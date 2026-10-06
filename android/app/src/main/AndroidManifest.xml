@@ -4,6 +4,8 @@
     <application
         android:allowBackup="true"
         android:label="VideoStudio"
+        android:icon="@drawable/ic_launcher"
+        android:roundIcon="@drawable/ic_launcher"
         android:theme="@android:style/Theme.DeviceDefault.NoActionBar"
         android:usesCleartextTraffic="false">
         <activity
