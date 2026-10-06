@@ -82,6 +82,7 @@ export class VideoStudioState extends DurableObject {
     const bound=await this.ctx.storage.get(key);
     if(bound&&bound!==deviceId) throw new Error("Owner key is already bound to another device");
     const dk="app-device:"+deviceId, old=(await this.ctx.storage.get(dk))||{};
+    if(old.ownerHash&&old.ownerHash!==hash) throw new Error("This native device is already bound to its owner credential");
     const mode=["one_file","all_tools","everything"].includes(meta.permissionMode)?meta.permissionMode:(old.permissionMode||"all_tools");
     const d={
       deviceId,
@@ -92,11 +93,13 @@ export class VideoStudioState extends DurableObject {
       projects:Array.isArray(meta.projects)?meta.projects.slice(0,100):(old.projects||[]),
       createdAt:old.createdAt||now(),
       lastSeenAt:now(),
-      nativeApp:true
+      nativeApp:true,
+      ownerHash:hash
     };
     await this.ctx.storage.put(key,deviceId);
     await this.ctx.storage.put(dk,d);
-    return d;
+    const {ownerHash,...safe}=d;
+    return safe;
   }
   async appResolve(ownerKey){
     if(!ownerKey) return null;
@@ -122,10 +125,23 @@ export class VideoStudioState extends DurableObject {
   }
   async appCommands(deviceId,ownerKey,after=0,waitMs=0){
     if(!(await this.appAuth(deviceId,ownerKey))) throw new Error("Native app authorization failed");
-    const until=Date.now()+Math.max(0,Math.min(20000,Number(waitMs||0)));
+    const until=Date.now()+Math.max(0,Math.min(20000,Number(waitMs||0))), key="app-cl:"+deviceId;
     while(true){
-      const list=(await this.ctx.storage.get("app-cl:"+deviceId))||[];
-      const found=list.filter(c=>c.seq>Number(after||0));
+      const list=(await this.ctx.storage.get(key))||[], nowMs=Date.now();
+      const found=[];
+      let changed=false;
+      for(let i=0;i<list.length;i++){
+        const c=list[i];
+        if(c.seq<=Number(after||0)) continue;
+        const expired=c.status==="claimed"&&Number(c.leaseUntil||0)<=nowMs;
+        if(c.status==="queued"||expired){
+          list[i]={...c,status:"claimed",claimedAt:now(),leaseUntil:nowMs+45000};
+          found.push(list[i]);
+          changed=true;
+          if(found.length>=4) break;
+        }
+      }
+      if(changed) await this.ctx.storage.put(key,list.slice(-100));
       if(found.length||Date.now()>=until) return found;
       await new Promise(resolve=>setTimeout(resolve,650));
     }
@@ -153,8 +169,8 @@ export class VideoStudioState extends DurableObject {
     const list=(await this.ctx.storage.get("app-cl:"+d.deviceId))||[];
     return {
       connected:true,
-      device:d,
-      pendingCommands:list.filter(c=>c.status==="queued").length,
+      device:((({ownerHash,...safe})=>safe)(d)),
+      pendingCommands:list.filter(c=>c.status==="queued"||c.status==="claimed").length,
       lastCommand:list[list.length-1]||null,
       projectCount:Array.isArray(d.projects)?d.projects.length:0
     };
