@@ -453,7 +453,7 @@
           meta: {
             name: /Android/i.test(navigator.userAgent) ? "Android device" : "Web device",
             platform: navigator.platform || "web",
-            appVersion: "0.2.0",
+            appVersion: "0.5.0",
           },
         }),
       });
@@ -579,10 +579,12 @@
       if (!asset) return;
       const node = document.createElement("div");
       node.className = "clip" + (app.selectedAssetId === asset.id ? " active" : "");
-      const duration = Math.max(0, Number(clip.outPoint || 0) - Number(clip.inPoint || 0));
+      const sourceDuration = Math.max(0, Number(clip.outPoint || 0) - Number(clip.inPoint || 0));
+      const clipSpeed = Math.max(.5, Math.min(2, Number(clip.speed || app.project.settings.speed || 1)));
+      const duration = sourceDuration / clipSpeed;
       node.innerHTML = "<strong></strong><span></span><div class='clipBtns'></div>";
-      node.querySelector("strong").textContent = asset.name;
-      node.querySelector("span").textContent = asset.kind + " • " + duration.toFixed(1) + "s";
+      node.querySelector("strong").textContent = (clip.title ? "✦ " + clip.title + " · " : "") + asset.name;
+      node.querySelector("span").textContent = asset.kind + " • " + Number(clip.inPoint || 0).toFixed(1) + "–" + Number(clip.outPoint || 0).toFixed(1) + "s • " + clipSpeed.toFixed(2) + "x • " + duration.toFixed(1) + "s out";
       node.onclick = () => {
         app.selectedAssetId = asset.id;
         renderTimeline();
@@ -1026,7 +1028,8 @@
           const img = new Image();
           const url = URL.createObjectURL(stored.blob);
           await new Promise((resolve, reject) => { img.onload = resolve; img.onerror = reject; img.src = url; });
-          const durationMs = Math.max(400, (Number(clip.outPoint || 3) - Number(clip.inPoint || 0)) * 1000 / Number(app.project.settings.speed || 1));
+          const clipSpeed = Math.max(.5, Math.min(2, Number(clip.speed || app.project.settings.speed || 1)));
+          const durationMs = Math.max(400, (Number(clip.outPoint || 3) - Number(clip.inPoint || 0)) * 1000 / clipSpeed);
           const startAt = performance.now();
           await new Promise((resolve) => {
             function frame(now) {
@@ -1038,7 +1041,7 @@
                 alpha = Math.max(0, alpha);
               }
               drawCover(ctx, img, width, height, alpha);
-              drawOverlay(ctx, width, height, app.project.settings.title);
+              drawOverlay(ctx, width, height, clip.title != null ? clip.title : app.project.settings.title);
               if (t >= durationMs) resolve(); else requestAnimationFrame(frame);
             }
             requestAnimationFrame(frame);
@@ -1057,7 +1060,8 @@
           const end = Math.min(Number(video.duration || 0), Number(clip.outPoint || video.duration || 0));
           video.currentTime = start;
           await new Promise((resolve) => { video.onseeked = resolve; setTimeout(resolve, 1000); });
-          video.playbackRate = Math.max(.5, Math.min(2, Number(app.project.settings.speed || 1)));
+          const clipSpeed = Math.max(.5, Math.min(2, Number(clip.speed || app.project.settings.speed || 1)));
+          video.playbackRate = clipSpeed;
 
           let mediaSource = null;
           let gain = null;
@@ -1091,7 +1095,7 @@
               let alpha = 1;
               if (transition) alpha = Math.max(0, Math.min(1, local / .25, left / .25));
               drawCover(ctx, video, width, height, alpha);
-              drawOverlay(ctx, width, height, app.project.settings.title);
+              drawOverlay(ctx, width, height, clip.title != null ? clip.title : app.project.settings.title);
               if (video.currentTime >= end || video.ended) {
                 video.pause();
                 resolve();
@@ -1271,6 +1275,54 @@
           result = { ok: true, assetIds: app.project.timeline.map((c) => c.assetId) };
           break;
         }
+        case "replace_timeline": {
+          if (!Array.isArray(p.clips) || !p.clips.length) throw new Error("clips array is required");
+          const next = [];
+          for (const raw of p.clips.slice(0, 40)) {
+            const assetId = raw.assetId || (app.project.assets[0] && app.project.assets[0].id);
+            const asset = app.project.assets.find((a) => a.id === assetId);
+            if (!asset) throw new Error("Asset not found for timeline clip");
+            const start = Math.max(0, Number(raw.start == null ? raw.inPoint || 0 : raw.start));
+            const maxEnd = Number(asset.duration || (asset.kind === "image" ? 3 : 0));
+            const end = Math.min(maxEnd, Number(raw.end == null ? raw.outPoint || maxEnd : raw.end));
+            if (!(end > start)) throw new Error("Invalid timeline clip range");
+            next.push({
+              clipId: raw.clipId || crypto.randomUUID(),
+              assetId,
+              inPoint: start,
+              outPoint: end,
+              speed: Math.max(.5, Math.min(2, Number(raw.speed || 1))),
+              title: String(raw.title || "").slice(0, 120),
+            });
+          }
+          app.project.timeline = next;
+          app.selectedAssetId = next[0] ? next[0].assetId : null;
+          await syncProject({ timeline: app.project.timeline });
+          renderProject();
+          await previewSelected();
+          result = { ok: true, clipCount: next.length, duration: next.reduce((sum,c)=>sum + (c.outPoint-c.inPoint)/(c.speed||1),0), timeline: next };
+          break;
+        }
+        case "set_clip_speed": {
+          const index = Math.max(0, Math.min(app.project.timeline.length - 1, Number(p.index || 0)));
+          const clip = app.project.timeline[index];
+          if (!clip) throw new Error("Clip not found");
+          clip.speed = Math.max(.5, Math.min(2, Number(p.speed || 1)));
+          await syncProject({ timeline: app.project.timeline });
+          renderProject();
+          result = { ok: true, index, speed: clip.speed };
+          break;
+        }
+        case "set_clip_title": {
+          const index = Math.max(0, Math.min(app.project.timeline.length - 1, Number(p.index || 0)));
+          const clip = app.project.timeline[index];
+          if (!clip) throw new Error("Clip not found");
+          clip.title = String(p.title || "").slice(0,120);
+          await syncProject({ timeline: app.project.timeline });
+          renderProject();
+          result = { ok: true, index, title: clip.title };
+          break;
+        }
         case "analyse_media":
           result = await analyseLocalMedia(p.assetId);
           break;
@@ -1279,14 +1331,49 @@
           break;
         case "autonomous_request": {
           const instruction = String(p.instruction || "").toLowerCase();
-          if (instruction.includes("vertical") || instruction.includes("9:16")) await changeSetting("aspect", "9:16");
-          if (instruction.includes("landscape") || instruction.includes("16:9")) await changeSetting("aspect", "16:9");
-          if (instruction.includes("square") || instruction.includes("1:1")) await changeSetting("aspect", "1:1");
-          if (instruction.includes("mute") || instruction.includes("no audio")) await changeSetting("mute", true);
-          const speedMatch = instruction.match(/(d(?:.d+)?)s*x/);
-          if (speedMatch) await changeSetting("speed", Math.max(.5, Math.min(2, Number(speedMatch[1]))));
-          if (instruction.includes("render") || instruction.includes("export")) result = await renderCurrentProject(true);
-          else result = { ok: true, applied: "Recognised local settings from instruction", instruction: p.instruction || "" };
+          if (Array.isArray(p.clips) && p.clips.length) {
+            const next = [];
+            for (const raw of p.clips.slice(0, 40)) {
+              const assetId = raw.assetId || (app.project.assets[0] && app.project.assets[0].id);
+              const asset = app.project.assets.find((a) => a.id === assetId);
+              if (!asset) throw new Error("Asset not found for autonomous timeline clip");
+              const start = Math.max(0, Number(raw.start == null ? raw.inPoint || 0 : raw.start));
+              const maxEnd = Number(asset.duration || (asset.kind === "image" ? 3 : 0));
+              const end = Math.min(maxEnd, Number(raw.end == null ? raw.outPoint || maxEnd : raw.end));
+              if (!(end > start)) throw new Error("Invalid autonomous timeline clip range");
+              next.push({
+                clipId: raw.clipId || crypto.randomUUID(),
+                assetId,
+                inPoint: start,
+                outPoint: end,
+                speed: Math.max(.5, Math.min(2, Number(raw.speed || 1))),
+                title: String(raw.title || "").slice(0, 120),
+              });
+            }
+            app.project.timeline = next;
+            app.selectedAssetId = next[0] ? next[0].assetId : null;
+            await syncProject({ timeline: app.project.timeline });
+            renderProject();
+            await previewSelected();
+          }
+          if (p.aspect && ["9:16","16:9","1:1","4:5"].includes(p.aspect)) await changeSetting("aspect", p.aspect);
+          else if (instruction.includes("vertical") || instruction.includes("9:16")) await changeSetting("aspect", "9:16");
+          else if (instruction.includes("landscape") || instruction.includes("16:9")) await changeSetting("aspect", "16:9");
+          else if (instruction.includes("square") || instruction.includes("1:1")) await changeSetting("aspect", "1:1");
+          if (p.quality) await changeSetting("quality", p.quality === "1080p" ? "1080p" : "720p");
+          if (p.transition) await changeSetting("transition", p.transition === "none" ? "none" : "fade");
+          if (p.mute != null) await changeSetting("mute", Boolean(p.mute));
+          else if (instruction.includes("mute") || instruction.includes("no audio")) await changeSetting("mute", true);
+          if (p.title != null) await changeSetting("title", String(p.title || "").slice(0,120));
+          const speedMatch = instruction.match(/(\d(?:\.\d+)?)\s*x/);
+          if (speedMatch && !(Array.isArray(p.clips) && p.clips.length)) await changeSetting("speed", Math.max(.5, Math.min(2, Number(speedMatch[1]))));
+          if (p.render === true || instruction.includes("render") || instruction.includes("export")) result = await renderCurrentProject(true);
+          else result = {
+            ok: true,
+            applied: Array.isArray(p.clips) && p.clips.length ? "Autonomous multi-cut timeline applied" : "Recognised local settings from instruction",
+            clipCount: app.project.timeline.length,
+            instruction: p.instruction || ""
+          };
           break;
         }
         default:
