@@ -817,6 +817,123 @@
     ctx.restore();
   }
 
+
+  async function analyseLocalMedia(assetId) {
+    if (!app.project) return { ok: false, error: "No project selected" };
+    const targetId = assetId || app.selectedAssetId || (app.project.timeline[0] && app.project.timeline[0].assetId);
+    if (!targetId) return { ok: false, error: "No visual media in the timeline" };
+    const asset = app.project.assets.find((a) => a.id === targetId);
+    if (!asset) return { ok: false, error: "Asset not found" };
+    if (asset.kind !== "video" && asset.kind !== "image") return { ok: false, error: "Only video and image assets can be visually analysed" };
+    const stored = await idbGet("assets", assetKey(app.project.id, asset.id));
+    if (!stored || !stored.blob) return { ok: false, error: "The media file is not available on this device" };
+
+    const sheet = document.createElement("canvas");
+    const tileW = 240, tileH = 135, cols = 3, rows = 2;
+    sheet.width = tileW * cols;
+    sheet.height = tileH * rows;
+    const ctx = sheet.getContext("2d", { alpha: false });
+    ctx.fillStyle = "#050608";
+    ctx.fillRect(0, 0, sheet.width, sheet.height);
+
+    const drawTile = (source, index, label) => {
+      const x = (index % cols) * tileW;
+      const y = Math.floor(index / cols) * tileH;
+      const sw = source.videoWidth || source.naturalWidth || tileW;
+      const sh = source.videoHeight || source.naturalHeight || tileH;
+      const scale = Math.max(tileW / sw, tileH / sh);
+      const dw = sw * scale, dh = sh * scale;
+      const dx = x + (tileW - dw) / 2, dy = y + (tileH - dh) / 2;
+      ctx.drawImage(source, dx, dy, dw, dh);
+      ctx.fillStyle = "rgba(0,0,0,.64)";
+      ctx.fillRect(x + 7, y + tileH - 26, 72, 19);
+      ctx.fillStyle = "#fff";
+      ctx.font = "600 12px system-ui, sans-serif";
+      ctx.textBaseline = "middle";
+      ctx.fillText(label, x + 12, y + tileH - 16);
+      ctx.strokeStyle = "rgba(255,255,255,.10)";
+      ctx.strokeRect(x + .5, y + .5, tileW - 1, tileH - 1);
+    };
+
+    let sourceWidth = 0, sourceHeight = 0, duration = Number(asset.duration || 0), frames = 0;
+    if (asset.kind === "image") {
+      const img = new Image();
+      const url = URL.createObjectURL(stored.blob);
+      try {
+        await new Promise((resolve, reject) => {
+          img.onload = resolve;
+          img.onerror = () => reject(new Error("Could not decode image"));
+          img.src = url;
+        });
+        sourceWidth = img.naturalWidth || 0;
+        sourceHeight = img.naturalHeight || 0;
+        for (let i = 0; i < 6; i++) drawTile(img, i, "still");
+        frames = 1;
+      } finally {
+        URL.revokeObjectURL(url);
+      }
+    } else {
+      const video = document.createElement("video");
+      video.playsInline = true;
+      video.preload = "auto";
+      video.muted = true;
+      const url = URL.createObjectURL(stored.blob);
+      try {
+        video.src = url;
+        await new Promise((resolve, reject) => {
+          video.onloadedmetadata = resolve;
+          video.onerror = () => reject(new Error("Could not decode video"));
+        });
+        sourceWidth = video.videoWidth || 0;
+        sourceHeight = video.videoHeight || 0;
+        duration = Number.isFinite(video.duration) ? video.duration : duration;
+        const clip = app.project.timeline.find((c) => c.assetId === asset.id);
+        const start = Math.max(0, Number(clip && clip.inPoint || 0));
+        const end = Math.max(start + .01, Math.min(duration || start + 1, Number(clip && clip.outPoint || duration || start + 1)));
+        const sampleCount = 6;
+        for (let i = 0; i < sampleCount; i++) {
+          const ratio = sampleCount === 1 ? .5 : i / (sampleCount - 1);
+          const t = start + (end - start) * ratio;
+          video.currentTime = Math.max(0, Math.min(Math.max(0, duration - .02), t));
+          await new Promise((resolve) => {
+            let done = false;
+            const finish = () => { if (!done) { done = true; resolve(); } };
+            video.onseeked = finish;
+            setTimeout(finish, 1200);
+          });
+          drawTile(video, i, t.toFixed(1) + "s");
+          frames++;
+        }
+      } finally {
+        URL.revokeObjectURL(url);
+      }
+    }
+
+    const dataUrl = sheet.toDataURL("image/jpeg", .62);
+    const base64 = dataUrl.split(",")[1] || "";
+    const result = {
+      ok: true,
+      asset: {
+        id: asset.id,
+        name: asset.name,
+        kind: asset.kind,
+        type: asset.type,
+        duration,
+        width: sourceWidth,
+        height: sourceHeight,
+      },
+      contactSheet: {
+        mimeType: "image/jpeg",
+        base64,
+        width: sheet.width,
+        height: sheet.height,
+        frames,
+      },
+      note: "Contact sheet generated locally from the user's media for ChatGPT visual inspection."
+    };
+    return result;
+  }
+
   function chooseMime() {
     const options = [
       "video/webm;codecs=vp9,opus",
@@ -1096,6 +1213,9 @@
           result.trim = { assetId, start, end };
           break;
         }
+        case "analyse_media":
+          result = await analyseLocalMedia(p.assetId);
+          break;
         case "render":
           result = await renderCurrentProject(true);
           break;

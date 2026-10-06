@@ -2,7 +2,7 @@
 
 VideoStudio MCP is a mobile-first, local-first video editor that can be controlled from ChatGPT through a custom MCP server.
 
-## What works in v0.2
+## What works in v0.3
 
 - Installable web app/PWA served by the same Cloudflare Worker as the MCP server.
 - One-tap pairing helper for ChatGPT.
@@ -16,6 +16,7 @@ VideoStudio MCP is a mobile-first, local-first video editor that can be controll
 - Local WebM rendering with Canvas + MediaRecorder.
 - Durable Object command relay so ChatGPT can send edits to the open app.
 - MCP tools for device status, project inspection, remote edit commands and command results.
+- On-device contact-sheet generation so ChatGPT can visually inspect sampled frames without uploading the full video.
 
 ## Privacy model
 
@@ -40,6 +41,7 @@ The device ID acts as the pairing secret for this early build. Do not post it pu
 - `get_video_project`
 - `queue_video_edit`
 - `get_video_command_result`
+- `request_media_analysis`
 - `video_project_plan`
 
 Supported remote edit actions:
@@ -51,6 +53,7 @@ Supported remote edit actions:
 - `set_title`
 - `set_quality`
 - `set_transition`
+- `analyse_media`
 - `render`
 - `autonomous_request`
 
