@@ -6,7 +6,8 @@ import android.content.SharedPreferences;
 import android.database.Cursor;
 import android.media.MediaMetadataRetriever;
 import android.net.Uri;
-import android.provider.OpenableColumns;\nimport android.os.ParcelFileDescriptor;
+import android.provider.OpenableColumns;
+import android.os.ParcelFileDescriptor;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
