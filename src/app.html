@@ -934,7 +934,7 @@
     return result;
   }
 
-  function chooseMime() {
+  function recorderMimeCandidates() {
     const options = [
       "video/mp4;codecs=avc1.42E01E,mp4a.40.2",
       "video/mp4",
@@ -942,7 +942,24 @@
       "video/webm;codecs=vp8,opus",
       "video/webm",
     ];
-    return options.find((type) => window.MediaRecorder && MediaRecorder.isTypeSupported(type)) || "";
+    if (!window.MediaRecorder) return [];
+    return options.filter((type) => MediaRecorder.isTypeSupported(type));
+  }
+
+  function createBestRecorder(stream, videoBitsPerSecond) {
+    let lastError = null;
+    for (const mimeType of recorderMimeCandidates()) {
+      try {
+        return new MediaRecorder(stream, { mimeType, videoBitsPerSecond });
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    try {
+      return new MediaRecorder(stream, { videoBitsPerSecond });
+    } catch (error) {
+      throw lastError || error;
+    }
   }
 
   async function renderCurrentProject(fromRemote) {
@@ -979,14 +996,13 @@
     if (audioDest && !app.project.settings.mute) {
       audioDest.stream.getAudioTracks().forEach((track) => stream.addTrack(track));
     }
-    const mimeType = chooseMime();
     let recorder;
     try {
-      recorder = new MediaRecorder(stream, mimeType ? { mimeType, videoBitsPerSecond: app.project.settings.quality === "1080p" ? 7000000 : 3500000 } : undefined);
+      recorder = createBestRecorder(stream, app.project.settings.quality === "1080p" ? 7000000 : 3500000);
     } catch (error) {
       app.rendering = false;
       els.renderBtn.disabled = false;
-      return { ok: false, error: "MediaRecorder could not start: " + error.message };
+      return { ok: false, error: "MediaRecorder could not start with MP4 or WebM: " + error.message };
     }
 
     const chunks = [];
