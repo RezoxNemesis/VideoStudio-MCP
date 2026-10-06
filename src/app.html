@@ -934,13 +934,32 @@
     return result;
   }
 
-  function chooseMime() {
+  function recorderMimeCandidates() {
     const options = [
+      "video/mp4;codecs=avc1.42E01E,mp4a.40.2",
+      "video/mp4",
       "video/webm;codecs=vp9,opus",
       "video/webm;codecs=vp8,opus",
       "video/webm",
     ];
-    return options.find((type) => window.MediaRecorder && MediaRecorder.isTypeSupported(type)) || "";
+    if (!window.MediaRecorder) return [];
+    return options.filter((type) => MediaRecorder.isTypeSupported(type));
+  }
+
+  function createBestRecorder(stream, videoBitsPerSecond) {
+    let lastError = null;
+    for (const mimeType of recorderMimeCandidates()) {
+      try {
+        return new MediaRecorder(stream, { mimeType, videoBitsPerSecond });
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    try {
+      return new MediaRecorder(stream, { videoBitsPerSecond });
+    } catch (error) {
+      throw lastError || error;
+    }
   }
 
   async function renderCurrentProject(fromRemote) {
@@ -977,14 +996,13 @@
     if (audioDest && !app.project.settings.mute) {
       audioDest.stream.getAudioTracks().forEach((track) => stream.addTrack(track));
     }
-    const mimeType = chooseMime();
     let recorder;
     try {
-      recorder = new MediaRecorder(stream, mimeType ? { mimeType, videoBitsPerSecond: app.project.settings.quality === "1080p" ? 7000000 : 3500000 } : undefined);
+      recorder = createBestRecorder(stream, app.project.settings.quality === "1080p" ? 7000000 : 3500000);
     } catch (error) {
       app.rendering = false;
       els.renderBtn.disabled = false;
-      return { ok: false, error: "MediaRecorder could not start: " + error.message };
+      return { ok: false, error: "MediaRecorder could not start with MP4 or WebM: " + error.message };
     }
 
     const chunks = [];
@@ -1106,7 +1124,8 @@
       app.renderUrl = URL.createObjectURL(blob);
       els.renderedPreview.src = app.renderUrl;
       els.downloadRender.href = app.renderUrl;
-      els.downloadRender.download = app.project.name.replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "").toLowerCase() + ".webm";
+      const renderExt = blob.type.includes("mp4") ? ".mp4" : ".webm";
+      els.downloadRender.download = app.project.name.replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "").toLowerCase() + renderExt;
       els.renderResult.style.display = "block";
       els.renderProgress.style.width = "100%";
       els.renderText.textContent = "Render complete • " + (blob.size / 1024 / 1024).toFixed(1) + " MB" + (missing ? " • " + missing + " missing local asset(s) skipped" : "");
@@ -1211,6 +1230,45 @@
           await syncProject({ timeline: app.project.timeline });
           renderProject();
           result.trim = { assetId, start, end };
+          break;
+        }
+        case "remove_clip": {
+          let index = Number.isInteger(p.index) ? p.index : app.project.timeline.findIndex((c) => c.assetId === p.assetId);
+          if (index < 0 || index >= app.project.timeline.length) throw new Error("Clip not found");
+          const removed = app.project.timeline.splice(index, 1)[0];
+          if (removed && app.selectedAssetId === removed.assetId) {
+            app.selectedAssetId = app.project.timeline[0] ? app.project.timeline[0].assetId : null;
+          }
+          await syncProject({ timeline: app.project.timeline });
+          renderProject();
+          await previewSelected();
+          result = { ok: true, removed, remainingClips: app.project.timeline.length };
+          break;
+        }
+        case "move_clip": {
+          let from = Number.isInteger(p.fromIndex) ? p.fromIndex : app.project.timeline.findIndex((c) => c.assetId === p.assetId);
+          if (from < 0 || from >= app.project.timeline.length) throw new Error("Clip not found");
+          const to = Math.max(0, Math.min(app.project.timeline.length - 1, Number(p.toIndex)));
+          if (!Number.isFinite(to)) throw new Error("toIndex is required");
+          const [clip] = app.project.timeline.splice(from, 1);
+          app.project.timeline.splice(to, 0, clip);
+          await syncProject({ timeline: app.project.timeline });
+          renderProject();
+          result = { ok: true, fromIndex: from, toIndex: to, assetId: clip.assetId };
+          break;
+        }
+        case "reorder_timeline": {
+          if (!Array.isArray(p.assetIds) || !p.assetIds.length) throw new Error("assetIds array is required");
+          const remaining = app.project.timeline.slice();
+          const reordered = [];
+          for (const id of p.assetIds) {
+            const i = remaining.findIndex((c) => c.assetId === id);
+            if (i >= 0) reordered.push(remaining.splice(i, 1)[0]);
+          }
+          app.project.timeline = reordered.concat(remaining);
+          await syncProject({ timeline: app.project.timeline });
+          renderProject();
+          result = { ok: true, assetIds: app.project.timeline.map((c) => c.assetId) };
           break;
         }
         case "analyse_media":
