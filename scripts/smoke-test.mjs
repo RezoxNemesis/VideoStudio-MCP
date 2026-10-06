@@ -4,7 +4,18 @@ const app = fs.readFileSync(new URL("../src/app.html", import.meta.url), "utf8")
 const worker = fs.readFileSync(new URL("../src/index.js", import.meta.url), "utf8");
 const wrangler = fs.readFileSync(new URL("../wrangler.jsonc", import.meta.url), "utf8");
 
+const scriptMatch = app.match(/<script>([\s\S]*?)<\/script>/);
+let appScriptParses = false;
+try {
+  if (!scriptMatch) throw new Error("Inline script not found");
+  new Function(scriptMatch[1]);
+  appScriptParses = true;
+} catch (error) {
+  console.error("APP SCRIPT SYNTAX ERROR:", error.message);
+}
+
 const checks = [
+  ["inline app JavaScript parses", appScriptParses],
   ["app has Connect to ChatGPT control", app.includes("Connect to ChatGPT")],
   ["app has media import", app.includes('id="fileInput"')],
   ["app has timeline", app.includes('id="timeline"')],
