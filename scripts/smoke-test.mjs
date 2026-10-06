@@ -60,7 +60,7 @@ const checks = [
   ["native app uses private app MCP protocol", nativeProtocol.includes("/app-mcp/") && nativeProtocol.includes("AndroidKeyStore")],
   ["native command checkpoint advances after completion", nativeProtocol.includes("prefs.edit().putLong(KEY_SEQ")],
   ["native app has bounded heavy-work scheduler", nativeJobs.includes("Semaphore") && nativeJobs.includes("THERMAL_STATUS_SEVERE")],
-  ["worker exposes private App MCP", worker.includes('"VideoStudio-App-MCP"') && worker.includes("/app-mcp/")],
+  ["worker exposes private App MCP", worker.includes('"VideoStudio-App-MCP"') && worker.includes("appMcp")],
   ["worker rejects unbound native credentials", worker.includes("Private App MCP credential rejected")],
   ["worker leases native commands", worker.includes('status:"claimed"') && worker.includes("leaseUntil")],
 ];
