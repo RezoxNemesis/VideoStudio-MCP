@@ -13,7 +13,7 @@ export class VideoStudioState extends DurableObject {
   constructor(ctx,env){ super(ctx,env); }
   async register(deviceId,meta={}){
     const k="d:"+deviceId, old=(await this.ctx.storage.get(k))||{};
-    const d={deviceId,name:clean(meta.name||old.name||"My device",80),platform:clean(meta.platform||old.platform||"web",80),appVersion:"0.2.0",createdAt:old.createdAt||now(),lastSeenAt:now()};
+    const d={deviceId,name:clean(meta.name||old.name||"My device",80),platform:clean(meta.platform||old.platform||"web",80),appVersion:"0.3.0",createdAt:old.createdAt||now(),lastSeenAt:now()};
     await this.ctx.storage.put(k,d); return d;
   }
   async device(deviceId){ return (await this.ctx.storage.get("d:"+deviceId))||null; }
@@ -58,18 +58,37 @@ const state = env => env.VIDEO_STATE.getByName("primary");
 const out = x => ({content:[{type:"text",text:JSON.stringify(x)}]});
 
 function serverFor(env){
-  const s=new McpServer({name:"VideoStudio-MCP",version:"0.2.0"}), st=state(env);
-  s.registerTool("server_status",{description:"Check VideoStudio MCP status.",inputSchema:{}},async()=>out({ok:true,service:"VideoStudio-MCP",version:"0.2.0",app:"/",capabilities:["device pairing","projects","local media","remote edit commands","local render feedback"]}));
+  const s=new McpServer({name:"VideoStudio-MCP",version:"0.3.0"}), st=state(env);
+  s.registerTool("server_status",{description:"Check VideoStudio MCP status.",inputSchema:{}},async()=>out({ok:true,service:"VideoStudio-MCP",version:"0.3.0",app:"/",capabilities:["device pairing","projects","local media","visual contact-sheet analysis","remote edit commands","local render feedback"]}));
   s.registerTool("device_status",{description:"Check a paired VideoStudio app device.",inputSchema:{deviceId:z.string().min(8)}},async({deviceId})=>out(await st.status(deviceId)));
   s.registerTool("create_video_project",{description:"Create a VideoStudio project on a paired device.",inputSchema:{deviceId:z.string().min(8),name:z.string().min(1).max(120),instruction:z.string().max(5000).optional()}},async({deviceId,name,instruction})=>out(await st.createProject(deviceId,name,instruction||"")));
   s.registerTool("list_video_projects",{description:"List projects and synced local-media metadata.",inputSchema:{deviceId:z.string().min(8)}},async({deviceId})=>out(await st.projects(deviceId)));
   s.registerTool("get_video_project",{description:"Get timeline, assets, settings and latest command result.",inputSchema:{deviceId:z.string().min(8),projectId:z.string().min(8)}},async({deviceId,projectId})=>out((await st.project(deviceId,projectId))||{error:"Project not found"}));
-  s.registerTool("queue_video_edit",{description:"Send an edit action to the open VideoStudio app. Media stays local on the device.",inputSchema:{deviceId:z.string().min(8),projectId:z.string().min(8),action:z.enum(["set_trim","set_speed","set_mute","set_aspect","set_title","set_quality","set_transition","render","autonomous_request"]),parameters:z.record(z.string(),z.any()).optional()}},async({deviceId,projectId,action,parameters})=>{
+  s.registerTool("queue_video_edit",{description:"Send an edit action to the open VideoStudio app. Media stays local on the device.",inputSchema:{deviceId:z.string().min(8),projectId:z.string().min(8),action:z.enum(["set_trim","set_speed","set_mute","set_aspect","set_title","set_quality","set_transition","analyse_media","render","autonomous_request"]),parameters:z.record(z.string(),z.any()).optional()}},async({deviceId,projectId,action,parameters})=>{
     try{ const c=await st.enqueue(deviceId,projectId,action,parameters||{}); return out({queued:true,commandId:c.id,sequence:c.seq,action,note:action==="render"?"Render runs locally. Keep the app open; a browser may require one tap before playback.":"The open app will apply this automatically."}); }
     catch(e){ return out({queued:false,error:e.message}); }
   });
-  s.registerTool("get_video_command_result",{description:"Get the result of a queued edit or render command.",inputSchema:{deviceId:z.string().min(8),commandId:z.string().min(8)}},async({deviceId,commandId})=>out((await st.command(deviceId,commandId))||{error:"Command not found"}));
-  s.registerTool("video_project_plan",{description:"Create a short autonomous editing workflow.",inputSchema:{projectName:z.string().min(1),instruction:z.string().min(1)}},async({projectName,instruction})=>out({projectName,instruction,status:"planned",workflow:["inspect asset metadata","decide framing and trims","queue edit commands","request local render","read render result","iterate"]}));
+  s.registerTool("get_video_command_result",{description:"Get the result of a queued edit, media-analysis, or render command. Visual analysis results include an image content block that ChatGPT can inspect.",inputSchema:{deviceId:z.string().min(8),commandId:z.string().min(8)}},async({deviceId,commandId})=>{
+    const c=await st.command(deviceId,commandId);
+    if(!c) return out({error:"Command not found"});
+    const sheet=c.result&&c.result.contactSheet;
+    if(sheet&&sheet.base64){
+      const safeResult={...c.result,contactSheet:{...sheet,base64:undefined}};
+      const safeCommand={...c,result:safeResult};
+      return {content:[
+        {type:"text",text:JSON.stringify(safeCommand)},
+        {type:"image",data:sheet.base64,mimeType:sheet.mimeType||"image/jpeg"}
+      ]};
+    }
+    return out(c);
+  });
+  s.registerTool("request_media_analysis",{description:"Ask the open VideoStudio app to sample a local video or image and return a compact contact sheet for visual inspection. The full media file stays on the user device.",inputSchema:{deviceId:z.string().min(8),projectId:z.string().min(8),assetId:z.string().min(8).optional()}},async({deviceId,projectId,assetId})=>{
+    try{
+      const c=await st.enqueue(deviceId,projectId,"analyse_media",assetId?{assetId}:{});
+      return out({queued:true,commandId:c.id,sequence:c.seq,note:"Keep VideoStudio open. Call get_video_command_result after the device completes analysis."});
+    }catch(e){ return out({queued:false,error:e.message}); }
+  });
+  s.registerTool("video_project_plan",{description:"Create a short autonomous editing workflow.",inputSchema:{projectName:z.string().min(1),instruction:z.string().min(1)}},async({projectName,instruction})=>out({projectName,instruction,status:"planned",workflow:["inspect asset metadata","request local contact-sheet analysis","visually inspect sampled frames","decide framing and trims","queue edit commands","request local render","read render result","iterate"]}));
   return s;
 }
 
