@@ -8,6 +8,22 @@ const JH = {"content-type":"application/json; charset=UTF-8","cache-control":"no
 const now = () => new Date().toISOString();
 const clean = (v,n=5000) => String(v ?? "").trim().slice(0,n);
 const reply = (x,s=200) => new Response(JSON.stringify(x),{status:s,headers:JH});
+const sha256Hex = async value => {
+  const bytes = new TextEncoder().encode(String(value || ""));
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return [...new Uint8Array(digest)].map(x=>x.toString(16).padStart(2,"0")).join("");
+};
+const bearer = request => {
+  const h=request.headers.get("authorization")||"";
+  return h.toLowerCase().startsWith("bearer ") ? h.slice(7).trim() : "";
+};
+const appActionAllowed = (mode,action) => {
+  if(["ping","get_state"].includes(action)) return true;
+  if(mode==="everything") return true;
+  if(mode==="all_tools") return !["import_url","delete_project"].includes(action);
+  if(mode==="one_file") return ["apply_tool","preview_project","cancel_job"].includes(action);
+  return false;
+};
 
 export class VideoStudioState extends DurableObject {
   constructor(ctx,env){ super(ctx,env); }
@@ -57,6 +73,91 @@ export class VideoStudioState extends DurableObject {
   async status(deviceId){
     const d=await this.device(deviceId), ps=await this.projects(deviceId), a=(await this.ctx.storage.get("cl:"+deviceId))||[];
     return {connected:!!d,device:d,projectCount:ps.length,pendingCommands:a.filter(c=>c.status==="queued").length,lastCommand:a[a.length-1]||null};
+  }
+
+  async appRegister(deviceId,ownerKey,meta={}){
+    if(!deviceId||String(deviceId).length<8) throw new Error("Invalid native device ID");
+    if(!ownerKey||String(ownerKey).length<32) throw new Error("Invalid owner key");
+    const hash=await sha256Hex(ownerKey), key="app-owner:"+hash;
+    const bound=await this.ctx.storage.get(key);
+    if(bound&&bound!==deviceId) throw new Error("Owner key is already bound to another device");
+    const dk="app-device:"+deviceId, old=(await this.ctx.storage.get(dk))||{};
+    const mode=["one_file","all_tools","everything"].includes(meta.permissionMode)?meta.permissionMode:(old.permissionMode||"all_tools");
+    const d={
+      deviceId,
+      name:clean(meta.name||old.name||"VideoStudio Android",80),
+      platform:clean(meta.platform||old.platform||"android-native",80),
+      appVersion:clean(meta.appVersion||old.appVersion||"1.0.0",30),
+      permissionMode:mode,
+      projects:Array.isArray(meta.projects)?meta.projects.slice(0,100):(old.projects||[]),
+      createdAt:old.createdAt||now(),
+      lastSeenAt:now(),
+      nativeApp:true
+    };
+    await this.ctx.storage.put(key,deviceId);
+    await this.ctx.storage.put(dk,d);
+    return d;
+  }
+  async appResolve(ownerKey){
+    if(!ownerKey) return null;
+    const hash=await sha256Hex(ownerKey), id=await this.ctx.storage.get("app-owner:"+hash);
+    if(!id) return null;
+    return (await this.ctx.storage.get("app-device:"+id))||null;
+  }
+  async appAuth(deviceId,ownerKey){
+    const d=await this.appResolve(ownerKey);
+    return d&&d.deviceId===deviceId?d:null;
+  }
+  async appEnqueue(ownerKey,action,parameters={}){
+    const d=await this.appResolve(ownerKey);
+    if(!d) throw new Error("Private App MCP credential rejected");
+    if(!appActionAllowed(d.permissionMode,action)) throw new Error("Action blocked by device permission mode: "+d.permissionMode);
+    const sk="app-seq:"+d.deviceId, seq=((await this.ctx.storage.get(sk))||0)+1;
+    await this.ctx.storage.put(sk,seq);
+    const c={id:crypto.randomUUID(),seq,deviceId:d.deviceId,action,parameters,status:"queued",createdAt:now(),completedAt:null,result:null};
+    const k="app-cl:"+d.deviceId, list=(await this.ctx.storage.get(k))||[];
+    list.push(c);
+    await this.ctx.storage.put(k,list.slice(-100));
+    return c;
+  }
+  async appCommands(deviceId,ownerKey,after=0,waitMs=0){
+    if(!(await this.appAuth(deviceId,ownerKey))) throw new Error("Native app authorization failed");
+    const until=Date.now()+Math.max(0,Math.min(20000,Number(waitMs||0)));
+    while(true){
+      const list=(await this.ctx.storage.get("app-cl:"+deviceId))||[];
+      const found=list.filter(c=>c.seq>Number(after||0));
+      if(found.length||Date.now()>=until) return found;
+      await new Promise(resolve=>setTimeout(resolve,650));
+    }
+  }
+  async appComplete(deviceId,ownerKey,id,result={},status="completed"){
+    if(!(await this.appAuth(deviceId,ownerKey))) throw new Error("Native app authorization failed");
+    const k="app-cl:"+deviceId, list=(await this.ctx.storage.get(k))||[], i=list.findIndex(c=>c.id===id);
+    if(i<0) return null;
+    list[i]={...list[i],status:clean(status,30)||"completed",completedAt:now(),result};
+    await this.ctx.storage.put(k,list.slice(-100));
+    const d=(await this.ctx.storage.get("app-device:"+deviceId))||{};
+    d.lastSeenAt=now();
+    await this.ctx.storage.put("app-device:"+deviceId,d);
+    return list[i];
+  }
+  async appCommand(ownerKey,id){
+    const d=await this.appResolve(ownerKey);
+    if(!d) throw new Error("Private App MCP credential rejected");
+    const list=(await this.ctx.storage.get("app-cl:"+d.deviceId))||[];
+    return list.find(c=>c.id===id)||null;
+  }
+  async appStatus(ownerKey){
+    const d=await this.appResolve(ownerKey);
+    if(!d) return {connected:false,error:"Private App MCP credential rejected"};
+    const list=(await this.ctx.storage.get("app-cl:"+d.deviceId))||[];
+    return {
+      connected:true,
+      device:d,
+      pendingCommands:list.filter(c=>c.status==="queued").length,
+      lastCommand:list[list.length-1]||null,
+      projectCount:Array.isArray(d.projects)?d.projects.length:0
+    };
   }
 }
 
@@ -120,10 +221,55 @@ function serverFor(env){
   return s;
 }
 
+function serverForApp(env,ownerKey){
+  const s=new McpServer({name:"VideoStudio-App-MCP",version:"1.0.0"}), st=state(env);
+  const queue=async(action,parameters={})=>{
+    try{
+      const c=await st.appEnqueue(ownerKey,action,parameters);
+      return out({queued:true,commandId:c.id,sequence:c.seq,action});
+    }catch(e){ return out({queued:false,error:e.message}); }
+  };
+  s.registerTool("app_status",{description:"Check the private native VideoStudio Android app connection, permission mode, project summaries and pending work.",inputSchema:{}},async()=>out(await st.appStatus(ownerKey)));
+  s.registerTool("app_capabilities",{description:"Read the native v1 editing/control capabilities exposed to ChatGPT.",inputSchema:{}},async()=>out({
+    version:"1.0.0",
+    primary:"Android native app",
+    capabilities:["native local projects","media import via Android picker","timeline trim/split","slow-motion and speed preview","green-screen parameter model","creator transitions","motion/keyframe preset model","colour/effect/mask model","private device-owned App MCP","HTTPS file import","bounded multitasking","thermal and memory guard","job cancellation"],
+    permissionModes:["one_file","all_tools","everything"],
+    renderEngine:"native safe export engine is the next v1 milestone; browser rendering is not used by this App MCP"
+  }));
+  s.registerTool("app_create_project",{description:"Create a project in the native VideoStudio app.",inputSchema:{name:z.string().min(1).max(120)}},async({name})=>queue("create_project",{name}));
+  s.registerTool("app_select_project",{description:"Select an existing native VideoStudio project by ID.",inputSchema:{projectId:z.string().min(8)}},async({projectId})=>queue("select_project",{projectId}));
+  s.registerTool("app_apply_edit_plan",{description:"Replace the active project's native timeline with an autonomous multi-cut plan. Clips reference already imported local asset IDs.",inputSchema:{clips:z.array(z.record(z.string(),z.any())).min(1).max(80)}},async({clips})=>queue("apply_edit_plan",{clips}));
+  s.registerTool("app_apply_tool",{description:"Apply a native editing primitive to one timeline clip. Supported tool names include trim, speed, slow_motion, green_screen, transition, motion, effect, color, reframe, mask, title and volume.",inputSchema:{clipIndex:z.number().int().min(0),tool:z.string().min(1).max(80),settings:z.record(z.string(),z.any()).optional()}},async({clipIndex,tool,settings})=>queue("apply_tool",{clipIndex,tool,settings:settings||{}}));
+  s.registerTool("app_preview_project",{description:"Ask the Android app to preview the active timeline locally.",inputSchema:{}},async()=>queue("preview_project",{}));
+  s.registerTool("app_import_from_url",{description:"Import an HTTPS media URL directly into the native app without browsing the user's gallery. Requires Allow everything mode.",inputSchema:{url:z.string().url(),name:z.string().max(160).optional()}},async({url,name})=>queue("import_url",{url,name:name||"ChatGPT import"}));
+  s.registerTool("app_cancel_job",{description:"Cancel a native VideoStudio background job.",inputSchema:{jobId:z.string().min(8)}},async({jobId})=>queue("cancel_job",{jobId}));
+  s.registerTool("app_get_command_result",{description:"Read completion status/result for a native App MCP command.",inputSchema:{commandId:z.string().min(8)}},async({commandId})=>{
+    try{ return out((await st.appCommand(ownerKey,commandId))||{error:"Command not found"}); }
+    catch(e){ return out({error:e.message}); }
+  });
+  return s;
+}
+
 async function api(request,env){
   const u=new URL(request.url), st=state(env);
-  if(request.method==="OPTIONS") return new Response(null,{status:204,headers:{"access-control-allow-origin":"*","access-control-allow-methods":"GET,POST,OPTIONS","access-control-allow-headers":"content-type"}});
+  if(request.method==="OPTIONS") return new Response(null,{status:204,headers:{"access-control-allow-origin":"*","access-control-allow-methods":"GET,POST,OPTIONS","access-control-allow-headers":"content-type, authorization"}});
   try{
+    if(u.pathname==="/api/app/register"&&request.method==="POST"){
+      const b=await request.json();
+      return reply({ok:true,device:await st.appRegister(b.deviceId,b.ownerKey,b.meta||{})});
+    }
+    if(u.pathname==="/api/app/commands"&&request.method==="GET"){
+      const deviceId=u.searchParams.get("deviceId")||"", after=Number(u.searchParams.get("after")||0), wait=Number(u.searchParams.get("wait")||0);
+      const token=bearer(request);
+      return reply({commands:await st.appCommands(deviceId,token,after,wait)});
+    }
+    const acm=u.pathname.match(/^\/api\/app\/commands\/([^/]+)\/complete$/);
+    if(acm&&request.method==="POST"){
+      const b=await request.json(),token=bearer(request);
+      const c=await st.appComplete(b.deviceId,token,acm[1],b.result||{},b.status||"completed");
+      return c?reply({command:c}):reply({error:"Command not found"},404);
+    }
     if(u.pathname==="/api/device/register"&&request.method==="POST"){ const b=await request.json(); return reply({ok:true,device:await st.register(b.deviceId,b.meta||{})}); }
     if(u.pathname==="/api/device/status"&&request.method==="GET") return reply(await st.status(u.searchParams.get("deviceId")||""));
     if(u.pathname==="/api/projects"&&request.method==="GET") return reply({projects:await st.projects(u.searchParams.get("deviceId")||"")});
@@ -150,6 +296,11 @@ export default {
     if(u.pathname==="/icon.svg") return new Response(ICON,{headers:{"content-type":"image/svg+xml"}});
     if(u.pathname==="/sw.js") return new Response(SW,{headers:{"content-type":"application/javascript","cache-control":"no-cache"}});
     if(u.pathname.startsWith("/api/")) return api(request,env);
+    const appMcp=u.pathname.match(/^\/app-mcp\/([A-Za-z0-9_-]{32,})$/);
+    if(appMcp){
+      const ownerKey=appMcp[1];
+      return createMcpHandler(()=>serverForApp(env,ownerKey),{route:u.pathname,responseMode:"auto"})(request,env,ctx);
+    }
     if(u.pathname==="/mcp"||u.pathname.startsWith("/mcp/")) return createMcpHandler(()=>serverFor(env),{route:"/mcp",responseMode:"auto"})(request,env,ctx);
     if(u.pathname==="/mcp-v06"||u.pathname.startsWith("/mcp-v06/")) return createMcpHandler(()=>serverFor(env),{route:"/mcp-v06",responseMode:"auto"})(request,env,ctx);
     return new Response("Not Found",{status:404});
