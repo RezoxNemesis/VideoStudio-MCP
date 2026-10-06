@@ -306,8 +306,8 @@
       <section class="card">
         <div class="sectionHead">
           <div>
-            <h3>Local render</h3>
-            <div class="tiny">Your browser renders the timeline on-device. No R2, no paid media storage.</div>
+            <h3>On-device render</h3>
+            <div class="tiny">VideoStudio renders the timeline on-device. No R2, no paid media storage.</div>
           </div>
           <button id="renderBtn" class="btn primary" disabled>Render video</button>
         </div>
@@ -326,7 +326,7 @@
       <section class="card pad">
         <h2>Autonomous command example</h2>
         <div class="muted tiny">After pairing, you can tell ChatGPT something like:</div>
-        <div class="pairbox"><code id="examplePrompt">Open my VideoStudio project, make it vertical, trim the first clip, add a title, render it, inspect the result status and fix anything needed.</code></div>
+        <div class="pairbox"><code id="examplePrompt">Open my VideoStudio project, analyse scenes and quiet sections, build a clean multi-cut timeline, use reframing/zoom only where useful, preserve clear audio, render it, inspect the rendered frames, and iterate if needed.</code></div>
         <button id="copyPromptBtn" class="btn" style="margin-top:10px">Copy example command</button>
       </section>
     </main>
@@ -363,6 +363,7 @@
     selectedAssetId: null,
     previewUrl: null,
     renderUrl: null,
+    latestRenderBlob: null,
     lastSeq: Number(localStorage.getItem("vs-last-seq") || 0),
     db: null,
     polling: false,
@@ -453,7 +454,7 @@
           meta: {
             name: /Android/i.test(navigator.userAgent) ? "Android device" : "Web device",
             platform: navigator.platform || "web",
-            appVersion: "0.5.0",
+            appVersion: "0.6.0",
           },
         }),
       });
@@ -786,26 +787,83 @@
     return [base, Math.round(base * 16 / 9)];
   }
 
-  function drawCover(ctx, source, width, height, alpha) {
-    const sw = source.videoWidth || source.naturalWidth || width;
-    const sh = source.videoHeight || source.naturalHeight || height;
-    const scale = Math.max(width / sw, height / sh);
-    const dw = sw * scale, dh = sh * scale;
-    const dx = (width - dw) / 2, dy = (height - dh) / 2;
-    ctx.globalAlpha = alpha == null ? 1 : alpha;
-    ctx.drawImage(source, dx, dy, dw, dh);
-    ctx.globalAlpha = 1;
+  const clamp = (v, min, max) => Math.max(min, Math.min(max, Number(v)));
+  const lerp = (a, b, t) => Number(a) + (Number(b) - Number(a)) * Math.max(0, Math.min(1, Number(t || 0)));
+
+  function normalizeClipSpec(raw, asset) {
+    const maxEnd = Number(asset && asset.duration || (asset && asset.kind === "image" ? 3 : 0));
+    const start = Math.max(0, Number(raw.start == null ? raw.inPoint || 0 : raw.start));
+    const end = Math.min(maxEnd, Number(raw.end == null ? raw.outPoint || maxEnd : raw.end));
+    if (!(end > start)) throw new Error("Invalid timeline clip range");
+    return {
+      clipId: raw.clipId || crypto.randomUUID(),
+      assetId: raw.assetId || asset.id,
+      inPoint: start,
+      outPoint: end,
+      speed: clamp(raw.speed == null ? 1 : raw.speed, .5, 2),
+      volume: clamp(raw.volume == null ? 1 : raw.volume, 0, 2),
+      audioFadeIn: clamp(raw.audioFadeIn || 0, 0, 5),
+      audioFadeOut: clamp(raw.audioFadeOut || 0, 0, 5),
+      title: String(raw.title || "").slice(0, 120),
+      titleStyle: {
+        position: ["top","center","bottom"].includes(raw.titleStyle && raw.titleStyle.position) ? raw.titleStyle.position : "bottom",
+        size: clamp(raw.titleStyle && raw.titleStyle.size || 1, .65, 1.7),
+        background: Boolean(raw.titleStyle && raw.titleStyle.background),
+      },
+      zoomStart: clamp(raw.zoomStart == null ? raw.zoom || 1 : raw.zoomStart, 1, 2.5),
+      zoomEnd: clamp(raw.zoomEnd == null ? raw.zoomStart == null ? raw.zoom || 1 : raw.zoomStart : raw.zoomEnd, 1, 2.5),
+      panXStart: clamp(raw.panXStart == null ? raw.panX || 0 : raw.panXStart, -1, 1),
+      panXEnd: clamp(raw.panXEnd == null ? raw.panXStart == null ? raw.panX || 0 : raw.panXStart : raw.panXEnd, -1, 1),
+      panYStart: clamp(raw.panYStart == null ? raw.panY || 0 : raw.panYStart, -1, 1),
+      panYEnd: clamp(raw.panYEnd == null ? raw.panYStart == null ? raw.panY || 0 : raw.panYStart : raw.panYEnd, -1, 1),
+      rotate: clamp(raw.rotate || 0, -15, 15),
+      brightness: clamp(raw.brightness == null ? 1 : raw.brightness, .5, 1.7),
+      contrast: clamp(raw.contrast == null ? 1 : raw.contrast, .5, 1.8),
+      saturation: clamp(raw.saturation == null ? 1 : raw.saturation, 0, 2.2),
+    };
   }
 
-  function drawOverlay(ctx, width, height, title) {
+  function drawFrame(ctx, source, width, height, alpha, clip, progress) {
+    const sw = source.videoWidth || source.naturalWidth || width;
+    const sh = source.videoHeight || source.naturalHeight || height;
+    const c = clip || {};
+    const p = Math.max(0, Math.min(1, Number(progress || 0)));
+    const zoom = lerp(c.zoomStart == null ? 1 : c.zoomStart, c.zoomEnd == null ? c.zoomStart == null ? 1 : c.zoomStart : c.zoomEnd, p);
+    const panX = lerp(c.panXStart || 0, c.panXEnd == null ? c.panXStart || 0 : c.panXEnd, p);
+    const panY = lerp(c.panYStart || 0, c.panYEnd == null ? c.panYStart || 0 : c.panYEnd, p);
+    const scale = Math.max(width / sw, height / sh) * zoom;
+    const dw = sw * scale, dh = sh * scale;
+    const maxPanX = Math.max(0, (dw - width) / 2);
+    const maxPanY = Math.max(0, (dh - height) / 2);
+    const dx = (width - dw) / 2 - panX * maxPanX;
+    const dy = (height - dh) / 2 - panY * maxPanY;
+    ctx.save();
+    ctx.globalAlpha = alpha == null ? 1 : alpha;
+    ctx.filter = "brightness(" + clamp(c.brightness == null ? 1 : c.brightness, .5, 1.7) + ") contrast(" + clamp(c.contrast == null ? 1 : c.contrast, .5, 1.8) + ") saturate(" + clamp(c.saturation == null ? 1 : c.saturation, 0, 2.2) + ")";
+    const rotation = clamp(c.rotate || 0, -15, 15) * Math.PI / 180;
+    if (rotation) {
+      ctx.translate(width / 2, height / 2);
+      ctx.rotate(rotation);
+      ctx.translate(-width / 2, -height / 2);
+    }
+    ctx.drawImage(source, dx, dy, dw, dh);
+    ctx.restore();
+  }
+
+  function drawCover(ctx, source, width, height, alpha) {
+    drawFrame(ctx, source, width, height, alpha, null, 0);
+  }
+
+  function drawOverlay(ctx, width, height, title, style) {
     if (!title) return;
-    const fontSize = Math.max(26, Math.round(width * .055));
+    const st = style || {};
+    const fontSize = Math.max(24, Math.round(width * .052 * clamp(st.size || 1, .65, 1.7)));
     ctx.save();
     ctx.font = "900 " + fontSize + "px system-ui, sans-serif";
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.lineWidth = Math.max(4, fontSize * .12);
-    ctx.strokeStyle = "rgba(0,0,0,.72)";
+    ctx.strokeStyle = "rgba(0,0,0,.78)";
     ctx.fillStyle = "#ffffff";
     const maxWidth = width * .86;
     let text = String(title).slice(0, 120);
@@ -813,7 +871,14 @@
       while (text.length > 4 && ctx.measureText(text + "…").width > maxWidth) text = text.slice(0, -1);
       text += "…";
     }
-    const y = height * .87;
+    const y = st.position === "top" ? height * .13 : st.position === "center" ? height * .5 : height * .86;
+    if (st.background) {
+      const m = ctx.measureText(text);
+      const padX = fontSize * .42, padY = fontSize * .28;
+      ctx.fillStyle = "rgba(0,0,0,.68)";
+      ctx.fillRect(width / 2 - m.width / 2 - padX, y - fontSize / 2 - padY, m.width + padX * 2, fontSize + padY * 2);
+      ctx.fillStyle = "#fff";
+    }
     ctx.strokeText(text, width / 2, y);
     ctx.fillText(text, width / 2, y);
     ctx.restore();
