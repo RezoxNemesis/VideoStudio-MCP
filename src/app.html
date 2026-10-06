@@ -1558,14 +1558,14 @@
   function pairingPrompt() {
     return [
       "Connect to my VideoStudio app.",
-      "MCP server: " + location.origin + "/mcp",
+      "MCP server: " + location.origin + "/mcp-v06",
       "Device ID: " + app.deviceId,
       "Use VideoStudio MCP device_status to verify it, then use this device ID for my VideoStudio projects and edit commands."
     ].join("\n");
   }
 
   els.copyDeviceBtn.onclick = () => copyText(app.deviceId, "Device ID copied");
-  els.copyMcpBtn.onclick = () => copyText(location.origin + "/mcp", "MCP URL copied");
+  els.copyMcpBtn.onclick = () => copyText(location.origin + "/mcp-v06", "MCP URL copied");
   els.connectBtn.onclick = async () => {
     await copyText(pairingPrompt(), "Pairing message copied");
     window.open("https://chatgpt.com/", "_blank", "noopener");
