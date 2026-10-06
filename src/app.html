@@ -1325,8 +1325,7 @@
       "MCP server: " + location.origin + "/mcp",
       "Device ID: " + app.deviceId,
       "Use VideoStudio MCP device_status to verify it, then use this device ID for my VideoStudio projects and edit commands."
-    ].join("
-");
+    ].join("\n");
   }
 
   els.copyDeviceBtn.onclick = () => copyText(app.deviceId, "Device ID copied");
