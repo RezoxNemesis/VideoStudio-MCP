@@ -6,7 +6,7 @@ import android.content.SharedPreferences;
 import android.database.Cursor;
 import android.media.MediaMetadataRetriever;
 import android.net.Uri;
-import android.provider.OpenableColumns;
+import android.provider.OpenableColumns;\nimport android.os.ParcelFileDescriptor;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -280,13 +280,17 @@ public final class ProjectStore {
 
     private long duration(Uri uri) {
         MediaMetadataRetriever r = new MediaMetadataRetriever();
+        ParcelFileDescriptor pfd = null;
         try {
-            r.setDataSource(resolver.getFileDescriptor(uri, "r").getFileDescriptor());
+            pfd = resolver.openFileDescriptor(uri, "r");
+            if (pfd == null) return 0;
+            r.setDataSource(pfd.getFileDescriptor());
             String value = r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION);
             return value == null ? 0 : Long.parseLong(value);
         } catch (Exception ignored) {
             return 0;
         } finally {
+            try { if (pfd != null) pfd.close(); } catch (Exception ignored) {}
             try { r.release(); } catch (Exception ignored) {}
         }
     }
