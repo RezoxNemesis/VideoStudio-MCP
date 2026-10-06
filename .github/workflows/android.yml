@@ -29,7 +29,7 @@ jobs:
           gradle-version: "8.9"
 
       - name: Ensure Android SDK 35
-        run: yes | sdkmanager "platforms;android-35" "build-tools;35.0.0" >/dev/null
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-35" "build-tools;35.0.0" >/dev/null
 
       - name: Build debug APK
         working-directory: android
