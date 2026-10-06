@@ -1150,8 +1150,9 @@
                 alpha = Math.min(1, t / 260, (durationMs - t) / 260);
                 alpha = Math.max(0, alpha);
               }
-              drawCover(ctx, img, width, height, alpha);
-              drawOverlay(ctx, width, height, clip.title != null ? clip.title : app.project.settings.title);
+              const progress = Math.max(0, Math.min(1, t / Math.max(1, durationMs)));
+              drawFrame(ctx, img, width, height, alpha, clip, progress);
+              drawOverlay(ctx, width, height, clip.title != null ? clip.title : app.project.settings.title, clip.titleStyle);
               if (t >= durationMs) resolve(); else requestAnimationFrame(frame);
             }
             requestAnimationFrame(frame);
@@ -1179,7 +1180,7 @@
             try {
               mediaSource = audioCtx.createMediaElementSource(video);
               gain = audioCtx.createGain();
-              gain.gain.value = 1;
+              gain.gain.value = clamp(clip.volume == null ? 1 : clip.volume, 0, 2);
               mediaSource.connect(gain);
               gain.connect(audioDest);
             } catch (error) {
@@ -1204,8 +1205,18 @@
               const left = end - video.currentTime;
               let alpha = 1;
               if (transition) alpha = Math.max(0, Math.min(1, local / .25, left / .25));
-              drawCover(ctx, video, width, height, alpha);
-              drawOverlay(ctx, width, height, clip.title != null ? clip.title : app.project.settings.title);
+              const sourceDuration = Math.max(.001, end - start);
+              const progress = Math.max(0, Math.min(1, local / sourceDuration));
+              drawFrame(ctx, video, width, height, alpha, clip, progress);
+              drawOverlay(ctx, width, height, clip.title != null ? clip.title : app.project.settings.title, clip.titleStyle);
+              if (gain) {
+                const baseVolume = clamp(clip.volume == null ? 1 : clip.volume, 0, 2);
+                const fadeIn = clamp(clip.audioFadeIn || 0, 0, 5);
+                const fadeOut = clamp(clip.audioFadeOut || 0, 0, 5);
+                const inFactor = fadeIn > 0 ? Math.min(1, local / fadeIn) : 1;
+                const outFactor = fadeOut > 0 ? Math.min(1, left / fadeOut) : 1;
+                gain.gain.value = baseVolume * Math.max(0, Math.min(inFactor, outFactor));
+              }
               if (video.currentTime >= end || video.ended) {
                 video.pause();
                 resolve();
@@ -1231,6 +1242,7 @@
       await stopped;
       if (audioCtx) await audioCtx.close().catch(() => {});
       const blob = new Blob(chunks, { type: recorder.mimeType || "video/webm" });
+      app.latestRenderBlob = blob;
       const renderId = crypto.randomUUID();
       await idbPut("renders", { key: app.project.id + ":" + renderId, blob, createdAt: new Date().toISOString() });
 
@@ -1268,6 +1280,24 @@
       app.rendering = false;
       els.renderBtn.disabled = !app.project || !app.project.timeline.length;
     }
+  }
+
+  async function saveRenderToAndroid(blob, filename) {
+    if (!blob || !window.AndroidNative || typeof window.AndroidNative.beginSave !== "function") return false;
+    const token = window.AndroidNative.beginSave(filename, blob.type || "video/mp4");
+    if (!token) throw new Error("Android could not create the output file");
+    const chunkSize = 384 * 1024;
+    for (let offset = 0; offset < blob.size; offset += chunkSize) {
+      const bytes = new Uint8Array(await blob.slice(offset, Math.min(blob.size, offset + chunkSize)).arrayBuffer());
+      let binary = "";
+      for (let i = 0; i < bytes.length; i += 0x8000) {
+        binary += String.fromCharCode.apply(null, bytes.subarray(i, Math.min(bytes.length, i + 0x8000)));
+      }
+      window.AndroidNative.appendChunk(token, btoa(binary));
+    }
+    window.AndroidNative.finishSave(token);
+    toast("Saved to Movies/VideoStudio");
+    return true;
   }
 
   function addLog(title, detail) {
@@ -1537,6 +1567,16 @@
   els.fileInput.onchange = (e) => importFiles(e.target.files);
   els.applyTrimBtn.onclick = applyTrim;
   els.renderBtn.onclick = () => renderCurrentProject(false);
+  els.downloadRender.addEventListener("click", async (event) => {
+    if (!window.AndroidNative || !app.latestRenderBlob) return;
+    event.preventDefault();
+    try {
+      const name = els.downloadRender.download || "videostudio-render.mp4";
+      await saveRenderToAndroid(app.latestRenderBlob, name);
+    } catch (error) {
+      toast("Save failed: " + error.message);
+    }
+  });
 
   els.renameBtn.onclick = async () => {
     if (!app.project) return;
