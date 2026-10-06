@@ -1422,18 +1422,7 @@
             const assetId = raw.assetId || (app.project.assets[0] && app.project.assets[0].id);
             const asset = app.project.assets.find((a) => a.id === assetId);
             if (!asset) throw new Error("Asset not found for timeline clip");
-            const start = Math.max(0, Number(raw.start == null ? raw.inPoint || 0 : raw.start));
-            const maxEnd = Number(asset.duration || (asset.kind === "image" ? 3 : 0));
-            const end = Math.min(maxEnd, Number(raw.end == null ? raw.outPoint || maxEnd : raw.end));
-            if (!(end > start)) throw new Error("Invalid timeline clip range");
-            next.push({
-              clipId: raw.clipId || crypto.randomUUID(),
-              assetId,
-              inPoint: start,
-              outPoint: end,
-              speed: Math.max(.5, Math.min(2, Number(raw.speed || 1))),
-              title: String(raw.title || "").slice(0, 120),
-            });
+            next.push(normalizeClipSpec({ ...raw, assetId }, asset));
           }
           app.project.timeline = next;
           app.selectedAssetId = next[0] ? next[0].assetId : null;
@@ -1464,8 +1453,22 @@
           break;
         }
         case "analyse_media":
-          result = await analyseLocalMedia(p.assetId);
+          result = await analyseLocalMedia(p.assetId, p);
           break;
+        case "inspect_render":
+          result = await analyseLatestRender(p);
+          break;
+        case "set_clip_effects": {
+          const index = Math.max(0, Math.min(app.project.timeline.length - 1, Number(p.index || 0)));
+          const clip = app.project.timeline[index];
+          const asset = clip && app.project.assets.find((a)=>a.id===clip.assetId);
+          if(!clip || !asset) throw new Error("Clip not found");
+          app.project.timeline[index] = normalizeClipSpec({ ...clip, ...(p.effects || p), assetId: clip.assetId, start: clip.inPoint, end: clip.outPoint }, asset);
+          await syncProject({ timeline: app.project.timeline });
+          renderProject();
+          result = { ok:true,index,clip:app.project.timeline[index] };
+          break;
+        }
         case "render":
           result = await renderCurrentProject(true);
           break;
@@ -1491,8 +1494,9 @@
               });
             }
             app.project.timeline = next;
+            app.project.settings.speed = 1;
             app.selectedAssetId = next[0] ? next[0].assetId : null;
-            await syncProject({ timeline: app.project.timeline });
+            await syncProject({ timeline: app.project.timeline, settings: app.project.settings });
             renderProject();
             await previewSelected();
           }
@@ -1507,8 +1511,13 @@
           if (p.title != null) await changeSetting("title", String(p.title || "").slice(0,120));
           const speedMatch = instruction.match(/(\d(?:\.\d+)?)\s*x/);
           if (speedMatch && !(Array.isArray(p.clips) && p.clips.length)) await changeSetting("speed", Math.max(.5, Math.min(2, Number(speedMatch[1]))));
-          if (p.render === true || instruction.includes("render") || instruction.includes("export")) result = await renderCurrentProject(true);
-          else result = {
+          if (p.render === true || instruction.includes("render") || instruction.includes("export")) {
+            const rendered = await renderCurrentProject(true);
+            if (rendered.ok && p.inspectAfterRender) {
+              const inspected = await analyseLatestRender({ frames:p.inspectFrames || 12, scanCount:32 });
+              result = { ...rendered, contactSheet: inspected.contactSheet, renderAnalysis: inspected.analysis, note:"Rendered and visually inspected locally." };
+            } else result = rendered;
+          } else result = {
             ok: true,
             applied: Array.isArray(p.clips) && p.clips.length ? "Autonomous multi-cut timeline applied" : "Recognised local settings from instruction",
             clipCount: app.project.timeline.length,
