@@ -453,7 +453,7 @@
           meta: {
             name: /Android/i.test(navigator.userAgent) ? "Android device" : "Web device",
             platform: navigator.platform || "web",
-            appVersion: "0.2.0",
+            appVersion: "0.5.0",
           },
         }),
       });
@@ -1331,14 +1331,49 @@
           break;
         case "autonomous_request": {
           const instruction = String(p.instruction || "").toLowerCase();
-          if (instruction.includes("vertical") || instruction.includes("9:16")) await changeSetting("aspect", "9:16");
-          if (instruction.includes("landscape") || instruction.includes("16:9")) await changeSetting("aspect", "16:9");
-          if (instruction.includes("square") || instruction.includes("1:1")) await changeSetting("aspect", "1:1");
-          if (instruction.includes("mute") || instruction.includes("no audio")) await changeSetting("mute", true);
-          const speedMatch = instruction.match(/(d(?:.d+)?)s*x/);
-          if (speedMatch) await changeSetting("speed", Math.max(.5, Math.min(2, Number(speedMatch[1]))));
-          if (instruction.includes("render") || instruction.includes("export")) result = await renderCurrentProject(true);
-          else result = { ok: true, applied: "Recognised local settings from instruction", instruction: p.instruction || "" };
+          if (Array.isArray(p.clips) && p.clips.length) {
+            const next = [];
+            for (const raw of p.clips.slice(0, 40)) {
+              const assetId = raw.assetId || (app.project.assets[0] && app.project.assets[0].id);
+              const asset = app.project.assets.find((a) => a.id === assetId);
+              if (!asset) throw new Error("Asset not found for autonomous timeline clip");
+              const start = Math.max(0, Number(raw.start == null ? raw.inPoint || 0 : raw.start));
+              const maxEnd = Number(asset.duration || (asset.kind === "image" ? 3 : 0));
+              const end = Math.min(maxEnd, Number(raw.end == null ? raw.outPoint || maxEnd : raw.end));
+              if (!(end > start)) throw new Error("Invalid autonomous timeline clip range");
+              next.push({
+                clipId: raw.clipId || crypto.randomUUID(),
+                assetId,
+                inPoint: start,
+                outPoint: end,
+                speed: Math.max(.5, Math.min(2, Number(raw.speed || 1))),
+                title: String(raw.title || "").slice(0, 120),
+              });
+            }
+            app.project.timeline = next;
+            app.selectedAssetId = next[0] ? next[0].assetId : null;
+            await syncProject({ timeline: app.project.timeline });
+            renderProject();
+            await previewSelected();
+          }
+          if (p.aspect && ["9:16","16:9","1:1","4:5"].includes(p.aspect)) await changeSetting("aspect", p.aspect);
+          else if (instruction.includes("vertical") || instruction.includes("9:16")) await changeSetting("aspect", "9:16");
+          else if (instruction.includes("landscape") || instruction.includes("16:9")) await changeSetting("aspect", "16:9");
+          else if (instruction.includes("square") || instruction.includes("1:1")) await changeSetting("aspect", "1:1");
+          if (p.quality) await changeSetting("quality", p.quality === "1080p" ? "1080p" : "720p");
+          if (p.transition) await changeSetting("transition", p.transition === "none" ? "none" : "fade");
+          if (p.mute != null) await changeSetting("mute", Boolean(p.mute));
+          else if (instruction.includes("mute") || instruction.includes("no audio")) await changeSetting("mute", true);
+          if (p.title != null) await changeSetting("title", String(p.title || "").slice(0,120));
+          const speedMatch = instruction.match(/(\d(?:\.\d+)?)\s*x/);
+          if (speedMatch && !(Array.isArray(p.clips) && p.clips.length)) await changeSetting("speed", Math.max(.5, Math.min(2, Number(speedMatch[1]))));
+          if (p.render === true || instruction.includes("render") || instruction.includes("export")) result = await renderCurrentProject(true);
+          else result = {
+            ok: true,
+            applied: Array.isArray(p.clips) && p.clips.length ? "Autonomous multi-cut timeline applied" : "Recognised local settings from instruction",
+            clipCount: app.project.timeline.length,
+            instruction: p.instruction || ""
+          };
           break;
         }
         default:
