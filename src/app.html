@@ -1,0 +1,1216 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <meta name="theme-color" content="#0b0d13" />
+  <meta name="description" content="VideoStudio MCP, a local-first video editor controlled through ChatGPT." />
+  <link rel="manifest" href="/manifest.webmanifest" />
+  <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+  <title>VideoStudio MCP</title>
+  <style>
+    :root{
+      color-scheme:dark;
+      --bg:#07090d;
+      --panel:#0e1118;
+      --panel2:#131722;
+      --line:#23293a;
+      --text:#f4f7ff;
+      --muted:#9199aa;
+      --violet:#9b72ff;
+      --cyan:#35d9ff;
+      --good:#4ade80;
+      --warn:#fbbf24;
+      --danger:#fb7185;
+      --shadow:0 18px 50px rgba(0,0,0,.34);
+      font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+    }
+    *{box-sizing:border-box}
+    html,body{margin:0;min-height:100%;background:
+      radial-gradient(900px 520px at 12% -8%,rgba(139,92,246,.18),transparent 55%),
+      radial-gradient(800px 480px at 95% 2%,rgba(53,217,255,.10),transparent 50%),
+      var(--bg);color:var(--text)}
+    body{padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom)}
+    button,input,select,textarea{font:inherit}
+    button{cursor:pointer}
+    .shell{max-width:1220px;margin:auto;padding:14px}
+    .topbar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 2px 16px;position:sticky;top:0;z-index:8;background:linear-gradient(180deg,rgba(7,9,13,.96),rgba(7,9,13,.72),transparent);backdrop-filter:blur(12px)}
+    .brand{display:flex;align-items:center;gap:11px;font-weight:800;letter-spacing:-.03em}
+    .logo{width:38px;height:38px;border-radius:12px;display:grid;place-items:center;background:linear-gradient(135deg,rgba(155,114,255,.24),rgba(53,217,255,.18));border:1px solid rgba(155,114,255,.35);box-shadow:0 10px 28px rgba(123,92,246,.18)}
+    .logo svg{width:22px;height:22px}
+    .brand small{display:block;color:var(--muted);font-weight:600;letter-spacing:0;font-size:11px;margin-top:1px}
+    .chip{display:inline-flex;align-items:center;gap:7px;border:1px solid var(--line);background:rgba(17,22,32,.86);border-radius:999px;padding:8px 11px;color:#cbd3e4;font-size:12px}
+    .dot{width:8px;height:8px;border-radius:50%;background:var(--warn);box-shadow:0 0 0 4px rgba(251,191,36,.08)}
+    .dot.ok{background:var(--good);box-shadow:0 0 0 4px rgba(74,222,128,.08)}
+    .grid{display:grid;grid-template-columns:310px minmax(0,1fr);gap:14px}
+    .stack{display:grid;gap:14px;align-content:start}
+    .card{background:linear-gradient(180deg,rgba(17,21,30,.96),rgba(12,15,22,.96));border:1px solid var(--line);border-radius:20px;box-shadow:var(--shadow);overflow:hidden}
+    .card.pad{padding:16px}
+    .card h2,.card h3{margin:0 0 6px;letter-spacing:-.025em}
+    .card h2{font-size:18px}
+    .card h3{font-size:14px;color:#dde4f3}
+    .muted{color:var(--muted)}
+    .tiny{font-size:11px;color:var(--muted)}
+    .hero{padding:17px;background:
+      linear-gradient(135deg,rgba(139,92,246,.12),rgba(53,217,255,.05)),
+      linear-gradient(180deg,rgba(17,21,30,.97),rgba(12,15,22,.97))}
+    .heroTitle{display:flex;justify-content:space-between;align-items:flex-start;gap:12px}
+    .heroTitle h2{font-size:21px}
+    .pairbox{margin-top:12px;padding:11px;border-radius:14px;background:#090c12;border:1px solid #202637}
+    .pairrow{display:flex;align-items:center;justify-content:space-between;gap:8px}
+    code{font-family:"SFMono-Regular",Consolas,monospace;color:#c9bcff;font-size:11px;word-break:break-all}
+    .btn{border:1px solid var(--line);background:#151a25;color:var(--text);padding:10px 12px;border-radius:12px;font-weight:750;font-size:13px;transition:.18s transform,.18s border-color,.18s background}
+    .btn:active{transform:scale(.98)}
+    .btn.primary{border-color:transparent;background:linear-gradient(135deg,#7651f6,#37bfe9);color:white;box-shadow:0 10px 28px rgba(118,81,246,.26)}
+    .btn.good{border-color:rgba(74,222,128,.25);background:rgba(74,222,128,.08);color:#a7f3d0}
+    .btn.danger{border-color:rgba(251,113,133,.22);background:rgba(251,113,133,.07);color:#fecdd3}
+    .btn.icon{padding:8px 10px;min-width:38px}
+    .btn.small{padding:7px 9px;font-size:11px}
+    .actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+    .field{display:grid;gap:6px;margin-top:11px}
+    .field label{font-size:11px;color:#aeb7ca;font-weight:700}
+    input,select,textarea{width:100%;border:1px solid #252c3d;background:#0a0d13;color:var(--text);border-radius:12px;padding:11px 12px;outline:none}
+    input:focus,select:focus,textarea:focus{border-color:#6d59cb;box-shadow:0 0 0 3px rgba(139,92,246,.10)}
+    textarea{min-height:86px;resize:vertical}
+    .projectList{display:grid;gap:8px;margin-top:12px;max-height:340px;overflow:auto}
+    .projectItem{padding:11px;border:1px solid #22293a;background:#0b0f16;border-radius:13px;display:grid;gap:4px}
+    .projectItem.active{border-color:rgba(155,114,255,.55);background:rgba(116,81,246,.10)}
+    .projectItem strong{font-size:13px}
+    .projectItem .meta{font-size:10px;color:var(--muted)}
+    .workspace{display:grid;gap:14px}
+    .previewWrap{position:relative;background:#030405;min-height:340px;display:grid;place-items:center;overflow:hidden}
+    .previewWrap[data-aspect="9:16"] .previewStage{aspect-ratio:9/16;max-height:560px}
+    .previewWrap[data-aspect="16:9"] .previewStage{aspect-ratio:16/9;width:92%}
+    .previewWrap[data-aspect="1:1"] .previewStage{aspect-ratio:1/1;max-height:520px}
+    .previewWrap[data-aspect="4:5"] .previewStage{aspect-ratio:4/5;max-height:540px}
+    .previewStage{position:relative;background:#090b10;height:min(55vh,560px);max-width:100%;border:1px solid #1d2230;border-radius:14px;overflow:hidden;display:grid;place-items:center}
+    #previewVideo,#previewImage{width:100%;height:100%;object-fit:contain;background:#050607}
+    #previewImage{display:none}
+    .emptyPreview{color:#666f80;text-align:center;padding:28px}
+    .previewTitle{position:absolute;left:6%;right:6%;bottom:8%;font-size:clamp(20px,4vw,46px);font-weight:900;text-align:center;text-shadow:0 2px 16px rgba(0,0,0,.8);pointer-events:none}
+    .sectionHead{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:14px 15px;border-bottom:1px solid #1f2534}
+    .sectionBody{padding:14px 15px}
+    .timeline{display:flex;gap:9px;overflow:auto;padding-bottom:5px;min-height:82px}
+    .clip{min-width:150px;max-width:180px;background:#0b0e15;border:1px solid #232a3b;border-radius:13px;padding:10px;display:grid;gap:6px}
+    .clip.active{border-color:rgba(53,217,255,.45)}
+    .clip strong{font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .clip span{font-size:10px;color:var(--muted)}
+    .clipBtns{display:flex;gap:5px}
+    .controlGrid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+    .rangeRow{display:grid;grid-template-columns:1fr 70px;gap:8px;align-items:center}
+    input[type=range]{padding:0;background:transparent;border:0}
+    .switchRow{display:flex;align-items:center;justify-content:space-between;padding:10px 0}
+    .switch{width:46px;height:26px;border-radius:999px;background:#232938;border:1px solid #30384b;position:relative}
+    .switch::after{content:"";position:absolute;width:20px;height:20px;border-radius:50%;background:#cbd5e1;left:2px;top:2px;transition:.2s}
+    .switch.on{background:#6848d3}
+    .switch.on::after{left:22px;background:white}
+    .drop{border:1px dashed #343c50;border-radius:15px;padding:15px;text-align:center;color:#a9b2c4;background:#0a0d13}
+    .drop.drag{border-color:#8b5cf6;background:rgba(139,92,246,.08)}
+    .statusLog{display:grid;gap:7px;margin-top:10px;max-height:160px;overflow:auto}
+    .log{display:flex;gap:9px;align-items:flex-start;background:#0a0d13;border:1px solid #202636;padding:9px;border-radius:11px}
+    .log b{font-size:11px}
+    .log span{font-size:10px;color:var(--muted)}
+    .renderResult{display:none;margin-top:12px}
+    .renderResult video{width:100%;max-height:420px;border-radius:14px;background:black}
+    .progress{height:7px;border-radius:999px;background:#1d2330;overflow:hidden;margin-top:10px}
+    .progress>i{display:block;height:100%;width:0;background:linear-gradient(90deg,#805cf5,#37d3ef);transition:.25s}
+    .toast{position:fixed;left:50%;bottom:calc(18px + env(safe-area-inset-bottom));transform:translateX(-50%) translateY(20px);opacity:0;pointer-events:none;background:#111622;border:1px solid #30384a;padding:11px 14px;border-radius:999px;box-shadow:var(--shadow);font-size:12px;z-index:50;transition:.22s}
+    .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+    .empty{padding:18px;text-align:center;color:var(--muted);font-size:12px}
+    @media(max-width:820px){
+      .shell{padding:10px}
+      .grid{grid-template-columns:1fr}
+      .left{order:2}
+      .workspace{order:1}
+      .topbar{padding-top:7px}
+      .controlGrid{grid-template-columns:1fr 1fr}
+      .previewWrap{min-height:290px}
+      .previewStage{height:min(52vh,500px)}
+      .brand small{display:none}
+    }
+    @media(max-width:460px){
+      .controlGrid{grid-template-columns:1fr}
+      .heroTitle h2{font-size:19px}
+      .previewWrap{min-height:260px}
+      .btn{font-size:12px}
+    }
+  </style>
+</head>
+<body>
+<div class="shell">
+  <header class="topbar">
+    <div class="brand">
+      <div class="logo">
+        <svg viewBox="0 0 24 24" fill="none"><path d="M8.5 6.3v11.4L18 12 8.5 6.3Z" fill="url(#lg)"/><defs><linearGradient id="lg"><stop stop-color="#b69cff"/><stop offset="1" stop-color="#41e4ff"/></linearGradient></defs></svg>
+      </div>
+      <div>VideoStudio <small>Local editor + ChatGPT MCP control</small></div>
+    </div>
+    <div class="chip"><i id="onlineDot" class="dot"></i><span id="onlineText">Connecting</span></div>
+  </header>
+
+  <div class="grid">
+    <aside class="stack left">
+      <section class="card hero">
+        <div class="heroTitle">
+          <div>
+            <h2>Connect to ChatGPT</h2>
+            <div class="muted tiny">Pair this device once, then control edits from chat.</div>
+          </div>
+          <span class="chip" style="padding:6px 8px">MCP</span>
+        </div>
+        <div class="pairbox">
+          <div class="tiny">Device ID</div>
+          <div class="pairrow">
+            <code id="deviceIdText">creating...</code>
+            <button id="copyDeviceBtn" class="btn icon small" aria-label="Copy device ID">Copy</button>
+          </div>
+        </div>
+        <div class="actions">
+          <button id="connectBtn" class="btn primary">Connect to ChatGPT</button>
+          <button id="copyMcpBtn" class="btn">Copy MCP URL</button>
+        </div>
+        <div class="tiny" style="margin-top:10px">Media stays on this device. Only project metadata and commands pass through MCP.</div>
+      </section>
+
+      <section class="card pad">
+        <h2>Projects</h2>
+        <div class="muted tiny">Projects sync as lightweight metadata. Video files remain local.</div>
+        <div class="field">
+          <label>NEW PROJECT</label>
+          <input id="newProjectName" placeholder="Cinematic reel" maxlength="120" />
+        </div>
+        <button id="createProjectBtn" class="btn good" style="width:100%;margin-top:9px">Create project</button>
+        <div id="projectList" class="projectList"></div>
+      </section>
+
+      <section class="card pad">
+        <h2>ChatGPT activity</h2>
+        <div class="muted tiny">Remote commands appear here while this app is open.</div>
+        <div id="commandLog" class="statusLog">
+          <div class="empty">No remote commands yet.</div>
+        </div>
+      </section>
+    </aside>
+
+    <main class="workspace">
+      <section class="card">
+        <div class="sectionHead">
+          <div>
+            <h2 id="projectTitle">No project selected</h2>
+            <div id="projectSubtitle" class="tiny">Create a project to start editing.</div>
+          </div>
+          <button id="renameBtn" class="btn small" disabled>Rename</button>
+        </div>
+
+        <div id="previewWrap" class="previewWrap" data-aspect="9:16">
+          <div class="previewStage">
+            <video id="previewVideo" controls playsinline style="display:none"></video>
+            <img id="previewImage" alt="Preview" />
+            <div id="emptyPreview" class="emptyPreview">
+              <div style="font-size:34px;margin-bottom:8px">🎬</div>
+              Import a video to begin.<br><span class="tiny">Your file never needs cloud storage.</span>
+            </div>
+            <div id="previewTitleOverlay" class="previewTitle"></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="sectionHead">
+          <div>
+            <h3>Media + timeline</h3>
+            <div class="tiny">Import from your Android device, then reorder or trim.</div>
+          </div>
+          <label class="btn primary small" for="fileInput">Import media</label>
+          <input id="fileInput" type="file" accept="video/*,image/*,audio/*" multiple hidden />
+        </div>
+        <div class="sectionBody">
+          <div id="dropZone" class="drop">Tap <b>Import media</b> or drop files here.</div>
+          <div id="timeline" class="timeline" style="margin-top:11px"></div>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="sectionHead">
+          <div>
+            <h3>Edit controls</h3>
+            <div class="tiny">These settings can also be changed by ChatGPT MCP tools.</div>
+          </div>
+          <span id="syncStatus" class="tiny">Idle</span>
+        </div>
+        <div class="sectionBody">
+          <div class="controlGrid">
+            <div class="field" style="margin:0">
+              <label>ASPECT</label>
+              <select id="aspectSelect">
+                <option value="9:16">9:16 Vertical</option>
+                <option value="16:9">16:9 Landscape</option>
+                <option value="1:1">1:1 Square</option>
+                <option value="4:5">4:5 Portrait</option>
+              </select>
+            </div>
+            <div class="field" style="margin:0">
+              <label>QUALITY</label>
+              <select id="qualitySelect">
+                <option value="720p">720p, mobile friendly</option>
+                <option value="1080p">1080p, heavier</option>
+              </select>
+            </div>
+            <div class="field" style="margin:0">
+              <label>TRANSITION</label>
+              <select id="transitionSelect">
+                <option value="fade">Fade</option>
+                <option value="none">None</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="field">
+            <label>PLAYBACK SPEED</label>
+            <div class="rangeRow">
+              <input id="speedRange" type="range" min=".5" max="2" step=".05" value="1" />
+              <input id="speedValue" value="1.00x" readonly />
+            </div>
+          </div>
+
+          <div class="field">
+            <label>TITLE OVERLAY</label>
+            <input id="titleInput" placeholder="Optional title shown over the video" maxlength="120" />
+          </div>
+
+          <div class="switchRow">
+            <div>
+              <b style="font-size:12px">Mute project audio</b>
+              <div class="tiny">Render without the source audio track.</div>
+            </div>
+            <button id="muteSwitch" class="switch" aria-label="Toggle mute"></button>
+          </div>
+
+          <div id="trimPanel" style="display:none;border-top:1px solid #1d2331;padding-top:12px">
+            <h3>Selected clip trim</h3>
+            <div class="controlGrid" style="grid-template-columns:1fr 1fr">
+              <div class="field">
+                <label>START, SECONDS</label>
+                <input id="trimStart" type="number" min="0" step=".1" value="0" />
+              </div>
+              <div class="field">
+                <label>END, SECONDS</label>
+                <input id="trimEnd" type="number" min="0" step=".1" value="0" />
+              </div>
+            </div>
+            <button id="applyTrimBtn" class="btn" style="margin-top:8px">Apply trim</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="sectionHead">
+          <div>
+            <h3>Local render</h3>
+            <div class="tiny">Your browser renders the timeline on-device. No R2, no paid media storage.</div>
+          </div>
+          <button id="renderBtn" class="btn primary" disabled>Render video</button>
+        </div>
+        <div class="sectionBody">
+          <div id="renderText" class="muted tiny">Ready when your timeline has at least one video or image.</div>
+          <div class="progress"><i id="renderProgress"></i></div>
+          <div id="renderResult" class="renderResult">
+            <video id="renderedPreview" controls playsinline></video>
+            <div class="actions">
+              <a id="downloadRender" class="btn good" download="videostudio-render.webm" style="text-decoration:none">Save video</a>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="card pad">
+        <h2>Autonomous command example</h2>
+        <div class="muted tiny">After pairing, you can tell ChatGPT something like:</div>
+        <div class="pairbox"><code id="examplePrompt">Open my VideoStudio project, make it vertical, trim the first clip, add a title, render it, inspect the result status and fix anything needed.</code></div>
+        <button id="copyPromptBtn" class="btn" style="margin-top:10px">Copy example command</button>
+      </section>
+    </main>
+  </div>
+</div>
+<div id="toast" class="toast"></div>
+
+<script>
+(() => {
+  "use strict";
+
+  const $ = (id) => document.getElementById(id);
+  const els = {
+    onlineDot: $("onlineDot"), onlineText: $("onlineText"), deviceIdText: $("deviceIdText"),
+    copyDeviceBtn: $("copyDeviceBtn"), connectBtn: $("connectBtn"), copyMcpBtn: $("copyMcpBtn"),
+    newProjectName: $("newProjectName"), createProjectBtn: $("createProjectBtn"), projectList: $("projectList"),
+    commandLog: $("commandLog"), projectTitle: $("projectTitle"), projectSubtitle: $("projectSubtitle"),
+    renameBtn: $("renameBtn"), previewWrap: $("previewWrap"), previewVideo: $("previewVideo"),
+    previewImage: $("previewImage"), emptyPreview: $("emptyPreview"), previewTitleOverlay: $("previewTitleOverlay"),
+    fileInput: $("fileInput"), dropZone: $("dropZone"), timeline: $("timeline"), syncStatus: $("syncStatus"),
+    aspectSelect: $("aspectSelect"), qualitySelect: $("qualitySelect"), transitionSelect: $("transitionSelect"),
+    speedRange: $("speedRange"), speedValue: $("speedValue"), titleInput: $("titleInput"),
+    muteSwitch: $("muteSwitch"), trimPanel: $("trimPanel"), trimStart: $("trimStart"), trimEnd: $("trimEnd"),
+    applyTrimBtn: $("applyTrimBtn"), renderBtn: $("renderBtn"), renderText: $("renderText"),
+    renderProgress: $("renderProgress"), renderResult: $("renderResult"), renderedPreview: $("renderedPreview"),
+    downloadRender: $("downloadRender"), copyPromptBtn: $("copyPromptBtn"), examplePrompt: $("examplePrompt"),
+    toast: $("toast"),
+  };
+
+  const app = {
+    deviceId: localStorage.getItem("vs-device-id") || crypto.randomUUID(),
+    projects: [],
+    project: null,
+    selectedAssetId: null,
+    previewUrl: null,
+    renderUrl: null,
+    lastSeq: Number(localStorage.getItem("vs-last-seq") || 0),
+    db: null,
+    polling: false,
+    rendering: false,
+    logs: [],
+  };
+  localStorage.setItem("vs-device-id", app.deviceId);
+  els.deviceIdText.textContent = app.deviceId;
+
+  function toast(message) {
+    els.toast.textContent = message;
+    els.toast.classList.add("show");
+    clearTimeout(toast._t);
+    toast._t = setTimeout(() => els.toast.classList.remove("show"), 2200);
+  }
+
+  async function copyText(text, message) {
+    try {
+      await navigator.clipboard.writeText(text);
+      toast(message || "Copied");
+    } catch {
+      const input = document.createElement("textarea");
+      input.value = text;
+      document.body.appendChild(input);
+      input.select();
+      document.execCommand("copy");
+      input.remove();
+      toast(message || "Copied");
+    }
+  }
+
+  async function api(path, options) {
+    const response = await fetch(path, {
+      headers: { "content-type": "application/json", ...(options && options.headers || {}) },
+      ...options,
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || "Request failed");
+    return data;
+  }
+
+  function openDb() {
+    return new Promise((resolve, reject) => {
+      const request = indexedDB.open("videostudio-local", 2);
+      request.onupgradeneeded = () => {
+        const db = request.result;
+        if (!db.objectStoreNames.contains("assets")) db.createObjectStore("assets", { keyPath: "key" });
+        if (!db.objectStoreNames.contains("renders")) db.createObjectStore("renders", { keyPath: "key" });
+      };
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+  }
+
+  function idbPut(storeName, value) {
+    return new Promise((resolve, reject) => {
+      const tx = app.db.transaction(storeName, "readwrite");
+      tx.objectStore(storeName).put(value);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  }
+
+  function idbGet(storeName, key) {
+    return new Promise((resolve, reject) => {
+      const tx = app.db.transaction(storeName, "readonly");
+      const req = tx.objectStore(storeName).get(key);
+      req.onsuccess = () => resolve(req.result || null);
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+  function assetKey(projectId, assetId) {
+    return projectId + ":" + assetId;
+  }
+
+  function setOnline(ok, text) {
+    els.onlineDot.classList.toggle("ok", ok);
+    els.onlineText.textContent = text || (ok ? "Connected" : "Offline");
+  }
+
+  async function registerDevice() {
+    try {
+      await api("/api/device/register", {
+        method: "POST",
+        body: JSON.stringify({
+          deviceId: app.deviceId,
+          meta: {
+            name: /Android/i.test(navigator.userAgent) ? "Android device" : "Web device",
+            platform: navigator.platform || "web",
+            appVersion: "0.2.0",
+          },
+        }),
+      });
+      setOnline(true, "MCP ready");
+    } catch (error) {
+      setOnline(false, "Offline");
+      console.warn(error);
+    }
+  }
+
+  async function loadProjects(preferId) {
+    try {
+      const data = await api("/api/projects?deviceId=" + encodeURIComponent(app.deviceId));
+      app.projects = data.projects || [];
+      renderProjectList();
+      const id = preferId || (app.project && app.project.id) || localStorage.getItem("vs-project-id");
+      if (id) {
+        const found = app.projects.find((p) => p.id === id);
+        if (found) await selectProject(found.id, false);
+      } else if (app.projects[0]) {
+        await selectProject(app.projects[0].id, false);
+      }
+    } catch (error) {
+      console.warn(error);
+    }
+  }
+
+  function renderProjectList() {
+    if (!app.projects.length) {
+      els.projectList.innerHTML = '<div class="empty">No projects yet.</div>';
+      return;
+    }
+    els.projectList.innerHTML = "";
+    app.projects.forEach((project) => {
+      const item = document.createElement("button");
+      item.className = "projectItem" + (app.project && app.project.id === project.id ? " active" : "");
+      item.style.textAlign = "left";
+      item.style.color = "inherit";
+      item.style.cursor = "pointer";
+      item.innerHTML = "<strong></strong><div class='meta'></div>";
+      item.querySelector("strong").textContent = project.name;
+      item.querySelector(".meta").textContent = (project.assets || []).length + " assets • " + new Date(project.updatedAt).toLocaleString();
+      item.onclick = () => selectProject(project.id);
+      els.projectList.appendChild(item);
+    });
+  }
+
+  async function createProject() {
+    const name = els.newProjectName.value.trim() || "Untitled Video";
+    els.createProjectBtn.disabled = true;
+    try {
+      const data = await api("/api/projects", {
+        method: "POST",
+        body: JSON.stringify({ deviceId: app.deviceId, name }),
+      });
+      els.newProjectName.value = "";
+      await loadProjects(data.project.id);
+      toast("Project created");
+    } catch (error) {
+      toast(error.message);
+    } finally {
+      els.createProjectBtn.disabled = false;
+    }
+  }
+
+  async function selectProject(id, refreshList = true) {
+    const project = app.projects.find((p) => p.id === id);
+    if (!project) return;
+    app.project = structuredClone(project);
+    localStorage.setItem("vs-project-id", id);
+    app.selectedAssetId = app.project.timeline && app.project.timeline[0] ? app.project.timeline[0].assetId : null;
+    if (refreshList) renderProjectList();
+    renderProject();
+    await previewSelected();
+  }
+
+  function normalizeSettings() {
+    if (!app.project) return;
+    app.project.assets = app.project.assets || [];
+    app.project.timeline = app.project.timeline || [];
+    app.project.settings = {
+      aspect: "9:16", speed: 1, mute: false, title: "", quality: "720p", transition: "fade",
+      ...(app.project.settings || {}),
+    };
+  }
+
+  function renderProject() {
+    if (!app.project) {
+      els.projectTitle.textContent = "No project selected";
+      els.projectSubtitle.textContent = "Create a project to start editing.";
+      els.renameBtn.disabled = true;
+      els.renderBtn.disabled = true;
+      els.timeline.innerHTML = "";
+      return;
+    }
+    normalizeSettings();
+    els.renameBtn.disabled = false;
+    els.projectTitle.textContent = app.project.name;
+    els.projectSubtitle.textContent = (app.project.assets.length || 0) + " local assets • project ID " + app.project.id.slice(0, 8);
+    els.aspectSelect.value = app.project.settings.aspect;
+    els.qualitySelect.value = app.project.settings.quality;
+    els.transitionSelect.value = app.project.settings.transition;
+    els.speedRange.value = String(app.project.settings.speed || 1);
+    els.speedValue.value = Number(app.project.settings.speed || 1).toFixed(2) + "x";
+    els.titleInput.value = app.project.settings.title || "";
+    els.muteSwitch.classList.toggle("on", Boolean(app.project.settings.mute));
+    els.previewWrap.dataset.aspect = app.project.settings.aspect;
+    els.previewTitleOverlay.textContent = app.project.settings.title || "";
+    els.renderBtn.disabled = !(app.project.timeline && app.project.timeline.length);
+    renderTimeline();
+    renderProjectList();
+  }
+
+  function renderTimeline() {
+    if (!app.project || !app.project.timeline.length) {
+      els.timeline.innerHTML = '<div class="empty">Timeline is empty.</div>';
+      els.trimPanel.style.display = "none";
+      return;
+    }
+    els.timeline.innerHTML = "";
+    app.project.timeline.forEach((clip, index) => {
+      const asset = app.project.assets.find((a) => a.id === clip.assetId);
+      if (!asset) return;
+      const node = document.createElement("div");
+      node.className = "clip" + (app.selectedAssetId === asset.id ? " active" : "");
+      const duration = Math.max(0, Number(clip.outPoint || 0) - Number(clip.inPoint || 0));
+      node.innerHTML = "<strong></strong><span></span><div class='clipBtns'></div>";
+      node.querySelector("strong").textContent = asset.name;
+      node.querySelector("span").textContent = asset.kind + " • " + duration.toFixed(1) + "s";
+      node.onclick = () => {
+        app.selectedAssetId = asset.id;
+        renderTimeline();
+        previewSelected();
+      };
+      const btns = node.querySelector(".clipBtns");
+      const up = document.createElement("button");
+      up.className = "btn icon small"; up.textContent = "↑"; up.disabled = index === 0;
+      up.onclick = (e) => { e.stopPropagation(); moveClip(index, -1); };
+      const down = document.createElement("button");
+      down.className = "btn icon small"; down.textContent = "↓"; down.disabled = index === app.project.timeline.length - 1;
+      down.onclick = (e) => { e.stopPropagation(); moveClip(index, 1); };
+      const del = document.createElement("button");
+      del.className = "btn icon small danger"; del.textContent = "×";
+      del.onclick = (e) => { e.stopPropagation(); removeClip(index); };
+      btns.append(up, down, del);
+      els.timeline.appendChild(node);
+    });
+    updateTrimPanel();
+  }
+
+  async function moveClip(index, direction) {
+    const target = index + direction;
+    if (target < 0 || target >= app.project.timeline.length) return;
+    const arr = app.project.timeline;
+    [arr[index], arr[target]] = [arr[target], arr[index]];
+    renderProject();
+    await syncProject({ timeline: arr });
+  }
+
+  async function removeClip(index) {
+    const clip = app.project.timeline[index];
+    app.project.timeline.splice(index, 1);
+    if (clip && app.selectedAssetId === clip.assetId) {
+      app.selectedAssetId = app.project.timeline[0] ? app.project.timeline[0].assetId : null;
+    }
+    renderProject();
+    await syncProject({ timeline: app.project.timeline });
+    await previewSelected();
+  }
+
+  function updateTrimPanel() {
+    if (!app.project || !app.selectedAssetId) {
+      els.trimPanel.style.display = "none";
+      return;
+    }
+    const clip = app.project.timeline.find((c) => c.assetId === app.selectedAssetId);
+    const asset = app.project.assets.find((a) => a.id === app.selectedAssetId);
+    if (!clip || !asset || asset.kind !== "video") {
+      els.trimPanel.style.display = "none";
+      return;
+    }
+    els.trimPanel.style.display = "block";
+    els.trimStart.value = Number(clip.inPoint || 0).toFixed(1);
+    els.trimEnd.value = Number(clip.outPoint || asset.duration || 0).toFixed(1);
+    els.trimStart.max = String(asset.duration || 0);
+    els.trimEnd.max = String(asset.duration || 0);
+  }
+
+  async function syncProject(patch) {
+    if (!app.project) return;
+    els.syncStatus.textContent = "Syncing";
+    try {
+      const data = await api("/api/projects/" + encodeURIComponent(app.project.id), {
+        method: "POST",
+        body: JSON.stringify({ deviceId: app.deviceId, patch }),
+      });
+      app.project = { ...app.project, ...data.project };
+      const idx = app.projects.findIndex((p) => p.id === app.project.id);
+      if (idx >= 0) app.projects[idx] = structuredClone(app.project);
+      els.syncStatus.textContent = "Synced";
+      setTimeout(() => { if (els.syncStatus.textContent === "Synced") els.syncStatus.textContent = "Idle"; }, 1400);
+    } catch (error) {
+      els.syncStatus.textContent = "Sync failed";
+      console.warn(error);
+    }
+  }
+
+  function getMediaDuration(file) {
+    return new Promise((resolve) => {
+      if (!file.type.startsWith("video/") && !file.type.startsWith("audio/")) return resolve(3);
+      const media = document.createElement(file.type.startsWith("video/") ? "video" : "audio");
+      const url = URL.createObjectURL(file);
+      media.preload = "metadata";
+      media.onloadedmetadata = () => {
+        const value = Number.isFinite(media.duration) ? media.duration : 0;
+        URL.revokeObjectURL(url);
+        resolve(value);
+      };
+      media.onerror = () => { URL.revokeObjectURL(url); resolve(0); };
+      media.src = url;
+    });
+  }
+
+  async function importFiles(fileList) {
+    if (!app.project) {
+      toast("Create a project first");
+      return;
+    }
+    const files = Array.from(fileList || []);
+    if (!files.length) return;
+    els.dropZone.textContent = "Importing " + files.length + " file(s)...";
+    try {
+      for (const file of files) {
+        const id = crypto.randomUUID();
+        const kind = file.type.startsWith("video/") ? "video" : file.type.startsWith("image/") ? "image" : "audio";
+        const duration = await getMediaDuration(file);
+        const asset = {
+          id, name: file.name, type: file.type, size: file.size, duration, kind,
+          importedAt: new Date().toISOString(),
+        };
+        await idbPut("assets", { key: assetKey(app.project.id, id), blob: file, meta: asset });
+        app.project.assets.push(asset);
+        if (kind === "video" || kind === "image") {
+          app.project.timeline.push({
+            assetId: id,
+            inPoint: 0,
+            outPoint: kind === "image" ? 3 : duration,
+          });
+        }
+        if (!app.selectedAssetId && (kind === "video" || kind === "image")) app.selectedAssetId = id;
+      }
+      await syncProject({ assets: app.project.assets, timeline: app.project.timeline });
+      renderProject();
+      await previewSelected();
+      toast(files.length + " media file(s) imported");
+    } catch (error) {
+      toast("Import failed: " + error.message);
+    } finally {
+      els.dropZone.innerHTML = "Tap <b>Import media</b> or drop files here.";
+    }
+  }
+
+  async function previewSelected() {
+    if (app.previewUrl) {
+      URL.revokeObjectURL(app.previewUrl);
+      app.previewUrl = null;
+    }
+    els.previewVideo.pause();
+    els.previewVideo.removeAttribute("src");
+    els.previewVideo.style.display = "none";
+    els.previewImage.style.display = "none";
+    els.emptyPreview.style.display = "block";
+    updateTrimPanel();
+
+    if (!app.project || !app.selectedAssetId) return;
+    const asset = app.project.assets.find((a) => a.id === app.selectedAssetId);
+    if (!asset) return;
+    const stored = await idbGet("assets", assetKey(app.project.id, asset.id));
+    if (!stored || !stored.blob) {
+      els.emptyPreview.innerHTML = "This project metadata is synced, but the local file is not on this device.<br><span class='tiny'>Import the media here to render it.</span>";
+      return;
+    }
+    app.previewUrl = URL.createObjectURL(stored.blob);
+    els.emptyPreview.style.display = "none";
+    if (asset.kind === "video") {
+      els.previewVideo.src = app.previewUrl;
+      els.previewVideo.style.display = "block";
+    } else if (asset.kind === "image") {
+      els.previewImage.src = app.previewUrl;
+      els.previewImage.style.display = "block";
+    } else {
+      els.emptyPreview.style.display = "block";
+      els.emptyPreview.textContent = "Audio asset selected.";
+    }
+  }
+
+  async function applyTrim() {
+    if (!app.project || !app.selectedAssetId) return;
+    const clip = app.project.timeline.find((c) => c.assetId === app.selectedAssetId);
+    const asset = app.project.assets.find((a) => a.id === app.selectedAssetId);
+    if (!clip || !asset) return;
+    let start = Math.max(0, Number(els.trimStart.value || 0));
+    let end = Math.min(Number(asset.duration || 0), Number(els.trimEnd.value || asset.duration || 0));
+    if (!(end > start)) {
+      toast("Trim end must be after start");
+      return;
+    }
+    clip.inPoint = start;
+    clip.outPoint = end;
+    renderProject();
+    await syncProject({ timeline: app.project.timeline });
+    toast("Trim applied");
+  }
+
+  async function changeSetting(key, value) {
+    if (!app.project) return;
+    normalizeSettings();
+    app.project.settings[key] = value;
+    renderProject();
+    await syncProject({ settings: app.project.settings });
+  }
+
+  function dimensions(aspect, quality) {
+    const base = quality === "1080p" ? 1080 : 720;
+    if (aspect === "16:9") return [Math.round(base * 16 / 9), base];
+    if (aspect === "1:1") return [base, base];
+    if (aspect === "4:5") return [base, Math.round(base * 5 / 4)];
+    return [base, Math.round(base * 16 / 9)];
+  }
+
+  function drawCover(ctx, source, width, height, alpha) {
+    const sw = source.videoWidth || source.naturalWidth || width;
+    const sh = source.videoHeight || source.naturalHeight || height;
+    const scale = Math.max(width / sw, height / sh);
+    const dw = sw * scale, dh = sh * scale;
+    const dx = (width - dw) / 2, dy = (height - dh) / 2;
+    ctx.globalAlpha = alpha == null ? 1 : alpha;
+    ctx.drawImage(source, dx, dy, dw, dh);
+    ctx.globalAlpha = 1;
+  }
+
+  function drawOverlay(ctx, width, height, title) {
+    if (!title) return;
+    const fontSize = Math.max(26, Math.round(width * .055));
+    ctx.save();
+    ctx.font = "900 " + fontSize + "px system-ui, sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.lineWidth = Math.max(4, fontSize * .12);
+    ctx.strokeStyle = "rgba(0,0,0,.72)";
+    ctx.fillStyle = "#ffffff";
+    const maxWidth = width * .86;
+    let text = String(title).slice(0, 120);
+    if (ctx.measureText(text).width > maxWidth) {
+      while (text.length > 4 && ctx.measureText(text + "…").width > maxWidth) text = text.slice(0, -1);
+      text += "…";
+    }
+    const y = height * .87;
+    ctx.strokeText(text, width / 2, y);
+    ctx.fillText(text, width / 2, y);
+    ctx.restore();
+  }
+
+  function chooseMime() {
+    const options = [
+      "video/webm;codecs=vp9,opus",
+      "video/webm;codecs=vp8,opus",
+      "video/webm",
+    ];
+    return options.find((type) => window.MediaRecorder && MediaRecorder.isTypeSupported(type)) || "";
+  }
+
+  async function renderCurrentProject(fromRemote) {
+    if (!app.project || !app.project.timeline.length || app.rendering) return { ok: false, error: "No timeline to render" };
+    if (!HTMLCanvasElement.prototype.captureStream || !window.MediaRecorder) {
+      const error = "This browser does not support local MediaRecorder rendering.";
+      toast(error);
+      return { ok: false, error };
+    }
+
+    app.rendering = true;
+    els.renderBtn.disabled = true;
+    els.renderResult.style.display = "none";
+    els.renderProgress.style.width = "2%";
+    els.renderText.textContent = "Preparing local render...";
+
+    const canvas = document.createElement("canvas");
+    const [width, height] = dimensions(app.project.settings.aspect, app.project.settings.quality);
+    canvas.width = width; canvas.height = height;
+    const ctx = canvas.getContext("2d", { alpha: false });
+    ctx.fillStyle = "#000"; ctx.fillRect(0, 0, width, height);
+
+    let audioCtx = null;
+    let audioDest = null;
+    try {
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      audioDest = audioCtx.createMediaStreamDestination();
+      await audioCtx.resume();
+    } catch (error) {
+      console.warn("Audio context unavailable", error);
+    }
+
+    const stream = canvas.captureStream(30);
+    if (audioDest && !app.project.settings.mute) {
+      audioDest.stream.getAudioTracks().forEach((track) => stream.addTrack(track));
+    }
+    const mimeType = chooseMime();
+    let recorder;
+    try {
+      recorder = new MediaRecorder(stream, mimeType ? { mimeType, videoBitsPerSecond: app.project.settings.quality === "1080p" ? 7000000 : 3500000 } : undefined);
+    } catch (error) {
+      app.rendering = false;
+      els.renderBtn.disabled = false;
+      return { ok: false, error: "MediaRecorder could not start: " + error.message };
+    }
+
+    const chunks = [];
+    recorder.ondataavailable = (event) => { if (event.data && event.data.size) chunks.push(event.data); };
+    const stopped = new Promise((resolve) => { recorder.onstop = resolve; });
+    recorder.start(500);
+
+    const timeline = app.project.timeline.slice();
+    let completed = 0;
+    let missing = 0;
+
+    try {
+      for (const clip of timeline) {
+        const asset = app.project.assets.find((a) => a.id === clip.assetId);
+        if (!asset) { missing++; continue; }
+        const stored = await idbGet("assets", assetKey(app.project.id, asset.id));
+        if (!stored || !stored.blob) { missing++; continue; }
+
+        const transition = app.project.settings.transition === "fade";
+        if (asset.kind === "image") {
+          const img = new Image();
+          const url = URL.createObjectURL(stored.blob);
+          await new Promise((resolve, reject) => { img.onload = resolve; img.onerror = reject; img.src = url; });
+          const durationMs = Math.max(400, (Number(clip.outPoint || 3) - Number(clip.inPoint || 0)) * 1000 / Number(app.project.settings.speed || 1));
+          const startAt = performance.now();
+          await new Promise((resolve) => {
+            function frame(now) {
+              const t = now - startAt;
+              ctx.fillStyle = "#000"; ctx.fillRect(0, 0, width, height);
+              let alpha = 1;
+              if (transition) {
+                alpha = Math.min(1, t / 260, (durationMs - t) / 260);
+                alpha = Math.max(0, alpha);
+              }
+              drawCover(ctx, img, width, height, alpha);
+              drawOverlay(ctx, width, height, app.project.settings.title);
+              if (t >= durationMs) resolve(); else requestAnimationFrame(frame);
+            }
+            requestAnimationFrame(frame);
+          });
+          URL.revokeObjectURL(url);
+        } else if (asset.kind === "video") {
+          const video = document.createElement("video");
+          video.playsInline = true;
+          video.preload = "auto";
+          video.src = URL.createObjectURL(stored.blob);
+          await new Promise((resolve, reject) => {
+            video.onloadedmetadata = resolve;
+            video.onerror = () => reject(new Error("Could not decode " + asset.name));
+          });
+          const start = Math.max(0, Number(clip.inPoint || 0));
+          const end = Math.min(Number(video.duration || 0), Number(clip.outPoint || video.duration || 0));
+          video.currentTime = start;
+          await new Promise((resolve) => { video.onseeked = resolve; setTimeout(resolve, 1000); });
+          video.playbackRate = Math.max(.5, Math.min(2, Number(app.project.settings.speed || 1)));
+
+          let mediaSource = null;
+          let gain = null;
+          if (audioCtx && audioDest && !app.project.settings.mute) {
+            try {
+              mediaSource = audioCtx.createMediaElementSource(video);
+              gain = audioCtx.createGain();
+              gain.gain.value = 1;
+              mediaSource.connect(gain);
+              gain.connect(audioDest);
+            } catch (error) {
+              console.warn("Audio route skipped", error);
+            }
+          } else {
+            video.muted = true;
+          }
+
+          try {
+            await video.play();
+          } catch (error) {
+            recorder.stop();
+            await stopped;
+            throw new Error(fromRemote ? "Browser requires one tap before remote rendering can play local media. Open VideoStudio and tap Render video once." : "Browser blocked media playback. Tap the page once and try Render video again.");
+          }
+
+          await new Promise((resolve) => {
+            function frame() {
+              ctx.fillStyle = "#000"; ctx.fillRect(0, 0, width, height);
+              const local = video.currentTime - start;
+              const left = end - video.currentTime;
+              let alpha = 1;
+              if (transition) alpha = Math.max(0, Math.min(1, local / .25, left / .25));
+              drawCover(ctx, video, width, height, alpha);
+              drawOverlay(ctx, width, height, app.project.settings.title);
+              if (video.currentTime >= end || video.ended) {
+                video.pause();
+                resolve();
+              } else requestAnimationFrame(frame);
+            }
+            requestAnimationFrame(frame);
+          });
+
+          if (mediaSource) { try { mediaSource.disconnect(); } catch {} }
+          if (gain) { try { gain.disconnect(); } catch {} }
+          URL.revokeObjectURL(video.src);
+        }
+
+        completed++;
+        const pct = Math.min(94, 5 + Math.round((completed / Math.max(1, timeline.length)) * 89));
+        els.renderProgress.style.width = pct + "%";
+        els.renderText.textContent = "Rendering clip " + completed + " of " + timeline.length + "...";
+      }
+
+      if (!completed) throw new Error("None of this project's media files are available locally on this device.");
+
+      if (recorder.state !== "inactive") recorder.stop();
+      await stopped;
+      if (audioCtx) await audioCtx.close().catch(() => {});
+      const blob = new Blob(chunks, { type: recorder.mimeType || "video/webm" });
+      const renderId = crypto.randomUUID();
+      await idbPut("renders", { key: app.project.id + ":" + renderId, blob, createdAt: new Date().toISOString() });
+
+      if (app.renderUrl) URL.revokeObjectURL(app.renderUrl);
+      app.renderUrl = URL.createObjectURL(blob);
+      els.renderedPreview.src = app.renderUrl;
+      els.downloadRender.href = app.renderUrl;
+      els.downloadRender.download = app.project.name.replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "").toLowerCase() + ".webm";
+      els.renderResult.style.display = "block";
+      els.renderProgress.style.width = "100%";
+      els.renderText.textContent = "Render complete • " + (blob.size / 1024 / 1024).toFixed(1) + " MB" + (missing ? " • " + missing + " missing local asset(s) skipped" : "");
+
+      const latestRender = {
+        id: renderId,
+        createdAt: new Date().toISOString(),
+        size: blob.size,
+        mimeType: blob.type,
+        width, height,
+        localOnly: true,
+        missingAssets: missing,
+      };
+      app.project.latestRender = latestRender;
+      await syncProject({ latestRender });
+      toast("Render complete");
+      return { ok: true, render: latestRender };
+    } catch (error) {
+      try { if (recorder.state !== "inactive") recorder.stop(); } catch {}
+      if (audioCtx) await audioCtx.close().catch(() => {});
+      els.renderProgress.style.width = "0%";
+      els.renderText.textContent = error.message;
+      toast("Render stopped");
+      return { ok: false, error: error.message };
+    } finally {
+      app.rendering = false;
+      els.renderBtn.disabled = !app.project || !app.project.timeline.length;
+    }
+  }
+
+  function addLog(title, detail) {
+    app.logs.unshift({ title, detail, time: new Date() });
+    app.logs = app.logs.slice(0, 12);
+    els.commandLog.innerHTML = "";
+    app.logs.forEach((item) => {
+      const node = document.createElement("div");
+      node.className = "log";
+      node.innerHTML = "<div style='font-size:14px'>✦</div><div><b></b><br><span></span></div>";
+      node.querySelector("b").textContent = item.title;
+      node.querySelector("span").textContent = item.detail + " • " + item.time.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+      els.commandLog.appendChild(node);
+    });
+  }
+
+  async function completeCommand(command, result, status) {
+    await api("/api/commands/" + encodeURIComponent(command.id) + "/complete", {
+      method: "POST",
+      body: JSON.stringify({ deviceId: app.deviceId, result, status: status || (result && result.ok === false ? "failed" : "completed") }),
+    });
+  }
+
+  async function applyCommand(command) {
+    let project = app.projects.find((p) => p.id === command.projectId);
+    if (!project) {
+      await loadProjects(command.projectId);
+      project = app.projects.find((p) => p.id === command.projectId);
+    }
+    if (!project) {
+      await completeCommand(command, { ok: false, error: "Project not found on device" }, "failed");
+      return;
+    }
+    if (!app.project || app.project.id !== project.id) await selectProject(project.id, false);
+
+    const p = command.parameters || {};
+    let result = { ok: true, action: command.action };
+
+    try {
+      switch (command.action) {
+        case "set_aspect":
+          await changeSetting("aspect", ["9:16","16:9","1:1","4:5"].includes(p.aspect) ? p.aspect : "9:16");
+          result.aspect = app.project.settings.aspect;
+          break;
+        case "set_quality":
+          await changeSetting("quality", p.quality === "1080p" ? "1080p" : "720p");
+          result.quality = app.project.settings.quality;
+          break;
+        case "set_transition":
+          await changeSetting("transition", p.transition === "none" ? "none" : "fade");
+          result.transition = app.project.settings.transition;
+          break;
+        case "set_speed":
+          await changeSetting("speed", Math.max(.5, Math.min(2, Number(p.speed || 1))));
+          result.speed = app.project.settings.speed;
+          break;
+        case "set_mute":
+          await changeSetting("mute", Boolean(p.mute));
+          result.mute = app.project.settings.mute;
+          break;
+        case "set_title":
+          await changeSetting("title", String(p.title || "").slice(0,120));
+          result.title = app.project.settings.title;
+          break;
+        case "set_trim": {
+          const assetId = p.assetId || (app.project.timeline[0] && app.project.timeline[0].assetId);
+          const clip = app.project.timeline.find((c) => c.assetId === assetId);
+          const asset = app.project.assets.find((a) => a.id === assetId);
+          if (!clip || !asset) throw new Error("Target clip not found");
+          const start = Math.max(0, Number(p.start || 0));
+          const end = Math.min(Number(asset.duration || 0), Number(p.end == null ? asset.duration : p.end));
+          if (!(end > start)) throw new Error("Invalid trim range");
+          clip.inPoint = start; clip.outPoint = end;
+          await syncProject({ timeline: app.project.timeline });
+          renderProject();
+          result.trim = { assetId, start, end };
+          break;
+        }
+        case "render":
+          result = await renderCurrentProject(true);
+          break;
+        case "autonomous_request": {
+          const instruction = String(p.instruction || "").toLowerCase();
+          if (instruction.includes("vertical") || instruction.includes("9:16")) await changeSetting("aspect", "9:16");
+          if (instruction.includes("landscape") || instruction.includes("16:9")) await changeSetting("aspect", "16:9");
+          if (instruction.includes("square") || instruction.includes("1:1")) await changeSetting("aspect", "1:1");
+          if (instruction.includes("mute") || instruction.includes("no audio")) await changeSetting("mute", true);
+          const speedMatch = instruction.match(/(d(?:.d+)?)s*x/);
+          if (speedMatch) await changeSetting("speed", Math.max(.5, Math.min(2, Number(speedMatch[1]))));
+          if (instruction.includes("render") || instruction.includes("export")) result = await renderCurrentProject(true);
+          else result = { ok: true, applied: "Recognised local settings from instruction", instruction: p.instruction || "" };
+          break;
+        }
+        default:
+          throw new Error("Unsupported action: " + command.action);
+      }
+      addLog("ChatGPT: " + command.action, result.ok === false ? (result.error || "failed") : "Applied");
+      await completeCommand(command, result);
+    } catch (error) {
+      result = { ok: false, error: error.message };
+      addLog("ChatGPT: " + command.action, error.message);
+      await completeCommand(command, result, "failed");
+    }
+  }
+
+  async function pollCommands() {
+    if (app.polling) return;
+    app.polling = true;
+    try {
+      const data = await api("/api/commands?deviceId=" + encodeURIComponent(app.deviceId) + "&after=" + app.lastSeq);
+      const commands = data.commands || [];
+      for (const command of commands) {
+        app.lastSeq = Math.max(app.lastSeq, Number(command.seq || 0));
+        localStorage.setItem("vs-last-seq", String(app.lastSeq));
+        if (command.status === "queued") await applyCommand(command);
+      }
+    } catch (error) {
+      console.warn("Command poll", error);
+    } finally {
+      app.polling = false;
+    }
+  }
+
+  function pairingPrompt() {
+    return [
+      "Connect to my VideoStudio app.",
+      "MCP server: " + location.origin + "/mcp",
+      "Device ID: " + app.deviceId,
+      "Use VideoStudio MCP device_status to verify it, then use this device ID for my VideoStudio projects and edit commands."
+    ].join("
+");
+  }
+
+  els.copyDeviceBtn.onclick = () => copyText(app.deviceId, "Device ID copied");
+  els.copyMcpBtn.onclick = () => copyText(location.origin + "/mcp", "MCP URL copied");
+  els.connectBtn.onclick = async () => {
+    await copyText(pairingPrompt(), "Pairing message copied");
+    window.open("https://chatgpt.com/", "_blank", "noopener");
+  };
+  els.copyPromptBtn.onclick = () => copyText(els.examplePrompt.textContent, "Command copied");
+  els.createProjectBtn.onclick = createProject;
+  els.newProjectName.addEventListener("keydown", (e) => { if (e.key === "Enter") createProject(); });
+  els.fileInput.onchange = (e) => importFiles(e.target.files);
+  els.applyTrimBtn.onclick = applyTrim;
+  els.renderBtn.onclick = () => renderCurrentProject(false);
+
+  els.renameBtn.onclick = async () => {
+    if (!app.project) return;
+    const name = prompt("Project name", app.project.name);
+    if (!name || !name.trim()) return;
+    app.project.name = name.trim().slice(0,120);
+    renderProject();
+    await syncProject({ name: app.project.name });
+  };
+
+  els.aspectSelect.onchange = () => changeSetting("aspect", els.aspectSelect.value);
+  els.qualitySelect.onchange = () => changeSetting("quality", els.qualitySelect.value);
+  els.transitionSelect.onchange = () => changeSetting("transition", els.transitionSelect.value);
+  els.speedRange.oninput = () => { els.speedValue.value = Number(els.speedRange.value).toFixed(2) + "x"; };
+  els.speedRange.onchange = () => changeSetting("speed", Number(els.speedRange.value));
+  els.titleInput.onchange = () => changeSetting("title", els.titleInput.value.slice(0,120));
+  els.muteSwitch.onclick = () => app.project && changeSetting("mute", !app.project.settings.mute);
+
+  ["dragenter","dragover"].forEach((name) => els.dropZone.addEventListener(name, (e) => {
+    e.preventDefault(); els.dropZone.classList.add("drag");
+  }));
+  ["dragleave","drop"].forEach((name) => els.dropZone.addEventListener(name, (e) => {
+    e.preventDefault(); els.dropZone.classList.remove("drag");
+  }));
+  els.dropZone.addEventListener("drop", (e) => importFiles(e.dataTransfer.files));
+
+  window.addEventListener("beforeunload", () => {
+    if (app.previewUrl) URL.revokeObjectURL(app.previewUrl);
+    if (app.renderUrl) URL.revokeObjectURL(app.renderUrl);
+  });
+
+  async function init() {
+    try {
+      app.db = await openDb();
+      await registerDevice();
+      await loadProjects();
+      await pollCommands();
+      setInterval(pollCommands, 2200);
+      setInterval(registerDevice, 30000);
+      if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
+    } catch (error) {
+      console.error(error);
+      setOnline(false, "Setup error");
+      toast("App setup failed: " + error.message);
+    }
+  }
+  init();
+})();
+</script>
+</body>
+</html>
