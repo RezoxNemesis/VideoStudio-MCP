@@ -111,6 +111,11 @@ public final class AppProtocol {
                 body.put("status", status == null ? "completed" : status);
                 body.put("result", result == null ? new JSONObject() : result);
                 request("POST", "/api/app/commands/" + id + "/complete", body, true, 15000);
+                long seq = command.optLong("seq", 0);
+                synchronized (prefs) {
+                    long current = prefs.getLong(KEY_SEQ, 0);
+                    if (seq > current) prefs.edit().putLong(KEY_SEQ, seq).apply();
+                }
             } catch (Exception ignored) {}
         });
     }
@@ -126,12 +131,8 @@ public final class AppProtocol {
                 for (int i = 0; i < commands.length(); i++) {
                     JSONObject cmd = commands.optJSONObject(i);
                     if (cmd == null) continue;
-                    long next = cmd.optLong("seq", seq);
-                    if (next > seq) {
-                        seq = next;
-                        prefs.edit().putLong(KEY_SEQ, seq).apply();
-                    }
-                    if (!"queued".equals(cmd.optString("status"))) continue;
+                    String commandStatus = cmd.optString("status");
+                    if (!"queued".equals(commandStatus) && !"claimed".equals(commandStatus)) continue;
                     JSONObject dispatch = cmd;
                     main.post(() -> callback.onCommand(dispatch));
                 }
