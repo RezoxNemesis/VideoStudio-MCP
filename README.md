@@ -2,7 +2,7 @@
 
 VideoStudio MCP is a mobile-first, local-first video editor that can be controlled from ChatGPT through a custom MCP server.
 
-## What works in v0.5
+## What works in v0.6
 
 - Installable web app/PWA served by the same Cloudflare Worker as the MCP server.
 - One-tap pairing helper for ChatGPT.
@@ -23,6 +23,11 @@ VideoStudio MCP is a mobile-first, local-first video editor that can be controll
 - Multi-cut timelines from one source asset, enabling real jump-cut edits.
 - Per-clip playback speed and per-clip title overlays.
 - Autonomous requests can submit a complete clip plan and render it in one remote workflow.
+- 12-frame contact-sheet analysis with local scene-change detection and quiet-section detection.
+- Per-clip zoom/pan/rotation, brightness/contrast/saturation, audio volume/fades and title styling.
+- Post-render contact-sheet inspection so ChatGPT can critique the actual rendered output before stopping.
+- Native Android APK shell using the same repository and web editor, with persistent WebView storage and Android media picker.
+- Native chunked save bridge writes large renders directly to Movies/VideoStudio without cloud media storage.
 
 ## Privacy model
 
@@ -90,3 +95,14 @@ npm run deploy
 ```
 
 Cloudflare Git integration is configured on `main`, so merging to `main` can deploy automatically.
+
+
+## Android APK
+
+The Android shell lives in `android/`. It loads the same VideoStudio web editor and MCP backend, so there is no duplicated editing engine. Imported media remains in the app's local WebView/IndexedDB storage. Large rendered files can be saved through the native bridge directly to `Movies/VideoStudio`.
+
+GitHub Actions workflow `.github/workflows/android.yml` builds an installable debug APK and publishes it as the `VideoStudio-Android-debug` workflow artifact.
+
+## Fresh v0.6 MCP endpoint
+
+Use `https://wispy-queen-f9b5.prakasharuntandon634.workers.dev/mcp-v06` when a fresh ChatGPT connector schema is needed for the new v0.6 tools.

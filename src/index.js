@@ -13,7 +13,7 @@ export class VideoStudioState extends DurableObject {
   constructor(ctx,env){ super(ctx,env); }
   async register(deviceId,meta={}){
     const k="d:"+deviceId, old=(await this.ctx.storage.get(k))||{};
-    const d={deviceId,name:clean(meta.name||old.name||"My device",80),platform:clean(meta.platform||old.platform||"web",80),appVersion:"0.5.0",createdAt:old.createdAt||now(),lastSeenAt:now()};
+    const d={deviceId,name:clean(meta.name||old.name||"My device",80),platform:clean(meta.platform||old.platform||"web",80),appVersion:"0.6.0",createdAt:old.createdAt||now(),lastSeenAt:now()};
     await this.ctx.storage.put(k,d); return d;
   }
   async device(deviceId){ return (await this.ctx.storage.get("d:"+deviceId))||null; }
@@ -64,13 +64,13 @@ const state = env => env.VIDEO_STATE.getByName("primary");
 const out = x => ({content:[{type:"text",text:JSON.stringify(x)}]});
 
 function serverFor(env){
-  const s=new McpServer({name:"VideoStudio-MCP",version:"0.5.0"}), st=state(env);
-  s.registerTool("server_status",{description:"Check VideoStudio MCP status.",inputSchema:{}},async()=>out({ok:true,service:"VideoStudio-MCP",version:"0.5.0",app:"/",capabilities:["device pairing","projects","local media","visual contact-sheet analysis","multi-cut timeline editing","per-clip speed and titles","batched edit commands","adaptive local MP4/WebM rendering"]}));
+  const s=new McpServer({name:"VideoStudio-MCP",version:"0.6.0"}), st=state(env);
+  s.registerTool("server_status",{description:"Check VideoStudio MCP status.",inputSchema:{}},async()=>out({ok:true,service:"VideoStudio-MCP",version:"0.6.0",app:"/",capabilities:["Android app shell","device pairing","projects","local media","12-frame visual analysis","scene-change detection","quiet-section detection","multi-cut timeline editing","per-clip speed volume transforms filters and titles","render inspection","batched edit commands","adaptive local MP4/WebM rendering"]}));
   s.registerTool("device_status",{description:"Check a paired VideoStudio app device.",inputSchema:{deviceId:z.string().min(8)}},async({deviceId})=>out(await st.status(deviceId)));
   s.registerTool("create_video_project",{description:"Create a VideoStudio project on a paired device.",inputSchema:{deviceId:z.string().min(8),name:z.string().min(1).max(120),instruction:z.string().max(5000).optional()}},async({deviceId,name,instruction})=>out(await st.createProject(deviceId,name,instruction||"")));
   s.registerTool("list_video_projects",{description:"List projects and synced local-media metadata.",inputSchema:{deviceId:z.string().min(8)}},async({deviceId})=>out(await st.projects(deviceId)));
   s.registerTool("get_video_project",{description:"Get timeline, assets, settings and latest command result.",inputSchema:{deviceId:z.string().min(8),projectId:z.string().min(8)}},async({deviceId,projectId})=>out((await st.project(deviceId,projectId))||{error:"Project not found"}));
-  s.registerTool("queue_video_edit",{description:"Send one edit action to the open VideoStudio app. Supports trimming, project settings, clip removal/movement, full multi-cut timeline replacement, per-clip speed/title, media analysis, rendering and autonomous requests. Media stays local on the device.",inputSchema:{deviceId:z.string().min(8),projectId:z.string().min(8),action:z.enum(["set_trim","set_speed","set_mute","set_aspect","set_title","set_quality","set_transition","remove_clip","move_clip","reorder_timeline","replace_timeline","set_clip_speed","set_clip_title","analyse_media","render","autonomous_request"]),parameters:z.record(z.string(),z.any()).optional()}},async({deviceId,projectId,action,parameters})=>{
+  s.registerTool("queue_video_edit",{description:"Send one edit action to VideoStudio. Supports timeline replacement, per-clip speed/volume/reframe/zoom/filter/title effects, local scene/audio analysis, render inspection, rendering and autonomous requests. Media stays local on the device.",inputSchema:{deviceId:z.string().min(8),projectId:z.string().min(8),action:z.enum(["set_trim","set_speed","set_mute","set_aspect","set_title","set_quality","set_transition","remove_clip","move_clip","reorder_timeline","replace_timeline","set_clip_speed","set_clip_title","set_clip_effects","analyse_media","inspect_render","render","autonomous_request"]),parameters:z.record(z.string(),z.any()).optional()}},async({deviceId,projectId,action,parameters})=>{
     try{ const c=await st.enqueue(deviceId,projectId,action,parameters||{}); return out({queued:true,commandId:c.id,sequence:c.seq,action,note:action==="render"?"Render runs locally. Keep the app open; a browser may require one tap before playback.":"The open app will apply this automatically."}); }
     catch(e){ return out({queued:false,error:e.message}); }
   });
@@ -88,7 +88,7 @@ function serverFor(env){
     }
     return out(c);
   });
-  s.registerTool("queue_video_edit_batch",{description:"Queue an ordered batch of VideoStudio edits for one project. The app applies them sequentially while open. Put render last when you want an export after the edits.",inputSchema:{deviceId:z.string().min(8),projectId:z.string().min(8),edits:z.array(z.object({action:z.enum(["set_trim","set_speed","set_mute","set_aspect","set_title","set_quality","set_transition","remove_clip","move_clip","reorder_timeline","replace_timeline","set_clip_speed","set_clip_title","analyse_media","render","autonomous_request"]),parameters:z.record(z.string(),z.any()).optional()})).min(1).max(20)}},async({deviceId,projectId,edits})=>{
+  s.registerTool("queue_video_edit_batch",{description:"Queue an ordered batch of VideoStudio edits for one project. The app applies them sequentially while open. Put render last when you want an export after the edits.",inputSchema:{deviceId:z.string().min(8),projectId:z.string().min(8),edits:z.array(z.object({action:z.enum(["set_trim","set_speed","set_mute","set_aspect","set_title","set_quality","set_transition","remove_clip","move_clip","reorder_timeline","replace_timeline","set_clip_speed","set_clip_title","set_clip_effects","analyse_media","inspect_render","render","autonomous_request"]),parameters:z.record(z.string(),z.any()).optional()})).min(1).max(20)}},async({deviceId,projectId,edits})=>{
     const queued=[];
     try{
       for(const edit of edits){
@@ -98,13 +98,25 @@ function serverFor(env){
       return out({queued:true,count:queued.length,commands:queued,note:"VideoStudio will apply these commands in sequence while the paired app is open."});
     }catch(e){ return out({queued:false,error:e.message,commands:queued}); }
   });
-  s.registerTool("request_media_analysis",{description:"Ask the open VideoStudio app to sample a local video or image and return a compact contact sheet for visual inspection. The full media file stays on the user device.",inputSchema:{deviceId:z.string().min(8),projectId:z.string().min(8),assetId:z.string().min(8).optional()}},async({deviceId,projectId,assetId})=>{
+  s.registerTool("request_media_analysis",{description:"Run local visual, scene-change and quiet-section analysis. Returns a 12-frame contact sheet plus suggested structural timestamps without uploading the full video.",inputSchema:{deviceId:z.string().min(8),projectId:z.string().min(8),assetId:z.string().min(8).optional(),start:z.number().min(0).optional(),end:z.number().positive().optional(),frames:z.number().int().min(6).max(16).optional(),includeAudio:z.boolean().optional()}},async({deviceId,projectId,assetId,start,end,frames,includeAudio})=>{
     try{
-      const c=await st.enqueue(deviceId,projectId,"analyse_media",assetId?{assetId}:{});
-      return out({queued:true,commandId:c.id,sequence:c.seq,note:"Keep VideoStudio open. Call get_video_command_result after the device completes analysis."});
+      const parameters={}; if(assetId)parameters.assetId=assetId; if(start!=null)parameters.start=start; if(end!=null)parameters.end=end; if(frames!=null)parameters.frames=frames; if(includeAudio!=null)parameters.includeAudio=includeAudio;
+      const c=await st.enqueue(deviceId,projectId,"analyse_media",parameters);
+      return out({queued:true,commandId:c.id,sequence:c.seq,note:"Keep VideoStudio open. The device will return sampled frames, scene changes and quiet sections."});
     }catch(e){ return out({queued:false,error:e.message}); }
   });
-  s.registerTool("video_project_plan",{description:"Create a short autonomous editing workflow.",inputSchema:{projectName:z.string().min(1),instruction:z.string().min(1)}},async({projectName,instruction})=>out({projectName,instruction,status:"planned",workflow:["inspect asset metadata","request local contact-sheet analysis","visually inspect sampled frames","design a multi-cut timeline","apply per-clip pacing and titles","queue edit commands","request local render","read render result","iterate"]}));
+  s.registerTool("inspect_video_render",{description:"Inspect the actual latest local render with a contact sheet so ChatGPT can critique the finished edit and iterate.",inputSchema:{deviceId:z.string().min(8),projectId:z.string().min(8),frames:z.number().int().min(6).max(16).optional()}},async({deviceId,projectId,frames})=>{
+    try{ const c=await st.enqueue(deviceId,projectId,"inspect_render",{frames:frames||12}); return out({queued:true,commandId:c.id,sequence:c.seq,note:"The app will sample the latest render locally and return visual frames."}); }
+    catch(e){ return out({queued:false,error:e.message}); }
+  });
+  s.registerTool("queue_autonomous_edit",{description:"Send a structured autonomous edit plan with multi-cuts, per-clip reframing, filters, audio levels, titles, rendering and optional post-render inspection.",inputSchema:{deviceId:z.string().min(8),projectId:z.string().min(8),instruction:z.string().min(1),clips:z.array(z.record(z.string(),z.any())).min(1).max(40),aspect:z.enum(["9:16","16:9","1:1","4:5"]).optional(),quality:z.enum(["720p","1080p"]).optional(),transition:z.enum(["none","fade"]).optional(),mute:z.boolean().optional(),render:z.boolean().optional(),inspectAfterRender:z.boolean().optional()}},async(args)=>{
+    try{
+      const {deviceId,projectId,...parameters}=args;
+      const c=await st.enqueue(deviceId,projectId,"autonomous_request",parameters);
+      return out({queued:true,commandId:c.id,sequence:c.seq,note:"Structured edit plan queued. VideoStudio will execute it locally."});
+    }catch(e){ return out({queued:false,error:e.message}); }
+  });
+  s.registerTool("video_project_plan",{description:"Create a short autonomous editing workflow.",inputSchema:{projectName:z.string().min(1),instruction:z.string().min(1)}},async({projectName,instruction})=>out({projectName,instruction,status:"planned",workflow:["inspect asset metadata","run 12-frame scene and quiet-section analysis","visually inspect sampled frames","design a multi-cut timeline around real structural changes","apply per-clip pacing/reframing/audio only where justified","render locally","inspect the actual rendered contact sheet","iterate before declaring the edit finished"]}));
   return s;
 }
 
@@ -139,6 +151,7 @@ export default {
     if(u.pathname==="/sw.js") return new Response(SW,{headers:{"content-type":"application/javascript","cache-control":"no-cache"}});
     if(u.pathname.startsWith("/api/")) return api(request,env);
     if(u.pathname==="/mcp"||u.pathname.startsWith("/mcp/")) return createMcpHandler(()=>serverFor(env),{route:"/mcp",responseMode:"auto"})(request,env,ctx);
+    if(u.pathname==="/mcp-v06"||u.pathname.startsWith("/mcp-v06/")) return createMcpHandler(()=>serverFor(env),{route:"/mcp-v06",responseMode:"auto"})(request,env,ctx);
     return new Response("Not Found",{status:404});
   }
 };
