@@ -205,6 +205,152 @@ export class VideoStudioState extends DurableObject {
     if(!id) return null;
     return (await this.ctx.storage.get("app-device:"+id))||null;
   }
+  async appBindStudioWebFallback(ownerKey,webDeviceId){
+    const native=await this.appResolve(ownerKey);
+    if(!native) throw new Error("Private App MCP credential rejected");
+    const id=String(webDeviceId||"").trim();
+    if(id.length<8) throw new Error("Invalid Studio Web device ID");
+    const web=await this.device(id);
+    if(!web) throw new Error("Studio Web device is not registered");
+    const ownerHash=await sha256Hex(ownerKey);
+    const projects=await this.projects(id);
+    const binding={
+      id:crypto.randomUUID(),
+      nativeDeviceId:native.deviceId,
+      webDeviceId:id,
+      fallbackWebProjectId:projects[0]&&projects[0].id||"",
+      createdAt:Date.now(),
+      updatedAt:Date.now(),
+      galleryAccess:false
+    };
+    await this.ctx.storage.put("app-web-fallback:"+ownerHash,binding);
+    return {
+      bound:true,
+      nativeDeviceId:binding.nativeDeviceId,
+      webDeviceId:binding.webDeviceId,
+      fallbackWebProjectId:binding.fallbackWebProjectId,
+      note:"The stable native MCP may route browser-capable work here when Android is sleeping."
+    };
+  }
+  async appResolveStudioWebFallback(ownerKey){
+    if(!ownerKey) return null;
+    const ownerHash=await sha256Hex(ownerKey);
+    const binding=await this.ctx.storage.get("app-web-fallback:"+ownerHash);
+    if(!binding) return null;
+    const web=await this.device(binding.webDeviceId);
+    if(!web) return null;
+    const last=Date.parse(String(web.lastSeenAt||""))||0;
+    const age=last>0?Math.max(0,Date.now()-last):Number.MAX_SAFE_INTEGER;
+    const fresh=age<=45000;
+    let projectId=String(binding.fallbackWebProjectId||"");
+    let project=projectId?await this.project(binding.webDeviceId,projectId):null;
+    if(!project){
+      const projects=await this.projects(binding.webDeviceId);
+      project=projects[0]||null;
+      projectId=project&&project.id||"";
+      if(projectId!==binding.fallbackWebProjectId){
+        binding.fallbackWebProjectId=projectId;
+        binding.updatedAt=Date.now();
+        await this.ctx.storage.put("app-web-fallback:"+ownerHash,binding);
+      }
+    }
+    return {binding,web,fresh,ageMs:age===Number.MAX_SAFE_INTEGER?null:age,project};
+  }
+  async appTryStudioWebFallback(ownerKey,action,parameters={}){
+    const fallback=await this.appResolveStudioWebFallback(ownerKey);
+    if(!fallback||!fallback.fresh||!fallback.project) return null;
+    const webDeviceId=fallback.binding.webDeviceId;
+    const projectId=parameters.webProjectId&&await this.project(webDeviceId,String(parameters.webProjectId))
+      ? String(parameters.webProjectId)
+      : fallback.project.id;
+    const p={...parameters};
+    let command=null;
+    if(action==="prompt_video"||action==="create_prompt_video"){
+      command=await this.enqueueRuntime(webDeviceId,projectId,"generate_video",{
+        mode:"prompt_scene",
+        prompt:clean(p.prompt||"",2000),
+        style:clean(p.style||"cinematic",80)||"cinematic",
+        duration:Math.max(4,Math.min(60,Number(p.durationSeconds||12))),
+        fps:24,
+        aspect:["9:16","16:9","1:1","4:5"].includes(p.aspect)?p.aspect:"9:16",
+        quality:p.quality==="720p"?"720p":"1080p"
+      });
+    }else if(action==="animate_images"){
+      command=await this.enqueueRuntime(webDeviceId,projectId,"generate_video",{
+        mode:"story_video",
+        prompt:clean(p.environment||p.style||"cinematic image animation",1200),
+        style:clean(p.style||"cinematic",80)||"cinematic",
+        duration:Math.max(4,Math.min(60,Number(p.durationSecondsPerImage||4)*4)),
+        fps:24,
+        aspect:["9:16","16:9","1:1","4:5"].includes(p.aspect)?p.aspect:"9:16",
+        quality:p.quality==="720p"?"720p":"1080p"
+      });
+    }else if(action==="export_project"){
+      command=await this.enqueue(webDeviceId,projectId,"render",{});
+    }else if(action==="autonomous_edit"){
+      command=await this.enqueue(webDeviceId,projectId,"autonomous_request",{
+        instruction:p.instruction||"",
+        clips:Array.isArray(p.clips)?p.clips:undefined,
+        aspect:p.aspect,
+        quality:p.quality,
+        transition:p.transition,
+        title:p.title,
+        mute:p.mute,
+        render:p.render!==false,
+        inspectAfterRender:!!p.inspectAfterRender
+      });
+    }else if(action==="apply_edit_plan"&&Array.isArray(p.clips)){
+      command=await this.enqueue(webDeviceId,projectId,"replace_timeline",{clips:p.clips});
+    }else if(action==="analyse_media"){
+      command=await this.enqueue(webDeviceId,projectId,"analyse_media",p);
+    }else if(action==="apply_tool"){
+      const tool=String(p.tool||"").toLowerCase();
+      const settings=p.settings||{};
+      if(tool==="speed"||tool==="slow_motion"){
+        command=await this.enqueue(webDeviceId,projectId,"set_clip_speed",{
+          index:Number(p.clipIndex||0),
+          speed:Number(settings.speed||settings.value||(tool==="slow_motion"?.5:1))
+        });
+      }else if(tool==="title"){
+        command=await this.enqueue(webDeviceId,projectId,"set_clip_title",{
+          index:Number(p.clipIndex||0),
+          title:clean(settings.title||settings.value||"",120)
+        });
+      }else if(tool==="trim"){
+        command=await this.enqueue(webDeviceId,projectId,"set_trim",{
+          index:Number(p.clipIndex||0),
+          start:Number(settings.start??settings.inPoint??0),
+          end:Number(settings.end??settings.outPoint??0)
+        });
+      }else if(["effect","color","motion","blur","reframe","mask","green_screen","audio_duck","volume"].includes(tool)){
+        command=await this.enqueue(webDeviceId,projectId,"set_clip_effects",{
+          index:Number(p.clipIndex||0),
+          effects:settings
+        });
+      }else if(tool==="transition"){
+        command=await this.enqueue(webDeviceId,projectId,"autonomous_request",{
+          instruction:"Apply requested transition",
+          transition:clean(settings.transition||settings.value||"fade",40),
+          render:false
+        });
+      }
+    }else if(action==="creator_preset"){
+      command=await this.enqueue(webDeviceId,projectId,"autonomous_request",{
+        instruction:"Apply creator preset "+clean(p.preset||"",80),
+        transition:p.transition,
+        render:false
+      });
+    }
+    if(!command) return null;
+    return {
+      ...command,
+      hybridRoute:"studio_web",
+      routedFromNativeAction:action,
+      nativeDeferred:false,
+      webDeviceId,
+      webProjectId:projectId
+    };
+  }
   async appCreateHybridBinding(ownerKey,webDeviceId){
     const native=await this.appResolve(ownerKey);
     if(!native) throw new Error("Private App MCP credential rejected");
@@ -299,6 +445,10 @@ export class VideoStudioState extends DurableObject {
     if(existing.filter(c=>c.status==="queued"||c.status==="claimed"||c.status==="waiting_native").length>=160) throw new Error("Native command queue is full; reconnect the app before adding work");
     const lastSeenMs=Date.parse(String(d.lastSeenAt||""))||0;
     const fresh=lastSeenMs>0&&(Date.now()-lastSeenMs)<=45000;
+    if(!fresh){
+      const webCommand=await this.appTryStudioWebFallback(ownerKey,action,parameters);
+      if(webCommand) return webCommand;
+    }
     const sk="app-v3-seq:"+d.deviceId, seq=((await this.ctx.storage.get(sk))||0)+1;
     await this.ctx.storage.put(sk,seq);
     const command={
@@ -614,7 +764,15 @@ export class VideoStudioState extends DurableObject {
   async appCommandV3(ownerKey,id){
     const d=await this.appV3Device(ownerKey);
     const list=(await this.ctx.storage.get("app-v3-cl:"+d.deviceId))||[];
-    return list.find(c=>c.id===id)||null;
+    const native=list.find(c=>c.id===id);
+    if(native) return native;
+    const fallback=await this.appResolveStudioWebFallback(ownerKey);
+    if(!fallback) return null;
+    const webDeviceId=fallback.binding.webDeviceId;
+    const webCommand=await this.command(webDeviceId,id);
+    if(webCommand) return {...webCommand,hybridRoute:"studio_web"};
+    const runtime=await this.runtimeCommand(webDeviceId,id);
+    return runtime?{...runtime,hybridRoute:"studio_web"}:null;
   }
   async appStatusV3(ownerKey){
     const d=await this.appResolve(ownerKey);
@@ -643,6 +801,8 @@ export class VideoStudioState extends DurableObject {
     const fresh=ageMs<=45000;
     const pending=list.filter(c=>c.status==="queued"||c.status==="claimed"||c.status==="waiting_native");
     const waitingNative=pending.filter(c=>c.status==="waiting_native").length;
+    const fallback=await this.appResolveStudioWebFallback(ownerKey);
+    const fallbackConnected=!!fallback&&!!fallback.fresh;
     return {
       // The private MCP endpoint is a Durable Object control plane and remains
       // reachable even when Android is sleeping. Native execution health is
@@ -650,8 +810,15 @@ export class VideoStudioState extends DurableObject {
       connected:true,
       controlPlaneConnected:true,
       nativeConnected:fresh,
-      executionAvailable:fresh,
+      executionAvailable:fresh||fallbackConnected,
       offlineQueueAvailable:true,
+      studioWebFallback:fallback?{
+        bound:true,
+        connected:fallbackConnected,
+        deviceId:fallback.binding.webDeviceId,
+        projectId:fallback.project&&fallback.project.id||"",
+        lastSeenAgeMs:fallback.ageMs
+      }:{bound:false,connected:false},
       nativeState:fresh?"online":"sleeping_or_offline",
       registered:true,
       stale:!fresh,
