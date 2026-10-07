@@ -63,6 +63,22 @@ The autonomous MCP v3 tools include `app_animate_images` and `app_job_status`.
 
 This is genuine articulated layered motion/compositing, but it does **not** claim full generative facial-expression synthesis or per-strand/per-fold non-rigid deformation. Those can be added later through optional local model modules without changing the editor/MCP architecture.
 
+## Autonomy model
+
+VideoStudio 3.2 defaults to **Full Autonomous** control. ChatGPT can use every VideoStudio-native operation without repeated permission prompts: explicit attachment/URL imports, project creation and deletion, analysis, editing, animation, rendering, inspection, retries and cleanup.
+
+There is one optional restrictive mode: **One File Lock**, which the user can enable manually when they want ChatGPT limited to one authorised asset.
+
+Full Autonomous does not weaken the permanent safety boundaries:
+
+- MCP cannot list, browse or enumerate the Android Gallery/media library
+- remote imports remain HTTPS-only and reject private/local network destinations
+- remote imports are byte-limited and partial failures are cleaned up
+- heavy rendering remains RAM/thermal guarded
+- STOP CHATGPT CONTROL remains immediately available
+
+The former `all_tools` value is accepted only as a backward-compatible alias and is normalised to Full Autonomous.
+
 ## ChatGPT attachment ingest
 
 The v3 MCP tool `app_import_attachment` uses ChatGPT's MCP file-parameter mechanism. ChatGPT supplies an authorised temporary file reference, and the Android Native Agent downloads the bytes directly into VideoStudio's app-private storage.
