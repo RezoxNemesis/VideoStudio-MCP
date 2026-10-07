@@ -43,6 +43,10 @@ public final class ProjectStore {
         public String name;
         public String mime;
         public long durationMs;
+        public long sizeBytes = -1L;
+        public boolean seekable = false;
+        public boolean persistedReadAccess = false;
+        public String providerAuthority = "";
         public String role = "source";
         public boolean generated = false;
         public JSONObject generationMetadata = new JSONObject();
@@ -56,6 +60,10 @@ public final class ProjectStore {
                 o.put("name", name);
                 o.put("mime", mime);
                 o.put("durationMs", durationMs);
+                o.put("sizeBytes", sizeBytes);
+                o.put("seekable", seekable);
+                o.put("persistedReadAccess", persistedReadAccess);
+                o.put("providerAuthority", providerAuthority);
                 o.put("role", role);
                 o.put("generated", generated);
                 o.put("generationMetadata", generationMetadata);
@@ -71,6 +79,16 @@ public final class ProjectStore {
             a.name = o.optString("name", "Media");
             a.mime = o.optString("mime", "application/octet-stream");
             a.durationMs = o.optLong("durationMs", 0);
+            a.sizeBytes = o.has("sizeBytes") ? o.optLong("sizeBytes", -1L) : -1L;
+            a.seekable = o.optBoolean("seekable", false);
+            a.persistedReadAccess = o.optBoolean("persistedReadAccess", false);
+            a.providerAuthority = o.optString("providerAuthority", "");
+            if (a.providerAuthority.isEmpty()) {
+                try {
+                    String authority = Uri.parse(a.uri).getAuthority();
+                    a.providerAuthority = authority == null ? "" : authority;
+                } catch (Exception ignored) {}
+            }
             a.role = o.optString("role", "source");
             a.generated = o.optBoolean("generated", false);
             JSONObject metadata = o.optJSONObject("generationMetadata");
@@ -308,9 +326,13 @@ public final class ProjectStore {
         Asset a = new Asset();
         a.id = UUID.randomUUID().toString();
         a.uri = uri.toString();
-        a.mime = resolver.getType(uri);
-        if (a.mime == null) a.mime = "application/octet-stream";
-        a.name = displayName(uri);
+        AssetProbe.Result probe = AssetProbe.probe(resolver, uri);
+        a.mime = probe.mime;
+        a.name = probe.displayName;
+        a.sizeBytes = probe.sizeBytes;
+        a.seekable = probe.seekable;
+        a.persistedReadAccess = probe.persistedReadAccess;
+        a.providerAuthority = probe.providerAuthority;
         a.durationMs = duration(uri);
         a.role = "source";
         a.generated = false;
