@@ -24,6 +24,7 @@ const motionScriptCompiler = fs.readFileSync(new URL("../android/app/src/main/ja
 const activityLog = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/ActivityLog.java", import.meta.url), "utf8");
 const recoveryPlans = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/RecoveryPlanStore.java", import.meta.url), "utf8");
 const capabilityRegistry = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/CapabilityRegistry.java", import.meta.url), "utf8");
+const modelPackManager = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/ModelPackManager.java", import.meta.url), "utf8");
 
 const scriptMatch = app.match(/<script>([\s\S]*?)<\/script>/);
 let appScriptParses = false;
@@ -161,6 +162,11 @@ const checks = [
   ["optional model manifests can extend capability registry", capabilityRegistry.includes('"manifest.json"') && capabilityRegistry.includes('"capabilities"') && capabilityRegistry.includes('"estimatedRamMb"')],
   ["Native Agent exposes capability registry and model pack status", controlService.includes('case "capability_registry"') && controlService.includes('case "resolve_capability"') && controlService.includes('case "model_pack_status"')],
   ["MCP v3 exposes typed capability-provider tools", worker.includes('"app_capability_registry"') && worker.includes('"app_resolve_capability"') && worker.includes('"app_model_pack_status"')],
+  ["model packs install transactionally from explicit app-owned assets", modelPackManager.includes("Transactional installer") && modelPackManager.includes("staging") && modelPackManager.includes("renameTo(target)") && modelPackManager.includes("source asset")],
+  ["model-pack extraction guards path traversal and expansion size", modelPackManager.includes("getCanonicalPath") && modelPackManager.includes("MAX_TOTAL_EXPANDED") && modelPackManager.includes("MAX_ENTRIES")],
+  ["model packs validate manifest capabilities license and checksums", modelPackManager.includes('"manifest.json"') && modelPackManager.includes('"capabilities"') && modelPackManager.includes('"license"') && modelPackManager.includes("verifyDeclaredFiles")],
+  ["model-pack installs survive interruption through durable recovery plans", controlService.includes('"install_model_pack"') && controlService.includes("queueModelPackInstall") && controlService.includes("submitRecoverableHeavy")],
+  ["MCP v3 exposes model-pack install and uninstall controls", worker.includes('"app_install_model_pack"') && worker.includes('"app_uninstall_model_pack"')],
   ["native v3 exposes a self-test", controlService.includes('case "self_test"') && worker.includes('"app_self_test"') && controlService.includes("privateStorageWritable")],
   ["native state reports v3 architecture", controlService.includes('out.put("mcpEndpointVersion", "v3")') && controlService.includes('out.put("localEngineOwnsProjects", true)')],
   ["cached connector compatibility routes v3 devices to v3 queue", worker.includes("enqueueNative") && worker.includes("appEnqueueV3") && worker.includes("commandNative")],
