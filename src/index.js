@@ -390,7 +390,14 @@ function serverFor(env){
     if(native) return out({nativeApp:true,projects:native.projects||[]});
     return out(await st.projects(deviceId));
   });
-  s.registerTool("get_video_project",{description:"Get timeline, assets, settings and latest command result.",inputSchema:{deviceId:z.string().min(8),projectId:z.string().min(8)}},async({deviceId,projectId})=>out((await st.project(deviceId,projectId))||{error:"Project not found"}));
+  s.registerTool("get_video_project",{description:"Get project metadata. For the native app this returns the latest registered local summary; full native state is available through get_state/app_state.",inputSchema:{deviceId:z.string().min(8),projectId:z.string().min(8)}},async({deviceId,projectId})=>{
+    const native=await st.appResolve(deviceId);
+    if(native){
+      const project=(native.projects||[]).find(p=>p&&p.id===projectId);
+      return out(project?{nativeApp:true,protocolVersion:isNativeV3(native)?3:1,project}:{error:"Native project not found"});
+    }
+    return out((await st.project(deviceId,projectId))||{error:"Project not found"});
+  });
   s.registerTool("queue_video_edit",{description:"Send one edit action to VideoStudio. Native v3/v1 compatibility can use the private owner credential as deviceId and projectId='active-native'.",inputSchema:{deviceId:z.string().min(8),projectId:z.string().min(8),action:z.enum(["set_trim","set_speed","set_mute","set_aspect","set_title","set_quality","set_transition","remove_clip","move_clip","reorder_timeline","replace_timeline","set_clip_speed","set_clip_title","set_clip_effects","analyse_media","inspect_render","render","autonomous_request"]),parameters:z.record(z.string(),z.any()).optional()}},async({deviceId,projectId,action,parameters})=>{
     try{
       const p=parameters||{};
@@ -461,14 +468,31 @@ function serverFor(env){
     }
     return out(c);
   });
-  s.registerTool("queue_video_edit_batch",{description:"Queue an ordered batch of VideoStudio edits for one project. The app applies them sequentially while open. Put render last when you want an export after the edits.",inputSchema:{deviceId:z.string().min(8),projectId:z.string().min(8),edits:z.array(z.object({action:z.enum(["set_trim","set_speed","set_mute","set_aspect","set_title","set_quality","set_transition","remove_clip","move_clip","reorder_timeline","replace_timeline","set_clip_speed","set_clip_title","set_clip_effects","analyse_media","inspect_render","render","autonomous_request"]),parameters:z.record(z.string(),z.any()).optional()})).min(1).max(20)}},async({deviceId,projectId,edits})=>{
+  s.registerTool("queue_video_edit_batch",{description:"Queue an ordered batch of VideoStudio edits. Native v3 compatibility routes the batch into the isolated MCP v3 queue.",inputSchema:{deviceId:z.string().min(8),projectId:z.string().min(8),edits:z.array(z.object({action:z.enum(["set_trim","set_speed","set_mute","set_aspect","set_title","set_quality","set_transition","remove_clip","move_clip","reorder_timeline","replace_timeline","set_clip_speed","set_clip_title","set_clip_effects","analyse_media","inspect_render","render","autonomous_request"]),parameters:z.record(z.string(),z.any()).optional()})).min(1).max(20)}},async({deviceId,projectId,edits})=>{
     const queued=[];
     try{
+      const native=await st.appResolve(deviceId);
       for(const edit of edits){
-        const c=await st.enqueue(deviceId,projectId,edit.action,edit.parameters||{});
-        queued.push({commandId:c.id,sequence:c.seq,action:c.action});
+        const p=edit.parameters||{};
+        if(native){
+          let nativeAction=p.nativeAction||"";
+          let nativeParameters=p.nativeParameters||p;
+          if(!nativeAction){
+            if(edit.action==="autonomous_request"&&p.prompt) nativeAction="prompt_video";
+            else if(edit.action==="autonomous_request") nativeAction="autonomous_edit";
+            else if(edit.action==="set_clip_effects") nativeAction="apply_tool";
+            else if(edit.action==="analyse_media") nativeAction="analyse_media";
+            else if(edit.action==="render") nativeAction="export_project";
+            else nativeAction="get_state";
+          }
+          const c=await enqueueNative(st,native,deviceId,nativeAction,nativeParameters);
+          queued.push({commandId:c.id,sequence:c.seq,action:c.action,protocolVersion:isNativeV3(native)?3:1});
+        }else{
+          const c=await st.enqueue(deviceId,projectId,edit.action,p);
+          queued.push({commandId:c.id,sequence:c.seq,action:c.action});
+        }
       }
-      return out({queued:true,count:queued.length,commands:queued,note:"VideoStudio will apply these commands in sequence while the paired app is open."});
+      return out({queued:true,count:queued.length,commands:queued,nativeApp:!!native,protocolVersion:native?(isNativeV3(native)?3:1):0});
     }catch(e){ return out({queued:false,error:e.message,commands:queued}); }
   });
   s.registerTool("request_media_analysis",{description:"Run local visual analysis on VideoStudio media. Native v3/v1.1 returns sampled frames and scene-change candidates without uploading the full video.",inputSchema:{deviceId:z.string().min(8),projectId:z.string().min(8),assetId:z.string().min(8).optional(),start:z.number().min(0).optional(),end:z.number().positive().optional(),frames:z.number().int().min(6).max(16).optional(),includeAudio:z.boolean().optional()}},async({deviceId,projectId,assetId,start,end,frames,includeAudio})=>{
