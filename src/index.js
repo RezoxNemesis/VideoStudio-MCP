@@ -955,7 +955,7 @@ async function api(request,env){
           expectedGeneration:registration.expectedGeneration,
           receivedGeneration:registration.receivedGeneration,
           error:"Older VideoStudio Native Agent generation rejected"
-        },409);
+        });
       }
       return reply({
         ok:true,
@@ -985,13 +985,32 @@ async function api(request,env){
       const deviceId=u.searchParams.get("deviceId")||"";
       const after=Number(u.searchParams.get("after")||0);
       const wait=Number(u.searchParams.get("wait")||0);
-      return reply({protocolVersion:3,commands:await st.appCommandsV3(deviceId,bearer(request),after,wait)});
+      const generation=Math.max(0,Number(u.searchParams.get("appGeneration")||0));
+      const token=bearer(request);
+      const registered=await st.appAuth(deviceId,token);
+      if(!registered) return reply({error:"VideoStudio stable MCP authorization failed"},401);
+      const expected=Math.max(0,Number(registered.appGeneration||0));
+      if(expected>0&&generation!==expected) return reply({
+        error:"Stale Native Agent generation",
+        staleClient:true,
+        expectedGeneration:expected,
+        receivedGeneration:generation
+      },409);
+      return reply({protocolVersion:3,appGeneration:expected,commands:await st.appCommandsV3(deviceId,token,after,wait)});
     }
     const v3hm=u.pathname.match(/^\/api\/v3\/app\/handoffs\/([^/]+)\/content$/);
     if(v3hm&&request.method==="GET"){
       const deviceId=u.searchParams.get("deviceId")||"", token=bearer(request);
-      const status=await st.appStatusV3(token);
-      if(!status.connected) return reply({error:"VideoStudio MCP v3 authorization failed"},401);
+      const generation=Math.max(0,Number(u.searchParams.get("appGeneration")||0));
+      const registered=await st.appAuth(deviceId,token);
+      if(!registered) return reply({error:"VideoStudio stable MCP authorization failed"},401);
+      const expected=Math.max(0,Number(registered.appGeneration||0));
+      if(expected>0&&generation!==expected) return reply({
+        error:"Stale Native Agent generation",
+        staleClient:true,
+        expectedGeneration:expected,
+        receivedGeneration:generation
+      },409);
       const handoff=await st.appHandoff(deviceId,token,v3hm[1]);
       if(!handoff) return reply({error:"Handoff missing or expired"},404);
       let upstream;
@@ -1015,8 +1034,18 @@ async function api(request,env){
     if(v3cm&&request.method==="POST"){
       const b=await request.json(), token=bearer(request);
       if(Number(b.protocolVersion||0)!==3) return reply({error:"Protocol version mismatch"},409);
+      const registered=await st.appAuth(b.deviceId,token);
+      if(!registered) return reply({error:"VideoStudio stable MCP authorization failed"},401);
+      const expected=Math.max(0,Number(registered.appGeneration||0));
+      const generation=Math.max(0,Number(b.appGeneration||0));
+      if(expected>0&&generation!==expected) return reply({
+        error:"Stale Native Agent generation",
+        staleClient:true,
+        expectedGeneration:expected,
+        receivedGeneration:generation
+      },409);
       const c=await st.appCompleteV3(b.deviceId,token,v3cm[1],b.result||{},b.status||"completed");
-      return c?reply({protocolVersion:3,command:c}):reply({error:"Command not found"},404);
+      return c?reply({protocolVersion:3,appGeneration:expected,command:c}):reply({error:"Command not found"},404);
     }
 
     if(u.pathname==="/api/app/register"&&request.method==="POST"){
