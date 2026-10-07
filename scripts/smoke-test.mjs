@@ -187,7 +187,7 @@ const checks = [
   ["cloud archive cannot escape the Creative Runtime project root", driveWorkspace.includes("Workspace file escaped project root") && driveWorkspace.includes("relativePath")],
   ["cloud archive skips regenerable temp and preview data", driveWorkspace.includes('"temp"') && driveWorkspace.includes('"previews"')],
   ["Android Control UI links one cloud folder through the system picker", nativeMain.includes("ACTION_OPEN_DOCUMENT_TREE") && nativeMain.includes("PICK_CLOUD_WORKSPACE") && nativeMain.includes("driveWorkspace.link")],
-  ["Native Agent archives project workspace through the linked folder", controlService.includes('case "sync_project_to_drive"') && controlService.includes("queueDriveProjectSync") && controlService.includes("driveWorkspace.syncProject")),
+  ["Native Agent archives project workspace through the linked folder", controlService.includes('case "sync_project_to_drive"') && controlService.includes("queueDriveProjectSync") && controlService.includes("driveWorkspace.syncProject")],
   ["MCP v3 exposes cloud workspace status and archive tools", worker.includes('"app_drive_workspace_status"') && worker.includes('"app_sync_project_to_drive"')],
   ["native v3 exposes a self-test", controlService.includes('case "self_test"') && worker.includes('"app_self_test"') && controlService.includes("privateStorageWritable")],
   ["native state reports v3 architecture", controlService.includes('out.put("mcpEndpointVersion", "v3")') && controlService.includes('out.put("localEngineOwnsProjects", true)')],
