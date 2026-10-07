@@ -86,7 +86,7 @@ export class VideoStudioState extends DurableObject {
     if(bound&&bound!==deviceId) throw new Error("Owner key is already bound to another device");
     const dk="app-device:"+deviceId, old=(await this.ctx.storage.get(dk))||{};
     if(old.ownerHash&&old.ownerHash!==hash) throw new Error("This native device is already bound to its owner credential");
-    const mode=["one_file","all_tools","everything"].includes(meta.permissionMode)?meta.permissionMode:(old.permissionMode||"all_tools");
+    const mode=["one_file","all_tools","everything"].includes(meta.permissionMode)?meta.permissionMode:(old.permissionMode||"everything");
     const d={
       deviceId,
       name:clean(meta.name||old.name||"VideoStudio Android",80),
