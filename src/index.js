@@ -4,6 +4,7 @@ import { createMcpHandler } from "agents/mcp/server";
 import { z } from "zod";
 import APP_HTML from "./app.html";
 import STUDIO_RUNTIME_JS from "./studio-runtime.js";
+import STUDIO_CINEMATIC_JS from "./studio-cinematic.js";
 
 const JH = {"content-type":"application/json; charset=UTF-8","cache-control":"no-store"};
 const now = () => new Date().toISOString();
@@ -591,7 +592,10 @@ function serverFor(env){
       "2D motion graphics generation",
       "procedural 3D video generation",
       "audio visualizer video generation",
-      "abstract VFX generation"
+      "abstract VFX generation",
+      "cinematic perspective portal/world replacement",
+      "multi-world sequencing through tracked windows/screens/doorways",
+      "foreground-preserving compositing with reflections"
     ]
   }));
   s.registerTool("device_status",{description:"Check a paired VideoStudio app device. Native v3/v1 also accepts the private owner credential as deviceId for compatibility.",inputSchema:{deviceId:z.string().min(8)}},async({deviceId})=>{
@@ -640,6 +644,32 @@ function serverFor(env){
       if(native) return out({queued:false,error:"This tool targets Studio Web. Use native app generation tools for an Android Native Agent device."});
       const c=await st.enqueueRuntime(deviceId,projectId,"generate_video",parameters);
       return out({queued:true,commandId:c.id,sequence:c.seq,runtime:"studio-web",note:"Keep Studio Web visible while browser-local generation records the video."});
+    }catch(e){return out({queued:false,error:e.message});}
+  });
+
+  s.registerTool("render_cinematic_world_video",{
+    description:"Create the window/portal-world effect shown in cinematic social videos: preserve the real base video and person, perspective-warp one or more generated/imported worlds into a window/screen/doorway quad, sequence worlds over time, retain subtle reflections, and optionally apply translation tracking. Rendering happens locally in Studio Web as a real video.",
+    inputSchema:{
+      deviceId:z.string().min(8),
+      projectId:z.string().min(8),
+      baseAssetId:z.string().min(8).optional(),
+      worldAssetIds:z.array(z.string().min(8)).max(24).optional(),
+      prompt:z.string().max(2000).optional(),
+      duration:z.number().min(1).max(180).optional(),
+      fps:z.number().int().min(12).max(60).optional(),
+      aspect:z.enum(["9:16","16:9","1:1","4:5"]).optional(),
+      quality:z.enum(["720p","1080p"]).optional(),
+      tracking:z.enum(["static","translation"]).optional(),
+      reflection:z.number().min(0).max(.35).optional(),
+      startQuad:z.array(z.tuple([z.number().min(0).max(1),z.number().min(0).max(1)])).length(4).optional(),
+      endQuad:z.array(z.tuple([z.number().min(0).max(1),z.number().min(0).max(1)])).length(4).optional()
+    }
+  },async({deviceId,projectId,...parameters})=>{
+    try{
+      const native=await st.appResolve(deviceId);
+      if(native) return out({queued:false,error:"This cinematic compositor currently targets Studio Web. Use the website device ID."});
+      const c=await st.enqueueRuntime(deviceId,projectId,"render_portal_video",parameters);
+      return out({queued:true,commandId:c.id,sequence:c.seq,runtime:"studio-web",engine:"studio-web-portal-compositor-v1",note:"Keep Studio Web visible during the real-time local render."});
     }catch(e){return out({queued:false,error:e.message});}
   });
 
@@ -1403,10 +1433,12 @@ export default {
   async fetch(request,env,ctx){
     const u=new URL(request.url);
     if(u.pathname==="/"&&request.method==="GET"){
-      const html=APP_HTML.includes("/studio-runtime.js")?APP_HTML:APP_HTML.replace("</body>",'<script defer src="/studio-runtime.js"></script></body>');
+      let html=APP_HTML.includes("/studio-runtime.js")?APP_HTML:APP_HTML.replace("</body>",'<script defer src="/studio-runtime.js"></script></body>');
+      if(!html.includes("/studio-cinematic.js")) html=html.replace("</body>",'<script defer src="/studio-cinematic.js"></script></body>');
       return new Response(html,{headers:{"content-type":"text/html; charset=UTF-8","cache-control":"no-store"}});
     }
     if(u.pathname==="/studio-runtime.js"&&request.method==="GET") return new Response(STUDIO_RUNTIME_JS,{headers:{"content-type":"application/javascript; charset=UTF-8","cache-control":"no-cache"}});
+    if(u.pathname==="/studio-cinematic.js"&&request.method==="GET") return new Response(STUDIO_CINEMATIC_JS,{headers:{"content-type":"application/javascript; charset=UTF-8","cache-control":"no-cache"}});
     if(u.pathname==="/api/web/config"&&request.method==="GET") return reply({googleDriveClientId:clean(env.GOOGLE_DRIVE_CLIENT_ID||"",300),driveScope:"https://www.googleapis.com/auth/drive.file",storageMode:"user-owned-google-drive"});
     if(u.pathname==="/manifest.webmanifest") return new Response(MANIFEST,{headers:{"content-type":"application/manifest+json"}});
     if(u.pathname==="/icon.svg") return new Response(ICON,{headers:{"content-type":"image/svg+xml"}});
