@@ -2,7 +2,7 @@ package com.rezoxnemesis.videostudio;
 
 import org.json.JSONObject;
 
-/** Immutable playback continuity carried across editor view rebuilds. */
+/** Immutable-enough serialisable editor playback state used across UI rebuilds. */
 public final class LivePlaybackState {
     public final String mediaUri;
     public final long positionMs;
@@ -34,14 +34,14 @@ public final class LivePlaybackState {
         return out;
     }
 
-    public static LivePlaybackState fromJson(JSONObject value) {
-        JSONObject json = value == null ? new JSONObject() : value;
+    public static LivePlaybackState fromJson(JSONObject raw) {
+        JSONObject o = raw == null ? new JSONObject() : raw;
         return new LivePlaybackState(
-                json.optString("mediaUri", ""),
-                json.optLong("positionMs", 0L),
-                json.optBoolean("playWhenReady", false),
-                json.optString("snapshotId", ""),
-                json.optString("clipId", "")
+                o.optString("mediaUri", ""),
+                o.optLong("positionMs", 0L),
+                o.optBoolean("playWhenReady", false),
+                o.optString("snapshotId", ""),
+                o.optString("clipId", "")
         );
     }
 
