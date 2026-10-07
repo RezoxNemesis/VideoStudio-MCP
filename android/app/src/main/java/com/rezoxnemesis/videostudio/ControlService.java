@@ -161,6 +161,9 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 case "get_state":
                     complete(command, stateJson());
                     return;
+                case "self_test":
+                    complete(command, nativeSelfTest());
+                    return;
                 case "activity_note": {
                     String note = p.optString("message", "ChatGPT is working");
                     String noteStatus = p.optString("status", "info");
@@ -819,6 +822,47 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         return project;
     }
 
+    private JSONObject nativeSelfTest() {
+        JSONObject out = ok();
+        File probe = null;
+        try {
+            File dir = new File(getFilesDir(), "v3_health");
+            boolean dirReady = dir.exists() || dir.mkdirs();
+            probe = new File(dir, "probe.tmp");
+            if (dirReady) {
+                try (FileOutputStream stream = new FileOutputStream(probe)) {
+                    stream.write("videostudio-v3".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                    stream.flush();
+                }
+            }
+            out.put("appVersion", AppProtocol.APP_VERSION);
+            out.put("protocolVersion", AppProtocol.PROTOCOL_VERSION);
+            out.put("nativeAgent", "videostudio-v3");
+            out.put("privateStorageWritable", dirReady && probe.exists() && probe.length() > 0);
+            out.put("projectStoreReady", store.summaries() != null);
+            out.put("jobEngineReady", jobs.state() != null);
+            out.put("renderEngineReady", renderEngine != null);
+            out.put("analysisEngineReady", mediaAnalyzer != null);
+            out.put("promptVideoEngineReady", promptVideoEngine != null);
+            out.put("permissionMode", permissionMode());
+            out.put("galleryAccess", false);
+            out.put("directAttachmentIngest", true);
+            out.put("controlPaused", protocol.isControlPaused());
+            out.put("backgroundService", true);
+            out.put("result", "VideoStudio v3 native core healthy");
+        } catch (Exception error) {
+            try {
+                out.put("ok", false);
+                out.put("error", error.getMessage() == null ? "Self-test failed" : error.getMessage());
+            } catch (Exception ignored) {}
+        } finally {
+            if (probe != null && probe.exists()) {
+                try { probe.delete(); } catch (Exception ignored) {}
+            }
+        }
+        return out;
+    }
+
     private JSONObject stateJson() {
         JSONObject out = ok();
         try {
@@ -868,7 +912,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     private boolean isAllowed(String action, JSONObject parameters) {
         String lower = action == null ? "" : action.toLowerCase(Locale.US);
         if (lower.contains("gallery") || lower.contains("media_library") || lower.contains("photo_library")) return false;
-        if ("ping".equals(action) || "get_state".equals(action) || "activity_note".equals(action) || "cancel_job".equals(action) || "cancel_all_jobs".equals(action) || "stop_all".equals(action)) return true;
+        if ("ping".equals(action) || "get_state".equals(action) || "self_test".equals(action) || "activity_note".equals(action) || "cancel_job".equals(action) || "cancel_all_jobs".equals(action) || "stop_all".equals(action)) return true;
         String mode = permissionMode();
         if ("everything".equals(mode)) return true;
         if ("all_tools".equals(mode)) {
@@ -939,6 +983,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             case "cancel_all_jobs":
             case "stop_all": return "Stopping VideoStudio jobs";
             case "get_state": return "Reading VideoStudio state";
+            case "self_test": return "Running VideoStudio v3 self-test";
             case "activity_note": return "ChatGPT progress";
             default: return action.replace('_', ' ');
         }
