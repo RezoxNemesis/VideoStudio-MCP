@@ -22,6 +22,9 @@ public final class CommandJournal {
 
     public CommandJournal(Context context) {
         prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        // Legacy get_state snapshots contain the journal itself. Purge them on upgrade,
+        // preventing exponential diagnostic growth and associated memory pressure.
+        prefs.edit().putString(KEY, read().toString()).commit();
     }
 
     public synchronized JSONObject terminal(String commandId) {
@@ -44,7 +47,7 @@ public final class CommandJournal {
     }
 
     public synchronized void begin(JSONObject command) {
-        if (command == null) return;
+        if (command == null || "get_state".equals(command.optString("action"))) return;
         String id = command.optString("id");
         if (id.isEmpty()) return;
         JSONObject entry = new JSONObject();
@@ -59,7 +62,7 @@ public final class CommandJournal {
     }
 
     public synchronized void finish(JSONObject command, JSONObject result, String status) {
-        if (command == null) return;
+        if (command == null || "get_state".equals(command.optString("action"))) return;
         String id = command.optString("id");
         if (id.isEmpty()) return;
         JSONObject entry = new JSONObject();
@@ -98,7 +101,16 @@ public final class CommandJournal {
     }
 
     private JSONArray read() {
-        try { return new JSONArray(prefs.getString(KEY, "[]")); }
+        try {
+            JSONArray stored = new JSONArray(prefs.getString(KEY, "[]"));
+            JSONArray safe = new JSONArray();
+            for (int i = 0; i < stored.length() && safe.length() < MAX; i++) {
+                JSONObject entry = stored.optJSONObject(i);
+                if (entry != null && !"get_state".equals(entry.optString("action"))) safe.put(entry);
+            }
+            return safe;
+        }
         catch (Exception ignored) { return new JSONArray(); }
     }
 }
+

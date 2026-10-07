@@ -52,4 +52,16 @@ public class CreativeRuntimeTest {
             reopened.acknowledge("cmd-17");assertEquals(0,reopened.count());
         } finally {reopened.close();context.deleteDatabase("mcp_result_outbox.db");}
     }
+    @Test public void stateReadsDoNotRecursivelyAccumulateInMutationJournal() throws Exception {
+        Context context=RuntimeEnvironment.getApplication();
+        android.content.SharedPreferences prefs=context.getSharedPreferences("videostudio_native_v1",Context.MODE_PRIVATE);
+        prefs.edit().putString("mcp_v3_command_journal", "[{\"id\":\"old-state\",\"action\":\"get_state\",\"status\":\"completed\",\"result\":{\"commandJournal\":[{\"result\":{\"commandJournal\":[]}}]}},{\"id\":\"edit-1\",\"action\":\"apply_tool\",\"status\":\"completed\",\"result\":{\"ok\":true}}]").commit();
+        CommandJournal journal=new CommandJournal(context);
+        JSONObject read=new JSONObject("{\"id\":\"new-state\",\"action\":\"get_state\"}");
+        journal.begin(read);journal.finish(read,new JSONObject("{\"commandJournal\":[]}"),"completed");
+        assertEquals(1,journal.recent(20).length());assertNotNull(journal.terminal("edit-1"));
+        assertNull(journal.terminal("old-state"));assertNull(journal.terminal("new-state"));
+        assertFalse(prefs.getString("mcp_v3_command_journal", "").contains("commandJournal"));
+    }
+
 }
