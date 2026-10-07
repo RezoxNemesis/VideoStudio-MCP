@@ -1,11 +1,11 @@
-# VideoStudio v3.2
+# VideoStudio v3.2.1
 
 VideoStudio is a native-first Android video editor controlled from ChatGPT through a private MCP connection.
 
 ## v3 identity
 
-- Android app: **3.2.0**
-- Android versionCode: **320**
+- Android app: **3.2.1**
+- Android versionCode: **321**
 - Native protocol: **MCP v3**
 - Canonical private endpoint: `/app-mcp-v3/<device-owned-key>`
 - Native control API: `/api/v3/app/*`
@@ -86,6 +86,8 @@ The v3 MCP tool `app_import_attachment` uses ChatGPT's MCP file-parameter mechan
 The signalling Worker does not proxy the media in the primary v3 path.
 
 A short-lived relay remains only as a compatibility fallback.
+
+VideoStudio 3.2.1 also adds an **owner-authenticated inline still-frame fallback**. When the current ChatGPT host can read a conversation image but cannot expose a temporary HTTPS download URL to the installed connector schema, ChatGPT can send a bounded PNG/JPEG/WebP payload inside the private MCP command. The Android app verifies the optional SHA-256, validates image bounds, writes the bytes straight into app-private storage, and never publishes the frame to a public host or Gallery.
 
 ## Privacy
 
