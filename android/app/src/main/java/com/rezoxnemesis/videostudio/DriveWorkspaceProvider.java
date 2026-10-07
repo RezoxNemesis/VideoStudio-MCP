@@ -178,6 +178,13 @@ public final class DriveWorkspaceProvider {
     public JSONObject restoreProjectWorkspace(String projectId,
                                               File projectWorkspace,
                                               Progress progress) throws Exception {
+        return restoreProjectWorkspace(projectId, projectWorkspace, false, progress);
+    }
+
+    public JSONObject restoreProjectWorkspace(String projectId,
+                                              File projectWorkspace,
+                                              boolean preserveLocalControlMetadata,
+                                              Progress progress) throws Exception {
         if (projectId == null || projectId.trim().isEmpty()) {
             throw new IllegalArgumentException("projectId is required");
         }
@@ -202,6 +209,12 @@ public final class DriveWorkspaceProvider {
         for (RemoteEntry entry : remote) {
             if (Thread.currentThread().isInterrupted()) throw new InterruptedException();
             if ("project.json".equals(entry.relative)) continue;
+            if (preserveLocalControlMetadata
+                    && (entry.relative.startsWith("checkpoints/")
+                    || entry.relative.startsWith("scenes/")
+                    || "cloud_offload.json".equals(entry.relative))) {
+                continue;
+            }
             File target = safeTarget(projectWorkspace, entry.relative);
             File parent = target.getParentFile();
             if (parent != null && !parent.exists() && !parent.mkdirs() && !parent.exists()) {
@@ -234,6 +247,7 @@ public final class DriveWorkspaceProvider {
         out.put("filesRestored", files);
         out.put("bytesRestored", copied);
         out.put("scope", "single-user-selected-document-tree");
+        out.put("preservedLocalControlMetadata", preserveLocalControlMetadata);
         out.put("galleryAccess", false);
         progress.onProgress(100, "Project creative workspace restored");
         return out;
