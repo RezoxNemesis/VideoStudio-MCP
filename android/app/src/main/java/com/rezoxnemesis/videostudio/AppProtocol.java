@@ -237,6 +237,13 @@ public final class AppProtocol {
             meta.put("localEngineOwnsProjects", true);
             meta.put("portraitAnimationEngine", "v3.2-articulated-parallax");
             meta.put("onDevicePortraitAi", true);
+            meta.put("creativeRuntime", "v3.3");
+            meta.put("motionScriptVersion", MotionScriptCompiler.MOTION_SCRIPT_VERSION);
+            meta.put("creativeIrVersion", MotionScriptCompiler.CREATIVE_IR_VERSION);
+            meta.put("capabilityRegistry", true);
+            meta.put("modelPacks", true);
+            meta.put("computePlanner", true);
+            meta.put("folderScopedCloudWorkspace", true);
             meta.put("projects", projectSummary.optJSONArray("projects") == null ? new JSONArray() : projectSummary.optJSONArray("projects"));
 
             JSONObject body = new JSONObject();
