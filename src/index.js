@@ -287,6 +287,91 @@ export class VideoStudioState extends DurableObject {
     const {ownerHash:nativeOwnerHash,...safeNative}=native;
     return {binding:safeBinding,native:safeNative};
   }
+  async appEnqueueHybrid(hybridKey,action,parameters={}){
+    const resolved=await this.appResolveHybrid(hybridKey);
+    if(!resolved) throw new Error("Private hybrid binding rejected");
+    const d=resolved.native;
+    const min=Number(d.protocolMin||d.protocolVersion||0), max=Number(d.protocolMax||d.protocolVersion||0);
+    if(!(min<=3&&max>=3)) throw new Error("Hybrid native device does not support MCP v3");
+    if(d.controlPaused) throw new Error("ChatGPT control is paused on the phone");
+    if(!appActionAllowed(d.permissionMode,action)) throw new Error("Action blocked by device permission mode or Gallery privacy boundary: "+d.permissionMode);
+    const queueKey="app-v3-cl:"+d.deviceId, existing=(await this.ctx.storage.get(queueKey))||[];
+    if(existing.filter(c=>c.status==="queued"||c.status==="claimed"||c.status==="waiting_native").length>=160) throw new Error("Native command queue is full; reconnect the app before adding work");
+    const lastSeenMs=Date.parse(String(d.lastSeenAt||""))||0;
+    const fresh=lastSeenMs>0&&(Date.now()-lastSeenMs)<=45000;
+    const sk="app-v3-seq:"+d.deviceId, seq=((await this.ctx.storage.get(sk))||0)+1;
+    await this.ctx.storage.put(sk,seq);
+    const command={
+      id:crypto.randomUUID(),
+      seq,
+      protocolVersion:3,
+      deviceId:d.deviceId,
+      action,
+      parameters,
+      status:fresh?"queued":"waiting_native",
+      waitingReason:fresh?"":"native_offline",
+      createdAt:now(),
+      completedAt:null,
+      result:null
+    };
+    const list=[...existing,command];
+    const pending=list.filter(c=>c.status==="queued"||c.status==="claimed"||c.status==="waiting_native");
+    const terminal=list.filter(c=>c.status!=="queued"&&c.status!=="claimed"&&c.status!=="waiting_native");
+    const terminalSlots=Math.max(0,160-pending.length);
+    const retained=[...(terminalSlots?terminal.slice(-terminalSlots):[]),...pending].sort((a,b)=>a.seq-b.seq);
+    await this.ctx.storage.put(queueKey,retained.slice(-160));
+    return command;
+  }
+  async appCommandHybrid(hybridKey,id){
+    const resolved=await this.appResolveHybrid(hybridKey);
+    if(!resolved) throw new Error("Private hybrid binding rejected");
+    const list=(await this.ctx.storage.get("app-v3-cl:"+resolved.native.deviceId))||[];
+    return list.find(c=>c.id===id)||null;
+  }
+  async appStatusHybrid(hybridKey){
+    const resolved=await this.appResolveHybrid(hybridKey);
+    if(!resolved) return {connected:false,hybrid:true,error:"Private hybrid binding rejected"};
+    const d=resolved.native, binding=resolved.binding;
+    const list=(await this.ctx.storage.get("app-v3-cl:"+d.deviceId))||[];
+    const nativeLast=Date.parse(String(d.lastSeenAt||""))||0;
+    const nativeAge=nativeLast>0?Math.max(0,Date.now()-nativeLast):Number.MAX_SAFE_INTEGER;
+    const nativeFresh=nativeAge<=45000;
+    const web=await this.device(binding.webDeviceId);
+    const webLast=Date.parse(String(web&&web.lastSeenAt||""))||0;
+    const webAge=webLast>0?Math.max(0,Date.now()-webLast):Number.MAX_SAFE_INTEGER;
+    const webFresh=!!web&&webAge<=45000;
+    const pending=list.filter(c=>c.status==="queued"||c.status==="claimed"||c.status==="waiting_native").length;
+    return {
+      connected:webFresh||nativeFresh,
+      hybrid:true,
+      binding,
+      web:{connected:webFresh,lastSeenAgeMs:webAge===Number.MAX_SAFE_INTEGER?null:webAge,device:web||null},
+      native:{
+        connected:nativeFresh,
+        lastSeenAgeMs:nativeAge===Number.MAX_SAFE_INTEGER?null:nativeAge,
+        appVersion:d.appVersion||"",
+        appGeneration:Number(d.appGeneration||0),
+        protocolVersion:Number(d.protocolVersion||0),
+        connectionCoreVersion:Number(d.connectionCoreVersion||0),
+        permissionMode:d.permissionMode||"everything",
+        deviceId:d.deviceId
+      },
+      pendingNativeCommands:pending,
+      waitingNative:!nativeFresh&&pending>0,
+      lastCommand:list[list.length-1]||null,
+      galleryAccess:false
+    };
+  }
+  async appRevokeHybrid(hybridKey){
+    if(!hybridKey||String(hybridKey).length<32) throw new Error("Private hybrid binding rejected");
+    const hybridHash=await sha256Hex(hybridKey);
+    const binding=await this.ctx.storage.get("hybrid-binding:"+hybridHash);
+    if(!binding||binding.revoked) throw new Error("Private hybrid binding rejected");
+    binding.revoked=true;
+    binding.revokedAt=Date.now();
+    await this.ctx.storage.put("hybrid-binding:"+hybridHash,binding);
+    return {revoked:true,bindingId:binding.id,nativeDeviceId:binding.nativeDeviceId,webDeviceId:binding.webDeviceId};
+  }
   async appCreateRebind(ownerKey){
     const d=await this.appResolve(ownerKey);
     if(!d) throw new Error("Private App MCP credential rejected");
@@ -387,7 +472,7 @@ export class VideoStudioState extends DurableObject {
         // A later ack must never hide earlier unacknowledged commands.
         // Terminal records are filtered by status; queued/expired leases are always eligible.
         const expired=c.status==="claimed"&&Number(c.leaseUntil||0)<=nowMs;
-        if(c.status==="queued"||expired){
+        if(c.status==="queued"||c.status==="waiting_native"||expired){
           list[i]={...c,status:"claimed",claimedAt:now(),leaseUntil:nowMs+45000};
           found.push(list[i]);
           changed=true;
@@ -428,7 +513,7 @@ export class VideoStudioState extends DurableObject {
     return {
       connected:true,
       device:((({ownerHash,...safe})=>safe)(d)),
-      pendingCommands:list.filter(c=>c.status==="queued"||c.status==="claimed").length,
+      pendingCommands:list.filter(c=>c.status==="queued"||c.status==="claimed"||c.status==="waiting_native").length,
       lastCommand:list[list.length-1]||null,
       projectCount:Array.isArray(d.projects)?d.projects.length:0
     };
@@ -446,7 +531,7 @@ export class VideoStudioState extends DurableObject {
     if(d.controlPaused) throw new Error("ChatGPT control is paused on the phone");
     if(!appActionAllowed(d.permissionMode,action)) throw new Error("Action blocked by device permission mode or Gallery privacy boundary: "+d.permissionMode);
     const queueKey="app-v3-cl:"+d.deviceId, existing=(await this.ctx.storage.get(queueKey))||[];
-    if(existing.filter(c=>c.status==="queued"||c.status==="claimed").length>=160) throw new Error("Native command queue is full; reconnect the app before adding work");
+    if(existing.filter(c=>c.status==="queued"||c.status==="claimed"||c.status==="waiting_native").length>=160) throw new Error("Native command queue is full; reconnect the app before adding work");
     const sk="app-v3-seq:"+d.deviceId, seq=((await this.ctx.storage.get(sk))||0)+1;
     await this.ctx.storage.put(sk,seq);
     const c={
@@ -463,8 +548,8 @@ export class VideoStudioState extends DurableObject {
     };
     const k="app-v3-cl:"+d.deviceId, list=(await this.ctx.storage.get(k))||[];
     list.push(c);
-    const pending=list.filter(c=>c.status==="queued"||c.status==="claimed");
-    const terminal=list.filter(c=>c.status!=="queued"&&c.status!=="claimed");
+    const pending=list.filter(c=>c.status==="queued"||c.status==="claimed"||c.status==="waiting_native");
+    const terminal=list.filter(c=>c.status!=="queued"&&c.status!=="claimed"&&c.status!=="waiting_native");
     const terminalSlots=Math.max(0,160-pending.length);
     const retained=[...(terminalSlots?terminal.slice(-terminalSlots):[]),...pending].sort((a,b)=>a.seq-b.seq);
     await this.ctx.storage.put(k,retained.slice(-160));
