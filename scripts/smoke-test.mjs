@@ -2,6 +2,7 @@ import fs from "node:fs";
 
 const app = fs.readFileSync(new URL("../src/app.html", import.meta.url), "utf8");
 const worker = fs.readFileSync(new URL("../src/index.js", import.meta.url), "utf8");
+const studioRuntime = fs.readFileSync(new URL("../src/studio-runtime.js", import.meta.url), "utf8");
 const wrangler = fs.readFileSync(new URL("../wrangler.jsonc", import.meta.url), "utf8");
 const nativeMain = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/MainActivity.java", import.meta.url), "utf8");
 const nativeProtocol = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/AppProtocol.java", import.meta.url), "utf8");
@@ -44,6 +45,16 @@ try {
   console.error("APP SCRIPT SYNTAX ERROR:", error.message);
 }
 
+const runtimeMatch = studioRuntime.match(/String\.raw\`([\s\S]*?)\`;\s*export default/);
+let studioRuntimeParses = false;
+try {
+  if (!runtimeMatch) throw new Error("Studio Runtime source not found");
+  new Function(runtimeMatch[1]);
+  studioRuntimeParses = true;
+} catch (error) {
+  console.error("STUDIO RUNTIME SYNTAX ERROR:", error.message);
+}
+
 const checks = [
   ["inline app JavaScript parses", appScriptParses],
   ["app has Connect to ChatGPT control", app.includes("Connect to ChatGPT")],
@@ -57,6 +68,18 @@ const checks = [
   ["Studio Web has mobile editor navigation", app.includes("bottomDock") && app.includes('data-jump="editorSection"') && app.includes('data-jump="controlSection"')],
   ["Studio Web command relay adapts polling cadence to visibility", app.includes("async function commandLoop") && app.includes("document.hidden ? 2600 : 850")],
   ["worker advertises Studio Web 1.0 fallback execution", worker.includes('name:"VideoStudio-Studio-Web"') && worker.includes('version:"1.0.0"') && worker.includes('"browser fallback execution when Android app is unavailable"')],
+  ["Studio Runtime browser JavaScript parses", studioRuntimeParses],
+  ["worker serves the Studio Runtime as a first-party script", worker.includes('"/studio-runtime.js"') && worker.includes("STUDIO_RUNTIME_JS")],
+  ["Studio Web supports user-owned Google Drive drive.file storage", studioRuntime.includes("https://www.googleapis.com/auth/drive.file") && studioRuntime.includes("VideoStudio Studio Web") && studioRuntime.includes("uploadBlobResumable") && studioRuntime.includes("restoreProject") && studioRuntime.includes("offloadProject")],
+  ["Drive upload uses resumable chunks instead of website object storage", studioRuntime.includes("uploadType=resumable") && studioRuntime.includes("Content-Range") && studioRuntime.includes("8*1024*1024")],
+  ["Drive OAuth client ID can come from worker config or one-time browser setting", worker.includes("GOOGLE_DRIVE_CLIENT_ID") && studioRuntime.includes("vs-drive-client-id") && studioRuntime.includes("vsDriveClientId")],
+  ["Studio Web has real text image story and video generation modes", studioRuntime.includes('"prompt_scene"') && studioRuntime.includes('"image_motion"') && studioRuntime.includes('"story_video"') && studioRuntime.includes('"video_restyle"')],
+  ["Studio Web has real 2D 3D audio and VFX generation modes", studioRuntime.includes('"motion_graphics"') && studioRuntime.includes('"procedural_3d"') && studioRuntime.includes('"audio_visualizer"') && studioRuntime.includes('"abstract_vfx"')],
+  ["Studio generation records actual media blobs through canvas capture and MediaRecorder", studioRuntime.includes("canvas.captureStream") && studioRuntime.includes("new MediaRecorder") && studioRuntime.includes("registerGeneratedVideo")],
+  ["generated videos become real project assets and timeline clips", studioRuntime.includes("project.assets.push(asset)") && studioRuntime.includes("project.timeline.push") && studioRuntime.includes('kind: "video"') && studioRuntime.includes("generated: true")],
+  ["Studio Runtime has a separate autonomous command queue", worker.includes("enqueueRuntime") && worker.includes("/api/runtime/commands") && studioRuntime.includes("runtimeCommandLoop")],
+  ["MCP exposes Studio generation and Drive runtime controls", worker.includes('"generate_studio_video"') && worker.includes('"studio_drive_sync"') && worker.includes('"studio_drive_restore"') && worker.includes('"studio_drive_offload"') && worker.includes('"get_studio_runtime_result"')],
+  ["Studio project metadata persists Drive and generation state", worker.includes('"drive","generation"') && worker.includes("drive:{},generation:{}")],
   ["app has local render control", app.includes('id="renderBtn"')],
   ["app can generate local contact sheets", app.includes("analyseLocalMedia")],
   ["app polls remote commands", app.includes("pollCommands")],
