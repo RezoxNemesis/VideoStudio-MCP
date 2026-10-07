@@ -551,7 +551,7 @@ function serverForApp(env,ownerKey,protocolVersion=1){
   const isV3=Number(protocolVersion)===3;
   const s=new McpServer({
     name:isV3?"VideoStudio-App-MCP-v3":"VideoStudio-App-MCP",
-    version:isV3?"3.2.0":"1.1.2"
+    version:isV3?"3.2.1":"1.1.2"
   }), st=state(env);
   const enqueueCommand=(action,parameters={})=>isV3
     ? st.appEnqueueV3(ownerKey,action,parameters)
@@ -587,7 +587,7 @@ function serverForApp(env,ownerKey,protocolVersion=1){
   s.registerTool("app_status",{description:isV3?"Check the VideoStudio v3 Native Agent connection, protocol version, permission mode, projects and pending native work. Gallery access is always false.":"Check the private native VideoStudio Android connection, permission mode, projects, control-pause state and pending work. Gallery access is always false.",inputSchema:{}},async()=>out(await readStatus()));
 
   s.registerTool("app_capabilities",{description:isV3?"Read VideoStudio v3 Native Agent capabilities and architecture guarantees.":"Read the native v1.1 editing, AI, render and privacy capabilities available to ChatGPT.",inputSchema:{}},async()=>out({
-    version:isV3?"3.2.0":"1.1.2",
+    version:isV3?"3.2.1":"1.1.2",
     protocolVersion:isV3?3:1,
     primary:"Android native app",
     architecture:isV3?"native-first; cloud path is signalling only":"native app with private MCP relay",
@@ -598,7 +598,7 @@ function serverForApp(env,ownerKey,protocolVersion=1){
       ?["MCP v3 endpoint","Android Keystore owner key","device binding","isolated v3 command queue","leased commands","durable command idempotency journal","persistent foreground Native Agent","secure reconnect backoff","live ChatGPT activity feed","STOP CHATGPT CONTROL"]
       :["Android Keystore owner key","device binding","persistent foreground control service","leased commands","crash-safe completion checkpoints","secure reconnect backoff","notification pause/cancel controls","live ChatGPT activity feed","STOP CHATGPT CONTROL"],
     media:isV3
-      ?["direct ChatGPT attachment ingest to app-private storage","VideoStudio-owned media","explicit HTTPS import","manual Android picker","no Gallery enumeration","legacy short-lived relay fallback"]
+      ?["direct ChatGPT attachment ingest to app-private storage","owner-authenticated inline still-frame fallback","VideoStudio-owned media","explicit HTTPS import","manual Android picker","no Gallery enumeration","legacy short-lived relay fallback"]
       :["VideoStudio-owned media","explicit HTTPS import","manual Android picker","private handoff"],
     editing:["trim","split","0.25x-4x speed","slow motion","volume","titles","fonts","text animations","scale","rotate","blur","colour/HSL","motion presets","transition presets","reframe model","mask model","green-screen model","audio-duck model"],
     ai:["native visual analysis","scene-change sampling","bundled person segmentation","bundled face mesh","subject-aware image animation","2.5D parallax","autonomous edit plans","creator presets","prompt-to-video","multi-variant planning","short-form recut planning","render/export orchestration"],
@@ -685,6 +685,19 @@ function serverForApp(env,ownerKey,protocolVersion=1){
     name:file.file_name||"ChatGPT attachment",
     mime:file.mime_type||"",
     projectId:projectId||""
+  }));
+
+  if(isV3) s.registerTool("app_import_inline_base64",{
+    description:"Private compatibility fallback for still-image attachments when ChatGPT can read the attachment but cannot expose an Android-downloadable temporary HTTPS URL. Bytes stay inside the owner-authenticated MCP command and are written directly to VideoStudio app-private storage. PNG, JPEG and WebP only, maximum 12 MB decoded.",
+    inputSchema:{
+      name:z.string().min(1).max(180),
+      mime:z.enum(["image/png","image/jpeg","image/webp"]),
+      base64:z.string().min(1).max(17*1024*1024),
+      sha256:z.string().regex(/^[a-fA-F0-9]{64}$/).optional(),
+      projectId:z.string().min(8).optional()
+    }
+  },async({name,mime,base64,sha256,projectId})=>queue("import_inline_base64",{
+    name,mime,base64,sha256:sha256||"",projectId:projectId||""
   }));
 
   s.registerTool("app_import_chat_file",{description:"Securely stream a file attached in this ChatGPT conversation into VideoStudio. Short-lived relay metadata only; media is not permanently stored by the Worker. Available in Full Autonomous mode; Gallery enumeration remains blocked.",inputSchema:{sourceUrl:z.string().url(),name:z.string().min(1).max(180),mime:z.string().max(120).optional(),size:z.number().nonnegative().optional(),projectId:z.string().min(8).optional()}},async({sourceUrl,name,mime,size,projectId})=>{
