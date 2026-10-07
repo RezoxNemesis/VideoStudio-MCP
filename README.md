@@ -52,6 +52,7 @@ The first foundation slice includes:
 - an app-private creative workspace for scene source, compiled plans, generated artifacts, masks, depth, pose, flow, rigs, meshes, audio, checkpoints, previews and renders
 - a capability-first provider registry so future local image, motion, depth, pose, interpolation, voice and 3D model packs can plug into the same runtime
 - a transactional optional model-pack installer using explicit VideoStudio-owned assets, guarded ZIP extraction, manifest/license validation, optional SHA-256 verification and atomic activation
+- a hardware-aware compute planner that treats RAM as a bounded active workspace, selects tiled inference and small temporal windows, and plans phase-by-phase model swapping instead of assuming an entire future generative pipeline must stay resident
 - generated video registration as first-class project media instead of only storing a latest-export URI
 - an editor **Media Bin** with generated/source roles, preview and timeline insertion
 - live editor refresh when native background work changes project state
