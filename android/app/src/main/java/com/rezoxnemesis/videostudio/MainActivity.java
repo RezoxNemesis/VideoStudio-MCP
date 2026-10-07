@@ -1476,6 +1476,9 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
     }
 
     private boolean isAllowed(String action, JSONObject parameters) {
+        String lower = action == null ? "" : action.toLowerCase(Locale.US);
+        // Hard boundary: no MCP mode may enumerate or browse the user's Gallery.
+        if (lower.contains("gallery") || lower.contains("media_library") || lower.contains("photo_library")) return false;
         if ("ping".equals(action) || "get_state".equals(action)) return true;
         String mode = permissionMode();
         if ("everything".equals(mode)) return true;
@@ -1490,8 +1493,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                 return activeProject != null && index >= 0 && index < activeProject.clips.size()
                         && allowed.equals(activeProject.clips.get(index).assetId);
             }
-            if ("preview_project".equals(action)) return true;
-            return false;
+            return "preview_project".equals(action) || "analyse_media".equals(action) || "export_project".equals(action) || "cancel_job".equals(action);
         }
         return false;
     }
@@ -1500,9 +1502,12 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         JSONObject out = new JSONObject();
         try {
             out.put("deviceId", protocol.deviceId());
-            out.put("appVersion", "1.0.1");
+            out.put("appVersion", "1.1.0");
             out.put("nativeApp", true);
             out.put("permissionMode", permissionMode());
+            out.put("controlPaused", protocol.isControlPaused());
+            out.put("galleryAccess", false);
+            out.put("galleryBoundary", "MCP cannot list, browse or enumerate Gallery media. Only Android-picker selections and explicit ChatGPT handoffs are usable.");
             out.put("projects", store.summaries().optJSONArray("projects"));
             if (activeProject != null) {
                 out.put("activeProjectId", activeProject.id);
@@ -1510,11 +1515,32 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                 out.put("clipCount", activeProject.clips.size());
                 out.put("assetCount", activeProject.assets.size());
                 out.put("durationMs", activeProject.outputDurationMs());
+                out.put("latestExportUri", activeProject.latestExportUri);
+                out.put("latestExportName", activeProject.latestExportName);
+                out.put("sourcePrompt", activeProject.sourcePrompt);
+                JSONArray assets = new JSONArray();
+                for (ProjectStore.Asset a : activeProject.assets) {
+                    JSONObject ai = new JSONObject();
+                    ai.put("id", a.id);
+                    ai.put("name", a.name);
+                    ai.put("mime", a.mime);
+                    ai.put("durationMs", a.durationMs);
+                    assets.put(ai);
+                }
+                out.put("activeAssets", assets);
             }
             out.put("jobs", jobs.state().optJSONArray("jobs"));
             out.put("workload", jobs.state());
+            out.put("creatorCatalog", CreatorCatalog.describe());
             JSONArray caps = new JSONArray();
-            String[] values = {"native-ui","local-projects","media-picker","timeline","trim","split","slow-motion-preview","speed","green-screen-model","transitions-model","motion-model","effects-model","colour-model","masks-model","private-app-mcp","chat-attachment-handoff","url-import","bounded-multitasking","thermal-guard","memory-guard","job-cancel"};
+            String[] values = {
+                    "native-ui","local-projects","private-app-mcp","chat-attachment-handoff","url-import",
+                    "timeline","trim","split","speed","slow-motion","native-frame-analysis","scene-change-sampling",
+                    "media3-native-export","prompt-to-video","gpu-brightness","gpu-contrast","gpu-hsl","gpu-blur",
+                    "gpu-motion","scale","rotate","creator-transition-model","green-screen-model","masks-model",
+                    "fonts","text-animation-model","audio-ducking-model","ai-edit-plans","autonomous-edit-and-export",
+                    "bounded-multitasking","crash-recovery-checkpoints","thermal-guard","memory-guard","job-cancel"
+            };
             for (String v : values) caps.put(v);
             out.put("capabilities", caps);
         } catch (Exception ignored) {}
@@ -1547,6 +1573,9 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         if (effects.has("speedRamp")) names.add("Speed Ramp");
         if (effects.has("reframe")) names.add("Reframe");
         if (effects.has("motionBlur")) names.add("Motion Blur");
+        if (effects.has("blur")) names.add("Blur");
+        if (effects.has("fontFamily")) names.add(effects.optString("fontFamily"));
+        if (effects.has("textAnimation")) names.add("Text FX");
         return names.isEmpty() ? "Effect" : String.join(" • ", names);
     }
 
