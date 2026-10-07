@@ -365,6 +365,9 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 case "sync_project_to_drive":
                     complete(command, queueDriveProjectSync(p));
                     return;
+                case "offload_project_to_drive":
+                    complete(command, queueDriveProjectOffload(p));
+                    return;
                 case "restore_project_from_drive":
                     complete(command, queueDriveProjectRestore(p));
                     return;
@@ -1271,6 +1274,9 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                     case "sync_project_to_drive":
                         queued = queueDriveProjectSync(parameters);
                         break;
+                    case "offload_project_to_drive":
+                        queued = queueDriveProjectOffload(parameters);
+                        break;
                     case "restore_project_from_drive":
                         queued = queueDriveProjectRestore(parameters);
                         break;
@@ -1306,6 +1312,62 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         } catch (Exception ignored) {
             return false;
         }
+    }
+
+    private JSONObject queueDriveProjectOffload(JSONObject p) throws Exception {
+        ProjectStore.Project project = resolveProject(p.optString("projectId", ""));
+        if (!driveWorkspace.isLinked()) {
+            throw new IllegalStateException("No folder-scoped cloud workspace is linked. Link one from VideoStudio > Control.");
+        }
+
+        JSONObject durableParameters = new JSONObject(p.toString());
+        durableParameters.put("projectId", project.id);
+
+        JobManager.Job job = submitRecoverableHeavy(
+                "offload_project_to_drive",
+                durableParameters,
+                project.id,
+                "Cloud offload • " + project.name,
+                state -> {
+                    File workspace = creativeWorkspace.projectRoot(project.id);
+                    checkpoint(state, "Cloud offload", "Verifying cloud archive before local eviction", 2, project.id);
+                    JSONObject archived = driveWorkspace.syncProject(
+                            project,
+                            workspace,
+                            (progress, detail) -> checkpoint(
+                                    state,
+                                    "Cloud offload",
+                                    detail,
+                                    Math.max(2, Math.min(86, (int) (2 + progress * .84))),
+                                    project.id
+                            )
+                    );
+                    if (!archived.optBoolean("ok", false)) {
+                        throw new IllegalStateException("Cloud archive verification did not complete");
+                    }
+                    jobs.awaitSafeCheckpoint(state, "cloud_offload_commit");
+                    checkpoint(state, "Cloud offload", "Archive verified • evicting only cloud-backed intermediates", 90, project.id);
+                    JSONObject evicted = creativeWorkspace.evictCloudBackedProject(project.id);
+                    checkpoint(state, "Cloud offload",
+                            "Freed " + evicted.optLong("removedBytes", 0) + " bytes of local creative working data",
+                            100, project.id);
+                    ActivityLog.add(this, "system", "Project workspace offloaded",
+                            project.name + " • " + evicted.optLong("removedBytes", 0) + " bytes freed locally",
+                            "success", 100, null, project.id);
+                    syncProtocolState();
+                }
+        );
+
+        JSONObject result = ok();
+        result.put("queued", true);
+        result.put("jobId", job.id);
+        result.put("projectId", project.id);
+        result.put("durableRecovery", true);
+        result.put("archiveBeforeEvict", true);
+        result.put("preservesProjectState", true);
+        result.put("preservesFinalExports", true);
+        result.put("galleryAccess", false);
+        return result;
     }
 
     private JSONObject queueDriveProjectRestore(JSONObject p) throws Exception {
@@ -1779,6 +1841,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     }
 
     private void runExportBlocking(ProjectStore.Project project, String aspect, String quality, String fileName, JobManager.Job state) throws Exception {
+        ensureProjectWorkspaceHydrated(project, state);
         jobs.awaitSafeCheckpoint(state, "native_export_prepare");
         File dir = new File(getCacheDir(), "native_exports");
         if (!dir.exists() && !dir.mkdirs()) throw new IllegalStateException("Could not create export workspace");
@@ -1837,6 +1900,59 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         if (!ready.delete()) { /* cache cleanup best effort */ }
         activeRender = null;
         syncProtocolState();
+    }
+
+    private void ensureProjectWorkspaceHydrated(ProjectStore.Project project,
+                                               JobManager.Job state) throws Exception {
+        if (project == null || !hasMissingCreativeLayerFiles(project)) return;
+        JSONObject offloadState = creativeWorkspace.cloudOffloadState(project.id);
+        if (!offloadState.optBoolean("offloaded", false)) {
+            throw new IllegalStateException("Creative layer files are missing and no verified cloud-offload marker is present");
+        }
+        if (!driveWorkspace.isLinked()) {
+            throw new IllegalStateException("Project intermediates are cloud-offloaded but the linked workspace is unavailable");
+        }
+
+        checkpoint(state, "Cloud rehydrate", "Restoring evicted creative layers before rendering", 12, project.id);
+        File workspace = creativeWorkspace.projectRoot(project.id);
+        JSONObject restored = driveWorkspace.restoreProjectWorkspace(
+                project.id,
+                workspace,
+                true,
+                (progress, detail) -> checkpoint(
+                        state,
+                        "Cloud rehydrate",
+                        detail,
+                        Math.max(12, Math.min(18, 12 + (int) (progress * .06))),
+                        project.id
+                )
+        );
+        if (!restored.optBoolean("ok", false) || hasMissingCreativeLayerFiles(project)) {
+            throw new IllegalStateException("Cloud rehydration completed but required creative layer files are still missing");
+        }
+        creativeWorkspace.markCloudHydrated(project.id);
+        checkpoint(state, "Cloud rehydrate", "Creative working set restored on demand", 19, project.id);
+    }
+
+    private boolean hasMissingCreativeLayerFiles(ProjectStore.Project project) {
+        if (project == null) return false;
+        String[] keys = {"foregroundUri", "headUri", "torsoUri", "lowerUri", "backgroundUri"};
+        for (ProjectStore.Clip clip : project.clips) {
+            if (clip == null || clip.effects == null) continue;
+            for (String key : keys) {
+                String raw = clip.effects.optString(key, "");
+                if (raw.isEmpty()) continue;
+                try {
+                    Uri uri = Uri.parse(raw);
+                    if (!"file".equalsIgnoreCase(uri.getScheme())) continue;
+                    String path = uri.getPath();
+                    if (path != null && !path.isEmpty() && !new File(path).isFile()) return true;
+                } catch (Exception ignored) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     private JSONObject queueDirectAttachmentImport(JSONObject p) throws Exception {
@@ -2448,6 +2564,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             case "drive_workspace_status": return "Reading cloud workspace";
             case "drive_workspace_inventory": return "Scanning linked cloud workspace";
             case "sync_project_to_drive": return "Archiving project to cloud workspace";
+            case "offload_project_to_drive": return "Offloading project workspace to cloud";
             case "restore_project_from_drive": return "Restoring project creative workspace";
             case "archive_model_pack_to_drive": return "Archiving model pack to cloud workspace";
             case "restore_model_pack_from_drive": return "Restoring model pack from cloud workspace";
@@ -2511,6 +2628,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         if ("drive_workspace_status".equals(action)) return result.optBoolean("linked", false) ? "Cloud workspace is linked" : "Cloud workspace is not linked";
         if ("drive_workspace_inventory".equals(action)) return "Folder-scoped cloud workspace scanned";
         if ("sync_project_to_drive".equals(action)) return "Project archive queued to folder-scoped cloud workspace";
+        if ("offload_project_to_drive".equals(action)) return "Verified cloud archive and local workspace offload queued";
         if ("restore_project_from_drive".equals(action)) return "Project workspace restore queued from cloud";
         if ("archive_model_pack_to_drive".equals(action)) return "Model-pack archive queued to cloud";
         if ("restore_model_pack_from_drive".equals(action)) return "Model-pack restore queued from cloud";
