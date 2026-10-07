@@ -21,7 +21,7 @@ const appActionAllowed = (mode,action) => {
   const a=String(action||"").toLowerCase();
   // Hard privacy boundary: no MCP permission mode may browse or enumerate Gallery/library media.
   if(a.includes("gallery")||a.includes("media_library")||a.includes("photo_library")) return false;
-  if(["ping","get_state","activity_note"].includes(a)) return true;
+  if(["ping","get_state","self_test","job_status","activity_note","cancel_job","cancel_all_jobs","stop_all"].includes(a)) return true;
   if(mode==="everything") return true;
   if(mode==="all_tools") return !["import_url","import_attachment","import_chat_file","delete_project"].includes(a);
   if(mode==="one_file") return ["apply_tool","preview_project","analyse_media","export_project","cancel_job"].includes(a);
