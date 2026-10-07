@@ -1305,6 +1305,11 @@ function serverForApp(env,ownerKey,protocolVersion=1){
     }catch(e){ return out({queued:false,error:e.message}); }
   });
 
+  if(isV3) s.registerTool("app_create_hybrid_binding",{
+    description:"Ask the Android Native Agent to mint a short-lived one-time challenge that binds a Studio Web device to this existing permanent native identity. The resulting private hybrid MCP key survives compatible APK upgrades.",
+    inputSchema:{webDeviceId:z.string().min(8).max(160)}
+  },async({webDeviceId})=>queue("create_hybrid_binding",{webDeviceId}));
+
   if(isV3) s.registerTool("app_connection_health",{
     description:"Read the Android Native Agent's stable MCP Connection Core health, app generation and persisted service heartbeat without changing identity or browsing Gallery.",
     inputSchema:{}
@@ -1410,6 +1415,21 @@ async function api(request,env){
           acceptedAppGeneration:Number(registration.appGeneration||0)
         }
       });
+    }
+    if(u.pathname==="/api/v3/app/hybrid/challenge"&&request.method==="POST"){
+      const b=await request.json(), token=bearer(request);
+      const registered=await st.appAuth(b.deviceId,token);
+      if(!registered) return reply({error:"VideoStudio stable MCP authorization failed"},401);
+      const expected=Math.max(0,Number(registered.appGeneration||0));
+      const received=Math.max(0,Number(b.appGeneration||0));
+      if(expected>0&&received!==expected) return reply({
+        error:"Stale Native Agent generation",
+        staleClient:true,
+        expectedGeneration:expected,
+        receivedGeneration:received
+      },409);
+      const challenge=await st.appCreateHybridBinding(token,b.webDeviceId);
+      return reply({ok:true,protocolVersion:3,challenge});
     }
     if(u.pathname==="/api/v3/app/status"&&request.method==="GET"){
       const status=await st.appStatusV3(bearer(request));
