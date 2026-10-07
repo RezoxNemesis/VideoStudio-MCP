@@ -434,30 +434,9 @@ const STUDIO_CINEMATIC_JS = String.raw`
     setInterval(refreshSelectors,15000);
   }
 
-  async function completeCommand(command,result,status="completed"){
-    await api("/api/runtime/commands/"+encodeURIComponent(command.id)+"/complete",{method:"POST",body:JSON.stringify({deviceId:deviceId(),result,status})});
-  }
-
-  let lastSeq=Number(localStorage.getItem("vs-cinematic-last-seq")||0);
-  async function commandLoop(){
-    while(true){
-      try{
-        const data=await api("/api/runtime/commands?deviceId="+encodeURIComponent(deviceId())+"&after="+lastSeq);
-        for(const c of data.commands||[]){
-          lastSeq=Math.max(lastSeq,Number(c.seq||0));localStorage.setItem("vs-cinematic-last-seq",String(lastSeq));
-          if(c.status!=="queued"||c.action!=="render_portal_video")continue;
-          try{
-            const result=await renderPortal(c.parameters||{});await completeCommand(c,result,"completed");
-          }catch(e){await completeCommand(c,{ok:false,error:e.message},"failed").catch(()=>{});}
-        }
-      }catch{}
-      await sleep(document.hidden?3800:1100);
-    }
-  }
-
-  window.VideoStudioCinematic={renderPortal,state};
-  if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",()=>{inject();commandLoop();});
-  else{inject();commandLoop();}
+  window.VideoStudioCinematic={renderPortal,state,refreshSelectors};
+  if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",inject);
+  else inject();
 })();
 `;
 
