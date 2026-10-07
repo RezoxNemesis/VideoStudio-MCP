@@ -708,7 +708,9 @@ function serverForApp(env,ownerKey,protocolVersion=1){
     }catch(e){ return out({queued:false,error:e.message}); }
   });
 
-  s.registerTool("app_batch",{description:"Queue up to 20 native VideoStudio actions quickly in order. Gallery/library enumeration is blocked regardless of permission mode.",inputSchema:{actions:z.array(z.object({action:z.enum(["get_state","select_project","apply_edit_plan","apply_tool","creator_preset","preview_project","analyse_media","animate_images","job_status","export_project","cancel_job","activity_note"]),parameters:z.record(z.string(),z.any()).optional()})).min(1).max(20)}},async({actions})=>{
+  if(isV3) s.registerTool("app_execute",{description:"Stable future-compatible VideoStudio v3 action bridge. Use this for native actions introduced by future app versions without requiring the ChatGPT connector to be recreated. Gallery/media-library enumeration remains permanently blocked by the server regardless of the requested action.",inputSchema:{action:z.string().min(1).max(80),parameters:z.record(z.string(),z.any()).optional()}},async({action,parameters})=>queue(action,parameters||{}));
+
+  s.registerTool("app_batch",{description:"Queue up to 20 native VideoStudio actions quickly in order. This v3-compatible batch surface accepts future native action names so app upgrades do not require reconnecting the ChatGPT connector. Gallery/library enumeration is blocked regardless of permission mode.",inputSchema:{actions:z.array(z.object({action:z.string().min(1).max(80),parameters:z.record(z.string(),z.any()).optional()})).min(1).max(20)}},async({actions})=>{
     const queued=[];
     try{
       for(const item of actions){
