@@ -10,7 +10,7 @@ The design must stay usable without paid cloud services. Heavy assets and models
 
 The first executable foundation slice is now present in the v3.3 code line:
 
-- [x] safe MotionScript 0.1 parser/compiler
+- [x] safe MotionScript 0.2 parser/compiler with subjects, identity, rigs, depth/pose/hands, voice, generation, lights and provider requirements
 - [x] versioned CreativeIR JSON output
 - [x] app-private creative workspace and atomic scene persistence
 - [x] generated-output registration into project media
@@ -42,6 +42,10 @@ Unchecked items are explicitly future work and must not be represented as alread
 ## Core architecture
 
 ### 1. MotionScript scene compiler
+
+MotionScript 0.2 now has executable declarations for subject identity, rig intent, depth/pose/hands, hair and cloth motion, camera/lens, lighting, narration/voice, generation nodes, interpolation, upscaling and critique policy. The compiler emits explicit provider requirements which are resolved against the installed capability registry before execution. Unsupported advanced requirements remain visible as unresolved instead of being silently faked.
+
+
 
 A constrained VideoStudio-specific scene language, not arbitrary shell/code execution.
 
