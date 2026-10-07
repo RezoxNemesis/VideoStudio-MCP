@@ -22,6 +22,7 @@ const atmosphere = fs.readFileSync(new URL("../android/app/src/main/java/com/rez
 const creativeWorkspace = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/CreativeWorkspace.java", import.meta.url), "utf8");
 const motionScriptCompiler = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/MotionScriptCompiler.java", import.meta.url), "utf8");
 const activityLog = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/ActivityLog.java", import.meta.url), "utf8");
+const recoveryPlans = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/RecoveryPlanStore.java", import.meta.url), "utf8");
 
 const scriptMatch = app.match(/<script>([\s\S]*?)<\/script>/);
 let appScriptParses = false;
@@ -150,6 +151,10 @@ const checks = [
   ["Native Agent compiles and executes MotionScript", controlService.includes('case "compile_scene"') && controlService.includes('case "run_motion_script"') && controlService.includes("compileMotionScene") && controlService.includes("runMotionScript")],
   ["MCP v3 exposes typed MotionScript and creative workspace tools", worker.includes('"app_compile_scene"') && worker.includes('"app_run_motion_script"') && worker.includes('"app_workspace_status"') && worker.includes('"app_cleanup_workspace"')],
   ["future generic MCP bridge remains available alongside typed creative tools", worker.includes('"app_execute"') && worker.includes('"app_batch"')],
+  ["durable recovery plans persist reconstructable heavy actions", recoveryPlans.includes("durable_recovery_plans_v1") && recoveryPlans.includes("pendingForAutoResume") && recoveryPlans.includes("outputUri")],
+  ["Native Agent auto-resumes supported interrupted heavy jobs", controlService.includes("recoverDurablePlans()") && controlService.includes("submitRecoverableHeavy") && controlService.includes('case "animate_images"') && controlService.includes('case "prompt_video"') && controlService.includes('case "export_project"')],
+  ["published output prevents duplicate render after restart", controlService.includes("markOutputForJob") && controlService.includes("Recovered completed render") && controlService.includes("isReadableOutput")],
+  ["recovery plans follow explicit job cancellation", controlService.includes("recoveryPlans.cancelByJob") && controlService.includes("recoveryPlans.cancelActive")],
   ["native v3 exposes a self-test", controlService.includes('case "self_test"') && worker.includes('"app_self_test"') && controlService.includes("privateStorageWritable")],
   ["native state reports v3 architecture", controlService.includes('out.put("mcpEndpointVersion", "v3")') && controlService.includes('out.put("localEngineOwnsProjects", true)')],
   ["cached connector compatibility routes v3 devices to v3 queue", worker.includes("enqueueNative") && worker.includes("appEnqueueV3") && worker.includes("commandNative")],
