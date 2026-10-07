@@ -150,6 +150,77 @@ export class VideoStudioState extends DurableObject {
     if(!id) return null;
     return (await this.ctx.storage.get("app-device:"+id))||null;
   }
+  async appCreateRebind(ownerKey){
+    const d=await this.appResolve(ownerKey);
+    if(!d) throw new Error("Private App MCP credential rejected");
+    const ownerHash=await sha256Hex(ownerKey);
+    const activeKey="app-rebind-active:"+ownerHash;
+    const activeToken=await this.ctx.storage.get(activeKey);
+    if(activeToken){
+      const existing=await this.ctx.storage.get("app-rebind:"+activeToken);
+      if(existing&&Number(existing.expiresAt||0)>Date.now()&&!existing.used){
+        return {
+          token:activeToken,
+          expiresAt:existing.expiresAt,
+          deepLink:"videostudio://mcp-rebind?token="+encodeURIComponent(activeToken)
+        };
+      }
+    }
+    const token=crypto.randomUUID()+"."+crypto.randomUUID();
+    const record={
+      token,
+      oldOwnerHash:ownerHash,
+      oldDeviceId:d.deviceId,
+      createdAt:Date.now(),
+      expiresAt:Date.now()+15*60*1000,
+      used:false
+    };
+    await this.ctx.storage.put("app-rebind:"+token,record);
+    await this.ctx.storage.put(activeKey,token);
+    return {
+      token,
+      expiresAt:record.expiresAt,
+      deepLink:"videostudio://mcp-rebind?token="+encodeURIComponent(token)
+    };
+  }
+
+  async appRedeemRebind(token,deviceId,newOwnerKey,meta={}){
+    if(!token||String(token).length<30) throw new Error("Invalid MCP rebind token");
+    if(!deviceId||String(deviceId).length<8) throw new Error("Invalid native device ID");
+    if(!newOwnerKey||String(newOwnerKey).length<32) throw new Error("Invalid owner key");
+    const key="app-rebind:"+String(token);
+    const record=await this.ctx.storage.get(key);
+    if(!record||record.used) throw new Error("MCP rebind token is invalid or already used");
+    if(Number(record.expiresAt||0)<Date.now()){
+      await this.ctx.storage.delete(key);
+      throw new Error("MCP rebind token expired");
+    }
+
+    const registered=await this.appRegister(deviceId,newOwnerKey,meta);
+    if(registered&&registered.__staleClient) throw new Error("New Native Agent generation is stale");
+    const newHash=await sha256Hex(newOwnerKey);
+    const device=(await this.ctx.storage.get("app-device:"+deviceId))||{};
+    device.reboundFromDeviceId=record.oldDeviceId||"";
+    device.reboundAt=now();
+    device.stableEndpointAliases=2;
+    await this.ctx.storage.put("app-device:"+deviceId,device);
+
+    // Preserve the old ChatGPT connector credential as an alias to the new
+    // Native Agent while the newly installed app keeps its own fresh secret.
+    await this.ctx.storage.put("app-owner:"+record.oldOwnerHash,deviceId);
+    await this.ctx.storage.put("app-owner:"+newHash,deviceId);
+
+    record.used=true;
+    record.usedAt=Date.now();
+    record.newDeviceId=deviceId;
+    await this.ctx.storage.put(key,record);
+    await this.ctx.storage.delete("app-rebind-active:"+record.oldOwnerHash);
+
+    const {ownerHash,...safe}=device;
+    return safe;
+  }
+
+
   async appAuth(deviceId,ownerKey){
     const d=await this.appResolve(ownerKey);
     return d&&d.deviceId===deviceId?d:null;
@@ -361,7 +432,8 @@ export class VideoStudioState extends DurableObject {
       galleryAccess:false,
       directAttachmentIngest:true,
       portraitAnimationEngine:d.portraitAnimationEngine||"",
-      onDevicePortraitAi:!!d.onDevicePortraitAi
+      onDevicePortraitAi:!!d.onDevicePortraitAi,
+      rebind:!fresh ? await this.appCreateRebind(ownerKey) : {available:false}
     };
   }
 
@@ -977,6 +1049,36 @@ async function api(request,env){
       }
       return reply({
         ok:true,
+        protocolVersion:3,
+        mcpEndpointVersion:"v3-stable",
+        stableMcpEndpoint:true,
+        device:registration,
+        connection:{
+          selectedProtocol:3,
+          apiPrefix:"/api/v3/app",
+          stableMcpPath:"/app-mcp-v3/",
+          heartbeatMs:12000,
+          commandWaitMs:18000,
+          requestTimeoutMs:30000,
+          leaseMs:60000,
+          endpointMode:"stable-compatibility",
+          compatibilityPolicy:"stable-major-additive-features",
+          wireSchemaVersion:1,
+          transportDecoupledFromApkVersion:true,
+          serverEpoch:"stable-core-2",
+          acceptedAppGeneration:Number(registration.appGeneration||0)
+        }
+      });
+    }
+    if(u.pathname==="/api/v3/app/rebind"&&request.method==="POST"){
+      const b=await request.json(), meta=b.meta||{};
+      const min=Number(meta.protocolMin||meta.protocolVersion||0);
+      const max=Number(meta.protocolMax||meta.protocolVersion||0);
+      if(!(min<=3&&max>=3)) return reply({ok:false,error:"Stable MCP compatibility lane v3 is required"},409);
+      const registration=await st.appRedeemRebind(b.token,b.deviceId,b.ownerKey,meta);
+      return reply({
+        ok:true,
+        rebound:true,
         protocolVersion:3,
         mcpEndpointVersion:"v3-stable",
         stableMcpEndpoint:true,
