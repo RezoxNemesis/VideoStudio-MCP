@@ -144,7 +144,9 @@ public final class AppProtocol {
      */
     public HttpURLConnection openPrivateHandoff(String handoffId) throws Exception {
         if (handoffId == null || handoffId.trim().isEmpty()) throw new IllegalArgumentException("Missing handoff ID");
-        String path = BASE + connectionCore.apiPrefix() + "/handoffs/" + enc(handoffId) + "/content?deviceId=" + enc(deviceId);
+        String path = BASE + connectionCore.apiPrefix() + "/handoffs/" + enc(handoffId)
+                + "/content?deviceId=" + enc(deviceId)
+                + "&appGeneration=" + connectionCore.appGeneration();
         HttpURLConnection c = (HttpURLConnection) new URL(path).openConnection();
         c.setRequestMethod("GET");
         c.setConnectTimeout(15000);
