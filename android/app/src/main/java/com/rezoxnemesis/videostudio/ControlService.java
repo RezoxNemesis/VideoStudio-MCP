@@ -145,6 +145,16 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 case "get_state":
                     complete(command, stateJson());
                     return;
+                case "activity_note": {
+                    String note = p.optString("message", "ChatGPT is working");
+                    String noteStatus = p.optString("status", "info");
+                    Integer noteProgress = p.has("progress") ? p.optInt("progress") : null;
+                    ActivityLog.add(this, "chatgpt", p.optString("title", "ChatGPT progress"), note, noteStatus, noteProgress, commandId, p.optString("projectId", ""));
+                    JSONObject result = ok();
+                    result.put("logged", true);
+                    complete(command, result);
+                    return;
+                }
                 case "create_project": {
                     ProjectStore.Project project = store.create(p.optString("name", "ChatGPT Project"));
                     JSONObject result = ok();
@@ -699,7 +709,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         JSONObject out = ok();
         try {
             out.put("deviceId", protocol.deviceId());
-            out.put("appVersion", "1.1.1");
+            out.put("appVersion", "1.1.2");
             out.put("nativeApp", true);
             out.put("backgroundControl", true);
             out.put("permissionMode", permissionMode());
@@ -738,7 +748,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     private boolean isAllowed(String action, JSONObject parameters) {
         String lower = action == null ? "" : action.toLowerCase(Locale.US);
         if (lower.contains("gallery") || lower.contains("media_library") || lower.contains("photo_library")) return false;
-        if ("ping".equals(action) || "get_state".equals(action) || "cancel_job".equals(action) || "cancel_all_jobs".equals(action) || "stop_all".equals(action)) return true;
+        if ("ping".equals(action) || "get_state".equals(action) || "activity_note".equals(action) || "cancel_job".equals(action) || "cancel_all_jobs".equals(action) || "stop_all".equals(action)) return true;
         String mode = permissionMode();
         if ("everything".equals(mode)) return true;
         if ("all_tools".equals(mode)) {
@@ -803,6 +813,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             case "cancel_all_jobs":
             case "stop_all": return "Stopping VideoStudio jobs";
             case "get_state": return "Reading VideoStudio state";
+            case "activity_note": return "ChatGPT progress";
             default: return action.replace('_', ' ');
         }
     }
