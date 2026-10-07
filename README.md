@@ -1,11 +1,11 @@
-# VideoStudio v3.1
+# VideoStudio v3.2
 
 VideoStudio is a native-first Android video editor controlled from ChatGPT through a private MCP connection.
 
 ## v3 identity
 
-- Android app: **3.1.0**
-- Android versionCode: **310**
+- Android app: **3.2.0**
+- Android versionCode: **320**
 - Native protocol: **MCP v3**
 - Canonical private endpoint: `/app-mcp-v3/<device-owned-key>`
 - Native control API: `/api/v3/app/*`
@@ -31,23 +31,24 @@ Existing v1/v1.1 projects are migrated automatically on first v3 launch.
 
 ## Native still-image animation
 
-VideoStudio 3.1 adds a zero-paid-service portrait animation engine while keeping the connection protocol on **MCP v3**.
+VideoStudio 3.2 strengthens the zero-paid-service portrait animation engine while keeping the connection protocol on **MCP v3**.
 
 The Android app bundles on-device ML for person segmentation and face mesh. For imported still images it can:
 
 - extract a transparent subject layer
+- split that subject into feathered head/hair, torso and lower-drape/body layers
 - reconstruct the hidden background region while preserving visible environment detail
 - anchor framing around the detected face/subject
 - generate varied multi-keyframe cinematic camera paths
 - animate foreground and background at independent depths for 2.5D parallax
-- add restrained whole-subject breathing/sway micro-motion
+- add independent head drift/nod, torso breathing and lower-drape/body sway
 - reorder wide/medium/close shots for visual rhythm
 - add procedural water glints, mist, rain, wind particles or light breathing
 - render the layers as a real local MP4 through Media3
 
 The autonomous MCP v3 tools include `app_animate_images` and `app_job_status`.
 
-This is genuine layered motion/compositing, but it does **not** claim full non-rigid generative deformation of facial expressions, hair strands or cloth folds. Those can be added later through optional local model modules without changing the editor/MCP architecture.
+This is genuine articulated layered motion/compositing, but it does **not** claim full generative facial-expression synthesis or per-strand/per-fold non-rigid deformation. Those can be added later through optional local model modules without changing the editor/MCP architecture.
 
 ## ChatGPT attachment ingest
 
