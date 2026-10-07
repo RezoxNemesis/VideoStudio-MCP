@@ -23,6 +23,7 @@ import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
+import java.net.InetAddress;
 import java.net.URL;
 import java.util.ArrayList;
 import java.util.Locale;
@@ -44,6 +45,8 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     private static final String KEY_FILE = "allowed_asset_id";
     private static final String KEY_SERVICE_ONLINE = "control_service_online";
     private static final String KEY_SERVICE_DETAIL = "control_service_detail";
+    private static final long MAX_REMOTE_IMPORT_BYTES = 350L * 1024L * 1024L;
+    private static final int MAX_REMOTE_REDIRECTS = 5;
 
     private ProjectStore store;
     private JobManager jobs;
@@ -771,40 +774,34 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         String name = p.optString("name", "ChatGPT attachment");
         String mimeHint = p.optString("mime", "");
         long sizeHint = Math.max(0, p.optLong("size", 0));
+        if (sizeHint > MAX_REMOTE_IMPORT_BYTES) {
+            throw new IllegalArgumentException("Attachment exceeds VideoStudio's 350 MB direct-import safety limit");
+        }
 
         JobManager.Job job = jobs.submit("Direct attachment • " + name, JobManager.Kind.LIGHT, state -> {
             File dir = new File(getFilesDir(), "imports");
             if (!dir.exists() && !dir.mkdirs()) throw new IllegalStateException("Could not create import directory");
             File file = new File(dir, System.currentTimeMillis() + "_" + sanitizeFileName(name));
 
-            HttpURLConnection connection = (HttpURLConnection) new URL(sourceUrl).openConnection();
-            connection.setConnectTimeout(18000);
-            connection.setReadTimeout(90000);
-            connection.setInstanceFollowRedirects(true);
-            connection.setRequestProperty("Accept", "*/*");
-            connection.setRequestProperty("User-Agent", "VideoStudio-Android/3.0.0 MCPv3-DirectIngest");
-            int code = connection.getResponseCode();
-            if (code < 200 || code >= 300) throw new IllegalStateException("Attachment source rejected: HTTP " + code);
-
+            HttpURLConnection connection = openSafeRemote(sourceUrl, 18000, 90000);
             String mime = mimeHint.isEmpty() ? connection.getContentType() : mimeHint;
             if (mime == null || mime.isEmpty()) mime = "application/octet-stream";
             long expected = connection.getContentLengthLong();
             if (expected <= 0) expected = sizeHint;
 
-            try (InputStream in = connection.getInputStream(); FileOutputStream out = new FileOutputStream(file)) {
-                byte[] buffer = new byte[192 * 1024];
-                long bytes = 0;
-                int n;
-                while ((n = in.read(buffer)) >= 0) {
-                    if (Thread.currentThread().isInterrupted()) throw new InterruptedException();
-                    out.write(buffer, 0, n);
-                    bytes += n;
-                    int progress = expected > 0
-                            ? Math.min(97, (int) (97d * bytes / expected))
-                            : Math.min(95, (int) (bytes / 1024 / 1024));
-                    checkpoint(state, "Direct ChatGPT attachment import",
-                            (bytes / 1024 / 1024) + " MB received directly by VideoStudio", progress, project.id);
-                }
+            try {
+                copyRemoteToFile(
+                        connection,
+                        file,
+                        expected,
+                        state,
+                        project.id,
+                        "Direct ChatGPT attachment import",
+                        "received directly by VideoStudio"
+                );
+            } catch (Exception error) {
+                if (file.exists()) file.delete();
+                throw error;
             } finally {
                 connection.disconnect();
             }
@@ -826,19 +823,116 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     private void validateRemoteHttps(String raw) throws Exception {
         URL parsed = new URL(raw);
         if (!"https".equalsIgnoreCase(parsed.getProtocol())) {
-            throw new IllegalArgumentException("VideoStudio v3 direct attachment ingest requires HTTPS");
+            throw new IllegalArgumentException("VideoStudio v3 remote ingest requires HTTPS");
         }
+        if (parsed.getUserInfo() != null) {
+            throw new IllegalArgumentException("Credential-bearing import URLs are not permitted");
+        }
+        int port = parsed.getPort();
+        if (port != -1 && port != 443) {
+            throw new IllegalArgumentException("Non-standard HTTPS import ports are not permitted");
+        }
+
         String host = parsed.getHost() == null ? "" : parsed.getHost().toLowerCase(Locale.US);
         if (host.isEmpty()
                 || "localhost".equals(host)
+                || "0.0.0.0".equals(host)
                 || "127.0.0.1".equals(host)
                 || "::1".equals(host)
                 || host.endsWith(".local")
                 || host.endsWith(".internal")
+                || host.endsWith(".localhost")
                 || host.startsWith("10.")
                 || host.startsWith("192.168.")
                 || private172(host)) {
             throw new IllegalArgumentException("Private-network attachment sources are not permitted");
+        }
+
+        InetAddress[] resolved = InetAddress.getAllByName(host);
+        if (resolved.length == 0) throw new IllegalArgumentException("Attachment host did not resolve");
+        for (InetAddress address : resolved) {
+            byte[] rawAddress = address.getAddress();
+            boolean uniqueLocalV6 = rawAddress.length == 16 && ((rawAddress[0] & 0xfe) == 0xfc);
+            if (address.isAnyLocalAddress()
+                    || address.isLoopbackAddress()
+                    || address.isLinkLocalAddress()
+                    || address.isSiteLocalAddress()
+                    || address.isMulticastAddress()
+                    || uniqueLocalV6) {
+                throw new IllegalArgumentException("Attachment host resolves to a private/local address");
+            }
+        }
+    }
+
+    private HttpURLConnection openSafeRemote(String raw, int connectTimeoutMs, int readTimeoutMs) throws Exception {
+        String current = raw;
+        for (int redirects = 0; redirects <= MAX_REMOTE_REDIRECTS; redirects++) {
+            validateRemoteHttps(current);
+            URL url = new URL(current);
+            HttpURLConnection connection = (HttpURLConnection) url.openConnection();
+            connection.setConnectTimeout(connectTimeoutMs);
+            connection.setReadTimeout(readTimeoutMs);
+            connection.setInstanceFollowRedirects(false);
+            connection.setRequestProperty("Accept", "*/*");
+            connection.setRequestProperty("User-Agent", "VideoStudio-Android/" + AppProtocol.APP_VERSION + " MCPv3-SafeIngest");
+
+            int code = connection.getResponseCode();
+            if (code == HttpURLConnection.HTTP_MOVED_PERM
+                    || code == HttpURLConnection.HTTP_MOVED_TEMP
+                    || code == HttpURLConnection.HTTP_SEE_OTHER
+                    || code == 307
+                    || code == 308) {
+                String location = connection.getHeaderField("Location");
+                connection.disconnect();
+                if (location == null || location.trim().isEmpty()) {
+                    throw new IllegalStateException("Attachment redirect had no destination");
+                }
+                current = new URL(url, location).toString();
+                continue;
+            }
+            if (code < 200 || code >= 300) {
+                connection.disconnect();
+                throw new IllegalStateException("Attachment source rejected: HTTP " + code);
+            }
+            long length = connection.getContentLengthLong();
+            if (length > MAX_REMOTE_IMPORT_BYTES) {
+                connection.disconnect();
+                throw new IllegalStateException("Remote media exceeds VideoStudio's 350 MB safety limit");
+            }
+            return connection;
+        }
+        throw new IllegalStateException("Too many attachment redirects");
+    }
+
+    private void copyRemoteToFile(HttpURLConnection connection,
+                                  File file,
+                                  long expected,
+                                  JobManager.Job state,
+                                  String projectId,
+                                  String activity,
+                                  String progressSuffix) throws Exception {
+        long announced = expected > 0 ? expected : connection.getContentLengthLong();
+        if (announced > MAX_REMOTE_IMPORT_BYTES) {
+            throw new IllegalStateException("Remote media exceeds VideoStudio's 350 MB safety limit");
+        }
+        try (InputStream in = connection.getInputStream(); FileOutputStream out = new FileOutputStream(file)) {
+            byte[] buffer = new byte[192 * 1024];
+            long bytes = 0;
+            int n;
+            while ((n = in.read(buffer)) >= 0) {
+                if (Thread.currentThread().isInterrupted()) throw new InterruptedException();
+                bytes += n;
+                if (bytes > MAX_REMOTE_IMPORT_BYTES) {
+                    throw new IllegalStateException("Remote media exceeded VideoStudio's 350 MB safety limit while streaming");
+                }
+                out.write(buffer, 0, n);
+                int progress = announced > 0
+                        ? Math.min(97, (int) (97d * bytes / announced))
+                        : Math.min(95, 4 + (int) (91d * bytes / MAX_REMOTE_IMPORT_BYTES));
+                checkpoint(state, activity,
+                        (bytes / 1024 / 1024) + " MB " + progressSuffix, progress, projectId);
+            }
+            out.flush();
         }
     }
 
@@ -872,17 +966,12 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             String mime = mimeHint.isEmpty() ? connection.getContentType() : mimeHint;
             if (mime == null || mime.isEmpty()) mime = "application/octet-stream";
             long expected = connection.getContentLengthLong();
-            try (InputStream in = connection.getInputStream(); FileOutputStream out = new FileOutputStream(file)) {
-                byte[] buffer = new byte[128 * 1024];
-                long bytes = 0;
-                int n;
-                while ((n = in.read(buffer)) >= 0) {
-                    if (Thread.currentThread().isInterrupted()) throw new InterruptedException();
-                    out.write(buffer, 0, n);
-                    bytes += n;
-                    int progress = expected > 0 ? Math.min(96, (int) (96d * bytes / expected)) : Math.min(94, (int) (bytes / 1024 / 1024));
-                    checkpoint(state, "Importing ChatGPT file", (bytes / 1024 / 1024) + " MB securely streamed", progress, project.id);
-                }
+            try {
+                copyRemoteToFile(connection, file, expected, state, project.id,
+                        "Importing ChatGPT file", "securely streamed");
+            } catch (Exception error) {
+                if (file.exists()) file.delete();
+                throw error;
             } finally {
                 connection.disconnect();
             }
@@ -899,7 +988,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
 
     private JSONObject queueUrlImport(JSONObject p) throws Exception {
         String url = p.optString("url");
-        if (!url.startsWith("https://")) throw new IllegalArgumentException("Only HTTPS imports are allowed");
+        validateRemoteHttps(url);
         ProjectStore.Project project = resolveProject(p.optString("projectId", ""));
         String name = p.optString("name", "ChatGPT import");
 
@@ -907,26 +996,16 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             File dir = new File(getFilesDir(), "imports");
             if (!dir.exists() && !dir.mkdirs()) throw new IllegalStateException("Could not create import directory");
             File file = new File(dir, System.currentTimeMillis() + "_" + sanitizeFileName(name));
-            HttpURLConnection connection = (HttpURLConnection) new URL(url).openConnection();
-            connection.setConnectTimeout(15000);
-            connection.setReadTimeout(45000);
-            connection.setRequestProperty("User-Agent", "VideoStudio-Android/3.0.0");
-            int code = connection.getResponseCode();
-            if (code < 200 || code >= 300) throw new IllegalStateException("Import failed: HTTP " + code);
+            HttpURLConnection connection = openSafeRemote(url, 15000, 60000);
             String mime = connection.getContentType();
             if (mime == null) mime = "application/octet-stream";
             long expected = connection.getContentLengthLong();
-            try (InputStream in = connection.getInputStream(); FileOutputStream out = new FileOutputStream(file)) {
-                byte[] buffer = new byte[128 * 1024];
-                long bytes = 0;
-                int n;
-                while ((n = in.read(buffer)) >= 0) {
-                    if (Thread.currentThread().isInterrupted()) throw new InterruptedException();
-                    out.write(buffer, 0, n);
-                    bytes += n;
-                    int progress = expected > 0 ? Math.min(96, (int) (96d * bytes / expected)) : Math.min(94, (int) (bytes / 1024 / 1024));
-                    checkpoint(state, "Importing media", (bytes / 1024 / 1024) + " MB received", progress, project.id);
-                }
+            try {
+                copyRemoteToFile(connection, file, expected, state, project.id,
+                        "Importing media", "received");
+            } catch (Exception error) {
+                if (file.exists()) file.delete();
+                throw error;
             } finally {
                 connection.disconnect();
             }
