@@ -780,6 +780,11 @@ function serverForApp(env,ownerKey,protocolVersion=1){
     }
   },async({projectId})=>queue("sync_project_to_drive",{projectId:projectId||""}));
 
+  if(isV3) s.registerTool("app_offload_project_to_drive",{
+    description:"Archive the active VideoStudio Creative Runtime workspace to the linked folder-scoped cloud tier, verify the archive, then evict only cloud-backed intermediates locally. Project SQLite state, MotionScript/checkpoints, source media and final exports stay local. Rendering can rehydrate evicted layers automatically.",
+    inputSchema:{projectId:z.string().min(8).optional()}
+  },async({projectId})=>queue("offload_project_to_drive",{projectId:projectId||""}));
+
   if(isV3) s.registerTool("app_restore_project_from_drive",{
     description:"Restore one project's Creative Runtime workspace from the linked folder-scoped cloud archive into VideoStudio app-private storage. SQLite project state and Gallery are not overwritten or browsed.",
     inputSchema:{projectId:z.string().min(8).optional()}
