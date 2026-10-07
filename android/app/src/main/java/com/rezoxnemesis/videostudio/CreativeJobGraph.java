@@ -185,8 +185,13 @@ public final class CreativeJobGraph {
                 for (String dep : globalAnalysisNodes) deps.put(dep);
                 for (String dep : generationNodes) deps.put(dep);
                 String name = safeId(shot.optString("name", "shot_" + i));
-                JSONObject shotInput = new JSONObject(shot.toString());
-                shotInput.put("_shotIndex", i);
+                JSONObject shotInput;
+                try {
+                    shotInput = new JSONObject(shot.toString());
+                    shotInput.put("_shotIndex", i);
+                } catch (Exception ignored) {
+                    shotInput = shot;
+                }
                 String node = addNode(nodes, unresolvedSet,
                         "shot." + name,
                         "compose",
