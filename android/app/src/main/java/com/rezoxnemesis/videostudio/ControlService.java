@@ -243,6 +243,17 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 case "connection_health":
                     complete(command, connectionHealth());
                     return;
+                case "create_hybrid_binding": {
+                    String webDeviceId = p.optString("webDeviceId", "").trim();
+                    JSONObject result = protocol.createHybridBinding(webDeviceId);
+                    JSONObject challenge = result.optJSONObject("challenge");
+                    ActivityLog.add(this, "chatgpt", "Studio Web binding challenge",
+                            challenge == null ? "Hybrid binding rejected" : "One-time challenge created for Studio Web",
+                            challenge == null ? "failed" : "success", challenge == null ? null : 100,
+                            commandId, null);
+                    complete(command, result);
+                    return;
+                }
                 case "reconnect_mcp": {
                     protocol.forceReconnect();
                     markService(false, "Forced stable MCP re-registration requested");
