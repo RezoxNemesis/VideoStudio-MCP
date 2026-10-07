@@ -551,11 +551,10 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         scroll.addView(box);
 
         box.addView(title("Autonomous Control", 27));
-        box.addView(body("Permissions are enforced locally by VideoStudio v3. The MCP path is signalling/control only; projects, media and editing state live in the app."));
-        box.addView(section("Access Mode"));
-        box.addView(permissionCard("everything", "Allow everything except Gallery  •  Recommended", "Default autonomous mode. ChatGPT can use every VideoStudio tool, import files you explicitly share, create/manage projects, analyse, animate, edit, render, inspect and retry without repeated permission prompts. Gallery listing/browsing remains technically blocked."));
-        box.addView(permissionCard("all_tools", "Allow all tools", "Optional restricted mode: editing and analysis on already imported project media, with remote import and project deletion blocked."));
-        box.addView(permissionCard("one_file", "Allow one file", "Optional restricted mode: ChatGPT can work only on the currently authorised media file."));
+        box.addView(body("Full Autonomous is the default. The MCP path is signalling/control only; projects, media and editing state live in the app. Gallery enumeration remains a hard technical boundary, not a permission toggle."));
+        box.addView(section("Autonomy Mode"));
+        box.addView(permissionCard("everything", "Full Autonomous  •  Recommended", "ChatGPT can use every VideoStudio-native operation: explicit file imports, project management, analysis, AI animation, editing, rendering, inspection, retries and cleanup without repeated permission prompts. Gallery listing/browsing remains technically blocked."));
+        box.addView(permissionCard("one_file", "One File Lock", "Optional manual safety lock. Restricts ChatGPT to the currently authorised media file until you switch back to Full Autonomous."));
 
         box.addView(section("Workload Safety"));
         LinearLayout safety = card(false);
@@ -1734,16 +1733,8 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         String lower = action == null ? "" : action.toLowerCase(Locale.US);
         // Hard boundary: no MCP mode may enumerate or browse the user's Gallery.
         if (lower.contains("gallery") || lower.contains("media_library") || lower.contains("photo_library")) return false;
-        if ("ping".equals(action) || "get_state".equals(action)) return true;
-        String mode = permissionMode();
-        if ("everything".equals(mode)) return true;
-        if ("all_tools".equals(mode)) {
-            return !"import_url".equals(action)
-                    && !"import_attachment".equals(action)
-                    && !"import_chat_file".equals(action)
-                    && !"delete_project".equals(action);
-        }
-        if ("one_file".equals(mode)) {
+
+        if ("one_file".equals(permissionMode())) {
             String allowed = prefs.getString(KEY_FILE, "");
             if (allowed.isEmpty()) return false;
             if ("apply_tool".equals(action)) {
@@ -1751,9 +1742,19 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                 return activeProject != null && index >= 0 && index < activeProject.clips.size()
                         && allowed.equals(activeProject.clips.get(index).assetId);
             }
-            return "preview_project".equals(action) || "analyse_media".equals(action) || "export_project".equals(action) || "cancel_job".equals(action);
+            return "ping".equals(action)
+                    || "get_state".equals(action)
+                    || "self_test".equals(action)
+                    || "job_status".equals(action)
+                    || "activity_note".equals(action)
+                    || "preview_project".equals(action)
+                    || "analyse_media".equals(action)
+                    || "export_project".equals(action)
+                    || "cancel_job".equals(action)
+                    || "cancel_all_jobs".equals(action)
+                    || "stop_all".equals(action);
         }
-        return false;
+        return true;
     }
 
     private JSONObject stateJson() {
@@ -1854,7 +1855,12 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
     }
 
     private String permissionMode() {
-        return prefs.getString(KEY_MODE, "everything");
+        String raw = prefs.getString(KEY_MODE, "everything");
+        if ("one_file".equals(raw)) return "one_file";
+        if (!"everything".equals(raw)) {
+            prefs.edit().putString(KEY_MODE, "everything").apply();
+        }
+        return "everything";
     }
 
     private void refreshCurrent() {
