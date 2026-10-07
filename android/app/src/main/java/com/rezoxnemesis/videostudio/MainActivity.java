@@ -170,7 +170,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         LinearLayout hero = card(true);
         TextView heroTitle = title("Create Without Limits", 28);
         hero.addView(heroTitle);
-        hero.addView(body("Native " + AppProtocol.APP_VERSION + " Creative Runtime • MCP v3 • on-device portrait AI • MotionScript/CreativeIR • local Media3 export"));
+        hero.addView(body("Native " + AppProtocol.APP_VERSION + " Creative Runtime • stable MCP compatibility core • on-device portrait AI • MotionScript/CreativeIR • local Media3 export"));
         Button promptVideo = neonButton("✦  Create Video from a Prompt", C_MAGENTA);
         promptVideo.setOnClickListener(v -> promptVideoDialog());
         hero.addView(promptVideo, margins(-1, dp(54), dp(14), dp(8), 0, 0));
@@ -692,8 +692,8 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
 
         box.addView(section("Private Connection"));
         LinearLayout privateCard = card(false);
-        privateCard.addView(title("Device-owned MCP v3 endpoint", 17));
-        privateCard.addView(body("MCP v3 uses the Keystore-protected device identity, an isolated v3 command queue, durable duplicate-command protection, leased commands and secure reconnect. VideoStudio remains the source of truth."));
+        privateCard.addView(title("Device-owned stable MCP endpoint", 17));
+        privateCard.addView(body("This same private MCP endpoint survives compatible APK updates. The Keystore owner identity stays fixed while the Connection Core negotiates the current app generation, heartbeat and command profile. Stale Native Agent processes are fenced automatically. VideoStudio remains the source of truth."));
         Button pause = neonButton(protocol.isControlPaused() ? "Resume ChatGPT Control" : "STOP CHATGPT CONTROL", protocol.isControlPaused() ? C_CYAN : Color.rgb(180, 38, 67));
         pause.setOnClickListener(v -> {
             boolean next = !protocol.isControlPaused();
@@ -2076,14 +2076,20 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                 long heartbeat = prefs.getLong("control_service_heartbeat", 0);
                 boolean fresh = System.currentTimeMillis() - heartbeat < 35000;
                 String reported = prefs.getString("control_service_app_version", "");
-                if (!fresh || !AppProtocol.APP_VERSION.equals(reported)) {
+                long reportedGeneration = prefs.getLong("control_service_app_generation", 0);
+                int reportedCore = prefs.getInt("control_service_connection_core_version", 0);
+                boolean currentGeneration = reportedGeneration == protocol.appGeneration();
+                boolean currentCore = reportedCore == McpConnectionCore.CORE_VERSION;
+                if (!fresh || !AppProtocol.APP_VERSION.equals(reported) || !currentGeneration || !currentCore) {
                     requestServiceSync();
                 }
                 if (connectionPill != null) {
                     connectionPill.setText(serviceConnectionText());
                     boolean online = prefs.getBoolean("control_service_online", false)
                             && System.currentTimeMillis() - prefs.getLong("control_service_heartbeat", 0) < 65000
-                            && AppProtocol.APP_VERSION.equals(prefs.getString("control_service_app_version", ""));
+                            && AppProtocol.APP_VERSION.equals(prefs.getString("control_service_app_version", ""))
+                            && prefs.getLong("control_service_app_generation", 0) == protocol.appGeneration()
+                            && prefs.getInt("control_service_connection_core_version", 0) == McpConnectionCore.CORE_VERSION;
                     connectionPill.setTextColor(online ? Color.rgb(74, 255, 172) : C_MUTED);
                 }
                 ui.postDelayed(this, 10000);
@@ -2098,15 +2104,23 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         String detail = prefs.getString("control_service_detail", "");
         boolean fresh = System.currentTimeMillis() - heartbeat < 65000;
         String serviceVersion = prefs.getString("control_service_app_version", "");
+        long serviceGeneration = prefs.getLong("control_service_app_generation", 0);
+        int coreVersion = prefs.getInt("control_service_connection_core_version", 0);
         if (protocol != null && protocol.isControlPaused()) return "●  ChatGPT control paused • tap Control to resume";
-        if (online && fresh && AppProtocol.APP_VERSION.equals(serviceVersion)) {
-            return "●  " + (detail == null || detail.isEmpty() ? "VideoStudio MCP v3 online" : detail)
-                    + " • app " + serviceVersion;
+        if (online && fresh
+                && AppProtocol.APP_VERSION.equals(serviceVersion)
+                && serviceGeneration == protocol.appGeneration()
+                && coreVersion == McpConnectionCore.CORE_VERSION) {
+            return "●  " + (detail == null || detail.isEmpty() ? "VideoStudio stable MCP online" : detail)
+                    + " • app " + serviceVersion + " • gen " + serviceGeneration;
         }
-        if (!serviceVersion.isEmpty() && !AppProtocol.APP_VERSION.equals(serviceVersion)) {
-            return "○  Restarting Native Agent • app " + AppProtocol.APP_VERSION + " / service " + serviceVersion;
+        if (!serviceVersion.isEmpty() && (!AppProtocol.APP_VERSION.equals(serviceVersion)
+                || serviceGeneration != protocol.appGeneration()
+                || coreVersion != McpConnectionCore.CORE_VERSION)) {
+            return "○  Rebinding Native Agent • app " + AppProtocol.APP_VERSION
+                    + " • gen " + protocol.appGeneration();
         }
-        return "○  MCP v3 Native Agent starting • app " + AppProtocol.APP_VERSION;
+        return "○  Stable MCP Native Agent starting • app " + AppProtocol.APP_VERSION;
     }
 
     @Override
