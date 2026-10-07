@@ -571,8 +571,8 @@ export class VideoStudioState extends DurableObject {
         // A later ack must never hide earlier unacknowledged commands.
         // Terminal records are filtered by status; queued/expired leases are always eligible.
         const expired=c.status==="claimed"&&Number(c.leaseUntil||0)<=nowMs;
-        if(c.status==="queued"||expired){
-          list[i]={...c,status:"claimed",claimedAt:now(),leaseUntil:nowMs+60000,claimCount:Number(c.claimCount||0)+1};
+        if(c.status==="queued"||c.status==="waiting_native"||expired){
+          list[i]={...c,status:"claimed",waitingReason:"",claimedAt:now(),leaseUntil:nowMs+60000,claimCount:Number(c.claimCount||0)+1};
           found.push(list[i]);
           changed=true;
           if(found.length>=4) break;
