@@ -342,7 +342,9 @@ export class VideoStudioState extends DurableObject {
     const webFresh=!!web&&webAge<=45000;
     const pending=list.filter(c=>c.status==="queued"||c.status==="claimed"||c.status==="waiting_native").length;
     return {
-      connected:webFresh||nativeFresh,
+      connected:true,
+      controlPlaneConnected:true,
+      executionAvailable:webFresh||nativeFresh,
       hybrid:true,
       binding,
       web:{connected:webFresh,lastSeenAgeMs:webAge===Number.MAX_SAFE_INTEGER?null:webAge,device:web||null},
@@ -532,6 +534,8 @@ export class VideoStudioState extends DurableObject {
     if(!appActionAllowed(d.permissionMode,action)) throw new Error("Action blocked by device permission mode or Gallery privacy boundary: "+d.permissionMode);
     const queueKey="app-v3-cl:"+d.deviceId, existing=(await this.ctx.storage.get(queueKey))||[];
     if(existing.filter(c=>c.status==="queued"||c.status==="claimed"||c.status==="waiting_native").length>=160) throw new Error("Native command queue is full; reconnect the app before adding work");
+    const lastSeenMs=Date.parse(String(d.lastSeenAt||""))||0;
+    const fresh=lastSeenMs>0&&(Date.now()-lastSeenMs)<=45000;
     const sk="app-v3-seq:"+d.deviceId, seq=((await this.ctx.storage.get(sk))||0)+1;
     await this.ctx.storage.put(sk,seq);
     const c={
@@ -541,7 +545,8 @@ export class VideoStudioState extends DurableObject {
       deviceId:d.deviceId,
       action,
       parameters,
-      status:"queued",
+      status:fresh?"queued":"waiting_native",
+      waitingReason:fresh?"":"native_offline",
       createdAt:now(),
       completedAt:null,
       result:null
@@ -636,8 +641,18 @@ export class VideoStudioState extends DurableObject {
     const lastSeenMs=Date.parse(String(d.lastSeenAt||""))||0;
     const ageMs=lastSeenMs>0?Math.max(0,Date.now()-lastSeenMs):Number.MAX_SAFE_INTEGER;
     const fresh=ageMs<=45000;
+    const pending=list.filter(c=>c.status==="queued"||c.status==="claimed"||c.status==="waiting_native");
+    const waitingNative=pending.filter(c=>c.status==="waiting_native").length;
     return {
-      connected:fresh,
+      // The private MCP endpoint is a Durable Object control plane and remains
+      // reachable even when Android is sleeping. Native execution health is
+      // reported separately so clients can keep accepting autonomous work.
+      connected:true,
+      controlPlaneConnected:true,
+      nativeConnected:fresh,
+      executionAvailable:fresh,
+      offlineQueueAvailable:true,
+      nativeState:fresh?"online":"sleeping_or_offline",
       registered:true,
       stale:!fresh,
       lastSeenAgeMs:ageMs===Number.MAX_SAFE_INTEGER?null:ageMs,
@@ -656,7 +671,10 @@ export class VideoStudioState extends DurableObject {
       appGeneration:Number(d.appGeneration||0),
       nativeAgent:"videostudio-v3",
       device:safe,
-      pendingCommands:list.filter(c=>c.status==="queued"||c.status==="claimed").length,
+      pendingCommands:pending.length,
+      waitingNativeCommands:waitingNative,
+      canAcceptAutonomousWork:true,
+      queuedExecutionPolicy:"native-on-reconnect",
       lastCommand:list[list.length-1]||null,
       projectCount:Array.isArray(d.projects)?d.projects.length:0,
       galleryAccess:false,
