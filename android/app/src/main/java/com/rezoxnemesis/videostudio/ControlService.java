@@ -621,7 +621,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         result.put("render", render);
         result.put("aspect", aspect);
         result.put("quality", quality);
-        result.put("engine", "VideoStudio v3.1 portrait animation");
+        result.put("engine", "VideoStudio v3.2 articulated portrait animation");
         return result;
     }
 
@@ -1128,7 +1128,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             out.put("nativeAgent", "videostudio-v3");
             out.put("directAttachmentIngest", true);
             out.put("localEngineOwnsProjects", true);
-            out.put("portraitAnimationEngine", "v3.1-layered-parallax");
+            out.put("portraitAnimationEngine", "v3.2-articulated-parallax");
             out.put("onDevicePortraitAi", true);
             out.put("nativeApp", true);
             out.put("backgroundControl", true);
