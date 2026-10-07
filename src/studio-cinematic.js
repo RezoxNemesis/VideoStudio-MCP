@@ -14,7 +14,11 @@ const STUDIO_CINEMATIC_JS = String.raw`
     calibrationTarget:"start",
     clicks:[],
     lastFrame:null,
-    trackOffset:[0,0]
+    trackOffset:[0,0],
+    personSegmenter:null,
+    personMaskCanvas:null,
+    personMaskFrame:0,
+    personMaskReady:false
   };
 
   const deviceId = () => localStorage.getItem("vs-device-id") || "";
@@ -255,6 +259,50 @@ const STUDIO_CINEMATIC_JS = String.raw`
     state.lastFrame=current;
   }
 
+  async function ensurePersonSegmenter(){
+    if(state.personSegmenter)return state.personSegmenter;
+    const mod=await import("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/vision_bundle.mjs");
+    const vision=await mod.FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm");
+    state.personSegmenter=await mod.ImageSegmenter.createFromOptions(vision,{
+      baseOptions:{modelAssetPath:"https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter_landscape/float16/latest/selfie_segmenter_landscape.tflite"},
+      outputCategoryMask:true,
+      outputConfidenceMasks:false,
+      runningMode:"VIDEO"
+    });
+    return state.personSegmenter;
+  }
+
+  function updatePersonMask(video,elapsed){
+    if(!state.personSegmenter)return;
+    state.personMaskFrame++;
+    if(state.personMaskFrame%4!==1&&state.personMaskReady)return;
+    try{
+      state.personSegmenter.segmentForVideo(video,elapsed*1000,result=>{
+        try{
+          const mask=result&&result.categoryMask;if(!mask)return;
+          const mw=mask.width,mh=mask.height,data=mask.getAsUint8Array();
+          const canvas=state.personMaskCanvas||(state.personMaskCanvas=document.createElement("canvas"));canvas.width=mw;canvas.height=mh;
+          const x=canvas.getContext("2d",{willReadFrequently:true}),img=x.createImageData(mw,mh);
+          for(let i=0,j=0;i<data.length;i++,j+=4){
+            const a=data[i]===1?255:0;
+            img.data[j]=255;img.data[j+1]=255;img.data[j+2]=255;img.data[j+3]=a;
+          }
+          x.putImageData(img,0,0);state.personMaskReady=true;
+          if(typeof mask.close==="function")mask.close();
+        }catch(error){console.warn("Person mask",error);}
+      });
+    }catch(error){console.warn("Person segmentation frame",error);}
+  }
+
+  function compositePersonOcclusion(ctx,video,w,h){
+    if(!state.personMaskReady||!state.personMaskCanvas)return;
+    const canvas=compositePersonOcclusion.canvas||(compositePersonOcclusion.canvas=document.createElement("canvas"));
+    if(canvas.width!==w||canvas.height!==h){canvas.width=w;canvas.height=h;}
+    const x=canvas.getContext("2d",{alpha:true});x.clearRect(0,0,w,h);drawCover(x,video,w,h,1);
+    x.globalCompositeOperation="destination-in";x.drawImage(state.personMaskCanvas,0,0,w,h);x.globalCompositeOperation="source-over";
+    ctx.drawImage(canvas,0,0);
+  }
+
   async function registerGenerated(project,blob,duration,name,metadata){
     const id=crypto.randomUUID(),ext=blob.type.includes("mp4")?".mp4":".webm";
     const asset={id,name:(name||"Cinematic-Portal")+ext,type:blob.type||"video/webm",size:blob.size,duration,kind:"video",generated:true,importedAt:new Date().toISOString(),cinematic:metadata};
@@ -267,7 +315,7 @@ const STUDIO_CINEMATIC_JS = String.raw`
 
   async function renderPortal(options={}){
     if(state.busy)throw new Error("Cinematic renderer is already running");
-    state.busy=true;state.lastFrame=null;state.trackOffset=[0,0];
+    state.busy=true;state.lastFrame=null;state.trackOffset=[0,0];state.personMaskFrame=0;state.personMaskReady=false;
     if(Array.isArray(options.startQuad)&&options.startQuad.length===4) state.startQuad=options.startQuad.map(p=>[clamp(p[0],0,1),clamp(p[1],0,1)]);
     if(Array.isArray(options.endQuad)&&options.endQuad.length===4) state.endQuad=options.endQuad.map(p=>[clamp(p[0],0,1),clamp(p[1],0,1)]);
     const project=await getProject();
@@ -284,6 +332,8 @@ const STUDIO_CINEMATIC_JS = String.raw`
       }
       const duration=clamp(options.duration||baseLoaded.video.duration||30,1,180);
       const fps=clamp(options.fps||30,12,60),aspect=options.aspect||project.settings.aspect||"9:16",quality=options.quality||project.settings.quality||"720p";
+      const personOcclusion=(options.personOcclusion||($("vsPortalOcclusion")&&$("vsPortalOcclusion").value)||"auto")==="auto";
+      if(personOcclusion){try{if($("vsPortalStatus"))$("vsPortalStatus").textContent="Loading local person segmentation…";await ensurePersonSegmenter();}catch(error){console.warn("Person segmentation unavailable",error);}}
       const [w,h]=dimensions(aspect,quality),canvas=document.createElement("canvas");canvas.width=w;canvas.height=h;const ctx=canvas.getContext("2d",{alpha:false});
       if(!canvas.captureStream||!window.MediaRecorder)throw new Error("This browser cannot record the cinematic composite");
       const stream=canvas.captureStream(fps);
@@ -337,6 +387,11 @@ const STUDIO_CINEMATIC_JS = String.raw`
             ctx.save();pathQuad(ctx,q);ctx.clip();ctx.globalCompositeOperation="screen";ctx.globalAlpha=clamp(options.reflection==null?.11:options.reflection,0,.35);ctx.filter="brightness(1.08) contrast(.92)";drawCover(ctx,baseLoaded.video,w,h,1);ctx.restore();
             ctx.globalCompositeOperation="source-over";ctx.globalAlpha=1;ctx.filter="none";
 
+            if(personOcclusion&&state.personSegmenter){
+              updatePersonMask(baseLoaded.video,elapsed);
+              compositePersonOcclusion(ctx,baseLoaded.video,w,h);
+            }
+
             ctx.save();pathQuad(ctx,q);ctx.strokeStyle="rgba(255,255,255,.18)";ctx.lineWidth=Math.max(1,w*.002);ctx.shadowColor="rgba(255,185,105,.18)";ctx.shadowBlur=12;ctx.stroke();ctx.restore();
 
             const pct=Math.round(t*100);if(bar)bar.style.width=pct+"%";if(status)status.textContent="Rendering cinematic portal • "+pct+"%";
@@ -351,7 +406,7 @@ const STUDIO_CINEMATIC_JS = String.raw`
       try{audioSource&&audioSource.disconnect();}catch{};try{audioCtx&&await audioCtx.close();}catch{}
       const blob=new Blob(chunks,{type:recorder.mimeType||"video/webm"});
       const asset=await registerGenerated(project,blob,duration,"VideoStudio-Cinematic-Portal",{
-        engine:"studio-web-portal-compositor-v1",baseAssetId:base.id,worldAssetIds:worldAssets.map(a=>a.id),prompt:String(options.prompt||"").slice(0,1000),tracking,startQuad:state.startQuad,endQuad:state.endQuad,reflection:options.reflection==null?.11:options.reflection
+        engine:"studio-web-portal-compositor-v1",baseAssetId:base.id,worldAssetIds:worldAssets.map(a=>a.id),prompt:String(options.prompt||"").slice(0,1000),tracking,startQuad:state.startQuad,endQuad:state.endQuad,reflection:options.reflection==null?.11:options.reflection,personOcclusion:personOcclusion&&!!state.personSegmenter
       });
       if(status)status.textContent="Complete • "+asset.name+" • "+Math.round(blob.size/1048576)+" MB";
       if(bar)bar.style.width="100%";log("Cinematic portal complete",asset.name);toast("Cinematic world video added to project");
@@ -412,7 +467,7 @@ const STUDIO_CINEMATIC_JS = String.raw`
     const card=document.createElement("div");card.id="vsCinematicWorlds";card.className="vsCinema";
     card.innerHTML='<h4>Cinematic Worlds <span class="vsBadge">TARGET EFFECT ENGINE</span></h4><div class="muted">Built for videos where a real person/room/train stays intact while impossible cinematic worlds move outside a window, screen, doorway or other portal. Uses real perspective compositing, scene sequencing, reflections and optional translation tracking.</div>'+
       '<div class="vsCinemaGrid"><div><label>BASE LIVE-ACTION VIDEO</label><select id="vsPortalBase"></select><label>WORLD ASSETS · multi-select</label><select id="vsPortalWorld" multiple size="5"></select><label>WORLD PROMPT · used when no world assets are selected</label><textarea id="vsPortalPrompt" placeholder="Epic mythological mountain realm, colossal divine figure, cinematic sunset, clouds, waterfalls"></textarea></div>'+
-      '<div><label>PORTAL TRACKING</label><select id="vsPortalTracking"><option value="static">Static / keyframed quad</option><option value="translation">Auto translation tracking + keyframes</option></select><label>DURATION SECONDS</label><input id="vsPortalDuration" type="number" min="1" max="180" value="30"><label>WINDOW REFLECTION</label><input id="vsPortalReflection" type="range" min="0" max=".35" step=".01" value=".11"><div class="row"><button id="vsPortalPreset">Right-window preset</button><button id="vsPortalStart">Set start corners</button><button id="vsPortalEnd">Set end corners</button></div></div></div>'+
+      '<div><label>PORTAL TRACKING</label><select id="vsPortalTracking"><option value="static">Static / keyframed quad</option><option value="translation">Auto translation tracking + keyframes</option></select><label>FOREGROUND OCCLUSION</label><select id="vsPortalOcclusion"><option value="auto">Auto person segmentation · local AI</option><option value="off">Off</option></select><label>DURATION SECONDS</label><input id="vsPortalDuration" type="number" min="1" max="180" value="30"><label>WINDOW REFLECTION</label><input id="vsPortalReflection" type="range" min="0" max=".35" step=".01" value=".11"><div class="row"><button id="vsPortalPreset">Right-window preset</button><button id="vsPortalStart">Set start corners</button><button id="vsPortalEnd">Set end corners</button></div></div></div>'+
       '<canvas id="vsPortalCanvas" width="540" height="304"></canvas><div id="vsPortalCalibrateHint" class="muted">Select a base clip, then use the preset or calibrate four corners.</div>'+
       '<div class="row"><button id="vsPortalRender" class="primary">Render cinematic world video</button><button id="vsPortalRefresh">Refresh media</button></div><div class="progress"><i id="vsPortalProgress"></i></div><div id="vsPortalStatus" class="muted">Ready. Use imported/generated image or video worlds for the highest realism. The compositor preserves the real foreground instead of regenerating it.</div>';
     host.appendChild(card);
@@ -428,7 +483,7 @@ const STUDIO_CINEMATIC_JS = String.raw`
       try{
         state.baseAssetId=$("vsPortalBase").value;state.worldAssetIds=[...$("vsPortalWorld").selectedOptions].map(o=>o.value);
         const p=await getProject();
-        await renderPortal({baseAssetId:state.baseAssetId,worldAssetIds:state.worldAssetIds,prompt:$("vsPortalPrompt").value,duration:Number($("vsPortalDuration").value||30),tracking:$("vsPortalTracking").value,reflection:Number($("vsPortalReflection").value),aspect:p.settings.aspect||"9:16",quality:p.settings.quality||"720p"});
+        await renderPortal({baseAssetId:state.baseAssetId,worldAssetIds:state.worldAssetIds,prompt:$("vsPortalPrompt").value,duration:Number($("vsPortalDuration").value||30),tracking:$("vsPortalTracking").value,personOcclusion:$("vsPortalOcclusion").value,reflection:Number($("vsPortalReflection").value),aspect:p.settings.aspect||"9:16",quality:p.settings.quality||"720p"});
         setTimeout(()=>location.reload(),900);
       }catch(e){toast(e.message);$("vsPortalStatus").textContent=e.message;}
     };
