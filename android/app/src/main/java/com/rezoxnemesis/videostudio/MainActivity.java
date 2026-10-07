@@ -56,6 +56,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 public class MainActivity extends Activity implements AppProtocol.Callback {
     private static final int PICK_MEDIA = 1201;
+    private static final int PICK_CLOUD_WORKSPACE = 1202;
     private static final int C_BG = Color.rgb(5, 8, 18);
     private static final int C_CARD = Color.rgb(13, 20, 37);
     private static final int C_CARD_2 = Color.rgb(17, 27, 48);
@@ -77,6 +78,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
     private NativeRenderEngine.Handle activeRenderHandle;
     private PromptVideoEngine promptVideoEngine;
     private NativeMediaAnalyzer mediaAnalyzer;
+    private DriveWorkspaceProvider driveWorkspace;
     private SharedPreferences prefs;
     private FrameLayout content;
     private TextView connectionPill;
@@ -105,6 +107,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         renderEngine = new NativeRenderEngine(this);
         promptVideoEngine = new PromptVideoEngine(this);
         mediaAnalyzer = new NativeMediaAnalyzer(this);
+        driveWorkspace = new DriveWorkspaceProvider(this);
         activeProject = store.active();
         protocol = new AppProtocol(this, this);
         syncProtocolState();
@@ -653,6 +656,34 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         safety.addView(body(detail));
         box.addView(safety);
 
+        box.addView(section("Cloud Workspace"));
+        LinearLayout cloud = card(false);
+        JSONObject cloudState = driveWorkspace.status();
+        boolean cloudLinked = cloudState.optBoolean("linked", false);
+        cloud.addView(title(cloudLinked ? "Cloud workspace linked" : "Link a workspace folder", 17));
+        cloud.addView(body(cloudLinked
+                ? "Folder-scoped archive is active through Android's document provider. Broad Google Drive permission is not used. Provider: "
+                    + cloudState.optString("providerAuthority", "document provider")
+                : "Choose one folder from Android's system folder picker. If Google Drive is available there, VideoStudio receives persistent read/write access only to that selected folder, not your whole Drive."));
+        Button cloudLink = compactButton(cloudLinked ? "Change Workspace Folder" : "Link Workspace Folder");
+        cloudLink.setOnClickListener(v -> pickCloudWorkspace());
+        cloud.addView(cloudLink, margins(-1, dp(44), dp(8), 0, 0, 0));
+        if (cloudLinked) {
+            Button archive = compactButton("Archive Active Project");
+            archive.setOnClickListener(v -> archiveActiveProjectToCloud());
+            cloud.addView(archive, margins(-1, dp(44), dp(6), 0, 0, 0));
+            Button unlink = compactButton("Unlink Workspace");
+            unlink.setOnClickListener(v -> {
+                driveWorkspace.unlink();
+                ActivityLog.add(this, "user", "Cloud workspace unlinked",
+                        "The folder capability was removed from VideoStudio settings. Existing Drive files were left untouched.",
+                        "success", 100, null, activeProject == null ? null : activeProject.id);
+                showControl();
+            });
+            cloud.addView(unlink, margins(-1, dp(44), dp(6), 0, 0, 0));
+        }
+        box.addView(cloud);
+
         box.addView(section("Private Connection"));
         LinearLayout privateCard = card(false);
         privateCard.addView(title("Device-owned MCP v3 endpoint", 17));
@@ -763,6 +794,41 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         showEditor();
     }
 
+    private void pickCloudWorkspace() {
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
+        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION
+                | Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
+                | Intent.FLAG_GRANT_PREFIX_URI_PERMISSION);
+        startActivityForResult(intent, PICK_CLOUD_WORKSPACE);
+    }
+
+    private void archiveActiveProjectToCloud() {
+        if (activeProject == null) {
+            Toast.makeText(this, "Open a project first", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        if (!driveWorkspace.isLinked()) {
+            pickCloudWorkspace();
+            return;
+        }
+        ProjectStore.Project project = store.get(activeProject.id);
+        if (project == null) return;
+        JobManager.Job job = jobs.submit("Archive project • " + project.name, JobManager.Kind.LIGHT, state -> {
+            state.checkpoint("Cloud archive", 2, "Preparing project workspace");
+            File workspace = new CreativeWorkspace(this).projectRoot(project.id);
+            JSONObject result = driveWorkspace.syncProject(project, workspace, (progress, detail) -> {
+                state.checkpoint("Cloud archive", progress, detail);
+                ActivityLog.progress(this, state.id, "Cloud archive", detail, progress, project.id);
+            });
+            state.checkpoint("Cloud archive", 100, "Archive complete");
+            ActivityLog.add(this, "system", "Project archived",
+                    project.name + " • " + result.optLong("bytesWritten", 0) + " bytes",
+                    "success", 100, null, project.id);
+        });
+        Toast.makeText(this, "Archive queued • " + job.id.substring(0, 8), Toast.LENGTH_SHORT).show();
+    }
+
     private void pickMedia() {
         if (activeProject == null) activeProject = store.create("Untitled Project");
         Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
@@ -775,7 +841,21 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
 
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
-        if (requestCode == PICK_MEDIA && resultCode == RESULT_OK && data != null) {
+        if (requestCode == PICK_CLOUD_WORKSPACE && resultCode == RESULT_OK && data != null && data.getData() != null) {
+            Uri tree = data.getData();
+            int takeFlags = data.getFlags() & (Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+            try {
+                getContentResolver().takePersistableUriPermission(tree, takeFlags);
+                driveWorkspace.link(tree);
+                ActivityLog.add(this, "user", "Cloud workspace linked",
+                        "Folder-scoped archive enabled without broad Drive permission",
+                        "success", 100, null, activeProject == null ? null : activeProject.id);
+                Toast.makeText(this, "Workspace folder linked", Toast.LENGTH_SHORT).show();
+            } catch (Exception error) {
+                Toast.makeText(this, "Could not persist folder access", Toast.LENGTH_LONG).show();
+            }
+            showControl();
+        } else if (requestCode == PICK_MEDIA && resultCode == RESULT_OK && data != null) {
             ArrayList<Uri> uris = new ArrayList<>();
             ClipData clipData = data.getClipData();
             if (clipData != null) {
