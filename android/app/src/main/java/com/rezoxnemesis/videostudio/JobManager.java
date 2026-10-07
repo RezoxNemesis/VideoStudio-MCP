@@ -20,13 +20,26 @@ import java.util.concurrent.Semaphore;
 public final class JobManager {
     public enum Kind { LIGHT, HEAVY }
 
+    public static final String STATE_QUEUED = "queued";
+    public static final String STATE_PREPARING = "preparing";
+    public static final String STATE_RUNNING = "running";
+    public static final String STATE_CHECKPOINTED = "checkpointed";
+    public static final String STATE_WAITING_NETWORK = "waiting_network";
+    public static final String STATE_WAITING_STORAGE = "waiting_storage";
+    public static final String STATE_WAITING_MEMORY = "waiting_memory";
+    public static final String STATE_WAITING_THERMAL = "waiting_thermal";
+    public static final String STATE_WAITING_NATIVE = "waiting_native";
+    public static final String STATE_COMPLETED = "completed";
+    public static final String STATE_FAILED = "failed";
+    public static final String STATE_CANCELLED = "cancelled";
+
     public static final class Job {
         public final String id;
         public final String name;
         public final Kind kind;
         public final long createdAt;
         public volatile long updatedAt;
-        public volatile String state = "queued";
+        public volatile String state = STATE_QUEUED;
         public volatile int progress = 0;
         public volatile String detail = "";
         public volatile String stage = "queued";
@@ -122,24 +135,25 @@ public final class JobManager {
         job.future = pool.submit(() -> {
             boolean locked = false;
             try {
+                setState(job, STATE_PREPARING,
+                        kind == Kind.HEAVY ? "Waiting for safe render lane" : "Preparing");
                 if (kind == Kind.HEAVY) {
-                    setState(job, "waiting", "Waiting for safe render lane");
                     heavyLane.acquire();
                     locked = true;
                     waitForSafeDevice(job);
                 }
                 if (Thread.currentThread().isInterrupted()) throw new InterruptedException();
-                setState(job, "running", job.detail);
+                setState(job, STATE_RUNNING, job.detail);
                 work.run(job);
-                if (!"cancelled".equals(job.state) && !"failed".equals(job.state)) {
+                if (!isTerminal(job.state)) {
                     job.progress = 100;
-                    setState(job, "completed", job.detail.isEmpty() ? "Completed" : job.detail);
+                    setState(job, STATE_COMPLETED, job.detail.isEmpty() ? "Completed" : job.detail);
                 }
             } catch (InterruptedException interrupted) {
-                setState(job, "cancelled", "Cancelled");
+                setState(job, STATE_CANCELLED, "Cancelled");
                 Thread.currentThread().interrupt();
             } catch (Exception error) {
-                setState(job, "failed", error.getMessage() == null ? "Job failed" : error.getMessage());
+                setState(job, STATE_FAILED, error.getMessage() == null ? "Job failed" : error.getMessage());
             } finally {
                 if (locked) heavyLane.release();
                 persist();
@@ -150,8 +164,8 @@ public final class JobManager {
 
     public boolean cancel(String id) {
         Job job = jobs.get(id);
-        if (job == null) return false;
-        setState(job, "cancelled", "Cancelled");
+        if (job == null || isTerminal(job.state)) return false;
+        setState(job, STATE_CANCELLED, "Cancelled");
         if (job.future != null) job.future.cancel(true);
         return true;
     }
@@ -159,10 +173,7 @@ public final class JobManager {
     public int cancelAll() {
         int count = 0;
         for (Job job : jobs.values()) {
-            if ("queued".equals(job.state) || "waiting".equals(job.state) || "waiting_thermal".equals(job.state)
-                    || "waiting_memory".equals(job.state) || "running".equals(job.state) || "retrying".equals(job.state)) {
-                if (cancel(job.id)) count++;
-            }
+            if (!isTerminal(job.state) && cancel(job.id)) count++;
         }
         return count;
     }
@@ -208,10 +219,70 @@ public final class JobManager {
     }
 
     private void setState(Job job, String state, String detail) {
-        job.state = state;
+        String current = canonicalState(job.state);
+        String next = canonicalState(state);
+        if (!canTransition(current, next)) return;
+        job.state = next;
         job.detail = detail == null ? "" : detail;
         job.updatedAt = System.currentTimeMillis();
         persist();
+    }
+
+    public static boolean isTerminal(String state) {
+        String value = canonicalState(state);
+        return STATE_COMPLETED.equals(value)
+                || STATE_FAILED.equals(value)
+                || STATE_CANCELLED.equals(value);
+    }
+
+    public static boolean canTransition(String from, String to) {
+        String current = canonicalState(from);
+        String next = canonicalState(to);
+        if (current.equals(next)) return true;
+        if (isTerminal(current)) return false;
+        if (STATE_CANCELLED.equals(next) || STATE_FAILED.equals(next)) return true;
+        switch (current) {
+            case STATE_QUEUED:
+                return STATE_PREPARING.equals(next)
+                        || STATE_RUNNING.equals(next)
+                        || isWaiting(next);
+            case STATE_PREPARING:
+                return STATE_RUNNING.equals(next)
+                        || STATE_CHECKPOINTED.equals(next)
+                        || isWaiting(next);
+            case STATE_RUNNING:
+                return STATE_CHECKPOINTED.equals(next)
+                        || STATE_COMPLETED.equals(next)
+                        || isWaiting(next);
+            case STATE_CHECKPOINTED:
+                return STATE_PREPARING.equals(next)
+                        || STATE_RUNNING.equals(next)
+                        || STATE_COMPLETED.equals(next)
+                        || isWaiting(next);
+            default:
+                if (isWaiting(current)) {
+                    return STATE_PREPARING.equals(next)
+                            || STATE_RUNNING.equals(next)
+                            || STATE_CHECKPOINTED.equals(next);
+                }
+                return false;
+        }
+    }
+
+    private static boolean isWaiting(String state) {
+        return STATE_WAITING_NETWORK.equals(state)
+                || STATE_WAITING_STORAGE.equals(state)
+                || STATE_WAITING_MEMORY.equals(state)
+                || STATE_WAITING_THERMAL.equals(state)
+                || STATE_WAITING_NATIVE.equals(state);
+    }
+
+    private static String canonicalState(String state) {
+        String value = state == null ? "" : state.trim().toLowerCase();
+        if (value.isEmpty()) return STATE_QUEUED;
+        if ("waiting".equals(value)) return STATE_PREPARING;
+        if ("retrying".equals(value) || "interrupted".equals(value)) return STATE_CHECKPOINTED;
+        return value;
     }
 
     private void waitForSafeDevice(Job job) throws InterruptedException {
@@ -225,7 +296,7 @@ public final class JobManager {
             boolean hot = thermal >= PowerManager.THERMAL_STATUS_SEVERE;
             if (!lowMemory && !hot) return;
 
-            String waitingState = hot ? "waiting_thermal" : "waiting_memory";
+            String waitingState = hot ? STATE_WAITING_THERMAL : STATE_WAITING_MEMORY;
             String detail = hot
                     ? "Thermal governor paused heavy work; checkpoint preserved until the phone cools"
                     : "Memory governor paused heavy work; checkpoint preserved until memory pressure drops";
@@ -239,7 +310,7 @@ public final class JobManager {
         if (job == null || job.kind != Kind.HEAVY) return;
         if (stage != null && !stage.trim().isEmpty()) job.stage = stage.trim();
         waitForSafeDevice(job);
-        if (!"cancelled".equals(job.state)) setState(job, "running", job.detail);
+        if (!STATE_CANCELLED.equals(job.state)) setState(job, STATE_RUNNING, job.detail);
     }
 
     private JSONObject memoryState() {
@@ -308,10 +379,9 @@ public final class JobManager {
                     try { job.result = new JSONObject(savedResult.toString()); }
                     catch (Exception ignored) { job.result = savedResult; }
                 }
-                String state = o.optString("state", "interrupted");
-                if ("queued".equals(state) || "waiting".equals(state) || "waiting_thermal".equals(state)
-                        || "waiting_memory".equals(state) || "running".equals(state) || "retrying".equals(state)) {
-                    job.state = "interrupted";
+                String state = canonicalState(o.optString("state", STATE_CHECKPOINTED));
+                if (!isTerminal(state)) {
+                    job.state = STATE_CHECKPOINTED;
                     job.recoverable = true;
                     job.detail = "App restarted after checkpoint '" + job.stage + "'. Recoverable work is preserved for retry.";
                 } else {

@@ -47,7 +47,6 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     private static final String KEY_SERVICE_ONLINE = "control_service_online";
     private static final String KEY_SERVICE_DETAIL = "control_service_detail";
     private static final String KEY_AUTONOMY_MIGRATED = "autonomy_everything_v32_migrated";
-    private static final long MAX_REMOTE_IMPORT_BYTES = 350L * 1024L * 1024L;
     // Private MCP JSON fallback for ChatGPT attachments when the host cannot expose a temporary HTTPS file URL.
     // Kept deliberately small because this path is for still frames, not video payloads.
     private static final long MAX_INLINE_IMAGE_BYTES = 12L * 1024L * 1024L;
@@ -56,6 +55,9 @@ public final class ControlService extends Service implements AppProtocol.Callbac
 
     private ProjectStore store;
     private JobManager jobs;
+    private PreviewSnapshotStore previewSnapshots;
+    private TransferJournal transferJournal;
+    private ResumableTransferManager transferManager;
     private AppProtocol protocol;
     private NativeRenderEngine renderEngine;
     private NativeRenderEngine.Handle activeRender;
@@ -85,6 +87,9 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         commandJournal = new CommandJournal(this);
         store = new ProjectStore(this);
         jobs = new JobManager(this);
+        previewSnapshots = new PreviewSnapshotStore(this);
+        transferJournal = new TransferJournal(this);
+        transferManager = new ResumableTransferManager(transferJournal);
         protocol = new AppProtocol(this, this);
         renderEngine = new NativeRenderEngine(this);
         promptVideoEngine = new PromptVideoEngine(this);
@@ -243,6 +248,17 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 case "connection_health":
                     complete(command, connectionHealth());
                     return;
+                case "create_hybrid_binding": {
+                    String webDeviceId = p.optString("webDeviceId", "").trim();
+                    JSONObject result = protocol.createHybridBinding(webDeviceId);
+                    JSONObject challenge = result.optJSONObject("challenge");
+                    ActivityLog.add(this, "chatgpt", "Studio Web binding challenge",
+                            challenge == null ? "Hybrid binding rejected" : "One-time challenge created for Studio Web",
+                            challenge == null ? "failed" : "success", challenge == null ? null : 100,
+                            commandId, null);
+                    complete(command, result);
+                    return;
+                }
                 case "reconnect_mcp": {
                     protocol.forceReconnect();
                     markService(false, "Forced stable MCP re-registration requested");
@@ -2080,8 +2096,31 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         if (ready == null || !ready.exists() || ready.length() == 0) throw new IllegalStateException("Native export produced no file");
 
         checkpoint(state, "Exporting video", "Publishing to Movies/VideoStudio", 97, project.id);
-        Uri publicUri = publishExport(ready, fileName);
-        recoveryPlans.markOutputForJob(state.id, publicUri.toString(), fileName);
+        JSONObject committed = recoveryPlans.outputForJob(state.id);
+        final String reusableUri = committed != null
+                && isReadableOutput(committed.optString("uri", ""))
+                ? committed.optString("uri", "")
+                : "";
+        AtomicMediaPublisher.PublishResult publication = AtomicMediaPublisher.publish(
+                ready,
+                new AtomicMediaPublisher.PublishTarget() {
+                    @Override public String existingPublishedUri() {
+                        return reusableUri;
+                    }
+
+                    @Override public String publish(File source) throws Exception {
+                        return publishExport(source, fileName).toString();
+                    }
+
+                    @Override public String displayName() {
+                        return fileName;
+                    }
+                }
+        );
+        Uri publicUri = Uri.parse(publication.uri);
+        if (!publication.reused) {
+            recoveryPlans.markOutputForJob(state.id, publicUri.toString(), fileName);
+        }
         ProjectStore.Project fresh = store.get(project.id);
         if (fresh != null) {
             fresh.latestExportUri = publicUri.toString();
@@ -2095,6 +2134,28 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                     "final_render",
                     false
             );
+            previewSnapshots.publish(new PreviewSnapshotStore.Snapshot(
+                    "final-" + state.id + "-" + fresh.latestExportAt,
+                    fresh.id,
+                    fresh.updatedAt,
+                    fresh.latestExportAt,
+                    publicUri.toString(),
+                    fileName.toLowerCase(Locale.US).contains("1080") ? "1080p" : "final",
+                    "final",
+                    state.id,
+                    fresh.latestExportAt
+            ));
+            previewSnapshots.publish(new PreviewSnapshotStore.Snapshot(
+                    UUID.randomUUID().toString(),
+                    fresh.id,
+                    fresh.updatedAt,
+                    generated.createdAt,
+                    publicUri.toString(),
+                    quality,
+                    "final",
+                    state.id,
+                    System.currentTimeMillis()
+            ));
             ActivityLog.add(this, "system", "Generated video available",
                     generated.name + " • Media Bin • asset " + shortId(generated.id),
                     "success", 100, null, fresh.id);
@@ -2172,39 +2233,40 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         ProjectStore.Project project = resolveProject(p.optString("projectId", ""));
         String name = p.optString("name", "ChatGPT attachment");
         String mimeHint = p.optString("mime", "");
-        long sizeHint = Math.max(0, p.optLong("size", 0));
-        if (sizeHint > MAX_REMOTE_IMPORT_BYTES) {
-            throw new IllegalArgumentException("Attachment exceeds VideoStudio's 350 MB direct-import safety limit");
-        }
+        long sizeHint = Math.max(0L, p.optLong("size", 0L));
+        String sha256 = p.optString("sha256", "").trim().toLowerCase(Locale.US);
+        String transferId = stableTransferId(project.id, sourceUrl, name);
 
         JobManager.Job job = jobs.submit("Direct attachment • " + name, JobManager.Kind.LIGHT, state -> {
             File dir = new File(getFilesDir(), "imports");
             if (!dir.exists() && !dir.mkdirs()) throw new IllegalStateException("Could not create import directory");
-            File file = new File(dir, System.currentTimeMillis() + "_" + sanitizeFileName(name));
+            File file = new File(dir, transferId + "_" + sanitizeFileName(name));
 
-            HttpURLConnection connection = openSafeRemote(sourceUrl, 18000, 90000);
-            String mime = mimeHint.isEmpty() ? connection.getContentType() : mimeHint;
+            ResumableTransferManager.Result transfer = file.isFile()
+                    ? new ResumableTransferManager.Result(file, file.length(), sizeHint > 0 ? sizeHint : file.length(), true, mimeHint)
+                    : transferManager.download(
+                            new ResumableTransferManager.Request(
+                                    transferId,
+                                    sourceUrl,
+                                    file,
+                                    sizeHint,
+                                    sha256
+                            ),
+                            (source, offset, etag, lastModified) ->
+                                    openSafeRemote(source, 18000, 90000, offset, etag, lastModified),
+                            (completed, expected) -> {
+                                int rawProgress = ResumableTransferManager.progressPercent(completed, expected);
+                                int progress = rawProgress < 0 ? 45 : Math.min(97, 4 + (rawProgress * 93 / 100));
+                                checkpoint(state,
+                                        "Direct ChatGPT attachment import",
+                                        (completed / 1024L / 1024L) + " MB received directly by VideoStudio",
+                                        progress,
+                                        project.id);
+                            }
+                    );
+
+            String mime = mimeHint.isEmpty() ? transfer.contentType : mimeHint;
             if (mime == null || mime.isEmpty()) mime = "application/octet-stream";
-            long expected = connection.getContentLengthLong();
-            if (expected <= 0) expected = sizeHint;
-
-            try {
-                copyRemoteToFile(
-                        connection,
-                        file,
-                        expected,
-                        state,
-                        project.id,
-                        "Direct ChatGPT attachment import",
-                        "received directly by VideoStudio"
-                );
-            } catch (Exception error) {
-                if (file.exists()) file.delete();
-                throw error;
-            } finally {
-                connection.disconnect();
-            }
-
             addImportedAsset(project, file, name, mime);
             checkpoint(state, "Direct ChatGPT attachment import",
                     "Attachment is now VideoStudio-owned media", 100, project.id);
@@ -2215,7 +2277,8 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         result.put("queued", true);
         result.put("jobId", job.id);
         result.put("projectId", project.id);
-        result.put("transport", "direct-app-ingest");
+        result.put("transport", "resumable-direct-app-ingest");
+        result.put("transferId", transferId);
         return result;
     }
 
@@ -2263,7 +2326,18 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         }
     }
 
-    private HttpURLConnection openSafeRemote(String raw, int connectTimeoutMs, int readTimeoutMs) throws Exception {
+    private HttpURLConnection openSafeRemote(String raw,
+                                                  int connectTimeoutMs,
+                                                  int readTimeoutMs) throws Exception {
+        return openSafeRemote(raw, connectTimeoutMs, readTimeoutMs, 0L, "", "");
+    }
+
+    private HttpURLConnection openSafeRemote(String raw,
+                                                  int connectTimeoutMs,
+                                                  int readTimeoutMs,
+                                                  long offset,
+                                                  String etag,
+                                                  String lastModified) throws Exception {
         String current = raw;
         for (int redirects = 0; redirects <= MAX_REMOTE_REDIRECTS; redirects++) {
             validateRemoteHttps(current);
@@ -2273,7 +2347,12 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             connection.setReadTimeout(readTimeoutMs);
             connection.setInstanceFollowRedirects(false);
             connection.setRequestProperty("Accept", "*/*");
-            connection.setRequestProperty("User-Agent", "VideoStudio-Android/" + AppProtocol.APP_VERSION + " MCPv3-SafeIngest");
+            connection.setRequestProperty("User-Agent", "VideoStudio-Android/" + AppProtocol.APP_VERSION + " MCPv3-ResumableIngest");
+            if (offset > 0L) {
+                connection.setRequestProperty("Range", "bytes=" + offset + "-");
+                String validator = etag == null || etag.isEmpty() ? lastModified : etag;
+                if (validator != null && !validator.isEmpty()) connection.setRequestProperty("If-Range", validator);
+            }
 
             int code = connection.getResponseCode();
             if (code == HttpURLConnection.HTTP_MOVED_PERM
@@ -2289,14 +2368,9 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 current = new URL(url, location).toString();
                 continue;
             }
-            if (code < 200 || code >= 300) {
+            if (code != HttpURLConnection.HTTP_OK && code != HttpURLConnection.HTTP_PARTIAL) {
                 connection.disconnect();
                 throw new IllegalStateException("Attachment source rejected: HTTP " + code);
-            }
-            long length = connection.getContentLengthLong();
-            if (length > MAX_REMOTE_IMPORT_BYTES) {
-                connection.disconnect();
-                throw new IllegalStateException("Remote media exceeds VideoStudio's 350 MB safety limit");
             }
             return connection;
         }
@@ -2311,25 +2385,21 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                                   String activity,
                                   String progressSuffix) throws Exception {
         long announced = expected > 0 ? expected : connection.getContentLengthLong();
-        if (announced > MAX_REMOTE_IMPORT_BYTES) {
-            throw new IllegalStateException("Remote media exceeds VideoStudio's 350 MB safety limit");
-        }
         try (InputStream in = connection.getInputStream(); FileOutputStream out = new FileOutputStream(file)) {
-            byte[] buffer = new byte[192 * 1024];
-            long bytes = 0;
+            byte[] buffer = new byte[256 * 1024];
+            long bytes = 0L;
             int n;
             while ((n = in.read(buffer)) >= 0) {
                 if (Thread.currentThread().isInterrupted()) throw new InterruptedException();
+                if (n == 0) continue;
                 bytes += n;
-                if (bytes > MAX_REMOTE_IMPORT_BYTES) {
-                    throw new IllegalStateException("Remote media exceeded VideoStudio's 350 MB safety limit while streaming");
-                }
                 out.write(buffer, 0, n);
-                int progress = announced > 0
-                        ? Math.min(97, (int) (97d * bytes / announced))
-                        : Math.min(95, 4 + (int) (91d * bytes / MAX_REMOTE_IMPORT_BYTES));
+                int rawProgress = announced > 0
+                        ? ResumableTransferManager.progressPercent(bytes, announced)
+                        : -1;
+                int progress = rawProgress < 0 ? 50 : Math.min(97, 4 + (rawProgress * 93 / 100));
                 checkpoint(state, activity,
-                        (bytes / 1024 / 1024) + " MB " + progressSuffix, progress, projectId);
+                        (bytes / 1024L / 1024L) + " MB " + progressSuffix, progress, projectId);
             }
             out.flush();
         }
@@ -2477,28 +2547,36 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     }
 
     private JSONObject queueUrlImport(JSONObject p) throws Exception {
-        String url = p.optString("url");
+        String url = p.optString("url", "").trim();
         validateRemoteHttps(url);
         ProjectStore.Project project = resolveProject(p.optString("projectId", ""));
         String name = p.optString("name", "ChatGPT import");
+        String sha256 = p.optString("sha256", "").trim().toLowerCase(Locale.US);
+        long sizeHint = Math.max(0L, p.optLong("size", 0L));
+        String transferId = stableTransferId(project.id, url, name);
 
         JobManager.Job job = jobs.submit("Import • " + name, JobManager.Kind.LIGHT, state -> {
             File dir = new File(getFilesDir(), "imports");
             if (!dir.exists() && !dir.mkdirs()) throw new IllegalStateException("Could not create import directory");
-            File file = new File(dir, System.currentTimeMillis() + "_" + sanitizeFileName(name));
-            HttpURLConnection connection = openSafeRemote(url, 15000, 60000);
-            String mime = connection.getContentType();
-            if (mime == null) mime = "application/octet-stream";
-            long expected = connection.getContentLengthLong();
-            try {
-                copyRemoteToFile(connection, file, expected, state, project.id,
-                        "Importing media", "received");
-            } catch (Exception error) {
-                if (file.exists()) file.delete();
-                throw error;
-            } finally {
-                connection.disconnect();
-            }
+            File file = new File(dir, transferId + "_" + sanitizeFileName(name));
+
+            ResumableTransferManager.Result transfer = file.isFile()
+                    ? new ResumableTransferManager.Result(file, file.length(), sizeHint > 0 ? sizeHint : file.length(), true, "")
+                    : transferManager.download(
+                            new ResumableTransferManager.Request(transferId, url, file, sizeHint, sha256),
+                            (source, offset, etag, lastModified) ->
+                                    openSafeRemote(source, 15000, 60000, offset, etag, lastModified),
+                            (completed, expected) -> {
+                                int rawProgress = ResumableTransferManager.progressPercent(completed, expected);
+                                int progress = rawProgress < 0 ? 45 : Math.min(97, 4 + (rawProgress * 93 / 100));
+                                checkpoint(state, "Importing media",
+                                        (completed / 1024L / 1024L) + " MB received",
+                                        progress, project.id);
+                            }
+                    );
+
+            String mime = transfer.contentType;
+            if (mime == null || mime.isEmpty()) mime = "application/octet-stream";
             addImportedAsset(project, file, name, mime);
             checkpoint(state, "Importing media", "Import complete", 100, project.id);
             syncProtocolState();
@@ -2507,7 +2585,14 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         result.put("queued", true);
         result.put("jobId", job.id);
         result.put("projectId", project.id);
+        result.put("transferId", transferId);
+        result.put("transport", "resumable-url-ingest");
         return result;
+    }
+
+    private String stableTransferId(String projectId, String source, String name) {
+        String seed = String.valueOf(projectId) + "\n" + String.valueOf(source) + "\n" + String.valueOf(name);
+        return UUID.nameUUIDFromBytes(seed.getBytes(java.nio.charset.StandardCharsets.UTF_8)).toString();
     }
 
     private ProjectStore.Asset addImportedAsset(ProjectStore.Project project, File file, String name, String mime) {
@@ -2517,6 +2602,13 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         asset.name = name;
         asset.mime = mime;
         asset.durationMs = fileDuration(file);
+        asset.sizeBytes = file.length();
+        asset.seekable = true;
+        asset.persistedReadAccess = true;
+        asset.providerAuthority = "";
+        for (ProjectStore.Asset existing : project.assets) {
+            if (asset.uri.equals(existing.uri)) return existing;
+        }
         project.assets.add(asset);
         if (mime.startsWith("video/") || mime.startsWith("image/")) {
             ProjectStore.Clip clip = new ProjectStore.Clip();
@@ -2776,6 +2868,17 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         state.checkpoint(action, progress, detail);
         recoveryPlans.checkpointForJob(state.id, action, progress, detail);
         ActivityLog.progress(this, state.id, action, detail, progress, projectId);
+        try {
+            JSONObject live = new JSONObject();
+            live.put("jobId", state.id);
+            live.put("projectId", projectId == null ? "" : projectId);
+            live.put("action", action == null ? "" : action);
+            live.put("detail", detail == null ? "" : detail);
+            live.put("progress", Math.max(0, Math.min(100, progress)));
+            live.put("state", state.state);
+            live.put("updatedAt", System.currentTimeMillis());
+            prefs.edit().putString("job_recovery_snapshot", live.toString()).apply();
+        } catch (Exception ignored) {}
     }
 
     private String friendlyAction(String action) {

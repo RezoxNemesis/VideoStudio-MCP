@@ -124,6 +124,27 @@ public final class AppProtocol {
                 + "All editing/import/analysis/rendering must execute inside VideoStudio. Gallery browsing is never permitted.";
     }
 
+    public JSONObject createHybridBinding(String webDeviceId) throws Exception {
+        String id = webDeviceId == null ? "" : webDeviceId.trim();
+        if (id.length() < 8) throw new IllegalArgumentException("Studio Web device ID is required");
+        JSONObject body = new JSONObject();
+        body.put("deviceId", deviceId);
+        body.put("webDeviceId", id);
+        body.put("appGeneration", connectionCore.appGeneration());
+        body.put("protocolVersion", connectionCore.selectedProtocol());
+        JSONObject result = request(
+                "POST",
+                connectionCore.apiPrefix() + "/hybrid/challenge",
+                body,
+                true,
+                connectionCore.requestTimeoutMs()
+        );
+        if (!result.optBoolean("ok", false) || result.optJSONObject("challenge") == null) {
+            throw new IllegalStateException("Hybrid binding challenge was rejected");
+        }
+        return result;
+    }
+
     public void setLocalState(String permissionMode, JSONObject projectSummary) {
         if (permissionMode != null) this.permissionMode = permissionMode;
         if (projectSummary != null) this.projectSummary = projectSummary;

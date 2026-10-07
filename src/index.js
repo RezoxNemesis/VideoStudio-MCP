@@ -21,6 +21,20 @@ const bearer = request => {
   const h=request.headers.get("authorization")||"";
   return h.toLowerCase().startsWith("bearer ") ? h.slice(7).trim() : "";
 };
+const studioMcpAuthorized = async (request,env) => {
+  const expected=clean(env&&env.VIDEOSTUDIO_STUDIO_MCP_BEARER||"",500);
+  // Compatibility lane: existing Web-only plugins keep working until the
+  // operator provisions a bearer. Native authority is separately gated by
+  // the durable hybrid binding and is never derived from a public device ID.
+  if(!expected) return true;
+  const supplied=bearer(request);
+  if(!supplied) return false;
+  const [a,b]=await Promise.all([sha256Hex(supplied),sha256Hex(expected)]);
+  let diff=a.length^b.length;
+  const n=Math.max(a.length,b.length);
+  for(let i=0;i<n;i++) diff|=(a.charCodeAt(i)||0)^(b.charCodeAt(i)||0);
+  return diff===0;
+};
 const appActionAllowed = (mode,action) => {
   const a=String(action||"").toLowerCase();
 
@@ -191,6 +205,173 @@ export class VideoStudioState extends DurableObject {
     if(!id) return null;
     return (await this.ctx.storage.get("app-device:"+id))||null;
   }
+  async appCreateHybridBinding(ownerKey,webDeviceId){
+    const native=await this.appResolve(ownerKey);
+    if(!native) throw new Error("Private App MCP credential rejected");
+    if(!webDeviceId||String(webDeviceId).length<8) throw new Error("Invalid Studio Web device ID");
+    const web=await this.device(String(webDeviceId));
+    if(!web) throw new Error("Studio Web device is not registered");
+    const ownerHash=await sha256Hex(ownerKey);
+    const activeKey="hybrid-challenge-active:"+ownerHash+":"+String(webDeviceId);
+    const activeToken=await this.ctx.storage.get(activeKey);
+    if(activeToken){
+      const existing=await this.ctx.storage.get("hybrid-challenge:"+activeToken);
+      if(existing&&!existing.used&&Number(existing.expiresAt||0)>Date.now()){
+        return {token:activeToken,expiresAt:existing.expiresAt,webDeviceId:existing.webDeviceId,nativeDeviceId:existing.nativeDeviceId};
+      }
+    }
+    const token=crypto.randomUUID()+"."+crypto.randomUUID();
+    const record={
+      token,
+      ownerHash,
+      nativeDeviceId:native.deviceId,
+      webDeviceId:String(webDeviceId),
+      createdAt:Date.now(),
+      expiresAt:Date.now()+15*60*1000,
+      used:false
+    };
+    await this.ctx.storage.put("hybrid-challenge:"+token,record);
+    await this.ctx.storage.put(activeKey,token);
+    return {token,expiresAt:record.expiresAt,webDeviceId:record.webDeviceId,nativeDeviceId:record.nativeDeviceId};
+  }
+  async appRedeemHybridBinding(token,webDeviceId){
+    if(!token||String(token).length<30) throw new Error("Invalid hybrid binding token");
+    if(!webDeviceId||String(webDeviceId).length<8) throw new Error("Invalid Studio Web device ID");
+    const key="hybrid-challenge:"+String(token);
+    const record=await this.ctx.storage.get(key);
+    if(!record||record.used) throw new Error("Hybrid binding token is invalid or already used");
+    if(Number(record.expiresAt||0)<Date.now()){
+      await this.ctx.storage.delete(key);
+      throw new Error("Hybrid binding token expired");
+    }
+    if(record.webDeviceId!==String(webDeviceId)) throw new Error("Hybrid binding token belongs to another Studio Web device");
+    const native=await this.ctx.storage.get("app-device:"+record.nativeDeviceId);
+    if(!native) throw new Error("Native device is no longer registered");
+    const hybridKey=(crypto.randomUUID()+crypto.randomUUID()).replace(/-/g,"");
+    const hybridHash=await sha256Hex(hybridKey);
+    const binding={
+      id:crypto.randomUUID(),
+      nativeDeviceId:record.nativeDeviceId,
+      webDeviceId:record.webDeviceId,
+      ownerHash:record.ownerHash,
+      createdAt:Date.now(),
+      lastUsedAt:Date.now(),
+      revoked:false,
+      stablePath:"/mcp-v06/"
+    };
+    await this.ctx.storage.put("hybrid-binding:"+hybridHash,binding);
+    await this.ctx.storage.put("hybrid-binding-owner:"+record.ownerHash+":"+record.webDeviceId,hybridHash);
+    record.used=true;
+    record.usedAt=Date.now();
+    record.hybridHash=hybridHash;
+    await this.ctx.storage.put(key,record);
+    await this.ctx.storage.delete("hybrid-challenge-active:"+record.ownerHash+":"+record.webDeviceId);
+    return {
+      hybridKey,
+      privateMcpPath:"/mcp-v06/"+hybridKey,
+      nativeDeviceId:record.nativeDeviceId,
+      webDeviceId:record.webDeviceId,
+      createdAt:binding.createdAt
+    };
+  }
+  async appResolveHybrid(hybridKey){
+    if(!hybridKey||String(hybridKey).length<32) return null;
+    const hybridHash=await sha256Hex(hybridKey);
+    const binding=await this.ctx.storage.get("hybrid-binding:"+hybridHash);
+    if(!binding||binding.revoked) return null;
+    const native=await this.ctx.storage.get("app-device:"+binding.nativeDeviceId);
+    if(!native) return null;
+    binding.lastUsedAt=Date.now();
+    await this.ctx.storage.put("hybrid-binding:"+hybridHash,binding);
+    const {ownerHash,...safeBinding}=binding;
+    const {ownerHash:nativeOwnerHash,...safeNative}=native;
+    return {binding:safeBinding,native:safeNative};
+  }
+  async appEnqueueHybrid(hybridKey,action,parameters={}){
+    const resolved=await this.appResolveHybrid(hybridKey);
+    if(!resolved) throw new Error("Private hybrid binding rejected");
+    const d=resolved.native;
+    const min=Number(d.protocolMin||d.protocolVersion||0), max=Number(d.protocolMax||d.protocolVersion||0);
+    if(!(min<=3&&max>=3)) throw new Error("Hybrid native device does not support MCP v3");
+    if(d.controlPaused) throw new Error("ChatGPT control is paused on the phone");
+    if(!appActionAllowed(d.permissionMode,action)) throw new Error("Action blocked by device permission mode or Gallery privacy boundary: "+d.permissionMode);
+    const queueKey="app-v3-cl:"+d.deviceId, existing=(await this.ctx.storage.get(queueKey))||[];
+    if(existing.filter(c=>c.status==="queued"||c.status==="claimed"||c.status==="waiting_native").length>=160) throw new Error("Native command queue is full; reconnect the app before adding work");
+    const lastSeenMs=Date.parse(String(d.lastSeenAt||""))||0;
+    const fresh=lastSeenMs>0&&(Date.now()-lastSeenMs)<=45000;
+    const sk="app-v3-seq:"+d.deviceId, seq=((await this.ctx.storage.get(sk))||0)+1;
+    await this.ctx.storage.put(sk,seq);
+    const command={
+      id:crypto.randomUUID(),
+      seq,
+      protocolVersion:3,
+      deviceId:d.deviceId,
+      action,
+      parameters,
+      status:fresh?"queued":"waiting_native",
+      waitingReason:fresh?"":"native_offline",
+      createdAt:now(),
+      completedAt:null,
+      result:null
+    };
+    const list=[...existing,command];
+    const pending=list.filter(c=>c.status==="queued"||c.status==="claimed"||c.status==="waiting_native");
+    const terminal=list.filter(c=>c.status!=="queued"&&c.status!=="claimed"&&c.status!=="waiting_native");
+    const terminalSlots=Math.max(0,160-pending.length);
+    const retained=[...(terminalSlots?terminal.slice(-terminalSlots):[]),...pending].sort((a,b)=>a.seq-b.seq);
+    await this.ctx.storage.put(queueKey,retained.slice(-160));
+    return command;
+  }
+  async appCommandHybrid(hybridKey,id){
+    const resolved=await this.appResolveHybrid(hybridKey);
+    if(!resolved) throw new Error("Private hybrid binding rejected");
+    const list=(await this.ctx.storage.get("app-v3-cl:"+resolved.native.deviceId))||[];
+    return list.find(c=>c.id===id)||null;
+  }
+  async appStatusHybrid(hybridKey){
+    const resolved=await this.appResolveHybrid(hybridKey);
+    if(!resolved) return {connected:false,hybrid:true,error:"Private hybrid binding rejected"};
+    const d=resolved.native, binding=resolved.binding;
+    const list=(await this.ctx.storage.get("app-v3-cl:"+d.deviceId))||[];
+    const nativeLast=Date.parse(String(d.lastSeenAt||""))||0;
+    const nativeAge=nativeLast>0?Math.max(0,Date.now()-nativeLast):Number.MAX_SAFE_INTEGER;
+    const nativeFresh=nativeAge<=45000;
+    const web=await this.device(binding.webDeviceId);
+    const webLast=Date.parse(String(web&&web.lastSeenAt||""))||0;
+    const webAge=webLast>0?Math.max(0,Date.now()-webLast):Number.MAX_SAFE_INTEGER;
+    const webFresh=!!web&&webAge<=45000;
+    const pending=list.filter(c=>c.status==="queued"||c.status==="claimed"||c.status==="waiting_native").length;
+    return {
+      connected:webFresh||nativeFresh,
+      hybrid:true,
+      binding,
+      web:{connected:webFresh,lastSeenAgeMs:webAge===Number.MAX_SAFE_INTEGER?null:webAge,device:web||null},
+      native:{
+        connected:nativeFresh,
+        lastSeenAgeMs:nativeAge===Number.MAX_SAFE_INTEGER?null:nativeAge,
+        appVersion:d.appVersion||"",
+        appGeneration:Number(d.appGeneration||0),
+        protocolVersion:Number(d.protocolVersion||0),
+        connectionCoreVersion:Number(d.connectionCoreVersion||0),
+        permissionMode:d.permissionMode||"everything",
+        deviceId:d.deviceId
+      },
+      pendingNativeCommands:pending,
+      waitingNative:!nativeFresh&&pending>0,
+      lastCommand:list[list.length-1]||null,
+      galleryAccess:false
+    };
+  }
+  async appRevokeHybrid(hybridKey){
+    if(!hybridKey||String(hybridKey).length<32) throw new Error("Private hybrid binding rejected");
+    const hybridHash=await sha256Hex(hybridKey);
+    const binding=await this.ctx.storage.get("hybrid-binding:"+hybridHash);
+    if(!binding||binding.revoked) throw new Error("Private hybrid binding rejected");
+    binding.revoked=true;
+    binding.revokedAt=Date.now();
+    await this.ctx.storage.put("hybrid-binding:"+hybridHash,binding);
+    return {revoked:true,bindingId:binding.id,nativeDeviceId:binding.nativeDeviceId,webDeviceId:binding.webDeviceId};
+  }
   async appCreateRebind(ownerKey){
     const d=await this.appResolve(ownerKey);
     if(!d) throw new Error("Private App MCP credential rejected");
@@ -291,7 +472,7 @@ export class VideoStudioState extends DurableObject {
         // A later ack must never hide earlier unacknowledged commands.
         // Terminal records are filtered by status; queued/expired leases are always eligible.
         const expired=c.status==="claimed"&&Number(c.leaseUntil||0)<=nowMs;
-        if(c.status==="queued"||expired){
+        if(c.status==="queued"||c.status==="waiting_native"||expired){
           list[i]={...c,status:"claimed",claimedAt:now(),leaseUntil:nowMs+45000};
           found.push(list[i]);
           changed=true;
@@ -332,7 +513,7 @@ export class VideoStudioState extends DurableObject {
     return {
       connected:true,
       device:((({ownerHash,...safe})=>safe)(d)),
-      pendingCommands:list.filter(c=>c.status==="queued"||c.status==="claimed").length,
+      pendingCommands:list.filter(c=>c.status==="queued"||c.status==="claimed"||c.status==="waiting_native").length,
       lastCommand:list[list.length-1]||null,
       projectCount:Array.isArray(d.projects)?d.projects.length:0
     };
@@ -350,7 +531,7 @@ export class VideoStudioState extends DurableObject {
     if(d.controlPaused) throw new Error("ChatGPT control is paused on the phone");
     if(!appActionAllowed(d.permissionMode,action)) throw new Error("Action blocked by device permission mode or Gallery privacy boundary: "+d.permissionMode);
     const queueKey="app-v3-cl:"+d.deviceId, existing=(await this.ctx.storage.get(queueKey))||[];
-    if(existing.filter(c=>c.status==="queued"||c.status==="claimed").length>=160) throw new Error("Native command queue is full; reconnect the app before adding work");
+    if(existing.filter(c=>c.status==="queued"||c.status==="claimed"||c.status==="waiting_native").length>=160) throw new Error("Native command queue is full; reconnect the app before adding work");
     const sk="app-v3-seq:"+d.deviceId, seq=((await this.ctx.storage.get(sk))||0)+1;
     await this.ctx.storage.put(sk,seq);
     const c={
@@ -367,8 +548,8 @@ export class VideoStudioState extends DurableObject {
     };
     const k="app-v3-cl:"+d.deviceId, list=(await this.ctx.storage.get(k))||[];
     list.push(c);
-    const pending=list.filter(c=>c.status==="queued"||c.status==="claimed");
-    const terminal=list.filter(c=>c.status!=="queued"&&c.status!=="claimed");
+    const pending=list.filter(c=>c.status==="queued"||c.status==="claimed"||c.status==="waiting_native");
+    const terminal=list.filter(c=>c.status!=="queued"&&c.status!=="claimed"&&c.status!=="waiting_native");
     const terminalSlots=Math.max(0,160-pending.length);
     const retained=[...(terminalSlots?terminal.slice(-terminalSlots):[]),...pending].sort((a,b)=>a.seq-b.seq);
     await this.ctx.storage.put(k,retained.slice(-160));
@@ -390,8 +571,8 @@ export class VideoStudioState extends DurableObject {
         // A later ack must never hide earlier unacknowledged commands.
         // Terminal records are filtered by status; queued/expired leases are always eligible.
         const expired=c.status==="claimed"&&Number(c.leaseUntil||0)<=nowMs;
-        if(c.status==="queued"||expired){
-          list[i]={...c,status:"claimed",claimedAt:now(),leaseUntil:nowMs+60000,claimCount:Number(c.claimCount||0)+1};
+        if(c.status==="queued"||c.status==="waiting_native"||expired){
+          list[i]={...c,status:"claimed",waitingReason:"",claimedAt:now(),leaseUntil:nowMs+60000,claimCount:Number(c.claimCount||0)+1};
           found.push(list[i]);
           changed=true;
           if(found.length>=4) break;
@@ -558,7 +739,7 @@ const statusNative = (st,d,ownerKey) => isNativeV3(d)
   ? st.appStatusV3(ownerKey)
   : st.appStatus(ownerKey);
 
-function serverFor(env){
+function serverFor(env,hybridKey=""){
   const s=new McpServer({name:"VideoStudio-Studio-Web",version:"1.0.0"}), st=state(env);
   s.registerTool("server_status",{description:"Check VideoStudio Studio Web status and fallback editing capabilities.",inputSchema:{}},async()=>out({
     ok:true,
@@ -881,6 +1062,47 @@ function serverFor(env){
       return out({queued:true,commandId:c.id,sequence:c.seq,nativeApp:true,protocolVersion:1,handoffId:handoff.id,expiresAt:handoff.expiresAt});
     }catch(e){ return out({queued:false,error:e.message}); }
   });
+  if(hybridKey){
+    s.registerTool("hybrid_status",{
+      description:"Read the permanent VideoStudio hybrid connection: Studio Web health, Android Native Agent health, app generation/protocol, pending native work, waiting-native state and privacy boundary.",
+      inputSchema:{}
+    },async()=>out(await st.appStatusHybrid(hybridKey)));
+
+    s.registerTool("hybrid_execute",{
+      description:"Execute any VideoStudio-native action through the permanent hybrid binding. If Android is offline, the command is preserved as waiting_native and becomes claimable when the Native Agent reconnects. Gallery/media-library enumeration remains blocked.",
+      inputSchema:{action:z.string().min(1).max(80),parameters:z.record(z.string(),z.any()).optional()}
+    },async({action,parameters})=>{
+      try{
+        const command=await st.appEnqueueHybrid(hybridKey,action,parameters||{});
+        return out({queued:true,commandId:command.id,sequence:command.seq,status:command.status,waitingNative:command.status==="waiting_native",action:command.action,nativeApp:true,hybrid:true});
+      }catch(e){ return out({queued:false,hybrid:true,error:e.message}); }
+    });
+
+    s.registerTool("hybrid_get_command_result",{
+      description:"Read one native command queued through the permanent hybrid binding. Native visual-analysis contact sheets are returned as images when available.",
+      inputSchema:{commandId:z.string().min(8)}
+    },async({commandId})=>{
+      try{
+        const command=await st.appCommandHybrid(hybridKey,commandId);
+        if(!command) return out({error:"Command not found",hybrid:true});
+        const sheet=command.result&&command.result.contactSheet;
+        if(sheet&&sheet.base64){
+          const safeResult={...command.result,contactSheet:{...sheet,base64:undefined}};
+          return {content:[
+            {type:"text",text:JSON.stringify({...command,result:safeResult,hybrid:true})},
+            {type:"image",data:sheet.base64,mimeType:sheet.mimeType||"image/jpeg"}
+          ]};
+        }
+        return out({...command,hybrid:true});
+      }catch(e){ return out({error:e.message,hybrid:true}); }
+    });
+
+    s.registerTool("hybrid_revoke_native_binding",{
+      description:"Revoke this permanent Studio Web to Android native-control binding. This does not delete VideoStudio projects or media.",
+      inputSchema:{confirm:z.literal(true)}
+    },async()=>out(await st.appRevokeHybrid(hybridKey)));
+  }
+
   s.registerTool("video_project_plan",{description:"Create a short autonomous editing workflow.",inputSchema:{projectName:z.string().min(1),instruction:z.string().min(1)}},async({projectName,instruction})=>out({projectName,instruction,status:"planned",workflow:["inspect asset metadata","run 12-frame scene and quiet-section analysis","visually inspect sampled frames","design a multi-cut timeline around real structural changes","apply per-clip pacing/reframing/audio only where justified","render locally","inspect the actual rendered contact sheet","iterate before declaring the edit finished"]}));
   return s;
 }
@@ -1209,6 +1431,11 @@ function serverForApp(env,ownerKey,protocolVersion=1){
     }catch(e){ return out({queued:false,error:e.message}); }
   });
 
+  if(isV3) s.registerTool("app_create_hybrid_binding",{
+    description:"Ask the Android Native Agent to mint a short-lived one-time challenge that binds a Studio Web device to this existing permanent native identity. The resulting private hybrid MCP key survives compatible APK upgrades.",
+    inputSchema:{webDeviceId:z.string().min(8).max(160)}
+  },async({webDeviceId})=>queue("create_hybrid_binding",{webDeviceId}));
+
   if(isV3) s.registerTool("app_connection_health",{
     description:"Read the Android Native Agent's stable MCP Connection Core health, app generation and persisted service heartbeat without changing identity or browsing Gallery.",
     inputSchema:{}
@@ -1314,6 +1541,21 @@ async function api(request,env){
           acceptedAppGeneration:Number(registration.appGeneration||0)
         }
       });
+    }
+    if(u.pathname==="/api/v3/app/hybrid/challenge"&&request.method==="POST"){
+      const b=await request.json(), token=bearer(request);
+      const registered=await st.appAuth(b.deviceId,token);
+      if(!registered) return reply({error:"VideoStudio stable MCP authorization failed"},401);
+      const expected=Math.max(0,Number(registered.appGeneration||0));
+      const received=Math.max(0,Number(b.appGeneration||0));
+      if(expected>0&&received!==expected) return reply({
+        error:"Stale Native Agent generation",
+        staleClient:true,
+        expectedGeneration:expected,
+        receivedGeneration:received
+      },409);
+      const challenge=await st.appCreateHybridBinding(token,b.webDeviceId);
+      return reply({ok:true,protocolVersion:3,challenge});
     }
     if(u.pathname==="/api/v3/app/status"&&request.method==="GET"){
       const status=await st.appStatusV3(bearer(request));
@@ -1523,7 +1765,19 @@ export default {
       return createMcpHandler(()=>serverForApp(env,ownerKey),{route:u.pathname,responseMode:"auto"})(request,env,ctx);
     }
     if(u.pathname==="/mcp"||u.pathname.startsWith("/mcp/")) return createMcpHandler(()=>serverFor(env),{route:"/mcp",responseMode:"auto"})(request,env,ctx);
-    if(u.pathname==="/mcp-v06"||u.pathname.startsWith("/mcp-v06/")) return createMcpHandler(()=>serverFor(env),{route:"/mcp-v06",responseMode:"auto"})(request,env,ctx);
+    const hybridMcp=u.pathname.match(/^\/mcp-v06\/([A-Za-z0-9_-]{32,})(?:\/.*)?$/);
+    if(hybridMcp){
+      if(!(await studioMcpAuthorized(request,env))) return reply({error:"Studio Web MCP authorization required"},401);
+      const hybridKey=hybridMcp[1];
+      const bound=await state(env).appResolveHybrid(hybridKey);
+      if(!bound) return reply({error:"Private hybrid MCP binding rejected"},401);
+      const route="/mcp-v06/"+hybridKey;
+      return createMcpHandler(()=>serverFor(env,hybridKey),{route,responseMode:"auto"})(request,env,ctx);
+    }
+    if(u.pathname==="/mcp-v06"||u.pathname.startsWith("/mcp-v06/")){
+      if(!(await studioMcpAuthorized(request,env))) return reply({error:"Studio Web MCP authorization required"},401);
+      return createMcpHandler(()=>serverFor(env),{route:"/mcp-v06",responseMode:"auto"})(request,env,ctx);
+    }
     return new Response("Not Found",{status:404});
   }
 };

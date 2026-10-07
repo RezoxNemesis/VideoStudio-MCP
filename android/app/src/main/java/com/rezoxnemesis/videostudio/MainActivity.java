@@ -10,7 +10,6 @@ import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.media.MediaMetadataRetriever;
-import android.media.PlaybackParams;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Environment;
@@ -33,7 +32,6 @@ import android.widget.ProgressBar;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
-import android.widget.VideoView;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -79,14 +77,15 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
     private PromptVideoEngine promptVideoEngine;
     private NativeMediaAnalyzer mediaAnalyzer;
     private DriveWorkspaceProvider driveWorkspace;
+    private PreviewSnapshotStore previewSnapshots;
+    private ProxyManager proxyManager;
     private SharedPreferences prefs;
     private FrameLayout content;
     private TextView connectionPill;
     private ProjectStore.Project activeProject;
     private ProjectStore.Clip selectedClip;
-    private VideoView preview;
+    private LiveEditPlayer livePlayer;
     private final Handler ui = new Handler(Looper.getMainLooper());
-    private Runnable clipStopper;
     private Runnable activityRefresh;
     private Runnable serviceWatchdog;
     private boolean timelinePreviewRunning;
@@ -108,6 +107,9 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         promptVideoEngine = new PromptVideoEngine(this);
         mediaAnalyzer = new NativeMediaAnalyzer(this);
         driveWorkspace = new DriveWorkspaceProvider(this);
+        previewSnapshots = new PreviewSnapshotStore(this);
+        proxyManager = new ProxyManager(this, store, jobs);
+        livePlayer = new LiveEditPlayer(this);
         activeProject = store.active();
         protocol = new AppProtocol(this, this);
         syncProtocolState();
@@ -149,10 +151,9 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
     @Override
     protected void onDestroy() {
         timelinePreviewRunning = false;
-        if (clipStopper != null) ui.removeCallbacks(clipStopper);
         if (activityRefresh != null) ui.removeCallbacks(activityRefresh);
         if (serviceWatchdog != null) ui.removeCallbacks(serviceWatchdog);
-        if (preview != null) preview.stopPlayback();
+        if (livePlayer != null) livePlayer.release();
         if (activeRenderHandle != null) activeRenderHandle.cancel();
         if (protocol != null) protocol.stop();
         if (jobs != null) jobs.shutdown();
@@ -420,12 +421,82 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
 
         FrameLayout viewer = new FrameLayout(this);
         viewer.setBackground(rounded(Color.BLACK, Color.rgb(37, 51, 83), dp(18)));
-        preview = new VideoView(this);
-        viewer.addView(preview, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(280)));
+        viewer.setMinimumHeight(dp(280));
+        livePlayer.attach(viewer);
         TextView hint = body(activeProject.assets.isEmpty() ? "Import media to begin" : "Select a clip below");
         hint.setGravity(Gravity.CENTER);
+        if (livePlayer.hasMedia()) hint.setVisibility(View.GONE);
         viewer.addView(hint, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(280)));
-        box.addView(viewer);
+        box.addView(viewer, margins(-1, dp(280), 0, 0, 0, 0));
+
+        LinearLayout autonomousStrip = card(false);
+        autonomousStrip.setBackground(neonCard());
+        JSONArray recentActivity = ActivityLog.recent(this, 1);
+        JSONObject latestActivity = recentActivity.optJSONObject(0);
+        JSONObject recoverySnapshot;
+        try {
+            recoverySnapshot = new JSONObject(prefs.getString("job_recovery_snapshot", "{}"));
+        } catch (Exception ignored) {
+            recoverySnapshot = new JSONObject();
+        }
+        boolean recoveryMatchesProject = activeProject != null
+                && (recoverySnapshot.optString("projectId", "").isEmpty()
+                || activeProject.id.equals(recoverySnapshot.optString("projectId", "")));
+        String activityTitle = recoveryMatchesProject && !recoverySnapshot.optString("jobId", "").isEmpty()
+                ? recoverySnapshot.optString("action", "Autonomous work")
+                : latestActivity == null ? "Autonomous work" : latestActivity.optString("action", "Autonomous work");
+        String activityDetail = recoveryMatchesProject && !recoverySnapshot.optString("jobId", "").isEmpty()
+                ? recoverySnapshot.optString("detail", recoverySnapshot.optString("state", "VideoStudio is working."))
+                : latestActivity == null
+                ? "Ready for ChatGPT edits while playback remains interactive."
+                : latestActivity.optString("detail", "VideoStudio is working.");
+        autonomousStrip.addView(title("✦  Autonomous work", 15));
+        autonomousStrip.addView(body(activityTitle + "\n" + activityDetail));
+        int liveProgressValue = recoveryMatchesProject && recoverySnapshot.has("progress")
+                ? recoverySnapshot.optInt("progress", 0)
+                : latestActivity != null && latestActivity.has("progress")
+                ? latestActivity.optInt("progress", 0)
+                : -1;
+        if (liveProgressValue >= 0) {
+            ProgressBar liveProgress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+            liveProgress.setMax(100);
+            liveProgress.setProgress(Math.max(0, Math.min(100, liveProgressValue)));
+            autonomousStrip.addView(liveProgress, margins(-1, dp(8), dp(6), 0, 0, 0));
+        }
+        LinearLayout liveActions = new LinearLayout(this);
+        liveActions.setGravity(Gravity.CENTER_VERTICAL);
+        PreviewSnapshotStore.Snapshot latestPreview = previewSnapshots.latest(activeProject.id);
+        LivePlaybackState playbackState = livePlayer.snapshotState();
+        if (latestPreview != null && !latestPreview.id.equals(playbackState.snapshotId)) {
+            Button playNew = compactButton("Play new result");
+            playNew.setOnClickListener(v -> {
+                livePlayer.setContextIds(latestPreview.id, "");
+                livePlayer.play(Uri.parse(latestPreview.uri), 0L);
+                Toast.makeText(this, "Playing latest " + latestPreview.qualityTier + " result", Toast.LENGTH_SHORT).show();
+            });
+            liveActions.addView(playNew);
+            TextView resultBadge = accent(
+                    "  " + latestPreview.sourceType.toUpperCase(Locale.US) + " • " + latestPreview.qualityTier.toUpperCase(Locale.US),
+                    C_CYAN
+            );
+            liveActions.addView(resultBadge);
+        }
+        Button stopJobs = compactButton("Stop jobs");
+        stopJobs.setOnClickListener(v -> {
+            try {
+                jobs.cancelAll();
+                if (activeRenderHandle != null) activeRenderHandle.cancel();
+                Intent stop = new Intent(this, ControlService.class);
+                stop.setAction(ControlService.ACTION_CANCEL_ALL);
+                startForegroundService(stop);
+                Toast.makeText(this, "Active VideoStudio jobs cancelled", Toast.LENGTH_SHORT).show();
+            } catch (Exception error) {
+                Toast.makeText(this, "Could not stop every job", Toast.LENGTH_SHORT).show();
+            }
+        });
+        liveActions.addView(stopJobs);
+        autonomousStrip.addView(liveActions, margins(-1, -2, dp(8), 0, 0, 0));
+        box.addView(autonomousStrip, margins(-1, -2, dp(10), dp(2), 0, 0));
 
         box.addView(section("Media Bin"));
         HorizontalScrollView mediaBin = new HorizontalScrollView(this);
@@ -447,8 +518,8 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                 previewAsset.setOnClickListener(v -> {
                     try {
                         hint.setVisibility(View.GONE);
-                        preview.setVideoURI(Uri.parse(asset.uri));
-                        preview.setOnPreparedListener(mp -> preview.start());
+                        livePlayer.setContextIds("", "");
+                        livePlayer.play(Uri.parse(ProxyManager.previewUri(activeProject, asset)), 0L);
                     } catch (Exception error) {
                         Toast.makeText(this, "Could not preview media", Toast.LENGTH_SHORT).show();
                     }
@@ -536,6 +607,84 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         setScreen(scroll, "editor");
         scheduleEditorRefresh(activeProject == null ? "" : activeProject.id,
                 activeProject == null ? 0 : activeProject.updatedAt);
+    }
+
+    private View autonomousEditorCard() {
+        LinearLayout card = card(false);
+        card.addView(title("Autonomous work", 16));
+
+        JSONObject job = latestPersistedJob();
+        if (job == null) {
+            card.addView(body("Ready • playback and scrubbing stay available while ChatGPT edits in the background."));
+        } else {
+            String state = job.optString("state", "working");
+            String stage = job.optString("stage", "");
+            int progressValue = Math.max(0, Math.min(100, job.optInt("progress", 0)));
+            String detail = job.optString("detail", "");
+            card.addView(accent(state.replace('_', ' ').toUpperCase(Locale.US)
+                    + (stage.isEmpty() ? "" : " • " + stage), C_CYAN));
+            ProgressBar progress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+            progress.setMax(100);
+            progress.setProgress(progressValue);
+            card.addView(progress, margins(-1, dp(10), dp(8), 0, 0, 0));
+            card.addView(body(progressValue + "% • " + (detail.isEmpty() ? "Background work is active" : detail)));
+
+            if (!isTerminalJobState(state)) {
+                Button stop = compactButton("Stop autonomous work");
+                stop.setOnClickListener(v -> {
+                    Intent intent = new Intent(this, ControlService.class);
+                    intent.setAction(ControlService.ACTION_CANCEL_ALL);
+                    startForegroundService(intent);
+                    Toast.makeText(this, "Stopping active VideoStudio jobs", Toast.LENGTH_SHORT).show();
+                });
+                card.addView(stop, margins(-1, dp(42), dp(8), 0, 0, 0));
+            }
+        }
+
+        PreviewSnapshotStore.Snapshot latest = activeProject == null
+                ? null
+                : previewSnapshots.latest(activeProject.id);
+        if (latest != null) {
+            LivePlaybackState playing = livePlayer == null ? null : livePlayer.snapshotState();
+            boolean alreadyPlaying = playing != null
+                    && (latest.id.equals(playing.snapshotId) || latest.uri.equals(playing.mediaUri));
+            card.addView(accent(
+                    "PREVIEW • " + latest.sourceType.toUpperCase(Locale.US)
+                            + (latest.qualityTier.isEmpty() ? "" : " • " + latest.qualityTier.toUpperCase(Locale.US)),
+                    C_MUTED
+            ));
+            if (!alreadyPlaying) {
+                Button playNew = neonButton("Play new result", C_CYAN);
+                playNew.setTextColor(Color.BLACK);
+                playNew.setOnClickListener(v -> {
+                    livePlayer.setContextIds(latest.id, "");
+                    livePlayer.play(Uri.parse(latest.uri), 0L);
+                    showEditor();
+                });
+                card.addView(playNew, margins(-1, dp(46), dp(8), 0, 0, 0));
+            }
+        }
+        return card;
+    }
+
+    private JSONObject latestPersistedJob() {
+        try {
+            JSONArray array = new JSONArray(prefs.getString("job_recovery_snapshot", "[]"));
+            JSONObject fallback = null;
+            for (int i = 0; i < array.length(); i++) {
+                JSONObject item = array.optJSONObject(i);
+                if (item == null) continue;
+                if (fallback == null) fallback = item;
+                if (!isTerminalJobState(item.optString("state", ""))) return item;
+            }
+            return fallback;
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    private boolean isTerminalJobState(String state) {
+        return "completed".equals(state) || "failed".equals(state) || "cancelled".equals(state);
     }
 
     private boolean assetOnTimeline(ProjectStore.Project project, String assetId) {
@@ -963,6 +1112,18 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                     getContentResolver().takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
                 } catch (Exception ignored) {}
                 ProjectStore.Asset asset = store.importUri(activeProject, uri);
+                if (ProxyManager.shouldProxy(asset)) {
+                    try {
+                        proxyManager.request(activeProject, asset, "720p");
+                        ActivityLog.add(this, "system", "Heavy preview proxy queued",
+                                asset.name + " • original retained for final render",
+                                "queued", 0, null, activeProject.id);
+                    } catch (Exception proxyError) {
+                        ActivityLog.add(this, "system", "Heavy preview proxy unavailable",
+                                proxyError.getMessage() == null ? asset.name : proxyError.getMessage(),
+                                "info", null, null, activeProject.id);
+                    }
+                }
                 if (selectedClip == null && !activeProject.clips.isEmpty()) selectedClip = activeProject.clips.get(activeProject.clips.size() - 1);
                 if ("one_file".equals(permissionMode()) && prefs.getString(KEY_FILE, "").isEmpty()) {
                     prefs.edit().putString(KEY_FILE, asset.id).apply();
@@ -976,15 +1137,15 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
     }
 
     private void previewSelectedClip() {
-        if (selectedClip == null || activeProject == null || preview == null) return;
+        if (selectedClip == null || activeProject == null || livePlayer == null) return;
         ProjectStore.Asset asset = activeProject.asset(selectedClip.assetId);
-        if (asset == null || !asset.mime.startsWith("video/")) return;
+        if (asset == null || asset.mime == null || !asset.mime.startsWith("video/")) return;
         timelinePreviewRunning = false;
         playClip(selectedClip, null);
     }
 
     private void previewTimeline() {
-        if (activeProject == null || activeProject.clips.isEmpty() || preview == null) return;
+        if (activeProject == null || activeProject.clips.isEmpty() || livePlayer == null) return;
         boolean hasVideoClip = false;
         for (ProjectStore.Clip clip : activeProject.clips) {
             ProjectStore.Asset asset = activeProject.asset(clip.assetId);
@@ -996,10 +1157,8 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         if (!hasVideoClip) {
             if (activeProject.latestExportUri != null && !activeProject.latestExportUri.isEmpty()) {
                 timelinePreviewRunning = false;
-                if (clipStopper != null) ui.removeCallbacks(clipStopper);
-                preview.stopPlayback();
-                preview.setVideoURI(Uri.parse(activeProject.latestExportUri));
-                preview.setOnPreparedListener(mp -> preview.start());
+                livePlayer.setContextIds("final:" + activeProject.latestExportAt, "");
+                livePlayer.play(Uri.parse(activeProject.latestExportUri), 0L);
             } else {
                 Toast.makeText(this, "Render the animated image timeline first", Toast.LENGTH_SHORT).show();
             }
@@ -1016,8 +1175,8 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         }
         ProjectStore.Clip clip = activeProject.clips.get(index);
         selectedClip = clip;
-        ProjectStore.Asset a = activeProject.asset(clip.assetId);
-        if (a == null || !a.mime.startsWith("video/")) {
+        ProjectStore.Asset asset = activeProject.asset(clip.assetId);
+        if (asset == null || asset.mime == null || !asset.mime.startsWith("video/")) {
             playTimelineIndex(index + 1);
             return;
         }
@@ -1025,33 +1184,19 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
     }
 
     private void playClip(ProjectStore.Clip clip, Runnable after) {
+        if (activeProject == null || livePlayer == null || clip == null) return;
         ProjectStore.Asset asset = activeProject.asset(clip.assetId);
-        if (asset == null || preview == null) return;
-        if (clipStopper != null) ui.removeCallbacks(clipStopper);
-        preview.stopPlayback();
-        preview.setVideoURI(Uri.parse(asset.uri));
-        preview.setOnPreparedListener(mp -> {
-            try {
-                mp.setPlaybackParams(new PlaybackParams().setSpeed(Math.max(.5f, Math.min(2f, clip.speed))));
-            } catch (Exception ignored) {}
-            preview.seekTo((int) clip.inMs);
-            preview.start();
-            clipStopper = new Runnable() {
-                @Override public void run() {
-                    if (preview == null || !preview.isPlaying()) {
-                        if (after != null && timelinePreviewRunning) after.run();
-                        return;
-                    }
-                    if (preview.getCurrentPosition() >= clip.outMs) {
-                        preview.pause();
-                        if (after != null && timelinePreviewRunning) after.run();
-                    } else {
-                        ui.postDelayed(this, 80);
-                    }
+        if (asset == null) return;
+        livePlayer.setContextIds("", clip.id);
+        livePlayer.playClip(
+                Uri.parse(ProxyManager.previewUri(activeProject, asset)),
+                clip.inMs,
+                clip.outMs,
+                clip.speed,
+                after == null ? null : () -> {
+                    if (timelinePreviewRunning) after.run();
                 }
-            };
-            ui.post(clipStopper);
-        });
+        );
     }
 
     private void applyTool(String tool) {
@@ -1118,7 +1263,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                     selectedClip.effects.put("motionBlur", .35);
                     break;
                 case "Freeze":
-                    selectedClip.effects.put("freezeAtMs", Math.max(selectedClip.inMs, preview == null ? selectedClip.inMs : preview.getCurrentPosition()));
+                    selectedClip.effects.put("freezeAtMs", Math.max(selectedClip.inMs, livePlayer == null ? selectedClip.inMs : livePlayer.currentPositionMs()));
                     break;
                 case "Duplicate": {
                     int index = activeProject.clips.indexOf(selectedClip);
@@ -1163,7 +1308,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
     }
 
     private void splitClip() {
-        long at = preview != null ? preview.getCurrentPosition() : selectedClip.inMs + (selectedClip.outMs - selectedClip.inMs) / 2;
+        long at = livePlayer != null ? livePlayer.currentPositionMs() : selectedClip.inMs + (selectedClip.outMs - selectedClip.inMs) / 2;
         if (at <= selectedClip.inMs + 250 || at >= selectedClip.outMs - 250) {
             Toast.makeText(this, "Move playback inside the clip before splitting", Toast.LENGTH_SHORT).show();
             return;
@@ -1451,6 +1596,17 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
             fresh.latestExportAt = System.currentTimeMillis();
             state.checkpoint(98, "Registering rendered MP4 in Media Bin");
             store.registerGeneratedAsset(fresh, publicUri, fileName, "final_render", false);
+            previewSnapshots.publish(new PreviewSnapshotStore.Snapshot(
+                    "local-final-" + fresh.latestExportAt,
+                    fresh.id,
+                    fresh.updatedAt,
+                    fresh.latestExportAt,
+                    publicUri.toString(),
+                    "1080p",
+                    "final",
+                    state.id,
+                    fresh.latestExportAt
+            ));
         }
         syncProtocolState();
         ui.post(() -> {

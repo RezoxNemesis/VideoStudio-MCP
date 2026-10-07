@@ -38,6 +38,13 @@ const creativeNodeStore = fs.readFileSync(new URL("../android/app/src/main/java/
 const builtInCreativeRuntime = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/CreativeBuiltInRuntime.java", import.meta.url), "utf8");
 const nativeRenderCritic = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/NativeRenderCritic.java", import.meta.url), "utf8");
 const nativeRecoveryReceiver = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/NativeAgentRecoveryReceiver.java", import.meta.url), "utf8");
+const resumableTransfer = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/ResumableTransferManager.java", import.meta.url), "utf8");
+const transferJournal = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/TransferJournal.java", import.meta.url), "utf8");
+const liveEditPlayer = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/LiveEditPlayer.java", import.meta.url), "utf8");
+const previewSnapshotStore = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/PreviewSnapshotStore.java", import.meta.url), "utf8");
+const proxyManager = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/ProxyManager.java", import.meta.url), "utf8");
+const storageBudget = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/StorageBudget.java", import.meta.url), "utf8");
+const atomicMediaPublisher = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/AtomicMediaPublisher.java", import.meta.url), "utf8");
 
 const scriptMatch = app.match(/<script>([\s\S]*?)<\/script>/);
 let appScriptParses = false;
@@ -195,6 +202,10 @@ const checks = [
   ["stale owner connector can mint a one-tap rebind link from app_status", worker.includes("appCreateRebind") && worker.includes("videostudio://mcp-rebind?token=") && worker.includes("rebind:!fresh")],
   ["server can atomically alias the old MCP owner endpoint to the new Native Agent", worker.includes("appRedeemRebind") && worker.includes("stableEndpointAliases=2") && worker.includes('put("app-owner:"+record.oldOwnerHash,deviceId)')],
   ["Android accepts one-tap MCP rebind deep links", androidManifest.includes('android:scheme="videostudio"') && androidManifest.includes('android:host="mcp-rebind"') && nativeMain.includes("handleMcpRebindIntent") && nativeProtocol.includes("redeemRebind")],
+  ["native app can mint a one-time Studio Web hybrid binding challenge", worker.includes('"/api/v3/app/hybrid/challenge"') && nativeProtocol.includes("createHybridBinding") && controlService.includes('case "create_hybrid_binding"')],
+  ["native MCP exposes typed hybrid binding bootstrap without changing v3 endpoint", worker.includes('"app_create_hybrid_binding"') && worker.includes("appCreateHybridBinding") && nativeProtocol.includes('MCP_PATH = McpConnectionCore.STABLE_MCP_PATH')],
+  ["private hybrid MCP path remains stable and is not derived from Web device ID", worker.includes("appResolveHybrid") && worker.includes('"/mcp-v06/"+hybridKey') && worker.includes("hybridMcp")],
+  ["private hybrid MCP exposes native execution status result and revocation", worker.includes('"hybrid_status"') && worker.includes('"hybrid_execute"') && worker.includes('"hybrid_get_command_result"') && worker.includes('"hybrid_revoke_native_binding"')],
   ["Native Agent UI only goes online after actual MCP handshake", controlService.includes('markService(false, "VideoStudio stable MCP Native Agent starting")') && controlService.includes("onConnection(boolean connected")],
   ["device reboot restores stable MCP control without Gallery permission", androidManifest.includes("android.permission.RECEIVE_BOOT_COMPLETED") && androidManifest.includes("android.intent.action.BOOT_COMPLETED") && nativeRecoveryReceiver.includes("ACTION_BOOT_COMPLETED") && !nativeRecoveryReceiver.includes("gallery")],
   ["native v3 command cursor advances only after completion", nativeProtocol.includes('KEY_SEQ = "native_v3_last_seq"') && nativeProtocol.includes("advanceSequence")],
@@ -207,7 +218,7 @@ const checks = [
   ["v3 leases track retries", worker.includes("claimCount:Number(c.claimCount||0)+1")],
   ["worker keeps legacy private chat handoff as fallback", worker.includes("appCreateHandoff") && worker.includes("app_import_chat_file")],
   ["v3 primary attachment path is direct app ingest", worker.includes('"app_import_attachment"') && worker.includes('"import_attachment"') && controlService.includes('case "import_attachment"') && controlService.includes("queueDirectAttachmentImport")],
-  ["v3 direct attachment bytes bypass Worker", worker.includes('"openai/fileParams":["file"]') && worker.includes("download_url") && controlService.includes("MCPv3-SafeIngest")],
+  ["v3 direct attachment bytes bypass Worker through resumable native ingest", worker.includes('"openai/fileParams":["file"]') && worker.includes("download_url") && controlService.includes("MCPv3-ResumableIngest") && controlService.includes("queueDirectAttachmentImport")],
   ["private inline still-frame fallback crosses stale connector schemas", worker.includes('"app_import_inline_base64"') && worker.includes('"import_inline_base64"') && controlService.includes('case "import_inline_base64"') && controlService.includes("MAX_INLINE_IMAGE_BYTES") && controlService.includes("owner-authenticated-inline-mcp")],
   ["v3 MCP import is a real ChatGPT file parameter", worker.includes('file:z.object({') && worker.includes('file_id:z.string()') && worker.includes('mime_type:z.string()') && worker.includes('file_name:z.string()')],
   ["worker has ephemeral direct private upload relay", worker.includes("/api/app/private/upload") && worker.includes("appCreateCachedHandoff") && worker.includes("__videostudio_private_upload")],
@@ -235,7 +246,7 @@ const checks = [
   ["Worker allows safety and status actions independent of edit permission", worker.includes('if(mode==="one_file")') && worker.includes('"self_test","job_status","activity_note"') && worker.includes('"cancel_job","cancel_all_jobs","stop_all"')],
   ["manual animation uses same Native Agent workflow", nativeMain.includes("animateImagesDialog") && nativeMain.includes("ControlService.ACTION_LOCAL_ANIMATE") && controlService.includes("ACTION_LOCAL_ANIMATE")],
   ["image project preview uses latest native render", nativeMain.includes("activeProject.latestExportUri") && nativeMain.includes("Render the animated image timeline first")],
-  ["remote ingest validates redirects DNS and byte limits", controlService.includes("openSafeRemote") && controlService.includes("InetAddress.getAllByName") && controlService.includes("MAX_REMOTE_IMPORT_BYTES") && controlService.includes("MAX_REMOTE_REDIRECTS")],
+  ["remote ingest validates redirects and DNS while using resumable storage-aware streaming", controlService.includes("openSafeRemote") && controlService.includes("InetAddress.getAllByName") && controlService.includes("MAX_REMOTE_REDIRECTS") && controlService.includes("ResumableTransferManager") && !controlService.includes("MAX_REMOTE_IMPORT_BYTES")],
   ["native app has prompt-to-video pipeline", promptVideo.includes("class PromptVideoEngine") && nativeMain.includes('case "prompt_video"')],
   ["native prompt video exports a real MP4", nativeMain.includes("runExportBlocking") && nativeMain.includes("Movies/VideoStudio")],
   ["native app has on-device visual analyser", nativeAnalyzer.includes("contactSheet") && nativeMain.includes('case "analyse_media"')],
@@ -331,6 +342,24 @@ const checks = [
   ["native state reports stable v3 compatibility architecture", controlService.includes('out.put("mcpEndpointVersion", "v3-stable")') && controlService.includes('out.put("stableMcpEndpoint", true)') && controlService.includes('out.put("connectionCore", protocol.connectionStatus())') && controlService.includes('out.put("localEngineOwnsProjects", true)')],
   ["cached connector compatibility routes v3 devices to v3 queue", worker.includes("enqueueNative") && worker.includes("appEnqueueV3") && worker.includes("commandNative")],
   ["native analysis results render as MCP images", worker.includes("safeResult") && worker.includes('type:"image"')],
+  ["Android editor exposes immutable preview checkpoints and explicit new-result handoff", nativeMain.includes("PreviewSnapshotStore") && nativeMain.includes("Play new result") && controlService.includes("previewSnapshots.publish")],
+  ["Android editor shows autonomous work status without replacing playback surface", nativeMain.includes("Autonomous work") && nativeMain.includes("job_recovery_snapshot")],
+  ["Android editor declares Media3 ExoPlayer and PlayerView dependencies", androidBuild.includes("media3-exoplayer:1.11.1") && androidBuild.includes("media3-ui:1.11.1")],
+  ["Android editor uses reusable LiveEditPlayer instead of VideoView preview ownership", nativeMain.includes("LiveEditPlayer") && !nativeMain.includes("private VideoView preview")],
+  ["native remote ingest has no legacy 350 MB application ceiling", !controlService.includes("MAX_REMOTE_IMPORT_BYTES") && !controlService.includes("350 MB")],
+  ["native URL and direct attachment ingest delegate to resumable transfer engine", controlService.includes("ResumableTransferManager") && controlService.includes("ResumableTransferManager.Request") && controlService.includes(".download(")],
+  ["native resumable HTTP path requests byte ranges and validates resume identity", controlService.includes('setRequestProperty("Range"') && controlService.includes('"If-Range"')],
+  ["resumable transfer checkpoints use 64-bit offsets and partial-file promotion", transferJournal.includes("long completedBytes") && resumableTransfer.includes(".partial") && resumableTransfer.includes("renameTo")],
+  ["resumable transfer performs storage preflight before writing heavy media", resumableTransfer.includes("StorageBudget.checkTransfer") && resumableTransfer.includes("Insufficient storage")],
+  ["large-file storage accounting uses overflow-safe 64-bit arithmetic", projectStore.includes("long sizeBytes") && storageBudget.includes("saturatingAdd") && transferJournal.includes("long completedBytes")],
+  ["heavy editor media can use preview-only proxies while final render keeps originals", proxyManager.includes("HEAVY_VIDEO_THRESHOLD_BYTES") && proxyManager.includes("preview_proxy") && proxyManager.includes("previewOnly") && nativeMain.includes("ProxyManager.previewUri") && nativeRender.includes("setUri(Uri.parse(asset.uri))")],
+  ["preview proxies are generated through bounded native Media3 work", proxyManager.includes("Transformer.Builder") && proxyManager.includes("Presentation.createForHeight") && proxyManager.includes("JobManager.Kind.HEAVY")],
+  ["live editor playback stays independent from autonomous background rendering", liveEditPlayer.includes("ExoPlayer") && liveEditPlayer.includes("playClip") && nativeMain.includes("Play new result") && controlService.includes("ControlService extends Service")],
+  ["preview checkpoints reject partial output and keep immutable history", previewSnapshotStore.includes("Partial preview files cannot be published") && previewSnapshotStore.includes("sameIdentity")],
+  ["job manager exposes canonical resumable wait states", nativeJobs.includes("STATE_CHECKPOINTED") && nativeJobs.includes("STATE_WAITING_NETWORK") && nativeJobs.includes("STATE_WAITING_STORAGE") && nativeJobs.includes("STATE_WAITING_MEMORY") && nativeJobs.includes("STATE_WAITING_THERMAL") && nativeJobs.includes("STATE_WAITING_NATIVE")],
+  ["terminal autonomous jobs cannot be resurrected by invalid transitions", nativeJobs.includes("canTransition") && nativeJobs.includes("isTerminal")],
+  ["native render publication is idempotent across restart windows", atomicMediaPublisher.includes("existingPublishedUri") && atomicMediaPublisher.includes("reused") && recoveryPlans.includes("outputForJob") && controlService.includes("AtomicMediaPublisher.publish")],
+  ["reboot and APK replacement re-arm the same stable Native Agent", nativeRecoveryReceiver.includes("ACTION_MY_PACKAGE_REPLACED") && nativeRecoveryReceiver.includes("ACTION_BOOT_COMPLETED") && nativeRecoveryReceiver.includes("ACTION_SYNC")],
 ];
 
 let failed = 0;
