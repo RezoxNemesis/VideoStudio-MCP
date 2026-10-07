@@ -68,6 +68,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     private ModelPackManager modelPackManager;
     private DeviceComputeProfile computeProfile;
     private CreativeJobGraph creativeJobGraph;
+    private CreativeNodeStore creativeNodeStore;
     private DriveWorkspaceProvider driveWorkspace;
     private SharedPreferences prefs;
     private CommandJournal commandJournal;
@@ -92,6 +93,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         modelPackManager = new ModelPackManager(this);
         computeProfile = new DeviceComputeProfile(this);
         creativeJobGraph = new CreativeJobGraph(capabilityRegistry, computeProfile);
+        creativeNodeStore = new CreativeNodeStore(creativeWorkspace);
         driveWorkspace = new DriveWorkspaceProvider(this);
         createChannel();
         startForeground(NOTIFICATION_ID, notification("VideoStudio MCP v3 starting"));
@@ -293,6 +295,25 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 case "plan_creative_graph":
                     complete(command, planCreativeGraph(p));
                     return;
+                case "creative_graph_status": {
+                    ProjectStore.Project project = resolveProject(p.optString("projectId", ""));
+                    JSONObject result = ok();
+                    result.put("projectId", project.id);
+                    result.put("state", creativeNodeStore.status(project.id));
+                    result.put("ready", creativeNodeStore.readyNodes(project.id));
+                    complete(command, result);
+                    return;
+                }
+                case "invalidate_creative_node": {
+                    ProjectStore.Project project = resolveProject(p.optString("projectId", ""));
+                    String nodeId = p.optString("nodeId", "");
+                    complete(command, creativeNodeStore.invalidate(
+                            project.id,
+                            nodeId,
+                            p.optBoolean("downstream", true)
+                    ));
+                    return;
+                }
                 case "workspace_status":
                     complete(command, workspaceStatus(p));
                     return;
@@ -804,11 +825,14 @@ public final class ControlService extends Service implements AppProtocol.Callbac
 
         JSONObject graph = creativeJobGraph.build(ir);
         ir.put("executionGraph", graph);
+        JSONObject nodeState = creativeNodeStore.prepare(project.id, graph);
 
         JSONObject result = ok();
         result.put("projectId", project.id);
         result.put("creativeIrVersion", ir.optString("creativeIrVersion", MotionScriptCompiler.CREATIVE_IR_VERSION));
         result.put("graph", graph);
+        result.put("nodeState", nodeState);
+        result.put("readyNodes", creativeNodeStore.readyNodes(project.id));
         result.put("ready", graph.optBoolean("ready", false));
         result.put("unresolvedCapabilities", graph.optJSONArray("unresolvedCapabilities") == null
                 ? new JSONArray()
@@ -1730,6 +1754,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             out.put("modelPackManagerReady", modelPackManager != null);
             out.put("computePlannerReady", computeProfile != null);
             out.put("creativeJobGraphReady", creativeJobGraph != null);
+            out.put("creativeNodeStoreReady", creativeNodeStore != null);
             out.put("driveWorkspaceProviderReady", driveWorkspace != null);
             out.put("driveWorkspaceLinked", driveWorkspace != null && driveWorkspace.isLinked());
             out.put("bundledSubjectSegmentation", true);
@@ -1893,6 +1918,8 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             case "compile_scene": return "Compiling MotionScript";
             case "run_motion_script": return "Running MotionScript";
             case "plan_creative_graph": return "Planning CreativeIR execution graph";
+            case "creative_graph_status": return "Reading CreativeIR node checkpoints";
+            case "invalidate_creative_node": return "Invalidating CreativeIR node";
             case "workspace_status": return "Reading creative workspace";
             case "cleanup_workspace": return "Cleaning creative workspace";
             case "capability_registry": return "Reading capability providers";
@@ -1949,6 +1976,8 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         if ("compile_scene".equals(action)) return "MotionScript compiled to CreativeIR";
         if ("run_motion_script".equals(action)) return result.optInt("changedClips", 0) + " clip(s) directed by MotionScript";
         if ("plan_creative_graph".equals(action)) return result.optBoolean("ready", false) ? "Creative execution graph ready" : "Creative graph planned with unresolved providers";
+        if ("creative_graph_status".equals(action)) return "Creative node checkpoints read";
+        if ("invalidate_creative_node".equals(action)) return result.optInt("invalidated", 0) + " creative node(s) invalidated for targeted re-execution";
         if ("workspace_status".equals(action)) return "Creative workspace status read";
         if ("cleanup_workspace".equals(action)) return "Regenerable creative workspace cleaned";
         if ("capability_registry".equals(action)) return "Capability provider registry read";
