@@ -117,10 +117,13 @@ public final class CapabilityRegistry {
             for (int i = 0; i < providers.length(); i++) {
                 JSONObject provider = providers.optJSONObject(i);
                 if (provider == null || !supports(provider, wanted)) continue;
+                if (!provider.optBoolean("enabled", true)) continue;
+                if (!provider.optBoolean("runtimeAvailable", provider.optBoolean("builtIn", false))) continue;
+
                 int score = provider.optBoolean("installed", false) ? 50 : 20;
-                if (provider.optBoolean("builtIn", false)) score += 15;
+                score += Math.max(-40, Math.min(80, provider.optInt("priority", provider.optBoolean("builtIn", false) ? 10 : 30)));
                 if (!quality.isEmpty() && quality.equals(normalize(provider.optString("quality")))) score += 20;
-                if (provider.optBoolean("enabled", true)) score += 10;
+                if (provider.optBoolean("builtIn", false)) score += 4;
                 score -= Math.max(0, provider.optInt("estimatedRamMb", 0) / 256);
                 if (score > bestScore) {
                     bestScore = score;
@@ -177,6 +180,11 @@ public final class CapabilityRegistry {
                 provider.put("builtIn", false);
                 provider.put("installed", true);
                 provider.put("enabled", parsed.optBoolean("enabled", true));
+                provider.put("priority", Math.max(-40, Math.min(80, parsed.optInt("priority", 30))));
+                provider.put("runtimeAvailable", installedRuntimeAvailable(parsed));
+                provider.put("runtimeState", installedRuntimeAvailable(parsed)
+                        ? "adapter-ready"
+                        : "registered-awaiting-runtime-adapter");
                 provider.put("packPath", pack.getAbsolutePath());
                 provider.put("installedBytes", sizeOf(pack));
                 if (!provider.has("backend")) provider.put("backend", "optional-model-runtime");
@@ -208,8 +216,20 @@ public final class CapabilityRegistry {
             provider.put("builtIn", true);
             provider.put("installed", true);
             provider.put("enabled", true);
+            provider.put("priority", 10);
+            provider.put("runtimeAvailable", true);
+            provider.put("runtimeState", "ready");
         } catch (Exception ignored) {}
         return provider;
+    }
+
+    private static boolean installedRuntimeAvailable(JSONObject manifest) {
+        // Optional model packs are deliberately registered before they are
+        // executable. A backend becomes runtimeAvailable only when the APK has
+        // an audited adapter for that backend. This prevents a manifest from
+        // claiming executable capability that VideoStudio cannot actually run.
+        String backend = normalize(manifest.optString("backend", ""));
+        return "videostudio-declarative-v1".equals(backend);
     }
 
     private static boolean supports(JSONObject provider, String capability) {
