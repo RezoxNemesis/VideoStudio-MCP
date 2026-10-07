@@ -228,8 +228,7 @@ public final class CapabilityRegistry {
         // executable. A backend becomes runtimeAvailable only when the APK has
         // an audited adapter for that backend. This prevents a manifest from
         // claiming executable capability that VideoStudio cannot actually run.
-        String backend = normalize(manifest.optString("backend", ""));
-        return "videostudio-declarative-v1".equals(backend);
+        return false;
     }
 
     private static boolean supports(JSONObject provider, String capability) {
