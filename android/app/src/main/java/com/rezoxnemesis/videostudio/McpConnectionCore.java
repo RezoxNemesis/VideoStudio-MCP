@@ -19,7 +19,9 @@ import java.util.Locale;
  * Additive actions travel through the typed tools or app_execute bridge.
  */
 public final class McpConnectionCore {
-    public static final int CORE_VERSION = 1;
+    public static final int CORE_VERSION = 2;
+    public static final int WIRE_SCHEMA_VERSION = 1;
+    public static final int FEATURE_LEVEL = 2;
     public static final int COMPAT_PROTOCOL = 3;
     public static final int MIN_SUPPORTED_PROTOCOL = 3;
     public static final int MAX_SUPPORTED_PROTOCOL = 3;
@@ -123,6 +125,11 @@ public final class McpConnectionCore {
             out.put("stableMcpPath", STABLE_MCP_PATH);
             out.put("bootstrapApiPrefix", BOOTSTRAP_API_PREFIX);
             out.put("additiveActionBridge", true);
+            out.put("wireSchemaVersion", WIRE_SCHEMA_VERSION);
+            out.put("featureLevel", FEATURE_LEVEL);
+            out.put("compatibilityPolicy", "stable-major-additive-features");
+            out.put("transportDecoupledFromApkVersion", true);
+            out.put("unknownAdditiveActionsMayUseExecuteBridge", true);
             out.put("upgradeKeepsDeviceIdentity", true);
             out.put("upgradeKeepsOwnerCredential", true);
         } catch (Exception ignored) {}
@@ -200,6 +207,10 @@ public final class McpConnectionCore {
             out.put("serverEpoch", prefs.getString(KEY_SERVER_EPOCH, ""));
             out.put("endpointMode", prefs.getString(KEY_ENDPOINT_MODE, "stable-compatibility"));
             out.put("negotiatedAt", prefs.getLong(KEY_NEGOTIATED_AT, 0L));
+            out.put("wireSchemaVersion", WIRE_SCHEMA_VERSION);
+            out.put("featureLevel", FEATURE_LEVEL);
+            out.put("compatibilityPolicy", "stable-major-additive-features");
+            out.put("transportDecoupledFromApkVersion", true);
             out.put("identitySurvivesAppUpdate", true);
             out.put("galleryAccess", false);
         } catch (Exception ignored) {}
