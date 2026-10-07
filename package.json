@@ -1,9 +1,9 @@
 {
   "name": "videostudio-mcp",
-  "version": "0.6.0",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "Local-first video editor controlled through ChatGPT MCP",
+  "description": "VideoStudio Studio Web + Android native creative runtime controlled through ChatGPT MCP",
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
