@@ -17,6 +17,12 @@ const bearer = request => {
   const h=request.headers.get("authorization")||"";
   return h.toLowerCase().startsWith("bearer ") ? h.slice(7).trim() : "";
 };
+const OpenAIFileParam = z.object({
+  download_url:z.string().url(),
+  file_id:z.string().min(1),
+  mime_type:z.string().optional(),
+  file_name:z.string().optional()
+});
 const appActionAllowed = (mode,action) => {
   const a=String(action||"").toLowerCase();
   // Hard privacy boundary: no MCP permission mode may browse or enumerate Gallery/library media.
@@ -365,6 +371,17 @@ function serverFor(env){
       return out({queued:true,commandId:c.id,sequence:c.seq,nativeApp:true,handoffId:handoff.id,expiresAt:handoff.expiresAt});
     }catch(e){ return out({queued:false,error:e.message}); }
   });
+  s.registerTool("import_chat_attachment",{
+    description:"Import a file already attached in this ChatGPT conversation directly into the private native VideoStudio app. ChatGPT supplies a short-lived authorized download URL automatically. Gallery access is not used.",
+    inputSchema:{deviceId:z.string().min(32),file:OpenAIFileParam,projectId:z.string().min(8).optional()},
+    _meta:{"openai/fileParams":["file"]}
+  },async({deviceId,file,projectId})=>{
+    try{
+      const handoff=await st.appCreateHandoff(deviceId,file.download_url,{name:file.file_name||"ChatGPT attachment",mime:file.mime_type||"",size:0});
+      const c=await st.appEnqueue(deviceId,"import_chat_file",{handoffId:handoff.id,name:handoff.name,mime:handoff.mime,size:handoff.size,projectId:projectId||""});
+      return out({queued:true,commandId:c.id,sequence:c.seq,nativeApp:true,handoffId:handoff.id,fileId:file.file_id,name:handoff.name});
+    }catch(e){ return out({queued:false,error:e.message}); }
+  });
   s.registerTool("video_project_plan",{description:"Create a short autonomous editing workflow.",inputSchema:{projectName:z.string().min(1),instruction:z.string().min(1)}},async({projectName,instruction})=>out({projectName,instruction,status:"planned",workflow:["inspect asset metadata","run 12-frame scene and quiet-section analysis","visually inspect sampled frames","design a multi-cut timeline around real structural changes","apply per-clip pacing/reframing/audio only where justified","render locally","inspect the actual rendered contact sheet","iterate before declaring the edit finished"]}));
   return s;
 }
@@ -448,6 +465,18 @@ function serverForApp(env,ownerKey){
       const handoff=await st.appCreateHandoff(ownerKey,sourceUrl,{name,mime,size});
       const c=await st.appEnqueue(ownerKey,"import_chat_file",{handoffId:handoff.id,name:handoff.name,mime:handoff.mime,size:handoff.size,projectId:projectId||""});
       return out({queued:true,commandId:c.id,sequence:c.seq,action:"import_chat_file",handoff:{id:handoff.id,expiresAt:handoff.expiresAt},note:"Bytes stream privately to the phone; the source URL is not sent in the device command."});
+    }catch(e){ return out({queued:false,error:e.message}); }
+  });
+
+  s.registerTool("app_import_chat_attachment",{
+    description:"Import a file already attached in this ChatGPT conversation directly into VideoStudio. ChatGPT provides a temporary authorized file URL to this tool; VideoStudio never browses Gallery.",
+    inputSchema:{file:OpenAIFileParam,projectId:z.string().min(8).optional()},
+    _meta:{"openai/fileParams":["file"]}
+  },async({file,projectId})=>{
+    try{
+      const handoff=await st.appCreateHandoff(ownerKey,file.download_url,{name:file.file_name||"ChatGPT attachment",mime:file.mime_type||"",size:0});
+      const c=await st.appEnqueue(ownerKey,"import_chat_file",{handoffId:handoff.id,name:handoff.name,mime:handoff.mime,size:handoff.size,projectId:projectId||""});
+      return out({queued:true,commandId:c.id,sequence:c.seq,action:"import_chat_file",fileId:file.file_id,handoff:{id:handoff.id,expiresAt:handoff.expiresAt}});
     }catch(e){ return out({queued:false,error:e.message}); }
   });
 
