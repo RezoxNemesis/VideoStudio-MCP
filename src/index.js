@@ -5,6 +5,7 @@ import { z } from "zod";
 import APP_HTML from "./app.html";
 import STUDIO_RUNTIME_JS from "./studio-runtime.js";
 import STUDIO_CINEMATIC_JS from "./studio-cinematic.js";
+import STUDIO_NEURAL_JS from "./studio-neural.js";
 
 const JH = {"content-type":"application/json; charset=UTF-8","cache-control":"no-store"};
 const now = () => new Date().toISOString();
@@ -595,7 +596,9 @@ function serverFor(env){
       "abstract VFX generation",
       "cinematic perspective portal/world replacement",
       "multi-world sequencing through tracked windows/screens/doorways",
-      "foreground-preserving compositing with reflections"
+      "foreground-preserving compositing with reflections",
+      "optional real SD-Turbo neural keyframe generation through ONNX Runtime WebGPU",
+      "sequential neural model phases to reduce peak browser memory"
     ]
   }));
   s.registerTool("device_status",{description:"Check a paired VideoStudio app device. Native v3/v1 also accepts the private owner credential as deviceId for compatibility.",inputSchema:{deviceId:z.string().min(8)}},async({deviceId})=>{
@@ -644,6 +647,35 @@ function serverFor(env){
       if(native) return out({queued:false,error:"This tool targets Studio Web. Use native app generation tools for an Android Native Agent device."});
       const c=await st.enqueueRuntime(deviceId,projectId,"generate_video",parameters);
       return out({queued:true,commandId:c.id,sequence:c.seq,runtime:"studio-web",note:"Keep Studio Web visible while browser-local generation records the video."});
+    }catch(e){return out({queued:false,error:e.message});}
+  });
+
+  s.registerTool("probe_studio_neural_gpu",{
+    description:"Probe whether the open Studio Web browser has WebGPU and shader-f16 support suitable for the optional real SD-Turbo ONNX keyframe generator.",
+    inputSchema:{deviceId:z.string().min(8),projectId:z.string().min(8)}
+  },async({deviceId,projectId})=>{
+    try{
+      const native=await st.appResolve(deviceId);
+      if(native)return out({queued:false,error:"This probe targets Studio Web, not the Android Native Agent."});
+      const c=await st.enqueueRuntime(deviceId,projectId,"neural_probe",{});
+      return out({queued:true,commandId:c.id,sequence:c.seq,runtime:"studio-web"});
+    }catch(e){return out({queued:false,error:e.message});}
+  });
+
+  s.registerTool("generate_neural_world_keyframes",{
+    description:"Generate up to nine real neural 512x512 world keyframes locally in Studio Web using SD-Turbo through ONNX Runtime WebGPU. First use downloads a large open model pack; no paid inference API is used. Intended to feed the Cinematic Worlds compositor.",
+    inputSchema:{
+      deviceId:z.string().min(8),
+      projectId:z.string().min(8),
+      prompts:z.array(z.string().min(1).max(1200)).min(1).max(9),
+      modelBase:z.string().url().optional()
+    }
+  },async({deviceId,projectId,prompts,modelBase})=>{
+    try{
+      const native=await st.appResolve(deviceId);
+      if(native)return out({queued:false,error:"This neural browser provider targets Studio Web. Use the website device ID."});
+      const c=await st.enqueueRuntime(deviceId,projectId,"generate_neural_keyframes",{prompts,...(modelBase?{modelBase}:{})});
+      return out({queued:true,commandId:c.id,sequence:c.seq,runtime:"studio-web",engine:"sd-turbo-webgpu-onnx",note:"Keep Studio Web visible during model download/inference. Model terms apply."});
     }catch(e){return out({queued:false,error:e.message});}
   });
 
@@ -1436,10 +1468,12 @@ export default {
     if(u.pathname==="/"&&request.method==="GET"){
       let html=APP_HTML.includes("/studio-runtime.js")?APP_HTML:APP_HTML.replace("</body>",'<script defer src="/studio-runtime.js"></script></body>');
       if(!html.includes("/studio-cinematic.js")) html=html.replace("</body>",'<script defer src="/studio-cinematic.js"></script></body>');
+      if(!html.includes("/studio-neural.js")) html=html.replace("</body>",'<script defer src="/studio-neural.js"></script></body>');
       return new Response(html,{headers:{"content-type":"text/html; charset=UTF-8","cache-control":"no-store"}});
     }
     if(u.pathname==="/studio-runtime.js"&&request.method==="GET") return new Response(STUDIO_RUNTIME_JS,{headers:{"content-type":"application/javascript; charset=UTF-8","cache-control":"no-cache"}});
     if(u.pathname==="/studio-cinematic.js"&&request.method==="GET") return new Response(STUDIO_CINEMATIC_JS,{headers:{"content-type":"application/javascript; charset=UTF-8","cache-control":"no-cache"}});
+    if(u.pathname==="/studio-neural.js"&&request.method==="GET") return new Response(STUDIO_NEURAL_JS,{headers:{"content-type":"application/javascript; charset=UTF-8","cache-control":"no-cache"}});
     if(u.pathname==="/api/web/config"&&request.method==="GET") return reply({googleDriveClientId:clean(env.GOOGLE_DRIVE_CLIENT_ID||"",300),driveScope:"https://www.googleapis.com/auth/drive.file",storageMode:"user-owned-google-drive"});
     if(u.pathname==="/manifest.webmanifest") return new Response(MANIFEST,{headers:{"content-type":"application/manifest+json"}});
     if(u.pathname==="/icon.svg") return new Response(ICON,{headers:{"content-type":"image/svg+xml"}});
