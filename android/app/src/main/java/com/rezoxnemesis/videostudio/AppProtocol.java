@@ -29,12 +29,26 @@ import javax.crypto.KeyGenerator;
 import javax.crypto.SecretKey;
 import javax.crypto.spec.GCMParameterSpec;
 
+/**
+ * VideoStudio Native Agent protocol v3.
+ *
+ * Important: the app keeps its existing device id and Keystore-protected owner
+ * secret during the v1 -> v3 upgrade. Only the protocol namespace changes.
+ * That gives v3 a clean command queue without breaking the device-owned trust
+ * relationship or requiring a new Gallery permission.
+ */
 public final class AppProtocol {
     public static final String BASE = "https://wispy-queen-f9b5.prakasharuntandon634.workers.dev";
+    public static final int PROTOCOL_VERSION = 3;
+    public static final String APP_VERSION = "3.0.0";
+    public static final String MCP_PATH = "/app-mcp-v3/";
+    public static final String API_PREFIX = "/api/v3/app";
+
+    // Keep the existing preference/Keystore namespace to preserve the device identity on update.
     private static final String PREFS = "videostudio_native_v1";
     private static final String KEY_DEVICE = "native_device_id";
     private static final String KEY_SECRET = "native_owner_secret";
-    private static final String KEY_SEQ = "native_last_seq";
+    private static final String KEY_SEQ = "native_v3_last_seq";
     private static final String KEY_ALIAS = "videostudio_owner_key_v1";
     private static final String KEY_PAUSED = "chatgpt_control_paused";
 
@@ -59,7 +73,7 @@ public final class AppProtocol {
     public AppProtocol(Context context, Callback callback) {
         this.context = context.getApplicationContext();
         this.callback = callback;
-        prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        prefs = this.context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
         String id = prefs.getString(KEY_DEVICE, "");
         if (id.isEmpty()) {
             id = UUID.randomUUID().toString();
@@ -70,6 +84,8 @@ public final class AppProtocol {
     }
 
     public String deviceId() { return deviceId; }
+    public int protocolVersion() { return PROTOCOL_VERSION; }
+    public String appVersion() { return APP_VERSION; }
 
     public boolean isControlPaused() {
         return prefs.getBoolean(KEY_PAUSED, false);
@@ -81,13 +97,14 @@ public final class AppProtocol {
     }
 
     public String privateMcpUrl() {
-        return BASE + "/app-mcp/" + ownerKey;
+        return BASE + MCP_PATH + ownerKey;
     }
 
     public String pairingMessage() {
-        return "Connect to my private VideoStudio Android App MCP.\n"
-                + "MCP endpoint: " + privateMcpUrl() + "\n"
-                + "This endpoint is the device-owned private connection. Use app_status first, then use the native app tools autonomously. Gallery browsing is never permitted.";
+        return "Connect to my private VideoStudio v3 Android Native Agent MCP.\n"
+                + "MCP v3 endpoint: " + privateMcpUrl() + "\n"
+                + "This is the device-owned VideoStudio v3 connection. Use app_status first, then use the native app tools autonomously. "
+                + "All editing/import/analysis/rendering must execute inside VideoStudio. Gallery browsing is never permitted.";
     }
 
     public void setLocalState(String permissionMode, JSONObject projectSummary) {
@@ -111,67 +128,87 @@ public final class AppProtocol {
     }
 
     public void registerNow() {
+        if (!running || io.isShutdown()) return;
         io.execute(this::register);
     }
 
+    /**
+     * Legacy-relay fallback only. v3's primary attachment path is direct
+     * app ingestion from the temporary source URL supplied to the MCP tool.
+     */
     public HttpURLConnection openPrivateHandoff(String handoffId) throws Exception {
         if (handoffId == null || handoffId.trim().isEmpty()) throw new IllegalArgumentException("Missing handoff ID");
-        String path = BASE + "/api/app/handoffs/" + enc(handoffId) + "/content?deviceId=" + enc(deviceId);
+        String path = BASE + API_PREFIX + "/handoffs/" + enc(handoffId) + "/content?deviceId=" + enc(deviceId);
         HttpURLConnection c = (HttpURLConnection) new URL(path).openConnection();
         c.setRequestMethod("GET");
         c.setConnectTimeout(15000);
-        c.setReadTimeout(45000);
+        c.setReadTimeout(60000);
+        c.setInstanceFollowRedirects(true);
         c.setRequestProperty("Accept", "*/*");
         c.setRequestProperty("Authorization", "Bearer " + ownerKey);
-        c.setRequestProperty("User-Agent", "VideoStudio-Android/1.1.2");
+        c.setRequestProperty("User-Agent", "VideoStudio-Android/" + APP_VERSION + " MCPv3");
         return c;
     }
 
     public void complete(JSONObject command, JSONObject result, String status) {
+        if (command == null || io.isShutdown()) return;
         io.execute(() -> {
             try {
                 String id = command.optString("id");
                 JSONObject body = new JSONObject();
                 body.put("deviceId", deviceId);
+                body.put("protocolVersion", PROTOCOL_VERSION);
                 body.put("status", status == null ? "completed" : status);
                 body.put("result", result == null ? new JSONObject() : result);
-                request("POST", "/api/app/commands/" + id + "/complete", body, true, 15000);
-                long seq = command.optLong("seq", 0);
-                synchronized (prefs) {
-                    long current = prefs.getLong(KEY_SEQ, 0);
-                    if (seq > current) prefs.edit().putLong(KEY_SEQ, seq).apply();
-                }
-            } catch (Exception ignored) {}
+                request("POST", API_PREFIX + "/commands/" + enc(id) + "/complete", body, true, 18000);
+                advanceSequence(command.optLong("seq", 0));
+            } catch (Exception ignored) {
+                // The server lease will make the command available again. The
+                // local CommandJournal prevents duplicate execution on retry.
+            }
         });
+    }
+
+    private void advanceSequence(long seq) {
+        if (seq <= 0) return;
+        synchronized (prefs) {
+            long current = prefs.getLong(KEY_SEQ, 0);
+            if (seq > current) prefs.edit().putLong(KEY_SEQ, seq).apply();
+        }
     }
 
     private void commandLoop() {
         while (running) {
             try {
                 if (isControlPaused()) {
-                    main.post(() -> callback.onConnection(false, "ChatGPT control paused"));
+                    notifyConnection(false, "VideoStudio MCP v3 paused");
                     sleep(900);
                     continue;
                 }
                 long seq = prefs.getLong(KEY_SEQ, 0);
-                String path = "/api/app/commands?deviceId=" + enc(deviceId) + "&after=" + seq + "&wait=18000";
-                JSONObject data = request("GET", path, null, true, 25000);
+                String path = API_PREFIX + "/commands?deviceId=" + enc(deviceId)
+                        + "&after=" + seq + "&wait=18000";
+                JSONObject data = request("GET", path, null, true, 26000);
                 JSONArray commands = data.optJSONArray("commands");
-                if (commands == null) continue;
-                for (int i = 0; i < commands.length(); i++) {
-                    JSONObject cmd = commands.optJSONObject(i);
-                    if (cmd == null) continue;
-                    String commandStatus = cmd.optString("status");
-                    if (!"queued".equals(commandStatus) && !"claimed".equals(commandStatus)) continue;
-                    JSONObject dispatch = cmd;
-                    main.post(() -> callback.onCommand(dispatch));
+                if (commands != null) {
+                    for (int i = 0; i < commands.length(); i++) {
+                        JSONObject cmd = commands.optJSONObject(i);
+                        if (cmd == null) continue;
+                        if (cmd.optInt("protocolVersion", PROTOCOL_VERSION) != PROTOCOL_VERSION) continue;
+                        String commandStatus = cmd.optString("status");
+                        if (!"queued".equals(commandStatus) && !"claimed".equals(commandStatus)) continue;
+                        if (callback != null) {
+                            JSONObject dispatch = cmd;
+                            main.post(() -> callback.onCommand(dispatch));
+                        }
+                    }
                 }
                 consecutiveFailures = 0;
-                main.post(() -> callback.onConnection(true, "Private App MCP online"));
+                notifyConnection(true, "VideoStudio MCP v3 online");
             } catch (Exception error) {
                 consecutiveFailures = Math.min(6, consecutiveFailures + 1);
-                long delay = Math.min(30000L, 900L * (1L << consecutiveFailures));
-                main.post(() -> callback.onConnection(false, "Reconnecting securely"));
+                long delay = Math.min(30000L, 750L * (1L << consecutiveFailures));
+                notifyConnection(false, "MCP v3 reconnecting securely");
                 sleep(delay);
             }
         }
@@ -180,32 +217,41 @@ public final class AppProtocol {
     private void heartbeatLoop() {
         while (running) {
             if (!isControlPaused()) register();
-            sleep(20000);
+            sleep(15000);
         }
     }
 
     private void register() {
         try {
             JSONObject meta = new JSONObject();
-            meta.put("name", "VideoStudio Android");
+            meta.put("name", "VideoStudio Android v3");
             meta.put("platform", "android-native");
-            meta.put("appVersion", "1.1.2");
+            meta.put("appVersion", APP_VERSION);
+            meta.put("protocolVersion", PROTOCOL_VERSION);
+            meta.put("nativeAgent", "videostudio-v3");
             meta.put("permissionMode", permissionMode);
             meta.put("controlPaused", isControlPaused());
             meta.put("connectionSession", connectionSession);
             meta.put("galleryAccess", false);
+            meta.put("directAttachmentIngest", true);
+            meta.put("localEngineOwnsProjects", true);
             meta.put("projects", projectSummary.optJSONArray("projects") == null ? new JSONArray() : projectSummary.optJSONArray("projects"));
 
             JSONObject body = new JSONObject();
             body.put("deviceId", deviceId);
             body.put("ownerKey", ownerKey);
             body.put("meta", meta);
-            JSONObject result = request("POST", "/api/app/register", body, false, 15000);
-            boolean ok = result.optBoolean("ok", false);
-            main.post(() -> callback.onConnection(ok, ok ? "Private App MCP online" : "MCP registration failed"));
+            JSONObject result = request("POST", API_PREFIX + "/register", body, false, 18000);
+            boolean ok = result.optBoolean("ok", false)
+                    && result.optInt("protocolVersion", 0) == PROTOCOL_VERSION;
+            notifyConnection(ok, ok ? "VideoStudio MCP v3 online" : "MCP v3 registration rejected");
         } catch (Exception error) {
-            main.post(() -> callback.onConnection(false, "Offline"));
+            notifyConnection(false, "MCP v3 offline");
         }
+    }
+
+    private void notifyConnection(boolean connected, String detail) {
+        if (callback != null) main.post(() -> callback.onConnection(connected, detail));
     }
 
     private JSONObject request(String method, String path, JSONObject body, boolean authenticated, int timeoutMs) throws Exception {
@@ -213,7 +259,10 @@ public final class AppProtocol {
         c.setRequestMethod(method);
         c.setConnectTimeout(timeoutMs);
         c.setReadTimeout(timeoutMs);
+        c.setInstanceFollowRedirects(true);
         c.setRequestProperty("Accept", "application/json");
+        c.setRequestProperty("X-VideoStudio-Protocol", "3");
+        c.setRequestProperty("User-Agent", "VideoStudio-Android/" + APP_VERSION + " MCPv3");
         if (authenticated) c.setRequestProperty("Authorization", "Bearer " + ownerKey);
         if (body != null) {
             c.setDoOutput(true);
@@ -248,8 +297,8 @@ public final class AppProtocol {
         String secret = Base64.encodeToString(raw, Base64.URL_SAFE | Base64.NO_WRAP | Base64.NO_PADDING);
         try {
             prefs.edit().putString(KEY_SECRET, encrypt(secret)).apply();
-        } catch (Exception error) {
-            // Keystore failures are rare. Keep the key only for this process rather than storing plaintext.
+        } catch (Exception ignored) {
+            // Never fall back to plaintext persistent storage.
         }
         return secret;
     }
@@ -300,6 +349,7 @@ public final class AppProtocol {
     }
 
     private static void sleep(long ms) {
-        try { Thread.sleep(ms); } catch (InterruptedException ignored) { Thread.currentThread().interrupt(); }
+        try { Thread.sleep(ms); }
+        catch (InterruptedException ignored) { Thread.currentThread().interrupt(); }
     }
 }
