@@ -79,9 +79,10 @@ public final class CreativeWorkspace {
             out.put("freeBytes", stat.getAvailableBytes());
             out.put("totalBytes", stat.getTotalBytes());
             out.put("storageTier", "device-app-private-hot-workspace");
-            out.put("driveTierReady", false);
-            out.put("driveTierState", "external-orchestrated-not-mounted");
-            out.put("driveTierNote", "ChatGPT may have Drive access, but the Android app does not claim direct Drive credentials.");
+            out.put("cloudTierArchitecture", "folder-scoped-storage-access-framework");
+            out.put("cloudTierSupportsProjectArchiveRestore", true);
+            out.put("cloudTierSupportsModelPackColdStorage", true);
+            out.put("cloudTierUsesBroadDriveOAuth", false);
             out.put("galleryAccess", false);
         } catch (Exception ignored) {}
         return out;
