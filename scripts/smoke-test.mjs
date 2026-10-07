@@ -14,6 +14,7 @@ const androidBuild = fs.readFileSync(new URL("../android/app/build.gradle.kts", 
 const androidManifest = fs.readFileSync(new URL("../android/app/src/main/AndroidManifest.xml", import.meta.url), "utf8");
 const controlService = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/ControlService.java", import.meta.url), "utf8");
 const commandJournal = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/CommandJournal.java", import.meta.url), "utf8");
+const projectStore = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/ProjectStore.java", import.meta.url), "utf8");
 
 const scriptMatch = app.match(/<script>([\s\S]*?)<\/script>/);
 let appScriptParses = false;
@@ -78,14 +79,15 @@ const checks = [
   ["v3 leases track retries", worker.includes("claimCount:Number(c.claimCount||0)+1")],
   ["worker keeps legacy private chat handoff as fallback", worker.includes("appCreateHandoff") && worker.includes("app_import_chat_file")],
   ["v3 primary attachment path is direct app ingest", worker.includes('"app_import_attachment"') && worker.includes('"import_attachment"') && controlService.includes('case "import_attachment"') && controlService.includes("queueDirectAttachmentImport")],
-  ["v3 direct attachment bytes bypass Worker", worker.includes('transport:"direct-app-ingest"') && controlService.includes("MCPv3-DirectIngest")],
+  ["v3 direct attachment bytes bypass Worker", worker.includes('"openai/fileParams":["file"]') && worker.includes("download_url") && controlService.includes("MCPv3-DirectIngest")],
+  ["v3 MCP import is a real ChatGPT file parameter", worker.includes('file:z.object({') && worker.includes('file_id:z.string()') && worker.includes('mime_type:z.string()') && worker.includes('file_name:z.string()')],
   ["worker has ephemeral direct private upload relay", worker.includes("/api/app/private/upload") && worker.includes("appCreateCachedHandoff") && worker.includes("__videostudio_private_upload")],
   ["private upload relay is owner-authenticated", worker.includes("Native app authorization failed") && worker.includes("Allow everything mode is required")],
   ["private handoff can stream cached uploads to app", worker.includes("Private upload expired or unavailable") && worker.includes("caches.default.match")],
   ["installed connector exposes direct chat-file import", worker.includes('"import_chat_file"') && worker.includes("Securely stream a ChatGPT conversation attachment")],
   ["worker streams handoff bytes without permanent storage", worker.includes("Attachment source unavailable") && worker.includes("new Response(upstream.body")],
   ["native app supports authenticated handoff download", nativeProtocol.includes("openPrivateHandoff") && nativeMain.includes('case "import_chat_file"')],
-  ["native app exposes chat attachment handoff capability", nativeMain.includes('"chat-attachment-handoff"')],
+  ["native app exposes v3 direct attachment capability", nativeMain.includes('"direct-chatgpt-attachment-ingest"') && nativeMain.includes('"chat-attachment-handoff-fallback"')],
   ["native v3 uses Media3 Transformer", androidBuild.includes("media3-transformer:1.11.1") && nativeRender.includes("Transformer.Builder")],
   ["native app has prompt-to-video pipeline", promptVideo.includes("class PromptVideoEngine") && nativeMain.includes('case "prompt_video"')],
   ["native prompt video exports a real MP4", nativeMain.includes("runExportBlocking") && nativeMain.includes("Movies/VideoStudio")],
@@ -99,6 +101,8 @@ const checks = [
   ["worker exposes v3 prompt video tool", worker.includes('"app_create_prompt_video"') && worker.includes('"prompt_video"')],
   ["worker exposes native autonomous edit/export", worker.includes('"app_autonomous_edit"') && worker.includes('"app_export_project"')],
   ["worker exposes v3 creator catalog", worker.includes('"app_catalog"') && worker.includes("camera_shutter")],
+  ["native v3 project state is app-private SQLite", projectStore.includes("extends SQLiteOpenHelper") && projectStore.includes('DB_NAME = "videostudio_v3.db"') && projectStore.includes("migrateLegacyProjectsOnce") && projectStore.includes('return "sqlite-v3"')],
+  ["v3 keeps existing projects through migration", projectStore.includes("LEGACY_PROJECTS") && projectStore.includes("CONFLICT_IGNORE") && projectStore.includes("META_MIGRATED")],
   ["native v3 has durable command idempotency", commandJournal.includes("terminal(String commandId)") && commandJournal.includes("finish(JSONObject command") && controlService.includes("MCP v3 command replay prevented")],
   ["native v3 exposes a self-test", controlService.includes('case "self_test"') && worker.includes('"app_self_test"') && controlService.includes("privateStorageWritable")],
   ["native state reports v3 architecture", controlService.includes('out.put("mcpEndpointVersion", "v3")') && controlService.includes('out.put("localEngineOwnsProjects", true)')],
