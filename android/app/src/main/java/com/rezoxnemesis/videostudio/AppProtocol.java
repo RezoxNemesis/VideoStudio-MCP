@@ -40,7 +40,7 @@ import javax.crypto.spec.GCMParameterSpec;
 public final class AppProtocol {
     public static final String BASE = "https://wispy-queen-f9b5.prakasharuntandon634.workers.dev";
     public static final int PROTOCOL_VERSION = 3;
-    public static final String APP_VERSION = "3.2.1";
+    public static final String APP_VERSION = "3.3.0";
     public static final String MCP_PATH = "/app-mcp-v3/";
     public static final String API_PREFIX = "/api/v3/app";
 
