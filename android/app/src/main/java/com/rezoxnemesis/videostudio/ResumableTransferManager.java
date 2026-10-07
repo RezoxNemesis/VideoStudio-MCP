@@ -167,9 +167,9 @@ public final class ResumableTransferManager {
                 expected = connection.getContentLengthLong();
             }
 
-            long freeBytes = parent == null ? 0L : Math.max(0L, parent.getUsableSpace());
+            long freeAfterHeaders = parent == null ? 0L : Math.max(0L, parent.getUsableSpace());
             StorageBudget.Check budget = StorageBudget.checkTransfer(
-                    freeBytes,
+                    freeAfterHeaders,
                     expected,
                     offset,
                     StorageBudget.DEFAULT_TRANSFER_RESERVE_BYTES
