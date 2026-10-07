@@ -45,7 +45,18 @@ public final class CreatorCatalog {
             "auto_cut","scene_detect","silence_trim","highlight_extract","smart_reframe","caption_plan",
             "hook_builder","beat_sync","b_roll_plan","pace_rewrite","shorts_recut","story_recut",
             "colour_match","audio_ducking","title_writer","thumbnail_frame_pick","render_critique",
-            "prompt_video","multi_variant_edit","platform_adapt","continuity_check"
+            "prompt_video","animate_images","portrait_parallax","face_aware_motion","story_shot_order",
+            "multi_variant_edit","platform_adapt","continuity_check"
+    );
+
+    public static final List<String> ANIMATION_STYLES = Arrays.asList(
+            "cinematic","dreamy","dramatic","epic","warm","romantic"
+    );
+
+    public static final List<String> ANIMATION_FEATURES = Arrays.asList(
+            "bundled_person_segmentation","bundled_face_mesh","foreground_background_layers",
+            "face_aware_anchor","multi_keyframe_easing","2.5d_parallax","breathing_micro_motion",
+            "subject_sway","environment_drift","cinematic_story_order","layered_media3_render"
     );
 
     private static final Map<String, JSONObject> EFFECT_PRESETS = new LinkedHashMap<>();
@@ -94,6 +105,8 @@ public final class CreatorCatalog {
             o.put("textAnimations", new JSONArray(TEXT_ANIMATIONS));
             o.put("fonts", new JSONArray(FONTS));
             o.put("aiTools", new JSONArray(AI_TOOLS));
+            o.put("animationStyles", new JSONArray(ANIMATION_STYLES));
+            o.put("animationFeatures", new JSONArray(ANIMATION_FEATURES));
         } catch (Exception ignored) {}
         return o;
     }

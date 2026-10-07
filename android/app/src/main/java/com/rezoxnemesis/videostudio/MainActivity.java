@@ -162,7 +162,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         LinearLayout hero = card(true);
         TextView heroTitle = title("Create Without Limits", 28);
         hero.addView(heroTitle);
-        hero.addView(body("Native v3 Creator Engine • MCP v3 Native Agent • direct attachment ingest • local Media3 export"));
+        hero.addView(body("Native v3.1 Creator Engine • MCP v3 • on-device portrait AI • layered animation • local Media3 export"));
         Button promptVideo = neonButton("✦  Create Video from a Prompt", C_MAGENTA);
         promptVideo.setOnClickListener(v -> promptVideoDialog());
         hero.addView(promptVideo, margins(-1, dp(54), dp(14), dp(8), 0, 0));
@@ -211,7 +211,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         quick.addView(actionTile("+", "New Project", C_PURPLE, this::createProjectDialog), weightWithMargin());
         quick.addView(actionTile("▧", "Import Media", C_BLUE, this::pickMedia), weightWithMargin());
         quick.addView(actionTile("✦", "AI Edit", C_MAGENTA, () -> showTools()), weightWithMargin());
-        quick.addView(actionTile("▶", "Prompt Video", C_CYAN, this::promptVideoDialog), weightWithMargin());
+        quick.addView(actionTile("◉", "Animate Stills", C_CYAN, this::animateImagesDialog), weightWithMargin());
         box.addView(quick);
 
         box.addView(section("Recent Projects"));
@@ -229,7 +229,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         box.addView(section("Foundation"));
         LinearLayout foundation = card(false);
         foundation.addView(title("Creator-grade native foundation", 17));
-        foundation.addView(body("Media3 GPU export • crash-recovery checkpoints • thermal/RAM governor • private ChatGPT handoff • native frame analysis • no gallery browsing permission."));
+        foundation.addView(body("Media3 layered export • bundled person segmentation + face mesh • 2.5D parallax • keyframed motion • crash recovery • thermal/RAM governor • no Gallery browsing permission."));
         box.addView(foundation);
 
         setScreen(scroll, "home");
@@ -475,7 +475,17 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         promptCard.addView(promptButton, margins(-1, dp(52), dp(12), 0, 0, 0));
         box.addView(promptCard);
 
+        LinearLayout animateCard = card(true);
+        animateCard.addView(title("Still Images → Living Scenes", 22));
+        animateCard.addView(body("On-device portrait AI separates subject and background, anchors motion around the face, builds independent depth layers, directs cinematic keyframes, and renders a real MP4."));
+        Button animateButton = neonButton("Animate Current Image Project", C_CYAN);
+        animateButton.setTextColor(Color.BLACK);
+        animateButton.setOnClickListener(v -> animateImagesDialog());
+        animateCard.addView(animateButton, margins(-1, dp(52), dp(12), 0, 0, 0));
+        box.addView(animateCard, margins(-1, -2, dp(10), 0, 0, 0));
+
         String[][] groups = {
+                {"◎ Animate Stills", "AI subject layers, face-aware parallax and organic micro-motion"},
                 {"✦ Auto Cut", "Scene-aware pacing and highlight edits"},
                 {"▣ Scene Detect", "Native sampled-frame scene analysis"},
                 {"⌗ Smart Reframe", "Vertical, square and subject-safe framing"},
@@ -505,6 +515,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                 tile.addView(body(groups[i + j][1]));
                 tile.setOnClickListener(v -> {
                     if (tool.contains("Prompt Video")) promptVideoDialog();
+                    else if (tool.contains("Animate Stills")) animateImagesDialog();
                     else if (tool.contains("Green")) applyTool("Green Screen");
                     else if (tool.contains("Transition")) applyTool("Transitions");
                     else if (tool.contains("Motion")) applyTool("Motion");
@@ -521,7 +532,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         LinearLayout mcp = card(false);
         mcp.setBackground(neonCard());
         mcp.addView(title("Connected editing surface", 18));
-        mcp.addView(body("MCP v3 controls the native engine directly: explicit attachment ingest, analyse, edit, batch actions, prompt-video, export and state inspection. Gallery enumeration is permanently excluded."));
+        mcp.addView(body("MCP v3 controls the native engine directly: attachment ingest, portrait animation, analysis, edits, prompt-video, layered rendering, export and job inspection. Gallery enumeration is permanently excluded."));
         Button connect = neonButton("Connect ChatGPT", C_CYAN);
         connect.setTextColor(Color.BLACK);
         connect.setOnClickListener(v -> sharePairing());
@@ -713,6 +724,26 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
 
     private void previewTimeline() {
         if (activeProject == null || activeProject.clips.isEmpty() || preview == null) return;
+        boolean hasVideoClip = false;
+        for (ProjectStore.Clip clip : activeProject.clips) {
+            ProjectStore.Asset asset = activeProject.asset(clip.assetId);
+            if (asset != null && asset.mime != null && asset.mime.startsWith("video/")) {
+                hasVideoClip = true;
+                break;
+            }
+        }
+        if (!hasVideoClip) {
+            if (activeProject.latestExportUri != null && !activeProject.latestExportUri.isEmpty()) {
+                timelinePreviewRunning = false;
+                if (clipStopper != null) ui.removeCallbacks(clipStopper);
+                preview.stopPlayback();
+                preview.setVideoURI(Uri.parse(activeProject.latestExportUri));
+                preview.setOnPreparedListener(mp -> preview.start());
+            } else {
+                Toast.makeText(this, "Render the animated image timeline first", Toast.LENGTH_SHORT).show();
+            }
+            return;
+        }
         timelinePreviewRunning = true;
         playTimelineIndex(0);
     }
@@ -931,6 +962,81 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                     store.save(activeProject);
                     syncProtocolState();
                     showEditor();
+                })
+                .setNegativeButton("Cancel", null)
+                .show();
+    }
+
+    private void animateImagesDialog() {
+        if (activeProject == null) {
+            Toast.makeText(this, "Create or open an image project first", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        int imageCount = 0;
+        for (ProjectStore.Clip clip : activeProject.clips) {
+            ProjectStore.Asset asset = activeProject.asset(clip.assetId);
+            if (asset != null && asset.mime != null && asset.mime.startsWith("image/")) imageCount++;
+        }
+        if (imageCount == 0) {
+            Toast.makeText(this, "Import still images into this project first", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        LinearLayout wrap = column();
+        wrap.setPadding(dp(20), dp(6), dp(20), 0);
+
+        EditText style = new EditText(this);
+        style.setHint("cinematic / dreamy / dramatic / epic / warm / romantic");
+        style.setText("cinematic");
+        style.setSingleLine();
+        style.setTextColor(C_TEXT);
+        style.setHintTextColor(C_MUTED);
+        wrap.addView(body("Animation style"));
+        wrap.addView(style, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(52)));
+
+        EditText environment = new EditText(this);
+        environment.setHint("river, forest, rain, mist, ambient…");
+        environment.setText("ambient");
+        environment.setSingleLine();
+        environment.setTextColor(C_TEXT);
+        environment.setHintTextColor(C_MUTED);
+        wrap.addView(body("Environment motion hint"));
+        wrap.addView(environment, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(52)));
+
+        EditText duration = numberInput(4.2f);
+        wrap.addView(body("Seconds per image"));
+        wrap.addView(duration, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(52)));
+
+        final int count = imageCount;
+        new AlertDialog.Builder(this)
+                .setTitle("Animate " + count + " still image" + (count == 1 ? "" : "s"))
+                .setMessage("VideoStudio will run bundled portrait AI on-device, build depth layers and render the animation through the protected native lane.")
+                .setView(wrap)
+                .setPositiveButton("Animate + Render", (d, w) -> {
+                    try {
+                        String styleValue = style.getText().toString().trim().toLowerCase(Locale.US);
+                        if (styleValue.isEmpty()) styleValue = "cinematic";
+                        String environmentValue = environment.getText().toString().trim();
+                        double seconds = Math.max(1.8, Math.min(8.0, Double.parseDouble(duration.getText().toString())));
+
+                        Intent animate = new Intent(this, ControlService.class)
+                                .setAction(ControlService.ACTION_LOCAL_ANIMATE);
+                        animate.putExtra("projectId", activeProject.id);
+                        animate.putExtra("style", styleValue);
+                        animate.putExtra("environment", environmentValue);
+                        animate.putExtra("intensity", .82d);
+                        animate.putExtra("durationSecondsPerImage", seconds);
+                        animate.putExtra("reorderForStory", true);
+                        animate.putExtra("render", true);
+                        animate.putExtra("aspect", "9:16");
+                        animate.putExtra("quality", "1080p");
+                        animate.putExtra("fileName", "VideoStudio_Animated_" + System.currentTimeMillis() + ".mp4");
+                        startForegroundService(animate);
+                        Toast.makeText(this, "Native animation queued • watch Activity for live progress", Toast.LENGTH_LONG).show();
+                        showActivity();
+                    } catch (Exception error) {
+                        Toast.makeText(this, error.getMessage() == null ? "Could not queue animation" : error.getMessage(), Toast.LENGTH_LONG).show();
+                    }
                 })
                 .setNegativeButton("Cancel", null)
                 .show();
@@ -1658,6 +1764,8 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
             out.put("nativeAgent", "videostudio-v3");
             out.put("directAttachmentIngest", true);
             out.put("localEngineOwnsProjects", true);
+            out.put("portraitAnimationEngine", "v3.1-layered-parallax");
+            out.put("onDevicePortraitAi", true);
             out.put("nativeApp", true);
             out.put("permissionMode", permissionMode());
             out.put("controlPaused", protocol.isControlPaused());
@@ -1693,7 +1801,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
             String[] values = {
                     "native-ui","mcp-v3-native-agent","persistent-background-control","local-projects","private-app-mcp-v3","direct-chatgpt-attachment-ingest","chat-attachment-handoff-fallback","url-import",
                     "timeline","trim","split","speed","slow-motion","native-frame-analysis","scene-change-sampling",
-                    "media3-native-export","prompt-to-video","gpu-brightness","gpu-contrast","gpu-hsl","gpu-blur",
+                    "media3-native-export","layered-media3-animation","on-device-person-segmentation","on-device-face-mesh","subject-aware-parallax","multi-keyframe-animation","prompt-to-video","gpu-brightness","gpu-contrast","gpu-hsl","gpu-blur",
                     "gpu-motion","scale","rotate","creator-transition-model","green-screen-model","masks-model",
                     "fonts","text-animation-model","audio-ducking-model","ai-edit-plans","autonomous-edit-and-export",
                     "bounded-multitasking","crash-recovery-checkpoints","durable-command-idempotency","thermal-guard","memory-guard","job-cancel"

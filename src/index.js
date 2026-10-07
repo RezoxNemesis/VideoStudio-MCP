@@ -540,7 +540,7 @@ function serverForApp(env,ownerKey,protocolVersion=1){
   const isV3=Number(protocolVersion)===3;
   const s=new McpServer({
     name:isV3?"VideoStudio-App-MCP-v3":"VideoStudio-App-MCP",
-    version:isV3?"3.0.0":"1.1.2"
+    version:isV3?"3.1.0":"1.1.2"
   }), st=state(env);
   const enqueueCommand=(action,parameters={})=>isV3
     ? st.appEnqueueV3(ownerKey,action,parameters)
@@ -576,7 +576,7 @@ function serverForApp(env,ownerKey,protocolVersion=1){
   s.registerTool("app_status",{description:isV3?"Check the VideoStudio v3 Native Agent connection, protocol version, permission mode, projects and pending native work. Gallery access is always false.":"Check the private native VideoStudio Android connection, permission mode, projects, control-pause state and pending work. Gallery access is always false.",inputSchema:{}},async()=>out(await readStatus()));
 
   s.registerTool("app_capabilities",{description:isV3?"Read VideoStudio v3 Native Agent capabilities and architecture guarantees.":"Read the native v1.1 editing, AI, render and privacy capabilities available to ChatGPT.",inputSchema:{}},async()=>out({
-    version:isV3?"3.0.0":"1.1.2",
+    version:isV3?"3.1.0":"1.1.2",
     protocolVersion:isV3?3:1,
     primary:"Android native app",
     architecture:isV3?"native-first; cloud path is signalling only":"native app with private MCP relay",
@@ -589,7 +589,8 @@ function serverForApp(env,ownerKey,protocolVersion=1){
       ?["direct ChatGPT attachment ingest to app-private storage","VideoStudio-owned media","explicit HTTPS import","manual Android picker","no Gallery enumeration","legacy short-lived relay fallback"]
       :["VideoStudio-owned media","explicit HTTPS import","manual Android picker","private handoff"],
     editing:["trim","split","0.25x-4x speed","slow motion","volume","titles","fonts","text animations","scale","rotate","blur","colour/HSL","motion presets","transition presets","reframe model","mask model","green-screen model","audio-duck model"],
-    ai:["native visual analysis","scene-change sampling","autonomous edit plans","creator presets","prompt-to-video","multi-variant planning","short-form recut planning","render/export orchestration"],
+    ai:["native visual analysis","scene-change sampling","bundled person segmentation","bundled face mesh","subject-aware image animation","2.5D parallax","autonomous edit plans","creator presets","prompt-to-video","multi-variant planning","short-form recut planning","render/export orchestration"],
+    animation:isV3?["AI subject/background layer extraction","face-aware camera anchoring","multi-keyframe easing","foreground breathing/sway","independent depth motion","story-shot reordering","layered Media3 composition"]:[],
     export:["Media3 native MP4","H.264","AAC","720p","1080p","9:16","16:9","1:1","4:5","Movies/VideoStudio"],
     stability:isV3
       ?["local projects survive signalling outages","bounded light/heavy lanes","one process-wide heavy export at a time","RAM guard","thermal guard","persistent job checkpoints","duplicate-command prevention","cancel single/all jobs"]
@@ -602,7 +603,7 @@ function serverForApp(env,ownerKey,protocolVersion=1){
     effects:["none","cinematic","film_grain","soft_glow","bloom","dream","vignette","sharpen","clarity","motion_blur","radial_blur","gaussian_blur","chromatic_aberration","rgb_split","glitch","scanlines","vhs","retro_cam","super8","film_burn","light_leak","halation","neon","cyberpunk","noir","bleach_bypass","teal_orange","warm_film","cool_night","golden_hour","matte","high_contrast","soft_portrait","crush_black","fade_black","duotone","posterize","pixelate","fisheye","shake","strobe","flash","edge_glow"],
     textAnimations:["none","fade","fade_up","fade_down","slide_left","slide_right","scale_in","pop","bounce","typewriter","word_reveal","line_reveal","blur_in","tracking_in","tracking_out","glitch","neon_flicker","kinetic","mask_reveal","cinematic_title","caption_pop"],
     fonts:["sans-serif","sans-serif-medium","sans-serif-condensed","sans-serif-light","sans-serif-black","serif","serif-monospace","monospace","cursive","casual","elegant","poster","tech","editorial"],
-    aiTools:["auto_cut","scene_detect","silence_trim","highlight_extract","smart_reframe","caption_plan","hook_builder","beat_sync","b_roll_plan","pace_rewrite","shorts_recut","story_recut","colour_match","audio_ducking","title_writer","thumbnail_frame_pick","render_critique","prompt_video","multi_variant_edit","platform_adapt","continuity_check"]
+    aiTools:["auto_cut","scene_detect","silence_trim","highlight_extract","smart_reframe","caption_plan","hook_builder","beat_sync","b_roll_plan","pace_rewrite","shorts_recut","story_recut","colour_match","audio_ducking","title_writer","thumbnail_frame_pick","render_critique","prompt_video","animate_images","portrait_parallax","multi_variant_edit","platform_adapt","continuity_check"]
   }));
 
   s.registerTool("app_state",{description:"Request full current native app/project state including active asset metadata, jobs, creator capabilities and recent on-device ChatGPT activity.",inputSchema:{}},async()=>queue("get_state",{}));
@@ -626,6 +627,27 @@ function serverForApp(env,ownerKey,protocolVersion=1){
   s.registerTool("app_autonomous_edit",{description:"Execute a structured autonomous native edit. ChatGPT may replace the timeline, apply a creator preset and optionally launch a safe native export in one request.",inputSchema:{instruction:z.string().max(5000).optional(),clips:z.array(z.record(z.string(),z.any())).max(80).optional(),preset:z.string().max(80).optional(),motion:z.string().max(80).optional(),transition:z.string().max(80).optional(),font:z.string().max(80).optional(),aspect:z.enum(["9:16","16:9","1:1","4:5"]).optional(),quality:z.enum(["720p","1080p"]).optional(),render:z.boolean().optional(),fileName:z.string().max(180).optional()}},async args=>queue("autonomous_edit",args));
 
   s.registerTool("app_create_prompt_video",{description:"Create and export a real local MP4 from a prompt. ChatGPT can provide a detailed scene plan with original titles, text, motion, transitions, effects and font choices; VideoStudio generates the scene visuals locally and renders them with its native engine.",inputSchema:{prompt:z.string().min(1).max(10000),durationSeconds:z.number().int().min(4).max(120).optional(),aspect:z.enum(["9:16","16:9","1:1","4:5"]).optional(),quality:z.enum(["720p","1080p"]).optional(),style:z.string().max(100).optional(),font:z.string().max(80).optional(),scenes:z.array(z.record(z.string(),z.any())).max(20).optional()}},async args=>queue("prompt_video",args));
+
+  if(isV3) s.registerTool("app_animate_images",{
+    description:"Turn imported still images into a real native animated video. VideoStudio runs bundled on-device person segmentation and face-aware analysis, builds foreground/background layers, directs varied cinematic keyframes and 2.5D parallax, optionally reorders shots for story rhythm, then renders a local MP4 through Media3.",
+    inputSchema:{
+      projectId:z.string().min(8).optional(),
+      style:z.enum(["cinematic","dreamy","dramatic","epic","warm","romantic"]).optional(),
+      environment:z.string().max(80).optional(),
+      intensity:z.number().min(.15).max(1).optional(),
+      durationSecondsPerImage:z.number().min(1.8).max(8).optional(),
+      reorderForStory:z.boolean().optional(),
+      render:z.boolean().optional(),
+      aspect:z.enum(["9:16","16:9","1:1","4:5"]).optional(),
+      quality:z.enum(["720p","1080p"]).optional(),
+      fileName:z.string().max(180).optional()
+    }
+  },async args=>queue("animate_images",args));
+
+  if(isV3) s.registerTool("app_job_status",{
+    description:"Read one native background job's current state and progress, including long image-animation, analysis and render jobs.",
+    inputSchema:{jobId:z.string().min(8)}
+  },async({jobId})=>queue("job_status",{jobId}));
 
   s.registerTool("app_export_project",{description:"Render the active timeline to a native MP4 and publish it to Movies/VideoStudio.",inputSchema:{aspect:z.enum(["9:16","16:9","1:1","4:5"]).optional(),quality:z.enum(["720p","1080p"]).optional(),fileName:z.string().max(180).optional()}},async({aspect,quality,fileName})=>queue("export_project",{aspect:aspect||"9:16",quality:quality||"1080p",fileName:fileName||("VideoStudio_"+Date.now()+".mp4")}));
 
@@ -661,7 +683,7 @@ function serverForApp(env,ownerKey,protocolVersion=1){
     }catch(e){ return out({queued:false,error:e.message}); }
   });
 
-  s.registerTool("app_batch",{description:"Queue up to 20 native VideoStudio actions quickly in order. Gallery/library enumeration is blocked regardless of permission mode.",inputSchema:{actions:z.array(z.object({action:z.enum(["get_state","select_project","apply_edit_plan","apply_tool","creator_preset","preview_project","analyse_media","export_project","cancel_job","activity_note"]),parameters:z.record(z.string(),z.any()).optional()})).min(1).max(20)}},async({actions})=>{
+  s.registerTool("app_batch",{description:"Queue up to 20 native VideoStudio actions quickly in order. Gallery/library enumeration is blocked regardless of permission mode.",inputSchema:{actions:z.array(z.object({action:z.enum(["get_state","select_project","apply_edit_plan","apply_tool","creator_preset","preview_project","analyse_media","animate_images","job_status","export_project","cancel_job","activity_note"]),parameters:z.record(z.string(),z.any()).optional()})).min(1).max(20)}},async({actions})=>{
     const queued=[];
     try{
       for(const item of actions){

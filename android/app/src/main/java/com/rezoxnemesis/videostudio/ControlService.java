@@ -23,6 +23,7 @@ import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
+import java.net.InetAddress;
 import java.net.URL;
 import java.util.ArrayList;
 import java.util.Locale;
@@ -36,6 +37,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     public static final String ACTION_PAUSE = "com.rezoxnemesis.videostudio.PAUSE_CONTROL";
     public static final String ACTION_RESUME = "com.rezoxnemesis.videostudio.RESUME_CONTROL";
     public static final String ACTION_SYNC = "com.rezoxnemesis.videostudio.SYNC_STATE";
+    public static final String ACTION_LOCAL_ANIMATE = "com.rezoxnemesis.videostudio.LOCAL_ANIMATE_IMAGES";
     private static final String CHANNEL = "videostudio_private_control";
     private static final int NOTIFICATION_ID = 6101;
     private static final String PREFS = "videostudio_native_v1";
@@ -43,6 +45,8 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     private static final String KEY_FILE = "allowed_asset_id";
     private static final String KEY_SERVICE_ONLINE = "control_service_online";
     private static final String KEY_SERVICE_DETAIL = "control_service_detail";
+    private static final long MAX_REMOTE_IMPORT_BYTES = 350L * 1024L * 1024L;
+    private static final int MAX_REMOTE_REDIRECTS = 5;
 
     private ProjectStore store;
     private JobManager jobs;
@@ -51,6 +55,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     private NativeRenderEngine.Handle activeRender;
     private PromptVideoEngine promptVideoEngine;
     private NativeMediaAnalyzer mediaAnalyzer;
+    private NativePortraitMotionAnalyzer portraitMotionAnalyzer;
     private SharedPreferences prefs;
     private CommandJournal commandJournal;
 
@@ -65,6 +70,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         renderEngine = new NativeRenderEngine(this);
         promptVideoEngine = new PromptVideoEngine(this);
         mediaAnalyzer = new NativeMediaAnalyzer(this);
+        portraitMotionAnalyzer = new NativePortraitMotionAnalyzer(this);
         createChannel();
         startForeground(NOTIFICATION_ID, notification("VideoStudio MCP v3 starting"));
         syncProtocolState();
@@ -93,6 +99,30 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         } else if (ACTION_SYNC.equals(action)) {
             syncProtocolState();
             protocol.registerNow();
+        } else if (ACTION_LOCAL_ANIMATE.equals(action)) {
+            try {
+                JSONObject p = new JSONObject();
+                p.put("projectId", intent.getStringExtra("projectId"));
+                p.put("style", intent.getStringExtra("style") == null ? "cinematic" : intent.getStringExtra("style"));
+                p.put("environment", intent.getStringExtra("environment") == null ? "ambient" : intent.getStringExtra("environment"));
+                p.put("intensity", intent.getDoubleExtra("intensity", .78));
+                p.put("durationSecondsPerImage", intent.getDoubleExtra("durationSecondsPerImage", 4.2));
+                p.put("reorderForStory", intent.getBooleanExtra("reorderForStory", true));
+                p.put("render", intent.getBooleanExtra("render", true));
+                p.put("aspect", intent.getStringExtra("aspect") == null ? "9:16" : intent.getStringExtra("aspect"));
+                p.put("quality", intent.getStringExtra("quality") == null ? "1080p" : intent.getStringExtra("quality"));
+                p.put("fileName", intent.getStringExtra("fileName") == null
+                        ? "VideoStudio_Animated_" + System.currentTimeMillis() + ".mp4"
+                        : intent.getStringExtra("fileName"));
+                JSONObject queued = queueAnimatedImages(p);
+                ActivityLog.add(this, "user", "AI image animation queued",
+                        queued.optInt("imageCount", 0) + " image(s) • job " + shortId(queued.optString("jobId")),
+                        "queued", 0, null, queued.optString("projectId", ""));
+            } catch (Exception error) {
+                ActivityLog.add(this, "user", "AI image animation failed",
+                        error.getMessage() == null ? "Could not queue animation" : error.getMessage(),
+                        "failed", null, null, intent.getStringExtra("projectId"));
+            }
         }
         syncProtocolState();
         return START_STICKY;
@@ -224,6 +254,15 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 case "prompt_video":
                     complete(command, queuePromptVideo(p));
                     return;
+                case "animate_images":
+                    complete(command, queueAnimatedImages(p));
+                    return;
+                case "job_status": {
+                    JSONObject result = ok();
+                    result.put("status", jobs.get(p.optString("jobId", "")));
+                    complete(command, result);
+                    return;
+                }
                 case "export_project":
                     complete(command, queueExport(p));
                     return;
@@ -491,6 +530,142 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         }
     }
 
+    private JSONObject queueAnimatedImages(JSONObject p) throws Exception {
+        ProjectStore.Project project = resolveProject(p.optString("projectId", ""));
+        if (project.clips.isEmpty()) throw new IllegalArgumentException("Timeline is empty");
+
+        ArrayList<ProjectStore.Clip> imageClips = new ArrayList<>();
+        for (ProjectStore.Clip clip : project.clips) {
+            ProjectStore.Asset asset = project.asset(clip.assetId);
+            if (asset != null && asset.mime != null && asset.mime.startsWith("image/")) imageClips.add(clip);
+        }
+        if (imageClips.isEmpty()) throw new IllegalArgumentException("No image clips are available to animate");
+
+        String style = p.optString("style", "cinematic").toLowerCase(Locale.US);
+        String environment = p.optString("environment", "ambient");
+        double intensity = Math.max(.15, Math.min(1.0, p.optDouble("intensity", .78)));
+        long baseDurationMs = (long) (1000d * Math.max(1.8, Math.min(8.0, p.optDouble("durationSecondsPerImage", 4.2))));
+        boolean reorderForStory = p.optBoolean("reorderForStory", true);
+        boolean render = p.optBoolean("render", true);
+        String aspect = p.optString("aspect", "9:16");
+        String quality = p.optString("quality", "1080p");
+        String fileName = sanitizeFileName(p.optString("fileName", "VideoStudio_Animated_" + System.currentTimeMillis() + ".mp4"));
+
+        JobManager.Job job = jobs.submit("Animate images • " + project.name, JobManager.Kind.HEAVY, state -> {
+            int total = imageClips.size();
+            for (int i = 0; i < total; i++) {
+                if (Thread.currentThread().isInterrupted()) throw new InterruptedException();
+                ProjectStore.Clip clip = imageClips.get(i);
+                ProjectStore.Asset asset = project.asset(clip.assetId);
+                if (asset == null) continue;
+
+                int startProgress = 4 + (int) (48d * i / Math.max(1, total));
+                checkpoint(state, "AI portrait animation",
+                        "Analysing subject and building depth layers • " + (i + 1) + "/" + total,
+                        startProgress, project.id);
+
+                NativePortraitMotionAnalyzer.Result layers =
+                        portraitMotionAnalyzer.analyseAndBuildLayers(asset, project.id);
+
+                String shotType = layers.analysis.optString("shotType", "medium");
+                long shotDuration = baseDurationMs;
+                if ("wide".equals(shotType)) shotDuration += 350;
+                if ("close".equals(shotType)) shotDuration -= 250;
+                shotDuration += ((i % 3) - 1) * 120L;
+                shotDuration = Math.max(1800, shotDuration);
+
+                AnimatedSceneDirector.attachPlan(
+                        clip,
+                        layers,
+                        i,
+                        total,
+                        style,
+                        intensity,
+                        shotDuration,
+                        environment
+                );
+
+                checkpoint(state, "AI portrait animation",
+                        "Motion plan ready • " + (i + 1) + "/" + total + " • " + shotType,
+                        5 + (int) (50d * (i + 1) / Math.max(1, total)), project.id);
+            }
+
+            if (reorderForStory && imageClips.size() >= 4) {
+                checkpoint(state, "AI motion director", "Rebuilding cinematic shot order", 58, project.id);
+                reorderAnimatedStory(project);
+            }
+
+            store.save(project);
+            syncProtocolState();
+            checkpoint(state, "AI motion director", "Layered motion timeline ready", 62, project.id);
+
+            if (render) {
+                checkpoint(state, "Rendering animated video", "Starting layered Media3 composition", 65, project.id);
+                runExportBlocking(project, aspect, quality, fileName, state);
+                checkpoint(state, "Rendering animated video", "Animated MP4 complete", 100, project.id);
+            } else {
+                checkpoint(state, "AI motion director", "Animation preparation complete", 100, project.id);
+            }
+        });
+
+        JSONObject result = ok();
+        result.put("queued", true);
+        result.put("jobId", job.id);
+        result.put("projectId", project.id);
+        result.put("imageCount", imageClips.size());
+        result.put("style", style);
+        result.put("environment", environment);
+        result.put("intensity", intensity);
+        result.put("durationSecondsPerImage", baseDurationMs / 1000d);
+        result.put("reorderForStory", reorderForStory);
+        result.put("render", render);
+        result.put("aspect", aspect);
+        result.put("quality", quality);
+        result.put("engine", "VideoStudio v3.1 portrait animation");
+        return result;
+    }
+
+    private void reorderAnimatedStory(ProjectStore.Project project) {
+        ArrayList<ProjectStore.Clip> wide = new ArrayList<>();
+        ArrayList<ProjectStore.Clip> medium = new ArrayList<>();
+        ArrayList<ProjectStore.Clip> close = new ArrayList<>();
+        ArrayList<ProjectStore.Clip> other = new ArrayList<>();
+
+        for (ProjectStore.Clip clip : project.clips) {
+            JSONObject fx = clip.effects == null ? null : clip.effects;
+            JSONObject analysis = fx == null ? null : fx.optJSONObject("animationAnalysis");
+            if (analysis == null) {
+                other.add(clip);
+                continue;
+            }
+            String shot = analysis.optString("shotType", "medium");
+            if ("wide".equals(shot)) wide.add(clip);
+            else if ("close".equals(shot)) close.add(clip);
+            else medium.add(clip);
+        }
+
+        ArrayList<ProjectStore.Clip> story = new ArrayList<>();
+        int wi = 0, mi = 0, ci = 0;
+        int target = wide.size() + medium.size() + close.size();
+        while (story.size() < target) {
+            int phase = story.size() % 5;
+            ProjectStore.Clip next = null;
+            if ((phase == 0 || phase == 4) && wi < wide.size()) next = wide.get(wi++);
+            else if ((phase == 1 || phase == 3) && mi < medium.size()) next = medium.get(mi++);
+            else if (phase == 2 && ci < close.size()) next = close.get(ci++);
+            else if (mi < medium.size()) next = medium.get(mi++);
+            else if (ci < close.size()) next = close.get(ci++);
+            else if (wi < wide.size()) next = wide.get(wi++);
+            if (next == null) break;
+            story.add(next);
+        }
+        story.addAll(other);
+        if (!story.isEmpty()) {
+            project.clips.clear();
+            project.clips.addAll(story);
+        }
+    }
+
     private JSONObject queuePromptVideo(JSONObject p) throws Exception {
         String prompt = p.optString("prompt", "").trim();
         if (prompt.isEmpty()) throw new IllegalArgumentException("Prompt is required");
@@ -599,40 +774,34 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         String name = p.optString("name", "ChatGPT attachment");
         String mimeHint = p.optString("mime", "");
         long sizeHint = Math.max(0, p.optLong("size", 0));
+        if (sizeHint > MAX_REMOTE_IMPORT_BYTES) {
+            throw new IllegalArgumentException("Attachment exceeds VideoStudio's 350 MB direct-import safety limit");
+        }
 
         JobManager.Job job = jobs.submit("Direct attachment • " + name, JobManager.Kind.LIGHT, state -> {
             File dir = new File(getFilesDir(), "imports");
             if (!dir.exists() && !dir.mkdirs()) throw new IllegalStateException("Could not create import directory");
             File file = new File(dir, System.currentTimeMillis() + "_" + sanitizeFileName(name));
 
-            HttpURLConnection connection = (HttpURLConnection) new URL(sourceUrl).openConnection();
-            connection.setConnectTimeout(18000);
-            connection.setReadTimeout(90000);
-            connection.setInstanceFollowRedirects(true);
-            connection.setRequestProperty("Accept", "*/*");
-            connection.setRequestProperty("User-Agent", "VideoStudio-Android/3.0.0 MCPv3-DirectIngest");
-            int code = connection.getResponseCode();
-            if (code < 200 || code >= 300) throw new IllegalStateException("Attachment source rejected: HTTP " + code);
-
+            HttpURLConnection connection = openSafeRemote(sourceUrl, 18000, 90000);
             String mime = mimeHint.isEmpty() ? connection.getContentType() : mimeHint;
             if (mime == null || mime.isEmpty()) mime = "application/octet-stream";
             long expected = connection.getContentLengthLong();
             if (expected <= 0) expected = sizeHint;
 
-            try (InputStream in = connection.getInputStream(); FileOutputStream out = new FileOutputStream(file)) {
-                byte[] buffer = new byte[192 * 1024];
-                long bytes = 0;
-                int n;
-                while ((n = in.read(buffer)) >= 0) {
-                    if (Thread.currentThread().isInterrupted()) throw new InterruptedException();
-                    out.write(buffer, 0, n);
-                    bytes += n;
-                    int progress = expected > 0
-                            ? Math.min(97, (int) (97d * bytes / expected))
-                            : Math.min(95, (int) (bytes / 1024 / 1024));
-                    checkpoint(state, "Direct ChatGPT attachment import",
-                            (bytes / 1024 / 1024) + " MB received directly by VideoStudio", progress, project.id);
-                }
+            try {
+                copyRemoteToFile(
+                        connection,
+                        file,
+                        expected,
+                        state,
+                        project.id,
+                        "Direct ChatGPT attachment import",
+                        "received directly by VideoStudio"
+                );
+            } catch (Exception error) {
+                if (file.exists()) file.delete();
+                throw error;
             } finally {
                 connection.disconnect();
             }
@@ -654,19 +823,116 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     private void validateRemoteHttps(String raw) throws Exception {
         URL parsed = new URL(raw);
         if (!"https".equalsIgnoreCase(parsed.getProtocol())) {
-            throw new IllegalArgumentException("VideoStudio v3 direct attachment ingest requires HTTPS");
+            throw new IllegalArgumentException("VideoStudio v3 remote ingest requires HTTPS");
         }
+        if (parsed.getUserInfo() != null) {
+            throw new IllegalArgumentException("Credential-bearing import URLs are not permitted");
+        }
+        int port = parsed.getPort();
+        if (port != -1 && port != 443) {
+            throw new IllegalArgumentException("Non-standard HTTPS import ports are not permitted");
+        }
+
         String host = parsed.getHost() == null ? "" : parsed.getHost().toLowerCase(Locale.US);
         if (host.isEmpty()
                 || "localhost".equals(host)
+                || "0.0.0.0".equals(host)
                 || "127.0.0.1".equals(host)
                 || "::1".equals(host)
                 || host.endsWith(".local")
                 || host.endsWith(".internal")
+                || host.endsWith(".localhost")
                 || host.startsWith("10.")
                 || host.startsWith("192.168.")
                 || private172(host)) {
             throw new IllegalArgumentException("Private-network attachment sources are not permitted");
+        }
+
+        InetAddress[] resolved = InetAddress.getAllByName(host);
+        if (resolved.length == 0) throw new IllegalArgumentException("Attachment host did not resolve");
+        for (InetAddress address : resolved) {
+            byte[] rawAddress = address.getAddress();
+            boolean uniqueLocalV6 = rawAddress.length == 16 && ((rawAddress[0] & 0xfe) == 0xfc);
+            if (address.isAnyLocalAddress()
+                    || address.isLoopbackAddress()
+                    || address.isLinkLocalAddress()
+                    || address.isSiteLocalAddress()
+                    || address.isMulticastAddress()
+                    || uniqueLocalV6) {
+                throw new IllegalArgumentException("Attachment host resolves to a private/local address");
+            }
+        }
+    }
+
+    private HttpURLConnection openSafeRemote(String raw, int connectTimeoutMs, int readTimeoutMs) throws Exception {
+        String current = raw;
+        for (int redirects = 0; redirects <= MAX_REMOTE_REDIRECTS; redirects++) {
+            validateRemoteHttps(current);
+            URL url = new URL(current);
+            HttpURLConnection connection = (HttpURLConnection) url.openConnection();
+            connection.setConnectTimeout(connectTimeoutMs);
+            connection.setReadTimeout(readTimeoutMs);
+            connection.setInstanceFollowRedirects(false);
+            connection.setRequestProperty("Accept", "*/*");
+            connection.setRequestProperty("User-Agent", "VideoStudio-Android/" + AppProtocol.APP_VERSION + " MCPv3-SafeIngest");
+
+            int code = connection.getResponseCode();
+            if (code == HttpURLConnection.HTTP_MOVED_PERM
+                    || code == HttpURLConnection.HTTP_MOVED_TEMP
+                    || code == HttpURLConnection.HTTP_SEE_OTHER
+                    || code == 307
+                    || code == 308) {
+                String location = connection.getHeaderField("Location");
+                connection.disconnect();
+                if (location == null || location.trim().isEmpty()) {
+                    throw new IllegalStateException("Attachment redirect had no destination");
+                }
+                current = new URL(url, location).toString();
+                continue;
+            }
+            if (code < 200 || code >= 300) {
+                connection.disconnect();
+                throw new IllegalStateException("Attachment source rejected: HTTP " + code);
+            }
+            long length = connection.getContentLengthLong();
+            if (length > MAX_REMOTE_IMPORT_BYTES) {
+                connection.disconnect();
+                throw new IllegalStateException("Remote media exceeds VideoStudio's 350 MB safety limit");
+            }
+            return connection;
+        }
+        throw new IllegalStateException("Too many attachment redirects");
+    }
+
+    private void copyRemoteToFile(HttpURLConnection connection,
+                                  File file,
+                                  long expected,
+                                  JobManager.Job state,
+                                  String projectId,
+                                  String activity,
+                                  String progressSuffix) throws Exception {
+        long announced = expected > 0 ? expected : connection.getContentLengthLong();
+        if (announced > MAX_REMOTE_IMPORT_BYTES) {
+            throw new IllegalStateException("Remote media exceeds VideoStudio's 350 MB safety limit");
+        }
+        try (InputStream in = connection.getInputStream(); FileOutputStream out = new FileOutputStream(file)) {
+            byte[] buffer = new byte[192 * 1024];
+            long bytes = 0;
+            int n;
+            while ((n = in.read(buffer)) >= 0) {
+                if (Thread.currentThread().isInterrupted()) throw new InterruptedException();
+                bytes += n;
+                if (bytes > MAX_REMOTE_IMPORT_BYTES) {
+                    throw new IllegalStateException("Remote media exceeded VideoStudio's 350 MB safety limit while streaming");
+                }
+                out.write(buffer, 0, n);
+                int progress = announced > 0
+                        ? Math.min(97, (int) (97d * bytes / announced))
+                        : Math.min(95, 4 + (int) (91d * bytes / MAX_REMOTE_IMPORT_BYTES));
+                checkpoint(state, activity,
+                        (bytes / 1024 / 1024) + " MB " + progressSuffix, progress, projectId);
+            }
+            out.flush();
         }
     }
 
@@ -700,17 +966,12 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             String mime = mimeHint.isEmpty() ? connection.getContentType() : mimeHint;
             if (mime == null || mime.isEmpty()) mime = "application/octet-stream";
             long expected = connection.getContentLengthLong();
-            try (InputStream in = connection.getInputStream(); FileOutputStream out = new FileOutputStream(file)) {
-                byte[] buffer = new byte[128 * 1024];
-                long bytes = 0;
-                int n;
-                while ((n = in.read(buffer)) >= 0) {
-                    if (Thread.currentThread().isInterrupted()) throw new InterruptedException();
-                    out.write(buffer, 0, n);
-                    bytes += n;
-                    int progress = expected > 0 ? Math.min(96, (int) (96d * bytes / expected)) : Math.min(94, (int) (bytes / 1024 / 1024));
-                    checkpoint(state, "Importing ChatGPT file", (bytes / 1024 / 1024) + " MB securely streamed", progress, project.id);
-                }
+            try {
+                copyRemoteToFile(connection, file, expected, state, project.id,
+                        "Importing ChatGPT file", "securely streamed");
+            } catch (Exception error) {
+                if (file.exists()) file.delete();
+                throw error;
             } finally {
                 connection.disconnect();
             }
@@ -727,7 +988,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
 
     private JSONObject queueUrlImport(JSONObject p) throws Exception {
         String url = p.optString("url");
-        if (!url.startsWith("https://")) throw new IllegalArgumentException("Only HTTPS imports are allowed");
+        validateRemoteHttps(url);
         ProjectStore.Project project = resolveProject(p.optString("projectId", ""));
         String name = p.optString("name", "ChatGPT import");
 
@@ -735,26 +996,16 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             File dir = new File(getFilesDir(), "imports");
             if (!dir.exists() && !dir.mkdirs()) throw new IllegalStateException("Could not create import directory");
             File file = new File(dir, System.currentTimeMillis() + "_" + sanitizeFileName(name));
-            HttpURLConnection connection = (HttpURLConnection) new URL(url).openConnection();
-            connection.setConnectTimeout(15000);
-            connection.setReadTimeout(45000);
-            connection.setRequestProperty("User-Agent", "VideoStudio-Android/3.0.0");
-            int code = connection.getResponseCode();
-            if (code < 200 || code >= 300) throw new IllegalStateException("Import failed: HTTP " + code);
+            HttpURLConnection connection = openSafeRemote(url, 15000, 60000);
             String mime = connection.getContentType();
             if (mime == null) mime = "application/octet-stream";
             long expected = connection.getContentLengthLong();
-            try (InputStream in = connection.getInputStream(); FileOutputStream out = new FileOutputStream(file)) {
-                byte[] buffer = new byte[128 * 1024];
-                long bytes = 0;
-                int n;
-                while ((n = in.read(buffer)) >= 0) {
-                    if (Thread.currentThread().isInterrupted()) throw new InterruptedException();
-                    out.write(buffer, 0, n);
-                    bytes += n;
-                    int progress = expected > 0 ? Math.min(96, (int) (96d * bytes / expected)) : Math.min(94, (int) (bytes / 1024 / 1024));
-                    checkpoint(state, "Importing media", (bytes / 1024 / 1024) + " MB received", progress, project.id);
-                }
+            try {
+                copyRemoteToFile(connection, file, expected, state, project.id,
+                        "Importing media", "received");
+            } catch (Exception error) {
+                if (file.exists()) file.delete();
+                throw error;
             } finally {
                 connection.disconnect();
             }
@@ -845,6 +1096,9 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             out.put("renderEngineReady", renderEngine != null);
             out.put("analysisEngineReady", mediaAnalyzer != null);
             out.put("promptVideoEngineReady", promptVideoEngine != null);
+            out.put("portraitAnimationEngineReady", portraitMotionAnalyzer != null);
+            out.put("bundledSubjectSegmentation", true);
+            out.put("bundledFaceMesh", true);
             out.put("permissionMode", permissionMode());
             out.put("galleryAccess", false);
             out.put("directAttachmentIngest", true);
@@ -874,6 +1128,8 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             out.put("nativeAgent", "videostudio-v3");
             out.put("directAttachmentIngest", true);
             out.put("localEngineOwnsProjects", true);
+            out.put("portraitAnimationEngine", "v3.1-layered-parallax");
+            out.put("onDevicePortraitAi", true);
             out.put("nativeApp", true);
             out.put("backgroundControl", true);
             out.put("permissionMode", permissionMode());
@@ -914,7 +1170,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     private boolean isAllowed(String action, JSONObject parameters) {
         String lower = action == null ? "" : action.toLowerCase(Locale.US);
         if (lower.contains("gallery") || lower.contains("media_library") || lower.contains("photo_library")) return false;
-        if ("ping".equals(action) || "get_state".equals(action) || "self_test".equals(action) || "activity_note".equals(action) || "cancel_job".equals(action) || "cancel_all_jobs".equals(action) || "stop_all".equals(action)) return true;
+        if ("ping".equals(action) || "get_state".equals(action) || "self_test".equals(action) || "job_status".equals(action) || "activity_note".equals(action) || "cancel_job".equals(action) || "cancel_all_jobs".equals(action) || "stop_all".equals(action)) return true;
         String mode = permissionMode();
         if ("everything".equals(mode)) return true;
         if ("all_tools".equals(mode)) {
@@ -976,6 +1232,8 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             case "autonomous_edit": return "Autonomous edit";
             case "analyse_media": return "Analysing media";
             case "prompt_video": return "Creating prompt video";
+            case "animate_images": return "Animating still images";
+            case "job_status": return "Reading native job status";
             case "export_project": return "Exporting project";
             case "import_attachment": return "Importing ChatGPT attachment directly";
             case "import_chat_file": return "Importing ChatGPT file";
@@ -996,6 +1254,9 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         if ("apply_tool".equals(action)) return p.optString("tool", "edit") + " • clip " + (p.optInt("clipIndex", 0) + 1);
         if ("create_project".equals(action)) return p.optString("name", "New project");
         if ("import_attachment".equals(action) || "import_chat_file".equals(action) || "import_url".equals(action)) return p.optString("name", "Media");
+        if ("animate_images".equals(action)) {
+            return p.optString("style", "cinematic") + " • " + p.optString("environment", "ambient");
+        }
         if ("prompt_video".equals(action)) {
             String prompt = p.optString("prompt", "");
             return prompt.length() > 90 ? prompt.substring(0, 90) + "…" : prompt;
@@ -1008,6 +1269,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         if ("apply_edit_plan".equals(action)) return result.optInt("clipCount", 0) + " timeline clip(s) applied";
         if ("apply_tool".equals(action)) return "Edit applied inside VideoStudio";
         if ("creator_preset".equals(action)) return result.optInt("changedClips", 0) + " clip(s) styled";
+        if ("animate_images".equals(action)) return result.optInt("imageCount", 0) + " image clip(s) queued for native animation";
         if ("select_project".equals(action)) return "Project selected";
         if ("delete_project".equals(action)) return "Project deleted";
         return "Completed inside VideoStudio";

@@ -16,6 +16,7 @@ import androidx.media3.effect.Brightness;
 import androidx.media3.effect.Contrast;
 import androidx.media3.effect.GaussianBlur;
 import androidx.media3.effect.HslAdjustment;
+import androidx.media3.effect.OverlayEffect;
 import androidx.media3.effect.Presentation;
 import androidx.media3.effect.ScaleAndRotateTransformation;
 import androidx.media3.transformer.Composition;
@@ -82,25 +83,31 @@ public final class NativeRenderEngine {
                 listener.onError("Could not replace previous export");
                 return null;
             }
-            List<EditedMediaItem> edited = new ArrayList<>();
-            boolean allVideoWithAudio = true;
-            for (ProjectStore.Clip clip : project.clips) {
-                ProjectStore.Asset asset = project.asset(clip.assetId);
-                if (asset == null) continue;
-                boolean isImage = asset.mime != null && asset.mime.startsWith("image/");
-                boolean isVideo = asset.mime != null && asset.mime.startsWith("video/");
-                if (!isVideo) allVideoWithAudio = false;
-                edited.add(buildItem(asset, clip, aspect, quality, isImage));
-            }
-            if (edited.isEmpty()) {
-                listener.onError("No renderable clips");
-                return null;
-            }
+            final boolean layeredAnimation = hasLayeredAnimation(project);
+            Composition composition;
+            if (layeredAnimation) {
+                composition = buildLayeredAnimationComposition(project, aspect, quality);
+            } else {
+                List<EditedMediaItem> edited = new ArrayList<>();
+                boolean allVideoWithAudio = true;
+                for (ProjectStore.Clip clip : project.clips) {
+                    ProjectStore.Asset asset = project.asset(clip.assetId);
+                    if (asset == null) continue;
+                    boolean isImage = asset.mime != null && asset.mime.startsWith("image/");
+                    boolean isVideo = asset.mime != null && asset.mime.startsWith("video/");
+                    if (!isVideo) allVideoWithAudio = false;
+                    edited.add(buildItem(asset, clip, aspect, quality, isImage));
+                }
+                if (edited.isEmpty()) {
+                    listener.onError("No renderable clips");
+                    return null;
+                }
 
-            EditedMediaItemSequence sequence = allVideoWithAudio
-                    ? EditedMediaItemSequence.withAudioAndVideoFrom(edited)
-                    : EditedMediaItemSequence.withVideoFrom(edited);
-            Composition composition = new Composition.Builder(sequence).build();
+                EditedMediaItemSequence sequence = allVideoWithAudio
+                        ? EditedMediaItemSequence.withAudioAndVideoFrom(edited)
+                        : EditedMediaItemSequence.withVideoFrom(edited);
+                composition = new Composition.Builder(sequence).build();
+            }
 
             Transformer transformer = new Transformer.Builder(context)
                     .setVideoMimeType(MimeTypes.VIDEO_H264)
@@ -117,7 +124,11 @@ public final class NativeRenderEngine {
                                 info.put("clipCount", project.clips.size());
                                 info.put("aspect", aspect);
                                 info.put("quality", quality);
-                                info.put("engine", "Media3 Transformer 1.11.1");
+                                info.put("engine", layeredAnimation
+                                        ? "VideoStudio v3.1 Media3 layered parallax"
+                                        : "Media3 Transformer 1.11.1");
+                                info.put("layeredAnimation", layeredAnimation);
+                                info.put("animationMode", layeredAnimation ? "subject-aware-2.5d" : "standard");
                             } catch (Exception ignored) {}
                             listener.onProgress(100, "Export complete");
                             listener.onCompleted(outputFile, info);
@@ -144,6 +155,140 @@ public final class NativeRenderEngine {
         } catch (Exception error) {
             listener.onError(error.getMessage() == null ? "Could not prepare native export" : error.getMessage());
             return null;
+        }
+    }
+
+    private boolean hasLayeredAnimation(ProjectStore.Project project) {
+        if (project == null || project.clips.isEmpty()) return false;
+        boolean found = false;
+        for (ProjectStore.Clip clip : project.clips) {
+            ProjectStore.Asset asset = project.asset(clip.assetId);
+            if (asset == null || asset.mime == null || !asset.mime.startsWith("image/")) return false;
+            JSONObject fx = clip.effects == null ? new JSONObject() : clip.effects;
+            if (!fx.optBoolean("animatedScene", false)) return false;
+            if (fx.optString("foregroundUri", "").isEmpty() || fx.optString("backgroundUri", "").isEmpty()) return false;
+            if (fx.optJSONObject("animationSpec") == null) return false;
+            found = true;
+        }
+        return found;
+    }
+
+    private Composition buildLayeredAnimationComposition(ProjectStore.Project project, String aspect, String quality) {
+        List<EditedMediaItem> foreground = new ArrayList<>();
+        List<EditedMediaItem> background = new ArrayList<>();
+
+        for (ProjectStore.Clip clip : project.clips) {
+            JSONObject fx = clip.effects == null ? new JSONObject() : clip.effects;
+            String fgUri = fx.optString("foregroundUri", "");
+            String bgUri = fx.optString("backgroundUri", "");
+            JSONObject spec = fx.optJSONObject("animationSpec");
+            long durationMs = Math.max(700, clip.outputDurationMs());
+
+            // Media3's compositor treats the first sequence as the overlay in
+            // its moving-overlay examples, so keep the alpha foreground first.
+            foreground.add(buildLayerItem(fgUri, clip, aspect, quality, durationMs, spec, "foreground"));
+            background.add(buildLayerItem(bgUri, clip, aspect, quality, durationMs, spec, "background"));
+        }
+
+        EditedMediaItemSequence foregroundSequence = EditedMediaItemSequence.withVideoFrom(foreground);
+        EditedMediaItemSequence backgroundSequence = EditedMediaItemSequence.withVideoFrom(background);
+        return new Composition.Builder(foregroundSequence, backgroundSequence).build();
+    }
+
+    private EditedMediaItem buildLayerItem(String uri,
+                                           ProjectStore.Clip clip,
+                                           String aspect,
+                                           String quality,
+                                           long durationMs,
+                                           JSONObject animationSpec,
+                                           String layerRole) {
+        MediaItem media = new MediaItem.Builder()
+                .setUri(Uri.parse(uri))
+                .setImageDurationMs(durationMs)
+                .build();
+
+        EditedMediaItem.Builder item = new EditedMediaItem.Builder(media)
+                .setFrameRate(30)
+                .setRemoveAudio(true);
+
+        List<Effect> video = buildLayerEffects(clip, aspect, quality, durationMs, animationSpec, layerRole);
+        item.setEffects(new Effects(Collections.emptyList(), video));
+        return item.build();
+    }
+
+    private List<Effect> buildLayerEffects(ProjectStore.Clip clip,
+                                           String aspect,
+                                           String quality,
+                                           long durationMs,
+                                           JSONObject animationSpec,
+                                           String layerRole) {
+        ArrayList<Effect> effects = new ArrayList<>();
+        JSONObject fx = clip.effects == null ? new JSONObject() : clip.effects;
+
+        effects.add(Presentation.createForAspectRatio(aspectRatio(aspect), Presentation.LAYOUT_SCALE_TO_FIT_WITH_CROP));
+        int height = "720p".equalsIgnoreCase(quality)
+                ? ("16:9".equals(aspect) ? 720 : 1280)
+                : ("16:9".equals(aspect) ? 1080 : 1920);
+        effects.add(Presentation.createForHeight(height));
+
+        // Keep a safety overscan so parallax never reveals the edge of a plate.
+        float overscan = "background".equals(layerRole) ? 1.10f : 1.035f;
+        effects.add(new ScaleAndRotateTransformation.Builder()
+                .setScale(overscan, overscan)
+                .build());
+
+        applyColourEffects(effects, fx);
+
+        String preset = animationSpec == null
+                ? fx.optString("motionPreset", "push_in")
+                : animationSpec.optString("cameraPreset", fx.optString("motionPreset", "push_in"));
+        long durationUs = Math.max(100_000L, durationMs * 1000L);
+        effects.add(new MotionMatrixEffect(
+                preset,
+                durationUs,
+                Math.min(320_000L, Math.max(180_000L, durationUs / 12)),
+                animationSpec,
+                layerRole
+        ));
+
+        // Atmosphere is drawn only once, on the alpha foreground sequence,
+        // after its spatial transform. That keeps mist/rain/light in screen
+        // space while the subject and background move independently.
+        if ("foreground".equals(layerRole) && animationSpec != null) {
+            String environment = animationSpec.optString("environmentMotion", "ambient_drift");
+            double atmosphere = animationSpec.optDouble("atmosphereIntensity", .42);
+            effects.add(new OverlayEffect(Collections.singletonList(
+                    new AtmosphereOverlay(environment, atmosphere, durationUs)
+            )));
+        }
+        return effects;
+    }
+
+    private void applyColourEffects(List<Effect> effects, JSONObject fx) {
+        double brightness = fx.optDouble("brightness", 0);
+        double contrast = fx.optDouble("contrast", 0);
+        double saturation = fx.optDouble("saturationAdjust", fx.optDouble("saturation", 0));
+        double lightness = fx.optDouble("lightnessAdjust", 0);
+        String preset = fx.optString("effectPreset", fx.optString("colorPreset", ""));
+        if (!preset.isEmpty() && !"none".equals(preset)) {
+            JSONObject p = CreatorCatalog.effectPreset(preset);
+            if (!fx.has("brightness")) brightness = p.optDouble("brightness", brightness);
+            if (!fx.has("contrast")) contrast = p.optDouble("contrast", contrast);
+            if (!fx.has("saturationAdjust") && !fx.has("saturation")) saturation = p.optDouble("saturationAdjust", saturation);
+            if (!fx.has("lightnessAdjust")) lightness = p.optDouble("lightnessAdjust", lightness);
+        }
+
+        brightness = clamp(brightness, -1, 1);
+        contrast = clamp(contrast, -1, 1);
+        saturation = clamp(saturation, -100, 100);
+        lightness = clamp(lightness, -100, 100);
+        if (Math.abs(brightness) > .001) effects.add(new Brightness((float) brightness));
+        if (Math.abs(contrast) > .001) effects.add(new Contrast((float) contrast));
+        if (Math.abs(saturation) > .001 || Math.abs(lightness) > .001) {
+            effects.add(new HslAdjustment.Builder()
+                    .adjustSaturation((float) saturation)
+                    .adjustLightness((float) lightness)
+                    .build());
         }
     }
 
@@ -188,31 +333,8 @@ public final class NativeRenderEngine {
         int height = "720p".equalsIgnoreCase(quality) ? ("16:9".equals(aspect) ? 720 : 1280) : ("16:9".equals(aspect) ? 1080 : 1920);
         effects.add(Presentation.createForHeight(height));
 
-        double brightness = fx.optDouble("brightness", 0);
-        double contrast = fx.optDouble("contrast", 0);
-        double saturation = fx.optDouble("saturationAdjust", fx.optDouble("saturation", 0));
-        double lightness = fx.optDouble("lightnessAdjust", 0);
         String preset = fx.optString("effectPreset", fx.optString("colorPreset", ""));
-        if (!preset.isEmpty() && !"none".equals(preset)) {
-            JSONObject p = CreatorCatalog.effectPreset(preset);
-            if (!fx.has("brightness")) brightness = p.optDouble("brightness", brightness);
-            if (!fx.has("contrast")) contrast = p.optDouble("contrast", contrast);
-            if (!fx.has("saturationAdjust") && !fx.has("saturation")) saturation = p.optDouble("saturationAdjust", saturation);
-            if (!fx.has("lightnessAdjust")) lightness = p.optDouble("lightnessAdjust", lightness);
-        }
-
-        brightness = clamp(brightness, -1, 1);
-        contrast = clamp(contrast, -1, 1);
-        saturation = clamp(saturation, -100, 100);
-        lightness = clamp(lightness, -100, 100);
-        if (Math.abs(brightness) > .001) effects.add(new Brightness((float) brightness));
-        if (Math.abs(contrast) > .001) effects.add(new Contrast((float) contrast));
-        if (Math.abs(saturation) > .001 || Math.abs(lightness) > .001) {
-            effects.add(new HslAdjustment.Builder()
-                    .adjustSaturation((float) saturation)
-                    .adjustLightness((float) lightness)
-                    .build());
-        }
+        applyColourEffects(effects, fx);
 
         double blur = fx.optDouble("blur", 0);
         if ("gaussian_blur".equals(preset)) blur = Math.max(blur, 5);
