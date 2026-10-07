@@ -162,7 +162,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         LinearLayout hero = card(true);
         TextView heroTitle = title("Create Without Limits", 28);
         hero.addView(heroTitle);
-        hero.addView(body("Native v3.1 Creator Engine • MCP v3 • on-device portrait AI • layered animation • local Media3 export"));
+        hero.addView(body("Native v3.2 Creator Engine • MCP v3 • on-device portrait AI • layered animation • local Media3 export"));
         Button promptVideo = neonButton("✦  Create Video from a Prompt", C_MAGENTA);
         promptVideo.setOnClickListener(v -> promptVideoDialog());
         hero.addView(promptVideo, margins(-1, dp(54), dp(14), dp(8), 0, 0));
@@ -1764,7 +1764,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
             out.put("nativeAgent", "videostudio-v3");
             out.put("directAttachmentIngest", true);
             out.put("localEngineOwnsProjects", true);
-            out.put("portraitAnimationEngine", "v3.1-layered-parallax");
+            out.put("portraitAnimationEngine", "v3.2-articulated-parallax");
             out.put("onDevicePortraitAi", true);
             out.put("nativeApp", true);
             out.put("permissionMode", permissionMode());
@@ -1801,7 +1801,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
             String[] values = {
                     "native-ui","mcp-v3-native-agent","persistent-background-control","local-projects","private-app-mcp-v3","direct-chatgpt-attachment-ingest","chat-attachment-handoff-fallback","url-import",
                     "timeline","trim","split","speed","slow-motion","native-frame-analysis","scene-change-sampling",
-                    "media3-native-export","layered-media3-animation","on-device-person-segmentation","on-device-face-mesh","subject-aware-parallax","multi-keyframe-animation","prompt-to-video","gpu-brightness","gpu-contrast","gpu-hsl","gpu-blur",
+                    "media3-native-export","layered-media3-animation","articulated-portrait-layers","head-hair-motion","torso-breathing","lower-drape-sway","on-device-person-segmentation","on-device-face-mesh","subject-aware-parallax","multi-keyframe-animation","prompt-to-video","gpu-brightness","gpu-contrast","gpu-hsl","gpu-blur",
                     "gpu-motion","scale","rotate","creator-transition-model","green-screen-model","masks-model",
                     "fonts","text-animation-model","audio-ducking-model","ai-edit-plans","autonomous-edit-and-export",
                     "bounded-multitasking","crash-recovery-checkpoints","durable-command-idempotency","thermal-guard","memory-guard","job-cancel"
