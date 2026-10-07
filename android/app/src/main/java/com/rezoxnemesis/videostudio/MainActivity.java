@@ -431,16 +431,34 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         autonomousStrip.setBackground(neonCard());
         JSONArray recentActivity = ActivityLog.recent(this, 1);
         JSONObject latestActivity = recentActivity.optJSONObject(0);
-        String activityTitle = latestActivity == null ? "Autonomous activity" : latestActivity.optString("action", "Autonomous activity");
-        String activityDetail = latestActivity == null
+        JSONObject recoverySnapshot;
+        try {
+            recoverySnapshot = new JSONObject(prefs.getString("job_recovery_snapshot", "{}"));
+        } catch (Exception ignored) {
+            recoverySnapshot = new JSONObject();
+        }
+        boolean recoveryMatchesProject = activeProject != null
+                && (recoverySnapshot.optString("projectId", "").isEmpty()
+                || activeProject.id.equals(recoverySnapshot.optString("projectId", "")));
+        String activityTitle = recoveryMatchesProject && !recoverySnapshot.optString("jobId", "").isEmpty()
+                ? recoverySnapshot.optString("action", "Autonomous work")
+                : latestActivity == null ? "Autonomous work" : latestActivity.optString("action", "Autonomous work");
+        String activityDetail = recoveryMatchesProject && !recoverySnapshot.optString("jobId", "").isEmpty()
+                ? recoverySnapshot.optString("detail", recoverySnapshot.optString("state", "VideoStudio is working."))
+                : latestActivity == null
                 ? "Ready for ChatGPT edits while playback remains interactive."
                 : latestActivity.optString("detail", "VideoStudio is working.");
-        autonomousStrip.addView(title("✦  " + activityTitle, 15));
-        autonomousStrip.addView(body(activityDetail));
-        if (latestActivity != null && latestActivity.has("progress")) {
+        autonomousStrip.addView(title("✦  Autonomous work", 15));
+        autonomousStrip.addView(body(activityTitle + "\n" + activityDetail));
+        int liveProgressValue = recoveryMatchesProject && recoverySnapshot.has("progress")
+                ? recoverySnapshot.optInt("progress", 0)
+                : latestActivity != null && latestActivity.has("progress")
+                ? latestActivity.optInt("progress", 0)
+                : -1;
+        if (liveProgressValue >= 0) {
             ProgressBar liveProgress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
             liveProgress.setMax(100);
-            liveProgress.setProgress(latestActivity.optInt("progress", 0));
+            liveProgress.setProgress(Math.max(0, Math.min(100, liveProgressValue)));
             autonomousStrip.addView(liveProgress, margins(-1, dp(8), dp(6), 0, 0, 0));
         }
         LinearLayout liveActions = new LinearLayout(this);
