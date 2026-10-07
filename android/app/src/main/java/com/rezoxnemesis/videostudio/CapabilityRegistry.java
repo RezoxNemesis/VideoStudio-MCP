@@ -52,7 +52,7 @@ public final class CapabilityRegistry {
                 "builtin.videostudio.articulated-parallax",
                 "animation",
                 "android-gpu-media3",
-                new String[]{"portrait.rig","motion.2_5d","environment.procedural"},
+                new String[]{"portrait.rig","motion.2_5d","environment.procedural","depth.estimate"},
                 420,
                 "balanced"
         ));
