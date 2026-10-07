@@ -341,6 +341,7 @@ const checks = [
   ["native URL and direct attachment ingest delegate to resumable transfer engine", controlService.includes("ResumableTransferManager") && controlService.includes("ResumableTransferManager.Request") && controlService.includes(".download(")],
   ["native resumable HTTP path requests byte ranges and validates resume identity", controlService.includes('setRequestProperty("Range"') && controlService.includes('"If-Range"')],
   ["resumable transfer checkpoints use 64-bit offsets and partial-file promotion", transferJournal.includes("long completedBytes") && resumableTransfer.includes(".partial") && resumableTransfer.includes("renameTo")],
+  ["resumable transfer performs storage preflight before writing heavy media", resumableTransfer.includes("StorageBudget.checkTransfer") && resumableTransfer.includes("Insufficient storage")],
 ];
 
 let failed = 0;
