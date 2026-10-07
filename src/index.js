@@ -922,6 +922,16 @@ function serverForApp(env,ownerKey,protocolVersion=1){
     }catch(e){ return out({queued:false,error:e.message}); }
   });
 
+  if(isV3) s.registerTool("app_connection_health",{
+    description:"Read the Android Native Agent's stable MCP Connection Core health, app generation and persisted service heartbeat without changing identity or browsing Gallery.",
+    inputSchema:{}
+  },async()=>queue("connection_health",{}));
+
+  if(isV3) s.registerTool("app_reconnect_mcp",{
+    description:"Ask VideoStudio to reset only cached MCP negotiation and re-register through the permanent compatibility endpoint. Device ID, owner credential, projects, command journal and Gallery privacy boundary are preserved.",
+    inputSchema:{}
+  },async()=>queue("reconnect_mcp",{}));
+
   if(isV3) s.registerTool("app_execute",{description:"Stable future-compatible VideoStudio v3 action bridge. Use this for native actions introduced by future app versions without requiring the ChatGPT connector to be recreated. Gallery/media-library enumeration remains permanently blocked by the server regardless of the requested action.",inputSchema:{action:z.string().min(1).max(80),parameters:z.record(z.string(),z.any()).optional()}},async({action,parameters})=>queue(action,parameters||{}));
 
   s.registerTool("app_batch",{description:"Queue up to 20 native VideoStudio actions quickly in order. This v3-compatible batch surface accepts future native action names so app upgrades do not require reconnecting the ChatGPT connector. Gallery/library enumeration is blocked regardless of permission mode.",inputSchema:{actions:z.array(z.object({action:z.string().min(1).max(80),parameters:z.record(z.string(),z.any()).optional()})).min(1).max(20)}},async({actions})=>{
