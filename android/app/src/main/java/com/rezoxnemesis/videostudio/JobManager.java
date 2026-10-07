@@ -75,8 +75,9 @@ public final class JobManager {
     private static final String KEY_JOBS = "job_recovery_snapshot";
     private final Context context;
     private final SharedPreferences prefs;
+    private static final Semaphore PROCESS_HEAVY_LANE = new Semaphore(1, true);
     private final ExecutorService pool = Executors.newFixedThreadPool(3);
-    private final Semaphore heavyLane = new Semaphore(1, true);
+    private final Semaphore heavyLane = PROCESS_HEAVY_LANE;
     private final Map<String, Job> jobs = new ConcurrentHashMap<>();
 
     public JobManager(Context context) {
