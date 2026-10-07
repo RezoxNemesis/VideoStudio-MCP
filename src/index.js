@@ -359,17 +359,28 @@ export class VideoStudioState extends DurableObject {
 
 const state = env => env.VIDEO_STATE.getByName("primary");
 const out = x => ({content:[{type:"text",text:JSON.stringify(x)}]});
+const isNativeV3 = d => !!d && Number(d.protocolVersion||0)===3;
+const enqueueNative = (st,d,ownerKey,action,parameters={}) => isNativeV3(d)
+  ? st.appEnqueueV3(ownerKey,action,parameters)
+  : st.appEnqueue(ownerKey,action,parameters);
+const commandNative = (st,d,ownerKey,id) => isNativeV3(d)
+  ? st.appCommandV3(ownerKey,id)
+  : st.appCommand(ownerKey,id);
+const statusNative = (st,d,ownerKey) => isNativeV3(d)
+  ? st.appStatusV3(ownerKey)
+  : st.appStatus(ownerKey);
 
 function serverFor(env){
   const s=new McpServer({name:"VideoStudio-MCP",version:"0.6.0"}), st=state(env);
   s.registerTool("server_status",{description:"Check VideoStudio MCP status.",inputSchema:{}},async()=>out({ok:true,service:"VideoStudio-MCP",version:"0.6.0",app:"/",capabilities:["Android app shell","device pairing","projects","local media","12-frame visual analysis","scene-change detection","quiet-section detection","multi-cut timeline editing","per-clip speed volume transforms filters and titles","render inspection","batched edit commands","adaptive local MP4/WebM rendering"]}));
-  s.registerTool("device_status",{description:"Check a paired VideoStudio app device. Native v1 also accepts the private owner credential as deviceId for compatibility.",inputSchema:{deviceId:z.string().min(8)}},async({deviceId})=>{
+  s.registerTool("device_status",{description:"Check a paired VideoStudio app device. Native v3/v1 also accepts the private owner credential as deviceId for compatibility.",inputSchema:{deviceId:z.string().min(8)}},async({deviceId})=>{
     const native=await st.appResolve(deviceId);
-    return out(native?await st.appStatus(deviceId):await st.status(deviceId));
+    return out(native?await statusNative(st,native,deviceId):await st.status(deviceId));
   });
   s.registerTool("create_video_project",{description:"Create a VideoStudio project on a paired device.",inputSchema:{deviceId:z.string().min(8),name:z.string().min(1).max(120),instruction:z.string().max(5000).optional()}},async({deviceId,name,instruction})=>{
-    if(await st.appResolve(deviceId)){
-      const c=await st.appEnqueue(deviceId,"create_project",{name,instruction:instruction||""});
+    const native=await st.appResolve(deviceId);
+    if(native){
+      const c=await enqueueNative(st,native,deviceId,"create_project",{name,instruction:instruction||""});
       return out({queued:true,commandId:c.id,sequence:c.seq,nativeApp:true});
     }
     return out(await st.createProject(deviceId,name,instruction||""));
@@ -380,10 +391,11 @@ function serverFor(env){
     return out(await st.projects(deviceId));
   });
   s.registerTool("get_video_project",{description:"Get timeline, assets, settings and latest command result.",inputSchema:{deviceId:z.string().min(8),projectId:z.string().min(8)}},async({deviceId,projectId})=>out((await st.project(deviceId,projectId))||{error:"Project not found"}));
-  s.registerTool("queue_video_edit",{description:"Send one edit action to VideoStudio. Native v1 compatibility can use the private owner credential as deviceId and projectId='active-native'.",inputSchema:{deviceId:z.string().min(8),projectId:z.string().min(8),action:z.enum(["set_trim","set_speed","set_mute","set_aspect","set_title","set_quality","set_transition","remove_clip","move_clip","reorder_timeline","replace_timeline","set_clip_speed","set_clip_title","set_clip_effects","analyse_media","inspect_render","render","autonomous_request"]),parameters:z.record(z.string(),z.any()).optional()}},async({deviceId,projectId,action,parameters})=>{
+  s.registerTool("queue_video_edit",{description:"Send one edit action to VideoStudio. Native v3/v1 compatibility can use the private owner credential as deviceId and projectId='active-native'.",inputSchema:{deviceId:z.string().min(8),projectId:z.string().min(8),action:z.enum(["set_trim","set_speed","set_mute","set_aspect","set_title","set_quality","set_transition","remove_clip","move_clip","reorder_timeline","replace_timeline","set_clip_speed","set_clip_title","set_clip_effects","analyse_media","inspect_render","render","autonomous_request"]),parameters:z.record(z.string(),z.any()).optional()}},async({deviceId,projectId,action,parameters})=>{
     try{
       const p=parameters||{};
-      if(await st.appResolve(deviceId)){
+      const native=await st.appResolve(deviceId);
+      if(native){
         let nativeAction=p.nativeAction||"";
         let nativeParameters=p.nativeParameters||p;
         if(!nativeAction){
@@ -404,8 +416,18 @@ function serverFor(env){
           const handoff=await st.appCreateHandoff(deviceId,sourceUrl,{name:nativeParameters.name,mime:nativeParameters.mime,size:nativeParameters.size});
           nativeParameters={handoffId:handoff.id,name:handoff.name,mime:handoff.mime,size:handoff.size,projectId:nativeParameters.projectId||""};
         }
-        const c=await st.appEnqueue(deviceId,nativeAction,nativeParameters);
-        return out({queued:true,commandId:c.id,sequence:c.seq,action:nativeAction,nativeApp:true});
+        if(isNativeV3(native)&&nativeAction==="import_chat_file"&&nativeParameters.sourceUrl){
+          nativeAction="import_attachment";
+          nativeParameters={
+            sourceUrl:nativeParameters.sourceUrl,
+            name:nativeParameters.name||"ChatGPT attachment",
+            mime:nativeParameters.mime||"",
+            size:Number(nativeParameters.size||0),
+            projectId:nativeParameters.projectId||""
+          };
+        }
+        const c=await enqueueNative(st,native,deviceId,nativeAction,nativeParameters);
+        return out({queued:true,commandId:c.id,sequence:c.seq,action:nativeAction,nativeApp:true,protocolVersion:isNativeV3(native)?3:1});
       }
       const c=await st.enqueue(deviceId,projectId,action,p);
       return out({queued:true,commandId:c.id,sequence:c.seq,action,note:action==="render"?"Render runs locally. Keep the app open; a browser may require one tap before playback.":"The open app will apply this automatically."});
@@ -414,7 +436,7 @@ function serverFor(env){
   s.registerTool("get_video_command_result",{description:"Get the result of a queued edit, media-analysis, render or native-app compatibility command.",inputSchema:{deviceId:z.string().min(8),commandId:z.string().min(8)}},async({deviceId,commandId})=>{
     const native=await st.appResolve(deviceId);
     if(native){
-      const c=await st.appCommand(deviceId,commandId);
+      const c=await commandNative(st,native,deviceId,commandId);
       if(!c) return out({error:"Command not found"});
       const sheet=c.result&&c.result.contactSheet;
       if(sheet&&sheet.base64){
@@ -449,11 +471,11 @@ function serverFor(env){
       return out({queued:true,count:queued.length,commands:queued,note:"VideoStudio will apply these commands in sequence while the paired app is open."});
     }catch(e){ return out({queued:false,error:e.message,commands:queued}); }
   });
-  s.registerTool("request_media_analysis",{description:"Run local visual analysis on VideoStudio media. Native v1.1 returns sampled frames and scene-change candidates without uploading the full video.",inputSchema:{deviceId:z.string().min(8),projectId:z.string().min(8),assetId:z.string().min(8).optional(),start:z.number().min(0).optional(),end:z.number().positive().optional(),frames:z.number().int().min(6).max(16).optional(),includeAudio:z.boolean().optional()}},async({deviceId,projectId,assetId,start,end,frames,includeAudio})=>{
+  s.registerTool("request_media_analysis",{description:"Run local visual analysis on VideoStudio media. Native v3/v1.1 returns sampled frames and scene-change candidates without uploading the full video.",inputSchema:{deviceId:z.string().min(8),projectId:z.string().min(8),assetId:z.string().min(8).optional(),start:z.number().min(0).optional(),end:z.number().positive().optional(),frames:z.number().int().min(6).max(16).optional(),includeAudio:z.boolean().optional()}},async({deviceId,projectId,assetId,start,end,frames,includeAudio})=>{
     try{
       const parameters={}; if(assetId)parameters.assetId=assetId; if(start!=null)parameters.start=start; if(end!=null)parameters.end=end; if(frames!=null)parameters.frames=frames; if(includeAudio!=null)parameters.includeAudio=includeAudio;
       const native=await st.appResolve(deviceId);
-      const c=native?await st.appEnqueue(deviceId,"analyse_media",parameters):await st.enqueue(deviceId,projectId,"analyse_media",parameters);
+      const c=native?await enqueueNative(st,native,deviceId,"analyse_media",parameters):await st.enqueue(deviceId,projectId,"analyse_media",parameters);
       return out({queued:true,commandId:c.id,sequence:c.seq,nativeApp:!!native,note:"VideoStudio will analyse frames locally and return a contact sheet."});
     }catch(e){ return out({queued:false,error:e.message}); }
   });
@@ -461,19 +483,25 @@ function serverFor(env){
     try{ const c=await st.enqueue(deviceId,projectId,"inspect_render",{frames:frames||12}); return out({queued:true,commandId:c.id,sequence:c.seq,note:"The app will sample the latest render locally and return visual frames."}); }
     catch(e){ return out({queued:false,error:e.message}); }
   });
-  s.registerTool("queue_autonomous_edit",{description:"Send a structured autonomous edit plan. Native v1.1 can apply the timeline, creator preset and optionally export locally.",inputSchema:{deviceId:z.string().min(8),projectId:z.string().min(8),instruction:z.string().min(1),clips:z.array(z.record(z.string(),z.any())).min(1).max(80),aspect:z.enum(["9:16","16:9","1:1","4:5"]).optional(),quality:z.enum(["720p","1080p"]).optional(),transition:z.string().optional(),mute:z.boolean().optional(),render:z.boolean().optional(),inspectAfterRender:z.boolean().optional()}},async(args)=>{
+  s.registerTool("queue_autonomous_edit",{description:"Send a structured autonomous edit plan. Native v3/v1.1 can apply the timeline, creator preset and optionally export locally.",inputSchema:{deviceId:z.string().min(8),projectId:z.string().min(8),instruction:z.string().min(1),clips:z.array(z.record(z.string(),z.any())).min(1).max(80),aspect:z.enum(["9:16","16:9","1:1","4:5"]).optional(),quality:z.enum(["720p","1080p"]).optional(),transition:z.string().optional(),mute:z.boolean().optional(),render:z.boolean().optional(),inspectAfterRender:z.boolean().optional()}},async(args)=>{
     try{
       const {deviceId,projectId,...parameters}=args;
       const native=await st.appResolve(deviceId);
-      const c=native?await st.appEnqueue(deviceId,"autonomous_edit",parameters):await st.enqueue(deviceId,projectId,"autonomous_request",parameters);
+      const c=native?await enqueueNative(st,native,deviceId,"autonomous_edit",parameters):await st.enqueue(deviceId,projectId,"autonomous_request",parameters);
       return out({queued:true,commandId:c.id,sequence:c.seq,nativeApp:!!native,note:"Structured edit plan queued for local execution."});
     }catch(e){ return out({queued:false,error:e.message}); }
   });
   s.registerTool("import_chat_file",{description:"Securely stream a ChatGPT conversation attachment into the private native VideoStudio Android app. Pass the native private owner credential as deviceId. Requires Allow everything mode.",inputSchema:{deviceId:z.string().min(32),sourceUrl:z.string().url(),name:z.string().min(1).max(180),mime:z.string().max(120).optional(),size:z.number().nonnegative().optional(),projectId:z.string().min(8).optional()}},async({deviceId,sourceUrl,name,mime,size,projectId})=>{
     try{
+      const native=await st.appResolve(deviceId);
+      if(!native) throw new Error("Native VideoStudio app not connected");
+      if(isNativeV3(native)){
+        const c=await st.appEnqueueV3(deviceId,"import_attachment",{sourceUrl,name,mime:mime||"",size:Number(size||0),projectId:projectId||""});
+        return out({queued:true,commandId:c.id,sequence:c.seq,nativeApp:true,protocolVersion:3,transport:"direct-app-ingest"});
+      }
       const handoff=await st.appCreateHandoff(deviceId,sourceUrl,{name,mime,size});
       const c=await st.appEnqueue(deviceId,"import_chat_file",{handoffId:handoff.id,name:handoff.name,mime:handoff.mime,size:handoff.size,projectId:projectId||""});
-      return out({queued:true,commandId:c.id,sequence:c.seq,nativeApp:true,handoffId:handoff.id,expiresAt:handoff.expiresAt});
+      return out({queued:true,commandId:c.id,sequence:c.seq,nativeApp:true,protocolVersion:1,handoffId:handoff.id,expiresAt:handoff.expiresAt});
     }catch(e){ return out({queued:false,error:e.message}); }
   });
   s.registerTool("video_project_plan",{description:"Create a short autonomous editing workflow.",inputSchema:{projectName:z.string().min(1),instruction:z.string().min(1)}},async({projectName,instruction})=>out({projectName,instruction,status:"planned",workflow:["inspect asset metadata","run 12-frame scene and quiet-section analysis","visually inspect sampled frames","design a multi-cut timeline around real structural changes","apply per-clip pacing/reframing/audio only where justified","render locally","inspect the actual rendered contact sheet","iterate before declaring the edit finished"]}));
