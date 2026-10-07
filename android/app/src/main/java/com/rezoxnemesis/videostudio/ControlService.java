@@ -875,6 +875,8 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             }
         }
 
+        boolean recoveringGraph = !p.optString("_recoveryPlanId", "").isEmpty();
+        int recoveredNodes = creativeNodeStore.recoverRetryable(project.id, recoveringGraph);
         boolean renderRequested = p.optBoolean("render", true);
         boolean critiqueRequested = p.optBoolean("critique", true);
         String aspect = p.optString("aspect", "9:16");
@@ -1018,6 +1020,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         result.put("quality", quality);
         result.put("fileName", fileName);
         result.put("nodeState", creativeNodeStore.status(project.id));
+        result.put("recoveredNodes", recoveredNodes);
         return result;
     }
 
@@ -1203,11 +1206,32 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             String outputUri = plan.optString("outputUri", "");
 
             if (!outputUri.isEmpty() && isReadableOutput(outputUri)) {
-                recoveryPlans.completePlan(planId, "Recovered published output; no duplicate render required");
-                ActivityLog.add(this, "system", "Recovered completed render",
-                        plan.optString("outputName", "Generated video") + " was already published before restart",
-                        "success", 100, null, projectId);
-                continue;
+                if ("run_creative_graph".equals(action)) {
+                    try {
+                        ProjectStore.Asset rendered = latestGeneratedVideo(projectId);
+                        if (rendered != null) {
+                            JSONObject renderResult = new JSONObject();
+                            renderResult.put("ok", true);
+                            renderResult.put("assetId", rendered.id);
+                            renderResult.put("uri", rendered.uri);
+                            renderResult.put("name", rendered.name);
+                            renderResult.put("role", rendered.role);
+                            renderResult.put("durationMs", rendered.durationMs);
+                            creativeNodeStore.complete(projectId, "render.final", renderResult);
+                            ActivityLog.add(this, "system", "Recovered CreativeIR render node",
+                                    rendered.name + " was already published; resuming downstream nodes only",
+                                    "success", 98, null, projectId);
+                        }
+                    } catch (Exception ignored) {
+                        // If graph metadata was not committed, the normal retry path will safely rebuild it.
+                    }
+                } else {
+                    recoveryPlans.completePlan(planId, "Recovered published output; no duplicate render required");
+                    ActivityLog.add(this, "system", "Recovered completed render",
+                            plan.optString("outputName", "Generated video") + " was already published before restart",
+                            "success", 100, null, projectId);
+                    continue;
+                }
             }
 
             JSONObject parameters = plan.optJSONObject("parameters");
@@ -1234,6 +1258,9 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                         break;
                     case "sync_project_to_drive":
                         queued = queueDriveProjectSync(parameters);
+                        break;
+                    case "run_creative_graph":
+                        queued = queueCreativeGraphRun(parameters);
                         break;
                     default:
                         recoveryPlans.completePlan(planId, "No auto-resume handler required for action: " + action);
