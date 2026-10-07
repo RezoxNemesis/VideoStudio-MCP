@@ -841,7 +841,7 @@ export class VideoStudioState extends DurableObject {
       pendingCommands:pending.length,
       waitingNativeCommands:waitingNative,
       canAcceptAutonomousWork:true,
-      queuedExecutionPolicy:"native-on-reconnect",
+      queuedExecutionPolicy:fallbackConnected?"studio-web-when-compatible-otherwise-native-on-reconnect":"native-on-reconnect",
       lastCommand:list[list.length-1]||null,
       projectCount:Array.isArray(d.projects)?d.projects.length:0,
       galleryAccess:false,
@@ -1208,7 +1208,7 @@ function serverFor(env,hybridKey=""){
           queued.push({commandId:c.id,sequence:c.seq,action:c.action,protocolVersion:isNativeV3(native)?3:1});
         }else{
           const c=await st.enqueue(deviceId,projectId,edit.action,p);
-          queued.push({commandId:c.id,sequence:c.seq,action:c.action});
+          queued.push({commandId:c.id,sequence:c.seq,action:c.action,route:c.hybridRoute||"native",waitingNative:c.status==="waiting_native"});
         }
       }
       return out({queued:true,count:queued.length,commands:queued,nativeApp:!!native,protocolVersion:native?(isNativeV3(native)?3:1):0});
@@ -1296,7 +1296,7 @@ function serverForApp(env,ownerKey,protocolVersion=1){
   const isV3=Number(protocolVersion)===3;
   const s=new McpServer({
     name:isV3?"VideoStudio-App-MCP-v3":"VideoStudio-App-MCP",
-    version:isV3?"3.3.3":"1.1.2"
+    version:isV3?"3.4.2":"1.1.2"
   }), st=state(env);
   const enqueueCommand=(action,parameters={})=>isV3
     ? st.appEnqueueV3(ownerKey,action,parameters)
@@ -1342,17 +1342,17 @@ function serverForApp(env,ownerKey,protocolVersion=1){
   s.registerTool("app_status",{description:isV3?"Check the VideoStudio v3 Native Agent connection, protocol version, permission mode, projects and pending native work. Gallery access is always false.":"Check the private native VideoStudio Android connection, permission mode, projects, control-pause state and pending work. Gallery access is always false.",inputSchema:{}},async()=>out(await readStatus()));
 
   s.registerTool("app_capabilities",{description:isV3?"Read VideoStudio v3 Native Agent capabilities and architecture guarantees.":"Read the native v1.1 editing, AI, render and privacy capabilities available to ChatGPT.",inputSchema:{}},async()=>out({
-    version:isV3?"3.3.2":"1.1.2",
+    version:isV3?"3.4.2":"1.1.2",
     protocolVersion:isV3?3:1,
     stableEndpoint:isV3,
     stableEndpointPath:isV3?"/app-mcp-v3/":"",
     primary:"Android native app",
-    architecture:isV3?"native-first; cloud path is signalling only":"native app with private MCP relay",
+    architecture:isV3?"permanent hybrid control plane; native-first execution with bound Studio Web fallback and durable native queue":"native app with private MCP relay",
     privacy:{galleryAccess:false,boundary:"No MCP tool may list, browse or enumerate Gallery/media-library items. Only user-selected Android picker files, VideoStudio-owned files and explicit ChatGPT attachments are usable."},
     permissions:["everything","one_file"],
     permissionModel:{default:"everything",legacyAlias:"all_tools",note:"Full Autonomous grants every VideoStudio-native action. One File Lock is the only restrictive mode. Gallery enumeration is always blocked."},
     connection:isV3
-      ?["stable MCP v3 compatibility endpoint across APK updates","Android Keystore owner key","device binding","persistent app-generation fencing","adaptive connection profile negotiation","isolated v3 command queue","leased commands","durable command idempotency journal","persistent foreground Native Agent","secure reconnect backoff","live ChatGPT activity feed","STOP CHATGPT CONTROL"]
+      ?["always-available stable MCP v3 control plane across APK updates","Android Keystore owner key","device binding","optional Studio Web fallback binding","persistent app-generation fencing","adaptive connection profile negotiation","isolated v3 command queue","waiting_native durable work","leased commands","durable command idempotency journal","persistent foreground Native Agent","self-rearm watchdog","secure reconnect backoff","live ChatGPT activity feed","STOP CHATGPT CONTROL"]
       :["Android Keystore owner key","device binding","persistent foreground control service","leased commands","crash-safe completion checkpoints","secure reconnect backoff","notification pause/cancel controls","live ChatGPT activity feed","STOP CHATGPT CONTROL"],
     media:isV3
       ?["direct ChatGPT attachment ingest to app-private storage","owner-authenticated inline still-frame fallback","VideoStudio-owned media","explicit HTTPS import","manual Android picker","no Gallery enumeration","legacy short-lived relay fallback"]
@@ -1362,7 +1362,7 @@ function serverForApp(env,ownerKey,protocolVersion=1){
     animation:isV3?["AI subject/background layer extraction","feathered head/hair torso and lower-drape layers","face-aware camera anchoring","multi-keyframe easing","head drift/nod","torso breathing","lower-drape sway","independent depth motion","story-shot reordering","procedural atmosphere","layered Media3 composition"]:[],
     export:["Media3 native MP4","H.264","AAC","720p","1080p","9:16","16:9","1:1","4:5","Movies/VideoStudio"],
     stability:isV3
-      ?["local projects survive signalling outages","bounded light/heavy lanes","one process-wide heavy export at a time","RAM guard","thermal guard","persistent job checkpoints","duplicate-command prevention","cancel single/all jobs"]
+      ?["MCP control plane remains reachable while Android sleeps","browser-capable work can route to bound Studio Web","native-only work waits durably for reconnect","Native Agent task/process self-rearm watchdog","local projects survive signalling outages","bounded light/heavy lanes","one process-wide heavy export at a time","RAM guard","thermal guard","persistent job checkpoints","duplicate-command prevention","cancel single/all jobs"]
       :["persistent background MCP controller","bounded light/heavy job lanes","one process-wide heavy export at a time","RAM guard","thermal guard","persistent job checkpoints","cancel single/all jobs"]
   }));
 
