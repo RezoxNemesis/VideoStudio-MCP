@@ -4,6 +4,7 @@ const app = fs.readFileSync(new URL("../src/app.html", import.meta.url), "utf8")
 const worker = fs.readFileSync(new URL("../src/index.js", import.meta.url), "utf8");
 const studioRuntime = fs.readFileSync(new URL("../src/studio-runtime.js", import.meta.url), "utf8");
 const studioCinematic = fs.readFileSync(new URL("../src/studio-cinematic.js", import.meta.url), "utf8");
+const studioNeural = fs.readFileSync(new URL("../src/studio-neural.js", import.meta.url), "utf8");
 const wrangler = fs.readFileSync(new URL("../wrangler.jsonc", import.meta.url), "utf8");
 const nativeMain = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/MainActivity.java", import.meta.url), "utf8");
 const nativeProtocol = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/AppProtocol.java", import.meta.url), "utf8");
@@ -46,6 +47,16 @@ try {
   console.error("APP SCRIPT SYNTAX ERROR:", error.message);
 }
 
+const neuralMatch = studioNeural.match(/String\.raw\`([\s\S]*?)\`;\s*export default/);
+let studioNeuralParses = false;
+try {
+  if (!neuralMatch) throw new Error("Studio Neural source not found");
+  new Function(neuralMatch[1]);
+  studioNeuralParses = true;
+} catch (error) {
+  console.error("STUDIO NEURAL SYNTAX ERROR:", error.message);
+}
+
 const cinematicMatch = studioCinematic.match(/String\.raw\`([\s\S]*?)\`;\s*export default/);
 let studioCinematicParses = false;
 try {
@@ -81,6 +92,15 @@ const checks = [
   ["worker advertises Studio Web 1.0 fallback execution", worker.includes('name:"VideoStudio-Studio-Web"') && worker.includes('version:"1.0.0"') && worker.includes('"browser fallback execution when Android app is unavailable"')],
   ["Studio Runtime browser JavaScript parses", studioRuntimeParses],
   ["Studio Cinematic browser JavaScript parses", studioCinematicParses],
+  ["Studio Neural browser JavaScript parses", studioNeuralParses],
+  ["worker serves optional first-party Neural Keyframe runtime", worker.includes('"/studio-neural.js"') && worker.includes("STUDIO_NEURAL_JS")],
+  ["Neural Keyframes use actual ONNX Runtime WebGPU SD-Turbo phases", studioNeural.includes("onnxruntime-web@") && studioNeural.includes("text_encoder/model.onnx") && studioNeural.includes("unet/model.onnx") && studioNeural.includes("vae_decoder/model.onnx") && studioNeural.includes('executionProviders:["webgpu"]')],
+  ["Neural Keyframes gate on WebGPU shader-f16 instead of crashing unsupported browsers", studioNeural.includes('adapter.features.has("shader-f16")') && studioNeural.includes("recommended") && studioNeural.includes("Compatible WebGPU is required")],
+  ["Neural Keyframes run model phases sequentially and release sessions", studioNeural.includes('sessionFor("text_encoder"') && studioNeural.includes('sessionFor("unet"') && studioNeural.includes('sessionFor("vae_decoder"') && studioNeural.includes("session.release")],
+  ["Neural world images become generated Media Bin assets for Cinematic Worlds", studioNeural.includes('role:"neural_world_keyframe"') && studioNeural.includes("project.assets.push(asset)") && studioNeural.includes("VideoStudioCinematic.refreshSelectors")],
+  ["MCP can probe and generate real neural world keyframes", worker.includes('"probe_studio_neural_gpu"') && worker.includes('"generate_neural_world_keyframes"') && worker.includes('"generate_neural_keyframes"')],
+  ["shared runtime waits for late-loaded neural/cinematic providers", studioRuntime.includes("waitForProvider") && studioRuntime.includes('"VideoStudioNeural"') && studioRuntime.includes('"VideoStudioCinematic"')],
+  ["Cinematic compositor supports local MediaPipe person occlusion", studioCinematic.includes("@mediapipe/tasks-vision") && studioCinematic.includes("selfie_segmenter_landscape") && studioCinematic.includes("compositePersonOcclusion")],
   ["worker serves first-party Cinematic Worlds runtime", worker.includes('"/studio-cinematic.js"') && worker.includes("STUDIO_CINEMATIC_JS")],
   ["Cinematic Worlds preserves live-action foreground and perspective-warps worlds into a quad", studioCinematic.includes("drawWarped") && studioCinematic.includes("affineFromTriangles") && studioCinematic.includes("drawCover(ctx,baseLoaded.video")],
   ["Cinematic Worlds supports start/end portal keyframes and translation tracking", studioCinematic.includes("startQuad") && studioCinematic.includes("endQuad") && studioCinematic.includes("trackTranslation") && studioCinematic.includes('tracking==="translation"')],
