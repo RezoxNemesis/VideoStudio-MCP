@@ -1,13 +1,16 @@
 package com.rezoxnemesis.videostudio;
 
 import android.content.ContentResolver;
+import android.content.ContentValues;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.database.Cursor;
+import android.database.sqlite.SQLiteDatabase;
+import android.database.sqlite.SQLiteOpenHelper;
 import android.media.MediaMetadataRetriever;
 import android.net.Uri;
-import android.provider.OpenableColumns;
 import android.os.ParcelFileDescriptor;
+import android.provider.OpenableColumns;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -16,10 +19,23 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
+/**
+ * VideoStudio v3 project store.
+ *
+ * Projects, timelines and asset metadata are app-owned and persisted in an
+ * app-private SQLite database. Existing v1/v1.1 JSON projects are migrated
+ * once on upgrade; the old SharedPreferences copy is intentionally left
+ * untouched as a rollback safety net.
+ */
 public final class ProjectStore {
-    private static final String PREFS = "videostudio_native_v1";
-    private static final String KEY_PROJECTS = "projects";
-    private static final String KEY_ACTIVE = "active_project";
+    private static final String LEGACY_PREFS = "videostudio_native_v1";
+    private static final String LEGACY_PROJECTS = "projects";
+    private static final String LEGACY_ACTIVE = "active_project";
+
+    private static final String DB_NAME = "videostudio_v3.db";
+    private static final int DB_VERSION = 1;
+    private static final String META_ACTIVE = "active_project";
+    private static final String META_MIGRATED = "legacy_projects_migrated";
 
     public static final class Asset {
         public String id;
@@ -163,34 +179,77 @@ public final class ProjectStore {
         }
     }
 
-    private final SharedPreferences prefs;
+    private static final class Db extends SQLiteOpenHelper {
+        Db(Context context) {
+            super(context.getApplicationContext(), DB_NAME, null, DB_VERSION);
+        }
+
+        @Override
+        public void onCreate(SQLiteDatabase db) {
+            db.execSQL("CREATE TABLE IF NOT EXISTS projects (" +
+                    "id TEXT PRIMARY KEY NOT NULL," +
+                    "json TEXT NOT NULL," +
+                    "updated_at INTEGER NOT NULL)");
+            db.execSQL("CREATE INDEX IF NOT EXISTS idx_projects_updated ON projects(updated_at DESC)");
+            db.execSQL("CREATE TABLE IF NOT EXISTS meta (" +
+                    "key TEXT PRIMARY KEY NOT NULL," +
+                    "value TEXT NOT NULL)");
+        }
+
+        @Override
+        public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
+            // v3 schema starts at 1. Future migrations belong here.
+        }
+    }
+
     private final ContentResolver resolver;
+    private final SharedPreferences legacyPrefs;
+    private final SQLiteDatabase db;
 
     public ProjectStore(Context context) {
-        prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
-        resolver = context.getContentResolver();
+        Context app = context.getApplicationContext();
+        resolver = app.getContentResolver();
+        legacyPrefs = app.getSharedPreferences(LEGACY_PREFS, Context.MODE_PRIVATE);
+        db = new Db(app).getWritableDatabase();
+        migrateLegacyProjectsOnce();
     }
 
     public synchronized List<Project> list() {
         ArrayList<Project> out = new ArrayList<>();
-        String raw = prefs.getString(KEY_PROJECTS, "[]");
-        try {
-            JSONArray arr = new JSONArray(raw);
-            for (int i = 0; i < arr.length(); i++) {
-                JSONObject o = arr.optJSONObject(i);
-                if (o != null) out.add(Project.fromJson(o));
+        try (Cursor c = db.query(
+                "projects",
+                new String[]{"json"},
+                null, null, null, null,
+                "updated_at DESC")) {
+            while (c.moveToNext()) {
+                try {
+                    Project p = Project.fromJson(new JSONObject(c.getString(0)));
+                    out.add(p);
+                } catch (Exception ignored) {}
             }
-        } catch (Exception ignored) {}
+        }
         return out;
     }
 
     public synchronized Project get(String id) {
-        for (Project p : list()) if (p.id.equals(id)) return p;
+        if (id == null || id.isEmpty()) return null;
+        try (Cursor c = db.query(
+                "projects",
+                new String[]{"json"},
+                "id=?",
+                new String[]{id},
+                null, null, null,
+                "1")) {
+            if (c.moveToFirst()) {
+                try { return Project.fromJson(new JSONObject(c.getString(0))); }
+                catch (Exception ignored) {}
+            }
+        }
         return null;
     }
 
     public synchronized Project active() {
-        String id = prefs.getString(KEY_ACTIVE, "");
+        String id = getMeta(META_ACTIVE);
         Project p = id.isEmpty() ? null : get(id);
         if (p == null) {
             List<Project> all = list();
@@ -204,38 +263,31 @@ public final class ProjectStore {
         p.id = UUID.randomUUID().toString();
         p.name = name == null || name.trim().isEmpty() ? "Untitled Project" : name.trim();
         p.updatedAt = System.currentTimeMillis();
-        ArrayList<Project> all = new ArrayList<>(list());
-        all.add(0, p);
-        write(all);
+        save(p);
         setActive(p.id);
         return p;
     }
 
     public synchronized void setActive(String id) {
-        prefs.edit().putString(KEY_ACTIVE, id == null ? "" : id).apply();
+        putMeta(META_ACTIVE, id == null ? "" : id);
     }
 
     public synchronized void save(Project project) {
+        if (project == null) return;
         project.updatedAt = System.currentTimeMillis();
-        ArrayList<Project> all = new ArrayList<>(list());
-        boolean replaced = false;
-        for (int i = 0; i < all.size(); i++) {
-            if (all.get(i).id.equals(project.id)) {
-                all.set(i, project);
-                replaced = true;
-                break;
-            }
-        }
-        if (!replaced) all.add(0, project);
-        write(all);
+        ContentValues values = new ContentValues();
+        values.put("id", project.id);
+        values.put("json", project.toJson().toString());
+        values.put("updated_at", project.updatedAt);
+        db.insertWithOnConflict("projects", null, values, SQLiteDatabase.CONFLICT_REPLACE);
     }
 
     public synchronized void delete(String id) {
-        ArrayList<Project> all = new ArrayList<>(list());
-        all.removeIf(p -> p.id.equals(id));
-        write(all);
-        if (id != null && id.equals(prefs.getString(KEY_ACTIVE, ""))) {
-            prefs.edit().putString(KEY_ACTIVE, all.isEmpty() ? "" : all.get(0).id).apply();
+        if (id == null || id.isEmpty()) return;
+        db.delete("projects", "id=?", new String[]{id});
+        if (id.equals(getMeta(META_ACTIVE))) {
+            List<Project> all = list();
+            putMeta(META_ACTIVE, all.isEmpty() ? "" : all.get(0).id);
         }
     }
 
@@ -280,8 +332,63 @@ public final class ProjectStore {
             arr.put(o);
         }
         JSONObject root = new JSONObject();
-        try { root.put("projects", arr); } catch (Exception ignored) {}
+        try {
+            root.put("projects", arr);
+            root.put("storageBackend", "sqlite-v3");
+        } catch (Exception ignored) {}
         return root;
+    }
+
+    public String storageBackend() {
+        return "sqlite-v3";
+    }
+
+    private synchronized void migrateLegacyProjectsOnce() {
+        if ("1".equals(getMeta(META_MIGRATED))) return;
+
+        db.beginTransaction();
+        try {
+            String raw = legacyPrefs.getString(LEGACY_PROJECTS, "[]");
+            JSONArray arr;
+            try { arr = new JSONArray(raw); }
+            catch (Exception ignored) { arr = new JSONArray(); }
+
+            for (int i = 0; i < arr.length(); i++) {
+                JSONObject o = arr.optJSONObject(i);
+                if (o == null) continue;
+                Project p = Project.fromJson(o);
+                ContentValues values = new ContentValues();
+                values.put("id", p.id);
+                values.put("json", p.toJson().toString());
+                values.put("updated_at", p.updatedAt);
+                db.insertWithOnConflict("projects", null, values, SQLiteDatabase.CONFLICT_IGNORE);
+            }
+
+            String legacyActive = legacyPrefs.getString(LEGACY_ACTIVE, "");
+            if (!legacyActive.isEmpty() && get(legacyActive) != null) {
+                putMeta(META_ACTIVE, legacyActive);
+            } else if (getMeta(META_ACTIVE).isEmpty()) {
+                List<Project> all = list();
+                if (!all.isEmpty()) putMeta(META_ACTIVE, all.get(0).id);
+            }
+            putMeta(META_MIGRATED, "1");
+            db.setTransactionSuccessful();
+        } finally {
+            db.endTransaction();
+        }
+    }
+
+    private String getMeta(String key) {
+        try (Cursor c = db.query("meta", new String[]{"value"}, "key=?", new String[]{key}, null, null, null, "1")) {
+            return c.moveToFirst() ? c.getString(0) : "";
+        }
+    }
+
+    private void putMeta(String key, String value) {
+        ContentValues values = new ContentValues();
+        values.put("key", key);
+        values.put("value", value == null ? "" : value);
+        db.insertWithOnConflict("meta", null, values, SQLiteDatabase.CONFLICT_REPLACE);
     }
 
     private String displayName(Uri uri) {
@@ -310,11 +417,5 @@ public final class ProjectStore {
             try { if (pfd != null) pfd.close(); } catch (Exception ignored) {}
             try { r.release(); } catch (Exception ignored) {}
         }
-    }
-
-    private void write(List<Project> projects) {
-        JSONArray arr = new JSONArray();
-        for (Project p : projects) arr.put(p.toJson());
-        prefs.edit().putString(KEY_PROJECTS, arr.toString()).apply();
     }
 }
