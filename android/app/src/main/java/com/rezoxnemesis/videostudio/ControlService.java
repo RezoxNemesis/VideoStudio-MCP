@@ -2834,6 +2834,17 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         state.checkpoint(action, progress, detail);
         recoveryPlans.checkpointForJob(state.id, action, progress, detail);
         ActivityLog.progress(this, state.id, action, detail, progress, projectId);
+        try {
+            JSONObject live = new JSONObject();
+            live.put("jobId", state.id);
+            live.put("projectId", projectId == null ? "" : projectId);
+            live.put("action", action == null ? "" : action);
+            live.put("detail", detail == null ? "" : detail);
+            live.put("progress", Math.max(0, Math.min(100, progress)));
+            live.put("state", state.state);
+            live.put("updatedAt", System.currentTimeMillis());
+            prefs.edit().putString("job_recovery_snapshot", live.toString()).apply();
+        } catch (Exception ignored) {}
     }
 
     private String friendlyAction(String action) {
