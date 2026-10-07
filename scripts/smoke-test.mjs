@@ -228,7 +228,7 @@ const checks = [
   ["MCP v3 exposes verified cloud project offload", worker.includes('"app_offload_project_to_drive"') && worker.includes('"offload_project_to_drive"')],
   ["Android Control UI exposes explicit archive-and-free-local-workspace action", nativeMain.includes("Archive + Free Local Workspace") && nativeMain.includes("offloadActiveProjectToCloud")],
   ["native v3 exposes a self-test", controlService.includes('case "self_test"') && worker.includes('"app_self_test"') && controlService.includes("privateStorageWritable")],
-  ["native state reports v3 architecture", controlService.includes('out.put("mcpEndpointVersion", "v3")') && controlService.includes('out.put("localEngineOwnsProjects", true)')],
+  ["native state reports stable v3 compatibility architecture", controlService.includes('out.put("mcpEndpointVersion", "v3-stable")') && controlService.includes('out.put("stableMcpEndpoint", true)') && controlService.includes('out.put("connectionCore", protocol.connectionStatus())') && controlService.includes('out.put("localEngineOwnsProjects", true)')],
   ["cached connector compatibility routes v3 devices to v3 queue", worker.includes("enqueueNative") && worker.includes("appEnqueueV3") && worker.includes("commandNative")],
   ["native analysis results render as MCP images", worker.includes("safeResult") && worker.includes('type:"image"')],
 ];
