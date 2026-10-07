@@ -102,11 +102,14 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         builtInCreativeRuntime = new CreativeBuiltInRuntime(portraitMotionAnalyzer, renderCritic, creativeNodeStore);
         driveWorkspace = new DriveWorkspaceProvider(this);
         createChannel();
-        startForeground(NOTIFICATION_ID, notification("VideoStudio MCP v3 starting"));
+        startForeground(NOTIFICATION_ID, notification("VideoStudio stable MCP starting"));
         syncProtocolState();
         protocol.start();
-        markService(true, "VideoStudio MCP v3 Native Agent active");
-        ActivityLog.add(this, "system", "VideoStudio v3 control online", "MCP v3 Native Agent background controller started", "success", null, null, null);
+        markService(true, "VideoStudio stable MCP Native Agent active");
+        ActivityLog.add(this, "system", "VideoStudio control online",
+                "Stable MCP compatibility endpoint • app " + AppProtocol.APP_VERSION
+                        + " • generation " + protocol.appGeneration(),
+                "success", null, null, null);
         recoverDurablePlans();
     }
 
@@ -123,10 +126,10 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             updateNotification("ChatGPT control paused");
         } else if (ACTION_RESUME.equals(action)) {
             protocol.setControlPaused(false);
-            ActivityLog.add(this, "user", "ChatGPT control resumed", "VideoStudio MCP v3 is accepting commands again", "success", null, null, null);
+            ActivityLog.add(this, "user", "ChatGPT control resumed", "VideoStudio stable MCP connection is accepting commands again", "success", null, null, null);
             syncProtocolState();
             protocol.registerNow();
-            updateNotification("MCP v3 control ready");
+            updateNotification("Stable MCP control ready");
         } else if (ACTION_SYNC.equals(action)) {
             syncProtocolState();
             protocol.registerNow();
@@ -184,7 +187,9 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         }
         updateNotification(protocol != null && protocol.isControlPaused()
                 ? "ChatGPT control paused"
-                : (connected ? "MCP v3 control ready • " + AppProtocol.APP_VERSION : "Reconnecting securely • " + AppProtocol.APP_VERSION));
+                : (connected
+                    ? "Stable MCP ready • " + AppProtocol.APP_VERSION + " • gen " + protocol.appGeneration()
+                    : "Stable MCP reconnecting • " + AppProtocol.APP_VERSION));
     }
 
     @Override
@@ -2491,7 +2496,10 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 }
             }
             out.put("appVersion", AppProtocol.APP_VERSION);
-            out.put("protocolVersion", AppProtocol.PROTOCOL_VERSION);
+            out.put("protocolVersion", protocol.protocolVersion());
+            out.put("stableMcpEndpoint", true);
+            out.put("appGeneration", protocol.appGeneration());
+            out.put("connectionCore", protocol.connectionStatus());
             out.put("nativeAgent", "videostudio-v3");
             out.put("privateStorageWritable", dirReady && probe.exists() && probe.length() > 0);
             out.put("projectStoreReady", store.summaries() != null);
@@ -2540,8 +2548,12 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         try {
             out.put("deviceId", protocol.deviceId());
             out.put("appVersion", AppProtocol.APP_VERSION);
-            out.put("protocolVersion", AppProtocol.PROTOCOL_VERSION);
-            out.put("mcpEndpointVersion", "v3");
+            out.put("protocolVersion", protocol.protocolVersion());
+            out.put("mcpEndpointVersion", "v3-stable");
+            out.put("stableMcpEndpoint", true);
+            out.put("stableMcpPath", McpConnectionCore.STABLE_MCP_PATH);
+            out.put("appGeneration", protocol.appGeneration());
+            out.put("connectionCore", protocol.connectionStatus());
             out.put("nativeAgent", "videostudio-v3");
             out.put("directAttachmentIngest", true);
             out.put("inlineAttachmentIngest", true);
@@ -2826,12 +2838,14 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 .putBoolean(KEY_SERVICE_ONLINE, online)
                 .putString(KEY_SERVICE_DETAIL, detail == null ? "" : detail)
                 .putString("control_service_app_version", AppProtocol.APP_VERSION)
+                .putLong("control_service_app_generation", protocol == null ? 0 : protocol.appGeneration())
+                .putInt("control_service_connection_core_version", McpConnectionCore.CORE_VERSION)
                 .putLong("control_service_heartbeat", System.currentTimeMillis())
                 .apply();
     }
 
     private void createChannel() {
-        NotificationChannel channel = new NotificationChannel(CHANNEL, "VideoStudio MCP v3", NotificationManager.IMPORTANCE_LOW);
+        NotificationChannel channel = new NotificationChannel(CHANNEL, "VideoStudio MCP control", NotificationManager.IMPORTANCE_LOW);
         channel.setDescription("Keeps VideoStudio's user-controlled private MCP connection available in the background.");
         NotificationManager nm = getSystemService(NotificationManager.class);
         if (nm != null) nm.createNotificationChannel(channel);
