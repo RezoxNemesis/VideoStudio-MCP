@@ -55,6 +55,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
 
     private ProjectStore store;
     private JobManager jobs;
+    private PreviewSnapshotStore previewSnapshots;
     private TransferJournal transferJournal;
     private ResumableTransferManager transferManager;
     private PreviewSnapshotStore previewSnapshots;
@@ -87,6 +88,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         commandJournal = new CommandJournal(this);
         store = new ProjectStore(this);
         jobs = new JobManager(this);
+        previewSnapshots = new PreviewSnapshotStore(this);
         transferJournal = new TransferJournal(this);
         transferManager = new ResumableTransferManager(transferJournal);
         previewSnapshots = new PreviewSnapshotStore(this);
@@ -2121,6 +2123,17 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                     "final",
                     state.id,
                     fresh.latestExportAt
+            ));
+            previewSnapshots.publish(new PreviewSnapshotStore.Snapshot(
+                    UUID.randomUUID().toString(),
+                    fresh.id,
+                    fresh.updatedAt,
+                    generated.createdAt,
+                    publicUri.toString(),
+                    quality,
+                    "final",
+                    state.id,
+                    System.currentTimeMillis()
             ));
             ActivityLog.add(this, "system", "Generated video available",
                     generated.name + " • Media Bin • asset " + shortId(generated.id),
