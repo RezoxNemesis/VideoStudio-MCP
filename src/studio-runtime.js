@@ -885,6 +885,10 @@ const STUDIO_RUNTIME_JS = String.raw`
     const p=command.parameters||{};let result;
     try{
       if(command.action==="generate_video")result=await generate({...p,remote:true});
+      else if(command.action==="render_portal_video"){
+        if(!window.VideoStudioCinematic||typeof window.VideoStudioCinematic.renderPortal!=="function") throw new Error("Cinematic Worlds runtime is not ready");
+        result=await window.VideoStudioCinematic.renderPortal({...p,remote:true});
+      }
       else if(command.action==="drive_status")result=await driveStatus();
       else if(command.action==="drive_sync")result=await syncProject({interactive:false});
       else if(command.action==="drive_restore")result=await restoreProject({interactive:false});
