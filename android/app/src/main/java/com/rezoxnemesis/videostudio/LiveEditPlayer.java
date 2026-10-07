@@ -6,24 +6,19 @@ import android.view.ViewGroup;
 
 import androidx.media3.common.MediaItem;
 import androidx.media3.common.Player;
-import androidx.media3.common.util.UnstableApi;
 import androidx.media3.exoplayer.ExoPlayer;
 import androidx.media3.ui.PlayerView;
 
+import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Reusable editor playback surface.
- *
- * Player ownership is independent from rendering/AI jobs so editor rebuilds do
- * not tear down active playback or cancel background autonomous work.
+ * Reusable Media3 editor player. Playback lives independently from editor view
+ * rebuilds and from autonomous render/generation jobs.
  */
-@UnstableApi
 public final class LiveEditPlayer {
     private final ExoPlayer player;
     private final PlayerView view;
-    private Player.Listener endListener;
-    private String mediaUri = "";
     private String snapshotId = "";
     private String clipId = "";
 
@@ -31,10 +26,8 @@ public final class LiveEditPlayer {
         Context app = context.getApplicationContext();
         player = new ExoPlayer.Builder(app).build();
         view = new PlayerView(context);
-        view.setPlayer(player);
         view.setUseController(true);
-        view.setControllerAutoShow(true);
-        view.setKeepContentOnPlayerReset(true);
+        view.setPlayer(player);
     }
 
     public void attach(ViewGroup host) {
@@ -42,81 +35,39 @@ public final class LiveEditPlayer {
         if (view.getParent() instanceof ViewGroup) {
             ((ViewGroup) view.getParent()).removeView(view);
         }
-        host.addView(view, 0, new ViewGroup.LayoutParams(
+        host.addView(view, new ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT
         ));
     }
 
     public void play(Uri uri, long positionMs) {
-        if (uri == null) return;
-        clearEndListener();
-        mediaUri = uri.toString();
-        player.setMediaItem(MediaItem.fromUri(uri));
-        player.prepare();
-        player.seekTo(Math.max(0L, positionMs));
-        player.setPlaybackSpeed(1f);
-        player.play();
+        play(uri, positionMs, 1f, true);
     }
 
-    public void playClip(Uri uri,
-                         long startMs,
-                         long endMs,
-                         float speed,
-                         Runnable onEnded) {
+    public void play(Uri uri, long positionMs, float speed, boolean playWhenReady) {
         if (uri == null) return;
-        clearEndListener();
-        mediaUri = uri.toString();
-        long safeStart = Math.max(0L, startMs);
-        long safeEnd = Math.max(safeStart + 100L, endMs);
-        MediaItem item = new MediaItem.Builder()
-                .setUri(uri)
-                .setClippingConfiguration(new MediaItem.ClippingConfiguration.Builder()
-                        .setStartPositionMs(safeStart)
-                        .setEndPositionMs(safeEnd)
-                        .build())
-                .build();
-        player.setMediaItem(item);
-        player.prepare();
-        player.seekTo(0L);
+        MediaItem item = MediaItem.fromUri(uri);
+        player.setMediaItem(item, Math.max(0L, positionMs));
         player.setPlaybackSpeed(Math.max(.25f, Math.min(4f, speed)));
-        if (onEnded != null) {
-            endListener = new Player.Listener() {
-                @Override public void onPlaybackStateChanged(int playbackState) {
-                    if (playbackState == Player.STATE_ENDED) {
-                        clearEndListener();
-                        onEnded.run();
-                    }
-                }
-            };
-            player.addListener(endListener);
-        }
-        player.play();
+        player.prepare();
+        player.setPlayWhenReady(playWhenReady);
     }
 
     public void setPlaylist(List<MediaItem> items) {
-        clearEndListener();
-        if (items == null || items.isEmpty()) {
-            player.clearMediaItems();
-            mediaUri = "";
-            return;
-        }
-        player.setMediaItems(items);
+        List<MediaItem> safe = items == null ? new ArrayList<>() : new ArrayList<>(items);
+        player.setMediaItems(safe, true);
         player.prepare();
-        MediaItem first = items.get(0);
-        mediaUri = first.localConfiguration == null || first.localConfiguration.uri == null
-                ? ""
-                : first.localConfiguration.uri.toString();
-    }
-
-    public void setContextIds(String snapshotId, String clipId) {
-        this.snapshotId = snapshotId == null ? "" : snapshotId;
-        this.clipId = clipId == null ? "" : clipId;
     }
 
     public LivePlaybackState snapshotState() {
+        String uri = "";
+        MediaItem item = player.getCurrentMediaItem();
+        if (item != null && item.localConfiguration != null && item.localConfiguration.uri != null) {
+            uri = item.localConfiguration.uri.toString();
+        }
         return new LivePlaybackState(
-                mediaUri,
+                uri,
                 Math.max(0L, player.getCurrentPosition()),
                 player.getPlayWhenReady(),
                 snapshotId,
@@ -125,43 +76,45 @@ public final class LiveEditPlayer {
     }
 
     public void restoreState(LivePlaybackState state) {
-        if (state == null || state.mediaUri.isEmpty()) return;
-        clearEndListener();
-        mediaUri = state.mediaUri;
+        if (state == null) return;
         snapshotId = state.snapshotId;
         clipId = state.clipId;
-        player.setMediaItem(MediaItem.fromUri(Uri.parse(state.mediaUri)));
-        player.prepare();
-        player.seekTo(state.positionMs);
-        player.setPlayWhenReady(state.playWhenReady);
+        if (!state.mediaUri.isEmpty()) {
+            play(Uri.parse(state.mediaUri), state.positionMs, 1f, state.playWhenReady);
+        }
     }
 
-    public boolean hasMedia() {
-        return !mediaUri.isEmpty() && player.getMediaItemCount() > 0;
+    public void setContextIds(String snapshotId, String clipId) {
+        this.snapshotId = snapshotId == null ? "" : snapshotId;
+        this.clipId = clipId == null ? "" : clipId;
+    }
+
+    public long getCurrentPosition() {
+        return Math.max(0L, player.getCurrentPosition());
     }
 
     public boolean isPlaying() {
         return player.isPlaying();
     }
 
-    public long currentPositionMs() {
-        return Math.max(0L, player.getCurrentPosition());
+    public boolean hasMedia() {
+        return player.getMediaItemCount() > 0;
     }
 
     public void pause() {
         player.pause();
     }
 
-    public void release() {
-        clearEndListener();
-        view.setPlayer(null);
-        player.release();
+    public void stop() {
+        player.stop();
     }
 
-    private void clearEndListener() {
-        if (endListener != null) {
-            player.removeListener(endListener);
-            endListener = null;
-        }
+    public void seekTo(long positionMs) {
+        player.seekTo(Math.max(0L, positionMs));
+    }
+
+    public void release() {
+        view.setPlayer(null);
+        player.release();
     }
 }
