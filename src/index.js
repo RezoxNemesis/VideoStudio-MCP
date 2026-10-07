@@ -309,7 +309,7 @@ export class VideoStudioState extends DurableObject {
       if(tool==="speed"||tool==="slow_motion"){
         command=await this.enqueue(webDeviceId,projectId,"set_clip_speed",{
           index:Number(p.clipIndex||0),
-          speed:Number(settings.speed||settings.value||(tool==="slow_motion"?.5:1))
+          speed:Number(settings.speed||settings.value||(tool==="slow_motion" ? .5 : 1))
         });
       }else if(tool==="title"){
         command=await this.enqueue(webDeviceId,projectId,"set_clip_title",{
@@ -1310,7 +1310,17 @@ function serverForApp(env,ownerKey,protocolVersion=1){
   const queue=async(action,parameters={})=>{
     try{
       const c=await enqueueCommand(action,parameters);
-      return out({queued:true,commandId:c.id,sequence:c.seq,action,nativeApp:true,protocolVersion:isV3?3:1});
+      return out({
+        queued:true,
+        commandId:c.id,
+        sequence:c.seq,
+        action,
+        nativeApp:c.hybridRoute!=="studio_web",
+        protocolVersion:isV3?3:1,
+        route:c.hybridRoute||"native",
+        waitingNative:c.status==="waiting_native",
+        webProjectId:c.webProjectId||undefined
+      });
     }catch(e){ return out({queued:false,error:e.message,protocolVersion:isV3?3:1}); }
   };
   const commandResult=async commandId=>{
@@ -1614,6 +1624,14 @@ function serverForApp(env,ownerKey,protocolVersion=1){
       const c=await enqueueCommand("import_chat_file",{handoffId:handoff.id,name:handoff.name,mime:handoff.mime,size:handoff.size,projectId:projectId||""});
       return out({queued:true,commandId:c.id,sequence:c.seq,action:"import_chat_file",handoff:{id:handoff.id,expiresAt:handoff.expiresAt},note:"Bytes stream privately to the phone; the source URL is not sent in the device command."});
     }catch(e){ return out({queued:false,error:e.message}); }
+  });
+
+  if(isV3) s.registerTool("app_bind_studio_web",{
+    description:"Bind one registered Studio Web device as the browser fallback for this same private native MCP. The owner credential stays private. When Android sleeps, compatible edit/generation/render work can route to the bound Web project; native-only work remains durable until Android reconnects.",
+    inputSchema:{webDeviceId:z.string().min(8).max(160)}
+  },async({webDeviceId})=>{
+    try { return out(await st.appBindStudioWebFallback(ownerKey,webDeviceId)); }
+    catch(e){ return out({bound:false,error:e.message}); }
   });
 
   if(isV3) s.registerTool("app_create_hybrid_binding",{
