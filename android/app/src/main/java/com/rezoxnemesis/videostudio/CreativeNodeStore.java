@@ -55,6 +55,9 @@ public final class CreativeNodeStore {
                 state.put("checkpointKey", planned.optString("checkpointKey", ""));
                 state.put("dependencies", planned.optJSONArray("dependencies") == null
                         ? new JSONArray() : planned.optJSONArray("dependencies"));
+                state.put("input", planned.optJSONObject("input") == null
+                        ? new JSONObject() : new JSONObject(planned.optJSONObject("input").toString()));
+                state.put("quality", planned.optString("quality", "balanced"));
                 state.put("providerResolved", planned.optBoolean("providerResolved", false));
                 if (planned.optJSONObject("provider") != null) {
                     state.put("provider", planned.optJSONObject("provider"));
