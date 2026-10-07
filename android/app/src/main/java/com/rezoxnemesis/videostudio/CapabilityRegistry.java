@@ -134,7 +134,9 @@ public final class CapabilityRegistry {
             out.put("providers", installed);
             out.put("root", installedModelRoot.getAbsolutePath());
             out.put("baseApkDependency", false);
-            out.put("transactionalInstallerReady", false);
+            out.put("transactionalInstallerReady", true);
+            out.put("installSource", "explicit-videostudio-asset");
+            out.put("galleryAccess", false);
         } catch (Exception ignored) {}
         return out;
     }
