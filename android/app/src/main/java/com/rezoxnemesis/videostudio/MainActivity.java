@@ -103,8 +103,9 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         syncProtocolState();
 
         setContentView(buildShell());
+        startForegroundService(new Intent(this, ControlService.class));
         showHome();
-        protocol.start();
+        protocol.registerNow();
     }
 
     @Override
@@ -174,8 +175,8 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         row.addView(logo, new LinearLayout.LayoutParams(dp(54), dp(54)));
         LinearLayout copy = column();
         copy.setPadding(dp(12), 0, 0, 0);
-        copy.addView(title("Connect ChatGPT", 19));
-        connectionPill = body("Private App MCP • checking connection…");
+        copy.addView(title("ChatGPT Private Link", 19));
+        connectionPill = body("Persistent control service • gallery access blocked");
         copy.addView(connectionPill);
         row.addView(copy, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
         TextView arrow = title("›", 34);
@@ -190,6 +191,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         quick.addView(actionTile("+", "New Project", C_PURPLE, this::createProjectDialog), weightWithMargin());
         quick.addView(actionTile("▧", "Import Media", C_BLUE, this::pickMedia), weightWithMargin());
         quick.addView(actionTile("✦", "AI Edit", C_MAGENTA, () -> showTools()), weightWithMargin());
+        quick.addView(actionTile("◈", "Prompt Video", C_CYAN, this::promptVideoDialog), weightWithMargin());
         quick.addView(actionTile("▶", "Prompt Video", C_CYAN, this::promptVideoDialog), weightWithMargin());
         box.addView(quick);
 
@@ -317,8 +319,18 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         box.setPadding(dp(16), dp(18), dp(16), dp(28));
         scroll.addView(box);
 
-        box.addView(title("AI Magic for Your Videos", 27));
-        box.addView(body("A native tool surface designed so ChatGPT can use the same primitives you can."));
+        box.addView(title("AI Studio", 27));
+        box.addView(body("ChatGPT can plan, edit, generate scene visuals, import them privately and assemble a native video without browsing your gallery."));
+
+        LinearLayout promptCard = card(false);
+        promptCard.setBackground(neonCard());
+        promptCard.addView(title("Prompt → Video", 21));
+        promptCard.addView(body("Describe a video. ChatGPT can create the visual plan and scene assets, send them privately into VideoStudio, then render the animated scene sequence locally."));
+        Button promptButton = neonButton("Create from a prompt", C_CYAN);
+        promptButton.setTextColor(Color.BLACK);
+        promptButton.setOnClickListener(v -> promptVideoDialog());
+        promptCard.addView(promptButton, margins(-1, dp(52), dp(14), 0, 0, 0));
+        box.addView(promptCard, margins(-1, -2, dp(14), dp(12), 0, 0));
         LinearLayout tabs = new LinearLayout(this);
         tabs.addView(accentPill("All"));
         tabs.addView(accentPill("Edit"));
@@ -433,6 +445,12 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         Button share = neonButton("Connect / Share with ChatGPT", C_PURPLE);
         share.setOnClickListener(v -> sharePairing());
         privateCard.addView(share, margins(-1, dp(52), dp(12), 0, 0, 0));
+        Button stop = neonButton("STOP CHATGPT CONTROL", Color.rgb(153, 30, 55));
+        stop.setOnClickListener(v -> {
+            stopService(new Intent(this, ControlService.class));
+            Toast.makeText(this, "ChatGPT control stopped", Toast.LENGTH_SHORT).show();
+        });
+        privateCard.addView(stop, margins(-1, dp(52), dp(10), 0, 0, 0));
         box.addView(privateCard);
 
         setScreen(scroll, "control");
@@ -715,6 +733,42 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                     break;
                 case "Crop":
                     selectedClip.effects.put("crop", "center_cover");
+                    break;
+                case "Flash":
+                    selectedClip.effects.put("flash", .55);
+                    break;
+                case "Shake":
+                    selectedClip.effects.put("shake", "creator_medium");
+                    break;
+                case "Chromatic":
+                    selectedClip.effects.put("chromaticAberration", .28);
+                    break;
+                case "Vignette":
+                    selectedClip.effects.put("vignette", .32);
+                    break;
+                case "Glow":
+                    selectedClip.effects.put("glow", .35);
+                    break;
+                case "Film Grain":
+                    selectedClip.effects.put("filmGrain", .22);
+                    break;
+                case "Glitch":
+                    selectedClip.effects.put("glitch", "rgb_slice");
+                    break;
+                case "Light Leak":
+                    selectedClip.effects.put("lightLeak", "warm_sweep");
+                    break;
+                case "Fonts":
+                    selectedClip.effects.put("font", "rounded");
+                    break;
+                case "Text Animation":
+                    selectedClip.effects.put("textAnimation", "fade_up");
+                    break;
+                case "Keyframes":
+                    selectedClip.effects.put("keyframePreset", "push_rotate");
+                    break;
+                case "Audio Ducking":
+                    selectedClip.effects.put("audioDucking", .45);
                     break;
             }
             store.save(activeProject);
@@ -1041,6 +1095,45 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         result.put("changedClips", changed);
         result.put("preset", preset);
         return result;
+    }
+
+    private void promptVideoDialog() {
+        final EditText input = new EditText(this);
+        input.setHint("Example: 20-second neon cyberpunk travel reel, energetic, vertical, cinematic text");
+        input.setTextColor(C_TEXT);
+        input.setHintTextColor(C_MUTED);
+        input.setMinLines(4);
+        input.setGravity(Gravity.TOP);
+        LinearLayout wrap = column();
+        wrap.setPadding(dp(20), dp(4), dp(20), 0);
+        wrap.addView(input, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(150)));
+        new AlertDialog.Builder(this)
+                .setTitle("Create a video with ChatGPT")
+                .setView(wrap)
+                .setPositiveButton("Open ChatGPT", (d, w) -> {
+                    String prompt = input.getText().toString().trim();
+                    if (prompt.isEmpty()) {
+                        Toast.makeText(this, "Enter a video idea first", Toast.LENGTH_SHORT).show();
+                        return;
+                    }
+                    Intent send = new Intent(Intent.ACTION_SEND);
+                    send.setType("text/plain");
+                    send.putExtra(Intent.EXTRA_TEXT,
+                            protocol.pairingMessage()
+                                    + "\n\nCreate a complete video from this prompt using my VideoStudio app:\n"
+                                    + prompt
+                                    + "\n\nUse the private attachment handoff for generated scene assets. Do not access my Gallery. Build the project autonomously, apply motion/text/effects as appropriate, then render the prompt-video locally with the protected native renderer.");
+                    if (getPackageManager().getLaunchIntentForPackage("com.openai.chatgpt") != null) {
+                        send.setPackage("com.openai.chatgpt");
+                    }
+                    try { startActivity(send); }
+                    catch (Exception error) {
+                        send.setPackage(null);
+                        startActivity(Intent.createChooser(send, "Create with ChatGPT"));
+                    }
+                })
+                .setNegativeButton("Cancel", null)
+                .show();
     }
 
     private void sharePairing() {
