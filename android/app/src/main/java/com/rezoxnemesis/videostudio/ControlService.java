@@ -58,7 +58,6 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     private PreviewSnapshotStore previewSnapshots;
     private TransferJournal transferJournal;
     private ResumableTransferManager transferManager;
-    private PreviewSnapshotStore previewSnapshots;
     private AppProtocol protocol;
     private NativeRenderEngine renderEngine;
     private NativeRenderEngine.Handle activeRender;
@@ -91,7 +90,6 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         previewSnapshots = new PreviewSnapshotStore(this);
         transferJournal = new TransferJournal(this);
         transferManager = new ResumableTransferManager(transferJournal);
-        previewSnapshots = new PreviewSnapshotStore(this);
         protocol = new AppProtocol(this, this);
         renderEngine = new NativeRenderEngine(this);
         promptVideoEngine = new PromptVideoEngine(this);
