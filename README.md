@@ -1,108 +1,121 @@
-# VideoStudio MCP
+# VideoStudio v3
 
-VideoStudio MCP is a mobile-first, local-first video editor that can be controlled from ChatGPT through a custom MCP server.
+VideoStudio is a native-first Android video editor controlled from ChatGPT through a private MCP connection.
 
-## What works in v0.6
+## v3 identity
 
-- Installable web app/PWA served by the same Cloudflare Worker as the MCP server.
-- One-tap pairing helper for ChatGPT.
-- Device identity generated locally in the browser.
-- Project creation and project metadata sync.
-- Video/image import that stays in the browser using IndexedDB.
-- Timeline reorder and clip removal.
-- Per-clip trim for video.
-- Aspect ratios: 9:16, 16:9, 1:1, 4:5.
-- Playback speed, mute, title overlay, quality and transition settings.
-- Local WebM rendering with Canvas + MediaRecorder.
-- Durable Object command relay so ChatGPT can send edits to the open app.
-- MCP tools for device status, project inspection, remote edit commands and command results.
-- On-device contact-sheet generation so ChatGPT can visually inspect sampled frames without uploading the full video.
-- Remote clip removal, movement and full timeline reordering.
-- Batched remote edits so ChatGPT can queue a sequence of changes with render last.
-- Adaptive local export: MP4 when supported by the browser, otherwise WebM.
-- Multi-cut timelines from one source asset, enabling real jump-cut edits.
-- Per-clip playback speed and per-clip title overlays.
-- Autonomous requests can submit a complete clip plan and render it in one remote workflow.
-- 12-frame contact-sheet analysis with local scene-change detection and quiet-section detection.
-- Per-clip zoom/pan/rotation, brightness/contrast/saturation, audio volume/fades and title styling.
-- Post-render contact-sheet inspection so ChatGPT can critique the actual rendered output before stopping.
-- Native Android APK shell using the same repository and web editor, with persistent WebView storage and Android media picker.
-- Native chunked save bridge writes large renders directly to Movies/VideoStudio without cloud media storage.
+- Android app: **3.0.0**
+- Android versionCode: **300**
+- Native protocol: **MCP v3**
+- Canonical private endpoint: `/app-mcp-v3/<device-owned-key>`
+- Native control API: `/api/v3/app/*`
+- Package: `com.rezoxnemesis.videostudio`
 
-## Privacy model
+The Android pairing message always shares the v3 endpoint.
 
-Video bytes stay on the user's device in this version. Only lightweight project metadata, settings and command status are stored in the Cloudflare Durable Object. This avoids requiring R2 or another cloud media bucket.
+## Architecture
 
-The device ID acts as the pairing secret for this early build. Do not post it publicly. A production multi-user version should add OAuth.
+The Android app is the source of truth. Projects, timeline state, imported media, analysis jobs, edit parameters, render jobs, recovery state and Activity history live on the phone.
 
-## MCP endpoint
+The Worker is limited to authenticated signalling, command leasing, lightweight status and compatibility fallback. It is not the video editor.
 
-`https://wispy-queen-f9b5.prakasharuntandon634.workers.dev/mcp`
+See [docs/V3_ARCHITECTURE.md](docs/V3_ARCHITECTURE.md) for the full architecture contract.
 
-## App
+## Native project state
 
-`https://wispy-queen-f9b5.prakasharuntandon634.workers.dev/`
+v3 stores project/timeline data in app-private SQLite:
 
-## MCP tools
+`videostudio_v3.db`
 
-- `server_status`
-- `device_status`
-- `create_video_project`
-- `list_video_projects`
-- `get_video_project`
-- `queue_video_edit`
-- `get_video_command_result`
-- `request_media_analysis`
-- `queue_video_edit_batch`
-- `video_project_plan`
+Existing v1/v1.1 projects are migrated automatically on first v3 launch.
 
-Supported remote edit actions:
+## ChatGPT attachment ingest
 
-- `set_trim`
-- `set_speed`
-- `set_mute`
-- `set_aspect`
-- `set_title`
-- `set_quality`
-- `set_transition`
-- `remove_clip`
-- `move_clip`
-- `reorder_timeline`
-- `replace_timeline`
-- `set_clip_speed`
-- `set_clip_title`
-- `analyse_media`
-- `render`
-- `autonomous_request`
+The v3 MCP tool `app_import_attachment` uses ChatGPT's MCP file-parameter mechanism. ChatGPT supplies an authorised temporary file reference, and the Android Native Agent downloads the bytes directly into VideoStudio's app-private storage.
 
-## Local rendering
+The signalling Worker does not proxy the media in the primary v3 path.
 
-Rendering happens on the device and currently exports WebM. Some browsers may require one user tap before allowing local media playback, especially when ChatGPT requests a render remotely. In that case, open VideoStudio and tap Render once.
+A short-lived relay remains only as a compatibility fallback.
 
-No paid media storage is required.
+## Privacy
+
+Gallery browsing is a hard boundary.
+
+The Android manifest does not request Gallery read permissions. MCP cannot enumerate the user's photo/video library.
+
+ChatGPT can work only with:
+
+- user-selected Android picker files
+- files explicitly attached/shared through ChatGPT
+- VideoStudio-owned media
+- explicit HTTPS imports
+
+## Autonomous control
+
+The v3 native tool surface supports:
+
+- status and native self-test
+- project create/select/delete
+- full native project state
+- ChatGPT Activity notes
+- direct attachment ingest
+- native media analysis
+- structured edit plans
+- per-clip edit tools
+- creator presets
+- autonomous edit + export
+- prompt-to-video
+- batch operations
+- native MP4 export
+- job cancellation
+
+v3 uses a dedicated queue/cursor namespace and an Android command journal so reconnect/retry does not execute a completed command twice.
+
+## Rendering and stability
+
+- Media3 Transformer native export
+- H.264/AAC MP4
+- 720p / 1080p
+- 9:16 / 16:9 / 1:1 / 4:5
+- thermal guard
+- memory guard
+- one protected heavy-render lane
+- bounded light-work lanes
+- persistent recovery checkpoints
+- foreground Native Agent service
+- secure reconnect backoff
+- STOP CHATGPT CONTROL
+
+## Activity transparency
+
+The app includes a ChatGPT Activity screen. Imports, analysis, edits, renders, exports, progress, failures and retries are visible there.
+
+Only work executed by VideoStudio itself counts as completed editing.
 
 ## Development
 
+Install dependencies:
+
 ```bash
 npm install
+```
+
+Run the Worker locally:
+
+```bash
 npm run dev
 ```
 
-Deploy:
+Run smoke tests:
 
 ```bash
-npm run deploy
+npm test
 ```
 
-Cloudflare Git integration is configured on `main`, so merging to `main` can deploy automatically.
+Cloudflare deploys from `main`. GitHub Actions builds the signed-development Android APK from the same branch.
 
+## Legacy compatibility
 
-## Android APK
+Legacy `/mcp`, `/mcp-v06` and `/app-mcp/<key>` routes remain for migration compatibility.
 
-The Android shell lives in `android/`. It loads the same VideoStudio web editor and MCP backend, so there is no duplicated editing engine. Imported media remains in the app's local WebView/IndexedDB storage. Large rendered files can be saved through the native bridge directly to `Movies/VideoStudio`.
-
-GitHub Actions workflow `.github/workflows/android.yml` builds an installable debug APK and publishes it as the `VideoStudio-Android-debug` workflow artifact.
-
-## Fresh v0.6 MCP endpoint
-
-Use `https://wispy-queen-f9b5.prakasharuntandon634.workers.dev/mcp-v06` when a fresh ChatGPT connector schema is needed for the new v0.6 tools.
+A device registered as protocol 3 is routed to the v3 queue even when a cached legacy connector is used. The canonical v3 pairing endpoint is still `/app-mcp-v3/<key>`.
