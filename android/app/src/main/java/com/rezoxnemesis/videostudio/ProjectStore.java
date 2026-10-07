@@ -102,6 +102,10 @@ public final class ProjectStore {
         public String id;
         public String name;
         public long updatedAt;
+        public String sourcePrompt = "";
+        public String latestExportUri = "";
+        public String latestExportName = "";
+        public long latestExportAt = 0;
         public final ArrayList<Asset> assets = new ArrayList<>();
         public final ArrayList<Clip> clips = new ArrayList<>();
 
@@ -121,6 +125,10 @@ public final class ProjectStore {
                 o.put("id", id);
                 o.put("name", name);
                 o.put("updatedAt", updatedAt);
+                o.put("sourcePrompt", sourcePrompt);
+                o.put("latestExportUri", latestExportUri);
+                o.put("latestExportName", latestExportName);
+                o.put("latestExportAt", latestExportAt);
                 o.put("assets", aa);
                 o.put("clips", cc);
             } catch (Exception ignored) {}
@@ -132,6 +140,10 @@ public final class ProjectStore {
             p.id = o.optString("id", UUID.randomUUID().toString());
             p.name = o.optString("name", "Untitled Project");
             p.updatedAt = o.optLong("updatedAt", System.currentTimeMillis());
+            p.sourcePrompt = o.optString("sourcePrompt", "");
+            p.latestExportUri = o.optString("latestExportUri", "");
+            p.latestExportName = o.optString("latestExportName", "");
+            p.latestExportAt = o.optLong("latestExportAt", 0);
             JSONArray aa = o.optJSONArray("assets");
             if (aa != null) for (int i = 0; i < aa.length(); i++) {
                 JSONObject item = aa.optJSONObject(i);
@@ -260,6 +272,10 @@ public final class ProjectStore {
                 o.put("clipCount", p.clips.size());
                 o.put("durationMs", p.outputDurationMs());
                 o.put("updatedAt", p.updatedAt);
+                o.put("latestExportUri", p.latestExportUri);
+                o.put("latestExportName", p.latestExportName);
+                o.put("latestExportAt", p.latestExportAt);
+                o.put("sourcePrompt", p.sourcePrompt);
             } catch (Exception ignored) {}
             arr.put(o);
         }
