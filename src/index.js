@@ -660,6 +660,7 @@ function serverFor(env){
       aspect:z.enum(["9:16","16:9","1:1","4:5"]).optional(),
       quality:z.enum(["720p","1080p"]).optional(),
       tracking:z.enum(["static","translation"]).optional(),
+      personOcclusion:z.enum(["auto","off"]).optional(),
       reflection:z.number().min(0).max(.35).optional(),
       startQuad:z.array(z.tuple([z.number().min(0).max(1),z.number().min(0).max(1)])).length(4).optional(),
       endQuad:z.array(z.tuple([z.number().min(0).max(1),z.number().min(0).max(1)])).length(4).optional()
