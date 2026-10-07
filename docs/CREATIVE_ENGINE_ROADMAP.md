@@ -22,7 +22,7 @@ The first executable foundation slice is now present in the v3.3 code line:
 - [x] capability-first provider registry
 - [x] optional installed model-manifest discovery
 - [x] typed MCP tools for MotionScript/workspace/provider inspection
-- [ ] transactional model-pack installer
+- [x] transactional model-pack installer
 - [ ] native Android Google Drive storage provider
 - [ ] Rust/native MotionScript compiler runtime
 - [ ] body/hand pose provider
