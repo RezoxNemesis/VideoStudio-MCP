@@ -350,7 +350,7 @@ function serverFor(env){
 }
 
 function serverForApp(env,ownerKey){
-  const s=new McpServer({name:"VideoStudio-App-MCP",version:"1.1.0"}), st=state(env);
+  const s=new McpServer({name:"VideoStudio-App-MCP",version:"1.1.1"}), st=state(env);
   const queue=async(action,parameters={})=>{
     try{
       const c=await st.appEnqueue(ownerKey,action,parameters);
@@ -376,15 +376,15 @@ function serverForApp(env,ownerKey){
   s.registerTool("app_status",{description:"Check the private native VideoStudio Android connection, permission mode, projects, control-pause state and pending work. Gallery access is always false.",inputSchema:{}},async()=>out(await st.appStatus(ownerKey)));
 
   s.registerTool("app_capabilities",{description:"Read the native v1.1 editing, AI, render and privacy capabilities available to ChatGPT.",inputSchema:{}},async()=>out({
-    version:"1.1.0",
+    version:"1.1.1",
     primary:"Android native app",
     privacy:{galleryAccess:false,boundary:"No MCP tool may list, browse or enumerate Gallery/media-library items. Only user-selected Android picker files, VideoStudio-owned files, explicit HTTPS imports and ChatGPT attachment handoffs are usable."},
     permissions:["one_file","all_tools","everything"],
-    connection:["Android Keystore owner key","device binding","leased commands","crash-safe completion checkpoints","secure reconnect backoff","STOP CHATGPT CONTROL"],
+    connection:["Android Keystore owner key","device binding","persistent foreground control service","leased commands","crash-safe completion checkpoints","secure reconnect backoff","notification pause/cancel controls","STOP CHATGPT CONTROL"],
     editing:["trim","split","0.25x-4x speed","slow motion","volume","titles","fonts","text animations","scale","rotate","blur","colour/HSL","motion presets","transition presets","reframe model","mask model","green-screen model","audio-duck model"],
     ai:["native visual analysis","scene-change sampling","autonomous edit plans","creator presets","prompt-to-video","multi-variant planning","short-form recut planning","render/export orchestration"],
     export:["Media3 native MP4","H.264","AAC","720p","1080p","9:16","16:9","1:1","4:5","Movies/VideoStudio"],
-    stability:["bounded light/heavy job lanes","one heavy export at a time","RAM guard","thermal guard","persistent job checkpoints","cancel single/all jobs"]
+    stability:["persistent background MCP controller","bounded light/heavy job lanes","one process-wide heavy export at a time","RAM guard","thermal guard","persistent job checkpoints","cancel single/all jobs"]
   }));
 
   s.registerTool("app_catalog",{description:"List creator effects, motions, transitions, text animations, fonts and AI editing operations understood by VideoStudio v1.1.",inputSchema:{}},async()=>out({
