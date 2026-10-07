@@ -480,17 +480,30 @@ function serverFor(env){
   return s;
 }
 
-function serverForApp(env,ownerKey){
-  const s=new McpServer({name:"VideoStudio-App-MCP",version:"1.1.2"}), st=state(env);
+function serverForApp(env,ownerKey,protocolVersion=1){
+  const isV3=Number(protocolVersion)===3;
+  const s=new McpServer({
+    name:isV3?"VideoStudio-App-MCP-v3":"VideoStudio-App-MCP",
+    version:isV3?"3.0.0":"1.1.2"
+  }), st=state(env);
+  const enqueueCommand=(action,parameters={})=>isV3
+    ? st.appEnqueueV3(ownerKey,action,parameters)
+    : st.appEnqueue(ownerKey,action,parameters);
+  const readCommand=commandId=>isV3
+    ? st.appCommandV3(ownerKey,commandId)
+    : st.appCommand(ownerKey,commandId);
+  const readStatus=()=>isV3
+    ? st.appStatusV3(ownerKey)
+    : st.appStatus(ownerKey);
   const queue=async(action,parameters={})=>{
     try{
-      const c=await st.appEnqueue(ownerKey,action,parameters);
-      return out({queued:true,commandId:c.id,sequence:c.seq,action,nativeApp:true});
-    }catch(e){ return out({queued:false,error:e.message}); }
+      const c=await enqueueCommand(action,parameters);
+      return out({queued:true,commandId:c.id,sequence:c.seq,action,nativeApp:true,protocolVersion:isV3?3:1});
+    }catch(e){ return out({queued:false,error:e.message,protocolVersion:isV3?3:1}); }
   };
   const commandResult=async commandId=>{
     try{
-      const c=await st.appCommand(ownerKey,commandId);
+      const c=await readCommand(commandId);
       if(!c) return out({error:"Command not found"});
       const sheet=c.result&&c.result.contactSheet;
       if(sheet&&sheet.base64){
@@ -504,21 +517,30 @@ function serverForApp(env,ownerKey){
     }catch(e){ return out({error:e.message}); }
   };
 
-  s.registerTool("app_status",{description:"Check the private native VideoStudio Android connection, permission mode, projects, control-pause state and pending work. Gallery access is always false.",inputSchema:{}},async()=>out(await st.appStatus(ownerKey)));
+  s.registerTool("app_status",{description:isV3?"Check the VideoStudio v3 Native Agent connection, protocol version, permission mode, projects and pending native work. Gallery access is always false.":"Check the private native VideoStudio Android connection, permission mode, projects, control-pause state and pending work. Gallery access is always false.",inputSchema:{}},async()=>out(await readStatus()));
 
-  s.registerTool("app_capabilities",{description:"Read the native v1.1 editing, AI, render and privacy capabilities available to ChatGPT.",inputSchema:{}},async()=>out({
-    version:"1.1.2",
+  s.registerTool("app_capabilities",{description:isV3?"Read VideoStudio v3 Native Agent capabilities and architecture guarantees.":"Read the native v1.1 editing, AI, render and privacy capabilities available to ChatGPT.",inputSchema:{}},async()=>out({
+    version:isV3?"3.0.0":"1.1.2",
+    protocolVersion:isV3?3:1,
     primary:"Android native app",
-    privacy:{galleryAccess:false,boundary:"No MCP tool may list, browse or enumerate Gallery/media-library items. Only user-selected Android picker files, VideoStudio-owned files, explicit HTTPS imports and ChatGPT attachment handoffs are usable."},
+    architecture:isV3?"native-first; cloud path is signalling only":"native app with private MCP relay",
+    privacy:{galleryAccess:false,boundary:"No MCP tool may list, browse or enumerate Gallery/media-library items. Only user-selected Android picker files, VideoStudio-owned files and explicit ChatGPT attachments are usable."},
     permissions:["one_file","all_tools","everything"],
-    connection:["Android Keystore owner key","device binding","persistent foreground control service","leased commands","crash-safe completion checkpoints","secure reconnect backoff","notification pause/cancel controls","live ChatGPT activity feed","STOP CHATGPT CONTROL"],
+    connection:isV3
+      ?["MCP v3 endpoint","Android Keystore owner key","device binding","isolated v3 command queue","leased commands","durable command idempotency journal","persistent foreground Native Agent","secure reconnect backoff","live ChatGPT activity feed","STOP CHATGPT CONTROL"]
+      :["Android Keystore owner key","device binding","persistent foreground control service","leased commands","crash-safe completion checkpoints","secure reconnect backoff","notification pause/cancel controls","live ChatGPT activity feed","STOP CHATGPT CONTROL"],
+    media:isV3
+      ?["direct ChatGPT attachment ingest to app-private storage","VideoStudio-owned media","explicit HTTPS import","manual Android picker","no Gallery enumeration","legacy short-lived relay fallback"]
+      :["VideoStudio-owned media","explicit HTTPS import","manual Android picker","private handoff"],
     editing:["trim","split","0.25x-4x speed","slow motion","volume","titles","fonts","text animations","scale","rotate","blur","colour/HSL","motion presets","transition presets","reframe model","mask model","green-screen model","audio-duck model"],
     ai:["native visual analysis","scene-change sampling","autonomous edit plans","creator presets","prompt-to-video","multi-variant planning","short-form recut planning","render/export orchestration"],
     export:["Media3 native MP4","H.264","AAC","720p","1080p","9:16","16:9","1:1","4:5","Movies/VideoStudio"],
-    stability:["persistent background MCP controller","bounded light/heavy job lanes","one process-wide heavy export at a time","RAM guard","thermal guard","persistent job checkpoints","cancel single/all jobs"]
+    stability:isV3
+      ?["local projects survive signalling outages","bounded light/heavy lanes","one process-wide heavy export at a time","RAM guard","thermal guard","persistent job checkpoints","duplicate-command prevention","cancel single/all jobs"]
+      :["persistent background MCP controller","bounded light/heavy job lanes","one process-wide heavy export at a time","RAM guard","thermal guard","persistent job checkpoints","cancel single/all jobs"]
   }));
 
-  s.registerTool("app_catalog",{description:"List creator effects, motions, transitions, text animations, fonts and AI editing operations understood by VideoStudio v1.1.",inputSchema:{}},async()=>out({
+  s.registerTool("app_catalog",{description:isV3?"List creator effects, motions, transitions, text animations, fonts and AI operations understood by VideoStudio v3.":"List creator effects, motions, transitions, text animations, fonts and AI editing operations understood by VideoStudio v1.1.",inputSchema:{}},async()=>out({
     transitions:["none","cut","fade","dip_black","dip_white","slide_left","slide_right","slide_up","slide_down","push_left","push_right","zoom_in","zoom_out","whip_left","whip_right","spin","blur","flash","glitch","rgb_split","light_leak","film_burn","luma_wipe","mask_wipe","camera_shutter"],
     motions:["none","push_in","pull_out","pan_left","pan_right","pan_up","pan_down","drift","orbit","handheld","micro_shake","impact_shake","bounce","elastic_pop","float","parallax","ken_burns","snap_zoom","zoom_punch","rack_focus_sim","tilt","roll","hero_reveal"],
     effects:["none","cinematic","film_grain","soft_glow","bloom","dream","vignette","sharpen","clarity","motion_blur","radial_blur","gaussian_blur","chromatic_aberration","rgb_split","glitch","scanlines","vhs","retro_cam","super8","film_burn","light_leak","halation","neon","cyberpunk","noir","bleach_bypass","teal_orange","warm_film","cool_night","golden_hour","matte","high_contrast","soft_portrait","crush_black","fade_black","duotone","posterize","pixelate","fisheye","shake","strobe","flash","edge_glow"],
@@ -552,21 +574,23 @@ function serverForApp(env,ownerKey){
 
   s.registerTool("app_preview_project",{description:"Preview the active timeline locally on the Android device.",inputSchema:{}},async()=>queue("preview_project",{}));
 
-  s.registerTool("app_import_from_url",{description:"Import an explicit HTTPS media URL into VideoStudio without browsing Gallery. Requires Allow everything except Gallery mode.",inputSchema:{url:z.string().url(),name:z.string().max(160).optional()}},async({url,name})=>queue("import_url",{url,name:name||"ChatGPT import"}));
+  s.registerTool("app_import_from_url",{description:"Import an explicit HTTPS media URL into VideoStudio without browsing Gallery. Requires Allow everything except Gallery mode.",inputSchema:{url:z.string().url(),name:z.string().max(160).optional(),projectId:z.string().min(8).optional()}},async({url,name,projectId})=>queue("import_url",{url,name:name||"ChatGPT import",projectId:projectId||""}));
+
+  if(isV3) s.registerTool("app_import_attachment",{description:"Primary v3 attachment path. Give VideoStudio a temporary authorised HTTPS source for a file explicitly attached/shared in ChatGPT. The Android app downloads the bytes directly into app-private storage; the Worker only relays command metadata and never proxies the media.",inputSchema:{sourceUrl:z.string().url(),name:z.string().min(1).max(180),mime:z.string().max(120).optional(),size:z.number().nonnegative().optional(),projectId:z.string().min(8).optional()}},async({sourceUrl,name,mime,size,projectId})=>queue("import_attachment",{sourceUrl,name,mime:mime||"",size:size||0,projectId:projectId||""}));
 
   s.registerTool("app_import_chat_file",{description:"Securely stream a file attached in this ChatGPT conversation into VideoStudio. Short-lived relay metadata only; media is not permanently stored by the Worker. Requires Allow everything except Gallery.",inputSchema:{sourceUrl:z.string().url(),name:z.string().min(1).max(180),mime:z.string().max(120).optional(),size:z.number().nonnegative().optional(),projectId:z.string().min(8).optional()}},async({sourceUrl,name,mime,size,projectId})=>{
     try{
       const handoff=await st.appCreateHandoff(ownerKey,sourceUrl,{name,mime,size});
-      const c=await st.appEnqueue(ownerKey,"import_chat_file",{handoffId:handoff.id,name:handoff.name,mime:handoff.mime,size:handoff.size,projectId:projectId||""});
+      const c=await enqueueCommand("import_chat_file",{handoffId:handoff.id,name:handoff.name,mime:handoff.mime,size:handoff.size,projectId:projectId||""});
       return out({queued:true,commandId:c.id,sequence:c.seq,action:"import_chat_file",handoff:{id:handoff.id,expiresAt:handoff.expiresAt},note:"Bytes stream privately to the phone; the source URL is not sent in the device command."});
     }catch(e){ return out({queued:false,error:e.message}); }
   });
 
-  s.registerTool("app_batch",{description:"Queue up to 20 native VideoStudio actions quickly in order. Gallery/library enumeration is blocked regardless of permission mode.",inputSchema:{actions:z.array(z.object({action:z.enum(["get_state","select_project","apply_edit_plan","apply_tool","creator_preset","preview_project","analyse_media","export_project","cancel_job"]),parameters:z.record(z.string(),z.any()).optional()})).min(1).max(20)}},async({actions})=>{
+  s.registerTool("app_batch",{description:"Queue up to 20 native VideoStudio actions quickly in order. Gallery/library enumeration is blocked regardless of permission mode.",inputSchema:{actions:z.array(z.object({action:z.enum(["get_state","select_project","apply_edit_plan","apply_tool","creator_preset","preview_project","analyse_media","export_project","cancel_job","activity_note"]),parameters:z.record(z.string(),z.any()).optional()})).min(1).max(20)}},async({actions})=>{
     const queued=[];
     try{
       for(const item of actions){
-        const c=await st.appEnqueue(ownerKey,item.action,item.parameters||{});
+        const c=await enqueueCommand(item.action,item.parameters||{});
         queued.push({commandId:c.id,sequence:c.seq,action:c.action});
       }
       return out({queued:true,count:queued.length,commands:queued});
