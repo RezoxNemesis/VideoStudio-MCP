@@ -4,8 +4,8 @@
 
 VideoStudio v3 is a protocol and architecture generation, not a cosmetic version label.
 
-- Android app: `3.1.0`
-- Android versionCode: `310`
+- Android app: `3.2.0`
+- Android versionCode: `320`
 - Native agent protocol: `3`
 - Canonical private MCP endpoint: `/app-mcp-v3/<device-owned-owner-key>`
 - Native control API namespace: `/api/v3/app/*`
@@ -143,21 +143,22 @@ The on-device self-test checks:
 
 Autonomous work should run `app_status`, then `app_self_test`, before a significant editing session.
 
-## v3.1 portrait animation module
+## v3.2 articulated portrait animation module
 
-v3.1 extends the local creator engine without changing the connection protocol.
+v3.2 extends the local creator engine without changing the connection protocol.
 
 - MCP remains protocol `3`
 - canonical endpoint remains `/app-mcp-v3/<device-owned-owner-key>`
 - bundled person segmentation and face mesh execute on-device
 - generated subject/background plates live in app-private storage
-- motion plans are persisted on the native timeline
-- Media3 composites independent foreground/background video sequences
+- subject plates are additionally split into feathered head/hair, torso and lower-drape/body layers
+- motion plans persist independent articulated motion parameters on the native timeline
+- Media3 composites head, torso, lower-body/drape and background sequences independently
 - procedural atmosphere is rendered per-frame locally
 - long animation preparation/rendering runs through the same thermal/RAM guarded heavy lane
 - `job_status` exposes durable progress through MCP
 
-The module deliberately distinguishes layered physical-looking motion from future full generative deformation. v3.1 does not pretend to synthesize new facial performances or arbitrary cloth/hair topology.
+The module deliberately distinguishes layered physical-looking motion from future full generative deformation. v3.2 does not pretend to synthesize new facial performances or arbitrary cloth/hair topology.
 
 ## Editing and rendering
 
