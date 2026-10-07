@@ -252,7 +252,11 @@ export class VideoStudioState extends DurableObject {
     if(Number(d.protocolVersion||0)!==3) throw new Error("VideoStudio v3 protocol registration required");
     const k="app-v3-cl:"+deviceId, list=(await this.ctx.storage.get(k))||[], i=list.findIndex(c=>c.id===id);
     if(i<0) return null;
-    list[i]={...list[i],status:clean(status,30)||"completed",completedAt:now(),leaseUntil:0,result};
+    const completedParameters={...(list[i].parameters||{})};
+    if(list[i].action==="import_attachment"&&completedParameters.sourceUrl){
+      completedParameters.sourceUrl="[expired temporary file URL removed]";
+    }
+    list[i]={...list[i],parameters:completedParameters,status:clean(status,30)||"completed",completedAt:now(),leaseUntil:0,result};
     for(let j=0;j<list.length;j++){
       if(j!==i&&list[j]&&list[j].result&&list[j].result.contactSheet&&list[j].result.contactSheet.base64){
         list[j]={...list[j],result:{...list[j].result,contactSheet:{...list[j].result.contactSheet,base64:undefined,expired:true}}};
@@ -629,7 +633,25 @@ function serverForApp(env,ownerKey,protocolVersion=1){
 
   s.registerTool("app_import_from_url",{description:"Import an explicit HTTPS media URL into VideoStudio without browsing Gallery. Requires Allow everything except Gallery mode.",inputSchema:{url:z.string().url(),name:z.string().max(160).optional(),projectId:z.string().min(8).optional()}},async({url,name,projectId})=>queue("import_url",{url,name:name||"ChatGPT import",projectId:projectId||""}));
 
-  if(isV3) s.registerTool("app_import_attachment",{description:"Primary v3 attachment path. Give VideoStudio a temporary authorised HTTPS source for a file explicitly attached/shared in ChatGPT. The Android app downloads the bytes directly into app-private storage; the Worker only relays command metadata and never proxies the media.",inputSchema:{sourceUrl:z.string().url(),name:z.string().min(1).max(180),mime:z.string().max(120).optional(),size:z.number().nonnegative().optional(),projectId:z.string().min(8).optional()}},async({sourceUrl,name,mime,size,projectId})=>queue("import_attachment",{sourceUrl,name,mime:mime||"",size:size||0,projectId:projectId||""}));
+  if(isV3) s.registerTool("app_import_attachment",{
+    description:"Primary VideoStudio v3 ChatGPT attachment path. Pass a file explicitly attached/shared by the user. ChatGPT provides an authorised temporary file URL; the Android app downloads it directly into app-private storage. The signalling Worker never proxies or stores the media bytes.",
+    inputSchema:{
+      file:z.object({
+        download_url:z.string().url(),
+        file_id:z.string().min(1),
+        mime_type:z.string().max(120).optional(),
+        file_name:z.string().max(180).optional()
+      }).strict(),
+      projectId:z.string().min(8).optional()
+    },
+    _meta:{"openai/fileParams":["file"]}
+  },async({file,projectId})=>queue("import_attachment",{
+    sourceUrl:file.download_url,
+    sourceFileId:file.file_id,
+    name:file.file_name||"ChatGPT attachment",
+    mime:file.mime_type||"",
+    projectId:projectId||""
+  }));
 
   s.registerTool("app_import_chat_file",{description:"Securely stream a file attached in this ChatGPT conversation into VideoStudio. Short-lived relay metadata only; media is not permanently stored by the Worker. Requires Allow everything except Gallery.",inputSchema:{sourceUrl:z.string().url(),name:z.string().min(1).max(180),mime:z.string().max(120).optional(),size:z.number().nonnegative().optional(),projectId:z.string().min(8).optional()}},async({sourceUrl,name,mime,size,projectId})=>{
     try{
