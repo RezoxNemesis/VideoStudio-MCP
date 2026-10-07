@@ -61,6 +61,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     private PromptVideoEngine promptVideoEngine;
     private NativeMediaAnalyzer mediaAnalyzer;
     private NativePortraitMotionAnalyzer portraitMotionAnalyzer;
+    private NativeSpeechEngine speechEngine;
     private CreativeWorkspace creativeWorkspace;
     private MotionScriptCompiler motionScriptCompiler;
     private RecoveryPlanStore recoveryPlans;
@@ -88,6 +89,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         promptVideoEngine = new PromptVideoEngine(this);
         mediaAnalyzer = new NativeMediaAnalyzer(this);
         portraitMotionAnalyzer = new NativePortraitMotionAnalyzer(this);
+        speechEngine = new NativeSpeechEngine(this);
         creativeWorkspace = new CreativeWorkspace(this);
         motionScriptCompiler = new MotionScriptCompiler();
         recoveryPlans = new RecoveryPlanStore(this);
@@ -288,6 +290,9 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                     return;
                 case "prompt_video":
                     complete(command, queuePromptVideo(p));
+                    return;
+                case "generate_voice":
+                    complete(command, queueGenerateVoice(p));
                     return;
                 case "compile_scene":
                     complete(command, compileMotionScene(p));
@@ -1174,6 +1179,41 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         return completed;
     }
 
+    private JobManager.Job submitRecoverableLight(String action,
+                                                  JSONObject parameters,
+                                                  String projectId,
+                                                  String jobName,
+                                                  JobManager.Work work) {
+        String requestedPlan = parameters == null ? "" : parameters.optString("_recoveryPlanId", "");
+        String planId = requestedPlan;
+        if (planId.isEmpty() || recoveryPlans.get(planId) == null) {
+            planId = recoveryPlans.begin(action, parameters, projectId);
+        } else {
+            recoveryPlans.markResuming(planId);
+        }
+
+        final String durablePlanId = planId;
+        JobManager.Job job = jobs.submit(jobName, JobManager.Kind.LIGHT, state -> {
+            recoveryPlans.attachJob(durablePlanId, state.id);
+            try {
+                work.run(state);
+                recoveryPlans.completeByJob(state.id);
+            } catch (InterruptedException interrupted) {
+                if ("cancelled".equals(state.state)) recoveryPlans.cancelByJob(state.id);
+                else recoveryPlans.failByJob(state.id, "Interrupted after checkpoint; safe to resume", true);
+                throw interrupted;
+            } catch (Exception error) {
+                recoveryPlans.failByJob(
+                        state.id,
+                        error.getMessage() == null ? "Recoverable background job failure" : error.getMessage(),
+                        true
+                );
+                throw error;
+            }
+        });
+        return job;
+    }
+
     private JobManager.Job submitRecoverableHeavy(String action,
                                                   JSONObject parameters,
                                                   String projectId,
@@ -1264,6 +1304,9 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                         break;
                     case "prompt_video":
                         queued = queuePromptVideo(parameters);
+                        break;
+                    case "generate_voice":
+                        queued = queueGenerateVoice(parameters);
                         break;
                     case "export_project":
                         queued = queueExport(parameters);
@@ -1763,6 +1806,87 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             project.clips.clear();
             project.clips.addAll(story);
         }
+    }
+
+    private JSONObject queueGenerateVoice(JSONObject p) throws Exception {
+        ProjectStore.Project project = resolveProject(p.optString("projectId", ""));
+        String text = p.optString("text", "").trim();
+        if (text.isEmpty()) throw new IllegalArgumentException("Narration text is required");
+
+        String language = p.optString("language", "");
+        String voice = p.optString("voice", "");
+        float rate = (float) Math.max(.45, Math.min(2.0, p.optDouble("rate", 1.0)));
+        float pitch = (float) Math.max(.55, Math.min(1.8, p.optDouble("pitch", 1.0)));
+        boolean offlineOnly = p.optBoolean("offlineOnly", true);
+        String fileName = p.optString("fileName", "VideoStudio_Voice_" + System.currentTimeMillis() + ".wav");
+
+        JSONObject durableParameters = new JSONObject(p.toString());
+        durableParameters.put("projectId", project.id);
+        durableParameters.put("text", text);
+        durableParameters.put("language", language);
+        durableParameters.put("voice", voice);
+        durableParameters.put("rate", rate);
+        durableParameters.put("pitch", pitch);
+        durableParameters.put("offlineOnly", offlineOnly);
+        durableParameters.put("fileName", fileName);
+
+        JobManager.Job job = submitRecoverableLight(
+                "generate_voice",
+                durableParameters,
+                project.id,
+                "Generate voice • " + project.name,
+                state -> {
+                    checkpoint(state, "Local narration", "Preparing Android speech synthesis", 2, project.id);
+                    JSONObject generated = speechEngine.synthesize(
+                            project,
+                            text,
+                            language,
+                            voice,
+                            rate,
+                            pitch,
+                            offlineOnly,
+                            fileName,
+                            (progress, detail) -> checkpoint(
+                                    state,
+                                    "Local narration",
+                                    detail,
+                                    Math.max(2, Math.min(96, progress)),
+                                    project.id
+                            )
+                    );
+
+                    Uri uri = Uri.parse(generated.optString("uri", ""));
+                    ProjectStore.Project fresh = store.get(project.id);
+                    if (fresh == null) throw new IllegalStateException("Project disappeared during narration generation");
+                    ProjectStore.Asset asset = store.registerGeneratedAsset(
+                            fresh,
+                            uri,
+                            generated.optString("fileName", fileName),
+                            "generated_voice",
+                            false
+                    );
+                    generated.put("assetId", asset.id);
+                    generated.put("mime", asset.mime);
+                    generated.put("durationMs", asset.durationMs);
+                    state.setResult(generated);
+
+                    checkpoint(state, "Local narration", "Narration available in project Media Bin", 100, project.id);
+                    ActivityLog.add(this, "system", "Narration generated",
+                            asset.name + " • Media Bin • asset " + shortId(asset.id),
+                            "success", 100, null, project.id);
+                    syncProtocolState();
+                }
+        );
+
+        JSONObject result = ok();
+        result.put("queued", true);
+        result.put("jobId", job.id);
+        result.put("projectId", project.id);
+        result.put("durableRecovery", true);
+        result.put("local", true);
+        result.put("offlineOnly", offlineOnly);
+        result.put("role", "generated_voice");
+        return result;
     }
 
     private JSONObject queuePromptVideo(JSONObject p) throws Exception {
@@ -2377,6 +2501,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             out.put("analysisEngineReady", mediaAnalyzer != null);
             out.put("promptVideoEngineReady", promptVideoEngine != null);
             out.put("portraitAnimationEngineReady", portraitMotionAnalyzer != null);
+            out.put("localSpeechEngineReady", speechEngine != null);
             out.put("motionScriptCompilerReady", motionScriptCompiler != null);
             out.put("creativeWorkspaceReady", creativeWorkspace != null);
             out.put("capabilityRegistryReady", capabilityRegistry != null);
@@ -2546,6 +2671,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             case "autonomous_edit": return "Autonomous edit";
             case "analyse_media": return "Analysing media";
             case "prompt_video": return "Creating prompt video";
+            case "generate_voice": return "Generating local narration";
             case "compile_scene": return "Compiling MotionScript";
             case "run_motion_script": return "Running MotionScript";
             case "plan_creative_graph": return "Planning CreativeIR execution graph";
@@ -2610,6 +2736,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         if ("apply_edit_plan".equals(action)) return result.optInt("clipCount", 0) + " timeline clip(s) applied";
         if ("apply_tool".equals(action)) return "Edit applied inside VideoStudio";
         if ("creator_preset".equals(action)) return result.optInt("changedClips", 0) + " clip(s) styled";
+        if ("generate_voice".equals(action)) return "Local narration generation queued";
         if ("compile_scene".equals(action)) return "MotionScript compiled to CreativeIR";
         if ("run_motion_script".equals(action)) return result.optInt("changedClips", 0) + " clip(s) directed by MotionScript";
         if ("plan_creative_graph".equals(action)) return result.optBoolean("ready", false) ? "Creative execution graph ready" : "Creative graph planned with unresolved providers";
