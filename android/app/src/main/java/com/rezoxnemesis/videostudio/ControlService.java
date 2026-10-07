@@ -288,6 +288,20 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                     complete(command, result);
                     return;
                 }
+                case "insert_asset_timeline": {
+                    ProjectStore.Project project = resolveProject(p.optString("projectId", ""));
+                    String assetId = p.optString("assetId", "");
+                    if (assetId.isEmpty()) throw new IllegalArgumentException("assetId is required");
+                    boolean inserted = store.appendAssetToTimeline(project, assetId);
+                    JSONObject result = ok();
+                    result.put("projectId", project.id);
+                    result.put("assetId", assetId);
+                    result.put("inserted", inserted);
+                    result.put("clipCount", project.clips.size());
+                    complete(command, result);
+                    syncProtocolState();
+                    return;
+                }
                 case "import_url":
                     complete(command, queueUrlImport(p));
                     return;
@@ -770,7 +784,17 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             fresh.latestExportUri = publicUri.toString();
             fresh.latestExportName = fileName;
             fresh.latestExportAt = System.currentTimeMillis();
-            store.save(fresh);
+            checkpoint(state, "Registering generated media", "Adding rendered MP4 to the project Media Bin", 98, project.id);
+            ProjectStore.Asset generated = store.registerGeneratedAsset(
+                    fresh,
+                    publicUri,
+                    fileName,
+                    "final_render",
+                    false
+            );
+            ActivityLog.add(this, "system", "Generated video available",
+                    generated.name + " • Media Bin • asset " + shortId(generated.id),
+                    "success", 100, null, fresh.id);
         }
         if (!ready.delete()) { /* cache cleanup best effort */ }
         activeRender = null;
@@ -1259,6 +1283,9 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                     ai.put("name", a.name);
                     ai.put("mime", a.mime);
                     ai.put("durationMs", a.durationMs);
+                    ai.put("role", a.role);
+                    ai.put("generated", a.generated);
+                    ai.put("createdAt", a.createdAt);
                     assets.put(ai);
                 }
                 out.put("activeAssets", assets);
@@ -1349,6 +1376,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             case "animate_images": return "Animating still images";
             case "job_status": return "Reading native job status";
             case "export_project": return "Exporting project";
+            case "insert_asset_timeline": return "Adding media to timeline";
             case "import_attachment": return "Importing ChatGPT attachment directly";
             case "import_chat_file": return "Importing ChatGPT file";
             case "import_url": return "Importing media";
@@ -1384,6 +1412,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         if ("apply_tool".equals(action)) return "Edit applied inside VideoStudio";
         if ("creator_preset".equals(action)) return result.optInt("changedClips", 0) + " clip(s) styled";
         if ("animate_images".equals(action)) return result.optInt("imageCount", 0) + " image clip(s) queued for native animation";
+        if ("insert_asset_timeline".equals(action)) return result.optBoolean("inserted", false) ? "Media added to timeline" : "Media could not be added to timeline";
         if ("select_project".equals(action)) return "Project selected";
         if ("delete_project".equals(action)) return "Project deleted";
         return "Completed inside VideoStudio";
