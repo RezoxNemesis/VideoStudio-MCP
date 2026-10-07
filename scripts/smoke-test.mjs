@@ -337,6 +337,8 @@ const checks = [
   ["native state reports stable v3 compatibility architecture", controlService.includes('out.put("mcpEndpointVersion", "v3-stable")') && controlService.includes('out.put("stableMcpEndpoint", true)') && controlService.includes('out.put("connectionCore", protocol.connectionStatus())') && controlService.includes('out.put("localEngineOwnsProjects", true)')],
   ["cached connector compatibility routes v3 devices to v3 queue", worker.includes("enqueueNative") && worker.includes("appEnqueueV3") && worker.includes("commandNative")],
   ["native analysis results render as MCP images", worker.includes("safeResult") && worker.includes('type:"image"')],
+  ["Android editor declares Media3 ExoPlayer and PlayerView dependencies", androidBuild.includes("media3-exoplayer:1.11.1") && androidBuild.includes("media3-ui:1.11.1")],
+  ["Android editor uses reusable LiveEditPlayer instead of VideoView preview ownership", nativeMain.includes("LiveEditPlayer") && !nativeMain.includes("private VideoView preview")],
   ["native remote ingest has no legacy 350 MB application ceiling", !controlService.includes("MAX_REMOTE_IMPORT_BYTES") && !controlService.includes("350 MB")],
   ["native URL and direct attachment ingest delegate to resumable transfer engine", controlService.includes("ResumableTransferManager") && controlService.includes("ResumableTransferManager.Request") && controlService.includes(".download(")],
   ["native resumable HTTP path requests byte ranges and validates resume identity", controlService.includes('setRequestProperty("Range"') && controlService.includes('"If-Range"')],
