@@ -113,6 +113,11 @@ public final class CreativeNodeStore {
         }
     }
 
+    public synchronized JSONObject node(String projectId, String nodeId) throws Exception {
+        JSONObject root = read(projectId);
+        return new JSONObject(requireNode(root, nodeId).toString());
+    }
+
     public synchronized JSONObject startNode(String projectId, String nodeId) throws Exception {
         JSONObject root = read(projectId);
         JSONObject node = requireNode(root, nodeId);
