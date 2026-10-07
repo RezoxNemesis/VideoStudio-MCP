@@ -147,3 +147,53 @@ test('expired native hybrid challenge cannot be redeemed',async()=>{
   /expired/i
  );
 });
+
+
+async function hybridFixture(){
+ const f=await fixture();
+ const webDeviceId='studio-web-hybrid-001';
+ await f.relay.register(webDeviceId,{name:'Studio Web'});
+ const challenge=await f.relay.appCreateHybridBinding(f.key,webDeviceId);
+ const bound=await f.relay.appRedeemHybridBinding(challenge.token,webDeviceId);
+ return {...f,webDeviceId,hybridKey:bound.hybridKey};
+}
+
+test('hybrid command waits for native when Android is stale and becomes claimable on reconnect',async()=>{
+ const f=await hybridFixture();
+ const native=await f.storage.get('app-device:'+f.deviceId);
+ native.lastSeenAt=new Date(Date.now()-120000).toISOString();
+ await f.storage.put('app-device:'+f.deviceId,native);
+
+ const queued=await f.relay.appEnqueueHybrid(f.hybridKey,'ping',{source:'hybrid'});
+ assert.equal(queued.status,'waiting_native');
+
+ const status=await f.relay.appStatusHybrid(f.hybridKey);
+ assert.equal(status.hybrid,true);
+ assert.equal(status.web.connected,true);
+ assert.equal(status.native.connected,false);
+ assert.equal(status.waitingNative,true);
+ assert.equal(status.pendingNativeCommands,1);
+
+ await f.relay.appRegister(f.deviceId,f.key,{protocolVersion:3,appGeneration:1,permissionMode:'everything'});
+ const claimed=await f.relay.appCommandsV3(f.deviceId,f.key,0,0);
+ assert.equal(claimed.length,1);
+ assert.equal(claimed[0].id,queued.id);
+ assert.equal(claimed[0].status,'claimed');
+});
+
+test('public Web device ID cannot route native commands and revoked hybrid binding stops routing',async()=>{
+ const f=await hybridFixture();
+ await assert.rejects(
+  f.relay.appEnqueueHybrid(f.webDeviceId,'ping',{}),
+  /hybrid.*rejected|binding/i
+ );
+
+ const revoked=await f.relay.appRevokeHybrid(f.hybridKey);
+ assert.equal(revoked.revoked,true);
+ assert.equal(await f.relay.appResolveHybrid(f.hybridKey),null);
+ await assert.rejects(
+  f.relay.appEnqueueHybrid(f.hybridKey,'ping',{}),
+  /hybrid.*rejected|binding/i
+ );
+ assert.ok(await f.storage.get('app-device:'+f.deviceId));
+});
