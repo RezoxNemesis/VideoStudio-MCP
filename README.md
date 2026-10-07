@@ -1,5 +1,41 @@
 # VideoStudio v3.4.1
 
+## Studio Web 1.0: user-owned Drive + executable generation
+
+The browser editor is now a real fallback execution surface instead of only an MCP dashboard.
+
+**Google Drive storage**
+
+- uses the user's own Google Drive, so VideoStudio itself does not pay for media object storage
+- OAuth scope is `drive.file`, not full-Drive browsing
+- creates a VideoStudio Studio Web folder, per-project folders, asset files, render files and a project manifest
+- uploads large media with resumable 8 MB chunks
+- can restore missing local browser media from Drive
+- can verify a project sync and then evict local IndexedDB media to free device/browser storage
+- keeps Drive file IDs in project metadata for later restore
+- OAuth Web Client ID can be supplied through `GOOGLE_DRIVE_CLIENT_ID` on the Worker or stored once in the browser UI
+- access tokens stay in browser memory and are not written into VideoStudio project metadata
+
+**Executable browser video generators**
+
+Studio Web renders real MP4/WebM media through Canvas capture + MediaRecorder and registers the result as a generated project asset and timeline clip:
+
+- text → procedural cinematic video
+- image → depth-motion video
+- multiple images → story video
+- video → video restyle
+- 2D motion graphics
+- procedural 3D scene animation
+- audio → visualizer video
+- abstract/VFX generation
+
+These are genuine executable renderers, not placeholder cards. They deliberately do **not** claim that procedural browser output is equivalent to neural photoreal text-to-video. Future WebGPU/local model providers can plug into the same project/generation surface without changing the storage model.
+
+**Autonomous website runtime**
+
+A separate Studio Runtime command queue allows ChatGPT to queue generation and Drive operations without colliding with the existing editor command queue. The MCP tools include `generate_studio_video`, `studio_drive_status`, `studio_drive_sync`, `studio_drive_restore`, `studio_drive_offload` and `get_studio_runtime_result`.
+
+
 See [the independent creative runtime](docs/INDEPENDENT_CREATIVE_RUNTIME.md) for Connection Core 3, executable procedural 2D/3D generation, bridge commands and precise remaining model requirements.
 
 VideoStudio is a native-first Android video editor controlled from ChatGPT through a private MCP connection.
