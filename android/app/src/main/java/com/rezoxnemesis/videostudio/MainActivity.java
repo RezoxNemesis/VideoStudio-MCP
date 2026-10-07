@@ -644,27 +644,27 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                     selectedClip.effects.put("spillSuppression", .35);
                     break;
                 case "Transitions":
-                    String[] transitions = {"fade", "slide", "zoom", "whip", "none"};
-                    int at = 0;
-                    for (int i = 0; i < transitions.length; i++) if (transitions[i].equals(selectedClip.transition)) at = i;
-                    selectedClip.transition = transitions[(at + 1) % transitions.length];
+                    selectedClip.transition = CreatorCatalog.next(CreatorCatalog.TRANSITIONS, selectedClip.transition);
                     break;
                 case "Motion":
-                    selectedClip.effects.put("motionPreset", "push_in");
+                    selectedClip.effects.put("motionPreset", CreatorCatalog.next(CreatorCatalog.MOTIONS, selectedClip.effects.optString("motionPreset", "none")));
                     selectedClip.effects.put("ease", "easeInOut");
                     break;
                 case "Effects":
-                    String current = selectedClip.effects.optString("effectPreset", "");
-                    selectedClip.effects.put("effectPreset", "cinematic_glow".equals(current) ? "film_grain" : "cinematic_glow");
+                    selectedClip.effects.put("effectPreset", CreatorCatalog.next(CreatorCatalog.EFFECTS, selectedClip.effects.optString("effectPreset", "none")));
                     break;
                 case "Colour":
-                    selectedClip.effects.put("colorPreset", "cinematic");
-                    selectedClip.effects.put("contrast", 1.06);
-                    selectedClip.effects.put("saturation", 1.04);
+                    String look = selectedClip.effects.optString("colorPreset", "none");
+                    String[] looks = {"cinematic","teal_orange","warm_film","cool_night","noir","golden_hour","matte","high_contrast","soft_portrait"};
+                    int li = java.util.Arrays.asList(looks).indexOf(look);
+                    selectedClip.effects.put("colorPreset", looks[(li + 1 + looks.length) % looks.length]);
                     break;
                 case "Text":
                     textDialog();
                     return;
+                case "Fonts":
+                    selectedClip.effects.put("fontFamily", CreatorCatalog.next(CreatorCatalog.FONTS, selectedClip.effects.optString("fontFamily", "sans-serif-medium")));
+                    break;
                 case "Volume":
                     selectedClip.volume = selectedClip.volume > .8f ? .6f : selectedClip.volume > .3f ? 0f : 1f;
                     break;
@@ -680,6 +680,38 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                     break;
                 case "Motion Blur":
                     selectedClip.effects.put("motionBlur", .35);
+                    break;
+                case "Freeze":
+                    selectedClip.effects.put("freezeAtMs", Math.max(selectedClip.inMs, preview == null ? selectedClip.inMs : preview.getCurrentPosition()));
+                    break;
+                case "Duplicate": {
+                    int index = activeProject.clips.indexOf(selectedClip);
+                    ProjectStore.Clip copy = ProjectStore.Clip.fromJson(selectedClip.toJson());
+                    copy.id = UUID.randomUUID().toString();
+                    activeProject.clips.add(index + 1, copy);
+                    selectedClip = copy;
+                    break;
+                }
+                case "Reverse":
+                    selectedClip.effects.put("reverse", !selectedClip.effects.optBoolean("reverse", false));
+                    break;
+                case "Shake":
+                    selectedClip.effects.put("motionPreset", "impact_shake");
+                    break;
+                case "Blur":
+                    selectedClip.effects.put("blur", selectedClip.effects.optDouble("blur", 0) > .1 ? 0 : 5.0);
+                    break;
+                case "Glow":
+                    selectedClip.effects.put("effectPreset", "soft_glow");
+                    selectedClip.effects.put("blur", 1.6);
+                    break;
+                case "Captions":
+                    selectedClip.effects.put("captionStyle", "creator_pop");
+                    selectedClip.effects.put("textAnimation", "caption_pop");
+                    break;
+                case "Audio Duck":
+                    selectedClip.effects.put("audioDucking", true);
+                    selectedClip.effects.put("duckLevel", .32);
                     break;
                 case "Crop":
                     selectedClip.effects.put("crop", "center_cover");
