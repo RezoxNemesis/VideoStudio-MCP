@@ -23,6 +23,7 @@ const creativeWorkspace = fs.readFileSync(new URL("../android/app/src/main/java/
 const motionScriptCompiler = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/MotionScriptCompiler.java", import.meta.url), "utf8");
 const activityLog = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/ActivityLog.java", import.meta.url), "utf8");
 const recoveryPlans = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/RecoveryPlanStore.java", import.meta.url), "utf8");
+const capabilityRegistry = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/CapabilityRegistry.java", import.meta.url), "utf8");
 
 const scriptMatch = app.match(/<script>([\s\S]*?)<\/script>/);
 let appScriptParses = false;
@@ -155,6 +156,11 @@ const checks = [
   ["Native Agent auto-resumes supported interrupted heavy jobs", controlService.includes("recoverDurablePlans()") && controlService.includes("submitRecoverableHeavy") && controlService.includes('case "animate_images"') && controlService.includes('case "prompt_video"') && controlService.includes('case "export_project"')],
   ["published output prevents duplicate render after restart", controlService.includes("markOutputForJob") && controlService.includes("Recovered completed render") && controlService.includes("isReadableOutput")],
   ["recovery plans follow explicit job cancellation", controlService.includes("recoveryPlans.cancelByJob") && controlService.includes("recoveryPlans.cancelActive")],
+  ["capability registry is provider-based instead of model-name coupled", capabilityRegistry.includes("capability-first-hardware-aware") && capabilityRegistry.includes("installedProviders()") && capabilityRegistry.includes("resolve(String capability")],
+  ["built-in engines are represented as capability providers", capabilityRegistry.includes("person.segmentation") && capabilityRegistry.includes("face.landmarks") && capabilityRegistry.includes("motion.2_5d") && capabilityRegistry.includes("render.video") && capabilityRegistry.includes("scene.compile")],
+  ["optional model manifests can extend capability registry", capabilityRegistry.includes('"manifest.json"') && capabilityRegistry.includes('"capabilities"') && capabilityRegistry.includes('"estimatedRamMb"')],
+  ["Native Agent exposes capability registry and model pack status", controlService.includes('case "capability_registry"') && controlService.includes('case "resolve_capability"') && controlService.includes('case "model_pack_status"')],
+  ["MCP v3 exposes typed capability-provider tools", worker.includes('"app_capability_registry"') && worker.includes('"app_resolve_capability"') && worker.includes('"app_model_pack_status"')],
   ["native v3 exposes a self-test", controlService.includes('case "self_test"') && worker.includes('"app_self_test"') && controlService.includes("privateStorageWritable")],
   ["native state reports v3 architecture", controlService.includes('out.put("mcpEndpointVersion", "v3")') && controlService.includes('out.put("localEngineOwnsProjects", true)')],
   ["cached connector compatibility routes v3 devices to v3 queue", worker.includes("enqueueNative") && worker.includes("appEnqueueV3") && worker.includes("commandNative")],
