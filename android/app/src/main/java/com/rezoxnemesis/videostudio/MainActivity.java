@@ -86,6 +86,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
     private final Handler ui = new Handler(Looper.getMainLooper());
     private Runnable clipStopper;
     private Runnable activityRefresh;
+    private Runnable serviceWatchdog;
     private boolean timelinePreviewRunning;
     private String currentScreen = "home";
 
@@ -111,6 +112,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         setContentView(buildShell());
         showHome();
         requestServiceSync();
+        startServiceWatchdog();
     }
 
     @Override
@@ -118,6 +120,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         timelinePreviewRunning = false;
         if (clipStopper != null) ui.removeCallbacks(clipStopper);
         if (activityRefresh != null) ui.removeCallbacks(activityRefresh);
+        if (serviceWatchdog != null) ui.removeCallbacks(serviceWatchdog);
         if (preview != null) preview.stopPlayback();
         if (activeRenderHandle != null) activeRenderHandle.cancel();
         if (protocol != null) protocol.stop();
@@ -164,7 +167,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         LinearLayout hero = card(true);
         TextView heroTitle = title("Create Without Limits", 28);
         hero.addView(heroTitle);
-        hero.addView(body("Native v3.2 Creator Engine • MCP v3 • on-device portrait AI • layered animation • local Media3 export"));
+        hero.addView(body("Native " + AppProtocol.APP_VERSION + " Creative Runtime • MCP v3 • on-device portrait AI • MotionScript/CreativeIR • local Media3 export"));
         Button promptVideo = neonButton("✦  Create Video from a Prompt", C_MAGENTA);
         promptVideo.setOnClickListener(v -> promptVideoDialog());
         hero.addView(promptVideo, margins(-1, dp(54), dp(14), dp(8), 0, 0));
@@ -1906,8 +1909,46 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
     private void requestServiceSync() {
         try {
             Intent intent = new Intent(this, ControlService.class).setAction(ControlService.ACTION_SYNC);
-            startForegroundService(intent);
-        } catch (Exception ignored) {}
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) startForegroundService(intent);
+            else startService(intent);
+            prefs.edit()
+                    .putLong("control_service_start_requested_at", System.currentTimeMillis())
+                    .putString("control_service_requested_app_version", AppProtocol.APP_VERSION)
+                    .apply();
+        } catch (Exception error) {
+            prefs.edit()
+                    .putBoolean("control_service_online", false)
+                    .putString("control_service_detail", "Native Agent start failed: " + (error.getMessage() == null ? error.getClass().getSimpleName() : error.getMessage()))
+                    .putLong("control_service_heartbeat", System.currentTimeMillis())
+                    .apply();
+            ActivityLog.add(this, "system", "Native Agent start failed",
+                    error.getMessage() == null ? error.getClass().getSimpleName() : error.getMessage(),
+                    "failed", null, null, activeProject == null ? null : activeProject.id);
+        }
+    }
+
+    private void startServiceWatchdog() {
+        if (serviceWatchdog != null) ui.removeCallbacks(serviceWatchdog);
+        serviceWatchdog = new Runnable() {
+            @Override public void run() {
+                if (isFinishing() || isDestroyed()) return;
+                long heartbeat = prefs.getLong("control_service_heartbeat", 0);
+                boolean fresh = System.currentTimeMillis() - heartbeat < 35000;
+                String reported = prefs.getString("control_service_app_version", "");
+                if (!fresh || !AppProtocol.APP_VERSION.equals(reported)) {
+                    requestServiceSync();
+                }
+                if (connectionPill != null) {
+                    connectionPill.setText(serviceConnectionText());
+                    boolean online = prefs.getBoolean("control_service_online", false)
+                            && System.currentTimeMillis() - prefs.getLong("control_service_heartbeat", 0) < 65000
+                            && AppProtocol.APP_VERSION.equals(prefs.getString("control_service_app_version", ""));
+                    connectionPill.setTextColor(online ? Color.rgb(74, 255, 172) : C_MUTED);
+                }
+                ui.postDelayed(this, 10000);
+            }
+        };
+        ui.post(serviceWatchdog);
     }
 
     private String serviceConnectionText() {
@@ -1915,14 +1956,23 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         boolean online = prefs.getBoolean("control_service_online", false);
         String detail = prefs.getString("control_service_detail", "");
         boolean fresh = System.currentTimeMillis() - heartbeat < 65000;
+        String serviceVersion = prefs.getString("control_service_app_version", "");
         if (protocol != null && protocol.isControlPaused()) return "●  ChatGPT control paused • tap Control to resume";
-        if (online && fresh) return "●  " + (detail == null || detail.isEmpty() ? "VideoStudio MCP v3 online" : detail);
-        return "○  MCP v3 Native Agent starting…";
+        if (online && fresh && AppProtocol.APP_VERSION.equals(serviceVersion)) {
+            return "●  " + (detail == null || detail.isEmpty() ? "VideoStudio MCP v3 online" : detail)
+                    + " • app " + serviceVersion;
+        }
+        if (!serviceVersion.isEmpty() && !AppProtocol.APP_VERSION.equals(serviceVersion)) {
+            return "○  Restarting Native Agent • app " + AppProtocol.APP_VERSION + " / service " + serviceVersion;
+        }
+        return "○  MCP v3 Native Agent starting • app " + AppProtocol.APP_VERSION;
     }
 
     @Override
     protected void onResume() {
         super.onResume();
+        requestServiceSync();
+        startServiceWatchdog();
         if (connectionPill != null) {
             connectionPill.setText(serviceConnectionText());
             connectionPill.setTextColor(prefs.getBoolean("control_service_online", false) ? Color.rgb(74, 255, 172) : C_MUTED);
