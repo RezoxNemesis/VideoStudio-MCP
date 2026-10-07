@@ -1,11 +1,11 @@
-# VideoStudio v3.2.1
+# VideoStudio v3.3.0
 
 VideoStudio is a native-first Android video editor controlled from ChatGPT through a private MCP connection.
 
 ## v3 identity
 
-- Android app: **3.2.1**
-- Android versionCode: **321**
+- Android app: **3.3.0**
+- Android versionCode: **330**
 - Native protocol: **MCP v3**
 - Canonical private endpoint: `/app-mcp-v3/<device-owned-key>`
 - Native control API: `/api/v3/app/*`
@@ -41,6 +41,25 @@ Two boundaries remain non-negotiable:
 - **STOP CHATGPT CONTROL** immediately pauses autonomous control and cancels active native work.
 
 The narrower `all_tools` and `one_file` modes remain available as deliberate user-selected restrictions. VideoStudio does not automatically switch back to full autonomy after the one-time v3.2 migration if the user later chooses one of those modes.
+
+## v3.3 creative runtime foundation
+
+VideoStudio 3.3 begins the programmable creative-runtime layer without changing the private MCP v3 endpoint.
+
+The first foundation slice includes:
+
+- a safe **MotionScript 0.1** scene language that compiles into versioned CreativeIR
+- an app-private creative workspace for scene source, compiled plans, generated artifacts, masks, depth, pose, flow, rigs, meshes, audio, checkpoints, previews and renders
+- a capability-first provider registry so future local image, motion, depth, pose, interpolation, voice and 3D model packs can plug into the same runtime
+- generated video registration as first-class project media instead of only storing a latest-export URI
+- an editor **Media Bin** with generated/source roles, preview and timeline insertion
+- live editor refresh when native background work changes project state
+- durable heavy-job recovery plans for animation, prompt-video and export work
+- thermal and memory waiting states that preserve checkpoints instead of using a fixed timeout
+- published-output recovery so a restart does not intentionally render a duplicate when the final MediaStore output was already committed
+- dedicated MCP v3 tools for MotionScript, creative workspace and capability-provider inspection, while retaining the generic future-compatible action bridge
+
+The 3.3 foundation is deliberately modular. Optional generative model providers are not bundled merely to inflate the APK; they can be introduced as verified model packs behind the capability registry.
 
 ## Native still-image animation
 
