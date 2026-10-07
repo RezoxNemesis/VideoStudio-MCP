@@ -303,6 +303,25 @@ const STUDIO_CINEMATIC_JS = String.raw`
     ctx.drawImage(canvas,0,0);
   }
 
+  function portalLightSpill(ctx,q,w,h,index,strength){
+    if(strength<=0)return;
+    const colors=["255,176,92","92,214,255","255,76,89","108,235,154","188,132,255"];
+    const color=colors[index%colors.length],cx=(q[0][0]+q[1][0]+q[2][0]+q[3][0])/4,cy=(q[0][1]+q[1][1]+q[2][1]+q[3][1])/4;
+    const radius=Math.max(w,h)*.55,g=ctx.createRadialGradient(cx,cy,0,cx,cy,radius);
+    g.addColorStop(0,"rgba("+color+","+Math.min(.28,strength)+")");
+    g.addColorStop(.45,"rgba("+color+","+(strength*.45)+")");
+    g.addColorStop(1,"rgba("+color+",0)");
+    ctx.save();ctx.globalCompositeOperation="screen";ctx.fillStyle=g;ctx.fillRect(0,0,w,h);ctx.restore();
+  }
+
+  function drawSceneLabel(ctx,w,h,label,alpha){
+    if(!label)return;
+    ctx.save();ctx.globalAlpha=clamp(alpha,0,1);ctx.textAlign="center";ctx.textBaseline="middle";
+    const font=Math.max(22,Math.round(w*.047));ctx.font="800 "+font+"px system-ui,sans-serif";
+    ctx.shadowColor="rgba(0,0,0,.85)";ctx.shadowBlur=16;ctx.fillStyle="rgba(255,250,240,.95)";
+    ctx.fillText(String(label).slice(0,52),w/2,h*.82);ctx.restore();
+  }
+
   async function registerGenerated(project,blob,duration,name,metadata){
     const id=crypto.randomUUID(),ext=blob.type.includes("mp4")?".mp4":".webm";
     const asset={id,name:(name||"Cinematic-Portal")+ext,type:blob.type||"video/webm",size:blob.size,duration,kind:"video",generated:true,importedAt:new Date().toISOString(),cinematic:metadata};
@@ -373,7 +392,15 @@ const STUDIO_CINEMATIC_JS = String.raw`
               ctx.save();pathQuad(ctx,q);ctx.clip();ctx.globalAlpha=alpha;
               ctx.filter="saturate(1.08) contrast(1.06) brightness(.96)";
               if(world){
-                const source=world.kind==="video"?world.video:world.image;drawWarped(ctx,source,q,10);
+                if(world.kind==="video"){
+                  drawWarped(ctx,world.video,q,10);
+                }else{
+                  const off=drawWorld.imageCanvas||(drawWorld.imageCanvas=document.createElement("canvas"));off.width=640;off.height=360;
+                  const ox=off.getContext("2d",{alpha:false});ox.fillStyle="#000";ox.fillRect(0,0,off.width,off.height);
+                  const drift=Math.sin(elapsed*.22+index)*.018,zoom=1.06+.035*Math.sin(elapsed*.17+index*.7);
+                  ox.save();ox.translate(drift*off.width,Math.cos(elapsed*.19+index)*off.height*.008);drawCover(ox,world.image,off.width,off.height,zoom);ox.restore();
+                  drawWarped(ctx,off,q,10);
+                }
               }else{
                 const off=drawWorld.canvas||(drawWorld.canvas=document.createElement("canvas"));off.width=640;off.height=360;
                 epicWorld(off.getContext("2d",{alpha:false}),off.width,off.height,elapsed,options.prompt||$("vsPortalPrompt")&&$("vsPortalPrompt").value||"epic mythological world",index||0);
@@ -387,12 +414,23 @@ const STUDIO_CINEMATIC_JS = String.raw`
             ctx.save();pathQuad(ctx,q);ctx.clip();ctx.globalCompositeOperation="screen";ctx.globalAlpha=clamp(options.reflection==null?.11:options.reflection,0,.35);ctx.filter="brightness(1.08) contrast(.92)";drawCover(ctx,baseLoaded.video,w,h,1);ctx.restore();
             ctx.globalCompositeOperation="source-over";ctx.globalAlpha=1;ctx.filter="none";
 
+            const lightSpill=clamp(options.lightSpill==null?.07:options.lightSpill,0,.25);
+            portalLightSpill(ctx,q,w,h,sceneIndex,lightSpill);
+
             if(personOcclusion&&state.personSegmenter){
               updatePersonMask(baseLoaded.video,elapsed);
               compositePersonOcclusion(ctx,baseLoaded.video,w,h);
             }
 
             ctx.save();pathQuad(ctx,q);ctx.strokeStyle="rgba(255,255,255,.18)";ctx.lineWidth=Math.max(1,w*.002);ctx.shadowColor="rgba(255,185,105,.18)";ctx.shadowBlur=12;ctx.stroke();ctx.restore();
+
+            const labels=Array.isArray(options.sceneLabels)?options.sceneLabels:[];
+            if(labels.length){
+              const labelIndex=Math.min(labels.length-1,Math.floor((elapsed/duration)*labels.length));
+              const localLabel=(elapsed/duration)*labels.length-labelIndex;
+              const labelAlpha=Math.min(1,localLabel*4,(1-localLabel)*4);
+              drawSceneLabel(ctx,w,h,labels[labelIndex],labelAlpha);
+            }
 
             const pct=Math.round(t*100);if(bar)bar.style.width=pct+"%";if(status)status.textContent="Rendering cinematic portal • "+pct+"%";
             if(elapsed>=duration||baseLoaded.video.ended)resolve();else requestAnimationFrame(frame);
@@ -406,7 +444,7 @@ const STUDIO_CINEMATIC_JS = String.raw`
       try{audioSource&&audioSource.disconnect();}catch{};try{audioCtx&&await audioCtx.close();}catch{}
       const blob=new Blob(chunks,{type:recorder.mimeType||"video/webm"});
       const asset=await registerGenerated(project,blob,duration,"VideoStudio-Cinematic-Portal",{
-        engine:"studio-web-portal-compositor-v1",baseAssetId:base.id,worldAssetIds:worldAssets.map(a=>a.id),prompt:String(options.prompt||"").slice(0,1000),tracking,startQuad:state.startQuad,endQuad:state.endQuad,reflection:options.reflection==null?.11:options.reflection,personOcclusion:personOcclusion&&!!state.personSegmenter
+        engine:"studio-web-portal-compositor-v1",baseAssetId:base.id,worldAssetIds:worldAssets.map(a=>a.id),prompt:String(options.prompt||"").slice(0,1000),tracking,startQuad:state.startQuad,endQuad:state.endQuad,reflection:options.reflection==null?.11:options.reflection,lightSpill:options.lightSpill==null?.07:options.lightSpill,sceneLabels:Array.isArray(options.sceneLabels)?options.sceneLabels.slice(0,24):[],personOcclusion:personOcclusion&&!!state.personSegmenter
       });
       if(status)status.textContent="Complete • "+asset.name+" • "+Math.round(blob.size/1048576)+" MB";
       if(bar)bar.style.width="100%";log("Cinematic portal complete",asset.name);toast("Cinematic world video added to project");
@@ -466,8 +504,8 @@ const STUDIO_CINEMATIC_JS = String.raw`
     document.head.appendChild(style);
     const card=document.createElement("div");card.id="vsCinematicWorlds";card.className="vsCinema";
     card.innerHTML='<h4>Cinematic Worlds <span class="vsBadge">TARGET EFFECT ENGINE</span></h4><div class="muted">Built for videos where a real person/room/train stays intact while impossible cinematic worlds move outside a window, screen, doorway or other portal. Uses real perspective compositing, scene sequencing, reflections and optional translation tracking.</div>'+
-      '<div class="vsCinemaGrid"><div><label>BASE LIVE-ACTION VIDEO</label><select id="vsPortalBase"></select><label>WORLD ASSETS · multi-select</label><select id="vsPortalWorld" multiple size="5"></select><label>WORLD PROMPT · used when no world assets are selected</label><textarea id="vsPortalPrompt" placeholder="Epic mythological mountain realm, colossal divine figure, cinematic sunset, clouds, waterfalls"></textarea></div>'+
-      '<div><label>PORTAL TRACKING</label><select id="vsPortalTracking"><option value="static">Static / keyframed quad</option><option value="translation">Auto translation tracking + keyframes</option></select><label>FOREGROUND OCCLUSION</label><select id="vsPortalOcclusion"><option value="auto">Auto person segmentation · local AI</option><option value="off">Off</option></select><label>DURATION SECONDS</label><input id="vsPortalDuration" type="number" min="1" max="180" value="30"><label>WINDOW REFLECTION</label><input id="vsPortalReflection" type="range" min="0" max=".35" step=".01" value=".11"><div class="row"><button id="vsPortalPreset">Right-window preset</button><button id="vsPortalStart">Set start corners</button><button id="vsPortalEnd">Set end corners</button></div></div></div>'+
+      '<div class="vsCinemaGrid"><div><label>BASE LIVE-ACTION VIDEO</label><select id="vsPortalBase"></select><label>WORLD ASSETS · multi-select</label><select id="vsPortalWorld" multiple size="5"></select><label>WORLD PROMPT · used when no world assets are selected</label><textarea id="vsPortalPrompt" placeholder="Epic mythological mountain realm, colossal divine figure, cinematic sunset, clouds, waterfalls"></textarea><label>SCENE LABELS · comma separated, optional</label><input id="vsPortalLabels" placeholder="Shailputri, Brahmacharini, Chandraghanta, Kushmanda"></div>'+
+      '<div><label>PORTAL TRACKING</label><select id="vsPortalTracking"><option value="static">Static / keyframed quad</option><option value="translation">Auto translation tracking + keyframes</option></select><label>FOREGROUND OCCLUSION</label><select id="vsPortalOcclusion"><option value="auto">Auto person segmentation · local AI</option><option value="off">Off</option></select><label>DURATION SECONDS</label><input id="vsPortalDuration" type="number" min="1" max="180" value="30"><label>WINDOW REFLECTION</label><input id="vsPortalReflection" type="range" min="0" max=".35" step=".01" value=".11"><label>LIGHT SPILL INTO REAL SCENE</label><input id="vsPortalLightSpill" type="range" min="0" max=".25" step=".01" value=".07"><div class="row"><button id="vsPortalPreset">Right-window preset</button><button id="vsPortalStart">Set start corners</button><button id="vsPortalEnd">Set end corners</button></div></div></div>'+
       '<canvas id="vsPortalCanvas" width="540" height="304"></canvas><div id="vsPortalCalibrateHint" class="muted">Select a base clip, then use the preset or calibrate four corners.</div>'+
       '<div class="row"><button id="vsPortalRender" class="primary">Render cinematic world video</button><button id="vsPortalRefresh">Refresh media</button></div><div class="progress"><i id="vsPortalProgress"></i></div><div id="vsPortalStatus" class="muted">Ready. Use imported/generated image or video worlds for the highest realism. The compositor preserves the real foreground instead of regenerating it.</div>';
     host.appendChild(card);
@@ -483,7 +521,7 @@ const STUDIO_CINEMATIC_JS = String.raw`
       try{
         state.baseAssetId=$("vsPortalBase").value;state.worldAssetIds=[...$("vsPortalWorld").selectedOptions].map(o=>o.value);
         const p=await getProject();
-        await renderPortal({baseAssetId:state.baseAssetId,worldAssetIds:state.worldAssetIds,prompt:$("vsPortalPrompt").value,duration:Number($("vsPortalDuration").value||30),tracking:$("vsPortalTracking").value,personOcclusion:$("vsPortalOcclusion").value,reflection:Number($("vsPortalReflection").value),aspect:p.settings.aspect||"9:16",quality:p.settings.quality||"720p"});
+        await renderPortal({baseAssetId:state.baseAssetId,worldAssetIds:state.worldAssetIds,prompt:$("vsPortalPrompt").value,sceneLabels:$("vsPortalLabels").value.split(",").map(x=>x.trim()).filter(Boolean),duration:Number($("vsPortalDuration").value||30),tracking:$("vsPortalTracking").value,personOcclusion:$("vsPortalOcclusion").value,reflection:Number($("vsPortalReflection").value),lightSpill:Number($("vsPortalLightSpill").value),aspect:p.settings.aspect||"9:16",quality:p.settings.quality||"720p"});
         setTimeout(()=>location.reload(),900);
       }catch(e){toast(e.message);$("vsPortalStatus").textContent=e.message;}
     };
