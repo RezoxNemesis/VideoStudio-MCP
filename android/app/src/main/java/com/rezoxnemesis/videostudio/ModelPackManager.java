@@ -56,6 +56,7 @@ public final class ModelPackManager {
         ensure(modelsRoot);
         ensure(installedRoot);
         ensure(stagingRoot);
+        cleanupStaleStaging();
     }
 
     public JSONObject install(ProjectStore.Asset source,
@@ -282,6 +283,15 @@ public final class ModelPackManager {
         long reserve = Math.max(512L * 1024L * 1024L, stats.getTotalBytes() / 20);
         if (needed <= 0 || stats.getAvailableBytes() - reserve < needed) {
             throw new IllegalStateException("Not enough app-private storage to activate this model pack safely");
+        }
+    }
+
+    private void cleanupStaleStaging() {
+        File[] children = stagingRoot.listFiles();
+        if (children == null) return;
+        long cutoff = System.currentTimeMillis() - 24L * 60L * 60L * 1000L;
+        for (File child : children) {
+            if (child.lastModified() > 0 && child.lastModified() < cutoff) deleteTree(child);
         }
     }
 
