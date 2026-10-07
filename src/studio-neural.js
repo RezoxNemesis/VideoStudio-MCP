@@ -15,6 +15,7 @@ const STUDIO_NEURAL_JS = String.raw`
 
   const $ = (id) => document.getElementById(id);
   const sleep = (ms) => new Promise(r=>setTimeout(r,ms));
+  const NEURAL_RUNTIME_VERSION = "1.0.0";
   const MODEL_BASE_DEFAULT = "https://huggingface.co/schmuell/sd-turbo-ort-web/resolve/main";
   const ORT_VERSION = "1.17.1";
   const ORT_SCRIPT = "https://cdn.jsdelivr.net/npm/onnxruntime-web@"+ORT_VERSION+"/dist/ort.webgpu.min.js";
@@ -295,7 +296,7 @@ const STUDIO_NEURAL_JS = String.raw`
       if(window.VideoStudioCinematic&&window.VideoStudioCinematic.refreshSelectors)window.VideoStudioCinematic.refreshSelectors();
       log("Neural worlds generated",assets.length+" SD-Turbo WebGPU keyframe(s)");
       toast("Neural world keyframes added to Media Bin");
-      return{ok:true,neural:true,engine:"sd-turbo-webgpu-onnx",assets,hardware,modelBase:state.modelBase,note:"Real client-side SD-Turbo inference through ONNX Runtime WebGPU."};
+      return{ok:true,neural:true,runtimeVersion:NEURAL_RUNTIME_VERSION,engine:"sd-turbo-webgpu-onnx",assets,hardware,modelBase:state.modelBase,note:"Real client-side SD-Turbo inference through ONNX Runtime WebGPU."};
     } finally {state.busy=false;}
   }
 
