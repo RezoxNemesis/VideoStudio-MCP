@@ -2,6 +2,8 @@ package com.rezoxnemesis.videostudio;
 
 import android.content.Context;
 import android.net.Uri;
+import android.os.Handler;
+import android.os.Looper;
 import android.view.ViewGroup;
 
 import androidx.media3.common.MediaItem;
@@ -21,6 +23,8 @@ public final class LiveEditPlayer {
     private final PlayerView view;
     private String snapshotId = "";
     private String clipId = "";
+    private final Handler handler = new Handler(Looper.getMainLooper());
+    private Runnable clipBoundaryWatcher;
 
     public LiveEditPlayer(Context context) {
         Context app = context.getApplicationContext();
@@ -52,6 +56,30 @@ public final class LiveEditPlayer {
         player.setPlaybackSpeed(Math.max(.25f, Math.min(4f, speed)));
         player.prepare();
         player.setPlayWhenReady(playWhenReady);
+    }
+
+    public void playClip(Uri uri,
+                         long inMs,
+                         long outMs,
+                         float speed,
+                         Runnable onComplete) {
+        cancelClipBoundaryWatcher();
+        play(uri, inMs, speed, true);
+        long safeOut = Math.max(inMs + 1L, outMs);
+        clipBoundaryWatcher = new Runnable() {
+            private boolean completed;
+            @Override public void run() {
+                if (completed) return;
+                if (player.getPlaybackState() == Player.STATE_ENDED || player.getCurrentPosition() >= safeOut) {
+                    completed = true;
+                    player.pause();
+                    if (onComplete != null) onComplete.run();
+                    return;
+                }
+                handler.postDelayed(this, 60L);
+            }
+        };
+        handler.post(clipBoundaryWatcher);
     }
 
     public void setPlaylist(List<MediaItem> items) {
@@ -93,6 +121,10 @@ public final class LiveEditPlayer {
         return Math.max(0L, player.getCurrentPosition());
     }
 
+    public long currentPositionMs() {
+        return getCurrentPosition();
+    }
+
     public boolean isPlaying() {
         return player.isPlaying();
     }
@@ -106,6 +138,7 @@ public final class LiveEditPlayer {
     }
 
     public void stop() {
+        cancelClipBoundaryWatcher();
         player.stop();
     }
 
@@ -114,7 +147,15 @@ public final class LiveEditPlayer {
     }
 
     public void release() {
+        cancelClipBoundaryWatcher();
         view.setPlayer(null);
         player.release();
+    }
+
+    private void cancelClipBoundaryWatcher() {
+        if (clipBoundaryWatcher != null) {
+            handler.removeCallbacks(clipBoundaryWatcher);
+            clipBoundaryWatcher = null;
+        }
     }
 }
