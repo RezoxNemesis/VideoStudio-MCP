@@ -4,7 +4,7 @@ plugins {
 
 android {
     namespace = "com.rezoxnemesis.videostudio"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.rezoxnemesis.videostudio"
