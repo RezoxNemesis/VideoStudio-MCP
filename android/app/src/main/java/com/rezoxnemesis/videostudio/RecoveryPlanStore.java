@@ -88,6 +88,21 @@ public final class RecoveryPlanStore {
         upsert(plan);
     }
 
+    public synchronized JSONObject outputForJob(String jobId) {
+        JSONObject plan = findByJobId(jobId);
+        if (plan == null) return null;
+        String uri = plan.optString("outputUri", "");
+        if (uri.isEmpty()) return null;
+        JSONObject out = new JSONObject();
+        try {
+            out.put("uri", uri);
+            out.put("name", plan.optString("outputName", ""));
+            out.put("stage", plan.optString("stage", ""));
+            out.put("state", plan.optString("state", ""));
+        } catch (Exception ignored) {}
+        return out;
+    }
+
     public synchronized void markOutputForJob(String jobId, String uri, String name) {
         JSONObject plan = findByJobId(jobId);
         if (plan == null) return;
