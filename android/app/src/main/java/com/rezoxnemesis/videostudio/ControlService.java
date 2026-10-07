@@ -63,6 +63,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     private NativePortraitMotionAnalyzer portraitMotionAnalyzer;
     private CreativeWorkspace creativeWorkspace;
     private MotionScriptCompiler motionScriptCompiler;
+    private RecoveryPlanStore recoveryPlans;
     private SharedPreferences prefs;
     private CommandJournal commandJournal;
 
@@ -81,12 +82,14 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         portraitMotionAnalyzer = new NativePortraitMotionAnalyzer(this);
         creativeWorkspace = new CreativeWorkspace(this);
         motionScriptCompiler = new MotionScriptCompiler();
+        recoveryPlans = new RecoveryPlanStore(this);
         createChannel();
         startForeground(NOTIFICATION_ID, notification("VideoStudio MCP v3 starting"));
         syncProtocolState();
         protocol.start();
         markService(true, "VideoStudio MCP v3 Native Agent active");
         ActivityLog.add(this, "system", "VideoStudio v3 control online", "MCP v3 Native Agent background controller started", "success", null, null, null);
+        recoverDurablePlans();
     }
 
     @Override
@@ -1433,6 +1436,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 out.put("activeAssets", assets);
             }
             out.put("workload", jobs.state());
+            out.put("recoveryPlans", recoveryPlans.recent(12));
             out.put("creatorCatalog", CreatorCatalog.describe());
             out.put("recentActivity", ActivityLog.recent(this, 30));
             out.put("commandJournal", commandJournal.recent(20));
