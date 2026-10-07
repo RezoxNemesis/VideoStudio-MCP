@@ -132,6 +132,10 @@ public final class McpConnectionCore {
             out.put("unknownAdditiveActionsMayUseExecuteBridge", true);
             out.put("upgradeKeepsDeviceIdentity", true);
             out.put("upgradeKeepsOwnerCredential", true);
+            out.put("hybridBindingCompatible", true);
+            out.put("hybridBindingSurvivesApkUpgrade", true);
+            out.put("hybridMcpPath", "/mcp-v06/");
+            out.put("hybridBindingPolicy", "stable-private-capability");
         } catch (Exception ignored) {}
         return out;
     }
@@ -212,6 +216,10 @@ public final class McpConnectionCore {
             out.put("compatibilityPolicy", "stable-major-additive-features");
             out.put("transportDecoupledFromApkVersion", true);
             out.put("identitySurvivesAppUpdate", true);
+            out.put("hybridBindingCompatible", true);
+            out.put("hybridBindingSurvivesApkUpgrade", true);
+            out.put("hybridMcpPath", "/mcp-v06/");
+            out.put("hybridBindingPolicy", "stable-private-capability");
             out.put("galleryAccess", false);
         } catch (Exception ignored) {}
         return out;
