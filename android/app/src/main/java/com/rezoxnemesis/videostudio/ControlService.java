@@ -655,6 +655,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         ProjectStore.Project project = resolveProject(p.optString("projectId", ""));
         String source = p.optString("script", p.optString("source", ""));
         MotionScriptCompiler.CompileResult compiled = motionScriptCompiler.compile(source, project);
+        resolveCreativeProviders(compiled.ir);
         JSONObject saved = creativeWorkspace.saveMotionScript(project.id, compiled.name, source, compiled.ir);
 
         JSONObject result = ok();
@@ -672,6 +673,13 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         String source = p.optString("script", p.optString("source", ""));
         MotionScriptCompiler.CompileResult compiled = motionScriptCompiler.compile(source, project);
         JSONObject ir = compiled.ir;
+        resolveCreativeProviders(ir);
+        if (p.optBoolean("strictProviders", false)) {
+            JSONArray unresolved = ir.optJSONArray("unresolvedCapabilities");
+            if (unresolved != null && unresolved.length() > 0) {
+                throw new IllegalStateException("MotionScript requires unavailable capability: " + unresolved.optString(0));
+            }
+        }
         JSONObject defaults = ir.optJSONObject("defaults");
         if (defaults == null) defaults = new JSONObject();
         JSONArray shots = ir.optJSONArray("shots");
@@ -740,6 +748,36 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         }
 
         return result;
+    }
+
+    private void resolveCreativeProviders(JSONObject ir) {
+        if (ir == null || capabilityRegistry == null) return;
+        JSONArray requirements = ir.optJSONArray("providerRequirements");
+        JSONArray resolutions = new JSONArray();
+        JSONArray unresolved = new JSONArray();
+
+        if (requirements != null) {
+            for (int i = 0; i < requirements.length(); i++) {
+                JSONObject requirement = requirements.optJSONObject(i);
+                if (requirement == null) continue;
+                String capability = requirement.optString("capability", "");
+                String quality = requirement.optString("quality", "balanced");
+                JSONObject resolution = capabilityRegistry.resolve(capability, quality);
+                try {
+                    resolution.put("target", requirement.optString("target", ""));
+                    resolution.put("quality", quality);
+                    resolutions.put(resolution);
+                    if (!resolution.optBoolean("resolved", false)) unresolved.put(capability);
+                } catch (Exception ignored) {}
+            }
+        }
+
+        try {
+            ir.put("providerResolution", resolutions);
+            ir.put("unresolvedCapabilities", unresolved);
+            ir.put("providerResolutionComplete", unresolved.length() == 0);
+            ir.put("capabilityRegistryVersion", 1);
+        } catch (Exception ignored) {}
     }
 
     private JobManager.Job submitRecoverableHeavy(String action,
