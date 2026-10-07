@@ -661,6 +661,15 @@ function serverForApp(env,ownerKey,protocolVersion=1){
     }
   },async args=>queue("run_motion_script",args));
 
+  if(isV3) s.registerTool("app_plan_creative_graph",{
+    description:"Compile or inspect a VideoStudio CreativeIR plan as a provider-agnostic execution DAG. The result exposes node dependencies, provider resolution, cache/checkpoint keys, compute plans and unresolved capabilities before expensive execution.",
+    inputSchema:{
+      projectId:z.string().min(8).optional(),
+      script:z.string().min(1).max(20000).optional(),
+      ir:z.record(z.string(),z.any()).optional()
+    }
+  },async args=>queue("plan_creative_graph",args));
+
   if(isV3) s.registerTool("app_workspace_status",{
     description:"Read VideoStudio's app-private creative workspace usage for models, caches, generated artifacts and the active project without browsing Gallery.",
     inputSchema:{projectId:z.string().min(8).optional()}
