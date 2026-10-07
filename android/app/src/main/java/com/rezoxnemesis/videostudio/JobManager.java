@@ -29,6 +29,10 @@ public final class JobManager {
         public volatile String state = "queued";
         public volatile int progress = 0;
         public volatile String detail = "";
+        public volatile String stage = "queued";
+        public volatile boolean recoverable = true;
+        public volatile int retryCount = 0;
+        public volatile long lastCheckpointAt;
         Future<?> future;
         private JobManager owner;
 
@@ -42,12 +46,19 @@ public final class JobManager {
             this.kind = kind;
             this.createdAt = createdAt;
             this.updatedAt = createdAt;
+            this.lastCheckpointAt = createdAt;
         }
 
         public void checkpoint(int progress, String detail) {
+            checkpoint(this.stage, progress, detail);
+        }
+
+        public void checkpoint(String stage, int progress, String detail) {
+            this.stage = stage == null || stage.trim().isEmpty() ? this.stage : stage.trim();
             this.progress = Math.max(0, Math.min(100, progress));
             this.detail = detail == null ? "" : detail;
             this.updatedAt = System.currentTimeMillis();
+            this.lastCheckpointAt = this.updatedAt;
             if (owner != null) owner.persist();
         }
 
@@ -60,6 +71,10 @@ public final class JobManager {
                 o.put("state", state);
                 o.put("progress", progress);
                 o.put("detail", detail);
+                o.put("stage", stage);
+                o.put("recoverable", recoverable);
+                o.put("retryCount", retryCount);
+                o.put("lastCheckpointAt", lastCheckpointAt);
                 o.put("createdAt", createdAt);
                 o.put("updatedAt", updatedAt);
             } catch (Exception ignored) {}
@@ -131,7 +146,8 @@ public final class JobManager {
     public int cancelAll() {
         int count = 0;
         for (Job job : jobs.values()) {
-            if ("queued".equals(job.state) || "waiting".equals(job.state) || "running".equals(job.state)) {
+            if ("queued".equals(job.state) || "waiting".equals(job.state) || "waiting_thermal".equals(job.state)
+                    || "waiting_memory".equals(job.state) || "running".equals(job.state) || "retrying".equals(job.state)) {
                 if (cancel(job.id)) count++;
             }
         }
@@ -186,7 +202,7 @@ public final class JobManager {
     }
 
     private void waitForSafeDevice(Job job) throws InterruptedException {
-        for (int i = 0; i < 90; i++) {
+        while (true) {
             if (Thread.currentThread().isInterrupted()) throw new InterruptedException();
             ActivityManager.MemoryInfo info = new ActivityManager.MemoryInfo();
             ActivityManager am = (ActivityManager) context.getSystemService(Context.ACTIVITY_SERVICE);
@@ -195,10 +211,22 @@ public final class JobManager {
             int thermal = thermalStatus();
             boolean hot = thermal >= PowerManager.THERMAL_STATUS_SEVERE;
             if (!lowMemory && !hot) return;
-            job.checkpoint(job.progress, hot ? "Cooling phone before heavy work" : "Waiting for memory pressure to drop");
-            Thread.sleep(1000);
+
+            String waitingState = hot ? "waiting_thermal" : "waiting_memory";
+            String detail = hot
+                    ? "Thermal governor paused heavy work; checkpoint preserved until the phone cools"
+                    : "Memory governor paused heavy work; checkpoint preserved until memory pressure drops";
+            setState(job, waitingState, detail);
+            job.checkpoint(job.stage, job.progress, detail);
+            Thread.sleep(hot ? 2500L : 1200L);
         }
-        throw new IllegalStateException("Device stayed under unsafe memory or thermal pressure");
+    }
+
+    public void awaitSafeCheckpoint(Job job, String stage) throws InterruptedException {
+        if (job == null || job.kind != Kind.HEAVY) return;
+        if (stage != null && !stage.trim().isEmpty()) job.stage = stage.trim();
+        waitForSafeDevice(job);
+        if (!"cancelled".equals(job.state)) setState(job, "running", job.detail);
     }
 
     private JSONObject memoryState() {
@@ -258,10 +286,16 @@ public final class JobManager {
                 job.owner = this;
                 job.progress = o.optInt("progress", 0);
                 job.updatedAt = updated;
+                job.stage = o.optString("stage", "recovered");
+                job.recoverable = o.optBoolean("recoverable", true);
+                job.retryCount = o.optInt("retryCount", 0);
+                job.lastCheckpointAt = o.optLong("lastCheckpointAt", updated);
                 String state = o.optString("state", "interrupted");
-                if ("queued".equals(state) || "waiting".equals(state) || "running".equals(state)) {
+                if ("queued".equals(state) || "waiting".equals(state) || "waiting_thermal".equals(state)
+                        || "waiting_memory".equals(state) || "running".equals(state) || "retrying".equals(state)) {
                     job.state = "interrupted";
-                    job.detail = "App restarted before this job finished. Safe to retry.";
+                    job.recoverable = true;
+                    job.detail = "App restarted after checkpoint '" + job.stage + "'. Recoverable work is preserved for retry.";
                 } else {
                     job.state = state;
                     job.detail = o.optString("detail", "");
