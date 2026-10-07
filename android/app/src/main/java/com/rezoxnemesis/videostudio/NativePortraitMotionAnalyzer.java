@@ -43,13 +43,20 @@ import java.util.concurrent.TimeUnit;
 public final class NativePortraitMotionAnalyzer {
     public static final class Result {
         public final Uri foregroundUri;
+        public final Uri headUri;
+        public final Uri torsoUri;
+        public final Uri lowerUri;
         public final Uri backgroundUri;
         public final JSONObject analysis;
         public final int width;
         public final int height;
 
-        Result(Uri foregroundUri, Uri backgroundUri, JSONObject analysis, int width, int height) {
+        Result(Uri foregroundUri, Uri headUri, Uri torsoUri, Uri lowerUri,
+               Uri backgroundUri, JSONObject analysis, int width, int height) {
             this.foregroundUri = foregroundUri;
+            this.headUri = headUri;
+            this.torsoUri = torsoUri;
+            this.lowerUri = lowerUri;
             this.backgroundUri = backgroundUri;
             this.analysis = analysis;
             this.width = width;
@@ -100,7 +107,9 @@ public final class NativePortraitMotionAnalyzer {
         }
 
         MaskStats stats = readMask(mask, working.getWidth(), working.getHeight());
+        Rect face = faces.isEmpty() ? null : largestFace(faces);
         Bitmap foreground = buildForeground(working, stats);
+        SubjectParts parts = buildSubjectParts(foreground, stats, face);
         Bitmap background = buildReconstructedBackground(working, stats);
 
         File dir = new File(context.getFilesDir(), "animation_layers/" + safe(projectId));
@@ -108,13 +117,21 @@ public final class NativePortraitMotionAnalyzer {
 
         String stem = safe(asset.id);
         File fgFile = new File(dir, stem + "_subject.png");
+        File headFile = new File(dir, stem + "_head_hair.png");
+        File torsoFile = new File(dir, stem + "_torso.png");
+        File lowerFile = new File(dir, stem + "_lower_drape.png");
         File bgFile = new File(dir, stem + "_background.jpg");
         write(foreground, fgFile, Bitmap.CompressFormat.PNG, 100);
+        write(parts.head, headFile, Bitmap.CompressFormat.PNG, 100);
+        write(parts.torso, torsoFile, Bitmap.CompressFormat.PNG, 100);
+        write(parts.lower, lowerFile, Bitmap.CompressFormat.PNG, 100);
         write(background, bgFile, Bitmap.CompressFormat.JPEG, 95);
 
         JSONObject analysis = new JSONObject();
         analysis.put("engine", "bundled-on-device-portrait-ai");
         analysis.put("backgroundReconstruction", "mask-aware-edge-fill-v1");
+        analysis.put("articulatedLayering", "head-torso-lower-v1");
+        analysis.put("articulatedParts", true);
         analysis.put("subjectDetected", stats.coverage > 0.015);
         analysis.put("subjectCoverage", stats.coverage);
         analysis.put("subjectCenterX", stats.centerX);
@@ -126,7 +143,6 @@ public final class NativePortraitMotionAnalyzer {
         analysis.put("maskWidth", mask.getWidth());
         analysis.put("maskHeight", mask.getHeight());
 
-        Rect face = faces.isEmpty() ? null : largestFace(faces);
         if (face != null) {
             double faceCx = clamp01((face.exactCenterX()) / working.getWidth());
             double faceCy = clamp01((face.exactCenterY()) / working.getHeight());
@@ -145,16 +161,27 @@ public final class NativePortraitMotionAnalyzer {
 
         analysis.put("shotType", shotType(stats.coverage, analysis.optDouble("faceCoverage", 0)));
         analysis.put("foregroundUri", Uri.fromFile(fgFile).toString());
+        analysis.put("headUri", Uri.fromFile(headFile).toString());
+        analysis.put("torsoUri", Uri.fromFile(torsoFile).toString());
+        analysis.put("lowerUri", Uri.fromFile(lowerFile).toString());
         analysis.put("backgroundUri", Uri.fromFile(bgFile).toString());
+        analysis.put("headSplitY", parts.headSplitY);
+        analysis.put("torsoSplitY", parts.torsoSplitY);
         analysis.put("width", working.getWidth());
         analysis.put("height", working.getHeight());
 
         foreground.recycle();
+        parts.head.recycle();
+        parts.torso.recycle();
+        parts.lower.recycle();
         background.recycle();
         working.recycle();
 
         return new Result(
                 Uri.fromFile(fgFile),
+                Uri.fromFile(headFile),
+                Uri.fromFile(torsoFile),
+                Uri.fromFile(lowerFile),
                 Uri.fromFile(bgFile),
                 analysis,
                 mask.getWidth(),
@@ -279,6 +306,89 @@ public final class NativePortraitMotionAnalyzer {
         Bitmap out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
         out.setPixels(pixels, 0, w, 0, 0, w, h);
         return out;
+    }
+
+    private static final class SubjectParts {
+        final Bitmap head;
+        final Bitmap torso;
+        final Bitmap lower;
+        final double headSplitY;
+        final double torsoSplitY;
+
+        SubjectParts(Bitmap head, Bitmap torso, Bitmap lower, double headSplitY, double torsoSplitY) {
+            this.head = head;
+            this.torso = torso;
+            this.lower = lower;
+            this.headSplitY = headSplitY;
+            this.torsoSplitY = torsoSplitY;
+        }
+    }
+
+    private SubjectParts buildSubjectParts(Bitmap foreground, MaskStats stats, Rect face) {
+        int w = foreground.getWidth();
+        int h = foreground.getHeight();
+        int[] source = new int[w * h];
+        foreground.getPixels(source, 0, w, 0, 0, w, h);
+
+        float subjectTop = (float) (stats.top * h);
+        float subjectBottom = (float) (stats.bottom * h);
+        float subjectHeight = Math.max(32f, subjectBottom - subjectTop);
+
+        float headSplit = subjectTop + subjectHeight * .31f;
+        if (face != null) {
+            headSplit = Math.max(headSplit, face.bottom + subjectHeight * .055f);
+            headSplit = Math.min(subjectTop + subjectHeight * .43f, headSplit);
+        }
+        float torsoSplit = subjectTop + subjectHeight * .68f;
+        torsoSplit = Math.max(headSplit + subjectHeight * .18f, torsoSplit);
+        torsoSplit = Math.min(subjectBottom - subjectHeight * .10f, torsoSplit);
+
+        float headOverlap = Math.max(10f, subjectHeight * .055f);
+        float lowerOverlap = Math.max(12f, subjectHeight * .070f);
+
+        int[] head = new int[source.length];
+        int[] torso = new int[source.length];
+        int[] lower = new int[source.length];
+
+        for (int y = 0; y < h; y++) {
+            float headFade = 1f - smoothstep(headSplit - headOverlap, headSplit + headOverlap, y);
+            float torsoIn = smoothstep(headSplit - headOverlap, headSplit + headOverlap, y);
+            float torsoOut = 1f - smoothstep(torsoSplit - lowerOverlap, torsoSplit + lowerOverlap, y);
+            float torsoWeight = torsoIn * torsoOut;
+            float lowerWeight = smoothstep(torsoSplit - lowerOverlap, torsoSplit + lowerOverlap, y);
+
+            // Keep the three weights normalized around the overlap bands.
+            float sum = headFade + torsoWeight + lowerWeight;
+            if (sum < .0001f) sum = 1f;
+            headFade /= sum;
+            torsoWeight /= sum;
+            lowerWeight /= sum;
+
+            for (int x = 0; x < w; x++) {
+                int i = y * w + x;
+                int color = source[i];
+                int a = Color.alpha(color);
+                int rgb = color & 0x00ffffff;
+                head[i] = rgb | (Math.round(a * headFade) << 24);
+                torso[i] = rgb | (Math.round(a * torsoWeight) << 24);
+                lower[i] = rgb | (Math.round(a * lowerWeight) << 24);
+            }
+        }
+
+        Bitmap headBitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
+        Bitmap torsoBitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
+        Bitmap lowerBitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
+        headBitmap.setPixels(head, 0, w, 0, 0, w, h);
+        torsoBitmap.setPixels(torso, 0, w, 0, 0, w, h);
+        lowerBitmap.setPixels(lower, 0, w, 0, 0, w, h);
+
+        return new SubjectParts(
+                headBitmap,
+                torsoBitmap,
+                lowerBitmap,
+                clamp01(headSplit / Math.max(1f, h)),
+                clamp01(torsoSplit / Math.max(1f, h))
+        );
     }
 
     private Bitmap buildReconstructedBackground(Bitmap source, MaskStats stats) {
