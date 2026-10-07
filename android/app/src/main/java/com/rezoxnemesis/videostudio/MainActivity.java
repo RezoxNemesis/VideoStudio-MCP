@@ -672,6 +672,9 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
             Button archive = compactButton("Archive Active Project");
             archive.setOnClickListener(v -> archiveActiveProjectToCloud());
             cloud.addView(archive, margins(-1, dp(44), dp(6), 0, 0, 0));
+            Button offload = compactButton("Archive + Free Local Workspace");
+            offload.setOnClickListener(v -> offloadActiveProjectToCloud());
+            cloud.addView(offload, margins(-1, dp(44), dp(6), 0, 0, 0));
             Button restore = compactButton("Restore Active Project Workspace");
             restore.setOnClickListener(v -> restoreActiveProjectFromCloud());
             cloud.addView(restore, margins(-1, dp(44), dp(6), 0, 0, 0));
@@ -830,6 +833,35 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                     "success", 100, null, project.id);
         });
         Toast.makeText(this, "Archive queued • " + job.id.substring(0, 8), Toast.LENGTH_SHORT).show();
+    }
+
+    private void offloadActiveProjectToCloud() {
+        if (activeProject == null) {
+            Toast.makeText(this, "Open a project first", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        if (!driveWorkspace.isLinked()) {
+            pickCloudWorkspace();
+            return;
+        }
+        ProjectStore.Project project = store.get(activeProject.id);
+        if (project == null) return;
+        JobManager.Job job = jobs.submit("Cloud offload • " + project.name, JobManager.Kind.HEAVY, state -> {
+            File workspace = new CreativeWorkspace(this).projectRoot(project.id);
+            state.checkpoint("Cloud offload", 2, "Archiving before local eviction");
+            JSONObject archived = driveWorkspace.syncProject(project, workspace, (progress, detail) -> {
+                int mapped = Math.max(2, Math.min(88, 2 + (int) (progress * .86)));
+                state.checkpoint("Cloud offload", mapped, detail);
+                ActivityLog.progress(this, state.id, "Cloud offload", detail, mapped, project.id);
+            });
+            if (!archived.optBoolean("ok", false)) throw new IllegalStateException("Cloud archive did not complete");
+            JSONObject evicted = new CreativeWorkspace(this).evictCloudBackedProject(project.id);
+            state.checkpoint("Cloud offload", 100, "Cloud archive verified and local intermediates evicted");
+            ActivityLog.add(this, "system", "Project workspace offloaded",
+                    project.name + " • " + evicted.optLong("removedBytes", 0) + " bytes freed locally",
+                    "success", 100, null, project.id);
+        });
+        Toast.makeText(this, "Cloud offload queued • " + job.id.substring(0, 8), Toast.LENGTH_SHORT).show();
     }
 
     private void restoreActiveProjectFromCloud() {
