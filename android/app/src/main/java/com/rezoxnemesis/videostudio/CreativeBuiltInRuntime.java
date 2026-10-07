@@ -115,6 +115,9 @@ public final class CreativeBuiltInRuntime {
         out.put("backgroundDepth", backgroundDepth);
         out.put("foregroundUri", bundle.optString("foregroundUri", ""));
         out.put("backgroundUri", bundle.optString("backgroundUri", ""));
+        if (bundle.optJSONObject("analysis") != null) {
+            out.put("analysis", new JSONObject(bundle.optJSONObject("analysis").toString()));
+        }
         out.put("sourceBundleNode", bundle.optString("_nodeId", ""));
         return out;
     }
