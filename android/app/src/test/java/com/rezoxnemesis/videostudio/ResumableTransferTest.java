@@ -11,6 +11,10 @@ import org.robolectric.annotation.Config;
 import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.RandomAccessFile;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Arrays;
 
 import static org.junit.Assert.*;
@@ -83,5 +87,94 @@ public class ResumableTransferTest {
         File partial=ResumableTransferManager.partialFileFor(target);
         assertNotEquals(target.getAbsolutePath(),partial.getAbsolutePath());
         assertTrue(partial.getName().endsWith(".partial"));
+    }
+
+    private static final class FakeConnection extends HttpURLConnection {
+        private final int code;
+        private final byte[] body;
+        private final Map<String,String> headers=new HashMap<>();
+        FakeConnection(int code,byte[] body) throws Exception {
+            super(new URL("https://example.test/media"));
+            this.code=code;this.body=body;
+        }
+        FakeConnection header(String name,String value){headers.put(name,value);return this;}
+        @Override public int getResponseCode(){return code;}
+        @Override public String getHeaderField(String name){return headers.get(name);}
+        @Override public long getContentLengthLong(){
+            String value=headers.get("Content-Length");
+            return value==null?body.length:Long.parseLong(value);
+        }
+        @Override public String getContentType(){return headers.get("Content-Type");}
+        @Override public java.io.InputStream getInputStream(){return new ByteArrayInputStream(body);}
+        @Override public void disconnect(){}
+        @Override public boolean usingProxy(){return false;}
+        @Override public void connect(){}
+    }
+
+    @Test public void managerResumesOnlyFromMatching206AndPromotesCompletedFile() throws Exception {
+        Context context=RuntimeEnvironment.getApplication();
+        TransferJournal journal=new TransferJournal(context);journal.clearAll();
+        File target=new File(context.getCacheDir(),"resumable-final.bin");
+        File partial=ResumableTransferManager.partialFileFor(target);
+        target.delete();partial.delete();
+        try(RandomAccessFile out=new RandomAccessFile(partial,"rw")){out.write(new byte[]{1,2,3});}
+        journal.save(new TransferJournal.Entry(
+                "resume-job","https://example.test/media",partial.getAbsolutePath(),
+                6L,3L,"etag-1","","","paused"
+        ));
+        ResumableTransferManager manager=new ResumableTransferManager(journal);
+        java.util.ArrayList<Long> offsets=new java.util.ArrayList<>();
+        ResumableTransferManager.Result result=manager.download(
+                new ResumableTransferManager.Request("resume-job","https://example.test/media",target,6L,""),
+                (source,offset,etag,lastModified)->{
+                    offsets.add(offset);
+                    return new FakeConnection(206,new byte[]{4,5,6})
+                            .header("Content-Range","bytes 3-5/6")
+                            .header("ETag","etag-1")
+                            .header("Content-Type","video/mp4");
+                },
+                null
+        );
+        assertEquals(Arrays.asList(3L),offsets);
+        assertTrue(result.resumed);
+        assertEquals(6L,result.bytes);
+        assertTrue(target.isFile());
+        assertFalse(partial.exists());
+        assertNull(journal.get("resume-job"));
+        try(RandomAccessFile in=new RandomAccessFile(target,"r")){
+            byte[] bytes=new byte[6];in.readFully(bytes);
+            assertArrayEquals(new byte[]{1,2,3,4,5,6},bytes);
+        } finally {target.delete();partial.delete();journal.clearAll();}
+    }
+
+    @Test public void managerRestartsWhenServerIgnoresRangeInsteadOfAppendingCorruption() throws Exception {
+        Context context=RuntimeEnvironment.getApplication();
+        TransferJournal journal=new TransferJournal(context);journal.clearAll();
+        File target=new File(context.getCacheDir(),"range-ignored-final.bin");
+        File partial=ResumableTransferManager.partialFileFor(target);
+        target.delete();partial.delete();
+        try(RandomAccessFile out=new RandomAccessFile(partial,"rw")){out.write(new byte[]{9,9,9});}
+        journal.save(new TransferJournal.Entry(
+                "range-job","https://example.test/media",partial.getAbsolutePath(),
+                4L,3L,"","","","paused"
+        ));
+        ResumableTransferManager manager=new ResumableTransferManager(journal);
+        java.util.ArrayList<Long> offsets=new java.util.ArrayList<>();
+        ResumableTransferManager.Result result=manager.download(
+                new ResumableTransferManager.Request("range-job","https://example.test/media",target,4L,""),
+                (source,offset,etag,lastModified)->{
+                    offsets.add(offset);
+                    if(offset>0) return new FakeConnection(200,new byte[]{1,2,3,4}).header("Content-Length","4");
+                    return new FakeConnection(200,new byte[]{1,2,3,4}).header("Content-Length","4");
+                },
+                null
+        );
+        assertEquals(Arrays.asList(3L,0L),offsets);
+        assertFalse(result.resumed);
+        assertEquals(4L,result.bytes);
+        try(RandomAccessFile in=new RandomAccessFile(target,"r")){
+            byte[] bytes=new byte[4];in.readFully(bytes);
+            assertArrayEquals(new byte[]{1,2,3,4},bytes);
+        } finally {target.delete();partial.delete();journal.clearAll();}
     }
 }
