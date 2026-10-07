@@ -3,6 +3,7 @@ import fs from "node:fs";
 const app = fs.readFileSync(new URL("../src/app.html", import.meta.url), "utf8");
 const worker = fs.readFileSync(new URL("../src/index.js", import.meta.url), "utf8");
 const studioRuntime = fs.readFileSync(new URL("../src/studio-runtime.js", import.meta.url), "utf8");
+const studioCinematic = fs.readFileSync(new URL("../src/studio-cinematic.js", import.meta.url), "utf8");
 const wrangler = fs.readFileSync(new URL("../wrangler.jsonc", import.meta.url), "utf8");
 const nativeMain = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/MainActivity.java", import.meta.url), "utf8");
 const nativeProtocol = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/AppProtocol.java", import.meta.url), "utf8");
@@ -45,6 +46,16 @@ try {
   console.error("APP SCRIPT SYNTAX ERROR:", error.message);
 }
 
+const cinematicMatch = studioCinematic.match(/String\.raw\`([\s\S]*?)\`;\s*export default/);
+let studioCinematicParses = false;
+try {
+  if (!cinematicMatch) throw new Error("Studio Cinematic source not found");
+  new Function(cinematicMatch[1]);
+  studioCinematicParses = true;
+} catch (error) {
+  console.error("STUDIO CINEMATIC SYNTAX ERROR:", error.message);
+}
+
 const runtimeMatch = studioRuntime.match(/String\.raw\`([\s\S]*?)\`;\s*export default/);
 let studioRuntimeParses = false;
 try {
@@ -69,6 +80,15 @@ const checks = [
   ["Studio Web command relay adapts polling cadence to visibility", app.includes("async function commandLoop") && app.includes("document.hidden ? 2600 : 850")],
   ["worker advertises Studio Web 1.0 fallback execution", worker.includes('name:"VideoStudio-Studio-Web"') && worker.includes('version:"1.0.0"') && worker.includes('"browser fallback execution when Android app is unavailable"')],
   ["Studio Runtime browser JavaScript parses", studioRuntimeParses],
+  ["Studio Cinematic browser JavaScript parses", studioCinematicParses],
+  ["worker serves first-party Cinematic Worlds runtime", worker.includes('"/studio-cinematic.js"') && worker.includes("STUDIO_CINEMATIC_JS")],
+  ["Cinematic Worlds preserves live-action foreground and perspective-warps worlds into a quad", studioCinematic.includes("drawWarped") && studioCinematic.includes("affineFromTriangles") && studioCinematic.includes("drawCover(ctx,baseLoaded.video")],
+  ["Cinematic Worlds supports start/end portal keyframes and translation tracking", studioCinematic.includes("startQuad") && studioCinematic.includes("endQuad") && studioCinematic.includes("trackTranslation") && studioCinematic.includes('tracking==="translation"')],
+  ["Cinematic Worlds sequences multiple imported/generated worlds with crossfades", studioCinematic.includes("worldAssetIds") && studioCinematic.includes("mix=local>.78") && studioCinematic.includes("secondary")],
+  ["Cinematic Worlds retains subtle base-video reflections over the replacement world", studioCinematic.includes('globalCompositeOperation="screen"') && studioCinematic.includes("reflection")],
+  ["Cinematic Worlds records a real video blob and inserts it into project assets/timeline", studioCinematic.includes("MediaRecorder") && studioCinematic.includes("registerGenerated") && studioCinematic.includes("project.timeline.push")],
+  ["MCP exposes autonomous cinematic portal rendering", worker.includes('"render_cinematic_world_video"') && worker.includes('"render_portal_video"') && worker.includes("startQuad") && worker.includes("worldAssetIds")],
+  ["shared Studio Runtime executes portal jobs without a second competing poller", studioRuntime.includes('command.action==="render_portal_video"') && studioRuntime.includes("VideoStudioCinematic.renderPortal") && !studioCinematic.includes("vs-cinematic-last-seq")],
   ["worker serves the Studio Runtime as a first-party script", worker.includes('"/studio-runtime.js"') && worker.includes("STUDIO_RUNTIME_JS")],
   ["Studio Web supports user-owned Google Drive drive.file storage", studioRuntime.includes("https://www.googleapis.com/auth/drive.file") && studioRuntime.includes("VideoStudio Studio Web") && studioRuntime.includes("uploadBlobResumable") && studioRuntime.includes("restoreProject") && studioRuntime.includes("offloadProject")],
   ["Drive upload uses resumable chunks instead of website object storage", studioRuntime.includes("uploadType=resumable") && studioRuntime.includes("Content-Range") && studioRuntime.includes("8*1024*1024")],
