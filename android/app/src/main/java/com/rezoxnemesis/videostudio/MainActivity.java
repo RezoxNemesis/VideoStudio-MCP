@@ -1664,6 +1664,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
             out.put("galleryAccess", false);
             out.put("galleryBoundary", "MCP v3 cannot list, browse or enumerate Gallery media. Only Android-picker selections, VideoStudio-owned media and explicit ChatGPT attachments are usable.");
             out.put("projects", store.summaries().optJSONArray("projects"));
+            out.put("projectStorage", store.storageBackend());
             if (activeProject != null) {
                 out.put("activeProjectId", activeProject.id);
                 out.put("activeProjectName", activeProject.name);
