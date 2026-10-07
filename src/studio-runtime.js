@@ -881,13 +881,33 @@ const STUDIO_RUNTIME_JS = String.raw`
     await api("/api/runtime/commands/"+encodeURIComponent(command.id)+"/complete",{method:"POST",body:JSON.stringify({deviceId:deviceId(),result,status:status||"completed"})});
   }
 
+  async function waitForProvider(name,timeout=6000){
+    const started=Date.now();
+    while(Date.now()-started<timeout){
+      if(window[name])return window[name];
+      await sleep(120);
+    }
+    return null;
+  }
+
   async function handleRuntimeCommand(command){
     const p=command.parameters||{};let result;
     try{
       if(command.action==="generate_video")result=await generate({...p,remote:true});
       else if(command.action==="render_portal_video"){
-        if(!window.VideoStudioCinematic||typeof window.VideoStudioCinematic.renderPortal!=="function") throw new Error("Cinematic Worlds runtime is not ready");
-        result=await window.VideoStudioCinematic.renderPortal({...p,remote:true});
+        const cinematic=await waitForProvider("VideoStudioCinematic");
+        if(!cinematic||typeof cinematic.renderPortal!=="function") throw new Error("Cinematic Worlds runtime is not ready");
+        result=await cinematic.renderPortal({...p,remote:true});
+      }
+      else if(command.action==="generate_neural_keyframes"){
+        const neural=await waitForProvider("VideoStudioNeural",10000);
+        if(!neural||typeof neural.generateKeyframes!=="function") throw new Error("Neural Keyframe runtime is not ready");
+        result=await neural.generateKeyframes({...p,remote:true});
+      }
+      else if(command.action==="neural_probe"){
+        const neural=await waitForProvider("VideoStudioNeural",10000);
+        if(!neural||typeof neural.probe!=="function") throw new Error("Neural Keyframe runtime is not ready");
+        result=await neural.probe();
       }
       else if(command.action==="drive_status")result=await driveStatus();
       else if(command.action==="drive_sync")result=await syncProject({interactive:false});
