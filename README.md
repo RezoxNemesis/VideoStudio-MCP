@@ -42,8 +42,8 @@ VideoStudio is a native-first Android video editor controlled from ChatGPT throu
 
 ## v3 identity
 
-- Android app: **3.3.2**
-- Android versionCode: **332**
+- Android app: **3.4.1**
+- Android versionCode: **341**
 - Native protocol: **MCP v3**
 - Canonical private endpoint: `/app-mcp-v3/<device-owned-key>`
 - Native control API: `/api/v3/app/*`
@@ -79,6 +79,46 @@ Two boundaries remain non-negotiable:
 - **STOP CHATGPT CONTROL** immediately pauses autonomous control and cancels active native work.
 
 The narrower `all_tools` and `one_file` modes remain available as deliberate user-selected restrictions. VideoStudio does not automatically switch back to full autonomy after the one-time v3.2 migration if the user later chooses one of those modes.
+
+
+## v3.4.1 Permanent Hybrid Control Foundation
+
+VideoStudio 3.4.1 strengthens the system around a permanent hybrid control model rather than creating a new ChatGPT connection for every APK.
+
+**Connection continuity**
+
+- the existing Android package, signing identity, device ID, owner credential and MCP v3 compatibility lane remain the stable native identity
+- Studio Web `/mcp-v06` acts as the persistent plugin-facing control plane
+- native authority is granted only through a private hybrid binding, never from a public Web device ID alone
+- native-required work can wait for Android as `WAITING_NATIVE` while Studio Web remains available
+- compatible APK upgrades re-arm the foreground Native Agent through `MY_PACKAGE_REPLACED` without intentionally rotating the stable endpoint
+
+**Live editor while ChatGPT works**
+
+- the Android editor now uses a reusable Media3 ExoPlayer `LiveEditPlayer`
+- playback is separate from autonomous render/generation jobs
+- immutable preview snapshots let the current result keep playing while a newer checkpoint is produced
+- the editor exposes autonomous activity/progress plus an explicit **Play new result** handoff
+- very large video sources can receive preview-only 540p/720p proxies while final export continues to use the untouched original media
+
+**5 GB+ media foundation**
+
+- Android picker media stays URI-backed where the provider grants persistent access
+- asset size, transfer offsets, durations and storage arithmetic use 64-bit values
+- remote media uses resumable HTTPS range transfer, bounded buffers, durable transfer checkpoints and `.partial` promotion
+- a server that ignores a resume range causes a safe restart rather than corrupt append
+- storage is checked before heavy transfers, with explicit reserve space
+- there is no application-level `5 GB` ceiling for supported URI-backed local media; practical limits come from device storage, provider/filesystem behaviour and codec support
+
+**Crash and recovery hardening**
+
+- autonomous jobs use canonical queued/preparing/running/checkpoint/wait/terminal states
+- memory, thermal, network, storage and native-offline waits are non-terminal
+- terminal jobs cannot be resurrected by an invalid state transition
+- render publication is idempotent: an already committed output is reused after restart instead of intentionally publishing a duplicate
+- partial output is never registered as a completed preview/final asset
+
+These changes are the execution foundation for heavier future local/generative engines. They do not claim that storage or connection hardening alone creates semantic neural image-to-video synthesis.
 
 ## v3.3.2 Stable MCP Connection Core
 
@@ -161,7 +201,7 @@ Full Autonomous does not weaken the permanent safety boundaries:
 
 - MCP cannot list, browse or enumerate the Android Gallery/media library
 - remote imports remain HTTPS-only and reject private/local network destinations
-- remote imports are byte-limited and partial failures are cleaned up
+- remote imports use resumable, bounded-memory streaming with storage preflight, 64-bit byte offsets and partial-file checkpoints instead of a legacy small-file ceiling
 - heavy rendering remains RAM/thermal guarded
 - STOP CHATGPT CONTROL remains immediately available
 
