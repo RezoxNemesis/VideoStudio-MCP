@@ -112,6 +112,10 @@ export class VideoStudioState extends DurableObject {
       appVersion:clean(meta.appVersion||old.appVersion||"1.0.0",30),
       appGeneration:Math.max(clientGeneration,storedGeneration),
       connectionCoreVersion:Math.max(0,Number(meta.connectionCoreVersion||old.connectionCoreVersion||0)),
+      wireSchemaVersion:Math.max(1,Number(meta.wireSchemaVersion||old.wireSchemaVersion||1)),
+      featureLevel:Math.max(0,Number(meta.featureLevel||old.featureLevel||0)),
+      compatibilityPolicy:clean(meta.compatibilityPolicy||old.compatibilityPolicy||"stable-major-additive-features",80),
+      transportDecoupledFromApkVersion:meta.transportDecoupledFromApkVersion!==false,
       protocolVersion:Number(meta.protocolVersion||old.protocolVersion||1),
       protocolMin:Number(meta.protocolMin||meta.protocolVersion||old.protocolMin||old.protocolVersion||1),
       protocolMax:Number(meta.protocolMax||meta.protocolVersion||old.protocolMax||old.protocolVersion||1),
@@ -344,6 +348,10 @@ export class VideoStudioState extends DurableObject {
       stableMcpEndpoint:true,
       stableMcpPath:"/app-mcp-v3/",
       connectionCoreVersion:Number(d.connectionCoreVersion||0),
+      wireSchemaVersion:Number(d.wireSchemaVersion||1),
+      featureLevel:Number(d.featureLevel||0),
+      compatibilityPolicy:d.compatibilityPolicy||"stable-major-additive-features",
+      transportDecoupledFromApkVersion:d.transportDecoupledFromApkVersion!==false,
       appGeneration:Number(d.appGeneration||0),
       nativeAgent:"videostudio-v3",
       device:safe,
@@ -972,7 +980,10 @@ async function api(request,env){
           requestTimeoutMs:30000,
           leaseMs:60000,
           endpointMode:"stable-compatibility",
-          serverEpoch:"stable-core-1",
+          compatibilityPolicy:"stable-major-additive-features",
+          wireSchemaVersion:1,
+          transportDecoupledFromApkVersion:true,
+          serverEpoch:"stable-core-2",
           acceptedAppGeneration:Number(registration.appGeneration||0)
         }
       });
