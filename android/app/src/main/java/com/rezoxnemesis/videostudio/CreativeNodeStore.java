@@ -234,6 +234,35 @@ public final class CreativeNodeStore {
         return result;
     }
 
+    public synchronized int recoverRetryable(String projectId, boolean includeRunning) throws Exception {
+        JSONObject root = read(projectId);
+        JSONArray nodes = root.optJSONArray("nodes");
+        if (nodes == null) return 0;
+        int recovered = 0;
+        for (int i = 0; i < nodes.length(); i++) {
+            JSONObject node = nodes.optJSONObject(i);
+            if (node == null) continue;
+            String state = node.optString("state", "");
+            boolean retryable = "waiting_retry".equals(state)
+                    || (includeRunning && ("running".equals(state)
+                    || "waiting_thermal".equals(state)
+                    || "waiting_memory".equals(state)));
+            if (!retryable || !node.optBoolean("recoverable", true)) continue;
+            node.put("state", "planned");
+            node.put("progress", 0);
+            node.put("detail", includeRunning
+                    ? "Recovered after process interruption"
+                    : "Retry requested");
+            node.put("updatedAt", System.currentTimeMillis());
+            recovered++;
+        }
+        if (recovered > 0) {
+            root.put("updatedAt", System.currentTimeMillis());
+            write(projectId, root);
+        }
+        return recovered;
+    }
+
     public synchronized JSONObject readyNodes(String projectId) throws Exception {
         JSONObject root = read(projectId);
         JSONArray nodes = root.optJSONArray("nodes");
