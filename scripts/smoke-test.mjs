@@ -171,7 +171,7 @@ const checks = [
   ["device compute planner bounds local AI working sets instead of assuming full residency", computeProfile.includes("activeWorkingSetBudgetMb") && computeProfile.includes("residentModelBudgetMb") && computeProfile.includes("phaseModelSwapping")],
   ["compute planner supports tiled inference temporal windows and disk intermediates", computeProfile.includes("tiledInference") && computeProfile.includes("boundedTemporalWindows") && computeProfile.includes("diskBackedIntermediates")],
   ["compute planning reacts to thermal state", computeProfile.includes("thermalSafeForHeavyWork") && computeProfile.includes("thermalPauseRequired")],
-  ["Native Agent exposes compute profile and planning", controlService.includes('case "compute_profile"') && controlService.includes('case "plan_compute"') && controlService.includes("computeProfile.plan")),
+  ["Native Agent exposes compute profile and planning", controlService.includes('case "compute_profile"') && controlService.includes('case "plan_compute"') && controlService.includes("computeProfile.plan")],
   ["MCP v3 exposes typed compute planning tools", worker.includes('"app_compute_profile"') && worker.includes('"app_plan_compute"')],
   ["native v3 exposes a self-test", controlService.includes('case "self_test"') && worker.includes('"app_self_test"') && controlService.includes("privateStorageWritable")],
   ["native state reports v3 architecture", controlService.includes('out.put("mcpEndpointVersion", "v3")') && controlService.includes('out.put("localEngineOwnsProjects", true)')],
