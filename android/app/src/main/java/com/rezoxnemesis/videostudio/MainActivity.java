@@ -672,6 +672,9 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
             Button archive = compactButton("Archive Active Project");
             archive.setOnClickListener(v -> archiveActiveProjectToCloud());
             cloud.addView(archive, margins(-1, dp(44), dp(6), 0, 0, 0));
+            Button restore = compactButton("Restore Active Project Workspace");
+            restore.setOnClickListener(v -> restoreActiveProjectFromCloud());
+            cloud.addView(restore, margins(-1, dp(44), dp(6), 0, 0, 0));
             Button unlink = compactButton("Unlink Workspace");
             unlink.setOnClickListener(v -> {
                 driveWorkspace.unlink();
@@ -827,6 +830,32 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                     "success", 100, null, project.id);
         });
         Toast.makeText(this, "Archive queued • " + job.id.substring(0, 8), Toast.LENGTH_SHORT).show();
+    }
+
+    private void restoreActiveProjectFromCloud() {
+        if (activeProject == null) {
+            Toast.makeText(this, "Open a project first", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        if (!driveWorkspace.isLinked()) {
+            pickCloudWorkspace();
+            return;
+        }
+        ProjectStore.Project project = store.get(activeProject.id);
+        if (project == null) return;
+        JobManager.Job job = jobs.submit("Restore project • " + project.name, JobManager.Kind.LIGHT, state -> {
+            state.checkpoint("Cloud restore", 2, "Preparing project workspace");
+            File workspace = new CreativeWorkspace(this).projectRoot(project.id);
+            JSONObject result = driveWorkspace.restoreProjectWorkspace(project.id, workspace, (progress, detail) -> {
+                state.checkpoint("Cloud restore", progress, detail);
+                ActivityLog.progress(this, state.id, "Cloud restore", detail, progress, project.id);
+            });
+            state.checkpoint("Cloud restore", 100, "Restore complete");
+            ActivityLog.add(this, "system", "Project workspace restored",
+                    project.name + " • " + result.optLong("bytesRestored", 0) + " bytes",
+                    "success", 100, null, project.id);
+        });
+        Toast.makeText(this, "Restore queued • " + job.id.substring(0, 8), Toast.LENGTH_SHORT).show();
     }
 
     private void pickMedia() {
