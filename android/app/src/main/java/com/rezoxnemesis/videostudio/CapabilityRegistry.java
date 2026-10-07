@@ -72,6 +72,22 @@ public final class CapabilityRegistry {
                 256,
                 "final"
         ));
+        providers.put(builtin(
+                "builtin.videostudio.compositor",
+                "render",
+                "android-media3-gpu",
+                new String[]{"render.compositor"},
+                320,
+                "balanced"
+        ));
+        providers.put(builtin(
+                "builtin.videostudio.critique",
+                "quality",
+                "native-analysis",
+                new String[]{"render.critique"},
+                96,
+                "balanced"
+        ));
 
         JSONArray installed = installedProviders();
         for (int i = 0; i < installed.length(); i++) providers.put(installed.opt(i));
@@ -79,7 +95,7 @@ public final class CapabilityRegistry {
         try {
             root.put("registryVersion", 1);
             root.put("providerCount", providers.length());
-            root.put("builtInProviderCount", 5);
+            root.put("builtInProviderCount", 7);
             root.put("installedModelProviderCount", installed.length());
             root.put("providers", providers);
             root.put("modelPackRoot", installedModelRoot.getAbsolutePath());
