@@ -5,6 +5,8 @@ const worker = fs.readFileSync(new URL("../src/index.js", import.meta.url), "utf
 const studioRuntime = fs.readFileSync(new URL("../src/studio-runtime.js", import.meta.url), "utf8");
 const studioCinematic = fs.readFileSync(new URL("../src/studio-cinematic.js", import.meta.url), "utf8");
 const studioNeural = fs.readFileSync(new URL("../src/studio-neural.js", import.meta.url), "utf8");
+const studioTemporalUrl = new URL("../src/studio-temporal.js", import.meta.url);
+const studioTemporal = fs.existsSync(studioTemporalUrl) ? fs.readFileSync(studioTemporalUrl, "utf8") : "";
 const wrangler = fs.readFileSync(new URL("../wrangler.jsonc", import.meta.url), "utf8");
 const nativeMain = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/MainActivity.java", import.meta.url), "utf8");
 const nativeProtocol = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/AppProtocol.java", import.meta.url), "utf8");
@@ -57,6 +59,16 @@ try {
   console.error("STUDIO NEURAL SYNTAX ERROR:", error.message);
 }
 
+const temporalMatch = studioTemporal.match(/String\.raw\`([\s\S]*?)\`;\s*export default/);
+let studioTemporalParses = false;
+try {
+  if (!temporalMatch) throw new Error("Studio Temporal source not found");
+  new Function(temporalMatch[1]);
+  studioTemporalParses = true;
+} catch (error) {
+  console.error("STUDIO TEMPORAL SYNTAX ERROR:", error.message);
+}
+
 const cinematicMatch = studioCinematic.match(/String\.raw\`([\s\S]*?)\`;\s*export default/);
 let studioCinematicParses = false;
 try {
@@ -93,6 +105,13 @@ const checks = [
   ["Studio Runtime browser JavaScript parses", studioRuntimeParses],
   ["Studio Cinematic browser JavaScript parses", studioCinematicParses],
   ["Studio Neural browser JavaScript parses", studioNeuralParses],
+  ["Studio Temporal browser JavaScript parses", studioTemporalParses],
+  ["worker serves first-party Neural Temporal Motion runtime", worker.includes('"/studio-temporal.js"') && worker.includes("STUDIO_TEMPORAL_JS")],
+  ["Temporal Motion uses real RAFT ONNX optical flow with WebGPU", studioTemporal.includes("optical_flow_estimation_raft_2023aug_int8bq.onnx") && studioTemporal.includes('executionProviders:["webgpu"]') && studioTemporal.includes('inputNames[0]') && studioTemporal.includes('inputNames[1]')],
+  ["Temporal Motion interpolates multiple neural anchors into an actual video asset", studioTemporal.includes("renderTemporalMotion") && studioTemporal.includes("flowAB") && studioTemporal.includes("flowBA") && studioTemporal.includes("MediaRecorder") && studioTemporal.includes("canvas.captureStream") && studioTemporal.includes('role:"neural_temporal_video"')],
+  ["Temporal Motion records output into Media Bin and timeline for Cinematic Worlds", studioTemporal.includes("project.assets.push(asset)") && studioTemporal.includes("project.timeline.push") && studioTemporal.includes("VideoStudioCinematic.refreshSelectors")],
+  ["Studio Runtime executes autonomous temporal-motion jobs", studioRuntime.includes('command.action==="generate_temporal_motion"') && studioRuntime.includes('waitForProvider("VideoStudioTemporal"')],
+  ["MCP exposes autonomous Neural Temporal Motion rendering", worker.includes('"render_neural_temporal_video"') && worker.includes('"generate_temporal_motion"') && worker.includes("anchorAssetIds")],
   ["worker serves optional first-party Neural Keyframe runtime", worker.includes('"/studio-neural.js"') && worker.includes("STUDIO_NEURAL_JS")],
   ["Neural Keyframes use actual ONNX Runtime WebGPU SD-Turbo phases", studioNeural.includes("onnxruntime-web@") && studioNeural.includes("text_encoder/model.onnx") && studioNeural.includes("unet/model.onnx") && studioNeural.includes("vae_decoder/model.onnx") && studioNeural.includes('executionProviders:["webgpu"]')],
   ["Neural Keyframes gate on WebGPU shader-f16 instead of crashing unsupported browsers", studioNeural.includes('adapter.features.has("shader-f16")') && studioNeural.includes("recommended") && studioNeural.includes("Compatible WebGPU is required")],
