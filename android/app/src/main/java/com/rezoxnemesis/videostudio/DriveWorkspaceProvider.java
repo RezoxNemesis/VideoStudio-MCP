@@ -7,6 +7,7 @@ import android.database.Cursor;
 import android.net.Uri;
 import android.provider.DocumentsContract;
 
+import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.BufferedInputStream;
@@ -14,6 +15,7 @@ import java.io.BufferedOutputStream;
 import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.FileInputStream;
+import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
@@ -39,6 +41,8 @@ public final class DriveWorkspaceProvider {
     private static final String KEY_TREE = "drive_workspace_tree_uri";
     private static final String KEY_LINKED_AT = "drive_workspace_linked_at";
     private static final int BUFFER = 256 * 1024;
+    private static final int MAX_REMOTE_ENTRIES = 20000;
+    private static final int MAX_REMOTE_DEPTH = 32;
 
     private final Context context;
     private final ContentResolver resolver;
@@ -141,6 +145,352 @@ public final class DriveWorkspaceProvider {
         result.put("galleryAccess", false);
         progress.onProgress(100, "Project workspace archived to linked cloud folder");
         return result;
+    }
+
+    public JSONObject inventory() throws Exception {
+        Uri tree = requireTree();
+        Uri root = rootDocumentUri(tree);
+        JSONArray areas = new JSONArray();
+        areas.put(inventoryArea(tree, root, "Projects"));
+        areas.put(inventoryArea(tree, root, "ModelPacks"));
+
+        long bytes = 0;
+        int files = 0;
+        int directories = 0;
+        for (int i = 0; i < areas.length(); i++) {
+            JSONObject area = areas.optJSONObject(i);
+            if (area == null) continue;
+            bytes += area.optLong("bytes", 0);
+            files += area.optInt("files", 0);
+            directories += area.optInt("directories", 0);
+        }
+
+        JSONObject out = status();
+        out.put("areas", areas);
+        out.put("workspaceBytesVisible", bytes);
+        out.put("workspaceFilesVisible", files);
+        out.put("workspaceDirectoriesVisible", directories);
+        out.put("scanLimit", MAX_REMOTE_ENTRIES);
+        out.put("storageRole", "cold-and-warm-project-model-archive");
+        return out;
+    }
+
+    public JSONObject restoreProjectWorkspace(String projectId,
+                                              File projectWorkspace,
+                                              Progress progress) throws Exception {
+        if (projectId == null || projectId.trim().isEmpty()) {
+            throw new IllegalArgumentException("projectId is required");
+        }
+        if (projectWorkspace == null) throw new IllegalArgumentException("Project workspace destination is required");
+        Uri tree = requireTree();
+        if (progress == null) progress = (p, d) -> {};
+
+        Uri root = rootDocumentUri(tree);
+        Uri projects = findChild(tree, root, "Projects", true);
+        if (projects == null) throw new IllegalStateException("Cloud Projects archive does not exist");
+        Uri projectDir = findChild(tree, projects, safeName(projectId), true);
+        if (projectDir == null) throw new IllegalStateException("Cloud archive for project was not found");
+
+        List<RemoteEntry> remote = new ArrayList<>();
+        collectRemoteFiles(tree, projectDir, "", remote, 0);
+        long totalBytes = 0;
+        for (RemoteEntry entry : remote) totalBytes += Math.max(0, entry.size);
+
+        long copied = 0;
+        int files = 0;
+        progress.onProgress(2, "Restoring project creative workspace from linked cloud folder");
+        for (RemoteEntry entry : remote) {
+            if (Thread.currentThread().isInterrupted()) throw new InterruptedException();
+            if ("project.json".equals(entry.relative)) continue;
+            File target = safeTarget(projectWorkspace, entry.relative);
+            File parent = target.getParentFile();
+            if (parent != null && !parent.exists() && !parent.mkdirs() && !parent.exists()) {
+                throw new IllegalStateException("Could not create restored workspace directory");
+            }
+            File temp = new File(parent, target.getName() + ".cloudtmp");
+            try (InputStream in = new BufferedInputStream(requireInput(entry.uri), BUFFER);
+                 OutputStream out = new BufferedOutputStream(new FileOutputStream(temp), BUFFER)) {
+                copy(in, out);
+            }
+            if (target.exists() && !target.delete()) {
+                temp.delete();
+                throw new IllegalStateException("Could not replace local workspace file");
+            }
+            if (!temp.renameTo(target)) {
+                temp.delete();
+                throw new IllegalStateException("Could not commit restored workspace file");
+            }
+            copied += Math.max(0, entry.size);
+            files++;
+            int p = totalBytes <= 0
+                    ? Math.min(98, 4 + files)
+                    : 4 + (int) Math.min(94, 94d * copied / totalBytes);
+            progress.onProgress(p, "Restored " + files + " item(s) • " + humanBytes(copied));
+        }
+
+        JSONObject out = new JSONObject();
+        out.put("ok", true);
+        out.put("projectId", projectId);
+        out.put("filesRestored", files);
+        out.put("bytesRestored", copied);
+        out.put("scope", "single-user-selected-document-tree");
+        out.put("galleryAccess", false);
+        progress.onProgress(100, "Project creative workspace restored");
+        return out;
+    }
+
+    public JSONObject syncModelPack(String packId,
+                                    File packDirectory,
+                                    Progress progress) throws Exception {
+        if (packId == null || packId.trim().isEmpty()) throw new IllegalArgumentException("Model pack id is required");
+        if (packDirectory == null || !packDirectory.isDirectory()) {
+            throw new IllegalArgumentException("Installed model pack directory is missing");
+        }
+        Uri tree = requireTree();
+        if (progress == null) progress = (p, d) -> {};
+
+        Uri root = rootDocumentUri(tree);
+        Uri modelPacks = ensureDirectory(tree, root, "ModelPacks");
+        Uri packDir = ensureDirectory(tree, modelPacks, safeName(packId));
+
+        List<File> files = new ArrayList<>();
+        collectAllFiles(packDirectory, files);
+        long totalBytes = 0;
+        for (File file : files) totalBytes += Math.max(0, file.length());
+        long copied = 0;
+        int count = 0;
+
+        progress.onProgress(2, "Opening cloud model-pack archive");
+        for (File file : files) {
+            if (Thread.currentThread().isInterrupted()) throw new InterruptedException();
+            String relative = relativePath(packDirectory, file);
+            Uri parent = ensureRelativeDirectories(tree, packDir, parentPath(relative));
+            copyFile(tree, parent, leafName(relative), mimeFor(relative), file);
+            copied += Math.max(0, file.length());
+            count++;
+            int p = totalBytes <= 0
+                    ? Math.min(98, 4 + count)
+                    : 4 + (int) Math.min(94, 94d * copied / totalBytes);
+            progress.onProgress(p, "Archived model pack • " + count + " files • " + humanBytes(copied));
+        }
+
+        JSONObject out = new JSONObject();
+        out.put("ok", true);
+        out.put("id", packId);
+        out.put("filesWritten", count);
+        out.put("bytesWritten", copied);
+        out.put("scope", "single-user-selected-document-tree");
+        out.put("galleryAccess", false);
+        progress.onProgress(100, "Model pack archived to linked cloud folder");
+        return out;
+    }
+
+    public JSONObject restoreModelPack(String packId,
+                                       File destination,
+                                       Progress progress) throws Exception {
+        if (packId == null || packId.trim().isEmpty()) throw new IllegalArgumentException("Model pack id is required");
+        if (destination == null) throw new IllegalArgumentException("Model pack restore destination is required");
+        Uri tree = requireTree();
+        if (progress == null) progress = (p, d) -> {};
+
+        Uri root = rootDocumentUri(tree);
+        Uri modelPacks = findChild(tree, root, "ModelPacks", true);
+        if (modelPacks == null) throw new IllegalStateException("Cloud ModelPacks archive does not exist");
+        Uri packDir = findChild(tree, modelPacks, safeName(packId), true);
+        if (packDir == null) throw new IllegalStateException("Cloud model pack was not found");
+
+        List<RemoteEntry> remote = new ArrayList<>();
+        collectRemoteFiles(tree, packDir, "", remote, 0);
+        long totalBytes = 0;
+        for (RemoteEntry entry : remote) totalBytes += Math.max(0, entry.size);
+
+        long copied = 0;
+        int files = 0;
+        progress.onProgress(2, "Restoring cloud model pack to protected staging");
+        for (RemoteEntry entry : remote) {
+            if (Thread.currentThread().isInterrupted()) throw new InterruptedException();
+            File target = safeTarget(destination, entry.relative);
+            File parent = target.getParentFile();
+            if (parent != null && !parent.exists() && !parent.mkdirs() && !parent.exists()) {
+                throw new IllegalStateException("Could not create model-pack staging directory");
+            }
+            try (InputStream in = new BufferedInputStream(requireInput(entry.uri), BUFFER);
+                 OutputStream out = new BufferedOutputStream(new FileOutputStream(target), BUFFER)) {
+                copy(in, out);
+            }
+            copied += Math.max(0, entry.size);
+            files++;
+            int p = totalBytes <= 0
+                    ? Math.min(98, 4 + files)
+                    : 4 + (int) Math.min(94, 94d * copied / totalBytes);
+            progress.onProgress(p, "Restored model pack • " + files + " files • " + humanBytes(copied));
+        }
+
+        JSONObject out = new JSONObject();
+        out.put("ok", true);
+        out.put("id", packId);
+        out.put("filesRestored", files);
+        out.put("bytesRestored", copied);
+        out.put("path", destination.getAbsolutePath());
+        out.put("galleryAccess", false);
+        progress.onProgress(100, "Cloud model pack restored to protected staging");
+        return out;
+    }
+
+    private JSONObject inventoryArea(Uri tree, Uri root, String name) throws Exception {
+        JSONObject out = new JSONObject();
+        out.put("name", name);
+        Uri area = findChild(tree, root, name, true);
+        if (area == null) {
+            out.put("present", false);
+            out.put("files", 0);
+            out.put("directories", 0);
+            out.put("bytes", 0);
+            return out;
+        }
+        RemoteStats stats = scanRemoteStats(tree, area, 0, new int[]{0});
+        out.put("present", true);
+        out.put("files", stats.files);
+        out.put("directories", stats.directories);
+        out.put("bytes", stats.bytes);
+        out.put("truncated", stats.truncated);
+        return out;
+    }
+
+    private RemoteStats scanRemoteStats(Uri tree, Uri directory, int depth, int[] visited) throws Exception {
+        RemoteStats stats = new RemoteStats();
+        if (depth > MAX_REMOTE_DEPTH) {
+            stats.truncated = true;
+            return stats;
+        }
+        String parentId = DocumentsContract.getDocumentId(directory);
+        Uri children = DocumentsContract.buildChildDocumentsUriUsingTree(tree, parentId);
+        String[] projection = {
+                DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+                DocumentsContract.Document.COLUMN_MIME_TYPE,
+                DocumentsContract.Document.COLUMN_SIZE
+        };
+        try (Cursor cursor = resolver.query(children, projection, null, null, null)) {
+            if (cursor == null) return stats;
+            int idIndex = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_DOCUMENT_ID);
+            int mimeIndex = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_MIME_TYPE);
+            int sizeIndex = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_SIZE);
+            while (cursor.moveToNext()) {
+                if (++visited[0] > MAX_REMOTE_ENTRIES) {
+                    stats.truncated = true;
+                    break;
+                }
+                String id = cursor.getString(idIndex);
+                String mime = mimeIndex >= 0 ? cursor.getString(mimeIndex) : "";
+                Uri child = DocumentsContract.buildDocumentUriUsingTree(tree, id);
+                if (DocumentsContract.Document.MIME_TYPE_DIR.equals(mime)) {
+                    stats.directories++;
+                    RemoteStats nested = scanRemoteStats(tree, child, depth + 1, visited);
+                    stats.add(nested);
+                    if (nested.truncated) stats.truncated = true;
+                } else {
+                    stats.files++;
+                    stats.bytes += sizeIndex >= 0 && !cursor.isNull(sizeIndex)
+                            ? Math.max(0, cursor.getLong(sizeIndex)) : 0;
+                }
+            }
+        }
+        return stats;
+    }
+
+    private void collectRemoteFiles(Uri tree,
+                                    Uri directory,
+                                    String prefix,
+                                    List<RemoteEntry> out,
+                                    int depth) throws Exception {
+        if (depth > MAX_REMOTE_DEPTH) throw new IllegalStateException("Cloud archive nesting is too deep");
+        if (out.size() >= MAX_REMOTE_ENTRIES) throw new IllegalStateException("Cloud archive contains too many files");
+
+        String parentId = DocumentsContract.getDocumentId(directory);
+        Uri children = DocumentsContract.buildChildDocumentsUriUsingTree(tree, parentId);
+        String[] projection = {
+                DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+                DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+                DocumentsContract.Document.COLUMN_MIME_TYPE,
+                DocumentsContract.Document.COLUMN_SIZE
+        };
+        try (Cursor cursor = resolver.query(children, projection, null, null, null)) {
+            if (cursor == null) return;
+            int idIndex = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_DOCUMENT_ID);
+            int nameIndex = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_DISPLAY_NAME);
+            int mimeIndex = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_MIME_TYPE);
+            int sizeIndex = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_SIZE);
+            while (cursor.moveToNext()) {
+                String id = cursor.getString(idIndex);
+                String name = safeName(nameIndex >= 0 ? cursor.getString(nameIndex) : "item");
+                String mime = mimeIndex >= 0 ? cursor.getString(mimeIndex) : "";
+                Uri child = DocumentsContract.buildDocumentUriUsingTree(tree, id);
+                String relative = prefix.isEmpty() ? name : prefix + "/" + name;
+                if (DocumentsContract.Document.MIME_TYPE_DIR.equals(mime)) {
+                    collectRemoteFiles(tree, child, relative, out, depth + 1);
+                } else {
+                    long size = sizeIndex >= 0 && !cursor.isNull(sizeIndex)
+                            ? Math.max(0, cursor.getLong(sizeIndex)) : 0;
+                    out.add(new RemoteEntry(child, relative, size));
+                    if (out.size() > MAX_REMOTE_ENTRIES) {
+                        throw new IllegalStateException("Cloud archive contains too many files");
+                    }
+                }
+            }
+        }
+    }
+
+    private void collectAllFiles(File root, List<File> out) {
+        File[] children = root.listFiles();
+        if (children == null) return;
+        for (File child : children) {
+            if (child.isDirectory()) collectAllFiles(child, out);
+            else if (child.isFile()) out.add(child);
+        }
+    }
+
+    private InputStream requireInput(Uri uri) throws Exception {
+        InputStream in = resolver.openInputStream(uri);
+        if (in == null) throw new IllegalStateException("Could not open cloud input stream");
+        return in;
+    }
+
+    private static File safeTarget(File root, String relative) throws Exception {
+        if (relative == null || relative.trim().isEmpty()) throw new IllegalArgumentException("Cloud archive path is empty");
+        File target = new File(root, relative.replace('/', File.separatorChar));
+        String rootPath = root.getCanonicalPath() + File.separator;
+        String targetPath = target.getCanonicalPath();
+        if (!targetPath.startsWith(rootPath)) {
+            throw new IllegalArgumentException("Cloud archive attempted to escape local workspace");
+        }
+        return target;
+    }
+
+    private static final class RemoteEntry {
+        final Uri uri;
+        final String relative;
+        final long size;
+
+        RemoteEntry(Uri uri, String relative, long size) {
+            this.uri = uri;
+            this.relative = relative;
+            this.size = size;
+        }
+    }
+
+    private static final class RemoteStats {
+        long bytes;
+        int files;
+        int directories;
+        boolean truncated;
+
+        void add(RemoteStats other) {
+            if (other == null) return;
+            bytes += other.bytes;
+            files += other.files;
+            directories += other.directories;
+            truncated |= other.truncated;
+        }
     }
 
     private Uri requireTree() {
