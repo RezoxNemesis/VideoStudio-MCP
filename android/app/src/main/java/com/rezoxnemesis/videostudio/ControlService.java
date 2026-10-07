@@ -944,8 +944,9 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         String title = prompt.replaceAll("\\s+", " ").trim();
         if (title.length() > 36) title = title.substring(0, 36).trim() + "…";
         boolean recovering = !p.optString("_recoveryPlanId", "").isEmpty();
-        ProjectStore.Project project = recovering ? store.get(p.optString("projectId", "")) : null;
-        if (project == null) project = store.create("AI • " + title);
+        ProjectStore.Project resolvedProject = recovering ? store.get(p.optString("projectId", "")) : null;
+        if (resolvedProject == null) resolvedProject = store.create("AI • " + title);
+        final ProjectStore.Project project = resolvedProject;
         project.sourcePrompt = prompt;
         store.save(project);
 
