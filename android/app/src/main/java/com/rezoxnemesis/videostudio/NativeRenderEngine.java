@@ -125,10 +125,14 @@ public final class NativeRenderEngine {
                                 info.put("aspect", aspect);
                                 info.put("quality", quality);
                                 info.put("engine", layeredAnimation
-                                        ? "VideoStudio v3.1 Media3 layered parallax"
+                                        ? (hasArticulatedAnimation(project)
+                                                ? "VideoStudio v3.2 Media3 articulated portrait"
+                                                : "VideoStudio v3.1 Media3 layered parallax")
                                         : "Media3 Transformer 1.11.1");
                                 info.put("layeredAnimation", layeredAnimation);
-                                info.put("animationMode", layeredAnimation ? "subject-aware-2.5d" : "standard");
+                                info.put("animationMode", layeredAnimation
+                                        ? (hasArticulatedAnimation(project) ? "articulated-subject-2.5d" : "subject-aware-2.5d")
+                                        : "standard");
                             } catch (Exception ignored) {}
                             listener.onProgress(100, "Export complete");
                             listener.onCompleted(outputFile, info);
@@ -174,25 +178,60 @@ public final class NativeRenderEngine {
     }
 
     private Composition buildLayeredAnimationComposition(ProjectStore.Project project, String aspect, String quality) {
-        List<EditedMediaItem> foreground = new ArrayList<>();
-        List<EditedMediaItem> background = new ArrayList<>();
+        boolean articulated = hasArticulatedAnimation(project);
+        if (articulated) {
+            List<EditedMediaItem> head = new ArrayList<>();
+            List<EditedMediaItem> torso = new ArrayList<>();
+            List<EditedMediaItem> lower = new ArrayList<>();
+            List<EditedMediaItem> background = new ArrayList<>();
 
-        for (ProjectStore.Clip clip : project.clips) {
-            JSONObject fx = clip.effects == null ? new JSONObject() : clip.effects;
-            String fgUri = fx.optString("foregroundUri", "");
-            String bgUri = fx.optString("backgroundUri", "");
-            JSONObject spec = fx.optJSONObject("animationSpec");
-            long durationMs = Math.max(700, clip.outputDurationMs());
+            for (ProjectStore.Clip clip : project.clips) {
+                JSONObject fx = clip.effects == null ? new JSONObject() : clip.effects;
+                JSONObject spec = fx.optJSONObject("animationSpec");
+                long durationMs = Math.max(700, clip.outputDurationMs());
 
-            // Media3's compositor treats the first sequence as the overlay in
-            // its moving-overlay examples, so keep the alpha foreground first.
-            foreground.add(buildLayerItem(fgUri, clip, aspect, quality, durationMs, spec, "foreground"));
-            background.add(buildLayerItem(bgUri, clip, aspect, quality, durationMs, spec, "background"));
+                head.add(buildLayerItem(fx.optString("headUri"), clip, aspect, quality, durationMs, spec, "head"));
+                torso.add(buildLayerItem(fx.optString("torsoUri"), clip, aspect, quality, durationMs, spec, "torso"));
+                lower.add(buildLayerItem(fx.optString("lowerUri"), clip, aspect, quality, durationMs, spec, "lower"));
+                background.add(buildLayerItem(fx.optString("backgroundUri"), clip, aspect, quality, durationMs, spec, "background"));
+            }
+
+            // Earlier sequences are composited above later sequences. The
+            // feathered bands add back up to the original subject alpha while
+            // their independent transforms create articulated motion.
+            return new Composition.Builder(
+                    EditedMediaItemSequence.withVideoFrom(head),
+                    EditedMediaItemSequence.withVideoFrom(torso),
+                    EditedMediaItemSequence.withVideoFrom(lower),
+                    EditedMediaItemSequence.withVideoFrom(background)
+            ).build();
         }
 
-        EditedMediaItemSequence foregroundSequence = EditedMediaItemSequence.withVideoFrom(foreground);
-        EditedMediaItemSequence backgroundSequence = EditedMediaItemSequence.withVideoFrom(background);
-        return new Composition.Builder(foregroundSequence, backgroundSequence).build();
+        List<EditedMediaItem> foreground = new ArrayList<>();
+        List<EditedMediaItem> background = new ArrayList<>();
+        for (ProjectStore.Clip clip : project.clips) {
+            JSONObject fx = clip.effects == null ? new JSONObject() : clip.effects;
+            JSONObject spec = fx.optJSONObject("animationSpec");
+            long durationMs = Math.max(700, clip.outputDurationMs());
+            foreground.add(buildLayerItem(fx.optString("foregroundUri"), clip, aspect, quality, durationMs, spec, "foreground"));
+            background.add(buildLayerItem(fx.optString("backgroundUri"), clip, aspect, quality, durationMs, spec, "background"));
+        }
+        return new Composition.Builder(
+                EditedMediaItemSequence.withVideoFrom(foreground),
+                EditedMediaItemSequence.withVideoFrom(background)
+        ).build();
+    }
+
+    private boolean hasArticulatedAnimation(ProjectStore.Project project) {
+        if (project == null || project.clips.isEmpty()) return false;
+        for (ProjectStore.Clip clip : project.clips) {
+            JSONObject fx = clip.effects == null ? new JSONObject() : clip.effects;
+            if (fx.optString("headUri", "").isEmpty()
+                    || fx.optString("torsoUri", "").isEmpty()
+                    || fx.optString("lowerUri", "").isEmpty()
+                    || fx.optString("backgroundUri", "").isEmpty()) return false;
+        }
+        return true;
     }
 
     private EditedMediaItem buildLayerItem(String uri,
@@ -251,10 +290,10 @@ public final class NativeRenderEngine {
                 layerRole
         ));
 
-        // Atmosphere is drawn only once, on the alpha foreground sequence,
-        // after its spatial transform. That keeps mist/rain/light in screen
-        // space while the subject and background move independently.
-        if ("foreground".equals(layerRole) && animationSpec != null) {
+        // Atmosphere is drawn only once on the topmost subject sequence.
+        // Articulated renders use the head layer; older layered projects use
+        // the single foreground layer.
+        if (("head".equals(layerRole) || "foreground".equals(layerRole)) && animationSpec != null) {
             String environment = animationSpec.optString("environmentMotion", "ambient_drift");
             double atmosphere = animationSpec.optDouble("atmosphereIntensity", .42);
             effects.add(new OverlayEffect(Collections.singletonList(

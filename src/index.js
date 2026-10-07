@@ -19,13 +19,20 @@ const bearer = request => {
 };
 const appActionAllowed = (mode,action) => {
   const a=String(action||"").toLowerCase();
-  // Hard privacy boundary: no MCP permission mode may browse or enumerate Gallery/library media.
+
+  // Permanent privacy wall. Full autonomy never means Gallery enumeration.
   if(a.includes("gallery")||a.includes("media_library")||a.includes("photo_library")) return false;
-  if(["ping","get_state","activity_note"].includes(a)) return true;
-  if(mode==="everything") return true;
-  if(mode==="all_tools") return !["import_url","import_attachment","import_chat_file","delete_project"].includes(a);
-  if(mode==="one_file") return ["apply_tool","preview_project","analyse_media","export_project","cancel_job"].includes(a);
-  return false;
+
+  // One-file mode is an explicit user lock, not the normal operating mode.
+  if(mode==="one_file"){
+    return ["ping","get_state","self_test","job_status","activity_note","apply_tool","preview_project","analyse_media","export_project","cancel_job","cancel_all_jobs","stop_all"].includes(a);
+  }
+
+  // "all_tools" remains a backward-compatible alias for Full Autonomous.
+  // Every ordinary VideoStudio-native action is available without permission
+  // friction; safety remains enforced by device privacy, network and workload
+  // boundaries instead of capability gating.
+  return true;
 };
 
 export class VideoStudioState extends DurableObject {
@@ -86,7 +93,7 @@ export class VideoStudioState extends DurableObject {
     if(bound&&bound!==deviceId) throw new Error("Owner key is already bound to another device");
     const dk="app-device:"+deviceId, old=(await this.ctx.storage.get(dk))||{};
     if(old.ownerHash&&old.ownerHash!==hash) throw new Error("This native device is already bound to its owner credential");
-    const mode=["one_file","all_tools","everything"].includes(meta.permissionMode)?meta.permissionMode:(old.permissionMode||"all_tools");
+    const mode=["one_file","all_tools","everything"].includes(meta.permissionMode)?meta.permissionMode:(old.permissionMode||"everything");
     const d={
       deviceId,
       name:clean(meta.name||old.name||"VideoStudio Android",80),
@@ -96,6 +103,8 @@ export class VideoStudioState extends DurableObject {
       nativeAgent:clean(meta.nativeAgent||old.nativeAgent||"",80),
       directAttachmentIngest:!!meta.directAttachmentIngest,
       localEngineOwnsProjects:meta.localEngineOwnsProjects!==false,
+      portraitAnimationEngine:clean(meta.portraitAnimationEngine||old.portraitAnimationEngine||"",80),
+      onDevicePortraitAi:!!meta.onDevicePortraitAi,
       permissionMode:mode,
       projects:Array.isArray(meta.projects)?meta.projects.slice(0,100):(old.projects||[]),
       controlPaused:!!meta.controlPaused,
@@ -298,14 +307,16 @@ export class VideoStudioState extends DurableObject {
       lastCommand:list[list.length-1]||null,
       projectCount:Array.isArray(d.projects)?d.projects.length:0,
       galleryAccess:false,
-      directAttachmentIngest:true
+      directAttachmentIngest:true,
+      portraitAnimationEngine:d.portraitAnimationEngine||"",
+      onDevicePortraitAi:!!d.onDevicePortraitAi
     };
   }
 
   async appCreateHandoff(ownerKey,sourceUrl,meta={}){
     const d=await this.appResolve(ownerKey);
     if(!d) throw new Error("Private App MCP credential rejected");
-    if(d.permissionMode!=="everything") throw new Error("Chat-file import requires Allow everything mode");
+    if(d.permissionMode==="one_file") throw new Error("Chat-file import is unavailable while One File Lock is active");
     let parsed;
     try{ parsed=new URL(String(sourceUrl||"")); }catch{ throw new Error("Invalid chat attachment URL"); }
     if(parsed.protocol!=="https:") throw new Error("Chat attachment handoff requires HTTPS");
@@ -328,7 +339,7 @@ export class VideoStudioState extends DurableObject {
   async appCreateCachedHandoff(ownerKey,cacheUrl,meta={}){
     const d=await this.appResolve(ownerKey);
     if(!d) throw new Error("Private App MCP credential rejected");
-    if(d.permissionMode!=="everything") throw new Error("Chat-file import requires Allow everything mode");
+    if(d.permissionMode==="one_file") throw new Error("Chat-file import is unavailable while One File Lock is active");
     if(!cacheUrl||!String(cacheUrl).startsWith("https://")) throw new Error("Invalid private upload cache URL");
     const id=crypto.randomUUID();
     const record={
@@ -519,7 +530,7 @@ function serverFor(env){
       return out({queued:true,commandId:c.id,sequence:c.seq,nativeApp:!!native,note:"Structured edit plan queued for local execution."});
     }catch(e){ return out({queued:false,error:e.message}); }
   });
-  s.registerTool("import_chat_file",{description:"Securely stream a ChatGPT conversation attachment into the private native VideoStudio Android app. Pass the native private owner credential as deviceId. Requires Allow everything mode.",inputSchema:{deviceId:z.string().min(32),sourceUrl:z.string().url(),name:z.string().min(1).max(180),mime:z.string().max(120).optional(),size:z.number().nonnegative().optional(),projectId:z.string().min(8).optional()}},async({deviceId,sourceUrl,name,mime,size,projectId})=>{
+  s.registerTool("import_chat_file",{description:"Securely stream a ChatGPT conversation attachment into the private native VideoStudio Android app. Pass the native private owner credential as deviceId. Available in Full Autonomous mode.",inputSchema:{deviceId:z.string().min(32),sourceUrl:z.string().url(),name:z.string().min(1).max(180),mime:z.string().max(120).optional(),size:z.number().nonnegative().optional(),projectId:z.string().min(8).optional()}},async({deviceId,sourceUrl,name,mime,size,projectId})=>{
     try{
       const native=await st.appResolve(deviceId);
       if(!native) throw new Error("Native VideoStudio app not connected");
@@ -540,7 +551,7 @@ function serverForApp(env,ownerKey,protocolVersion=1){
   const isV3=Number(protocolVersion)===3;
   const s=new McpServer({
     name:isV3?"VideoStudio-App-MCP-v3":"VideoStudio-App-MCP",
-    version:isV3?"3.1.0":"1.1.2"
+    version:isV3?"3.2.0":"1.1.2"
   }), st=state(env);
   const enqueueCommand=(action,parameters={})=>isV3
     ? st.appEnqueueV3(ownerKey,action,parameters)
@@ -576,12 +587,13 @@ function serverForApp(env,ownerKey,protocolVersion=1){
   s.registerTool("app_status",{description:isV3?"Check the VideoStudio v3 Native Agent connection, protocol version, permission mode, projects and pending native work. Gallery access is always false.":"Check the private native VideoStudio Android connection, permission mode, projects, control-pause state and pending work. Gallery access is always false.",inputSchema:{}},async()=>out(await readStatus()));
 
   s.registerTool("app_capabilities",{description:isV3?"Read VideoStudio v3 Native Agent capabilities and architecture guarantees.":"Read the native v1.1 editing, AI, render and privacy capabilities available to ChatGPT.",inputSchema:{}},async()=>out({
-    version:isV3?"3.1.0":"1.1.2",
+    version:isV3?"3.2.0":"1.1.2",
     protocolVersion:isV3?3:1,
     primary:"Android native app",
     architecture:isV3?"native-first; cloud path is signalling only":"native app with private MCP relay",
     privacy:{galleryAccess:false,boundary:"No MCP tool may list, browse or enumerate Gallery/media-library items. Only user-selected Android picker files, VideoStudio-owned files and explicit ChatGPT attachments are usable."},
-    permissions:["one_file","all_tools","everything"],
+    permissions:["everything","one_file"],
+    permissionModel:{default:"everything",legacyAlias:"all_tools",note:"Full Autonomous grants every VideoStudio-native action. One File Lock is the only restrictive mode. Gallery enumeration is always blocked."},
     connection:isV3
       ?["MCP v3 endpoint","Android Keystore owner key","device binding","isolated v3 command queue","leased commands","durable command idempotency journal","persistent foreground Native Agent","secure reconnect backoff","live ChatGPT activity feed","STOP CHATGPT CONTROL"]
       :["Android Keystore owner key","device binding","persistent foreground control service","leased commands","crash-safe completion checkpoints","secure reconnect backoff","notification pause/cancel controls","live ChatGPT activity feed","STOP CHATGPT CONTROL"],
@@ -590,7 +602,7 @@ function serverForApp(env,ownerKey,protocolVersion=1){
       :["VideoStudio-owned media","explicit HTTPS import","manual Android picker","private handoff"],
     editing:["trim","split","0.25x-4x speed","slow motion","volume","titles","fonts","text animations","scale","rotate","blur","colour/HSL","motion presets","transition presets","reframe model","mask model","green-screen model","audio-duck model"],
     ai:["native visual analysis","scene-change sampling","bundled person segmentation","bundled face mesh","subject-aware image animation","2.5D parallax","autonomous edit plans","creator presets","prompt-to-video","multi-variant planning","short-form recut planning","render/export orchestration"],
-    animation:isV3?["AI subject/background layer extraction","face-aware camera anchoring","multi-keyframe easing","foreground breathing/sway","independent depth motion","story-shot reordering","layered Media3 composition"]:[],
+    animation:isV3?["AI subject/background layer extraction","feathered head/hair torso and lower-drape layers","face-aware camera anchoring","multi-keyframe easing","head drift/nod","torso breathing","lower-drape sway","independent depth motion","story-shot reordering","procedural atmosphere","layered Media3 composition"]:[],
     export:["Media3 native MP4","H.264","AAC","720p","1080p","9:16","16:9","1:1","4:5","Movies/VideoStudio"],
     stability:isV3
       ?["local projects survive signalling outages","bounded light/heavy lanes","one process-wide heavy export at a time","RAM guard","thermal guard","persistent job checkpoints","duplicate-command prevention","cancel single/all jobs"]
@@ -611,7 +623,7 @@ function serverForApp(env,ownerKey,protocolVersion=1){
   s.registerTool("app_activity_note",{description:"Post a live progress message into VideoStudio's ChatGPT Activity screen. Use this to mirror autonomous-work updates such as planning, analysing, applying edits, rendering or retrying.",inputSchema:{title:z.string().min(1).max(120),message:z.string().min(1).max(500),status:z.enum(["info","queued","running","success","failed"]).optional(),progress:z.number().int().min(0).max(100).optional(),projectId:z.string().min(8).optional()}},async args=>queue("activity_note",args));
   s.registerTool("app_create_project",{description:"Create a native VideoStudio project.",inputSchema:{name:z.string().min(1).max(120)}},async({name})=>queue("create_project",{name}));
   s.registerTool("app_select_project",{description:"Select an existing native VideoStudio project by ID.",inputSchema:{projectId:z.string().min(8)}},async({projectId})=>queue("select_project",{projectId}));
-  s.registerTool("app_delete_project",{description:"Delete a VideoStudio-owned project. Requires Allow everything except Gallery mode.",inputSchema:{projectId:z.string().min(8)}},async({projectId})=>queue("delete_project",{projectId}));
+  s.registerTool("app_delete_project",{description:"Delete a VideoStudio-owned project. Available in Full Autonomous mode; Gallery enumeration remains blocked.",inputSchema:{projectId:z.string().min(8)}},async({projectId})=>queue("delete_project",{projectId}));
 
   s.registerTool("app_analyse_media",{description:"Sample a local imported video on-device and return a contact sheet plus scene-change candidates to ChatGPT. Full video stays on the phone.",inputSchema:{assetId:z.string().min(8).optional(),frames:z.number().int().min(6).max(16).optional(),start:z.number().min(0).optional(),end:z.number().positive().optional()}},async({assetId,frames,start,end})=>{
     const p={frames:frames||12}; if(assetId)p.assetId=assetId; if(start!=null)p.start=start; if(end!=null)p.end=end;
@@ -653,7 +665,7 @@ function serverForApp(env,ownerKey,protocolVersion=1){
 
   s.registerTool("app_preview_project",{description:"Preview the active timeline locally on the Android device.",inputSchema:{}},async()=>queue("preview_project",{}));
 
-  s.registerTool("app_import_from_url",{description:"Import an explicit HTTPS media URL into VideoStudio without browsing Gallery. Requires Allow everything except Gallery mode.",inputSchema:{url:z.string().url(),name:z.string().max(160).optional(),projectId:z.string().min(8).optional()}},async({url,name,projectId})=>queue("import_url",{url,name:name||"ChatGPT import",projectId:projectId||""}));
+  s.registerTool("app_import_from_url",{description:"Import an explicit HTTPS media URL into VideoStudio without browsing Gallery. Available in Full Autonomous mode; Gallery enumeration remains blocked.",inputSchema:{url:z.string().url(),name:z.string().max(160).optional(),projectId:z.string().min(8).optional()}},async({url,name,projectId})=>queue("import_url",{url,name:name||"ChatGPT import",projectId:projectId||""}));
 
   if(isV3) s.registerTool("app_import_attachment",{
     description:"Primary VideoStudio v3 ChatGPT attachment path. Pass a file explicitly attached/shared by the user. ChatGPT provides an authorised temporary file URL; the Android app downloads it directly into app-private storage. The signalling Worker never proxies or stores the media bytes.",
@@ -675,7 +687,7 @@ function serverForApp(env,ownerKey,protocolVersion=1){
     projectId:projectId||""
   }));
 
-  s.registerTool("app_import_chat_file",{description:"Securely stream a file attached in this ChatGPT conversation into VideoStudio. Short-lived relay metadata only; media is not permanently stored by the Worker. Requires Allow everything except Gallery.",inputSchema:{sourceUrl:z.string().url(),name:z.string().min(1).max(180),mime:z.string().max(120).optional(),size:z.number().nonnegative().optional(),projectId:z.string().min(8).optional()}},async({sourceUrl,name,mime,size,projectId})=>{
+  s.registerTool("app_import_chat_file",{description:"Securely stream a file attached in this ChatGPT conversation into VideoStudio. Short-lived relay metadata only; media is not permanently stored by the Worker. Available in Full Autonomous mode; Gallery enumeration remains blocked.",inputSchema:{sourceUrl:z.string().url(),name:z.string().min(1).max(180),mime:z.string().max(120).optional(),size:z.number().nonnegative().optional(),projectId:z.string().min(8).optional()}},async({sourceUrl,name,mime,size,projectId})=>{
     try{
       const handoff=await st.appCreateHandoff(ownerKey,sourceUrl,{name,mime,size});
       const c=await enqueueCommand("import_chat_file",{handoffId:handoff.id,name:handoff.name,mime:handoff.mime,size:handoff.size,projectId:projectId||""});
@@ -772,7 +784,7 @@ async function api(request,env){
       const token=bearer(request), deviceId=u.searchParams.get("deviceId")||"";
       if(!(await st.appAuth(deviceId,token))) return reply({error:"Native app authorization failed"},401);
       const status=await st.appStatus(token);
-      if(!status.connected||status.device.permissionMode!=="everything") return reply({error:"Allow everything mode is required"},403);
+      if(!status.connected||status.device.permissionMode==="one_file") return reply({error:"Full Autonomous mode is required while One File Lock is active"},403);
 
       const declared=Number(request.headers.get("content-length")||0);
       const max=250*1024*1024;

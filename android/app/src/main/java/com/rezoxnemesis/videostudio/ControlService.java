@@ -45,6 +45,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     private static final String KEY_FILE = "allowed_asset_id";
     private static final String KEY_SERVICE_ONLINE = "control_service_online";
     private static final String KEY_SERVICE_DETAIL = "control_service_detail";
+    private static final String KEY_AUTONOMY_MIGRATED = "autonomy_everything_v32_migrated";
     private static final long MAX_REMOTE_IMPORT_BYTES = 350L * 1024L * 1024L;
     private static final int MAX_REMOTE_REDIRECTS = 5;
 
@@ -63,6 +64,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     public void onCreate() {
         super.onCreate();
         prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
+        migrateAutonomyDefaultOnce();
         commandJournal = new CommandJournal(this);
         store = new ProjectStore(this);
         jobs = new JobManager(this);
@@ -621,7 +623,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         result.put("render", render);
         result.put("aspect", aspect);
         result.put("quality", quality);
-        result.put("engine", "VideoStudio v3.1 portrait animation");
+        result.put("engine", "VideoStudio v3.2 articulated portrait animation");
         return result;
     }
 
@@ -1128,7 +1130,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             out.put("nativeAgent", "videostudio-v3");
             out.put("directAttachmentIngest", true);
             out.put("localEngineOwnsProjects", true);
-            out.put("portraitAnimationEngine", "v3.1-layered-parallax");
+            out.put("portraitAnimationEngine", "v3.2-articulated-parallax");
             out.put("onDevicePortraitAi", true);
             out.put("nativeApp", true);
             out.put("backgroundControl", true);
@@ -1169,16 +1171,12 @@ public final class ControlService extends Service implements AppProtocol.Callbac
 
     private boolean isAllowed(String action, JSONObject parameters) {
         String lower = action == null ? "" : action.toLowerCase(Locale.US);
+
+        // This is an architectural privacy wall, not a user permission tier.
+        // Even Full Autonomous cannot enumerate or browse the phone Gallery.
         if (lower.contains("gallery") || lower.contains("media_library") || lower.contains("photo_library")) return false;
-        if ("ping".equals(action) || "get_state".equals(action) || "self_test".equals(action) || "job_status".equals(action) || "activity_note".equals(action) || "cancel_job".equals(action) || "cancel_all_jobs".equals(action) || "stop_all".equals(action)) return true;
+
         String mode = permissionMode();
-        if ("everything".equals(mode)) return true;
-        if ("all_tools".equals(mode)) {
-            return !"import_url".equals(action)
-                    && !"import_attachment".equals(action)
-                    && !"import_chat_file".equals(action)
-                    && !"delete_project".equals(action);
-        }
         if ("one_file".equals(mode)) {
             String allowed = prefs.getString(KEY_FILE, "");
             if (allowed.isEmpty()) return false;
@@ -1187,9 +1185,23 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 int index = parameters.optInt("clipIndex", -1);
                 return index >= 0 && index < project.clips.size() && allowed.equals(project.clips.get(index).assetId);
             }
-            return "analyse_media".equals(action) || "export_project".equals(action) || "preview_project".equals(action);
+            return "ping".equals(action)
+                    || "get_state".equals(action)
+                    || "self_test".equals(action)
+                    || "job_status".equals(action)
+                    || "activity_note".equals(action)
+                    || "analyse_media".equals(action)
+                    || "preview_project".equals(action)
+                    || "export_project".equals(action)
+                    || "cancel_job".equals(action)
+                    || "cancel_all_jobs".equals(action)
+                    || "stop_all".equals(action);
         }
-        return false;
+
+        // "all_tools" is accepted as a legacy alias, but from v3.2 onward it
+        // means the same thing as Full Autonomous. No routine VideoStudio
+        // operation is permission-gated in the autonomous mode.
+        return true;
     }
 
     private int cancelAllNativeWork() {
@@ -1309,8 +1321,21 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         return safe;
     }
 
+    private void migrateAutonomyDefaultOnce() {
+        if (prefs.getBoolean(KEY_AUTONOMY_MIGRATED, false)) return;
+        prefs.edit()
+                .putString(KEY_MODE, "everything")
+                .putBoolean(KEY_AUTONOMY_MIGRATED, true)
+                .apply();
+    }
+
     private String permissionMode() {
-        return prefs.getString(KEY_MODE, "all_tools");
+        String raw = prefs.getString(KEY_MODE, "everything");
+        if ("one_file".equals(raw)) return "one_file";
+        if (!"everything".equals(raw)) {
+            prefs.edit().putString(KEY_MODE, "everything").apply();
+        }
+        return "everything";
     }
 
     private void syncProtocolState() {

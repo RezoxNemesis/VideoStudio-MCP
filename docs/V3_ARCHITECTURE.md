@@ -4,8 +4,8 @@
 
 VideoStudio v3 is a protocol and architecture generation, not a cosmetic version label.
 
-- Android app: `3.1.0`
-- Android versionCode: `310`
+- Android app: `3.2.0`
+- Android versionCode: `320`
 - Native agent protocol: `3`
 - Canonical private MCP endpoint: `/app-mcp-v3/<device-owned-owner-key>`
 - Native control API namespace: `/api/v3/app/*`
@@ -143,21 +143,43 @@ The on-device self-test checks:
 
 Autonomous work should run `app_status`, then `app_self_test`, before a significant editing session.
 
-## v3.1 portrait animation module
+## Autonomous control policy
 
-v3.1 extends the local creator engine without changing the connection protocol.
+v3.2 treats autonomy as the default operating mode rather than an opt-in capability.
+
+- default permission mode: `everything`
+- one-time upgrade migration promotes the old default to `everything`
+- Gallery/media-library enumeration is rejected in both Worker and Android policy regardless of permission mode
+- status, self-test and cancellation commands remain available independent of editing restrictions
+- user-selected `all_tools` and `one_file` restrictions persist after the migration
+- local **STOP CHATGPT CONTROL** overrides all remote commands
+
+This keeps the agent capable of completing end-to-end work without repeated prompts while preserving the privacy boundary that MCP never gets a Gallery browser.
+
+## Autonomy and permission contract
+
+MCP v3 uses **Full Autonomous** as the normal operating state. It grants all VideoStudio-native operations so autonomous workflows do not stall on capability prompts. The legacy `all_tools` value is treated as the same state.
+
+The only restrictive state is **One File Lock**, explicitly selected by the user. It narrows editing/analysis/export to one authorised asset while preserving status, cancellation and safety operations.
+
+This autonomy contract is separate from hard safety/privacy boundaries. Gallery enumeration is always denied, network ingest is validated and bounded, heavy work is governed by thermal/RAM checks, and STOP CHATGPT CONTROL remains local and immediate.
+
+## v3.2 articulated portrait animation module
+
+v3.2 extends the local creator engine without changing the connection protocol.
 
 - MCP remains protocol `3`
 - canonical endpoint remains `/app-mcp-v3/<device-owned-owner-key>`
 - bundled person segmentation and face mesh execute on-device
 - generated subject/background plates live in app-private storage
-- motion plans are persisted on the native timeline
-- Media3 composites independent foreground/background video sequences
+- subject plates are additionally split into feathered head/hair, torso and lower-drape/body layers
+- motion plans persist independent articulated motion parameters on the native timeline
+- Media3 composites head, torso, lower-body/drape and background sequences independently
 - procedural atmosphere is rendered per-frame locally
 - long animation preparation/rendering runs through the same thermal/RAM guarded heavy lane
 - `job_status` exposes durable progress through MCP
 
-The module deliberately distinguishes layered physical-looking motion from future full generative deformation. v3.1 does not pretend to synthesize new facial performances or arbitrary cloth/hair topology.
+The module deliberately distinguishes layered physical-looking motion from future full generative deformation. v3.2 does not pretend to synthesize new facial performances or arbitrary cloth/hair topology.
 
 ## Editing and rendering
 

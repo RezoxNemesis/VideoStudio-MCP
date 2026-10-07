@@ -1,11 +1,11 @@
-# VideoStudio v3.1
+# VideoStudio v3.2
 
 VideoStudio is a native-first Android video editor controlled from ChatGPT through a private MCP connection.
 
 ## v3 identity
 
-- Android app: **3.1.0**
-- Android versionCode: **310**
+- Android app: **3.2.0**
+- Android versionCode: **320**
 - Native protocol: **MCP v3**
 - Canonical private endpoint: `/app-mcp-v3/<device-owned-key>`
 - Native control API: `/api/v3/app/*`
@@ -29,25 +29,55 @@ v3 stores project/timeline data in app-private SQLite:
 
 Existing v1/v1.1 projects are migrated automatically on first v3 launch.
 
+## Autonomous permission default
+
+VideoStudio 3.2 defaults to **Allow everything except Gallery** so the Native Agent can finish work without repeated permission interruptions. On upgrade, older installs using the previous default are migrated once to this mode.
+
+This mode allows ChatGPT to create/manage VideoStudio projects, import files explicitly shared to ChatGPT, analyse media, apply edits and animation, render/export, inspect job state, retry work, and manage VideoStudio-owned project media.
+
+Two boundaries remain non-negotiable:
+
+- MCP cannot list, browse or enumerate the Android Gallery/media library.
+- **STOP CHATGPT CONTROL** immediately pauses autonomous control and cancels active native work.
+
+The narrower `all_tools` and `one_file` modes remain available as deliberate user-selected restrictions. VideoStudio does not automatically switch back to full autonomy after the one-time v3.2 migration if the user later chooses one of those modes.
+
 ## Native still-image animation
 
-VideoStudio 3.1 adds a zero-paid-service portrait animation engine while keeping the connection protocol on **MCP v3**.
+VideoStudio 3.2 strengthens the zero-paid-service portrait animation engine while keeping the connection protocol on **MCP v3**.
 
 The Android app bundles on-device ML for person segmentation and face mesh. For imported still images it can:
 
 - extract a transparent subject layer
+- split that subject into feathered head/hair, torso and lower-drape/body layers
 - reconstruct the hidden background region while preserving visible environment detail
 - anchor framing around the detected face/subject
 - generate varied multi-keyframe cinematic camera paths
 - animate foreground and background at independent depths for 2.5D parallax
-- add restrained whole-subject breathing/sway micro-motion
+- add independent head drift/nod, torso breathing and lower-drape/body sway
 - reorder wide/medium/close shots for visual rhythm
 - add procedural water glints, mist, rain, wind particles or light breathing
 - render the layers as a real local MP4 through Media3
 
 The autonomous MCP v3 tools include `app_animate_images` and `app_job_status`.
 
-This is genuine layered motion/compositing, but it does **not** claim full non-rigid generative deformation of facial expressions, hair strands or cloth folds. Those can be added later through optional local model modules without changing the editor/MCP architecture.
+This is genuine articulated layered motion/compositing, but it does **not** claim full generative facial-expression synthesis or per-strand/per-fold non-rigid deformation. Those can be added later through optional local model modules without changing the editor/MCP architecture.
+
+## Autonomy model
+
+VideoStudio 3.2 defaults to **Full Autonomous** control. ChatGPT can use every VideoStudio-native operation without repeated permission prompts: explicit attachment/URL imports, project creation and deletion, analysis, editing, animation, rendering, inspection, retries and cleanup.
+
+There is one optional restrictive mode: **One File Lock**, which the user can enable manually when they want ChatGPT limited to one authorised asset.
+
+Full Autonomous does not weaken the permanent safety boundaries:
+
+- MCP cannot list, browse or enumerate the Android Gallery/media library
+- remote imports remain HTTPS-only and reject private/local network destinations
+- remote imports are byte-limited and partial failures are cleaned up
+- heavy rendering remains RAM/thermal guarded
+- STOP CHATGPT CONTROL remains immediately available
+
+The former `all_tools` value is accepted only as a backward-compatible alias and is normalised to Full Autonomous.
 
 ## ChatGPT attachment ingest
 

@@ -106,7 +106,13 @@ public final class MotionMatrixEffect implements MatrixTransformation {
     private void applyLayerDepth(Motion m) {
         double parallax = clamp01(animationSpec.optDouble("parallaxStrength", .8));
         float depth;
-        if ("foreground".equals(layerRole)) {
+        if ("head".equals(layerRole)) {
+            depth = (float) animationSpec.optDouble("headDepth", 1.07);
+        } else if ("torso".equals(layerRole)) {
+            depth = (float) animationSpec.optDouble("torsoDepth", 1.0);
+        } else if ("lower".equals(layerRole)) {
+            depth = (float) animationSpec.optDouble("lowerDepth", .94);
+        } else if ("foreground".equals(layerRole)) {
             depth = (float) animationSpec.optDouble("foregroundDepth", 1.0);
         } else if ("background".equals(layerRole)) {
             depth = (float) animationSpec.optDouble("backgroundDepth", .36);
@@ -129,7 +135,29 @@ public final class MotionMatrixEffect implements MatrixTransformation {
 
     private void applyOrganicMotion(Motion m, float p) {
         double twoPi = Math.PI * 2.0;
-        if ("foreground".equals(layerRole)) {
+        if ("head".equals(layerRole)) {
+            double swayCycles = animationSpec.optDouble("swayCycles", .8);
+            float hx = (float) animationSpec.optDouble("headSwayAmplitudeX", .0022);
+            float hy = (float) animationSpec.optDouble("headSwayAmplitudeY", .0015);
+            float nod = (float) animationSpec.optDouble("headNodDegrees", .18);
+            m.x += hx * (float) Math.sin(twoPi * swayCycles * p + .35);
+            m.y += hy * (float) Math.sin(twoPi * swayCycles * .71 * p + 1.0);
+            m.rotation += nod * (float) Math.sin(twoPi * swayCycles * .62 * p + .55);
+        } else if ("torso".equals(layerRole)) {
+            double breathingCycles = animationSpec.optDouble("breathingCycles", 1.2);
+            float breath = (float) Math.sin(twoPi * breathingCycles * p - Math.PI / 2.0);
+            float scale = (float) animationSpec.optDouble("torsoBreathScale", .006);
+            float shift = (float) animationSpec.optDouble("torsoBreathShiftY", .002);
+            float swayX = (float) animationSpec.optDouble("swayAmplitudeX", 0);
+            m.scale *= 1f + scale * (.5f + .5f * breath);
+            m.y += shift * breath;
+            m.x += swayX * .55f * (float) Math.sin(twoPi * .74 * p);
+        } else if ("lower".equals(layerRole)) {
+            float sway = (float) animationSpec.optDouble("lowerSwayAmplitudeX", .003);
+            float degrees = (float) animationSpec.optDouble("lowerSwayDegrees", .14);
+            m.x += sway * (float) Math.sin(twoPi * .58 * p + .8);
+            m.rotation += degrees * (float) Math.sin(twoPi * .48 * p + .35);
+        } else if ("foreground".equals(layerRole)) {
             float breathing = (float) animationSpec.optDouble("breathingAmplitude", 0);
             double breathingCycles = animationSpec.optDouble("breathingCycles", 1.2);
             if (breathing > 0) {

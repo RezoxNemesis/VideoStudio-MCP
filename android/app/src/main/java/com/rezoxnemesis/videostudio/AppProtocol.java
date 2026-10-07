@@ -40,7 +40,7 @@ import javax.crypto.spec.GCMParameterSpec;
 public final class AppProtocol {
     public static final String BASE = "https://wispy-queen-f9b5.prakasharuntandon634.workers.dev";
     public static final int PROTOCOL_VERSION = 3;
-    public static final String APP_VERSION = "3.1.0";
+    public static final String APP_VERSION = "3.2.0";
     public static final String MCP_PATH = "/app-mcp-v3/";
     public static final String API_PREFIX = "/api/v3/app";
 
@@ -63,7 +63,7 @@ public final class AppProtocol {
     private final Handler main = new Handler(Looper.getMainLooper());
     private final Callback callback;
     private volatile boolean running;
-    private volatile String permissionMode = "all_tools";
+    private volatile String permissionMode = "everything";
     private volatile JSONObject projectSummary = new JSONObject();
     private volatile int consecutiveFailures = 0;
     private final String deviceId;
@@ -235,7 +235,7 @@ public final class AppProtocol {
             meta.put("galleryAccess", false);
             meta.put("directAttachmentIngest", true);
             meta.put("localEngineOwnsProjects", true);
-            meta.put("portraitAnimationEngine", "v3.1-layered-parallax");
+            meta.put("portraitAnimationEngine", "v3.2-articulated-parallax");
             meta.put("onDevicePortraitAi", true);
             meta.put("projects", projectSummary.optJSONArray("projects") == null ? new JSONArray() : projectSummary.optJSONArray("projects"));
 

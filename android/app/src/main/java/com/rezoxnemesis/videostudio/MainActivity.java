@@ -68,6 +68,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
     private static final String PREFS = "videostudio_native_v1";
     private static final String KEY_MODE = "permission_mode";
     private static final String KEY_FILE = "allowed_asset_id";
+    private static final String KEY_AUTONOMY_MIGRATED = "autonomy_everything_v32_migrated";
 
     private ProjectStore store;
     private JobManager jobs;
@@ -97,6 +98,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
 
         prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
+        migrateAutonomyDefaultOnce();
         store = new ProjectStore(this);
         jobs = new JobManager(this);
         renderEngine = new NativeRenderEngine(this);
@@ -162,7 +164,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         LinearLayout hero = card(true);
         TextView heroTitle = title("Create Without Limits", 28);
         hero.addView(heroTitle);
-        hero.addView(body("Native v3.1 Creator Engine • MCP v3 • on-device portrait AI • layered animation • local Media3 export"));
+        hero.addView(body("Native v3.2 Creator Engine • MCP v3 • on-device portrait AI • layered animation • local Media3 export"));
         Button promptVideo = neonButton("✦  Create Video from a Prompt", C_MAGENTA);
         promptVideo.setOnClickListener(v -> promptVideoDialog());
         hero.addView(promptVideo, margins(-1, dp(54), dp(14), dp(8), 0, 0));
@@ -549,11 +551,10 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         scroll.addView(box);
 
         box.addView(title("Autonomous Control", 27));
-        box.addView(body("Permissions are enforced locally by VideoStudio v3. The MCP path is signalling/control only; projects, media and editing state live in the app."));
-        box.addView(section("Access Mode"));
-        box.addView(permissionCard("one_file", "Allow one file", "ChatGPT can edit only the currently authorised media file."));
-        box.addView(permissionCard("all_tools", "Allow all tools", "All editing and analysis tools on imported project media. No remote file import or project deletion."));
-        box.addView(permissionCard("everything", "Allow everything except Gallery", "Full autonomous VideoStudio control: imports you explicitly share, projects, AI planning, editing, export and retries. Gallery listing/browsing stays blocked."));
+        box.addView(body("Full Autonomous is the default. The MCP path is signalling/control only; projects, media and editing state live in the app. Gallery enumeration remains a hard technical boundary, not a permission toggle."));
+        box.addView(section("Autonomy Mode"));
+        box.addView(permissionCard("everything", "Full Autonomous  •  Recommended", "ChatGPT can use every VideoStudio-native operation: explicit file imports, project management, analysis, AI animation, editing, rendering, inspection, retries and cleanup without repeated permission prompts. Gallery listing/browsing remains technically blocked."));
+        box.addView(permissionCard("one_file", "One File Lock", "Optional manual safety lock. Restricts ChatGPT to the currently authorised media file until you switch back to Full Autonomous."));
 
         box.addView(section("Workload Safety"));
         LinearLayout safety = card(false);
@@ -1732,16 +1733,8 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         String lower = action == null ? "" : action.toLowerCase(Locale.US);
         // Hard boundary: no MCP mode may enumerate or browse the user's Gallery.
         if (lower.contains("gallery") || lower.contains("media_library") || lower.contains("photo_library")) return false;
-        if ("ping".equals(action) || "get_state".equals(action)) return true;
-        String mode = permissionMode();
-        if ("everything".equals(mode)) return true;
-        if ("all_tools".equals(mode)) {
-            return !"import_url".equals(action)
-                    && !"import_attachment".equals(action)
-                    && !"import_chat_file".equals(action)
-                    && !"delete_project".equals(action);
-        }
-        if ("one_file".equals(mode)) {
+
+        if ("one_file".equals(permissionMode())) {
             String allowed = prefs.getString(KEY_FILE, "");
             if (allowed.isEmpty()) return false;
             if ("apply_tool".equals(action)) {
@@ -1749,9 +1742,19 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                 return activeProject != null && index >= 0 && index < activeProject.clips.size()
                         && allowed.equals(activeProject.clips.get(index).assetId);
             }
-            return "preview_project".equals(action) || "analyse_media".equals(action) || "export_project".equals(action) || "cancel_job".equals(action);
+            return "ping".equals(action)
+                    || "get_state".equals(action)
+                    || "self_test".equals(action)
+                    || "job_status".equals(action)
+                    || "activity_note".equals(action)
+                    || "preview_project".equals(action)
+                    || "analyse_media".equals(action)
+                    || "export_project".equals(action)
+                    || "cancel_job".equals(action)
+                    || "cancel_all_jobs".equals(action)
+                    || "stop_all".equals(action);
         }
-        return false;
+        return true;
     }
 
     private JSONObject stateJson() {
@@ -1764,7 +1767,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
             out.put("nativeAgent", "videostudio-v3");
             out.put("directAttachmentIngest", true);
             out.put("localEngineOwnsProjects", true);
-            out.put("portraitAnimationEngine", "v3.1-layered-parallax");
+            out.put("portraitAnimationEngine", "v3.2-articulated-parallax");
             out.put("onDevicePortraitAi", true);
             out.put("nativeApp", true);
             out.put("permissionMode", permissionMode());
@@ -1801,7 +1804,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
             String[] values = {
                     "native-ui","mcp-v3-native-agent","persistent-background-control","local-projects","private-app-mcp-v3","direct-chatgpt-attachment-ingest","chat-attachment-handoff-fallback","url-import",
                     "timeline","trim","split","speed","slow-motion","native-frame-analysis","scene-change-sampling",
-                    "media3-native-export","layered-media3-animation","on-device-person-segmentation","on-device-face-mesh","subject-aware-parallax","multi-keyframe-animation","prompt-to-video","gpu-brightness","gpu-contrast","gpu-hsl","gpu-blur",
+                    "media3-native-export","layered-media3-animation","articulated-portrait-layers","head-hair-motion","torso-breathing","lower-drape-sway","on-device-person-segmentation","on-device-face-mesh","subject-aware-parallax","multi-keyframe-animation","prompt-to-video","gpu-brightness","gpu-contrast","gpu-hsl","gpu-blur",
                     "gpu-motion","scale","rotate","creator-transition-model","green-screen-model","masks-model",
                     "fonts","text-animation-model","audio-ducking-model","ai-edit-plans","autonomous-edit-and-export",
                     "bounded-multitasking","crash-recovery-checkpoints","durable-command-idempotency","thermal-guard","memory-guard","job-cancel"
@@ -1843,8 +1846,21 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         }
     }
 
+    private void migrateAutonomyDefaultOnce() {
+        if (prefs.getBoolean(KEY_AUTONOMY_MIGRATED, false)) return;
+        prefs.edit()
+                .putString(KEY_MODE, "everything")
+                .putBoolean(KEY_AUTONOMY_MIGRATED, true)
+                .apply();
+    }
+
     private String permissionMode() {
-        return prefs.getString(KEY_MODE, "all_tools");
+        String raw = prefs.getString(KEY_MODE, "everything");
+        if ("one_file".equals(raw)) return "one_file";
+        if (!"everything".equals(raw)) {
+            prefs.edit().putString(KEY_MODE, "everything").apply();
+        }
+        return "everything";
     }
 
     private void refreshCurrent() {
