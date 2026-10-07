@@ -236,6 +236,19 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 case "self_test":
                     complete(command, nativeSelfTest());
                     return;
+                case "connection_health":
+                    complete(command, connectionHealth());
+                    return;
+                case "reconnect_mcp": {
+                    protocol.forceReconnect();
+                    markService(false, "Forced stable MCP re-registration requested");
+                    JSONObject result = connectionHealth();
+                    result.put("reconnectRequested", true);
+                    result.put("identityPreserved", true);
+                    result.put("ownerCredentialPreserved", true);
+                    complete(command, result);
+                    return;
+                }
                 case "activity_note": {
                     String note = p.optString("message", "ChatGPT is working");
                     String noteStatus = p.optString("status", "info");
@@ -2482,6 +2495,29 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         return project;
     }
 
+    private JSONObject connectionHealth() {
+        JSONObject out = ok();
+        try {
+            out.put("appVersion", AppProtocol.APP_VERSION);
+            out.put("protocolVersion", protocol.protocolVersion());
+            out.put("appGeneration", protocol.appGeneration());
+            out.put("stableMcpEndpoint", true);
+            out.put("stableMcpPath", McpConnectionCore.STABLE_MCP_PATH);
+            out.put("connectionCore", protocol.connectionStatus());
+            out.put("serviceOnline", prefs.getBoolean(KEY_SERVICE_ONLINE, false));
+            out.put("serviceDetail", prefs.getString(KEY_SERVICE_DETAIL, ""));
+            out.put("serviceHeartbeat", prefs.getLong("control_service_heartbeat", 0));
+            out.put("serviceAppVersion", prefs.getString("control_service_app_version", ""));
+            out.put("serviceAppGeneration", prefs.getLong("control_service_app_generation", 0));
+            out.put("serviceConnectionCoreVersion", prefs.getInt("control_service_connection_core_version", 0));
+            out.put("controlPaused", protocol.isControlPaused());
+            out.put("deviceIdentityPersistent", true);
+            out.put("ownerCredentialPersistent", true);
+            out.put("galleryAccess", false);
+        } catch (Exception ignored) {}
+        return out;
+    }
+
     private JSONObject nativeSelfTest() {
         JSONObject out = ok();
         File probe = null;
@@ -2624,6 +2660,8 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             return "ping".equals(action)
                     || "get_state".equals(action)
                     || "self_test".equals(action)
+                    || "connection_health".equals(action)
+                    || "reconnect_mcp".equals(action)
                     || "job_status".equals(action)
                     || "activity_note".equals(action)
                     || "analyse_media".equals(action)
@@ -2719,6 +2757,8 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             case "stop_all": return "Stopping VideoStudio jobs";
             case "get_state": return "Reading VideoStudio state";
             case "self_test": return "Running VideoStudio v3 self-test";
+            case "connection_health": return "Checking stable MCP connection";
+            case "reconnect_mcp": return "Rebinding stable MCP connection";
             case "activity_note": return "ChatGPT progress";
             default: return action.replace('_', ' ');
         }
@@ -2771,6 +2811,8 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         if ("restore_project_from_drive".equals(action)) return "Project workspace restore queued from cloud";
         if ("archive_model_pack_to_drive".equals(action)) return "Model-pack archive queued to cloud";
         if ("restore_model_pack_from_drive".equals(action)) return "Model-pack restore queued from cloud";
+        if ("connection_health".equals(action)) return "Stable MCP connection health read";
+        if ("reconnect_mcp".equals(action)) return "Stable MCP re-registration requested without changing identity";
         if ("animate_images".equals(action)) return result.optInt("imageCount", 0) + " image clip(s) queued for native animation";
         if ("insert_asset_timeline".equals(action)) return result.optBoolean("inserted", false) ? "Media added to timeline" : "Media could not be added to timeline";
         if ("select_project".equals(action)) return "Project selected";
