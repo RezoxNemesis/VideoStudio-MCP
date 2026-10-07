@@ -19,6 +19,9 @@ const portraitMotion = fs.readFileSync(new URL("../android/app/src/main/java/com
 const animatedDirector = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/AnimatedSceneDirector.java", import.meta.url), "utf8");
 const motionMatrix = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/MotionMatrixEffect.java", import.meta.url), "utf8");
 const atmosphere = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/AtmosphereOverlay.java", import.meta.url), "utf8");
+const creativeWorkspace = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/CreativeWorkspace.java", import.meta.url), "utf8");
+const motionScriptCompiler = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/MotionScriptCompiler.java", import.meta.url), "utf8");
+const activityLog = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/ActivityLog.java", import.meta.url), "utf8");
 
 const scriptMatch = app.match(/<script>([\s\S]*?)<\/script>/);
 let appScriptParses = false;
@@ -132,6 +135,21 @@ const checks = [
   ["native v3 project state is app-private SQLite", projectStore.includes("extends SQLiteOpenHelper") && projectStore.includes('DB_NAME = "videostudio_v3.db"') && projectStore.includes("migrateLegacyProjectsOnce") && projectStore.includes('return "sqlite-v3"')],
   ["v3 keeps existing projects through migration", projectStore.includes("LEGACY_PROJECTS") && projectStore.includes("CONFLICT_IGNORE") && projectStore.includes("META_MIGRATED")],
   ["native v3 has durable command idempotency", commandJournal.includes("terminal(String commandId)") && commandJournal.includes("finish(JSONObject command") && controlService.includes("MCP v3 command replay prevented")],
+  ["generated renders are first-class project assets", projectStore.includes("registerGeneratedAsset") && projectStore.includes('role = "source"') && projectStore.includes("generated = false") && controlService.includes('"final_render"')],
+  ["editor exposes a real project Media Bin", nativeMain.includes('section("Media Bin")') && nativeMain.includes("asset.generated") && nativeMain.includes("+ Timeline") && nativeMain.includes("scheduleEditorRefresh")],
+  ["background export registers generated MP4 in Media Bin", controlService.includes("Registering generated media") && controlService.includes("Generated video available") && controlService.includes("registerGeneratedAsset")),
+  ["native agent can insert a media-bin asset into timeline", controlService.includes('case "insert_asset_timeline"') && projectStore.includes("appendAssetToTimeline") && worker.includes('"app_insert_asset_timeline"')],
+  ["heavy jobs persist named recovery stages", nativeJobs.includes('public volatile String stage = "queued"') && nativeJobs.includes("lastCheckpointAt") && nativeJobs.includes("recoverable")],
+  ["thermal pressure pauses instead of timing out heavy work", nativeJobs.includes('"waiting_thermal"') && nativeJobs.includes("awaitSafeCheckpoint") && !nativeJobs.includes('for (int i = 0; i < 90; i++)')),
+  ["animation pipeline checks thermal safety between expensive stages", controlService.includes('awaitSafeCheckpoint(state, "portrait_analysis_') && controlService.includes('awaitSafeCheckpoint(state, "layered_render")')],
+  ["Activity progress is stage-linked and coalesced", activityLog.includes("public static synchronized void progress") && controlService.includes("state.checkpoint(action, progress, detail)")],
+  ["creative workspace uses app-private structured storage", creativeWorkspace.includes('"creative_workspace"') && creativeWorkspace.includes('"projects"') && creativeWorkspace.includes('"models"') && creativeWorkspace.includes("cleanupRegenerable")],
+  ["creative workspace cleanup preserves durable project/export layers", creativeWorkspace.includes('"preservedProjectState"') && creativeWorkspace.includes('"preservedExports"') && creativeWorkspace.includes('"preservedModelPacks"')],
+  ["MotionScript 0.1 compiles to versioned CreativeIR", motionScriptCompiler.includes('MOTION_SCRIPT_VERSION = "0.1"') && motionScriptCompiler.includes('CREATIVE_IR_VERSION = "0.1"') && motionScriptCompiler.includes('"safeRuntime"') && motionScriptCompiler.includes('"arbitraryCodeExecution"')],
+  ["MotionScript supports scene timing camera motion atmosphere and render directives", motionScriptCompiler.includes('case "shot"') && motionScriptCompiler.includes('case "camera"') && motionScriptCompiler.includes('case "motion"') && motionScriptCompiler.includes('case "atmosphere"') && motionScriptCompiler.includes('case "render"')],
+  ["Native Agent compiles and executes MotionScript", controlService.includes('case "compile_scene"') && controlService.includes('case "run_motion_script"') && controlService.includes("compileMotionScene") && controlService.includes("runMotionScript")],
+  ["MCP v3 exposes typed MotionScript and creative workspace tools", worker.includes('"app_compile_scene"') && worker.includes('"app_run_motion_script"') && worker.includes('"app_workspace_status"') && worker.includes('"app_cleanup_workspace"')],
+  ["future generic MCP bridge remains available alongside typed creative tools", worker.includes('"app_execute"') && worker.includes('"app_batch"')],
   ["native v3 exposes a self-test", controlService.includes('case "self_test"') && worker.includes('"app_self_test"') && controlService.includes("privateStorageWritable")],
   ["native state reports v3 architecture", controlService.includes('out.put("mcpEndpointVersion", "v3")') && controlService.includes('out.put("localEngineOwnsProjects", true)')],
   ["cached connector compatibility routes v3 devices to v3 queue", worker.includes("enqueueNative") && worker.includes("appEnqueueV3") && worker.includes("commandNative")],
