@@ -739,7 +739,7 @@ const statusNative = (st,d,ownerKey) => isNativeV3(d)
   ? st.appStatusV3(ownerKey)
   : st.appStatus(ownerKey);
 
-function serverFor(env){
+function serverFor(env,hybridKey=""){
   const s=new McpServer({name:"VideoStudio-Studio-Web",version:"1.0.0"}), st=state(env);
   s.registerTool("server_status",{description:"Check VideoStudio Studio Web status and fallback editing capabilities.",inputSchema:{}},async()=>out({
     ok:true,
@@ -1062,6 +1062,47 @@ function serverFor(env){
       return out({queued:true,commandId:c.id,sequence:c.seq,nativeApp:true,protocolVersion:1,handoffId:handoff.id,expiresAt:handoff.expiresAt});
     }catch(e){ return out({queued:false,error:e.message}); }
   });
+  if(hybridKey){
+    s.registerTool("hybrid_status",{
+      description:"Read the permanent VideoStudio hybrid connection: Studio Web health, Android Native Agent health, app generation/protocol, pending native work, waiting-native state and privacy boundary.",
+      inputSchema:{}
+    },async()=>out(await st.appStatusHybrid(hybridKey)));
+
+    s.registerTool("hybrid_execute",{
+      description:"Execute any VideoStudio-native action through the permanent hybrid binding. If Android is offline, the command is preserved as waiting_native and becomes claimable when the Native Agent reconnects. Gallery/media-library enumeration remains blocked.",
+      inputSchema:{action:z.string().min(1).max(80),parameters:z.record(z.string(),z.any()).optional()}
+    },async({action,parameters})=>{
+      try{
+        const command=await st.appEnqueueHybrid(hybridKey,action,parameters||{});
+        return out({queued:true,commandId:command.id,sequence:command.seq,status:command.status,waitingNative:command.status==="waiting_native",action:command.action,nativeApp:true,hybrid:true});
+      }catch(e){ return out({queued:false,hybrid:true,error:e.message}); }
+    });
+
+    s.registerTool("hybrid_get_command_result",{
+      description:"Read one native command queued through the permanent hybrid binding. Native visual-analysis contact sheets are returned as images when available.",
+      inputSchema:{commandId:z.string().min(8)}
+    },async({commandId})=>{
+      try{
+        const command=await st.appCommandHybrid(hybridKey,commandId);
+        if(!command) return out({error:"Command not found",hybrid:true});
+        const sheet=command.result&&command.result.contactSheet;
+        if(sheet&&sheet.base64){
+          const safeResult={...command.result,contactSheet:{...sheet,base64:undefined}};
+          return {content:[
+            {type:"text",text:JSON.stringify({...command,result:safeResult,hybrid:true})},
+            {type:"image",data:sheet.base64,mimeType:sheet.mimeType||"image/jpeg"}
+          ]};
+        }
+        return out({...command,hybrid:true});
+      }catch(e){ return out({error:e.message,hybrid:true}); }
+    });
+
+    s.registerTool("hybrid_revoke_native_binding",{
+      description:"Revoke this permanent Studio Web to Android native-control binding. This does not delete VideoStudio projects or media.",
+      inputSchema:{confirm:z.literal(true)}
+    },async()=>out(await st.appRevokeHybrid(hybridKey)));
+  }
+
   s.registerTool("video_project_plan",{description:"Create a short autonomous editing workflow.",inputSchema:{projectName:z.string().min(1),instruction:z.string().min(1)}},async({projectName,instruction})=>out({projectName,instruction,status:"planned",workflow:["inspect asset metadata","run 12-frame scene and quiet-section analysis","visually inspect sampled frames","design a multi-cut timeline around real structural changes","apply per-clip pacing/reframing/audio only where justified","render locally","inspect the actual rendered contact sheet","iterate before declaring the edit finished"]}));
   return s;
 }
@@ -1724,6 +1765,15 @@ export default {
       return createMcpHandler(()=>serverForApp(env,ownerKey),{route:u.pathname,responseMode:"auto"})(request,env,ctx);
     }
     if(u.pathname==="/mcp"||u.pathname.startsWith("/mcp/")) return createMcpHandler(()=>serverFor(env),{route:"/mcp",responseMode:"auto"})(request,env,ctx);
+    const hybridMcp=u.pathname.match(/^\/mcp-v06\/([A-Za-z0-9_-]{32,})(?:\/.*)?$/);
+    if(hybridMcp){
+      if(!(await studioMcpAuthorized(request,env))) return reply({error:"Studio Web MCP authorization required"},401);
+      const hybridKey=hybridMcp[1];
+      const bound=await state(env).appResolveHybrid(hybridKey);
+      if(!bound) return reply({error:"Private hybrid MCP binding rejected"},401);
+      const route="/mcp-v06/"+hybridKey;
+      return createMcpHandler(()=>serverFor(env,hybridKey),{route,responseMode:"auto"})(request,env,ctx);
+    }
     if(u.pathname==="/mcp-v06"||u.pathname.startsWith("/mcp-v06/")){
       if(!(await studioMcpAuthorized(request,env))) return reply({error:"Studio Web MCP authorization required"},401);
       return createMcpHandler(()=>serverFor(env),{route:"/mcp-v06",responseMode:"auto"})(request,env,ctx);
