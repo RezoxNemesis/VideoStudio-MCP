@@ -77,10 +77,7 @@ public final class AppProtocol {
 
     public void setControlPaused(boolean paused) {
         prefs.edit().putBoolean(KEY_PAUSED, paused).apply();
-        if (!paused) {
-            consecutiveFailures = 0;
-            registerNow();
-        }
+        if (!paused) consecutiveFailures = 0;
     }
 
     public String privateMcpUrl() {
@@ -126,7 +123,7 @@ public final class AppProtocol {
         c.setReadTimeout(45000);
         c.setRequestProperty("Accept", "*/*");
         c.setRequestProperty("Authorization", "Bearer " + ownerKey);
-        c.setRequestProperty("User-Agent", "VideoStudio-Android/1.1.0");
+        c.setRequestProperty("User-Agent", "VideoStudio-Android/1.1.1");
         return c;
     }
 
@@ -192,7 +189,7 @@ public final class AppProtocol {
             JSONObject meta = new JSONObject();
             meta.put("name", "VideoStudio Android");
             meta.put("platform", "android-native");
-            meta.put("appVersion", "1.1.0");
+            meta.put("appVersion", "1.1.1");
             meta.put("permissionMode", permissionMode);
             meta.put("controlPaused", isControlPaused());
             meta.put("connectionSession", connectionSession);
