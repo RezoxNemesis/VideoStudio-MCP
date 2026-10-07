@@ -615,7 +615,7 @@ function serverForApp(env,ownerKey,protocolVersion=1){
     effects:["none","cinematic","film_grain","soft_glow","bloom","dream","vignette","sharpen","clarity","motion_blur","radial_blur","gaussian_blur","chromatic_aberration","rgb_split","glitch","scanlines","vhs","retro_cam","super8","film_burn","light_leak","halation","neon","cyberpunk","noir","bleach_bypass","teal_orange","warm_film","cool_night","golden_hour","matte","high_contrast","soft_portrait","crush_black","fade_black","duotone","posterize","pixelate","fisheye","shake","strobe","flash","edge_glow"],
     textAnimations:["none","fade","fade_up","fade_down","slide_left","slide_right","scale_in","pop","bounce","typewriter","word_reveal","line_reveal","blur_in","tracking_in","tracking_out","glitch","neon_flicker","kinetic","mask_reveal","cinematic_title","caption_pop"],
     fonts:["sans-serif","sans-serif-medium","sans-serif-condensed","sans-serif-light","sans-serif-black","serif","serif-monospace","monospace","cursive","casual","elegant","poster","tech","editorial"],
-    aiTools:["auto_cut","scene_detect","silence_trim","highlight_extract","smart_reframe","caption_plan","hook_builder","beat_sync","b_roll_plan","pace_rewrite","shorts_recut","story_recut","colour_match","audio_ducking","title_writer","thumbnail_frame_pick","render_critique","prompt_video","animate_images","portrait_parallax","multi_variant_edit","platform_adapt","continuity_check"]
+    aiTools:["auto_cut","scene_detect","silence_trim","highlight_extract","smart_reframe","caption_plan","hook_builder","beat_sync","b_roll_plan","pace_rewrite","shorts_recut","story_recut","colour_match","audio_ducking","title_writer","thumbnail_frame_pick","render_critique","prompt_video","animate_images","portrait_parallax","motion_script_compile","motion_script_run","creative_workspace","generated_media_bin","multi_variant_edit","platform_adapt","continuity_check"]
   }));
 
   s.registerTool("app_state",{description:"Request full current native app/project state including active asset metadata, jobs, creator capabilities and recent on-device ChatGPT activity.",inputSchema:{}},async()=>queue("get_state",{}));
@@ -639,6 +639,44 @@ function serverForApp(env,ownerKey,protocolVersion=1){
   s.registerTool("app_autonomous_edit",{description:"Execute a structured autonomous native edit. ChatGPT may replace the timeline, apply a creator preset and optionally launch a safe native export in one request.",inputSchema:{instruction:z.string().max(5000).optional(),clips:z.array(z.record(z.string(),z.any())).max(80).optional(),preset:z.string().max(80).optional(),motion:z.string().max(80).optional(),transition:z.string().max(80).optional(),font:z.string().max(80).optional(),aspect:z.enum(["9:16","16:9","1:1","4:5"]).optional(),quality:z.enum(["720p","1080p"]).optional(),render:z.boolean().optional(),fileName:z.string().max(180).optional()}},async args=>queue("autonomous_edit",args));
 
   s.registerTool("app_create_prompt_video",{description:"Create and export a real local MP4 from a prompt. ChatGPT can provide a detailed scene plan with original titles, text, motion, transitions, effects and font choices; VideoStudio generates the scene visuals locally and renders them with its native engine.",inputSchema:{prompt:z.string().min(1).max(10000),durationSeconds:z.number().int().min(4).max(120).optional(),aspect:z.enum(["9:16","16:9","1:1","4:5"]).optional(),quality:z.enum(["720p","1080p"]).optional(),style:z.string().max(100).optional(),font:z.string().max(80).optional(),scenes:z.array(z.record(z.string(),z.any())).max(20).optional()}},async args=>queue("prompt_video",args));
+
+  if(isV3) s.registerTool("app_compile_scene",{
+    description:"Compile safe VideoStudio MotionScript into serializable CreativeIR and persist both in the app-private creative workspace. This is a creative scene language, not arbitrary shell/code execution.",
+    inputSchema:{
+      projectId:z.string().min(8).optional(),
+      script:z.string().min(1).max(20000)
+    }
+  },async({projectId,script})=>queue("compile_scene",{projectId:projectId||"",script}));
+
+  if(isV3) s.registerTool("app_run_motion_script",{
+    description:"Compile and apply MotionScript to the active native timeline, persisting CreativeIR and optionally launching a protected VideoStudio render.",
+    inputSchema:{
+      projectId:z.string().min(8).optional(),
+      script:z.string().min(1).max(20000),
+      render:z.boolean().optional(),
+      aspect:z.enum(["9:16","16:9","1:1","4:5"]).optional(),
+      quality:z.enum(["720p","1080p"]).optional(),
+      fileName:z.string().max(180).optional()
+    }
+  },async args=>queue("run_motion_script",args));
+
+  if(isV3) s.registerTool("app_workspace_status",{
+    description:"Read VideoStudio's app-private creative workspace usage for models, caches, generated artifacts and the active project without browsing Gallery.",
+    inputSchema:{projectId:z.string().min(8).optional()}
+  },async({projectId})=>queue("workspace_status",{projectId:projectId||""}));
+
+  if(isV3) s.registerTool("app_cleanup_workspace",{
+    description:"Delete only regenerable VideoStudio creative workspace caches for one project or global caches while preserving project state, final exports and installed model packs.",
+    inputSchema:{projectId:z.string().min(8).optional()}
+  },async({projectId})=>queue("cleanup_workspace",{projectId:projectId||""}));
+
+  if(isV3) s.registerTool("app_insert_asset_timeline",{
+    description:"Insert an existing VideoStudio project media-bin asset into the active timeline without browsing Gallery.",
+    inputSchema:{
+      projectId:z.string().min(8).optional(),
+      assetId:z.string().min(8)
+    }
+  },async({projectId,assetId})=>queue("insert_asset_timeline",{projectId:projectId||"",assetId}));
 
   if(isV3) s.registerTool("app_animate_images",{
     description:"Turn imported still images into a real native animated video. VideoStudio runs bundled on-device person segmentation and face-aware analysis, builds foreground/background layers, directs varied cinematic keyframes and 2.5D parallax, optionally reorders shots for story rhythm, then renders a local MP4 through Media3.",
