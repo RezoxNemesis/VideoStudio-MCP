@@ -551,7 +551,7 @@ function serverForApp(env,ownerKey,protocolVersion=1){
   const isV3=Number(protocolVersion)===3;
   const s=new McpServer({
     name:isV3?"VideoStudio-App-MCP-v3":"VideoStudio-App-MCP",
-    version:isV3?"3.3.0":"1.1.2"
+    version:isV3?"3.3.1":"1.1.2"
   }), st=state(env);
   const enqueueCommand=(action,parameters={})=>isV3
     ? st.appEnqueueV3(ownerKey,action,parameters)
