@@ -1946,7 +1946,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         parameters.put("projectId", project.id);
         if (!parameters.has("_generationId")) parameters.put("_generationId", java.util.UUID.randomUUID().toString());
         JobManager.Job job = submitRecoverableLight("generate_image", parameters, project.id, "Generate procedural image", state -> {
-            File dir = new File(getFilesDir(), "generated_images/" + project.id);
+            File dir = new File(creativeWorkspace.projectRoot(project.id), "generated/images");
             if (!dir.exists() && !dir.mkdirs()) throw new IllegalStateException("Could not create image workspace");
             File file = new File(dir, "scene_" + parameters.getString("_generationId") + ".png");
             checkpoint(state, "Image generation", "Rendering original local geometry", 10, project.id);
@@ -2138,6 +2138,15 @@ public final class ControlService extends Service implements AppProtocol.Callbac
 
     private boolean hasMissingCreativeLayerFiles(ProjectStore.Project project) {
         if (project == null) return false;
+        String workspacePrefix = creativeWorkspace.projectRoot(project.id).getAbsolutePath() + File.separator;
+        for (ProjectStore.Clip clip : project.clips) {
+            ProjectStore.Asset asset = project.asset(clip.assetId);
+            if (asset == null || !asset.generated) continue;
+            Uri uri = Uri.parse(asset.uri);
+            String path = uri.getPath();
+            if ("file".equalsIgnoreCase(uri.getScheme()) && path != null && path.startsWith(workspacePrefix)
+                    && !new File(path).isFile()) return true;
+        }
         String[] keys = {"foregroundUri", "headUri", "torsoUri", "lowerUri", "backgroundUri"};
         for (ProjectStore.Clip clip : project.clips) {
             if (clip == null || clip.effects == null) continue;
