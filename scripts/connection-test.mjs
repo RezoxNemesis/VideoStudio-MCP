@@ -233,3 +233,56 @@ test('direct native commands become durable waiting_native work while Android sl
  assert.equal(claimed[0].id,queued.id);
  assert.equal(claimed[0].status,'claimed');
 });
+
+
+test('same private native MCP routes prompt generation to bound Studio Web while Android sleeps',async()=>{
+ const f=await fixture();
+ const webDeviceId='studio-web-fallback-001';
+ await f.relay.register(webDeviceId,{name:'Studio Web fallback'});
+ const project=await f.relay.createProject(webDeviceId,'Fallback Project','');
+ const binding=await f.relay.appBindStudioWebFallback(f.key,webDeviceId);
+ assert.equal(binding.bound,true);
+ assert.equal(binding.fallbackWebProjectId,project.id);
+
+ const native=await f.storage.get('app-device:'+f.deviceId);
+ native.lastSeenAt=new Date(Date.now()-120000).toISOString();
+ await f.storage.put('app-device:'+f.deviceId,native);
+
+ const queued=await f.relay.appEnqueueV3(f.key,'prompt_video',{
+  prompt:'cinematic test world',
+  durationSeconds:8,
+  aspect:'9:16',
+  quality:'1080p'
+ });
+ assert.equal(queued.hybridRoute,'studio_web');
+ assert.equal(queued.action,'generate_video');
+ assert.equal(queued.runtime,'studio-web');
+ assert.equal(queued.webProjectId,project.id);
+
+ const read=await f.relay.appCommandV3(f.key,queued.id);
+ assert.equal(read.hybridRoute,'studio_web');
+ assert.equal(read.id,queued.id);
+
+ const status=await f.relay.appStatusV3(f.key);
+ assert.equal(status.nativeConnected,false);
+ assert.equal(status.executionAvailable,true);
+ assert.equal(status.studioWebFallback.bound,true);
+ assert.equal(status.studioWebFallback.connected,true);
+ assert.equal(status.studioWebFallback.projectId,project.id);
+});
+
+test('offline native MCP still queues native-only work when Web fallback cannot execute it',async()=>{
+ const f=await fixture();
+ const webDeviceId='studio-web-fallback-native-only';
+ await f.relay.register(webDeviceId,{name:'Studio Web fallback'});
+ await f.relay.createProject(webDeviceId,'Fallback Project','');
+ await f.relay.appBindStudioWebFallback(f.key,webDeviceId);
+ const native=await f.storage.get('app-device:'+f.deviceId);
+ native.lastSeenAt=new Date(Date.now()-120000).toISOString();
+ await f.storage.put('app-device:'+f.deviceId,native);
+
+ const queued=await f.relay.appEnqueueV3(f.key,'install_model_pack',{assetId:'asset-12345678'});
+ assert.equal(queued.status,'waiting_native');
+ assert.equal(queued.waitingReason,'native_offline');
+ assert.equal(queued.hybridRoute,undefined);
+});
