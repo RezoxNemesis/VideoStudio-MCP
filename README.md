@@ -123,6 +123,11 @@ The v3 native tool surface supports:
 
 v3 uses a dedicated queue/cursor namespace and an Android command journal so reconnect/retry does not execute a completed command twice.
 
+### Future-version connector stability
+
+The v3 MCP surface now includes a stable `app_execute` bridge and a future-compatible `app_batch` action field. New Android-native actions can therefore be introduced behind the same private MCP endpoint without forcing the user to recreate the ChatGPT connector for every VideoStudio release. The permanent Gallery/media-library block is enforced server-side before any action is queued, including actions sent through this generic bridge.
+
+
 ## Rendering and stability
 
 - Media3 Transformer native export
