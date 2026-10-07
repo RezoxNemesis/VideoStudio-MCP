@@ -45,6 +45,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     private static final String KEY_FILE = "allowed_asset_id";
     private static final String KEY_SERVICE_ONLINE = "control_service_online";
     private static final String KEY_SERVICE_DETAIL = "control_service_detail";
+    private static final String KEY_AUTONOMY_MIGRATED = "autonomy_everything_v32_migrated";
     private static final long MAX_REMOTE_IMPORT_BYTES = 350L * 1024L * 1024L;
     private static final int MAX_REMOTE_REDIRECTS = 5;
 
@@ -63,6 +64,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     public void onCreate() {
         super.onCreate();
         prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
+        migrateAutonomyDefaultOnce();
         commandJournal = new CommandJournal(this);
         store = new ProjectStore(this);
         jobs = new JobManager(this);
@@ -1309,8 +1311,16 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         return safe;
     }
 
+    private void migrateAutonomyDefaultOnce() {
+        if (prefs.getBoolean(KEY_AUTONOMY_MIGRATED, false)) return;
+        prefs.edit()
+                .putString(KEY_MODE, "everything")
+                .putBoolean(KEY_AUTONOMY_MIGRATED, true)
+                .apply();
+    }
+
     private String permissionMode() {
-        return prefs.getString(KEY_MODE, "all_tools");
+        return prefs.getString(KEY_MODE, "everything");
     }
 
     private void syncProtocolState() {
