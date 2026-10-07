@@ -103,7 +103,6 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         syncProtocolState();
 
         setContentView(buildShell());
-        startForegroundService(new Intent(this, ControlService.class));
         showHome();
         requestServiceSync();
     }
@@ -1559,7 +1558,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
     private void requestServiceSync() {
         try {
             Intent intent = new Intent(this, ControlService.class).setAction(ControlService.ACTION_SYNC);
-            startService(intent);
+            startForegroundService(intent);
         } catch (Exception ignored) {}
     }
 
