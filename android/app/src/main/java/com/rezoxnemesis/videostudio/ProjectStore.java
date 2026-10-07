@@ -43,6 +43,9 @@ public final class ProjectStore {
         public String name;
         public String mime;
         public long durationMs;
+        public String role = "source";
+        public boolean generated = false;
+        public long createdAt = System.currentTimeMillis();
 
         JSONObject toJson() {
             JSONObject o = new JSONObject();
@@ -52,6 +55,9 @@ public final class ProjectStore {
                 o.put("name", name);
                 o.put("mime", mime);
                 o.put("durationMs", durationMs);
+                o.put("role", role);
+                o.put("generated", generated);
+                o.put("createdAt", createdAt);
             } catch (Exception ignored) {}
             return o;
         }
@@ -63,6 +69,9 @@ public final class ProjectStore {
             a.name = o.optString("name", "Media");
             a.mime = o.optString("mime", "application/octet-stream");
             a.durationMs = o.optLong("durationMs", 0);
+            a.role = o.optString("role", "source");
+            a.generated = o.optBoolean("generated", false);
+            a.createdAt = o.optLong("createdAt", System.currentTimeMillis());
             return a;
         }
     }
@@ -299,6 +308,9 @@ public final class ProjectStore {
         if (a.mime == null) a.mime = "application/octet-stream";
         a.name = displayName(uri);
         a.durationMs = duration(uri);
+        a.role = "source";
+        a.generated = false;
+        a.createdAt = System.currentTimeMillis();
 
         project.assets.add(a);
         if (a.mime.startsWith("video/") || a.mime.startsWith("image/")) {
@@ -311,6 +323,76 @@ public final class ProjectStore {
         }
         save(project);
         return a;
+    }
+
+    /**
+     * Register media created by VideoStudio itself as a first-class project asset.
+     * Generated outputs live in the project media bin even when they are not
+     * automatically inserted into the timeline.
+     */
+    public synchronized Asset registerGeneratedAsset(Project project,
+                                                     Uri uri,
+                                                     String name,
+                                                     String role,
+                                                     boolean appendToTimeline) {
+        if (project == null) throw new IllegalArgumentException("Project is required");
+        if (uri == null) throw new IllegalArgumentException("Generated asset URI is required");
+
+        String uriValue = uri.toString();
+        for (Asset existing : project.assets) {
+            if (uriValue.equals(existing.uri)) {
+                existing.generated = true;
+                existing.role = role == null || role.trim().isEmpty() ? "generated" : role.trim();
+                if (name != null && !name.trim().isEmpty()) existing.name = name.trim();
+                save(project);
+                return existing;
+            }
+        }
+
+        Asset asset = new Asset();
+        asset.id = UUID.randomUUID().toString();
+        asset.uri = uriValue;
+        asset.name = name == null || name.trim().isEmpty() ? "Generated media" : name.trim();
+        asset.mime = resolver.getType(uri);
+        if (asset.mime == null || asset.mime.isEmpty()) {
+            String lower = asset.name.toLowerCase();
+            asset.mime = lower.endsWith(".mp4") ? "video/mp4"
+                    : (lower.endsWith(".png") ? "image/png"
+                    : (lower.endsWith(".jpg") || lower.endsWith(".jpeg") ? "image/jpeg" : "application/octet-stream"));
+        }
+        asset.durationMs = duration(uri);
+        asset.role = role == null || role.trim().isEmpty() ? "generated" : role.trim();
+        asset.generated = true;
+        asset.createdAt = System.currentTimeMillis();
+        project.assets.add(asset);
+
+        if (appendToTimeline && (asset.mime.startsWith("video/") || asset.mime.startsWith("image/"))) {
+            Clip clip = new Clip();
+            clip.id = UUID.randomUUID().toString();
+            clip.assetId = asset.id;
+            clip.inMs = 0;
+            clip.outMs = asset.mime.startsWith("image/") ? 3000 : Math.max(1000, asset.durationMs);
+            project.clips.add(clip);
+        }
+
+        save(project);
+        return asset;
+    }
+
+    public synchronized boolean appendAssetToTimeline(Project project, String assetId) {
+        if (project == null || assetId == null || assetId.isEmpty()) return false;
+        Asset asset = project.asset(assetId);
+        if (asset == null || asset.mime == null) return false;
+        if (!asset.mime.startsWith("video/") && !asset.mime.startsWith("image/")) return false;
+
+        Clip clip = new Clip();
+        clip.id = UUID.randomUUID().toString();
+        clip.assetId = asset.id;
+        clip.inMs = 0;
+        clip.outMs = asset.mime.startsWith("image/") ? 3000 : Math.max(1000, asset.durationMs);
+        project.clips.add(clip);
+        save(project);
+        return true;
     }
 
     public JSONObject summaries() {
