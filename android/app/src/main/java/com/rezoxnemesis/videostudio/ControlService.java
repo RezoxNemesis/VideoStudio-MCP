@@ -35,6 +35,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     public static final String ACTION_CANCEL_ALL = "com.rezoxnemesis.videostudio.CANCEL_ALL";
     public static final String ACTION_PAUSE = "com.rezoxnemesis.videostudio.PAUSE_CONTROL";
     public static final String ACTION_RESUME = "com.rezoxnemesis.videostudio.RESUME_CONTROL";
+    public static final String ACTION_SYNC = "com.rezoxnemesis.videostudio.SYNC_STATE";
     private static final String CHANNEL = "videostudio_private_control";
     private static final int NOTIFICATION_ID = 6101;
     private static final String PREFS = "videostudio_native_v1";
@@ -83,6 +84,9 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             syncProtocolState();
             protocol.registerNow();
             updateNotification("ChatGPT control ready");
+        } else if (ACTION_SYNC.equals(action)) {
+            syncProtocolState();
+            protocol.registerNow();
         }
         syncProtocolState();
         return START_STICKY;
