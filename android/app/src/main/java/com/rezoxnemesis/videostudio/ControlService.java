@@ -117,6 +117,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                         + " • generation " + protocol.appGeneration(),
                 "success", null, null, null);
         recoverDurablePlans();
+        NativeAgentWatchdog.scheduleHealthy(this, "service_created");
     }
 
     @Override
@@ -129,12 +130,14 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             protocol.setControlPaused(true);
             int cancelled = cancelAllNativeWork();
             ActivityLog.add(this, "user", "ChatGPT control paused", cancelled + " active job(s) cancelled", "info", null, null, null);
+            NativeAgentWatchdog.cancel(this);
             updateNotification("ChatGPT control paused");
         } else if (ACTION_RESUME.equals(action)) {
             protocol.setControlPaused(false);
             ActivityLog.add(this, "user", "ChatGPT control resumed", "VideoStudio stable MCP connection is accepting commands again", "success", null, null, null);
             syncProtocolState();
             protocol.registerNow();
+            NativeAgentWatchdog.scheduleHealthy(this, "control_resumed");
             updateNotification("Stable MCP control ready");
         } else if (ACTION_RECONNECT.equals(action)) {
             syncProtocolState();
@@ -168,16 +171,34 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             }
         }
         syncProtocolState();
+        if (protocol != null && !protocol.isControlPaused()) {
+            NativeAgentWatchdog.scheduleHealthy(this, "service_active");
+        }
         return START_STICKY;
+    }
+
+    @Override
+    public void onTaskRemoved(Intent rootIntent) {
+        if (protocol == null || NativeAgentWatchdog.shouldRearm(protocol.isControlPaused())) {
+            NativeAgentWatchdog.scheduleTaskRemoved(this);
+        }
+        markService(false, "MCP control plane available • native execution re-arming");
+        super.onTaskRemoved(rootIntent);
     }
 
     @Override
     public void onDestroy() {
         ActivityLog.add(this, "system", "VideoStudio control stopped", "Background controller stopped", "info", null, null, null);
         markService(false, "Control service stopped");
+        boolean paused = protocol != null && protocol.isControlPaused();
         if (activeRender != null) activeRender.cancel();
         if (jobs != null) jobs.shutdown();
         if (protocol != null) protocol.stop();
+        if (NativeAgentWatchdog.shouldRearm(paused)) {
+            NativeAgentWatchdog.scheduleRetry(this, "service_destroyed");
+        } else {
+            NativeAgentWatchdog.cancel(this);
+        }
         super.onDestroy();
     }
 
@@ -194,11 +215,15 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                     detail + " • app " + AppProtocol.APP_VERSION,
                     connected ? "success" : "running", null, null, null);
         }
+        if (protocol != null && !protocol.isControlPaused()) {
+            if (connected) NativeAgentWatchdog.scheduleHealthy(this, "connection_healthy");
+            else NativeAgentWatchdog.scheduleRetry(this, "connection_retry");
+        }
         updateNotification(protocol != null && protocol.isControlPaused()
                 ? "ChatGPT control paused"
                 : (connected
                     ? "Stable MCP ready • " + AppProtocol.APP_VERSION + " • gen " + protocol.appGeneration()
-                    : "Stable MCP reconnecting • " + AppProtocol.APP_VERSION));
+                    : "MCP control plane online • native reconnecting • " + AppProtocol.APP_VERSION));
     }
 
     @Override

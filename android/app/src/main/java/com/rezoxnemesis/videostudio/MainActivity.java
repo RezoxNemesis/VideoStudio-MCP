@@ -2307,10 +2307,10 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         if (!serviceVersion.isEmpty() && (!AppProtocol.APP_VERSION.equals(serviceVersion)
                 || serviceGeneration != protocol.appGeneration()
                 || coreVersion != McpConnectionCore.CORE_VERSION)) {
-            return "○  Rebinding Native Agent • app " + AppProtocol.APP_VERSION
+            return "◌  MCP control plane available • rebinding native executor • app " + AppProtocol.APP_VERSION
                     + " • gen " + protocol.appGeneration();
         }
-        return "○  Stable MCP Native Agent starting • app " + AppProtocol.APP_VERSION;
+        return "◌  MCP control plane available • native executor starting • app " + AppProtocol.APP_VERSION;
     }
 
     @Override

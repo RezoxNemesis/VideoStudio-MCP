@@ -19,7 +19,8 @@ public final class NativeAgentRecoveryReceiver extends BroadcastReceiver {
         if (context == null) return;
         String action = intent == null ? "" : intent.getAction();
         if (!Intent.ACTION_MY_PACKAGE_REPLACED.equals(action)
-                && !Intent.ACTION_BOOT_COMPLETED.equals(action)) {
+                && !Intent.ACTION_BOOT_COMPLETED.equals(action)
+                && !NativeAgentWatchdog.ACTION_REARM.equals(action)) {
             return;
         }
 
@@ -29,7 +30,9 @@ public final class NativeAgentRecoveryReceiver extends BroadcastReceiver {
                 .putString("control_service_detail",
                         Intent.ACTION_MY_PACKAGE_REPLACED.equals(action)
                                 ? "APK updated • rebinding stable MCP Native Agent"
-                                : "Device restarted • restoring stable MCP Native Agent")
+                                : Intent.ACTION_BOOT_COMPLETED.equals(action)
+                                    ? "Device restarted • restoring stable MCP Native Agent"
+                                    : "Always-available watchdog • restoring native execution")
                 .putString("control_service_requested_app_version", AppProtocol.APP_VERSION)
                 .putLong("control_service_recovery_requested_at", System.currentTimeMillis())
                 .apply();
@@ -38,6 +41,7 @@ public final class NativeAgentRecoveryReceiver extends BroadcastReceiver {
             Intent service = new Intent(context, ControlService.class)
                     .setAction(ControlService.ACTION_SYNC);
             context.startForegroundService(service);
+            NativeAgentWatchdog.scheduleHealthy(context, "receiver_rearm");
         } catch (Exception error) {
             prefs.edit()
                     .putBoolean("control_service_online", false)
@@ -45,6 +49,7 @@ public final class NativeAgentRecoveryReceiver extends BroadcastReceiver {
                             "Stable MCP recovery deferred until VideoStudio opens")
                     .putLong("control_service_heartbeat", System.currentTimeMillis())
                     .apply();
+            NativeAgentWatchdog.scheduleRetry(context, "receiver_start_deferred");
         }
     }
 }

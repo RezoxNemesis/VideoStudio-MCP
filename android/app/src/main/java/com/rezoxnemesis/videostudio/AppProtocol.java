@@ -42,7 +42,7 @@ import javax.crypto.spec.GCMParameterSpec;
 public final class AppProtocol {
     public static final String BASE = "https://wispy-queen-f9b5.prakasharuntandon634.workers.dev";
     public static final int PROTOCOL_VERSION = 3;
-    public static final String APP_VERSION = "3.4.1";
+    public static final String APP_VERSION = "3.4.2";
     /** Stable compatibility URL. APK updates must not change this path. */
     public static final String MCP_PATH = McpConnectionCore.STABLE_MCP_PATH;
     /** Stable registration bootstrap. Runtime requests use the negotiated profile. */
@@ -120,8 +120,9 @@ public final class AppProtocol {
     public String pairingMessage() {
         return "Connect to my private VideoStudio Android Native Agent MCP.\n"
                 + "Stable MCP endpoint: " + privateMcpUrl() + "\n"
-                + "This device-owned endpoint survives compatible VideoStudio APK upgrades. Use app_status first, then use the native app tools autonomously. "
-                + "All editing/import/analysis/rendering must execute inside VideoStudio. Gallery browsing is never permitted.";
+                + "This device-owned endpoint survives compatible VideoStudio APK upgrades and remains available as the durable control plane while Android sleeps. "
+                + "Use app_status first, then use the native app tools autonomously. Native-only work is queued safely and resumes when the executor reconnects. "
+                + "All editing/import/analysis/rendering must execute through VideoStudio surfaces. Gallery browsing is never permitted.";
     }
 
     public JSONObject createHybridBinding(String webDeviceId) throws Exception {
