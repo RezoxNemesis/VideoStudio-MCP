@@ -28,6 +28,7 @@ import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
@@ -112,15 +113,16 @@ public final class NativePortraitMotionAnalyzer {
         SubjectParts parts = buildSubjectParts(foreground, stats, face);
         Bitmap background = buildReconstructedBackground(working, stats);
 
-        File dir = new File(context.getFilesDir(), "animation_layers/" + safe(projectId));
+        CreativeWorkspace workspace = new CreativeWorkspace(context);
+        File projectRoot = workspace.projectRoot(projectId);
+        File dir = new File(new File(new File(projectRoot, "rigs"), "layers"), safe(asset.id));
         if (!dir.exists() && !dir.mkdirs()) throw new IllegalStateException("Could not create animation layer directory");
 
-        String stem = safe(asset.id);
-        File fgFile = new File(dir, stem + "_subject.png");
-        File headFile = new File(dir, stem + "_head_hair.png");
-        File torsoFile = new File(dir, stem + "_torso.png");
-        File lowerFile = new File(dir, stem + "_lower_drape.png");
-        File bgFile = new File(dir, stem + "_background.jpg");
+        File fgFile = new File(dir, "subject.png");
+        File headFile = new File(dir, "head_hair.png");
+        File torsoFile = new File(dir, "torso.png");
+        File lowerFile = new File(dir, "lower_drape.png");
+        File bgFile = new File(dir, "background.jpg");
         write(foreground, fgFile, Bitmap.CompressFormat.PNG, 100);
         write(parts.head, headFile, Bitmap.CompressFormat.PNG, 100);
         write(parts.torso, torsoFile, Bitmap.CompressFormat.PNG, 100);
@@ -169,6 +171,15 @@ public final class NativePortraitMotionAnalyzer {
         analysis.put("torsoSplitY", parts.torsoSplitY);
         analysis.put("width", working.getWidth());
         analysis.put("height", working.getHeight());
+        analysis.put("workspaceRelativePath", "rigs/layers/" + safe(asset.id));
+        analysis.put("coldTierPortable", true);
+
+        File rigMetadata = new File(dir, "rig.json");
+        try (FileOutputStream out = new FileOutputStream(rigMetadata)) {
+            out.write(analysis.toString(2).getBytes(StandardCharsets.UTF_8));
+            out.flush();
+            out.getFD().sync();
+        }
 
         foreground.recycle();
         parts.head.recycle();
