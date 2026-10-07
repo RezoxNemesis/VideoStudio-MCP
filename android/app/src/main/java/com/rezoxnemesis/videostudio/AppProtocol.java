@@ -41,8 +41,10 @@ public final class AppProtocol {
     public static final String BASE = "https://wispy-queen-f9b5.prakasharuntandon634.workers.dev";
     public static final int PROTOCOL_VERSION = 3;
     public static final String APP_VERSION = "3.3.1";
-    public static final String MCP_PATH = "/app-mcp-v3/";
-    public static final String API_PREFIX = "/api/v3/app";
+    /** Stable compatibility URL. APK updates must not change this path. */
+    public static final String MCP_PATH = McpConnectionCore.STABLE_MCP_PATH;
+    /** Stable registration bootstrap. Runtime requests use the negotiated profile. */
+    public static final String API_PREFIX = McpConnectionCore.BOOTSTRAP_API_PREFIX;
 
     // Keep the existing preference/Keystore namespace to preserve the device identity on update.
     private static final String PREFS = "videostudio_native_v1";
@@ -62,6 +64,7 @@ public final class AppProtocol {
     private final ExecutorService io = Executors.newFixedThreadPool(3);
     private final Handler main = new Handler(Looper.getMainLooper());
     private final Callback callback;
+    private final McpConnectionCore connectionCore;
     private volatile boolean running;
     private volatile String permissionMode = "everything";
     private volatile JSONObject projectSummary = new JSONObject();
@@ -74,6 +77,7 @@ public final class AppProtocol {
         this.context = context.getApplicationContext();
         this.callback = callback;
         prefs = this.context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        connectionCore = new McpConnectionCore(this.context, APP_VERSION);
         String id = prefs.getString(KEY_DEVICE, "");
         if (id.isEmpty()) {
             id = UUID.randomUUID().toString();
@@ -84,8 +88,10 @@ public final class AppProtocol {
     }
 
     public String deviceId() { return deviceId; }
-    public int protocolVersion() { return PROTOCOL_VERSION; }
+    public int protocolVersion() { return connectionCore.selectedProtocol(); }
     public String appVersion() { return APP_VERSION; }
+    public long appGeneration() { return connectionCore.appGeneration(); }
+    public JSONObject connectionStatus() { return connectionCore.status(); }
 
     public boolean isControlPaused() {
         return prefs.getBoolean(KEY_PAUSED, false);
@@ -101,9 +107,9 @@ public final class AppProtocol {
     }
 
     public String pairingMessage() {
-        return "Connect to my private VideoStudio v3 Android Native Agent MCP.\n"
-                + "MCP v3 endpoint: " + privateMcpUrl() + "\n"
-                + "This is the device-owned VideoStudio v3 connection. Use app_status first, then use the native app tools autonomously. "
+        return "Connect to my private VideoStudio Android Native Agent MCP.\n"
+                + "Stable MCP endpoint: " + privateMcpUrl() + "\n"
+                + "This device-owned endpoint survives compatible VideoStudio APK upgrades. Use app_status first, then use the native app tools autonomously. "
                 + "All editing/import/analysis/rendering must execute inside VideoStudio. Gallery browsing is never permitted.";
     }
 
@@ -138,7 +144,7 @@ public final class AppProtocol {
      */
     public HttpURLConnection openPrivateHandoff(String handoffId) throws Exception {
         if (handoffId == null || handoffId.trim().isEmpty()) throw new IllegalArgumentException("Missing handoff ID");
-        String path = BASE + API_PREFIX + "/handoffs/" + enc(handoffId) + "/content?deviceId=" + enc(deviceId);
+        String path = BASE + connectionCore.apiPrefix() + "/handoffs/" + enc(handoffId) + "/content?deviceId=" + enc(deviceId);
         HttpURLConnection c = (HttpURLConnection) new URL(path).openConnection();
         c.setRequestMethod("GET");
         c.setConnectTimeout(15000);
@@ -157,10 +163,12 @@ public final class AppProtocol {
                 String id = command.optString("id");
                 JSONObject body = new JSONObject();
                 body.put("deviceId", deviceId);
-                body.put("protocolVersion", PROTOCOL_VERSION);
+                body.put("protocolVersion", connectionCore.selectedProtocol());
+                body.put("appGeneration", connectionCore.appGeneration());
                 body.put("status", status == null ? "completed" : status);
                 body.put("result", result == null ? new JSONObject() : result);
-                request("POST", API_PREFIX + "/commands/" + enc(id) + "/complete", body, true, 18000);
+                request("POST", connectionCore.apiPrefix() + "/commands/" + enc(id) + "/complete",
+                        body, true, connectionCore.requestTimeoutMs());
                 advanceSequence(command.optLong("seq", 0));
             } catch (Exception ignored) {
                 // The server lease will make the command available again. The
@@ -186,15 +194,17 @@ public final class AppProtocol {
                     continue;
                 }
                 long seq = prefs.getLong(KEY_SEQ, 0);
-                String path = API_PREFIX + "/commands?deviceId=" + enc(deviceId)
-                        + "&after=" + seq + "&wait=18000";
-                JSONObject data = request("GET", path, null, true, 26000);
+                long waitMs = connectionCore.commandWaitMs();
+                String path = connectionCore.apiPrefix() + "/commands?deviceId=" + enc(deviceId)
+                        + "&after=" + seq + "&wait=" + waitMs
+                        + "&appGeneration=" + connectionCore.appGeneration();
+                JSONObject data = request("GET", path, null, true, connectionCore.requestTimeoutMs());
                 JSONArray commands = data.optJSONArray("commands");
                 if (commands != null) {
                     for (int i = 0; i < commands.length(); i++) {
                         JSONObject cmd = commands.optJSONObject(i);
                         if (cmd == null) continue;
-                        if (cmd.optInt("protocolVersion", PROTOCOL_VERSION) != PROTOCOL_VERSION) continue;
+                        if (!connectionCore.acceptsCommand(cmd)) continue;
                         String commandStatus = cmd.optString("status");
                         if (!"queued".equals(commandStatus) && !"claimed".equals(commandStatus)) continue;
                         if (callback != null) {
@@ -204,11 +214,13 @@ public final class AppProtocol {
                     }
                 }
                 consecutiveFailures = 0;
-                notifyConnection(true, "VideoStudio MCP v3 online");
+                notifyConnection(true, "VideoStudio MCP online • app " + APP_VERSION
+                        + " • compat v" + connectionCore.selectedProtocol());
             } catch (Exception error) {
                 consecutiveFailures = Math.min(6, consecutiveFailures + 1);
+                if (consecutiveFailures >= 3) connectionCore.resetNegotiation();
                 long delay = Math.min(30000L, 750L * (1L << consecutiveFailures));
-                notifyConnection(false, "MCP v3 reconnecting securely");
+                notifyConnection(false, "MCP reconnecting securely • stable compatibility lane");
                 sleep(delay);
             }
         }
@@ -217,7 +229,7 @@ public final class AppProtocol {
     private void heartbeatLoop() {
         while (running) {
             if (!isControlPaused()) register();
-            sleep(15000);
+            sleep(connectionCore.heartbeatMs());
         }
     }
 
@@ -227,8 +239,16 @@ public final class AppProtocol {
             meta.put("name", "VideoStudio Android v3");
             meta.put("platform", "android-native");
             meta.put("appVersion", APP_VERSION);
-            meta.put("protocolVersion", PROTOCOL_VERSION);
+            meta.put("protocolVersion", connectionCore.selectedProtocol());
             meta.put("nativeAgent", "videostudio-v3");
+            JSONObject connectionMeta = connectionCore.registrationMeta();
+            JSONArray connectionNames = connectionMeta.names();
+            if (connectionNames != null) {
+                for (int i = 0; i < connectionNames.length(); i++) {
+                    String key = connectionNames.optString(i);
+                    meta.put(key, connectionMeta.opt(key));
+                }
+            }
             meta.put("permissionMode", permissionMode);
             meta.put("controlPaused", isControlPaused());
             meta.put("connectionSession", connectionSession);
@@ -250,12 +270,21 @@ public final class AppProtocol {
             body.put("deviceId", deviceId);
             body.put("ownerKey", ownerKey);
             body.put("meta", meta);
-            JSONObject result = request("POST", API_PREFIX + "/register", body, false, 18000);
+            JSONObject result = request("POST", McpConnectionCore.BOOTSTRAP_API_PREFIX + "/register",
+                    body, false, connectionCore.requestTimeoutMs());
+            if (result.optBoolean("staleClient", false)) {
+                notifyConnection(false, "Older Native Agent generation rejected • reopen current APK");
+                return;
+            }
+            connectionCore.applyRegistrationResponse(result);
             boolean ok = result.optBoolean("ok", false)
-                    && result.optInt("protocolVersion", 0) == PROTOCOL_VERSION;
-            notifyConnection(ok, ok ? "VideoStudio MCP v3 online" : "MCP v3 registration rejected");
+                    && result.optInt("protocolVersion", 0) == connectionCore.selectedProtocol();
+            notifyConnection(ok, ok
+                    ? "VideoStudio MCP online • app " + APP_VERSION
+                        + " • generation " + connectionCore.appGeneration()
+                    : "MCP stable registration rejected");
         } catch (Exception error) {
-            notifyConnection(false, "MCP v3 offline");
+            notifyConnection(false, "MCP stable connection offline");
         }
     }
 
@@ -270,8 +299,11 @@ public final class AppProtocol {
         c.setReadTimeout(timeoutMs);
         c.setInstanceFollowRedirects(true);
         c.setRequestProperty("Accept", "application/json");
-        c.setRequestProperty("X-VideoStudio-Protocol", "3");
-        c.setRequestProperty("User-Agent", "VideoStudio-Android/" + APP_VERSION + " MCPv3");
+        c.setRequestProperty("X-VideoStudio-Protocol", String.valueOf(connectionCore.selectedProtocol()));
+        c.setRequestProperty("X-VideoStudio-App-Generation", String.valueOf(connectionCore.appGeneration()));
+        c.setRequestProperty("X-VideoStudio-Connection-Core", String.valueOf(McpConnectionCore.CORE_VERSION));
+        c.setRequestProperty("User-Agent", "VideoStudio-Android/" + APP_VERSION
+                + " MCPCompat/" + connectionCore.selectedProtocol());
         if (authenticated) c.setRequestProperty("Authorization", "Bearer " + ownerKey);
         if (body != null) {
             c.setDoOutput(true);
