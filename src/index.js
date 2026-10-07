@@ -312,6 +312,13 @@ function serverFor(env){
       return out({queued:true,commandId:c.id,sequence:c.seq,note:"Structured edit plan queued. VideoStudio will execute it locally."});
     }catch(e){ return out({queued:false,error:e.message}); }
   });
+  s.registerTool("import_chat_file",{description:"Securely stream a ChatGPT conversation attachment into the private native VideoStudio Android app. Pass the native private owner credential as deviceId. Requires Allow everything mode.",inputSchema:{deviceId:z.string().min(32),sourceUrl:z.string().url(),name:z.string().min(1).max(180),mime:z.string().max(120).optional(),size:z.number().nonnegative().optional(),projectId:z.string().min(8).optional()}},async({deviceId,sourceUrl,name,mime,size,projectId})=>{
+    try{
+      const handoff=await st.appCreateHandoff(deviceId,sourceUrl,{name,mime,size});
+      const c=await st.appEnqueue(deviceId,"import_chat_file",{handoffId:handoff.id,name:handoff.name,mime:handoff.mime,size:handoff.size,projectId:projectId||""});
+      return out({queued:true,commandId:c.id,sequence:c.seq,nativeApp:true,handoffId:handoff.id,expiresAt:handoff.expiresAt});
+    }catch(e){ return out({queued:false,error:e.message}); }
+  });
   s.registerTool("video_project_plan",{description:"Create a short autonomous editing workflow.",inputSchema:{projectName:z.string().min(1),instruction:z.string().min(1)}},async({projectName,instruction})=>out({projectName,instruction,status:"planned",workflow:["inspect asset metadata","run 12-frame scene and quiet-section analysis","visually inspect sampled frames","design a multi-cut timeline around real structural changes","apply per-clip pacing/reframing/audio only where justified","render locally","inspect the actual rendered contact sheet","iterate before declaring the edit finished"]}));
   return s;
 }
