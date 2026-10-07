@@ -197,3 +197,39 @@ test('public Web device ID cannot route native commands and revoked hybrid bindi
  );
  assert.ok(await f.storage.get('app-device:'+f.deviceId));
 });
+
+
+test('stable native MCP control plane remains available while Android sleeps',async()=>{
+ const f=await fixture();
+ const native=await f.storage.get('app-device:'+f.deviceId);
+ native.lastSeenAt=new Date(Date.now()-120000).toISOString();
+ await f.storage.put('app-device:'+f.deviceId,native);
+
+ const status=await f.relay.appStatusV3(f.key);
+ assert.equal(status.connected,true);
+ assert.equal(status.controlPlaneConnected,true);
+ assert.equal(status.nativeConnected,false);
+ assert.equal(status.executionAvailable,false);
+ assert.equal(status.offlineQueueAvailable,true);
+ assert.equal(status.nativeState,'sleeping_or_offline');
+});
+
+test('direct native commands become durable waiting_native work while Android sleeps',async()=>{
+ const f=await fixture();
+ const native=await f.storage.get('app-device:'+f.deviceId);
+ native.lastSeenAt=new Date(Date.now()-120000).toISOString();
+ await f.storage.put('app-device:'+f.deviceId,native);
+
+ const queued=await f.relay.appEnqueueV3(f.key,'apply_tool',{clipIndex:0,tool:'transition'});
+ assert.equal(queued.status,'waiting_native');
+ assert.equal(queued.waitingReason,'native_offline');
+
+ const status=await f.relay.appStatusV3(f.key);
+ assert.equal(status.pendingCommands,1);
+ assert.equal(status.waitingNativeCommands,1);
+
+ const claimed=await f.relay.appCommandsV3(f.deviceId,f.key,0,0);
+ assert.equal(claimed.length,1);
+ assert.equal(claimed[0].id,queued.id);
+ assert.equal(claimed[0].status,'claimed');
+});
