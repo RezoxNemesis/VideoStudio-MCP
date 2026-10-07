@@ -4,10 +4,10 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
   <meta name="theme-color" content="#0b0d13" />
-  <meta name="description" content="VideoStudio MCP, a local-first video editor controlled through ChatGPT." />
+  <meta name="description" content="VideoStudio Studio Web, a local-first visual editor and autonomous ChatGPT execution surface." />
   <link rel="manifest" href="/manifest.webmanifest" />
   <link rel="icon" href="/icon.svg" type="image/svg+xml" />
-  <title>VideoStudio MCP</title>
+  <title>VideoStudio Studio Web</title>
   <style>
     :root{
       color-scheme:dark;
@@ -117,6 +117,55 @@
     .toast{position:fixed;left:50%;bottom:calc(18px + env(safe-area-inset-bottom));transform:translateX(-50%) translateY(20px);opacity:0;pointer-events:none;background:#111622;border:1px solid #30384a;padding:11px 14px;border-radius:999px;box-shadow:var(--shadow);font-size:12px;z-index:50;transition:.22s}
     .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
     .empty{padding:18px;text-align:center;color:var(--muted);font-size:12px}
+
+    /* Studio Web 1.0 */
+    .topbar{border-bottom:1px solid rgba(90,106,145,.16)}
+    .brandVersion{font-size:10px;color:#65e4ff;margin-left:8px;border:1px solid rgba(53,217,255,.2);padding:3px 7px;border-radius:999px;background:rgba(53,217,255,.05)}
+    .workspaceHero{position:relative}
+    .workspaceHero::after{content:"";position:absolute;inset:0;pointer-events:none;background:radial-gradient(560px 200px at 50% 0,rgba(119,81,246,.08),transparent 65%)}
+    .sectionHead{position:relative;z-index:1}
+    .editorActions{display:flex;gap:7px;align-items:center;flex-wrap:wrap;justify-content:flex-end}
+    .mediaShelf{display:flex;gap:10px;overflow:auto;padding:2px 1px 8px;scroll-snap-type:x proximity}
+    .mediaCard{position:relative;flex:0 0 132px;border:1px solid #242c40;background:#090d14;border-radius:15px;overflow:hidden;text-align:left;color:inherit;padding:0;scroll-snap-align:start}
+    .mediaCard.active{border-color:rgba(53,217,255,.68);box-shadow:0 0 0 2px rgba(53,217,255,.08)}
+    .mediaThumb{width:100%;aspect-ratio:16/10;background:#05070b;display:grid;place-items:center;overflow:hidden;position:relative}
+    .mediaThumb img,.mediaThumb video{width:100%;height:100%;object-fit:cover}
+    .mediaThumb .fallback{font-size:22px;color:#6f7890}
+    .mediaBadge{position:absolute;left:7px;top:7px;padding:3px 6px;border-radius:999px;background:rgba(3,6,12,.78);backdrop-filter:blur(8px);font-size:8px;font-weight:900;letter-spacing:.08em;color:#d9e4ff}
+    .mediaMeta{padding:8px 9px 9px;display:grid;gap:3px}
+    .mediaMeta strong{font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .mediaMeta span{font-size:9px;color:var(--muted)}
+    .timeline{min-height:120px;align-items:stretch}
+    .clip{min-width:176px;max-width:200px;padding:0;overflow:hidden;position:relative}
+    .clipThumb{height:78px;background:#05070b;display:grid;place-items:center;overflow:hidden;border-bottom:1px solid #1e2535}
+    .clipThumb img{width:100%;height:100%;object-fit:cover}
+    .clipBody{padding:9px;display:grid;gap:6px}
+    .clipIndex{position:absolute;left:7px;top:7px;z-index:2;background:rgba(3,6,12,.82);border:1px solid rgba(255,255,255,.08);border-radius:999px;padding:3px 6px;font-size:8px;font-weight:900}
+    .clip.active{border-color:rgba(53,217,255,.65);box-shadow:0 0 0 2px rgba(53,217,255,.08)}
+    .toolRail{display:flex;gap:8px;overflow:auto;padding-bottom:3px}
+    .toolTile{flex:0 0 112px;min-height:78px;border:1px solid #283149;background:linear-gradient(180deg,#121827,#0c111c);border-radius:15px;color:#eaf0ff;padding:10px;text-align:left}
+    .toolTile b{display:block;font-size:12px;margin-top:10px}
+    .toolTile span{font-size:10px;color:var(--muted)}
+    .agentPanel{background:linear-gradient(135deg,rgba(117,75,246,.12),rgba(53,217,255,.07)),#0b0f17;border:1px solid rgba(99,102,241,.28);border-radius:16px;padding:13px}
+    .agentTop{display:flex;align-items:center;justify-content:space-between;gap:10px}
+    .agentPulse{display:inline-flex;align-items:center;gap:7px;font-size:10px;color:#9ff5cf}
+    .agentPulse::before{content:"";width:8px;height:8px;border-radius:50%;background:#45e59b;box-shadow:0 0 0 4px rgba(69,229,155,.08)}
+    .agentPrompt{margin-top:10px;min-height:82px}
+    .statGrid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:10px}
+    .statCard{padding:9px;border:1px solid #232b3e;background:rgba(7,10,16,.7);border-radius:12px}
+    .statCard b{display:block;font-size:14px}
+    .statCard span{font-size:9px;color:var(--muted)}
+    .storageBar{height:5px;background:#1d2433;border-radius:999px;overflow:hidden;margin-top:6px}
+    .storageBar i{display:block;height:100%;width:0;background:linear-gradient(90deg,#4f8dff,#3de4d0)}
+    .bottomDock{display:none}
+    .dockBtn{border:0;background:transparent;color:#8d96aa;padding:8px 9px;min-width:58px;border-radius:12px;font-size:9px;font-weight:750}
+    .dockBtn b{display:block;color:#e9efff;font-size:17px;line-height:1.2;margin-bottom:2px}
+    .dockBtn.active{background:rgba(113,81,246,.12);color:#cdd6e8}
+    .renderResult{border-top:1px solid #1d2432;padding-top:12px}
+    .appModeLine{font-size:10px;color:#aab5ca;margin-top:7px;display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+    .cap{padding:3px 6px;border:1px solid #283249;border-radius:999px;background:#0a0e16;color:#9fb0cb}
+    .cap.on{border-color:rgba(74,222,128,.25);color:#99f6c8;background:rgba(74,222,128,.05)}
+
     @media(max-width:820px){
       .shell{padding:10px}
       .grid{grid-template-columns:1fr}
@@ -127,6 +176,14 @@
       .previewWrap{min-height:290px}
       .previewStage{height:min(52vh,500px)}
       .brand small{display:none}
+      .shell{padding-bottom:84px}
+      .left{order:3}
+      .workspace{order:1}
+      .bottomDock{display:flex;position:fixed;left:10px;right:10px;bottom:calc(8px + env(safe-area-inset-bottom));z-index:40;justify-content:space-around;gap:3px;padding:7px;border:1px solid rgba(78,91,126,.34);border-radius:20px;background:rgba(8,12,20,.92);backdrop-filter:blur(18px);box-shadow:0 18px 55px rgba(0,0,0,.45)}
+      .previewStage{height:min(58vh,560px)}
+      .mediaCard{flex-basis:118px}
+      .clip{min-width:160px}
+      .statGrid{grid-template-columns:1fr 1fr 1fr}
     }
     @media(max-width:460px){
       .controlGrid{grid-template-columns:1fr}
@@ -143,14 +200,14 @@
       <div class="logo">
         <svg viewBox="0 0 24 24" fill="none"><path d="M8.5 6.3v11.4L18 12 8.5 6.3Z" fill="url(#lg)"/><defs><linearGradient id="lg"><stop stop-color="#b69cff"/><stop offset="1" stop-color="#41e4ff"/></linearGradient></defs></svg>
       </div>
-      <div>VideoStudio <small>Local editor + ChatGPT MCP control</small></div>
+      <div>VideoStudio <span class="brandVersion">WEB 1.0</span><small>Visual editor + autonomous ChatGPT execution surface</small></div>
     </div>
     <div class="chip"><i id="onlineDot" class="dot"></i><span id="onlineText">Connecting</span></div>
   </header>
 
   <div class="grid">
     <aside class="stack left">
-      <section class="card hero">
+      <section id="controlSection" class="card hero">
         <div class="heroTitle">
           <div>
             <h2>Connect to ChatGPT</h2>
@@ -183,7 +240,7 @@
         <div id="projectList" class="projectList"></div>
       </section>
 
-      <section class="card pad">
+      <section id="activitySection" class="card pad">
         <h2>ChatGPT activity</h2>
         <div class="muted tiny">Remote commands appear here while this app is open.</div>
         <div id="commandLog" class="statusLog">
@@ -193,13 +250,18 @@
     </aside>
 
     <main class="workspace">
-      <section class="card">
+      <section id="editorSection" class="card workspaceHero">
         <div class="sectionHead">
           <div>
             <h2 id="projectTitle">No project selected</h2>
             <div id="projectSubtitle" class="tiny">Create a project to start editing.</div>
           </div>
-          <button id="renameBtn" class="btn small" disabled>Rename</button>
+          <div class="editorActions">
+            <label class="btn small" for="fileInput">＋ Import</label>
+            <button id="previewSelectedBtn" class="btn small" disabled>▶ Preview</button>
+            <button id="renameBtn" class="btn small" disabled>Rename</button>
+            <button id="renderTopBtn" class="btn primary small" disabled>Export</button>
+          </div>
         </div>
 
         <div id="previewWrap" class="previewWrap" data-aspect="9:16">
@@ -208,25 +270,88 @@
             <img id="previewImage" alt="Preview" />
             <div id="emptyPreview" class="emptyPreview">
               <div style="font-size:34px;margin-bottom:8px">🎬</div>
-              Import a video to begin.<br><span class="tiny">Your file never needs cloud storage.</span>
+              Import media to begin.<br><span class="tiny">Images and videos preview here instantly. Your media stays local.</span>
             </div>
             <div id="previewTitleOverlay" class="previewTitle"></div>
           </div>
         </div>
       </section>
 
-      <section class="card">
+      <section id="mediaSection" class="card">
         <div class="sectionHead">
           <div>
-            <h3>Media + timeline</h3>
-            <div class="tiny">Import from your Android device, then reorder or trim.</div>
+            <h3>Media Bin</h3>
+            <div class="tiny">Visual source and generated assets. Select anything to inspect it.</div>
           </div>
-          <label class="btn primary small" for="fileInput">Import media</label>
+          <label class="btn primary small" for="fileInput">＋ Add media</label>
           <input id="fileInput" type="file" accept="video/*,image/*,audio/*" multiple hidden />
         </div>
         <div class="sectionBody">
-          <div id="dropZone" class="drop">Tap <b>Import media</b> or drop files here.</div>
-          <div id="timeline" class="timeline" style="margin-top:11px"></div>
+          <div id="dropZone" class="drop">Tap <b>Add media</b> or drop files here.</div>
+          <div id="mediaShelf" class="mediaShelf" style="margin-top:11px"></div>
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:10px">
+            <h3 style="margin:0">Timeline</h3>
+            <span id="timelineSummary" class="tiny">0 clips</span>
+          </div>
+          <div id="timeline" class="timeline" style="margin-top:8px"></div>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="sectionHead">
+          <div>
+            <h3>Creator Tools</h3>
+            <div class="tiny">Fast operations on the selected timeline clip.</div>
+          </div>
+          <span class="tiny">Local + reversible metadata</span>
+        </div>
+        <div class="sectionBody">
+          <div class="toolRail">
+            <button class="toolTile" data-quick-tool="split"><span>✂</span><b>Split</b><span>At midpoint</span></button>
+            <button class="toolTile" data-quick-tool="slow"><span>½</span><b>Slow Motion</b><span>0.5×</span></button>
+            <button class="toolTile" data-quick-tool="speed"><span>⚡</span><b>Speed Up</b><span>1.5×</span></button>
+            <button class="toolTile" data-quick-tool="push"><span>◎</span><b>Push In</b><span>Cinematic</span></button>
+            <button class="toolTile" data-quick-tool="pan"><span>↔</span><b>Pan</b><span>Right drift</span></button>
+            <button class="toolTile" data-quick-tool="film"><span>◐</span><b>Film Look</b><span>Warm contrast</span></button>
+            <button class="toolTile" data-quick-tool="reset"><span>↺</span><b>Reset</b><span>Selected clip</span></button>
+          </div>
+        </div>
+      </section>
+
+      <section id="aiSection" class="card">
+        <div class="sectionHead">
+          <div>
+            <h3>Autonomous Director</h3>
+            <div class="tiny">One goal in, structured editing through ChatGPT MCP.</div>
+          </div>
+          <span class="agentPulse">Agent relay ready</span>
+        </div>
+        <div class="sectionBody">
+          <div class="agentPanel">
+            <div class="agentTop">
+              <div>
+                <b style="font-size:13px">Director Goal</b>
+                <div class="tiny">Stored with the project so ChatGPT can pick up the same intent.</div>
+              </div>
+              <button id="copyDirectorBtn" class="btn small">Send to ChatGPT</button>
+            </div>
+            <textarea id="directorGoal" class="agentPrompt" placeholder="Example: Turn these frames into a cinematic 9:16 sequence, keep identity stable, use subtle motion, inspect the render, then repair only weak shots."></textarea>
+            <div class="actions">
+              <button id="saveDirectorBtn" class="btn good small">Save goal</button>
+              <button id="directorTemplateBtn" class="btn small">Use cinematic template</button>
+            </div>
+            <div class="statGrid">
+              <div class="statCard"><b id="assetStat">0</b><span>MEDIA ASSETS</span></div>
+              <div class="statCard"><b id="clipStat">0</b><span>TIMELINE CLIPS</span></div>
+              <div class="statCard"><b id="storageStat">—</b><span>LOCAL STORAGE</span><div class="storageBar"><i id="storageBar"></i></div></div>
+            </div>
+            <div class="appModeLine">
+              <span class="cap on">Local media</span>
+              <span class="cap on">MCP control</span>
+              <span class="cap on">Browser fallback editor</span>
+              <span class="cap">No paid media storage</span>
+            </div>
+          </div>
         </div>
       </section>
 
@@ -332,6 +457,13 @@
     </main>
   </div>
 </div>
+<nav class="bottomDock" aria-label="VideoStudio">
+  <button class="dockBtn active" data-jump="editorSection"><b>⌂</b>Editor</button>
+  <button class="dockBtn" data-jump="mediaSection"><b>▣</b>Media</button>
+  <button class="dockBtn" data-jump="aiSection"><b>✦</b>AI</button>
+  <button class="dockBtn" data-jump="activitySection"><b>◎</b>Activity</button>
+  <button class="dockBtn" data-jump="controlSection"><b>⚙</b>Control</button>
+</nav>
 <div id="toast" class="toast"></div>
 
 <script>
@@ -353,6 +485,10 @@
     applyTrimBtn: $("applyTrimBtn"), renderBtn: $("renderBtn"), renderText: $("renderText"),
     renderProgress: $("renderProgress"), renderResult: $("renderResult"), renderedPreview: $("renderedPreview"),
     downloadRender: $("downloadRender"), copyPromptBtn: $("copyPromptBtn"), examplePrompt: $("examplePrompt"),
+    mediaShelf: $("mediaShelf"), timelineSummary: $("timelineSummary"), previewSelectedBtn: $("previewSelectedBtn"),
+    renderTopBtn: $("renderTopBtn"), directorGoal: $("directorGoal"), saveDirectorBtn: $("saveDirectorBtn"),
+    directorTemplateBtn: $("directorTemplateBtn"), copyDirectorBtn: $("copyDirectorBtn"),
+    assetStat: $("assetStat"), clipStat: $("clipStat"), storageStat: $("storageStat"), storageBar: $("storageBar"),
     toast: $("toast"),
   };
 
@@ -369,6 +505,8 @@
     polling: false,
     rendering: false,
     logs: [],
+    thumbnailUrls: new Map(),
+    persistentStorage: false,
   };
   localStorage.setItem("vs-device-id", app.deviceId);
   els.deviceIdText.textContent = app.deviceId;
@@ -407,11 +545,12 @@
 
   function openDb() {
     return new Promise((resolve, reject) => {
-      const request = indexedDB.open("videostudio-local", 2);
+      const request = indexedDB.open("videostudio-local", 3);
       request.onupgradeneeded = () => {
         const db = request.result;
         if (!db.objectStoreNames.contains("assets")) db.createObjectStore("assets", { keyPath: "key" });
         if (!db.objectStoreNames.contains("renders")) db.createObjectStore("renders", { keyPath: "key" });
+        if (!db.objectStoreNames.contains("thumbs")) db.createObjectStore("thumbs", { keyPath: "key" });
       };
       request.onsuccess = () => resolve(request.result);
       request.onerror = () => reject(request.error);
@@ -454,7 +593,8 @@
           meta: {
             name: /Android/i.test(navigator.userAgent) ? "Android device" : "Web device",
             platform: navigator.platform || "web",
-            appVersion: "0.6.0",
+            appVersion: "1.0.0",
+            capabilities: ["visual-media-bin","thumbnail-timeline","local-render","autonomous-command-relay","persistent-browser-storage"],
           },
         }),
       });
@@ -563,7 +703,15 @@
     els.muteSwitch.classList.toggle("on", Boolean(app.project.settings.mute));
     els.previewWrap.dataset.aspect = app.project.settings.aspect;
     els.previewTitleOverlay.textContent = app.project.settings.title || "";
-    els.renderBtn.disabled = !(app.project.timeline && app.project.timeline.length);
+    const hasTimeline = Boolean(app.project.timeline && app.project.timeline.length);
+    els.renderBtn.disabled = !hasTimeline;
+    els.renderTopBtn.disabled = !hasTimeline;
+    els.previewSelectedBtn.disabled = !app.selectedAssetId;
+    els.directorGoal.value = app.project.instruction || "";
+    els.assetStat.textContent = String(app.project.assets.length || 0);
+    els.clipStat.textContent = String(app.project.timeline.length || 0);
+    els.timelineSummary.textContent = (app.project.timeline.length || 0) + " clip" + (app.project.timeline.length === 1 ? "" : "s");
+    renderMediaShelf();
     renderTimeline();
     renderProjectList();
   }
@@ -571,24 +719,28 @@
   function renderTimeline() {
     if (!app.project || !app.project.timeline.length) {
       els.timeline.innerHTML = '<div class="empty">Timeline is empty.</div>';
+      els.timelineSummary.textContent = "0 clips";
       els.trimPanel.style.display = "none";
       return;
     }
     els.timeline.innerHTML = "";
+    els.timelineSummary.textContent = app.project.timeline.length + " clip" + (app.project.timeline.length === 1 ? "" : "s");
     app.project.timeline.forEach((clip, index) => {
       const asset = app.project.assets.find((a) => a.id === clip.assetId);
       if (!asset) return;
       const node = document.createElement("div");
       node.className = "clip" + (app.selectedAssetId === asset.id ? " active" : "");
       const sourceDuration = Math.max(0, Number(clip.outPoint || 0) - Number(clip.inPoint || 0));
-      const clipSpeed = Math.max(.5, Math.min(2, Number(clip.speed || app.project.settings.speed || 1)));
+      const clipSpeed = Math.max(.25, Math.min(4, Number(clip.speed || app.project.settings.speed || 1)));
       const duration = sourceDuration / clipSpeed;
-      node.innerHTML = "<strong></strong><span></span><div class='clipBtns'></div>";
+      node.innerHTML = "<span class='clipIndex'></span><div class='clipThumb'><span class='fallback'>▧</span></div><div class='clipBody'><strong></strong><span></span><div class='clipBtns'></div></div>";
+      node.querySelector(".clipIndex").textContent = String(index + 1);
       node.querySelector("strong").textContent = (clip.title ? "✦ " + clip.title + " · " : "") + asset.name;
-      node.querySelector("span").textContent = asset.kind + " • " + Number(clip.inPoint || 0).toFixed(1) + "–" + Number(clip.outPoint || 0).toFixed(1) + "s • " + clipSpeed.toFixed(2) + "x • " + duration.toFixed(1) + "s out";
+      node.querySelector(".clipBody>span").textContent = asset.kind + " • " + duration.toFixed(1) + "s • " + clipSpeed.toFixed(2) + "×";
+      hydrateThumb(node.querySelector(".clipThumb"), asset);
       node.onclick = () => {
         app.selectedAssetId = asset.id;
-        renderTimeline();
+        renderProject();
         previewSelected();
       };
       const btns = node.querySelector(".clipBtns");
@@ -606,6 +758,88 @@
     });
     updateTrimPanel();
   }
+
+  function renderMediaShelf() {
+    if (!els.mediaShelf) return;
+    if (!app.project || !app.project.assets.length) {
+      els.mediaShelf.innerHTML = '<div class="empty">No media yet.</div>';
+      return;
+    }
+    els.mediaShelf.innerHTML = "";
+    app.project.assets.forEach((asset) => {
+      const card = document.createElement("button");
+      card.className = "mediaCard" + (app.selectedAssetId === asset.id ? " active" : "");
+      card.innerHTML = "<div class='mediaThumb'><span class='mediaBadge'></span><span class='fallback'>▧</span></div><div class='mediaMeta'><strong></strong><span></span></div>";
+      card.querySelector(".mediaBadge").textContent = (asset.generated ? "GENERATED" : String(asset.kind || "media").toUpperCase());
+      card.querySelector("strong").textContent = asset.name || "Media";
+      const seconds = Number(asset.duration || 0);
+      card.querySelector(".mediaMeta span").textContent = seconds > 0 ? seconds.toFixed(1) + "s" : humanBytes(asset.size || 0);
+      hydrateThumb(card.querySelector(".mediaThumb"), asset);
+      card.onclick = () => {
+        app.selectedAssetId = asset.id;
+        renderProject();
+        previewSelected();
+      };
+      els.mediaShelf.appendChild(card);
+    });
+  }
+
+  function humanBytes(bytes) {
+    const n = Number(bytes || 0);
+    if (n < 1024) return n + " B";
+    if (n < 1048576) return (n / 1024).toFixed(1) + " KB";
+    if (n < 1073741824) return (n / 1048576).toFixed(1) + " MB";
+    return (n / 1073741824).toFixed(2) + " GB";
+  }
+
+  async function hydrateThumb(container, asset) {
+    if (!container || !app.project || !asset) return;
+    try {
+      const key = assetKey(app.project.id, asset.id);
+      let thumb = await idbGet("thumbs", key);
+      if (!thumb || !thumb.dataUrl) {
+        const stored = await idbGet("assets", key);
+        if (!stored || !stored.blob) return;
+        const dataUrl = await makeThumbnail(stored.blob, asset.kind);
+        if (!dataUrl) return;
+        thumb = { key, dataUrl, updatedAt: Date.now() };
+        await idbPut("thumbs", thumb);
+      }
+      const img = document.createElement("img");
+      img.alt = "";
+      img.src = thumb.dataUrl;
+      container.querySelectorAll("img,.fallback").forEach((x) => x.remove());
+      container.appendChild(img);
+    } catch (error) {
+      console.warn("thumbnail", error);
+    }
+  }
+
+  async function makeThumbnail(blob, kind) {
+    if (!blob || (kind !== "image" && kind !== "video")) return "";
+    const canvas = document.createElement("canvas");
+    canvas.width = 320; canvas.height = 180;
+    const ctx = canvas.getContext("2d", { alpha:false });
+    ctx.fillStyle = "#05070b"; ctx.fillRect(0,0,canvas.width,canvas.height);
+    let source, url = URL.createObjectURL(blob);
+    try {
+      if (kind === "image") {
+        source = new Image();
+        await new Promise((resolve,reject)=>{source.onload=resolve;source.onerror=reject;source.src=url;});
+      } else {
+        source = document.createElement("video");
+        source.muted = true; source.playsInline = true; source.preload = "metadata"; source.src = url;
+        await new Promise((resolve,reject)=>{source.onloadedmetadata=resolve;source.onerror=()=>reject(new Error("thumbnail decode failed"));});
+        source.currentTime = Math.min(Math.max(.05, Number(source.duration||0) * .12), Math.max(.05, Number(source.duration||0)-.05));
+        await new Promise((resolve)=>{source.onseeked=resolve;setTimeout(resolve,700);});
+      }
+      drawCover(ctx, source, canvas.width, canvas.height, 1);
+      return canvas.toDataURL("image/jpeg", .72);
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  }
+
 
   async function moveClip(index, direction) {
     const target = index + direction;
@@ -699,6 +933,9 @@
         };
         await idbPut("assets", { key: assetKey(app.project.id, id), blob: file, meta: asset });
         app.project.assets.push(asset);
+        if (kind === "image" || kind === "video") {
+          makeThumbnail(file, kind).then((dataUrl) => dataUrl && idbPut("thumbs", { key: assetKey(app.project.id, id), dataUrl, updatedAt: Date.now() })).catch(()=>{});
+        }
         if (kind === "video" || kind === "image") {
           app.project.timeline.push({
             assetId: id,
@@ -753,6 +990,70 @@
     }
   }
 
+  async function quickTool(action) {
+    if (!app.project || !app.selectedAssetId) return toast("Select a timeline clip first");
+    const index = app.project.timeline.findIndex((c) => c.assetId === app.selectedAssetId);
+    if (index < 0) return toast("Selected media is not on the timeline");
+    const clip = app.project.timeline[index];
+    const asset = app.project.assets.find((a) => a.id === clip.assetId);
+    if (!asset) return;
+
+    if (action === "split") {
+      const start = Number(clip.inPoint || 0), end = Number(clip.outPoint || 0);
+      if (end - start < .6) return toast("Clip is too short to split");
+      const mid = start + (end - start) / 2;
+      const left = { ...clip, clipId: crypto.randomUUID(), outPoint: mid };
+      const right = { ...clip, clipId: crypto.randomUUID(), inPoint: mid };
+      app.project.timeline.splice(index,1,left,right);
+    } else if (action === "slow") {
+      clip.speed = .5;
+    } else if (action === "speed") {
+      clip.speed = 1.5;
+    } else if (action === "push") {
+      clip.zoomStart = 1.02; clip.zoomEnd = 1.16; clip.panXStart = 0; clip.panXEnd = 0; clip.panYStart = .04; clip.panYEnd = -.02;
+    } else if (action === "pan") {
+      clip.zoomStart = 1.10; clip.zoomEnd = 1.12; clip.panXStart = -.45; clip.panXEnd = .45;
+    } else if (action === "film") {
+      clip.brightness = .98; clip.contrast = 1.08; clip.saturation = .92;
+    } else if (action === "reset") {
+      ["speed","zoomStart","zoomEnd","panXStart","panXEnd","panYStart","panYEnd","rotate","brightness","contrast","saturation"].forEach((k)=>delete clip[k]);
+    }
+    renderProject();
+    await syncProject({ timeline: app.project.timeline });
+    toast(action === "split" ? "Clip split" : "Tool applied");
+  }
+
+  async function saveDirectorGoal() {
+    if (!app.project) return toast("Create a project first");
+    const instruction = String(els.directorGoal.value || "").trim().slice(0,2000);
+    app.project.instruction = instruction;
+    await syncProject({ instruction });
+    toast("Director goal saved");
+  }
+
+  function directorPrompt() {
+    const goal = String(els.directorGoal.value || app.project && app.project.instruction || "").trim();
+    return [
+      "Connect to my VideoStudio Studio Web editor.",
+      "MCP server: " + location.origin + "/mcp-v06",
+      "Device ID: " + app.deviceId,
+      app.project ? "Project ID: " + app.project.id : "",
+      goal ? "Director goal: " + goal : "Director goal: inspect the current project and improve it autonomously.",
+      "Work autonomously through VideoStudio tools. Inspect media, build/edit the timeline, render locally, inspect the finished render, and iterate. Do not assume media exists in the cloud."
+    ].filter(Boolean).join("\n");
+  }
+
+  async function updateStorageStatus() {
+    if (!navigator.storage || !navigator.storage.estimate) return;
+    try {
+      const estimate = await navigator.storage.estimate();
+      const used = Number(estimate.usage || 0), quota = Number(estimate.quota || 0);
+      const pct = quota > 0 ? Math.max(0, Math.min(100, used / quota * 100)) : 0;
+      els.storageStat.textContent = humanBytes(used);
+      els.storageBar.style.width = pct.toFixed(1) + "%";
+    } catch {}
+  }
+
   async function applyTrim() {
     if (!app.project || !app.selectedAssetId) return;
     const clip = app.project.timeline.find((c) => c.assetId === app.selectedAssetId);
@@ -800,7 +1101,7 @@
       assetId: raw.assetId || asset.id,
       inPoint: start,
       outPoint: end,
-      speed: clamp(raw.speed == null ? 1 : raw.speed, .5, 2),
+      speed: clamp(raw.speed == null ? 1 : raw.speed, .25, 4),
       volume: clamp(raw.volume == null ? 1 : raw.volume, 0, 2),
       audioFadeIn: clamp(raw.audioFadeIn || 0, 0, 5),
       audioFadeOut: clamp(raw.audioFadeOut || 0, 0, 5),
@@ -1138,7 +1439,7 @@
           const img = new Image();
           const url = URL.createObjectURL(stored.blob);
           await new Promise((resolve, reject) => { img.onload = resolve; img.onerror = reject; img.src = url; });
-          const clipSpeed = Math.max(.5, Math.min(2, Number(clip.speed || app.project.settings.speed || 1)));
+          const clipSpeed = Math.max(.25, Math.min(4, Number(clip.speed || app.project.settings.speed || 1)));
           const durationMs = Math.max(400, (Number(clip.outPoint || 3) - Number(clip.inPoint || 0)) * 1000 / clipSpeed);
           const startAt = performance.now();
           await new Promise((resolve) => {
@@ -1171,7 +1472,7 @@
           const end = Math.min(Number(video.duration || 0), Number(clip.outPoint || video.duration || 0));
           video.currentTime = start;
           await new Promise((resolve) => { video.onseeked = resolve; setTimeout(resolve, 1000); });
-          const clipSpeed = Math.max(.5, Math.min(2, Number(clip.speed || app.project.settings.speed || 1)));
+          const clipSpeed = Math.max(.25, Math.min(4, Number(clip.speed || app.project.settings.speed || 1)));
           video.playbackRate = clipSpeed;
 
           let mediaSource = null;
@@ -1267,6 +1568,7 @@
       };
       app.project.latestRender = latestRender;
       await syncProject({ latestRender });
+      await updateStorageStatus();
       toast("Render complete");
       return { ok: true, render: latestRender };
     } catch (error) {
@@ -1557,10 +1859,10 @@
 
   function pairingPrompt() {
     return [
-      "Connect to my VideoStudio app.",
+      "Connect to my VideoStudio Studio Web editor.",
       "MCP server: " + location.origin + "/mcp-v06",
       "Device ID: " + app.deviceId,
-      "Use VideoStudio MCP device_status to verify it, then use this device ID for my VideoStudio projects and edit commands."
+      "Use VideoStudio MCP device_status first, then work autonomously on this browser editor. Media remains local in the browser; use the website as a fallback execution surface when the Android app is unavailable."
     ].join("\n");
   }
 
@@ -1575,7 +1877,27 @@
   els.newProjectName.addEventListener("keydown", (e) => { if (e.key === "Enter") createProject(); });
   els.fileInput.onchange = (e) => importFiles(e.target.files);
   els.applyTrimBtn.onclick = applyTrim;
+  els.previewSelectedBtn.onclick = () => previewSelected();
   els.renderBtn.onclick = () => renderCurrentProject(false);
+  els.renderTopBtn.onclick = () => renderCurrentProject(false);
+  document.querySelectorAll("[data-quick-tool]").forEach((button) => {
+    button.onclick = () => quickTool(button.dataset.quickTool);
+  });
+  els.saveDirectorBtn.onclick = saveDirectorGoal;
+  els.directorTemplateBtn.onclick = () => {
+    els.directorGoal.value = "Build a polished cinematic sequence from the current media. Keep subjects and scene continuity stable, vary camera motion subtly, preserve clear audio, render locally, inspect the result, and repair only weak shots.";
+  };
+  els.copyDirectorBtn.onclick = async () => {
+    await copyText(directorPrompt(), "Director command copied");
+    window.open("https://chatgpt.com/", "_blank", "noopener");
+  };
+  document.querySelectorAll("[data-jump]").forEach((button) => {
+    button.onclick = () => {
+      const target = document.getElementById(button.dataset.jump);
+      if (target) target.scrollIntoView({ behavior:"smooth", block:"start" });
+      document.querySelectorAll(".dockBtn").forEach((b)=>b.classList.toggle("active", b===button));
+    };
+  });
   els.downloadRender.addEventListener("click", async (event) => {
     if (!window.AndroidNative || !app.latestRenderBlob) return;
     event.preventDefault();
@@ -1617,14 +1939,28 @@
     if (app.renderUrl) URL.revokeObjectURL(app.renderUrl);
   });
 
+  async function commandLoop() {
+    while (true) {
+      await pollCommands();
+      await new Promise((resolve)=>setTimeout(resolve, document.hidden ? 2600 : 850));
+    }
+  }
+
   async function init() {
     try {
       app.db = await openDb();
+      if (navigator.storage && navigator.storage.persist) {
+        try { app.persistentStorage = await navigator.storage.persist(); } catch {}
+      }
+      await updateStorageStatus();
       await registerDevice();
       await loadProjects();
-      await pollCommands();
-      setInterval(pollCommands, 2200);
-      setInterval(registerDevice, 30000);
+      commandLoop();
+      setInterval(registerDevice, 25000);
+      setInterval(updateStorageStatus, 12000);
+      document.addEventListener("visibilitychange", () => {
+        if (!document.hidden) { registerDevice(); pollCommands(); updateStorageStatus(); }
+      });
       if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
     } catch (error) {
       console.error(error);
