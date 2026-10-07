@@ -25,6 +25,7 @@ const activityLog = fs.readFileSync(new URL("../android/app/src/main/java/com/re
 const recoveryPlans = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/RecoveryPlanStore.java", import.meta.url), "utf8");
 const capabilityRegistry = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/CapabilityRegistry.java", import.meta.url), "utf8");
 const modelPackManager = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/ModelPackManager.java", import.meta.url), "utf8");
+const computeProfile = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/DeviceComputeProfile.java", import.meta.url), "utf8");
 
 const scriptMatch = app.match(/<script>([\s\S]*?)<\/script>/);
 let appScriptParses = false;
@@ -167,6 +168,11 @@ const checks = [
   ["model packs validate manifest capabilities license and checksums", modelPackManager.includes('"manifest.json"') && modelPackManager.includes('"capabilities"') && modelPackManager.includes('"license"') && modelPackManager.includes("verifyDeclaredFiles")],
   ["model-pack installs survive interruption through durable recovery plans", controlService.includes('"install_model_pack"') && controlService.includes("queueModelPackInstall") && controlService.includes("submitRecoverableHeavy")],
   ["MCP v3 exposes model-pack install and uninstall controls", worker.includes('"app_install_model_pack"') && worker.includes('"app_uninstall_model_pack"')],
+  ["device compute planner bounds local AI working sets instead of assuming full residency", computeProfile.includes("activeWorkingSetBudgetMb") && computeProfile.includes("residentModelBudgetMb") && computeProfile.includes("phaseModelSwapping")],
+  ["compute planner supports tiled inference temporal windows and disk intermediates", computeProfile.includes("tiledInference") && computeProfile.includes("boundedTemporalWindows") && computeProfile.includes("diskBackedIntermediates")],
+  ["compute planning reacts to thermal state", computeProfile.includes("thermalSafeForHeavyWork") && computeProfile.includes("thermalPauseRequired")],
+  ["Native Agent exposes compute profile and planning", controlService.includes('case "compute_profile"') && controlService.includes('case "plan_compute"') && controlService.includes("computeProfile.plan")),
+  ["MCP v3 exposes typed compute planning tools", worker.includes('"app_compute_profile"') && worker.includes('"app_plan_compute"')],
   ["native v3 exposes a self-test", controlService.includes('case "self_test"') && worker.includes('"app_self_test"') && controlService.includes("privateStorageWritable")],
   ["native state reports v3 architecture", controlService.includes('out.put("mcpEndpointVersion", "v3")') && controlService.includes('out.put("localEngineOwnsProjects", true)')],
   ["cached connector compatibility routes v3 devices to v3 queue", worker.includes("enqueueNative") && worker.includes("appEnqueueV3") && worker.includes("commandNative")],
