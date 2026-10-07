@@ -191,6 +191,113 @@ export class VideoStudioState extends DurableObject {
       projectCount:Array.isArray(d.projects)?d.projects.length:0
     };
   }
+  async appV3Device(ownerKey){
+    const d=await this.appResolve(ownerKey);
+    if(!d) throw new Error("VideoStudio MCP v3 credential rejected");
+    if(Number(d.protocolVersion||0)!==3) throw new Error("VideoStudio v3 app is required for this MCP endpoint");
+    return d;
+  }
+  async appEnqueueV3(ownerKey,action,parameters={}){
+    const d=await this.appV3Device(ownerKey);
+    if(d.controlPaused) throw new Error("ChatGPT control is paused on the phone");
+    if(!appActionAllowed(d.permissionMode,action)) throw new Error("Action blocked by device permission mode or Gallery privacy boundary: "+d.permissionMode);
+    const sk="app-v3-seq:"+d.deviceId, seq=((await this.ctx.storage.get(sk))||0)+1;
+    await this.ctx.storage.put(sk,seq);
+    const c={
+      id:crypto.randomUUID(),
+      seq,
+      protocolVersion:3,
+      deviceId:d.deviceId,
+      action,
+      parameters,
+      status:"queued",
+      createdAt:now(),
+      completedAt:null,
+      result:null
+    };
+    const k="app-v3-cl:"+d.deviceId, list=(await this.ctx.storage.get(k))||[];
+    list.push(c);
+    await this.ctx.storage.put(k,list.slice(-160));
+    return c;
+  }
+  async appCommandsV3(deviceId,ownerKey,after=0,waitMs=0){
+    const d=await this.appAuth(deviceId,ownerKey);
+    if(!d) throw new Error("VideoStudio v3 native authorization failed");
+    if(Number(d.protocolVersion||0)!==3) throw new Error("VideoStudio v3 protocol registration required");
+    const until=Date.now()+Math.max(0,Math.min(20000,Number(waitMs||0)));
+    const key="app-v3-cl:"+deviceId;
+    while(true){
+      const list=(await this.ctx.storage.get(key))||[], nowMs=Date.now();
+      const found=[];
+      let changed=false;
+      for(let i=0;i<list.length;i++){
+        const c=list[i];
+        if(c.seq<=Number(after||0)) continue;
+        const expired=c.status==="claimed"&&Number(c.leaseUntil||0)<=nowMs;
+        if(c.status==="queued"||expired){
+          list[i]={...c,status:"claimed",claimedAt:now(),leaseUntil:nowMs+60000,claimCount:Number(c.claimCount||0)+1};
+          found.push(list[i]);
+          changed=true;
+          if(found.length>=4) break;
+        }
+      }
+      if(changed) await this.ctx.storage.put(key,list.slice(-160));
+      if(found.length||Date.now()>=until) return found;
+      await new Promise(resolve=>setTimeout(resolve,500));
+    }
+  }
+  async appCompleteV3(deviceId,ownerKey,id,result={},status="completed"){
+    const d=await this.appAuth(deviceId,ownerKey);
+    if(!d) throw new Error("VideoStudio v3 native authorization failed");
+    if(Number(d.protocolVersion||0)!==3) throw new Error("VideoStudio v3 protocol registration required");
+    const k="app-v3-cl:"+deviceId, list=(await this.ctx.storage.get(k))||[], i=list.findIndex(c=>c.id===id);
+    if(i<0) return null;
+    list[i]={...list[i],status:clean(status,30)||"completed",completedAt:now(),leaseUntil:0,result};
+    for(let j=0;j<list.length;j++){
+      if(j!==i&&list[j]&&list[j].result&&list[j].result.contactSheet&&list[j].result.contactSheet.base64){
+        list[j]={...list[j],result:{...list[j].result,contactSheet:{...list[j].result.contactSheet,base64:undefined,expired:true}}};
+      }
+    }
+    await this.ctx.storage.put(k,list.slice(-160));
+    const stored=(await this.ctx.storage.get("app-device:"+deviceId))||d;
+    stored.lastSeenAt=now();
+    await this.ctx.storage.put("app-device:"+deviceId,stored);
+    return list[i];
+  }
+  async appCommandV3(ownerKey,id){
+    const d=await this.appV3Device(ownerKey);
+    const list=(await this.ctx.storage.get("app-v3-cl:"+d.deviceId))||[];
+    return list.find(c=>c.id===id)||null;
+  }
+  async appStatusV3(ownerKey){
+    const d=await this.appResolve(ownerKey);
+    if(!d) return {connected:false,protocolVersion:3,error:"VideoStudio MCP v3 credential rejected"};
+    if(Number(d.protocolVersion||0)!==3){
+      return {
+        connected:false,
+        protocolVersion:3,
+        upgradeRequired:true,
+        registeredProtocolVersion:Number(d.protocolVersion||0),
+        appVersion:d.appVersion||"",
+        error:"Install/open VideoStudio v3 to activate the v3 Native Agent connection"
+      };
+    }
+    const list=(await this.ctx.storage.get("app-v3-cl:"+d.deviceId))||[];
+    const {ownerHash,...safe}=d;
+    return {
+      connected:true,
+      protocolVersion:3,
+      mcpEndpointVersion:"v3",
+      nativeAgent:"videostudio-v3",
+      device:safe,
+      pendingCommands:list.filter(c=>c.status==="queued"||c.status==="claimed").length,
+      lastCommand:list[list.length-1]||null,
+      projectCount:Array.isArray(d.projects)?d.projects.length:0,
+      galleryAccess:false,
+      directAttachmentIngest:true
+    };
+  }
+
   async appCreateHandoff(ownerKey,sourceUrl,meta={}){
     const d=await this.appResolve(ownerKey);
     if(!d) throw new Error("Private App MCP credential rejected");
