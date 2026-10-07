@@ -5,6 +5,7 @@ const worker = fs.readFileSync(new URL("../src/index.js", import.meta.url), "utf
 const wrangler = fs.readFileSync(new URL("../wrangler.jsonc", import.meta.url), "utf8");
 const nativeMain = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/MainActivity.java", import.meta.url), "utf8");
 const nativeProtocol = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/AppProtocol.java", import.meta.url), "utf8");
+const mcpConnectionCore = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/McpConnectionCore.java", import.meta.url), "utf8");
 const nativeJobs = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/JobManager.java", import.meta.url), "utf8");
 const nativeRender = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/NativeRenderEngine.java", import.meta.url), "utf8");
 const promptVideo = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/PromptVideoEngine.java", import.meta.url), "utf8");
@@ -88,6 +89,9 @@ const checks = [
   ["Gallery remains blocked under Full Autonomous", worker.includes("Permanent privacy wall") && controlService.includes("Even Full Autonomous cannot enumerate or browse the phone Gallery") && nativeMain.includes("Gallery enumeration remains a hard technical boundary")],
   ["native app has green screen and slow motion tools", nativeMain.includes("Green Screen") && nativeMain.includes("Slow Motion")],
   ["native app pairs through persistent adaptive MCP Connection Core", nativeProtocol.includes("McpConnectionCore.STABLE_MCP_PATH") && nativeProtocol.includes("McpConnectionCore.BOOTSTRAP_API_PREFIX") && nativeProtocol.includes("PROTOCOL_VERSION = 3") && nativeProtocol.includes("AndroidKeyStore")],
+  ["MCP transport compatibility is decoupled from APK version", mcpConnectionCore.includes("transportDecoupledFromApkVersion") && mcpConnectionCore.includes("stable-major-additive-features") && mcpConnectionCore.includes("WIRE_SCHEMA_VERSION") && mcpConnectionCore.includes("FEATURE_LEVEL")],
+  ["MCP connection identity survives compatible APK upgrades", mcpConnectionCore.includes("upgradeKeepsDeviceIdentity") && mcpConnectionCore.includes("upgradeKeepsOwnerCredential") && nativeProtocol.includes('PREFS = "videostudio_native_v1"') && nativeProtocol.includes('KEY_ALIAS = "videostudio_owner_key_v1"')],
+  ["worker persists negotiated wire compatibility independently of app version", worker.includes("wireSchemaVersion") && worker.includes("featureLevel") && worker.includes("transportDecoupledFromApkVersion") && worker.includes('"stable-core-2"')],
   ["native app identifies as VideoStudio 3.3.1 while retaining MCP v3", nativeProtocol.includes('APP_VERSION = "3.3.1"') && nativeProtocol.includes("PROTOCOL_VERSION = 3") && androidBuild.includes('versionName = "3.3.1"') && androidBuild.includes("versionCode = 331")],
   ["pairing message advertises stable upgrade-surviving endpoint", nativeProtocol.includes("Stable MCP endpoint:") && nativeProtocol.includes("survives compatible VideoStudio APK upgrades")],
   ["native v3 command cursor advances only after completion", nativeProtocol.includes('KEY_SEQ = "native_v3_last_seq"') && nativeProtocol.includes("advanceSequence")],
