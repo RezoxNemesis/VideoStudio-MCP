@@ -293,8 +293,10 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                     complete(command, queueExport(p));
                     return;
                 case "cancel_job": {
-                    boolean cancelled = jobs.cancel(p.optString("jobId"));
+                    String jobId = p.optString("jobId");
+                    boolean cancelled = jobs.cancel(jobId);
                     if (cancelled && activeRender != null) activeRender.cancel();
+                    if (cancelled) recoveryPlans.cancelByJob(jobId);
                     JSONObject result = ok();
                     result.put("cancelled", cancelled);
                     complete(command, result);
@@ -1048,6 +1050,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
 
         checkpoint(state, "Exporting video", "Publishing to Movies/VideoStudio", 97, project.id);
         Uri publicUri = publishExport(ready, fileName);
+        recoveryPlans.markOutputForJob(state.id, publicUri.toString(), fileName);
         ProjectStore.Project fresh = store.get(project.id);
         if (fresh != null) {
             fresh.latestExportUri = publicUri.toString();
@@ -1611,7 +1614,9 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             activeRender.cancel();
             activeRender = null;
         }
-        return jobs.cancelAll();
+        int jobsCancelled = jobs.cancelAll();
+        recoveryPlans.cancelActive();
+        return jobsCancelled;
     }
 
     private void complete(JSONObject command, JSONObject result) {
@@ -1631,6 +1636,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
 
     private void checkpoint(JobManager.Job state, String action, String detail, int progress, String projectId) {
         state.checkpoint(action, progress, detail);
+        recoveryPlans.checkpointForJob(state.id, action, progress, detail);
         ActivityLog.progress(this, state.id, action, detail, progress, projectId);
     }
 
