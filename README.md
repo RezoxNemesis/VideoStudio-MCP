@@ -1,4 +1,4 @@
-# VideoStudio v3.4.1
+# VideoStudio v3.4.2
 
 ## Studio Web 1.0: user-owned Drive + executable generation
 
@@ -80,6 +80,21 @@ Two boundaries remain non-negotiable:
 
 The narrower `all_tools` and `one_file` modes remain available as deliberate user-selected restrictions. VideoStudio does not automatically switch back to full autonomy after the one-time v3.2 migration if the user later chooses one of those modes.
 
+
+## v3.4.2 Always-Available Autonomous MCP
+
+VideoStudio 3.4.2 changes the meaning of “offline” so a sleeping Android executor does not make the whole ChatGPT connection disappear.
+
+- the private MCP v3 endpoint stays reachable as the durable cloud control plane while Android sleeps
+- `app_status` separates `controlPlaneConnected` from `nativeConnected`
+- native-only work becomes durable `waiting_native` work and is claimed automatically after reconnect
+- a registered Studio Web device can be bound once through `app_bind_studio_web` from the same private native MCP
+- when Android is sleeping and Studio Web is alive, compatible prompt generation, story-video generation, autonomous edits, timeline replacement, analysis, rendering and common clip tools can route to the bound Web project
+- unsupported/native-only operations remain queued for Android rather than being dropped or falsely reported as complete
+- Android adds a self-rearming Native Agent watchdog for task removal, service destruction, reboot and APK replacement, without requiring exact-alarm permission
+- the existing foreground service, network callback, app-generation fencing, owner credential, package ID and Gallery privacy boundary remain unchanged
+
+This architecture cannot perform compute while **every** execution surface is physically unavailable. In that case the MCP still accepts and preserves the job until an executor returns. It does not fake completed editing or generation.
 
 ## v3.4.1 Permanent Hybrid Control Foundation
 
