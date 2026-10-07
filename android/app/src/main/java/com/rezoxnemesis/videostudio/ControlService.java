@@ -2096,8 +2096,31 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         if (ready == null || !ready.exists() || ready.length() == 0) throw new IllegalStateException("Native export produced no file");
 
         checkpoint(state, "Exporting video", "Publishing to Movies/VideoStudio", 97, project.id);
-        Uri publicUri = publishExport(ready, fileName);
-        recoveryPlans.markOutputForJob(state.id, publicUri.toString(), fileName);
+        JSONObject committed = recoveryPlans.outputForJob(state.id);
+        final String reusableUri = committed != null
+                && isReadableOutput(committed.optString("uri", ""))
+                ? committed.optString("uri", "")
+                : "";
+        AtomicMediaPublisher.PublishResult publication = AtomicMediaPublisher.publish(
+                ready,
+                new AtomicMediaPublisher.PublishTarget() {
+                    @Override public String existingPublishedUri() {
+                        return reusableUri;
+                    }
+
+                    @Override public String publish(File source) throws Exception {
+                        return publishExport(source, fileName).toString();
+                    }
+
+                    @Override public String displayName() {
+                        return fileName;
+                    }
+                }
+        );
+        Uri publicUri = Uri.parse(publication.uri);
+        if (!publication.reused) {
+            recoveryPlans.markOutputForJob(state.id, publicUri.toString(), fileName);
+        }
         ProjectStore.Project fresh = store.get(project.id);
         if (fresh != null) {
             fresh.latestExportUri = publicUri.toString();
