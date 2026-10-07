@@ -47,6 +47,7 @@ public final class CreatorCatalog {
             "colour_match","audio_ducking","title_writer","thumbnail_frame_pick","render_critique",
             "prompt_video","animate_images","portrait_parallax","face_aware_motion","story_shot_order",
             "motion_script_compile","motion_script_run","creative_workspace","generated_media_bin",
+            "capability_registry","model_pack_install",
             "multi_variant_edit","platform_adapt","continuity_check"
     );
 
