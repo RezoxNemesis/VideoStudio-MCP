@@ -114,8 +114,36 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
 
         setContentView(buildShell());
         showHome();
+        handleMcpRebindIntent(getIntent());
         requestServiceSync();
         startServiceWatchdog();
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        handleMcpRebindIntent(intent);
+    }
+
+    private void handleMcpRebindIntent(Intent intent) {
+        if (intent == null || intent.getData() == null || protocol == null) return;
+        Uri data = intent.getData();
+        if (!"videostudio".equalsIgnoreCase(data.getScheme())
+                || !"mcp-rebind".equalsIgnoreCase(data.getHost())) return;
+        String token = data.getQueryParameter("token");
+        if (token == null || token.trim().length() < 30) {
+            Toast.makeText(this, "Invalid VideoStudio MCP rebind link", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        prefs.edit()
+                .putBoolean("control_service_online", false)
+                .putString("control_service_detail", "Rebinding stable MCP endpoint…")
+                .putLong("control_service_heartbeat", System.currentTimeMillis())
+                .apply();
+        Toast.makeText(this, "Rebinding the existing ChatGPT connection…", Toast.LENGTH_SHORT).show();
+        protocol.redeemRebind(token.trim());
+        ui.postDelayed(this::requestServiceSync, 900);
     }
 
     @Override
