@@ -358,7 +358,11 @@ public final class ProjectStore {
             String lower = asset.name.toLowerCase();
             asset.mime = lower.endsWith(".mp4") ? "video/mp4"
                     : (lower.endsWith(".png") ? "image/png"
-                    : (lower.endsWith(".jpg") || lower.endsWith(".jpeg") ? "image/jpeg" : "application/octet-stream"));
+                    : (lower.endsWith(".jpg") || lower.endsWith(".jpeg") ? "image/jpeg"
+                    : (lower.endsWith(".wav") ? "audio/wav"
+                    : (lower.endsWith(".mp3") ? "audio/mpeg"
+                    : (lower.endsWith(".m4a") ? "audio/mp4"
+                    : (lower.endsWith(".aac") ? "audio/aac" : "application/octet-stream"))))));
         }
         asset.durationMs = duration(uri);
         asset.role = role == null || role.trim().isEmpty() ? "generated" : role.trim();
