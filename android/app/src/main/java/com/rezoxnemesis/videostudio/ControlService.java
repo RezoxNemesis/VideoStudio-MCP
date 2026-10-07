@@ -691,6 +691,104 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         return result;
     }
 
+    private JobManager.Job submitRecoverableHeavy(String action,
+                                                  JSONObject parameters,
+                                                  String projectId,
+                                                  String jobName,
+                                                  JobManager.Work work) {
+        String requestedPlan = parameters == null ? "" : parameters.optString("_recoveryPlanId", "");
+        String planId = requestedPlan;
+        if (planId.isEmpty() || recoveryPlans.get(planId) == null) {
+            planId = recoveryPlans.begin(action, parameters, projectId);
+        } else {
+            recoveryPlans.markResuming(planId);
+        }
+
+        final String durablePlanId = planId;
+        JobManager.Job job = jobs.submit(jobName, JobManager.Kind.HEAVY, state -> {
+            recoveryPlans.attachJob(durablePlanId, state.id);
+            try {
+                work.run(state);
+                recoveryPlans.completeByJob(state.id);
+            } catch (InterruptedException interrupted) {
+                if ("cancelled".equals(state.state)) recoveryPlans.cancelByJob(state.id);
+                else recoveryPlans.failByJob(state.id, "Interrupted after checkpoint; safe to resume", true);
+                throw interrupted;
+            } catch (Exception error) {
+                recoveryPlans.failByJob(
+                        state.id,
+                        error.getMessage() == null ? "Recoverable heavy job failure" : error.getMessage(),
+                        true
+                );
+                throw error;
+            }
+        });
+        return job;
+    }
+
+    private void recoverDurablePlans() {
+        if (recoveryPlans == null || protocol == null || protocol.isControlPaused()) return;
+        JSONArray pending = recoveryPlans.pendingForAutoResume();
+        for (int i = 0; i < pending.length(); i++) {
+            JSONObject plan = pending.optJSONObject(i);
+            if (plan == null) continue;
+            String planId = plan.optString("id", "");
+            String action = plan.optString("action", "");
+            String projectId = plan.optString("projectId", "");
+            String outputUri = plan.optString("outputUri", "");
+
+            if (!outputUri.isEmpty() && isReadableOutput(outputUri)) {
+                recoveryPlans.completePlan(planId, "Recovered published output; no duplicate render required");
+                ActivityLog.add(this, "system", "Recovered completed render",
+                        plan.optString("outputName", "Generated video") + " was already published before restart",
+                        "success", 100, null, projectId);
+                continue;
+            }
+
+            JSONObject parameters = plan.optJSONObject("parameters");
+            if (parameters == null) parameters = new JSONObject();
+            try {
+                parameters = new JSONObject(parameters.toString());
+                parameters.put("_recoveryPlanId", planId);
+                if (!projectId.isEmpty()) parameters.put("projectId", projectId);
+                recoveryPlans.markResuming(planId);
+
+                JSONObject queued;
+                switch (action) {
+                    case "animate_images":
+                        queued = queueAnimatedImages(parameters);
+                        break;
+                    case "prompt_video":
+                        queued = queuePromptVideo(parameters);
+                        break;
+                    case "export_project":
+                        queued = queueExport(parameters);
+                        break;
+                    default:
+                        recoveryPlans.completePlan(planId, "No auto-resume handler required for action: " + action);
+                        continue;
+                }
+
+                ActivityLog.add(this, "system", "Resuming interrupted work",
+                        friendlyAction(action) + " • job " + shortId(queued.optString("jobId", "")),
+                        "running", plan.optInt("progress", 0), null, projectId);
+            } catch (Exception error) {
+                ActivityLog.add(this, "system", "Recovery retry deferred",
+                        friendlyAction(action) + " • " + (error.getMessage() == null ? "retry unavailable" : error.getMessage()),
+                        "info", plan.optInt("progress", 0), null, projectId);
+            }
+        }
+    }
+
+    private boolean isReadableOutput(String rawUri) {
+        if (rawUri == null || rawUri.isEmpty()) return false;
+        try (InputStream in = getContentResolver().openInputStream(Uri.parse(rawUri))) {
+            return in != null;
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
     private JSONObject queueAnimatedImages(JSONObject p) throws Exception {
         ProjectStore.Project project = resolveProject(p.optString("projectId", ""));
         if (project.clips.isEmpty()) throw new IllegalArgumentException("Timeline is empty");
