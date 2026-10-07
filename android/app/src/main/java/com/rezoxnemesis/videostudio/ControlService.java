@@ -66,6 +66,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     private RecoveryPlanStore recoveryPlans;
     private CapabilityRegistry capabilityRegistry;
     private ModelPackManager modelPackManager;
+    private DeviceComputeProfile computeProfile;
     private SharedPreferences prefs;
     private CommandJournal commandJournal;
 
@@ -87,6 +88,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         recoveryPlans = new RecoveryPlanStore(this);
         capabilityRegistry = new CapabilityRegistry(this);
         modelPackManager = new ModelPackManager(this);
+        computeProfile = new DeviceComputeProfile(this);
         createChannel();
         startForeground(NOTIFICATION_ID, notification("VideoStudio MCP v3 starting"));
         syncProtocolState();
@@ -301,6 +303,17 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                     return;
                 case "uninstall_model_pack":
                     complete(command, modelPackManager.uninstall(p.optString("id", "")));
+                    return;
+                case "compute_profile":
+                    complete(command, computeProfile.snapshot());
+                    return;
+                case "plan_compute":
+                    complete(command, computeProfile.plan(
+                            Math.max(0, p.optLong("estimatedModelMb", 0)),
+                            Math.max(1, p.optInt("width", 1080)),
+                            Math.max(1, p.optInt("height", 1920)),
+                            p.optString("quality", "balanced")
+                    ));
                     return;
                 case "animate_images":
                     complete(command, queueAnimatedImages(p));
@@ -1573,6 +1586,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             out.put("creativeWorkspaceReady", creativeWorkspace != null);
             out.put("capabilityRegistryReady", capabilityRegistry != null);
             out.put("modelPackManagerReady", modelPackManager != null);
+            out.put("computePlannerReady", computeProfile != null);
             out.put("bundledSubjectSegmentation", true);
             out.put("bundledFaceMesh", true);
             out.put("permissionMode", permissionMode());
@@ -1644,6 +1658,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             out.put("workload", jobs.state());
             out.put("recoveryPlans", recoveryPlans.recent(12));
             out.put("capabilityRegistry", capabilityRegistry.describe());
+            out.put("computeProfile", computeProfile.snapshot());
             out.put("creatorCatalog", CreatorCatalog.describe());
             out.put("recentActivity", ActivityLog.recent(this, 30));
             out.put("commandJournal", commandJournal.recent(20));
@@ -1738,6 +1753,8 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             case "model_pack_status": return "Reading model packs";
             case "install_model_pack": return "Installing model pack";
             case "uninstall_model_pack": return "Removing model pack";
+            case "compute_profile": return "Reading device compute profile";
+            case "plan_compute": return "Planning local AI working set";
             case "animate_images": return "Animating still images";
             case "job_status": return "Reading native job status";
             case "export_project": return "Exporting project";
@@ -1789,6 +1806,8 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         if ("model_pack_status".equals(action)) return "Optional model-pack status read";
         if ("install_model_pack".equals(action)) return "Transactional model-pack install queued";
         if ("uninstall_model_pack".equals(action)) return result.optBoolean("ok", false) ? "Model pack removed" : result.optString("error", "Model pack not removed");
+        if ("compute_profile".equals(action)) return "Device compute profile measured";
+        if ("plan_compute".equals(action)) return "Local AI working set planned";
         if ("animate_images".equals(action)) return result.optInt("imageCount", 0) + " image clip(s) queued for native animation";
         if ("insert_asset_timeline".equals(action)) return result.optBoolean("inserted", false) ? "Media added to timeline" : "Media could not be added to timeline";
         if ("select_project".equals(action)) return "Project selected";
