@@ -28,6 +28,7 @@ const modelPackManager = fs.readFileSync(new URL("../android/app/src/main/java/c
 const computeProfile = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/DeviceComputeProfile.java", import.meta.url), "utf8");
 const driveWorkspace = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/DriveWorkspaceProvider.java", import.meta.url), "utf8");
 const creativeJobGraph = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/CreativeJobGraph.java", import.meta.url), "utf8");
+const creativeNodeStore = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/CreativeNodeStore.java", import.meta.url), "utf8");
 
 const scriptMatch = app.match(/<script>([\s\S]*?)<\/script>/);
 let appScriptParses = false;
@@ -166,6 +167,12 @@ const checks = [
   ["CreativeIR graph spans analysis rigs generation audio composition render and critique", creativeJobGraph.includes('"analysis"') && creativeJobGraph.includes('"rig"') && creativeJobGraph.includes('"generation"') && creativeJobGraph.includes('"audio"') && creativeJobGraph.includes('"compose"') && creativeJobGraph.includes('"render"') && creativeJobGraph.includes('"critique"')],
   ["Native Agent persists execution graphs into compiled MotionScript plans", controlService.includes('put("executionGraph", creativeJobGraph.build') && controlService.includes('case "plan_creative_graph"')],
   ["MCP v3 exposes CreativeIR graph planning", worker.includes('"app_plan_creative_graph"') && worker.includes('"plan_creative_graph"')],
+  ["CreativeIR node checkpoints survive process restarts in project workspace", creativeNodeStore.includes("creative_nodes_v1.json") && creativeNodeStore.includes("FileOutputStream") && creativeNodeStore.includes("getFD().sync")],
+  ["CreativeIR cache reuse is keyed per node instead of whole-project rerender", creativeNodeStore.includes("sameCache") && creativeNodeStore.includes("reusedCompletedNodes") && creativeNodeStore.includes("invalidatedNodes")],
+  ["CreativeIR targeted invalidation can cascade to downstream dependencies", creativeNodeStore.includes("invalidate(String projectId") && creativeNodeStore.includes("targets.contains(deps.optString") && creativeNodeStore.includes('"Invalidated for targeted re-execution"')],
+  ["CreativeIR scheduler exposes only dependency-satisfied provider-ready nodes", creativeNodeStore.includes("readyNodes") && creativeNodeStore.includes('"providerResolved"') && creativeNodeStore.includes('"completed".equals(dependency.optString("state"))')],
+  ["Native Agent exposes CreativeIR checkpoint state and invalidation", controlService.includes('case "creative_graph_status"') && controlService.includes('case "invalidate_creative_node"') && controlService.includes("creativeNodeStore.prepare")],
+  ["MCP v3 exposes CreativeIR checkpoint and targeted regeneration controls", worker.includes('"app_creative_graph_status"') && worker.includes('"app_invalidate_creative_node"')],
   ["Native Agent compiles and executes MotionScript", controlService.includes('case "compile_scene"') && controlService.includes('case "run_motion_script"') && controlService.includes("compileMotionScene") && controlService.includes("runMotionScript")],
   ["MCP v3 exposes typed MotionScript and creative workspace tools", worker.includes('"app_compile_scene"') && worker.includes('"app_run_motion_script"') && worker.includes('"app_workspace_status"') && worker.includes('"app_cleanup_workspace"')],
   ["future generic MCP bridge remains available alongside typed creative tools", worker.includes('"app_execute"') && worker.includes('"app_batch"')],
