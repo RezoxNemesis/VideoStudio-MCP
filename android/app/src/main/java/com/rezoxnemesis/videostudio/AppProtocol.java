@@ -139,6 +139,18 @@ public final class AppProtocol {
     }
 
     /**
+     * Force the transport back to the permanent bootstrap profile without
+     * changing device identity, owner credential, command cursor or projects.
+     * Useful when a cached negotiated profile becomes stale after deployment.
+     */
+    public void forceReconnect() {
+        connectionCore.resetNegotiation();
+        consecutiveFailures = 0;
+        if (!running || io.isShutdown()) return;
+        io.execute(this::register);
+    }
+
+    /**
      * Legacy-relay fallback only. v3's primary attachment path is direct
      * app ingestion from the temporary source URL supplied to the MCP tool.
      */
