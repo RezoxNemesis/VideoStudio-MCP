@@ -21,7 +21,7 @@ const appActionAllowed = (mode,action) => {
   const a=String(action||"").toLowerCase();
   // Hard privacy boundary: no MCP permission mode may browse or enumerate Gallery/library media.
   if(a.includes("gallery")||a.includes("media_library")||a.includes("photo_library")) return false;
-  if(["ping","get_state"].includes(a)) return true;
+  if(["ping","get_state","activity_note"].includes(a)) return true;
   if(mode==="everything") return true;
   if(mode==="all_tools") return !["import_url","import_chat_file","delete_project"].includes(a);
   if(mode==="one_file") return ["apply_tool","preview_project","analyse_media","export_project","cancel_job"].includes(a);
@@ -350,7 +350,7 @@ function serverFor(env){
 }
 
 function serverForApp(env,ownerKey){
-  const s=new McpServer({name:"VideoStudio-App-MCP",version:"1.1.1"}), st=state(env);
+  const s=new McpServer({name:"VideoStudio-App-MCP",version:"1.1.2"}), st=state(env);
   const queue=async(action,parameters={})=>{
     try{
       const c=await st.appEnqueue(ownerKey,action,parameters);
@@ -376,11 +376,11 @@ function serverForApp(env,ownerKey){
   s.registerTool("app_status",{description:"Check the private native VideoStudio Android connection, permission mode, projects, control-pause state and pending work. Gallery access is always false.",inputSchema:{}},async()=>out(await st.appStatus(ownerKey)));
 
   s.registerTool("app_capabilities",{description:"Read the native v1.1 editing, AI, render and privacy capabilities available to ChatGPT.",inputSchema:{}},async()=>out({
-    version:"1.1.1",
+    version:"1.1.2",
     primary:"Android native app",
     privacy:{galleryAccess:false,boundary:"No MCP tool may list, browse or enumerate Gallery/media-library items. Only user-selected Android picker files, VideoStudio-owned files, explicit HTTPS imports and ChatGPT attachment handoffs are usable."},
     permissions:["one_file","all_tools","everything"],
-    connection:["Android Keystore owner key","device binding","persistent foreground control service","leased commands","crash-safe completion checkpoints","secure reconnect backoff","notification pause/cancel controls","STOP CHATGPT CONTROL"],
+    connection:["Android Keystore owner key","device binding","persistent foreground control service","leased commands","crash-safe completion checkpoints","secure reconnect backoff","notification pause/cancel controls","live ChatGPT activity feed","STOP CHATGPT CONTROL"],
     editing:["trim","split","0.25x-4x speed","slow motion","volume","titles","fonts","text animations","scale","rotate","blur","colour/HSL","motion presets","transition presets","reframe model","mask model","green-screen model","audio-duck model"],
     ai:["native visual analysis","scene-change sampling","autonomous edit plans","creator presets","prompt-to-video","multi-variant planning","short-form recut planning","render/export orchestration"],
     export:["Media3 native MP4","H.264","AAC","720p","1080p","9:16","16:9","1:1","4:5","Movies/VideoStudio"],
@@ -396,7 +396,8 @@ function serverForApp(env,ownerKey){
     aiTools:["auto_cut","scene_detect","silence_trim","highlight_extract","smart_reframe","caption_plan","hook_builder","beat_sync","b_roll_plan","pace_rewrite","shorts_recut","story_recut","colour_match","audio_ducking","title_writer","thumbnail_frame_pick","render_critique","prompt_video","multi_variant_edit","platform_adapt","continuity_check"]
   }));
 
-  s.registerTool("app_state",{description:"Request full current native app/project state including active asset metadata, jobs and creator capabilities.",inputSchema:{}},async()=>queue("get_state",{}));
+  s.registerTool("app_state",{description:"Request full current native app/project state including active asset metadata, jobs, creator capabilities and recent on-device ChatGPT activity.",inputSchema:{}},async()=>queue("get_state",{}));
+  s.registerTool("app_activity_note",{description:"Post a live progress message into VideoStudio's ChatGPT Activity screen. Use this to mirror autonomous-work updates such as planning, analysing, applying edits, rendering or retrying.",inputSchema:{title:z.string().min(1).max(120),message:z.string().min(1).max(500),status:z.enum(["info","queued","running","success","failed"]).optional(),progress:z.number().int().min(0).max(100).optional(),projectId:z.string().min(8).optional()}},async args=>queue("activity_note",args));
   s.registerTool("app_create_project",{description:"Create a native VideoStudio project.",inputSchema:{name:z.string().min(1).max(120)}},async({name})=>queue("create_project",{name}));
   s.registerTool("app_select_project",{description:"Select an existing native VideoStudio project by ID.",inputSchema:{projectId:z.string().min(8)}},async({projectId})=>queue("select_project",{projectId}));
   s.registerTool("app_delete_project",{description:"Delete a VideoStudio-owned project. Requires Allow everything except Gallery mode.",inputSchema:{projectId:z.string().min(8)}},async({projectId})=>queue("delete_project",{projectId}));
