@@ -246,7 +246,7 @@ public final class NativeRenderEngine {
         effects.add(new MotionMatrixEffect(
                 preset,
                 durationUs,
-                0,
+                Math.min(320_000L, Math.max(180_000L, durationUs / 12)),
                 animationSpec,
                 layerRole
         ));
