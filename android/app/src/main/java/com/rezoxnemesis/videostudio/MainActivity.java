@@ -68,6 +68,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
     private static final String PREFS = "videostudio_native_v1";
     private static final String KEY_MODE = "permission_mode";
     private static final String KEY_FILE = "allowed_asset_id";
+    private static final String KEY_AUTONOMY_MIGRATED = "autonomy_everything_v32_migrated";
 
     private ProjectStore store;
     private JobManager jobs;
@@ -97,6 +98,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
 
         prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
+        migrateAutonomyDefaultOnce();
         store = new ProjectStore(this);
         jobs = new JobManager(this);
         renderEngine = new NativeRenderEngine(this);
@@ -551,9 +553,9 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         box.addView(title("Autonomous Control", 27));
         box.addView(body("Permissions are enforced locally by VideoStudio v3. The MCP path is signalling/control only; projects, media and editing state live in the app."));
         box.addView(section("Access Mode"));
-        box.addView(permissionCard("one_file", "Allow one file", "ChatGPT can edit only the currently authorised media file."));
-        box.addView(permissionCard("all_tools", "Allow all tools", "All editing and analysis tools on imported project media. No remote file import or project deletion."));
-        box.addView(permissionCard("everything", "Allow everything except Gallery", "Full autonomous VideoStudio control: imports you explicitly share, projects, AI planning, editing, export and retries. Gallery listing/browsing stays blocked."));
+        box.addView(permissionCard("everything", "Allow everything except Gallery  •  Recommended", "Default autonomous mode. ChatGPT can use every VideoStudio tool, import files you explicitly share, create/manage projects, analyse, animate, edit, render, inspect and retry without repeated permission prompts. Gallery listing/browsing remains technically blocked."));
+        box.addView(permissionCard("all_tools", "Allow all tools", "Optional restricted mode: editing and analysis on already imported project media, with remote import and project deletion blocked."));
+        box.addView(permissionCard("one_file", "Allow one file", "Optional restricted mode: ChatGPT can work only on the currently authorised media file."));
 
         box.addView(section("Workload Safety"));
         LinearLayout safety = card(false);
@@ -1843,8 +1845,16 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         }
     }
 
+    private void migrateAutonomyDefaultOnce() {
+        if (prefs.getBoolean(KEY_AUTONOMY_MIGRATED, false)) return;
+        prefs.edit()
+                .putString(KEY_MODE, "everything")
+                .putBoolean(KEY_AUTONOMY_MIGRATED, true)
+                .apply();
+    }
+
     private String permissionMode() {
-        return prefs.getString(KEY_MODE, "all_tools");
+        return prefs.getString(KEY_MODE, "everything");
     }
 
     private void refreshCurrent() {
