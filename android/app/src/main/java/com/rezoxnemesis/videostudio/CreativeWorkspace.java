@@ -138,6 +138,12 @@ public final class CreativeWorkspace {
         return out;
     }
 
+    public void markCloudHydrated(String projectId) {
+        if (projectId == null || projectId.trim().isEmpty()) return;
+        File marker = new File(projectRoot(projectId), "cloud_offload.json");
+        if (marker.exists()) marker.delete();
+    }
+
     public JSONObject cloudOffloadState(String projectId) {
         JSONObject out = new JSONObject();
         try {
