@@ -445,10 +445,6 @@ export class VideoStudioState extends DurableObject {
     if(existing.filter(c=>c.status==="queued"||c.status==="claimed"||c.status==="waiting_native").length>=160) throw new Error("Native command queue is full; reconnect the app before adding work");
     const lastSeenMs=Date.parse(String(d.lastSeenAt||""))||0;
     const fresh=lastSeenMs>0&&(Date.now()-lastSeenMs)<=45000;
-    if(!fresh){
-      const webCommand=await this.appTryStudioWebFallback(ownerKey,action,parameters);
-      if(webCommand) return webCommand;
-    }
     const sk="app-v3-seq:"+d.deviceId, seq=((await this.ctx.storage.get(sk))||0)+1;
     await this.ctx.storage.put(sk,seq);
     const command={
@@ -686,6 +682,10 @@ export class VideoStudioState extends DurableObject {
     if(existing.filter(c=>c.status==="queued"||c.status==="claimed"||c.status==="waiting_native").length>=160) throw new Error("Native command queue is full; reconnect the app before adding work");
     const lastSeenMs=Date.parse(String(d.lastSeenAt||""))||0;
     const fresh=lastSeenMs>0&&(Date.now()-lastSeenMs)<=45000;
+    if(!fresh){
+      const webCommand=await this.appTryStudioWebFallback(ownerKey,action,parameters);
+      if(webCommand) return webCommand;
+    }
     const sk="app-v3-seq:"+d.deviceId, seq=((await this.ctx.storage.get(sk))||0)+1;
     await this.ctx.storage.put(sk,seq);
     const c={
