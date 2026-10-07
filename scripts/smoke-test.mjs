@@ -141,7 +141,7 @@ const checks = [
   ["background export registers generated MP4 in Media Bin", controlService.includes("Registering generated media") && controlService.includes("Generated video available") && controlService.includes("registerGeneratedAsset")],
   ["native agent can insert a media-bin asset into timeline", controlService.includes('case "insert_asset_timeline"') && projectStore.includes("appendAssetToTimeline") && worker.includes('"app_insert_asset_timeline"')],
   ["heavy jobs persist named recovery stages", nativeJobs.includes('public volatile String stage = "queued"') && nativeJobs.includes("lastCheckpointAt") && nativeJobs.includes("recoverable")],
-  ["thermal pressure pauses instead of timing out heavy work", nativeJobs.includes('"waiting_thermal"') && nativeJobs.includes("awaitSafeCheckpoint") && !nativeJobs.includes('for (int i = 0; i < 90; i++)')),
+  ["thermal pressure pauses instead of timing out heavy work", nativeJobs.includes('"waiting_thermal"') && nativeJobs.includes("awaitSafeCheckpoint") && !nativeJobs.includes('for (int i = 0; i < 90; i++)')],
   ["animation pipeline checks thermal safety between expensive stages", controlService.includes('awaitSafeCheckpoint(state, "portrait_analysis_') && controlService.includes('awaitSafeCheckpoint(state, "layered_render")')],
   ["Activity progress is stage-linked and coalesced", activityLog.includes("public static synchronized void progress") && controlService.includes("state.checkpoint(action, progress, detail)")],
   ["creative workspace uses app-private structured storage", creativeWorkspace.includes('"creative_workspace"') && creativeWorkspace.includes('"projects"') && creativeWorkspace.includes('"models"') && creativeWorkspace.includes("cleanupRegenerable")],
