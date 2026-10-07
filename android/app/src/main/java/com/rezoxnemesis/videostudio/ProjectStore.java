@@ -261,6 +261,32 @@ public final class ProjectStore {
         return a;
     }
 
+    public synchronized Asset importGeneratedFile(Project project, java.io.File file, String displayName, String mime, boolean addToTimeline) {
+        Asset a = new Asset();
+        a.id = UUID.randomUUID().toString();
+        a.uri = Uri.fromFile(file).toString();
+        a.name = displayName == null || displayName.trim().isEmpty() ? file.getName() : displayName.trim();
+        a.mime = mime == null || mime.trim().isEmpty() ? "application/octet-stream" : mime.trim();
+        a.durationMs = duration(Uri.fromFile(file));
+        project.assets.add(a);
+        if (addToTimeline && (a.mime.startsWith("video/") || a.mime.startsWith("image/"))) {
+            Clip clip = new Clip();
+            clip.id = UUID.randomUUID().toString();
+            clip.assetId = a.id;
+            clip.inMs = 0;
+            clip.outMs = a.mime.startsWith("image/") ? 3000 : Math.max(1000, a.durationMs);
+            project.clips.add(clip);
+        }
+        save(project);
+        return a;
+    }
+
+    public synchronized JSONObject fullState(String projectId) {
+        Project p = get(projectId);
+        if (p == null) return null;
+        return p.toJson();
+    }
+
     public JSONObject summaries() {
         JSONArray arr = new JSONArray();
         for (Project p : list()) {
