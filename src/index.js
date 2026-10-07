@@ -656,7 +656,8 @@ function serverForApp(env,ownerKey,protocolVersion=1){
       render:z.boolean().optional(),
       aspect:z.enum(["9:16","16:9","1:1","4:5"]).optional(),
       quality:z.enum(["720p","1080p"]).optional(),
-      fileName:z.string().max(180).optional()
+      fileName:z.string().max(180).optional(),
+      strictProviders:z.boolean().optional()
     }
   },async args=>queue("run_motion_script",args));
 
