@@ -210,6 +210,26 @@ export class VideoStudioState extends DurableObject {
     await this.ctx.storage.put("app-handoff:"+d.deviceId+":"+id,record);
     return {id,name:record.name,mime:record.mime,size:record.size,expiresAt:record.expiresAt};
   }
+  async appCreateCachedHandoff(ownerKey,cacheUrl,meta={}){
+    const d=await this.appResolve(ownerKey);
+    if(!d) throw new Error("Private App MCP credential rejected");
+    if(d.permissionMode!=="everything") throw new Error("Chat-file import requires Allow everything mode");
+    if(!cacheUrl||!String(cacheUrl).startsWith("https://")) throw new Error("Invalid private upload cache URL");
+    const id=crypto.randomUUID();
+    const record={
+      id,
+      deviceId:d.deviceId,
+      cacheUrl:String(cacheUrl),
+      sourceUrl:"",
+      name:clean(meta.name||"ChatGPT import",180),
+      mime:clean(meta.mime||"",120),
+      size:Number(meta.size||0)||0,
+      createdAt:now(),
+      expiresAt:Date.now()+20*60*1000
+    };
+    await this.ctx.storage.put("app-handoff:"+d.deviceId+":"+id,record);
+    return {id,name:record.name,mime:record.mime,size:record.size,expiresAt:record.expiresAt};
+  }
   async appHandoff(deviceId,ownerKey,id){
     if(!(await this.appAuth(deviceId,ownerKey))) throw new Error("Native app authorization failed");
     const key="app-handoff:"+deviceId+":"+id, record=await this.ctx.storage.get(key);
@@ -456,6 +476,43 @@ async function api(request,env){
       const b=await request.json();
       return reply({ok:true,device:await st.appRegister(b.deviceId,b.ownerKey,b.meta||{})});
     }
+    if(u.pathname==="/api/app/private/status"&&request.method==="GET"){
+      const token=bearer(request);
+      const status=await st.appStatus(token);
+      if(!status.connected) return reply(status,401);
+      return reply(status);
+    }
+    const pcm=u.pathname.match(/^\/api\/app\/private\/commands\/([^/]+)$/);
+    if(pcm&&request.method==="GET"){
+      const token=bearer(request);
+      const command=await st.appCommand(token,pcm[1]);
+      return command?reply({command}):reply({error:"Command not found"},404);
+    }
+    if(u.pathname==="/api/app/private/upload"&&request.method==="POST"){
+      const token=bearer(request), deviceId=u.searchParams.get("deviceId")||"";
+      if(!(await st.appAuth(deviceId,token))) return reply({error:"Native app authorization failed"},401);
+      const status=await st.appStatus(token);
+      if(!status.connected||status.device.permissionMode!=="everything") return reply({error:"Allow everything mode is required"},403);
+
+      const declared=Number(request.headers.get("content-length")||0);
+      const max=250*1024*1024;
+      if(declared>max) return reply({error:"Upload exceeds 250 MB private relay limit"},413);
+      const name=clean(u.searchParams.get("name")||"ChatGPT import",180);
+      const mime=clean(u.searchParams.get("mime")||request.headers.get("content-type")||"application/octet-stream",120);
+      const projectId=clean(u.searchParams.get("projectId")||"",120);
+      const uploadId=crypto.randomUUID();
+      const cacheUrl=u.origin+"/__videostudio_private_upload/"+uploadId;
+      const cacheHeaders=new Headers();
+      cacheHeaders.set("content-type",mime);
+      if(declared>0) cacheHeaders.set("content-length",String(declared));
+      cacheHeaders.set("cache-control","public, max-age=1200");
+      cacheHeaders.set("x-content-type-options","nosniff");
+      await caches.default.put(new Request(cacheUrl),new Response(request.body,{status:200,headers:cacheHeaders}));
+
+      const handoff=await st.appCreateCachedHandoff(token,cacheUrl,{name,mime,size:declared});
+      const c=await st.appEnqueue(token,"import_chat_file",{handoffId:handoff.id,name:handoff.name,mime:handoff.mime,size:handoff.size,projectId});
+      return reply({ok:true,queued:true,commandId:c.id,sequence:c.seq,handoffId:handoff.id,expiresAt:handoff.expiresAt,name,mime,size:declared,projectId});
+    }
     if(u.pathname==="/api/app/commands"&&request.method==="GET"){
       const deviceId=u.searchParams.get("deviceId")||"", after=Number(u.searchParams.get("after")||0), wait=Number(u.searchParams.get("wait")||0);
       const token=bearer(request);
@@ -466,8 +523,14 @@ async function api(request,env){
       const deviceId=u.searchParams.get("deviceId")||"", token=bearer(request);
       const handoff=await st.appHandoff(deviceId,token,hm[1]);
       if(!handoff) return reply({error:"Handoff missing or expired"},404);
-      const upstream=await fetch(handoff.sourceUrl,{headers:{"accept":"*/*","user-agent":"VideoStudio-Private-Handoff/1.0"}});
-      if(!upstream.ok||!upstream.body) return reply({error:"Attachment source unavailable",status:upstream.status},502);
+      let upstream;
+      if(handoff.cacheUrl){
+        upstream=await caches.default.match(new Request(handoff.cacheUrl));
+        if(!upstream||!upstream.body) return reply({error:"Private upload expired or unavailable"},404);
+      }else{
+        upstream=await fetch(handoff.sourceUrl,{headers:{"accept":"*/*","user-agent":"VideoStudio-Private-Handoff/1.0"}});
+        if(!upstream.ok||!upstream.body) return reply({error:"Attachment source unavailable",status:upstream.status},502);
+      }
       const headers=new Headers();
       headers.set("content-type",handoff.mime||upstream.headers.get("content-type")||"application/octet-stream");
       const length=upstream.headers.get("content-length");
