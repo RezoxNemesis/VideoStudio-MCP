@@ -76,10 +76,13 @@ public final class CreativeJobGraph {
 
                 String depthMode = subject.optString("depth", "auto");
                 if (!"none".equalsIgnoreCase(depthMode)) {
+                    String depthCapability = ("monocular".equalsIgnoreCase(depthMode)
+                            || "metric".equalsIgnoreCase(depthMode))
+                            ? "monocular.depth" : "depth.estimate";
                     String depth = addNode(nodes, unresolvedSet,
                             "subject." + alias + ".depth",
                             "analysis",
-                            "monocular.depth",
+                            depthCapability,
                             "balanced",
                             arrayOf(segmentation),
                             subjectInput(subject, assetId, "depth"),
@@ -89,7 +92,10 @@ public final class CreativeJobGraph {
                 }
 
                 String poseMode = subject.optString("pose", "auto");
-                if (!"none".equalsIgnoreCase(poseMode)) {
+                boolean poseAvailable = registry != null
+                        && registry.resolve("body.pose", "balanced").optBoolean("resolved", false);
+                if (!"none".equalsIgnoreCase(poseMode)
+                        && (!"auto".equalsIgnoreCase(poseMode) || poseAvailable)) {
                     String pose = addNode(nodes, unresolvedSet,
                             "subject." + alias + ".pose",
                             "analysis",
