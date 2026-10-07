@@ -589,6 +589,84 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                 activeProject == null ? 0 : activeProject.updatedAt);
     }
 
+    private View autonomousEditorCard() {
+        LinearLayout card = card(false);
+        card.addView(title("Autonomous work", 16));
+
+        JSONObject job = latestPersistedJob();
+        if (job == null) {
+            card.addView(body("Ready • playback and scrubbing stay available while ChatGPT edits in the background."));
+        } else {
+            String state = job.optString("state", "working");
+            String stage = job.optString("stage", "");
+            int progressValue = Math.max(0, Math.min(100, job.optInt("progress", 0)));
+            String detail = job.optString("detail", "");
+            card.addView(accent(state.replace('_', ' ').toUpperCase(Locale.US)
+                    + (stage.isEmpty() ? "" : " • " + stage), C_CYAN));
+            ProgressBar progress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+            progress.setMax(100);
+            progress.setProgress(progressValue);
+            card.addView(progress, margins(-1, dp(10), dp(8), 0, 0, 0));
+            card.addView(body(progressValue + "% • " + (detail.isEmpty() ? "Background work is active" : detail)));
+
+            if (!isTerminalJobState(state)) {
+                Button stop = compactButton("Stop autonomous work");
+                stop.setOnClickListener(v -> {
+                    Intent intent = new Intent(this, ControlService.class);
+                    intent.setAction(ControlService.ACTION_CANCEL_ALL);
+                    startForegroundService(intent);
+                    Toast.makeText(this, "Stopping active VideoStudio jobs", Toast.LENGTH_SHORT).show();
+                });
+                card.addView(stop, margins(-1, dp(42), dp(8), 0, 0, 0));
+            }
+        }
+
+        PreviewSnapshotStore.Snapshot latest = activeProject == null
+                ? null
+                : previewSnapshots.latest(activeProject.id);
+        if (latest != null) {
+            LivePlaybackState playing = livePlayer == null ? null : livePlayer.snapshotState();
+            boolean alreadyPlaying = playing != null
+                    && (latest.id.equals(playing.snapshotId) || latest.uri.equals(playing.mediaUri));
+            card.addView(accent(
+                    "PREVIEW • " + latest.sourceType.toUpperCase(Locale.US)
+                            + (latest.qualityTier.isEmpty() ? "" : " • " + latest.qualityTier.toUpperCase(Locale.US)),
+                    C_MUTED
+            ));
+            if (!alreadyPlaying) {
+                Button playNew = neonButton("Play new result", C_CYAN);
+                playNew.setTextColor(Color.BLACK);
+                playNew.setOnClickListener(v -> {
+                    livePlayer.setContextIds(latest.id, "");
+                    livePlayer.play(Uri.parse(latest.uri), 0L);
+                    showEditor();
+                });
+                card.addView(playNew, margins(-1, dp(46), dp(8), 0, 0, 0));
+            }
+        }
+        return card;
+    }
+
+    private JSONObject latestPersistedJob() {
+        try {
+            JSONArray array = new JSONArray(prefs.getString("job_recovery_snapshot", "[]"));
+            JSONObject fallback = null;
+            for (int i = 0; i < array.length(); i++) {
+                JSONObject item = array.optJSONObject(i);
+                if (item == null) continue;
+                if (fallback == null) fallback = item;
+                if (!isTerminalJobState(item.optString("state", ""))) return item;
+            }
+            return fallback;
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    private boolean isTerminalJobState(String state) {
+        return "completed".equals(state) || "failed".equals(state) || "cancelled".equals(state);
+    }
+
     private boolean assetOnTimeline(ProjectStore.Project project, String assetId) {
         if (project == null || assetId == null) return false;
         for (ProjectStore.Clip clip : project.clips) {
