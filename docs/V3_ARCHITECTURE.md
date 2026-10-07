@@ -4,7 +4,7 @@
 
 VideoStudio v3 is a protocol and architecture generation, not a cosmetic version label.
 
-- Android app: `3.2.0`
+- Android app: `3.3.0`
 - Android versionCode: `320`
 - Native agent protocol: `3`
 - Canonical private MCP endpoint: `/app-mcp-v3/<device-owned-owner-key>`
@@ -163,6 +163,26 @@ MCP v3 uses **Full Autonomous** as the normal operating state. It grants all Vid
 The only restrictive state is **One File Lock**, explicitly selected by the user. It narrows editing/analysis/export to one authorised asset while preserving status, cancellation and safety operations.
 
 This autonomy contract is separate from hard safety/privacy boundaries. Gallery enumeration is always denied, network ingest is validated and bounded, heavy work is governed by thermal/RAM checks, and STOP CHATGPT CONTROL remains local and immediate.
+
+## v3.3 programmable creative-runtime foundation
+
+v3.3 keeps MCP protocol v3 stable while adding the first executable layer of the larger creative-runtime architecture.
+
+Implemented foundation pieces:
+
+- MotionScript 0.1 source compiled into versioned CreativeIR
+- app-private structured creative workspace with atomic scene/IR persistence
+- typed MCP v3 MotionScript and workspace operations plus the generic future action bridge
+- first-class generated media roles in project state
+- editor Media Bin with generated/source visibility and timeline insertion
+- live editor refresh after background project updates
+- durable heavy-job recovery plans with action parameters, stages and published-output markers
+- thermal and memory waiting states without the former fixed waiting timeout
+- automatic restart reconstruction for supported heavy actions
+- capability-first provider registry for built-in engines and future optional model manifests
+- explicit distinction between ChatGPT Drive access and a not-yet-mounted native Android Drive tier
+
+The bootstrap MotionScript compiler is currently implemented in the Android layer so the first vertical slice can ship and be tested quickly. Its serialized CreativeIR is the stable boundary intended to support a later Rust/native compiler/runtime without invalidating projects or the MCP control surface.
 
 ## v3.2 articulated portrait animation module
 
