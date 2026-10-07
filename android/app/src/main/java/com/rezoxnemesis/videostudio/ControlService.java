@@ -67,6 +67,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     private CapabilityRegistry capabilityRegistry;
     private ModelPackManager modelPackManager;
     private DeviceComputeProfile computeProfile;
+    private DriveWorkspaceProvider driveWorkspace;
     private SharedPreferences prefs;
     private CommandJournal commandJournal;
 
@@ -89,6 +90,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         capabilityRegistry = new CapabilityRegistry(this);
         modelPackManager = new ModelPackManager(this);
         computeProfile = new DeviceComputeProfile(this);
+        driveWorkspace = new DriveWorkspaceProvider(this);
         createChannel();
         startForeground(NOTIFICATION_ID, notification("VideoStudio MCP v3 starting"));
         syncProtocolState();
@@ -320,6 +322,12 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                             Math.max(1, p.optInt("height", 1920)),
                             p.optString("quality", "balanced")
                     ));
+                    return;
+                case "drive_workspace_status":
+                    complete(command, driveWorkspace.status());
+                    return;
+                case "sync_project_to_drive":
+                    complete(command, queueDriveProjectSync(p));
                     return;
                 case "animate_images":
                     complete(command, queueAnimatedImages(p));
@@ -810,6 +818,9 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                     case "install_model_pack":
                         queued = queueModelPackInstall(parameters);
                         break;
+                    case "sync_project_to_drive":
+                        queued = queueDriveProjectSync(parameters);
+                        break;
                     default:
                         recoveryPlans.completePlan(planId, "No auto-resume handler required for action: " + action);
                         continue;
@@ -833,6 +844,51 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         } catch (Exception ignored) {
             return false;
         }
+    }
+
+    private JSONObject queueDriveProjectSync(JSONObject p) throws Exception {
+        ProjectStore.Project project = resolveProject(p.optString("projectId", ""));
+        if (!driveWorkspace.isLinked()) {
+            throw new IllegalStateException("No folder-scoped cloud workspace is linked. Link one from VideoStudio > Control.");
+        }
+
+        JSONObject durableParameters = new JSONObject(p.toString());
+        durableParameters.put("projectId", project.id);
+
+        JobManager.Job job = submitRecoverableHeavy(
+                "sync_project_to_drive",
+                durableParameters,
+                project.id,
+                "Cloud archive • " + project.name,
+                state -> {
+                    checkpoint(state, "Cloud archive", "Preparing project workspace", 2, project.id);
+                    File workspace = creativeWorkspace.projectRoot(project.id);
+                    JSONObject archived = driveWorkspace.syncProject(
+                            project,
+                            workspace,
+                            (progress, detail) -> checkpoint(
+                                    state,
+                                    "Cloud archive",
+                                    detail,
+                                    Math.max(2, Math.min(100, progress)),
+                                    project.id
+                            )
+                    );
+                    checkpoint(state, "Cloud archive",
+                            "Project workspace archived • " + archived.optLong("bytesWritten", 0) + " bytes",
+                            100, project.id);
+                    syncProtocolState();
+                }
+        );
+
+        JSONObject result = ok();
+        result.put("queued", true);
+        result.put("jobId", job.id);
+        result.put("projectId", project.id);
+        result.put("durableRecovery", true);
+        result.put("scope", "single-user-selected-document-tree");
+        result.put("broadDrivePermission", false);
+        return result;
     }
 
     private JSONObject queueModelPackInstall(JSONObject p) throws Exception {
@@ -1593,6 +1649,8 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             out.put("capabilityRegistryReady", capabilityRegistry != null);
             out.put("modelPackManagerReady", modelPackManager != null);
             out.put("computePlannerReady", computeProfile != null);
+            out.put("driveWorkspaceProviderReady", driveWorkspace != null);
+            out.put("driveWorkspaceLinked", driveWorkspace != null && driveWorkspace.isLinked());
             out.put("bundledSubjectSegmentation", true);
             out.put("bundledFaceMesh", true);
             out.put("permissionMode", permissionMode());
@@ -1665,6 +1723,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             out.put("recoveryPlans", recoveryPlans.recent(12));
             out.put("capabilityRegistry", capabilityRegistry.describe());
             out.put("computeProfile", computeProfile.snapshot());
+            out.put("driveWorkspace", driveWorkspace.status());
             out.put("creatorCatalog", CreatorCatalog.describe());
             out.put("recentActivity", ActivityLog.recent(this, 30));
             out.put("commandJournal", commandJournal.recent(20));
@@ -1761,6 +1820,8 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             case "uninstall_model_pack": return "Removing model pack";
             case "compute_profile": return "Reading device compute profile";
             case "plan_compute": return "Planning local AI working set";
+            case "drive_workspace_status": return "Reading cloud workspace";
+            case "sync_project_to_drive": return "Archiving project to cloud workspace";
             case "animate_images": return "Animating still images";
             case "job_status": return "Reading native job status";
             case "export_project": return "Exporting project";
@@ -1814,6 +1875,8 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         if ("uninstall_model_pack".equals(action)) return result.optBoolean("ok", false) ? "Model pack removed" : result.optString("error", "Model pack not removed");
         if ("compute_profile".equals(action)) return "Device compute profile measured";
         if ("plan_compute".equals(action)) return "Local AI working set planned";
+        if ("drive_workspace_status".equals(action)) return result.optBoolean("linked", false) ? "Cloud workspace is linked" : "Cloud workspace is not linked";
+        if ("sync_project_to_drive".equals(action)) return "Project archive queued to folder-scoped cloud workspace";
         if ("animate_images".equals(action)) return result.optInt("imageCount", 0) + " image clip(s) queued for native animation";
         if ("insert_asset_timeline".equals(action)) return result.optBoolean("inserted", false) ? "Media added to timeline" : "Media could not be added to timeline";
         if ("select_project".equals(action)) return "Project selected";
