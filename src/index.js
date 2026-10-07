@@ -39,7 +39,18 @@ export class VideoStudioState extends DurableObject {
   constructor(ctx,env){ super(ctx,env); }
   async register(deviceId,meta={}){
     const k="d:"+deviceId, old=(await this.ctx.storage.get(k))||{};
-    const d={deviceId,name:clean(meta.name||old.name||"My device",80),platform:clean(meta.platform||old.platform||"web",80),appVersion:"0.6.0",createdAt:old.createdAt||now(),lastSeenAt:now()};
+    const d={
+      deviceId,
+      name:clean(meta.name||old.name||"My device",80),
+      platform:clean(meta.platform||old.platform||"web",80),
+      appVersion:clean(meta.appVersion||old.appVersion||"1.0.0",30),
+      capabilities:Array.isArray(meta.capabilities)?meta.capabilities.slice(0,40):(old.capabilities||[]),
+      executionSurface:"studio-web",
+      localMedia:true,
+      galleryAccess:false,
+      createdAt:old.createdAt||now(),
+      lastSeenAt:now()
+    };
     await this.ctx.storage.put(k,d); return d;
   }
   async device(deviceId){ return (await this.ctx.storage.get("d:"+deviceId))||null; }
@@ -518,8 +529,35 @@ const statusNative = (st,d,ownerKey) => isNativeV3(d)
   : st.appStatus(ownerKey);
 
 function serverFor(env){
-  const s=new McpServer({name:"VideoStudio-MCP",version:"0.6.0"}), st=state(env);
-  s.registerTool("server_status",{description:"Check VideoStudio MCP status.",inputSchema:{}},async()=>out({ok:true,service:"VideoStudio-MCP",version:"0.6.0",app:"/",capabilities:["Android app shell","device pairing","projects","local media","12-frame visual analysis","scene-change detection","quiet-section detection","multi-cut timeline editing","per-clip speed volume transforms filters and titles","render inspection","batched edit commands","adaptive local MP4/WebM rendering"]}));
+  const s=new McpServer({name:"VideoStudio-Studio-Web",version:"1.0.0"}), st=state(env);
+  s.registerTool("server_status",{description:"Check VideoStudio Studio Web status and fallback editing capabilities.",inputSchema:{}},async()=>out({
+    ok:true,
+    service:"VideoStudio Studio Web",
+    version:"1.0.0",
+    app:"/",
+    executionSurface:"browser-local",
+    mediaPolicy:"Media blobs stay in browser IndexedDB; only metadata and commands use MCP.",
+    galleryAccess:false,
+    capabilities:[
+      "visual Media Bin thumbnails",
+      "thumbnail timeline",
+      "instant image/video preview",
+      "persistent browser storage request",
+      "projects and lightweight metadata sync",
+      "12-frame visual analysis",
+      "scene-change detection",
+      "quiet-section detection",
+      "multi-cut timeline editing",
+      "per-clip speed volume transforms filters titles and camera motion",
+      "creator quick tools",
+      "autonomous director goal",
+      "render inspection",
+      "batched edit commands",
+      "adaptive local MP4/WebM rendering",
+      "mobile bottom navigation",
+      "browser fallback execution when Android app is unavailable"
+    ]
+  }));
   s.registerTool("device_status",{description:"Check a paired VideoStudio app device. Native v3/v1 also accepts the private owner credential as deviceId for compatibility.",inputSchema:{deviceId:z.string().min(8)}},async({deviceId})=>{
     const native=await st.appResolve(deviceId);
     return out(native?await statusNative(st,native,deviceId):await st.status(deviceId));
@@ -1268,9 +1306,19 @@ async function api(request,env){
   }catch(e){ return reply({error:e.message||"Request failed"},400); }
 }
 
-const MANIFEST=JSON.stringify({name:"VideoStudio MCP",short_name:"VideoStudio",description:"Local-first video editor controlled through ChatGPT MCP.",start_url:"/",display:"standalone",background_color:"#080a0f",theme_color:"#0b0d13",icons:[{src:"/icon.svg",sizes:"any",type:"image/svg+xml",purpose:"any maskable"}]});
+const MANIFEST=JSON.stringify({
+  name:"VideoStudio Studio Web",
+  short_name:"VideoStudio",
+  description:"Visual local-first video editor and autonomous ChatGPT execution surface.",
+  start_url:"/",
+  display:"standalone",
+  background_color:"#07090d",
+  theme_color:"#0b0d13",
+  categories:["video","productivity","photo"],
+  icons:[{src:"/icon.svg",sizes:"any",type:"image/svg+xml",purpose:"any maskable"}]
+});
 const ICON='<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><defs><linearGradient id="g"><stop stop-color="#8b5cf6"/><stop offset="1" stop-color="#21d4fd"/></linearGradient></defs><rect width="512" height="512" rx="112" fill="#090b11"/><path d="M211 182v148l124-74-124-74z" fill="url(#g)"/><circle cx="256" cy="256" r="188" fill="none" stroke="url(#g)" stroke-width="18"/></svg>';
-const SW='const C="videostudio-v2";self.addEventListener("install",e=>e.waitUntil(caches.open(C).then(c=>c.addAll(["/","/manifest.webmanifest","/icon.svg"]))));self.addEventListener("activate",e=>e.waitUntil(self.clients.claim()));self.addEventListener("fetch",e=>{if(e.request.method!=="GET")return;e.respondWith(fetch(e.request).then(r=>{const x=r.clone();if(!new URL(e.request.url).pathname.startsWith("/api/"))caches.open(C).then(c=>c.put(e.request,x));return r}).catch(()=>caches.match(e.request)))})';
+const SW='const C="videostudio-studio-web-v3";self.addEventListener("install",e=>e.waitUntil(caches.open(C).then(c=>c.addAll(["/","/manifest.webmanifest","/icon.svg"]))));self.addEventListener("activate",e=>e.waitUntil(Promise.all([self.clients.claim(),caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==C).map(k=>caches.delete(k))))])));self.addEventListener("fetch",e=>{if(e.request.method!=="GET")return;const u=new URL(e.request.url);if(u.pathname.startsWith("/api/")||u.pathname.startsWith("/mcp"))return;e.respondWith(fetch(e.request).then(r=>{const x=r.clone();caches.open(C).then(c=>c.put(e.request,x));return r}).catch(()=>caches.match(e.request)))})';
 
 export default {
   async fetch(request,env,ctx){
