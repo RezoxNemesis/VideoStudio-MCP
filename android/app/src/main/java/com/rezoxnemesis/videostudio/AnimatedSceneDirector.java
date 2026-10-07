@@ -132,6 +132,7 @@ public final class AnimatedSceneDirector {
         spec.put("motionBlur", 0.12 + 0.20 * power);
         spec.put("focusPulse", "dreamy".equals(style) ? 0.20 : 0.08);
         spec.put("environmentMotion", environmentMotion(environment));
+        spec.put("atmosphereIntensity", 0.22 + 0.46 * power);
         return spec;
     }
 
