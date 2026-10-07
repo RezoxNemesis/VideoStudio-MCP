@@ -83,7 +83,7 @@ const checks = [
   ["v3 leases track retries", worker.includes("claimCount:Number(c.claimCount||0)+1")],
   ["worker keeps legacy private chat handoff as fallback", worker.includes("appCreateHandoff") && worker.includes("app_import_chat_file")],
   ["v3 primary attachment path is direct app ingest", worker.includes('"app_import_attachment"') && worker.includes('"import_attachment"') && controlService.includes('case "import_attachment"') && controlService.includes("queueDirectAttachmentImport")],
-  ["v3 direct attachment bytes bypass Worker", worker.includes('"openai/fileParams":["file"]') && worker.includes("download_url") && controlService.includes("MCPv3-DirectIngest")],
+  ["v3 direct attachment bytes bypass Worker", worker.includes('"openai/fileParams":["file"]') && worker.includes("download_url") && controlService.includes("MCPv3-SafeIngest")],
   ["v3 MCP import is a real ChatGPT file parameter", worker.includes('file:z.object({') && worker.includes('file_id:z.string()') && worker.includes('mime_type:z.string()') && worker.includes('file_name:z.string()')],
   ["worker has ephemeral direct private upload relay", worker.includes("/api/app/private/upload") && worker.includes("appCreateCachedHandoff") && worker.includes("__videostudio_private_upload")],
   ["private upload relay is owner-authenticated", worker.includes("Native app authorization failed") && worker.includes("Allow everything mode is required")],
