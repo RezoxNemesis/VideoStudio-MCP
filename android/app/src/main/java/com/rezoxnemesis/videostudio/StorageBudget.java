@@ -2,6 +2,7 @@ package com.rezoxnemesis.videostudio;
 
 /** Overflow-safe storage preflight for large imports, proxies and renders. */
 public final class StorageBudget {
+    public static final long DEFAULT_TRANSFER_RESERVE_BYTES = 512L * 1024L * 1024L;
     public static final class Check {
         public final boolean allowed;
         public final long freeBytes;
