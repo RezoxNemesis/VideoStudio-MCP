@@ -4,6 +4,7 @@ import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
+import android.graphics.Color;
 import android.graphics.ColorMatrix;
 import android.graphics.ColorMatrixColorFilter;
 import android.graphics.Paint;
@@ -100,7 +101,7 @@ public final class NativePortraitMotionAnalyzer {
 
         MaskStats stats = readMask(mask, working.getWidth(), working.getHeight());
         Bitmap foreground = buildForeground(working, stats);
-        Bitmap background = buildSoftBackground(working);
+        Bitmap background = buildReconstructedBackground(working, stats);
 
         File dir = new File(context.getFilesDir(), "animation_layers/" + safe(projectId));
         if (!dir.exists() && !dir.mkdirs()) throw new IllegalStateException("Could not create animation layer directory");
@@ -113,6 +114,7 @@ public final class NativePortraitMotionAnalyzer {
 
         JSONObject analysis = new JSONObject();
         analysis.put("engine", "bundled-on-device-portrait-ai");
+        analysis.put("backgroundReconstruction", "mask-aware-edge-fill-v1");
         analysis.put("subjectDetected", stats.coverage > 0.015);
         analysis.put("subjectCoverage", stats.coverage);
         analysis.put("subjectCenterX", stats.centerX);
@@ -279,30 +281,132 @@ public final class NativePortraitMotionAnalyzer {
         return out;
     }
 
-    private Bitmap buildSoftBackground(Bitmap source) {
+    private Bitmap buildReconstructedBackground(Bitmap source, MaskStats stats) {
         int w = source.getWidth(), h = source.getHeight();
-        int sw = Math.max(12, w / 18);
-        int sh = Math.max(12, h / 18);
+
+        // Build a broad low-frequency plate used only to fill the area hidden
+        // behind the extracted person. The original environment stays sharp.
+        int sw = Math.max(10, w / 30);
+        int sh = Math.max(10, h / 30);
         Bitmap tiny = Bitmap.createScaledBitmap(source, sw, sh, true);
         Bitmap blurred = Bitmap.createScaledBitmap(tiny, w, h, true);
         tiny.recycle();
 
-        Bitmap out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
-        Canvas canvas = new Canvas(out);
+        int[] original = new int[w * h];
+        int[] soft = new int[w * h];
+        int[] output = new int[w * h];
+        source.getPixels(original, 0, w, 0, 0, w, h);
+        blurred.getPixels(soft, 0, w, 0, 0, w, h);
+        blurred.recycle();
+
+        int left = Math.max(0, Math.min(w - 1, (int) Math.floor(stats.left * (w - 1))));
+        int top = Math.max(0, Math.min(h - 1, (int) Math.floor(stats.top * (h - 1))));
+        int right = Math.max(left, Math.min(w - 1, (int) Math.ceil(stats.right * (w - 1))));
+        int bottom = Math.max(top, Math.min(h - 1, (int) Math.ceil(stats.bottom * (h - 1))));
+        int marginX = Math.max(8, (right - left) / 16);
+        int marginY = Math.max(8, (bottom - top) / 18);
+
+        for (int y = 0; y < h; y++) {
+            int my = maskY(y, h, stats.maskHeight);
+            for (int x = 0; x < w; x++) {
+                int mx = maskX(x, w, stats.maskWidth);
+                float confidence = dilatedConfidence(stats, mx, my);
+                float replace = smoothstep(0.08f, 0.70f, confidence);
+                int index = y * w + x;
+
+                if (replace <= .001f) {
+                    output[index] = original[index];
+                    continue;
+                }
+
+                // Pull real environment color from the nearest side of the
+                // subject bounds, then mix it with the broad blurred plate.
+                // This is intentionally conservative: parallax only needs a
+                // plausible hidden plate, while visible rocks/water remain the
+                // untouched original pixels.
+                int dl = Math.abs(x - left);
+                int dr = Math.abs(right - x);
+                int dt = Math.abs(y - top);
+                int db = Math.abs(bottom - y);
+                int sx = x;
+                int sy = y;
+                int nearest = Math.min(Math.min(dl, dr), Math.min(dt, db));
+                if (nearest == dl) sx = Math.max(0, left - marginX);
+                else if (nearest == dr) sx = Math.min(w - 1, right + marginX);
+                else if (nearest == dt) sy = Math.max(0, top - marginY);
+                else sy = Math.min(h - 1, bottom + marginY);
+
+                int edge = original[sy * w + sx];
+                int broad = soft[index];
+                int fill = mixColor(edge, broad, .42f);
+
+                // Preserve a little original texture near the matte boundary,
+                // but fully replace the deep subject interior to suppress
+                // ghost silhouettes when foreground parallax exposes it.
+                float interior = smoothstep(0.28f, 0.78f, confidence);
+                float alpha = Math.max(replace * .82f, interior);
+                output[index] = mixColor(original[index], fill, alpha);
+            }
+        }
+
+        Bitmap reconstructed = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
+        reconstructed.setPixels(output, 0, w, 0, 0, w, h);
+
+        // A very mild grade separates the background spatially without
+        // sacrificing the river/rock detail outside the reconstructed hole.
+        Bitmap graded = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
+        Canvas canvas = new Canvas(graded);
         Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
         ColorMatrix matrix = new ColorMatrix();
-        matrix.setSaturation(0.92f);
+        matrix.setSaturation(0.95f);
         ColorMatrix exposure = new ColorMatrix(new float[]{
-                0.92f,0,0,0,-5,
-                0,0.92f,0,0,-5,
-                0,0,0.92f,0,-5,
+                0.97f,0,0,0,-2,
+                0,0.97f,0,0,-2,
+                0,0,0.97f,0,-2,
                 0,0,0,1,0
         });
         matrix.postConcat(exposure);
         paint.setColorFilter(new ColorMatrixColorFilter(matrix));
-        canvas.drawBitmap(blurred, 0, 0, paint);
-        blurred.recycle();
-        return out;
+        canvas.drawBitmap(reconstructed, 0, 0, paint);
+        reconstructed.recycle();
+        return graded;
+    }
+
+    private int maskX(int x, int imageWidth, int maskWidth) {
+        return Math.min(maskWidth - 1,
+                Math.max(0, Math.round(x * (maskWidth - 1f) / Math.max(1, imageWidth - 1))));
+    }
+
+    private int maskY(int y, int imageHeight, int maskHeight) {
+        return Math.min(maskHeight - 1,
+                Math.max(0, Math.round(y * (maskHeight - 1f) / Math.max(1, imageHeight - 1))));
+    }
+
+    private float dilatedConfidence(MaskStats stats, int mx, int my) {
+        int rx = Math.max(2, stats.maskWidth / 180);
+        int ry = Math.max(2, stats.maskHeight / 180);
+        float best = 0f;
+        int[] offsets = {-1, 0, 1};
+        for (int oy : offsets) {
+            int y = Math.max(0, Math.min(stats.maskHeight - 1, my + oy * ry));
+            for (int ox : offsets) {
+                int x = Math.max(0, Math.min(stats.maskWidth - 1, mx + ox * rx));
+                best = Math.max(best, stats.values[y * stats.maskWidth + x]);
+            }
+        }
+        return best;
+    }
+
+    private static int mixColor(int a, int b, float amount) {
+        float t = Math.max(0f, Math.min(1f, amount));
+        int aa = Color.alpha(a), ar = Color.red(a), ag = Color.green(a), ab = Color.blue(a);
+        int ba = Color.alpha(b), br = Color.red(b), bg = Color.green(b), bb = Color.blue(b);
+        return Color.argb(
+                Math.round(aa + (ba - aa) * t),
+                Math.round(ar + (br - ar) * t),
+                Math.round(ag + (bg - ag) * t),
+                Math.round(ab + (bb - ab) * t)
+        );
     }
 
     private static Rect largestFace(List<FaceMesh> faces) {
