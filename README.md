@@ -1,11 +1,11 @@
-# VideoStudio v3.3.0
+# VideoStudio v3.3.1
 
 VideoStudio is a native-first Android video editor controlled from ChatGPT through a private MCP connection.
 
 ## v3 identity
 
-- Android app: **3.3.0**
-- Android versionCode: **330**
+- Android app: **3.3.1**
+- Android versionCode: **331**
 - Native protocol: **MCP v3**
 - Canonical private endpoint: `/app-mcp-v3/<device-owned-key>`
 - Native control API: `/api/v3/app/*`
@@ -41,6 +41,16 @@ Two boundaries remain non-negotiable:
 - **STOP CHATGPT CONTROL** immediately pauses autonomous control and cancels active native work.
 
 The narrower `all_tools` and `one_file` modes remain available as deliberate user-selected restrictions. VideoStudio does not automatically switch back to full autonomy after the one-time v3.2 migration if the user later chooses one of those modes.
+
+## v3.3.1 Native Agent self-healing
+
+VideoStudio 3.3.1 strengthens upgrade and reconnection behavior:
+
+- opening or resuming the app explicitly requests the foreground Native Agent to start and sync
+- a foreground watchdog re-requests the service if its heartbeat is stale or if the running service version does not match the installed app
+- the Native Agent heartbeat records its exact app version so stale service processes are visible instead of being mistaken for the current build
+- the Home connection card shows the installed/running version state
+- repeated heartbeat registrations no longer flood Activity with duplicate connection messages
 
 ## v3.3 creative runtime foundation
 
