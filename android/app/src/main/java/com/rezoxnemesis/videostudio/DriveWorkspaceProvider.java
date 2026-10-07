@@ -281,7 +281,7 @@ public final class DriveWorkspaceProvider {
     }
 
     private OutputStream requireOutput(Uri uri) throws Exception {
-        OutputStream out = resolver.openOutputStream(uri, "wt");
+        OutputStream out = resolver.openOutputStream(uri, "w");
         if (out == null) throw new IllegalStateException("Could not open cloud output stream");
         return out;
     }
