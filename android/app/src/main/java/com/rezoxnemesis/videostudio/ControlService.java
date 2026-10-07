@@ -810,7 +810,15 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         String quality = p.optString("quality", "1080p");
         String fileName = sanitizeFileName(p.optString("fileName", "VideoStudio_Animated_" + System.currentTimeMillis() + ".mp4"));
 
-        JobManager.Job job = jobs.submit("Animate images • " + project.name, JobManager.Kind.HEAVY, state -> {
+        JSONObject durableParameters = new JSONObject(p.toString());
+        durableParameters.put("projectId", project.id);
+        durableParameters.put("fileName", fileName);
+        JobManager.Job job = submitRecoverableHeavy(
+                "animate_images",
+                durableParameters,
+                project.id,
+                "Animate images • " + project.name,
+                state -> {
             int total = imageClips.size();
             for (int i = 0; i < total; i++) {
                 if (Thread.currentThread().isInterrupted()) throw new InterruptedException();
@@ -872,6 +880,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         JSONObject result = ok();
         result.put("queued", true);
         result.put("jobId", job.id);
+        result.put("durableRecovery", true);
         result.put("projectId", project.id);
         result.put("imageCount", imageClips.size());
         result.put("style", style);
@@ -932,7 +941,9 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         if (prompt.isEmpty()) throw new IllegalArgumentException("Prompt is required");
         String title = prompt.replaceAll("\\s+", " ").trim();
         if (title.length() > 36) title = title.substring(0, 36).trim() + "…";
-        ProjectStore.Project project = store.create("AI • " + title);
+        boolean recovering = !p.optString("_recoveryPlanId", "").isEmpty();
+        ProjectStore.Project project = recovering ? store.get(p.optString("projectId", "")) : null;
+        if (project == null) project = store.create("AI • " + title);
         project.sourcePrompt = prompt;
         store.save(project);
 
@@ -940,7 +951,15 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         String quality = p.optString("quality", "1080p");
         String fileName = p.optString("fileName", "VideoStudio_AI_" + System.currentTimeMillis() + ".mp4");
 
-        JobManager.Job job = jobs.submit("Prompt video • " + title, JobManager.Kind.HEAVY, state -> {
+        JSONObject durableParameters = new JSONObject(p.toString());
+        durableParameters.put("projectId", project.id);
+        durableParameters.put("fileName", fileName);
+        JobManager.Job job = submitRecoverableHeavy(
+                "prompt_video",
+                durableParameters,
+                project.id,
+                "Prompt video • " + title,
+                state -> {
             checkpoint(state, "Prompt video", "Designing local scene plan", 3, project.id);
             jobs.awaitSafeCheckpoint(state, "prompt_scene_build");
             PromptVideoEngine.BuildResult built = promptVideoEngine.build(store, project, p);
@@ -953,6 +972,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         JSONObject result = ok();
         result.put("queued", true);
         result.put("jobId", job.id);
+        result.put("durableRecovery", true);
         result.put("projectId", project.id);
         result.put("prompt", prompt);
         result.put("aspect", aspect);
@@ -968,7 +988,15 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         String quality = p.optString("quality", "1080p");
         String fileName = sanitizeFileName(p.optString("fileName", "VideoStudio_" + System.currentTimeMillis() + ".mp4"));
 
-        JobManager.Job job = jobs.submit("Export • " + project.name, JobManager.Kind.HEAVY, state -> {
+        JSONObject durableParameters = new JSONObject(p.toString());
+        durableParameters.put("projectId", project.id);
+        durableParameters.put("fileName", fileName);
+        JobManager.Job job = submitRecoverableHeavy(
+                "export_project",
+                durableParameters,
+                project.id,
+                "Export • " + project.name,
+                state -> {
             checkpoint(state, "Exporting video", "Preparing protected native export", 2, project.id);
             runExportBlocking(project, aspect, quality, fileName, state);
             checkpoint(state, "Exporting video", "Export complete", 100, project.id);
@@ -976,6 +1004,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         JSONObject result = ok();
         result.put("queued", true);
         result.put("jobId", job.id);
+        result.put("durableRecovery", true);
         result.put("projectId", project.id);
         result.put("fileName", fileName);
         return result;
