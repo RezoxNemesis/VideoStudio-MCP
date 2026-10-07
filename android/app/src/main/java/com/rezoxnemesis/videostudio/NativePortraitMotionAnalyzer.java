@@ -202,14 +202,23 @@ public final class NativePortraitMotionAnalyzer {
 
     private Bitmap decode(String uriString) throws Exception {
         Uri uri = Uri.parse(uriString);
+        BitmapFactory.Options bounds = new BitmapFactory.Options();
+        bounds.inJustDecodeBounds = true;
         try (InputStream in = context.getContentResolver().openInputStream(uri)) {
-            if (in != null) return BitmapFactory.decodeStream(in);
+            if (in == null) throw new IllegalStateException("Could not open portrait source");
+            BitmapFactory.decodeStream(in, null, bounds);
         }
-        if ("file".equalsIgnoreCase(uri.getScheme()) || uri.getScheme() == null) {
-            String path = uri.getScheme() == null ? uriString : uri.getPath();
-            return BitmapFactory.decodeFile(path);
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) throw new IllegalArgumentException("Unsupported portrait image");
+        BitmapFactory.Options options = new BitmapFactory.Options();
+        options.inSampleSize = 1;
+        while (Math.max(bounds.outWidth, bounds.outHeight) / options.inSampleSize > MAX_ANALYSIS_EDGE)
+            options.inSampleSize *= 2;
+        options.inPreferredConfig = Bitmap.Config.ARGB_8888;
+        // Subsample at decode time: never allocate the full camera image merely to shrink it.
+        try (InputStream in = context.getContentResolver().openInputStream(uri)) {
+            if (in == null) throw new IllegalStateException("Could not reopen portrait source");
+            return BitmapFactory.decodeStream(in, null, options);
         }
-        return null;
     }
 
     private Bitmap scaleForAnalysis(Bitmap source) {
@@ -571,3 +580,4 @@ public final class NativePortraitMotionAnalyzer {
         return Math.max(0d, Math.min(1d, v));
     }
 }
+

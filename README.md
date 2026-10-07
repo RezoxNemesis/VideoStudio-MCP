@@ -1,4 +1,4 @@
-# VideoStudio v3.4.0
+# VideoStudio v3.4.1
 
 See [the independent creative runtime](docs/INDEPENDENT_CREATIVE_RUNTIME.md) for Connection Core 3, executable procedural 2D/3D generation, bridge commands and precise remaining model requirements.
 

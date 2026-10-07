@@ -1,4 +1,4 @@
-# VideoStudio 3.4.0 independent creative runtime
+# VideoStudio 3.4.1 independent creative runtime
 
 The generation path stays within VideoStudio. There is no Runway, Veo, Kling or paid inference API dependency. This release adds original procedural scene generation, not a neural video model. Phone storage and Drive hold assets/checkpoints; they do not replace inference compute.
 
@@ -7,6 +7,8 @@ The generation path stays within VideoStudio. There is no Runway, Veo, Kling or 
 Keep the existing private connector. Its stable URL and device identity survive this upgrade. The app has a **Repair Connection** button, network-availability reconnection, and a SQLite result outbox. Completed command results remain on disk until a matching server receipt arrives. Reconciliation polls unresolved leases regardless of the highest previously acknowledged sequence. The relay also rejects queue saturation instead of dropping pending work. HTTP redirects cannot carry owner credentials to another origin.
 
 The native reconciliation change works with the existing deployed relay. The relay queue-preservation improvement and dedicated image tool require a Worker deployment; existing `app_execute` can dispatch the new native actions without that deployment. This repository does not contain deployment credentials.
+
+State reads are deliberately excluded from the mutation journal. Legacy stored get_state results are purged during journal initialisation: storing a snapshot of a journal inside the same journal recursively inflated diagnostics on the live phone. Mutation results keep their replay protection.
 
 ## Executable generation
 
