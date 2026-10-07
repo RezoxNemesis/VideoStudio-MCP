@@ -587,6 +587,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 checkpoint(state, "AI portrait animation",
                         "Analysing subject and building depth layers • " + (i + 1) + "/" + total,
                         startProgress, project.id);
+                jobs.awaitSafeCheckpoint(state, "portrait_analysis_" + (i + 1));
 
                 NativePortraitMotionAnalyzer.Result layers =
                         portraitMotionAnalyzer.analyseAndBuildLayers(asset, project.id);
@@ -625,6 +626,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
 
             if (render) {
                 checkpoint(state, "Rendering animated video", "Starting layered Media3 composition", 65, project.id);
+                jobs.awaitSafeCheckpoint(state, "layered_render");
                 runExportBlocking(project, aspect, quality, fileName, state);
                 checkpoint(state, "Rendering animated video", "Animated MP4 complete", 100, project.id);
             } else {
@@ -704,9 +706,11 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         String fileName = p.optString("fileName", "VideoStudio_AI_" + System.currentTimeMillis() + ".mp4");
 
         JobManager.Job job = jobs.submit("Prompt video • " + title, JobManager.Kind.HEAVY, state -> {
-            checkpoint(state, "Prompt video", "Designing local scene cards", 3, project.id);
+            checkpoint(state, "Prompt video", "Designing local scene plan", 3, project.id);
+            jobs.awaitSafeCheckpoint(state, "prompt_scene_build");
             PromptVideoEngine.BuildResult built = promptVideoEngine.build(store, project, p);
             checkpoint(state, "Prompt video", "Scene plan ready • native rendering", 18, project.id);
+            jobs.awaitSafeCheckpoint(state, "prompt_render");
             runExportBlocking(built.project, built.aspect, built.quality, fileName, state);
             checkpoint(state, "Prompt video", "Prompt video complete", 100, project.id);
         });
@@ -743,6 +747,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     }
 
     private void runExportBlocking(ProjectStore.Project project, String aspect, String quality, String fileName, JobManager.Job state) throws Exception {
+        jobs.awaitSafeCheckpoint(state, "native_export_prepare");
         File dir = new File(getCacheDir(), "native_exports");
         if (!dir.exists() && !dir.mkdirs()) throw new IllegalStateException("Could not create export workspace");
         File temp = new File(dir, "tmp_" + System.currentTimeMillis() + ".mp4");
@@ -1357,7 +1362,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     }
 
     private void checkpoint(JobManager.Job state, String action, String detail, int progress, String projectId) {
-        state.checkpoint(progress, detail);
+        state.checkpoint(action, progress, detail);
         ActivityLog.progress(this, state.id, action, detail, progress, projectId);
     }
 
