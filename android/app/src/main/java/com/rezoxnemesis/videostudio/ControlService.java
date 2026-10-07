@@ -359,8 +359,20 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 case "drive_workspace_status":
                     complete(command, driveWorkspace.status());
                     return;
+                case "drive_workspace_inventory":
+                    complete(command, driveWorkspace.inventory());
+                    return;
                 case "sync_project_to_drive":
                     complete(command, queueDriveProjectSync(p));
+                    return;
+                case "restore_project_from_drive":
+                    complete(command, queueDriveProjectRestore(p));
+                    return;
+                case "archive_model_pack_to_drive":
+                    complete(command, queueDriveModelPackArchive(p));
+                    return;
+                case "restore_model_pack_from_drive":
+                    complete(command, queueDriveModelPackRestore(p));
                     return;
                 case "animate_images":
                     complete(command, queueAnimatedImages(p));
@@ -1259,6 +1271,15 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                     case "sync_project_to_drive":
                         queued = queueDriveProjectSync(parameters);
                         break;
+                    case "restore_project_from_drive":
+                        queued = queueDriveProjectRestore(parameters);
+                        break;
+                    case "archive_model_pack_to_drive":
+                        queued = queueDriveModelPackArchive(parameters);
+                        break;
+                    case "restore_model_pack_from_drive":
+                        queued = queueDriveModelPackRestore(parameters);
+                        break;
                     case "run_creative_graph":
                         queued = queueCreativeGraphRun(parameters);
                         break;
@@ -1285,6 +1306,161 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         } catch (Exception ignored) {
             return false;
         }
+    }
+
+    private JSONObject queueDriveProjectRestore(JSONObject p) throws Exception {
+        ProjectStore.Project project = resolveProject(p.optString("projectId", ""));
+        if (!driveWorkspace.isLinked()) {
+            throw new IllegalStateException("No folder-scoped cloud workspace is linked. Link one from VideoStudio > Control.");
+        }
+
+        JSONObject durableParameters = new JSONObject(p.toString());
+        durableParameters.put("projectId", project.id);
+
+        JobManager.Job job = submitRecoverableHeavy(
+                "restore_project_from_drive",
+                durableParameters,
+                project.id,
+                "Restore cloud workspace • " + project.name,
+                state -> {
+                    checkpoint(state, "Cloud restore", "Preparing protected project workspace", 2, project.id);
+                    File workspace = creativeWorkspace.projectRoot(project.id);
+                    JSONObject restored = driveWorkspace.restoreProjectWorkspace(
+                            project.id,
+                            workspace,
+                            (progress, detail) -> checkpoint(
+                                    state,
+                                    "Cloud restore",
+                                    detail,
+                                    Math.max(2, Math.min(100, progress)),
+                                    project.id
+                            )
+                    );
+                    checkpoint(state, "Cloud restore",
+                            "Creative workspace restored • " + restored.optLong("bytesRestored", 0) + " bytes",
+                            100, project.id);
+                    ActivityLog.add(this, "system", "Cloud workspace restored",
+                            project.name + " • " + restored.optInt("filesRestored", 0) + " file(s)",
+                            "success", 100, null, project.id);
+                    syncProtocolState();
+                }
+        );
+
+        JSONObject result = ok();
+        result.put("queued", true);
+        result.put("jobId", job.id);
+        result.put("projectId", project.id);
+        result.put("durableRecovery", true);
+        result.put("scope", "single-user-selected-document-tree");
+        result.put("galleryAccess", false);
+        return result;
+    }
+
+    private JSONObject queueDriveModelPackArchive(JSONObject p) throws Exception {
+        if (!driveWorkspace.isLinked()) {
+            throw new IllegalStateException("No folder-scoped cloud workspace is linked. Link one from VideoStudio > Control.");
+        }
+        String packId = p.optString("id", "").trim();
+        if (packId.isEmpty()) throw new IllegalArgumentException("Model pack id is required");
+        File pack = modelPackManager.installedDirectory(packId);
+
+        JSONObject durableParameters = new JSONObject(p.toString());
+        durableParameters.put("id", packId);
+
+        JobManager.Job job = submitRecoverableHeavy(
+                "archive_model_pack_to_drive",
+                durableParameters,
+                "",
+                "Archive model pack • " + packId,
+                state -> {
+                    checkpoint(state, "Cloud model archive", "Preparing installed model pack", 2, "");
+                    JSONObject archived = driveWorkspace.syncModelPack(
+                            packId,
+                            pack,
+                            (progress, detail) -> checkpoint(
+                                    state,
+                                    "Cloud model archive",
+                                    detail,
+                                    Math.max(2, Math.min(100, progress)),
+                                    ""
+                            )
+                    );
+                    checkpoint(state, "Cloud model archive",
+                            "Model pack archived • " + archived.optLong("bytesWritten", 0) + " bytes",
+                            100, "");
+                    ActivityLog.add(this, "system", "Model pack archived",
+                            packId + " • " + archived.optInt("filesWritten", 0) + " file(s)",
+                            "success", 100, null, null);
+                }
+        );
+
+        JSONObject result = ok();
+        result.put("queued", true);
+        result.put("jobId", job.id);
+        result.put("id", packId);
+        result.put("durableRecovery", true);
+        result.put("scope", "single-user-selected-document-tree");
+        return result;
+    }
+
+    private JSONObject queueDriveModelPackRestore(JSONObject p) throws Exception {
+        if (!driveWorkspace.isLinked()) {
+            throw new IllegalStateException("No folder-scoped cloud workspace is linked. Link one from VideoStudio > Control.");
+        }
+        String packId = p.optString("id", "").trim();
+        if (packId.isEmpty()) throw new IllegalArgumentException("Model pack id is required");
+
+        JSONObject durableParameters = new JSONObject(p.toString());
+        durableParameters.put("id", packId);
+
+        JobManager.Job job = submitRecoverableHeavy(
+                "restore_model_pack_from_drive",
+                durableParameters,
+                "",
+                "Restore model pack • " + packId,
+                state -> {
+                    File staging = modelPackManager.createCloudRestoreDirectory(packId);
+                    checkpoint(state, "Cloud model restore", "Streaming model pack into protected staging", 2, "");
+                    driveWorkspace.restoreModelPack(
+                            packId,
+                            staging,
+                            (progress, detail) -> checkpoint(
+                                    state,
+                                    "Cloud model restore",
+                                    detail,
+                                    Math.max(2, Math.min(64, (int) (2 + progress * .62))),
+                                    ""
+                            )
+                    );
+                    jobs.awaitSafeCheckpoint(state, "cloud_model_activation");
+                    JSONObject installed = modelPackManager.activateRestoredDirectory(
+                            staging,
+                            "folder-scoped-cloud-workspace",
+                            (progress, detail) -> checkpoint(
+                                    state,
+                                    "Cloud model activation",
+                                    detail,
+                                    Math.max(64, Math.min(100, progress)),
+                                    ""
+                            )
+                    );
+                    checkpoint(state, "Cloud model activation",
+                            "Capabilities restored • " + installed.optString("id", packId),
+                            100, "");
+                    ActivityLog.add(this, "system", "Cloud model pack restored",
+                            installed.optString("id", packId) + " • " + installed.optString("version", ""),
+                            "success", 100, null, null);
+                    syncProtocolState();
+                }
+        );
+
+        JSONObject result = ok();
+        result.put("queued", true);
+        result.put("jobId", job.id);
+        result.put("id", packId);
+        result.put("durableRecovery", true);
+        result.put("transactionalActivation", true);
+        return result;
     }
 
     private JSONObject queueDriveProjectSync(JSONObject p) throws Exception {
@@ -2270,7 +2446,11 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             case "compute_profile": return "Reading device compute profile";
             case "plan_compute": return "Planning local AI working set";
             case "drive_workspace_status": return "Reading cloud workspace";
+            case "drive_workspace_inventory": return "Scanning linked cloud workspace";
             case "sync_project_to_drive": return "Archiving project to cloud workspace";
+            case "restore_project_from_drive": return "Restoring project creative workspace";
+            case "archive_model_pack_to_drive": return "Archiving model pack to cloud workspace";
+            case "restore_model_pack_from_drive": return "Restoring model pack from cloud workspace";
             case "animate_images": return "Animating still images";
             case "job_status": return "Reading native job status";
             case "export_project": return "Exporting project";
@@ -2329,7 +2509,11 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         if ("compute_profile".equals(action)) return "Device compute profile measured";
         if ("plan_compute".equals(action)) return "Local AI working set planned";
         if ("drive_workspace_status".equals(action)) return result.optBoolean("linked", false) ? "Cloud workspace is linked" : "Cloud workspace is not linked";
+        if ("drive_workspace_inventory".equals(action)) return "Folder-scoped cloud workspace scanned";
         if ("sync_project_to_drive".equals(action)) return "Project archive queued to folder-scoped cloud workspace";
+        if ("restore_project_from_drive".equals(action)) return "Project workspace restore queued from cloud";
+        if ("archive_model_pack_to_drive".equals(action)) return "Model-pack archive queued to cloud";
+        if ("restore_model_pack_from_drive".equals(action)) return "Model-pack restore queued from cloud";
         if ("animate_images".equals(action)) return result.optInt("imageCount", 0) + " image clip(s) queued for native animation";
         if ("insert_asset_timeline".equals(action)) return result.optBoolean("inserted", false) ? "Media added to timeline" : "Media could not be added to timeline";
         if ("select_project".equals(action)) return "Project selected";
