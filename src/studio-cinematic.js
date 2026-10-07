@@ -268,6 +268,8 @@ const STUDIO_CINEMATIC_JS = String.raw`
   async function renderPortal(options={}){
     if(state.busy)throw new Error("Cinematic renderer is already running");
     state.busy=true;state.lastFrame=null;state.trackOffset=[0,0];
+    if(Array.isArray(options.startQuad)&&options.startQuad.length===4) state.startQuad=options.startQuad.map(p=>[clamp(p[0],0,1),clamp(p[1],0,1)]);
+    if(Array.isArray(options.endQuad)&&options.endQuad.length===4) state.endQuad=options.endQuad.map(p=>[clamp(p[0],0,1),clamp(p[1],0,1)]);
     const project=await getProject();
     const base=project.assets.find(a=>a.id===(options.baseAssetId||state.baseAssetId)&&a.kind==="video")||project.assets.find(a=>a.kind==="video"&&!a.generated);
     if(!base)throw new Error("Import a live-action base video first");
