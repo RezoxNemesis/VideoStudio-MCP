@@ -145,6 +145,26 @@ public final class ResumableTransferManager {
                 expected = connection.getContentLengthLong();
             }
 
+            long freeBytes = parent == null ? 0L : Math.max(0L, parent.getUsableSpace());
+            StorageBudget.Check budget = StorageBudget.checkTransfer(
+                    freeBytes,
+                    expected,
+                    offset,
+                    StorageBudget.DEFAULT_TRANSFER_RESERVE_BYTES
+            );
+            if (!budget.allowed) {
+                journal.save(new TransferJournal.Entry(
+                        request.id, request.sourceUrl, partial.getAbsolutePath(),
+                        expected, offset, etag, lastModified, request.sha256, "waiting_storage"
+                ));
+                throw new IllegalStateException(
+                        "Insufficient storage for remote media: need "
+                                + budget.requiredWithReserveBytes
+                                + " bytes including reserve, free "
+                                + budget.freeBytes
+                );
+            }
+
             String responseEtag = safe(connection.getHeaderField("ETag"));
             String responseLastModified = safe(connection.getHeaderField("Last-Modified"));
             if (!responseEtag.isEmpty()) etag = responseEtag;
