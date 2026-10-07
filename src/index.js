@@ -670,6 +670,20 @@ function serverForApp(env,ownerKey,protocolVersion=1){
     }
   },async args=>queue("plan_creative_graph",args));
 
+  if(isV3) s.registerTool("app_run_creative_graph",{
+    description:"Execute the prepared CreativeIR DAG inside VideoStudio using only installed/resolved providers. Built-in portrait analysis, layered depth/rigging, native composition, Media3 rendering and local technical critique run on-device; unresolved capabilities remain explicit rather than being faked.",
+    inputSchema:{
+      projectId:z.string().min(8).optional(),
+      script:z.string().min(1).max(20000).optional(),
+      render:z.boolean().optional(),
+      critique:z.boolean().optional(),
+      strictProviders:z.boolean().optional(),
+      aspect:z.enum(["9:16","16:9","1:1","4:5"]).optional(),
+      quality:z.enum(["720p","1080p"]).optional(),
+      fileName:z.string().max(180).optional()
+    }
+  },async args=>queue("run_creative_graph",args));
+
   if(isV3) s.registerTool("app_creative_graph_status",{
     description:"Read durable CreativeIR node checkpoints for a VideoStudio project, including currently dependency-ready nodes.",
     inputSchema:{projectId:z.string().min(8).optional()}
