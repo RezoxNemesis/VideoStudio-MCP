@@ -89,6 +89,67 @@ public final class CreativeWorkspace {
     }
 
     /**
+     * Evicts bulky project working data only after the caller has verified a
+     * cloud archive. MotionScript source and durable DAG checkpoints stay hot
+     * locally so ChatGPT can still inspect and plan the project without
+     * downloading the full working set.
+     */
+    public JSONObject evictCloudBackedProject(String projectId) {
+        if (projectId == null || projectId.trim().isEmpty()) {
+            throw new IllegalArgumentException("projectId is required");
+        }
+        File project = projectRoot(projectId);
+        long before = sizeOf(project);
+        long removed = 0;
+
+        String[] coldEligible = {
+                "generated", "masks", "depth", "pose", "flow",
+                "rigs", "meshes", "audio", "previews", "renders", "temp"
+        };
+        for (String name : coldEligible) {
+            removed += deleteContents(new File(project, name));
+        }
+
+        JSONObject marker = new JSONObject();
+        try {
+            marker.put("projectId", projectId);
+            marker.put("offloadedAt", System.currentTimeMillis());
+            marker.put("removedBytes", removed);
+            marker.put("cloudArchiveRequiredForRehydrate", true);
+            marker.put("preservedScenes", true);
+            marker.put("preservedCheckpoints", true);
+            atomicWrite(new File(project, "cloud_offload.json"), marker.toString(2));
+        } catch (Exception error) {
+            throw new IllegalStateException("Could not commit cloud-offload marker", error);
+        }
+
+        JSONObject out = new JSONObject();
+        try {
+            out.put("projectId", projectId);
+            out.put("beforeBytes", before);
+            out.put("removedBytes", removed);
+            out.put("afterBytes", sizeOf(project));
+            out.put("preservedScenes", true);
+            out.put("preservedCheckpoints", true);
+            out.put("preservedSQLiteProjectState", true);
+            out.put("preservedExports", true);
+            out.put("requiresCloudRestoreForEvictedIntermediates", removed > 0);
+        } catch (Exception ignored) {}
+        return out;
+    }
+
+    public JSONObject cloudOffloadState(String projectId) {
+        JSONObject out = new JSONObject();
+        try {
+            File marker = new File(projectRoot(projectId), "cloud_offload.json");
+            out.put("offloaded", marker.isFile());
+            out.put("markerBytes", marker.isFile() ? marker.length() : 0);
+            out.put("projectId", projectId == null ? "" : projectId);
+        } catch (Exception ignored) {}
+        return out;
+    }
+
+    /**
      * Removes only regenerable workspace material. Source project assets,
      * SQLite project state and MediaStore exports are deliberately untouched.
      */
