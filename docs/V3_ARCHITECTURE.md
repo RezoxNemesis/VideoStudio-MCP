@@ -4,8 +4,8 @@
 
 VideoStudio v3 is a protocol and architecture generation, not a cosmetic version label.
 
-- Android app: `3.3.0`
-- Android versionCode: `320`
+- Android app: `3.4.1`
+- Android versionCode: `341`
 - Native agent protocol: `3`
 - Canonical private MCP endpoint: `/app-mcp-v3/<device-owned-owner-key>`
 - Native control API namespace: `/api/v3/app/*`
@@ -99,7 +99,7 @@ The owner secret:
 
 v3 registration includes:
 
-- appVersion `3.0.0`
+- appVersion `3.4.1`
 - protocolVersion `3`
 - connection session ID
 - local permission mode
@@ -162,7 +162,61 @@ MCP v3 uses **Full Autonomous** as the normal operating state. It grants all Vid
 
 The only restrictive state is **One File Lock**, explicitly selected by the user. It narrows editing/analysis/export to one authorised asset while preserving status, cancellation and safety operations.
 
-This autonomy contract is separate from hard safety/privacy boundaries. Gallery enumeration is always denied, network ingest is validated and bounded, heavy work is governed by thermal/RAM checks, and STOP CHATGPT CONTROL remains local and immediate.
+This autonomy contract is separate from hard safety/privacy boundaries. Gallery enumeration is always denied, network ingest is validated, resumable and storage-aware, heavy work is governed by thermal/RAM checks, and STOP CHATGPT CONTROL remains local and immediate.
+
+
+## v3.4.1 permanent hybrid control and heavy-media foundation
+
+v3.4.1 keeps native MCP protocol 3 stable while adding a permanent hybrid control plane.
+
+### Permanent hybrid control
+
+The user-facing ChatGPT plugin may remain connected through Studio Web while Android temporarily sleeps or is unavailable. This does not transfer native project authority to the browser.
+
+- `/mcp-v06` is the stable plugin-facing Studio Web MCP surface
+- `/app-mcp-v3/<device-owned-owner-key>` remains the stable direct native compatibility lane
+- Studio Web cannot obtain native authority from a public `deviceId` alone
+- a native-authenticated, one-time binding challenge creates the private hybrid relationship
+- native-required work may remain durable as `waiting_native` until the current app generation reconnects
+- in-place APK replacement and reboot re-arm `ControlService` while preserving the existing device/owner identity
+- app version growth is represented through capability negotiation and app generation, not new MCP endpoint versions
+
+### Large media
+
+The Android file-picker path remains URI-backed whenever possible. Selecting a 5 GB video does not copy five gigabytes into RAM or app-private storage merely to register the asset.
+
+Asset/transfer fields use Java `long` for byte counts and offsets. Remote media uses:
+
+- bounded 256 KiB transfer buffers
+- `Range` / `If-Range` resume where supported
+- durable byte-offset checkpoints
+- restart-from-zero if an origin ignores an attempted resume
+- `.partial` files that are never registered as completed media
+- storage preflight with a safety reserve
+- atomic promotion after length/integrity validation
+
+There is deliberately no small fixed 5 GB application limit for supported local URI-backed media.
+
+### Live editor during autonomous work
+
+The editor uses a reusable Media3 ExoPlayer surface. Playback is independent of service-owned autonomous rendering.
+
+- editor view refreshes do not intentionally rebuild the player
+- the currently watched preview can remain active while a newer result is produced
+- completed previews/final renders are published as immutable preview snapshots
+- **Play new result** explicitly hands playback to a newer snapshot
+- very large video sources can generate 540p/720p preview-only proxies
+- final Media3 rendering continues to reference original source assets, not the preview proxy
+
+### Recovery states and output publication
+
+Autonomous jobs use canonical states:
+
+`queued → preparing → running/checkpointed → waiting_* → running → completed|failed|cancelled`
+
+Supported non-terminal waits include network, storage, memory, thermal and native-agent availability. Terminal states cannot transition back to running.
+
+Render publication is idempotent. If encoded media was already committed before process death, the recovery plan reuses the readable published URI instead of intentionally publishing a duplicate. Project latest-export metadata is updated only after a committed output URI exists.
 
 ## v3.3 programmable creative-runtime foundation
 
