@@ -946,7 +946,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
             refreshCurrent();
             Toast.makeText(this, "Exported to Movies/VideoStudio • " + fileName, Toast.LENGTH_LONG).show();
         });
-        if (!ready.delete()) ready.deleteOnExit();
+        if (!ready.delete()) { /* cache cleanup is best-effort */ }
     }
 
     private Uri publishExport(File file, String displayName) throws Exception {
@@ -1421,7 +1421,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
             HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
             c.setConnectTimeout(15000);
             c.setReadTimeout(30000);
-            c.setRequestProperty("User-Agent", "VideoStudio-Android/1.0");
+            c.setRequestProperty("User-Agent", "VideoStudio-Android/1.1.0");
             String mime = c.getContentType();
             if (mime == null) mime = "video/mp4";
             try (InputStream in = c.getInputStream(); FileOutputStream out = new FileOutputStream(file)) {
