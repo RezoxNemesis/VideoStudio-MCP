@@ -12,6 +12,10 @@ The first executable foundation slice is now present in the v3.3 code line:
 
 - [x] safe MotionScript 0.2 parser/compiler with subjects, identity, rigs, depth/pose/hands, voice, generation, lights and provider requirements
 - [x] versioned CreativeIR JSON output
+- [x] provider-agnostic CreativeIR execution DAG with dependency, cache, checkpoint and compute metadata
+- [x] durable per-node cache/checkpoint state with downstream-only invalidation
+- [x] resumable built-in CreativeIR execution for bundled portrait analysis, layered depth/rigging, composition and Media3 rendering
+- [x] local technical render critic for black frames, exposure failures, freeze-like spans, abrupt jumps and luminance instability
 - [x] app-private creative workspace and atomic scene persistence
 - [x] generated-output registration into project media
 - [x] editor Media Bin and timeline insertion path
