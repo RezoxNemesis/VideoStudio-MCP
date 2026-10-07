@@ -109,6 +109,7 @@ public final class AnimatedSceneDirector {
         spec.put("environment", environment == null ? "" : environment);
         spec.put("shotType", shot);
         spec.put("cameraPreset", cameraPreset);
+        spec.put("transitionPreset", transitionFor(index, total, style));
         spec.put("durationMs", durationMs);
         spec.put("easing", "cinematic");
         spec.put("keyframes", keyframes);
