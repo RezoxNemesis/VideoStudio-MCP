@@ -51,6 +51,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     private NativeRenderEngine.Handle activeRender;
     private PromptVideoEngine promptVideoEngine;
     private NativeMediaAnalyzer mediaAnalyzer;
+    private NativePortraitMotionAnalyzer portraitMotionAnalyzer;
     private SharedPreferences prefs;
     private CommandJournal commandJournal;
 
@@ -65,6 +66,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         renderEngine = new NativeRenderEngine(this);
         promptVideoEngine = new PromptVideoEngine(this);
         mediaAnalyzer = new NativeMediaAnalyzer(this);
+        portraitMotionAnalyzer = new NativePortraitMotionAnalyzer(this);
         createChannel();
         startForeground(NOTIFICATION_ID, notification("VideoStudio MCP v3 starting"));
         syncProtocolState();
@@ -224,6 +226,15 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 case "prompt_video":
                     complete(command, queuePromptVideo(p));
                     return;
+                case "animate_images":
+                    complete(command, queueAnimatedImages(p));
+                    return;
+                case "job_status": {
+                    JSONObject result = ok();
+                    result.put("status", jobs.get(p.optString("jobId", "")));
+                    complete(command, result);
+                    return;
+                }
                 case "export_project":
                     complete(command, queueExport(p));
                     return;
@@ -488,6 +499,142 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             } catch (Exception ignored) {}
             commandJournal.finish(command, failed, "failed");
             protocol.complete(command, failed, "failed");
+        }
+    }
+
+    private JSONObject queueAnimatedImages(JSONObject p) throws Exception {
+        ProjectStore.Project project = resolveProject(p.optString("projectId", ""));
+        if (project.clips.isEmpty()) throw new IllegalArgumentException("Timeline is empty");
+
+        ArrayList<ProjectStore.Clip> imageClips = new ArrayList<>();
+        for (ProjectStore.Clip clip : project.clips) {
+            ProjectStore.Asset asset = project.asset(clip.assetId);
+            if (asset != null && asset.mime != null && asset.mime.startsWith("image/")) imageClips.add(clip);
+        }
+        if (imageClips.isEmpty()) throw new IllegalArgumentException("No image clips are available to animate");
+
+        String style = p.optString("style", "cinematic").toLowerCase(Locale.US);
+        String environment = p.optString("environment", "ambient");
+        double intensity = Math.max(.15, Math.min(1.0, p.optDouble("intensity", .78)));
+        long baseDurationMs = (long) (1000d * Math.max(1.8, Math.min(8.0, p.optDouble("durationSecondsPerImage", 4.2))));
+        boolean reorderForStory = p.optBoolean("reorderForStory", true);
+        boolean render = p.optBoolean("render", true);
+        String aspect = p.optString("aspect", "9:16");
+        String quality = p.optString("quality", "1080p");
+        String fileName = sanitizeFileName(p.optString("fileName", "VideoStudio_Animated_" + System.currentTimeMillis() + ".mp4"));
+
+        JobManager.Job job = jobs.submit("Animate images • " + project.name, JobManager.Kind.HEAVY, state -> {
+            int total = imageClips.size();
+            for (int i = 0; i < total; i++) {
+                if (Thread.currentThread().isInterrupted()) throw new InterruptedException();
+                ProjectStore.Clip clip = imageClips.get(i);
+                ProjectStore.Asset asset = project.asset(clip.assetId);
+                if (asset == null) continue;
+
+                int startProgress = 4 + (int) (48d * i / Math.max(1, total));
+                checkpoint(state, "AI portrait animation",
+                        "Analysing subject and building depth layers • " + (i + 1) + "/" + total,
+                        startProgress, project.id);
+
+                NativePortraitMotionAnalyzer.Result layers =
+                        portraitMotionAnalyzer.analyseAndBuildLayers(asset, project.id);
+
+                String shotType = layers.analysis.optString("shotType", "medium");
+                long shotDuration = baseDurationMs;
+                if ("wide".equals(shotType)) shotDuration += 350;
+                if ("close".equals(shotType)) shotDuration -= 250;
+                shotDuration += ((i % 3) - 1) * 120L;
+                shotDuration = Math.max(1800, shotDuration);
+
+                AnimatedSceneDirector.attachPlan(
+                        clip,
+                        layers,
+                        i,
+                        total,
+                        style,
+                        intensity,
+                        shotDuration,
+                        environment
+                );
+
+                checkpoint(state, "AI portrait animation",
+                        "Motion plan ready • " + (i + 1) + "/" + total + " • " + shotType,
+                        5 + (int) (50d * (i + 1) / Math.max(1, total)), project.id);
+            }
+
+            if (reorderForStory && imageClips.size() >= 4) {
+                checkpoint(state, "AI motion director", "Rebuilding cinematic shot order", 58, project.id);
+                reorderAnimatedStory(project);
+            }
+
+            store.save(project);
+            syncProtocolState();
+            checkpoint(state, "AI motion director", "Layered motion timeline ready", 62, project.id);
+
+            if (render) {
+                checkpoint(state, "Rendering animated video", "Starting layered Media3 composition", 65, project.id);
+                runExportBlocking(project, aspect, quality, fileName, state);
+                checkpoint(state, "Rendering animated video", "Animated MP4 complete", 100, project.id);
+            } else {
+                checkpoint(state, "AI motion director", "Animation preparation complete", 100, project.id);
+            }
+        });
+
+        JSONObject result = ok();
+        result.put("queued", true);
+        result.put("jobId", job.id);
+        result.put("projectId", project.id);
+        result.put("imageCount", imageClips.size());
+        result.put("style", style);
+        result.put("environment", environment);
+        result.put("intensity", intensity);
+        result.put("durationSecondsPerImage", baseDurationMs / 1000d);
+        result.put("reorderForStory", reorderForStory);
+        result.put("render", render);
+        result.put("aspect", aspect);
+        result.put("quality", quality);
+        result.put("engine", "VideoStudio v3.1 portrait animation");
+        return result;
+    }
+
+    private void reorderAnimatedStory(ProjectStore.Project project) {
+        ArrayList<ProjectStore.Clip> wide = new ArrayList<>();
+        ArrayList<ProjectStore.Clip> medium = new ArrayList<>();
+        ArrayList<ProjectStore.Clip> close = new ArrayList<>();
+        ArrayList<ProjectStore.Clip> other = new ArrayList<>();
+
+        for (ProjectStore.Clip clip : project.clips) {
+            JSONObject fx = clip.effects == null ? null : clip.effects;
+            JSONObject analysis = fx == null ? null : fx.optJSONObject("animationAnalysis");
+            if (analysis == null) {
+                other.add(clip);
+                continue;
+            }
+            String shot = analysis.optString("shotType", "medium");
+            if ("wide".equals(shot)) wide.add(clip);
+            else if ("close".equals(shot)) close.add(clip);
+            else medium.add(clip);
+        }
+
+        ArrayList<ProjectStore.Clip> story = new ArrayList<>();
+        int wi = 0, mi = 0, ci = 0;
+        int target = wide.size() + medium.size() + close.size();
+        while (story.size() < target) {
+            int phase = story.size() % 5;
+            ProjectStore.Clip next = null;
+            if ((phase == 0 || phase == 4) && wi < wide.size()) next = wide.get(wi++);
+            else if ((phase == 1 || phase == 3) && mi < medium.size()) next = medium.get(mi++);
+            else if (phase == 2 && ci < close.size()) next = close.get(ci++);
+            else if (mi < medium.size()) next = medium.get(mi++);
+            else if (ci < close.size()) next = close.get(ci++);
+            else if (wi < wide.size()) next = wide.get(wi++);
+            if (next == null) break;
+            story.add(next);
+        }
+        story.addAll(other);
+        if (!story.isEmpty()) {
+            project.clips.clear();
+            project.clips.addAll(story);
         }
     }
 
@@ -845,6 +992,9 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             out.put("renderEngineReady", renderEngine != null);
             out.put("analysisEngineReady", mediaAnalyzer != null);
             out.put("promptVideoEngineReady", promptVideoEngine != null);
+            out.put("portraitAnimationEngineReady", portraitMotionAnalyzer != null);
+            out.put("bundledSubjectSegmentation", true);
+            out.put("bundledFaceMesh", true);
             out.put("permissionMode", permissionMode());
             out.put("galleryAccess", false);
             out.put("directAttachmentIngest", true);
@@ -874,6 +1024,8 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             out.put("nativeAgent", "videostudio-v3");
             out.put("directAttachmentIngest", true);
             out.put("localEngineOwnsProjects", true);
+            out.put("portraitAnimationEngine", "v3.1-layered-parallax");
+            out.put("onDevicePortraitAi", true);
             out.put("nativeApp", true);
             out.put("backgroundControl", true);
             out.put("permissionMode", permissionMode());
@@ -914,7 +1066,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     private boolean isAllowed(String action, JSONObject parameters) {
         String lower = action == null ? "" : action.toLowerCase(Locale.US);
         if (lower.contains("gallery") || lower.contains("media_library") || lower.contains("photo_library")) return false;
-        if ("ping".equals(action) || "get_state".equals(action) || "self_test".equals(action) || "activity_note".equals(action) || "cancel_job".equals(action) || "cancel_all_jobs".equals(action) || "stop_all".equals(action)) return true;
+        if ("ping".equals(action) || "get_state".equals(action) || "self_test".equals(action) || "job_status".equals(action) || "activity_note".equals(action) || "cancel_job".equals(action) || "cancel_all_jobs".equals(action) || "stop_all".equals(action)) return true;
         String mode = permissionMode();
         if ("everything".equals(mode)) return true;
         if ("all_tools".equals(mode)) {
@@ -976,6 +1128,8 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             case "autonomous_edit": return "Autonomous edit";
             case "analyse_media": return "Analysing media";
             case "prompt_video": return "Creating prompt video";
+            case "animate_images": return "Animating still images";
+            case "job_status": return "Reading native job status";
             case "export_project": return "Exporting project";
             case "import_attachment": return "Importing ChatGPT attachment directly";
             case "import_chat_file": return "Importing ChatGPT file";
@@ -996,6 +1150,9 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         if ("apply_tool".equals(action)) return p.optString("tool", "edit") + " • clip " + (p.optInt("clipIndex", 0) + 1);
         if ("create_project".equals(action)) return p.optString("name", "New project");
         if ("import_attachment".equals(action) || "import_chat_file".equals(action) || "import_url".equals(action)) return p.optString("name", "Media");
+        if ("animate_images".equals(action)) {
+            return p.optString("style", "cinematic") + " • " + p.optString("environment", "ambient");
+        }
         if ("prompt_video".equals(action)) {
             String prompt = p.optString("prompt", "");
             return prompt.length() > 90 ? prompt.substring(0, 90) + "…" : prompt;
@@ -1008,6 +1165,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         if ("apply_edit_plan".equals(action)) return result.optInt("clipCount", 0) + " timeline clip(s) applied";
         if ("apply_tool".equals(action)) return "Edit applied inside VideoStudio";
         if ("creator_preset".equals(action)) return result.optInt("changedClips", 0) + " clip(s) styled";
+        if ("animate_images".equals(action)) return result.optInt("imageCount", 0) + " image clip(s) queued for native animation";
         if ("select_project".equals(action)) return "Project selected";
         if ("delete_project".equals(action)) return "Project deleted";
         return "Completed inside VideoStudio";
