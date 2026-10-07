@@ -29,6 +29,8 @@ const computeProfile = fs.readFileSync(new URL("../android/app/src/main/java/com
 const driveWorkspace = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/DriveWorkspaceProvider.java", import.meta.url), "utf8");
 const creativeJobGraph = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/CreativeJobGraph.java", import.meta.url), "utf8");
 const creativeNodeStore = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/CreativeNodeStore.java", import.meta.url), "utf8");
+const builtInCreativeRuntime = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/CreativeBuiltInRuntime.java", import.meta.url), "utf8");
+const nativeRenderCritic = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/NativeRenderCritic.java", import.meta.url), "utf8");
 
 const scriptMatch = app.match(/<script>([\s\S]*?)<\/script>/);
 let appScriptParses = false;
@@ -173,6 +175,12 @@ const checks = [
   ["CreativeIR scheduler exposes only dependency-satisfied provider-ready nodes", creativeNodeStore.includes("readyNodes") && creativeNodeStore.includes('"providerResolved"') && creativeNodeStore.includes('"completed".equals(dependency.optString("state"))')],
   ["Native Agent exposes CreativeIR checkpoint state and invalidation", controlService.includes('case "creative_graph_status"') && controlService.includes('case "invalidate_creative_node"') && controlService.includes("creativeNodeStore.prepare")],
   ["MCP v3 exposes CreativeIR checkpoint and targeted regeneration controls", worker.includes('"app_creative_graph_status"') && worker.includes('"app_invalidate_creative_node"')],
+  ["built-in CreativeIR runtime executes only capabilities it truly implements", builtInCreativeRuntime.includes("Unsupported advanced capabilities are never faked") && builtInCreativeRuntime.includes('"person.segmentation"') && builtInCreativeRuntime.includes('"face.landmarks"') && builtInCreativeRuntime.includes('"depth.estimate"') && builtInCreativeRuntime.includes('"portrait.rig"') && builtInCreativeRuntime.includes('"render.critique"')],
+  ["local render critic measures technical continuity without claiming semantic vision", nativeRenderCritic.includes('"semanticVision", false') && nativeRenderCritic.includes("blackFrameRatio") && nativeRenderCritic.includes("freezeLikeRatio") && nativeRenderCritic.includes("abruptJumpCount")],
+  ["CreativeIR runtime composes articulated layers into project clips", controlService.includes("executeCreativeCompositor") && controlService.includes('"creativeir-articulated-parallax-v1"') && controlService.includes("completedCreativeResult")),
+  ["CreativeIR runtime can render and critique through dependency-ordered DAG execution", controlService.includes("queueCreativeGraphRun") && controlService.includes('"render.video".equals(capability)') && controlService.includes('"render.critique".equals(capability)')],
+  ["CreativeIR graph execution is durable and resumes downstream after a published render", controlService.includes('"run_creative_graph"') && controlService.includes("Recovered CreativeIR render node") && creativeNodeStore.includes("recoverRetryable")),
+  ["MCP v3 exposes resumable CreativeIR DAG execution", worker.includes('"app_run_creative_graph"') && worker.includes('"run_creative_graph"')],
   ["Native Agent compiles and executes MotionScript", controlService.includes('case "compile_scene"') && controlService.includes('case "run_motion_script"') && controlService.includes("compileMotionScene") && controlService.includes("runMotionScript")],
   ["MCP v3 exposes typed MotionScript and creative workspace tools", worker.includes('"app_compile_scene"') && worker.includes('"app_run_motion_script"') && worker.includes('"app_workspace_status"') && worker.includes('"app_cleanup_workspace"')],
   ["future generic MCP bridge remains available alongside typed creative tools", worker.includes('"app_execute"') && worker.includes('"app_batch"')],
