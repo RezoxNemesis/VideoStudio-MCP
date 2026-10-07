@@ -247,38 +247,66 @@ public final class AppProtocol {
         }
     }
 
+    private JSONObject registrationMeta() throws Exception {
+        JSONObject meta = new JSONObject();
+        meta.put("name", "VideoStudio Android v3");
+        meta.put("platform", "android-native");
+        meta.put("appVersion", APP_VERSION);
+        meta.put("protocolVersion", connectionCore.selectedProtocol());
+        meta.put("nativeAgent", "videostudio-v3");
+        JSONObject connectionMeta = connectionCore.registrationMeta();
+        JSONArray connectionNames = connectionMeta.names();
+        if (connectionNames != null) {
+            for (int i = 0; i < connectionNames.length(); i++) {
+                String key = connectionNames.optString(i);
+                meta.put(key, connectionMeta.opt(key));
+            }
+        }
+        meta.put("permissionMode", permissionMode);
+        meta.put("controlPaused", isControlPaused());
+        meta.put("connectionSession", connectionSession);
+        meta.put("galleryAccess", false);
+        meta.put("directAttachmentIngest", true);
+        meta.put("localEngineOwnsProjects", true);
+        meta.put("portraitAnimationEngine", "v3.2-articulated-parallax");
+        meta.put("onDevicePortraitAi", true);
+        meta.put("creativeRuntime", "v3.3");
+        meta.put("motionScriptVersion", MotionScriptCompiler.MOTION_SCRIPT_VERSION);
+        meta.put("creativeIrVersion", MotionScriptCompiler.CREATIVE_IR_VERSION);
+        meta.put("capabilityRegistry", true);
+        meta.put("modelPacks", true);
+        meta.put("computePlanner", true);
+        meta.put("folderScopedCloudWorkspace", true);
+        meta.put("projects", projectSummary.optJSONArray("projects") == null ? new JSONArray() : projectSummary.optJSONArray("projects"));
+        return meta;
+    }
+
+    public void redeemRebind(String token) {
+        if (token == null || token.trim().length() < 30 || io.isShutdown()) return;
+        io.execute(() -> {
+            try {
+                JSONObject body = new JSONObject();
+                body.put("token", token.trim());
+                body.put("deviceId", deviceId);
+                body.put("ownerKey", ownerKey);
+                body.put("meta", registrationMeta());
+                JSONObject result = request("POST", McpConnectionCore.BOOTSTRAP_API_PREFIX + "/rebind",
+                        body, false, connectionCore.requestTimeoutMs());
+                connectionCore.applyRegistrationResponse(result);
+                boolean ok = result.optBoolean("ok", false) && result.optBoolean("rebound", false);
+                notifyConnection(ok, ok
+                        ? "Stable MCP endpoint rebound • app " + APP_VERSION + " • gen " + connectionCore.appGeneration()
+                        : "Stable MCP rebind was rejected");
+                if (ok) register();
+            } catch (Exception error) {
+                notifyConnection(false, "Stable MCP rebind failed");
+            }
+        });
+    }
+
     private void register() {
         try {
-            JSONObject meta = new JSONObject();
-            meta.put("name", "VideoStudio Android v3");
-            meta.put("platform", "android-native");
-            meta.put("appVersion", APP_VERSION);
-            meta.put("protocolVersion", connectionCore.selectedProtocol());
-            meta.put("nativeAgent", "videostudio-v3");
-            JSONObject connectionMeta = connectionCore.registrationMeta();
-            JSONArray connectionNames = connectionMeta.names();
-            if (connectionNames != null) {
-                for (int i = 0; i < connectionNames.length(); i++) {
-                    String key = connectionNames.optString(i);
-                    meta.put(key, connectionMeta.opt(key));
-                }
-            }
-            meta.put("permissionMode", permissionMode);
-            meta.put("controlPaused", isControlPaused());
-            meta.put("connectionSession", connectionSession);
-            meta.put("galleryAccess", false);
-            meta.put("directAttachmentIngest", true);
-            meta.put("localEngineOwnsProjects", true);
-            meta.put("portraitAnimationEngine", "v3.2-articulated-parallax");
-            meta.put("onDevicePortraitAi", true);
-            meta.put("creativeRuntime", "v3.3");
-            meta.put("motionScriptVersion", MotionScriptCompiler.MOTION_SCRIPT_VERSION);
-            meta.put("creativeIrVersion", MotionScriptCompiler.CREATIVE_IR_VERSION);
-            meta.put("capabilityRegistry", true);
-            meta.put("modelPacks", true);
-            meta.put("computePlanner", true);
-            meta.put("folderScopedCloudWorkspace", true);
-            meta.put("projects", projectSummary.optJSONArray("projects") == null ? new JSONArray() : projectSummary.optJSONArray("projects"));
+            JSONObject meta = registrationMeta();
 
             JSONObject body = new JSONObject();
             body.put("deviceId", deviceId);
