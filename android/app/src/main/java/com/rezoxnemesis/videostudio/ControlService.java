@@ -57,6 +57,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     private JobManager jobs;
     private TransferJournal transferJournal;
     private ResumableTransferManager transferManager;
+    private PreviewSnapshotStore previewSnapshots;
     private AppProtocol protocol;
     private NativeRenderEngine renderEngine;
     private NativeRenderEngine.Handle activeRender;
@@ -88,6 +89,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         jobs = new JobManager(this);
         transferJournal = new TransferJournal(this);
         transferManager = new ResumableTransferManager(transferJournal);
+        previewSnapshots = new PreviewSnapshotStore(this);
         protocol = new AppProtocol(this, this);
         renderEngine = new NativeRenderEngine(this);
         promptVideoEngine = new PromptVideoEngine(this);
@@ -2109,6 +2111,17 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                     "final_render",
                     false
             );
+            previewSnapshots.publish(new PreviewSnapshotStore.Snapshot(
+                    "final-" + state.id + "-" + fresh.latestExportAt,
+                    fresh.id,
+                    fresh.updatedAt,
+                    fresh.latestExportAt,
+                    publicUri.toString(),
+                    fileName.toLowerCase(Locale.US).contains("1080") ? "1080p" : "final",
+                    "final",
+                    state.id,
+                    fresh.latestExportAt
+            ));
             ActivityLog.add(this, "system", "Generated video available",
                     generated.name + " • Media Bin • asset " + shortId(generated.id),
                     "success", 100, null, fresh.id);
