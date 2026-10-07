@@ -36,6 +36,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     public static final String ACTION_PAUSE = "com.rezoxnemesis.videostudio.PAUSE_CONTROL";
     public static final String ACTION_RESUME = "com.rezoxnemesis.videostudio.RESUME_CONTROL";
     public static final String ACTION_SYNC = "com.rezoxnemesis.videostudio.SYNC_STATE";
+    public static final String ACTION_LOCAL_ANIMATE = "com.rezoxnemesis.videostudio.LOCAL_ANIMATE_IMAGES";
     private static final String CHANNEL = "videostudio_private_control";
     private static final int NOTIFICATION_ID = 6101;
     private static final String PREFS = "videostudio_native_v1";
@@ -95,6 +96,30 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         } else if (ACTION_SYNC.equals(action)) {
             syncProtocolState();
             protocol.registerNow();
+        } else if (ACTION_LOCAL_ANIMATE.equals(action)) {
+            try {
+                JSONObject p = new JSONObject();
+                p.put("projectId", intent.getStringExtra("projectId"));
+                p.put("style", intent.getStringExtra("style") == null ? "cinematic" : intent.getStringExtra("style"));
+                p.put("environment", intent.getStringExtra("environment") == null ? "ambient" : intent.getStringExtra("environment"));
+                p.put("intensity", intent.getDoubleExtra("intensity", .78));
+                p.put("durationSecondsPerImage", intent.getDoubleExtra("durationSecondsPerImage", 4.2));
+                p.put("reorderForStory", intent.getBooleanExtra("reorderForStory", true));
+                p.put("render", intent.getBooleanExtra("render", true));
+                p.put("aspect", intent.getStringExtra("aspect") == null ? "9:16" : intent.getStringExtra("aspect"));
+                p.put("quality", intent.getStringExtra("quality") == null ? "1080p" : intent.getStringExtra("quality"));
+                p.put("fileName", intent.getStringExtra("fileName") == null
+                        ? "VideoStudio_Animated_" + System.currentTimeMillis() + ".mp4"
+                        : intent.getStringExtra("fileName"));
+                JSONObject queued = queueAnimatedImages(p);
+                ActivityLog.add(this, "user", "AI image animation queued",
+                        queued.optInt("imageCount", 0) + " image(s) • job " + shortId(queued.optString("jobId")),
+                        "queued", 0, null, queued.optString("projectId", ""));
+            } catch (Exception error) {
+                ActivityLog.add(this, "user", "AI image animation failed",
+                        error.getMessage() == null ? "Could not queue animation" : error.getMessage(),
+                        "failed", null, null, intent.getStringExtra("projectId"));
+            }
         }
         syncProtocolState();
         return START_STICKY;
