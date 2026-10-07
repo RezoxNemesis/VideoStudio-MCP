@@ -2,6 +2,8 @@ package com.rezoxnemesis.videostudio;
 
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.net.ConnectivityManager;
+import android.net.Network;
 import android.os.Handler;
 import android.os.Looper;
 import android.security.keystore.KeyGenParameterSpec;
@@ -40,7 +42,7 @@ import javax.crypto.spec.GCMParameterSpec;
 public final class AppProtocol {
     public static final String BASE = "https://wispy-queen-f9b5.prakasharuntandon634.workers.dev";
     public static final int PROTOCOL_VERSION = 3;
-    public static final String APP_VERSION = "3.3.3";
+    public static final String APP_VERSION = "3.4.0";
     /** Stable compatibility URL. APK updates must not change this path. */
     public static final String MCP_PATH = McpConnectionCore.STABLE_MCP_PATH;
     /** Stable registration bootstrap. Runtime requests use the negotiated profile. */
@@ -65,6 +67,10 @@ public final class AppProtocol {
     private final Handler main = new Handler(Looper.getMainLooper());
     private final Callback callback;
     private final McpConnectionCore connectionCore;
+    private final CommandOutbox outbox;
+    private final Object outboxLock = new Object();
+    private ConnectivityManager connectivity;
+    private ConnectivityManager.NetworkCallback networkCallback;
     private volatile boolean running;
     private volatile String permissionMode = "everything";
     private volatile JSONObject projectSummary = new JSONObject();
@@ -78,6 +84,7 @@ public final class AppProtocol {
         this.callback = callback;
         prefs = this.context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
         connectionCore = new McpConnectionCore(this.context, APP_VERSION);
+        outbox = new CommandOutbox(this.context);
         String id = prefs.getString(KEY_DEVICE, "");
         if (id.isEmpty()) {
             id = UUID.randomUUID().toString();
@@ -91,7 +98,11 @@ public final class AppProtocol {
     public int protocolVersion() { return connectionCore.selectedProtocol(); }
     public String appVersion() { return APP_VERSION; }
     public long appGeneration() { return connectionCore.appGeneration(); }
-    public JSONObject connectionStatus() { return connectionCore.status(); }
+    public JSONObject connectionStatus() {
+        JSONObject status = connectionCore.status();
+        try { status.put("pendingResultDeliveries", outbox.count()); status.put("durableResultDelivery", true); } catch (Exception ignored) {}
+        return status;
+    }
 
     public boolean isControlPaused() {
         return prefs.getBoolean(KEY_PAUSED, false);
@@ -121,6 +132,13 @@ public final class AppProtocol {
     public void start() {
         if (running) return;
         running = true;
+        try {
+            connectivity = (ConnectivityManager) context.getSystemService(Context.CONNECTIVITY_SERVICE);
+            networkCallback = new ConnectivityManager.NetworkCallback() {
+                @Override public void onAvailable(Network network) { registerNow(); }
+            };
+            if (connectivity != null) connectivity.registerDefaultNetworkCallback(networkCallback);
+        } catch (Exception ignored) { networkCallback = null; }
         io.execute(() -> {
             register();
             commandLoop();
@@ -130,12 +148,16 @@ public final class AppProtocol {
 
     public void stop() {
         running = false;
+        if (connectivity != null && networkCallback != null) {
+            try { connectivity.unregisterNetworkCallback(networkCallback); } catch (Exception ignored) {}
+            networkCallback = null;
+        }
         io.shutdownNow();
     }
 
     public void registerNow() {
         if (!running || io.isShutdown()) return;
-        io.execute(this::register);
+        io.execute(() -> { register(); flushOutbox(); });
     }
 
     /**
@@ -147,7 +169,7 @@ public final class AppProtocol {
         connectionCore.resetNegotiation();
         consecutiveFailures = 0;
         if (!running || io.isShutdown()) return;
-        io.execute(this::register);
+        io.execute(() -> { register(); flushOutbox(); });
     }
 
     /**
@@ -163,7 +185,7 @@ public final class AppProtocol {
         c.setRequestMethod("GET");
         c.setConnectTimeout(15000);
         c.setReadTimeout(60000);
-        c.setInstanceFollowRedirects(true);
+        c.setInstanceFollowRedirects(false);
         c.setRequestProperty("Accept", "*/*");
         c.setRequestProperty("Authorization", "Bearer " + ownerKey);
         c.setRequestProperty("User-Agent", "VideoStudio-Android/" + APP_VERSION + " MCPv3");
@@ -171,24 +193,42 @@ public final class AppProtocol {
     }
 
     public void complete(JSONObject command, JSONObject result, String status) {
-        if (command == null || io.isShutdown()) return;
-        io.execute(() -> {
+        if (command == null) return;
+        try {
+            if (!outbox.contains(command.optString("id"))) outbox.put(command, result, status);
+        } catch (Exception error) {
+            notifyConnection(false, "Result persistence failed; command will be retried from its journal");
+            return;
+        }
+        if (!io.isShutdown()) io.execute(this::flushOutbox);
+    }
+
+    private void flushOutbox() {
+        synchronized (outboxLock) {
+            if (!running) return;
             try {
-                String id = command.optString("id");
-                JSONObject body = new JSONObject();
-                body.put("deviceId", deviceId);
-                body.put("protocolVersion", connectionCore.selectedProtocol());
-                body.put("appGeneration", connectionCore.appGeneration());
-                body.put("status", status == null ? "completed" : status);
-                body.put("result", result == null ? new JSONObject() : result);
-                request("POST", connectionCore.apiPrefix() + "/commands/" + enc(id) + "/complete",
-                        body, true, connectionCore.requestTimeoutMs());
-                advanceSequence(command.optLong("seq", 0));
+                JSONArray pending = outbox.pending();
+                for (int i = 0; i < pending.length() && running; i++) {
+                    JSONObject entry = pending.getJSONObject(i);
+                    String id = entry.getString("id");
+                    JSONObject body = new JSONObject();
+                    body.put("deviceId", deviceId);
+                    body.put("protocolVersion", connectionCore.selectedProtocol());
+                    body.put("appGeneration", connectionCore.appGeneration());
+                    body.put("status", entry.getString("status"));
+                    body.put("result", entry.getJSONObject("result"));
+                    JSONObject receipt = request("POST", connectionCore.apiPrefix() + "/commands/" + enc(id) + "/complete",
+                            body, true, connectionCore.requestTimeoutMs());
+                    // A 2xx response alone is insufficient: require an actual matching command receipt.
+                    JSONObject acknowledged = receipt.optJSONObject("command");
+                    if (acknowledged == null || !id.equals(acknowledged.optString("id"))) return;
+                    advanceSequence(entry.optLong("seq"));
+                    outbox.acknowledge(id);
+                }
             } catch (Exception ignored) {
-                // The server lease will make the command available again. The
-                // local CommandJournal prevents duplicate execution on retry.
+                // Retry durable results on the next heartbeat, including after process death.
             }
-        });
+        }
     }
 
     private void advanceSequence(long seq) {
@@ -207,7 +247,7 @@ public final class AppProtocol {
                     sleep(900);
                     continue;
                 }
-                long seq = prefs.getLong(KEY_SEQ, 0);
+                long seq = 0; // Reconcile all nonterminal leases, including gaps before a later ack.
                 long waitMs = connectionCore.commandWaitMs();
                 String path = connectionCore.apiPrefix() + "/commands?deviceId=" + enc(deviceId)
                         + "&after=" + seq + "&wait=" + waitMs
@@ -242,7 +282,7 @@ public final class AppProtocol {
 
     private void heartbeatLoop() {
         while (running) {
-            if (!isControlPaused()) register();
+            if (!isControlPaused()) { register(); flushOutbox(); }
             sleep(connectionCore.heartbeatMs());
         }
     }
@@ -304,7 +344,8 @@ public final class AppProtocol {
         });
     }
 
-    private void register() {
+    private synchronized void register() {
+        if (!running || isControlPaused()) return;
         try {
             JSONObject meta = registrationMeta();
 
@@ -336,10 +377,11 @@ public final class AppProtocol {
 
     private JSONObject request(String method, String path, JSONObject body, boolean authenticated, int timeoutMs) throws Exception {
         HttpURLConnection c = (HttpURLConnection) new URL(BASE + path).openConnection();
+        try {
         c.setRequestMethod(method);
         c.setConnectTimeout(timeoutMs);
         c.setReadTimeout(timeoutMs);
-        c.setInstanceFollowRedirects(true);
+        c.setInstanceFollowRedirects(false);
         c.setRequestProperty("Accept", "application/json");
         c.setRequestProperty("X-VideoStudio-Protocol", String.valueOf(connectionCore.selectedProtocol()));
         c.setRequestProperty("X-VideoStudio-App-Generation", String.valueOf(connectionCore.appGeneration()));
@@ -356,16 +398,20 @@ public final class AppProtocol {
         int code = c.getResponseCode();
         InputStream stream = code >= 200 && code < 300 ? c.getInputStream() : c.getErrorStream();
         String text = read(stream);
-        if (code < 200 || code >= 300) throw new IllegalStateException("HTTP " + code + " " + text);
+        if (code < 200 || code >= 300) throw new IllegalStateException("HTTP " + code);
         return text.isEmpty() ? new JSONObject() : new JSONObject(text);
+        } finally { c.disconnect(); }
     }
 
     private static String read(InputStream stream) throws Exception {
         if (stream == null) return "";
         StringBuilder b = new StringBuilder();
-        try (BufferedReader r = new BufferedReader(new InputStreamReader(stream, StandardCharsets.UTF_8))) {
-            String line;
-            while ((line = r.readLine()) != null) b.append(line);
+        try (InputStreamReader reader = new InputStreamReader(stream, StandardCharsets.UTF_8)) {
+            char[] chunk = new char[8192]; int count;
+            while ((count = reader.read(chunk)) != -1) {
+                if (b.length() + count > 8 * 1024 * 1024) throw new IllegalStateException("Relay response exceeds limit");
+                b.append(chunk, 0, count);
+            }
         }
         return b.toString();
     }
@@ -436,3 +482,4 @@ public final class AppProtocol {
         catch (InterruptedException ignored) { Thread.currentThread().interrupt(); }
     }
 }
+

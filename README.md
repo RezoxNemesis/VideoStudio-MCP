@@ -1,4 +1,6 @@
-# VideoStudio v3.3.2
+# VideoStudio v3.4.0
+
+See [the independent creative runtime](docs/INDEPENDENT_CREATIVE_RUNTIME.md) for Connection Core 3, executable procedural 2D/3D generation, bridge commands and precise remaining model requirements.
 
 VideoStudio is a native-first Android video editor controlled from ChatGPT through a private MCP connection.
 
@@ -226,3 +228,4 @@ Cloudflare deploys from `main`. GitHub Actions builds the signed-development And
 Legacy `/mcp`, `/mcp-v06` and `/app-mcp/<key>` routes remain for migration compatibility.
 
 A device registered as protocol 3 is routed to the v3 queue even when a cached legacy connector is used. The canonical v3 pairing endpoint is still `/app-mcp-v3/<key>`.
+

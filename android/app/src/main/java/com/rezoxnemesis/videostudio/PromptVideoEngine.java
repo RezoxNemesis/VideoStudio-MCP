@@ -74,13 +74,22 @@ public final class PromptVideoEngine {
             int width = "16:9".equals(aspect) ? 1280 : ("1:1".equals(aspect) ? 1080 : ("4:5".equals(aspect) ? 864 : 720));
             int height = "16:9".equals(aspect) ? 720 : ("1:1".equals(aspect) ? 1080 : ("4:5".equals(aspect) ? 1080 : 1280));
             File png = new File(dir, String.format(Locale.US, "scene_%02d.png", i + 1));
-            renderScene(png, width, height, title, text, sceneStyle, sceneFont, i, maxScenes);
+            JSONObject graph = scene.optJSONObject("sceneGraph");
+            if (graph == null) graph = parameters.optJSONObject("sceneGraph");
+            if (graph == null) graph = LocalSceneDirector.fromPrompt(scene.optString("prompt", text), i);
+            ProceduralScene.validate(graph);
+            renderProceduralImage(png, width, height, graph);
 
             ProjectStore.Asset asset = new ProjectStore.Asset();
             asset.id = UUID.randomUUID().toString();
             asset.uri = Uri.fromFile(png).toString();
-            asset.name = "AI Scene " + (i + 1);
+            asset.name = "Procedural Scene " + (i + 1);
             asset.mime = "image/png";
+            asset.generated = true;
+            asset.role = "generated_image";
+            asset.generationMetadata.put("provider", "builtin.videostudio.procedural-scene");
+            asset.generationMetadata.put("prompt", prompt);
+            asset.generationMetadata.put("sceneGraph", graph);
             asset.durationMs = durationMs;
             generatedAssets.add(asset);
 
@@ -92,8 +101,9 @@ public final class PromptVideoEngine {
             clip.speed = 1f;
             clip.volume = 1f;
             clip.transition = transition;
-            clip.title = title;
-            clip.effects.put("motionPreset", motion);
+            clip.title = scene.optBoolean("showTitle", false) ? title : "";
+            clip.effects.put("motionPreset", "none");
+            clip.effects.put("proceduralScene", graph);
             clip.effects.put("textAnimation", scene.optString("textAnimation", defaultTextAnimation(i)));
             clip.effects.put("fontFamily", sceneFont);
             clip.effects.put("effectPreset", scene.optString("effect", styleToEffect(sceneStyle)));
@@ -107,6 +117,17 @@ public final class PromptVideoEngine {
         project.clips.addAll(generatedClips);
         store.save(project);
         return new BuildResult(project, aspect, quality, generatedClips.size());
+    }
+
+    public static void renderProceduralImage(File file, int width, int height, JSONObject graph) throws Exception {
+        ProceduralScene scene = new ProceduralScene(graph);
+        Bitmap bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
+        try {
+            scene.draw(new Canvas(bitmap), 0, 1);
+            try (FileOutputStream out = new FileOutputStream(file)) {
+                if (!bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)) throw new IllegalStateException("Could not save generated image");
+            }
+        } finally { bitmap.recycle(); }
     }
 
     private void renderScene(File file, int width, int height, String title, String text, String style, String font, int index, int count) throws Exception {
@@ -283,3 +304,4 @@ public final class PromptVideoEngine {
         return "9:16";
     }
 }
+

@@ -372,6 +372,14 @@ public final class NativeRenderEngine {
         int height = "720p".equalsIgnoreCase(quality) ? ("16:9".equals(aspect) ? 720 : 1280) : ("16:9".equals(aspect) ? 1080 : 1920);
         effects.add(Presentation.createForHeight(height));
 
+        JSONObject proceduralGraph = fx.optJSONObject("proceduralScene");
+        if (proceduralGraph != null) {
+            try {
+                effects.add(new OverlayEffect(Collections.singletonList(new ProceduralSceneOverlay(
+                        proceduralGraph, Math.max(100_000, clip.outputDurationMs() * 1000L)))));
+            } catch (Exception error) { throw new IllegalArgumentException("Invalid procedural scene", error); }
+        }
+
         String preset = fx.optString("effectPreset", fx.optString("colorPreset", ""));
         applyColourEffects(effects, fx);
 
@@ -429,3 +437,4 @@ public final class NativeRenderEngine {
         return Math.max(min, Math.min(max, v));
     }
 }
+
