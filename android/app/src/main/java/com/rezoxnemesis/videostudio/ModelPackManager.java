@@ -17,6 +17,7 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.util.ArrayList;
 import java.util.Locale;
 import java.util.UUID;
 import java.util.zip.ZipEntry;
@@ -45,6 +46,7 @@ public final class ModelPackManager {
     private final File modelsRoot;
     private final File installedRoot;
     private final File stagingRoot;
+    private final File cloudRestoreRoot;
 
     public ModelPackManager(Context context) {
         this.context = context.getApplicationContext();
@@ -53,10 +55,13 @@ public final class ModelPackManager {
         this.modelsRoot = new File(workspace, "models");
         this.installedRoot = new File(modelsRoot, "installed");
         this.stagingRoot = new File(modelsRoot, "staging");
+        this.cloudRestoreRoot = new File(modelsRoot, "cloud_restore");
         ensure(modelsRoot);
         ensure(installedRoot);
         ensure(stagingRoot);
+        ensure(cloudRestoreRoot);
         cleanupStaleStaging();
+        cleanupStaleCloudRestore();
     }
 
     public JSONObject install(ProjectStore.Asset source,
@@ -152,6 +157,127 @@ public final class ModelPackManager {
             }
             if (archive.exists()) archive.delete();
             deleteTree(txRoot);
+        }
+    }
+
+    public File installedDirectory(String packId) throws Exception {
+        String id = safeId(packId);
+        if (id.isEmpty()) throw new IllegalArgumentException("Invalid model-pack id");
+        File target = new File(installedRoot, id);
+        String rootPath = installedRoot.getCanonicalPath() + File.separator;
+        String targetPath = target.getCanonicalPath();
+        if (!targetPath.startsWith(rootPath)) throw new IllegalArgumentException("Unsafe model-pack id");
+        if (!target.isDirectory()) throw new IllegalArgumentException("Installed model pack not found: " + id);
+        return target;
+    }
+
+    public File createCloudRestoreDirectory(String packId) throws Exception {
+        String id = safeId(packId);
+        if (id.isEmpty()) throw new IllegalArgumentException("Invalid model-pack id");
+        File dir = new File(cloudRestoreRoot, id + "_" + UUID.randomUUID());
+        String rootPath = cloudRestoreRoot.getCanonicalPath() + File.separator;
+        String targetPath = dir.getCanonicalPath();
+        if (!targetPath.startsWith(rootPath)) throw new IllegalArgumentException("Unsafe cloud restore path");
+        ensure(dir);
+        return dir;
+    }
+
+    public JSONObject activateRestoredDirectory(File restored,
+                                                String sourceLabel,
+                                                Progress progress) throws Exception {
+        if (restored == null || !restored.isDirectory()) {
+            throw new IllegalArgumentException("Restored model-pack directory is missing");
+        }
+        if (progress == null) progress = (p, d) -> {};
+
+        String cloudRoot = cloudRestoreRoot.getCanonicalPath() + File.separator;
+        String restoredPath = restored.getCanonicalPath();
+        if (!restoredPath.startsWith(cloudRoot)) {
+            throw new IllegalArgumentException("Restored model pack is outside protected staging");
+        }
+
+        long restoredBytes = sizeOf(restored);
+        if (restoredBytes <= 0 || restoredBytes > MAX_TOTAL_EXPANDED) {
+            throw new IllegalArgumentException("Restored model-pack size is invalid");
+        }
+
+        progress.onProgress(68, "Validating restored model-pack manifest");
+        JSONObject manifest = loadManifest(restored);
+        String packId = safeId(manifest.optString("id", ""));
+        if (packId.isEmpty()) throw new IllegalArgumentException("Model-pack manifest requires a valid id");
+        String version = manifest.optString("version", "").trim();
+        if (version.isEmpty()) throw new IllegalArgumentException("Model-pack manifest requires version");
+        String license = manifest.optString("license", "").trim();
+        if (license.isEmpty()) throw new IllegalArgumentException("Model-pack manifest requires license metadata");
+        JSONArray capabilities = manifest.optJSONArray("capabilities");
+        if (capabilities == null || capabilities.length() == 0) {
+            throw new IllegalArgumentException("Model-pack manifest requires at least one capability");
+        }
+
+        verifyDeclaredFiles(restored, manifest, progress);
+        ensureSpaceFor(restoredBytes);
+
+        String transactionId = UUID.randomUUID().toString();
+        File txRoot = new File(stagingRoot, transactionId);
+        File unpacked = new File(txRoot, "unpacked");
+        ensure(txRoot);
+        ensure(unpacked);
+
+        boolean committed = false;
+        File backup = null;
+        try {
+            progress.onProgress(88, "Copying restored model pack into transactional activation");
+            copyTreeWithLimits(restored, unpacked);
+
+            JSONObject installedManifest = new JSONObject(manifest.toString());
+            installedManifest.put("installedAt", System.currentTimeMillis());
+            installedManifest.put("transactionalInstall", true);
+            installedManifest.put("source", sourceLabel == null ? "cloud-workspace" : sourceLabel);
+            installedManifest.put("restoredFromCloudWorkspace", true);
+            installedManifest.put("integrity",
+                    manifest.optJSONObject("files") == null
+                            ? "cloud-folder-manifest-validated"
+                            : "declared-file-sha256-verified");
+            writeUtf8(new File(unpacked, "manifest.json"), installedManifest.toString(2));
+
+            File target = new File(installedRoot, packId);
+            if (target.exists()) {
+                backup = new File(stagingRoot, ".backup_" + packId + "_" + System.currentTimeMillis());
+                if (!target.renameTo(backup)) {
+                    throw new IllegalStateException("Could not stage previous model-pack version for replacement");
+                }
+            }
+
+            progress.onProgress(96, "Activating restored model pack");
+            if (!unpacked.renameTo(target)) {
+                if (backup != null && backup.exists()) backup.renameTo(target);
+                throw new IllegalStateException("Could not atomically activate restored model pack");
+            }
+            committed = true;
+            if (backup != null) deleteTree(backup);
+
+            JSONObject result = new JSONObject();
+            result.put("ok", true);
+            result.put("id", packId);
+            result.put("version", version);
+            result.put("license", license);
+            result.put("capabilities", capabilities);
+            result.put("installedBytes", sizeOf(target));
+            result.put("path", target.getAbsolutePath());
+            result.put("restoredFromCloudWorkspace", true);
+            result.put("integrity", installedManifest.optString("integrity"));
+            progress.onProgress(100, "Cloud model pack activated");
+            return result;
+        } finally {
+            if (!committed) {
+                deleteTree(unpacked);
+                if (backup != null && backup.exists()) {
+                    File restoreTarget = new File(installedRoot, packId);
+                    if (!restoreTarget.exists()) backup.renameTo(restoreTarget);
+                }
+            }
+            deleteTree(txRoot);
+            deleteTree(restored);
         }
     }
 
@@ -283,6 +409,64 @@ public final class ModelPackManager {
         long reserve = Math.max(512L * 1024L * 1024L, stats.getTotalBytes() / 20);
         if (needed <= 0 || stats.getAvailableBytes() - reserve < needed) {
             throw new IllegalStateException("Not enough app-private storage to activate this model pack safely");
+        }
+    }
+
+    private void cleanupStaleCloudRestore() {
+        File[] children = cloudRestoreRoot.listFiles();
+        if (children == null) return;
+        long cutoff = System.currentTimeMillis() - 24L * 60L * 60L * 1000L;
+        for (File child : children) {
+            if (child.lastModified() > 0 && child.lastModified() < cutoff) deleteTree(child);
+        }
+    }
+
+    private static void copyTreeWithLimits(File source, File destination) throws Exception {
+        String sourceRoot = source.getCanonicalPath() + File.separator;
+        String destinationRoot = destination.getCanonicalPath() + File.separator;
+        ArrayList<File> stack = new ArrayList<>();
+        stack.add(source);
+        long total = 0;
+        int entries = 0;
+
+        while (!stack.isEmpty()) {
+            if (Thread.currentThread().isInterrupted()) throw new InterruptedException();
+            File current = stack.remove(stack.size() - 1);
+            File[] children = current.listFiles();
+            if (children == null) continue;
+            for (File child : children) {
+                if (++entries > MAX_ENTRIES) throw new IllegalArgumentException("Restored model pack contains too many files");
+                String childPath = child.getCanonicalPath();
+                if (!childPath.startsWith(sourceRoot)) {
+                    throw new IllegalArgumentException("Restored model pack attempted source path escape");
+                }
+                String relative = childPath.substring(sourceRoot.length());
+                File target = new File(destination, relative);
+                String targetPath = target.getCanonicalPath();
+                if (!targetPath.startsWith(destinationRoot)) {
+                    throw new IllegalArgumentException("Restored model pack attempted destination path escape");
+                }
+
+                if (child.isDirectory()) {
+                    ensure(target);
+                    stack.add(child);
+                } else if (child.isFile()) {
+                    long length = Math.max(0, child.length());
+                    if (length > MAX_SINGLE_ENTRY) throw new IllegalArgumentException("One restored model file exceeds the safe size limit");
+                    total += length;
+                    if (total > MAX_TOTAL_EXPANDED) throw new IllegalArgumentException("Restored model pack exceeds the safe size limit");
+                    ensure(target.getParentFile());
+                    try (InputStream in = new BufferedInputStream(new FileInputStream(child), BUFFER);
+                         OutputStream out = new BufferedOutputStream(new FileOutputStream(target), BUFFER)) {
+                        byte[] buffer = new byte[BUFFER];
+                        int n;
+                        while ((n = in.read(buffer)) >= 0) {
+                            if (Thread.currentThread().isInterrupted()) throw new InterruptedException();
+                            out.write(buffer, 0, n);
+                        }
+                    }
+                }
+            }
         }
     }
 
