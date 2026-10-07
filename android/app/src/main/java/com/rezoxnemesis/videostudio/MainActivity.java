@@ -156,10 +156,13 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         LinearLayout hero = card(true);
         TextView heroTitle = title("Create Without Limits", 28);
         hero.addView(heroTitle);
-        hero.addView(body("Native VideoStudio v1 • local projects • private App MCP • safe multitasking"));
-        Button create = neonButton("+  New Project", C_PURPLE);
+        hero.addView(body("Native v1.1 Creator Engine • prompt-to-video • Media3 export • private autonomous App MCP"));
+        Button promptVideo = neonButton("✦  Create Video from a Prompt", C_MAGENTA);
+        promptVideo.setOnClickListener(v -> promptVideoDialog());
+        hero.addView(promptVideo, margins(-1, dp(54), dp(14), dp(8), 0, 0));
+        Button create = compactButton("+ New project");
         create.setOnClickListener(v -> createProjectDialog());
-        hero.addView(create, margins(-1, dp(52), 0, dp(16), 0, 0));
+        hero.addView(create, margins(-1, dp(46), 0, dp(4), 0, 0));
         box.addView(hero, margins(-1, -2, 0, dp(22), 0, 0));
 
         LinearLayout connect = card(false);
@@ -187,6 +190,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         quick.addView(actionTile("+", "New Project", C_PURPLE, this::createProjectDialog), weightWithMargin());
         quick.addView(actionTile("▧", "Import Media", C_BLUE, this::pickMedia), weightWithMargin());
         quick.addView(actionTile("✦", "AI Edit", C_MAGENTA, () -> showTools()), weightWithMargin());
+        quick.addView(actionTile("▶", "Prompt Video", C_CYAN, this::promptVideoDialog), weightWithMargin());
         box.addView(quick);
 
         box.addView(section("Recent Projects"));
@@ -203,8 +207,8 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
 
         box.addView(section("Foundation"));
         LinearLayout foundation = card(false);
-        foundation.addView(title("Built for heavy work, not browser tricks", 17));
-        foundation.addView(body("Native local project store • bounded 3-lane scheduler • one heavy job at a time • RAM/thermal guard • cancellable jobs • no permanent screen-lock flag."));
+        foundation.addView(title("Creator-grade native foundation", 17));
+        foundation.addView(body("Media3 GPU export • crash-recovery checkpoints • thermal/RAM governor • private ChatGPT handoff • native frame analysis • no gallery browsing permission."));
         box.addView(foundation);
 
         setScreen(scroll, "home");
@@ -229,6 +233,12 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         Button playButton = compactButton("Preview");
         playButton.setOnClickListener(v -> previewTimeline());
         top.addView(playButton);
+        Button exportButton = compactButton("Export");
+        exportButton.setOnClickListener(v -> {
+            try { queueNativeExport(activeProject, "9:16", "1080p", "VideoStudio_" + System.currentTimeMillis() + ".mp4"); }
+            catch (Exception e) { Toast.makeText(this, e.getMessage(), Toast.LENGTH_SHORT).show(); }
+        });
+        top.addView(exportButton);
         box.addView(top, margins(-1, -2, 0, dp(10), 0, 0));
 
         FrameLayout viewer = new FrameLayout(this);
@@ -275,8 +285,10 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         String[][] tools = {
                 {"✂", "Split"}, {"↔", "Trim"}, {"½", "Slow Motion"}, {"⌁", "Speed Ramp"},
                 {"◆", "Green Screen"}, {"⇄", "Transitions"}, {"↗", "Motion"}, {"✦", "Effects"},
-                {"◉", "Colour"}, {"T", "Text"}, {"♫", "Volume"}, {"▣", "Reframe"},
-                {"◐", "Mask"}, {"▥", "Overlay"}, {"≈", "Motion Blur"}, {"⤢", "Crop"}
+                {"◉", "Colour"}, {"T", "Text"}, {"Aa", "Fonts"}, {"♫", "Volume"},
+                {"▣", "Reframe"}, {"◐", "Mask"}, {"▥", "Overlay"}, {"≈", "Motion Blur"},
+                {"❄", "Freeze"}, {"⧉", "Duplicate"}, {"↺", "Reverse"}, {"↯", "Shake"},
+                {"◌", "Blur"}, {"☼", "Glow"}, {"CC", "Captions"}, {"⌁", "Audio Duck"}
         };
         LinearLayout toolGrid = column();
         for (int i = 0; i < tools.length; i += 4) {
@@ -292,8 +304,8 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         box.addView(toolGrid);
 
         LinearLayout status = card(false);
-        status.addView(title("Native editor foundation", 16));
-        status.addView(body("Trim, split, speed/slow-motion preview and timeline state are live now. Chroma key, transitions, motion, masks, colour and effect parameters are stored as real clip instructions for the native render pipeline."));
+        status.addView(title("Native creator pipeline", 16));
+        status.addView(body("Cuts, speed, colour, blur, transforms, motion and prompt scenes now feed the Media3 native exporter. Advanced chroma, masks and creator transitions remain in the timeline model for progressive renderer coverage."));
         box.addView(status, margins(-1, -2, dp(6), 0, 0, 0));
 
         setScreen(scroll, "editor");
@@ -314,19 +326,33 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         tabs.addView(accentPill("Audio"));
         box.addView(tabs, margins(-1, -2, dp(14), dp(16), 0, 0));
 
+        LinearLayout promptCard = card(true);
+        promptCard.addView(title("Prompt → Finished Video", 22));
+        promptCard.addView(body("Describe a video. ChatGPT can design the scenes, pacing, titles, motion and style, then VideoStudio builds and exports it locally."));
+        Button promptButton = neonButton("Generate from Prompt", C_MAGENTA);
+        promptButton.setOnClickListener(v -> promptVideoDialog());
+        promptCard.addView(promptButton, margins(-1, dp(52), dp(12), 0, 0, 0));
+        box.addView(promptCard);
+
         String[][] groups = {
-                {"✦ Auto Cut", "Scene-aware timeline planning"},
-                {"▣ Scene Detect", "Find visual changes"},
-                {"⌗ Smart Reframe", "Vertical / square framing"},
-                {"T Text Animation", "Titles and motion presets"},
-                {"⌁ Motion Effects", "Push, pan, zoom, shake"},
-                {"⇄ Transitions", "Fade, slide, zoom, whip"},
-                {"◉ Colour Enhance", "Cinematic colour parameters"},
-                {"CC Subtitles", "Caption track foundation"},
-                {"♫ Voice / Audio", "Gain, fades and ducking model"},
-                {"◆ Green Screen", "Chroma key + spill controls"},
-                {"≈ Motion Blur", "Motion effect parameter model"},
-                {"◐ Masks", "Shape and animated masks"}
+                {"✦ Auto Cut", "Scene-aware pacing and highlight edits"},
+                {"▣ Scene Detect", "Native sampled-frame scene analysis"},
+                {"⌗ Smart Reframe", "Vertical, square and subject-safe framing"},
+                {"T Text Animation", "21 title and caption motion styles"},
+                {"⌁ Motion Effects", "Pan, push, drift, orbit, shake and zoom"},
+                {"⇄ Transitions", "25 creator transition presets"},
+                {"◉ Colour Enhance", "GPU brightness, contrast and HSL looks"},
+                {"CC Subtitles", "Caption timing and animated style model"},
+                {"♫ Audio Duck", "Dialogue-first gain automation model"},
+                {"◆ Green Screen", "Chroma key, tolerance and spill controls"},
+                {"≈ Blur / Glow", "Gaussian blur, glow and dream looks"},
+                {"◐ Masks", "Shape, feather and animated mask model"},
+                {"⚡ Beat Sync", "Cut and motion markers for music beats"},
+                {"✂ Shorts Recut", "Rebuild long footage for vertical short-form"},
+                {"▧ B-roll Plan", "AI-assisted insert and coverage planning"},
+                {"◫ Multi Variant", "Create alternate hooks and pacing versions"},
+                {"Aa Fonts", "System creator font families and styles"},
+                {"▶ Prompt Video", "Generate a complete local video from a prompt"}
         };
         for (int i = 0; i < groups.length; i += 2) {
             LinearLayout row = new LinearLayout(this);
@@ -337,11 +363,14 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                 tile.addView(title(tool, 16));
                 tile.addView(body(groups[i + j][1]));
                 tile.setOnClickListener(v -> {
-                    if (tool.contains("Green")) applyTool("Green Screen");
+                    if (tool.contains("Prompt Video")) promptVideoDialog();
+                    else if (tool.contains("Green")) applyTool("Green Screen");
                     else if (tool.contains("Transition")) applyTool("Transitions");
                     else if (tool.contains("Motion")) applyTool("Motion");
                     else if (tool.contains("Colour")) applyTool("Colour");
-                    else Toast.makeText(this, tool + " is registered for autonomous use", Toast.LENGTH_SHORT).show();
+                    else if (tool.contains("Fonts")) applyTool("Fonts");
+                    else if (tool.contains("Blur")) applyTool("Blur");
+                    else Toast.makeText(this, tool + " is available to the autonomous editor", Toast.LENGTH_SHORT).show();
                 });
                 row.addView(tile, weightWithMargin());
             }
@@ -351,7 +380,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         LinearLayout mcp = card(false);
         mcp.setBackground(neonCard());
         mcp.addView(title("Connected editing surface", 18));
-        mcp.addView(body("App MCP commands map to native project/timeline operations. No browser page needs to be open."));
+        mcp.addView(body("Direct native control: analyse, import, edit, batch actions, prompt-video, export and inspect project state. Gallery enumeration is permanently excluded."));
         Button connect = neonButton("Connect ChatGPT", C_CYAN);
         connect.setTextColor(Color.BLACK);
         connect.setOnClickListener(v -> sharePairing());
@@ -372,7 +401,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         box.addView(section("Access Mode"));
         box.addView(permissionCard("one_file", "Allow one file", "ChatGPT can edit only the currently authorised media file."));
         box.addView(permissionCard("all_tools", "Allow all tools", "All editing and analysis tools on imported project media. No remote file import or project deletion."));
-        box.addView(permissionCard("everything", "Allow everything", "Full autonomous VideoStudio control, including URL imports and project management. It still cannot browse your phone gallery."));
+        box.addView(permissionCard("everything", "Allow everything except Gallery", "Full autonomous VideoStudio control: imports you explicitly share, projects, AI planning, editing, export and retries. Gallery listing/browsing stays blocked."));
 
         box.addView(section("Workload Safety"));
         LinearLayout safety = card(false);
@@ -389,7 +418,18 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         box.addView(section("Private Connection"));
         LinearLayout privateCard = card(false);
         privateCard.addView(title("Device-owned MCP endpoint", 17));
-        privateCard.addView(body("The connection credential is generated on this phone and encrypted with Android Keystore. Anonymous App MCP requests are rejected."));
+        privateCard.addView(body("The device credential is encrypted by Android Keystore, commands are leased and checkpointed, reconnect uses backoff, and the app can pause control instantly."));
+        Button pause = neonButton(protocol.isControlPaused() ? "Resume ChatGPT Control" : "STOP CHATGPT CONTROL", protocol.isControlPaused() ? C_CYAN : Color.rgb(180, 38, 67));
+        pause.setOnClickListener(v -> {
+            boolean next = !protocol.isControlPaused();
+            protocol.setControlPaused(next);
+            if (next) {
+                if (activeRenderHandle != null) activeRenderHandle.cancel();
+                jobs.cancelAll();
+            }
+            showControl();
+        });
+        privateCard.addView(pause, margins(-1, dp(52), dp(10), dp(8), 0, 0));
         Button share = neonButton("Connect / Share with ChatGPT", C_PURPLE);
         share.setOnClickListener(v -> sharePairing());
         privateCard.addView(share, margins(-1, dp(52), dp(12), 0, 0, 0));
@@ -410,7 +450,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         copy.addView(brand);
         copy.addView(body("Create • Edit • Enhance • With AI"));
         row.addView(copy, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
-        TextView badge = accent("NATIVE v1", C_CYAN);
+        TextView badge = accent("NATIVE 1.1", C_CYAN);
         row.addView(badge);
         return row;
     }
