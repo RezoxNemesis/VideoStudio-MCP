@@ -19,6 +19,7 @@ import java.util.regex.Pattern;
  */
 public final class ResumableTransferManager {
     public static final int BUFFER_BYTES = 256 * 1024;
+    public static final long STORAGE_RESERVE_BYTES = 256L * 1024L * 1024L;
     private static final Pattern CONTENT_RANGE =
             Pattern.compile("bytes\\s+(\\d+)-(\\d+)/(\\d+|\\*)", Pattern.CASE_INSENSITIVE);
 
@@ -110,6 +111,27 @@ public final class ResumableTransferManager {
             // A stray partial with no durable provenance is unsafe to append.
             truncate(partial);
             offset = 0L;
+        }
+
+        File budgetRoot = parent == null ? request.target.getAbsoluteFile().getParentFile() : parent;
+        long freeBytes = budgetRoot == null ? request.target.getUsableSpace() : budgetRoot.getUsableSpace();
+        StorageBudget.Check storage = StorageBudget.checkTransfer(
+                freeBytes,
+                expected,
+                offset,
+                STORAGE_RESERVE_BYTES
+        );
+        if (!storage.allowed) {
+            journal.save(new TransferJournal.Entry(
+                    request.id, request.sourceUrl, partial.getAbsolutePath(),
+                    expected, offset, etag, lastModified, request.sha256, "waiting_storage"
+            ));
+            throw new IllegalStateException(
+                    "Insufficient storage for media transfer: need "
+                            + storage.requiredWithReserveBytes
+                            + " bytes including reserve, have "
+                            + storage.freeBytes
+            );
         }
 
         boolean resumed = offset > 0;
