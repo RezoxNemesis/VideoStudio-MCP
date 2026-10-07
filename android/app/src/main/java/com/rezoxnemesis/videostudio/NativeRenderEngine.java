@@ -175,7 +175,7 @@ public final class NativeRenderEngine {
         List<AudioProcessor> audio = Collections.emptyList();
         List<Effect> video = buildEffects(clip, aspect, quality, inputDurationMs);
         edited.setEffects(new Effects(audio, video));
-        if (!asset.mime.startsWith("video/")) edited.setRemoveAudio(true);
+        if (asset.mime == null || !asset.mime.startsWith("video/")) edited.setRemoveAudio(true);
         return edited.build();
     }
 
