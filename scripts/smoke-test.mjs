@@ -27,6 +27,7 @@ const capabilityRegistry = fs.readFileSync(new URL("../android/app/src/main/java
 const modelPackManager = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/ModelPackManager.java", import.meta.url), "utf8");
 const computeProfile = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/DeviceComputeProfile.java", import.meta.url), "utf8");
 const driveWorkspace = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/DriveWorkspaceProvider.java", import.meta.url), "utf8");
+const creativeJobGraph = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/CreativeJobGraph.java", import.meta.url), "utf8");
 
 const scriptMatch = app.match(/<script>([\s\S]*?)<\/script>/);
 let appScriptParses = false;
@@ -160,6 +161,11 @@ const checks = [
   ["CreativeIR records provider requirements for interchangeable engines", motionScriptCompiler.includes('"providerRequirements"') && motionScriptCompiler.includes("addRequirement") && motionScriptCompiler.includes('"providerInterchangeable"')],
   ["Native Agent resolves MotionScript requirements through capability registry", controlService.includes("resolveCreativeProviders") && controlService.includes('"providerResolution"') && controlService.includes('"unresolvedCapabilities"')],
   ["strict MotionScript runs can reject unavailable provider requirements", worker.includes("strictProviders") && controlService.includes('optBoolean("strictProviders"')],
+  ["CreativeIR graph planner builds provider-agnostic durable DAG nodes", creativeJobGraph.includes("durable execution DAG") && creativeJobGraph.includes('"checkpointKey"') && creativeJobGraph.includes('"cacheKey"') && creativeJobGraph.includes('"targetedReexecution"')],
+  ["CreativeIR graph nodes carry capability resolution and bounded resource plans", creativeJobGraph.includes('"providerResolved"') && creativeJobGraph.includes('"resourcePlan"') && creativeJobGraph.includes("compute.plan") && creativeJobGraph.includes("registry.resolve")],
+  ["CreativeIR graph spans analysis rigs generation audio composition render and critique", creativeJobGraph.includes('"analysis"') && creativeJobGraph.includes('"rig"') && creativeJobGraph.includes('"generation"') && creativeJobGraph.includes('"audio"') && creativeJobGraph.includes('"compose"') && creativeJobGraph.includes('"render"') && creativeJobGraph.includes('"critique"')],
+  ["Native Agent persists execution graphs into compiled MotionScript plans", controlService.includes('put("executionGraph", creativeJobGraph.build') && controlService.includes('case "plan_creative_graph"')],
+  ["MCP v3 exposes CreativeIR graph planning", worker.includes('"app_plan_creative_graph"') && worker.includes('"plan_creative_graph"')],
   ["Native Agent compiles and executes MotionScript", controlService.includes('case "compile_scene"') && controlService.includes('case "run_motion_script"') && controlService.includes("compileMotionScene") && controlService.includes("runMotionScript")],
   ["MCP v3 exposes typed MotionScript and creative workspace tools", worker.includes('"app_compile_scene"') && worker.includes('"app_run_motion_script"') && worker.includes('"app_workspace_status"') && worker.includes('"app_cleanup_workspace"')],
   ["future generic MCP bridge remains available alongside typed creative tools", worker.includes('"app_execute"') && worker.includes('"app_batch"')],
