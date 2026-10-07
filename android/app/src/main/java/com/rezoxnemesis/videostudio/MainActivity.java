@@ -103,8 +103,9 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         syncProtocolState();
 
         setContentView(buildShell());
+        startForegroundService(new Intent(this, ControlService.class));
         showHome();
-        protocol.start();
+        requestServiceSync();
     }
 
     @Override
@@ -175,7 +176,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         LinearLayout copy = column();
         copy.setPadding(dp(12), 0, 0, 0);
         copy.addView(title("Connect ChatGPT", 19));
-        connectionPill = body("Private App MCP • checking connection…");
+        connectionPill = body(serviceConnectionText());
         copy.addView(connectionPill);
         row.addView(copy, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
         TextView arrow = title("›", 34);
@@ -423,11 +424,14 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         pause.setOnClickListener(v -> {
             boolean next = !protocol.isControlPaused();
             protocol.setControlPaused(next);
+            Intent control = new Intent(this, ControlService.class)
+                    .setAction(next ? ControlService.ACTION_PAUSE : ControlService.ACTION_RESUME);
+            startService(control);
             if (next) {
                 if (activeRenderHandle != null) activeRenderHandle.cancel();
                 jobs.cancelAll();
             }
-            showControl();
+            ui.postDelayed(this::showControl, 120);
         });
         privateCard.addView(pause, margins(-1, dp(52), dp(10), dp(8), 0, 0));
         Button share = neonButton("Connect / Share with ChatGPT", C_PURPLE);
@@ -491,7 +495,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                 prefs.edit().putString(KEY_FILE, selectedClip.assetId).apply();
             }
             syncProtocolState();
-            protocol.registerNow();
+            requestServiceSync();
             showControl();
         });
         return card;
@@ -518,7 +522,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         activeProject = store.create(name);
         selectedClip = null;
         syncProtocolState();
-        protocol.registerNow();
+        requestServiceSync();
         showEditor();
     }
 
@@ -553,7 +557,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                 }
             }
             syncProtocolState();
-            protocol.registerNow();
+            requestServiceSync();
             showEditor();
         }
         super.onActivityResult(requestCode, resultCode, data);
@@ -1061,8 +1065,8 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
     @Override
     public void onConnection(boolean connected, String detail) {
         if (connectionPill != null) {
-            connectionPill.setText((connected ? "●  " : "○  ") + detail);
-            connectionPill.setTextColor(connected ? Color.rgb(74, 255, 172) : C_MUTED);
+            connectionPill.setText(serviceConnectionText());
+            connectionPill.setTextColor(prefs.getBoolean("control_service_online", false) ? Color.rgb(74, 255, 172) : C_MUTED);
         }
     }
 
@@ -1502,7 +1506,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         JSONObject out = new JSONObject();
         try {
             out.put("deviceId", protocol.deviceId());
-            out.put("appVersion", "1.1.0");
+            out.put("appVersion", "1.1.1");
             out.put("nativeApp", true);
             out.put("permissionMode", permissionMode());
             out.put("controlPaused", protocol.isControlPaused());
@@ -1534,7 +1538,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
             out.put("creatorCatalog", CreatorCatalog.describe());
             JSONArray caps = new JSONArray();
             String[] values = {
-                    "native-ui","local-projects","private-app-mcp","chat-attachment-handoff","url-import",
+                    "native-ui","persistent-background-control","local-projects","private-app-mcp","chat-attachment-handoff","url-import",
                     "timeline","trim","split","speed","slow-motion","native-frame-analysis","scene-change-sampling",
                     "media3-native-export","prompt-to-video","gpu-brightness","gpu-contrast","gpu-hsl","gpu-blur",
                     "gpu-motion","scale","rotate","creator-transition-model","green-screen-model","masks-model",
@@ -1549,6 +1553,33 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
 
     private void syncProtocolState() {
         if (protocol != null) protocol.setLocalState(permissionMode(), store.summaries());
+        requestServiceSync();
+    }
+
+    private void requestServiceSync() {
+        try {
+            Intent intent = new Intent(this, ControlService.class).setAction(ControlService.ACTION_SYNC);
+            startService(intent);
+        } catch (Exception ignored) {}
+    }
+
+    private String serviceConnectionText() {
+        long heartbeat = prefs.getLong("control_service_heartbeat", 0);
+        boolean online = prefs.getBoolean("control_service_online", false);
+        String detail = prefs.getString("control_service_detail", "");
+        boolean fresh = System.currentTimeMillis() - heartbeat < 65000;
+        if (protocol != null && protocol.isControlPaused()) return "●  ChatGPT control paused • tap Control to resume";
+        if (online && fresh) return "●  " + (detail == null || detail.isEmpty() ? "Persistent private MCP online" : detail);
+        return "○  Persistent MCP service starting…";
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        if (connectionPill != null) {
+            connectionPill.setText(serviceConnectionText());
+            connectionPill.setTextColor(prefs.getBoolean("control_service_online", false) ? Color.rgb(74, 255, 172) : C_MUTED);
+        }
     }
 
     private String permissionMode() {
