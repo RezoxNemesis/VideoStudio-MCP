@@ -694,6 +694,8 @@ function serverFor(env){
       tracking:z.enum(["static","translation"]).optional(),
       personOcclusion:z.enum(["auto","off"]).optional(),
       reflection:z.number().min(0).max(.35).optional(),
+      lightSpill:z.number().min(0).max(.25).optional(),
+      sceneLabels:z.array(z.string().max(80)).max(24).optional(),
       startQuad:z.array(z.tuple([z.number().min(0).max(1),z.number().min(0).max(1)])).length(4).optional(),
       endQuad:z.array(z.tuple([z.number().min(0).max(1),z.number().min(0).max(1)])).length(4).optional()
     }
