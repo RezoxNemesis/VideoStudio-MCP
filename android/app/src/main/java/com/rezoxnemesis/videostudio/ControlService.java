@@ -162,11 +162,17 @@ public final class ControlService extends Service implements AppProtocol.Callbac
 
     @Override
     public void onConnection(boolean connected, String detail) {
+        boolean wasOnline = prefs.getBoolean(KEY_SERVICE_ONLINE, false);
+        String previousDetail = prefs.getString(KEY_SERVICE_DETAIL, "");
         markService(connected, detail);
-        ActivityLog.add(this, "system", connected ? "MCP connected" : "MCP reconnecting", detail, connected ? "success" : "running", null, null, null);
+        if (connected != wasOnline || !String.valueOf(detail).equals(previousDetail)) {
+            ActivityLog.add(this, "system", connected ? "MCP connected" : "MCP reconnecting",
+                    detail + " • app " + AppProtocol.APP_VERSION,
+                    connected ? "success" : "running", null, null, null);
+        }
         updateNotification(protocol != null && protocol.isControlPaused()
                 ? "ChatGPT control paused"
-                : (connected ? "MCP v3 control ready" : "Reconnecting securely"));
+                : (connected ? "MCP v3 control ready • " + AppProtocol.APP_VERSION : "Reconnecting securely • " + AppProtocol.APP_VERSION));
     }
 
     @Override
@@ -1874,6 +1880,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         prefs.edit()
                 .putBoolean(KEY_SERVICE_ONLINE, online)
                 .putString(KEY_SERVICE_DETAIL, detail == null ? "" : detail)
+                .putString("control_service_app_version", AppProtocol.APP_VERSION)
                 .putLong("control_service_heartbeat", System.currentTimeMillis())
                 .apply();
     }
