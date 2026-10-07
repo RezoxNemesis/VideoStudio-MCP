@@ -7,7 +7,7 @@ on:
     branches: [ main ]
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build-apk:
@@ -50,3 +50,31 @@ jobs:
           name: VideoStudio-Android-debug
           path: android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
+
+      - name: Prepare stable direct-download APK
+        if: github.event_name == 'push'
+        run: |
+          cp android/app/build/outputs/apk/debug/app-debug.apk VideoStudio-latest.apk
+          sha256sum VideoStudio-latest.apk | tee VideoStudio-latest.sha256
+          {
+            echo "Latest installable VideoStudio Android build from main."
+            echo
+            echo "Commit: $GITHUB_SHA"
+            echo
+            echo "SHA-256:"
+            echo '~~~'
+            cat VideoStudio-latest.sha256
+            echo '~~~'
+          } > release-notes.md
+
+      - name: Publish stable latest APK release
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete videostudio-latest --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag || true
+          gh release create videostudio-latest VideoStudio-latest.apk VideoStudio-latest.sha256 \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "VideoStudio Latest Android APK" \
+            --notes-file release-notes.md
