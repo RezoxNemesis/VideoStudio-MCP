@@ -1130,9 +1130,64 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                     result.put("ok", true);
                     result.put("previewing", true);
                     break;
-                case "cancel_job":
-                    result.put("ok", jobs.cancel(p.optString("jobId")));
+                case "analyse_media":
+                    queueAnalysisCommand(command, p);
+                    return;
+                case "prompt_video":
+                    result = queuePromptVideo(p);
+                    refreshCurrent();
                     break;
+                case "export_project":
+                    result = queueNativeExport(
+                            activeProject,
+                            p.optString("aspect", "9:16"),
+                            p.optString("quality", "1080p"),
+                            p.optString("fileName", "VideoStudio_" + System.currentTimeMillis() + ".mp4")
+                    );
+                    break;
+                case "creator_preset":
+                    result = applyCreatorPreset(p);
+                    refreshCurrent();
+                    break;
+                case "autonomous_edit": {
+                    JSONObject planResult = p.optJSONArray("clips") == null ? new JSONObject().put("ok", true) : applyRemotePlan(p);
+                    if (p.has("preset")) applyCreatorPreset(p);
+                    result.put("ok", true);
+                    result.put("plan", planResult);
+                    if (p.optBoolean("render", false)) {
+                        JSONObject export = queueNativeExport(
+                                activeProject,
+                                p.optString("aspect", "9:16"),
+                                p.optString("quality", "1080p"),
+                                p.optString("fileName", "VideoStudio_AI_Edit_" + System.currentTimeMillis() + ".mp4")
+                        );
+                        result.put("export", export);
+                    }
+                    refreshCurrent();
+                    break;
+                }
+                case "cancel_job": {
+                    boolean cancelled = jobs.cancel(p.optString("jobId"));
+                    if (cancelled && activeRenderHandle != null) activeRenderHandle.cancel();
+                    result.put("ok", cancelled);
+                    break;
+                }
+                case "cancel_all_jobs":
+                    if (activeRenderHandle != null) activeRenderHandle.cancel();
+                    result.put("ok", true);
+                    result.put("cancelled", jobs.cancelAll());
+                    break;
+                case "delete_project": {
+                    String id = p.optString("projectId", activeProject == null ? "" : activeProject.id);
+                    if (id.isEmpty()) throw new IllegalArgumentException("Project ID is required");
+                    store.delete(id);
+                    activeProject = store.active();
+                    selectedClip = activeProject == null || activeProject.clips.isEmpty() ? null : activeProject.clips.get(0);
+                    result.put("ok", true);
+                    result.put("deletedProjectId", id);
+                    refreshCurrent();
+                    break;
+                }
                 case "import_url":
                     result = queueUrlImport(p.optString("url"), p.optString("name", "ChatGPT import"));
                     break;
@@ -1205,7 +1260,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         switch (tool) {
             case "speed":
             case "slow_motion":
-                selectedClip.speed = (float) Math.max(.5, Math.min(2, settings.optDouble("speed", .5)));
+                selectedClip.speed = (float) Math.max(.25, Math.min(4, settings.optDouble("speed", .5)));
                 break;
             case "trim":
                 selectedClip.inMs = settings.optLong("inMs", selectedClip.inMs);
@@ -1225,10 +1280,15 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                 selectedClip.effects.put("ease", settings.optString("ease", "easeInOut"));
                 break;
             case "effect":
-                selectedClip.effects.put("effectPreset", settings.optString("preset", "cinematic_glow"));
+                selectedClip.effects.put("effectPreset", settings.optString("preset", "cinematic"));
+                if (settings.has("blur")) selectedClip.effects.put("blur", settings.optDouble("blur"));
                 break;
             case "color":
                 selectedClip.effects.put("colorPreset", settings.optString("preset", "cinematic"));
+                if (settings.has("brightness")) selectedClip.effects.put("brightness", settings.optDouble("brightness"));
+                if (settings.has("contrast")) selectedClip.effects.put("contrast", settings.optDouble("contrast"));
+                if (settings.has("saturation")) selectedClip.effects.put("saturationAdjust", settings.optDouble("saturation"));
+                if (settings.has("lightness")) selectedClip.effects.put("lightnessAdjust", settings.optDouble("lightness"));
                 break;
             case "reframe":
                 selectedClip.effects.put("reframe", settings.optString("preset", "9:16_subject_safe"));
@@ -1237,8 +1297,27 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                 selectedClip.effects.put("mask", settings.optString("shape", "rounded_rect"));
                 selectedClip.effects.put("maskFeather", settings.optDouble("feather", .08));
                 break;
+            case "font":
+                selectedClip.effects.put("fontFamily", settings.optString("family", "sans-serif-medium"));
+                break;
+            case "text_animation":
+                selectedClip.effects.put("textAnimation", settings.optString("preset", "fade_up"));
+                break;
+            case "blur":
+                selectedClip.effects.put("blur", Math.max(0, Math.min(18, settings.optDouble("sigma", 4))));
+                break;
+            case "transform":
+                if (settings.has("scale")) selectedClip.effects.put("scale", settings.optDouble("scale", 1));
+                if (settings.has("rotate")) selectedClip.effects.put("rotate", settings.optDouble("rotate", 0));
+                break;
+            case "audio_duck":
+                selectedClip.effects.put("audioDucking", true);
+                selectedClip.effects.put("duckLevel", settings.optDouble("level", .32));
+                break;
             case "title":
                 selectedClip.title = settings.optString("text", "");
+                if (settings.has("font")) selectedClip.effects.put("fontFamily", settings.optString("font"));
+                if (settings.has("animation")) selectedClip.effects.put("textAnimation", settings.optString("animation"));
                 break;
             case "volume":
                 selectedClip.volume = (float) Math.max(0, Math.min(2, settings.optDouble("volume", 1)));
