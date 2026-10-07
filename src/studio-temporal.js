@@ -1,4 +1,4 @@
-const STUDIO_TEMPORAL_JS = String.raw\`
+const STUDIO_TEMPORAL_JS = String.raw`
 /*
  * VideoStudio Neural Temporal Motion
  *
@@ -698,6 +698,6 @@ const STUDIO_TEMPORAL_JS = String.raw\`
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", inject);
   else inject();
 })();
-\`;
+`;
 
 export default STUDIO_TEMPORAL_JS;
