@@ -364,6 +364,10 @@ const checks = [
   ["native watchdog re-arms after task/process loss without exact-alarm permission", nativeWatchdog.includes("setAndAllowWhileIdle") && nativeWatchdog.includes("TASK_REMOVED_DELAY_MS") && nativeMain.includes("MCP control plane available") && controlService.includes("onTaskRemoved") && controlService.includes("NativeAgentWatchdog.scheduleRetry")],
   ["direct stable MCP stays available while native executor sleeps", worker.includes("controlPlaneConnected:true") && worker.includes("offlineQueueAvailable:true") && worker.includes('status:fresh?"queued":"waiting_native"') && worker.includes('nativeState:fresh?"online":"sleeping_or_offline"')],
   ["pairing text documents durable queued execution instead of claiming native is always awake", nativeProtocol.includes("remains available as the durable control plane while Android sleeps") && nativeProtocol.includes("Native-only work is queued safely")],
+  ["same private native MCP exposes one-step Studio Web fallback binding", worker.includes('"app_bind_studio_web"') && worker.includes("appBindStudioWebFallback") && worker.includes("app-web-fallback:")],
+  ["offline v3 router can send compatible work to Studio Web", worker.includes("appTryStudioWebFallback") && worker.includes('hybridRoute:"studio_web"') && worker.includes('mode:"prompt_scene"') && worker.includes('mode:"story_video"')],
+  ["native command result lookup can follow Web-routed work", worker.includes("appCommandV3") && worker.includes("runtimeCommand(webDeviceId,id)") && worker.includes('hybridRoute:"studio_web"')],
+
 
 ];
 
