@@ -10,8 +10,8 @@ android {
         applicationId = "com.rezoxnemesis.videostudio"
         minSdk = 29
         targetSdk = 35
-        versionCode = 14
-        versionName = "1.1.2"
+        versionCode = 300
+        versionName = "3.0.0"
     }
 
     compileOptions {
