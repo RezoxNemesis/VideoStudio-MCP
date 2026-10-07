@@ -61,6 +61,8 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     private PromptVideoEngine promptVideoEngine;
     private NativeMediaAnalyzer mediaAnalyzer;
     private NativePortraitMotionAnalyzer portraitMotionAnalyzer;
+    private CreativeWorkspace creativeWorkspace;
+    private MotionScriptCompiler motionScriptCompiler;
     private SharedPreferences prefs;
     private CommandJournal commandJournal;
 
@@ -77,6 +79,8 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         promptVideoEngine = new PromptVideoEngine(this);
         mediaAnalyzer = new NativeMediaAnalyzer(this);
         portraitMotionAnalyzer = new NativePortraitMotionAnalyzer(this);
+        creativeWorkspace = new CreativeWorkspace(this);
+        motionScriptCompiler = new MotionScriptCompiler();
         createChannel();
         startForeground(NOTIFICATION_ID, notification("VideoStudio MCP v3 starting"));
         syncProtocolState();
@@ -259,6 +263,19 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                     return;
                 case "prompt_video":
                     complete(command, queuePromptVideo(p));
+                    return;
+                case "compile_scene":
+                    complete(command, compileMotionScene(p));
+                    return;
+                case "run_motion_script":
+                    complete(command, runMotionScript(p));
+                    syncProtocolState();
+                    return;
+                case "workspace_status":
+                    complete(command, workspaceStatus(p));
+                    return;
+                case "cleanup_workspace":
+                    complete(command, cleanupWorkspace(p));
                     return;
                 case "animate_images":
                     complete(command, queueAnimatedImages(p));
@@ -552,6 +569,123 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             commandJournal.finish(command, failed, "failed");
             protocol.complete(command, failed, "failed");
         }
+    }
+
+    private JSONObject workspaceStatus(JSONObject p) {
+        JSONObject result = ok();
+        ProjectStore.Project project = store.active();
+        String requested = p.optString("projectId", "");
+        if (!requested.isEmpty()) {
+            ProjectStore.Project candidate = store.get(requested);
+            if (candidate != null) project = candidate;
+        }
+        String projectId = project == null ? "" : project.id;
+        try {
+            result.put("projectId", projectId);
+            result.put("workspace", creativeWorkspace.status(projectId));
+        } catch (Exception ignored) {}
+        return result;
+    }
+
+    private JSONObject cleanupWorkspace(JSONObject p) {
+        JSONObject result = ok();
+        String projectId = p.optString("projectId", "");
+        try {
+            result.put("projectId", projectId);
+            result.put("cleanup", creativeWorkspace.cleanupRegenerable(projectId));
+        } catch (Exception ignored) {}
+        return result;
+    }
+
+    private JSONObject compileMotionScene(JSONObject p) throws Exception {
+        ProjectStore.Project project = resolveProject(p.optString("projectId", ""));
+        String source = p.optString("script", p.optString("source", ""));
+        MotionScriptCompiler.CompileResult compiled = motionScriptCompiler.compile(source, project);
+        JSONObject saved = creativeWorkspace.saveMotionScript(project.id, compiled.name, source, compiled.ir);
+
+        JSONObject result = ok();
+        result.put("projectId", project.id);
+        result.put("name", compiled.name);
+        result.put("motionScriptVersion", MotionScriptCompiler.MOTION_SCRIPT_VERSION);
+        result.put("creativeIrVersion", MotionScriptCompiler.CREATIVE_IR_VERSION);
+        result.put("ir", compiled.ir);
+        result.put("workspace", saved);
+        return result;
+    }
+
+    private JSONObject runMotionScript(JSONObject p) throws Exception {
+        ProjectStore.Project project = resolveProject(p.optString("projectId", ""));
+        String source = p.optString("script", p.optString("source", ""));
+        MotionScriptCompiler.CompileResult compiled = motionScriptCompiler.compile(source, project);
+        JSONObject ir = compiled.ir;
+        JSONObject defaults = ir.optJSONObject("defaults");
+        if (defaults == null) defaults = new JSONObject();
+        JSONArray shots = ir.optJSONArray("shots");
+        if (shots == null) shots = new JSONArray();
+
+        int changed = 0;
+        for (int i = 0; i < project.clips.size(); i++) {
+            ProjectStore.Clip clip = project.clips.get(i);
+            JSONObject shot = shots.length() == 0 ? defaults : shots.optJSONObject(Math.min(i, shots.length() - 1));
+            if (shot == null) shot = defaults;
+
+            String motion = shot.optString("motionPreset", defaults.optString("motionPreset", "none"));
+            String effect = shot.optString("effectPreset", defaults.optString("effectPreset", "none"));
+            double strength = shot.optDouble("motionStrength", defaults.optDouble("motionStrength", .35));
+            String atmosphere = shot.optString("atmosphere", defaults.optString("atmosphere", "ambient"));
+            double atmosphereIntensity = shot.optDouble("atmosphereIntensity", defaults.optDouble("atmosphereIntensity", 0));
+
+            clip.effects.put("motionPreset", motion);
+            clip.effects.put("motionStrength", strength);
+            if (!"none".equals(effect)) clip.effects.put("effectPreset", effect);
+
+            JSONObject animationSpec = clip.effects.optJSONObject("animationSpec");
+            if (animationSpec == null) animationSpec = new JSONObject();
+            animationSpec.put("environmentMotion", atmosphere);
+            animationSpec.put("atmosphereIntensity", atmosphereIntensity);
+            animationSpec.put("motionScript", true);
+            animationSpec.put("motionScriptVersion", MotionScriptCompiler.MOTION_SCRIPT_VERSION);
+            clip.effects.put("animationSpec", animationSpec);
+
+            if (shots.length() > 0 && shot.has("startMs") && shot.has("endMs")) {
+                long requestedDuration = Math.max(900, shot.optLong("endMs") - shot.optLong("startMs"));
+                ProjectStore.Asset asset = project.asset(clip.assetId);
+                if (asset != null && asset.mime != null && asset.mime.startsWith("image/")) {
+                    clip.inMs = 0;
+                    clip.outMs = requestedDuration;
+                } else if (asset != null && asset.durationMs > 0) {
+                    clip.outMs = Math.min(asset.durationMs, Math.max(clip.inMs + 100, clip.inMs + requestedDuration));
+                }
+            }
+            changed++;
+        }
+
+        store.save(project);
+        JSONObject saved = creativeWorkspace.saveMotionScript(project.id, compiled.name, source, ir);
+        ActivityLog.add(this, "chatgpt", "MotionScript compiled",
+                compiled.name + " • " + changed + " clip(s) directed through CreativeIR",
+                "success", 100, null, project.id);
+
+        JSONObject result = ok();
+        result.put("projectId", project.id);
+        result.put("name", compiled.name);
+        result.put("changedClips", changed);
+        result.put("ir", ir);
+        result.put("workspace", saved);
+
+        if (p.optBoolean("render", false)) {
+            JSONObject render = ir.optJSONObject("render");
+            if (render == null) render = new JSONObject();
+            JSONObject exportParams = new JSONObject();
+            exportParams.put("projectId", project.id);
+            exportParams.put("quality", p.optString("quality", render.optString("quality", "1080p")));
+            exportParams.put("aspect", p.optString("aspect", render.optString("aspect", "9:16")));
+            exportParams.put("fileName", sanitizeFileName(p.optString("fileName",
+                    "VideoStudio_MotionScript_" + System.currentTimeMillis() + ".mp4")));
+            result.put("export", queueExport(exportParams));
+        }
+
+        return result;
     }
 
     private JSONObject queueAnimatedImages(JSONObject p) throws Exception {
@@ -1228,6 +1362,8 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             out.put("analysisEngineReady", mediaAnalyzer != null);
             out.put("promptVideoEngineReady", promptVideoEngine != null);
             out.put("portraitAnimationEngineReady", portraitMotionAnalyzer != null);
+            out.put("motionScriptCompilerReady", motionScriptCompiler != null);
+            out.put("creativeWorkspaceReady", creativeWorkspace != null);
             out.put("bundledSubjectSegmentation", true);
             out.put("bundledFaceMesh", true);
             out.put("permissionMode", permissionMode());
@@ -1281,6 +1417,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 out.put("sourcePrompt", active.sourcePrompt);
                 out.put("latestExportUri", active.latestExportUri);
                 out.put("latestExportName", active.latestExportName);
+                out.put("creativeWorkspace", creativeWorkspace.status(active.id));
                 JSONArray assets = new JSONArray();
                 for (ProjectStore.Asset a : active.assets) {
                     JSONObject ai = new JSONObject();
@@ -1378,6 +1515,10 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             case "autonomous_edit": return "Autonomous edit";
             case "analyse_media": return "Analysing media";
             case "prompt_video": return "Creating prompt video";
+            case "compile_scene": return "Compiling MotionScript";
+            case "run_motion_script": return "Running MotionScript";
+            case "workspace_status": return "Reading creative workspace";
+            case "cleanup_workspace": return "Cleaning creative workspace";
             case "animate_images": return "Animating still images";
             case "job_status": return "Reading native job status";
             case "export_project": return "Exporting project";
@@ -1408,6 +1549,10 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             String prompt = p.optString("prompt", "");
             return prompt.length() > 90 ? prompt.substring(0, 90) + "…" : prompt;
         }
+        if ("compile_scene".equals(action) || "run_motion_script".equals(action)) {
+            String script = p.optString("script", p.optString("source", ""));
+            return script.length() > 90 ? script.substring(0, 90) + "…" : script;
+        }
         return "Received from ChatGPT";
     }
 
@@ -1416,6 +1561,10 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         if ("apply_edit_plan".equals(action)) return result.optInt("clipCount", 0) + " timeline clip(s) applied";
         if ("apply_tool".equals(action)) return "Edit applied inside VideoStudio";
         if ("creator_preset".equals(action)) return result.optInt("changedClips", 0) + " clip(s) styled";
+        if ("compile_scene".equals(action)) return "MotionScript compiled to CreativeIR";
+        if ("run_motion_script".equals(action)) return result.optInt("changedClips", 0) + " clip(s) directed by MotionScript";
+        if ("workspace_status".equals(action)) return "Creative workspace status read";
+        if ("cleanup_workspace".equals(action)) return "Regenerable creative workspace cleaned";
         if ("animate_images".equals(action)) return result.optInt("imageCount", 0) + " image clip(s) queued for native animation";
         if ("insert_asset_timeline".equals(action)) return result.optBoolean("inserted", false) ? "Media added to timeline" : "Media could not be added to timeline";
         if ("select_project".equals(action)) return "Project selected";
