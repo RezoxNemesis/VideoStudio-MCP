@@ -143,6 +143,19 @@ The on-device self-test checks:
 
 Autonomous work should run `app_status`, then `app_self_test`, before a significant editing session.
 
+## Autonomous control policy
+
+v3.2 treats autonomy as the default operating mode rather than an opt-in capability.
+
+- default permission mode: `everything`
+- one-time upgrade migration promotes the old default to `everything`
+- Gallery/media-library enumeration is rejected in both Worker and Android policy regardless of permission mode
+- status, self-test and cancellation commands remain available independent of editing restrictions
+- user-selected `all_tools` and `one_file` restrictions persist after the migration
+- local **STOP CHATGPT CONTROL** overrides all remote commands
+
+This keeps the agent capable of completing end-to-end work without repeated prompts while preserving the privacy boundary that MCP never gets a Gallery browser.
+
 ## v3.2 articulated portrait animation module
 
 v3.2 extends the local creator engine without changing the connection protocol.
