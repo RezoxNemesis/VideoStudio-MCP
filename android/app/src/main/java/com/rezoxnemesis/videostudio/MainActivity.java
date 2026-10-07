@@ -77,6 +77,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
     private PromptVideoEngine promptVideoEngine;
     private NativeMediaAnalyzer mediaAnalyzer;
     private DriveWorkspaceProvider driveWorkspace;
+    private PreviewSnapshotStore previewSnapshots;
     private SharedPreferences prefs;
     private FrameLayout content;
     private TextView connectionPill;
@@ -105,6 +106,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         promptVideoEngine = new PromptVideoEngine(this);
         mediaAnalyzer = new NativeMediaAnalyzer(this);
         driveWorkspace = new DriveWorkspaceProvider(this);
+        previewSnapshots = new PreviewSnapshotStore(this);
         livePlayer = new LiveEditPlayer(this);
         activeProject = store.active();
         protocol = new AppProtocol(this, this);
@@ -424,6 +426,57 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         if (livePlayer.hasMedia()) hint.setVisibility(View.GONE);
         viewer.addView(hint, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(280)));
         box.addView(viewer, margins(-1, dp(280), 0, 0, 0, 0));
+
+        LinearLayout autonomousStrip = card(false);
+        autonomousStrip.setBackground(neonCard());
+        JSONArray recentActivity = ActivityLog.recent(this, 1);
+        JSONObject latestActivity = recentActivity.optJSONObject(0);
+        String activityTitle = latestActivity == null ? "Autonomous activity" : latestActivity.optString("action", "Autonomous activity");
+        String activityDetail = latestActivity == null
+                ? "Ready for ChatGPT edits while playback remains interactive."
+                : latestActivity.optString("detail", "VideoStudio is working.");
+        autonomousStrip.addView(title("✦  " + activityTitle, 15));
+        autonomousStrip.addView(body(activityDetail));
+        if (latestActivity != null && latestActivity.has("progress")) {
+            ProgressBar liveProgress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+            liveProgress.setMax(100);
+            liveProgress.setProgress(latestActivity.optInt("progress", 0));
+            autonomousStrip.addView(liveProgress, margins(-1, dp(8), dp(6), 0, 0, 0));
+        }
+        LinearLayout liveActions = new LinearLayout(this);
+        liveActions.setGravity(Gravity.CENTER_VERTICAL);
+        PreviewSnapshotStore.Snapshot latestPreview = previewSnapshots.latest(activeProject.id);
+        LivePlaybackState playbackState = livePlayer.snapshotState();
+        if (latestPreview != null && !latestPreview.id.equals(playbackState.snapshotId)) {
+            Button playNew = compactButton("Play new result");
+            playNew.setOnClickListener(v -> {
+                livePlayer.setContextIds(latestPreview.id, "");
+                livePlayer.play(Uri.parse(latestPreview.uri), 0L);
+                Toast.makeText(this, "Playing latest " + latestPreview.qualityTier + " result", Toast.LENGTH_SHORT).show();
+            });
+            liveActions.addView(playNew);
+            TextView resultBadge = accent(
+                    "  " + latestPreview.sourceType.toUpperCase(Locale.US) + " • " + latestPreview.qualityTier.toUpperCase(Locale.US),
+                    C_CYAN
+            );
+            liveActions.addView(resultBadge);
+        }
+        Button stopJobs = compactButton("Stop jobs");
+        stopJobs.setOnClickListener(v -> {
+            try {
+                jobs.cancelAll();
+                if (activeRenderHandle != null) activeRenderHandle.cancel();
+                Intent stop = new Intent(this, ControlService.class);
+                stop.setAction(ControlService.ACTION_CANCEL_ALL);
+                startForegroundService(stop);
+                Toast.makeText(this, "Active VideoStudio jobs cancelled", Toast.LENGTH_SHORT).show();
+            } catch (Exception error) {
+                Toast.makeText(this, "Could not stop every job", Toast.LENGTH_SHORT).show();
+            }
+        });
+        liveActions.addView(stopJobs);
+        autonomousStrip.addView(liveActions, margins(-1, -2, dp(8), 0, 0, 0));
+        box.addView(autonomousStrip, margins(-1, -2, dp(10), dp(2), 0, 0));
 
         box.addView(section("Media Bin"));
         HorizontalScrollView mediaBin = new HorizontalScrollView(this);
@@ -1433,6 +1486,17 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
             fresh.latestExportAt = System.currentTimeMillis();
             state.checkpoint(98, "Registering rendered MP4 in Media Bin");
             store.registerGeneratedAsset(fresh, publicUri, fileName, "final_render", false);
+            previewSnapshots.publish(new PreviewSnapshotStore.Snapshot(
+                    "local-final-" + fresh.latestExportAt,
+                    fresh.id,
+                    fresh.updatedAt,
+                    fresh.latestExportAt,
+                    publicUri.toString(),
+                    "1080p",
+                    "final",
+                    state.id,
+                    fresh.latestExportAt
+            ));
         }
         syncProtocolState();
         ui.post(() -> {
