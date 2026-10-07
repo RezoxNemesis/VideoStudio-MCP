@@ -1,6 +1,8 @@
 package com.rezoxnemesis.videostudio;
 
 import android.content.Context;
+import android.content.Intent;
+import android.speech.tts.TextToSpeech;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -21,11 +23,18 @@ import java.util.Locale;
 public final class CapabilityRegistry {
     private static final int MAX_MANIFEST_BYTES = 256 * 1024;
     private final File installedModelRoot;
+    private final boolean systemTtsAvailable;
 
     public CapabilityRegistry(Context context) {
         File workspace = new File(context.getApplicationContext().getFilesDir(), "creative_workspace");
         installedModelRoot = new File(new File(workspace, "models"), "installed");
         if (!installedModelRoot.exists()) installedModelRoot.mkdirs();
+        boolean tts = false;
+        try {
+            Intent intent = new Intent(TextToSpeech.Engine.INTENT_ACTION_TTS_SERVICE);
+            tts = !context.getPackageManager().queryIntentServices(intent, 0).isEmpty();
+        } catch (Exception ignored) {}
+        systemTtsAvailable = tts;
     }
 
     public JSONObject describe() {
@@ -88,14 +97,26 @@ public final class CapabilityRegistry {
                 96,
                 "balanced"
         ));
+        if (systemTtsAvailable) {
+            providers.put(builtin(
+                    "builtin.android.system-tts",
+                    "audio",
+                    "android-tts",
+                    new String[]{"speech.tts","voice.narration"},
+                    64,
+                    "balanced"
+            ));
+        }
 
+        int builtInCount = providers.length();
         JSONArray installed = installedProviders();
         for (int i = 0; i < installed.length(); i++) providers.put(installed.opt(i));
 
         try {
             root.put("registryVersion", 1);
             root.put("providerCount", providers.length());
-            root.put("builtInProviderCount", 7);
+            root.put("builtInProviderCount", builtInCount);
+            root.put("systemTtsAvailable", systemTtsAvailable);
             root.put("installedModelProviderCount", installed.length());
             root.put("providers", providers);
             root.put("modelPackRoot", installedModelRoot.getAbsolutePath());
