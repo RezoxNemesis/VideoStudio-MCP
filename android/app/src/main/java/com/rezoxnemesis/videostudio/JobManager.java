@@ -33,6 +33,7 @@ public final class JobManager {
         public volatile boolean recoverable = true;
         public volatile int retryCount = 0;
         public volatile long lastCheckpointAt;
+        public volatile JSONObject result;
         Future<?> future;
         private JobManager owner;
 
@@ -62,6 +63,17 @@ public final class JobManager {
             if (owner != null) owner.persist();
         }
 
+        public void setResult(JSONObject value) {
+            if (value == null) {
+                this.result = null;
+            } else {
+                try { this.result = new JSONObject(value.toString()); }
+                catch (Exception ignored) { this.result = value; }
+            }
+            this.updatedAt = System.currentTimeMillis();
+            if (owner != null) owner.persist();
+        }
+
         JSONObject json() {
             JSONObject o = new JSONObject();
             try {
@@ -77,6 +89,7 @@ public final class JobManager {
                 o.put("lastCheckpointAt", lastCheckpointAt);
                 o.put("createdAt", createdAt);
                 o.put("updatedAt", updatedAt);
+                if (result != null) o.put("result", result);
             } catch (Exception ignored) {}
             return o;
         }
@@ -290,6 +303,11 @@ public final class JobManager {
                 job.recoverable = o.optBoolean("recoverable", true);
                 job.retryCount = o.optInt("retryCount", 0);
                 job.lastCheckpointAt = o.optLong("lastCheckpointAt", updated);
+                JSONObject savedResult = o.optJSONObject("result");
+                if (savedResult != null) {
+                    try { job.result = new JSONObject(savedResult.toString()); }
+                    catch (Exception ignored) { job.result = savedResult; }
+                }
                 String state = o.optString("state", "interrupted");
                 if ("queued".equals(state) || "waiting".equals(state) || "waiting_thermal".equals(state)
                         || "waiting_memory".equals(state) || "running".equals(state) || "retrying".equals(state)) {
