@@ -102,3 +102,48 @@ test('stable Studio Web MCP requires the configured bearer while the editor page
  const root=await worker.fetch(new Request("https://example.test/",{method:"GET"}),env,{});
  assert.equal(root.status,200);
 });
+
+
+test('one-time native hybrid challenge creates a private stable binding and rejects replay',async()=>{
+ const f=await fixture();
+ const webDeviceId='studio-web-device-001';
+ await f.relay.register(webDeviceId,{name:'Studio Web'});
+
+ assert.equal(await f.relay.appResolveHybrid(webDeviceId),null);
+
+ const challenge=await f.relay.appCreateHybridBinding(f.key,webDeviceId);
+ assert.ok(challenge.token.length>=30);
+ assert.equal(challenge.webDeviceId,webDeviceId);
+
+ await assert.rejects(
+  f.relay.appRedeemHybridBinding(challenge.token,'another-web-device'),
+  /device/i
+ );
+
+ const bound=await f.relay.appRedeemHybridBinding(challenge.token,webDeviceId);
+ assert.ok(bound.hybridKey.length>=32);
+ assert.match(bound.privateMcpPath,/^\/mcp-v06\/[A-Za-z0-9_-]{32,}$/);
+
+ const resolved=await f.relay.appResolveHybrid(bound.hybridKey);
+ assert.equal(resolved.native.deviceId,f.deviceId);
+ assert.equal(resolved.binding.webDeviceId,webDeviceId);
+
+ await assert.rejects(
+  f.relay.appRedeemHybridBinding(challenge.token,webDeviceId),
+  /already used|invalid/i
+ );
+});
+
+test('expired native hybrid challenge cannot be redeemed',async()=>{
+ const f=await fixture();
+ const webDeviceId='studio-web-device-expired';
+ await f.relay.register(webDeviceId,{name:'Studio Web'});
+ const challenge=await f.relay.appCreateHybridBinding(f.key,webDeviceId);
+ const record=await f.storage.get('hybrid-challenge:'+challenge.token);
+ record.expiresAt=Date.now()-1;
+ await f.storage.put('hybrid-challenge:'+challenge.token,record);
+ await assert.rejects(
+  f.relay.appRedeemHybridBinding(challenge.token,webDeviceId),
+  /expired/i
+ );
+});
