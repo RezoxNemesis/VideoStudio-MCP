@@ -615,7 +615,7 @@ function serverForApp(env,ownerKey,protocolVersion=1){
     effects:["none","cinematic","film_grain","soft_glow","bloom","dream","vignette","sharpen","clarity","motion_blur","radial_blur","gaussian_blur","chromatic_aberration","rgb_split","glitch","scanlines","vhs","retro_cam","super8","film_burn","light_leak","halation","neon","cyberpunk","noir","bleach_bypass","teal_orange","warm_film","cool_night","golden_hour","matte","high_contrast","soft_portrait","crush_black","fade_black","duotone","posterize","pixelate","fisheye","shake","strobe","flash","edge_glow"],
     textAnimations:["none","fade","fade_up","fade_down","slide_left","slide_right","scale_in","pop","bounce","typewriter","word_reveal","line_reveal","blur_in","tracking_in","tracking_out","glitch","neon_flicker","kinetic","mask_reveal","cinematic_title","caption_pop"],
     fonts:["sans-serif","sans-serif-medium","sans-serif-condensed","sans-serif-light","sans-serif-black","serif","serif-monospace","monospace","cursive","casual","elegant","poster","tech","editorial"],
-    aiTools:["auto_cut","scene_detect","silence_trim","highlight_extract","smart_reframe","caption_plan","hook_builder","beat_sync","b_roll_plan","pace_rewrite","shorts_recut","story_recut","colour_match","audio_ducking","title_writer","thumbnail_frame_pick","render_critique","prompt_video","animate_images","portrait_parallax","motion_script_compile","motion_script_run","creative_workspace","generated_media_bin","capability_registry","model_pack_install","multi_variant_edit","platform_adapt","continuity_check"]
+    aiTools:["auto_cut","scene_detect","silence_trim","highlight_extract","smart_reframe","caption_plan","hook_builder","beat_sync","b_roll_plan","pace_rewrite","shorts_recut","story_recut","colour_match","audio_ducking","title_writer","thumbnail_frame_pick","render_critique","prompt_video","animate_images","portrait_parallax","motion_script_compile","motion_script_run","creative_workspace","generated_media_bin","capability_registry","model_pack_install","cloud_workspace_archive","multi_variant_edit","platform_adapt","continuity_check"]
   }));
 
   s.registerTool("app_state",{description:"Request full current native app/project state including active asset metadata, jobs, creator capabilities and recent on-device ChatGPT activity.",inputSchema:{}},async()=>queue("get_state",{}));
@@ -724,6 +724,18 @@ function serverForApp(env,ownerKey,protocolVersion=1){
       quality:z.enum(["draft","balanced","final"]).optional()
     }
   },async args=>queue("plan_compute",args));
+
+  if(isV3) s.registerTool("app_drive_workspace_status",{
+    description:"Read VideoStudio's folder-scoped cloud workspace status. This uses a single Android document-tree capability selected by the user and does not request broad Google Drive access or browse Gallery.",
+    inputSchema:{}
+  },async()=>queue("drive_workspace_status",{}));
+
+  if(isV3) s.registerTool("app_sync_project_to_drive",{
+    description:"Archive one VideoStudio project's Creative Runtime workspace and project manifest to the linked folder-scoped cloud workspace. The Android app performs the transfer natively and only within the user-selected folder.",
+    inputSchema:{
+      projectId:z.string().min(8).optional()
+    }
+  },async({projectId})=>queue("sync_project_to_drive",{projectId:projectId||""}));
 
   if(isV3) s.registerTool("app_animate_images",{
     description:"Turn imported still images into a real native animated video. VideoStudio runs bundled on-device person segmentation and face-aware analysis, builds foreground/background layers, directs varied cinematic keyframes and 2.5D parallax, optionally reorders shots for story rhythm, then renders a local MP4 through Media3.",
