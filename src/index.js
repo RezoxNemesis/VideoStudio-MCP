@@ -710,6 +710,21 @@ function serverForApp(env,ownerKey,protocolVersion=1){
     inputSchema:{id:z.string().min(3).max(120)}
   },async({id})=>queue("uninstall_model_pack",{id}));
 
+  if(isV3) s.registerTool("app_compute_profile",{
+    description:"Read VideoStudio's current Android compute profile and bounded working-set recommendations for local AI/render workloads.",
+    inputSchema:{}
+  },async()=>queue("compute_profile",{}));
+
+  if(isV3) s.registerTool("app_plan_compute",{
+    description:"Plan a bounded local inference working set using the phone's current RAM, storage and thermal state. Returns model swapping, tile, overlap, temporal-window and checkpoint recommendations.",
+    inputSchema:{
+      estimatedModelMb:z.number().int().min(0).max(1048576).optional(),
+      width:z.number().int().min(1).max(16384).optional(),
+      height:z.number().int().min(1).max(16384).optional(),
+      quality:z.enum(["draft","balanced","final"]).optional()
+    }
+  },async args=>queue("plan_compute",args));
+
   if(isV3) s.registerTool("app_animate_images",{
     description:"Turn imported still images into a real native animated video. VideoStudio runs bundled on-device person segmentation and face-aware analysis, builds foreground/background layers, directs varied cinematic keyframes and 2.5D parallax, optionally reorders shots for story rhythm, then renders a local MP4 through Media3.",
     inputSchema:{
