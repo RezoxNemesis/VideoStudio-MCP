@@ -64,6 +64,7 @@ const checks = [
   ["worker rejects unbound native credentials", worker.includes("Private App MCP credential rejected")],
   ["worker leases native commands", worker.includes('status:"claimed"') && worker.includes("leaseUntil")],
   ["worker has private chat attachment handoff", worker.includes("appCreateHandoff") && worker.includes("app_import_chat_file")],
+  ["installed connector exposes direct chat-file import", worker.includes('"import_chat_file"') && worker.includes("Securely stream a ChatGPT conversation attachment")],
   ["worker streams handoff bytes without permanent storage", worker.includes("Attachment source unavailable") && worker.includes("new Response(upstream.body")],
   ["native app supports authenticated handoff download", nativeProtocol.includes("openPrivateHandoff") && nativeMain.includes('case "import_chat_file"')],
   ["native app exposes chat attachment handoff capability", nativeMain.includes('"chat-attachment-handoff"')],
