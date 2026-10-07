@@ -40,6 +40,11 @@ const nativeRenderCritic = fs.readFileSync(new URL("../android/app/src/main/java
 const nativeRecoveryReceiver = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/NativeAgentRecoveryReceiver.java", import.meta.url), "utf8");
 const resumableTransfer = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/ResumableTransferManager.java", import.meta.url), "utf8");
 const transferJournal = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/TransferJournal.java", import.meta.url), "utf8");
+const liveEditPlayer = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/LiveEditPlayer.java", import.meta.url), "utf8");
+const previewSnapshotStore = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/PreviewSnapshotStore.java", import.meta.url), "utf8");
+const proxyManager = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/ProxyManager.java", import.meta.url), "utf8");
+const storageBudget = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/StorageBudget.java", import.meta.url), "utf8");
+const atomicMediaPublisher = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/AtomicMediaPublisher.java", import.meta.url), "utf8");
 
 const scriptMatch = app.match(/<script>([\s\S]*?)<\/script>/);
 let appScriptParses = false;
@@ -346,6 +351,15 @@ const checks = [
   ["native resumable HTTP path requests byte ranges and validates resume identity", controlService.includes('setRequestProperty("Range"') && controlService.includes('"If-Range"')],
   ["resumable transfer checkpoints use 64-bit offsets and partial-file promotion", transferJournal.includes("long completedBytes") && resumableTransfer.includes(".partial") && resumableTransfer.includes("renameTo")],
   ["resumable transfer performs storage preflight before writing heavy media", resumableTransfer.includes("StorageBudget.checkTransfer") && resumableTransfer.includes("Insufficient storage")],
+  ["large-file storage accounting uses overflow-safe 64-bit arithmetic", projectStore.includes("long sizeBytes") && storageBudget.includes("saturatingAdd") && transferJournal.includes("long completedBytes")],
+  ["heavy editor media can use preview-only proxies while final render keeps originals", proxyManager.includes("HEAVY_VIDEO_THRESHOLD_BYTES") && proxyManager.includes("preview_proxy") && proxyManager.includes("previewOnly") && nativeMain.includes("ProxyManager.previewUri") && nativeRender.includes("setUri(Uri.parse(asset.uri))")],
+  ["preview proxies are generated through bounded native Media3 work", proxyManager.includes("Transformer.Builder") && proxyManager.includes("Presentation.createForHeight") && proxyManager.includes("JobManager.Kind.HEAVY")],
+  ["live editor playback stays independent from autonomous background rendering", liveEditPlayer.includes("ExoPlayer") && liveEditPlayer.includes("playClip") && nativeMain.includes("Play new result") && controlService.includes("ControlService extends Service")],
+  ["preview checkpoints reject partial output and keep immutable history", previewSnapshotStore.includes("Partial preview files cannot be published") && previewSnapshotStore.includes("sameIdentity")],
+  ["job manager exposes canonical resumable wait states", nativeJobs.includes("STATE_CHECKPOINTED") && nativeJobs.includes("STATE_WAITING_NETWORK") && nativeJobs.includes("STATE_WAITING_STORAGE") && nativeJobs.includes("STATE_WAITING_MEMORY") && nativeJobs.includes("STATE_WAITING_THERMAL") && nativeJobs.includes("STATE_WAITING_NATIVE")],
+  ["terminal autonomous jobs cannot be resurrected by invalid transitions", nativeJobs.includes("canTransition") && nativeJobs.includes("isTerminal")],
+  ["native render publication is idempotent across restart windows", atomicMediaPublisher.includes("existingPublishedUri") && atomicMediaPublisher.includes("reused") && recoveryPlans.includes("outputForJob") && controlService.includes("AtomicMediaPublisher.publish")],
+  ["reboot and APK replacement re-arm the same stable Native Agent", nativeRecoveryReceiver.includes("ACTION_MY_PACKAGE_REPLACED") && nativeRecoveryReceiver.includes("ACTION_BOOT_COMPLETED") && nativeRecoveryReceiver.includes("ACTION_SYNC")],
 ];
 
 let failed = 0;
