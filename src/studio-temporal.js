@@ -267,28 +267,45 @@ const STUDIO_TEMPORAL_JS = String.raw`
     if (state.session) return state.session;
     const ort = await loadOrt();
     const files = [state.modelFile, ...MODEL_FILES.filter(x => x !== state.modelFile)];
+    const downloaded = new Map();
     let lastError = null;
+
+    // Prefer every available model on WebGPU before accepting a CPU/WASM
+    // fallback. The int8 model is smaller, while fp32 can have wider WebGPU
+    // operator support depending on the browser/GPU driver.
     for (const file of files) {
       const url = state.modelBase.replace(/\/+$/, "") + "/" + file;
       try {
         const bytes = await fetchModelBytes(url);
-        setStatus("Loading RAFT on WebGPU…", 5);
-        try {
-          state.session = await ort.InferenceSession.create(bytes, {
-            executionProviders:["webgpu"],
-            graphOptimizationLevel: "all",
-            enableCpuMemArena: false,
-            enableMemPattern: false
-          });
-          state.backend = "webgpu";
-        } catch (webgpuError) {
-          console.warn("RAFT WebGPU session failed; trying WASM", webgpuError);
-          state.session = await ort.InferenceSession.create(bytes, {
-            executionProviders:["wasm"],
-            graphOptimizationLevel: "all"
-          });
-          state.backend = "wasm";
-        }
+        downloaded.set(file, bytes);
+        setStatus("Loading " + file.replace("optical_flow_estimation_raft_2023aug_", "RAFT ") + " on WebGPU…", 5);
+        state.session = await ort.InferenceSession.create(bytes, {
+          executionProviders:["webgpu"],
+          graphOptimizationLevel: "all",
+          enableCpuMemArena: false,
+          enableMemPattern: false
+        });
+        state.backend = "webgpu";
+        state.modelFile = file;
+        localStorage.setItem("vs-temporal-model-file", file);
+        return state.session;
+      } catch (error) {
+        console.warn("RAFT WebGPU candidate failed", file, error);
+        lastError = error;
+        state.session = null;
+      }
+    }
+
+    for (const file of files) {
+      try {
+        const url = state.modelBase.replace(/\/+$/, "") + "/" + file;
+        const bytes = downloaded.get(file) || await fetchModelBytes(url);
+        setStatus("WebGPU RAFT unavailable; loading WASM fallback…", 5);
+        state.session = await ort.InferenceSession.create(bytes, {
+          executionProviders:["wasm"],
+          graphOptimizationLevel: "all"
+        });
+        state.backend = "wasm";
         state.modelFile = file;
         localStorage.setItem("vs-temporal-model-file", file);
         return state.session;
@@ -359,7 +376,7 @@ const STUDIO_TEMPORAL_JS = String.raw`
   }
 
   function drawFlowWarp(ctx, source, flow, progress, w, h, strength, alpha, direction) {
-    const cols = w >= 1000 ? 36 : 30;
+    const cols = w >= 1000 ? 22 : 18;
     const rows = Math.max(18, Math.round(cols * h / w));
     const cellW = w / cols, cellH = h / rows;
     const scaleX = w / flow.width, scaleY = h / flow.height;
@@ -498,6 +515,12 @@ const STUDIO_TEMPORAL_JS = String.raw`
     state.busy = true;
     let loaded = [];
     try {
+      if (options.modelBase) {
+        state.modelBase = String(options.modelBase).replace(/\/+$/, "");
+        localStorage.setItem("vs-temporal-model-base", state.modelBase);
+        if (state.session && typeof state.session.release === "function") { try { state.session.release(); } catch {} }
+        state.session = null;
+      }
       let project = await getProject();
       const resolved = await resolveAnchors(project, options);
       project = resolved.project;
