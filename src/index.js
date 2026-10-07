@@ -96,6 +96,8 @@ export class VideoStudioState extends DurableObject {
       nativeAgent:clean(meta.nativeAgent||old.nativeAgent||"",80),
       directAttachmentIngest:!!meta.directAttachmentIngest,
       localEngineOwnsProjects:meta.localEngineOwnsProjects!==false,
+      portraitAnimationEngine:clean(meta.portraitAnimationEngine||old.portraitAnimationEngine||"",80),
+      onDevicePortraitAi:!!meta.onDevicePortraitAi,
       permissionMode:mode,
       projects:Array.isArray(meta.projects)?meta.projects.slice(0,100):(old.projects||[]),
       controlPaused:!!meta.controlPaused,
@@ -298,7 +300,9 @@ export class VideoStudioState extends DurableObject {
       lastCommand:list[list.length-1]||null,
       projectCount:Array.isArray(d.projects)?d.projects.length:0,
       galleryAccess:false,
-      directAttachmentIngest:true
+      directAttachmentIngest:true,
+      portraitAnimationEngine:d.portraitAnimationEngine||"",
+      onDevicePortraitAi:!!d.onDevicePortraitAi
     };
   }
 
@@ -540,7 +544,7 @@ function serverForApp(env,ownerKey,protocolVersion=1){
   const isV3=Number(protocolVersion)===3;
   const s=new McpServer({
     name:isV3?"VideoStudio-App-MCP-v3":"VideoStudio-App-MCP",
-    version:isV3?"3.1.0":"1.1.2"
+    version:isV3?"3.2.0":"1.1.2"
   }), st=state(env);
   const enqueueCommand=(action,parameters={})=>isV3
     ? st.appEnqueueV3(ownerKey,action,parameters)
@@ -576,7 +580,7 @@ function serverForApp(env,ownerKey,protocolVersion=1){
   s.registerTool("app_status",{description:isV3?"Check the VideoStudio v3 Native Agent connection, protocol version, permission mode, projects and pending native work. Gallery access is always false.":"Check the private native VideoStudio Android connection, permission mode, projects, control-pause state and pending work. Gallery access is always false.",inputSchema:{}},async()=>out(await readStatus()));
 
   s.registerTool("app_capabilities",{description:isV3?"Read VideoStudio v3 Native Agent capabilities and architecture guarantees.":"Read the native v1.1 editing, AI, render and privacy capabilities available to ChatGPT.",inputSchema:{}},async()=>out({
-    version:isV3?"3.1.0":"1.1.2",
+    version:isV3?"3.2.0":"1.1.2",
     protocolVersion:isV3?3:1,
     primary:"Android native app",
     architecture:isV3?"native-first; cloud path is signalling only":"native app with private MCP relay",
@@ -590,7 +594,7 @@ function serverForApp(env,ownerKey,protocolVersion=1){
       :["VideoStudio-owned media","explicit HTTPS import","manual Android picker","private handoff"],
     editing:["trim","split","0.25x-4x speed","slow motion","volume","titles","fonts","text animations","scale","rotate","blur","colour/HSL","motion presets","transition presets","reframe model","mask model","green-screen model","audio-duck model"],
     ai:["native visual analysis","scene-change sampling","bundled person segmentation","bundled face mesh","subject-aware image animation","2.5D parallax","autonomous edit plans","creator presets","prompt-to-video","multi-variant planning","short-form recut planning","render/export orchestration"],
-    animation:isV3?["AI subject/background layer extraction","face-aware camera anchoring","multi-keyframe easing","foreground breathing/sway","independent depth motion","story-shot reordering","layered Media3 composition"]:[],
+    animation:isV3?["AI subject/background layer extraction","feathered head/hair torso and lower-drape layers","face-aware camera anchoring","multi-keyframe easing","head drift/nod","torso breathing","lower-drape sway","independent depth motion","story-shot reordering","procedural atmosphere","layered Media3 composition"]:[],
     export:["Media3 native MP4","H.264","AAC","720p","1080p","9:16","16:9","1:1","4:5","Movies/VideoStudio"],
     stability:isV3
       ?["local projects survive signalling outages","bounded light/heavy lanes","one process-wide heavy export at a time","RAM guard","thermal guard","persistent job checkpoints","duplicate-command prevention","cancel single/all jobs"]
