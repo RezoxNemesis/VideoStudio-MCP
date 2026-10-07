@@ -64,6 +64,20 @@ public class CreativeRuntimeTest {
         assertFalse(prefs.getString("mcp_v3_command_journal", "").contains("commandJournal"));
     }
 
+    @Test public void hybridBindingCompatibilityIsDecoupledFromApkVersion() throws Exception {
+        Context context=RuntimeEnvironment.getApplication();
+        McpConnectionCore core=new McpConnectionCore(context,"test-hybrid-contract-341");
+        JSONObject meta=core.registrationMeta();
+        assertTrue(meta.getBoolean("hybridBindingCompatible"));
+        assertTrue(meta.getBoolean("hybridBindingSurvivesApkUpgrade"));
+        assertEquals("/mcp-v06/",meta.getString("hybridMcpPath"));
+        assertEquals("stable-private-capability",meta.getString("hybridBindingPolicy"));
+        JSONObject status=core.status();
+        assertTrue(status.getBoolean("hybridBindingCompatible"));
+        assertEquals("/mcp-v06/",status.getString("hybridMcpPath"));
+        assertEquals(McpConnectionCore.STABLE_MCP_PATH,status.getString("stableMcpPath"));
+    }
+
     @Test public void largePortraitIsSubsampledBeforeAnalysisAllocation() throws Exception {
         Context context=RuntimeEnvironment.getApplication();
         java.io.File file=new java.io.File(context.getCacheDir(),"large-portrait.png");
