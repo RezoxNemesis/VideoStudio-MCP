@@ -65,6 +65,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     private MotionScriptCompiler motionScriptCompiler;
     private RecoveryPlanStore recoveryPlans;
     private CapabilityRegistry capabilityRegistry;
+    private ModelPackManager modelPackManager;
     private SharedPreferences prefs;
     private CommandJournal commandJournal;
 
@@ -85,6 +86,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         motionScriptCompiler = new MotionScriptCompiler();
         recoveryPlans = new RecoveryPlanStore(this);
         capabilityRegistry = new CapabilityRegistry(this);
+        modelPackManager = new ModelPackManager(this);
         createChannel();
         startForeground(NOTIFICATION_ID, notification("VideoStudio MCP v3 starting"));
         syncProtocolState();
@@ -293,6 +295,12 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                     return;
                 case "model_pack_status":
                     complete(command, capabilityRegistry.modelPackStatus());
+                    return;
+                case "install_model_pack":
+                    complete(command, queueModelPackInstall(p));
+                    return;
+                case "uninstall_model_pack":
+                    complete(command, modelPackManager.uninstall(p.optString("id", "")));
                     return;
                 case "animate_images":
                     complete(command, queueAnimatedImages(p));
@@ -780,6 +788,9 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                     case "export_project":
                         queued = queueExport(parameters);
                         break;
+                    case "install_model_pack":
+                        queued = queueModelPackInstall(parameters);
+                        break;
                     default:
                         recoveryPlans.completePlan(planId, "No auto-resume handler required for action: " + action);
                         continue;
@@ -803,6 +814,54 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         } catch (Exception ignored) {
             return false;
         }
+    }
+
+    private JSONObject queueModelPackInstall(JSONObject p) throws Exception {
+        ProjectStore.Project project = resolveProject(p.optString("projectId", ""));
+        String assetId = p.optString("assetId", "");
+        if (assetId.isEmpty()) throw new IllegalArgumentException("assetId is required");
+        ProjectStore.Asset source = project.asset(assetId);
+        if (source == null) throw new IllegalArgumentException("Model-pack source asset not found");
+        String expectedSha256 = p.optString("sha256", "");
+
+        JSONObject durableParameters = new JSONObject(p.toString());
+        durableParameters.put("projectId", project.id);
+        durableParameters.put("assetId", assetId);
+
+        JobManager.Job job = submitRecoverableHeavy(
+                "install_model_pack",
+                durableParameters,
+                project.id,
+                "Install model pack • " + source.name,
+                state -> {
+                    checkpoint(state, "Model pack", "Preparing transactional model-pack install", 1, project.id);
+                    jobs.awaitSafeCheckpoint(state, "model_pack_install");
+                    JSONObject installed = modelPackManager.install(
+                            source,
+                            expectedSha256,
+                            (progress, detail) -> checkpoint(
+                                    state,
+                                    "Model pack",
+                                    detail,
+                                    Math.max(2, Math.min(99, progress)),
+                                    project.id
+                            )
+                    );
+                    checkpoint(state, "Model pack", "Capabilities activated • " + installed.optString("id"), 100, project.id);
+                    ActivityLog.add(this, "system", "Model pack ready",
+                            installed.optString("id") + " • " + installed.optString("version"),
+                            "success", 100, null, project.id);
+                    syncProtocolState();
+                }
+        );
+
+        JSONObject result = ok();
+        result.put("queued", true);
+        result.put("jobId", job.id);
+        result.put("projectId", project.id);
+        result.put("assetId", assetId);
+        result.put("durableRecovery", true);
+        return result;
     }
 
     private JSONObject queueAnimatedImages(JSONObject p) throws Exception {
@@ -1513,6 +1572,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             out.put("motionScriptCompilerReady", motionScriptCompiler != null);
             out.put("creativeWorkspaceReady", creativeWorkspace != null);
             out.put("capabilityRegistryReady", capabilityRegistry != null);
+            out.put("modelPackManagerReady", modelPackManager != null);
             out.put("bundledSubjectSegmentation", true);
             out.put("bundledFaceMesh", true);
             out.put("permissionMode", permissionMode());
@@ -1676,6 +1736,8 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             case "capability_registry": return "Reading capability providers";
             case "resolve_capability": return "Resolving creative capability";
             case "model_pack_status": return "Reading model packs";
+            case "install_model_pack": return "Installing model pack";
+            case "uninstall_model_pack": return "Removing model pack";
             case "animate_images": return "Animating still images";
             case "job_status": return "Reading native job status";
             case "export_project": return "Exporting project";
@@ -1725,6 +1787,8 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         if ("capability_registry".equals(action)) return "Capability provider registry read";
         if ("resolve_capability".equals(action)) return result.optBoolean("resolved", false) ? "Creative capability resolved" : "No installed provider resolved";
         if ("model_pack_status".equals(action)) return "Optional model-pack status read";
+        if ("install_model_pack".equals(action)) return "Transactional model-pack install queued";
+        if ("uninstall_model_pack".equals(action)) return result.optBoolean("ok", false) ? "Model pack removed" : result.optString("error", "Model pack not removed");
         if ("animate_images".equals(action)) return result.optInt("imageCount", 0) + " image clip(s) queued for native animation";
         if ("insert_asset_timeline".equals(action)) return result.optBoolean("inserted", false) ? "Media added to timeline" : "Media could not be added to timeline";
         if ("select_project".equals(action)) return "Project selected";
