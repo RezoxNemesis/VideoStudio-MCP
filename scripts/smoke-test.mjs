@@ -12,6 +12,9 @@ const nativeAnalyzer = fs.readFileSync(new URL("../android/app/src/main/java/com
 const creatorCatalog = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/CreatorCatalog.java", import.meta.url), "utf8");
 const androidBuild = fs.readFileSync(new URL("../android/app/build.gradle.kts", import.meta.url), "utf8");
 const androidManifest = fs.readFileSync(new URL("../android/app/src/main/AndroidManifest.xml", import.meta.url), "utf8");
+const controlService = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/ControlService.java", import.meta.url), "utf8");
+const commandJournal = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/CommandJournal.java", import.meta.url), "utf8");
+const projectStore = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/ProjectStore.java", import.meta.url), "utf8");
 
 const scriptMatch = app.match(/<script>([\s\S]*?)<\/script>/);
 let appScriptParses = false;
@@ -63,21 +66,29 @@ const checks = [
   ["native app has selected reference UI branding", nativeMain.includes("Create Without Limits") && nativeMain.includes("AI Magic for Your Videos")],
   ["native app has three permission modes", nativeMain.includes("Allow one file") && nativeMain.includes("Allow all tools") && nativeMain.includes("Allow everything")],
   ["native app has green screen and slow motion tools", nativeMain.includes("Green Screen") && nativeMain.includes("Slow Motion")],
-  ["native app uses private app MCP protocol", nativeProtocol.includes("/app-mcp/") && nativeProtocol.includes("AndroidKeyStore")],
-  ["native command checkpoint advances after completion", nativeProtocol.includes("prefs.edit().putLong(KEY_SEQ")],
+  ["native app uses MCP v3 endpoint only for pairing", nativeProtocol.includes('MCP_PATH = "/app-mcp-v3/"') && nativeProtocol.includes('API_PREFIX = "/api/v3/app"') && nativeProtocol.includes("PROTOCOL_VERSION = 3") && nativeProtocol.includes("AndroidKeyStore")],
+  ["native app identifies as VideoStudio 3.0.0", nativeProtocol.includes('APP_VERSION = "3.0.0"') && androidBuild.includes('versionName = "3.0.0"') && androidBuild.includes("versionCode = 300")],
+  ["pairing message explicitly says VideoStudio v3", nativeProtocol.includes("VideoStudio v3 Android Native Agent MCP") && nativeProtocol.includes("MCP v3 endpoint")],
+  ["native v3 command cursor advances only after completion", nativeProtocol.includes('KEY_SEQ = "native_v3_last_seq"') && nativeProtocol.includes("advanceSequence")],
   ["native app has bounded heavy-work scheduler", nativeJobs.includes("Semaphore") && nativeJobs.includes("THERMAL_STATUS_SEVERE")],
-  ["worker exposes private App MCP", worker.includes('"VideoStudio-App-MCP"') && worker.includes("appMcp")],
+  ["worker exposes canonical VideoStudio App MCP v3", worker.includes('"VideoStudio-App-MCP-v3"') && worker.includes("appMcpV3") && worker.includes("serverForApp(env,ownerKey,3)")],
+  ["worker has dedicated v3 API namespace", worker.includes('"/api/v3/app/register"') && worker.includes('"/api/v3/app/commands"') && worker.includes("appCompleteV3")],
+  ["worker uses an isolated v3 command queue", worker.includes('"app-v3-seq:"') && worker.includes('"app-v3-cl:"') && worker.includes("protocolVersion:3")],
   ["worker rejects unbound native credentials", worker.includes("Private App MCP credential rejected")],
   ["worker leases native commands", worker.includes('status:"claimed"') && worker.includes("leaseUntil")],
-  ["worker has private chat attachment handoff", worker.includes("appCreateHandoff") && worker.includes("app_import_chat_file")],
+  ["v3 leases track retries", worker.includes("claimCount:Number(c.claimCount||0)+1")],
+  ["worker keeps legacy private chat handoff as fallback", worker.includes("appCreateHandoff") && worker.includes("app_import_chat_file")],
+  ["v3 primary attachment path is direct app ingest", worker.includes('"app_import_attachment"') && worker.includes('"import_attachment"') && controlService.includes('case "import_attachment"') && controlService.includes("queueDirectAttachmentImport")],
+  ["v3 direct attachment bytes bypass Worker", worker.includes('"openai/fileParams":["file"]') && worker.includes("download_url") && controlService.includes("MCPv3-DirectIngest")],
+  ["v3 MCP import is a real ChatGPT file parameter", worker.includes('file:z.object({') && worker.includes('file_id:z.string()') && worker.includes('mime_type:z.string()') && worker.includes('file_name:z.string()')],
   ["worker has ephemeral direct private upload relay", worker.includes("/api/app/private/upload") && worker.includes("appCreateCachedHandoff") && worker.includes("__videostudio_private_upload")],
   ["private upload relay is owner-authenticated", worker.includes("Native app authorization failed") && worker.includes("Allow everything mode is required")],
   ["private handoff can stream cached uploads to app", worker.includes("Private upload expired or unavailable") && worker.includes("caches.default.match")],
   ["installed connector exposes direct chat-file import", worker.includes('"import_chat_file"') && worker.includes("Securely stream a ChatGPT conversation attachment")],
   ["worker streams handoff bytes without permanent storage", worker.includes("Attachment source unavailable") && worker.includes("new Response(upstream.body")],
   ["native app supports authenticated handoff download", nativeProtocol.includes("openPrivateHandoff") && nativeMain.includes('case "import_chat_file"')],
-  ["native app exposes chat attachment handoff capability", nativeMain.includes('"chat-attachment-handoff"')],
-  ["native v1.1 uses Media3 Transformer", androidBuild.includes("media3-transformer:1.11.1") && nativeRender.includes("Transformer.Builder")],
+  ["native app exposes v3 direct attachment capability", nativeMain.includes('"direct-chatgpt-attachment-ingest"') && nativeMain.includes('"chat-attachment-handoff-fallback"')],
+  ["native v3 uses Media3 Transformer", androidBuild.includes("media3-transformer:1.11.1") && nativeRender.includes("Transformer.Builder")],
   ["native app has prompt-to-video pipeline", promptVideo.includes("class PromptVideoEngine") && nativeMain.includes('case "prompt_video"')],
   ["native prompt video exports a real MP4", nativeMain.includes("runExportBlocking") && nativeMain.includes("Movies/VideoStudio")],
   ["native app has on-device visual analyser", nativeAnalyzer.includes("contactSheet") && nativeMain.includes('case "analyse_media"')],
@@ -87,9 +98,15 @@ const checks = [
   ["native app has stop ChatGPT control", nativeMain.includes("STOP CHATGPT CONTROL") && nativeProtocol.includes("chatgpt_control_paused")],
   ["native jobs persist crash recovery checkpoints", nativeJobs.includes("job_recovery_snapshot") && nativeJobs.includes("interrupted")],
   ["worker hard-blocks Gallery MCP actions", worker.includes('a.includes("gallery")') && worker.includes("Gallery privacy boundary")],
-  ["worker exposes v1.1 prompt video tool", worker.includes('"app_create_prompt_video"') && worker.includes('"prompt_video"')],
+  ["worker exposes v3 prompt video tool", worker.includes('"app_create_prompt_video"') && worker.includes('"prompt_video"')],
   ["worker exposes native autonomous edit/export", worker.includes('"app_autonomous_edit"') && worker.includes('"app_export_project"')],
-  ["worker exposes v1.1 creator catalog", worker.includes('"app_catalog"') && worker.includes("camera_shutter")],
+  ["worker exposes v3 creator catalog", worker.includes('"app_catalog"') && worker.includes("camera_shutter")],
+  ["native v3 project state is app-private SQLite", projectStore.includes("extends SQLiteOpenHelper") && projectStore.includes('DB_NAME = "videostudio_v3.db"') && projectStore.includes("migrateLegacyProjectsOnce") && projectStore.includes('return "sqlite-v3"')],
+  ["v3 keeps existing projects through migration", projectStore.includes("LEGACY_PROJECTS") && projectStore.includes("CONFLICT_IGNORE") && projectStore.includes("META_MIGRATED")],
+  ["native v3 has durable command idempotency", commandJournal.includes("terminal(String commandId)") && commandJournal.includes("finish(JSONObject command") && controlService.includes("MCP v3 command replay prevented")],
+  ["native v3 exposes a self-test", controlService.includes('case "self_test"') && worker.includes('"app_self_test"') && controlService.includes("privateStorageWritable")],
+  ["native state reports v3 architecture", controlService.includes('out.put("mcpEndpointVersion", "v3")') && controlService.includes('out.put("localEngineOwnsProjects", true)')],
+  ["cached connector compatibility routes v3 devices to v3 queue", worker.includes("enqueueNative") && worker.includes("appEnqueueV3") && worker.includes("commandNative")],
   ["native analysis results render as MCP images", worker.includes("safeResult") && worker.includes('type:"image"')],
 ];
 

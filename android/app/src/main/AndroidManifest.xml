@@ -17,7 +17,7 @@
             android:stopWithTask="false">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="User-enabled private MCP connection for background video editing and rendering control" />
+                android:value="VideoStudio v3 Native Agent: user-enabled private MCP control for local editing, analysis and rendering" />
         </service>
         <activity
             android:name=".MainActivity"

@@ -162,7 +162,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         LinearLayout hero = card(true);
         TextView heroTitle = title("Create Without Limits", 28);
         hero.addView(heroTitle);
-        hero.addView(body("Native v1.1.2 Creator Engine • prompt-to-video • Media3 export • private autonomous App MCP"));
+        hero.addView(body("Native v3 Creator Engine • MCP v3 Native Agent • direct attachment ingest • local Media3 export"));
         Button promptVideo = neonButton("✦  Create Video from a Prompt", C_MAGENTA);
         promptVideo.setOnClickListener(v -> promptVideoDialog());
         hero.addView(promptVideo, margins(-1, dp(54), dp(14), dp(8), 0, 0));
@@ -521,7 +521,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         LinearLayout mcp = card(false);
         mcp.setBackground(neonCard());
         mcp.addView(title("Connected editing surface", 18));
-        mcp.addView(body("Direct native control: analyse, import, edit, batch actions, prompt-video, export and inspect project state. Gallery enumeration is permanently excluded."));
+        mcp.addView(body("MCP v3 controls the native engine directly: explicit attachment ingest, analyse, edit, batch actions, prompt-video, export and state inspection. Gallery enumeration is permanently excluded."));
         Button connect = neonButton("Connect ChatGPT", C_CYAN);
         connect.setTextColor(Color.BLACK);
         connect.setOnClickListener(v -> sharePairing());
@@ -538,7 +538,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         scroll.addView(box);
 
         box.addView(title("Autonomous Control", 27));
-        box.addView(body("Permissions are enforced locally on the phone as well as by the App MCP relay."));
+        box.addView(body("Permissions are enforced locally by VideoStudio v3. The MCP path is signalling/control only; projects, media and editing state live in the app."));
         box.addView(section("Access Mode"));
         box.addView(permissionCard("one_file", "Allow one file", "ChatGPT can edit only the currently authorised media file."));
         box.addView(permissionCard("all_tools", "Allow all tools", "All editing and analysis tools on imported project media. No remote file import or project deletion."));
@@ -558,8 +558,8 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
 
         box.addView(section("Private Connection"));
         LinearLayout privateCard = card(false);
-        privateCard.addView(title("Device-owned MCP endpoint", 17));
-        privateCard.addView(body("The device credential is encrypted by Android Keystore, commands are leased and checkpointed, reconnect uses backoff, and the app can pause control instantly."));
+        privateCard.addView(title("Device-owned MCP v3 endpoint", 17));
+        privateCard.addView(body("MCP v3 uses the Keystore-protected device identity, an isolated v3 command queue, durable duplicate-command protection, leased commands and secure reconnect. VideoStudio remains the source of truth."));
         Button pause = neonButton(protocol.isControlPaused() ? "Resume ChatGPT Control" : "STOP CHATGPT CONTROL", protocol.isControlPaused() ? C_CYAN : Color.rgb(180, 38, 67));
         pause.setOnClickListener(v -> {
             boolean next = !protocol.isControlPaused();
@@ -594,7 +594,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         copy.addView(brand);
         copy.addView(body("Create • Edit • Enhance • With AI"));
         row.addView(copy, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
-        TextView badge = accent("NATIVE 1.1", C_CYAN);
+        TextView badge = accent("MCP v3", C_CYAN);
         row.addView(badge);
         return row;
     }
@@ -1335,6 +1335,9 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                 case "import_url":
                     result = queueUrlImport(p.optString("url"), p.optString("name", "ChatGPT import"));
                     break;
+                case "import_attachment":
+                    result = queueUrlImport(p.optString("sourceUrl"), p.optString("name", "ChatGPT attachment"));
+                    break;
                 case "import_chat_file":
                     result = queuePrivateHandoffImport(
                             p.optString("handoffId"),
@@ -1345,7 +1348,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                     break;
                 default:
                     result.put("ok", false);
-                    result.put("error", "Native v1 does not implement action: " + action);
+                    result.put("error", "Native v3 does not implement action: " + action);
                     protocol.complete(command, result, "failed");
                     return;
             }
@@ -1565,7 +1568,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
             HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
             c.setConnectTimeout(15000);
             c.setReadTimeout(30000);
-            c.setRequestProperty("User-Agent", "VideoStudio-Android/1.1.0");
+            c.setRequestProperty("User-Agent", "VideoStudio-Android/3.0.0");
             String mime = c.getContentType();
             if (mime == null) mime = "video/mp4";
             try (InputStream in = c.getInputStream(); FileOutputStream out = new FileOutputStream(file)) {
@@ -1627,7 +1630,10 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         String mode = permissionMode();
         if ("everything".equals(mode)) return true;
         if ("all_tools".equals(mode)) {
-            return !"import_url".equals(action) && !"import_chat_file".equals(action) && !"delete_project".equals(action);
+            return !"import_url".equals(action)
+                    && !"import_attachment".equals(action)
+                    && !"import_chat_file".equals(action)
+                    && !"delete_project".equals(action);
         }
         if ("one_file".equals(mode)) {
             String allowed = prefs.getString(KEY_FILE, "");
@@ -1646,13 +1652,19 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         JSONObject out = new JSONObject();
         try {
             out.put("deviceId", protocol.deviceId());
-            out.put("appVersion", "1.1.2");
+            out.put("appVersion", AppProtocol.APP_VERSION);
+            out.put("protocolVersion", AppProtocol.PROTOCOL_VERSION);
+            out.put("mcpEndpointVersion", "v3");
+            out.put("nativeAgent", "videostudio-v3");
+            out.put("directAttachmentIngest", true);
+            out.put("localEngineOwnsProjects", true);
             out.put("nativeApp", true);
             out.put("permissionMode", permissionMode());
             out.put("controlPaused", protocol.isControlPaused());
             out.put("galleryAccess", false);
-            out.put("galleryBoundary", "MCP cannot list, browse or enumerate Gallery media. Only Android-picker selections and explicit ChatGPT handoffs are usable.");
+            out.put("galleryBoundary", "MCP v3 cannot list, browse or enumerate Gallery media. Only Android-picker selections, VideoStudio-owned media and explicit ChatGPT attachments are usable.");
             out.put("projects", store.summaries().optJSONArray("projects"));
+            out.put("projectStorage", store.storageBackend());
             if (activeProject != null) {
                 out.put("activeProjectId", activeProject.id);
                 out.put("activeProjectName", activeProject.name);
@@ -1679,12 +1691,12 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
             out.put("recentActivity", ActivityLog.recent(this, 30));
             JSONArray caps = new JSONArray();
             String[] values = {
-                    "native-ui","persistent-background-control","local-projects","private-app-mcp","chat-attachment-handoff","url-import",
+                    "native-ui","mcp-v3-native-agent","persistent-background-control","local-projects","private-app-mcp-v3","direct-chatgpt-attachment-ingest","chat-attachment-handoff-fallback","url-import",
                     "timeline","trim","split","speed","slow-motion","native-frame-analysis","scene-change-sampling",
                     "media3-native-export","prompt-to-video","gpu-brightness","gpu-contrast","gpu-hsl","gpu-blur",
                     "gpu-motion","scale","rotate","creator-transition-model","green-screen-model","masks-model",
                     "fonts","text-animation-model","audio-ducking-model","ai-edit-plans","autonomous-edit-and-export",
-                    "bounded-multitasking","crash-recovery-checkpoints","thermal-guard","memory-guard","job-cancel"
+                    "bounded-multitasking","crash-recovery-checkpoints","durable-command-idempotency","thermal-guard","memory-guard","job-cancel"
             };
             for (String v : values) caps.put(v);
             out.put("capabilities", caps);
@@ -1710,8 +1722,8 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         String detail = prefs.getString("control_service_detail", "");
         boolean fresh = System.currentTimeMillis() - heartbeat < 65000;
         if (protocol != null && protocol.isControlPaused()) return "●  ChatGPT control paused • tap Control to resume";
-        if (online && fresh) return "●  " + (detail == null || detail.isEmpty() ? "Persistent private MCP online" : detail);
-        return "○  Persistent MCP service starting…";
+        if (online && fresh) return "●  " + (detail == null || detail.isEmpty() ? "VideoStudio MCP v3 online" : detail);
+        return "○  MCP v3 Native Agent starting…";
     }
 
     @Override

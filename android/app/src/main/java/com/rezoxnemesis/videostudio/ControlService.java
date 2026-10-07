@@ -52,11 +52,13 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     private PromptVideoEngine promptVideoEngine;
     private NativeMediaAnalyzer mediaAnalyzer;
     private SharedPreferences prefs;
+    private CommandJournal commandJournal;
 
     @Override
     public void onCreate() {
         super.onCreate();
         prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
+        commandJournal = new CommandJournal(this);
         store = new ProjectStore(this);
         jobs = new JobManager(this);
         protocol = new AppProtocol(this, this);
@@ -64,11 +66,11 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         promptVideoEngine = new PromptVideoEngine(this);
         mediaAnalyzer = new NativeMediaAnalyzer(this);
         createChannel();
-        startForeground(NOTIFICATION_ID, notification("Private ChatGPT control starting"));
+        startForeground(NOTIFICATION_ID, notification("VideoStudio MCP v3 starting"));
         syncProtocolState();
         protocol.start();
-        markService(true, "Persistent control service active");
-        ActivityLog.add(this, "system", "VideoStudio control online", "Private MCP background controller started", "success", null, null, null);
+        markService(true, "VideoStudio MCP v3 Native Agent active");
+        ActivityLog.add(this, "system", "VideoStudio v3 control online", "MCP v3 Native Agent background controller started", "success", null, null, null);
     }
 
     @Override
@@ -84,10 +86,10 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             updateNotification("ChatGPT control paused");
         } else if (ACTION_RESUME.equals(action)) {
             protocol.setControlPaused(false);
-            ActivityLog.add(this, "user", "ChatGPT control resumed", "Private MCP is accepting commands again", "success", null, null, null);
+            ActivityLog.add(this, "user", "ChatGPT control resumed", "VideoStudio MCP v3 is accepting commands again", "success", null, null, null);
             syncProtocolState();
             protocol.registerNow();
-            updateNotification("ChatGPT control ready");
+            updateNotification("MCP v3 control ready");
         } else if (ACTION_SYNC.equals(action)) {
             syncProtocolState();
             protocol.registerNow();
@@ -115,7 +117,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         ActivityLog.add(this, "system", connected ? "MCP connected" : "MCP reconnecting", detail, connected ? "success" : "running", null, null, null);
         updateNotification(protocol != null && protocol.isControlPaused()
                 ? "ChatGPT control paused"
-                : (connected ? "ChatGPT control ready" : "Reconnecting securely"));
+                : (connected ? "MCP v3 control ready" : "Reconnecting securely"));
     }
 
     @Override
@@ -126,6 +128,19 @@ public final class ControlService extends Service implements AppProtocol.Callbac
 
         String commandId = command.optString("id", "");
         String projectId = p.optString("projectId", "");
+
+        JSONObject terminal = commandJournal.terminal(commandId);
+        if (terminal != null) {
+            JSONObject priorResult = terminal.optJSONObject("result");
+            if (priorResult == null) priorResult = new JSONObject();
+            String priorStatus = terminal.optString("status", "completed");
+            ActivityLog.add(this, "system", "MCP v3 command replay prevented",
+                    friendlyAction(action) + " • returning durable prior result",
+                    "success", 100, commandId, projectId);
+            protocol.complete(command, priorResult, priorStatus);
+            return;
+        }
+        commandJournal.begin(command);
         ActivityLog.add(this, "chatgpt", friendlyAction(action), commandDetail(action, p), "running", 0, commandId, projectId);
 
         if (!isAllowed(action, p)) {
@@ -135,6 +150,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 denied.put("error", "Blocked by VideoStudio permission/privacy boundary: " + action);
             } catch (Exception ignored) {}
             ActivityLog.add(this, "chatgpt", friendlyAction(action), denied.optString("error"), "denied", null, commandId, projectId);
+            commandJournal.finish(command, denied, "denied");
             protocol.complete(command, denied, "denied");
             return;
         }
@@ -144,6 +160,9 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 case "ping":
                 case "get_state":
                     complete(command, stateJson());
+                    return;
+                case "self_test":
+                    complete(command, nativeSelfTest());
                     return;
                 case "activity_note": {
                     String note = p.optString("message", "ChatGPT is working");
@@ -227,6 +246,9 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 case "import_url":
                     complete(command, queueUrlImport(p));
                     return;
+                case "import_attachment":
+                    complete(command, queueDirectAttachmentImport(p));
+                    return;
                 case "import_chat_file":
                     complete(command, queuePrivateImport(p));
                     return;
@@ -242,6 +264,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                     result.put("ok", false);
                     result.put("error", "Native background controller does not implement action: " + action);
                     ActivityLog.add(this, "chatgpt", friendlyAction(action), result.optString("error"), "failed", null, commandId, projectId);
+                    commandJournal.finish(command, result, "failed");
                     protocol.complete(command, result, "failed");
                 }
             }
@@ -252,6 +275,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 result.put("error", error.getMessage() == null ? "Command failed" : error.getMessage());
             } catch (Exception ignored) {}
             ActivityLog.add(this, "chatgpt", friendlyAction(action), result.optString("error"), "failed", null, commandId, projectId);
+            commandJournal.finish(command, result, "failed");
             protocol.complete(command, result, "failed");
         }
     }
@@ -444,12 +468,14 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                     JSONObject result = mediaAnalyzer.analyse(target, frames, startMs, endMs);
                     checkpoint(state, "Analysing media", "Analysis complete", 100, project.id);
                     ActivityLog.add(this, "chatgpt", "Media analysis complete", target.name + " analysed on-device", "success", 100, command.optString("id", ""), project.id);
+                    commandJournal.finish(command, result, "completed");
                     protocol.complete(command, result, "completed");
                 } catch (Exception error) {
                     JSONObject failed = new JSONObject();
                     failed.put("ok", false);
                     failed.put("error", error.getMessage() == null ? "Analysis failed" : error.getMessage());
                     ActivityLog.add(this, "chatgpt", "Media analysis failed", failed.optString("error"), "failed", null, command.optString("id", ""), project.id);
+                    commandJournal.finish(command, failed, "failed");
                     protocol.complete(command, failed, "failed");
                     throw error;
                 }
@@ -460,6 +486,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 failed.put("ok", false);
                 failed.put("error", error.getMessage());
             } catch (Exception ignored) {}
+            commandJournal.finish(command, failed, "failed");
             protocol.complete(command, failed, "failed");
         }
     }
@@ -565,6 +592,96 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         syncProtocolState();
     }
 
+    private JSONObject queueDirectAttachmentImport(JSONObject p) throws Exception {
+        String sourceUrl = p.optString("sourceUrl", "").trim();
+        validateRemoteHttps(sourceUrl);
+        ProjectStore.Project project = resolveProject(p.optString("projectId", ""));
+        String name = p.optString("name", "ChatGPT attachment");
+        String mimeHint = p.optString("mime", "");
+        long sizeHint = Math.max(0, p.optLong("size", 0));
+
+        JobManager.Job job = jobs.submit("Direct attachment • " + name, JobManager.Kind.LIGHT, state -> {
+            File dir = new File(getFilesDir(), "imports");
+            if (!dir.exists() && !dir.mkdirs()) throw new IllegalStateException("Could not create import directory");
+            File file = new File(dir, System.currentTimeMillis() + "_" + sanitizeFileName(name));
+
+            HttpURLConnection connection = (HttpURLConnection) new URL(sourceUrl).openConnection();
+            connection.setConnectTimeout(18000);
+            connection.setReadTimeout(90000);
+            connection.setInstanceFollowRedirects(true);
+            connection.setRequestProperty("Accept", "*/*");
+            connection.setRequestProperty("User-Agent", "VideoStudio-Android/3.0.0 MCPv3-DirectIngest");
+            int code = connection.getResponseCode();
+            if (code < 200 || code >= 300) throw new IllegalStateException("Attachment source rejected: HTTP " + code);
+
+            String mime = mimeHint.isEmpty() ? connection.getContentType() : mimeHint;
+            if (mime == null || mime.isEmpty()) mime = "application/octet-stream";
+            long expected = connection.getContentLengthLong();
+            if (expected <= 0) expected = sizeHint;
+
+            try (InputStream in = connection.getInputStream(); FileOutputStream out = new FileOutputStream(file)) {
+                byte[] buffer = new byte[192 * 1024];
+                long bytes = 0;
+                int n;
+                while ((n = in.read(buffer)) >= 0) {
+                    if (Thread.currentThread().isInterrupted()) throw new InterruptedException();
+                    out.write(buffer, 0, n);
+                    bytes += n;
+                    int progress = expected > 0
+                            ? Math.min(97, (int) (97d * bytes / expected))
+                            : Math.min(95, (int) (bytes / 1024 / 1024));
+                    checkpoint(state, "Direct ChatGPT attachment import",
+                            (bytes / 1024 / 1024) + " MB received directly by VideoStudio", progress, project.id);
+                }
+            } finally {
+                connection.disconnect();
+            }
+
+            addImportedAsset(project, file, name, mime);
+            checkpoint(state, "Direct ChatGPT attachment import",
+                    "Attachment is now VideoStudio-owned media", 100, project.id);
+            syncProtocolState();
+        });
+
+        JSONObject result = ok();
+        result.put("queued", true);
+        result.put("jobId", job.id);
+        result.put("projectId", project.id);
+        result.put("transport", "direct-app-ingest");
+        return result;
+    }
+
+    private void validateRemoteHttps(String raw) throws Exception {
+        URL parsed = new URL(raw);
+        if (!"https".equalsIgnoreCase(parsed.getProtocol())) {
+            throw new IllegalArgumentException("VideoStudio v3 direct attachment ingest requires HTTPS");
+        }
+        String host = parsed.getHost() == null ? "" : parsed.getHost().toLowerCase(Locale.US);
+        if (host.isEmpty()
+                || "localhost".equals(host)
+                || "127.0.0.1".equals(host)
+                || "::1".equals(host)
+                || host.endsWith(".local")
+                || host.endsWith(".internal")
+                || host.startsWith("10.")
+                || host.startsWith("192.168.")
+                || private172(host)) {
+            throw new IllegalArgumentException("Private-network attachment sources are not permitted");
+        }
+    }
+
+    private boolean private172(String host) {
+        if (!host.startsWith("172.")) return false;
+        String[] parts = host.split("\\.");
+        if (parts.length < 2) return false;
+        try {
+            int second = Integer.parseInt(parts[1]);
+            return second >= 16 && second <= 31;
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
     private JSONObject queuePrivateImport(JSONObject p) throws Exception {
         String handoffId = p.optString("handoffId");
         if (handoffId.isEmpty()) throw new IllegalArgumentException("Missing private handoff ID");
@@ -621,7 +738,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             HttpURLConnection connection = (HttpURLConnection) new URL(url).openConnection();
             connection.setConnectTimeout(15000);
             connection.setReadTimeout(45000);
-            connection.setRequestProperty("User-Agent", "VideoStudio-Android/1.1.1");
+            connection.setRequestProperty("User-Agent", "VideoStudio-Android/3.0.0");
             int code = connection.getResponseCode();
             if (code < 200 || code >= 300) throw new IllegalStateException("Import failed: HTTP " + code);
             String mime = connection.getContentType();
@@ -705,18 +822,66 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         return project;
     }
 
+    private JSONObject nativeSelfTest() {
+        JSONObject out = ok();
+        File probe = null;
+        try {
+            File dir = new File(getFilesDir(), "v3_health");
+            boolean dirReady = dir.exists() || dir.mkdirs();
+            probe = new File(dir, "probe.tmp");
+            if (dirReady) {
+                try (FileOutputStream stream = new FileOutputStream(probe)) {
+                    stream.write("videostudio-v3".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                    stream.flush();
+                }
+            }
+            out.put("appVersion", AppProtocol.APP_VERSION);
+            out.put("protocolVersion", AppProtocol.PROTOCOL_VERSION);
+            out.put("nativeAgent", "videostudio-v3");
+            out.put("privateStorageWritable", dirReady && probe.exists() && probe.length() > 0);
+            out.put("projectStoreReady", store.summaries() != null);
+            out.put("projectStorage", store.storageBackend());
+            out.put("jobEngineReady", jobs.state() != null);
+            out.put("renderEngineReady", renderEngine != null);
+            out.put("analysisEngineReady", mediaAnalyzer != null);
+            out.put("promptVideoEngineReady", promptVideoEngine != null);
+            out.put("permissionMode", permissionMode());
+            out.put("galleryAccess", false);
+            out.put("directAttachmentIngest", true);
+            out.put("controlPaused", protocol.isControlPaused());
+            out.put("backgroundService", true);
+            out.put("result", "VideoStudio v3 native core healthy");
+        } catch (Exception error) {
+            try {
+                out.put("ok", false);
+                out.put("error", error.getMessage() == null ? "Self-test failed" : error.getMessage());
+            } catch (Exception ignored) {}
+        } finally {
+            if (probe != null && probe.exists()) {
+                try { probe.delete(); } catch (Exception ignored) {}
+            }
+        }
+        return out;
+    }
+
     private JSONObject stateJson() {
         JSONObject out = ok();
         try {
             out.put("deviceId", protocol.deviceId());
-            out.put("appVersion", "1.1.2");
+            out.put("appVersion", AppProtocol.APP_VERSION);
+            out.put("protocolVersion", AppProtocol.PROTOCOL_VERSION);
+            out.put("mcpEndpointVersion", "v3");
+            out.put("nativeAgent", "videostudio-v3");
+            out.put("directAttachmentIngest", true);
+            out.put("localEngineOwnsProjects", true);
             out.put("nativeApp", true);
             out.put("backgroundControl", true);
             out.put("permissionMode", permissionMode());
             out.put("controlPaused", protocol.isControlPaused());
             out.put("galleryAccess", false);
-            out.put("galleryBoundary", "MCP cannot list, browse or enumerate Gallery media. Only user-picked files, VideoStudio-owned files and explicit ChatGPT handoffs are usable.");
+            out.put("galleryBoundary", "MCP v3 cannot list, browse or enumerate Gallery media. Only user-picked files, VideoStudio-owned media and explicit ChatGPT attachments are usable.");
             out.put("projects", store.summaries().optJSONArray("projects"));
+            out.put("projectStorage", store.storageBackend());
             ProjectStore.Project active = store.active();
             if (active != null) {
                 out.put("activeProjectId", active.id);
@@ -741,6 +906,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             out.put("workload", jobs.state());
             out.put("creatorCatalog", CreatorCatalog.describe());
             out.put("recentActivity", ActivityLog.recent(this, 30));
+            out.put("commandJournal", commandJournal.recent(20));
         } catch (Exception ignored) {}
         return out;
     }
@@ -748,11 +914,14 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     private boolean isAllowed(String action, JSONObject parameters) {
         String lower = action == null ? "" : action.toLowerCase(Locale.US);
         if (lower.contains("gallery") || lower.contains("media_library") || lower.contains("photo_library")) return false;
-        if ("ping".equals(action) || "get_state".equals(action) || "activity_note".equals(action) || "cancel_job".equals(action) || "cancel_all_jobs".equals(action) || "stop_all".equals(action)) return true;
+        if ("ping".equals(action) || "get_state".equals(action) || "self_test".equals(action) || "activity_note".equals(action) || "cancel_job".equals(action) || "cancel_all_jobs".equals(action) || "stop_all".equals(action)) return true;
         String mode = permissionMode();
         if ("everything".equals(mode)) return true;
         if ("all_tools".equals(mode)) {
-            return !"import_url".equals(action) && !"import_chat_file".equals(action) && !"delete_project".equals(action);
+            return !"import_url".equals(action)
+                    && !"import_attachment".equals(action)
+                    && !"import_chat_file".equals(action)
+                    && !"delete_project".equals(action);
         }
         if ("one_file".equals(mode)) {
             String allowed = prefs.getString(KEY_FILE, "");
@@ -785,7 +954,9 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 ? ("Queued inside VideoStudio" + (result.optString("jobId", "").isEmpty() ? "" : " • job " + shortId(result.optString("jobId"))))
                 : (ok ? completionDetail(action, result) : result.optString("error", "Command failed"));
         ActivityLog.add(this, "chatgpt", friendlyAction(action), detail, queued ? "queued" : (ok ? "success" : "failed"), queued ? 0 : (ok ? 100 : null), command.optString("id", ""), projectId);
-        protocol.complete(command, result, ok ? "completed" : "failed");
+        String terminalStatus = ok ? "completed" : "failed";
+        commandJournal.finish(command, result, terminalStatus);
+        protocol.complete(command, result, terminalStatus);
     }
 
     private void checkpoint(JobManager.Job state, String action, String detail, int progress, String projectId) {
@@ -806,6 +977,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             case "analyse_media": return "Analysing media";
             case "prompt_video": return "Creating prompt video";
             case "export_project": return "Exporting project";
+            case "import_attachment": return "Importing ChatGPT attachment directly";
             case "import_chat_file": return "Importing ChatGPT file";
             case "import_url": return "Importing media";
             case "preview_project": return "Opening preview";
@@ -813,6 +985,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             case "cancel_all_jobs":
             case "stop_all": return "Stopping VideoStudio jobs";
             case "get_state": return "Reading VideoStudio state";
+            case "self_test": return "Running VideoStudio v3 self-test";
             case "activity_note": return "ChatGPT progress";
             default: return action.replace('_', ' ');
         }
@@ -822,7 +995,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         if (p == null) return "Received from ChatGPT";
         if ("apply_tool".equals(action)) return p.optString("tool", "edit") + " • clip " + (p.optInt("clipIndex", 0) + 1);
         if ("create_project".equals(action)) return p.optString("name", "New project");
-        if ("import_chat_file".equals(action) || "import_url".equals(action)) return p.optString("name", "Media");
+        if ("import_attachment".equals(action) || "import_chat_file".equals(action) || "import_url".equals(action)) return p.optString("name", "Media");
         if ("prompt_video".equals(action)) {
             String prompt = p.optString("prompt", "");
             return prompt.length() > 90 ? prompt.substring(0, 90) + "…" : prompt;
@@ -891,7 +1064,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     }
 
     private void createChannel() {
-        NotificationChannel channel = new NotificationChannel(CHANNEL, "Private ChatGPT control", NotificationManager.IMPORTANCE_LOW);
+        NotificationChannel channel = new NotificationChannel(CHANNEL, "VideoStudio MCP v3", NotificationManager.IMPORTANCE_LOW);
         channel.setDescription("Keeps VideoStudio's user-controlled private MCP connection available in the background.");
         NotificationManager nm = getSystemService(NotificationManager.class);
         if (nm != null) nm.createNotificationChannel(channel);
