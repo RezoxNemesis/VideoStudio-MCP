@@ -32,6 +32,7 @@ const creativeJobGraph = fs.readFileSync(new URL("../android/app/src/main/java/c
 const creativeNodeStore = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/CreativeNodeStore.java", import.meta.url), "utf8");
 const builtInCreativeRuntime = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/CreativeBuiltInRuntime.java", import.meta.url), "utf8");
 const nativeRenderCritic = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/NativeRenderCritic.java", import.meta.url), "utf8");
+const nativeRecoveryReceiver = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/NativeAgentRecoveryReceiver.java", import.meta.url), "utf8");
 
 const scriptMatch = app.match(/<script>([\s\S]*?)<\/script>/);
 let appScriptParses = false;
@@ -97,6 +98,8 @@ const checks = [
   ["MCP Connection Core preserves stable endpoint across APK upgrades", mcpConnectionCore.includes('STABLE_MCP_PATH = "/app-mcp-v3/"') && mcpConnectionCore.includes("appGeneration") && mcpConnectionCore.includes("upgradeKeepsOwnerCredential") && mcpConnectionCore.includes("upgradeKeepsDeviceIdentity")],
   ["MCP Connection Core negotiates only an allow-listed same-origin API profile", mcpConnectionCore.includes("applyRegistrationResponse") && mcpConnectionCore.includes("safeApiPrefix") && mcpConnectionCore.includes("heartbeatMs") && mcpConnectionCore.includes("commandWaitMs")],
   ["Native Agent rejects stale process generations while preserving the same owner endpoint", worker.includes("Stale Native Agent generation") && worker.includes("expectedGeneration") && worker.includes("receivedGeneration") && worker.includes("stableMcpEndpoint:true")],
+  ["APK replacement automatically re-arms the stable Native Agent", androidManifest.includes("android.intent.action.MY_PACKAGE_REPLACED") && nativeRecoveryReceiver.includes("ACTION_MY_PACKAGE_REPLACED") && nativeRecoveryReceiver.includes("startForegroundService")],
+  ["device reboot restores stable MCP control without Gallery permission", androidManifest.includes("android.permission.RECEIVE_BOOT_COMPLETED") && androidManifest.includes("android.intent.action.BOOT_COMPLETED") && nativeRecoveryReceiver.includes("ACTION_BOOT_COMPLETED") && !nativeRecoveryReceiver.includes("gallery")],
   ["native v3 command cursor advances only after completion", nativeProtocol.includes('KEY_SEQ = "native_v3_last_seq"') && nativeProtocol.includes("advanceSequence")],
   ["native app has bounded heavy-work scheduler", nativeJobs.includes("Semaphore") && nativeJobs.includes("THERMAL_STATUS_SEVERE")],
   ["worker exposes canonical stable VideoStudio App MCP lane", worker.includes('"VideoStudio-App-MCP-v3"') && worker.includes("appMcpV3") && worker.includes("serverForApp(env,ownerKey,3)") && worker.includes("Permanent compatibility endpoint")],
