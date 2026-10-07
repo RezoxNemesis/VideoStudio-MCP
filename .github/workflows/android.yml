@@ -31,6 +31,15 @@ jobs:
       - name: Ensure Android SDK 36
         run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;35.0.0" >/dev/null
 
+      - name: Prepare stable development signing
+        run: mkdir -p "$HOME/.android"
+
+      - name: Restore stable development signing key
+        uses: actions/cache@v4
+        with:
+          path: ~/.android/debug.keystore
+          key: videostudio-android-debug-signing-v1
+
       - name: Build debug APK
         working-directory: android
         run: gradle :app:assembleDebug --stacktrace
