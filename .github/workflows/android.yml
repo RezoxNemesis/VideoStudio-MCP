@@ -104,12 +104,15 @@ jobs:
               --clobber
             gh release edit videostudio-latest \
               --repo "$GITHUB_REPOSITORY" \
+              --draft=false \
+              --latest \
               --title "VideoStudio Latest Android APK" \
               --notes-file release-notes.md
           else
             gh release create videostudio-latest VideoStudio-latest.apk VideoStudio-latest.sha256 \
               --repo "$GITHUB_REPOSITORY" \
               --verify-tag \
+              --latest \
               --title "VideoStudio Latest Android APK" \
               --notes-file release-notes.md
           fi
