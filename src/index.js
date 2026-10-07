@@ -678,6 +678,24 @@ function serverForApp(env,ownerKey,protocolVersion=1){
     }
   },async({projectId,assetId})=>queue("insert_asset_timeline",{projectId:projectId||"",assetId}));
 
+  if(isV3) s.registerTool("app_capability_registry",{
+    description:"Read VideoStudio's capability-first provider registry, including built-in engines and optional installed model providers.",
+    inputSchema:{}
+  },async()=>queue("capability_registry",{}));
+
+  if(isV3) s.registerTool("app_resolve_capability",{
+    description:"Ask VideoStudio to resolve the best currently installed provider for one creative capability such as depth, pose, rendering, scene compilation or future generative modules.",
+    inputSchema:{
+      capability:z.string().min(1).max(120),
+      quality:z.string().max(40).optional()
+    }
+  },async({capability,quality})=>queue("resolve_capability",{capability,quality:quality||""}));
+
+  if(isV3) s.registerTool("app_model_pack_status",{
+    description:"Read optional local VideoStudio model-pack status and installed provider manifests. This does not browse Gallery or install anything.",
+    inputSchema:{}
+  },async()=>queue("model_pack_status",{}));
+
   if(isV3) s.registerTool("app_animate_images",{
     description:"Turn imported still images into a real native animated video. VideoStudio runs bundled on-device person segmentation and face-aware analysis, builds foreground/background layers, directs varied cinematic keyframes and 2.5D parallax, optionally reorders shots for story rhythm, then renders a local MP4 through Media3.",
     inputSchema:{
