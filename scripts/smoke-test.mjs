@@ -6,6 +6,12 @@ const wrangler = fs.readFileSync(new URL("../wrangler.jsonc", import.meta.url), 
 const nativeMain = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/MainActivity.java", import.meta.url), "utf8");
 const nativeProtocol = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/AppProtocol.java", import.meta.url), "utf8");
 const nativeJobs = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/JobManager.java", import.meta.url), "utf8");
+const nativeRender = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/NativeRenderEngine.java", import.meta.url), "utf8");
+const promptVideo = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/PromptVideoEngine.java", import.meta.url), "utf8");
+const nativeAnalyzer = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/NativeMediaAnalyzer.java", import.meta.url), "utf8");
+const creatorCatalog = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/CreatorCatalog.java", import.meta.url), "utf8");
+const androidBuild = fs.readFileSync(new URL("../android/app/build.gradle.kts", import.meta.url), "utf8");
+const androidManifest = fs.readFileSync(new URL("../android/app/src/main/AndroidManifest.xml", import.meta.url), "utf8");
 
 const scriptMatch = app.match(/<script>([\s\S]*?)<\/script>/);
 let appScriptParses = false;
@@ -68,6 +74,20 @@ const checks = [
   ["worker streams handoff bytes without permanent storage", worker.includes("Attachment source unavailable") && worker.includes("new Response(upstream.body")],
   ["native app supports authenticated handoff download", nativeProtocol.includes("openPrivateHandoff") && nativeMain.includes('case "import_chat_file"')],
   ["native app exposes chat attachment handoff capability", nativeMain.includes('"chat-attachment-handoff"')],
+  ["native v1.1 uses Media3 Transformer", androidBuild.includes("media3-transformer:1.11.1") && nativeRender.includes("Transformer.Builder")],
+  ["native app has prompt-to-video pipeline", promptVideo.includes("class PromptVideoEngine") && nativeMain.includes('case "prompt_video"')],
+  ["native prompt video exports a real MP4", nativeMain.includes("runExportBlocking") && nativeMain.includes("Movies/VideoStudio")],
+  ["native app has on-device visual analyser", nativeAnalyzer.includes("contactSheet") && nativeMain.includes('case "analyse_media"')],
+  ["native app creator catalog is expanded", creatorCatalog.includes("camera_shutter") && creatorCatalog.includes("caption_pop") && creatorCatalog.includes("shorts_recut")],
+  ["native app has hard Gallery MCP boundary", nativeMain.includes("galleryAccess") && nativeMain.includes('lower.contains("gallery")')],
+  ["Android manifest requests no Gallery read permission", !androidManifest.includes("READ_MEDIA_IMAGES") && !androidManifest.includes("READ_MEDIA_VIDEO") && !androidManifest.includes("READ_EXTERNAL_STORAGE")],
+  ["native app has stop ChatGPT control", nativeMain.includes("STOP CHATGPT CONTROL") && nativeProtocol.includes("chatgpt_control_paused")],
+  ["native jobs persist crash recovery checkpoints", nativeJobs.includes("job_recovery_snapshot") && nativeJobs.includes("interrupted")],
+  ["worker hard-blocks Gallery MCP actions", worker.includes('a.includes("gallery")') && worker.includes("Gallery privacy boundary")],
+  ["worker exposes v1.1 prompt video tool", worker.includes('"app_create_prompt_video"') && worker.includes('"prompt_video"')],
+  ["worker exposes native autonomous edit/export", worker.includes('"app_autonomous_edit"') && worker.includes('"app_export_project"')],
+  ["worker exposes v1.1 creator catalog", worker.includes('"app_catalog"') && worker.includes("camera_shutter")],
+  ["native analysis results render as MCP images", worker.includes("safeResult") && worker.includes('type:"image"')],
 ];
 
 let failed = 0;

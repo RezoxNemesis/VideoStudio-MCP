@@ -3,6 +3,7 @@ package com.rezoxnemesis.videostudio;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.ClipData;
+import android.content.ContentValues;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.graphics.Color;
@@ -12,8 +13,10 @@ import android.media.MediaMetadataRetriever;
 import android.media.PlaybackParams;
 import android.net.Uri;
 import android.os.Bundle;
+import android.os.Environment;
 import android.os.Handler;
 import android.os.Looper;
+import android.provider.MediaStore;
 import android.text.InputType;
 import android.view.Gravity;
 import android.view.View;
@@ -37,12 +40,16 @@ import org.json.JSONObject;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 
 public class MainActivity extends Activity implements AppProtocol.Callback {
     private static final int PICK_MEDIA = 1201;
@@ -62,6 +69,10 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
     private ProjectStore store;
     private JobManager jobs;
     private AppProtocol protocol;
+    private NativeRenderEngine renderEngine;
+    private NativeRenderEngine.Handle activeRenderHandle;
+    private PromptVideoEngine promptVideoEngine;
+    private NativeMediaAnalyzer mediaAnalyzer;
     private SharedPreferences prefs;
     private FrameLayout content;
     private TextView connectionPill;
@@ -84,6 +95,9 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
         store = new ProjectStore(this);
         jobs = new JobManager(this);
+        renderEngine = new NativeRenderEngine(this);
+        promptVideoEngine = new PromptVideoEngine(this);
+        mediaAnalyzer = new NativeMediaAnalyzer(this);
         activeProject = store.active();
         protocol = new AppProtocol(this, this);
         syncProtocolState();
@@ -98,6 +112,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         timelinePreviewRunning = false;
         if (clipStopper != null) ui.removeCallbacks(clipStopper);
         if (preview != null) preview.stopPlayback();
+        if (activeRenderHandle != null) activeRenderHandle.cancel();
         if (protocol != null) protocol.stop();
         if (jobs != null) jobs.shutdown();
         super.onDestroy();
@@ -141,10 +156,13 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         LinearLayout hero = card(true);
         TextView heroTitle = title("Create Without Limits", 28);
         hero.addView(heroTitle);
-        hero.addView(body("Native VideoStudio v1 • local projects • private App MCP • safe multitasking"));
-        Button create = neonButton("+  New Project", C_PURPLE);
+        hero.addView(body("Native v1.1 Creator Engine • prompt-to-video • Media3 export • private autonomous App MCP"));
+        Button promptVideo = neonButton("✦  Create Video from a Prompt", C_MAGENTA);
+        promptVideo.setOnClickListener(v -> promptVideoDialog());
+        hero.addView(promptVideo, margins(-1, dp(54), dp(14), dp(8), 0, 0));
+        Button create = compactButton("+ New project");
         create.setOnClickListener(v -> createProjectDialog());
-        hero.addView(create, margins(-1, dp(52), 0, dp(16), 0, 0));
+        hero.addView(create, margins(-1, dp(46), 0, dp(4), 0, 0));
         box.addView(hero, margins(-1, -2, 0, dp(22), 0, 0));
 
         LinearLayout connect = card(false);
@@ -172,6 +190,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         quick.addView(actionTile("+", "New Project", C_PURPLE, this::createProjectDialog), weightWithMargin());
         quick.addView(actionTile("▧", "Import Media", C_BLUE, this::pickMedia), weightWithMargin());
         quick.addView(actionTile("✦", "AI Edit", C_MAGENTA, () -> showTools()), weightWithMargin());
+        quick.addView(actionTile("▶", "Prompt Video", C_CYAN, this::promptVideoDialog), weightWithMargin());
         box.addView(quick);
 
         box.addView(section("Recent Projects"));
@@ -188,8 +207,8 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
 
         box.addView(section("Foundation"));
         LinearLayout foundation = card(false);
-        foundation.addView(title("Built for heavy work, not browser tricks", 17));
-        foundation.addView(body("Native local project store • bounded 3-lane scheduler • one heavy job at a time • RAM/thermal guard • cancellable jobs • no permanent screen-lock flag."));
+        foundation.addView(title("Creator-grade native foundation", 17));
+        foundation.addView(body("Media3 GPU export • crash-recovery checkpoints • thermal/RAM governor • private ChatGPT handoff • native frame analysis • no gallery browsing permission."));
         box.addView(foundation);
 
         setScreen(scroll, "home");
@@ -214,6 +233,12 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         Button playButton = compactButton("Preview");
         playButton.setOnClickListener(v -> previewTimeline());
         top.addView(playButton);
+        Button exportButton = compactButton("Export");
+        exportButton.setOnClickListener(v -> {
+            try { queueNativeExport(activeProject, "9:16", "1080p", "VideoStudio_" + System.currentTimeMillis() + ".mp4"); }
+            catch (Exception e) { Toast.makeText(this, e.getMessage(), Toast.LENGTH_SHORT).show(); }
+        });
+        top.addView(exportButton);
         box.addView(top, margins(-1, -2, 0, dp(10), 0, 0));
 
         FrameLayout viewer = new FrameLayout(this);
@@ -260,8 +285,10 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         String[][] tools = {
                 {"✂", "Split"}, {"↔", "Trim"}, {"½", "Slow Motion"}, {"⌁", "Speed Ramp"},
                 {"◆", "Green Screen"}, {"⇄", "Transitions"}, {"↗", "Motion"}, {"✦", "Effects"},
-                {"◉", "Colour"}, {"T", "Text"}, {"♫", "Volume"}, {"▣", "Reframe"},
-                {"◐", "Mask"}, {"▥", "Overlay"}, {"≈", "Motion Blur"}, {"⤢", "Crop"}
+                {"◉", "Colour"}, {"T", "Text"}, {"Aa", "Fonts"}, {"♫", "Volume"},
+                {"▣", "Reframe"}, {"◐", "Mask"}, {"▥", "Overlay"}, {"≈", "Motion Blur"},
+                {"❄", "Freeze"}, {"⧉", "Duplicate"}, {"↺", "Reverse"}, {"↯", "Shake"},
+                {"◌", "Blur"}, {"☼", "Glow"}, {"CC", "Captions"}, {"⌁", "Audio Duck"}
         };
         LinearLayout toolGrid = column();
         for (int i = 0; i < tools.length; i += 4) {
@@ -277,8 +304,8 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         box.addView(toolGrid);
 
         LinearLayout status = card(false);
-        status.addView(title("Native editor foundation", 16));
-        status.addView(body("Trim, split, speed/slow-motion preview and timeline state are live now. Chroma key, transitions, motion, masks, colour and effect parameters are stored as real clip instructions for the native render pipeline."));
+        status.addView(title("Native creator pipeline", 16));
+        status.addView(body("Cuts, speed, colour, blur, transforms, motion and prompt scenes now feed the Media3 native exporter. Advanced chroma, masks and creator transitions remain in the timeline model for progressive renderer coverage."));
         box.addView(status, margins(-1, -2, dp(6), 0, 0, 0));
 
         setScreen(scroll, "editor");
@@ -299,19 +326,33 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         tabs.addView(accentPill("Audio"));
         box.addView(tabs, margins(-1, -2, dp(14), dp(16), 0, 0));
 
+        LinearLayout promptCard = card(true);
+        promptCard.addView(title("Prompt → Finished Video", 22));
+        promptCard.addView(body("Describe a video. ChatGPT can design the scenes, pacing, titles, motion and style, then VideoStudio builds and exports it locally."));
+        Button promptButton = neonButton("Generate from Prompt", C_MAGENTA);
+        promptButton.setOnClickListener(v -> promptVideoDialog());
+        promptCard.addView(promptButton, margins(-1, dp(52), dp(12), 0, 0, 0));
+        box.addView(promptCard);
+
         String[][] groups = {
-                {"✦ Auto Cut", "Scene-aware timeline planning"},
-                {"▣ Scene Detect", "Find visual changes"},
-                {"⌗ Smart Reframe", "Vertical / square framing"},
-                {"T Text Animation", "Titles and motion presets"},
-                {"⌁ Motion Effects", "Push, pan, zoom, shake"},
-                {"⇄ Transitions", "Fade, slide, zoom, whip"},
-                {"◉ Colour Enhance", "Cinematic colour parameters"},
-                {"CC Subtitles", "Caption track foundation"},
-                {"♫ Voice / Audio", "Gain, fades and ducking model"},
-                {"◆ Green Screen", "Chroma key + spill controls"},
-                {"≈ Motion Blur", "Motion effect parameter model"},
-                {"◐ Masks", "Shape and animated masks"}
+                {"✦ Auto Cut", "Scene-aware pacing and highlight edits"},
+                {"▣ Scene Detect", "Native sampled-frame scene analysis"},
+                {"⌗ Smart Reframe", "Vertical, square and subject-safe framing"},
+                {"T Text Animation", "21 title and caption motion styles"},
+                {"⌁ Motion Effects", "Pan, push, drift, orbit, shake and zoom"},
+                {"⇄ Transitions", "25 creator transition presets"},
+                {"◉ Colour Enhance", "GPU brightness, contrast and HSL looks"},
+                {"CC Subtitles", "Caption timing and animated style model"},
+                {"♫ Audio Duck", "Dialogue-first gain automation model"},
+                {"◆ Green Screen", "Chroma key, tolerance and spill controls"},
+                {"≈ Blur / Glow", "Gaussian blur, glow and dream looks"},
+                {"◐ Masks", "Shape, feather and animated mask model"},
+                {"⚡ Beat Sync", "Cut and motion markers for music beats"},
+                {"✂ Shorts Recut", "Rebuild long footage for vertical short-form"},
+                {"▧ B-roll Plan", "AI-assisted insert and coverage planning"},
+                {"◫ Multi Variant", "Create alternate hooks and pacing versions"},
+                {"Aa Fonts", "System creator font families and styles"},
+                {"▶ Prompt Video", "Generate a complete local video from a prompt"}
         };
         for (int i = 0; i < groups.length; i += 2) {
             LinearLayout row = new LinearLayout(this);
@@ -322,11 +363,14 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                 tile.addView(title(tool, 16));
                 tile.addView(body(groups[i + j][1]));
                 tile.setOnClickListener(v -> {
-                    if (tool.contains("Green")) applyTool("Green Screen");
+                    if (tool.contains("Prompt Video")) promptVideoDialog();
+                    else if (tool.contains("Green")) applyTool("Green Screen");
                     else if (tool.contains("Transition")) applyTool("Transitions");
                     else if (tool.contains("Motion")) applyTool("Motion");
                     else if (tool.contains("Colour")) applyTool("Colour");
-                    else Toast.makeText(this, tool + " is registered for autonomous use", Toast.LENGTH_SHORT).show();
+                    else if (tool.contains("Fonts")) applyTool("Fonts");
+                    else if (tool.contains("Blur")) applyTool("Blur");
+                    else Toast.makeText(this, tool + " is available to the autonomous editor", Toast.LENGTH_SHORT).show();
                 });
                 row.addView(tile, weightWithMargin());
             }
@@ -336,7 +380,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         LinearLayout mcp = card(false);
         mcp.setBackground(neonCard());
         mcp.addView(title("Connected editing surface", 18));
-        mcp.addView(body("App MCP commands map to native project/timeline operations. No browser page needs to be open."));
+        mcp.addView(body("Direct native control: analyse, import, edit, batch actions, prompt-video, export and inspect project state. Gallery enumeration is permanently excluded."));
         Button connect = neonButton("Connect ChatGPT", C_CYAN);
         connect.setTextColor(Color.BLACK);
         connect.setOnClickListener(v -> sharePairing());
@@ -357,7 +401,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         box.addView(section("Access Mode"));
         box.addView(permissionCard("one_file", "Allow one file", "ChatGPT can edit only the currently authorised media file."));
         box.addView(permissionCard("all_tools", "Allow all tools", "All editing and analysis tools on imported project media. No remote file import or project deletion."));
-        box.addView(permissionCard("everything", "Allow everything", "Full autonomous VideoStudio control, including URL imports and project management. It still cannot browse your phone gallery."));
+        box.addView(permissionCard("everything", "Allow everything except Gallery", "Full autonomous VideoStudio control: imports you explicitly share, projects, AI planning, editing, export and retries. Gallery listing/browsing stays blocked."));
 
         box.addView(section("Workload Safety"));
         LinearLayout safety = card(false);
@@ -374,7 +418,18 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         box.addView(section("Private Connection"));
         LinearLayout privateCard = card(false);
         privateCard.addView(title("Device-owned MCP endpoint", 17));
-        privateCard.addView(body("The connection credential is generated on this phone and encrypted with Android Keystore. Anonymous App MCP requests are rejected."));
+        privateCard.addView(body("The device credential is encrypted by Android Keystore, commands are leased and checkpointed, reconnect uses backoff, and the app can pause control instantly."));
+        Button pause = neonButton(protocol.isControlPaused() ? "Resume ChatGPT Control" : "STOP CHATGPT CONTROL", protocol.isControlPaused() ? C_CYAN : Color.rgb(180, 38, 67));
+        pause.setOnClickListener(v -> {
+            boolean next = !protocol.isControlPaused();
+            protocol.setControlPaused(next);
+            if (next) {
+                if (activeRenderHandle != null) activeRenderHandle.cancel();
+                jobs.cancelAll();
+            }
+            showControl();
+        });
+        privateCard.addView(pause, margins(-1, dp(52), dp(10), dp(8), 0, 0));
         Button share = neonButton("Connect / Share with ChatGPT", C_PURPLE);
         share.setOnClickListener(v -> sharePairing());
         privateCard.addView(share, margins(-1, dp(52), dp(12), 0, 0, 0));
@@ -395,7 +450,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         copy.addView(brand);
         copy.addView(body("Create • Edit • Enhance • With AI"));
         row.addView(copy, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
-        TextView badge = accent("NATIVE v1", C_CYAN);
+        TextView badge = accent("NATIVE 1.1", C_CYAN);
         row.addView(badge);
         return row;
     }
@@ -589,27 +644,27 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                     selectedClip.effects.put("spillSuppression", .35);
                     break;
                 case "Transitions":
-                    String[] transitions = {"fade", "slide", "zoom", "whip", "none"};
-                    int at = 0;
-                    for (int i = 0; i < transitions.length; i++) if (transitions[i].equals(selectedClip.transition)) at = i;
-                    selectedClip.transition = transitions[(at + 1) % transitions.length];
+                    selectedClip.transition = CreatorCatalog.next(CreatorCatalog.TRANSITIONS, selectedClip.transition);
                     break;
                 case "Motion":
-                    selectedClip.effects.put("motionPreset", "push_in");
+                    selectedClip.effects.put("motionPreset", CreatorCatalog.next(CreatorCatalog.MOTIONS, selectedClip.effects.optString("motionPreset", "none")));
                     selectedClip.effects.put("ease", "easeInOut");
                     break;
                 case "Effects":
-                    String current = selectedClip.effects.optString("effectPreset", "");
-                    selectedClip.effects.put("effectPreset", "cinematic_glow".equals(current) ? "film_grain" : "cinematic_glow");
+                    selectedClip.effects.put("effectPreset", CreatorCatalog.next(CreatorCatalog.EFFECTS, selectedClip.effects.optString("effectPreset", "none")));
                     break;
                 case "Colour":
-                    selectedClip.effects.put("colorPreset", "cinematic");
-                    selectedClip.effects.put("contrast", 1.06);
-                    selectedClip.effects.put("saturation", 1.04);
+                    String look = selectedClip.effects.optString("colorPreset", "none");
+                    String[] looks = {"cinematic","teal_orange","warm_film","cool_night","noir","golden_hour","matte","high_contrast","soft_portrait"};
+                    int li = java.util.Arrays.asList(looks).indexOf(look);
+                    selectedClip.effects.put("colorPreset", looks[(li + 1 + looks.length) % looks.length]);
                     break;
                 case "Text":
                     textDialog();
                     return;
+                case "Fonts":
+                    selectedClip.effects.put("fontFamily", CreatorCatalog.next(CreatorCatalog.FONTS, selectedClip.effects.optString("fontFamily", "sans-serif-medium")));
+                    break;
                 case "Volume":
                     selectedClip.volume = selectedClip.volume > .8f ? .6f : selectedClip.volume > .3f ? 0f : 1f;
                     break;
@@ -625,6 +680,38 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                     break;
                 case "Motion Blur":
                     selectedClip.effects.put("motionBlur", .35);
+                    break;
+                case "Freeze":
+                    selectedClip.effects.put("freezeAtMs", Math.max(selectedClip.inMs, preview == null ? selectedClip.inMs : preview.getCurrentPosition()));
+                    break;
+                case "Duplicate": {
+                    int index = activeProject.clips.indexOf(selectedClip);
+                    ProjectStore.Clip copy = ProjectStore.Clip.fromJson(selectedClip.toJson());
+                    copy.id = UUID.randomUUID().toString();
+                    activeProject.clips.add(index + 1, copy);
+                    selectedClip = copy;
+                    break;
+                }
+                case "Reverse":
+                    selectedClip.effects.put("reverse", !selectedClip.effects.optBoolean("reverse", false));
+                    break;
+                case "Shake":
+                    selectedClip.effects.put("motionPreset", "impact_shake");
+                    break;
+                case "Blur":
+                    selectedClip.effects.put("blur", selectedClip.effects.optDouble("blur", 0) > .1 ? 0 : 5.0);
+                    break;
+                case "Glow":
+                    selectedClip.effects.put("effectPreset", "soft_glow");
+                    selectedClip.effects.put("blur", 1.6);
+                    break;
+                case "Captions":
+                    selectedClip.effects.put("captionStyle", "creator_pop");
+                    selectedClip.effects.put("textAnimation", "caption_pop");
+                    break;
+                case "Audio Duck":
+                    selectedClip.effects.put("audioDucking", true);
+                    selectedClip.effects.put("duckLevel", .32);
                     break;
                 case "Crop":
                     selectedClip.effects.put("crop", "center_cover");
@@ -703,6 +790,257 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                 })
                 .setNegativeButton("Cancel", null)
                 .show();
+    }
+
+    private void promptVideoDialog() {
+        LinearLayout wrap = column();
+        wrap.setPadding(dp(20), dp(6), dp(20), 0);
+
+        EditText prompt = new EditText(this);
+        prompt.setHint("Describe the video you want…");
+        prompt.setTextColor(C_TEXT);
+        prompt.setHintTextColor(C_MUTED);
+        prompt.setMinLines(4);
+        prompt.setGravity(Gravity.TOP);
+        prompt.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
+        wrap.addView(prompt, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(150)));
+
+        EditText duration = numberInput(18);
+        duration.setHint("Duration seconds");
+        wrap.addView(body("Approx. duration in seconds"));
+        wrap.addView(duration, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(52)));
+
+        new AlertDialog.Builder(this)
+                .setTitle("Create Video from a Prompt")
+                .setMessage("VideoStudio will build a scene plan locally. When ChatGPT controls this tool, I can supply a richer scene-by-scene plan automatically.")
+                .setView(wrap)
+                .setPositiveButton("Generate", (d, w) -> {
+                    try {
+                        JSONObject p = new JSONObject();
+                        p.put("prompt", prompt.getText().toString().trim());
+                        p.put("durationSeconds", Math.max(4, Math.min(120, (int) Float.parseFloat(duration.getText().toString()))));
+                        p.put("aspect", "9:16");
+                        p.put("quality", "1080p");
+                        p.put("style", "cinematic");
+                        p.put("font", "sans-serif-medium");
+                        JSONObject queued = queuePromptVideo(p);
+                        Toast.makeText(this, "Prompt video queued • job " + queued.optString("jobId").substring(0, 8), Toast.LENGTH_LONG).show();
+                    } catch (Exception error) {
+                        Toast.makeText(this, error.getMessage() == null ? "Could not create prompt video" : error.getMessage(), Toast.LENGTH_LONG).show();
+                    }
+                })
+                .setNegativeButton("Cancel", null)
+                .show();
+    }
+
+    private JSONObject queuePromptVideo(JSONObject parameters) throws Exception {
+        String prompt = parameters.optString("prompt", "").trim();
+        if (prompt.isEmpty()) throw new IllegalArgumentException("Write a video prompt first");
+
+        String titleText = prompt.replaceAll("\\s+", " ").trim();
+        if (titleText.length() > 36) titleText = titleText.substring(0, 36).trim() + "…";
+        ProjectStore.Project project = store.create("AI • " + titleText);
+        project.sourcePrompt = prompt;
+        store.save(project);
+        activeProject = project;
+        selectedClip = null;
+        syncProtocolState();
+
+        String aspect = parameters.optString("aspect", "9:16");
+        String quality = parameters.optString("quality", "1080p");
+        String fileName = "VideoStudio_AI_" + System.currentTimeMillis() + ".mp4";
+
+        JobManager.Job job = jobs.submit("Prompt video • " + titleText, JobManager.Kind.HEAVY, state -> {
+            state.checkpoint(3, "Designing local scene cards");
+            PromptVideoEngine.BuildResult built = promptVideoEngine.build(store, project, parameters);
+            state.checkpoint(18, "Scene plan ready • starting native render");
+            runExportBlocking(built.project, built.aspect, built.quality, fileName, state);
+            state.checkpoint(100, "Prompt video complete");
+        });
+
+        JSONObject result = new JSONObject();
+        result.put("ok", true);
+        result.put("queued", true);
+        result.put("jobId", job.id);
+        result.put("projectId", project.id);
+        result.put("prompt", prompt);
+        result.put("aspect", aspect);
+        result.put("quality", quality);
+        return result;
+    }
+
+    private JSONObject queueNativeExport(ProjectStore.Project project, String aspect, String quality, String fileName) throws Exception {
+        if (project == null || project.clips.isEmpty()) throw new IllegalArgumentException("Timeline is empty");
+        final ProjectStore.Project target = store.get(project.id);
+        if (target == null) throw new IllegalArgumentException("Project not found");
+        String safeName = (fileName == null || fileName.trim().isEmpty())
+                ? "VideoStudio_" + System.currentTimeMillis() + ".mp4"
+                : fileName.replaceAll("[^a-zA-Z0-9._-]+", "_");
+        if (!safeName.toLowerCase(Locale.US).endsWith(".mp4")) safeName += ".mp4";
+        final String finalName = safeName;
+
+        JobManager.Job job = jobs.submit("Export • " + target.name, JobManager.Kind.HEAVY, state -> {
+            state.checkpoint(2, "Preparing Media3 native export");
+            runExportBlocking(target, aspect, quality, finalName, state);
+            state.checkpoint(100, "Export complete");
+        });
+
+        JSONObject result = new JSONObject();
+        result.put("ok", true);
+        result.put("queued", true);
+        result.put("jobId", job.id);
+        result.put("projectId", target.id);
+        result.put("fileName", finalName);
+        return result;
+    }
+
+    private void runExportBlocking(ProjectStore.Project project, String aspect, String quality, String fileName, JobManager.Job state) throws Exception {
+        File dir = new File(getCacheDir(), "native_exports");
+        if (!dir.exists() && !dir.mkdirs()) throw new IllegalStateException("Could not create export workspace");
+        File temp = new File(dir, "tmp_" + System.currentTimeMillis() + ".mp4");
+        CountDownLatch latch = new CountDownLatch(1);
+        AtomicReference<String> error = new AtomicReference<>(null);
+        AtomicReference<File> completed = new AtomicReference<>(null);
+
+        ui.post(() -> {
+            activeRenderHandle = renderEngine.export(project, temp, aspect, quality, new NativeRenderEngine.Listener() {
+                @Override public void onProgress(int progress, String detail) {
+                    state.checkpoint(Math.max(20, Math.min(96, 20 + (int) (progress * .76))), detail);
+                }
+
+                @Override public void onCompleted(File file, JSONObject result) {
+                    completed.set(file);
+                    latch.countDown();
+                }
+
+                @Override public void onError(String message) {
+                    error.set(message);
+                    latch.countDown();
+                }
+            });
+        });
+
+        while (!latch.await(550, TimeUnit.MILLISECONDS)) {
+            if (Thread.currentThread().isInterrupted()) {
+                if (activeRenderHandle != null) activeRenderHandle.cancel();
+                throw new InterruptedException();
+            }
+        }
+
+        if (error.get() != null) throw new IllegalStateException(error.get());
+        File ready = completed.get();
+        if (ready == null || !ready.exists() || ready.length() == 0) throw new IllegalStateException("Native export produced no file");
+
+        state.checkpoint(97, "Publishing to Movies/VideoStudio");
+        Uri publicUri = publishExport(ready, fileName);
+        ProjectStore.Project fresh = store.get(project.id);
+        if (fresh != null) {
+            fresh.latestExportUri = publicUri.toString();
+            fresh.latestExportName = fileName;
+            fresh.latestExportAt = System.currentTimeMillis();
+            store.save(fresh);
+        }
+        syncProtocolState();
+        ui.post(() -> {
+            activeProject = store.get(project.id);
+            refreshCurrent();
+            Toast.makeText(this, "Exported to Movies/VideoStudio • " + fileName, Toast.LENGTH_LONG).show();
+        });
+        if (!ready.delete()) { /* cache cleanup is best-effort */ }
+    }
+
+    private Uri publishExport(File file, String displayName) throws Exception {
+        ContentValues values = new ContentValues();
+        values.put(MediaStore.Video.Media.DISPLAY_NAME, displayName);
+        values.put(MediaStore.Video.Media.MIME_TYPE, "video/mp4");
+        values.put(MediaStore.Video.Media.RELATIVE_PATH, Environment.DIRECTORY_MOVIES + "/VideoStudio");
+        values.put(MediaStore.Video.Media.IS_PENDING, 1);
+        Uri uri = getContentResolver().insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values);
+        if (uri == null) throw new IllegalStateException("Could not create exported video");
+        boolean success = false;
+        try (InputStream in = new java.io.FileInputStream(file);
+             OutputStream out = getContentResolver().openOutputStream(uri, "w")) {
+            if (out == null) throw new IllegalStateException("Could not open export destination");
+            byte[] buffer = new byte[256 * 1024];
+            int n;
+            while ((n = in.read(buffer)) >= 0) out.write(buffer, 0, n);
+            success = true;
+        } finally {
+            if (!success) {
+                try { getContentResolver().delete(uri, null, null); } catch (Exception ignored) {}
+            }
+        }
+        ContentValues done = new ContentValues();
+        done.put(MediaStore.Video.Media.IS_PENDING, 0);
+        getContentResolver().update(uri, done, null, null);
+        return uri;
+    }
+
+    private void queueAnalysisCommand(JSONObject command, JSONObject parameters) {
+        try {
+            if (activeProject == null || activeProject.assets.isEmpty()) throw new IllegalArgumentException("No media in the active project");
+            String requested = parameters.optString("assetId", "");
+            ProjectStore.Asset asset = requested.isEmpty() ? null : activeProject.asset(requested);
+            if (asset == null) {
+                for (ProjectStore.Asset candidate : activeProject.assets) {
+                    if (candidate.mime != null && candidate.mime.startsWith("video/")) { asset = candidate; break; }
+                }
+            }
+            if (asset == null) throw new IllegalArgumentException("No video asset available for analysis");
+            ProjectStore.Asset target = asset;
+            int frames = parameters.optInt("frames", 12);
+            long startMs = parameters.has("startMs") ? parameters.optLong("startMs") : (long) (parameters.optDouble("start", 0) * 1000);
+            long endMs = parameters.has("endMs") ? parameters.optLong("endMs") : (long) (parameters.optDouble("end", 0) * 1000);
+
+            jobs.submit("Analyse • " + target.name, JobManager.Kind.LIGHT, state -> {
+                try {
+                    state.checkpoint(8, "Sampling frames locally");
+                    JSONObject result = mediaAnalyzer.analyse(target, frames, startMs, endMs);
+                    state.checkpoint(100, "Analysis complete");
+                    protocol.complete(command, result, "completed");
+                } catch (Exception error) {
+                    JSONObject failed = new JSONObject();
+                    failed.put("ok", false);
+                    failed.put("error", error.getMessage() == null ? "Analysis failed" : error.getMessage());
+                    protocol.complete(command, failed, "failed");
+                    throw error;
+                }
+            });
+        } catch (Exception error) {
+            JSONObject failed = new JSONObject();
+            try {
+                failed.put("ok", false);
+                failed.put("error", error.getMessage());
+            } catch (Exception ignored) {}
+            protocol.complete(command, failed, "failed");
+        }
+    }
+
+    private JSONObject applyCreatorPreset(JSONObject parameters) throws Exception {
+        if (activeProject == null || activeProject.clips.isEmpty()) throw new IllegalArgumentException("No clips");
+        String preset = parameters.optString("preset", "cinematic");
+        String motion = parameters.optString("motion", "");
+        String transition = parameters.optString("transition", "");
+        String font = parameters.optString("font", "");
+        boolean all = parameters.optBoolean("allClips", true);
+        int selectedIndex = Math.max(0, parameters.optInt("clipIndex", 0));
+
+        int changed = 0;
+        for (int i = 0; i < activeProject.clips.size(); i++) {
+            if (!all && i != selectedIndex) continue;
+            ProjectStore.Clip c = activeProject.clips.get(i);
+            c.effects.put("effectPreset", preset);
+            if (!motion.isEmpty()) c.effects.put("motionPreset", motion);
+            if (!transition.isEmpty()) c.transition = transition;
+            if (!font.isEmpty()) c.effects.put("fontFamily", font);
+            changed++;
+        }
+        store.save(activeProject);
+        JSONObject result = new JSONObject();
+        result.put("ok", true);
+        result.put("changedClips", changed);
+        result.put("preset", preset);
+        return result;
     }
 
     private void sharePairing() {
@@ -792,9 +1130,64 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                     result.put("ok", true);
                     result.put("previewing", true);
                     break;
-                case "cancel_job":
-                    result.put("ok", jobs.cancel(p.optString("jobId")));
+                case "analyse_media":
+                    queueAnalysisCommand(command, p);
+                    return;
+                case "prompt_video":
+                    result = queuePromptVideo(p);
+                    refreshCurrent();
                     break;
+                case "export_project":
+                    result = queueNativeExport(
+                            activeProject,
+                            p.optString("aspect", "9:16"),
+                            p.optString("quality", "1080p"),
+                            p.optString("fileName", "VideoStudio_" + System.currentTimeMillis() + ".mp4")
+                    );
+                    break;
+                case "creator_preset":
+                    result = applyCreatorPreset(p);
+                    refreshCurrent();
+                    break;
+                case "autonomous_edit": {
+                    JSONObject planResult = p.optJSONArray("clips") == null ? new JSONObject().put("ok", true) : applyRemotePlan(p);
+                    if (p.has("preset")) applyCreatorPreset(p);
+                    result.put("ok", true);
+                    result.put("plan", planResult);
+                    if (p.optBoolean("render", false)) {
+                        JSONObject export = queueNativeExport(
+                                activeProject,
+                                p.optString("aspect", "9:16"),
+                                p.optString("quality", "1080p"),
+                                p.optString("fileName", "VideoStudio_AI_Edit_" + System.currentTimeMillis() + ".mp4")
+                        );
+                        result.put("export", export);
+                    }
+                    refreshCurrent();
+                    break;
+                }
+                case "cancel_job": {
+                    boolean cancelled = jobs.cancel(p.optString("jobId"));
+                    if (cancelled && activeRenderHandle != null) activeRenderHandle.cancel();
+                    result.put("ok", cancelled);
+                    break;
+                }
+                case "cancel_all_jobs":
+                    if (activeRenderHandle != null) activeRenderHandle.cancel();
+                    result.put("ok", true);
+                    result.put("cancelled", jobs.cancelAll());
+                    break;
+                case "delete_project": {
+                    String id = p.optString("projectId", activeProject == null ? "" : activeProject.id);
+                    if (id.isEmpty()) throw new IllegalArgumentException("Project ID is required");
+                    store.delete(id);
+                    activeProject = store.active();
+                    selectedClip = activeProject == null || activeProject.clips.isEmpty() ? null : activeProject.clips.get(0);
+                    result.put("ok", true);
+                    result.put("deletedProjectId", id);
+                    refreshCurrent();
+                    break;
+                }
                 case "import_url":
                     result = queueUrlImport(p.optString("url"), p.optString("name", "ChatGPT import"));
                     break;
@@ -867,7 +1260,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         switch (tool) {
             case "speed":
             case "slow_motion":
-                selectedClip.speed = (float) Math.max(.5, Math.min(2, settings.optDouble("speed", .5)));
+                selectedClip.speed = (float) Math.max(.25, Math.min(4, settings.optDouble("speed", .5)));
                 break;
             case "trim":
                 selectedClip.inMs = settings.optLong("inMs", selectedClip.inMs);
@@ -887,10 +1280,15 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                 selectedClip.effects.put("ease", settings.optString("ease", "easeInOut"));
                 break;
             case "effect":
-                selectedClip.effects.put("effectPreset", settings.optString("preset", "cinematic_glow"));
+                selectedClip.effects.put("effectPreset", settings.optString("preset", "cinematic"));
+                if (settings.has("blur")) selectedClip.effects.put("blur", settings.optDouble("blur"));
                 break;
             case "color":
                 selectedClip.effects.put("colorPreset", settings.optString("preset", "cinematic"));
+                if (settings.has("brightness")) selectedClip.effects.put("brightness", settings.optDouble("brightness"));
+                if (settings.has("contrast")) selectedClip.effects.put("contrast", settings.optDouble("contrast"));
+                if (settings.has("saturation")) selectedClip.effects.put("saturationAdjust", settings.optDouble("saturation"));
+                if (settings.has("lightness")) selectedClip.effects.put("lightnessAdjust", settings.optDouble("lightness"));
                 break;
             case "reframe":
                 selectedClip.effects.put("reframe", settings.optString("preset", "9:16_subject_safe"));
@@ -899,8 +1297,27 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                 selectedClip.effects.put("mask", settings.optString("shape", "rounded_rect"));
                 selectedClip.effects.put("maskFeather", settings.optDouble("feather", .08));
                 break;
+            case "font":
+                selectedClip.effects.put("fontFamily", settings.optString("family", "sans-serif-medium"));
+                break;
+            case "text_animation":
+                selectedClip.effects.put("textAnimation", settings.optString("preset", "fade_up"));
+                break;
+            case "blur":
+                selectedClip.effects.put("blur", Math.max(0, Math.min(18, settings.optDouble("sigma", 4))));
+                break;
+            case "transform":
+                if (settings.has("scale")) selectedClip.effects.put("scale", settings.optDouble("scale", 1));
+                if (settings.has("rotate")) selectedClip.effects.put("rotate", settings.optDouble("rotate", 0));
+                break;
+            case "audio_duck":
+                selectedClip.effects.put("audioDucking", true);
+                selectedClip.effects.put("duckLevel", settings.optDouble("level", .32));
+                break;
             case "title":
                 selectedClip.title = settings.optString("text", "");
+                if (settings.has("font")) selectedClip.effects.put("fontFamily", settings.optString("font"));
+                if (settings.has("animation")) selectedClip.effects.put("textAnimation", settings.optString("animation"));
                 break;
             case "volume":
                 selectedClip.volume = (float) Math.max(0, Math.min(2, settings.optDouble("volume", 1)));
@@ -1004,7 +1421,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
             HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
             c.setConnectTimeout(15000);
             c.setReadTimeout(30000);
-            c.setRequestProperty("User-Agent", "VideoStudio-Android/1.0");
+            c.setRequestProperty("User-Agent", "VideoStudio-Android/1.1.0");
             String mime = c.getContentType();
             if (mime == null) mime = "video/mp4";
             try (InputStream in = c.getInputStream(); FileOutputStream out = new FileOutputStream(file)) {
@@ -1059,6 +1476,9 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
     }
 
     private boolean isAllowed(String action, JSONObject parameters) {
+        String lower = action == null ? "" : action.toLowerCase(Locale.US);
+        // Hard boundary: no MCP mode may enumerate or browse the user's Gallery.
+        if (lower.contains("gallery") || lower.contains("media_library") || lower.contains("photo_library")) return false;
         if ("ping".equals(action) || "get_state".equals(action)) return true;
         String mode = permissionMode();
         if ("everything".equals(mode)) return true;
@@ -1073,8 +1493,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                 return activeProject != null && index >= 0 && index < activeProject.clips.size()
                         && allowed.equals(activeProject.clips.get(index).assetId);
             }
-            if ("preview_project".equals(action)) return true;
-            return false;
+            return "preview_project".equals(action) || "analyse_media".equals(action) || "export_project".equals(action) || "cancel_job".equals(action);
         }
         return false;
     }
@@ -1083,9 +1502,12 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         JSONObject out = new JSONObject();
         try {
             out.put("deviceId", protocol.deviceId());
-            out.put("appVersion", "1.0.1");
+            out.put("appVersion", "1.1.0");
             out.put("nativeApp", true);
             out.put("permissionMode", permissionMode());
+            out.put("controlPaused", protocol.isControlPaused());
+            out.put("galleryAccess", false);
+            out.put("galleryBoundary", "MCP cannot list, browse or enumerate Gallery media. Only Android-picker selections and explicit ChatGPT handoffs are usable.");
             out.put("projects", store.summaries().optJSONArray("projects"));
             if (activeProject != null) {
                 out.put("activeProjectId", activeProject.id);
@@ -1093,11 +1515,32 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                 out.put("clipCount", activeProject.clips.size());
                 out.put("assetCount", activeProject.assets.size());
                 out.put("durationMs", activeProject.outputDurationMs());
+                out.put("latestExportUri", activeProject.latestExportUri);
+                out.put("latestExportName", activeProject.latestExportName);
+                out.put("sourcePrompt", activeProject.sourcePrompt);
+                JSONArray assets = new JSONArray();
+                for (ProjectStore.Asset a : activeProject.assets) {
+                    JSONObject ai = new JSONObject();
+                    ai.put("id", a.id);
+                    ai.put("name", a.name);
+                    ai.put("mime", a.mime);
+                    ai.put("durationMs", a.durationMs);
+                    assets.put(ai);
+                }
+                out.put("activeAssets", assets);
             }
             out.put("jobs", jobs.state().optJSONArray("jobs"));
             out.put("workload", jobs.state());
+            out.put("creatorCatalog", CreatorCatalog.describe());
             JSONArray caps = new JSONArray();
-            String[] values = {"native-ui","local-projects","media-picker","timeline","trim","split","slow-motion-preview","speed","green-screen-model","transitions-model","motion-model","effects-model","colour-model","masks-model","private-app-mcp","chat-attachment-handoff","url-import","bounded-multitasking","thermal-guard","memory-guard","job-cancel"};
+            String[] values = {
+                    "native-ui","local-projects","private-app-mcp","chat-attachment-handoff","url-import",
+                    "timeline","trim","split","speed","slow-motion","native-frame-analysis","scene-change-sampling",
+                    "media3-native-export","prompt-to-video","gpu-brightness","gpu-contrast","gpu-hsl","gpu-blur",
+                    "gpu-motion","scale","rotate","creator-transition-model","green-screen-model","masks-model",
+                    "fonts","text-animation-model","audio-ducking-model","ai-edit-plans","autonomous-edit-and-export",
+                    "bounded-multitasking","crash-recovery-checkpoints","thermal-guard","memory-guard","job-cancel"
+            };
             for (String v : values) caps.put(v);
             out.put("capabilities", caps);
         } catch (Exception ignored) {}
@@ -1130,6 +1573,9 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         if (effects.has("speedRamp")) names.add("Speed Ramp");
         if (effects.has("reframe")) names.add("Reframe");
         if (effects.has("motionBlur")) names.add("Motion Blur");
+        if (effects.has("blur")) names.add("Blur");
+        if (effects.has("fontFamily")) names.add(effects.optString("fontFamily"));
+        if (effects.has("textAnimation")) names.add("Text FX");
         return names.isEmpty() ? "Effect" : String.join(" • ", names);
     }
 

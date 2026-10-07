@@ -36,6 +36,7 @@ public final class AppProtocol {
     private static final String KEY_SECRET = "native_owner_secret";
     private static final String KEY_SEQ = "native_last_seq";
     private static final String KEY_ALIAS = "videostudio_owner_key_v1";
+    private static final String KEY_PAUSED = "chatgpt_control_paused";
 
     public interface Callback {
         void onConnection(boolean connected, String detail);
@@ -50,8 +51,10 @@ public final class AppProtocol {
     private volatile boolean running;
     private volatile String permissionMode = "all_tools";
     private volatile JSONObject projectSummary = new JSONObject();
+    private volatile int consecutiveFailures = 0;
     private final String deviceId;
     private final String ownerKey;
+    private final String connectionSession = UUID.randomUUID().toString();
 
     public AppProtocol(Context context, Callback callback) {
         this.context = context.getApplicationContext();
@@ -68,6 +71,18 @@ public final class AppProtocol {
 
     public String deviceId() { return deviceId; }
 
+    public boolean isControlPaused() {
+        return prefs.getBoolean(KEY_PAUSED, false);
+    }
+
+    public void setControlPaused(boolean paused) {
+        prefs.edit().putBoolean(KEY_PAUSED, paused).apply();
+        if (!paused) {
+            consecutiveFailures = 0;
+            registerNow();
+        }
+    }
+
     public String privateMcpUrl() {
         return BASE + "/app-mcp/" + ownerKey;
     }
@@ -75,7 +90,7 @@ public final class AppProtocol {
     public String pairingMessage() {
         return "Connect to my private VideoStudio Android App MCP.\n"
                 + "MCP endpoint: " + privateMcpUrl() + "\n"
-                + "This endpoint is the device-owned private connection. Use app_status first, then control VideoStudio through the native app tools.";
+                + "This endpoint is the device-owned private connection. Use app_status first, then use the native app tools autonomously. Gallery browsing is never permitted.";
     }
 
     public void setLocalState(String permissionMode, JSONObject projectSummary) {
@@ -111,7 +126,7 @@ public final class AppProtocol {
         c.setReadTimeout(45000);
         c.setRequestProperty("Accept", "*/*");
         c.setRequestProperty("Authorization", "Bearer " + ownerKey);
-        c.setRequestProperty("User-Agent", "VideoStudio-Android/1.0.1");
+        c.setRequestProperty("User-Agent", "VideoStudio-Android/1.1.0");
         return c;
     }
 
@@ -136,6 +151,11 @@ public final class AppProtocol {
     private void commandLoop() {
         while (running) {
             try {
+                if (isControlPaused()) {
+                    main.post(() -> callback.onConnection(false, "ChatGPT control paused"));
+                    sleep(900);
+                    continue;
+                }
                 long seq = prefs.getLong(KEY_SEQ, 0);
                 String path = "/api/app/commands?deviceId=" + enc(deviceId) + "&after=" + seq + "&wait=18000";
                 JSONObject data = request("GET", path, null, true, 25000);
@@ -149,18 +169,21 @@ public final class AppProtocol {
                     JSONObject dispatch = cmd;
                     main.post(() -> callback.onCommand(dispatch));
                 }
+                consecutiveFailures = 0;
                 main.post(() -> callback.onConnection(true, "Private App MCP online"));
             } catch (Exception error) {
-                main.post(() -> callback.onConnection(false, "Reconnecting"));
-                sleep(2200);
+                consecutiveFailures = Math.min(6, consecutiveFailures + 1);
+                long delay = Math.min(30000L, 900L * (1L << consecutiveFailures));
+                main.post(() -> callback.onConnection(false, "Reconnecting securely"));
+                sleep(delay);
             }
         }
     }
 
     private void heartbeatLoop() {
         while (running) {
-            register();
-            sleep(25000);
+            if (!isControlPaused()) register();
+            sleep(20000);
         }
     }
 
@@ -169,8 +192,11 @@ public final class AppProtocol {
             JSONObject meta = new JSONObject();
             meta.put("name", "VideoStudio Android");
             meta.put("platform", "android-native");
-            meta.put("appVersion", "1.0.1");
+            meta.put("appVersion", "1.1.0");
             meta.put("permissionMode", permissionMode);
+            meta.put("controlPaused", isControlPaused());
+            meta.put("connectionSession", connectionSession);
+            meta.put("galleryAccess", false);
             meta.put("projects", projectSummary.optJSONArray("projects") == null ? new JSONArray() : projectSummary.optJSONArray("projects"));
 
             JSONObject body = new JSONObject();
