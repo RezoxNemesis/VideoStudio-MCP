@@ -24,7 +24,8 @@ The first executable foundation slice is now present in the v3.3 code line:
 - [x] typed MCP tools for MotionScript/workspace/provider inspection
 - [x] transactional model-pack installer
 - [x] hardware-aware local compute planner with bounded working sets, tiling, model swapping and temporal windows
-- [ ] native Android Google Drive storage provider
+- [x] folder-scoped Android cloud workspace provider via Storage Access Framework
+- [ ] optional deeper Google Drive sync/index provider if folder-tree access is unavailable on a device
 - [ ] Rust/native MotionScript compiler runtime
 - [ ] body/hand pose provider
 - [ ] monocular depth provider beyond current layered analysis
