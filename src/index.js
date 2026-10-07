@@ -768,12 +768,32 @@ function serverForApp(env,ownerKey,protocolVersion=1){
     inputSchema:{}
   },async()=>queue("drive_workspace_status",{}));
 
+  if(isV3) s.registerTool("app_drive_workspace_inventory",{
+    description:"Scan only the folder-scoped VideoStudio cloud workspace selected by the user and report visible Projects/ModelPacks counts and bytes. It never enumerates unrelated Drive content or Gallery.",
+    inputSchema:{}
+  },async()=>queue("drive_workspace_inventory",{}));
+
   if(isV3) s.registerTool("app_sync_project_to_drive",{
     description:"Archive one VideoStudio project's Creative Runtime workspace and project manifest to the linked folder-scoped cloud workspace. The Android app performs the transfer natively and only within the user-selected folder.",
     inputSchema:{
       projectId:z.string().min(8).optional()
     }
   },async({projectId})=>queue("sync_project_to_drive",{projectId:projectId||""}));
+
+  if(isV3) s.registerTool("app_restore_project_from_drive",{
+    description:"Restore one project's Creative Runtime workspace from the linked folder-scoped cloud archive into VideoStudio app-private storage. SQLite project state and Gallery are not overwritten or browsed.",
+    inputSchema:{projectId:z.string().min(8).optional()}
+  },async({projectId})=>queue("restore_project_from_drive",{projectId:projectId||""}));
+
+  if(isV3) s.registerTool("app_archive_model_pack_to_drive",{
+    description:"Archive one already-installed VideoStudio model pack to the linked folder-scoped cloud workspace so large packs can live in cold storage without broad Drive permission.",
+    inputSchema:{id:z.string().min(3).max(120)}
+  },async({id})=>queue("archive_model_pack_to_drive",{id}));
+
+  if(isV3) s.registerTool("app_restore_model_pack_from_drive",{
+    description:"Restore a previously archived VideoStudio model pack from the linked folder-scoped cloud workspace into protected staging, revalidate its manifest/checksums, and atomically activate it locally.",
+    inputSchema:{id:z.string().min(3).max(120)}
+  },async({id})=>queue("restore_model_pack_from_drive",{id}));
 
   if(isV3) s.registerTool("app_animate_images",{
     description:"Turn imported still images into a real native animated video. VideoStudio runs bundled on-device person segmentation and face-aware analysis, builds foreground/background layers, directs varied cinematic keyframes and 2.5D parallax, optionally reorders shots for story rhythm, then renders a local MP4 through Media3.",
