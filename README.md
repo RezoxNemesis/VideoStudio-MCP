@@ -50,6 +50,7 @@ VideoStudio now treats the existing `/app-mcp-v3/<owner-key>` URL as a **permane
 - a persistent MCP Connection Core tracks app generation separately from protocol compatibility
 - the server negotiates heartbeat, long-poll and timeout parameters without changing the endpoint
 - newer APK generations fence stale background processes so an old service cannot overwrite current connection state
+- Android automatically re-arms the foreground Native Agent after an in-place APK replacement or device reboot, so the user normally does not need to reconnect or recreate the MCP
 - additive native actions continue through `app_execute` / `app_batch`, so new functions do not require recreating the connector
 - the app automatically falls back to the stable v3 bootstrap profile if negotiated connection metadata becomes invalid
 - Gallery browsing remains permanently blocked
