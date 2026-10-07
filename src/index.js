@@ -205,6 +205,88 @@ export class VideoStudioState extends DurableObject {
     if(!id) return null;
     return (await this.ctx.storage.get("app-device:"+id))||null;
   }
+  async appCreateHybridBinding(ownerKey,webDeviceId){
+    const native=await this.appResolve(ownerKey);
+    if(!native) throw new Error("Private App MCP credential rejected");
+    if(!webDeviceId||String(webDeviceId).length<8) throw new Error("Invalid Studio Web device ID");
+    const web=await this.device(String(webDeviceId));
+    if(!web) throw new Error("Studio Web device is not registered");
+    const ownerHash=await sha256Hex(ownerKey);
+    const activeKey="hybrid-challenge-active:"+ownerHash+":"+String(webDeviceId);
+    const activeToken=await this.ctx.storage.get(activeKey);
+    if(activeToken){
+      const existing=await this.ctx.storage.get("hybrid-challenge:"+activeToken);
+      if(existing&&!existing.used&&Number(existing.expiresAt||0)>Date.now()){
+        return {token:activeToken,expiresAt:existing.expiresAt,webDeviceId:existing.webDeviceId,nativeDeviceId:existing.nativeDeviceId};
+      }
+    }
+    const token=crypto.randomUUID()+"."+crypto.randomUUID();
+    const record={
+      token,
+      ownerHash,
+      nativeDeviceId:native.deviceId,
+      webDeviceId:String(webDeviceId),
+      createdAt:Date.now(),
+      expiresAt:Date.now()+15*60*1000,
+      used:false
+    };
+    await this.ctx.storage.put("hybrid-challenge:"+token,record);
+    await this.ctx.storage.put(activeKey,token);
+    return {token,expiresAt:record.expiresAt,webDeviceId:record.webDeviceId,nativeDeviceId:record.nativeDeviceId};
+  }
+  async appRedeemHybridBinding(token,webDeviceId){
+    if(!token||String(token).length<30) throw new Error("Invalid hybrid binding token");
+    if(!webDeviceId||String(webDeviceId).length<8) throw new Error("Invalid Studio Web device ID");
+    const key="hybrid-challenge:"+String(token);
+    const record=await this.ctx.storage.get(key);
+    if(!record||record.used) throw new Error("Hybrid binding token is invalid or already used");
+    if(Number(record.expiresAt||0)<Date.now()){
+      await this.ctx.storage.delete(key);
+      throw new Error("Hybrid binding token expired");
+    }
+    if(record.webDeviceId!==String(webDeviceId)) throw new Error("Hybrid binding token belongs to another Studio Web device");
+    const native=await this.ctx.storage.get("app-device:"+record.nativeDeviceId);
+    if(!native) throw new Error("Native device is no longer registered");
+    const hybridKey=(crypto.randomUUID()+crypto.randomUUID()).replace(/-/g,"");
+    const hybridHash=await sha256Hex(hybridKey);
+    const binding={
+      id:crypto.randomUUID(),
+      nativeDeviceId:record.nativeDeviceId,
+      webDeviceId:record.webDeviceId,
+      ownerHash:record.ownerHash,
+      createdAt:Date.now(),
+      lastUsedAt:Date.now(),
+      revoked:false,
+      stablePath:"/mcp-v06/"
+    };
+    await this.ctx.storage.put("hybrid-binding:"+hybridHash,binding);
+    await this.ctx.storage.put("hybrid-binding-owner:"+record.ownerHash+":"+record.webDeviceId,hybridHash);
+    record.used=true;
+    record.usedAt=Date.now();
+    record.hybridHash=hybridHash;
+    await this.ctx.storage.put(key,record);
+    await this.ctx.storage.delete("hybrid-challenge-active:"+record.ownerHash+":"+record.webDeviceId);
+    return {
+      hybridKey,
+      privateMcpPath:"/mcp-v06/"+hybridKey,
+      nativeDeviceId:record.nativeDeviceId,
+      webDeviceId:record.webDeviceId,
+      createdAt:binding.createdAt
+    };
+  }
+  async appResolveHybrid(hybridKey){
+    if(!hybridKey||String(hybridKey).length<32) return null;
+    const hybridHash=await sha256Hex(hybridKey);
+    const binding=await this.ctx.storage.get("hybrid-binding:"+hybridHash);
+    if(!binding||binding.revoked) return null;
+    const native=await this.ctx.storage.get("app-device:"+binding.nativeDeviceId);
+    if(!native) return null;
+    binding.lastUsedAt=Date.now();
+    await this.ctx.storage.put("hybrid-binding:"+hybridHash,binding);
+    const {ownerHash,...safeBinding}=binding;
+    const {ownerHash:nativeOwnerHash,...safeNative}=native;
+    return {binding:safeBinding,native:safeNative};
+  }
   async appCreateRebind(ownerKey){
     const d=await this.appResolve(ownerKey);
     if(!d) throw new Error("Private App MCP credential rejected");
