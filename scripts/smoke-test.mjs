@@ -15,6 +15,10 @@ const androidManifest = fs.readFileSync(new URL("../android/app/src/main/Android
 const controlService = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/ControlService.java", import.meta.url), "utf8");
 const commandJournal = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/CommandJournal.java", import.meta.url), "utf8");
 const projectStore = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/ProjectStore.java", import.meta.url), "utf8");
+const portraitMotion = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/NativePortraitMotionAnalyzer.java", import.meta.url), "utf8");
+const animatedDirector = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/AnimatedSceneDirector.java", import.meta.url), "utf8");
+const motionMatrix = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/MotionMatrixEffect.java", import.meta.url), "utf8");
+const atmosphere = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/AtmosphereOverlay.java", import.meta.url), "utf8");
 
 const scriptMatch = app.match(/<script>([\s\S]*?)<\/script>/);
 let appScriptParses = false;
@@ -67,11 +71,11 @@ const checks = [
   ["native app has three permission modes", nativeMain.includes("Allow one file") && nativeMain.includes("Allow all tools") && nativeMain.includes("Allow everything")],
   ["native app has green screen and slow motion tools", nativeMain.includes("Green Screen") && nativeMain.includes("Slow Motion")],
   ["native app uses MCP v3 endpoint only for pairing", nativeProtocol.includes('MCP_PATH = "/app-mcp-v3/"') && nativeProtocol.includes('API_PREFIX = "/api/v3/app"') && nativeProtocol.includes("PROTOCOL_VERSION = 3") && nativeProtocol.includes("AndroidKeyStore")],
-  ["native app identifies as VideoStudio 3.0.0", nativeProtocol.includes('APP_VERSION = "3.0.0"') && androidBuild.includes('versionName = "3.0.0"') && androidBuild.includes("versionCode = 300")],
+  ["native app identifies as VideoStudio 3.1.0 while retaining MCP v3", nativeProtocol.includes('APP_VERSION = "3.1.0"') && nativeProtocol.includes("PROTOCOL_VERSION = 3") && androidBuild.includes('versionName = "3.1.0"') && androidBuild.includes("versionCode = 310")],
   ["pairing message explicitly says VideoStudio v3", nativeProtocol.includes("VideoStudio v3 Android Native Agent MCP") && nativeProtocol.includes("MCP v3 endpoint")],
   ["native v3 command cursor advances only after completion", nativeProtocol.includes('KEY_SEQ = "native_v3_last_seq"') && nativeProtocol.includes("advanceSequence")],
   ["native app has bounded heavy-work scheduler", nativeJobs.includes("Semaphore") && nativeJobs.includes("THERMAL_STATUS_SEVERE")],
-  ["worker exposes canonical VideoStudio App MCP v3", worker.includes('"VideoStudio-App-MCP-v3"') && worker.includes("appMcpV3") && worker.includes("serverForApp(env,ownerKey,3)")],
+  ["worker exposes canonical VideoStudio App MCP v3", worker.includes('"VideoStudio-App-MCP-v3"') && worker.includes('version:isV3?"3.1.0"') && worker.includes("appMcpV3") && worker.includes("serverForApp(env,ownerKey,3)")],
   ["worker has dedicated v3 API namespace", worker.includes('"/api/v3/app/register"') && worker.includes('"/api/v3/app/commands"') && worker.includes("appCompleteV3")],
   ["worker uses an isolated v3 command queue", worker.includes('"app-v3-seq:"') && worker.includes('"app-v3-cl:"') && worker.includes("protocolVersion:3")],
   ["worker rejects unbound native credentials", worker.includes("Private App MCP credential rejected")],
@@ -89,6 +93,18 @@ const checks = [
   ["native app supports authenticated handoff download", nativeProtocol.includes("openPrivateHandoff") && nativeMain.includes('case "import_chat_file"')],
   ["native app exposes v3 direct attachment capability", nativeMain.includes('"direct-chatgpt-attachment-ingest"') && nativeMain.includes('"chat-attachment-handoff-fallback"')],
   ["native v3 uses Media3 Transformer", androidBuild.includes("media3-transformer:1.11.1") && nativeRender.includes("Transformer.Builder")],
+  ["v3.1 bundles on-device portrait AI", androidBuild.includes("segmentation-selfie:16.0.0-beta6") && androidBuild.includes("face-mesh-detection:16.0.0-beta1")],
+  ["portrait AI builds app-private foreground/background layers", portraitMotion.includes("SelfieSegmenterOptions.SINGLE_IMAGE_MODE") && portraitMotion.includes("FaceMeshDetection.getClient") && portraitMotion.includes("animation_layers/") && portraitMotion.includes("buildReconstructedBackground")],
+  ["background reconstruction preserves visible environment", portraitMotion.includes("mask-aware-edge-fill-v1") && portraitMotion.includes("dilatedConfidence") && portraitMotion.includes("mixColor")],
+  ["animation director emits face-aware cinematic keyframes", animatedDirector.includes('spec.put("keyframes"') && animatedDirector.includes("faceAnchorX") && animatedDirector.includes("foregroundDepth") && animatedDirector.includes("breathingAmplitude")],
+  ["GPU motion supports multi-keyframe independent layer depth", motionMatrix.includes("keyframedMotion") && motionMatrix.includes("applyLayerDepth") && motionMatrix.includes('"foreground".equals(layerRole)') && motionMatrix.includes('"background".equals(layerRole)')],
+  ["Media3 renderer composites foreground/background animation sequences", nativeRender.includes("buildLayeredAnimationComposition") && nativeRender.includes("foregroundSequence") && nativeRender.includes("backgroundSequence") && nativeRender.includes("subject-aware-2.5d")],
+  ["procedural atmosphere renders per frame", atmosphere.includes("extends CanvasOverlay") && atmosphere.includes("presentationTimeUs") && nativeRender.includes("new AtmosphereOverlay") && nativeRender.includes("new OverlayEffect")],
+  ["MCP v3 exposes autonomous still animation", worker.includes('"app_animate_images"') && worker.includes('"animate_images"') && controlService.includes('case "animate_images"') && controlService.includes("queueAnimatedImages")],
+  ["MCP v3 exposes native job polling", worker.includes('"app_job_status"') && controlService.includes('case "job_status"') && nativeJobs.includes("public JSONObject get(String id)")],
+  ["manual animation uses same Native Agent workflow", nativeMain.includes("animateImagesDialog") && nativeMain.includes("ControlService.ACTION_LOCAL_ANIMATE") && controlService.includes("ACTION_LOCAL_ANIMATE")],
+  ["image project preview uses latest native render", nativeMain.includes("activeProject.latestExportUri") && nativeMain.includes("Render the animated image timeline first")],
+  ["remote ingest validates redirects DNS and byte limits", controlService.includes("openSafeRemote") && controlService.includes("InetAddress.getAllByName") && controlService.includes("MAX_REMOTE_IMPORT_BYTES") && controlService.includes("MAX_REMOTE_REDIRECTS")],
   ["native app has prompt-to-video pipeline", promptVideo.includes("class PromptVideoEngine") && nativeMain.includes('case "prompt_video"')],
   ["native prompt video exports a real MP4", nativeMain.includes("runExportBlocking") && nativeMain.includes("Movies/VideoStudio")],
   ["native app has on-device visual analyser", nativeAnalyzer.includes("contactSheet") && nativeMain.includes('case "analyse_media"')],
