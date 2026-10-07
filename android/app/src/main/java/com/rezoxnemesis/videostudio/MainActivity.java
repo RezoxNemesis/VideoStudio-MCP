@@ -78,6 +78,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
     private NativeMediaAnalyzer mediaAnalyzer;
     private DriveWorkspaceProvider driveWorkspace;
     private PreviewSnapshotStore previewSnapshots;
+    private ProxyManager proxyManager;
     private SharedPreferences prefs;
     private FrameLayout content;
     private TextView connectionPill;
@@ -107,6 +108,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         mediaAnalyzer = new NativeMediaAnalyzer(this);
         driveWorkspace = new DriveWorkspaceProvider(this);
         previewSnapshots = new PreviewSnapshotStore(this);
+        proxyManager = new ProxyManager(this, store, jobs);
         livePlayer = new LiveEditPlayer(this);
         activeProject = store.active();
         protocol = new AppProtocol(this, this);
@@ -517,7 +519,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                     try {
                         hint.setVisibility(View.GONE);
                         livePlayer.setContextIds("", "");
-                        livePlayer.play(Uri.parse(asset.uri), 0L);
+                        livePlayer.play(Uri.parse(ProxyManager.previewUri(activeProject, asset)), 0L);
                     } catch (Exception error) {
                         Toast.makeText(this, "Could not preview media", Toast.LENGTH_SHORT).show();
                     }
@@ -1110,6 +1112,18 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                     getContentResolver().takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
                 } catch (Exception ignored) {}
                 ProjectStore.Asset asset = store.importUri(activeProject, uri);
+                if (ProxyManager.shouldProxy(asset)) {
+                    try {
+                        proxyManager.request(activeProject, asset, "720p");
+                        ActivityLog.add(this, "system", "Heavy preview proxy queued",
+                                asset.name + " • original retained for final render",
+                                "queued", 0, null, activeProject.id);
+                    } catch (Exception proxyError) {
+                        ActivityLog.add(this, "system", "Heavy preview proxy unavailable",
+                                proxyError.getMessage() == null ? asset.name : proxyError.getMessage(),
+                                "info", null, null, activeProject.id);
+                    }
+                }
                 if (selectedClip == null && !activeProject.clips.isEmpty()) selectedClip = activeProject.clips.get(activeProject.clips.size() - 1);
                 if ("one_file".equals(permissionMode()) && prefs.getString(KEY_FILE, "").isEmpty()) {
                     prefs.edit().putString(KEY_FILE, asset.id).apply();
@@ -1175,7 +1189,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         if (asset == null) return;
         livePlayer.setContextIds("", clip.id);
         livePlayer.playClip(
-                Uri.parse(asset.uri),
+                Uri.parse(ProxyManager.previewUri(activeProject, asset)),
                 clip.inMs,
                 clip.outMs,
                 clip.speed,
