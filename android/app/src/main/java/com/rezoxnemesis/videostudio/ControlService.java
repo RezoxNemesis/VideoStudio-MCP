@@ -360,7 +360,9 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     }
 
     private void syncState() {
-        protocol.setLocalState("everything", store.summaries());
+        String mode = getSharedPreferences("videostudio_native_v1", MODE_PRIVATE)
+                .getString("permission_mode", "all_tools");
+        protocol.setLocalState(mode, store.summaries());
     }
 
     private void createChannel() {
