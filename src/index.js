@@ -183,15 +183,52 @@ const out = x => ({content:[{type:"text",text:JSON.stringify(x)}]});
 function serverFor(env){
   const s=new McpServer({name:"VideoStudio-MCP",version:"0.6.0"}), st=state(env);
   s.registerTool("server_status",{description:"Check VideoStudio MCP status.",inputSchema:{}},async()=>out({ok:true,service:"VideoStudio-MCP",version:"0.6.0",app:"/",capabilities:["Android app shell","device pairing","projects","local media","12-frame visual analysis","scene-change detection","quiet-section detection","multi-cut timeline editing","per-clip speed volume transforms filters and titles","render inspection","batched edit commands","adaptive local MP4/WebM rendering"]}));
-  s.registerTool("device_status",{description:"Check a paired VideoStudio app device.",inputSchema:{deviceId:z.string().min(8)}},async({deviceId})=>out(await st.status(deviceId)));
-  s.registerTool("create_video_project",{description:"Create a VideoStudio project on a paired device.",inputSchema:{deviceId:z.string().min(8),name:z.string().min(1).max(120),instruction:z.string().max(5000).optional()}},async({deviceId,name,instruction})=>out(await st.createProject(deviceId,name,instruction||"")));
-  s.registerTool("list_video_projects",{description:"List projects and synced local-media metadata.",inputSchema:{deviceId:z.string().min(8)}},async({deviceId})=>out(await st.projects(deviceId)));
-  s.registerTool("get_video_project",{description:"Get timeline, assets, settings and latest command result.",inputSchema:{deviceId:z.string().min(8),projectId:z.string().min(8)}},async({deviceId,projectId})=>out((await st.project(deviceId,projectId))||{error:"Project not found"}));
-  s.registerTool("queue_video_edit",{description:"Send one edit action to VideoStudio. Supports timeline replacement, per-clip speed/volume/reframe/zoom/filter/title effects, local scene/audio analysis, render inspection, rendering and autonomous requests. Media stays local on the device.",inputSchema:{deviceId:z.string().min(8),projectId:z.string().min(8),action:z.enum(["set_trim","set_speed","set_mute","set_aspect","set_title","set_quality","set_transition","remove_clip","move_clip","reorder_timeline","replace_timeline","set_clip_speed","set_clip_title","set_clip_effects","analyse_media","inspect_render","render","autonomous_request"]),parameters:z.record(z.string(),z.any()).optional()}},async({deviceId,projectId,action,parameters})=>{
-    try{ const c=await st.enqueue(deviceId,projectId,action,parameters||{}); return out({queued:true,commandId:c.id,sequence:c.seq,action,note:action==="render"?"Render runs locally. Keep the app open; a browser may require one tap before playback.":"The open app will apply this automatically."}); }
-    catch(e){ return out({queued:false,error:e.message}); }
+  s.registerTool("device_status",{description:"Check a paired VideoStudio app device. Native v1 also accepts the private owner credential as deviceId for compatibility.",inputSchema:{deviceId:z.string().min(8)}},async({deviceId})=>{
+    const native=await st.appResolve(deviceId);
+    return out(native?await st.appStatus(deviceId):await st.status(deviceId));
   });
-  s.registerTool("get_video_command_result",{description:"Get the result of a queued edit, media-analysis, or render command. Visual analysis results include an image content block that ChatGPT can inspect.",inputSchema:{deviceId:z.string().min(8),commandId:z.string().min(8)}},async({deviceId,commandId})=>{
+  s.registerTool("create_video_project",{description:"Create a VideoStudio project on a paired device.",inputSchema:{deviceId:z.string().min(8),name:z.string().min(1).max(120),instruction:z.string().max(5000).optional()}},async({deviceId,name,instruction})=>{
+    if(await st.appResolve(deviceId)){
+      const c=await st.appEnqueue(deviceId,"create_project",{name,instruction:instruction||""});
+      return out({queued:true,commandId:c.id,sequence:c.seq,nativeApp:true});
+    }
+    return out(await st.createProject(deviceId,name,instruction||""));
+  });
+  s.registerTool("list_video_projects",{description:"List projects and synced local-media metadata.",inputSchema:{deviceId:z.string().min(8)}},async({deviceId})=>{
+    const native=await st.appResolve(deviceId);
+    if(native) return out({nativeApp:true,projects:native.projects||[]});
+    return out(await st.projects(deviceId));
+  });
+  s.registerTool("get_video_project",{description:"Get timeline, assets, settings and latest command result.",inputSchema:{deviceId:z.string().min(8),projectId:z.string().min(8)}},async({deviceId,projectId})=>out((await st.project(deviceId,projectId))||{error:"Project not found"}));
+  s.registerTool("queue_video_edit",{description:"Send one edit action to VideoStudio. Native v1 compatibility can use the private owner credential as deviceId and projectId='active-native'.",inputSchema:{deviceId:z.string().min(8),projectId:z.string().min(8),action:z.enum(["set_trim","set_speed","set_mute","set_aspect","set_title","set_quality","set_transition","remove_clip","move_clip","reorder_timeline","replace_timeline","set_clip_speed","set_clip_title","set_clip_effects","analyse_media","inspect_render","render","autonomous_request"]),parameters:z.record(z.string(),z.any()).optional()}},async({deviceId,projectId,action,parameters})=>{
+    try{
+      const p=parameters||{};
+      if(await st.appResolve(deviceId)){
+        let nativeAction=p.nativeAction||"";
+        let nativeParameters=p.nativeParameters||p;
+        if(!nativeAction){
+          if(action==="autonomous_request"&&Array.isArray(p.clips)) nativeAction="apply_edit_plan";
+          else if(action==="set_clip_effects") nativeAction="apply_tool";
+          else if(action==="render"||action==="inspect_render") nativeAction="preview_project";
+          else if(action==="autonomous_request"&&String(p.instruction||"").toLowerCase().includes("preview")) nativeAction="preview_project";
+          else nativeAction="get_state";
+        }
+        if(nativeAction==="apply_tool"&&!nativeParameters.tool){
+          nativeParameters={clipIndex:Number(p.clipIndex||p.index||0),tool:p.tool||"effect",settings:p.settings||p.effects||p};
+        }
+        const c=await st.appEnqueue(deviceId,nativeAction,nativeParameters);
+        return out({queued:true,commandId:c.id,sequence:c.seq,action:nativeAction,nativeApp:true});
+      }
+      const c=await st.enqueue(deviceId,projectId,action,p);
+      return out({queued:true,commandId:c.id,sequence:c.seq,action,note:action==="render"?"Render runs locally. Keep the app open; a browser may require one tap before playback.":"The open app will apply this automatically."});
+    }catch(e){ return out({queued:false,error:e.message}); }
+  });
+  s.registerTool("get_video_command_result",{description:"Get the result of a queued edit, media-analysis, render or native-app compatibility command.",inputSchema:{deviceId:z.string().min(8),commandId:z.string().min(8)}},async({deviceId,commandId})=>{
+    const native=await st.appResolve(deviceId);
+    if(native){
+      const c=await st.appCommand(deviceId,commandId);
+      return out(c||{error:"Command not found"});
+    }
     const c=await st.command(deviceId,commandId);
     if(!c) return out({error:"Command not found"});
     const sheet=c.result&&c.result.contactSheet;
