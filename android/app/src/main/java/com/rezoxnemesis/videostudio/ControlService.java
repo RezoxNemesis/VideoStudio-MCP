@@ -47,6 +47,10 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     private static final String KEY_SERVICE_DETAIL = "control_service_detail";
     private static final String KEY_AUTONOMY_MIGRATED = "autonomy_everything_v32_migrated";
     private static final long MAX_REMOTE_IMPORT_BYTES = 350L * 1024L * 1024L;
+    // Private MCP JSON fallback for ChatGPT attachments when the host cannot expose a temporary HTTPS file URL.
+    // Kept deliberately small because this path is for still frames, not video payloads.
+    private static final long MAX_INLINE_IMAGE_BYTES = 12L * 1024L * 1024L;
+    private static final int MAX_INLINE_BASE64_CHARS = 17 * 1024 * 1024;
     private static final int MAX_REMOTE_REDIRECTS = 5;
 
     private ProjectStore store;
@@ -289,6 +293,10 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                     return;
                 case "import_attachment":
                     complete(command, queueDirectAttachmentImport(p));
+                    return;
+                case "import_inline_base64":
+                    complete(command, importInlineBase64(p));
+                    syncProtocolState();
                     return;
                 case "import_chat_file":
                     complete(command, queuePrivateImport(p));
@@ -950,6 +958,97 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         }
     }
 
+    /**
+     * Private inline still-image ingest used as a compatibility bridge when ChatGPT can read
+     * an attachment but cannot expose an Android-downloadable HTTPS URL to the installed MCP
+     * schema. The bytes travel inside the already owner-authenticated MCP command and are
+     * written directly to app-private storage. Nothing is published to Gallery or a public URL.
+     */
+    private JSONObject importInlineBase64(JSONObject p) throws Exception {
+        ProjectStore.Project project = resolveProject(p.optString("projectId", ""));
+        String name = sanitizeFileName(p.optString("name", "ChatGPT_frame.png"));
+        String mime = p.optString("mime", "image/png").trim().toLowerCase(Locale.US);
+        if (!("image/png".equals(mime) || "image/jpeg".equals(mime) || "image/webp".equals(mime))) {
+            throw new IllegalArgumentException("Inline MCP ingest accepts PNG, JPEG or WebP still images only");
+        }
+
+        String encoded = p.optString("base64", "").trim();
+        if (encoded.startsWith("data:")) {
+            int comma = encoded.indexOf(',');
+            if (comma < 0) throw new IllegalArgumentException("Malformed data URL");
+            encoded = encoded.substring(comma + 1);
+        }
+        if (encoded.isEmpty()) throw new IllegalArgumentException("Missing inline attachment bytes");
+        if (encoded.length() > MAX_INLINE_BASE64_CHARS) {
+            throw new IllegalArgumentException("Inline image exceeds VideoStudio's private MCP transfer limit");
+        }
+
+        byte[] bytes;
+        try {
+            bytes = java.util.Base64.getDecoder().decode(encoded);
+        } catch (IllegalArgumentException error) {
+            throw new IllegalArgumentException("Invalid base64 image payload");
+        }
+        if (bytes.length == 0 || bytes.length > MAX_INLINE_IMAGE_BYTES) {
+            throw new IllegalArgumentException("Inline image exceeds VideoStudio's 12 MB decoded transfer limit");
+        }
+
+        String expectedSha = p.optString("sha256", "").trim().toLowerCase(Locale.US);
+        if (!expectedSha.isEmpty()) {
+            String actualSha = sha256Hex(bytes);
+            if (!actualSha.equals(expectedSha)) throw new IllegalArgumentException("Inline image SHA-256 mismatch");
+        }
+
+        File dir = new File(getFilesDir(), "imports");
+        if (!dir.exists() && !dir.mkdirs()) throw new IllegalStateException("Could not create import directory");
+        File file = new File(dir, System.currentTimeMillis() + "_" + name);
+        boolean success = false;
+        try (FileOutputStream out = new FileOutputStream(file)) {
+            out.write(bytes);
+            out.flush();
+            success = true;
+        } finally {
+            if (!success && file.exists()) file.delete();
+        }
+
+        // Decode bounds only, so malformed data is rejected without allocating the full bitmap.
+        android.graphics.BitmapFactory.Options bounds = new android.graphics.BitmapFactory.Options();
+        bounds.inJustDecodeBounds = true;
+        android.graphics.BitmapFactory.decodeFile(file.getAbsolutePath(), bounds);
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
+            file.delete();
+            throw new IllegalArgumentException("Inline payload is not a readable image");
+        }
+        long pixels = (long) bounds.outWidth * (long) bounds.outHeight;
+        if (pixels > 80_000_000L) {
+            file.delete();
+            throw new IllegalArgumentException("Inline image dimensions exceed VideoStudio's safe decode limit");
+        }
+
+        ProjectStore.Asset asset = addImportedAsset(project, file, name, mime);
+        ActivityLog.add(this, "chatgpt", "Private inline frame imported",
+                name + " • " + bounds.outWidth + "×" + bounds.outHeight,
+                "success", 100, null, project.id);
+
+        JSONObject result = ok();
+        result.put("projectId", project.id);
+        result.put("assetId", asset.id);
+        result.put("name", asset.name);
+        result.put("mime", asset.mime);
+        result.put("size", bytes.length);
+        result.put("width", bounds.outWidth);
+        result.put("height", bounds.outHeight);
+        result.put("transport", "owner-authenticated-inline-mcp");
+        return result;
+    }
+
+    private String sha256Hex(byte[] bytes) throws Exception {
+        byte[] digest = java.security.MessageDigest.getInstance("SHA-256").digest(bytes);
+        StringBuilder out = new StringBuilder(digest.length * 2);
+        for (byte b : digest) out.append(String.format(Locale.US, "%02x", b & 0xff));
+        return out.toString();
+    }
+
     private JSONObject queuePrivateImport(JSONObject p) throws Exception {
         String handoffId = p.optString("handoffId");
         if (handoffId.isEmpty()) throw new IllegalArgumentException("Missing private handoff ID");
@@ -1022,7 +1121,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         return result;
     }
 
-    private void addImportedAsset(ProjectStore.Project project, File file, String name, String mime) {
+    private ProjectStore.Asset addImportedAsset(ProjectStore.Project project, File file, String name, String mime) {
         ProjectStore.Asset asset = new ProjectStore.Asset();
         asset.id = UUID.randomUUID().toString();
         asset.uri = Uri.fromFile(file).toString();
@@ -1039,6 +1138,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             project.clips.add(clip);
         }
         store.save(project);
+        return asset;
     }
 
     private Uri publishExport(File file, String displayName) throws Exception {
@@ -1104,6 +1204,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             out.put("permissionMode", permissionMode());
             out.put("galleryAccess", false);
             out.put("directAttachmentIngest", true);
+            out.put("inlineAttachmentIngest", true);
             out.put("controlPaused", protocol.isControlPaused());
             out.put("backgroundService", true);
             out.put("result", "VideoStudio v3 native core healthy");
@@ -1129,6 +1230,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             out.put("mcpEndpointVersion", "v3");
             out.put("nativeAgent", "videostudio-v3");
             out.put("directAttachmentIngest", true);
+            out.put("inlineAttachmentIngest", true);
             out.put("localEngineOwnsProjects", true);
             out.put("portraitAnimationEngine", "v3.2-articulated-parallax");
             out.put("onDevicePortraitAi", true);
