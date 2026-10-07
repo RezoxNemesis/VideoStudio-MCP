@@ -123,7 +123,7 @@ public final class AppProtocol {
         c.setReadTimeout(45000);
         c.setRequestProperty("Accept", "*/*");
         c.setRequestProperty("Authorization", "Bearer " + ownerKey);
-        c.setRequestProperty("User-Agent", "VideoStudio-Android/1.1.1");
+        c.setRequestProperty("User-Agent", "VideoStudio-Android/1.1.2");
         return c;
     }
 
@@ -189,7 +189,7 @@ public final class AppProtocol {
             JSONObject meta = new JSONObject();
             meta.put("name", "VideoStudio Android");
             meta.put("platform", "android-native");
-            meta.put("appVersion", "1.1.1");
+            meta.put("appVersion", "1.1.2");
             meta.put("permissionMode", permissionMode);
             meta.put("controlPaused", isControlPaused());
             meta.put("connectionSession", connectionSession);
