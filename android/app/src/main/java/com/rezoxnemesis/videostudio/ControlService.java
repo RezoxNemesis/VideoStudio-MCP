@@ -857,6 +857,305 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         return result;
     }
 
+    private JSONObject queueCreativeGraphRun(JSONObject p) throws Exception {
+        ProjectStore.Project project = resolveProject(p.optString("projectId", ""));
+        JSONObject existing = creativeNodeStore.status(project.id);
+        JSONArray existingNodes = existing.optJSONArray("nodes");
+
+        String source = p.optString("script", p.optString("source", "")).trim();
+        if (existingNodes == null || existingNodes.length() == 0) {
+            if (source.isEmpty()) {
+                throw new IllegalStateException("No CreativeIR graph is prepared. Compile or plan MotionScript first.");
+            }
+            JSONObject planned = planCreativeGraph(p);
+            if (!planned.optBoolean("ready", false) && p.optBoolean("strictProviders", false)) {
+                JSONArray unresolved = planned.optJSONArray("unresolvedCapabilities");
+                throw new IllegalStateException("Creative graph has unavailable capability: "
+                        + (unresolved == null ? "unknown" : unresolved.optString(0, "unknown")));
+            }
+        }
+
+        boolean renderRequested = p.optBoolean("render", true);
+        boolean critiqueRequested = p.optBoolean("critique", true);
+        String aspect = p.optString("aspect", "9:16");
+        String quality = p.optString("quality", "1080p");
+        String fileName = sanitizeFileName(p.optString(
+                "fileName",
+                "VideoStudio_Creative_" + System.currentTimeMillis() + ".mp4"
+        ));
+
+        JSONObject durableParameters = new JSONObject(p.toString());
+        durableParameters.put("projectId", project.id);
+        durableParameters.put("render", renderRequested);
+        durableParameters.put("critique", critiqueRequested);
+        durableParameters.put("aspect", aspect);
+        durableParameters.put("quality", quality);
+        durableParameters.put("fileName", fileName);
+
+        JobManager.Job job = submitRecoverableHeavy(
+                "run_creative_graph",
+                durableParameters,
+                project.id,
+                "Creative Runtime • " + project.name,
+                state -> {
+                    int guard = 0;
+                    while (guard++ < 256) {
+                        if (Thread.currentThread().isInterrupted()) throw new InterruptedException();
+                        JSONObject readyState = creativeNodeStore.readyNodes(project.id);
+                        JSONArray readyNodes = readyState.optJSONArray("nodes");
+                        if (readyNodes == null || readyNodes.length() == 0) break;
+
+                        boolean progressed = false;
+                        for (int i = 0; i < readyNodes.length(); i++) {
+                            if (Thread.currentThread().isInterrupted()) throw new InterruptedException();
+
+                            JSONObject node = readyNodes.optJSONObject(i);
+                            if (node == null) continue;
+                            String nodeId = node.optString("id", "");
+                            String capability = node.optString("capability", "");
+                            if (nodeId.isEmpty() || capability.isEmpty()) continue;
+
+                            if ("render.video".equals(capability) && !renderRequested) continue;
+                            if ("render.critique".equals(capability) && !critiqueRequested) {
+                                creativeNodeStore.startNode(project.id, nodeId);
+                                JSONObject skipped = new JSONObject();
+                                skipped.put("ok", true);
+                                skipped.put("skipped", true);
+                                skipped.put("reason", "Critique disabled for this run");
+                                creativeNodeStore.complete(project.id, nodeId, skipped);
+                                progressed = true;
+                                continue;
+                            }
+
+                            int total = creativeNodeCount(project.id);
+                            int completed = creativeCompletedCount(project.id);
+                            int progress = 4 + (int) Math.min(88,
+                                    88d * completed / Math.max(1, total));
+                            checkpoint(state, "Creative Runtime",
+                                    "Executing " + nodeId + " • " + capability,
+                                    progress, project.id);
+                            jobs.awaitSafeCheckpoint(state, "creative_" + nodeId.replaceAll("[^a-zA-Z0-9._-]+", "_"));
+                            creativeNodeStore.startNode(project.id, nodeId);
+
+                            try {
+                                JSONObject nodeResult;
+                                if (builtInCreativeRuntime.supports(capability)) {
+                                    nodeResult = builtInCreativeRuntime.execute(
+                                            store.get(project.id),
+                                            node,
+                                            latestGeneratedVideo(project.id)
+                                    );
+                                } else if ("render.compositor".equals(capability)) {
+                                    nodeResult = executeCreativeCompositor(store.get(project.id), node);
+                                } else if ("render.video".equals(capability)) {
+                                    ProjectStore.Project latest = store.get(project.id);
+                                    if (latest == null || latest.clips.isEmpty()) {
+                                        throw new IllegalStateException("Creative compositor produced no timeline");
+                                    }
+                                    runExportBlocking(latest, aspect, quality, fileName, state);
+                                    ProjectStore.Asset rendered = latestGeneratedVideo(project.id);
+                                    if (rendered == null) {
+                                        throw new IllegalStateException("Native creative render completed without a registered Media Bin asset");
+                                    }
+                                    nodeResult = new JSONObject();
+                                    nodeResult.put("ok", true);
+                                    nodeResult.put("assetId", rendered.id);
+                                    nodeResult.put("uri", rendered.uri);
+                                    nodeResult.put("name", rendered.name);
+                                    nodeResult.put("role", rendered.role);
+                                    nodeResult.put("durationMs", rendered.durationMs);
+                                } else {
+                                    throw new IllegalStateException(
+                                            "Capability provider is registered but no safe local runtime adapter is available yet: "
+                                                    + capability
+                                    );
+                                }
+
+                                creativeNodeStore.complete(project.id, nodeId, nodeResult);
+                                progressed = true;
+                                checkpoint(state, "Creative Runtime",
+                                        "Completed " + nodeId,
+                                        5 + (int) Math.min(90,
+                                                90d * creativeCompletedCount(project.id)
+                                                        / Math.max(1, creativeNodeCount(project.id))),
+                                        project.id);
+                            } catch (Exception error) {
+                                creativeNodeStore.fail(
+                                        project.id,
+                                        nodeId,
+                                        error.getMessage() == null ? "Creative node failed" : error.getMessage(),
+                                        true
+                                );
+                                throw error;
+                            }
+                        }
+                        if (!progressed) break;
+                    }
+
+                    JSONObject finalState = creativeNodeStore.status(project.id);
+                    JSONArray nodes = finalState.optJSONArray("nodes");
+                    int completed = creativeCompletedCount(project.id);
+                    int total = nodes == null ? 0 : nodes.length();
+                    checkpoint(state, "Creative Runtime",
+                            completed + "/" + total + " DAG nodes complete",
+                            renderRequested ? 100 : Math.min(100, 10 + (int) (90d * completed / Math.max(1, total))),
+                            project.id);
+                    ActivityLog.add(this, "system", "Creative Runtime pass complete",
+                            completed + "/" + total + " nodes • targeted cache preserved",
+                            "success", 100, null, project.id);
+                    syncProtocolState();
+                }
+        );
+
+        JSONObject result = ok();
+        result.put("queued", true);
+        result.put("jobId", job.id);
+        result.put("projectId", project.id);
+        result.put("durableRecovery", true);
+        result.put("render", renderRequested);
+        result.put("critique", critiqueRequested);
+        result.put("aspect", aspect);
+        result.put("quality", quality);
+        result.put("fileName", fileName);
+        result.put("nodeState", creativeNodeStore.status(project.id));
+        return result;
+    }
+
+    private JSONObject executeCreativeCompositor(ProjectStore.Project project, JSONObject node) throws Exception {
+        if (project == null) throw new IllegalStateException("Project is unavailable");
+        if (project.clips.isEmpty()) throw new IllegalStateException("Timeline is empty");
+
+        JSONObject input = node.optJSONObject("input");
+        if (input == null) input = new JSONObject();
+        int shotIndex = Math.max(0, Math.min(
+                project.clips.size() - 1,
+                input.optInt("_shotIndex", 0)
+        ));
+        ProjectStore.Clip clip = project.clips.get(shotIndex);
+        ProjectStore.Asset asset = project.asset(clip.assetId);
+        if (asset == null) throw new IllegalStateException("Compositor clip asset is missing");
+
+        String motion = input.optString("motionPreset", "none");
+        String effect = input.optString("effectPreset", "none");
+        double strength = Math.max(0, Math.min(1, input.optDouble("motionStrength", .35)));
+        String atmosphere = input.optString("atmosphere", "ambient");
+        double atmosphereIntensity = Math.max(0, Math.min(1, input.optDouble("atmosphereIntensity", .25)));
+        long duration = input.has("startMs") && input.has("endMs")
+                ? Math.max(900, input.optLong("endMs") - input.optLong("startMs"))
+                : Math.max(900, clip.outputDurationMs());
+
+        JSONObject rig = completedCreativeResult(project.id, "portrait.rig", asset.id);
+        boolean layered = rig != null && asset.mime != null && asset.mime.startsWith("image/");
+
+        if (layered) {
+            JSONObject analysis = rig.optJSONObject("analysis");
+            if (analysis == null) analysis = new JSONObject();
+            JSONObject spec = AnimatedSceneDirector.buildSpec(
+                    analysis,
+                    shotIndex,
+                    Math.max(1, project.clips.size()),
+                    "cinematic",
+                    Math.max(.15, strength),
+                    duration,
+                    atmosphere
+            );
+            if (!"none".equals(motion)) spec.put("cameraPreset", motion);
+            spec.put("environmentMotion", atmosphere);
+            spec.put("atmosphereIntensity", atmosphereIntensity);
+            spec.put("motionScript", true);
+            spec.put("motionScriptVersion", MotionScriptCompiler.MOTION_SCRIPT_VERSION);
+
+            clip.inMs = 0;
+            clip.outMs = duration;
+            clip.speed = 1f;
+            clip.effects.put("animatedScene", true);
+            clip.effects.put("animationEngine", "creativeir-articulated-parallax-v1");
+            clip.effects.put("animationAnalysis", analysis);
+            clip.effects.put("animationSpec", spec);
+            clip.effects.put("foregroundUri", rig.optString("foregroundUri", ""));
+            clip.effects.put("headUri", rig.optString("headUri", ""));
+            clip.effects.put("torsoUri", rig.optString("torsoUri", ""));
+            clip.effects.put("lowerUri", rig.optString("lowerUri", ""));
+            clip.effects.put("backgroundUri", rig.optString("backgroundUri", ""));
+            clip.effects.put("motionPreset", spec.optString("cameraPreset", "push_in"));
+            clip.effects.put("motionStrength", strength);
+            clip.effects.put("motionBlur", spec.optDouble("motionBlur", .18));
+        } else {
+            clip.effects.put("motionPreset", motion);
+            clip.effects.put("motionStrength", strength);
+            JSONObject spec = clip.effects.optJSONObject("animationSpec");
+            if (spec == null) spec = new JSONObject();
+            spec.put("environmentMotion", atmosphere);
+            spec.put("atmosphereIntensity", atmosphereIntensity);
+            spec.put("motionScript", true);
+            spec.put("motionScriptVersion", MotionScriptCompiler.MOTION_SCRIPT_VERSION);
+            clip.effects.put("animationSpec", spec);
+        }
+
+        if (!"none".equals(effect)) clip.effects.put("effectPreset", effect);
+        store.save(project);
+
+        JSONObject result = new JSONObject();
+        result.put("ok", true);
+        result.put("clipId", clip.id);
+        result.put("assetId", asset.id);
+        result.put("shotIndex", shotIndex);
+        result.put("layered", layered);
+        result.put("motionPreset", clip.effects.optString("motionPreset", motion));
+        result.put("durationMs", clip.outputDurationMs());
+        result.put("engine", layered ? "creativeir-articulated-parallax-v1" : "creativeir-native-compositor-v1");
+        return result;
+    }
+
+    private JSONObject completedCreativeResult(String projectId,
+                                               String capability,
+                                               String assetId) {
+        JSONObject state = creativeNodeStore.status(projectId);
+        JSONArray nodes = state.optJSONArray("nodes");
+        if (nodes == null) return null;
+        for (int i = 0; i < nodes.length(); i++) {
+            JSONObject node = nodes.optJSONObject(i);
+            if (node == null
+                    || !"completed".equals(node.optString("state"))
+                    || !capability.equals(node.optString("capability"))) continue;
+            JSONObject result = node.optJSONObject("result");
+            if (result == null) continue;
+            if (assetId == null || assetId.isEmpty() || assetId.equals(result.optString("assetId", ""))) {
+                try { return new JSONObject(result.toString()); }
+                catch (Exception ignored) { return result; }
+            }
+        }
+        return null;
+    }
+
+    private ProjectStore.Asset latestGeneratedVideo(String projectId) {
+        ProjectStore.Project project = store.get(projectId);
+        if (project == null) return null;
+        ProjectStore.Asset latest = null;
+        for (ProjectStore.Asset asset : project.assets) {
+            if (asset == null || asset.mime == null || !asset.mime.startsWith("video/")) continue;
+            if (!asset.generated && !"final_render".equals(asset.role)) continue;
+            if (latest == null || asset.createdAt >= latest.createdAt) latest = asset;
+        }
+        return latest;
+    }
+
+    private int creativeNodeCount(String projectId) {
+        JSONArray nodes = creativeNodeStore.status(projectId).optJSONArray("nodes");
+        return nodes == null ? 0 : nodes.length();
+    }
+
+    private int creativeCompletedCount(String projectId) {
+        JSONArray nodes = creativeNodeStore.status(projectId).optJSONArray("nodes");
+        if (nodes == null) return 0;
+        int completed = 0;
+        for (int i = 0; i < nodes.length(); i++) {
+            JSONObject node = nodes.optJSONObject(i);
+            if (node != null && "completed".equals(node.optString("state"))) completed++;
+        }
+        return completed;
+    }
+
     private JobManager.Job submitRecoverableHeavy(String action,
                                                   JSONObject parameters,
                                                   String projectId,
