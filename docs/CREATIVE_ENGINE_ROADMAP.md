@@ -6,6 +6,37 @@ Turn VideoStudio from a conventional editor with local AI helpers into a program
 
 The design must stay usable without paid cloud services. Heavy assets and models live in app-managed device storage as optional model/content packs so the APK can remain reasonably small.
 
+## Foundation status
+
+The first executable foundation slice is now present in the v3.3 code line:
+
+- [x] safe MotionScript 0.1 parser/compiler
+- [x] versioned CreativeIR JSON output
+- [x] app-private creative workspace and atomic scene persistence
+- [x] generated-output registration into project media
+- [x] editor Media Bin and timeline insertion path
+- [x] stage-level heavy-job checkpoints
+- [x] thermal/memory wait states
+- [x] durable action/parameter recovery plans for animation, prompt-video and export
+- [x] published-output recovery to avoid intentional duplicate rerenders after restart
+- [x] capability-first provider registry
+- [x] optional installed model-manifest discovery
+- [x] typed MCP tools for MotionScript/workspace/provider inspection
+- [ ] transactional model-pack installer
+- [ ] native Android Google Drive storage provider
+- [ ] Rust/native MotionScript compiler runtime
+- [ ] body/hand pose provider
+- [ ] monocular depth provider beyond current layered analysis
+- [ ] optical-flow deformation provider
+- [ ] frame interpolation provider
+- [ ] local image-generation provider
+- [ ] local image-to-video provider
+- [ ] 3D mesh runtime
+- [ ] local multi-voice narration stack
+- [ ] full automated visual critique/targeted repair loop
+
+Unchecked items are explicitly future work and must not be represented as already implemented.
+
 ## Core architecture
 
 ### 1. MotionScript scene compiler
