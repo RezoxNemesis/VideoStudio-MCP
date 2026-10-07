@@ -69,7 +69,7 @@ function loadWorkerForRouteTests() {
   crypto:webcrypto,TextEncoder,TextDecoder,Response,Request,Headers,URL,setTimeout,clearTimeout,Date,
   DurableObject:class{constructor(ctx){this.ctx=ctx;}},
   McpServer:class{},
-  createMcpHandler:()=>()=>new Response("mcp",{status:204}),
+  createMcpHandler:()=>()=>new Response(null,{status:204}),
   z:{},
   APP_HTML:"<html><body>studio</body></html>",
   STUDIO_RUNTIME_JS:"",STUDIO_CINEMATIC_JS:"",STUDIO_NEURAL_JS:"",STUDIO_TEMPORAL_JS:""
