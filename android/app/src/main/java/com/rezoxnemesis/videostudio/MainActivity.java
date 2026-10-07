@@ -393,6 +393,54 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         viewer.addView(hint, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(280)));
         box.addView(viewer);
 
+        box.addView(section("Media Bin"));
+        HorizontalScrollView mediaBin = new HorizontalScrollView(this);
+        mediaBin.setHorizontalScrollBarEnabled(false);
+        LinearLayout mediaItems = new LinearLayout(this);
+        mediaItems.setPadding(0, dp(4), dp(12), dp(8));
+        for (ProjectStore.Asset asset : activeProject.assets) {
+            LinearLayout mediaCard = card(false);
+            mediaCard.setMinimumWidth(dp(205));
+            mediaCard.addView(title(asset.name, 13));
+            String role = asset.role == null || asset.role.isEmpty() ? "source" : asset.role.replace('_', ' ');
+            String meta = (asset.generated ? "GENERATED" : "SOURCE") + " • " + role.toUpperCase(Locale.US);
+            mediaCard.addView(accent(meta, asset.generated ? C_CYAN : C_MUTED));
+            mediaCard.addView(body((asset.mime == null ? "media" : asset.mime) + (asset.durationMs > 0 ? " • " + time(asset.durationMs) : "")));
+
+            boolean onTimeline = assetOnTimeline(activeProject, asset.id);
+            if (asset.mime != null && asset.mime.startsWith("video/")) {
+                Button previewAsset = compactButton("Preview");
+                previewAsset.setOnClickListener(v -> {
+                    try {
+                        hint.setVisibility(View.GONE);
+                        preview.setVideoURI(Uri.parse(asset.uri));
+                        preview.setOnPreparedListener(mp -> preview.start());
+                    } catch (Exception error) {
+                        Toast.makeText(this, "Could not preview media", Toast.LENGTH_SHORT).show();
+                    }
+                });
+                mediaCard.addView(previewAsset, margins(-1, dp(42), dp(8), 0, 0, 0));
+            }
+            if (!onTimeline && asset.mime != null && (asset.mime.startsWith("video/") || asset.mime.startsWith("image/"))) {
+                Button add = compactButton("+ Timeline");
+                add.setOnClickListener(v -> {
+                    ProjectStore.Project latest = store.get(activeProject.id);
+                    if (latest != null && store.appendAssetToTimeline(latest, asset.id)) {
+                        activeProject = store.get(latest.id);
+                        selectedClip = activeProject.clips.isEmpty() ? null : activeProject.clips.get(activeProject.clips.size() - 1);
+                        syncProtocolState();
+                        showEditor();
+                        Toast.makeText(this, "Added to timeline", Toast.LENGTH_SHORT).show();
+                    }
+                });
+                mediaCard.addView(add, margins(-1, dp(42), dp(6), 0, 0, 0));
+            }
+            mediaItems.addView(mediaCard, margins(dp(205), -2, 0, dp(8), dp(8), 0));
+        }
+        if (activeProject.assets.isEmpty()) mediaItems.addView(body("No media in this project yet."));
+        mediaBin.addView(mediaItems);
+        box.addView(mediaBin);
+
         box.addView(section("Timeline"));
         HorizontalScrollView timeline = new HorizontalScrollView(this);
         timeline.setHorizontalScrollBarEnabled(false);
@@ -452,6 +500,40 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         box.addView(status, margins(-1, -2, dp(6), 0, 0, 0));
 
         setScreen(scroll, "editor");
+        scheduleEditorRefresh(activeProject == null ? "" : activeProject.id,
+                activeProject == null ? 0 : activeProject.updatedAt);
+    }
+
+    private boolean assetOnTimeline(ProjectStore.Project project, String assetId) {
+        if (project == null || assetId == null) return false;
+        for (ProjectStore.Clip clip : project.clips) {
+            if (assetId.equals(clip.assetId)) return true;
+        }
+        return false;
+    }
+
+    private void scheduleEditorRefresh(String projectId, long knownUpdatedAt) {
+        if (projectId == null || projectId.isEmpty()) return;
+        activityRefresh = () -> {
+            if (!"editor".equals(currentScreen)) return;
+            ProjectStore.Project latest = store.get(projectId);
+            if (latest != null && latest.updatedAt != knownUpdatedAt) {
+                String selectedId = selectedClip == null ? "" : selectedClip.id;
+                activeProject = latest;
+                selectedClip = null;
+                for (ProjectStore.Clip clip : latest.clips) {
+                    if (selectedId.equals(clip.id)) {
+                        selectedClip = clip;
+                        break;
+                    }
+                }
+                if (selectedClip == null && !latest.clips.isEmpty()) selectedClip = latest.clips.get(0);
+                showEditor();
+                return;
+            }
+            ui.postDelayed(activityRefresh, 1500);
+        };
+        ui.postDelayed(activityRefresh, 1500);
     }
 
     private void showTools() {
@@ -1189,7 +1271,8 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
             fresh.latestExportUri = publicUri.toString();
             fresh.latestExportName = fileName;
             fresh.latestExportAt = System.currentTimeMillis();
-            store.save(fresh);
+            state.checkpoint(98, "Registering rendered MP4 in Media Bin");
+            store.registerGeneratedAsset(fresh, publicUri, fileName, "final_render", false);
         }
         syncProtocolState();
         ui.post(() -> {
@@ -1844,6 +1927,11 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
             connectionPill.setText(serviceConnectionText());
             connectionPill.setTextColor(prefs.getBoolean("control_service_online", false) ? Color.rgb(74, 255, 172) : C_MUTED);
         }
+        if (activeProject != null) {
+            ProjectStore.Project latest = store.get(activeProject.id);
+            if (latest != null) activeProject = latest;
+        }
+        if ("editor".equals(currentScreen)) showEditor();
     }
 
     private void migrateAutonomyDefaultOnce() {
