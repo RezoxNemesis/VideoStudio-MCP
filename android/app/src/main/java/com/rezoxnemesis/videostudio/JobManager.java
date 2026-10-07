@@ -138,6 +138,21 @@ public final class JobManager {
         return count;
     }
 
+    public JSONObject get(String id) {
+        JSONObject out = new JSONObject();
+        try {
+            Job job = id == null ? null : jobs.get(id);
+            if (job == null) {
+                out.put("found", false);
+                out.put("jobId", id == null ? "" : id);
+            } else {
+                out.put("found", true);
+                out.put("job", job.json());
+            }
+        } catch (Exception ignored) {}
+        return out;
+    }
+
     public JSONObject state() {
         JSONObject root = new JSONObject();
         JSONArray arr = new JSONArray();
