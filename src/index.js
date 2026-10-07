@@ -607,6 +607,54 @@ async function api(request,env){
   const u=new URL(request.url), st=state(env);
   if(request.method==="OPTIONS") return new Response(null,{status:204,headers:{"access-control-allow-origin":"*","access-control-allow-methods":"GET,POST,OPTIONS","access-control-allow-headers":"content-type, authorization"}});
   try{
+    if(u.pathname==="/api/v3/app/register"&&request.method==="POST"){
+      const b=await request.json(), meta=b.meta||{};
+      if(Number(meta.protocolVersion||0)!==3) return reply({ok:false,protocolVersion:3,error:"MCP v3 registration requires protocolVersion=3"},409);
+      const device=await st.appRegister(b.deviceId,b.ownerKey,meta);
+      return reply({ok:true,protocolVersion:3,mcpEndpointVersion:"v3",device});
+    }
+    if(u.pathname==="/api/v3/app/status"&&request.method==="GET"){
+      const status=await st.appStatusV3(bearer(request));
+      return reply(status,status.connected?200:409);
+    }
+    if(u.pathname==="/api/v3/app/commands"&&request.method==="GET"){
+      const deviceId=u.searchParams.get("deviceId")||"";
+      const after=Number(u.searchParams.get("after")||0);
+      const wait=Number(u.searchParams.get("wait")||0);
+      return reply({protocolVersion:3,commands:await st.appCommandsV3(deviceId,bearer(request),after,wait)});
+    }
+    const v3hm=u.pathname.match(/^\/api\/v3\/app\/handoffs\/([^/]+)\/content$/);
+    if(v3hm&&request.method==="GET"){
+      const deviceId=u.searchParams.get("deviceId")||"", token=bearer(request);
+      const status=await st.appStatusV3(token);
+      if(!status.connected) return reply({error:"VideoStudio MCP v3 authorization failed"},401);
+      const handoff=await st.appHandoff(deviceId,token,v3hm[1]);
+      if(!handoff) return reply({error:"Handoff missing or expired"},404);
+      let upstream;
+      if(handoff.cacheUrl){
+        upstream=await caches.default.match(new Request(handoff.cacheUrl));
+        if(!upstream||!upstream.body) return reply({error:"Private upload expired or unavailable"},404);
+      }else{
+        upstream=await fetch(handoff.sourceUrl,{headers:{"accept":"*/*","user-agent":"VideoStudio-MCPv3-Fallback/3.0"}});
+        if(!upstream.ok||!upstream.body) return reply({error:"Attachment source unavailable",status:upstream.status},502);
+      }
+      const headers=new Headers();
+      headers.set("content-type",handoff.mime||upstream.headers.get("content-type")||"application/octet-stream");
+      const length=upstream.headers.get("content-length");
+      if(length) headers.set("content-length",length);
+      headers.set("cache-control","no-store");
+      headers.set("x-content-type-options","nosniff");
+      headers.set("content-disposition",'attachment; filename="'+handoff.name.replace(/[\r\n"]/g,"_")+'"');
+      return new Response(upstream.body,{status:200,headers});
+    }
+    const v3cm=u.pathname.match(/^\/api\/v3\/app\/commands\/([^/]+)\/complete$/);
+    if(v3cm&&request.method==="POST"){
+      const b=await request.json(), token=bearer(request);
+      if(Number(b.protocolVersion||0)!==3) return reply({error:"Protocol version mismatch"},409);
+      const c=await st.appCompleteV3(b.deviceId,token,v3cm[1],b.result||{},b.status||"completed");
+      return c?reply({protocolVersion:3,command:c}):reply({error:"Command not found"},404);
+    }
+
     if(u.pathname==="/api/app/register"&&request.method==="POST"){
       const b=await request.json();
       return reply({ok:true,device:await st.appRegister(b.deviceId,b.ownerKey,b.meta||{})});
@@ -707,6 +755,11 @@ export default {
     if(u.pathname==="/icon.svg") return new Response(ICON,{headers:{"content-type":"image/svg+xml"}});
     if(u.pathname==="/sw.js") return new Response(SW,{headers:{"content-type":"application/javascript","cache-control":"no-cache"}});
     if(u.pathname.startsWith("/api/")) return api(request,env);
+    const appMcpV3=u.pathname.match(/^\/app-mcp-v3\/([A-Za-z0-9_-]{32,})$/);
+    if(appMcpV3){
+      const ownerKey=appMcpV3[1];
+      return createMcpHandler(()=>serverForApp(env,ownerKey,3),{route:u.pathname,responseMode:"auto"})(request,env,ctx);
+    }
     const appMcp=u.pathname.match(/^\/app-mcp\/([A-Za-z0-9_-]{32,})$/);
     if(appMcp){
       const ownerKey=appMcp[1];
