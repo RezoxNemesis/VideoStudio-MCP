@@ -67,6 +67,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     private CapabilityRegistry capabilityRegistry;
     private ModelPackManager modelPackManager;
     private DeviceComputeProfile computeProfile;
+    private CreativeJobGraph creativeJobGraph;
     private DriveWorkspaceProvider driveWorkspace;
     private SharedPreferences prefs;
     private CommandJournal commandJournal;
@@ -90,6 +91,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         capabilityRegistry = new CapabilityRegistry(this);
         modelPackManager = new ModelPackManager(this);
         computeProfile = new DeviceComputeProfile(this);
+        creativeJobGraph = new CreativeJobGraph(capabilityRegistry, computeProfile);
         driveWorkspace = new DriveWorkspaceProvider(this);
         createChannel();
         startForeground(NOTIFICATION_ID, notification("VideoStudio MCP v3 starting"));
@@ -287,6 +289,9 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 case "run_motion_script":
                     complete(command, runMotionScript(p));
                     syncProtocolState();
+                    return;
+                case "plan_creative_graph":
+                    complete(command, planCreativeGraph(p));
                     return;
                 case "workspace_status":
                     complete(command, workspaceStatus(p));
@@ -656,6 +661,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         String source = p.optString("script", p.optString("source", ""));
         MotionScriptCompiler.CompileResult compiled = motionScriptCompiler.compile(source, project);
         resolveCreativeProviders(compiled.ir);
+        compiled.ir.put("executionGraph", creativeJobGraph.build(compiled.ir));
         JSONObject saved = creativeWorkspace.saveMotionScript(project.id, compiled.name, source, compiled.ir);
 
         JSONObject result = ok();
@@ -674,6 +680,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         MotionScriptCompiler.CompileResult compiled = motionScriptCompiler.compile(source, project);
         JSONObject ir = compiled.ir;
         resolveCreativeProviders(ir);
+        ir.put("executionGraph", creativeJobGraph.build(ir));
         if (p.optBoolean("strictProviders", false)) {
             JSONArray unresolved = ir.optJSONArray("unresolvedCapabilities");
             if (unresolved != null && unresolved.length() > 0) {
@@ -778,6 +785,41 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             ir.put("providerResolutionComplete", unresolved.length() == 0);
             ir.put("capabilityRegistryVersion", 1);
         } catch (Exception ignored) {}
+    }
+
+    private JSONObject planCreativeGraph(JSONObject p) throws Exception {
+        ProjectStore.Project project = resolveProject(p.optString("projectId", ""));
+        JSONObject ir = p.optJSONObject("ir");
+        String source = p.optString("script", p.optString("source", ""));
+
+        if (ir == null) {
+            if (source.trim().isEmpty()) throw new IllegalArgumentException("script/source or ir is required");
+            MotionScriptCompiler.CompileResult compiled = motionScriptCompiler.compile(source, project);
+            ir = compiled.ir;
+            resolveCreativeProviders(ir);
+        } else {
+            ir = new JSONObject(ir.toString());
+            resolveCreativeProviders(ir);
+        }
+
+        JSONObject graph = creativeJobGraph.build(ir);
+        ir.put("executionGraph", graph);
+
+        JSONObject result = ok();
+        result.put("projectId", project.id);
+        result.put("creativeIrVersion", ir.optString("creativeIrVersion", MotionScriptCompiler.CREATIVE_IR_VERSION));
+        result.put("graph", graph);
+        result.put("ready", graph.optBoolean("ready", false));
+        result.put("unresolvedCapabilities", graph.optJSONArray("unresolvedCapabilities") == null
+                ? new JSONArray()
+                : graph.optJSONArray("unresolvedCapabilities"));
+        result.put("computeProfile", computeProfile.snapshot());
+
+        if (!source.trim().isEmpty()) {
+            String name = ir.optString("name", "scene");
+            result.put("workspace", creativeWorkspace.saveMotionScript(project.id, name, source, ir));
+        }
+        return result;
     }
 
     private JobManager.Job submitRecoverableHeavy(String action,
@@ -1687,6 +1729,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             out.put("capabilityRegistryReady", capabilityRegistry != null);
             out.put("modelPackManagerReady", modelPackManager != null);
             out.put("computePlannerReady", computeProfile != null);
+            out.put("creativeJobGraphReady", creativeJobGraph != null);
             out.put("driveWorkspaceProviderReady", driveWorkspace != null);
             out.put("driveWorkspaceLinked", driveWorkspace != null && driveWorkspace.isLinked());
             out.put("bundledSubjectSegmentation", true);
@@ -1849,6 +1892,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             case "prompt_video": return "Creating prompt video";
             case "compile_scene": return "Compiling MotionScript";
             case "run_motion_script": return "Running MotionScript";
+            case "plan_creative_graph": return "Planning CreativeIR execution graph";
             case "workspace_status": return "Reading creative workspace";
             case "cleanup_workspace": return "Cleaning creative workspace";
             case "capability_registry": return "Reading capability providers";
@@ -1904,6 +1948,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         if ("creator_preset".equals(action)) return result.optInt("changedClips", 0) + " clip(s) styled";
         if ("compile_scene".equals(action)) return "MotionScript compiled to CreativeIR";
         if ("run_motion_script".equals(action)) return result.optInt("changedClips", 0) + " clip(s) directed by MotionScript";
+        if ("plan_creative_graph".equals(action)) return result.optBoolean("ready", false) ? "Creative execution graph ready" : "Creative graph planned with unresolved providers";
         if ("workspace_status".equals(action)) return "Creative workspace status read";
         if ("cleanup_workspace".equals(action)) return "Regenerable creative workspace cleaned";
         if ("capability_registry".equals(action)) return "Capability provider registry read";
