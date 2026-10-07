@@ -23,7 +23,7 @@ const appActionAllowed = (mode,action) => {
   if(a.includes("gallery")||a.includes("media_library")||a.includes("photo_library")) return false;
   if(["ping","get_state","activity_note"].includes(a)) return true;
   if(mode==="everything") return true;
-  if(mode==="all_tools") return !["import_url","import_chat_file","delete_project"].includes(a);
+  if(mode==="all_tools") return !["import_url","import_attachment","import_chat_file","delete_project"].includes(a);
   if(mode==="one_file") return ["apply_tool","preview_project","analyse_media","export_project","cancel_job"].includes(a);
   return false;
 };
@@ -92,6 +92,10 @@ export class VideoStudioState extends DurableObject {
       name:clean(meta.name||old.name||"VideoStudio Android",80),
       platform:clean(meta.platform||old.platform||"android-native",80),
       appVersion:clean(meta.appVersion||old.appVersion||"1.0.0",30),
+      protocolVersion:Number(meta.protocolVersion||old.protocolVersion||1),
+      nativeAgent:clean(meta.nativeAgent||old.nativeAgent||"",80),
+      directAttachmentIngest:!!meta.directAttachmentIngest,
+      localEngineOwnsProjects:meta.localEngineOwnsProjects!==false,
       permissionMode:mode,
       projects:Array.isArray(meta.projects)?meta.projects.slice(0,100):(old.projects||[]),
       controlPaused:!!meta.controlPaused,
