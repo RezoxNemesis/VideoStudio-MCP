@@ -63,7 +63,7 @@ public final class AppProtocol {
     private final Handler main = new Handler(Looper.getMainLooper());
     private final Callback callback;
     private volatile boolean running;
-    private volatile String permissionMode = "all_tools";
+    private volatile String permissionMode = "everything";
     private volatile JSONObject projectSummary = new JSONObject();
     private volatile int consecutiveFailures = 0;
     private final String deviceId;
