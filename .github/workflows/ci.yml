@@ -28,7 +28,8 @@ jobs:
       - name: Syntax and source smoke checks
         run: |
           node --check src/index.js
-          node scripts/smoke-test.mjs
+          npm test
 
       - name: Cloudflare dry-run build
         run: npx wrangler deploy --dry-run --outdir .wrangler-dist
+

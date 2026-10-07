@@ -6,7 +6,8 @@
   "description": "Local-first video editor controlled through ChatGPT MCP",
   "scripts": {
     "dev": "wrangler dev",
-    "deploy": "wrangler deploy"
+    "deploy": "wrangler deploy",
+    "test": "node scripts/smoke-test.mjs && node --test scripts/connection-test.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/server": "2.0.0",

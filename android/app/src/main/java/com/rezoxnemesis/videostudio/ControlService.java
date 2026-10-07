@@ -36,6 +36,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     public static final String ACTION_CANCEL_ALL = "com.rezoxnemesis.videostudio.CANCEL_ALL";
     public static final String ACTION_PAUSE = "com.rezoxnemesis.videostudio.PAUSE_CONTROL";
     public static final String ACTION_RESUME = "com.rezoxnemesis.videostudio.RESUME_CONTROL";
+    public static final String ACTION_RECONNECT = "com.rezoxnemesis.videostudio.RECONNECT";
     public static final String ACTION_SYNC = "com.rezoxnemesis.videostudio.SYNC_STATE";
     public static final String ACTION_LOCAL_ANIMATE = "com.rezoxnemesis.videostudio.LOCAL_ANIMATE_IMAGES";
     private static final String CHANNEL = "videostudio_private_control";
@@ -130,6 +131,9 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             syncProtocolState();
             protocol.registerNow();
             updateNotification("Stable MCP control ready");
+        } else if (ACTION_RECONNECT.equals(action)) {
+            syncProtocolState();
+            protocol.forceReconnect();
         } else if (ACTION_SYNC.equals(action)) {
             syncProtocolState();
             protocol.registerNow();
@@ -309,6 +313,9 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 case "prompt_video":
                     complete(command, queuePromptVideo(p));
                     return;
+                case "generate_image":
+                    complete(command, queueGenerateImage(p));
+                    return;
                 case "generate_voice":
                     complete(command, queueGenerateVoice(p));
                     return;
@@ -350,6 +357,23 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 case "cleanup_workspace":
                     complete(command, cleanupWorkspace(p));
                     return;
+                case "creative_system_status": {
+                    JSONObject result = ok();
+                    result.put("connection", protocol.connectionStatus());
+                    result.put("providers", capabilityRegistry.describe());
+                    result.put("drive", driveWorkspace.status());
+                    result.put("compute", computeProfile.snapshot());
+                    result.put("localSceneRenderer", "2d-vectors-and-perspective-3d-triangle-meshes");
+                    result.put("stillImageMotion", "articulated-2.5d-portrait");
+                    result.put("neuralImageGeneration", false);
+                    result.put("neuralVideoGeneration", false);
+                    result.put("photorealisticHumanSynthesis", false);
+                    result.put("missingComponent", "executable-local-generative-model-adapter-and-compatible-model-pack");
+                    result.put("paidInferenceRequired", false);
+                    result.put("phoneValidationRequired", true);
+                    complete(command, result);
+                    return;
+                }
                 case "capability_registry":
                     complete(command, capabilityRegistry.describe());
                     return;
@@ -1323,6 +1347,9 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                     case "prompt_video":
                         queued = queuePromptVideo(parameters);
                         break;
+                    case "generate_image":
+                        queued = queueGenerateImage(parameters);
+                        break;
                     case "generate_voice":
                         queued = queueGenerateVoice(parameters);
                         break;
@@ -1907,6 +1934,39 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         return result;
     }
 
+    private JSONObject queueGenerateImage(JSONObject p) throws Exception {
+        ProjectStore.Project project = resolveProject(p.optString("projectId", ""));
+        JSONObject graph = p.optJSONObject("sceneGraph");
+        if (graph == null) graph = LocalSceneDirector.fromPrompt(p.optString("prompt", "abstract geometry"), 0);
+        ProceduralScene.validate(graph);
+        final JSONObject scene = graph;
+        final JSONObject parameters = new JSONObject(p.toString());
+        int width = Math.max(128, Math.min(1920, p.optInt("width", 720)));
+        int height = Math.max(128, Math.min(1920, p.optInt("height", 1280)));
+        parameters.put("projectId", project.id);
+        if (!parameters.has("_generationId")) parameters.put("_generationId", java.util.UUID.randomUUID().toString());
+        JobManager.Job job = submitRecoverableLight("generate_image", parameters, project.id, "Generate procedural image", state -> {
+            File dir = new File(creativeWorkspace.projectRoot(project.id), "generated/images");
+            if (!dir.exists() && !dir.mkdirs()) throw new IllegalStateException("Could not create image workspace");
+            File file = new File(dir, "scene_" + parameters.getString("_generationId") + ".png");
+            checkpoint(state, "Image generation", "Rendering original local geometry", 10, project.id);
+            PromptVideoEngine.renderProceduralImage(file, width, height, scene);
+            ProjectStore.Asset asset = store.registerGeneratedAsset(project, Uri.fromFile(file), file.getName(),
+                    "generated_image", parameters.optBoolean("appendToTimeline", false));
+            asset.generationMetadata.put("provider", "builtin.videostudio.procedural-scene");
+            asset.generationMetadata.put("prompt", parameters.optString("prompt", ""));
+            asset.generationMetadata.put("sceneGraph", scene);
+            store.save(project);
+            JSONObject generated = ok(); generated.put("assetId", asset.id); generated.put("uri", asset.uri);
+            generated.put("provider", "builtin.videostudio.procedural-scene"); state.setResult(generated);
+            syncProtocolState();
+            checkpoint(state, "Image generation", "Generated image registered in Media Bin", 100, project.id);
+        });
+        JSONObject out = ok(); out.put("queued", true); out.put("jobId", job.id);
+        out.put("projectId", project.id); out.put("provider", "builtin.videostudio.procedural-scene");
+        out.put("photorealistic", false); return out;
+    }
+
     private JSONObject queuePromptVideo(JSONObject p) throws Exception {
         String prompt = p.optString("prompt", "").trim();
         if (prompt.isEmpty()) throw new IllegalArgumentException("Prompt is required");
@@ -2078,6 +2138,15 @@ public final class ControlService extends Service implements AppProtocol.Callbac
 
     private boolean hasMissingCreativeLayerFiles(ProjectStore.Project project) {
         if (project == null) return false;
+        String workspacePrefix = creativeWorkspace.projectRoot(project.id).getAbsolutePath() + File.separator;
+        for (ProjectStore.Clip clip : project.clips) {
+            ProjectStore.Asset asset = project.asset(clip.assetId);
+            if (asset == null || !asset.generated) continue;
+            Uri uri = Uri.parse(asset.uri);
+            String path = uri.getPath();
+            if ("file".equalsIgnoreCase(uri.getScheme()) && path != null && path.startsWith(workspacePrefix)
+                    && !new File(path).isFile()) return true;
+        }
         String[] keys = {"foregroundUri", "headUri", "torsoUri", "lowerUri", "backgroundUri"};
         for (ProjectStore.Clip clip : project.clips) {
             if (clip == null || clip.effects == null) continue;
@@ -2919,3 +2988,4 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         if (nm != null) nm.notify(NOTIFICATION_ID, notification(message));
     }
 }
+

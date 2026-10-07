@@ -736,6 +736,12 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
             ui.postDelayed(this::showControl, 120);
         });
         privateCard.addView(pause, margins(-1, dp(52), dp(10), dp(8), 0, 0));
+        Button repairConnection = neonButton("Repair Connection", C_CYAN);
+        repairConnection.setOnClickListener(v -> {
+            startService(new Intent(this, ControlService.class).setAction(ControlService.ACTION_RECONNECT));
+            Toast.makeText(this, "Secure reconnection requested", Toast.LENGTH_SHORT).show();
+        });
+        privateCard.addView(repairConnection, margins(-1, dp(48), dp(8), 0, 0, 0));
         Button share = neonButton("Connect / Share with ChatGPT", C_PURPLE);
         share.setOnClickListener(v -> sharePairing());
         privateCard.addView(share, margins(-1, dp(52), dp(12), 0, 0, 0));
@@ -1356,7 +1362,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         String fileName = "VideoStudio_AI_" + System.currentTimeMillis() + ".mp4";
 
         JobManager.Job job = jobs.submit("Prompt video • " + titleText, JobManager.Kind.HEAVY, state -> {
-            state.checkpoint(3, "Designing local scene cards");
+            state.checkpoint(3, "Building original procedural scene geometry");
             PromptVideoEngine.BuildResult built = promptVideoEngine.build(store, project, parameters);
             state.checkpoint(18, "Scene plan ready • starting native render");
             runExportBlocking(built.project, built.aspect, built.quality, fileName, state);
@@ -2382,3 +2388,4 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         return Math.round(value * getResources().getDisplayMetrics().density);
     }
 }
+

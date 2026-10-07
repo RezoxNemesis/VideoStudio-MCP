@@ -108,6 +108,8 @@ public final class CapabilityRegistry {
             ));
         }
 
+        providers.put(builtin("builtin.videostudio.procedural-scene", "generation", "android-canvas-media3",
+                new String[]{"image.generate.procedural", "animation.2d.procedural", "render.3d.procedural"}, 64, "procedural"));
         int builtInCount = providers.length();
         JSONArray installed = installedProviders();
         for (int i = 0; i < installed.length(); i++) providers.put(installed.opt(i));
@@ -289,3 +291,4 @@ public final class CapabilityRegistry {
         return total;
     }
 }
+

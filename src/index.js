@@ -247,7 +247,8 @@ export class VideoStudioState extends DurableObject {
       let changed=false;
       for(let i=0;i<list.length;i++){
         const c=list[i];
-        if(c.seq<=Number(after||0)) continue;
+        // A later ack must never hide earlier unacknowledged commands.
+        // Terminal records are filtered by status; queued/expired leases are always eligible.
         const expired=c.status==="claimed"&&Number(c.leaseUntil||0)<=nowMs;
         if(c.status==="queued"||expired){
           list[i]={...c,status:"claimed",claimedAt:now(),leaseUntil:nowMs+45000};
@@ -307,6 +308,8 @@ export class VideoStudioState extends DurableObject {
     const d=await this.appV3Device(ownerKey);
     if(d.controlPaused) throw new Error("ChatGPT control is paused on the phone");
     if(!appActionAllowed(d.permissionMode,action)) throw new Error("Action blocked by device permission mode or Gallery privacy boundary: "+d.permissionMode);
+    const queueKey="app-v3-cl:"+d.deviceId, existing=(await this.ctx.storage.get(queueKey))||[];
+    if(existing.filter(c=>c.status==="queued"||c.status==="claimed").length>=160) throw new Error("Native command queue is full; reconnect the app before adding work");
     const sk="app-v3-seq:"+d.deviceId, seq=((await this.ctx.storage.get(sk))||0)+1;
     await this.ctx.storage.put(sk,seq);
     const c={
@@ -323,7 +326,11 @@ export class VideoStudioState extends DurableObject {
     };
     const k="app-v3-cl:"+d.deviceId, list=(await this.ctx.storage.get(k))||[];
     list.push(c);
-    await this.ctx.storage.put(k,list.slice(-160));
+    const pending=list.filter(c=>c.status==="queued"||c.status==="claimed");
+    const terminal=list.filter(c=>c.status!=="queued"&&c.status!=="claimed");
+    const terminalSlots=Math.max(0,160-pending.length);
+    const retained=[...(terminalSlots?terminal.slice(-terminalSlots):[]),...pending].sort((a,b)=>a.seq-b.seq);
+    await this.ctx.storage.put(k,retained.slice(-160));
     return c;
   }
   async appCommandsV3(deviceId,ownerKey,after=0,waitMs=0){
@@ -339,7 +346,8 @@ export class VideoStudioState extends DurableObject {
       let changed=false;
       for(let i=0;i<list.length;i++){
         const c=list[i];
-        if(c.seq<=Number(after||0)) continue;
+        // A later ack must never hide earlier unacknowledged commands.
+        // Terminal records are filtered by status; queued/expired leases are always eligible.
         const expired=c.status==="claimed"&&Number(c.leaseUntil||0)<=nowMs;
         if(c.status==="queued"||expired){
           list[i]={...c,status:"claimed",claimedAt:now(),leaseUntil:nowMs+60000,claimCount:Number(c.claimCount||0)+1};
@@ -745,6 +753,7 @@ function serverForApp(env,ownerKey,protocolVersion=1){
   }));
 
   s.registerTool("app_state",{description:"Request full current native app/project state including active asset metadata, jobs, creator capabilities and recent on-device ChatGPT activity.",inputSchema:{}},async()=>queue("get_state",{}));
+  if(isV3) s.registerTool("app_generate_image",{description:"Generate an original local procedural image from a sceneGraph or supported scene prompt. Not photorealistic diffusion. Registers output in the app Media Bin.",inputSchema:{prompt:z.string().max(10000).optional(),sceneGraph:z.record(z.string(),z.any()).optional(),projectId:z.string().min(8).optional(),width:z.number().int().min(128).max(1920).optional(),height:z.number().int().min(128).max(1920).optional(),appendToTimeline:z.boolean().optional()}},async args=>queue("generate_image",args));
   if(isV3) s.registerTool("app_self_test",{description:"Run VideoStudio v3's on-device native self-test before autonomous work. Verifies protocol v3, app-private storage, local project state, job/render/analysis engines, direct attachment ingest and the no-Gallery boundary.",inputSchema:{}},async()=>queue("self_test",{}));
   s.registerTool("app_activity_note",{description:"Post a live progress message into VideoStudio's ChatGPT Activity screen. Use this to mirror autonomous-work updates such as planning, analysing, applying edits, rendering or retrying.",inputSchema:{title:z.string().min(1).max(120),message:z.string().min(1).max(500),status:z.enum(["info","queued","running","success","failed"]).optional(),progress:z.number().int().min(0).max(100).optional(),projectId:z.string().min(8).optional()}},async args=>queue("activity_note",args));
   s.registerTool("app_create_project",{description:"Create a native VideoStudio project.",inputSchema:{name:z.string().min(1).max(120)}},async({name})=>queue("create_project",{name}));
@@ -1288,3 +1297,4 @@ export default {
     return new Response("Not Found",{status:404});
   }
 };
+

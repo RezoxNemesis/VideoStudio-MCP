@@ -45,6 +45,7 @@ public final class ProjectStore {
         public long durationMs;
         public String role = "source";
         public boolean generated = false;
+        public JSONObject generationMetadata = new JSONObject();
         public long createdAt = System.currentTimeMillis();
 
         JSONObject toJson() {
@@ -57,6 +58,7 @@ public final class ProjectStore {
                 o.put("durationMs", durationMs);
                 o.put("role", role);
                 o.put("generated", generated);
+                o.put("generationMetadata", generationMetadata);
                 o.put("createdAt", createdAt);
             } catch (Exception ignored) {}
             return o;
@@ -71,6 +73,8 @@ public final class ProjectStore {
             a.durationMs = o.optLong("durationMs", 0);
             a.role = o.optString("role", "source");
             a.generated = o.optBoolean("generated", false);
+            JSONObject metadata = o.optJSONObject("generationMetadata");
+            a.generationMetadata = metadata == null ? new JSONObject() : metadata;
             a.createdAt = o.optLong("createdAt", System.currentTimeMillis());
             return a;
         }
@@ -505,3 +509,4 @@ public final class ProjectStore {
         }
     }
 }
+
