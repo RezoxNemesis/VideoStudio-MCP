@@ -21,6 +21,20 @@ const bearer = request => {
   const h=request.headers.get("authorization")||"";
   return h.toLowerCase().startsWith("bearer ") ? h.slice(7).trim() : "";
 };
+const studioMcpAuthorized = async (request,env) => {
+  const expected=clean(env&&env.VIDEOSTUDIO_STUDIO_MCP_BEARER||"",500);
+  // Compatibility lane: existing Web-only plugins keep working until the
+  // operator provisions a bearer. Native authority is separately gated by
+  // the durable hybrid binding and is never derived from a public device ID.
+  if(!expected) return true;
+  const supplied=bearer(request);
+  if(!supplied) return false;
+  const [a,b]=await Promise.all([sha256Hex(supplied),sha256Hex(expected)]);
+  let diff=a.length^b.length;
+  const n=Math.max(a.length,b.length);
+  for(let i=0;i<n;i++) diff|=(a.charCodeAt(i)||0)^(b.charCodeAt(i)||0);
+  return diff===0;
+};
 const appActionAllowed = (mode,action) => {
   const a=String(action||"").toLowerCase();
 
@@ -1523,7 +1537,10 @@ export default {
       return createMcpHandler(()=>serverForApp(env,ownerKey),{route:u.pathname,responseMode:"auto"})(request,env,ctx);
     }
     if(u.pathname==="/mcp"||u.pathname.startsWith("/mcp/")) return createMcpHandler(()=>serverFor(env),{route:"/mcp",responseMode:"auto"})(request,env,ctx);
-    if(u.pathname==="/mcp-v06"||u.pathname.startsWith("/mcp-v06/")) return createMcpHandler(()=>serverFor(env),{route:"/mcp-v06",responseMode:"auto"})(request,env,ctx);
+    if(u.pathname==="/mcp-v06"||u.pathname.startsWith("/mcp-v06/")){
+      if(!(await studioMcpAuthorized(request,env))) return reply({error:"Studio Web MCP authorization required"},401);
+      return createMcpHandler(()=>serverFor(env),{route:"/mcp-v06",responseMode:"auto"})(request,env,ctx);
+    }
     return new Response("Not Found",{status:404});
   }
 };
