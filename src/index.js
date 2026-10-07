@@ -3,6 +3,7 @@ import { McpServer } from "@modelcontextprotocol/server";
 import { createMcpHandler } from "agents/mcp/server";
 import { z } from "zod";
 import APP_HTML from "./app.html";
+import STUDIO_RUNTIME_JS from "./studio-runtime.js";
 
 const JH = {"content-type":"application/json; charset=UTF-8","cache-control":"no-store"};
 const now = () => new Date().toISOString();
@@ -56,7 +57,7 @@ export class VideoStudioState extends DurableObject {
   async device(deviceId){ return (await this.ctx.storage.get("d:"+deviceId))||null; }
   async createProject(deviceId,name,instruction=""){
     await this.register(deviceId);
-    const id=crypto.randomUUID(), p={id,deviceId,name:clean(name||"Untitled Project",120),instruction:clean(instruction),createdAt:now(),updatedAt:now(),assets:[],timeline:[],settings:{aspect:"9:16",speed:1,mute:false,title:"",quality:"720p",transition:"fade"},latestRender:null,latestCommand:null};
+    const id=crypto.randomUUID(), p={id,deviceId,name:clean(name||"Untitled Project",120),instruction:clean(instruction),createdAt:now(),updatedAt:now(),assets:[],timeline:[],settings:{aspect:"9:16",speed:1,mute:false,title:"",quality:"720p",transition:"fade"},drive:{},generation:{},latestRender:null,latestCommand:null};
     await this.ctx.storage.put("p:"+deviceId+":"+id,p);
     const k="pl:"+deviceId, ids=(await this.ctx.storage.get(k))||[]; ids.unshift(id); await this.ctx.storage.put(k,ids.slice(0,100)); return p;
   }
@@ -68,7 +69,7 @@ export class VideoStudioState extends DurableObject {
   async project(deviceId,id){ return (await this.ctx.storage.get("p:"+deviceId+":"+id))||null; }
   async update(deviceId,id,patch={}){
     const p=await this.project(deviceId,id); if(!p) return null;
-    for(const k of ["name","instruction","assets","timeline","settings","latestRender","latestCommand"]) if(patch[k]!==undefined) p[k]=patch[k];
+    for(const k of ["name","instruction","assets","timeline","settings","drive","generation","latestRender","latestCommand"]) if(patch[k]!==undefined) p[k]=patch[k];
     p.updatedAt=now(); await this.ctx.storage.put("p:"+deviceId+":"+id,p); await this.register(deviceId); return p;
   }
   async enqueue(deviceId,projectId,action,parameters={}){
@@ -91,9 +92,35 @@ export class VideoStudioState extends DurableObject {
     await this.ctx.storage.put(k,a.slice(-60));
     const c=a[i]; await this.update(deviceId,c.projectId,{latestCommand:{id:c.id,action:c.action,status:c.status,createdAt:c.createdAt,completedAt:c.completedAt,result:c.result}}); return c;
   }
+  async enqueueRuntime(deviceId,projectId,action,parameters={}){
+    if(!(await this.project(deviceId,projectId))) throw new Error("Project not found");
+    const sk="rseq:"+deviceId, seq=((await this.ctx.storage.get(sk))||0)+1; await this.ctx.storage.put(sk,seq);
+    const c={id:crypto.randomUUID(),seq,deviceId,projectId,action,parameters,status:"queued",createdAt:now(),completedAt:null,result:null,runtime:"studio-web"};
+    const k="rcl:"+deviceId, a=(await this.ctx.storage.get(k))||[]; a.push(c); await this.ctx.storage.put(k,a.slice(-80));
+    await this.update(deviceId,projectId,{latestCommand:{id:c.id,action,status:c.status,createdAt:c.createdAt,runtime:"studio-web"}});
+    return c;
+  }
+  async runtimeCommands(deviceId,after=0){
+    const a=(await this.ctx.storage.get("rcl:"+deviceId))||[];
+    return a.filter(c=>c.seq>Number(after||0));
+  }
+  async runtimeCommand(deviceId,id){
+    const a=(await this.ctx.storage.get("rcl:"+deviceId))||[];
+    return a.find(c=>c.id===id)||null;
+  }
+  async completeRuntime(deviceId,id,result={},status="completed"){
+    const k="rcl:"+deviceId, a=(await this.ctx.storage.get(k))||[], i=a.findIndex(c=>c.id===id);
+    if(i<0) return null;
+    a[i]={...a[i],status:clean(status,40)||"completed",completedAt:now(),result};
+    await this.ctx.storage.put(k,a.slice(-80));
+    const c=a[i];
+    await this.update(deviceId,c.projectId,{latestCommand:{id:c.id,action:c.action,status:c.status,createdAt:c.createdAt,completedAt:c.completedAt,result:c.result,runtime:"studio-web"}});
+    return c;
+  }
+
   async status(deviceId){
     const d=await this.device(deviceId), ps=await this.projects(deviceId), a=(await this.ctx.storage.get("cl:"+deviceId))||[];
-    return {connected:!!d,device:d,projectCount:ps.length,pendingCommands:a.filter(c=>c.status==="queued").length,lastCommand:a[a.length-1]||null};
+    const ra=(await this.ctx.storage.get("rcl:"+deviceId))||[]; return {connected:!!d,device:d,projectCount:ps.length,pendingCommands:a.filter(c=>c.status==="queued").length,pendingRuntimeCommands:ra.filter(c=>c.status==="queued").length,lastCommand:(ra[ra.length-1]||a[a.length-1]||null)};
   }
 
   async appRegister(deviceId,ownerKey,meta={}){
@@ -555,7 +582,16 @@ function serverFor(env){
       "batched edit commands",
       "adaptive local MP4/WebM rendering",
       "mobile bottom navigation",
-      "browser fallback execution when Android app is unavailable"
+      "browser fallback execution when Android app is unavailable",
+      "Google Drive drive.file project storage",
+      "real browser-local text-to-video procedural rendering",
+      "image-to-video depth motion",
+      "multi-image story video generation",
+      "video-to-video restyling",
+      "2D motion graphics generation",
+      "procedural 3D video generation",
+      "audio visualizer video generation",
+      "abstract VFX generation"
     ]
   }));
   s.registerTool("device_status",{description:"Check a paired VideoStudio app device. Native v3/v1 also accepts the private owner credential as deviceId for compatibility.",inputSchema:{deviceId:z.string().min(8)}},async({deviceId})=>{
@@ -583,6 +619,46 @@ function serverFor(env){
     }
     return out((await st.project(deviceId,projectId))||{error:"Project not found"});
   });
+  s.registerTool("generate_studio_video",{
+    description:"Generate a real video inside VideoStudio Studio Web. The browser executes and records the selected generator locally; this tool does not pretend procedural output is neural photoreal synthesis.",
+    inputSchema:{
+      deviceId:z.string().min(8),
+      projectId:z.string().min(8),
+      mode:z.enum(["prompt_scene","image_motion","story_video","video_restyle","motion_graphics","procedural_3d","audio_visualizer","abstract_vfx"]),
+      prompt:z.string().max(2000).optional(),
+      style:z.enum(["cinematic","dreamy","neon","film","mono"]).optional(),
+      duration:z.number().min(1).max(60).optional(),
+      fps:z.number().int().min(12).max(60).optional(),
+      aspect:z.enum(["9:16","16:9","1:1","4:5"]).optional(),
+      quality:z.enum(["720p","1080p"]).optional(),
+      assetId:z.string().min(8).optional(),
+      seed:z.number().int().optional()
+    }
+  },async({deviceId,projectId,...parameters})=>{
+    try{
+      const native=await st.appResolve(deviceId);
+      if(native) return out({queued:false,error:"This tool targets Studio Web. Use native app generation tools for an Android Native Agent device."});
+      const c=await st.enqueueRuntime(deviceId,projectId,"generate_video",parameters);
+      return out({queued:true,commandId:c.id,sequence:c.seq,runtime:"studio-web",note:"Keep Studio Web visible while browser-local generation records the video."});
+    }catch(e){return out({queued:false,error:e.message});}
+  });
+
+  s.registerTool("studio_drive_status",{description:"Read Studio Web Google Drive storage status. The website uses user-owned Drive through the narrow drive.file OAuth scope; it does not store video files in Cloudflare.",inputSchema:{deviceId:z.string().min(8),projectId:z.string().min(8)}},async({deviceId,projectId})=>{
+    try{const c=await st.enqueueRuntime(deviceId,projectId,"drive_status",{});return out({queued:true,commandId:c.id,sequence:c.seq,runtime:"studio-web"});}catch(e){return out({queued:false,error:e.message});}
+  });
+  s.registerTool("studio_drive_sync",{description:"Sync the current Studio Web project media and manifest to the user's own Google Drive. Drive must already be authorized in the open website.",inputSchema:{deviceId:z.string().min(8),projectId:z.string().min(8)}},async({deviceId,projectId})=>{
+    try{const c=await st.enqueueRuntime(deviceId,projectId,"drive_sync",{});return out({queued:true,commandId:c.id,sequence:c.seq,runtime:"studio-web"});}catch(e){return out({queued:false,error:e.message});}
+  });
+  s.registerTool("studio_drive_restore",{description:"Restore locally missing Studio Web project media from the user's own Google Drive archive.",inputSchema:{deviceId:z.string().min(8),projectId:z.string().min(8)}},async({deviceId,projectId})=>{
+    try{const c=await st.enqueueRuntime(deviceId,projectId,"drive_restore",{});return out({queued:true,commandId:c.id,sequence:c.seq,runtime:"studio-web"});}catch(e){return out({queued:false,error:e.message});}
+  });
+  s.registerTool("studio_drive_offload",{description:"First verify a Studio Web project sync to the user's Drive, then remove local browser media blobs to free browser/device storage. Project metadata and Drive IDs remain.",inputSchema:{deviceId:z.string().min(8),projectId:z.string().min(8)}},async({deviceId,projectId})=>{
+    try{const c=await st.enqueueRuntime(deviceId,projectId,"drive_offload",{});return out({queued:true,commandId:c.id,sequence:c.seq,runtime:"studio-web"});}catch(e){return out({queued:false,error:e.message});}
+  });
+  s.registerTool("get_studio_runtime_result",{description:"Read the result of a Studio Web generation or Drive runtime command.",inputSchema:{deviceId:z.string().min(8),commandId:z.string().min(8)}},async({deviceId,commandId})=>{
+    const c=await st.runtimeCommand(deviceId,commandId);return out(c||{error:"Studio Runtime command not found"});
+  });
+
   s.registerTool("queue_video_edit",{description:"Send one edit action to VideoStudio. Native v3/v1 compatibility can use the private owner credential as deviceId and projectId='active-native'.",inputSchema:{deviceId:z.string().min(8),projectId:z.string().min(8),action:z.enum(["set_trim","set_speed","set_mute","set_aspect","set_title","set_quality","set_transition","remove_clip","move_clip","reorder_timeline","replace_timeline","set_clip_speed","set_clip_title","set_clip_effects","analyse_media","inspect_render","render","autonomous_request"]),parameters:z.record(z.string(),z.any()).optional()}},async({deviceId,projectId,action,parameters})=>{
     try{
       const p=parameters||{};
@@ -1299,7 +1375,10 @@ async function api(request,env){
     const pm=u.pathname.match(/^\/api\/projects\/([^/]+)$/);
     if(pm&&request.method==="GET"){ const p=await st.project(u.searchParams.get("deviceId")||"",pm[1]); return p?reply({project:p}):reply({error:"Project not found"},404); }
     if(pm&&request.method==="POST"){ const b=await request.json(),p=await st.update(b.deviceId,pm[1],b.patch||{}); return p?reply({project:p}):reply({error:"Project not found"},404); }
-    if(u.pathname==="/api/commands"&&request.method==="GET") return reply({commands:await st.commands(u.searchParams.get("deviceId")||"",Number(u.searchParams.get("after")||0))});
+    if(u.pathname==="/api/runtime/commands"&&request.method==="GET") return reply({commands:await st.runtimeCommands(u.searchParams.get("deviceId")||"",Number(u.searchParams.get("after")||0))});
+    const rcm=u.pathname.match(/^\/api\/runtime\/commands\/([^/]+)\/complete$/);
+    if(rcm&&request.method==="POST"){ const b=await request.json(),c=await st.completeRuntime(b.deviceId,rcm[1],b.result||{},b.status||"completed"); return c?reply({command:c}):reply({error:"Runtime command not found"},404); }
+        if(u.pathname==="/api/commands"&&request.method==="GET") return reply({commands:await st.commands(u.searchParams.get("deviceId")||"",Number(u.searchParams.get("after")||0))});
     const cm=u.pathname.match(/^\/api\/commands\/([^/]+)\/complete$/);
     if(cm&&request.method==="POST"){ const b=await request.json(),c=await st.complete(b.deviceId,cm[1],b.result||{},b.status||"completed"); return c?reply({command:c}):reply({error:"Command not found"},404); }
     return reply({error:"API route not found"},404);
@@ -1323,7 +1402,12 @@ const SW='const C="videostudio-studio-web-v3";self.addEventListener("install",e=
 export default {
   async fetch(request,env,ctx){
     const u=new URL(request.url);
-    if(u.pathname==="/"&&request.method==="GET") return new Response(APP_HTML,{headers:{"content-type":"text/html; charset=UTF-8","cache-control":"no-store"}});
+    if(u.pathname==="/"&&request.method==="GET"){
+      const html=APP_HTML.includes("/studio-runtime.js")?APP_HTML:APP_HTML.replace("</body>",'<script defer src="/studio-runtime.js"></script></body>');
+      return new Response(html,{headers:{"content-type":"text/html; charset=UTF-8","cache-control":"no-store"}});
+    }
+    if(u.pathname==="/studio-runtime.js"&&request.method==="GET") return new Response(STUDIO_RUNTIME_JS,{headers:{"content-type":"application/javascript; charset=UTF-8","cache-control":"no-cache"}});
+    if(u.pathname==="/api/web/config"&&request.method==="GET") return reply({googleDriveClientId:clean(env.GOOGLE_DRIVE_CLIENT_ID||"",300),driveScope:"https://www.googleapis.com/auth/drive.file",storageMode:"user-owned-google-drive"});
     if(u.pathname==="/manifest.webmanifest") return new Response(MANIFEST,{headers:{"content-type":"application/manifest+json"}});
     if(u.pathname==="/icon.svg") return new Response(ICON,{headers:{"content-type":"image/svg+xml"}});
     if(u.pathname==="/sw.js") return new Response(SW,{headers:{"content-type":"application/javascript","cache-control":"no-cache"}});
