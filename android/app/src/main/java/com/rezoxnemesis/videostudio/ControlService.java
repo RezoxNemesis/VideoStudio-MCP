@@ -840,6 +840,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             out.put("nativeAgent", "videostudio-v3");
             out.put("privateStorageWritable", dirReady && probe.exists() && probe.length() > 0);
             out.put("projectStoreReady", store.summaries() != null);
+            out.put("projectStorage", store.storageBackend());
             out.put("jobEngineReady", jobs.state() != null);
             out.put("renderEngineReady", renderEngine != null);
             out.put("analysisEngineReady", mediaAnalyzer != null);
@@ -880,6 +881,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             out.put("galleryAccess", false);
             out.put("galleryBoundary", "MCP v3 cannot list, browse or enumerate Gallery media. Only user-picked files, VideoStudio-owned media and explicit ChatGPT attachments are usable.");
             out.put("projects", store.summaries().optJSONArray("projects"));
+            out.put("projectStorage", store.storageBackend());
             ProjectStore.Project active = store.active();
             if (active != null) {
                 out.put("activeProjectId", active.id);
