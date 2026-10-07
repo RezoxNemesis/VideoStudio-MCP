@@ -149,6 +149,7 @@ public final class AppProtocol {
     }
 
     private void commandLoop() {
+        long backoffMs = 900;
         while (running) {
             try {
                 if (isControlPaused()) {
@@ -167,7 +168,7 @@ public final class AppProtocol {
                     String commandStatus = cmd.optString("status");
                     if (!"queued".equals(commandStatus) && !"claimed".equals(commandStatus)) continue;
                     JSONObject dispatch = cmd;
-                    main.post(() -> callback.onCommand(dispatch));
+                    if (callback != null) main.post(() -> callback.onCommand(dispatch));
                 }
                 consecutiveFailures = 0;
                 main.post(() -> callback.onConnection(true, "Private App MCP online"));
@@ -205,9 +206,9 @@ public final class AppProtocol {
             body.put("meta", meta);
             JSONObject result = request("POST", "/api/app/register", body, false, 15000);
             boolean ok = result.optBoolean("ok", false);
-            main.post(() -> callback.onConnection(ok, ok ? "Private App MCP online" : "MCP registration failed"));
+            if (callback != null) main.post(() -> callback.onConnection(ok, ok ? "Private App MCP online" : "MCP registration failed"));
         } catch (Exception error) {
-            main.post(() -> callback.onConnection(false, "Offline"));
+            if (callback != null) main.post(() -> callback.onConnection(false, "Offline"));
         }
     }
 
