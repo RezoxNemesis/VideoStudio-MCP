@@ -93,13 +93,33 @@ export class VideoStudioState extends DurableObject {
     if(bound&&bound!==deviceId) throw new Error("Owner key is already bound to another device");
     const dk="app-device:"+deviceId, old=(await this.ctx.storage.get(dk))||{};
     if(old.ownerHash&&old.ownerHash!==hash) throw new Error("This native device is already bound to its owner credential");
+    const clientGeneration=Math.max(0,Number(meta.appGeneration||0));
+    const storedGeneration=Math.max(0,Number(old.appGeneration||0));
+    if(storedGeneration>clientGeneration){
+      const {ownerHash,...safeOld}=old;
+      return {
+        __staleClient:true,
+        expectedGeneration:storedGeneration,
+        receivedGeneration:clientGeneration,
+        device:safeOld
+      };
+    }
     const mode=["one_file","all_tools","everything"].includes(meta.permissionMode)?meta.permissionMode:(old.permissionMode||"everything");
     const d={
       deviceId,
       name:clean(meta.name||old.name||"VideoStudio Android",80),
       platform:clean(meta.platform||old.platform||"android-native",80),
       appVersion:clean(meta.appVersion||old.appVersion||"1.0.0",30),
+      appGeneration:Math.max(clientGeneration,storedGeneration),
+      connectionCoreVersion:Math.max(0,Number(meta.connectionCoreVersion||old.connectionCoreVersion||0)),
       protocolVersion:Number(meta.protocolVersion||old.protocolVersion||1),
+      protocolMin:Number(meta.protocolMin||meta.protocolVersion||old.protocolMin||old.protocolVersion||1),
+      protocolMax:Number(meta.protocolMax||meta.protocolVersion||old.protocolMax||old.protocolVersion||1),
+      preferredProtocol:Number(meta.preferredProtocol||meta.protocolVersion||old.preferredProtocol||old.protocolVersion||1),
+      protocolFamily:clean(meta.protocolFamily||old.protocolFamily||"videostudio-native",80),
+      stableMcpEndpoint:meta.stableMcpEndpoint!==false,
+      stableMcpPath:clean(meta.stableMcpPath||old.stableMcpPath||"/app-mcp-v3/",120),
+      additiveActionBridge:meta.additiveActionBridge!==false,
       nativeAgent:clean(meta.nativeAgent||old.nativeAgent||"",80),
       directAttachmentIngest:!!meta.directAttachmentIngest,
       localEngineOwnsProjects:meta.localEngineOwnsProjects!==false,
@@ -203,7 +223,9 @@ export class VideoStudioState extends DurableObject {
   async appV3Device(ownerKey){
     const d=await this.appResolve(ownerKey);
     if(!d) throw new Error("VideoStudio MCP v3 credential rejected");
-    if(Number(d.protocolVersion||0)!==3) throw new Error("VideoStudio v3 app is required for this MCP endpoint");
+    const min=Number(d.protocolMin||d.protocolVersion||0);
+    const max=Number(d.protocolMax||d.protocolVersion||0);
+    if(!(min<=3&&max>=3)) throw new Error("VideoStudio stable MCP compatibility lane v3 is not supported by this app");
     return d;
   }
   async appEnqueueV3(ownerKey,action,parameters={}){
@@ -232,7 +254,8 @@ export class VideoStudioState extends DurableObject {
   async appCommandsV3(deviceId,ownerKey,after=0,waitMs=0){
     const d=await this.appAuth(deviceId,ownerKey);
     if(!d) throw new Error("VideoStudio v3 native authorization failed");
-    if(Number(d.protocolVersion||0)!==3) throw new Error("VideoStudio v3 protocol registration required");
+    const min=Number(d.protocolMin||d.protocolVersion||0), max=Number(d.protocolMax||d.protocolVersion||0);
+    if(!(min<=3&&max>=3)) throw new Error("VideoStudio stable MCP compatibility lane v3 is not registered");
     const until=Date.now()+Math.max(0,Math.min(20000,Number(waitMs||0)));
     const key="app-v3-cl:"+deviceId;
     while(true){
@@ -258,7 +281,8 @@ export class VideoStudioState extends DurableObject {
   async appCompleteV3(deviceId,ownerKey,id,result={},status="completed"){
     const d=await this.appAuth(deviceId,ownerKey);
     if(!d) throw new Error("VideoStudio v3 native authorization failed");
-    if(Number(d.protocolVersion||0)!==3) throw new Error("VideoStudio v3 protocol registration required");
+    const min=Number(d.protocolMin||d.protocolVersion||0), max=Number(d.protocolMax||d.protocolVersion||0);
+    if(!(min<=3&&max>=3)) throw new Error("VideoStudio stable MCP compatibility lane v3 is not registered");
     const k="app-v3-cl:"+deviceId, list=(await this.ctx.storage.get(k))||[], i=list.findIndex(c=>c.id===id);
     if(i<0) return null;
     const completedParameters={...(list[i].parameters||{})};
@@ -284,23 +308,43 @@ export class VideoStudioState extends DurableObject {
   }
   async appStatusV3(ownerKey){
     const d=await this.appResolve(ownerKey);
-    if(!d) return {connected:false,protocolVersion:3,error:"VideoStudio MCP v3 credential rejected"};
-    if(Number(d.protocolVersion||0)!==3){
+    if(!d) return {connected:false,registered:false,protocolVersion:3,error:"VideoStudio stable MCP credential rejected"};
+    const min=Number(d.protocolMin||d.protocolVersion||0);
+    const max=Number(d.protocolMax||d.protocolVersion||0);
+    const compatible=min<=3&&max>=3;
+    if(!compatible){
       return {
         connected:false,
+        registered:true,
         protocolVersion:3,
         upgradeRequired:true,
         registeredProtocolVersion:Number(d.protocolVersion||0),
+        protocolMin:min,
+        protocolMax:max,
         appVersion:d.appVersion||"",
-        error:"Install/open VideoStudio v3 to activate the v3 Native Agent connection"
+        appGeneration:Number(d.appGeneration||0),
+        error:"Installed VideoStudio does not expose the stable MCP compatibility lane v3"
       };
     }
     const list=(await this.ctx.storage.get("app-v3-cl:"+d.deviceId))||[];
     const {ownerHash,...safe}=d;
+    const lastSeenMs=Date.parse(String(d.lastSeenAt||""))||0;
+    const ageMs=lastSeenMs>0?Math.max(0,Date.now()-lastSeenMs):Number.MAX_SAFE_INTEGER;
+    const fresh=ageMs<=45000;
     return {
-      connected:true,
+      connected:fresh,
+      registered:true,
+      stale:!fresh,
+      lastSeenAgeMs:ageMs===Number.MAX_SAFE_INTEGER?null:ageMs,
       protocolVersion:3,
-      mcpEndpointVersion:"v3",
+      protocolMin:min,
+      protocolMax:max,
+      selectedCompatibilityProtocol:3,
+      mcpEndpointVersion:"v3-stable",
+      stableMcpEndpoint:true,
+      stableMcpPath:"/app-mcp-v3/",
+      connectionCoreVersion:Number(d.connectionCoreVersion||0),
+      appGeneration:Number(d.appGeneration||0),
       nativeAgent:"videostudio-v3",
       device:safe,
       pendingCommands:list.filter(c=>c.status==="queued"||c.status==="claimed").length,
@@ -551,7 +595,7 @@ function serverForApp(env,ownerKey,protocolVersion=1){
   const isV3=Number(protocolVersion)===3;
   const s=new McpServer({
     name:isV3?"VideoStudio-App-MCP-v3":"VideoStudio-App-MCP",
-    version:isV3?"3.3.1":"1.1.2"
+    version:isV3?"3.3.2":"1.1.2"
   }), st=state(env);
   const enqueueCommand=(action,parameters={})=>isV3
     ? st.appEnqueueV3(ownerKey,action,parameters)
@@ -587,15 +631,17 @@ function serverForApp(env,ownerKey,protocolVersion=1){
   s.registerTool("app_status",{description:isV3?"Check the VideoStudio v3 Native Agent connection, protocol version, permission mode, projects and pending native work. Gallery access is always false.":"Check the private native VideoStudio Android connection, permission mode, projects, control-pause state and pending work. Gallery access is always false.",inputSchema:{}},async()=>out(await readStatus()));
 
   s.registerTool("app_capabilities",{description:isV3?"Read VideoStudio v3 Native Agent capabilities and architecture guarantees.":"Read the native v1.1 editing, AI, render and privacy capabilities available to ChatGPT.",inputSchema:{}},async()=>out({
-    version:isV3?"3.2.1":"1.1.2",
+    version:isV3?"3.3.2":"1.1.2",
     protocolVersion:isV3?3:1,
+    stableEndpoint:isV3,
+    stableEndpointPath:isV3?"/app-mcp-v3/":"",
     primary:"Android native app",
     architecture:isV3?"native-first; cloud path is signalling only":"native app with private MCP relay",
     privacy:{galleryAccess:false,boundary:"No MCP tool may list, browse or enumerate Gallery/media-library items. Only user-selected Android picker files, VideoStudio-owned files and explicit ChatGPT attachments are usable."},
     permissions:["everything","one_file"],
     permissionModel:{default:"everything",legacyAlias:"all_tools",note:"Full Autonomous grants every VideoStudio-native action. One File Lock is the only restrictive mode. Gallery enumeration is always blocked."},
     connection:isV3
-      ?["MCP v3 endpoint","Android Keystore owner key","device binding","isolated v3 command queue","leased commands","durable command idempotency journal","persistent foreground Native Agent","secure reconnect backoff","live ChatGPT activity feed","STOP CHATGPT CONTROL"]
+      ?["stable MCP v3 compatibility endpoint across APK updates","Android Keystore owner key","device binding","persistent app-generation fencing","adaptive connection profile negotiation","isolated v3 command queue","leased commands","durable command idempotency journal","persistent foreground Native Agent","secure reconnect backoff","live ChatGPT activity feed","STOP CHATGPT CONTROL"]
       :["Android Keystore owner key","device binding","persistent foreground control service","leased commands","crash-safe completion checkpoints","secure reconnect backoff","notification pause/cancel controls","live ChatGPT activity feed","STOP CHATGPT CONTROL"],
     media:isV3
       ?["direct ChatGPT attachment ingest to app-private storage","owner-authenticated inline still-frame fallback","VideoStudio-owned media","explicit HTTPS import","manual Android picker","no Gallery enumeration","legacy short-lived relay fallback"]
@@ -893,9 +939,43 @@ async function api(request,env){
   try{
     if(u.pathname==="/api/v3/app/register"&&request.method==="POST"){
       const b=await request.json(), meta=b.meta||{};
-      if(Number(meta.protocolVersion||0)!==3) return reply({ok:false,protocolVersion:3,error:"MCP v3 registration requires protocolVersion=3"},409);
-      const device=await st.appRegister(b.deviceId,b.ownerKey,meta);
-      return reply({ok:true,protocolVersion:3,mcpEndpointVersion:"v3",device});
+      const min=Number(meta.protocolMin||meta.protocolVersion||0);
+      const max=Number(meta.protocolMax||meta.protocolVersion||0);
+      if(!(min<=3&&max>=3)) return reply({
+        ok:false,
+        protocolVersion:3,
+        error:"Stable MCP compatibility lane v3 is not supported by this app"
+      },409);
+      const registration=await st.appRegister(b.deviceId,b.ownerKey,meta);
+      if(registration&&registration.__staleClient){
+        return reply({
+          ok:false,
+          staleClient:true,
+          protocolVersion:3,
+          expectedGeneration:registration.expectedGeneration,
+          receivedGeneration:registration.receivedGeneration,
+          error:"Older VideoStudio Native Agent generation rejected"
+        },409);
+      }
+      return reply({
+        ok:true,
+        protocolVersion:3,
+        mcpEndpointVersion:"v3-stable",
+        stableMcpEndpoint:true,
+        device:registration,
+        connection:{
+          selectedProtocol:3,
+          apiPrefix:"/api/v3/app",
+          stableMcpPath:"/app-mcp-v3/",
+          heartbeatMs:12000,
+          commandWaitMs:18000,
+          requestTimeoutMs:30000,
+          leaseMs:60000,
+          endpointMode:"stable-compatibility",
+          serverEpoch:"stable-core-1",
+          acceptedAppGeneration:Number(registration.appGeneration||0)
+        }
+      });
     }
     if(u.pathname==="/api/v3/app/status"&&request.method==="GET"){
       const status=await st.appStatusV3(bearer(request));
@@ -1039,6 +1119,8 @@ export default {
     if(u.pathname==="/icon.svg") return new Response(ICON,{headers:{"content-type":"image/svg+xml"}});
     if(u.pathname==="/sw.js") return new Response(SW,{headers:{"content-type":"application/javascript","cache-control":"no-cache"}});
     if(u.pathname.startsWith("/api/")) return api(request,env);
+    // Permanent compatibility endpoint. Do not rename this route for APK releases.
+    // Future app versions evolve behind protocol-v3 additive actions/app_execute.
     const appMcpV3=u.pathname.match(/^\/app-mcp-v3\/([A-Za-z0-9_-]{32,})$/);
     if(appMcpV3){
       const ownerKey=appMcpV3[1];
