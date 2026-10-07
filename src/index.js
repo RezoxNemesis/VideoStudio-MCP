@@ -18,10 +18,13 @@ const bearer = request => {
   return h.toLowerCase().startsWith("bearer ") ? h.slice(7).trim() : "";
 };
 const appActionAllowed = (mode,action) => {
-  if(["ping","get_state"].includes(action)) return true;
+  const a=String(action||"").toLowerCase();
+  // Hard privacy boundary: no MCP permission mode may browse or enumerate Gallery/library media.
+  if(a.includes("gallery")||a.includes("media_library")||a.includes("photo_library")) return false;
+  if(["ping","get_state"].includes(a)) return true;
   if(mode==="everything") return true;
-  if(mode==="all_tools") return !["import_url","import_chat_file","delete_project"].includes(action);
-  if(mode==="one_file") return ["apply_tool","preview_project","cancel_job"].includes(action);
+  if(mode==="all_tools") return !["import_url","import_chat_file","delete_project"].includes(a);
+  if(mode==="one_file") return ["apply_tool","preview_project","analyse_media","export_project","cancel_job"].includes(a);
   return false;
 };
 
@@ -91,6 +94,9 @@ export class VideoStudioState extends DurableObject {
       appVersion:clean(meta.appVersion||old.appVersion||"1.0.0",30),
       permissionMode:mode,
       projects:Array.isArray(meta.projects)?meta.projects.slice(0,100):(old.projects||[]),
+      controlPaused:!!meta.controlPaused,
+      connectionSession:clean(meta.connectionSession||old.connectionSession||"",80),
+      galleryAccess:false,
       createdAt:old.createdAt||now(),
       lastSeenAt:now(),
       nativeApp:true,
@@ -114,7 +120,8 @@ export class VideoStudioState extends DurableObject {
   async appEnqueue(ownerKey,action,parameters={}){
     const d=await this.appResolve(ownerKey);
     if(!d) throw new Error("Private App MCP credential rejected");
-    if(!appActionAllowed(d.permissionMode,action)) throw new Error("Action blocked by device permission mode: "+d.permissionMode);
+    if(d.controlPaused) throw new Error("ChatGPT control is paused on the phone");
+    if(!appActionAllowed(d.permissionMode,action)) throw new Error("Action blocked by device permission mode or Gallery privacy boundary: "+d.permissionMode);
     const sk="app-seq:"+d.deviceId, seq=((await this.ctx.storage.get(sk))||0)+1;
     await this.ctx.storage.put(sk,seq);
     const c={id:crypto.randomUUID(),seq,deviceId:d.deviceId,action,parameters,status:"queued",createdAt:now(),completedAt:null,result:null};
@@ -151,6 +158,11 @@ export class VideoStudioState extends DurableObject {
     const k="app-cl:"+deviceId, list=(await this.ctx.storage.get(k))||[], i=list.findIndex(c=>c.id===id);
     if(i<0) return null;
     list[i]={...list[i],status:clean(status,30)||"completed",completedAt:now(),result};
+    for(let j=0;j<list.length;j++){
+      if(j!==i&&list[j]&&list[j].result&&list[j].result.contactSheet&&list[j].result.contactSheet.base64){
+        list[j]={...list[j],result:{...list[j].result,contactSheet:{...list[j].result.contactSheet,base64:undefined,expired:true}}};
+      }
+    }
     await this.ctx.storage.put(k,list.slice(-100));
     const d=(await this.ctx.storage.get("app-device:"+deviceId))||{};
     d.lastSeenAt=now();
@@ -244,9 +256,12 @@ function serverFor(env){
         let nativeAction=p.nativeAction||"";
         let nativeParameters=p.nativeParameters||p;
         if(!nativeAction){
-          if(action==="autonomous_request"&&Array.isArray(p.clips)) nativeAction="apply_edit_plan";
+          if(action==="autonomous_request"&&p.prompt) nativeAction="prompt_video";
+          else if(action==="autonomous_request"&&(Array.isArray(p.clips)||p.preset||p.render)) nativeAction="autonomous_edit";
           else if(action==="set_clip_effects") nativeAction="apply_tool";
-          else if(action==="render"||action==="inspect_render") nativeAction="preview_project";
+          else if(action==="analyse_media") nativeAction="analyse_media";
+          else if(action==="render") nativeAction="export_project";
+          else if(action==="inspect_render") nativeAction="get_state";
           else if(action==="autonomous_request"&&String(p.instruction||"").toLowerCase().includes("preview")) nativeAction="preview_project";
           else nativeAction="get_state";
         }
@@ -269,7 +284,16 @@ function serverFor(env){
     const native=await st.appResolve(deviceId);
     if(native){
       const c=await st.appCommand(deviceId,commandId);
-      return out(c||{error:"Command not found"});
+      if(!c) return out({error:"Command not found"});
+      const sheet=c.result&&c.result.contactSheet;
+      if(sheet&&sheet.base64){
+        const safeResult={...c.result,contactSheet:{...sheet,base64:undefined}};
+        return {content:[
+          {type:"text",text:JSON.stringify({...c,result:safeResult})},
+          {type:"image",data:sheet.base64,mimeType:sheet.mimeType||"image/jpeg"}
+        ]};
+      }
+      return out(c);
     }
     const c=await st.command(deviceId,commandId);
     if(!c) return out({error:"Command not found"});
@@ -294,22 +318,24 @@ function serverFor(env){
       return out({queued:true,count:queued.length,commands:queued,note:"VideoStudio will apply these commands in sequence while the paired app is open."});
     }catch(e){ return out({queued:false,error:e.message,commands:queued}); }
   });
-  s.registerTool("request_media_analysis",{description:"Run local visual, scene-change and quiet-section analysis. Returns a 12-frame contact sheet plus suggested structural timestamps without uploading the full video.",inputSchema:{deviceId:z.string().min(8),projectId:z.string().min(8),assetId:z.string().min(8).optional(),start:z.number().min(0).optional(),end:z.number().positive().optional(),frames:z.number().int().min(6).max(16).optional(),includeAudio:z.boolean().optional()}},async({deviceId,projectId,assetId,start,end,frames,includeAudio})=>{
+  s.registerTool("request_media_analysis",{description:"Run local visual analysis on VideoStudio media. Native v1.1 returns sampled frames and scene-change candidates without uploading the full video.",inputSchema:{deviceId:z.string().min(8),projectId:z.string().min(8),assetId:z.string().min(8).optional(),start:z.number().min(0).optional(),end:z.number().positive().optional(),frames:z.number().int().min(6).max(16).optional(),includeAudio:z.boolean().optional()}},async({deviceId,projectId,assetId,start,end,frames,includeAudio})=>{
     try{
       const parameters={}; if(assetId)parameters.assetId=assetId; if(start!=null)parameters.start=start; if(end!=null)parameters.end=end; if(frames!=null)parameters.frames=frames; if(includeAudio!=null)parameters.includeAudio=includeAudio;
-      const c=await st.enqueue(deviceId,projectId,"analyse_media",parameters);
-      return out({queued:true,commandId:c.id,sequence:c.seq,note:"Keep VideoStudio open. The device will return sampled frames, scene changes and quiet sections."});
+      const native=await st.appResolve(deviceId);
+      const c=native?await st.appEnqueue(deviceId,"analyse_media",parameters):await st.enqueue(deviceId,projectId,"analyse_media",parameters);
+      return out({queued:true,commandId:c.id,sequence:c.seq,nativeApp:!!native,note:"VideoStudio will analyse frames locally and return a contact sheet."});
     }catch(e){ return out({queued:false,error:e.message}); }
   });
   s.registerTool("inspect_video_render",{description:"Inspect the actual latest local render with a contact sheet so ChatGPT can critique the finished edit and iterate.",inputSchema:{deviceId:z.string().min(8),projectId:z.string().min(8),frames:z.number().int().min(6).max(16).optional()}},async({deviceId,projectId,frames})=>{
     try{ const c=await st.enqueue(deviceId,projectId,"inspect_render",{frames:frames||12}); return out({queued:true,commandId:c.id,sequence:c.seq,note:"The app will sample the latest render locally and return visual frames."}); }
     catch(e){ return out({queued:false,error:e.message}); }
   });
-  s.registerTool("queue_autonomous_edit",{description:"Send a structured autonomous edit plan with multi-cuts, per-clip reframing, filters, audio levels, titles, rendering and optional post-render inspection.",inputSchema:{deviceId:z.string().min(8),projectId:z.string().min(8),instruction:z.string().min(1),clips:z.array(z.record(z.string(),z.any())).min(1).max(40),aspect:z.enum(["9:16","16:9","1:1","4:5"]).optional(),quality:z.enum(["720p","1080p"]).optional(),transition:z.enum(["none","fade"]).optional(),mute:z.boolean().optional(),render:z.boolean().optional(),inspectAfterRender:z.boolean().optional()}},async(args)=>{
+  s.registerTool("queue_autonomous_edit",{description:"Send a structured autonomous edit plan. Native v1.1 can apply the timeline, creator preset and optionally export locally.",inputSchema:{deviceId:z.string().min(8),projectId:z.string().min(8),instruction:z.string().min(1),clips:z.array(z.record(z.string(),z.any())).min(1).max(80),aspect:z.enum(["9:16","16:9","1:1","4:5"]).optional(),quality:z.enum(["720p","1080p"]).optional(),transition:z.string().optional(),mute:z.boolean().optional(),render:z.boolean().optional(),inspectAfterRender:z.boolean().optional()}},async(args)=>{
     try{
       const {deviceId,projectId,...parameters}=args;
-      const c=await st.enqueue(deviceId,projectId,"autonomous_request",parameters);
-      return out({queued:true,commandId:c.id,sequence:c.seq,note:"Structured edit plan queued. VideoStudio will execute it locally."});
+      const native=await st.appResolve(deviceId);
+      const c=native?await st.appEnqueue(deviceId,"autonomous_edit",parameters):await st.enqueue(deviceId,projectId,"autonomous_request",parameters);
+      return out({queued:true,commandId:c.id,sequence:c.seq,nativeApp:!!native,note:"Structured edit plan queued for local execution."});
     }catch(e){ return out({queued:false,error:e.message}); }
   });
   s.registerTool("import_chat_file",{description:"Securely stream a ChatGPT conversation attachment into the private native VideoStudio Android app. Pass the native private owner credential as deviceId. Requires Allow everything mode.",inputSchema:{deviceId:z.string().min(32),sourceUrl:z.string().url(),name:z.string().min(1).max(180),mime:z.string().max(120).optional(),size:z.number().nonnegative().optional(),projectId:z.string().min(8).optional()}},async({deviceId,sourceUrl,name,mime,size,projectId})=>{
