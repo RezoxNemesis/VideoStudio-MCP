@@ -104,9 +104,9 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         createChannel();
         startForeground(NOTIFICATION_ID, notification("VideoStudio stable MCP starting"));
         syncProtocolState();
+        markService(false, "VideoStudio stable MCP Native Agent starting");
         protocol.start();
-        markService(true, "VideoStudio stable MCP Native Agent active");
-        ActivityLog.add(this, "system", "VideoStudio control online",
+        ActivityLog.add(this, "system", "VideoStudio control starting",
                 "Stable MCP compatibility endpoint • app " + AppProtocol.APP_VERSION
                         + " • generation " + protocol.appGeneration(),
                 "success", null, null, null);
