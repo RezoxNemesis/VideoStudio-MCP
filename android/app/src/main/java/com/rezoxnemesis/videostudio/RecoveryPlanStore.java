@@ -114,6 +114,31 @@ public final class RecoveryPlanStore {
         upsert(plan);
     }
 
+    public synchronized void completePlan(String planId, String detail) {
+        JSONObject plan = get(planId);
+        if (plan == null) return;
+        try {
+            plan.put("state", "completed");
+            plan.put("stage", "completed");
+            plan.put("progress", 100);
+            plan.put("detail", clean(detail, "Completed"));
+            plan.put("updatedAt", System.currentTimeMillis());
+        } catch (Exception ignored) {}
+        upsert(plan);
+    }
+
+    public synchronized void markResuming(String planId) {
+        JSONObject plan = get(planId);
+        if (plan == null) return;
+        try {
+            plan.put("state", "retrying");
+            plan.put("stage", "restart_recovery");
+            plan.put("detail", "Resuming durable work after process restart");
+            plan.put("updatedAt", System.currentTimeMillis());
+        } catch (Exception ignored) {}
+        upsert(plan);
+    }
+
     public synchronized void failByJob(String jobId, String error, boolean recoverable) {
         JSONObject plan = findByJobId(jobId);
         if (plan == null) return;
