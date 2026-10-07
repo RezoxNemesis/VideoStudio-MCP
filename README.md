@@ -29,6 +29,19 @@ v3 stores project/timeline data in app-private SQLite:
 
 Existing v1/v1.1 projects are migrated automatically on first v3 launch.
 
+## Autonomous permission default
+
+VideoStudio 3.2 defaults to **Allow everything except Gallery** so the Native Agent can finish work without repeated permission interruptions. On upgrade, older installs using the previous default are migrated once to this mode.
+
+This mode allows ChatGPT to create/manage VideoStudio projects, import files explicitly shared to ChatGPT, analyse media, apply edits and animation, render/export, inspect job state, retry work, and manage VideoStudio-owned project media.
+
+Two boundaries remain non-negotiable:
+
+- MCP cannot list, browse or enumerate the Android Gallery/media library.
+- **STOP CHATGPT CONTROL** immediately pauses autonomous control and cancels active native work.
+
+The narrower `all_tools` and `one_file` modes remain available as deliberate user-selected restrictions. VideoStudio does not automatically switch back to full autonomy after the one-time v3.2 migration if the user later chooses one of those modes.
+
 ## Native still-image animation
 
 VideoStudio 3.2 strengthens the zero-paid-service portrait animation engine while keeping the connection protocol on **MCP v3**.
