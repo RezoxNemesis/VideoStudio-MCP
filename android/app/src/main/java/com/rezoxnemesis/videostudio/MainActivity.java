@@ -798,6 +798,14 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                 case "import_url":
                     result = queueUrlImport(p.optString("url"), p.optString("name", "ChatGPT import"));
                     break;
+                case "import_chat_file":
+                    result = queuePrivateHandoffImport(
+                            p.optString("handoffId"),
+                            p.optString("name", "ChatGPT import"),
+                            p.optString("mime", ""),
+                            p.optString("projectId", "")
+                    );
+                    break;
                 default:
                     result.put("ok", false);
                     result.put("error", "Native v1 does not implement action: " + action);
@@ -903,6 +911,85 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         store.save(activeProject);
     }
 
+    private JSONObject queuePrivateHandoffImport(String handoffId, String name, String mimeHint, String projectId) throws Exception {
+        if (handoffId == null || handoffId.trim().isEmpty()) throw new IllegalArgumentException("Missing private handoff ID");
+        ProjectStore.Project requested = projectId == null || projectId.isEmpty() ? null : store.get(projectId);
+        if (requested == null) requested = activeProject;
+        if (requested == null) requested = store.create("ChatGPT Imports");
+        ProjectStore.Project project = requested;
+
+        JobManager.Job job = jobs.submit("Private import " + name, JobManager.Kind.LIGHT, state -> {
+            state.progress = 4;
+            File dir = new File(getFilesDir(), "imports");
+            if (!dir.exists() && !dir.mkdirs()) throw new IllegalStateException("Could not create import directory");
+            String safe = name == null ? "chat_import.mp4" : name.replaceAll("[^a-zA-Z0-9._-]+", "_");
+            if (safe.isEmpty()) safe = "chat_import_" + System.currentTimeMillis() + ".mp4";
+            File file = new File(dir, System.currentTimeMillis() + "_" + safe);
+
+            HttpURLConnection c = protocol.openPrivateHandoff(handoffId);
+            int code = c.getResponseCode();
+            if (code < 200 || code >= 300) throw new IllegalStateException("Private attachment transfer failed: HTTP " + code);
+            String mime = mimeHint == null || mimeHint.isEmpty() ? c.getContentType() : mimeHint;
+            if (mime == null || mime.isEmpty()) mime = "application/octet-stream";
+            long expected = c.getContentLengthLong();
+
+            try (InputStream in = c.getInputStream(); FileOutputStream out = new FileOutputStream(file)) {
+                byte[] buf = new byte[128 * 1024];
+                int n;
+                long bytes = 0;
+                while ((n = in.read(buf)) >= 0) {
+                    if (Thread.currentThread().isInterrupted()) throw new InterruptedException();
+                    out.write(buf, 0, n);
+                    bytes += n;
+                    if (expected > 0) state.progress = Math.min(94, 5 + (int) (88d * bytes / expected));
+                    else state.progress = Math.min(90, 8 + (int) Math.min(82, bytes / (1024 * 1024)));
+                    state.detail = (bytes / 1024 / 1024) + " MB securely streamed";
+                }
+            } finally {
+                c.disconnect();
+            }
+
+            ProjectStore.Asset asset = new ProjectStore.Asset();
+            asset.id = UUID.randomUUID().toString();
+            asset.uri = Uri.fromFile(file).toString();
+            asset.name = name;
+            asset.mime = mime;
+            asset.durationMs = fileDuration(file);
+            project.assets.add(asset);
+
+            if (mime.startsWith("video/") || mime.startsWith("image/")) {
+                ProjectStore.Clip clip = new ProjectStore.Clip();
+                clip.id = UUID.randomUUID().toString();
+                clip.assetId = asset.id;
+                clip.inMs = 0;
+                clip.outMs = mime.startsWith("image/") ? 3000 : Math.max(1000, asset.durationMs);
+                project.clips.add(clip);
+            }
+
+            store.save(project);
+            syncProtocolState();
+            state.progress = 100;
+            state.detail = "Imported into " + project.name;
+            ui.post(() -> {
+                activeProject = store.get(project.id);
+                if (activeProject != null && !activeProject.clips.isEmpty()) {
+                    selectedClip = activeProject.clips.get(activeProject.clips.size() - 1);
+                }
+                refreshCurrent();
+                Toast.makeText(this, "ChatGPT file imported: " + name, Toast.LENGTH_SHORT).show();
+            });
+        });
+
+        JSONObject result = new JSONObject();
+        result.put("ok", true);
+        result.put("queued", true);
+        result.put("jobId", job.id);
+        result.put("handoffId", handoffId);
+        result.put("projectId", project.id);
+        result.put("name", name);
+        return result;
+    }
+
     private JSONObject queueUrlImport(String url, String name) throws Exception {
         if (url == null || !url.startsWith("https://")) throw new IllegalArgumentException("Only HTTPS imports are allowed");
         if (activeProject == null) activeProject = store.create("ChatGPT Imports");
@@ -976,7 +1063,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         String mode = permissionMode();
         if ("everything".equals(mode)) return true;
         if ("all_tools".equals(mode)) {
-            return !"import_url".equals(action) && !"delete_project".equals(action);
+            return !"import_url".equals(action) && !"import_chat_file".equals(action) && !"delete_project".equals(action);
         }
         if ("one_file".equals(mode)) {
             String allowed = prefs.getString(KEY_FILE, "");
@@ -996,7 +1083,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         JSONObject out = new JSONObject();
         try {
             out.put("deviceId", protocol.deviceId());
-            out.put("appVersion", "1.0.0");
+            out.put("appVersion", "1.0.1");
             out.put("nativeApp", true);
             out.put("permissionMode", permissionMode());
             out.put("projects", store.summaries().optJSONArray("projects"));
@@ -1010,7 +1097,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
             out.put("jobs", jobs.state().optJSONArray("jobs"));
             out.put("workload", jobs.state());
             JSONArray caps = new JSONArray();
-            String[] values = {"native-ui","local-projects","media-picker","timeline","trim","split","slow-motion-preview","speed","green-screen-model","transitions-model","motion-model","effects-model","colour-model","masks-model","private-app-mcp","url-import","bounded-multitasking","thermal-guard","memory-guard","job-cancel"};
+            String[] values = {"native-ui","local-projects","media-picker","timeline","trim","split","slow-motion-preview","speed","green-screen-model","transitions-model","motion-model","effects-model","colour-model","masks-model","private-app-mcp","chat-attachment-handoff","url-import","bounded-multitasking","thermal-guard","memory-guard","job-cancel"};
             for (String v : values) caps.put(v);
             out.put("capabilities", caps);
         } catch (Exception ignored) {}
