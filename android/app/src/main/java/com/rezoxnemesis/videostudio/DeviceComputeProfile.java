@@ -52,7 +52,12 @@ public final class DeviceComputeProfile {
         try {
             out.put("availableRamMb", availableMb);
             out.put("totalRamMb", totalMb);
-            out.put("androidRuntimeMaxMb", Runtime.getRuntime().maxMemory() / (1024L * 1024L));
+            Runtime runtime = Runtime.getRuntime();
+            long heapHeadroomMb = Math.max(0, runtime.maxMemory() - (runtime.totalMemory() - runtime.freeMemory())) / (1024L * 1024L);
+            out.put("androidRuntimeMaxMb", runtime.maxMemory() / (1024L * 1024L));
+            out.put("javaHeapHeadroomMb", heapHeadroomMb);
+            out.put("javaArrayBudgetMb", Math.min(workingBudgetMb, heapHeadroomMb / 2));
+            out.put("nativeAndJavaBudgetsAreDistinct", true);
             out.put("cpuCores", Runtime.getRuntime().availableProcessors());
             out.put("abis", abis);
             out.put("thermalStatus", thermal);
@@ -155,3 +160,4 @@ public final class DeviceComputeProfile {
         return "streaming-local";
     }
 }
+

@@ -64,4 +64,17 @@ public class CreativeRuntimeTest {
         assertFalse(prefs.getString("mcp_v3_command_journal", "").contains("commandJournal"));
     }
 
+    @Test public void largePortraitIsSubsampledBeforeAnalysisAllocation() throws Exception {
+        Context context=RuntimeEnvironment.getApplication();
+        java.io.File file=new java.io.File(context.getCacheDir(),"large-portrait.png");
+        Bitmap source=Bitmap.createBitmap(3000,2000,Bitmap.Config.ARGB_8888);
+        try(java.io.FileOutputStream out=new java.io.FileOutputStream(file)){ source.compress(Bitmap.CompressFormat.PNG,100,out); }
+        source.recycle();
+        java.lang.reflect.Method decode=NativePortraitMotionAnalyzer.class.getDeclaredMethod("decode",String.class);
+        decode.setAccessible(true);
+        Bitmap sampled=(Bitmap)decode.invoke(new NativePortraitMotionAnalyzer(context),android.net.Uri.fromFile(file).toString());
+        try { assertTrue(Math.max(sampled.getWidth(),sampled.getHeight())<=1440);assertEquals(1.5,sampled.getWidth()/(double)sampled.getHeight(),.01); }
+        finally {sampled.recycle();file.delete();}
+    }
+
 }
