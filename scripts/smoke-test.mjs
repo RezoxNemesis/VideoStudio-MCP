@@ -38,6 +38,7 @@ const creativeNodeStore = fs.readFileSync(new URL("../android/app/src/main/java/
 const builtInCreativeRuntime = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/CreativeBuiltInRuntime.java", import.meta.url), "utf8");
 const nativeRenderCritic = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/NativeRenderCritic.java", import.meta.url), "utf8");
 const nativeRecoveryReceiver = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/NativeAgentRecoveryReceiver.java", import.meta.url), "utf8");
+const nativeWatchdog = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/NativeAgentWatchdog.java", import.meta.url), "utf8");
 const resumableTransfer = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/ResumableTransferManager.java", import.meta.url), "utf8");
 const transferJournal = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/TransferJournal.java", import.meta.url), "utf8");
 const liveEditPlayer = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/LiveEditPlayer.java", import.meta.url), "utf8");
@@ -190,7 +191,7 @@ const checks = [
   ["MCP transport compatibility is decoupled from APK version", mcpConnectionCore.includes("transportDecoupledFromApkVersion") && mcpConnectionCore.includes("stable-major-additive-features") && mcpConnectionCore.includes("WIRE_SCHEMA_VERSION") && mcpConnectionCore.includes("FEATURE_LEVEL")],
   ["MCP connection identity survives compatible APK upgrades", mcpConnectionCore.includes("upgradeKeepsDeviceIdentity") && mcpConnectionCore.includes("upgradeKeepsOwnerCredential") && nativeProtocol.includes('PREFS = "videostudio_native_v1"') && nativeProtocol.includes('KEY_ALIAS = "videostudio_owner_key_v1"')],
   ["worker persists negotiated wire compatibility independently of app version", worker.includes("wireSchemaVersion") && worker.includes("featureLevel") && worker.includes("transportDecoupledFromApkVersion") && worker.includes('"stable-core-2"')],
-  ["native app identifies as VideoStudio 3.4.1 while retaining stable MCP v3", nativeProtocol.includes('APP_VERSION = "3.4.1"') && nativeProtocol.includes("PROTOCOL_VERSION = 3") && androidBuild.includes('versionName = "3.4.1"') && androidBuild.includes("versionCode = 341")],
+  ["native app identifies as VideoStudio 3.4.2 while retaining stable MCP v3", nativeProtocol.includes('APP_VERSION = "3.4.2"') && nativeProtocol.includes("PROTOCOL_VERSION = 3") && androidBuild.includes('versionName = "3.4.2"') && androidBuild.includes("versionCode = 342")],
   ["pairing message advertises stable upgrade-surviving endpoint", nativeProtocol.includes("Stable MCP endpoint:") && nativeProtocol.includes("survives compatible VideoStudio APK upgrades")],
   ["MCP Connection Core preserves stable endpoint across APK upgrades", mcpConnectionCore.includes('STABLE_MCP_PATH = "/app-mcp-v3/"') && mcpConnectionCore.includes("appGeneration") && mcpConnectionCore.includes("upgradeKeepsOwnerCredential") && mcpConnectionCore.includes("upgradeKeepsDeviceIdentity")],
   ["MCP Connection Core negotiates only an allow-listed same-origin API profile", mcpConnectionCore.includes("applyRegistrationResponse") && mcpConnectionCore.includes("safeApiPrefix") && mcpConnectionCore.includes("heartbeatMs") && mcpConnectionCore.includes("commandWaitMs")],
@@ -360,6 +361,10 @@ const checks = [
   ["terminal autonomous jobs cannot be resurrected by invalid transitions", nativeJobs.includes("canTransition") && nativeJobs.includes("isTerminal")],
   ["native render publication is idempotent across restart windows", atomicMediaPublisher.includes("existingPublishedUri") && atomicMediaPublisher.includes("reused") && recoveryPlans.includes("outputForJob") && controlService.includes("AtomicMediaPublisher.publish")],
   ["reboot and APK replacement re-arm the same stable Native Agent", nativeRecoveryReceiver.includes("ACTION_MY_PACKAGE_REPLACED") && nativeRecoveryReceiver.includes("ACTION_BOOT_COMPLETED") && nativeRecoveryReceiver.includes("ACTION_SYNC")],
+  ["native watchdog re-arms after task/process loss without exact-alarm permission", nativeWatchdog.includes("setAndAllowWhileIdle") && nativeWatchdog.includes("TASK_REMOVED_DELAY_MS") && nativeMain.includes("MCP control plane available") && controlService.includes("onTaskRemoved") && controlService.includes("NativeAgentWatchdog.scheduleRetry")],
+  ["direct stable MCP stays available while native executor sleeps", worker.includes("controlPlaneConnected:true") && worker.includes("offlineQueueAvailable:true") && worker.includes('status:fresh?"queued":"waiting_native"') && worker.includes('nativeState:fresh?"online":"sleeping_or_offline"')],
+  ["pairing text documents durable queued execution instead of claiming native is always awake", nativeProtocol.includes("remains available as the durable control plane while Android sleeps") && nativeProtocol.includes("Native-only work is queued safely")],
+
 ];
 
 let failed = 0;
