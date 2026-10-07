@@ -26,6 +26,7 @@ const recoveryPlans = fs.readFileSync(new URL("../android/app/src/main/java/com/
 const capabilityRegistry = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/CapabilityRegistry.java", import.meta.url), "utf8");
 const modelPackManager = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/ModelPackManager.java", import.meta.url), "utf8");
 const computeProfile = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/DeviceComputeProfile.java", import.meta.url), "utf8");
+const driveWorkspace = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/DriveWorkspaceProvider.java", import.meta.url), "utf8");
 
 const scriptMatch = app.match(/<script>([\s\S]*?)<\/script>/);
 let appScriptParses = false;
@@ -176,6 +177,13 @@ const checks = [
   ["compute planning reacts to thermal state", computeProfile.includes("thermalSafeForHeavyWork") && computeProfile.includes("thermalPauseRequired")],
   ["Native Agent exposes compute profile and planning", controlService.includes('case "compute_profile"') && controlService.includes('case "plan_compute"') && controlService.includes("computeProfile.plan")],
   ["MCP v3 exposes typed compute planning tools", worker.includes('"app_compute_profile"') && worker.includes('"app_plan_compute"')],
+  ["cloud workspace is folder-scoped instead of broad Drive OAuth", driveWorkspace.includes("single-user-selected-document-tree") && driveWorkspace.includes('"broadDrivePermission"') && driveWorkspace.includes("ACTION_OPEN_DOCUMENT_TREE") === false],
+  ["cloud workspace uses persisted Android document-tree permissions", driveWorkspace.includes("getPersistedUriPermissions") && driveWorkspace.includes("DocumentsContract.getTreeDocumentId")],
+  ["cloud archive cannot escape the Creative Runtime project root", driveWorkspace.includes("Workspace file escaped project root") && driveWorkspace.includes("relativePath")],
+  ["cloud archive skips regenerable temp and preview data", driveWorkspace.includes('"temp"') && driveWorkspace.includes('"previews"')],
+  ["Android Control UI links one cloud folder through the system picker", nativeMain.includes("ACTION_OPEN_DOCUMENT_TREE") && nativeMain.includes("PICK_CLOUD_WORKSPACE") && nativeMain.includes("driveWorkspace.link")],
+  ["Native Agent archives project workspace through the linked folder", controlService.includes('case "sync_project_to_drive"') && controlService.includes("queueDriveProjectSync") && controlService.includes("driveWorkspace.syncProject")),
+  ["MCP v3 exposes cloud workspace status and archive tools", worker.includes('"app_drive_workspace_status"') && worker.includes('"app_sync_project_to_drive"')],
   ["native v3 exposes a self-test", controlService.includes('case "self_test"') && worker.includes('"app_self_test"') && controlService.includes("privateStorageWritable")],
   ["native state reports v3 architecture", controlService.includes('out.put("mcpEndpointVersion", "v3")') && controlService.includes('out.put("localEngineOwnsProjects", true)')],
   ["cached connector compatibility routes v3 devices to v3 queue", worker.includes("enqueueNative") && worker.includes("appEnqueueV3") && worker.includes("commandNative")],
