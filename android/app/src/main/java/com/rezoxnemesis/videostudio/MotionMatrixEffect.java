@@ -243,16 +243,47 @@ public final class MotionMatrixEffect implements MatrixTransformation {
     private void applyTransitionEdge(Motion m, long presentationTimeUs) {
         if (transitionUs <= 0) return;
         float edge = 1f;
+        boolean entrance = false;
         if (presentationTimeUs < transitionUs) {
             edge = clamp(presentationTimeUs / (float) transitionUs);
+            entrance = true;
         } else if (presentationTimeUs > durationUs - transitionUs) {
             edge = clamp((durationUs - presentationTimeUs) / (float) transitionUs);
         }
         float e = edge * edge * (3f - 2f * edge);
-        if (preset.contains("slide_left")) m.x += -.18f * (1f - e);
-        if (preset.contains("slide_right")) m.x += .18f * (1f - e);
-        if (preset.contains("slide_up")) m.y += .18f * (1f - e);
-        if (preset.contains("slide_down")) m.y += -.18f * (1f - e);
+        float remaining = 1f - e;
+        String transition = animationSpec == null
+                ? preset
+                : animationSpec.optString("transitionPreset", preset);
+
+        float direction = entrance ? 1f : -1f;
+        if (transition.contains("slide_left") || transition.contains("push_left")) {
+            m.x += -.15f * direction * remaining;
+        } else if (transition.contains("slide_right") || transition.contains("push_right")) {
+            m.x += .15f * direction * remaining;
+        } else if (transition.contains("slide_up")) {
+            m.y += .13f * direction * remaining;
+        } else if (transition.contains("slide_down")) {
+            m.y += -.13f * direction * remaining;
+        } else if (transition.contains("whip_left")) {
+            m.x += -.24f * direction * remaining;
+            m.rotation += -1.1f * direction * remaining;
+            m.scale *= 1f + .03f * remaining;
+        } else if (transition.contains("whip_right")) {
+            m.x += .24f * direction * remaining;
+            m.rotation += 1.1f * direction * remaining;
+            m.scale *= 1f + .03f * remaining;
+        } else if (transition.contains("zoom_in")) {
+            m.scale *= 1f + .08f * remaining;
+        } else if (transition.contains("zoom_out")) {
+            m.scale *= 1f - .05f * remaining;
+        } else if (transition.contains("dip") || transition.contains("fade") || transition.contains("blur")) {
+            // No alpha overlap is synthesized here. Use a restrained depth
+            // pulse so the cut still has temporal momentum without faking a
+            // cross-fade that the concatenated sequence cannot actually do.
+            m.scale *= 1f + .018f * remaining;
+            m.y += .006f * direction * remaining;
+        }
     }
 
     private static float ease(float t, String easing) {
