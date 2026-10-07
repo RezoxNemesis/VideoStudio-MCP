@@ -899,6 +899,11 @@ const STUDIO_RUNTIME_JS = String.raw`
         if(!cinematic||typeof cinematic.renderPortal!=="function") throw new Error("Cinematic Worlds runtime is not ready");
         result=await cinematic.renderPortal({...p,remote:true});
       }
+      else if(command.action==="generate_temporal_motion"){
+        const temporal=await waitForProvider("VideoStudioTemporal",10000);
+        if(!temporal||typeof temporal.renderTemporalMotion!=="function") throw new Error("Neural Temporal Motion runtime is not ready");
+        result=await temporal.renderTemporalMotion({...p,remote:true});
+      }
       else if(command.action==="generate_neural_keyframes"){
         const neural=await waitForProvider("VideoStudioNeural",10000);
         if(!neural||typeof neural.generateKeyframes!=="function") throw new Error("Neural Keyframe runtime is not ready");

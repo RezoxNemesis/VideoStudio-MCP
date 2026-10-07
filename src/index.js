@@ -6,6 +6,7 @@ import APP_HTML from "./app.html";
 import STUDIO_RUNTIME_JS from "./studio-runtime.js";
 import STUDIO_CINEMATIC_JS from "./studio-cinematic.js";
 import STUDIO_NEURAL_JS from "./studio-neural.js";
+import STUDIO_TEMPORAL_JS from "./studio-temporal.js";
 
 const JH = {"content-type":"application/json; charset=UTF-8","cache-control":"no-store"};
 const now = () => new Date().toISOString();
@@ -598,6 +599,7 @@ function serverFor(env){
       "multi-world sequencing through tracked windows/screens/doorways",
       "foreground-preserving compositing with reflections",
       "optional real SD-Turbo neural keyframe generation through ONNX Runtime WebGPU",
+      "neural temporal motion using bidirectional RAFT ONNX optical flow on WebGPU",
       "sequential neural model phases to reduce peak browser memory"
     ]
   }));
@@ -676,6 +678,30 @@ function serverFor(env){
       if(native)return out({queued:false,error:"This neural browser provider targets Studio Web. Use the website device ID."});
       const c=await st.enqueueRuntime(deviceId,projectId,"generate_neural_keyframes",{prompts,...(modelBase?{modelBase}:{})});
       return out({queued:true,commandId:c.id,sequence:c.seq,runtime:"studio-web",engine:"sd-turbo-webgpu-onnx",note:"Keep Studio Web visible during model download/inference. Model terms apply."});
+    }catch(e){return out({queued:false,error:e.message});}
+  });
+
+
+  s.registerTool("render_neural_temporal_video",{
+    description:"Create a real moving world video from 2–9 neural/imported image anchors in Studio Web. VideoStudio runs the RAFT ONNX optical-flow network locally with WebGPU, estimates bidirectional dense motion between anchor frames, flow-warps/interpolates them into continuous motion, records a real video asset, and makes that asset available to Cinematic Worlds. No paid inference API is required.",
+    inputSchema:{
+      deviceId:z.string().min(8),
+      projectId:z.string().min(8),
+      anchorAssetIds:z.array(z.string().min(8)).min(2).max(9).optional(),
+      prompts:z.array(z.string().min(1).max(1200)).min(2).max(9).optional(),
+      duration:z.number().min(2).max(60).optional(),
+      fps:z.number().int().min(12).max(30).optional(),
+      aspect:z.enum(["9:16","16:9","1:1","4:5"]).optional(),
+      quality:z.enum(["720p","1080p"]).optional(),
+      motionStrength:z.number().min(.2).max(1.6).optional(),
+      modelBase:z.string().url().optional()
+    }
+  },async({deviceId,projectId,...parameters})=>{
+    try{
+      const native=await st.appResolve(deviceId);
+      if(native)return out({queued:false,error:"Neural Temporal Motion currently targets Studio Web. Use the website device ID."});
+      const c=await st.enqueueRuntime(deviceId,projectId,"generate_temporal_motion",parameters);
+      return out({queued:true,commandId:c.id,sequence:c.seq,runtime:"studio-web",engine:"raft-onnx-webgpu-flow-mesh-v1",note:"Keep Studio Web visible during local neural motion analysis and video recording. Two or more progressive anchors are required."});
     }catch(e){return out({queued:false,error:e.message});}
   });
 
@@ -1472,11 +1498,13 @@ export default {
       let html=APP_HTML.includes("/studio-runtime.js")?APP_HTML:APP_HTML.replace("</body>",'<script defer src="/studio-runtime.js"></script></body>');
       if(!html.includes("/studio-cinematic.js")) html=html.replace("</body>",'<script defer src="/studio-cinematic.js"></script></body>');
       if(!html.includes("/studio-neural.js")) html=html.replace("</body>",'<script defer src="/studio-neural.js"></script></body>');
+      if(!html.includes("/studio-temporal.js")) html=html.replace("</body>",'<script defer src="/studio-temporal.js"></script></body>');
       return new Response(html,{headers:{"content-type":"text/html; charset=UTF-8","cache-control":"no-store"}});
     }
     if(u.pathname==="/studio-runtime.js"&&request.method==="GET") return new Response(STUDIO_RUNTIME_JS,{headers:{"content-type":"application/javascript; charset=UTF-8","cache-control":"no-cache"}});
     if(u.pathname==="/studio-cinematic.js"&&request.method==="GET") return new Response(STUDIO_CINEMATIC_JS,{headers:{"content-type":"application/javascript; charset=UTF-8","cache-control":"no-cache"}});
     if(u.pathname==="/studio-neural.js"&&request.method==="GET") return new Response(STUDIO_NEURAL_JS,{headers:{"content-type":"application/javascript; charset=UTF-8","cache-control":"no-cache"}});
+    if(u.pathname==="/studio-temporal.js"&&request.method==="GET") return new Response(STUDIO_TEMPORAL_JS,{headers:{"content-type":"application/javascript; charset=UTF-8","cache-control":"no-cache"}});
     if(u.pathname==="/api/web/config"&&request.method==="GET") return reply({googleDriveClientId:clean(env.GOOGLE_DRIVE_CLIENT_ID||"",300),driveScope:"https://www.googleapis.com/auth/drive.file",storageMode:"user-owned-google-drive"});
     if(u.pathname==="/manifest.webmanifest") return new Response(MANIFEST,{headers:{"content-type":"application/manifest+json"}});
     if(u.pathname==="/icon.svg") return new Response(ICON,{headers:{"content-type":"image/svg+xml"}});
