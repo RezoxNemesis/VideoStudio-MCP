@@ -29,6 +29,7 @@ import android.widget.FrameLayout;
 import android.widget.HorizontalScrollView;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
+import android.widget.ProgressBar;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -43,7 +44,9 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Date;
 import java.util.List;
 import java.util.Locale;
 import java.util.UUID;
@@ -81,6 +84,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
     private VideoView preview;
     private final Handler ui = new Handler(Looper.getMainLooper());
     private Runnable clipStopper;
+    private Runnable activityRefresh;
     private boolean timelinePreviewRunning;
     private String currentScreen = "home";
 
@@ -111,6 +115,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
     protected void onDestroy() {
         timelinePreviewRunning = false;
         if (clipStopper != null) ui.removeCallbacks(clipStopper);
+        if (activityRefresh != null) ui.removeCallbacks(activityRefresh);
         if (preview != null) preview.stopPlayback();
         if (activeRenderHandle != null) activeRenderHandle.cancel();
         if (protocol != null) protocol.stop();
@@ -132,7 +137,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         nav.setBackground(rounded(C_CARD, 0, dp(0)));
         nav.addView(navButton("⌂", "Home", () -> showHome()), weight());
         nav.addView(navButton("▣", "Editor", () -> showEditor()), weight());
-        nav.addView(navButton("+", "New", this::createProjectDialog), weight());
+        nav.addView(navButton("◎", "Activity", this::showActivity), weight());
         nav.addView(navButton("✦", "AI Tools", () -> showTools()), weight());
         nav.addView(navButton("⚙", "Control", () -> showControl()), weight());
         root.addView(nav, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(72)));
@@ -140,6 +145,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
     }
 
     private void setScreen(View view, String name) {
+        if (activityRefresh != null) ui.removeCallbacks(activityRefresh);
         currentScreen = name;
         content.removeAllViews();
         content.addView(view, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
@@ -156,7 +162,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         LinearLayout hero = card(true);
         TextView heroTitle = title("Create Without Limits", 28);
         hero.addView(heroTitle);
-        hero.addView(body("Native v1.1 Creator Engine • prompt-to-video • Media3 export • private autonomous App MCP"));
+        hero.addView(body("Native v1.1.2 Creator Engine • prompt-to-video • Media3 export • private autonomous App MCP"));
         Button promptVideo = neonButton("✦  Create Video from a Prompt", C_MAGENTA);
         promptVideo.setOnClickListener(v -> promptVideoDialog());
         hero.addView(promptVideo, margins(-1, dp(54), dp(14), dp(8), 0, 0));
@@ -183,6 +189,21 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         connect.addView(row);
         connect.setOnClickListener(v -> sharePairing());
         box.addView(connect, margins(-1, -2, 0, dp(16), 0, 0));
+
+        LinearLayout live = card(false);
+        LinearLayout liveTop = new LinearLayout(this);
+        liveTop.setGravity(Gravity.CENTER_VERTICAL);
+        LinearLayout liveCopy = column();
+        liveCopy.addView(title("◎  Live ChatGPT Activity", 18));
+        JSONArray latestActivity = ActivityLog.recent(this, 1);
+        JSONObject latest = latestActivity.optJSONObject(0);
+        liveCopy.addView(body(latest == null ? "No autonomous actions yet" : latest.optString("action") + " • " + latest.optString("status")));
+        liveTop.addView(liveCopy, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        liveTop.addView(title("›", 30));
+        live.addView(liveTop);
+        live.addView(accent("ONLY ACTIONS EXECUTED INSIDE VIDEOSTUDIO COUNT", C_CYAN));
+        live.setOnClickListener(v -> showActivity());
+        box.addView(live, margins(-1, -2, 0, dp(16), 0, 0));
 
         box.addView(section("Quick Actions"));
         LinearLayout quick = new LinearLayout(this);
@@ -212,6 +233,126 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         box.addView(foundation);
 
         setScreen(scroll, "home");
+    }
+
+    private void showActivity() {
+        ScrollView scroll = baseScroll();
+        LinearLayout box = column();
+        box.setPadding(dp(16), dp(18), dp(16), dp(30));
+        scroll.addView(box);
+
+        LinearLayout heading = new LinearLayout(this);
+        heading.setGravity(Gravity.CENTER_VERTICAL);
+        LinearLayout headingCopy = column();
+        headingCopy.addView(title("ChatGPT Activity", 27));
+        headingCopy.addView(body("Live record of actions actually executed inside VideoStudio."));
+        heading.addView(headingCopy, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        TextView online = accent(prefs.getBoolean("control_service_online", false) ? "● LIVE" : "○ CONNECTING", prefs.getBoolean("control_service_online", false) ? Color.rgb(74,255,172) : C_MUTED);
+        heading.addView(online);
+        box.addView(heading);
+
+        LinearLayout rule = card(false);
+        rule.setBackground(neonCard());
+        rule.addView(title("VideoStudio-only execution", 17));
+        rule.addView(body("An edit is counted as complete only when VideoStudio itself imports, analyses, changes, renders or exports it. External-editor substitutes are not counted."));
+        box.addView(rule, margins(-1, -2, dp(14), dp(12), 0, 0));
+
+        LinearLayout controls = new LinearLayout(this);
+        Button refresh = compactButton("Refresh");
+        refresh.setOnClickListener(v -> showActivity());
+        controls.addView(refresh);
+        Button clear = compactButton("Clear");
+        clear.setOnClickListener(v -> new AlertDialog.Builder(this)
+                .setTitle("Clear activity history?")
+                .setMessage("This clears the local activity display only. It does not change projects or media.")
+                .setPositiveButton("Clear", (d,w) -> {
+                    ActivityLog.clear(this);
+                    showActivity();
+                })
+                .setNegativeButton("Cancel", null)
+                .show());
+        controls.addView(clear);
+        box.addView(controls, margins(-1, -2, 0, dp(10), 0, 0));
+
+        JSONArray entries = ActivityLog.recent(this, 120);
+        if (entries.length() == 0) {
+            LinearLayout empty = card(false);
+            empty.addView(title("Waiting for activity", 17));
+            empty.addView(body("When ChatGPT imports a file, analyses footage, applies an edit, renders, retries or fails, it will appear here."));
+            box.addView(empty);
+        } else {
+            for (int i = 0; i < entries.length(); i++) {
+                JSONObject item = entries.optJSONObject(i);
+                if (item != null) box.addView(activityCard(item), margins(-1, -2, 0, dp(8), 0, 0));
+            }
+        }
+
+        setScreen(scroll, "activity");
+        activityRefresh = () -> {
+            if ("activity".equals(currentScreen)) showActivity();
+        };
+        ui.postDelayed(activityRefresh, 1500);
+    }
+
+    private View activityCard(JSONObject item) {
+        LinearLayout card = card(false);
+        String status = item.optString("status", "info");
+        int statusColor = C_MUTED;
+        String icon = "•";
+        if ("success".equals(status)) { statusColor = Color.rgb(74,255,172); icon = "✓"; }
+        else if ("failed".equals(status) || "denied".equals(status)) { statusColor = Color.rgb(255,95,125); icon = "×"; }
+        else if ("running".equals(status)) { statusColor = C_CYAN; icon = "●"; }
+        else if ("queued".equals(status)) { statusColor = C_PURPLE; icon = "◷"; }
+
+        LinearLayout top = new LinearLayout(this);
+        top.setGravity(Gravity.CENTER_VERTICAL);
+        TextView action = title(icon + "  " + item.optString("action", "Activity"), 16);
+        top.addView(action, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        TextView time = body(formatActivityTime(item.optLong("time", System.currentTimeMillis())));
+        time.setGravity(Gravity.RIGHT);
+        top.addView(time);
+        card.addView(top);
+
+        String detail = item.optString("detail", "");
+        if (!detail.isEmpty()) card.addView(body(detail));
+
+        LinearLayout meta = new LinearLayout(this);
+        meta.setPadding(0, dp(8), 0, 0);
+        TextView source = accent("chatgpt".equals(item.optString("source")) ? "CHATGPT" : item.optString("source", "SYSTEM").toUpperCase(Locale.US), statusColor);
+        meta.addView(source, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        if (item.has("progress")) {
+            TextView percent = accent(item.optInt("progress") + "%", statusColor);
+            meta.addView(percent);
+        }
+        card.addView(meta);
+
+        if (item.has("progress") && !"success".equals(status)) {
+            ProgressBar progress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+            progress.setMax(100);
+            progress.setProgress(item.optInt("progress"));
+            card.addView(progress, margins(-1, dp(8), dp(6), 0, 0, 0));
+        }
+
+        String commandId = item.optString("commandId", "");
+        String projectId = item.optString("projectId", "");
+        if (!commandId.isEmpty() || !projectId.isEmpty()) {
+            String ids = (!projectId.isEmpty() ? "project " + shortUiId(projectId) : "")
+                    + (!commandId.isEmpty() ? ((!projectId.isEmpty() ? "  •  " : "") + "command " + shortUiId(commandId)) : "");
+            TextView idsView = body(ids);
+            idsView.setTextSize(10);
+            idsView.setPadding(0, dp(5), 0, 0);
+            card.addView(idsView);
+        }
+        return card;
+    }
+
+    private String formatActivityTime(long millis) {
+        return new SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(new Date(millis));
+    }
+
+    private String shortUiId(String id) {
+        if (id == null) return "";
+        return id.length() <= 8 ? id : id.substring(0, 8);
     }
 
     private void showEditor() {
@@ -1505,7 +1646,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         JSONObject out = new JSONObject();
         try {
             out.put("deviceId", protocol.deviceId());
-            out.put("appVersion", "1.1.1");
+            out.put("appVersion", "1.1.2");
             out.put("nativeApp", true);
             out.put("permissionMode", permissionMode());
             out.put("controlPaused", protocol.isControlPaused());
@@ -1535,6 +1676,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
             out.put("jobs", jobs.state().optJSONArray("jobs"));
             out.put("workload", jobs.state());
             out.put("creatorCatalog", CreatorCatalog.describe());
+            out.put("recentActivity", ActivityLog.recent(this, 30));
             JSONArray caps = new JSONArray();
             String[] values = {
                     "native-ui","persistent-background-control","local-projects","private-app-mcp","chat-attachment-handoff","url-import",
