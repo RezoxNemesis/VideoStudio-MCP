@@ -30,17 +30,21 @@ public final class ProceduralScene {
     public static void validate(JSONObject scene) throws Exception {
         if (scene == null) throw new IllegalArgumentException("sceneGraph is required");
         if (scene.optInt("version", 1) != 1) throw new IllegalArgumentException("Unsupported procedural scene version");
+        for (String field : new String[]{"cameraOrbit", "fov"})
+            if (scene.has(field) && (!Double.isFinite(scene.getDouble(field)) || Math.abs(scene.getDouble(field)) > 1000))
+                throw new IllegalArgumentException("Invalid camera parameter: " + field);
         JSONArray objects = scene.optJSONArray("objects");
         if (objects == null || objects.length() == 0 || objects.length() > 128) throw new IllegalArgumentException("Scene requires 1..128 objects");
         int triangleBudget = 0;
         for (int i=0; i<objects.length(); i++) {
             JSONObject o = objects.getJSONObject(i);
             if (!TYPES.contains("|" + o.optString("type", "") + "|")) throw new IllegalArgumentException("Unknown scene object type");
-            for (String field : new String[]{"x","y","z","toX","toY","toZ","size","width","height","rotation","spin","orbit","frequency","amplitude"}) {
+            for (String field : new String[]{"x","y","z","toX","toY","toZ","size","width","height","rotation","spin","orbit","frequency","amplitude","phase"}) {
                 if (o.has(field) && (!Double.isFinite(o.getDouble(field)) || Math.abs(o.getDouble(field)) > 10000)) throw new IllegalArgumentException("Invalid scene parameter: " + field);
             }
             if ("cube".equals(o.optString("type"))) triangleBudget += 12;
             if ("pyramid".equals(o.optString("type"))) triangleBudget += 6;
+            if ("polygon".equals(o.optString("type")) && !o.has("vertices")) throw new IllegalArgumentException("Polygon vertices are required");
             if (o.has("vertices")) {
                 JSONArray v = o.getJSONArray("vertices");
                 if (v.length()<3 || v.length()>512) throw new IllegalArgumentException("Mesh/polygon requires 3..512 vertices");
