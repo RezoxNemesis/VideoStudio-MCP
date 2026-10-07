@@ -55,8 +55,9 @@ public final class CreatorCatalog {
 
     public static final List<String> ANIMATION_FEATURES = Arrays.asList(
             "bundled_person_segmentation","bundled_face_mesh","foreground_background_layers",
-            "face_aware_anchor","multi_keyframe_easing","2.5d_parallax","breathing_micro_motion",
-            "subject_sway","environment_drift","cinematic_story_order","layered_media3_render"
+            "feathered_head_hair_layer","feathered_torso_layer","feathered_lower_drape_layer",
+            "face_aware_anchor","multi_keyframe_easing","2.5d_parallax","head_drift_and_nod",
+            "torso_breathing","lower_drape_sway","environment_drift","cinematic_story_order","layered_media3_render"
     );
 
     private static final Map<String, JSONObject> EFFECT_PRESETS = new LinkedHashMap<>();
