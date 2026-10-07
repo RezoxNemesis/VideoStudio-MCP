@@ -7,20 +7,14 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 
-/**
- * Durable metadata store for immutable playable preview checkpoints.
- *
- * A new checkpoint never invalidates an older one, so the editor can keep
- * playing snapshot N while autonomous work prepares N+1.
- */
+/** Durable immutable preview/checkpoint index for the editor. */
 public final class PreviewSnapshotStore {
     private static final String PREFS = "videostudio_preview_snapshots_v1";
     private static final String KEY = "snapshots";
-    private static final int MAX_SNAPSHOTS = 80;
+    private static final int MAX = 80;
 
     public static final class Snapshot {
         public final String id;
@@ -42,35 +36,34 @@ public final class PreviewSnapshotStore {
                         String sourceType,
                         String jobId,
                         long createdAt) {
-            this.id = safe(id);
-            this.projectId = safe(projectId);
+            this.id = clean(id);
+            this.projectId = clean(projectId);
             this.projectRevision = Math.max(0L, projectRevision);
             this.mediaRevision = Math.max(0L, mediaRevision);
-            this.uri = safe(uri);
-            this.qualityTier = safe(qualityTier);
-            this.sourceType = safe(sourceType);
-            this.jobId = safe(jobId);
+            this.uri = clean(uri);
+            this.qualityTier = clean(qualityTier);
+            this.sourceType = clean(sourceType);
+            this.jobId = clean(jobId);
             this.createdAt = Math.max(0L, createdAt);
         }
 
         JSONObject toJson() {
-            JSONObject out = new JSONObject();
+            JSONObject o = new JSONObject();
             try {
-                out.put("id", id);
-                out.put("projectId", projectId);
-                out.put("projectRevision", projectRevision);
-                out.put("mediaRevision", mediaRevision);
-                out.put("uri", uri);
-                out.put("qualityTier", qualityTier);
-                out.put("sourceType", sourceType);
-                out.put("jobId", jobId);
-                out.put("createdAt", createdAt);
+                o.put("id", id);
+                o.put("projectId", projectId);
+                o.put("projectRevision", projectRevision);
+                o.put("mediaRevision", mediaRevision);
+                o.put("uri", uri);
+                o.put("qualityTier", qualityTier);
+                o.put("sourceType", sourceType);
+                o.put("jobId", jobId);
+                o.put("createdAt", createdAt);
             } catch (Exception ignored) {}
-            return out;
+            return o;
         }
 
         static Snapshot fromJson(JSONObject o) {
-            if (o == null) return null;
             return new Snapshot(
                     o.optString("id", ""),
                     o.optString("projectId", ""),
@@ -83,6 +76,10 @@ public final class PreviewSnapshotStore {
                     o.optLong("createdAt", 0L)
             );
         }
+
+        private static String clean(String value) {
+            return value == null ? "" : value.trim();
+        }
     }
 
     private final SharedPreferences prefs;
@@ -92,85 +89,79 @@ public final class PreviewSnapshotStore {
     }
 
     public synchronized void publish(Snapshot snapshot) {
-        validate(snapshot);
-        List<Snapshot> current = all();
-        ArrayList<Snapshot> next = new ArrayList<>();
-        boolean replaced = false;
-        for (Snapshot item : current) {
-            if (snapshot.id.equals(item.id)) {
-                next.add(snapshot);
-                replaced = true;
-            } else {
-                next.add(item);
-            }
+        if (snapshot == null) throw new IllegalArgumentException("Preview snapshot is required");
+        if (snapshot.id.isEmpty()) throw new IllegalArgumentException("Preview snapshot ID is required");
+        if (snapshot.projectId.isEmpty()) throw new IllegalArgumentException("Preview project ID is required");
+        if (snapshot.uri.isEmpty()) throw new IllegalArgumentException("Preview URI is required");
+        if (snapshot.uri.toLowerCase().endsWith(".partial")) {
+            throw new IllegalArgumentException("Partial preview files cannot be published");
         }
-        if (!replaced) next.add(snapshot);
-        next.sort(Comparator.comparingLong((Snapshot s) -> s.createdAt).reversed());
-        if (next.size() > MAX_SNAPSHOTS) next = new ArrayList<>(next.subList(0, MAX_SNAPSHOTS));
-        write(next);
+
+        ArrayList<Snapshot> next = new ArrayList<>();
+        next.add(snapshot);
+        for (Snapshot existing : all()) {
+            if (snapshot.id.equals(existing.id)) continue;
+            if (sameIdentity(snapshot, existing)) continue;
+            next.add(existing);
+            if (next.size() >= MAX) break;
+        }
+        persist(next);
     }
 
     public synchronized Snapshot get(String id) {
         if (id == null || id.isEmpty()) return null;
-        for (Snapshot item : all()) if (id.equals(item.id)) return item;
+        for (Snapshot snapshot : all()) if (id.equals(snapshot.id)) return snapshot;
         return null;
     }
 
     public synchronized Snapshot latest(String projectId) {
-        List<Snapshot> list = list(projectId);
-        return list.isEmpty() ? null : list.get(0);
+        if (projectId == null || projectId.isEmpty()) return null;
+        List<Snapshot> items = list(projectId);
+        return items.isEmpty() ? null : items.get(0);
     }
 
     public synchronized List<Snapshot> list(String projectId) {
         ArrayList<Snapshot> out = new ArrayList<>();
-        for (Snapshot item : all()) {
-            if (projectId == null || projectId.isEmpty() || projectId.equals(item.projectId)) out.add(item);
+        for (Snapshot snapshot : all()) {
+            if (projectId == null || projectId.isEmpty() || projectId.equals(snapshot.projectId)) {
+                out.add(snapshot);
+            }
         }
         out.sort(Comparator.comparingLong((Snapshot s) -> s.createdAt).reversed());
-        return Collections.unmodifiableList(out);
+        return out;
     }
 
     public synchronized void clearAll() {
         prefs.edit().remove(KEY).commit();
     }
 
-    /**
-     * Auto-switch is opt-in and only safe while the user is not actively playing.
-     */
-    public static boolean shouldAutoSwitch(boolean autoSwitchEnabled, boolean playbackActive) {
-        return autoSwitchEnabled && !playbackActive;
+    public static boolean shouldAutoSwitch(boolean autoSwitchEnabled, boolean currentlyPlaying) {
+        return autoSwitchEnabled && !currentlyPlaying;
     }
 
     private List<Snapshot> all() {
         ArrayList<Snapshot> out = new ArrayList<>();
+        String raw = prefs.getString(KEY, "[]");
         try {
-            JSONArray rows = new JSONArray(prefs.getString(KEY, "[]"));
-            for (int i = 0; i < rows.length(); i++) {
-                Snapshot item = Snapshot.fromJson(rows.optJSONObject(i));
-                if (item != null && !item.id.isEmpty()) out.add(item);
+            JSONArray array = new JSONArray(raw == null ? "[]" : raw);
+            for (int i = 0; i < array.length(); i++) {
+                JSONObject item = array.optJSONObject(i);
+                if (item != null) out.add(Snapshot.fromJson(item));
             }
         } catch (Exception ignored) {}
         return out;
     }
 
-    private void write(List<Snapshot> rows) {
-        JSONArray out = new JSONArray();
-        for (Snapshot item : rows) out.put(item.toJson());
-        prefs.edit().putString(KEY, out.toString()).commit();
+    private void persist(List<Snapshot> snapshots) {
+        JSONArray array = new JSONArray();
+        for (Snapshot snapshot : snapshots) array.put(snapshot.toJson());
+        prefs.edit().putString(KEY, array.toString()).commit();
     }
 
-    private static void validate(Snapshot snapshot) {
-        if (snapshot == null) throw new IllegalArgumentException("Preview snapshot is required");
-        if (snapshot.id.isEmpty()) throw new IllegalArgumentException("Preview snapshot ID is required");
-        if (snapshot.projectId.isEmpty()) throw new IllegalArgumentException("Preview project ID is required");
-        if (snapshot.uri.isEmpty()) throw new IllegalArgumentException("Preview URI is required");
-        String lower = snapshot.uri.toLowerCase(java.util.Locale.US);
-        if (lower.endsWith(".partial") || lower.contains(".partial?")) {
-            throw new IllegalArgumentException("Partial preview output cannot be published");
-        }
-    }
-
-    private static String safe(String value) {
-        return value == null ? "" : value;
+    private static boolean sameIdentity(Snapshot a, Snapshot b) {
+        return a.projectId.equals(b.projectId)
+                && a.uri.equals(b.uri)
+                && a.projectRevision == b.projectRevision
+                && a.mediaRevision == b.mediaRevision;
     }
 }
