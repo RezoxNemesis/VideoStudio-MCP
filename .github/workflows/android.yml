@@ -43,6 +43,25 @@ jobs:
         with:
           path: ~/.android/debug.keystore
           key: videostudio-android-debug-signing-v1
+          save-always: true
+
+      - name: Ensure stable development signing key exists
+        run: |
+          if [ ! -f "$HOME/.android/debug.keystore" ]; then
+            keytool -genkeypair \
+              -keystore "$HOME/.android/debug.keystore" \
+              -storepass android \
+              -alias androiddebugkey \
+              -keypass android \
+              -dname "CN=VideoStudio Development,O=VideoStudio,C=IN" \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000
+          fi
+          keytool -list -v \
+            -keystore "$HOME/.android/debug.keystore" \
+            -storepass android \
+            -alias androiddebugkey | grep -E "SHA256:|Valid from:"
 
       - name: Build debug APK
         working-directory: android
@@ -76,6 +95,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          git tag -f videostudio-latest "$GITHUB_SHA"
+          git push origin refs/tags/videostudio-latest --force
+
           if gh release view videostudio-latest --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release upload videostudio-latest VideoStudio-latest.apk VideoStudio-latest.sha256 \
               --repo "$GITHUB_REPOSITORY" \
@@ -87,7 +109,7 @@ jobs:
           else
             gh release create videostudio-latest VideoStudio-latest.apk VideoStudio-latest.sha256 \
               --repo "$GITHUB_REPOSITORY" \
-              --target "$GITHUB_SHA" \
+              --verify-tag \
               --title "VideoStudio Latest Android APK" \
               --notes-file release-notes.md
           fi
