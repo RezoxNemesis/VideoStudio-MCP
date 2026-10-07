@@ -670,6 +670,20 @@ function serverForApp(env,ownerKey,protocolVersion=1){
     }
   },async args=>queue("plan_creative_graph",args));
 
+  if(isV3) s.registerTool("app_creative_graph_status",{
+    description:"Read durable CreativeIR node checkpoints for a VideoStudio project, including currently dependency-ready nodes.",
+    inputSchema:{projectId:z.string().min(8).optional()}
+  },async({projectId})=>queue("creative_graph_status",{projectId:projectId||""}));
+
+  if(isV3) s.registerTool("app_invalidate_creative_node",{
+    description:"Invalidate one CreativeIR execution node and optionally every downstream dependent node so VideoStudio can regenerate only the affected part of a scene.",
+    inputSchema:{
+      projectId:z.string().min(8).optional(),
+      nodeId:z.string().min(1).max(160),
+      downstream:z.boolean().optional()
+    }
+  },async({projectId,nodeId,downstream})=>queue("invalidate_creative_node",{projectId:projectId||"",nodeId,downstream:downstream!==false}));
+
   if(isV3) s.registerTool("app_workspace_status",{
     description:"Read VideoStudio's app-private creative workspace usage for models, caches, generated artifacts and the active project without browsing Gallery.",
     inputSchema:{projectId:z.string().min(8).optional()}
