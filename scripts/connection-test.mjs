@@ -62,3 +62,43 @@ test('filling the last free queue slot retains every pending command',async()=>{
  assert.equal(rows.length,160);assert.ok(rows.some(c=>c.id==='cmd-1'));
  assert.equal(rows.filter(c=>c.status==='queued').length,160);
 });
+
+
+function loadWorkerForRouteTests() {
+ const workerContext={
+  crypto:webcrypto,TextEncoder,TextDecoder,Response,Request,Headers,URL,setTimeout,clearTimeout,Date,
+  DurableObject:class{constructor(ctx){this.ctx=ctx;}},
+  McpServer:class{},
+  createMcpHandler:()=>()=>new Response("mcp",{status:204}),
+  z:{},
+  APP_HTML:"<html><body>studio</body></html>",
+  STUDIO_RUNTIME_JS:"",STUDIO_CINEMATIC_JS:"",STUDIO_NEURAL_JS:"",STUDIO_TEMPORAL_JS:""
+ };
+ vm.createContext(workerContext);
+ const transformed=source
+  .replace(/^import .*$/gm,"")
+  .replace("export class VideoStudioState","class VideoStudioState")
+  .replace("export default {","globalThis.worker = {");
+ vm.runInContext(transformed,workerContext);
+ return workerContext.worker;
+}
+
+test('stable Studio Web MCP requires the configured bearer while the editor page stays public',async()=>{
+ const worker=loadWorkerForRouteTests();
+ const env={VIDEOSTUDIO_STUDIO_MCP_BEARER:"studio-secret"};
+
+ const missing=await worker.fetch(new Request("https://example.test/mcp-v06",{method:"POST"}),env,{});
+ assert.equal(missing.status,401);
+
+ const wrong=await worker.fetch(new Request("https://example.test/mcp-v06",{method:"POST",headers:{authorization:"Bearer wrong"}}),env,{});
+ assert.equal(wrong.status,401);
+
+ const good=await worker.fetch(new Request("https://example.test/mcp-v06",{method:"POST",headers:{authorization:"Bearer studio-secret"}}),env,{});
+ assert.equal(good.status,204);
+
+ const nested=await worker.fetch(new Request("https://example.test/mcp-v06/messages",{method:"POST",headers:{authorization:"Bearer studio-secret"}}),env,{});
+ assert.equal(nested.status,204);
+
+ const root=await worker.fetch(new Request("https://example.test/",{method:"GET"}),env,{});
+ assert.equal(root.status,200);
+});
