@@ -58,12 +58,13 @@ VideoStudio 3.3 begins the programmable creative-runtime layer without changing 
 
 The first foundation slice includes:
 
-- a safe **MotionScript 0.1** scene language that compiles into versioned CreativeIR
+- a safe **MotionScript 0.2** scene language that compiles into versioned CreativeIR and can declare subjects, identity constraints, rigs, depth/pose/hands, lighting, voice, generation nodes and capability requirements
 - an app-private creative workspace for scene source, compiled plans, generated artifacts, masks, depth, pose, flow, rigs, meshes, audio, checkpoints, previews and renders
 - a capability-first provider registry so future local image, motion, depth, pose, interpolation, voice and 3D model packs can plug into the same runtime
 - a transactional optional model-pack installer using explicit VideoStudio-owned assets, guarded ZIP extraction, manifest/license validation, optional SHA-256 verification and atomic activation
 - a hardware-aware compute planner that treats RAM as a bounded active workspace, selects tiled inference and small temporal windows, and plans phase-by-phase model swapping instead of assuming an entire future generative pipeline must stay resident
 - a folder-scoped cloud workspace archive using Android's system document-tree picker, so Google Drive can be used when exposed by the device without granting VideoStudio broad access to the user's whole Drive
+- provider-aware MotionScript planning that resolves requested creative capabilities against currently installed local providers and can fail strictly instead of pretending a missing engine exists
 - generated video registration as first-class project media instead of only storing a latest-export URI
 - an editor **Media Bin** with generated/source roles, preview and timeline insertion
 - live editor refresh when native background work changes project state
