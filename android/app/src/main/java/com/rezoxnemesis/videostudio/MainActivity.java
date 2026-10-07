@@ -792,6 +792,257 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                 .show();
     }
 
+    private void promptVideoDialog() {
+        LinearLayout wrap = column();
+        wrap.setPadding(dp(20), dp(6), dp(20), 0);
+
+        EditText prompt = new EditText(this);
+        prompt.setHint("Describe the video you want…");
+        prompt.setTextColor(C_TEXT);
+        prompt.setHintTextColor(C_MUTED);
+        prompt.setMinLines(4);
+        prompt.setGravity(Gravity.TOP);
+        prompt.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
+        wrap.addView(prompt, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(150)));
+
+        EditText duration = numberInput(18);
+        duration.setHint("Duration seconds");
+        wrap.addView(body("Approx. duration in seconds"));
+        wrap.addView(duration, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(52)));
+
+        new AlertDialog.Builder(this)
+                .setTitle("Create Video from a Prompt")
+                .setMessage("VideoStudio will build a scene plan locally. When ChatGPT controls this tool, I can supply a richer scene-by-scene plan automatically.")
+                .setView(wrap)
+                .setPositiveButton("Generate", (d, w) -> {
+                    try {
+                        JSONObject p = new JSONObject();
+                        p.put("prompt", prompt.getText().toString().trim());
+                        p.put("durationSeconds", Math.max(4, Math.min(120, (int) Float.parseFloat(duration.getText().toString()))));
+                        p.put("aspect", "9:16");
+                        p.put("quality", "1080p");
+                        p.put("style", "cinematic");
+                        p.put("font", "sans-serif-medium");
+                        JSONObject queued = queuePromptVideo(p);
+                        Toast.makeText(this, "Prompt video queued • job " + queued.optString("jobId").substring(0, 8), Toast.LENGTH_LONG).show();
+                    } catch (Exception error) {
+                        Toast.makeText(this, error.getMessage() == null ? "Could not create prompt video" : error.getMessage(), Toast.LENGTH_LONG).show();
+                    }
+                })
+                .setNegativeButton("Cancel", null)
+                .show();
+    }
+
+    private JSONObject queuePromptVideo(JSONObject parameters) throws Exception {
+        String prompt = parameters.optString("prompt", "").trim();
+        if (prompt.isEmpty()) throw new IllegalArgumentException("Write a video prompt first");
+
+        String titleText = prompt.replaceAll("\\s+", " ").trim();
+        if (titleText.length() > 36) titleText = titleText.substring(0, 36).trim() + "…";
+        ProjectStore.Project project = store.create("AI • " + titleText);
+        project.sourcePrompt = prompt;
+        store.save(project);
+        activeProject = project;
+        selectedClip = null;
+        syncProtocolState();
+
+        String aspect = parameters.optString("aspect", "9:16");
+        String quality = parameters.optString("quality", "1080p");
+        String fileName = "VideoStudio_AI_" + System.currentTimeMillis() + ".mp4";
+
+        JobManager.Job job = jobs.submit("Prompt video • " + titleText, JobManager.Kind.HEAVY, state -> {
+            state.checkpoint(3, "Designing local scene cards");
+            PromptVideoEngine.BuildResult built = promptVideoEngine.build(store, project, parameters);
+            state.checkpoint(18, "Scene plan ready • starting native render");
+            runExportBlocking(built.project, built.aspect, built.quality, fileName, state);
+            state.checkpoint(100, "Prompt video complete");
+        });
+
+        JSONObject result = new JSONObject();
+        result.put("ok", true);
+        result.put("queued", true);
+        result.put("jobId", job.id);
+        result.put("projectId", project.id);
+        result.put("prompt", prompt);
+        result.put("aspect", aspect);
+        result.put("quality", quality);
+        return result;
+    }
+
+    private JSONObject queueNativeExport(ProjectStore.Project project, String aspect, String quality, String fileName) throws Exception {
+        if (project == null || project.clips.isEmpty()) throw new IllegalArgumentException("Timeline is empty");
+        final ProjectStore.Project target = store.get(project.id);
+        if (target == null) throw new IllegalArgumentException("Project not found");
+        String safeName = (fileName == null || fileName.trim().isEmpty())
+                ? "VideoStudio_" + System.currentTimeMillis() + ".mp4"
+                : fileName.replaceAll("[^a-zA-Z0-9._-]+", "_");
+        if (!safeName.toLowerCase(Locale.US).endsWith(".mp4")) safeName += ".mp4";
+        final String finalName = safeName;
+
+        JobManager.Job job = jobs.submit("Export • " + target.name, JobManager.Kind.HEAVY, state -> {
+            state.checkpoint(2, "Preparing Media3 native export");
+            runExportBlocking(target, aspect, quality, finalName, state);
+            state.checkpoint(100, "Export complete");
+        });
+
+        JSONObject result = new JSONObject();
+        result.put("ok", true);
+        result.put("queued", true);
+        result.put("jobId", job.id);
+        result.put("projectId", target.id);
+        result.put("fileName", finalName);
+        return result;
+    }
+
+    private void runExportBlocking(ProjectStore.Project project, String aspect, String quality, String fileName, JobManager.Job state) throws Exception {
+        File dir = new File(getCacheDir(), "native_exports");
+        if (!dir.exists() && !dir.mkdirs()) throw new IllegalStateException("Could not create export workspace");
+        File temp = new File(dir, "tmp_" + System.currentTimeMillis() + ".mp4");
+        CountDownLatch latch = new CountDownLatch(1);
+        AtomicReference<String> error = new AtomicReference<>(null);
+        AtomicReference<File> completed = new AtomicReference<>(null);
+
+        ui.post(() -> {
+            activeRenderHandle = renderEngine.export(project, temp, aspect, quality, new NativeRenderEngine.Listener() {
+                @Override public void onProgress(int progress, String detail) {
+                    state.checkpoint(Math.max(20, Math.min(96, 20 + (int) (progress * .76))), detail);
+                }
+
+                @Override public void onCompleted(File file, JSONObject result) {
+                    completed.set(file);
+                    latch.countDown();
+                }
+
+                @Override public void onError(String message) {
+                    error.set(message);
+                    latch.countDown();
+                }
+            });
+        });
+
+        while (!latch.await(550, TimeUnit.MILLISECONDS)) {
+            if (Thread.currentThread().isInterrupted()) {
+                if (activeRenderHandle != null) activeRenderHandle.cancel();
+                throw new InterruptedException();
+            }
+        }
+
+        if (error.get() != null) throw new IllegalStateException(error.get());
+        File ready = completed.get();
+        if (ready == null || !ready.exists() || ready.length() == 0) throw new IllegalStateException("Native export produced no file");
+
+        state.checkpoint(97, "Publishing to Movies/VideoStudio");
+        Uri publicUri = publishExport(ready, fileName);
+        ProjectStore.Project fresh = store.get(project.id);
+        if (fresh != null) {
+            fresh.latestExportUri = publicUri.toString();
+            fresh.latestExportName = fileName;
+            fresh.latestExportAt = System.currentTimeMillis();
+            store.save(fresh);
+        }
+        syncProtocolState();
+        ui.post(() -> {
+            activeProject = store.get(project.id);
+            refreshCurrent();
+            Toast.makeText(this, "Exported to Movies/VideoStudio • " + fileName, Toast.LENGTH_LONG).show();
+        });
+        if (!ready.delete()) ready.deleteOnExit();
+    }
+
+    private Uri publishExport(File file, String displayName) throws Exception {
+        ContentValues values = new ContentValues();
+        values.put(MediaStore.Video.Media.DISPLAY_NAME, displayName);
+        values.put(MediaStore.Video.Media.MIME_TYPE, "video/mp4");
+        values.put(MediaStore.Video.Media.RELATIVE_PATH, Environment.DIRECTORY_MOVIES + "/VideoStudio");
+        values.put(MediaStore.Video.Media.IS_PENDING, 1);
+        Uri uri = getContentResolver().insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values);
+        if (uri == null) throw new IllegalStateException("Could not create exported video");
+        boolean success = false;
+        try (InputStream in = new java.io.FileInputStream(file);
+             OutputStream out = getContentResolver().openOutputStream(uri, "w")) {
+            if (out == null) throw new IllegalStateException("Could not open export destination");
+            byte[] buffer = new byte[256 * 1024];
+            int n;
+            while ((n = in.read(buffer)) >= 0) out.write(buffer, 0, n);
+            success = true;
+        } finally {
+            if (!success) {
+                try { getContentResolver().delete(uri, null, null); } catch (Exception ignored) {}
+            }
+        }
+        ContentValues done = new ContentValues();
+        done.put(MediaStore.Video.Media.IS_PENDING, 0);
+        getContentResolver().update(uri, done, null, null);
+        return uri;
+    }
+
+    private void queueAnalysisCommand(JSONObject command, JSONObject parameters) {
+        try {
+            if (activeProject == null || activeProject.assets.isEmpty()) throw new IllegalArgumentException("No media in the active project");
+            String requested = parameters.optString("assetId", "");
+            ProjectStore.Asset asset = requested.isEmpty() ? null : activeProject.asset(requested);
+            if (asset == null) {
+                for (ProjectStore.Asset candidate : activeProject.assets) {
+                    if (candidate.mime != null && candidate.mime.startsWith("video/")) { asset = candidate; break; }
+                }
+            }
+            if (asset == null) throw new IllegalArgumentException("No video asset available for analysis");
+            ProjectStore.Asset target = asset;
+            int frames = parameters.optInt("frames", 12);
+            long startMs = parameters.has("startMs") ? parameters.optLong("startMs") : (long) (parameters.optDouble("start", 0) * 1000);
+            long endMs = parameters.has("endMs") ? parameters.optLong("endMs") : (long) (parameters.optDouble("end", 0) * 1000);
+
+            jobs.submit("Analyse • " + target.name, JobManager.Kind.LIGHT, state -> {
+                try {
+                    state.checkpoint(8, "Sampling frames locally");
+                    JSONObject result = mediaAnalyzer.analyse(target, frames, startMs, endMs);
+                    state.checkpoint(100, "Analysis complete");
+                    protocol.complete(command, result, "completed");
+                } catch (Exception error) {
+                    JSONObject failed = new JSONObject();
+                    failed.put("ok", false);
+                    failed.put("error", error.getMessage() == null ? "Analysis failed" : error.getMessage());
+                    protocol.complete(command, failed, "failed");
+                    throw error;
+                }
+            });
+        } catch (Exception error) {
+            JSONObject failed = new JSONObject();
+            try {
+                failed.put("ok", false);
+                failed.put("error", error.getMessage());
+            } catch (Exception ignored) {}
+            protocol.complete(command, failed, "failed");
+        }
+    }
+
+    private JSONObject applyCreatorPreset(JSONObject parameters) throws Exception {
+        if (activeProject == null || activeProject.clips.isEmpty()) throw new IllegalArgumentException("No clips");
+        String preset = parameters.optString("preset", "cinematic");
+        String motion = parameters.optString("motion", "");
+        String transition = parameters.optString("transition", "");
+        String font = parameters.optString("font", "");
+        boolean all = parameters.optBoolean("allClips", true);
+        int selectedIndex = Math.max(0, parameters.optInt("clipIndex", 0));
+
+        int changed = 0;
+        for (int i = 0; i < activeProject.clips.size(); i++) {
+            if (!all && i != selectedIndex) continue;
+            ProjectStore.Clip c = activeProject.clips.get(i);
+            c.effects.put("effectPreset", preset);
+            if (!motion.isEmpty()) c.effects.put("motionPreset", motion);
+            if (!transition.isEmpty()) c.transition = transition;
+            if (!font.isEmpty()) c.effects.put("fontFamily", font);
+            changed++;
+        }
+        store.save(activeProject);
+        JSONObject result = new JSONObject();
+        result.put("ok", true);
+        result.put("changedClips", changed);
+        result.put("preset", preset);
+        return result;
+    }
+
     private void sharePairing() {
         Intent send = new Intent(Intent.ACTION_SEND);
         send.setType("text/plain");
