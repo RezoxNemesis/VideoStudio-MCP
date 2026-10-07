@@ -20,7 +20,7 @@ const bearer = request => {
 const appActionAllowed = (mode,action) => {
   if(["ping","get_state"].includes(action)) return true;
   if(mode==="everything") return true;
-  if(mode==="all_tools") return !["import_url","delete_project"].includes(action);
+  if(mode==="all_tools") return !["import_url","import_chat_file","delete_project"].includes(action);
   if(mode==="one_file") return ["apply_tool","preview_project","cancel_job"].includes(action);
   return false;
 };
@@ -175,6 +175,43 @@ export class VideoStudioState extends DurableObject {
       projectCount:Array.isArray(d.projects)?d.projects.length:0
     };
   }
+  async appCreateHandoff(ownerKey,sourceUrl,meta={}){
+    const d=await this.appResolve(ownerKey);
+    if(!d) throw new Error("Private App MCP credential rejected");
+    if(d.permissionMode!=="everything") throw new Error("Chat-file import requires Allow everything mode");
+    let parsed;
+    try{ parsed=new URL(String(sourceUrl||"")); }catch{ throw new Error("Invalid chat attachment URL"); }
+    if(parsed.protocol!=="https:") throw new Error("Chat attachment handoff requires HTTPS");
+    const host=parsed.hostname.toLowerCase();
+    if(["localhost","127.0.0.1","0.0.0.0","::1"].includes(host)||host.endsWith(".internal")) throw new Error("Private-network source URLs are not allowed");
+    const id=crypto.randomUUID();
+    const record={
+      id,
+      deviceId:d.deviceId,
+      sourceUrl:String(sourceUrl),
+      name:clean(meta.name||"ChatGPT import",180),
+      mime:clean(meta.mime||"",120),
+      size:Number(meta.size||0)||0,
+      createdAt:now(),
+      expiresAt:Date.now()+20*60*1000
+    };
+    await this.ctx.storage.put("app-handoff:"+d.deviceId+":"+id,record);
+    return {id,name:record.name,mime:record.mime,size:record.size,expiresAt:record.expiresAt};
+  }
+  async appHandoff(deviceId,ownerKey,id){
+    if(!(await this.appAuth(deviceId,ownerKey))) throw new Error("Native app authorization failed");
+    const key="app-handoff:"+deviceId+":"+id, record=await this.ctx.storage.get(key);
+    if(!record) return null;
+    if(Number(record.expiresAt||0)<Date.now()){
+      await this.ctx.storage.delete(key);
+      return null;
+    }
+    return record;
+  }
+  async appDeleteHandoff(deviceId,ownerKey,id){
+    if(!(await this.appAuth(deviceId,ownerKey))) throw new Error("Native app authorization failed");
+    await this.ctx.storage.delete("app-handoff:"+deviceId+":"+id);
+  }
 }
 
 const state = env => env.VIDEO_STATE.getByName("primary");
@@ -215,6 +252,11 @@ function serverFor(env){
         }
         if(nativeAction==="apply_tool"&&!nativeParameters.tool){
           nativeParameters={clipIndex:Number(p.clipIndex||p.index||0),tool:p.tool||"effect",settings:p.settings||p.effects||p};
+        }
+        if(nativeAction==="import_chat_file"){
+          const sourceUrl=nativeParameters.sourceUrl||nativeParameters.url||"";
+          const handoff=await st.appCreateHandoff(deviceId,sourceUrl,{name:nativeParameters.name,mime:nativeParameters.mime,size:nativeParameters.size});
+          nativeParameters={handoffId:handoff.id,name:handoff.name,mime:handoff.mime,size:handoff.size,projectId:nativeParameters.projectId||""};
         }
         const c=await st.appEnqueue(deviceId,nativeAction,nativeParameters);
         return out({queued:true,commandId:c.id,sequence:c.seq,action:nativeAction,nativeApp:true});
@@ -296,6 +338,13 @@ function serverForApp(env,ownerKey){
   s.registerTool("app_apply_tool",{description:"Apply a native editing primitive to one timeline clip. Supported tool names include trim, speed, slow_motion, green_screen, transition, motion, effect, color, reframe, mask, title and volume.",inputSchema:{clipIndex:z.number().int().min(0),tool:z.string().min(1).max(80),settings:z.record(z.string(),z.any()).optional()}},async({clipIndex,tool,settings})=>queue("apply_tool",{clipIndex,tool,settings:settings||{}}));
   s.registerTool("app_preview_project",{description:"Ask the Android app to preview the active timeline locally.",inputSchema:{}},async()=>queue("preview_project",{}));
   s.registerTool("app_import_from_url",{description:"Import an HTTPS media URL directly into the native app without browsing the user's gallery. Requires Allow everything mode.",inputSchema:{url:z.string().url(),name:z.string().max(160).optional()}},async({url,name})=>queue("import_url",{url,name:name||"ChatGPT import"}));
+  s.registerTool("app_import_chat_file",{description:"Securely stream a file attached in this ChatGPT conversation into the active native VideoStudio project. The Worker keeps only short-lived transfer metadata and does not permanently store the media. Requires Allow everything mode.",inputSchema:{sourceUrl:z.string().url(),name:z.string().min(1).max(180),mime:z.string().max(120).optional(),size:z.number().nonnegative().optional(),projectId:z.string().min(8).optional()}},async({sourceUrl,name,mime,size,projectId})=>{
+    try{
+      const handoff=await st.appCreateHandoff(ownerKey,sourceUrl,{name,mime,size});
+      const c=await st.appEnqueue(ownerKey,"import_chat_file",{handoffId:handoff.id,name:handoff.name,mime:handoff.mime,size:handoff.size,projectId:projectId||""});
+      return out({queued:true,commandId:c.id,sequence:c.seq,action:"import_chat_file",handoff:{id:handoff.id,expiresAt:handoff.expiresAt},note:"Media will be streamed privately to the Android app; the source URL is never sent in the command."});
+    }catch(e){ return out({queued:false,error:e.message}); }
+  });
   s.registerTool("app_cancel_job",{description:"Cancel a native VideoStudio background job.",inputSchema:{jobId:z.string().min(8)}},async({jobId})=>queue("cancel_job",{jobId}));
   s.registerTool("app_get_command_result",{description:"Read completion status/result for a native App MCP command.",inputSchema:{commandId:z.string().min(8)}},async({commandId})=>{
     try{ return out((await st.appCommand(ownerKey,commandId))||{error:"Command not found"}); }
@@ -316,6 +365,22 @@ async function api(request,env){
       const deviceId=u.searchParams.get("deviceId")||"", after=Number(u.searchParams.get("after")||0), wait=Number(u.searchParams.get("wait")||0);
       const token=bearer(request);
       return reply({commands:await st.appCommands(deviceId,token,after,wait)});
+    }
+    const hm=u.pathname.match(/^\/api\/app\/handoffs\/([^/]+)\/content$/);
+    if(hm&&request.method==="GET"){
+      const deviceId=u.searchParams.get("deviceId")||"", token=bearer(request);
+      const handoff=await st.appHandoff(deviceId,token,hm[1]);
+      if(!handoff) return reply({error:"Handoff missing or expired"},404);
+      const upstream=await fetch(handoff.sourceUrl,{headers:{"accept":"*/*","user-agent":"VideoStudio-Private-Handoff/1.0"}});
+      if(!upstream.ok||!upstream.body) return reply({error:"Attachment source unavailable",status:upstream.status},502);
+      const headers=new Headers();
+      headers.set("content-type",handoff.mime||upstream.headers.get("content-type")||"application/octet-stream");
+      const length=upstream.headers.get("content-length");
+      if(length) headers.set("content-length",length);
+      headers.set("cache-control","no-store");
+      headers.set("x-content-type-options","nosniff");
+      headers.set("content-disposition",'attachment; filename="'+handoff.name.replace(/[\r\n"]/g,"_")+'"');
+      return new Response(upstream.body,{status:200,headers});
     }
     const acm=u.pathname.match(/^\/api\/app\/commands\/([^/]+)\/complete$/);
     if(acm&&request.method==="POST"){

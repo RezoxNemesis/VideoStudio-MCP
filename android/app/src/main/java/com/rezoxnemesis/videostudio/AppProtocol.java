@@ -102,6 +102,19 @@ public final class AppProtocol {
         io.execute(this::register);
     }
 
+    public HttpURLConnection openPrivateHandoff(String handoffId) throws Exception {
+        if (handoffId == null || handoffId.trim().isEmpty()) throw new IllegalArgumentException("Missing handoff ID");
+        String path = BASE + "/api/app/handoffs/" + enc(handoffId) + "/content?deviceId=" + enc(deviceId);
+        HttpURLConnection c = (HttpURLConnection) new URL(path).openConnection();
+        c.setRequestMethod("GET");
+        c.setConnectTimeout(15000);
+        c.setReadTimeout(45000);
+        c.setRequestProperty("Accept", "*/*");
+        c.setRequestProperty("Authorization", "Bearer " + ownerKey);
+        c.setRequestProperty("User-Agent", "VideoStudio-Android/1.0.1");
+        return c;
+    }
+
     public void complete(JSONObject command, JSONObject result, String status) {
         io.execute(() -> {
             try {
@@ -156,7 +169,7 @@ public final class AppProtocol {
             JSONObject meta = new JSONObject();
             meta.put("name", "VideoStudio Android");
             meta.put("platform", "android-native");
-            meta.put("appVersion", "1.0.0");
+            meta.put("appVersion", "1.0.1");
             meta.put("permissionMode", permissionMode);
             meta.put("projects", projectSummary.optJSONArray("projects") == null ? new JSONArray() : projectSummary.optJSONArray("projects"));
 
