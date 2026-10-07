@@ -156,6 +156,14 @@ v3.2 treats autonomy as the default operating mode rather than an opt-in capabil
 
 This keeps the agent capable of completing end-to-end work without repeated prompts while preserving the privacy boundary that MCP never gets a Gallery browser.
 
+## Autonomy and permission contract
+
+MCP v3 uses **Full Autonomous** as the normal operating state. It grants all VideoStudio-native operations so autonomous workflows do not stall on capability prompts. The legacy `all_tools` value is treated as the same state.
+
+The only restrictive state is **One File Lock**, explicitly selected by the user. It narrows editing/analysis/export to one authorised asset while preserving status, cancellation and safety operations.
+
+This autonomy contract is separate from hard safety/privacy boundaries. Gallery enumeration is always denied, network ingest is validated and bounded, heavy work is governed by thermal/RAM checks, and STOP CHATGPT CONTROL remains local and immediate.
+
 ## v3.2 articulated portrait animation module
 
 v3.2 extends the local creator engine without changing the connection protocol.
