@@ -52,9 +52,9 @@ public final class NativeSpeechEngine {
         String spoken = text == null ? "" : text.trim();
         if (spoken.isEmpty()) throw new IllegalArgumentException("Narration text is required");
         if (spoken.length() > 12000) throw new IllegalArgumentException("Narration text exceeds the local synthesis limit");
-        if (progress == null) progress = (p, d) -> {};
+        final Progress callback = progress == null ? (p, d) -> {} : progress;
 
-        progress.onProgress(3, "Initialising local Android speech engine");
+        callback.onProgress(3, "Initialising local Android speech engine");
         CountDownLatch initLatch = new CountDownLatch(1);
         AtomicInteger initStatus = new AtomicInteger(Integer.MIN_VALUE);
         TextToSpeech tts = new TextToSpeech(context, status -> {
@@ -113,7 +113,7 @@ public final class NativeSpeechEngine {
                 @Override
                 public void onStart(String id) {
                     if (utteranceId.equals(id)) {
-                        try { progress.onProgress(18, "Synthesising narration locally"); }
+                        try { callback.onProgress(18, "Synthesising narration locally"); }
                         catch (Exception ignored) {}
                     }
                 }
@@ -141,7 +141,7 @@ public final class NativeSpeechEngine {
                 }
             });
 
-            progress.onProgress(12, "Preparing local voice");
+            callback.onProgress(12, "Preparing local voice");
             Bundle params = new Bundle();
             int queued = tts.synthesizeToFile(spoken, params, target, utteranceId);
             if (queued != TextToSpeech.SUCCESS) {
@@ -160,7 +160,7 @@ public final class NativeSpeechEngine {
                 throw new IllegalStateException("Local speech engine produced no usable audio");
             }
 
-            progress.onProgress(96, "Registering generated narration");
+            callback.onProgress(96, "Registering generated narration");
             JSONObject out = new JSONObject();
             out.put("ok", true);
             out.put("engine", "android-system-tts");
@@ -176,7 +176,7 @@ public final class NativeSpeechEngine {
             out.put("fileName", target.getName());
             out.put("bytes", target.length());
             out.put("workspaceRelativePath", "audio/voices/" + target.getName());
-            progress.onProgress(100, "Narration audio ready");
+            callback.onProgress(100, "Narration audio ready");
             return out;
         } finally {
             try { tts.shutdown(); } catch (Exception ignored) {}
