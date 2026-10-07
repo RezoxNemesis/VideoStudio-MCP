@@ -65,6 +65,10 @@ The first foundation slice includes:
 - a hardware-aware compute planner that treats RAM as a bounded active workspace, selects tiled inference and small temporal windows, and plans phase-by-phase model swapping instead of assuming an entire future generative pipeline must stay resident
 - a folder-scoped cloud workspace archive using Android's system document-tree picker, so Google Drive can be used when exposed by the device without granting VideoStudio broad access to the user's whole Drive
 - provider-aware MotionScript planning that resolves requested creative capabilities against currently installed local providers and can fail strictly instead of pretending a missing engine exists
+- a provider-agnostic **CreativeIR execution DAG** with explicit dependencies, per-node cache keys, restart checkpoints and hardware-aware resource plans
+- durable **targeted regeneration**, where changing or invalidating one node resets only that node and downstream dependants while unaffected completed work stays reusable
+- a first built-in CreativeIR executor for bundled portrait segmentation/face analysis, layered depth approximation, articulated 2.5D rigging, native shot composition and Media3 final rendering
+- a local technical render critic that checks decode health, black/overexposed frames, freeze-like spans, abrupt visual jumps and luminance instability without pretending to be a semantic vision model
 - generated video registration as first-class project media instead of only storing a latest-export URI
 - an editor **Media Bin** with generated/source roles, preview and timeline insertion
 - live editor refresh when native background work changes project state
