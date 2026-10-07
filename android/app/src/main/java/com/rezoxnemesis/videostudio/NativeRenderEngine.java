@@ -16,6 +16,7 @@ import androidx.media3.effect.Brightness;
 import androidx.media3.effect.Contrast;
 import androidx.media3.effect.GaussianBlur;
 import androidx.media3.effect.HslAdjustment;
+import androidx.media3.effect.OverlayEffect;
 import androidx.media3.effect.Presentation;
 import androidx.media3.effect.ScaleAndRotateTransformation;
 import androidx.media3.transformer.Composition;
@@ -241,13 +242,25 @@ public final class NativeRenderEngine {
         String preset = animationSpec == null
                 ? fx.optString("motionPreset", "push_in")
                 : animationSpec.optString("cameraPreset", fx.optString("motionPreset", "push_in"));
+        long durationUs = Math.max(100_000L, durationMs * 1000L);
         effects.add(new MotionMatrixEffect(
                 preset,
-                Math.max(100_000L, durationMs * 1000L),
+                durationUs,
                 0,
                 animationSpec,
                 layerRole
         ));
+
+        // Atmosphere is drawn only once, on the alpha foreground sequence,
+        // after its spatial transform. That keeps mist/rain/light in screen
+        // space while the subject and background move independently.
+        if ("foreground".equals(layerRole) && animationSpec != null) {
+            String environment = animationSpec.optString("environmentMotion", "ambient_drift");
+            double atmosphere = animationSpec.optDouble("atmosphereIntensity", .42);
+            effects.add(new OverlayEffect(Collections.singletonList(
+                    new AtmosphereOverlay(environment, atmosphere, durationUs)
+            )));
+        }
         return effects;
     }
 
