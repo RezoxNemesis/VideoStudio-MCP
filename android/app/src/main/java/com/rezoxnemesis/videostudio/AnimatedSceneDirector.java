@@ -30,10 +30,13 @@ public final class AnimatedSceneDirector {
         clip.speed = 1f;
         clip.transition = transitionFor(index, total, style);
         clip.effects.put("animatedScene", true);
-        clip.effects.put("animationEngine", "videostudio-native-parallax-v1");
+        clip.effects.put("animationEngine", "videostudio-native-articulated-parallax-v2");
         clip.effects.put("animationAnalysis", analysis);
         clip.effects.put("animationSpec", spec);
         clip.effects.put("foregroundUri", layers.foregroundUri.toString());
+        clip.effects.put("headUri", layers.headUri.toString());
+        clip.effects.put("torsoUri", layers.torsoUri.toString());
+        clip.effects.put("lowerUri", layers.lowerUri.toString());
         clip.effects.put("backgroundUri", layers.backgroundUri.toString());
         clip.effects.put("motionPreset", spec.optString("cameraPreset", "push_in"));
         clip.effects.put("motionBlur", spec.optDouble("motionBlur", 0.18));
@@ -120,6 +123,9 @@ public final class AnimatedSceneDirector {
 
         // Independent layer movement creates the actual 2.5D effect.
         spec.put("foregroundDepth", 1.0);
+        spec.put("headDepth", 1.07);
+        spec.put("torsoDepth", 1.0);
+        spec.put("lowerDepth", 0.94);
         spec.put("backgroundDepth", 0.36);
         spec.put("parallaxStrength", 0.65 + 0.35 * power);
 
@@ -130,6 +136,13 @@ public final class AnimatedSceneDirector {
         spec.put("swayAmplitudeY", 0.0015 + 0.0020 * power);
         spec.put("swayCycles", 0.72 + (index % 3) * .08);
         spec.put("microRotation", ("dramatic".equals(style) ? .34 : .18) * power);
+        spec.put("headSwayAmplitudeX", (0.0018 + 0.0024 * power) * direction);
+        spec.put("headSwayAmplitudeY", 0.0012 + 0.0015 * power);
+        spec.put("headNodDegrees", ("close".equals(shot) ? .16 : .24) * power);
+        spec.put("torsoBreathScale", (0.0045 + 0.0035 * power));
+        spec.put("torsoBreathShiftY", (0.0015 + 0.0017 * power));
+        spec.put("lowerSwayAmplitudeX", (0.0025 + 0.0040 * power) * -direction);
+        spec.put("lowerSwayDegrees", 0.18 * power);
         spec.put("motionBlur", 0.12 + 0.20 * power);
         spec.put("focusPulse", "dreamy".equals(style) ? 0.20 : 0.08);
         spec.put("environmentMotion", environmentMotion(environment));
