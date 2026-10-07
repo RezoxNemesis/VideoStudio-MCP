@@ -76,9 +76,18 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release delete videostudio-latest --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag || true
-          gh release create videostudio-latest VideoStudio-latest.apk VideoStudio-latest.sha256 \
-            --repo "$GITHUB_REPOSITORY" \
-            --target "$GITHUB_SHA" \
-            --title "VideoStudio Latest Android APK" \
-            --notes-file release-notes.md
+          if gh release view videostudio-latest --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload videostudio-latest VideoStudio-latest.apk VideoStudio-latest.sha256 \
+              --repo "$GITHUB_REPOSITORY" \
+              --clobber
+            gh release edit videostudio-latest \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "VideoStudio Latest Android APK" \
+              --notes-file release-notes.md
+          else
+            gh release create videostudio-latest VideoStudio-latest.apk VideoStudio-latest.sha256 \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" \
+              --title "VideoStudio Latest Android APK" \
+              --notes-file release-notes.md
+          fi
