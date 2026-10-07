@@ -64,6 +64,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     private CreativeWorkspace creativeWorkspace;
     private MotionScriptCompiler motionScriptCompiler;
     private RecoveryPlanStore recoveryPlans;
+    private CapabilityRegistry capabilityRegistry;
     private SharedPreferences prefs;
     private CommandJournal commandJournal;
 
@@ -83,6 +84,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         creativeWorkspace = new CreativeWorkspace(this);
         motionScriptCompiler = new MotionScriptCompiler();
         recoveryPlans = new RecoveryPlanStore(this);
+        capabilityRegistry = new CapabilityRegistry(this);
         createChannel();
         startForeground(NOTIFICATION_ID, notification("VideoStudio MCP v3 starting"));
         syncProtocolState();
@@ -279,6 +281,18 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                     return;
                 case "cleanup_workspace":
                     complete(command, cleanupWorkspace(p));
+                    return;
+                case "capability_registry":
+                    complete(command, capabilityRegistry.describe());
+                    return;
+                case "resolve_capability":
+                    complete(command, capabilityRegistry.resolve(
+                            p.optString("capability", ""),
+                            p.optString("quality", "")
+                    ));
+                    return;
+                case "model_pack_status":
+                    complete(command, capabilityRegistry.modelPackStatus());
                     return;
                 case "animate_images":
                     complete(command, queueAnimatedImages(p));
@@ -1498,6 +1512,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             out.put("portraitAnimationEngineReady", portraitMotionAnalyzer != null);
             out.put("motionScriptCompilerReady", motionScriptCompiler != null);
             out.put("creativeWorkspaceReady", creativeWorkspace != null);
+            out.put("capabilityRegistryReady", capabilityRegistry != null);
             out.put("bundledSubjectSegmentation", true);
             out.put("bundledFaceMesh", true);
             out.put("permissionMode", permissionMode());
@@ -1568,6 +1583,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             }
             out.put("workload", jobs.state());
             out.put("recoveryPlans", recoveryPlans.recent(12));
+            out.put("capabilityRegistry", capabilityRegistry.describe());
             out.put("creatorCatalog", CreatorCatalog.describe());
             out.put("recentActivity", ActivityLog.recent(this, 30));
             out.put("commandJournal", commandJournal.recent(20));
@@ -1657,6 +1673,9 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             case "run_motion_script": return "Running MotionScript";
             case "workspace_status": return "Reading creative workspace";
             case "cleanup_workspace": return "Cleaning creative workspace";
+            case "capability_registry": return "Reading capability providers";
+            case "resolve_capability": return "Resolving creative capability";
+            case "model_pack_status": return "Reading model packs";
             case "animate_images": return "Animating still images";
             case "job_status": return "Reading native job status";
             case "export_project": return "Exporting project";
@@ -1703,6 +1722,9 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         if ("run_motion_script".equals(action)) return result.optInt("changedClips", 0) + " clip(s) directed by MotionScript";
         if ("workspace_status".equals(action)) return "Creative workspace status read";
         if ("cleanup_workspace".equals(action)) return "Regenerable creative workspace cleaned";
+        if ("capability_registry".equals(action)) return "Capability provider registry read";
+        if ("resolve_capability".equals(action)) return result.optBoolean("resolved", false) ? "Creative capability resolved" : "No installed provider resolved";
+        if ("model_pack_status".equals(action)) return "Optional model-pack status read";
         if ("animate_images".equals(action)) return result.optInt("imageCount", 0) + " image clip(s) queued for native animation";
         if ("insert_asset_timeline".equals(action)) return result.optBoolean("inserted", false) ? "Media added to timeline" : "Media could not be added to timeline";
         if ("select_project".equals(action)) return "Project selected";
