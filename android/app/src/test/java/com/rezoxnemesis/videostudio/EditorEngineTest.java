@@ -144,4 +144,34 @@ public class EditorEngineTest {
         catch (IllegalArgumentException expected) { }
         assertEquals(revision, store.get(project.id).revision);
     }
+
+    @Test public void autonomousEditsCannotBypassRevisionChecks() throws Exception {
+        try{editor.execute(project.id,-1,"agent","agent-request-001","move_clip",args("{\"clipId\":\"clip\",\"startMs\":2000}"));fail("Agent bypassed owner revision");}
+        catch(IllegalArgumentException expected){}
+        assertEquals(0,store.get(project.id).clip("clip").startMs);
+    }
+
+    @Test public void reusedCommandIdWithDifferentEditIsAConflict() throws Exception {
+        editor.execute(project.id,project.revision,"agent","agent-request-001","move_clip",args("{\"clipId\":\"clip\",\"startMs\":2000}"));
+        try{editor.execute(project.id,project.revision,"agent","agent-request-001","move_clip",args("{\"clipId\":\"clip\",\"startMs\":4000}"));fail("Different mutation reused receipt");}
+        catch(IllegalArgumentException expected){}
+        assertEquals(2000,store.get(project.id).clip("clip").startMs);
+    }
+
+    @Test public void rollingBoundaryKeepsTheSequenceEndAndBothSourceRangesValid() throws Exception {
+        edit("duplicate_clip",args("{\"clipId\":\"clip\"}"));
+        long end=project.outputDurationMs();
+        edit("roll_clip",args("{\"clipId\":\"clip\",\"deltaMs\":500}"));
+        assertEquals(4500,project.clip("clip").outputDurationMs());
+        assertEquals(4500,project.clips.get(1).startMs);assertEquals(2000,project.clips.get(1).inMs);
+        assertEquals(end,project.outputDurationMs());
+    }
+
+    @Test public void slidingMiddleClipPreservesItsSourceAndOuterSequenceEnd()throws Exception{
+        edit("duplicate_clip",args("{\"clipId\":\"clip\"}"));
+        String middle=project.clips.get(1).id;edit("duplicate_clip",args("{\"clipId\":\""+middle+"\"}"));
+        edit("slide_clip",args("{\"clipId\":\""+middle+"\",\"deltaMs\":500}"));
+        assertEquals(4500,project.clip(middle).startMs);assertEquals(1000,project.clip(middle).inMs);assertEquals(9000,project.clip(middle).outMs);
+        assertEquals(12000,project.outputDurationMs());
+    }
 }

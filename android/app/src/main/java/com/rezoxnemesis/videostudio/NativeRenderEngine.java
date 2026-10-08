@@ -124,7 +124,11 @@ public final class NativeRenderEngine {
 
                         @Override
                         public void onError(Composition composition, ExportResult result, ExportException exception) {
-                            listener.onError(exception.getMessage() == null ? "Native export failed" : exception.getMessage());
+                            android.util.Log.e("VideoStudioRender","Native export failed",exception);
+                            String detail=exception.getMessage()==null?"Native export failed":exception.getMessage();
+                            Throwable cause=exception.getCause();int depth=0;
+                            while(cause!=null&&depth++<3){detail+=" · "+cause.getClass().getSimpleName()+": "+cause.getMessage();cause=cause.getCause();}
+                            listener.onError(detail);
                         }
                     })
                     .build();

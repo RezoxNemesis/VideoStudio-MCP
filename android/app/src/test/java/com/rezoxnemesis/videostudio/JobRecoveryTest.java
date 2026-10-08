@@ -10,6 +10,8 @@ import org.junit.runner.RunWith;
 import org.robolectric.RobolectricTestRunner;
 import org.robolectric.RuntimeEnvironment;
 import org.robolectric.annotation.Config;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 
 import static org.junit.Assert.*;
 
@@ -69,5 +71,33 @@ public class JobRecoveryTest {
         assertTrue(JobManager.isTerminal(JobManager.STATE_CANCELLED));
         assertTrue(JobManager.isTerminal(JobManager.STATE_FAILED));
         assertTrue(JobManager.isTerminal(JobManager.STATE_COMPLETED));
+    }
+
+    @Test public void openingAnotherManagerDoesNotCheckpointALiveServiceJob() throws Exception {
+        Context context=RuntimeEnvironment.getApplication();
+        context.getSharedPreferences("videostudio_native_v1",Context.MODE_PRIVATE).edit().remove("job_recovery_snapshot").commit();
+        CountDownLatch started=new CountDownLatch(1),release=new CountDownLatch(1);
+        JobManager service=new JobManager(context);JobManager activity=null;
+        try{
+            JobManager.Job live=service.submit("Service work",JobManager.Kind.LIGHT,state->{started.countDown();release.await(5,TimeUnit.SECONDS);});
+            assertTrue(started.await(5,TimeUnit.SECONDS));activity=new JobManager(context);
+            assertEquals("Opening UI is not process death","running",activity.get(live.id).getJSONObject("job").getString("state"));
+        }finally{release.countDown();if(activity!=null)activity.shutdown();service.shutdown();}
+    }
+
+    @Test public void progressFromOneLaneCannotEraseAnotherManagersJob() throws Exception {
+        Context context=RuntimeEnvironment.getApplication();
+        SharedPreferences prefs=context.getSharedPreferences("videostudio_native_v1",Context.MODE_PRIVATE);
+        prefs.edit().remove("job_recovery_snapshot").commit();
+        CountDownLatch release=new CountDownLatch(1),started=new CountDownLatch(2);
+        JobManager first=new JobManager(context),second=new JobManager(context);
+        try{
+            JobManager.Job a=first.submit("A",JobManager.Kind.LIGHT,state->{started.countDown();release.await(5,TimeUnit.SECONDS);});
+            JobManager.Job b=second.submit("B",JobManager.Kind.LIGHT,state->{started.countDown();release.await(5,TimeUnit.SECONDS);});
+            assertTrue(started.await(5,TimeUnit.SECONDS));a.checkpoint("work",40,"Progress A");
+            JSONArray saved=new JSONArray(prefs.getString("job_recovery_snapshot","[]"));
+            java.util.HashSet<String> ids=new java.util.HashSet<>();for(int i=0;i<saved.length();i++)ids.add(saved.getJSONObject(i).getString("id"));
+            assertTrue(ids.contains(a.id));assertTrue("B must survive A's checkpoint",ids.contains(b.id));
+        }finally{release.countDown();first.shutdown();second.shutdown();}
     }
 }

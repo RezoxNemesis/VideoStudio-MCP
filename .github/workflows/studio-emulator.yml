@@ -45,13 +45,7 @@ jobs:
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
           script: |
-            mkdir -p artifacts/device-evidence
-            adb logcat -c
-            trap 'adb pull /sdcard/Android/data/com.rezoxnemesis.videostudio/files/evidence artifacts/device-evidence; adb logcat -d > artifacts/device-evidence/logcat.txt' EXIT
-            adb install -r android/app/build/outputs/apk/debug/app-debug.apk
-            adb install -r android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
-            adb shell am instrument -w -r com.rezoxnemesis.videostudio.test/androidx.test.runner.AndroidJUnitRunner | tee artifacts/device-evidence/instrumentation.txt
-            rg -q 'OK \([1-9][0-9]* tests?\)' artifacts/device-evidence/instrumentation.txt
+            bash scripts/run-device-evidence.sh
       - name: Upload device screenshots, renders and reports
         if: always()
         uses: actions/upload-artifact@v4
