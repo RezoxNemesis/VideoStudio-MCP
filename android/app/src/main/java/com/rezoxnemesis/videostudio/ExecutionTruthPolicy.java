@@ -54,6 +54,83 @@ public final class ExecutionTruthPolicy {
                 && !result.optString("jobId", "").isEmpty();
     }
 
+    public static JSONObject presentDeferredJob(String defaultAction, JSONObject job) {
+        JSONObject out = new JSONObject();
+        String fallbackAction = defaultAction == null || defaultAction.trim().isEmpty()
+                ? "Native work" : defaultAction.trim();
+        String state = job == null ? "" : job.optString("state", "").trim().toLowerCase();
+        String stage = job == null ? "" : job.optString("stage", "").trim();
+        String detail = job == null ? "" : job.optString("detail", "").trim();
+        int progress = job == null ? 0 : Math.max(0, Math.min(100, job.optInt("progress", 0)));
+
+        String action = fallbackAction;
+        String status = "running";
+
+        switch (state) {
+            case "waiting_thermal":
+                action = "Waiting for phone to cool";
+                status = "queued";
+                break;
+            case "waiting_memory":
+                action = "Waiting for memory";
+                status = "queued";
+                break;
+            case "waiting_network":
+                action = "Waiting for network";
+                status = "queued";
+                break;
+            case "waiting_storage":
+                action = "Waiting for storage";
+                status = "queued";
+                break;
+            case "waiting_native":
+                action = "Waiting for native executor";
+                status = "queued";
+                break;
+            case "checkpointed":
+                action = "Native work checkpointed";
+                status = "queued";
+                break;
+            case "queued":
+            case "preparing":
+                if (!stage.isEmpty() && !"queued".equalsIgnoreCase(stage)) action = stage;
+                status = "queued";
+                break;
+            case "completed":
+                if (!stage.isEmpty() && !"queued".equalsIgnoreCase(stage)) action = stage;
+                status = "success";
+                progress = 100;
+                break;
+            case "failed":
+            case "cancelled":
+                if (!stage.isEmpty() && !"queued".equalsIgnoreCase(stage)) action = stage;
+                status = "failed";
+                break;
+            default:
+                if (!stage.isEmpty() && !"queued".equalsIgnoreCase(stage)) action = stage;
+                status = "running";
+                break;
+        }
+
+        if (detail.isEmpty()) {
+            if ("waiting_thermal".equals(state)) detail = "Thermal governor paused heavy work; checkpoint preserved until the phone cools";
+            else if ("waiting_memory".equals(state)) detail = "Memory governor paused heavy work; checkpoint preserved";
+            else if ("waiting_network".equals(state)) detail = "Waiting for network before native work can continue";
+            else if ("waiting_storage".equals(state)) detail = "Waiting for storage before native work can continue";
+            else if ("waiting_native".equals(state)) detail = "Native executor is offline; queued work will resume automatically";
+            else detail = state.isEmpty() ? "Native job state unavailable" : state.replace('_', ' ');
+        }
+
+        try {
+            out.put("action", action);
+            out.put("detail", detail);
+            out.put("status", status);
+            out.put("progress", progress);
+            out.put("jobState", state);
+        } catch (Exception ignored) {}
+        return out;
+    }
+
     public static boolean requiresValidatedMediaOutput(String action) {
         String value = action == null ? "" : action.trim().toLowerCase();
         return "prompt_video".equals(value)
