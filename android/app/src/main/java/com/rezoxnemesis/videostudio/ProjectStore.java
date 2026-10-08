@@ -33,7 +33,7 @@ public final class ProjectStore {
     private static final String LEGACY_ACTIVE = "active_project";
 
     private static final String DB_NAME = "videostudio_v3.db";
-    private static final int DB_VERSION = 1;
+    private static final int DB_VERSION = 2;
     private static final String META_ACTIVE = "active_project";
     private static final String META_MIGRATED = "legacy_projects_migrated";
 
@@ -98,11 +98,47 @@ public final class ProjectStore {
         }
     }
 
+    public static final class Track {
+        public String id = UUID.randomUUID().toString();
+        public String name = "Video 1";
+        public String type = "video";
+        public int order;
+        public int height = 72;
+        public boolean locked, muted, solo;
+        public boolean visible = true;
+
+        JSONObject toJson() {
+            JSONObject o = new JSONObject();
+            try {
+                o.put("id", id); o.put("name", name); o.put("type", type);
+                o.put("order", order); o.put("height", height);
+                o.put("locked", locked); o.put("muted", muted);
+                o.put("solo", solo); o.put("visible", visible);
+            } catch (Exception error) { throw new IllegalStateException(error); }
+            return o;
+        }
+        static Track fromJson(JSONObject o) {
+            Track t = new Track();
+            t.id = o.optString("id", t.id); t.name = o.optString("name", t.name);
+            t.type = o.optString("type", "video"); t.order = o.optInt("order", 0);
+            t.height = Math.max(40, Math.min(240, o.optInt("height", 72)));
+            t.locked = o.optBoolean("locked"); t.muted = o.optBoolean("muted");
+            t.solo = o.optBoolean("solo"); t.visible = o.optBoolean("visible", true);
+            return t;
+        }
+        public boolean audioOnly() { return type.startsWith("audio") || "voice_over".equals(type); }
+    }
+
     public static final class Clip {
         public String id;
         public String assetId;
         public long inMs;
         public long outMs;
+        public long startMs = -1;
+        public String trackId = "";
+        public String linkGroup = "";
+        public JSONArray keyframes = new JSONArray();
+        public float pan = 0f;
         public float speed = 1f;
         public float volume = 1f;
         public String transition = "none";
@@ -110,7 +146,7 @@ public final class ProjectStore {
         public JSONObject effects = new JSONObject();
 
         public long outputDurationMs() {
-            return Math.max(0, (long) ((outMs - inMs) / Math.max(.1f, speed)));
+            return TimelineMath.duration(Math.max(0, inMs), Math.max(inMs, outMs), Math.max(.1f, speed));
         }
 
         JSONObject toJson() {
@@ -120,6 +156,11 @@ public final class ProjectStore {
                 o.put("assetId", assetId);
                 o.put("inMs", inMs);
                 o.put("outMs", outMs);
+                o.put("startMs", startMs);
+                o.put("trackId", trackId);
+                o.put("linkGroup", linkGroup);
+                o.put("keyframes", keyframes);
+                o.put("pan", pan);
                 o.put("speed", speed);
                 o.put("volume", volume);
                 o.put("transition", transition);
@@ -135,6 +176,12 @@ public final class ProjectStore {
             c.assetId = o.optString("assetId");
             c.inMs = o.optLong("inMs", 0);
             c.outMs = o.optLong("outMs", 0);
+            c.startMs = o.optLong("startMs", -1);
+            c.trackId = o.optString("trackId", "");
+            c.linkGroup = o.optString("linkGroup", "");
+            c.keyframes = o.optJSONArray("keyframes");
+            if (c.keyframes == null) c.keyframes = new JSONArray();
+            c.pan = (float) o.optDouble("pan", 0);
             c.speed = (float) o.optDouble("speed", 1);
             c.volume = (float) o.optDouble("volume", 1);
             c.transition = o.optString("transition", "none");
@@ -149,6 +196,10 @@ public final class ProjectStore {
         public String id;
         public String name;
         public long updatedAt;
+        public long revision;
+        public JSONObject settings = new JSONObject();
+        public JSONArray markers = new JSONArray();
+        public final ArrayList<Track> tracks = new ArrayList<>();
         public String sourcePrompt = "";
         public String latestExportUri = "";
         public String latestExportName = "";
@@ -157,21 +208,30 @@ public final class ProjectStore {
         public final ArrayList<Clip> clips = new ArrayList<>();
 
         public long outputDurationMs() {
-            long total = 0;
-            for (Clip c : clips) total += c.outputDurationMs();
-            return total;
+            ensureTimelineDefaults();
+            long end = 0;
+            for (Clip c : clips) end = Math.max(end, TimelineMath.add(c.startMs, c.outputDurationMs()));
+            return end;
         }
 
         JSONObject toJson() {
+            ensureTimelineDefaults();
             JSONObject o = new JSONObject();
             JSONArray aa = new JSONArray();
             JSONArray cc = new JSONArray();
+            JSONArray tt = new JSONArray();
             for (Asset a : assets) aa.put(a.toJson());
             for (Clip c : clips) cc.put(c.toJson());
+            for (Track t : tracks) tt.put(t.toJson());
             try {
                 o.put("id", id);
                 o.put("name", name);
                 o.put("updatedAt", updatedAt);
+                o.put("schemaVersion", 2);
+                o.put("revision", revision);
+                o.put("tracks", tt);
+                o.put("settings", settings);
+                o.put("markers", markers);
                 o.put("sourcePrompt", sourcePrompt);
                 o.put("latestExportUri", latestExportUri);
                 o.put("latestExportName", latestExportName);
@@ -187,6 +247,16 @@ public final class ProjectStore {
             p.id = o.optString("id", UUID.randomUUID().toString());
             p.name = o.optString("name", "Untitled Project");
             p.updatedAt = o.optLong("updatedAt", System.currentTimeMillis());
+            p.revision = o.optLong("revision", 0);
+            JSONObject settings = o.optJSONObject("settings");
+            if (settings != null) p.settings = settings;
+            JSONArray markers = o.optJSONArray("markers");
+            if (markers != null) p.markers = markers;
+            JSONArray tracks = o.optJSONArray("tracks");
+            if (tracks != null) for (int i = 0; i < tracks.length(); i++) {
+                JSONObject item = tracks.optJSONObject(i);
+                if (item != null) p.tracks.add(Track.fromJson(item));
+            }
             p.sourcePrompt = o.optString("sourcePrompt", "");
             p.latestExportUri = o.optString("latestExportUri", "");
             p.latestExportName = o.optString("latestExportName", "");
@@ -201,12 +271,44 @@ public final class ProjectStore {
                 JSONObject item = cc.optJSONObject(i);
                 if (item != null) p.clips.add(Clip.fromJson(item));
             }
+            p.ensureTimelineDefaults();
             return p;
         }
 
         public Asset asset(String id) {
             for (Asset a : assets) if (a.id.equals(id)) return a;
             return null;
+        }
+
+        public Track track(String id) {
+            for (Track t : tracks) if (t.id.equals(id)) return t;
+            return null;
+        }
+
+        public Clip clip(String id) {
+            for (Clip c : clips) if (c.id.equals(id)) return c;
+            return null;
+        }
+
+        public void ensureTimelineDefaults() {
+            if (tracks.isEmpty()) {
+                Track t = new Track(); t.id = "video-1"; tracks.add(t);
+            }
+            java.util.HashMap<String, Long> ends = new java.util.HashMap<>();
+            for (Clip c : clips) {
+                if (c.trackId == null || c.trackId.isEmpty()) {
+                    Asset a = asset(c.assetId);
+                    if (a != null && a.mime != null && a.mime.startsWith("audio/")) {
+                        if (track("audio-1") == null) {
+                            Track t = new Track(); t.id = "audio-1"; t.name = "Audio 1";
+                            t.type = "audio_dialogue"; t.order = tracks.size(); tracks.add(t);
+                        }
+                        c.trackId = "audio-1";
+                    } else c.trackId = tracks.get(0).id;
+                }
+                if (c.startMs < 0) c.startMs = ends.getOrDefault(c.trackId, 0L);
+                ends.put(c.trackId, Math.max(ends.getOrDefault(c.trackId, 0L), TimelineMath.add(c.startMs, c.outputDurationMs())));
+            }
         }
     }
 
@@ -225,11 +327,25 @@ public final class ProjectStore {
             db.execSQL("CREATE TABLE IF NOT EXISTS meta (" +
                     "key TEXT PRIMARY KEY NOT NULL," +
                     "value TEXT NOT NULL)");
+            createEditorTables(db);
         }
 
         @Override
         public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
-            // v3 schema starts at 1. Future migrations belong here.
+            if (oldVersion < 2) createEditorTables(db);
+        }
+
+        private void createEditorTables(SQLiteDatabase db) {
+            db.execSQL("CREATE TABLE IF NOT EXISTS project_history (" +
+                    "seq INTEGER PRIMARY KEY AUTOINCREMENT, project_id TEXT NOT NULL," +
+                    "before_json TEXT NOT NULL, after_json TEXT NOT NULL, actor TEXT NOT NULL," +
+                    "description TEXT NOT NULL, applied INTEGER NOT NULL DEFAULT 1, created_at INTEGER NOT NULL)");
+            db.execSQL("CREATE INDEX IF NOT EXISTS idx_history_project ON project_history(project_id,seq)");
+            db.execSQL("CREATE TABLE IF NOT EXISTS project_snapshots (" +
+                    "id TEXT PRIMARY KEY, project_id TEXT NOT NULL, name TEXT NOT NULL," +
+                    "json TEXT NOT NULL, created_at INTEGER NOT NULL)");
+            db.execSQL("CREATE TABLE IF NOT EXISTS project_receipts (" +
+                    "command_id TEXT PRIMARY KEY, project_id TEXT NOT NULL, json TEXT NOT NULL)");
         }
     }
 
@@ -242,6 +358,7 @@ public final class ProjectStore {
         resolver = app.getContentResolver();
         legacyPrefs = app.getSharedPreferences(LEGACY_PREFS, Context.MODE_PRIVATE);
         db = new Db(app).getWritableDatabase();
+        db.enableWriteAheadLogging();
         migrateLegacyProjectsOnce();
     }
 
@@ -305,12 +422,150 @@ public final class ProjectStore {
 
     public synchronized void save(Project project) {
         if (project == null) return;
-        project.updatedAt = System.currentTimeMillis();
+        db.beginTransaction();
+        boolean conflict = false;
+        long currentRevision = 0;
+        try {
+            Project previous = get(project.id);
+            if (previous != null && previous.revision != project.revision) {
+                currentRevision = previous.revision;
+                insertSnapshot(project, "Conflict at revision " + currentRevision);
+                conflict = true;
+            } else {
+                writeRevision(project, previous, "system", "Save project", true);
+            }
+            db.setTransactionSuccessful();
+        } finally { db.endTransaction(); }
+        if (conflict) throw new RevisionConflict(project.id, project.revision, currentRevision);
+    }
+
+    public static final class RevisionConflict extends IllegalStateException {
+        public final String projectId;
+        public final long expectedRevision, actualRevision;
+        RevisionConflict(String id, long expected, long actual) {
+            super("Project changed: expected revision " + expected + ", current " + actual + ". Reload or restore the saved conflict snapshot.");
+            projectId = id; expectedRevision = expected; actualRevision = actual;
+        }
+    }
+
+    public interface Mutation { void apply(Project project) throws Exception; }
+
+    public synchronized Project transact(String id, long expectedRevision, String actor,
+                                         String commandId, String description, Mutation mutation) {
+        db.beginTransaction();
+        try {
+            if (commandId != null && !commandId.isEmpty()) {
+                try (Cursor c = db.query("project_receipts", new String[]{"project_id", "json"},
+                        "command_id=?", new String[]{commandId}, null, null, null)) {
+                    if (c.moveToFirst()) {
+                        if (!id.equals(c.getString(0))) throw new IllegalArgumentException("Command ID belongs to another project");
+                        Project result = Project.fromJson(new JSONObject(c.getString(1)));
+                        db.setTransactionSuccessful(); return result;
+                    }
+                }
+            }
+            Project before = get(id);
+            if (before == null) throw new IllegalArgumentException("Project not found");
+            if (expectedRevision >= 0 && before.revision != expectedRevision)
+                throw new RevisionConflict(id, expectedRevision, before.revision);
+            Project next = Project.fromJson(before.toJson());
+            mutation.apply(next);
+            writeRevision(next, before, actor == null ? "owner" : actor,
+                    description == null ? "Edit project" : description, true);
+            if (commandId != null && !commandId.isEmpty()) {
+                ContentValues receipt = new ContentValues(); receipt.put("command_id", commandId);
+                receipt.put("project_id", id); receipt.put("json", next.toJson().toString());
+                db.insertOrThrow("project_receipts", null, receipt);
+            }
+            db.setTransactionSuccessful(); return next;
+        } catch (RuntimeException error) { throw error; }
+        catch (Exception error) { throw new IllegalStateException("Could not commit editor transaction", error); }
+        finally { db.endTransaction(); }
+    }
+
+    private void writeRevision(Project next, Project before, String actor, String description, boolean history) {
+        if (before != null && before.revision == Long.MAX_VALUE) throw new IllegalStateException("Project revision exhausted");
+        next.revision = before == null ? 1 : before.revision + 1;
+        next.updatedAt = System.currentTimeMillis();
+        next.ensureTimelineDefaults();
         ContentValues values = new ContentValues();
-        values.put("id", project.id);
-        values.put("json", project.toJson().toString());
-        values.put("updated_at", project.updatedAt);
+        values.put("id", next.id); values.put("json", next.toJson().toString()); values.put("updated_at", next.updatedAt);
         db.insertWithOnConflict("projects", null, values, SQLiteDatabase.CONFLICT_REPLACE);
+        if (before != null && history) {
+            db.delete("project_history", "project_id=? AND applied=0", new String[]{next.id});
+            ContentValues row = new ContentValues(); row.put("project_id", next.id);
+            row.put("before_json", before.toJson().toString()); row.put("after_json", next.toJson().toString());
+            row.put("actor", actor); row.put("description", description); row.put("applied", 1);
+            row.put("created_at", next.updatedAt); db.insertOrThrow("project_history", null, row);
+            // A practical disk history budget. Named snapshots are never pruned.
+            db.execSQL("DELETE FROM project_history WHERE project_id=? AND seq NOT IN " +
+                    "(SELECT seq FROM project_history WHERE project_id=? ORDER BY seq DESC LIMIT 500)", new Object[]{next.id, next.id});
+        }
+    }
+
+    public synchronized Project undo(String id, long expectedRevision) { return historyStep(id, expectedRevision, false); }
+    public synchronized Project redo(String id, long expectedRevision) { return historyStep(id, expectedRevision, true); }
+
+    private Project historyStep(String id, long expectedRevision, boolean redo) {
+        db.beginTransaction();
+        try {
+            Project current = get(id);
+            if (current == null) throw new IllegalArgumentException("Project not found");
+            if (current.revision != expectedRevision) throw new RevisionConflict(id, expectedRevision, current.revision);
+            try (Cursor c = db.query("project_history", new String[]{"seq", redo ? "after_json" : "before_json"},
+                    "project_id=? AND applied=?", new String[]{id, redo ? "0" : "1"}, null, null,
+                    "seq " + (redo ? "ASC" : "DESC"), "1")) {
+                if (!c.moveToFirst()) { db.setTransactionSuccessful(); return current; }
+                Project next = Project.fromJson(new JSONObject(c.getString(1)));
+                writeRevision(next, current, "owner", redo ? "Redo" : "Undo", false);
+                ContentValues row = new ContentValues(); row.put("applied", redo ? 1 : 0);
+                db.update("project_history", row, "seq=?", new String[]{Long.toString(c.getLong(0))});
+                db.setTransactionSuccessful(); return next;
+            }
+        } catch (RuntimeException error) { throw error; }
+        catch (Exception error) { throw new IllegalStateException(error); }
+        finally { db.endTransaction(); }
+    }
+
+    public synchronized String snapshot(String id, String name) {
+        Project p = get(id);
+        if (p == null) throw new IllegalArgumentException("Project not found");
+        return insertSnapshot(p, name == null || name.trim().isEmpty() ? "Snapshot" : name.trim());
+    }
+
+    private String insertSnapshot(Project project, String name) {
+        String id = UUID.randomUUID().toString();
+        ContentValues row = new ContentValues(); row.put("id", id); row.put("project_id", project.id);
+        row.put("name", name); row.put("json", project.toJson().toString()); row.put("created_at", System.currentTimeMillis());
+        db.insertOrThrow("project_snapshots", null, row); return id;
+    }
+
+    public synchronized JSONArray snapshots(String projectId) {
+        JSONArray result = new JSONArray();
+        try (Cursor c = db.query("project_snapshots", new String[]{"id", "name", "created_at"},
+                "project_id=?", new String[]{projectId}, null, null, "created_at DESC")) {
+            while (c.moveToNext()) {
+                JSONObject o = new JSONObject();
+                try { o.put("id", c.getString(0)); o.put("name", c.getString(1)); o.put("createdAt", c.getLong(2)); }
+                catch (Exception error) { throw new IllegalStateException(error); }
+                result.put(o);
+            }
+        }
+        return result;
+    }
+
+    public synchronized Project restore(String projectId, long revision, String snapshotId) {
+        return transact(projectId, revision, "owner", "", "Restore snapshot", p -> {
+            try (Cursor c = db.query("project_snapshots", new String[]{"json"}, "id=? AND project_id=?",
+                    new String[]{snapshotId, projectId}, null, null, null)) {
+                if (!c.moveToFirst()) throw new IllegalArgumentException("Snapshot not found in this project");
+                Project snapshot = Project.fromJson(new JSONObject(c.getString(0)));
+                p.name = snapshot.name; p.settings = snapshot.settings; p.markers = snapshot.markers;
+                p.tracks.clear(); p.tracks.addAll(snapshot.tracks); p.clips.clear(); p.clips.addAll(snapshot.clips);
+                // Retain media published/imported after the snapshot for recovery.
+                for (Asset a : snapshot.assets) if (p.asset(a.id) == null) p.assets.add(a);
+            }
+        });
     }
 
     public synchronized void delete(String id) {

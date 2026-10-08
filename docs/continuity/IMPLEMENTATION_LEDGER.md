@@ -12,3 +12,7 @@ Ruling: the supplied bundle already defines architecture and explicitly authoriz
 Findings: image clips never bind to direct preview; preview requires final render for image timelines; timeline cards have no track/time layout; UI export is displayed as queued; ProjectStore.save has no revision check or undo history; renderer drops all source audio in mixed image/video timelines and does not apply clip volume.
 
 Tasks 1–6: in progress; the complete roadmap is not claimed complete.
+
+Android RED evidence: run 37817933116 / job 113451244875 executed 64 tests, with exactly the 3 intended ProjectStoreEditorTest failures (duration, stale save, durable revision). Existing 61 tests passed. Node/Worker CI run 37817932905 succeeded including Wrangler dry run.
+
+The Java runtime includes jdk.compiler despite no javac executable. Direct java com.sun.tools.javac.Main with -source/-target 17 can run pure core tests; --release lacks ct.sym locally. Nested Node spawning of java is blocked by the execution sandbox, so use bash scripts/core-test.sh. Timeline core passes 33 checks.
