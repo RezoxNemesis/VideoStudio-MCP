@@ -1,6 +1,6 @@
 # VideoStudio 3.6 native editor and motion workspace
 
-This release is an ARM64 Android APK, package `com.rezoxnemesis.videostudio`, version 3.6.0 (360), signed by an explicitly restored GitHub cache key. Previous 3.4.7 and 3.5.0 APKs were verified to have different certificates. Their original private keys are unavailable. An in-place upgrade may therefore be rejected: back up projects using the authorised workspace archive before any uninstall, then restore/reconnect after installation. Future builds explicitly use the restored key and verify that the APK certificate matches it.
+This release is an ARM64 Android APK, package `com.rezoxnemesis.videostudio`, version 3.6.0 (360), signed by an explicitly restored GitHub cache key. Previous 3.4.7 and 3.5.0 APKs were verified to have different certificates. Their original private keys are unavailable. An in-place upgrade may therefore be rejected: independently preserve project manifests, original media and exports before any uninstall. The existing workspace archive is not a complete reinstall migration: it does not automatically restore project database records, app-private imported sources or URI grants. Reinstallation requires reconnecting ChatGPT and reauthorising/reimporting media. Do not uninstall while important material remains only inside the app. Future builds explicitly use the restored key and verify that the APK certificate matches it.
 
 ## Implemented
 
