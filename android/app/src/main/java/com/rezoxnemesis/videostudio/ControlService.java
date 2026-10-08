@@ -53,9 +53,9 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     private static final String KEY_SERVICE_ONLINE = "control_service_online";
     private static final String KEY_SERVICE_DETAIL = "control_service_detail";
     private static final String KEY_AUTONOMY_MIGRATED = "autonomy_everything_v32_migrated";
-    // Private MCP JSON fallback for ChatGPT attachments when the host cannot expose a temporary HTTPS file URL.
-    // Kept deliberately small because this path is for still frames, not video payloads.
-    private static final long MAX_INLINE_IMAGE_BYTES = 12L * 1024L * 1024L;
+    // Private MCP JSON fallback for small ChatGPT attachments when the host cannot expose a usable temporary HTTPS file URL.
+    // Kept deliberately bounded so normal video transfer stays on the streaming handoff path.
+    private static final long MAX_INLINE_MEDIA_BYTES = 12L * 1024L * 1024L;
     private static final int MAX_INLINE_BASE64_CHARS = 17 * 1024 * 1024;
     private static final int MAX_REMOTE_REDIRECTS = 5;
 
@@ -2558,17 +2558,19 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     }
 
     /**
-     * Private inline still-image ingest used as a compatibility bridge when ChatGPT can read
-     * an attachment but cannot expose an Android-downloadable HTTPS URL to the installed MCP
-     * schema. The bytes travel inside the already owner-authenticated MCP command and are
-     * written directly to app-private storage. Nothing is published to Gallery or a public URL.
+     * Private inline small-media ingest used as a compatibility bridge when the normal
+     * Worker handoff cannot deliver a ChatGPT attachment. The bytes travel inside the already
+     * owner-authenticated MCP command and are written directly to app-private storage.
+     * Nothing is published to Gallery or a public URL.
      */
     private JSONObject importInlineBase64(JSONObject p) throws Exception {
         ProjectStore.Project project = resolveProject(p.optString("projectId", ""));
-        String name = sanitizeFileName(p.optString("name", "ChatGPT_frame.png"));
+        String name = sanitizeFileName(p.optString("name", "ChatGPT_media"));
         String mime = p.optString("mime", "image/png").trim().toLowerCase(Locale.US);
-        if (!("image/png".equals(mime) || "image/jpeg".equals(mime) || "image/webp".equals(mime))) {
-            throw new IllegalArgumentException("Inline MCP ingest accepts PNG, JPEG or WebP still images only");
+        boolean isImage = "image/png".equals(mime) || "image/jpeg".equals(mime) || "image/webp".equals(mime);
+        boolean isMp4 = "video/mp4".equals(mime);
+        if (!(isImage || isMp4)) {
+            throw new IllegalArgumentException("Inline MCP ingest accepts PNG, JPEG, WebP or MP4 media only");
         }
 
         String encoded = p.optString("base64", "").trim();
@@ -2579,23 +2581,33 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         }
         if (encoded.isEmpty()) throw new IllegalArgumentException("Missing inline attachment bytes");
         if (encoded.length() > MAX_INLINE_BASE64_CHARS) {
-            throw new IllegalArgumentException("Inline image exceeds VideoStudio's private MCP transfer limit");
+            throw new IllegalArgumentException("Inline media exceeds VideoStudio's private MCP transfer limit");
         }
 
         byte[] bytes;
         try {
             bytes = java.util.Base64.getDecoder().decode(encoded);
         } catch (IllegalArgumentException error) {
-            throw new IllegalArgumentException("Invalid base64 image payload");
+            throw new IllegalArgumentException("Invalid base64 media payload");
         }
-        if (bytes.length == 0 || bytes.length > MAX_INLINE_IMAGE_BYTES) {
-            throw new IllegalArgumentException("Inline image exceeds VideoStudio's 12 MB decoded transfer limit");
+        if (bytes.length == 0 || bytes.length > MAX_INLINE_MEDIA_BYTES) {
+            throw new IllegalArgumentException("Inline media exceeds VideoStudio's 12 MB decoded transfer limit");
         }
 
         String expectedSha = p.optString("sha256", "").trim().toLowerCase(Locale.US);
         if (!expectedSha.isEmpty()) {
             String actualSha = sha256Hex(bytes);
-            if (!actualSha.equals(expectedSha)) throw new IllegalArgumentException("Inline image SHA-256 mismatch");
+            if (!actualSha.equals(expectedSha)) throw new IllegalArgumentException("Inline media SHA-256 mismatch");
+        }
+
+        if (isMp4) {
+            if (bytes.length < 12
+                    || bytes[4] != 'f'
+                    || bytes[5] != 't'
+                    || bytes[6] != 'y'
+                    || bytes[7] != 'p') {
+                throw new IllegalArgumentException("Inline MP4 payload is missing an ISO media ftyp header");
+            }
         }
 
         File dir = new File(getFilesDir(), "imports");
@@ -2610,23 +2622,31 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             if (!success && file.exists()) file.delete();
         }
 
-        // Decode bounds only, so malformed data is rejected without allocating the full bitmap.
-        android.graphics.BitmapFactory.Options bounds = new android.graphics.BitmapFactory.Options();
-        bounds.inJustDecodeBounds = true;
-        android.graphics.BitmapFactory.decodeFile(file.getAbsolutePath(), bounds);
-        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
-            file.delete();
-            throw new IllegalArgumentException("Inline payload is not a readable image");
-        }
-        long pixels = (long) bounds.outWidth * (long) bounds.outHeight;
-        if (pixels > 80_000_000L) {
-            file.delete();
-            throw new IllegalArgumentException("Inline image dimensions exceed VideoStudio's safe decode limit");
+        int width = 0;
+        int height = 0;
+        if (isImage) {
+            // Decode bounds only, so malformed data is rejected without allocating the full bitmap.
+            android.graphics.BitmapFactory.Options bounds = new android.graphics.BitmapFactory.Options();
+            bounds.inJustDecodeBounds = true;
+            android.graphics.BitmapFactory.decodeFile(file.getAbsolutePath(), bounds);
+            if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
+                file.delete();
+                throw new IllegalArgumentException("Inline payload is not a readable image");
+            }
+            long pixels = (long) bounds.outWidth * (long) bounds.outHeight;
+            if (pixels > 80_000_000L) {
+                file.delete();
+                throw new IllegalArgumentException("Inline image dimensions exceed VideoStudio's safe decode limit");
+            }
+            width = bounds.outWidth;
+            height = bounds.outHeight;
         }
 
         ProjectStore.Asset asset = addImportedAsset(project, file, name, mime);
-        ActivityLog.add(this, "chatgpt", "Private inline frame imported",
-                name + " • " + bounds.outWidth + "×" + bounds.outHeight,
+        ActivityLog.add(this, "chatgpt",
+                isMp4 ? "Private inline video imported" : "Private inline frame imported",
+                isMp4 ? name + " • " + (bytes.length / 1024L) + " KB"
+                        : name + " • " + width + "×" + height,
                 "success", 100, null, project.id);
 
         JSONObject result = ok();
@@ -2635,8 +2655,12 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         result.put("name", asset.name);
         result.put("mime", asset.mime);
         result.put("size", bytes.length);
-        result.put("width", bounds.outWidth);
-        result.put("height", bounds.outHeight);
+        if (isImage) {
+            result.put("width", width);
+            result.put("height", height);
+        } else {
+            result.put("durationMs", asset.durationMs);
+        }
         result.put("transport", "owner-authenticated-inline-mcp");
         return result;
     }

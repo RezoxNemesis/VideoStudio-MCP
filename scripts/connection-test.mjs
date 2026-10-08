@@ -6,7 +6,7 @@ import {webcrypto} from 'node:crypto';
 // Run the real relay class with an in-memory Durable Object store; SDK/network are not needed.
 const source=fs.readFileSync(new URL('../src/index.js',import.meta.url),'utf8');
 const end=source.indexOf('\n}\n',source.indexOf('export class VideoStudioState'))+3;
-const context={crypto:webcrypto,TextEncoder,Response,Request,Headers,setTimeout,DurableObject:class{constructor(ctx){this.ctx=ctx;}},Date};
+const context={crypto:webcrypto,TextEncoder,Response,Request,Headers,URL,setTimeout,DurableObject:class{constructor(ctx){this.ctx=ctx;}},Date};
 vm.createContext(context);
 vm.runInContext(source.slice(source.indexOf('const JH'),end).replace('export class VideoStudioState','globalThis.VideoStudioState = class VideoStudioState'),context);
 async function fixture(commands=[]) {
@@ -352,4 +352,29 @@ test('convergence can repair a missing primary owner index from the canonical de
  const repaired=await f.relay.appConvergeOwnerAliases(f.key,[],f.deviceId);
  assert.equal(repaired.canonicalDeviceId,f.deviceId);
  assert.equal((await f.relay.appResolve(f.key)).deviceId,f.deviceId);
+});
+
+
+test('ChatGPT attachment URL is relayed through a private handoff instead of exposed to Android',async()=>{
+ const f=await fixture();
+ const sourceUrl='https://files.example.test/private/video.mp4?sig=short-lived';
+ const queued=await f.relay.appQueueAttachmentHandoff(f.key,{
+  download_url:sourceUrl,
+  file_id:'file-chatgpt-video',
+  mime_type:'video/mp4',
+  file_name:'chatgpt-source.mp4'
+ },'project-12345678');
+
+ assert.equal(queued.action,'import_chat_file');
+ assert.ok(queued.parameters.handoffId);
+ assert.equal(queued.parameters.sourceUrl,undefined);
+ assert.equal(queued.parameters.name,'chatgpt-source.mp4');
+ assert.equal(queued.parameters.mime,'video/mp4');
+ assert.equal(queued.parameters.projectId,'project-12345678');
+
+ const handoff=await f.relay.appHandoff(f.deviceId,f.key,queued.parameters.handoffId);
+ assert.ok(handoff);
+ assert.equal(handoff.sourceUrl,sourceUrl);
+ assert.equal(handoff.name,'chatgpt-source.mp4');
+ assert.equal(handoff.mime,'video/mp4');
 });

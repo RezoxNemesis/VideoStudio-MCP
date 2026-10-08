@@ -971,6 +971,21 @@ export class VideoStudioState extends DurableObject {
     await this.ctx.storage.put("app-handoff:"+d.deviceId+":"+id,record);
     return {id,name:record.name,mime:record.mime,size:record.size,expiresAt:record.expiresAt};
   }
+  async appQueueAttachmentHandoff(ownerKey,file={},projectId=""){
+    const sourceUrl=String(file.download_url||"");
+    const name=clean(file.file_name||"ChatGPT attachment",180);
+    const mime=clean(file.mime_type||"",120);
+    const handoff=await this.appCreateHandoff(ownerKey,sourceUrl,{name,mime,size:0});
+    const command=await this.appEnqueueV3(ownerKey,"import_chat_file",{
+      handoffId:handoff.id,
+      name:handoff.name,
+      mime:handoff.mime,
+      size:handoff.size,
+      projectId:clean(projectId||"",120)
+    });
+    return command;
+  }
+
   async appCreateCachedHandoff(ownerKey,cacheUrl,meta={}){
     const d=await this.appResolve(ownerKey);
     if(!d) throw new Error("Private App MCP credential rejected");
@@ -1397,7 +1412,7 @@ function serverForApp(env,ownerKey,protocolVersion=1){
   const isV3=Number(protocolVersion)===3;
   const s=new McpServer({
     name:isV3?"VideoStudio-App-MCP-v3":"VideoStudio-App-MCP",
-    version:isV3?"3.4.2":"1.1.2"
+    version:isV3?"3.4.6":"1.1.2"
   }), st=state(env);
   const enqueueCommand=(action,parameters={})=>isV3
     ? st.appEnqueueV3(ownerKey,action,parameters)
@@ -1687,7 +1702,7 @@ function serverForApp(env,ownerKey,protocolVersion=1){
   s.registerTool("app_import_from_url",{description:"Import an explicit HTTPS media URL into VideoStudio without browsing Gallery. Available in Full Autonomous mode; Gallery enumeration remains blocked.",inputSchema:{url:z.string().url(),name:z.string().max(160).optional(),projectId:z.string().min(8).optional()}},async({url,name,projectId})=>queue("import_url",{url,name:name||"ChatGPT import",projectId:projectId||""}));
 
   if(isV3) s.registerTool("app_import_attachment",{
-    description:"Primary VideoStudio v3 ChatGPT attachment path. Pass a file explicitly attached/shared by the user. ChatGPT provides an authorised temporary file URL; the Android app downloads it directly into app-private storage. The signalling Worker never proxies or stores the media bytes.",
+    description:"Primary VideoStudio v3 ChatGPT attachment path. Pass a file explicitly attached/shared by the user. The Worker holds only short-lived handoff metadata and privately streams the temporary source to the authorised Android app; Gallery enumeration is never used.",
     inputSchema:{
       file:z.object({
         download_url:z.string().url(),
@@ -1698,19 +1713,27 @@ function serverForApp(env,ownerKey,protocolVersion=1){
       projectId:z.string().min(8).optional()
     },
     _meta:{"openai/fileParams":["file"]}
-  },async({file,projectId})=>queue("import_attachment",{
-    sourceUrl:file.download_url,
-    sourceFileId:file.file_id,
-    name:file.file_name||"ChatGPT attachment",
-    mime:file.mime_type||"",
-    projectId:projectId||""
-  }));
+  },async({file,projectId})=>{
+    try{
+      const c=await st.appQueueAttachmentHandoff(ownerKey,file,projectId||"");
+      return out({
+        queued:true,
+        commandId:c.id,
+        sequence:c.seq,
+        action:"import_chat_file",
+        nativeApp:true,
+        protocolVersion:3,
+        route:"private-worker-handoff",
+        waitingNative:c.status==="waiting_native"
+      });
+    }catch(e){ return out({queued:false,error:e.message}); }
+  });
 
   if(isV3) s.registerTool("app_import_inline_base64",{
-    description:"Private compatibility fallback for still-image attachments when ChatGPT can read the attachment but cannot expose an Android-downloadable temporary HTTPS URL. Bytes stay inside the owner-authenticated MCP command and are written directly to VideoStudio app-private storage. PNG, JPEG and WebP only, maximum 12 MB decoded.",
+    description:"Private compatibility fallback for small ChatGPT media when temporary HTTPS handoff is unavailable. Bytes stay inside the owner-authenticated MCP command and are written directly to VideoStudio app-private storage. PNG, JPEG, WebP and MP4 are accepted up to 12 MB decoded.",
     inputSchema:{
       name:z.string().min(1).max(180),
-      mime:z.enum(["image/png","image/jpeg","image/webp"]),
+      mime:z.enum(["image/png","image/jpeg","image/webp","video/mp4"]),
       base64:z.string().min(1).max(17*1024*1024),
       sha256:z.string().regex(/^[a-fA-F0-9]{64}$/).optional(),
       projectId:z.string().min(8).optional()
