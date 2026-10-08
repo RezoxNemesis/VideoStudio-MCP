@@ -42,7 +42,7 @@ import javax.crypto.spec.GCMParameterSpec;
 public final class AppProtocol {
     public static final String BASE = "https://wispy-queen-f9b5.prakasharuntandon634.workers.dev";
     public static final int PROTOCOL_VERSION = 3;
-    public static final String APP_VERSION = "3.4.2";
+    public static final String APP_VERSION = "3.4.3";
     /** Stable compatibility URL. APK updates must not change this path. */
     public static final String MCP_PATH = McpConnectionCore.STABLE_MCP_PATH;
     /** Stable registration bootstrap. Runtime requests use the negotiated profile. */
@@ -55,6 +55,7 @@ public final class AppProtocol {
     private static final String KEY_SEQ = "native_v3_last_seq";
     private static final String KEY_ALIAS = "videostudio_owner_key_v1";
     private static final String KEY_PAUSED = "chatgpt_control_paused";
+    private static final String KEY_IDENTITY_RECOVERY_REQUIRED = "native_identity_recovery_required";
 
     public interface Callback {
         void onConnection(boolean connected, String detail);
@@ -77,6 +78,7 @@ public final class AppProtocol {
     private volatile int consecutiveFailures = 0;
     private final String deviceId;
     private final String ownerKey;
+    private final boolean identityRecoveryRequired;
     private final String connectionSession = UUID.randomUUID().toString();
 
     public AppProtocol(Context context, Callback callback) {
@@ -91,7 +93,9 @@ public final class AppProtocol {
             prefs.edit().putString(KEY_DEVICE, id).apply();
         }
         deviceId = id;
-        ownerKey = loadOrCreateOwnerKey();
+        OwnerLoadResult identity = loadOrCreateOwnerKey();
+        ownerKey = identity.ownerKey;
+        identityRecoveryRequired = identity.recoveryRequired;
     }
 
     public String deviceId() { return deviceId; }
@@ -100,7 +104,11 @@ public final class AppProtocol {
     public long appGeneration() { return connectionCore.appGeneration(); }
     public JSONObject connectionStatus() {
         JSONObject status = connectionCore.status();
-        try { status.put("pendingResultDeliveries", outbox.count()); status.put("durableResultDelivery", true); } catch (Exception ignored) {}
+        try {
+            status.put("pendingResultDeliveries", outbox.count());
+            status.put("durableResultDelivery", true);
+            status.put("identityRecoveryRequired", identityRecoveryRequired);
+        } catch (Exception ignored) {}
         return status;
     }
 
@@ -114,10 +122,14 @@ public final class AppProtocol {
     }
 
     public String privateMcpUrl() {
+        if (identityRecoveryRequired || ownerKey == null || ownerKey.isEmpty()) return "";
         return BASE + MCP_PATH + ownerKey;
     }
 
     public String pairingMessage() {
+        if (identityRecoveryRequired || ownerKey == null || ownerKey.isEmpty()) {
+            return "VideoStudio MCP identity recovery is required. The existing owner credential was not rotated, so no replacement endpoint was created.";
+        }
         return "Connect to my private VideoStudio Android Native Agent MCP.\n"
                 + "Stable MCP endpoint: " + privateMcpUrl() + "\n"
                 + "This device-owned endpoint survives compatible VideoStudio APK upgrades and remains available as the durable control plane while Android sleeps. "
@@ -153,6 +165,10 @@ public final class AppProtocol {
 
     public void start() {
         if (running) return;
+        if (identityRecoveryRequired || ownerKey == null || ownerKey.isEmpty()) {
+            notifyConnection(false, "MCP identity recovery required • existing owner credential was not rotated");
+            return;
+        }
         running = true;
         try {
             connectivity = (ConnectivityManager) context.getSystemService(Context.CONNECTIVITY_SERVICE);
@@ -178,6 +194,7 @@ public final class AppProtocol {
     }
 
     public void registerNow() {
+        if (identityRecoveryRequired || ownerKey == null || ownerKey.isEmpty()) return;
         if (!running || io.isShutdown()) return;
         io.execute(() -> { register(); flushOutbox(); });
     }
@@ -188,6 +205,10 @@ public final class AppProtocol {
      * Useful when a cached negotiated profile becomes stale after deployment.
      */
     public void forceReconnect() {
+        if (identityRecoveryRequired || ownerKey == null || ownerKey.isEmpty()) {
+            notifyConnection(false, "MCP identity recovery required • refusing to rotate owner credential");
+            return;
+        }
         connectionCore.resetNegotiation();
         consecutiveFailures = 0;
         if (!running || io.isShutdown()) return;
@@ -438,20 +459,48 @@ public final class AppProtocol {
         return b.toString();
     }
 
-    private String loadOrCreateOwnerKey() {
+    private static final class OwnerLoadResult {
+        final String ownerKey;
+        final boolean recoveryRequired;
+        OwnerLoadResult(String ownerKey, boolean recoveryRequired) {
+            this.ownerKey = ownerKey == null ? "" : ownerKey;
+            this.recoveryRequired = recoveryRequired;
+        }
+    }
+
+    private OwnerLoadResult loadOrCreateOwnerKey() {
         String encrypted = prefs.getString(KEY_SECRET, "");
         if (!encrypted.isEmpty()) {
-            try { return decrypt(encrypted); } catch (Exception ignored) {}
+            try {
+                String secret = decrypt(encrypted);
+                prefs.edit().putBoolean(KEY_IDENTITY_RECOVERY_REQUIRED, false).apply();
+                return new OwnerLoadResult(secret, false);
+            } catch (Exception decryptFailure) {
+                // Critical rule: an unreadable existing identity must never be
+                // replaced silently. Rotation would strand every existing MCP URL.
+                prefs.edit().putBoolean(KEY_IDENTITY_RECOVERY_REQUIRED, true).apply();
+                return new OwnerLoadResult("", true);
+            }
         }
+
+        if (prefs.getBoolean(KEY_IDENTITY_RECOVERY_REQUIRED, false)) {
+            return new OwnerLoadResult("", true);
+        }
+
         byte[] raw = new byte[32];
         new SecureRandom().nextBytes(raw);
         String secret = Base64.encodeToString(raw, Base64.URL_SAFE | Base64.NO_WRAP | Base64.NO_PADDING);
         try {
-            prefs.edit().putString(KEY_SECRET, encrypt(secret)).apply();
-        } catch (Exception ignored) {
-            // Never fall back to plaintext persistent storage.
+            String stored = encrypt(secret);
+            prefs.edit()
+                    .putString(KEY_SECRET, stored)
+                    .putBoolean(KEY_IDENTITY_RECOVERY_REQUIRED, false)
+                    .commit();
+            return new OwnerLoadResult(secret, false);
+        } catch (Exception encryptionFailure) {
+            prefs.edit().putBoolean(KEY_IDENTITY_RECOVERY_REQUIRED, true).apply();
+            return new OwnerLoadResult("", true);
         }
-        return secret;
     }
 
     private SecretKey keystoreKey() throws Exception {

@@ -145,8 +145,9 @@ export class VideoStudioState extends DurableObject {
     if(!ownerKey||String(ownerKey).length<32) throw new Error("Invalid owner key");
     const hash=await sha256Hex(ownerKey), key="app-owner:"+hash;
     const bound=await this.ctx.storage.get(key);
-    if(bound&&bound!==deviceId) throw new Error("Owner key is already bound to another device");
     const dk="app-device:"+deviceId, old=(await this.ctx.storage.get(dk))||{};
+    if(old.supersededByDeviceId) throw new Error("This native identity is superseded by canonical device "+old.supersededByDeviceId);
+    if(bound&&bound!==deviceId) throw new Error("Owner key is already bound to canonical device "+bound);
     if(old.ownerHash&&old.ownerHash!==hash) throw new Error("This native device is already bound to its owner credential");
     const clientGeneration=Math.max(0,Number(meta.appGeneration||0));
     const storedGeneration=Math.max(0,Number(old.appGeneration||0));
@@ -203,7 +204,102 @@ export class VideoStudioState extends DurableObject {
     if(!ownerKey) return null;
     const hash=await sha256Hex(ownerKey), id=await this.ctx.storage.get("app-owner:"+hash);
     if(!id) return null;
-    return (await this.ctx.storage.get("app-device:"+id))||null;
+    let device=(await this.ctx.storage.get("app-device:"+id))||null;
+    if(device&&device.supersededByDeviceId){
+      const canonical=(await this.ctx.storage.get("app-device:"+device.supersededByDeviceId))||null;
+      if(canonical){
+        await this.ctx.storage.put("app-owner:"+hash,canonical.deviceId);
+        device=canonical;
+      }
+    }
+    return device;
+  }
+
+  async appConvergeOwnerAliases(primaryOwnerKey,legacyOwnerKeys=[],primaryDeviceId=""){
+    if(!primaryOwnerKey||String(primaryOwnerKey).length<32) throw new Error("Primary owner key is required");
+    const primaryHash=await sha256Hex(primaryOwnerKey);
+    let canonicalId=await this.ctx.storage.get("app-owner:"+primaryHash);
+    if(!canonicalId&&primaryDeviceId){
+      const candidate=await this.ctx.storage.get("app-device:"+String(primaryDeviceId));
+      if(candidate&&candidate.ownerHash===primaryHash){
+        canonicalId=candidate.deviceId;
+        await this.ctx.storage.put("app-owner:"+primaryHash,canonicalId);
+      }
+    }
+    if(!canonicalId) throw new Error("Primary native identity could not be proven");
+    let canonical=await this.ctx.storage.get("app-device:"+canonicalId);
+    if(!canonical) throw new Error("Canonical native device record is missing");
+    if(canonical.supersededByDeviceId){
+      const next=await this.ctx.storage.get("app-device:"+canonical.supersededByDeviceId);
+      if(!next) throw new Error("Canonical native identity chain is broken");
+      canonical=next;
+      canonicalId=next.deviceId;
+      await this.ctx.storage.put("app-owner:"+primaryHash,canonicalId);
+    }
+
+    const aliases=new Set(Array.isArray(canonical.ownerAliases)?canonical.ownerAliases:[]);
+    aliases.add(primaryHash);
+    const keys=[primaryOwnerKey,...(Array.isArray(legacyOwnerKeys)?legacyOwnerKeys:[])];
+    const seen=new Set();
+    for(const raw of keys){
+      const key=String(raw||"");
+      if(key.length<32) continue;
+      const hash=await sha256Hex(key);
+      if(seen.has(hash)) continue;
+      seen.add(hash);
+      aliases.add(hash);
+      const id=await this.ctx.storage.get("app-owner:"+hash);
+      if(!id&&hash!==primaryHash) throw new Error("Legacy owner key could not be proven");
+      if(!id||id===canonicalId){
+        await this.ctx.storage.put("app-owner:"+hash,canonicalId);
+        continue;
+      }
+      const legacy=await this.ctx.storage.get("app-device:"+id);
+      if(!legacy) throw new Error("Legacy native device record is missing");
+
+      const currentRows=(await this.ctx.storage.get("app-v3-cl:"+canonicalId))||[];
+      const legacyRows=(await this.ctx.storage.get("app-v3-cl:"+id))||[];
+      const byId=new Map(currentRows.filter(Boolean).map(row=>[row.id,row]));
+      let seq=Math.max(
+        Number((await this.ctx.storage.get("app-v3-seq:"+canonicalId))||0),
+        ...currentRows.map(row=>Number(row&&row.seq||0)),
+        0
+      );
+      for(const row of legacyRows){
+        if(!row||!row.id||byId.has(row.id)) continue;
+        seq++;
+        byId.set(row.id,{
+          ...row,
+          seq,
+          deviceId:canonicalId,
+          migratedFromDeviceId:id,
+          migratedAt:now()
+        });
+      }
+      const merged=[...byId.values()].sort((a,b)=>Number(a.seq||0)-Number(b.seq||0)).slice(-160);
+      await this.ctx.storage.put("app-v3-cl:"+canonicalId,merged);
+      await this.ctx.storage.put("app-v3-seq:"+canonicalId,seq);
+
+      legacy.supersededByDeviceId=canonicalId;
+      legacy.supersededAt=now();
+      legacy.canonicalIdentity=false;
+      await this.ctx.storage.put("app-device:"+id,legacy);
+      await this.ctx.storage.put("app-owner:"+hash,canonicalId);
+    }
+
+    canonical.ownerAliases=[...aliases];
+    canonical.canonicalIdentity=true;
+    canonical.identityConvergedAt=now();
+    canonical.identityAliasCount=canonical.ownerAliases.length;
+    await this.ctx.storage.put("app-device:"+canonicalId,canonical);
+    return {
+      ok:true,
+      canonicalDeviceId:canonicalId,
+      appVersion:canonical.appVersion||"",
+      aliasCount:canonical.ownerAliases.length,
+      retainedCommandCount:((await this.ctx.storage.get("app-v3-cl:"+canonicalId))||[]).length,
+      galleryAccess:false
+    };
   }
   async appBindStudioWebFallback(ownerKey,webDeviceId){
     const native=await this.appResolve(ownerKey);
@@ -1120,6 +1216,11 @@ function serverFor(env,hybridKey=""){
   s.registerTool("queue_video_edit",{description:"Send one edit action to VideoStudio. Native v3/v1 compatibility can use the private owner credential as deviceId and projectId='active-native'.",inputSchema:{deviceId:z.string().min(8),projectId:z.string().min(8),action:z.enum(["set_trim","set_speed","set_mute","set_aspect","set_title","set_quality","set_transition","remove_clip","move_clip","reorder_timeline","replace_timeline","set_clip_speed","set_clip_title","set_clip_effects","analyse_media","inspect_render","render","autonomous_request"]),parameters:z.record(z.string(),z.any()).optional()}},async({deviceId,projectId,action,parameters})=>{
     try{
       const p=parameters||{};
+      if(action==="autonomous_request"&&p.nativeAction==="converge_identity"){
+        const primary=String(p.primaryOwnerKey||deviceId||"");
+        const legacy=Array.isArray(p.legacyOwnerKeys)?p.legacyOwnerKeys:[];
+        return out(await st.appConvergeOwnerAliases(primary,legacy,String(p.primaryDeviceId||"")));
+      }
       const native=await st.appResolve(deviceId);
       if(native){
         let nativeAction=p.nativeAction||"";
@@ -1649,7 +1750,18 @@ function serverForApp(env,ownerKey,protocolVersion=1){
     inputSchema:{}
   },async()=>queue("reconnect_mcp",{}));
 
-  if(isV3) s.registerTool("app_execute",{description:"Stable future-compatible VideoStudio v3 action bridge. Use this for native actions introduced by future app versions without requiring the ChatGPT connector to be recreated. Gallery/media-library enumeration remains permanently blocked by the server regardless of the requested action.",inputSchema:{action:z.string().min(1).max(80),parameters:z.record(z.string(),z.any()).optional()}},async({action,parameters})=>queue(action,parameters||{}));
+  if(isV3) s.registerTool("app_execute",{description:"Stable future-compatible VideoStudio v3 action bridge. Use this for native actions introduced by future app versions without requiring the ChatGPT connector to be recreated. Gallery/media-library enumeration remains permanently blocked by the server regardless of the requested action.",inputSchema:{action:z.string().min(1).max(80),parameters:z.record(z.string(),z.any()).optional()}},async({action,parameters})=>{
+    const p=parameters||{};
+    if(action==="converge_identity_to"){
+      try{
+        const primaryOwnerKey=String(p.primaryOwnerKey||"");
+        const primaryDeviceId=String(p.primaryDeviceId||"");
+        const legacy=[ownerKey,...(Array.isArray(p.legacyOwnerKeys)?p.legacyOwnerKeys:[])];
+        return out(await st.appConvergeOwnerAliases(primaryOwnerKey,legacy,primaryDeviceId));
+      }catch(e){ return out({ok:false,error:e.message}); }
+    }
+    return queue(action,p);
+  });
 
   s.registerTool("app_batch",{description:"Queue up to 20 native VideoStudio actions quickly in order. This v3-compatible batch surface accepts future native action names so app upgrades do not require reconnecting the ChatGPT connector. Gallery/library enumeration is blocked regardless of permission mode.",inputSchema:{actions:z.array(z.object({action:z.string().min(1).max(80),parameters:z.record(z.string(),z.any()).optional()})).min(1).max(20)}},async({actions})=>{
     const queued=[];
