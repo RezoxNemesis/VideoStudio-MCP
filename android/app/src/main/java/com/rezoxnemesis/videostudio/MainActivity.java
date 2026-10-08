@@ -413,8 +413,18 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         top.addView(playButton);
         Button exportButton = compactButton("Export");
         exportButton.setOnClickListener(v -> {
-            try { queueNativeExport(activeProject, "9:16", "1080p", "VideoStudio_" + System.currentTimeMillis() + ".mp4"); }
-            catch (Exception e) { Toast.makeText(this, e.getMessage(), Toast.LENGTH_SHORT).show(); }
+            if (activeProject == null || activeProject.clips.isEmpty()) {
+                Toast.makeText(this, "Timeline is empty", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            Intent export = new Intent(this, ControlService.class)
+                    .setAction(ControlService.ACTION_LOCAL_EXPORT)
+                    .putExtra("projectId", activeProject.id)
+                    .putExtra("aspect", "9:16")
+                    .putExtra("quality", "1080p")
+                    .putExtra("fileName", "VideoStudio_" + System.currentTimeMillis() + ".mp4");
+            startForegroundService(export);
+            Toast.makeText(this, "Export queued in Native Agent • watch Autonomous work", Toast.LENGTH_LONG).show();
         });
         top.addView(exportButton);
         box.addView(top, margins(-1, -2, 0, dp(10), 0, 0));
@@ -1497,8 +1507,17 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                         p.put("quality", "1080p");
                         p.put("style", "cinematic");
                         p.put("font", "sans-serif-medium");
-                        JSONObject queued = queuePromptVideo(p);
-                        Toast.makeText(this, "Prompt video queued • job " + queued.optString("jobId").substring(0, 8), Toast.LENGTH_LONG).show();
+                        Intent generate = new Intent(this, ControlService.class)
+                                .setAction(ControlService.ACTION_LOCAL_PROMPT_VIDEO)
+                                .putExtra("prompt", p.optString("prompt", ""))
+                                .putExtra("durationSeconds", p.optInt("durationSeconds", 18))
+                                .putExtra("aspect", p.optString("aspect", "9:16"))
+                                .putExtra("quality", p.optString("quality", "1080p"))
+                                .putExtra("style", p.optString("style", "cinematic"))
+                                .putExtra("fileName", "VideoStudio_AI_" + System.currentTimeMillis() + ".mp4");
+                        startForegroundService(generate);
+                        Toast.makeText(this, "Prompt video queued in Native Agent • watch Autonomous work", Toast.LENGTH_LONG).show();
+                        showActivity();
                     } catch (Exception error) {
                         Toast.makeText(this, error.getMessage() == null ? "Could not create prompt video" : error.getMessage(), Toast.LENGTH_LONG).show();
                     }
