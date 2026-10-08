@@ -26,7 +26,16 @@ public final class ExecutionTruthPolicy {
     }
 
     public static boolean shouldSurfaceAsWork(String source, String action) {
-        return !isTransportActivity(source, action);
+        if (isTransportActivity(source, action)) return false;
+        String value = action == null ? "" : action.trim().toLowerCase();
+        return !value.equals("running videostudio v3 self-test")
+                && !value.equals("checking stable mcp connection")
+                && !value.equals("reading videostudio state")
+                && !value.equals("reading native job status")
+                && !value.equals("reading capability providers")
+                && !value.equals("reading device compute profile")
+                && !value.equals("reading model packs")
+                && !value.equals("reading cloud workspace");
     }
 
     public static boolean shouldAdoptStoreActive(boolean currentProjectEmpty,
