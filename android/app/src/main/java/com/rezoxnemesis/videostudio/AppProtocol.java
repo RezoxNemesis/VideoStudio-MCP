@@ -42,7 +42,7 @@ import javax.crypto.spec.GCMParameterSpec;
 public final class AppProtocol {
     public static final String BASE = "https://wispy-queen-f9b5.prakasharuntandon634.workers.dev";
     public static final int PROTOCOL_VERSION = 3;
-    public static final String APP_VERSION = "3.4.3";
+    public static final String APP_VERSION = "3.4.4";
     /** Stable compatibility URL. APK updates must not change this path. */
     public static final String MCP_PATH = McpConnectionCore.STABLE_MCP_PATH;
     /** Stable registration bootstrap. Runtime requests use the negotiated profile. */
@@ -364,23 +364,39 @@ public final class AppProtocol {
         return meta;
     }
 
+    public JSONObject redeemRebindNow(String token) throws Exception {
+        if (token == null || token.trim().length() < 30) {
+            throw new IllegalArgumentException("Invalid MCP rebind token");
+        }
+        if (identityRecoveryRequired || ownerKey == null || ownerKey.isEmpty()) {
+            throw new IllegalStateException("MCP owner identity recovery is required");
+        }
+        JSONObject body = new JSONObject();
+        body.put("token", token.trim());
+        body.put("deviceId", deviceId);
+        body.put("ownerKey", ownerKey);
+        body.put("meta", registrationMeta());
+        JSONObject result = request("POST", McpConnectionCore.BOOTSTRAP_API_PREFIX + "/rebind",
+                body, false, connectionCore.requestTimeoutMs());
+        connectionCore.applyRegistrationResponse(result);
+        boolean ok = result.optBoolean("ok", false) && result.optBoolean("rebound", false);
+        result.put("identityPreserved", true);
+        result.put("ownerCredentialPreserved", true);
+        result.put("deviceId", deviceId);
+        result.put("appVersion", APP_VERSION);
+        notifyConnection(ok, ok
+                ? "Stable MCP endpoint rebound • app " + APP_VERSION + " • gen " + connectionCore.appGeneration()
+                : "Stable MCP rebind was rejected");
+        if (!ok) throw new IllegalStateException(result.optString("error", "Stable MCP rebind was rejected"));
+        register();
+        return result;
+    }
+
     public void redeemRebind(String token) {
         if (token == null || token.trim().length() < 30 || io.isShutdown()) return;
         io.execute(() -> {
             try {
-                JSONObject body = new JSONObject();
-                body.put("token", token.trim());
-                body.put("deviceId", deviceId);
-                body.put("ownerKey", ownerKey);
-                body.put("meta", registrationMeta());
-                JSONObject result = request("POST", McpConnectionCore.BOOTSTRAP_API_PREFIX + "/rebind",
-                        body, false, connectionCore.requestTimeoutMs());
-                connectionCore.applyRegistrationResponse(result);
-                boolean ok = result.optBoolean("ok", false) && result.optBoolean("rebound", false);
-                notifyConnection(ok, ok
-                        ? "Stable MCP endpoint rebound • app " + APP_VERSION + " • gen " + connectionCore.appGeneration()
-                        : "Stable MCP rebind was rejected");
-                if (ok) register();
+                redeemRebindNow(token);
             } catch (Exception error) {
                 notifyConnection(false, "Stable MCP rebind failed");
             }
