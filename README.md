@@ -94,6 +94,7 @@ This release fixes the recurring state mismatch where the UI could show connecti
 - inflight command-to-job bindings are durable and are relinked when a recoverable job resumes after restart
 - if the editor is displaying an empty project and the Native Agent creates/selects a new active AI project, the editor follows that project automatically
 - non-empty projects are not force-switched, preserving the user’s current editing context
+- manual Prompt Video and Export buttons now submit to the same foreground Native Agent pipeline as ChatGPT, so progress, recovery, project switching, validation and final status use one execution authority
 
 ## v3.4.2 Always-Available Autonomous MCP
 
