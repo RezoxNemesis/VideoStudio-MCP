@@ -1216,6 +1216,11 @@ function serverFor(env,hybridKey=""){
   s.registerTool("queue_video_edit",{description:"Send one edit action to VideoStudio. Native v3/v1 compatibility can use the private owner credential as deviceId and projectId='active-native'.",inputSchema:{deviceId:z.string().min(8),projectId:z.string().min(8),action:z.enum(["set_trim","set_speed","set_mute","set_aspect","set_title","set_quality","set_transition","remove_clip","move_clip","reorder_timeline","replace_timeline","set_clip_speed","set_clip_title","set_clip_effects","analyse_media","inspect_render","render","autonomous_request"]),parameters:z.record(z.string(),z.any()).optional()}},async({deviceId,projectId,action,parameters})=>{
     try{
       const p=parameters||{};
+      if(action==="autonomous_request"&&p.nativeAction==="converge_identity"){
+        const primary=String(p.primaryOwnerKey||deviceId||"");
+        const legacy=Array.isArray(p.legacyOwnerKeys)?p.legacyOwnerKeys:[];
+        return out(await st.appConvergeOwnerAliases(primary,legacy,String(p.primaryDeviceId||"")));
+      }
       const native=await st.appResolve(deviceId);
       if(native){
         let nativeAction=p.nativeAction||"";
@@ -1745,7 +1750,18 @@ function serverForApp(env,ownerKey,protocolVersion=1){
     inputSchema:{}
   },async()=>queue("reconnect_mcp",{}));
 
-  if(isV3) s.registerTool("app_execute",{description:"Stable future-compatible VideoStudio v3 action bridge. Use this for native actions introduced by future app versions without requiring the ChatGPT connector to be recreated. Gallery/media-library enumeration remains permanently blocked by the server regardless of the requested action.",inputSchema:{action:z.string().min(1).max(80),parameters:z.record(z.string(),z.any()).optional()}},async({action,parameters})=>queue(action,parameters||{}));
+  if(isV3) s.registerTool("app_execute",{description:"Stable future-compatible VideoStudio v3 action bridge. Use this for native actions introduced by future app versions without requiring the ChatGPT connector to be recreated. Gallery/media-library enumeration remains permanently blocked by the server regardless of the requested action.",inputSchema:{action:z.string().min(1).max(80),parameters:z.record(z.string(),z.any()).optional()}},async({action,parameters})=>{
+    const p=parameters||{};
+    if(action==="converge_identity_to"){
+      try{
+        const primaryOwnerKey=String(p.primaryOwnerKey||"");
+        const primaryDeviceId=String(p.primaryDeviceId||"");
+        const legacy=[ownerKey,...(Array.isArray(p.legacyOwnerKeys)?p.legacyOwnerKeys:[])];
+        return out(await st.appConvergeOwnerAliases(primaryOwnerKey,legacy,primaryDeviceId));
+      }catch(e){ return out({ok:false,error:e.message}); }
+    }
+    return queue(action,p);
+  });
 
   s.registerTool("app_batch",{description:"Queue up to 20 native VideoStudio actions quickly in order. This v3-compatible batch surface accepts future native action names so app upgrades do not require reconnecting the ChatGPT connector. Gallery/library enumeration is blocked regardless of permission mode.",inputSchema:{actions:z.array(z.object({action:z.string().min(1).max(80),parameters:z.record(z.string(),z.any()).optional()})).min(1).max(20)}},async({actions})=>{
     const queued=[];
