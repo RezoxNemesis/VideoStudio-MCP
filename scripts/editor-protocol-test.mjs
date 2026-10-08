@@ -62,3 +62,17 @@ test('completed editor receipt survives queue history pruning',async()=>{
   await f.storage.put('app-v3-cl:editor-device-001',[]);
   const replay=await f.relay.appEnqueueV3(f.key,'editor_operation',edit());assert.equal(replay.id,c.id);assert.equal(replay.status,'completed');assert.equal(replay.result.revision,13);
 });
+
+test('project-only authority is retained and rejects another project',async()=>{
+  const f=await fixture();await f.relay.appRegister('editor-device-001',f.key,{protocolVersion:3,appGeneration:1,editorSchemaVersion:1,permissionMode:'project',allowedProjectId:'project-001'});
+  assert.equal((await f.relay.appResolve(f.key)).permissionMode,'project');
+  await assert.rejects(f.relay.appEnqueueV3(f.key,'editor_operation',edit({projectId:'project-private'})),/scope|project|permission/i);
+  assert.ok((await f.relay.appEnqueueV3(f.key,'editor_operation',edit())).id);
+});
+test('selected-assets authority rejects unselected analysis and clip edits',async()=>{
+  const f=await fixture();await f.relay.appRegister('editor-device-001',f.key,{protocolVersion:3,appGeneration:1,editorSchemaVersion:1,permissionMode:'selected_assets',allowedProjectId:'project-001',allowedAssetIds:['asset-001'],allowedClipIds:['clip-001']});
+  await assert.rejects(f.relay.appEnqueueV3(f.key,'analyse_media',{projectId:'project-001',assetId:'unselected'}),/scope|asset|permission/i);
+  await assert.rejects(f.relay.appEnqueueV3(f.key,'editor_operation',edit({operation:'set_property',args:{clipId:'unselected',property:'volume',value:.5}})),/scope|clip|permission/i);
+  await assert.rejects(f.relay.appEnqueueV3(f.key,'editor_history',edit({operation:'undo'})),/scope|permission/i);
+  assert.ok((await f.relay.appEnqueueV3(f.key,'editor_operation',edit({operation:'set_property',args:{clipId:'clip-001',property:'volume',value:.5}}))).id);
+});

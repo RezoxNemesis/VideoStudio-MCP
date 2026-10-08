@@ -73,6 +73,7 @@ public class StudioDeviceTest {
             scenario.onActivity(a->click(a,"Redo"));assertEquals(2,store.get(project.id).clips.size());
             scenario.recreate();
             device.wait(Until.findObject(By.text("Editor")),15000).click();
+            assertNotNull(device.wait(Until.findObject(By.desc("VideoStudio preview monitor")),15000));
             assertEquals(2,new ProjectStore(context).get(project.id).clips.size());
             device.takeScreenshot(new File(evidence,"02-split-persisted.png"));
             scenario.onActivity(a->{

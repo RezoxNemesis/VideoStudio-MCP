@@ -50,7 +50,8 @@ public final class JobManager {
         public volatile long lastCheckpointAt;
         public volatile JSONObject result;
         public volatile long journalRevision=1;
-        Future<?> future;
+        public volatile String projectId="";
+        volatile Future<?> future;
         private JobManager owner;
 
         Job(String name, Kind kind) {
@@ -84,6 +85,8 @@ public final class JobManager {
             if (owner != null) owner.persist();
         }
 
+        public void bindProject(String id){ synchronized(this){projectId=id==null?"":id;journalRevision++;}if(owner!=null)owner.persist(); }
+
         public void setResult(JSONObject value) {
             synchronized(this){
             if (value == null) {
@@ -115,6 +118,7 @@ public final class JobManager {
                 o.put("createdAt", createdAt);
                 o.put("updatedAt", updatedAt);
                 o.put("journalRevision",journalRevision);
+                o.put("projectId",projectId);
                 if (result != null) o.put("result", result);
             } catch (Exception ignored) {}
             return o;
@@ -431,6 +435,7 @@ public final class JobManager {
                 job.updatedAt = updated;
                 job.journalRevision=o.optLong("journalRevision",1);
                 job.stage = o.optString("stage", "recovered");
+                job.projectId=o.optString("projectId","");
                 job.recoverable = o.optBoolean("recoverable", true);
                 job.retryCount = o.optInt("retryCount", 0);
                 job.lastCheckpointAt = o.optLong("lastCheckpointAt", updated);

@@ -12,8 +12,9 @@ public final class EditorProtocol {
     private final JSONObject schema;
     private final ProjectStore store;
     private final EditorEngine editor;
+    private final OwnerAccessPolicy access;
     public EditorProtocol(Context context,ProjectStore store){
-        this.store=store;this.editor=new EditorEngine(store);
+        this.store=store;this.editor=new EditorEngine(store);this.access=new OwnerAccessPolicy(context,store);
         try(InputStream in=context.getAssets().open("editor-operations.json")){
             java.io.ByteArrayOutputStream bytes=new java.io.ByteArrayOutputStream();byte[] buffer=new byte[4096];int count;
             while((count=in.read(buffer))!=-1){if(bytes.size()+count>256*1024)throw new IllegalArgumentException("Editor schema is too large");bytes.write(buffer,0,count);}
@@ -22,9 +23,11 @@ public final class EditorProtocol {
     }
     public JSONObject describe(){try{return new JSONObject(schema.toString());}catch(Exception error){throw new IllegalStateException(error);}}
     public JSONObject execute(String action,JSONObject parameters)throws Exception{
+        if(!access.allows(action,parameters))throw new SecurityException("Command is outside the current owner scope");
         String projectId=requiredString(parameters,"projectId",120);
         ProjectStore.Project current=store.get(projectId);if(current==null)throw new IllegalArgumentException("Project not found");
         if("project_query".equals(action)){
+            current=ProjectStore.Project.fromJson(access.redactProject(current));
             String query=parameters.optString("query","graph");JSONObject result=receipt(current,"",query);
             if("graph".equals(query))result.put("project",current.toJson());
             else if("assets".equals(query))result.put("assets",current.toJson().getJSONArray("assets"));
@@ -60,6 +63,7 @@ public final class EditorProtocol {
         JSONObject response=receipt(result,commandId,action);response.put("expectedRevision",revision);return response;
     }
     private JSONObject receipt(ProjectStore.Project p,String commandId,String operation)throws Exception{
+        p=ProjectStore.Project.fromJson(access.redactProject(p));
         JSONObject out=new JSONObject();out.put("ok",true);out.put("projectId",p.id);out.put("revision",p.revision);out.put("commandId",commandId);
         out.put("schemaVersion",SCHEMA_VERSION);out.put("operation",operation);out.put("clipCount",p.clips.size());out.put("trackCount",p.tracks.size());out.put("durationMs",p.outputDurationMs());return out;
     }

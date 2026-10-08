@@ -69,6 +69,7 @@ public final class AppProtocol {
     private final Callback callback;
     private final McpConnectionCore connectionCore;
     private final CommandOutbox outbox;
+    private final OwnerAccessPolicy ownerAccess;
     private final Object outboxLock = new Object();
     private ConnectivityManager connectivity;
     private ConnectivityManager.NetworkCallback networkCallback;
@@ -87,6 +88,7 @@ public final class AppProtocol {
         prefs = this.context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
         connectionCore = new McpConnectionCore(this.context, APP_VERSION);
         outbox = new CommandOutbox(this.context);
+        ownerAccess = new OwnerAccessPolicy(this.context,new ProjectStore(this.context));
         String id = prefs.getString(KEY_DEVICE, "");
         if (id.isEmpty()) {
             id = UUID.randomUUID().toString();
@@ -348,6 +350,8 @@ public final class AppProtocol {
             }
         }
         meta.put("permissionMode", permissionMode);
+        JSONObject ownerScope=ownerAccess.metadata();
+        java.util.Iterator<String> scopeKeys=ownerScope.keys();while(scopeKeys.hasNext()){String key=scopeKeys.next();meta.put(key,ownerScope.get(key));}
         meta.put("controlPaused", isControlPaused());
         meta.put("connectionSession", connectionSession);
         meta.put("galleryAccess", false);

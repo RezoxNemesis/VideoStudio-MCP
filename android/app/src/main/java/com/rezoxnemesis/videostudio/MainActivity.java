@@ -56,6 +56,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
     private static final int PICK_MEDIA = 1201;
     private static final int PICK_CLOUD_WORKSPACE = 1202;
     private static final int PICK_EXPORT_DESTINATION = 1203;
+    private static final int PICK_STORAGE_PROFILE = 1204;
     private JSONObject pendingExportSettings;
     private String pendingExportProjectId;
     private static final int C_BG = Color.rgb(5, 8, 18);
@@ -80,6 +81,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
     private PromptVideoEngine promptVideoEngine;
     private NativeMediaAnalyzer mediaAnalyzer;
     private DriveWorkspaceProvider driveWorkspace;
+    private StorageProfileStore storageProfiles;
     private PreviewSnapshotStore previewSnapshots;
     private ProxyManager proxyManager;
     private SharedPreferences prefs;
@@ -115,6 +117,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         promptVideoEngine = new PromptVideoEngine(this);
         mediaAnalyzer = new NativeMediaAnalyzer(this);
         driveWorkspace = new DriveWorkspaceProvider(this);
+        storageProfiles = new StorageProfileStore(this);
         previewSnapshots = new PreviewSnapshotStore(this);
         proxyManager = new ProxyManager(this, store, jobs);
         livePlayer = new LiveEditPlayer(this);
@@ -923,6 +926,8 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         box.addView(body("Full Autonomous is the default. The MCP path is signalling/control only; projects, media and editing state live in the app. Gallery enumeration remains a hard technical boundary, not a permission toggle."));
         box.addView(section("Autonomy Mode"));
         box.addView(permissionCard("everything", "Full Autonomous  •  Recommended", "ChatGPT can use every VideoStudio-native operation: explicit file imports, project management, analysis, AI animation, editing, rendering, inspection, retries and cleanup without repeated permission prompts. Gallery listing/browsing remains technically blocked."));
+        box.addView(permissionCard("project", "Allow This Project Only", "Limit ChatGPT to this project's imported media and edits. Your other projects stay outside its scope."));
+        box.addView(permissionCard("selected_assets", "Allow Selected Assets Only", "Choose which media ChatGPT can inspect and edit. Project-wide history and exports remain under your control."));
         box.addView(permissionCard("one_file", "One File Lock", "Optional manual safety lock. Restricts ChatGPT to the currently authorised media file until you switch back to Full Autonomous."));
 
         box.addView(section("Workload Safety"));
@@ -937,6 +942,8 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         safety.addView(body(detail));
         box.addView(safety);
 
+        Button storageHub=compactButton("Storage Hub · "+storageProfiles.list().length()+" / 5 profiles");
+        storageHub.setOnClickListener(v->showStorageHub());box.addView(storageHub,margins(-1,dp(48),dp(10),0,0,0));
         box.addView(section("Cloud Workspace"));
         LinearLayout cloud = card(false);
         JSONObject cloudState = driveWorkspace.status();
@@ -983,8 +990,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                     .setAction(next ? ControlService.ACTION_PAUSE : ControlService.ACTION_RESUME);
             startService(control);
             if (next) {
-                if (activeRenderHandle != null) activeRenderHandle.cancel();
-                jobs.cancelAll();
+                jobs.cancelAutonomous();
             }
             ui.postDelayed(this::showControl, 120);
         });
@@ -1051,6 +1057,9 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                 pickMedia();
                 return;
             }
+            if(("project".equals(value)||"selected_assets".equals(value))&&activeProject==null){Toast.makeText(this,"Open a project first",Toast.LENGTH_SHORT).show();return;}
+            if("selected_assets".equals(value)){selectAgentAssets();return;}
+            prefs.edit().putLong("permission_scope_updated_at",System.currentTimeMillis()).putString("allowed_project_id",activeProject==null?"":activeProject.id).apply();
             prefs.edit().putString(KEY_MODE, value).apply();
             if ("one_file".equals(value) && selectedClip != null) {
                 prefs.edit().putString(KEY_FILE, selectedClip.assetId).apply();
@@ -1060,6 +1069,17 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
             showControl();
         });
         return card;
+    }
+
+    private void selectAgentAssets(){
+        java.util.List<ProjectStore.Asset> assets=activeProject.assets;String[] names=new String[assets.size()];boolean[] selected=new boolean[assets.size()];
+        java.util.Set<String> allowed=new OwnerAccessPolicy(this,store).assets();for(int i=0;i<assets.size();i++){names[i]=assets.get(i).name;selected[i]=allowed.contains(assets.get(i).id);}
+        new AlertDialog.Builder(this).setTitle("Allow selected project media").setMultiChoiceItems(names,selected,(dialog,index,checked)->selected[index]=checked)
+            .setPositiveButton("Allow",(dialog,which)->{
+                JSONArray ids=new JSONArray();for(int i=0;i<selected.length;i++)if(selected[i])ids.put(assets.get(i).id);
+                prefs.edit().putString(KEY_MODE,"selected_assets").putString("allowed_project_id",activeProject.id).putString("allowed_asset_ids",ids.toString()).putLong("permission_scope_updated_at",System.currentTimeMillis()).commit();
+                syncProtocolState();requestServiceSync();showControl();
+            }).setNegativeButton("Cancel",null).show();
     }
 
     private void createProjectDialog() {
@@ -1086,6 +1106,30 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         requestServiceSync();
         showEditor();
     }
+
+    private void showStorageHub(){
+        ScrollView scroll=baseScroll();LinearLayout box=column();box.setPadding(dp(16),dp(12),dp(16),dp(24));scroll.addView(box);
+        box.addView(title("Storage Hub",26));box.addView(body("Keep media on this device, SD card, USB, or up to five folders connected through Android's document providers. Select each account and folder in the system picker."));
+        box.addView(body("Internal workspace · "+humanStorage(getFilesDir().getUsableSpace())+" free. Originals stay in their selected location. Provider quotas appear when the provider reports them."));
+        JSONArray profiles=storageProfiles.list();
+        for(int i=0;i<profiles.length();i++){
+            JSONObject p=profiles.optJSONObject(i);if(p==null)continue;String id=p.optString("id");LinearLayout item=column();
+            item.addView(title(p.optString("label"),19));item.addView(body(p.optString("provider")+" · "+p.optString("health","unchecked")));
+            item.addView(body(p.optBoolean("quotaKnown")?humanStorage(p.optLong("usedBytes"))+" used / "+humanStorage(p.optLong("totalBytes"))+" total":"Quota not reported by this document provider"));
+            item.addView(body("Roles: "+p.optJSONArray("roles")+" · "+humanStorage(p.optLong("lastSpeedBytesPerSecond"))+"/s last transfer\nPinned projects: "+p.optJSONArray("pinnedProjects")));
+            LinearLayout actions=new LinearLayout(this);addEditorButton(actions,"Check",()->{
+                jobs.submit("Check storage folder",JobManager.Kind.LIGHT,JobManager.Origin.OWNER,state->{JSONObject status=new DriveWorkspaceProvider(this,id).status();storageProfiles.reportHealth(id,status.optBoolean("linked"),status.optString("displayName"));ui.post(this::showStorageHub);});
+            });
+            addEditorButton(actions,"Use for archive",()->{storageProfiles.setDefault("archive",id);Toast.makeText(this,"Archive destination selected",Toast.LENGTH_SHORT).show();});
+            addEditorButton(actions,"Roles",()->{String[] roles={"source","proxy","cache","export","archive"};boolean[] picked=new boolean[roles.length];String saved=p.optJSONArray("roles").toString();for(int n=0;n<roles.length;n++)picked[n]=saved.contains("\""+roles[n]+"\"");new AlertDialog.Builder(this).setTitle("Storage roles").setMultiChoiceItems(roles,picked,(d,n,v)->picked[n]=v).setPositiveButton("Save",(d,w)->{JSONArray chosen=new JSONArray();for(int n=0;n<roles.length;n++)if(picked[n])chosen.put(roles[n]);storageProfiles.setRoles(id,chosen);showStorageHub();}).setNegativeButton("Cancel",null).show();});
+            if(activeProject!=null)addEditorButton(actions,"Pin project",()->{storageProfiles.pinProject(id,activeProject.id,true);showStorageHub();});
+            addEditorButton(actions,"Disconnect",()->{storageProfiles.disconnect(id);try{getContentResolver().releasePersistableUriPermission(Uri.parse(p.optString("treeUri")),Intent.FLAG_GRANT_READ_URI_PERMISSION|Intent.FLAG_GRANT_WRITE_URI_PERMISSION);}catch(SecurityException ignored){}showStorageHub();});
+            HorizontalScrollView actionScroll=new HorizontalScrollView(this);actionScroll.addView(actions);item.addView(actionScroll);box.addView(item,margins(-1,-2,dp(16),0,0,0));
+        }
+        if(profiles.length()<StorageProfileStore.MAX_PROFILES){Button add=neonButton("Connect storage folder",C_CYAN);add.setOnClickListener(v->{Intent picker=new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION|Intent.FLAG_GRANT_WRITE_URI_PERMISSION|Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION|Intent.FLAG_GRANT_PREFIX_URI_PERMISSION);startActivityForResult(picker,PICK_STORAGE_PROFILE);});box.addView(add,margins(-1,dp(48),dp(20),0,0,0));}
+        Button back=compactButton("Back to Control");back.setOnClickListener(v->showControl());box.addView(back,margins(-1,dp(48),dp(12),0,0,0));setScreen(scroll,"storage");
+    }
+    private static String humanStorage(long bytes){if(bytes<0)return "unknown";if(bytes>=1L<<30)return String.format(java.util.Locale.US,"%.1f GB",bytes/(double)(1L<<30));if(bytes>=1L<<20)return String.format(java.util.Locale.US,"%.1f MB",bytes/(double)(1L<<20));return bytes+" B";}
 
     private void pickCloudWorkspace() {
         Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
@@ -1189,7 +1233,10 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
 
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
-        if (requestCode == PICK_EXPORT_DESTINATION && resultCode == RESULT_OK && data != null && data.getData() != null) {
+        if(requestCode==PICK_STORAGE_PROFILE&&resultCode==RESULT_OK&&data!=null&&data.getData()!=null){
+            Uri tree=data.getData();int flags=data.getFlags()&(Intent.FLAG_GRANT_READ_URI_PERMISSION|Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+            try{getContentResolver().takePersistableUriPermission(tree,flags);EditText label=new EditText(this);label.setText("Storage "+(storageProfiles.list().length()+1));new AlertDialog.Builder(this).setTitle("Name this storage connection").setView(label).setPositiveButton("Connect",(d,w)->{try{storageProfiles.connect(tree,label.getText().toString());showStorageHub();}catch(Exception error){editorError(error);}}).setNegativeButton("Cancel",null).show();}catch(Exception error){editorError(error);}
+        } else if (requestCode == PICK_EXPORT_DESTINATION && resultCode == RESULT_OK && data != null && data.getData() != null) {
             try {
                 Uri destination=data.getData();
                 int flags=data.getFlags() & (Intent.FLAG_GRANT_READ_URI_PERMISSION|Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
@@ -2232,6 +2279,8 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         // Hard boundary: no MCP mode may enumerate or browse the user's Gallery.
         if (lower.contains("gallery") || lower.contains("media_library") || lower.contains("photo_library")) return false;
 
+        OwnerAccessPolicy access=new OwnerAccessPolicy(this,store);
+        if(access.restricted())return access.allows(action,parameters);
         if ("one_file".equals(permissionMode())) {
             String allowed = prefs.getString(KEY_FILE, "");
             if (allowed.isEmpty()) return false;
@@ -2314,7 +2363,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
     }
 
     private void syncProtocolState() {
-        if (protocol != null) protocol.setLocalState(permissionMode(), store.summaries());
+        if (protocol != null) protocol.setLocalState(permissionMode(), new OwnerAccessPolicy(this,store).summaries());
         requestServiceSync();
     }
 
@@ -2420,7 +2469,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
 
     private String permissionMode() {
         String raw = prefs.getString(KEY_MODE, "everything");
-        if ("one_file".equals(raw)) return "one_file";
+        if (java.util.Arrays.asList("one_file","project","selected_assets").contains(raw)) return raw;
         if (!"everything".equals(raw)) {
             prefs.edit().putString(KEY_MODE, "everything").apply();
         }

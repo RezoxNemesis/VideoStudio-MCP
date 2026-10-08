@@ -322,7 +322,8 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         String commandId = command.optString("id", "");
         String projectId = p.optString("projectId", "");
 
-        JSONObject terminal = commandJournal.terminal(commandId);
+        OwnerAccessPolicy commandAccess=new OwnerAccessPolicy(this,store);
+        JSONObject terminal = isAllowed(action,p)&&!commandAccess.resultPredatesScope(command)?commandJournal.terminal(commandId):null;
         if (terminal != null) {
             JSONObject priorResult = terminal.optJSONObject("result");
             if (priorResult == null) priorResult = new JSONObject();
@@ -1461,6 +1462,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 throw error;
             }
         });
+        job.bindProject(projectId);
         return job;
     }
 
@@ -1496,6 +1498,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 throw error;
             }
         });
+        job.bindProject(projectId);
         return job;
     }
 
@@ -3144,10 +3147,12 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             out.put("controlPaused", protocol.isControlPaused());
             out.put("galleryAccess", false);
             out.put("galleryBoundary", "MCP v3 cannot list, browse or enumerate Gallery media. Only user-picked files, VideoStudio-owned media and explicit ChatGPT attachments are usable.");
-            out.put("projects", store.summaries().optJSONArray("projects"));
+            OwnerAccessPolicy access=new OwnerAccessPolicy(this,store);
+            out.put("projects", access.summaries().optJSONArray("projects"));
             out.put("projectStorage", store.storageBackend());
-            ProjectStore.Project active = store.active();
+            ProjectStore.Project active = access.restricted()?store.get(access.projectId()):store.active();
             if (active != null) {
+                active=ProjectStore.Project.fromJson(access.redactProject(active));
                 out.put("activeProjectId", active.id);
                 out.put("activeProjectName", active.name);
                 out.put("clipCount", active.clips.size());
@@ -3156,7 +3161,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 out.put("sourcePrompt", active.sourcePrompt);
                 out.put("latestExportUri", active.latestExportUri);
                 out.put("latestExportName", active.latestExportName);
-                out.put("creativeWorkspace", creativeWorkspace.status(active.id));
+                if(!access.assetLimited())out.put("creativeWorkspace", creativeWorkspace.status(active.id));
                 JSONArray assets = new JSONArray();
                 for (ProjectStore.Asset a : active.assets) {
                     JSONObject ai = new JSONObject();
@@ -3171,14 +3176,19 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 }
                 out.put("activeAssets", assets);
             }
-            out.put("workload", jobs.state());
-            out.put("recoveryPlans", recoveryPlans.recent(12));
+            JSONObject workload=jobs.state();
+            if(access.restricted()){
+                JSONArray visibleJobs=new JSONArray(),allJobs=workload.optJSONArray("jobs");
+                if(allJobs!=null)for(int i=0;i<allJobs.length();i++){JSONObject job=allJobs.optJSONObject(i);if(job!=null&&access.projectAllowed(job.optString("projectId")))visibleJobs.put(job);}
+                workload.put("jobs",visibleJobs);
+            }
+            out.put("workload",workload);
+            if(!access.restricted())out.put("recoveryPlans", recoveryPlans.recent(12));
             out.put("capabilityRegistry", capabilityRegistry.describe());
             out.put("computeProfile", computeProfile.snapshot());
             out.put("driveWorkspace", driveWorkspace.status());
             out.put("creatorCatalog", CreatorCatalog.describe());
-            out.put("recentActivity", ActivityLog.recent(this, 30));
-            out.put("commandJournal", commandJournal.recent(20));
+            if(!access.restricted()){out.put("recentActivity", ActivityLog.recent(this, 30));out.put("commandJournal", commandJournal.recent(20));}
         } catch (Exception ignored) {}
         return out;
     }
@@ -3190,6 +3200,13 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         // Even Full Autonomous cannot enumerate or browse the phone Gallery.
         if (lower.contains("gallery") || lower.contains("media_library") || lower.contains("photo_library")) return false;
 
+        OwnerAccessPolicy access=new OwnerAccessPolicy(this,store);
+        if(access.restricted()){
+            if("job_status".equals(action)||"cancel_job".equals(action)){
+                JSONObject job=jobs.get(parameters.optString("jobId")).optJSONObject("job");return job!=null&&access.projectAllowed(job.optString("projectId"))&&!"owner".equals(job.optString("origin"));
+            }
+            return access.allows(action,parameters);
+        }
         String mode = permissionMode();
         if ("one_file".equals(mode)) {
             String allowed = prefs.getString(KEY_FILE, "");
@@ -3693,7 +3710,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
 
     private String permissionMode() {
         String raw = prefs.getString(KEY_MODE, "everything");
-        if ("one_file".equals(raw)) return "one_file";
+        if (java.util.Arrays.asList("one_file","project","selected_assets").contains(raw)) return raw;
         if (!"everything".equals(raw)) {
             prefs.edit().putString(KEY_MODE, "everything").apply();
         }
@@ -3701,7 +3718,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     }
 
     private void syncProtocolState() {
-        protocol.setLocalState(permissionMode(), store.summaries());
+        protocol.setLocalState(permissionMode(), new OwnerAccessPolicy(this,store).summaries());
     }
 
     private void markService(boolean online, String detail) {

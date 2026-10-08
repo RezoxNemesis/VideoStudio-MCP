@@ -47,11 +47,17 @@ public final class DriveWorkspaceProvider {
     private final Context context;
     private final ContentResolver resolver;
     private final SharedPreferences prefs;
+    private final StorageProfileStore storageProfiles;
+    private final String profileId;
 
-    public DriveWorkspaceProvider(Context context) {
+    public DriveWorkspaceProvider(Context context) { this(context, ""); }
+
+    public DriveWorkspaceProvider(Context context,String profileId) {
         this.context = context.getApplicationContext();
         this.resolver = this.context.getContentResolver();
         this.prefs = this.context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        this.storageProfiles = new StorageProfileStore(this.context);
+        this.profileId = profileId==null?"":profileId;
     }
 
     public synchronized void link(Uri treeUri) {
@@ -60,6 +66,8 @@ public final class DriveWorkspaceProvider {
         if (authority == null || authority.trim().isEmpty()) {
             throw new IllegalArgumentException("Workspace folder provider is invalid");
         }
+        String id=storageProfiles.connect(treeUri,"Workspace "+(storageProfiles.list().length()+1));
+        storageProfiles.setDefault("archive",id);
         prefs.edit()
                 .putString(KEY_TREE, treeUri.toString())
                 .putLong(KEY_LINKED_AT, System.currentTimeMillis())
@@ -67,6 +75,8 @@ public final class DriveWorkspaceProvider {
     }
 
     public synchronized void unlink() {
+        JSONObject selected=profileId.isEmpty()?storageProfiles.defaultProfile("archive"):storageProfiles.get(profileId);
+        if(selected!=null)storageProfiles.disconnect(selected.optString("id"));
         prefs.edit().remove(KEY_TREE).remove(KEY_LINKED_AT).apply();
     }
 
@@ -520,7 +530,9 @@ public final class DriveWorkspaceProvider {
     }
 
     private Uri treeUri() {
-        String raw = prefs.getString(KEY_TREE, "");
+        JSONObject selected=profileId.isEmpty()?storageProfiles.defaultProfile("archive"):storageProfiles.get(profileId);
+        if(!profileId.isEmpty()&&selected==null)return null;
+        String raw = selected==null?prefs.getString(KEY_TREE, ""):selected.optString("treeUri","");
         if (raw == null || raw.trim().isEmpty()) return null;
         try { return Uri.parse(raw); }
         catch (Exception ignored) { return null; }

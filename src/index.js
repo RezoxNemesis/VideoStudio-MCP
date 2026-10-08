@@ -36,11 +36,28 @@ const studioMcpAuthorized = async (request,env) => {
   for(let i=0;i<n;i++) diff|=(a.charCodeAt(i)||0)^(b.charCodeAt(i)||0);
   return diff===0;
 };
-const appActionAllowed = (mode,action) => {
+const appActionAllowed = (mode,action,parameters={},device={}) => {
   const a=String(action||"").toLowerCase();
 
   // Permanent privacy wall. Full autonomy never means Gallery enumeration.
   if(a.includes("gallery")||a.includes("media_library")||a.includes("photo_library")) return false;
+
+  if(mode==="project"||mode==="selected_assets"){
+    if(["ping","get_state","self_test","connection_health","reconnect_mcp","job_status","activity_note","cancel_job","cancel_all_jobs","stop_all","editor_schema"].includes(a))return true;
+    if(!device.allowedProjectId||parameters.projectId!==device.allowedProjectId)return false;
+    if(mode==="project")return !["create_project","delete_project"].includes(a);
+    const assets=new Set(device.allowedAssetIds||[]),clips=new Set(device.allowedClipIds||[]);
+    if(a==="project_query")return (parameters.query||"graph")!=="snapshots";
+    if(a==="analyse_media")return assets.has(parameters.assetId);
+    const allowed=entry=>{
+      const op=entry.operation,args=entry.args||{};
+      if(["rename_asset","remove_asset","add_clip"].includes(op))return assets.has(args.assetId);
+      return ["set_property","set_keyframe","remove_keyframe","set_title","slip_clip","split_clip"].includes(op)&&clips.has(args.clipId);
+    };
+    if(a==="editor_operation")return allowed(parameters);
+    if(a==="editor_batch")return Array.isArray(parameters.operations)&&parameters.operations.every(allowed);
+    return false;
+  }
 
   // One-file mode is an explicit user lock, not the normal operating mode.
   if(mode==="one_file"){
@@ -219,7 +236,7 @@ export class VideoStudioState extends DurableObject {
         device:safeOld
       };
     }
-    const mode=["one_file","all_tools","everything"].includes(meta.permissionMode)?meta.permissionMode:(old.permissionMode||"everything");
+    const mode=["one_file","all_tools","everything","project","selected_assets"].includes(meta.permissionMode)?meta.permissionMode:(old.permissionMode||"everything");
     const d={
       deviceId,
       name:clean(meta.name||old.name||"VideoStudio Android",80),
@@ -245,6 +262,10 @@ export class VideoStudioState extends DurableObject {
       portraitAnimationEngine:clean(meta.portraitAnimationEngine||old.portraitAnimationEngine||"",80),
       onDevicePortraitAi:!!meta.onDevicePortraitAi,
       permissionMode:mode,
+      allowedProjectId:clean(meta.allowedProjectId||"",120),
+      allowedAssetIds:Array.isArray(meta.allowedAssetIds)?meta.allowedAssetIds.filter(x=>typeof x==="string").slice(0,1000):[],
+      allowedClipIds:Array.isArray(meta.allowedClipIds)?meta.allowedClipIds.filter(x=>typeof x==="string").slice(0,5000):[],
+      permissionScopeUpdatedAt:Math.max(0,Number(meta.permissionScopeUpdatedAt||0)),
       editorSchemaVersion:Math.max(0,Number(meta.editorSchemaVersion||0)),
       featureProtocolMax:Math.max(3,Number(meta.featureProtocolMax||3)),
       projects:Array.isArray(meta.projects)?meta.projects.slice(0,100):(old.projects||[]),
@@ -597,7 +618,7 @@ export class VideoStudioState extends DurableObject {
     const min=Number(d.protocolMin||d.protocolVersion||0), max=Number(d.protocolMax||d.protocolVersion||0);
     if(!(min<=3&&max>=3)) throw new Error("Hybrid native device does not support MCP v3");
     if(d.controlPaused) throw new Error("ChatGPT control is paused on the phone");
-    if(!appActionAllowed(d.permissionMode,action)) throw new Error("Action blocked by device permission mode or Gallery privacy boundary: "+d.permissionMode);
+    if(!appActionAllowed(d.permissionMode,action,parameters,d)) throw new Error("Action blocked by device permission mode or Gallery privacy boundary: "+d.permissionMode);
     const queueKey="app-v3-cl:"+d.deviceId, existing=(await this.ctx.storage.get(queueKey))||[];
     if(existing.filter(c=>c.status==="queued"||c.status==="claimed"||c.status==="waiting_native").length>=160) throw new Error("Native command queue is full; reconnect the app before adding work");
     const lastSeenMs=Date.parse(String(d.lastSeenAt||""))||0;
@@ -663,7 +684,7 @@ export class VideoStudioState extends DurableObject {
       },
       pendingNativeCommands:pending,
       waitingNative:!nativeFresh&&pending>0,
-      lastCommand:list[list.length-1]||null,
+      lastCommand:list.filter(c=>appActionAllowed(d.permissionMode,c.action,c.parameters||{},d)&&Date.parse(c.createdAt||"")>=d.permissionScopeUpdatedAt).at(-1)||null,
       galleryAccess:false
     };
   }
@@ -756,7 +777,7 @@ export class VideoStudioState extends DurableObject {
     const d=await this.appResolve(ownerKey);
     if(!d) throw new Error("Private App MCP credential rejected");
     if(d.controlPaused) throw new Error("ChatGPT control is paused on the phone");
-    if(!appActionAllowed(d.permissionMode,action)) throw new Error("Action blocked by device permission mode or Gallery privacy boundary: "+d.permissionMode);
+    if(!appActionAllowed(d.permissionMode,action,parameters,d)) throw new Error("Action blocked by device permission mode or Gallery privacy boundary: "+d.permissionMode);
     const sk="app-seq:"+d.deviceId, seq=((await this.ctx.storage.get(sk))||0)+1;
     await this.ctx.storage.put(sk,seq);
     const c={id:crypto.randomUUID(),seq,deviceId:d.deviceId,action,parameters,status:"queued",createdAt:now(),completedAt:null,result:null};
@@ -819,7 +840,7 @@ export class VideoStudioState extends DurableObject {
       connected:true,
       device:((({ownerHash,...safe})=>safe)(d)),
       pendingCommands:list.filter(c=>c.status==="queued"||c.status==="claimed"||c.status==="waiting_native").length,
-      lastCommand:list[list.length-1]||null,
+      lastCommand:list.filter(c=>appActionAllowed(d.permissionMode,c.action,c.parameters||{},d)&&Date.parse(c.createdAt||"")>=d.permissionScopeUpdatedAt).at(-1)||null,
       projectCount:Array.isArray(d.projects)?d.projects.length:0
     };
   }
@@ -841,7 +862,7 @@ export class VideoStudioState extends DurableObject {
   async appEnqueueV3Serialized(ownerKey,action,parameters={}){
     const d=await this.appV3Device(ownerKey);
     if(d.controlPaused) throw new Error("ChatGPT control is paused on the phone");
-    if(!appActionAllowed(d.permissionMode,action)) throw new Error("Action blocked by device permission mode or Gallery privacy boundary: "+d.permissionMode);
+    if(!appActionAllowed(d.permissionMode,action,parameters,d)) throw new Error("Action blocked by device permission mode or Gallery privacy boundary: "+d.permissionMode);
     const editor=validateEditorRequest(action,parameters);
     if(editor&&d.editorSchemaVersion<1)throw new Error("Installed app does not support the shared editor schema; install the compatible APK");
     const queueKey="app-v3-cl:"+d.deviceId, existing=(await this.ctx.storage.get(queueKey))||[];
@@ -955,8 +976,8 @@ export class VideoStudioState extends DurableObject {
     const d=await this.appV3Device(ownerKey);
     const list=(await this.ctx.storage.get("app-v3-cl:"+d.deviceId))||[];
     const native=list.find(c=>c.id===id);
-    if(native) return native;
-    const receipt=await this.ctx.storage.get("app-v3-editor-result:"+d.deviceId+":"+id);if(receipt)return receipt;
+    if(native){if(!appActionAllowed(d.permissionMode,native.action,native.parameters||{},d)||Date.parse(native.createdAt||"")<d.permissionScopeUpdatedAt)throw new Error("Command result is outside the current owner scope");return native;}
+    const receipt=await this.ctx.storage.get("app-v3-editor-result:"+d.deviceId+":"+id);if(receipt){if(!appActionAllowed(d.permissionMode,receipt.action,receipt.parameters||{},d)||Date.parse(receipt.createdAt||"")<d.permissionScopeUpdatedAt)throw new Error("Command result is outside the current owner scope");return receipt;}
     const fallback=await this.appResolveStudioWebFallback(ownerKey);
     if(!fallback) return null;
     const webDeviceId=fallback.binding.webDeviceId;
@@ -1033,7 +1054,7 @@ export class VideoStudioState extends DurableObject {
       waitingNativeCommands:waitingNative,
       canAcceptAutonomousWork:true,
       queuedExecutionPolicy:fallbackConnected?"studio-web-when-compatible-otherwise-native-on-reconnect":"native-on-reconnect",
-      lastCommand:list[list.length-1]||null,
+      lastCommand:list.filter(c=>appActionAllowed(d.permissionMode,c.action,c.parameters||{},d)&&Date.parse(c.createdAt||"")>=d.permissionScopeUpdatedAt).at(-1)||null,
       projectCount:Array.isArray(d.projects)?d.projects.length:0,
       galleryAccess:false,
       directAttachmentIngest:true,
@@ -1580,8 +1601,8 @@ function serverForApp(env,ownerKey,protocolVersion=1){
     primary:"Android native app",
     architecture:isV3?"permanent hybrid control plane; native-first execution with bound Studio Web fallback and durable native queue":"native app with private MCP relay",
     privacy:{galleryAccess:false,boundary:"No MCP tool may list, browse or enumerate Gallery/media-library items. Only user-selected Android picker files, VideoStudio-owned files and explicit ChatGPT attachments are usable."},
-    permissions:["everything","one_file"],
-    permissionModel:{default:"everything",legacyAlias:"all_tools",note:"Full Autonomous grants every VideoStudio-native action. One File Lock is the only restrictive mode. Gallery enumeration is always blocked."},
+    permissions:["everything","project","selected_assets","one_file"],
+    permissionModel:{default:"everything",legacyAlias:"all_tools",note:"Full Autonomous grants every VideoStudio-native action. Owners can restrict control to one project or selected assets. One File Lock remains a legacy option. Gallery enumeration is always blocked."},
     connection:isV3
       ?["always-available stable MCP v3 control plane across APK updates","Android Keystore owner key","device binding","optional Studio Web fallback binding","persistent app-generation fencing","adaptive connection profile negotiation","isolated v3 command queue","waiting_native durable work","leased commands","durable command idempotency journal","persistent foreground Native Agent","self-rearm watchdog","secure reconnect backoff","live ChatGPT activity feed","STOP CHATGPT CONTROL"]
       :["Android Keystore owner key","device binding","persistent foreground control service","leased commands","crash-safe completion checkpoints","secure reconnect backoff","notification pause/cancel controls","live ChatGPT activity feed","STOP CHATGPT CONTROL"],
