@@ -28,8 +28,19 @@ public final class ActivityLog {
         JSONArray next = new JSONArray();
 
         JSONObject entry = new JSONObject();
+        String stableId = "";
+        String linkedJobId = "";
+        if (commandId != null && !commandId.isEmpty()) {
+            for (int i = 0; i < old.length(); i++) {
+                JSONObject item = old.optJSONObject(i);
+                if (item == null || !commandId.equals(item.optString("commandId"))) continue;
+                if (stableId.isEmpty()) stableId = item.optString("id", "");
+                if (linkedJobId.isEmpty()) linkedJobId = item.optString("jobId", "");
+            }
+        }
+
         try {
-            entry.put("id", UUID.randomUUID().toString());
+            entry.put("id", stableId.isEmpty() ? UUID.randomUUID().toString() : stableId);
             entry.put("time", System.currentTimeMillis());
             entry.put("source", clean(source, "system"));
             entry.put("action", clean(action, "Activity"));
@@ -37,14 +48,47 @@ public final class ActivityLog {
             entry.put("status", clean(status, "info"));
             if (progress != null) entry.put("progress", Math.max(0, Math.min(100, progress)));
             if (commandId != null && !commandId.isEmpty()) entry.put("commandId", commandId);
+            if (!linkedJobId.isEmpty()) entry.put("jobId", linkedJobId);
             if (projectId != null && !projectId.isEmpty()) entry.put("projectId", projectId);
         } catch (Exception ignored) {}
         next.put(entry);
 
         for (int i = 0; i < old.length() && next.length() < MAX; i++) {
             JSONObject item = old.optJSONObject(i);
-            if (item != null) next.put(item);
+            if (item == null) continue;
+            if (commandId != null && !commandId.isEmpty()
+                    && commandId.equals(item.optString("commandId"))) {
+                continue;
+            }
+            next.put(item);
         }
+        prefs.edit().putString(KEY, next.toString()).apply();
+    }
+
+    public static synchronized void bindJob(Context context,
+                                            String commandId,
+                                            String jobId) {
+        if (commandId == null || commandId.isEmpty() || jobId == null || jobId.isEmpty()) return;
+        SharedPreferences prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        JSONArray old = readArray(prefs);
+        JSONArray next = new JSONArray();
+        boolean bound = false;
+
+        for (int i = 0; i < old.length() && next.length() < MAX; i++) {
+            JSONObject item = old.optJSONObject(i);
+            if (item == null) continue;
+            if (!bound && commandId.equals(item.optString("commandId"))) {
+                try {
+                    JSONObject updated = new JSONObject(item.toString());
+                    updated.put("jobId", jobId);
+                    next.put(updated);
+                    bound = true;
+                    continue;
+                } catch (Exception ignored) {}
+            }
+            next.put(item);
+        }
+
         prefs.edit().putString(KEY, next.toString()).apply();
     }
 
