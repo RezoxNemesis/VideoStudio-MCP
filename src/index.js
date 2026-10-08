@@ -145,8 +145,9 @@ export class VideoStudioState extends DurableObject {
     if(!ownerKey||String(ownerKey).length<32) throw new Error("Invalid owner key");
     const hash=await sha256Hex(ownerKey), key="app-owner:"+hash;
     const bound=await this.ctx.storage.get(key);
-    if(bound&&bound!==deviceId) throw new Error("Owner key is already bound to another device");
     const dk="app-device:"+deviceId, old=(await this.ctx.storage.get(dk))||{};
+    if(old.supersededByDeviceId) throw new Error("This native identity is superseded by canonical device "+old.supersededByDeviceId);
+    if(bound&&bound!==deviceId) throw new Error("Owner key is already bound to canonical device "+bound);
     if(old.ownerHash&&old.ownerHash!==hash) throw new Error("This native device is already bound to its owner credential");
     const clientGeneration=Math.max(0,Number(meta.appGeneration||0));
     const storedGeneration=Math.max(0,Number(old.appGeneration||0));
@@ -203,7 +204,102 @@ export class VideoStudioState extends DurableObject {
     if(!ownerKey) return null;
     const hash=await sha256Hex(ownerKey), id=await this.ctx.storage.get("app-owner:"+hash);
     if(!id) return null;
-    return (await this.ctx.storage.get("app-device:"+id))||null;
+    let device=(await this.ctx.storage.get("app-device:"+id))||null;
+    if(device&&device.supersededByDeviceId){
+      const canonical=(await this.ctx.storage.get("app-device:"+device.supersededByDeviceId))||null;
+      if(canonical){
+        await this.ctx.storage.put("app-owner:"+hash,canonical.deviceId);
+        device=canonical;
+      }
+    }
+    return device;
+  }
+
+  async appConvergeOwnerAliases(primaryOwnerKey,legacyOwnerKeys=[],primaryDeviceId=""){
+    if(!primaryOwnerKey||String(primaryOwnerKey).length<32) throw new Error("Primary owner key is required");
+    const primaryHash=await sha256Hex(primaryOwnerKey);
+    let canonicalId=await this.ctx.storage.get("app-owner:"+primaryHash);
+    if(!canonicalId&&primaryDeviceId){
+      const candidate=await this.ctx.storage.get("app-device:"+String(primaryDeviceId));
+      if(candidate&&candidate.ownerHash===primaryHash){
+        canonicalId=candidate.deviceId;
+        await this.ctx.storage.put("app-owner:"+primaryHash,canonicalId);
+      }
+    }
+    if(!canonicalId) throw new Error("Primary native identity could not be proven");
+    let canonical=await this.ctx.storage.get("app-device:"+canonicalId);
+    if(!canonical) throw new Error("Canonical native device record is missing");
+    if(canonical.supersededByDeviceId){
+      const next=await this.ctx.storage.get("app-device:"+canonical.supersededByDeviceId);
+      if(!next) throw new Error("Canonical native identity chain is broken");
+      canonical=next;
+      canonicalId=next.deviceId;
+      await this.ctx.storage.put("app-owner:"+primaryHash,canonicalId);
+    }
+
+    const aliases=new Set(Array.isArray(canonical.ownerAliases)?canonical.ownerAliases:[]);
+    aliases.add(primaryHash);
+    const keys=[primaryOwnerKey,...(Array.isArray(legacyOwnerKeys)?legacyOwnerKeys:[])];
+    const seen=new Set();
+    for(const raw of keys){
+      const key=String(raw||"");
+      if(key.length<32) continue;
+      const hash=await sha256Hex(key);
+      if(seen.has(hash)) continue;
+      seen.add(hash);
+      aliases.add(hash);
+      const id=await this.ctx.storage.get("app-owner:"+hash);
+      if(!id&&hash!==primaryHash) throw new Error("Legacy owner key could not be proven");
+      if(!id||id===canonicalId){
+        await this.ctx.storage.put("app-owner:"+hash,canonicalId);
+        continue;
+      }
+      const legacy=await this.ctx.storage.get("app-device:"+id);
+      if(!legacy) throw new Error("Legacy native device record is missing");
+
+      const currentRows=(await this.ctx.storage.get("app-v3-cl:"+canonicalId))||[];
+      const legacyRows=(await this.ctx.storage.get("app-v3-cl:"+id))||[];
+      const byId=new Map(currentRows.filter(Boolean).map(row=>[row.id,row]));
+      let seq=Math.max(
+        Number((await this.ctx.storage.get("app-v3-seq:"+canonicalId))||0),
+        ...currentRows.map(row=>Number(row&&row.seq||0)),
+        0
+      );
+      for(const row of legacyRows){
+        if(!row||!row.id||byId.has(row.id)) continue;
+        seq++;
+        byId.set(row.id,{
+          ...row,
+          seq,
+          deviceId:canonicalId,
+          migratedFromDeviceId:id,
+          migratedAt:now()
+        });
+      }
+      const merged=[...byId.values()].sort((a,b)=>Number(a.seq||0)-Number(b.seq||0)).slice(-160);
+      await this.ctx.storage.put("app-v3-cl:"+canonicalId,merged);
+      await this.ctx.storage.put("app-v3-seq:"+canonicalId,seq);
+
+      legacy.supersededByDeviceId=canonicalId;
+      legacy.supersededAt=now();
+      legacy.canonicalIdentity=false;
+      await this.ctx.storage.put("app-device:"+id,legacy);
+      await this.ctx.storage.put("app-owner:"+hash,canonicalId);
+    }
+
+    canonical.ownerAliases=[...aliases];
+    canonical.canonicalIdentity=true;
+    canonical.identityConvergedAt=now();
+    canonical.identityAliasCount=canonical.ownerAliases.length;
+    await this.ctx.storage.put("app-device:"+canonicalId,canonical);
+    return {
+      ok:true,
+      canonicalDeviceId:canonicalId,
+      appVersion:canonical.appVersion||"",
+      aliasCount:canonical.ownerAliases.length,
+      retainedCommandCount:((await this.ctx.storage.get("app-v3-cl:"+canonicalId))||[]).length,
+      galleryAccess:false
+    };
   }
   async appBindStudioWebFallback(ownerKey,webDeviceId){
     const native=await this.appResolve(ownerKey);
