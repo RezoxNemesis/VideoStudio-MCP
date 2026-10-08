@@ -286,3 +286,70 @@ test('offline native MCP still queues native-only work when Web fallback cannot 
  assert.equal(queued.waitingReason,'native_offline');
  assert.equal(queued.hybridRoute,undefined);
 });
+
+
+test('canonical identity convergence aliases legacy owner keys to the current device',async()=>{
+ const store=new Map();
+ const storage={get:async k=>structuredClone(store.get(k)),put:async(k,v)=>store.set(k,structuredClone(v)),delete:async k=>store.delete(k)};
+ const relay=new context.VideoStudioState({storage},{});
+ const primaryKey='p'.repeat(43), primaryDevice='current-device-343';
+ const legacyKey='l'.repeat(43), legacyDevice='legacy-device-341';
+
+ await relay.appRegister(primaryDevice,primaryKey,{protocolVersion:3,appGeneration:3,appVersion:'3.4.3',permissionMode:'everything'});
+ await relay.appRegister(legacyDevice,legacyKey,{protocolVersion:3,appGeneration:1,appVersion:'3.4.1',permissionMode:'everything'});
+ await storage.put('app-v3-cl:'+legacyDevice,[
+  {id:'legacy-pending',seq:1,protocolVersion:3,deviceId:legacyDevice,action:'apply_tool',parameters:{},status:'queued',createdAt:new Date().toISOString(),completedAt:null,result:null},
+  {id:'legacy-done',seq:2,protocolVersion:3,deviceId:legacyDevice,action:'get_state',parameters:{},status:'completed',createdAt:new Date().toISOString(),completedAt:new Date().toISOString(),result:{ok:true,marker:'legacy'}}
+ ]);
+
+ const result=await relay.appConvergeOwnerAliases(primaryKey,[legacyKey],primaryDevice);
+ assert.equal(result.canonicalDeviceId,primaryDevice);
+ assert.equal(result.aliasCount,2);
+
+ const primary=await relay.appResolve(primaryKey);
+ const legacy=await relay.appResolve(legacyKey);
+ assert.equal(primary.deviceId,primaryDevice);
+ assert.equal(legacy.deviceId,primaryDevice);
+ assert.equal(legacy.appVersion,'3.4.3');
+
+ const rows=await storage.get('app-v3-cl:'+primaryDevice);
+ assert.ok(rows.some(x=>x.id==='legacy-pending'));
+ assert.ok(rows.some(x=>x.id==='legacy-done'&&x.result.marker==='legacy'));
+
+ const oldRecord=await storage.get('app-device:'+legacyDevice);
+ assert.equal(oldRecord.supersededByDeviceId,primaryDevice);
+ assert.equal(oldRecord.canonicalIdentity,false);
+});
+
+test('superseded native device cannot steal a converged legacy endpoint back',async()=>{
+ const store=new Map();
+ const storage={get:async k=>structuredClone(store.get(k)),put:async(k,v)=>store.set(k,structuredClone(v)),delete:async k=>store.delete(k)};
+ const relay=new context.VideoStudioState({storage},{});
+ const primaryKey='q'.repeat(43), primaryDevice='current-device-lock';
+ const legacyKey='r'.repeat(43), legacyDevice='legacy-device-lock';
+
+ await relay.appRegister(primaryDevice,primaryKey,{protocolVersion:3,appGeneration:4,appVersion:'3.4.3'});
+ await relay.appRegister(legacyDevice,legacyKey,{protocolVersion:3,appGeneration:1,appVersion:'3.4.1'});
+ await relay.appConvergeOwnerAliases(primaryKey,[legacyKey],primaryDevice);
+
+ await assert.rejects(
+  relay.appRegister(legacyDevice,legacyKey,{protocolVersion:3,appGeneration:99,appVersion:'9.9.9'}),
+  /superseded|canonical/i
+ );
+ const legacy=await relay.appResolve(legacyKey);
+ assert.equal(legacy.deviceId,primaryDevice);
+});
+
+test('convergence can repair a missing primary owner index from the canonical device record',async()=>{
+ const f=await fixture();
+ const ownerHash=await (async()=>{
+  const data=new TextEncoder().encode(f.key);
+  const digest=await webcrypto.subtle.digest('SHA-256',data);
+  return Array.from(new Uint8Array(digest),b=>b.toString(16).padStart(2,'0')).join('');
+ })();
+ await f.storage.delete('app-owner:'+ownerHash);
+
+ const repaired=await f.relay.appConvergeOwnerAliases(f.key,[],f.deviceId);
+ assert.equal(repaired.canonicalDeviceId,f.deviceId);
+ assert.equal((await f.relay.appResolve(f.key)).deviceId,f.deviceId);
+});
