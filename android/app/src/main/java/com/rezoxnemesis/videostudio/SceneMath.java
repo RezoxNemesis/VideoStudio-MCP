@@ -19,10 +19,14 @@ public final class SceneMath {
         return new double[]{.5 + x * focal / (2 * z * aspect), .5 - y * focal / (2 * z)};
     }
     public static double diffuse(double[] a, double[] b, double[] c) {
+        return diffuse(a,b,c,-.4,.7,-.59);
+    }
+    public static double diffuse(double[] a, double[] b, double[] c,double lx,double ly,double lz) {
         double ux = b[0]-a[0], uy = b[1]-a[1], uz = b[2]-a[2];
         double vx = c[0]-a[0], vy = c[1]-a[1], vz = c[2]-a[2];
         double nx = uy*vz-uz*vy, ny = uz*vx-ux*vz, nz = ux*vy-uy*vx;
         double length = Math.sqrt(nx*nx+ny*ny+nz*nz);
-        return length < 1e-9 ? .25 : .25 + .75 * Math.max(0, (nx * -.4 + ny * .7 + nz * -.59) / length);
+        double lightLength=Math.sqrt(lx*lx+ly*ly+lz*lz);
+        return length < 1e-9 || lightLength < 1e-9 ? .25 : .25 + .75 * Math.max(0, (nx*lx+ny*ly+nz*lz) / (length*lightLength));
     }
 }

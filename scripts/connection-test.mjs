@@ -378,3 +378,16 @@ test('ChatGPT attachment URL is relayed through a private handoff instead of exp
  assert.equal(handoff.name,'chatgpt-source.mp4');
  assert.equal(handoff.mime,'video/mp4');
 });
+
+test('native scene operations remain native when the phone is offline',async()=>{
+ const f=await fixture([]);
+ const resolved=await f.relay.appResolve(f.key);
+ assert.ok(resolved);
+ resolved.lastSeenAt=new Date(Date.now()-120000).toISOString();
+ await f.storage.put('app-device:'+f.deviceId,resolved);
+ f.relay.appResolveStudioWebFallback=async()=>({fresh:true,project:{id:'web-project'},binding:{webDeviceId:'web-device'}});
+ f.relay.enqueueRuntime=async()=>{throw new Error('Native scene was incorrectly sent to the browser');};
+ const queued=await f.relay.appEnqueueV3(f.key,'native_scene',{operation:'render',sceneName:'living_world',revision:1});
+ assert.equal(queued.action,'native_scene');assert.equal(queued.parameters.revision,1);
+ assert.notEqual(queued.hybridRoute,'studio_web');assert.equal(queued.status,'waiting_native');
+});

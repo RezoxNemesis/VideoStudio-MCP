@@ -30,7 +30,7 @@ public final class ProceduralScene {
     public static void validate(JSONObject scene) throws Exception {
         if (scene == null) throw new IllegalArgumentException("sceneGraph is required");
         if (scene.optInt("version", 1) != 1) throw new IllegalArgumentException("Unsupported procedural scene version");
-        for (String field : new String[]{"cameraOrbit", "fov"})
+        for (String field : new String[]{"cameraOrbit", "cameraDolly", "fov"})
             if (scene.has(field) && (!Double.isFinite(scene.getDouble(field)) || Math.abs(scene.getDouble(field)) > 1000))
                 throw new IllegalArgumentException("Invalid camera parameter: " + field);
         JSONArray objects = scene.optJSONArray("objects");
@@ -68,7 +68,7 @@ public final class ProceduralScene {
         if (triangleBudget > 4096) throw new IllegalArgumentException("Scene exceeds software renderer triangle budget; split into separate shots");
     }
     private static final class Face {
-        double[][] vertices; double depth; int color;
+        double[][] vertices; double depth; int color; double roughness;
         Face(double[][] v, int c) { vertices=v; color=c; depth=(v[0][2]+v[1][2]+v[2][2])/3; }
     }
     public void draw(Canvas canvas, double seconds, double duration) {
@@ -89,7 +89,11 @@ public final class ProceduralScene {
             double[][] projected=new double[3][]; boolean visible=true;
             for(int i=0;i<3;i++) { double[] v=face.vertices[i]; projected[i]=SceneMath.project(v[0],v[1],v[2],fov,w/(double)h); if(projected[i]==null) visible=false; }
             if(!visible) continue;
-            double light=SceneMath.diffuse(face.vertices[0],face.vertices[1],face.vertices[2]);
+            JSONObject lighting=scene.optJSONObject("light");
+            JSONArray direction=lighting==null?null:lighting.optJSONArray("direction");
+            double light=direction==null?SceneMath.diffuse(face.vertices[0],face.vertices[1],face.vertices[2]):SceneMath.diffuse(face.vertices[0],face.vertices[1],face.vertices[2],direction.optDouble(0),direction.optDouble(1),direction.optDouble(2));
+            light+=(1-light)*.2*face.roughness;
+            if(lighting!=null) light=Math.max(.05,Math.min(1,light*lighting.optDouble("intensity",1)));
             paint.setColor(shade(face.color,light)); paint.setStyle(Paint.Style.FILL); path.reset();
             for(int i=0;i<3;i++) { float x=(float)(projected[i][0]*w), y=(float)(projected[i][1]*h); if(i==0) path.moveTo(x,y); else path.lineTo(x,y); }
             path.close(); canvas.drawPath(path,paint);
@@ -111,11 +115,11 @@ public final class ProceduralScene {
         for(int i=0;i<v.length;i++) {
             double[] point=SceneMath.rotate(v[i][0]*size,v[i][1]*size,v[i][2]*size,.25,ry,0);
             point[0]+=x; point[1]+=y; point[2]+=z-4;
-            point=SceneMath.rotate(point[0],point[1],point[2],0,orbit,0); point[2]+=4;
+            point=SceneMath.rotate(point[0],point[1],point[2],0,orbit,0); point[2]+=4-scene.optDouble("cameraDolly",0)*SceneMath.ease(t/Math.max(.001, scene.optDouble("durationSeconds",4)));
             transformed[i]=point;
         }
         int c=color(o.optString("color","#59d9e8"));
-        for(int[] tri:f) out.add(new Face(new double[][]{transformed[tri[0]],transformed[tri[1]],transformed[tri[2]]},c));
+        for(int[] tri:f) { Face face=new Face(new double[][]{transformed[tri[0]],transformed[tri[1]],transformed[tri[2]]},c); face.roughness=Math.max(0,Math.min(1,o.optDouble("roughness",0))); out.add(face); }
     }
     private void draw2d(Canvas c,JSONObject o,double p,double t,int w,int h) {
         double x=track(o,"x",.5,p), y=track(o,"y",.5,p);

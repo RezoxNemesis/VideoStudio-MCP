@@ -16,6 +16,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.Semaphore;
+import java.util.function.Consumer;
 
 public final class JobManager {
     public enum Kind { LIGHT, HEAVY }
@@ -68,6 +69,7 @@ public final class JobManager {
         }
 
         public void checkpoint(String stage, int progress, String detail) {
+            if ("cancelled".equals(state)) return;
             this.stage = stage == null || stage.trim().isEmpty() ? this.stage : stage.trim();
             this.progress = Math.max(0, Math.min(100, progress));
             this.detail = detail == null ? "" : detail;
@@ -114,24 +116,41 @@ public final class JobManager {
 
     private static final String PREFS = "videostudio_native_v1";
     private static final String KEY_JOBS = ExecutionTruthPolicy.JOB_RECOVERY_PREF_KEY;
+    private static final String KEY_UI_JOBS = "ui_job_recovery_snapshot";
     private final Context context;
     private final SharedPreferences prefs;
+    private final String snapshotKey;
     private static final Semaphore PROCESS_HEAVY_LANE = new Semaphore(1, true);
-    private final ExecutorService pool = Executors.newFixedThreadPool(3);
+    private final ExecutorService lightPool = Executors.newFixedThreadPool(2);
+    private final ExecutorService heavyPool = Executors.newSingleThreadExecutor();
     private final Semaphore heavyLane = PROCESS_HEAVY_LANE;
     private final Map<String, Job> jobs = new ConcurrentHashMap<>();
+    private volatile boolean restarting;
 
     public JobManager(Context context) {
+        this(context, false);
+    }
+
+    public JobManager(Context context, boolean activityOwned) {
         this.context = context.getApplicationContext();
+        snapshotKey = activityOwned ? KEY_UI_JOBS : KEY_JOBS;
         prefs = this.context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
         restoreRecoveryState();
     }
 
     public Job submit(String name, Kind kind, Work work) {
+        return submit(name, kind, job -> {}, work);
+    }
+
+    public Job submit(String name, Kind kind, Consumer<Job> onQueued, Work work) {
         Job job = new Job(name, kind);
         job.owner = this;
+        // Associate durable plans before waiting for resources, so STOP and
+        // process death can also find jobs that have not started executing.
+        onQueued.accept(job);
         jobs.put(job.id, job);
         persist();
+        ExecutorService pool = kind == Kind.HEAVY ? heavyPool : lightPool;
         job.future = pool.submit(() -> {
             boolean locked = false;
             try {
@@ -150,7 +169,9 @@ public final class JobManager {
                     setState(job, STATE_COMPLETED, job.detail.isEmpty() ? "Completed" : job.detail);
                 }
             } catch (InterruptedException interrupted) {
-                setState(job, STATE_CANCELLED, "Cancelled");
+                if (restarting && !"cancelled".equals(job.state))
+                    setState(job, "interrupted", "Service stopped; durable checkpoint retained for restart");
+                else setState(job, "cancelled", "Cancelled");
                 Thread.currentThread().interrupt();
             } catch (Exception error) {
                 setState(job, STATE_FAILED, error.getMessage() == null ? "Job failed" : error.getMessage());
@@ -196,12 +217,25 @@ public final class JobManager {
     public JSONObject state() {
         JSONObject root = new JSONObject();
         JSONArray arr = new JSONArray();
+        // The Activity can display service work without taking ownership of it
+        // or marking live service jobs interrupted when the screen reopens.
+        Map<String, JSONObject> visible = new LinkedHashMap<>();
+        try {
+            String otherKey = KEY_JOBS.equals(snapshotKey) ? KEY_UI_JOBS : KEY_JOBS;
+            JSONArray other = new JSONArray(prefs.getString(otherKey, "[]"));
+            for (int i = 0; i < other.length(); i++) {
+                JSONObject item = other.optJSONObject(i);
+                if (item != null) visible.put(item.optString("id"), item);
+            }
+        } catch (Exception ignored) {}
         Map<String, Job> sorted = new LinkedHashMap<>();
         jobs.values().stream()
                 .sorted((a, b) -> Long.compare(b.updatedAt, a.updatedAt))
                 .limit(30)
                 .forEach(j -> sorted.put(j.id, j));
-        for (Job job : sorted.values()) arr.put(job.json());
+        for (Job job : sorted.values()) visible.put(job.id, job.json());
+        visible.values().stream().sorted((a, b) -> Long.compare(b.optLong("updatedAt"), a.optLong("updatedAt")))
+                .limit(30).forEach(arr::put);
         try {
             root.put("jobs", arr);
             root.put("memory", memoryState());
@@ -214,7 +248,19 @@ public final class JobManager {
 
     public void shutdown() {
         cancelAll();
-        pool.shutdownNow();
+        lightPool.shutdownNow();
+        heavyPool.shutdownNow();
+        persist();
+    }
+
+    public void shutdownForRestart() {
+        restarting = true;
+        for (Job job : jobs.values()) {
+            if (!"completed".equals(job.state) && !"failed".equals(job.state) && !"cancelled".equals(job.state))
+                setState(job, "interrupted", "Service stopped; durable checkpoint retained for restart");
+        }
+        lightPool.shutdownNow();
+        heavyPool.shutdownNow();
         persist();
     }
 
@@ -352,11 +398,11 @@ public final class JobManager {
                 .sorted((a, b) -> Long.compare(b.updatedAt, a.updatedAt))
                 .limit(40)
                 .forEach(j -> arr.put(j.json()));
-        prefs.edit().putString(KEY_JOBS, arr.toString()).apply();
+        prefs.edit().putString(snapshotKey, arr.toString()).apply();
     }
 
     private void restoreRecoveryState() {
-        String raw = prefs.getString(KEY_JOBS, "[]");
+        String raw = prefs.getString(snapshotKey, "[]");
         try {
             JSONArray arr = new JSONArray(raw);
             long cutoff = System.currentTimeMillis() - 48L * 60L * 60L * 1000L;

@@ -34,6 +34,8 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicReference;
 
 public final class ControlService extends Service implements AppProtocol.Callback {
@@ -42,6 +44,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     public static final String ACTION_RESUME = "com.rezoxnemesis.videostudio.RESUME_CONTROL";
     public static final String ACTION_RECONNECT = "com.rezoxnemesis.videostudio.RECONNECT";
     public static final String ACTION_SYNC = "com.rezoxnemesis.videostudio.SYNC_STATE";
+    public static final String ACTION_LOCAL_SCENE = "com.rezoxnemesis.videostudio.LOCAL_SCENE";
     public static final String ACTION_LOCAL_ANIMATE = "com.rezoxnemesis.videostudio.LOCAL_ANIMATE_IMAGES";
     public static final String ACTION_LOCAL_PROMPT_VIDEO = "com.rezoxnemesis.videostudio.LOCAL_PROMPT_VIDEO";
     public static final String ACTION_LOCAL_EXPORT = "com.rezoxnemesis.videostudio.LOCAL_EXPORT_PROJECT";
@@ -66,7 +69,8 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     private ResumableTransferManager transferManager;
     private AppProtocol protocol;
     private NativeRenderEngine renderEngine;
-    private NativeRenderEngine.Handle activeRender;
+    private volatile NativeRenderEngine.Handle activeRender;
+    private final ExecutorService commandExecutor = Executors.newSingleThreadExecutor();
     private PromptVideoEngine promptVideoEngine;
     private NativeMediaAnalyzer mediaAnalyzer;
     private NativePortraitMotionAnalyzer portraitMotionAnalyzer;
@@ -126,7 +130,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 "Stable MCP compatibility endpoint • app " + AppProtocol.APP_VERSION
                         + " • generation " + protocol.appGeneration(),
                 "success", null, null, null);
-        recoverDurablePlans();
+        commandExecutor.execute(this::recoverDurablePlans);
         reattachInflightCommandWatchers();
         NativeAgentWatchdog.scheduleHealthy(this, "service_created");
     }
@@ -156,6 +160,18 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         } else if (ACTION_SYNC.equals(action)) {
             syncProtocolState();
             protocol.registerNow();
+        } else if (ACTION_LOCAL_SCENE.equals(action)) {
+            android.os.ResultReceiver receiver = intent.getParcelableExtra("receiver");
+            String operation = intent.getStringExtra("operation");
+            String raw = intent.getStringExtra("parameters");
+            commandExecutor.execute(() -> {
+                JSONObject result;
+                try { result = sceneOperation(operation, new JSONObject(raw == null ? "{}" : raw)); }
+                catch (Exception error) { result = new JSONObject(); try { result.put("ok", false).put("error",String.valueOf(error.getMessage())); } catch(Exception ignored) {} }
+                ActivityLog.add(this,"user","Native scene • "+operation,result.optBoolean("ok") ? (result.optBoolean("queued") ? "Native job queued" : "Scene operation completed") : result.optString("error"),result.optBoolean("ok") ? "success" : "failed",null,null,"");
+                if(receiver != null) { android.os.Bundle reply=new android.os.Bundle(); reply.putString("result",result.toString()); receiver.send(result.optBoolean("ok") ? 0 : 1,reply); }
+                syncProtocolState();
+            });
         } else if (ACTION_LOCAL_ANIMATE.equals(action)) {
             try {
                 JSONObject p = new JSONObject();
@@ -237,12 +253,13 @@ public final class ControlService extends Service implements AppProtocol.Callbac
 
     @Override
     public void onDestroy() {
+        commandExecutor.shutdownNow();
         serviceAlive = false;
         ActivityLog.add(this, "transport", "VideoStudio control stopped", "Background controller stopped", "info", null, null, null);
         markService(false, "Control service stopped");
         boolean paused = protocol != null && protocol.isControlPaused();
         if (activeRender != null) activeRender.cancel();
-        if (jobs != null) jobs.shutdown();
+        if (jobs != null) jobs.shutdownForRestart();
         if (protocol != null) protocol.stop();
         commandCompletionWatchers.shutdownNow();
         if (NativeAgentWatchdog.shouldRearm(paused)) {
@@ -278,6 +295,12 @@ public final class ControlService extends Service implements AppProtocol.Callbac
 
     @Override
     public void onCommand(JSONObject command) {
+        // DNS, inline decoding, database writes and scene planning must never
+        // block Android's main looper (including foreground-service callbacks).
+        if (!commandExecutor.isShutdown()) commandExecutor.execute(() -> executeCommand(command));
+    }
+
+    private void executeCommand(JSONObject command) {
         String action = command.optString("action");
         JSONObject p = command.optJSONObject("parameters");
         if (p == null) p = new JSONObject();
@@ -334,6 +357,9 @@ public final class ControlService extends Service implements AppProtocol.Callbac
 
         try {
             switch (action) {
+                case "native_scene":
+                    complete(command,sceneOperation(p.optString("operation","capabilities"),p));
+                    return;
                 case "ping":
                 case "get_state":
                     complete(command, stateJson());
@@ -895,6 +921,9 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     }
 
     private JSONObject compileMotionScene(JSONObject p) throws Exception {
+        if (p.optString("script", "").trim().startsWith("vsl ")) {
+            return sceneOperation("compile", p);
+        }
         ProjectStore.Project project = resolveProject(p.optString("projectId", ""));
         String source = p.optString("script", p.optString("source", ""));
         MotionScriptCompiler.CompileResult compiled = motionScriptCompiler.compile(source, project);
@@ -915,6 +944,9 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     }
 
     private JSONObject runMotionScript(JSONObject p) throws Exception {
+        if (p.optString("script", "").trim().startsWith("vsl ")) {
+            return sceneOperation(p.optBoolean("render",true) ? "render" : "preview", p);
+        }
         ProjectStore.Project project = resolveProject(p.optString("projectId", ""));
         String source = p.optString("script", p.optString("source", ""));
         MotionScriptCompiler.CompileResult compiled = motionScriptCompiler.compile(source, project);
@@ -1383,8 +1415,8 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         }
 
         final String durablePlanId = planId;
-        JobManager.Job job = jobs.submit(jobName, JobManager.Kind.LIGHT, state -> {
-            recoveryPlans.attachJob(durablePlanId, state.id);
+        JobManager.Job job = jobs.submit(jobName, JobManager.Kind.LIGHT,
+                state -> recoveryPlans.attachJob(durablePlanId, state.id), state -> {
             try {
                 work.run(state);
                 recoveryPlans.completeByJob(state.id);
@@ -1418,8 +1450,8 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         }
 
         final String durablePlanId = planId;
-        JobManager.Job job = jobs.submit(jobName, JobManager.Kind.HEAVY, state -> {
-            recoveryPlans.attachJob(durablePlanId, state.id);
+        JobManager.Job job = jobs.submit(jobName, JobManager.Kind.HEAVY,
+                state -> recoveryPlans.attachJob(durablePlanId, state.id), state -> {
             try {
                 work.run(state);
                 recoveryPlans.completeByJob(state.id);
@@ -1489,6 +1521,15 @@ public final class ControlService extends Service implements AppProtocol.Callbac
 
                 JSONObject queued;
                 switch (action) {
+                    case "native_scene":
+                        queued = queueNativeScene(parameters,parameters.optBoolean("previewOnly",false));
+                        break;
+                    case "native_neural":
+                        queued = queueNativeNeural(parameters);
+                        break;
+                    case "native_temporal":
+                        queued = queueNativeTemporal(parameters);
+                        break;
                     case "animate_images":
                         queued = queueAnimatedImages(parameters);
                         break;
@@ -2097,6 +2138,206 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         return result;
     }
 
+    private JSONObject sceneOperation(String operation, JSONObject p) throws Exception {
+        if (operation.equals("capabilities")) {
+            return new JSONObject().put("ok",true).put("runtimeTarget","android_native")
+                    .put("vslVersion",VslCompiler.VERSION).put("demo",VslCompiler.DEMO)
+                    .put("implemented",new JSONArray(new String[]{"vsl.compile","scene.memory","scene.revisions","delta.invalidation","render.sparse_raster","physics.analytic_wind","cinematic.image_portal","render.progressive","repair.cache_consistency","render.technical_critique","temporal.raft.adapter","image.generate.sd_turbo.adapter"}))
+                    .put("modelRequired",new JSONArray(new String[]{"temporal.raft.weights","image.synthesis.pose","sd_turbo.weights","image.synthesis.pose","render.critique.semantic"}))
+                    .put("semanticValidation","unchecked").put("raftPacks",capabilityRegistry.modelPackStatus());
+        }
+        ProjectStore.Project project = p.optString("projectId", "").isEmpty() ? store.active() : store.get(p.getString("projectId"));
+        if(project==null) throw new IllegalArgumentException("Create/select a native project first");
+        p = new JSONObject(p.toString()).put("projectId", project.id);
+        SceneMemoryStore memory=new SceneMemoryStore(this);
+        switch(operation) {
+            case "compile": {
+                JSONObject compiled=memory.commit(project,p.getString("script"),p.optInt("expectedRevision",-1));
+                return ok().put("scene",compiled).put("executionPlan",NativeScenePlanner.plan(this,compiled,p.optString("quality","")));
+            }
+            case "inspect": return memory.status(project.id,p.optString("sceneName","living_world"));
+            case "uncertainty": {
+                JSONObject scene=memory.read(project.id,p.optString("sceneName","living_world"),p.optInt("revision",0));
+                if(scene==null) throw new IllegalArgumentException("Compile/save the scene first");
+                return ok().put("uncertainty",SceneUncertainty.describe(scene,0,scene.getLong("durationMs")/2000d));
+            }
+            case "render": case "preview": return queueNativeScene(p,operation.equals("preview"));
+            case "portal": {
+                ProjectStore.Asset asset=project.asset(p.getString("assetId"));
+                if(asset==null||asset.mime==null||(!asset.mime.startsWith("image/")&&!asset.mime.startsWith("video/"))) throw new IllegalArgumentException("Portal requires an explicitly imported image or video");
+                String script="vsl 0.1\nscene cinematic_portal {\n duration = "+Math.max(.5,Math.min(30,p.optDouble("durationSeconds",4)))+"s\n portal world {\n type = "+(asset.mime.startsWith("video/")?"video":"image")+"\n asset = "+asset.id+"\n position = vector(0.5, 0.5, 0)\n width = 0.75\n height = 0.7\n }\n}";
+                JSONObject request=new JSONObject(p.toString()); request.put("script",script); return queueNativeScene(request,false).put("sourceAudioIncluded",false).put("note","Visual portal compositor; source-video audio is excluded");
+            }
+            case "temporal": return queueNativeTemporal(p);
+            case "install_pack": return queueModelPackInstall(p);
+            case "neural": return queueNativeNeural(p);
+            case "repair_region": return queueNativeNeural(p);
+            default: throw new IllegalArgumentException("Unknown native scene operation: "+operation);
+        }
+    }
+
+    private JSONObject queueNativeScene(JSONObject p, boolean previewOnly) throws Exception {
+        ProjectStore.Project project=store.get(p.optString("projectId",store.active()==null?"":store.active().id));
+        if(project==null) throw new IllegalArgumentException("Native scene project not found");
+        SceneMemoryStore memory=new SceneMemoryStore(this);
+        JSONObject scene=p.has("script") ? memory.commit(project,p.getString("script"),p.optInt("expectedRevision",-1))
+                : memory.read(project.id,p.optString("sceneName","living_world"),p.optInt("revision",0));
+        if(scene==null) throw new IllegalArgumentException("Compile the scene first");
+        if(!scene.optBoolean("ready")) throw new IllegalStateException("Scene requires unavailable providers: "+scene.getJSONArray("missingCapabilities"));
+        memory.verifyBindings(scene,project);
+        JSONObject plan=NativeScenePlanner.plan(this,scene,p.optString("quality",""));
+        JSONObject params=new JSONObject(p.toString());params.put("quality",plan.getString("quality")); params.remove("script"); params.put("projectId",project.id);
+        params.put("sceneName",scene.getString("name")); params.put("revision",scene.getInt("revision")); params.put("previewOnly",previewOnly);
+        String fileName=sanitizeFileName(p.optString("fileName","VideoStudio_"+scene.getString("name")+"_r"+scene.getInt("revision")+".mp4")); params.put("fileName",fileName);
+        JobManager.Job job=submitRecoverableHeavy("native_scene",params,project.id,"Native scene • "+scene.getString("name"),state->{
+            JSONObject frozen=memory.read(project.id,params.getString("sceneName"),params.getInt("revision"));
+            memory.verifyBindings(frozen,store.get(project.id));
+            File dir=new File(creativeWorkspace.projectRoot(project.id),"previews/vsl"); if(!dir.isDirectory()&&!dir.mkdirs()) throw new IllegalStateException("Preview workspace unavailable");
+            JSONObject run=new JSONObject().put("revision",frozen.getInt("revision")).put("state","running").put("semanticValidation","unchecked");
+            JSONArray stages=new JSONArray(); run.put("stages",stages); memory.checkpoint(frozen,run);
+            try {
+                int[] edges=frozen.getJSONObject("policy").optBoolean("progressive",true)?new int[]{320,512,720}:new int[]{720};
+                File cover=null; double seconds=frozen.getLong("durationMs")/2000d;
+                for(int edge:edges) {
+                    jobs.awaitSafeCheckpoint(state,"scene_"+edge);
+                    int sw=frozen.getInt("width"), sh=frozen.getInt("height"); double scale=edge/(double)Math.min(sw,sh);
+                    int width=(int)Math.round(sw*scale),height=(int)Math.round(sh*scale);
+                    if(Math.max(width,height)>1920) {double shrink=1920d/Math.max(width,height);width=(int)(width*shrink);height=(int)(height*shrink);}
+                    android.graphics.Bitmap bitmap=android.graphics.Bitmap.createBitmap(width,height,android.graphics.Bitmap.Config.ARGB_8888);
+                    JSONObject statistics; boolean repaired=false;
+                    try(NativeSceneRenderer renderer=new NativeSceneRenderer(this,frozen)) {
+                        android.graphics.Canvas canvas=new android.graphics.Canvas(bitmap);
+                        renderer.draw(canvas,0); renderer.draw(canvas,seconds);
+                        // Compare sparse reuse to a fresh evaluation before admitting final export.
+                        if(edge==320) {
+                            android.graphics.Bitmap reference=android.graphics.Bitmap.createBitmap(width,height,android.graphics.Bitmap.Config.ARGB_8888);
+                            try(NativeSceneRenderer full=new NativeSceneRenderer(this,frozen)) {
+                                full.draw(new android.graphics.Canvas(reference),seconds);
+                                if(!bitmap.sameAs(reference)) {
+                                    if(frozen.getJSONObject("policy").optInt("maxRepairs",2)==0) throw new IllegalStateException("Sparse cache consistency failed; repair budget is zero");
+                                    frozen.getJSONObject("graph").put("forceFullFrame",true); repaired=true;
+                                    canvas.drawBitmap(reference,0,0,null);
+                                }
+                            } finally {reference.recycle();}
+                        }
+                        statistics=renderer.statistics();
+                        cover=new File(dir,frozen.getString("artifactSha256")+"_"+edge+".png");
+                        try(FileOutputStream out=new FileOutputStream(cover)) {if(!bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG,100,out)) throw new IllegalStateException("Cannot write scene preview");}
+                    } finally {bitmap.recycle();}
+                    stages.put(new JSONObject().put("shortEdge",edge).put("path",cover.getAbsolutePath()).put("statistics",statistics).put("cacheRepair",repaired));
+                    run.put("stage",edge+"p structural preview"); memory.checkpoint(frozen,run);
+                    checkpoint(state,"Native VSL scene",edge+"p scene structure verified",edge==320?8:edge==512?13:18,project.id);
+                }
+                ProjectStore.Project fresh=store.get(project.id); if(fresh==null) throw new IllegalStateException("Scene project was deleted");
+                ProjectStore.Asset source=store.registerGeneratedAsset(fresh,Uri.fromFile(cover),cover.getName(),"scene_preview",false);
+                if(previewOnly) {
+                    run.put("state","completed").put("previewAssetId",source.id); memory.checkpoint(frozen,run);
+                    state.setResult(ok().put("assetId",source.id).put("uri",source.uri).put("scene",frozen.getString("name")).put("revision",frozen.getInt("revision"))); syncProtocolState(); return;
+                }
+                // Render a snapshot, preserving the user's existing timeline and other scenes.
+                ProjectStore.Project renderProject=ProjectStore.Project.fromJson(fresh.toJson()); renderProject.clips.clear();
+                ProjectStore.Clip clip=new ProjectStore.Clip(); clip.id=UUID.randomUUID().toString(); clip.assetId=source.id;
+                clip.outMs=frozen.getLong("durationMs"); clip.effects.put("nativeScene",frozen); renderProject.clips.add(clip);
+                String aspect=sceneAspect(frozen.getInt("width"),frozen.getInt("height"));
+                runExportBlocking(renderProject,aspect,params.optString("quality","1080p"),fileName,state);
+                ProjectStore.Project published=store.get(project.id); ProjectStore.Asset output=null;
+                for(ProjectStore.Asset a:published.assets) if(a.uri.equals(published.latestExportUri)) output=a;
+                JSONObject critique=output==null?new JSONObject().put("ok",false):renderCritic.critique(output,8);
+                run.put("state","completed").put("outputUri",published.latestExportUri).put("critique",critique).put("semanticValidation","unchecked");
+                memory.checkpoint(frozen,run); state.setResult(ok().put("uri",published.latestExportUri).put("assetId",output==null?"":output.id).put("revision",frozen.getInt("revision")).put("critique",critique));
+            } catch(Exception error) {run.put("state",Thread.currentThread().isInterrupted()?"checkpointed":"failed").put("error",String.valueOf(error.getMessage())); memory.checkpoint(frozen,run); throw error;}
+        });
+        return ok().put("queued",true).put("jobId",job.id).put("projectId",project.id).put("sceneName",scene.getString("name")).put("revision",scene.getInt("revision")).put("executionPlan",plan).put("durableRecovery",true);
+    }
+
+    private static String sceneAspect(int width,int height) {
+        double ratio=width/(double)height;
+        if(Math.abs(ratio-1)<.03) return "1:1"; if(Math.abs(ratio-.8)<.03) return "4:5";
+        if(Math.abs(ratio-16d/9)<.03) return "16:9"; if(Math.abs(ratio-9d/16)<.03) return "9:16";
+        throw new IllegalArgumentException("Native scene export supports 9:16, 16:9, 1:1 or 4:5 canvas");
+    }
+
+    private JSONObject queueNativeNeural(JSONObject p) throws Exception {
+        ProjectStore.Project project=store.get(p.getString("projectId"));
+        if(project==null) throw new IllegalArgumentException("Neural project not found");
+        String prompt=p.getString("prompt").trim(); if(prompt.isEmpty()||prompt.length()>4000) throw new IllegalArgumentException("Neural prompt requires 1..4000 characters");
+        if(p.has("assetId")) {
+            ProjectStore.Asset reference=project.asset(p.getString("assetId"));
+            if(reference==null||reference.mime==null||!reference.mime.startsWith("image/")) throw new IllegalArgumentException("Region replacement requires an imported image");
+            double left=p.getDouble("left"),top=p.getDouble("top"),right=p.getDouble("right"),bottom=p.getDouble("bottom");
+            if(!Double.isFinite(left+top+right+bottom)||left<0||top<0||right>1||bottom>1||right<=left||bottom<=top) throw new IllegalArgumentException("Invalid normalized repair region");
+        }
+        File dir=modelPackManager.installedDirectory(p.getString("packId"));
+        JSONObject manifest=new JSONObject(SceneMemoryStore.readSmall(new File(dir,"manifest.json")));
+        if(!NativeNeuralEngine.compatible(manifest)) throw new IllegalArgumentException("Install a compatible verified SD-Turbo pack first");
+        JSONObject parameters=new JSONObject(p.toString());
+        if(parameters.has("_modelContract")) NativeModelContract.verify(manifest,parameters.getString("_modelContract"));
+        else parameters.put("_modelContract",NativeModelContract.fingerprint(manifest));
+        if(!parameters.has("_generationId")) parameters.put("_generationId",UUID.randomUUID().toString());
+        if(!parameters.has("seed")) parameters.put("seed",0L);
+        JobManager.Job job=submitRecoverableHeavy("native_neural",parameters,project.id,"Native neural world keyframe",state->{
+            File generated=new File(creativeWorkspace.projectRoot(project.id),"generated/neural");if(!generated.isDirectory()&&!generated.mkdirs()) throw new IllegalStateException("Neural workspace unavailable");
+            File output=new File(generated,parameters.getString("_generationId")+".png");
+            new NativeNeuralEngine(this).generate(parameters.getString("packId"),prompt,parameters.getLong("seed"),output,parameters.getString("_modelContract"),(phase,progress)->{
+                jobs.awaitSafeCheckpoint(state,"neural_"+phase);checkpoint(state,"Native neural world",phase,progress,project.id);
+            });
+            ProjectStore.Project fresh=store.get(project.id);if(fresh==null) throw new IllegalStateException("Project deleted");
+            if(parameters.has("assetId")) {
+                ProjectStore.Asset reference=fresh.asset(parameters.getString("assetId"));
+                if(reference==null||reference.mime==null||!reference.mime.startsWith("image/")) throw new IllegalArgumentException("Neural region repair requires an imported image reference");
+                android.graphics.Bitmap base=NativeSceneRenderer.loadImage(this,reference.uri,1920), generatedFrame=null,repaired=null;
+                try {
+                    generatedFrame=NativeSceneRenderer.loadImage(this,Uri.fromFile(output).toString(),512);
+                    repaired=NativeRegionRepair.compose(base,generatedFrame,parameters.getDouble("left"),parameters.getDouble("top"),parameters.getDouble("right"),parameters.getDouble("bottom"));
+                    try(FileOutputStream file=new FileOutputStream(output)) {if(!repaired.compress(android.graphics.Bitmap.CompressFormat.PNG,100,file)) throw new IllegalStateException("Region repair encoding failed");}
+                } finally {base.recycle();if(generatedFrame!=null) generatedFrame.recycle();if(repaired!=null) repaired.recycle();}
+            }
+            ProjectStore.Asset asset=store.registerGeneratedAsset(fresh,Uri.fromFile(output),output.getName(),parameters.has("assetId")?"neural_region_repair":"neural_world_keyframe",false);
+            asset.generationMetadata.put("provider","native.onnx.sd-turbo").put("prompt",prompt).put("seed",parameters.getLong("seed")).put("packId",parameters.getString("packId")).put("modelArchiveSha256",manifest.optString("archiveSha256")).put("semanticValidation","unchecked");
+            if(parameters.has("assetId")) asset.generationMetadata.put("sourceAssetId",parameters.getString("assetId")).put("region",new JSONArray(new double[]{parameters.getDouble("left"),parameters.getDouble("top"),parameters.getDouble("right"),parameters.getDouble("bottom")})).put("conditioning","text-only-region-replacement");
+            store.save(fresh);
+            state.setResult(ok().put("assetId",asset.id).put("uri",asset.uri).put("provider","native.onnx.sd-turbo").put("semanticValidation","unchecked"));syncProtocolState();
+        });
+        return ok().put("queued",true).put("jobId",job.id).put("projectId",project.id).put("durableRecovery",true);
+    }
+
+    private JSONObject queueNativeTemporal(JSONObject p) throws Exception {
+        ProjectStore.Project project=store.get(p.optString("projectId",store.active()==null?"":store.active().id));
+        if(project==null) throw new IllegalArgumentException("Temporal project not found");
+        ProjectStore.Asset first=project.asset(p.getString("firstAssetId")),second=project.asset(p.getString("secondAssetId"));
+        if(first==null||second==null||!first.mime.startsWith("image/")||!second.mime.startsWith("image/")) throw new IllegalArgumentException("RAFT requires two explicitly imported image anchors");
+        File modelDir=modelPackManager.installedDirectory(p.getString("packId"));
+        JSONObject manifest=new JSONObject(SceneMemoryStore.readSmall(new File(modelDir,"manifest.json")));
+        if(!NativeRaftEngine.compatible(manifest)) throw new IllegalArgumentException("Install a compatible hash-verified RAFT pack first");
+        JSONObject parameters=new JSONObject(p.toString()); parameters.put("projectId",project.id);
+        if(parameters.has("_modelContract")) NativeModelContract.verify(manifest,parameters.getString("_modelContract"));
+        else parameters.put("_modelContract",NativeModelContract.fingerprint(manifest));
+        if(!parameters.has("_generationId")) parameters.put("_generationId",UUID.randomUUID().toString());
+        double seconds=Math.max(.5,Math.min(30,p.optDouble("durationSeconds",4)));
+        JobManager.Job job=submitRecoverableHeavy("native_temporal",parameters,project.id,"Native RAFT temporal motion",state->{
+            jobs.awaitSafeCheckpoint(state,"raft_forward");
+            android.graphics.Bitmap a=NativeSceneRenderer.loadImage(this,first.uri,1024),b=null;
+            File dir=new File(creativeWorkspace.projectRoot(project.id),"flow/"+parameters.getString("_generationId")); if(!dir.isDirectory()&&!dir.mkdirs()) throw new IllegalStateException("Flow workspace unavailable");
+            File f=new File(dir,"forward.f32"),back=new File(dir,"backward.f32");
+            try {
+                b=NativeSceneRenderer.loadImage(this,second.uri,1024); NativeRaftEngine raft=new NativeRaftEngine(this);
+                checkpoint(state,"Native RAFT","Estimating forward correspondence",5,project.id);
+                NativeRaftEngine.writeFlow(f,raft.estimate(parameters.getString("packId"),a,b,parameters.getString("_modelContract")));
+                jobs.awaitSafeCheckpoint(state,"raft_backward");
+                checkpoint(state,"Native RAFT","Estimating reverse correspondence",12,project.id);
+                NativeRaftEngine.writeFlow(back,raft.estimate(parameters.getString("packId"),b,a,parameters.getString("_modelContract")));
+            } finally {a.recycle();if(b!=null) b.recycle();}
+            JSONObject spec=new JSONObject().put("firstUri",first.uri).put("secondUri",second.uri).put("forwardPath",f.getAbsolutePath()).put("backwardPath",back.getAbsolutePath())
+                    .put("width",manifest.getJSONObject("raft").getInt("width")).put("height",manifest.getJSONObject("raft").getInt("height")).put("durationSeconds",seconds);
+            ProjectStore.Project snapshot=store.get(project.id); if(snapshot==null) throw new IllegalStateException("Project deleted");
+            snapshot=ProjectStore.Project.fromJson(snapshot.toJson()); snapshot.clips.clear();
+            ProjectStore.Clip clip=new ProjectStore.Clip();clip.id=UUID.randomUUID().toString();clip.assetId=first.id;clip.outMs=(long)(seconds*1000);clip.effects.put("temporalFlow",spec);snapshot.clips.add(clip);
+            runExportBlocking(snapshot,parameters.optString("aspect","9:16"),parameters.optString("quality","720p"),"VideoStudio_Temporal_"+parameters.getString("_generationId")+".mp4",state);
+            ProjectStore.Project done=store.get(project.id);state.setResult(ok().put("uri",done.latestExportUri).put("provider","native.onnx.raft").put("semanticValidation","unchecked"));
+        });
+        return ok().put("queued",true).put("jobId",job.id).put("projectId",project.id).put("durableRecovery",true);
+    }
+
     private JSONObject queueGenerateImage(JSONObject p) throws Exception {
         ProjectStore.Project project = resolveProject(p.optString("projectId", ""));
         JSONObject graph = p.optJSONObject("sceneGraph");
@@ -2591,42 +2832,20 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             throw new IllegalArgumentException("Inline media exceeds VideoStudio's private MCP transfer limit");
         }
 
-        byte[] bytes;
-        try {
-            bytes = java.util.Base64.getDecoder().decode(encoded);
-        } catch (IllegalArgumentException error) {
-            throw new IllegalArgumentException("Invalid base64 media payload");
-        }
-        if (bytes.length == 0 || bytes.length > MAX_INLINE_MEDIA_BYTES) {
-            throw new IllegalArgumentException("Inline media exceeds VideoStudio's 12 MB decoded transfer limit");
-        }
-
         String expectedSha = p.optString("sha256", "").trim().toLowerCase(Locale.US);
-        if (!expectedSha.isEmpty()) {
-            String actualSha = sha256Hex(bytes);
-            if (!actualSha.equals(expectedSha)) throw new IllegalArgumentException("Inline media SHA-256 mismatch");
-        }
-
-        if (isMp4) {
-            if (bytes.length < 12
-                    || bytes[4] != 'f'
-                    || bytes[5] != 't'
-                    || bytes[6] != 'y'
-                    || bytes[7] != 'p') {
-                throw new IllegalArgumentException("Inline MP4 payload is missing an ISO media ftyp header");
-            }
-        }
-
         File dir = new File(getFilesDir(), "imports");
         if (!dir.exists() && !dir.mkdirs()) throw new IllegalStateException("Could not create import directory");
-        File file = new File(dir, System.currentTimeMillis() + "_" + name);
-        boolean success = false;
-        try (FileOutputStream out = new FileOutputStream(file)) {
-            out.write(bytes);
-            out.flush();
-            success = true;
-        } finally {
-            if (!success && file.exists()) file.delete();
+        File file = new File(dir, UUID.randomUUID() + "_" + name);
+        long decodedSize = InlineImageWriter.write(encoded, file, MAX_INLINE_MEDIA_BYTES, expectedSha);
+        if (isMp4) {
+            byte[] header = new byte[12];
+            try (FileInputStream input = new FileInputStream(file)) {
+                if (input.read(header) != 12 || header[4] != 'f' || header[5] != 't'
+                        || header[6] != 'y' || header[7] != 'p') {
+                    file.delete();
+                    throw new IllegalArgumentException("Inline MP4 payload is missing an ISO media ftyp header");
+                }
+            }
         }
 
         int width = 0;
@@ -2652,7 +2871,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         ProjectStore.Asset asset = addImportedAsset(project, file, name, mime);
         ActivityLog.add(this, "chatgpt",
                 isMp4 ? "Private inline video imported" : "Private inline frame imported",
-                isMp4 ? name + " • " + (bytes.length / 1024L) + " KB"
+                isMp4 ? name + " • " + (decodedSize / 1024L) + " KB"
                         : name + " • " + width + "×" + height,
                 "success", 100, null, project.id);
 
@@ -2661,7 +2880,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         result.put("assetId", asset.id);
         result.put("name", asset.name);
         result.put("mime", asset.mime);
-        result.put("size", bytes.length);
+        result.put("size", decodedSize);
         if (isImage) {
             result.put("width", width);
             result.put("height", height);
@@ -2670,13 +2889,6 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         }
         result.put("transport", "owner-authenticated-inline-mcp");
         return result;
-    }
-
-    private String sha256Hex(byte[] bytes) throws Exception {
-        byte[] digest = java.security.MessageDigest.getInstance("SHA-256").digest(bytes);
-        StringBuilder out = new StringBuilder(digest.length * 2);
-        for (byte b : digest) out.append(String.format(Locale.US, "%02x", b & 0xff));
-        return out.toString();
     }
 
     private JSONObject queuePrivateImport(JSONObject p) throws Exception {
@@ -2767,30 +2979,33 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     }
 
     private ProjectStore.Asset addImportedAsset(ProjectStore.Project project, File file, String name, String mime) {
-        ProjectStore.Asset asset = new ProjectStore.Asset();
-        asset.id = UUID.randomUUID().toString();
-        asset.uri = Uri.fromFile(file).toString();
-        asset.name = name;
-        asset.mime = mime;
-        asset.durationMs = fileDuration(file);
-        asset.sizeBytes = file.length();
-        asset.seekable = true;
-        asset.persistedReadAccess = true;
-        asset.providerAuthority = "";
-        for (ProjectStore.Asset existing : project.assets) {
-            if (asset.uri.equals(existing.uri)) return existing;
+        if (Thread.currentThread().isInterrupted()) {
+            file.delete();
+            throw new IllegalStateException("Import cancelled");
         }
-        project.assets.add(asset);
-        if (mime.startsWith("video/") || mime.startsWith("image/")) {
-            ProjectStore.Clip clip = new ProjectStore.Clip();
-            clip.id = UUID.randomUUID().toString();
-            clip.assetId = asset.id;
-            clip.inMs = 0;
-            clip.outMs = mime.startsWith("image/") ? 3000 : Math.max(1000, asset.durationMs);
-            project.clips.add(clip);
+        String detectedMime = mime == null ? "application/octet-stream" : mime.split(";", 2)[0].trim();
+        // Attachment servers sometimes use a generic content type. Inspect
+        // image headers without decoding pixels; never invoke a video codec
+        // just to register a still image.
+        android.graphics.BitmapFactory.Options bounds = new android.graphics.BitmapFactory.Options();
+        bounds.inJustDecodeBounds = true;
+        android.graphics.BitmapFactory.decodeFile(file.getAbsolutePath(), bounds);
+        if (bounds.outWidth > 0 && bounds.outHeight > 0 && bounds.outMimeType != null)
+            detectedMime = bounds.outMimeType;
+        if (detectedMime.startsWith("image/") && (bounds.outWidth <= 0 || bounds.outHeight <= 0
+                || (long) bounds.outWidth * bounds.outHeight > 80_000_000L)) {
+            file.delete();
+            throw new IllegalArgumentException("Imported image is unreadable or exceeds the safe dimension limit");
         }
-        store.save(project);
-        return asset;
+        // Downloads finish asynchronously. Append to current persisted state,
+        // not the snapshot captured before the download started.
+        try {
+            return store.registerImportedAsset(project.id, Uri.fromFile(file), name, detectedMime,
+                    detectedMime.startsWith("image/") ? 0 : fileDuration(file));
+        } catch (RuntimeException error) {
+            file.delete();
+            throw error;
+        }
     }
 
     private Uri publishExport(File file, String displayName) throws Exception {
@@ -3331,6 +3546,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             case "analyse_media": return "Analysing media";
             case "prompt_video": return "Creating prompt video";
             case "generate_voice": return "Generating local narration";
+            case "native_scene": return "Native scene runtime";
             case "compile_scene": return "Compiling MotionScript";
             case "run_motion_script": return "Running MotionScript";
             case "plan_creative_graph": return "Planning CreativeIR execution graph";

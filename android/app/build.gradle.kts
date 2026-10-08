@@ -10,8 +10,9 @@ android {
         applicationId = "com.rezoxnemesis.videostudio"
         minSdk = 29
         targetSdk = 35
-        versionCode = 347
-        versionName = "3.4.7"
+        versionCode = 350
+        versionName = "3.5.0"
+        manifestPlaceholders["appLabel"] = "VideoStudio"
     }
 
     testOptions { unitTests.isIncludeAndroidResources = true }
@@ -22,6 +23,14 @@ android {
     }
 
     buildTypes {
+        create("preview") {
+            initWith(getByName("debug"))
+            applicationIdSuffix = ".preview"
+            versionNameSuffix = "-preview"
+            ndk { abiFilters += "arm64-v8a" }
+            manifestPlaceholders["appLabel"] = "VideoStudio Preview"
+            matchingFallbacks += listOf("debug")
+        }
         release {
             isMinifyEnabled = false
         }
@@ -33,6 +42,7 @@ dependencies {
     testImplementation("org.robolectric:robolectric:4.14.1")
     implementation("androidx.media3:media3-exoplayer:1.11.1")
     implementation("androidx.media3:media3-ui:1.11.1")
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.20.0")
     implementation("androidx.media3:media3-transformer:1.11.1")
     implementation("androidx.media3:media3-effect:1.11.1")
     implementation("androidx.media3:media3-common:1.11.1")
@@ -41,4 +51,3 @@ dependencies {
     implementation("com.google.mlkit:segmentation-selfie:16.0.0-beta6")
     implementation("com.google.mlkit:face-mesh-detection:16.0.0-beta1")
 }
-

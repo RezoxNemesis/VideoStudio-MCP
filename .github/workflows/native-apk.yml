@@ -1,0 +1,88 @@
+name: VideoStudio 3.5 Native APK
+
+on:
+  push:
+    branches: [ codex/native-3.5-apk ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: videostudio-native-apk-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+      - name: Install Android SDK
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;35.0.0" >/dev/null
+      - name: Prepare signing directory
+        run: mkdir -p "$HOME/.android"
+      - name: Restore existing app signing key
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.android/debug.keystore
+          key: videostudio-android-debug-signing-v1
+          fail-on-cache-miss: true
+      - name: Require existing signing identity
+        run: test -s "$HOME/.android/debug.keystore"
+      - name: Validate relay compatibility
+        run: npm ci --no-audit --no-fund && npm test
+      - name: Test and build native app
+        working-directory: android
+        run: gradle :app:testDebugUnitTest :app:assembleDebug --max-workers=4 --stacktrace
+      - name: Verify APK identity and version
+        run: |
+          "$ANDROID_HOME/build-tools/35.0.0/aapt2" dump badging android/app/build/outputs/apk/debug/app-debug.apk > apk-metadata.txt
+          grep -F "package: name='com.rezoxnemesis.videostudio' versionCode='350' versionName='3.5.0'" apk-metadata.txt
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs android/app/build/outputs/apk/debug/app-debug.apk > apk-signature.txt
+          cp android/app/build/outputs/apk/debug/app-debug.apk VideoStudio-3.5.0.apk
+          sha256sum VideoStudio-3.5.0.apk > VideoStudio-3.5.0.apk.sha256
+      - name: Upload installable APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: VideoStudio-3.5.0-native-APK
+          path: |
+            VideoStudio-3.5.0.apk
+            VideoStudio-3.5.0.apk.sha256
+            apk-metadata.txt
+            apk-signature.txt
+          if-no-files-found: error
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: VideoStudio-3.5.0-test-results
+          path: android/app/build/test-results/testDebugUnitTest/*.xml
+          if-no-files-found: ignore
+      - name: Publish direct APK download
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cat > native-release-notes.md <<'NOTES'
+          Native VideoStudio 3.5.0, with the existing app package and signing identity.
+
+          Includes bounded image imports, background command execution, durable job recovery, native Scene Studio, and compatibility with the existing ChatGPT MCP relay through app_execute.
+
+          Install over the existing app to retain its projects and MCP identity. Open Connect ChatGPT to check connection status. Custom MCP connectors require a supported ChatGPT account.
+
+          Phone crashes and optional learned-model inference still require physical-device validation. Trained model weights are not bundled. See docs/NATIVE_SCENE_STUDIO.md for implemented features and remaining limitations.
+          NOTES
+          printf '\nSource commit: %s\n' "$GITHUB_SHA" >> native-release-notes.md
+          if gh release view videostudio-native-3.5.0 --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload videostudio-native-3.5.0 VideoStudio-3.5.0.apk VideoStudio-3.5.0.apk.sha256 apk-metadata.txt apk-signature.txt --repo "$GITHUB_REPOSITORY" --clobber
+            gh release edit videostudio-native-3.5.0 --repo "$GITHUB_REPOSITORY" --title 'VideoStudio 3.5.0 Native APK' --notes-file native-release-notes.md
+          else
+            gh release create videostudio-native-3.5.0 VideoStudio-3.5.0.apk VideoStudio-3.5.0.apk.sha256 apk-metadata.txt apk-signature.txt --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title 'VideoStudio 3.5.0 Native APK' --notes-file native-release-notes.md --latest=false
+          fi

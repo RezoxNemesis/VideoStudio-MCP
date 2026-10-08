@@ -112,6 +112,12 @@ public final class NativeRenderEngine {
             Transformer transformer = new Transformer.Builder(context)
                     .setVideoMimeType(MimeTypes.VIDEO_H264)
                     .setAudioMimeType(MimeTypes.AUDIO_AAC)
+                    .setEncoderFactory(new androidx.media3.transformer.DefaultEncoderFactory.Builder(context)
+                            .setEnableFallback(true)
+                            .setEnableFormatFallback(true)
+                            .setRequestedAudioEncoderSettings(new androidx.media3.transformer.AudioEncoderSettings.Builder()
+                                    .setBitrate(128000).build())
+                            .build())
                     .addListener(new Transformer.Listener() {
                         @Override
                         public void onCompleted(Composition composition, ExportResult result) {
@@ -160,6 +166,11 @@ public final class NativeRenderEngine {
             listener.onError(error.getMessage() == null ? "Could not prepare native export" : error.getMessage());
             return null;
         }
+    }
+
+    static int outputHeight(String aspect, String quality) {
+        int shortEdge = quality.equals("320p") ? 320 : quality.equals("512p") ? 512 : quality.equals("720p") ? 720 : 1080;
+        return Math.round(shortEdge / Math.min(1f, aspectRatio(aspect)) / 2f) * 2;
     }
 
     private boolean hasLayeredAnimation(ProjectStore.Project project) {
@@ -265,9 +276,7 @@ public final class NativeRenderEngine {
         JSONObject fx = clip.effects == null ? new JSONObject() : clip.effects;
 
         effects.add(Presentation.createForAspectRatio(aspectRatio(aspect), Presentation.LAYOUT_SCALE_TO_FIT_WITH_CROP));
-        int height = "720p".equalsIgnoreCase(quality)
-                ? ("16:9".equals(aspect) ? 720 : 1280)
-                : ("16:9".equals(aspect) ? 1080 : 1920);
+        int height = outputHeight(aspect, quality);
         effects.add(Presentation.createForHeight(height));
 
         // Keep a safety overscan so parallax never reveals the edge of a plate.
@@ -346,7 +355,8 @@ public final class NativeRenderEngine {
         }
 
         EditedMediaItem.Builder edited = new EditedMediaItem.Builder(media.build());
-        if (image) edited.setFrameRate(30);
+        if (image) edited.setFrameRate(clip.effects != null && clip.effects.optJSONObject("nativeScene") != null
+                ? clip.effects.optJSONObject("nativeScene").optInt("fps",30) : 30);
 
         if (!image && Math.abs(clip.speed - 1f) > .01f) {
             final float speed = Math.max(.25f, Math.min(4f, clip.speed));
@@ -356,7 +366,12 @@ public final class NativeRenderEngine {
             });
         }
 
-        List<AudioProcessor> audio = Collections.emptyList();
+        List<AudioProcessor> audio = new ArrayList<>();
+        if (asset.mime != null && asset.mime.startsWith("video/")) {
+            androidx.media3.common.audio.SonicAudioProcessor resampler = new androidx.media3.common.audio.SonicAudioProcessor();
+            resampler.setOutputSampleRateHz(48000);
+            audio.add(resampler);
+        }
         List<Effect> video = buildEffects(clip, aspect, quality, inputDurationMs);
         edited.setEffects(new Effects(audio, video));
         if (asset.mime == null || !asset.mime.startsWith("video/")) edited.setRemoveAudio(true);
@@ -369,8 +384,21 @@ public final class NativeRenderEngine {
 
         float targetAspect = aspectRatio(aspect);
         effects.add(Presentation.createForAspectRatio(targetAspect, Presentation.LAYOUT_SCALE_TO_FIT_WITH_CROP));
-        int height = "720p".equalsIgnoreCase(quality) ? ("16:9".equals(aspect) ? 720 : 1280) : ("16:9".equals(aspect) ? 1080 : 1920);
+        int height = outputHeight(aspect, quality);
         effects.add(Presentation.createForHeight(height));
+
+        JSONObject temporalFlow = fx.optJSONObject("temporalFlow");
+        if (temporalFlow != null) {
+            try { effects.add(new OverlayEffect(Collections.singletonList(new TemporalFlowOverlay(context, temporalFlow)))); }
+            catch (Exception error) { throw new IllegalArgumentException("Invalid temporal flow artifacts", error); }
+        }
+
+        JSONObject nativeScene = fx.optJSONObject("nativeScene");
+        if (nativeScene != null) {
+            try {
+                effects.add(new OverlayEffect(Collections.singletonList(new NativeSceneOverlay(context, nativeScene))));
+            } catch (Exception error) { throw new IllegalArgumentException("Invalid native VSL scene", error); }
+        }
 
         JSONObject proceduralGraph = fx.optJSONObject("proceduralScene");
         if (proceduralGraph != null) {

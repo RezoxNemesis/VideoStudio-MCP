@@ -102,7 +102,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
         migrateAutonomyDefaultOnce();
         store = new ProjectStore(this);
-        jobs = new JobManager(this);
+        jobs = new JobManager(this, true);
         renderEngine = new NativeRenderEngine(this);
         promptVideoEngine = new PromptVideoEngine(this);
         mediaAnalyzer = new NativeMediaAnalyzer(this);
@@ -747,6 +747,132 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         ui.postDelayed(activityRefresh, 1500);
     }
 
+    private void nativeSceneDialog() {
+        if(activeProject==null) activeProject=store.create("Native Scenes");
+        final String projectId=activeProject.id;
+        LinearLayout box=column(); box.setPadding(dp(16),dp(12),dp(16),dp(12));
+        box.addView(body("VSL runs inside the Android app. Compile saves scene memory; preview creates an image; render exports an MP4. Existing timeline clips are preserved. Use Activity to inspect or stop jobs."));
+        EditText source=new EditText(this); source.setTextColor(C_TEXT); source.setTextSize(13); source.setTypeface(Typeface.MONOSPACE);
+        source.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_FLAG_MULTI_LINE); source.setMinLines(10); source.setMaxLines(18);
+        String key="vsl_editor_"+projectId; source.setText(prefs.getString(key,VslCompiler.DEMO)); box.addView(source);
+        TextView result=body("Ready to compile. Pose synthesis and semantic face/finger repair require compatible models; procedural scenes, image portals and analytic cloth run locally."); box.addView(result);
+        for(String operation:new String[]{"compile","preview","render"}) {
+            Button button=neonButton(operation.equals("compile")?"Save Scene Memory":operation.equals("preview")?"Build Preview":"Render Native Video",C_CYAN); button.setTextColor(Color.BLACK);
+            button.setOnClickListener(v->{
+                prefs.edit().putString(key,source.getText().toString()).apply();
+                try {sendNativeScene(operation,new JSONObject().put("projectId",projectId).put("script",source.getText().toString()).put("quality","1080p"),result);} catch(Exception error) {result.setText(error.getMessage());}
+            }); box.addView(button,margins(-1,dp(48),dp(8),0,0,0));
+        }
+        Button memory=neonButton("Inspect Saved Memory",C_BLUE); memory.setOnClickListener(v->{
+            try {
+                JSONObject compiled=new VslCompiler().compile(source.getText().toString(),projectId);
+                sendNativeScene("inspect",new JSONObject().put("projectId",projectId).put("sceneName",compiled.getString("name")),result);
+            } catch(Exception error) {result.setText(error.getMessage());}
+        }); box.addView(memory,margins(-1,dp(48),dp(8),0,0,0));
+        Button uncertainty=neonButton("Inspect Change Map",C_BLUE);uncertainty.setOnClickListener(v->{
+            try {JSONObject compiled=new VslCompiler().compile(source.getText().toString(),projectId);sendNativeScene("uncertainty",new JSONObject().put("projectId",projectId).put("sceneName",compiled.getString("name")),result);}
+            catch(Exception error) {result.setText(error.getMessage());}
+        });box.addView(uncertainty,margins(-1,dp(48),dp(8),0,0,0));
+        ScrollView scroll=new ScrollView(this);scroll.addView(box);
+        new AlertDialog.Builder(this).setTitle("Native VSL Scene Studio").setView(scroll).setNegativeButton("Close",null).show();
+    }
+
+    private void sendNativeScene(String operation,JSONObject parameters,TextView result) {
+        result.setText("Submitting "+operation+" to the native service…");
+        Intent intent=new Intent(this,ControlService.class).setAction(ControlService.ACTION_LOCAL_SCENE);
+        intent.putExtra("operation",operation);intent.putExtra("parameters",parameters.toString());
+        intent.putExtra("receiver",new android.os.ResultReceiver(ui) {
+            @Override protected void onReceiveResult(int code,Bundle data) {
+                if(isFinishing()||isDestroyed()) return;
+                try {
+                    JSONObject value=new JSONObject(data.getString("result","{}"));
+                    if(!value.optBoolean("ok")) result.setText(value.optString("error","Native operation failed"));
+                    else if(value.optBoolean("queued")) result.setText("Queued native job "+value.optString("jobId")+". Follow progress in Activity; output will appear in this project's Media Bin.");
+                    else if(value.has("uncertainty")) {
+                        JSONObject map=value.getJSONObject("uncertainty");JSONArray tiles=map.getJSONArray("tiles");
+                        android.graphics.Bitmap cells=android.graphics.Bitmap.createBitmap(16,16,android.graphics.Bitmap.Config.ARGB_8888);
+                        int[] colors={Color.rgb(32,210,108),Color.rgb(245,195,45),Color.rgb(230,64,80)};
+                        for(int i=0;i<256;i++) cells.setPixel(i%16,i/16,colors[tiles.getInt(i)]);
+                        ImageView image=new ImageView(MainActivity.this);image.setImageBitmap(android.graphics.Bitmap.createScaledBitmap(cells,512,512,false));cells.recycle();
+                        new AlertDialog.Builder(MainActivity.this).setTitle("Green: preserve · Yellow: reconstruct · Red: missing provider").setMessage("Conservative execution map. Semantic confidence is uncalibrated.").setView(image).setPositiveButton("Close",null).show();
+                        result.setText("Change map: "+map.optInt("preserveTiles")+" preserved, "+map.optInt("reconstructTiles")+" reconstructed, "+map.optInt("missingProviderTiles")+" need providers.");
+                    } else result.setText(value.toString(2));
+                } catch(Exception error) {result.setText("Could not read native result");}
+            }
+        });
+        if(android.os.Build.VERSION.SDK_INT>=26) startForegroundService(intent); else startService(intent);
+    }
+
+    private void nativeImageEngineDialog(boolean temporal) {
+        if(activeProject==null) {Toast.makeText(this,"Create a project and import images first",Toast.LENGTH_LONG).show();return;}
+        ProjectStore.Project project=store.get(activeProject.id); ArrayList<ProjectStore.Asset> images=new ArrayList<>();
+        for(ProjectStore.Asset a:project.assets) if(a.mime!=null&&(a.mime.startsWith("image/")||(!temporal&&a.mime.startsWith("video/")))) images.add(a);
+        if(images.size()<(temporal?2:1)) {Toast.makeText(this,temporal?"Import two image anchors first":"Import an image first",Toast.LENGTH_LONG).show();return;}
+        LinearLayout box=column();box.setPadding(dp(16),dp(12),dp(16),dp(12));
+        box.addView(body(temporal?"Native RAFT estimates motion between two observed images. Install a compatible verified model pack first. Occluded content is not synthesised.":"Create a native perspective portal from an imported image or video. Video plates are sampled at 512 pixels and 15 fps to bound decoder memory. Portal output is visual; source audio is not included."));
+        String[] labels=new String[images.size()]; for(int i=0;i<labels.length;i++) labels[i]=images.get(i).name;
+        android.widget.Spinner first=new android.widget.Spinner(this),second=new android.widget.Spinner(this);
+        first.setAdapter(new android.widget.ArrayAdapter<>(this,android.R.layout.simple_spinner_dropdown_item,labels));box.addView(first);
+        EditText pack=new EditText(this);pack.setTextColor(C_TEXT);pack.setHint("Installed RAFT pack ID");pack.setHintTextColor(C_MUTED);
+        if(temporal) {second.setAdapter(new android.widget.ArrayAdapter<>(this,android.R.layout.simple_spinner_dropdown_item,labels));second.setSelection(1);box.addView(second);box.addView(pack);}
+        TextView result=body("Outputs are added to the native Media Bin.");box.addView(result);
+        Button run=neonButton(temporal?"Render Temporal Motion":"Render Cinematic Portal",C_CYAN);run.setTextColor(Color.BLACK);
+        run.setOnClickListener(v->{try {
+            JSONObject request=new JSONObject().put("projectId",project.id).put("durationSeconds",4);
+            if(temporal) request.put("firstAssetId",images.get(first.getSelectedItemPosition()).id).put("secondAssetId",images.get(second.getSelectedItemPosition()).id).put("packId",pack.getText().toString().trim());
+            else request.put("assetId",images.get(first.getSelectedItemPosition()).id);
+            sendNativeScene(temporal?"temporal":"portal",request,result);
+        } catch(Exception error) {result.setText(error.getMessage());}});box.addView(run,margins(-1,dp(48),dp(8),0,0,0));
+        new AlertDialog.Builder(this).setTitle(temporal?"Native RAFT Motion":"Native Cinematic Worlds").setView(box).setNegativeButton("Close",null).show();
+    }
+
+    private void nativeNeuralDialog() {
+        if(activeProject==null) activeProject=store.create("Neural Worlds");
+        String projectId=activeProject.id;LinearLayout box=column();box.setPadding(dp(16),dp(12),dp(16),dp(12));
+        box.addView(body("Native SD-Turbo generates 512×512 world keyframes, one model phase at a time. Requires a compatible verified model pack and sufficient device memory. Generated images can become portal plates or animated scenes."));
+        EditText prompt=new EditText(this);prompt.setTextColor(C_TEXT);prompt.setHintTextColor(C_MUTED);prompt.setHint("Describe your world");box.addView(prompt);
+        EditText pack=new EditText(this);pack.setTextColor(C_TEXT);pack.setHintTextColor(C_MUTED);pack.setHint("Installed SD-Turbo pack ID");box.addView(pack);
+        TextView result=body("Models are not bundled. No remote inference is used.");box.addView(result);
+        Button run=neonButton("Generate Native Neural Keyframe",C_CYAN);run.setTextColor(Color.BLACK);
+        run.setOnClickListener(v->{try {sendNativeScene("neural",new JSONObject().put("projectId",projectId).put("packId",pack.getText().toString().trim()).put("prompt",prompt.getText().toString()).put("seed",0),result);}catch(Exception error) {result.setText(error.getMessage());}});
+        box.addView(run,margins(-1,dp(48),dp(8),0,0,0));new AlertDialog.Builder(this).setTitle("Native Neural Worlds").setView(box).setNegativeButton("Close",null).show();
+    }
+
+    private void nativeRegionRepairDialog() {
+        if(activeProject==null) {Toast.makeText(this,"Import an image first",Toast.LENGTH_LONG).show();return;}
+        ProjectStore.Project project=store.get(activeProject.id);ArrayList<ProjectStore.Asset> images=new ArrayList<>();
+        for(ProjectStore.Asset a:project.assets) if(a.mime!=null&&a.mime.startsWith("image/")) images.add(a);
+        if(images.isEmpty()) {Toast.makeText(this,"Import an image first",Toast.LENGTH_LONG).show();return;}
+        LinearLayout box=column();box.setPadding(dp(16),dp(12),dp(16),dp(12));
+        box.addView(body("Replace a selected region using a text-conditioned neural keyframe. Pixels outside that region stay intact in the decoded reference raster (maximum 1920 pixels). This is not identity-conditioned inpainting; inspect the result before using it."));
+        String[] names=new String[images.size()];for(int i=0;i<names.length;i++) names[i]=images.get(i).name;
+        android.widget.Spinner image=new android.widget.Spinner(this);image.setAdapter(new android.widget.ArrayAdapter<>(this,android.R.layout.simple_spinner_dropdown_item,names));box.addView(image);
+        EditText prompt=new EditText(this),pack=new EditText(this),region=new EditText(this);
+        for(EditText field:new EditText[]{prompt,pack,region}) {field.setTextColor(C_TEXT);field.setHintTextColor(C_MUTED);box.addView(field);}
+        prompt.setHint("Describe the replacement region");pack.setHint("Installed SD-Turbo pack ID");region.setText("0.25,0.25,0.75,0.75");
+        TextView result=body("Bounds: left, top, right, bottom in 0..1. Requires model weights.");box.addView(result);
+        Button run=neonButton("Generate Region Replacement",C_CYAN);run.setTextColor(Color.BLACK);
+        run.setOnClickListener(v->{try {
+            String[] bounds=region.getText().toString().split(",");if(bounds.length!=4) throw new IllegalArgumentException("Enter four region bounds");
+            JSONObject request=new JSONObject().put("projectId",project.id).put("assetId",images.get(image.getSelectedItemPosition()).id).put("prompt",prompt.getText().toString()).put("packId",pack.getText().toString().trim());
+            for(int i=0;i<4;i++) request.put(new String[]{"left","top","right","bottom"}[i],Double.parseDouble(bounds[i].trim()));
+            sendNativeScene("repair_region",request,result);
+        } catch(Exception error) {result.setText(error.getMessage());}});box.addView(run,margins(-1,dp(48),dp(8),0,0,0));
+        new AlertDialog.Builder(this).setTitle("Native Region Replacement").setView(box).setNegativeButton("Close",null).show();
+    }
+
+    private void nativeModelPackDialog() {
+        if(activeProject==null) {Toast.makeText(this,"Create a project first",Toast.LENGTH_SHORT).show();return;}
+        ArrayList<ProjectStore.Asset> packs=new ArrayList<>();
+        for(ProjectStore.Asset a:activeProject.assets) if(a.name.toLowerCase(Locale.US).endsWith(".zip")) packs.add(a);
+        if(packs.isEmpty()) {Toast.makeText(this,"Import a model-pack ZIP using Import first",Toast.LENGTH_LONG).show();pickMedia();return;}
+        String[] labels=new String[packs.size()];for(int i=0;i<labels.length;i++) labels[i]=packs.get(i).name;
+        new AlertDialog.Builder(this).setTitle("Install Verified Model Pack").setItems(labels,(dialog,index)->{
+            TextView result=body("Preparing pack install");new AlertDialog.Builder(this).setTitle("Native Model Pack").setView(result).setPositiveButton("Close",null).show();
+            try {sendNativeScene("install_pack",new JSONObject().put("projectId",activeProject.id).put("assetId",packs.get(index).id),result);} catch(Exception error) {result.setText(error.getMessage());}
+        }).setNegativeButton("Close",null).show();
+    }
+
     private void showTools() {
         ScrollView scroll = baseScroll();
         LinearLayout box = column();
@@ -778,6 +904,17 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         animateButton.setOnClickListener(v -> animateImagesDialog());
         animateCard.addView(animateButton, margins(-1, dp(52), dp(12), 0, 0, 0));
         box.addView(animateCard, margins(-1, -2, dp(10), 0, 0, 0));
+
+        LinearLayout sceneCard=card(true);
+        sceneCard.addView(title("Native Scene Studio",22));
+        sceneCard.addView(body("Persistent worlds, VSL, scene revisions, sparse raster updates, progressive previews and automatic cache repair. You and ChatGPT use the same native service."));
+        String[] names={"Open VSL Studio","Cinematic Worlds Portal","RAFT Temporal Motion","Neural World Keyframes","Neural Region Replacement","Install Model Pack"};
+        for(int index=0;index<names.length;index++) {
+            final int selected=index; Button button=neonButton(names[index],C_CYAN);button.setTextColor(Color.BLACK);
+            button.setOnClickListener(v->{if(selected==0) nativeSceneDialog();else if(selected==1) nativeImageEngineDialog(false);else if(selected==2) nativeImageEngineDialog(true);else if(selected==3) nativeNeuralDialog();else if(selected==4) nativeRegionRepairDialog();else nativeModelPackDialog();});
+            sceneCard.addView(button,margins(-1,dp(48),dp(8),0,0,0));
+        }
+        box.addView(sceneCard,margins(-1,-2,dp(10),0,0,0));
 
         String[][] groups = {
                 {"◎ Animate Stills", "AI subject layers, face-aware parallax and organic micro-motion"},
@@ -1106,7 +1243,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
         intent.addCategory(Intent.CATEGORY_OPENABLE);
         intent.setType("*/*");
-        intent.putExtra(Intent.EXTRA_MIME_TYPES, new String[]{"video/*", "image/*", "audio/*"});
+        intent.putExtra(Intent.EXTRA_MIME_TYPES, new String[]{"video/*", "image/*", "audio/*", "application/zip", "application/x-zip-compressed"});
         intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
         startActivityForResult(intent, PICK_MEDIA);
     }
@@ -1749,6 +1886,30 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
     }
 
     private void sharePairing() {
+        requestServiceSync();
+        new AlertDialog.Builder(this)
+                .setTitle("Connect VideoStudio to ChatGPT")
+                .setMessage("1. Keep VideoStudio open until the connection shows online.\n\n"
+                        + "2. Copy the private MCP URL and add it as a custom connector in ChatGPT's app/connector settings, if your account supports custom MCP connectors. Setup may require ChatGPT on the web.\n\n"
+                        + "3. Enable that connector in your chat and ask ChatGPT to run app_status, then app_self_test.\n\n"
+                        + "Sharing this message alone does not install a connector. Keep the URL private; it authorises control of this VideoStudio installation.")
+                .setPositiveButton("Copy MCP URL", (dialog, which) -> {
+                    android.content.ClipboardManager clipboard = getSystemService(android.content.ClipboardManager.class);
+                    if (clipboard != null) {
+                        ClipData clip = ClipData.newPlainText("VideoStudio private MCP", protocol.privateMcpUrl());
+                        android.os.PersistableBundle extras = new android.os.PersistableBundle();
+                        extras.putBoolean("android.content.extra.IS_SENSITIVE", true);
+                        clip.getDescription().setExtras(extras);
+                        clipboard.setPrimaryClip(clip);
+                        Toast.makeText(this, "Private MCP URL copied", Toast.LENGTH_SHORT).show();
+                    }
+                })
+                .setNeutralButton("Share to ChatGPT", (dialog, which) -> sendPairingMessage())
+                .setNegativeButton("Close", null)
+                .show();
+    }
+
+    private void sendPairingMessage() {
         Intent send = new Intent(Intent.ACTION_SEND);
         send.setType("text/plain");
         send.putExtra(Intent.EXTRA_TEXT, protocol.pairingMessage());

@@ -47,7 +47,7 @@ public final class CommandJournal {
     }
 
     public synchronized void begin(JSONObject command) {
-        if (command == null || "get_state".equals(command.optString("action"))) return;
+        if (command == null || isDiagnostic(command.optString("action"))) return;
         String id = command.optString("id");
         if (id.isEmpty()) return;
         JSONObject entry = new JSONObject();
@@ -125,7 +125,7 @@ public final class CommandJournal {
     }
 
     public synchronized void finish(JSONObject command, JSONObject result, String status) {
-        if (command == null || "get_state".equals(command.optString("action"))) return;
+        if (command == null || isDiagnostic(command.optString("action"))) return;
         String id = command.optString("id");
         if (id.isEmpty()) return;
         JSONObject entry = new JSONObject();
@@ -179,11 +179,18 @@ public final class CommandJournal {
             JSONArray safe = new JSONArray();
             for (int i = 0; i < stored.length() && safe.length() < MAX; i++) {
                 JSONObject entry = stored.optJSONObject(i);
-                if (entry != null && !"get_state".equals(entry.optString("action"))) safe.put(entry);
+                if (entry != null && !isDiagnostic(entry.optString("action"))) safe.put(entry);
             }
             return safe;
         }
         catch (Exception ignored) { return new JSONArray(); }
     }
-}
 
+    private static boolean isDiagnostic(String action) {
+        // ping returns the same full state as get_state. Keeping either in
+        // the mutation journal recursively embeds previous state snapshots.
+        return "get_state".equals(action) || "ping".equals(action)
+                || "connection_health".equals(action) || "job_status".equals(action)
+                || "self_test".equals(action);
+    }
+}

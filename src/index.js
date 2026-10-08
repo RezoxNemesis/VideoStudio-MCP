@@ -1514,8 +1514,24 @@ function serverForApp(env,ownerKey,protocolVersion=1){
 
   s.registerTool("app_create_prompt_video",{description:"Create and export a real local MP4 from a prompt. ChatGPT can provide a detailed scene plan with original titles, text, motion, transitions, effects and font choices; VideoStudio generates the scene visuals locally and renders them with its native engine.",inputSchema:{prompt:z.string().min(1).max(10000),durationSeconds:z.number().int().min(4).max(120).optional(),aspect:z.enum(["9:16","16:9","1:1","4:5"]).optional(),quality:z.enum(["720p","1080p"]).optional(),style:z.string().max(100).optional(),font:z.string().max(80).optional(),scenes:z.array(z.record(z.string(),z.any())).max(20).optional()}},async args=>queue("prompt_video",args));
 
+  if(isV3) s.registerTool("app_native_scene",{
+    description:"Use the Android-native VSL Scene Studio, shared with the user's AI Tools controls. Operations: capabilities, compile (save immutable memory), inspect, preview, render, portal (image perspective compositor), temporal (two observed image anchors using an installed verified RAFT pack), neural (phased SD-Turbo 512p keyframes with verified compatible weights), repair_region (text-only replacement inside normalized bounds, preserve outside the decoded reference raster; semantic quality unchecked), install_pack. Native-only route; inspect ready/missingCapabilities before render. Procedural/analytic motion is not neural human synthesis. Final results require app_command_result/job_status; queued work is not completion.",
+    inputSchema:{
+      operation:z.enum(["capabilities","compile","inspect","uncertainty","preview","render","portal","temporal","neural","repair_region","install_pack"]),
+      projectId:z.string().min(8).optional(),script:z.string().min(1).max(20000).optional(),
+      sceneName:z.string().regex(/^[A-Za-z][A-Za-z0-9_-]{0,63}$/).optional(),
+      expectedRevision:z.number().int().min(0).optional(),revision:z.number().int().min(1).optional(),
+      assetId:z.string().min(8).optional(),firstAssetId:z.string().min(8).optional(),secondAssetId:z.string().min(8).optional(),
+      left:z.number().min(0).max(1).optional(),top:z.number().min(0).max(1).optional(),right:z.number().min(0).max(1).optional(),bottom:z.number().min(0).max(1).optional(),
+      prompt:z.string().min(1).max(4000).optional(),seed:z.number().int().min(0).max(2147483647).optional(),
+      packId:z.string().max(128).optional(),sha256:z.string().regex(/^[a-fA-F0-9]{64}$/).optional(),
+      durationSeconds:z.number().min(.5).max(30).optional(),quality:z.enum(["720p","1080p"]).optional(),
+      aspect:z.enum(["9:16","16:9","1:1","4:5"]).optional(),fileName:z.string().max(180).optional()
+    }
+  },async args=>queue("native_scene",args));
+
   if(isV3) s.registerTool("app_compile_scene",{
-    description:"Compile safe VideoStudio MotionScript into serializable CreativeIR and persist both in the app-private creative workspace. This is a creative scene language, not arbitrary shell/code execution.",
+    description:"Compile safe VideoStudio MotionScript into serializable CreativeIR, or VSL (source starts with vsl 0.1) into native persistent scene memory and persist both in the app-private creative workspace. This is a creative scene language, not arbitrary shell/code execution.",
     inputSchema:{
       projectId:z.string().min(8).optional(),
       script:z.string().min(1).max(20000)
@@ -1523,7 +1539,7 @@ function serverForApp(env,ownerKey,protocolVersion=1){
   },async({projectId,script})=>queue("compile_scene",{projectId:projectId||"",script}));
 
   if(isV3) s.registerTool("app_run_motion_script",{
-    description:"Compile and apply MotionScript to the active native timeline, persisting CreativeIR and optionally launching a protected VideoStudio render.",
+    description:"Compile and apply MotionScript to the active native timeline, or render VSL through Native Scene Studio while preserving existing timeline clips, persisting CreativeIR and optionally launching a protected VideoStudio render.",
     inputSchema:{
       projectId:z.string().min(8).optional(),
       script:z.string().min(1).max(20000),

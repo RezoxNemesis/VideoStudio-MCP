@@ -322,6 +322,30 @@ public final class ProjectStore {
         }
     }
 
+    public synchronized Asset registerImportedAsset(String projectId, Uri uri, String name,
+                                                     String mime, long durationMs) {
+        Project project = get(projectId);
+        if (project == null) throw new IllegalArgumentException("Import project no longer exists");
+        Asset asset = new Asset();
+        asset.id = UUID.randomUUID().toString();
+        asset.uri = uri.toString();
+        asset.name = name;
+        asset.mime = mime == null ? "application/octet-stream" : mime;
+        asset.durationMs = durationMs;
+        asset.role = "source";
+        asset.createdAt = System.currentTimeMillis();
+        project.assets.add(asset);
+        if (asset.mime.startsWith("video/") || asset.mime.startsWith("image/")) {
+            Clip clip = new Clip();
+            clip.id = UUID.randomUUID().toString();
+            clip.assetId = asset.id;
+            clip.outMs = asset.mime.startsWith("image/") ? 3000 : Math.max(1000, durationMs);
+            project.clips.add(clip);
+        }
+        save(project);
+        return asset;
+    }
+
     public Asset importUri(Project project, Uri uri) {
         Asset a = new Asset();
         a.id = UUID.randomUUID().toString();
@@ -531,4 +555,3 @@ public final class ProjectStore {
         }
     }
 }
-

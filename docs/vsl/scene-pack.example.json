@@ -1,0 +1,95 @@
+{
+  "packVersion": "0.1",
+  "projectId": "example_project",
+  "sceneId": "moving_cube",
+  "runtimeTarget": "android_native",
+  "genomeRevision": 0,
+  "parentRevision": null,
+  "timebase": {
+    "numerator": 1,
+    "denominator": 30
+  },
+  "durationTicks": 120,
+  "coordinates": {
+    "world": "right_handed_y_up_camera_minus_z",
+    "screen": "top_left_x_right_y_down",
+    "worldScale": "relative"
+  },
+  "color": {
+    "reference": "srgb",
+    "compositing": "linear_srgb"
+  },
+  "entities": [
+    {
+      "id": "cube_A",
+      "kind": "object",
+      "parentId": null,
+      "representation": "procedural_geometry",
+      "artifactIds": [],
+      "transform": {
+        "space": "world",
+        "position": [
+          0,
+          0,
+          -4
+        ],
+        "rotationDegrees": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "geometry": {
+        "primitive": "cube",
+        "dimensions": [
+          1,
+          1,
+          1
+        ],
+        "color": "#61d9eb"
+      }
+    }
+  ],
+  "tracks": [
+    {
+      "id": "cube_turn",
+      "entityId": "cube_A",
+      "property": "rotationDegrees",
+      "unit": "deg",
+      "keyframes": [
+        {
+          "tick": 0,
+          "value": [
+            0,
+            0,
+            0
+          ],
+          "interpolation": "linear"
+        },
+        {
+          "tick": 120,
+          "value": [
+            0,
+            90,
+            0
+          ],
+          "interpolation": "linear"
+        }
+      ]
+    }
+  ],
+  "identityConstraints": [],
+  "artifacts": [],
+  "capabilityRequirements": [
+    {
+      "capability": "scene.geometry_render",
+      "runtimeTarget": "android_native",
+      "required": true
+    }
+  ]
+}

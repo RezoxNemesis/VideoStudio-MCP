@@ -1,0 +1,629 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://videostudio.example/spec/scene-pack-0.1.schema.json",
+  "title": "Proposed VideoStudio Scene Pack 0.1 manifest",
+  "description": "Manifest envelope only. No implemented VSL runtime is implied. Cross-reference, hash, tensor-size and interval checks require semantic validation.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "packVersion",
+    "projectId",
+    "sceneId",
+    "runtimeTarget",
+    "genomeRevision",
+    "parentRevision",
+    "timebase",
+    "durationTicks",
+    "coordinates",
+    "color",
+    "entities",
+    "tracks",
+    "identityConstraints",
+    "artifacts",
+    "capabilityRequirements"
+  ],
+  "properties": {
+    "packVersion": {
+      "const": "0.1"
+    },
+    "projectId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$"
+    },
+    "sceneId": {
+      "type": "string",
+      "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,63}$"
+    },
+    "runtimeTarget": {
+      "enum": [
+        "android_native",
+        "studio_web"
+      ]
+    },
+    "genomeRevision": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "parentRevision": {
+      "anyOf": [
+        {
+          "type": "integer",
+          "minimum": 0
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "timebase": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "numerator",
+        "denominator"
+      ],
+      "properties": {
+        "numerator": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000000
+        },
+        "denominator": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000000
+        }
+      }
+    },
+    "durationTicks": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 1000000000
+    },
+    "coordinates": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "world",
+        "screen",
+        "worldScale"
+      ],
+      "properties": {
+        "world": {
+          "const": "right_handed_y_up_camera_minus_z"
+        },
+        "screen": {
+          "const": "top_left_x_right_y_down"
+        },
+        "worldScale": {
+          "enum": [
+            "metric",
+            "relative",
+            "unknown"
+          ]
+        }
+      }
+    },
+    "color": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reference",
+        "compositing"
+      ],
+      "properties": {
+        "reference": {
+          "const": "srgb"
+        },
+        "compositing": {
+          "const": "linear_srgb"
+        }
+      }
+    },
+    "entities": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 128,
+      "items": {
+        "$ref": "#/$defs/entity"
+      }
+    },
+    "tracks": {
+      "type": "array",
+      "maxItems": 256,
+      "items": {
+        "$ref": "#/$defs/track"
+      }
+    },
+    "identityConstraints": {
+      "type": "array",
+      "maxItems": 128,
+      "items": {
+        "$ref": "#/$defs/identity"
+      }
+    },
+    "artifacts": {
+      "type": "array",
+      "maxItems": 10000,
+      "items": {
+        "$ref": "#/$defs/artifact"
+      }
+    },
+    "capabilityRequirements": {
+      "type": "array",
+      "maxItems": 256,
+      "items": {
+        "$ref": "#/$defs/capability"
+      }
+    }
+  },
+  "$defs": {
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "sha256",
+        "path",
+        "byteLength",
+        "mediaType",
+        "provenance"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,63}$"
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "path": {
+          "type": "string",
+          "pattern": "^blobs/[0-9a-f]{64}$"
+        },
+        "byteLength": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "mediaType": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "provenance": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "enum": [
+                "observed",
+                "derived",
+                "generated"
+              ]
+            },
+            "providerId": {
+              "type": "string",
+              "pattern": "^[A-Za-z][A-Za-z0-9_.:-]{0,127}$"
+            },
+            "providerVersion": {
+              "type": "string",
+              "maxLength": 64
+            },
+            "sourceArtifactIds": {
+              "type": "array",
+              "maxItems": 128,
+              "items": {
+                "type": "string",
+                "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,63}$"
+              }
+            }
+          }
+        },
+        "tensor": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "shape",
+            "dtype",
+            "layout",
+            "space"
+          ],
+          "properties": {
+            "shape": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 8,
+              "items": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 65536
+              }
+            },
+            "dtype": {
+              "enum": [
+                "uint8",
+                "int8",
+                "fp16",
+                "fp32"
+              ]
+            },
+            "layout": {
+              "enum": [
+                "NCHW",
+                "NHWC",
+                "HW",
+                "HWC",
+                "XYZ",
+                "UV"
+              ]
+            },
+            "space": {
+              "enum": [
+                "world",
+                "screen_pixels",
+                "normalized_image",
+                "provider_latent"
+              ]
+            },
+            "providerAbi": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "quantization": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "scale",
+                "zeroPoint"
+              ],
+              "properties": {
+                "scale": {
+                  "type": "number",
+                  "exclusiveMinimum": 0
+                },
+                "zeroPoint": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "validity": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "status"
+          ],
+          "properties": {
+            "status": {
+              "enum": [
+                "observed",
+                "estimated",
+                "unresolved"
+              ]
+            },
+            "confidence": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "confidenceCalibrated": {
+              "type": "boolean"
+            }
+          }
+        }
+      }
+    },
+    "entity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "kind",
+        "parentId",
+        "representation",
+        "artifactIds"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,63}$"
+        },
+        "kind": {
+          "enum": [
+            "subject",
+            "object",
+            "camera",
+            "light",
+            "material",
+            "environment"
+          ]
+        },
+        "parentId": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,63}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "representation": {
+          "enum": [
+            "procedural_geometry",
+            "layered_portrait",
+            "mesh",
+            "reference_image",
+            "camera",
+            "light",
+            "material"
+          ]
+        },
+        "artifactIds": {
+          "type": "array",
+          "maxItems": 128,
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,63}$"
+          }
+        },
+        "transform": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "space",
+            "position",
+            "rotationDegrees",
+            "scale"
+          ],
+          "properties": {
+            "space": {
+              "enum": [
+                "world",
+                "normalized_image"
+              ]
+            },
+            "position": {
+              "type": "array",
+              "minItems": 3,
+              "maxItems": 3,
+              "items": {
+                "type": "number"
+              }
+            },
+            "rotationDegrees": {
+              "type": "array",
+              "minItems": 3,
+              "maxItems": 3,
+              "items": {
+                "type": "number"
+              }
+            },
+            "scale": {
+              "type": "array",
+              "minItems": 3,
+              "maxItems": 3,
+              "items": {
+                "type": "number"
+              }
+            }
+          }
+        },
+        "geometry": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "primitive",
+            "dimensions"
+          ],
+          "properties": {
+            "primitive": {
+              "enum": [
+                "circle",
+                "rectangle",
+                "cube",
+                "pyramid",
+                "mesh"
+              ]
+            },
+            "dimensions": {
+              "type": "array",
+              "minItems": 3,
+              "maxItems": 3,
+              "items": {
+                "type": "number"
+              }
+            },
+            "color": {
+              "type": "string",
+              "pattern": "^#[0-9a-fA-F]{6}$"
+            }
+          }
+        }
+      }
+    },
+    "track": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "entityId",
+        "property",
+        "unit",
+        "keyframes"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,63}$"
+        },
+        "entityId": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,63}$"
+        },
+        "property": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "unit": {
+          "enum": [
+            "normalized",
+            "m",
+            "deg",
+            "unitless",
+            "linear_rgb"
+          ]
+        },
+        "keyframes": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 4096,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "tick",
+              "value",
+              "interpolation"
+            ],
+            "properties": {
+              "tick": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "value": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "array",
+                    "minItems": 3,
+                    "maxItems": 3,
+                    "items": {
+                      "type": "number"
+                    }
+                  }
+                ]
+              },
+              "interpolation": {
+                "enum": [
+                  "step",
+                  "linear",
+                  "smoothstep"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "entityId",
+        "referenceArtifactIds",
+        "preserve",
+        "policy",
+        "semanticValidation"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,63}$"
+        },
+        "entityId": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,63}$"
+        },
+        "referenceArtifactIds": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,63}$"
+          }
+        },
+        "preserve": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "face",
+              "clothing",
+              "body_shape",
+              "texture",
+              "geometry"
+            ]
+          }
+        },
+        "policy": {
+          "enum": [
+            "reference_locked",
+            "validated_update"
+          ]
+        },
+        "semanticValidation": {
+          "enum": [
+            "unchecked",
+            "required"
+          ]
+        }
+      }
+    },
+    "capability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "capability",
+        "runtimeTarget",
+        "required"
+      ],
+      "properties": {
+        "capability": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_.-]{1,127}$"
+        },
+        "runtimeTarget": {
+          "enum": [
+            "android_native",
+            "studio_web"
+          ]
+        },
+        "providerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "providerVersion": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "modelHashes": {
+          "type": "array",
+          "maxItems": 16,
+          "items": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        },
+        "required": {
+          "type": "boolean"
+        }
+      }
+    }
+  }
+}

@@ -185,7 +185,7 @@ public final class RecoveryPlanStore {
             String state = plan.optString("state");
             if ("queued".equals(state) || "running".equals(state) || "waiting_retry".equals(state)
                     || "interrupted".equals(state) || "waiting_thermal".equals(state)
-                    || "waiting_memory".equals(state)) {
+                    || "waiting_memory".equals(state) || "retrying".equals(state)) {
                 try {
                     plan.put("state", "cancelled");
                     plan.put("detail", "Cancelled");
@@ -210,7 +210,7 @@ public final class RecoveryPlanStore {
             String state = plan.optString("state");
             if ("queued".equals(state) || "running".equals(state) || "waiting_retry".equals(state)
                     || "interrupted".equals(state) || "waiting_thermal".equals(state)
-                    || "waiting_memory".equals(state)) {
+                    || "waiting_memory".equals(state) || "retrying".equals(state)) {
                 try { out.put(new JSONObject(plan.toString())); }
                 catch (Exception ignored) {}
             }
