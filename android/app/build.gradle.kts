@@ -22,9 +22,16 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
+    signingConfigs {
+        getByName("debug") {
+            System.getenv("VIDEOSTUDIO_SIGNING_KEY")?.let { storeFile = file(it) }
+        }
+    }
+
     buildTypes {
         create("mobile") {
             initWith(getByName("debug"))
+            signingConfig = signingConfigs.getByName("debug")
             ndk { abiFilters += "arm64-v8a" }
             matchingFallbacks += listOf("debug")
         }

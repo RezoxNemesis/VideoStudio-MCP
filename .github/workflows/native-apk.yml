@@ -41,12 +41,13 @@ jobs:
         run: npm install --no-audit --no-fund && npm test
       - name: Test and build native app
         working-directory: android
-        run: gradle :app:testDebugUnitTest :app:assembleMobile --max-workers=4 --stacktrace
+        run: VIDEOSTUDIO_SIGNING_KEY="$HOME/.android/debug.keystore" gradle :app:testDebugUnitTest :app:assembleMobile --max-workers=4 --stacktrace
       - name: Verify APK identity and version
         run: |
           "$ANDROID_HOME/build-tools/35.0.0/aapt2" dump badging android/app/build/outputs/apk/mobile/app-mobile.apk > apk-metadata.txt
           grep -F "package: name='com.rezoxnemesis.videostudio' versionCode='360' versionName='3.6.0'" apk-metadata.txt
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs android/app/build/outputs/apk/mobile/app-mobile.apk > apk-signature.txt
+          grep -F "certificate SHA-256 digest: 6798d7392a47fb2e30282dee28f7fcfa0c0a9bc7ee54670dc3ffb8318ac2d792" apk-signature.txt
           cp android/app/build/outputs/apk/mobile/app-mobile.apk VideoStudio-3.6.0.apk
           sha256sum VideoStudio-3.6.0.apk > VideoStudio-3.6.0.apk.sha256
       - name: Upload installable APK
