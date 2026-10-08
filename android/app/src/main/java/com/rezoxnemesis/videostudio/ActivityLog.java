@@ -115,6 +115,28 @@ public final class ActivityLog {
         return out;
     }
 
+    /**
+     * Returns only user/ChatGPT work. Connection heartbeats and service
+     * housekeeping stay available in the full activity history but never drive
+     * the "Autonomous work" cards.
+     */
+    public static synchronized JSONArray recentWork(Context context, int limit) {
+        JSONArray old = readArray(context.getSharedPreferences(PREFS, Context.MODE_PRIVATE));
+        JSONArray out = new JSONArray();
+        int count = Math.max(1, Math.min(MAX, limit));
+        for (int i = 0; i < old.length() && out.length() < count; i++) {
+            JSONObject item = old.optJSONObject(i);
+            if (item == null) continue;
+            if (!ExecutionTruthPolicy.shouldSurfaceAsWork(
+                    item.optString("source", ""),
+                    item.optString("action", ""))) {
+                continue;
+            }
+            out.put(item);
+        }
+        return out;
+    }
+
     public static synchronized void clear(Context context) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
                 .edit().putString(KEY, "[]").apply();

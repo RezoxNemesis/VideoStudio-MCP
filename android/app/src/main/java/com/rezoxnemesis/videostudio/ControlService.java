@@ -27,8 +27,12 @@ import java.net.InetAddress;
 import java.net.URL;
 import java.util.ArrayList;
 import java.util.Locale;
+import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -39,6 +43,8 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     public static final String ACTION_RECONNECT = "com.rezoxnemesis.videostudio.RECONNECT";
     public static final String ACTION_SYNC = "com.rezoxnemesis.videostudio.SYNC_STATE";
     public static final String ACTION_LOCAL_ANIMATE = "com.rezoxnemesis.videostudio.LOCAL_ANIMATE_IMAGES";
+    public static final String ACTION_LOCAL_PROMPT_VIDEO = "com.rezoxnemesis.videostudio.LOCAL_PROMPT_VIDEO";
+    public static final String ACTION_LOCAL_EXPORT = "com.rezoxnemesis.videostudio.LOCAL_EXPORT_PROJECT";
     private static final String CHANNEL = "videostudio_private_control";
     private static final int NOTIFICATION_ID = 6101;
     private static final String PREFS = "videostudio_native_v1";
@@ -78,10 +84,14 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     private DriveWorkspaceProvider driveWorkspace;
     private SharedPreferences prefs;
     private CommandJournal commandJournal;
+    private final ExecutorService commandCompletionWatchers = Executors.newFixedThreadPool(2);
+    private final Set<String> watchedCommands = ConcurrentHashMap.newKeySet();
+    private volatile boolean serviceAlive;
 
     @Override
     public void onCreate() {
         super.onCreate();
+        serviceAlive = true;
         prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
         migrateAutonomyDefaultOnce();
         commandJournal = new CommandJournal(this);
@@ -117,6 +127,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                         + " • generation " + protocol.appGeneration(),
                 "success", null, null, null);
         recoverDurablePlans();
+        reattachInflightCommandWatchers();
         NativeAgentWatchdog.scheduleHealthy(this, "service_created");
     }
 
@@ -169,6 +180,44 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                         error.getMessage() == null ? "Could not queue animation" : error.getMessage(),
                         "failed", null, null, intent.getStringExtra("projectId"));
             }
+        } else if (ACTION_LOCAL_PROMPT_VIDEO.equals(action)) {
+            try {
+                JSONObject p = new JSONObject();
+                p.put("prompt", intent.getStringExtra("prompt") == null ? "" : intent.getStringExtra("prompt"));
+                p.put("durationSeconds", Math.max(4, Math.min(120, intent.getIntExtra("durationSeconds", 18))));
+                p.put("aspect", intent.getStringExtra("aspect") == null ? "9:16" : intent.getStringExtra("aspect"));
+                p.put("quality", intent.getStringExtra("quality") == null ? "1080p" : intent.getStringExtra("quality"));
+                p.put("style", intent.getStringExtra("style") == null ? "cinematic" : intent.getStringExtra("style"));
+                p.put("fileName", intent.getStringExtra("fileName") == null
+                        ? "VideoStudio_AI_" + System.currentTimeMillis() + ".mp4"
+                        : intent.getStringExtra("fileName"));
+                JSONObject queued = queuePromptVideo(p);
+                ActivityLog.add(this, "user", "Prompt video queued",
+                        "Native job " + shortId(queued.optString("jobId")) + " • project " + shortId(queued.optString("projectId")),
+                        "queued", 0, null, queued.optString("projectId", ""));
+            } catch (Exception error) {
+                ActivityLog.add(this, "user", "Prompt video failed",
+                        error.getMessage() == null ? "Could not queue prompt video" : error.getMessage(),
+                        "failed", null, null, null);
+            }
+        } else if (ACTION_LOCAL_EXPORT.equals(action)) {
+            try {
+                JSONObject p = new JSONObject();
+                p.put("projectId", intent.getStringExtra("projectId"));
+                p.put("aspect", intent.getStringExtra("aspect") == null ? "9:16" : intent.getStringExtra("aspect"));
+                p.put("quality", intent.getStringExtra("quality") == null ? "1080p" : intent.getStringExtra("quality"));
+                p.put("fileName", intent.getStringExtra("fileName") == null
+                        ? "VideoStudio_" + System.currentTimeMillis() + ".mp4"
+                        : intent.getStringExtra("fileName"));
+                JSONObject queued = queueExport(p);
+                ActivityLog.add(this, "user", "Export queued",
+                        "Native job " + shortId(queued.optString("jobId")),
+                        "queued", 0, null, queued.optString("projectId", ""));
+            } catch (Exception error) {
+                ActivityLog.add(this, "user", "Export failed",
+                        error.getMessage() == null ? "Could not queue export" : error.getMessage(),
+                        "failed", null, null, intent.getStringExtra("projectId"));
+            }
         }
         syncProtocolState();
         if (protocol != null && !protocol.isControlPaused()) {
@@ -188,12 +237,14 @@ public final class ControlService extends Service implements AppProtocol.Callbac
 
     @Override
     public void onDestroy() {
-        ActivityLog.add(this, "system", "VideoStudio control stopped", "Background controller stopped", "info", null, null, null);
+        serviceAlive = false;
+        ActivityLog.add(this, "transport", "VideoStudio control stopped", "Background controller stopped", "info", null, null, null);
         markService(false, "Control service stopped");
         boolean paused = protocol != null && protocol.isControlPaused();
         if (activeRender != null) activeRender.cancel();
         if (jobs != null) jobs.shutdown();
         if (protocol != null) protocol.stop();
+        commandCompletionWatchers.shutdownNow();
         if (NativeAgentWatchdog.shouldRearm(paused)) {
             NativeAgentWatchdog.scheduleRetry(this, "service_destroyed");
         } else {
@@ -208,12 +259,11 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     @Override
     public void onConnection(boolean connected, String detail) {
         boolean wasOnline = prefs.getBoolean(KEY_SERVICE_ONLINE, false);
-        String previousDetail = prefs.getString(KEY_SERVICE_DETAIL, "");
         markService(connected, detail);
-        if (connected != wasOnline || !String.valueOf(detail).equals(previousDetail)) {
-            ActivityLog.add(this, "system", connected ? "MCP connected" : "MCP reconnecting",
+        if (connected != wasOnline) {
+            ActivityLog.add(this, "transport", connected ? "MCP connected" : "MCP reconnecting",
                     detail + " • app " + AppProtocol.APP_VERSION,
-                    connected ? "success" : "running", null, null, null);
+                    connected ? "info" : "running", null, null, null);
         }
         if (protocol != null && !protocol.isControlPaused()) {
             if (connected) NativeAgentWatchdog.scheduleHealthy(this, "connection_healthy");
@@ -246,7 +296,21 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             protocol.complete(command, priorResult, priorStatus);
             return;
         }
+
+        JSONObject inflight = commandJournal.inflight(commandId);
+        if (inflight != null) {
+            watchDeferredCommand(command, inflight.optJSONObject("queuedResult"));
+            ActivityLog.add(this, "chatgpt", friendlyAction(action),
+                    "Existing native job still running • " + shortId(inflight.optString("jobId", "")),
+                    "running", inflight.optInt("progress", 0), commandId,
+                    inflight.optString("projectId", projectId));
+            return;
+        }
+
         commandJournal.begin(command);
+        if (mayQueueBackgroundWork(action) && !commandId.isEmpty()) {
+            try { p.put("_mcpCommandId", commandId); } catch (Exception ignored) {}
+        }
         ActivityLog.add(this, "chatgpt", friendlyAction(action), commandDetail(action, p), "running", 0, commandId, projectId);
 
         if (!isAllowed(action, p)) {
@@ -732,13 +796,22 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         if (p.optJSONArray("clips") != null) result.put("plan", applyEditPlan(p));
         if (p.has("preset")) result.put("preset", applyCreatorPreset(p));
         ProjectStore.Project project = resolveProject(p.optString("projectId", ""));
+        result.put("projectId", project.id);
         if (p.optBoolean("render", false)) {
             JSONObject exportArgs = new JSONObject();
             exportArgs.put("projectId", project.id);
             exportArgs.put("aspect", p.optString("aspect", "9:16"));
             exportArgs.put("quality", p.optString("quality", "1080p"));
             exportArgs.put("fileName", p.optString("fileName", "VideoStudio_AI_Edit_" + System.currentTimeMillis() + ".mp4"));
-            result.put("export", queueExport(exportArgs));
+            if (p.has("_mcpCommandId")) exportArgs.put("_mcpCommandId", p.optString("_mcpCommandId", ""));
+            JSONObject export = queueExport(exportArgs);
+            result.put("export", export);
+            if (ExecutionTruthPolicy.isDeferredResult(export)) {
+                result.put("queued", true);
+                result.put("jobId", export.optString("jobId", ""));
+                result.put("durableRecovery", export.optBoolean("durableRecovery", true));
+                result.put("render", true);
+            }
         }
         return result;
     }
@@ -1453,6 +1526,21 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 ActivityLog.add(this, "system", "Resuming interrupted work",
                         friendlyAction(action) + " • job " + shortId(queued.optString("jobId", "")),
                         "running", plan.optInt("progress", 0), null, projectId);
+
+                String deferredCommandId = parameters.optString("_mcpCommandId", "");
+                if (!deferredCommandId.isEmpty() && ExecutionTruthPolicy.isDeferredResult(queued)) {
+                    JSONObject inflight = commandJournal.inflight(deferredCommandId);
+                    if (inflight != null) {
+                        commandJournal.relinkJob(
+                                deferredCommandId,
+                                queued.optString("jobId", ""),
+                                queued.optString("projectId", projectId),
+                                queued
+                        );
+                        JSONObject originalCommand = inflight.optJSONObject("command");
+                        if (originalCommand != null) watchDeferredCommand(originalCommand, queued);
+                    }
+                }
             } catch (Exception error) {
                 ActivityLog.add(this, "system", "Recovery retry deferred",
                         friendlyAction(action) + " • " + (error.getMessage() == null ? "retry unavailable" : error.getMessage()),
@@ -2903,17 +2991,250 @@ public final class ControlService extends Service implements AppProtocol.Callbac
 
     private void complete(JSONObject command, JSONObject result) {
         boolean ok = result.optBoolean("ok", false);
-        boolean queued = result.optBoolean("queued", false);
         String action = command.optString("action", "");
         JSONObject p = command.optJSONObject("parameters");
         String projectId = p == null ? "" : p.optString("projectId", result.optString("projectId", ""));
-        String detail = queued
-                ? ("Queued inside VideoStudio" + (result.optString("jobId", "").isEmpty() ? "" : " • job " + shortId(result.optString("jobId"))))
-                : (ok ? completionDetail(action, result) : result.optString("error", "Command failed"));
-        ActivityLog.add(this, "chatgpt", friendlyAction(action), detail, queued ? "queued" : (ok ? "success" : "failed"), queued ? 0 : (ok ? 100 : null), command.optString("id", ""), projectId);
+
+        if (ExecutionTruthPolicy.isDeferredResult(result)) {
+            String jobId = result.optString("jobId", "");
+            ActivityLog.add(this, "chatgpt", friendlyAction(action),
+                    "Queued inside VideoStudio • job " + shortId(jobId),
+                    "queued", 0, command.optString("id", ""), projectId);
+            commandJournal.linkJob(command, jobId, projectId, result);
+            watchDeferredCommand(command, result);
+            return;
+        }
+
+        String detail = ok ? completionDetail(action, result) : result.optString("error", "Command failed");
+        ActivityLog.add(this, "chatgpt", friendlyAction(action), detail,
+                ok ? "success" : "failed", ok ? 100 : null,
+                command.optString("id", ""), projectId);
         String terminalStatus = ok ? "completed" : "failed";
         commandJournal.finish(command, result, terminalStatus);
         protocol.complete(command, result, terminalStatus);
+    }
+
+    private boolean mayQueueBackgroundWork(String action) {
+        if (action == null) return false;
+        switch (action) {
+            case "prompt_video":
+            case "animate_images":
+            case "export_project":
+            case "autonomous_edit":
+            case "generate_image":
+            case "generate_voice":
+            case "run_creative_graph":
+            case "install_model_pack":
+            case "sync_project_to_drive":
+            case "offload_project_to_drive":
+            case "restore_project_from_drive":
+            case "archive_model_pack_to_drive":
+            case "restore_model_pack_from_drive":
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    private void reattachInflightCommandWatchers() {
+        if (commandJournal == null) return;
+        JSONArray inflight = commandJournal.inflightEntries(160);
+        for (int i = 0; i < inflight.length(); i++) {
+            JSONObject entry = inflight.optJSONObject(i);
+            if (entry == null) continue;
+            JSONObject command = entry.optJSONObject("command");
+            if (command == null) continue;
+            watchDeferredCommand(command, entry.optJSONObject("queuedResult"));
+        }
+    }
+
+    private void watchDeferredCommand(JSONObject command, JSONObject initialQueuedResult) {
+        if (command == null) return;
+        String commandId = command.optString("id", "");
+        if (commandId.isEmpty() || !watchedCommands.add(commandId)) return;
+
+        JSONObject commandCopy;
+        JSONObject queuedCopy;
+        try { commandCopy = new JSONObject(command.toString()); }
+        catch (Exception ignored) { commandCopy = command; }
+        try {
+            queuedCopy = initialQueuedResult == null
+                    ? new JSONObject()
+                    : new JSONObject(initialQueuedResult.toString());
+        } catch (Exception ignored) {
+            queuedCopy = initialQueuedResult == null ? new JSONObject() : initialQueuedResult;
+        }
+
+        final JSONObject durableCommand = commandCopy;
+        final JSONObject durableQueued = queuedCopy;
+        commandCompletionWatchers.execute(() -> {
+            long missingSince = 0L;
+            try {
+                while (serviceAlive && !Thread.currentThread().isInterrupted()) {
+                    JSONObject binding = commandJournal.inflight(commandId);
+                    if (binding == null) return;
+
+                    String jobId = binding.optString("jobId", durableQueued.optString("jobId", ""));
+                    if (jobId.isEmpty()) {
+                        Thread.sleep(350L);
+                        continue;
+                    }
+
+                    JSONObject state = jobs.get(jobId);
+                    if (!state.optBoolean("found", false)) {
+                        if (missingSince == 0L) missingSince = System.currentTimeMillis();
+                        if (System.currentTimeMillis() - missingSince > 180_000L) {
+                            JSONObject failed = new JSONObject();
+                            failed.put("ok", false);
+                            failed.put("error", "Native background job disappeared before a terminal result");
+                            finishDeferredCommand(durableCommand, failed, "failed",
+                                    binding.optString("projectId", ""));
+                            return;
+                        }
+                        Thread.sleep(500L);
+                        continue;
+                    }
+                    missingSince = 0L;
+
+                    JSONObject job = state.optJSONObject("job");
+                    if (job == null) {
+                        Thread.sleep(350L);
+                        continue;
+                    }
+                    String jobState = job.optString("state", "");
+                    if (!JobManager.isTerminal(jobState)) {
+                        Thread.sleep(450L);
+                        continue;
+                    }
+
+                    String projectId = binding.optString(
+                            "projectId",
+                            durableQueued.optString("projectId", "")
+                    );
+                    if ("completed".equals(jobState)) {
+                        JSONObject finalResult = buildVerifiedDeferredResult(
+                                durableCommand.optString("action", ""),
+                                binding.optJSONObject("queuedResult"),
+                                job,
+                                jobId,
+                                projectId
+                        );
+                        if (finalResult.optBoolean("ok", false)) {
+                            finishDeferredCommand(durableCommand, finalResult, "completed", projectId);
+                        } else {
+                            finishDeferredCommand(durableCommand, finalResult, "failed", projectId);
+                        }
+                    } else {
+                        JSONObject failed = new JSONObject();
+                        failed.put("ok", false);
+                        failed.put("jobId", jobId);
+                        failed.put("jobState", jobState);
+                        failed.put("error", job.optString("detail",
+                                "Native job " + jobState));
+                        finishDeferredCommand(durableCommand, failed, "failed", projectId);
+                    }
+                    return;
+                }
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+            } catch (Exception error) {
+                try {
+                    JSONObject failed = new JSONObject();
+                    failed.put("ok", false);
+                    failed.put("error", error.getMessage() == null
+                            ? "Could not verify native job completion"
+                            : error.getMessage());
+                    finishDeferredCommand(durableCommand, failed, "failed",
+                            durableQueued.optString("projectId", ""));
+                } catch (Exception ignored) {}
+            } finally {
+                watchedCommands.remove(commandId);
+            }
+        });
+    }
+
+    private JSONObject buildVerifiedDeferredResult(String action,
+                                                   JSONObject queuedResult,
+                                                   JSONObject job,
+                                                   String jobId,
+                                                   String projectId) throws Exception {
+        JSONObject out = queuedResult == null
+                ? new JSONObject()
+                : new JSONObject(queuedResult.toString());
+        out.put("ok", true);
+        out.put("queued", false);
+        out.put("completed", true);
+        out.put("jobId", jobId);
+        out.put("jobState", "completed");
+        out.put("job", new JSONObject(job.toString()));
+
+        JSONObject jobResult = job.optJSONObject("result");
+        if (jobResult != null) out.put("jobResult", new JSONObject(jobResult.toString()));
+
+        boolean requirePlayableOutput = ExecutionTruthPolicy.requiresValidatedMediaOutput(action);
+        if ("animate_images".equals(action)
+                && queuedResult != null
+                && !queuedResult.optBoolean("render", true)) {
+            requirePlayableOutput = false;
+        }
+        if ("autonomous_edit".equals(action)
+                && queuedResult != null
+                && !queuedResult.optBoolean("render", false)) {
+            requirePlayableOutput = false;
+        }
+
+        if (requirePlayableOutput) {
+            ProjectStore.Project project = projectId == null || projectId.isEmpty()
+                    ? null : store.get(projectId);
+            if (project == null) {
+                out.put("ok", false);
+                out.put("error", "Native job completed but its project is missing");
+                return out;
+            }
+
+            JSONObject committed = recoveryPlans.outputForJob(jobId);
+            String outputUri = committed == null ? "" : committed.optString("uri", "");
+            String outputName = committed == null ? "" : committed.optString("name", "");
+            if (outputUri.isEmpty()) {
+                long jobCreatedAt = job.optLong("createdAt", 0L);
+                if (project.latestExportAt >= jobCreatedAt) {
+                    outputUri = project.latestExportUri;
+                    outputName = project.latestExportName;
+                }
+            }
+            if (outputUri == null || outputUri.isEmpty() || !isReadableOutput(outputUri)) {
+                out.put("ok", false);
+                out.put("error", "Native job reached completed state without a readable published video");
+                out.put("verifiedPlayableOutput", false);
+                return out;
+            }
+
+            out.put("verifiedPlayableOutput", true);
+            out.put("outputUri", outputUri);
+            out.put("outputName", outputName == null ? "" : outputName);
+            out.put("projectId", project.id);
+            out.put("assetCount", project.assets.size());
+            out.put("clipCount", project.clips.size());
+            out.put("durationMs", project.outputDurationMs());
+        }
+        return out;
+    }
+
+    private void finishDeferredCommand(JSONObject command,
+                                       JSONObject result,
+                                       String status,
+                                       String projectId) {
+        String commandId = command.optString("id", "");
+        boolean ok = "completed".equals(status) && result.optBoolean("ok", false);
+        String action = command.optString("action", "");
+        String detail = ok
+                ? completionDetail(action, result)
+                : result.optString("error", "Native background work failed");
+        ActivityLog.add(this, "chatgpt", friendlyAction(action), detail,
+                ok ? "success" : "failed", ok ? 100 : null,
+                commandId, projectId);
+        commandJournal.finish(command, result, status);
+        protocol.complete(command, result, status);
     }
 
     private void checkpoint(JobManager.Job state, String action, String detail, int progress, String projectId) {
@@ -2929,7 +3250,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             live.put("progress", Math.max(0, Math.min(100, progress)));
             live.put("state", state.state);
             live.put("updatedAt", System.currentTimeMillis());
-            prefs.edit().putString("job_recovery_snapshot", live.toString()).apply();
+            prefs.edit().putString(ExecutionTruthPolicy.LIVE_JOB_PREF_KEY, live.toString()).apply();
         } catch (Exception ignored) {}
     }
 

@@ -113,7 +113,7 @@ public final class JobManager {
     }
 
     private static final String PREFS = "videostudio_native_v1";
-    private static final String KEY_JOBS = "job_recovery_snapshot";
+    private static final String KEY_JOBS = ExecutionTruthPolicy.JOB_RECOVERY_PREF_KEY;
     private final Context context;
     private final SharedPreferences prefs;
     private static final Semaphore PROCESS_HEAVY_LANE = new Semaphore(1, true);

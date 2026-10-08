@@ -1,4 +1,4 @@
-# VideoStudio v3.4.2
+# VideoStudio v3.4.5
 
 ## Studio Web 1.0: user-owned Drive + executable generation
 
@@ -80,6 +80,21 @@ Two boundaries remain non-negotiable:
 
 The narrower `all_tools` and `one_file` modes remain available as deliberate user-selected restrictions. VideoStudio does not automatically switch back to full autonomy after the one-time v3.2 migration if the user later chooses one of those modes.
 
+
+## v3.4.5 Execution Truth and Autonomous Handoff
+
+This release fixes the recurring state mismatch where the UI could show connection health as “autonomous work,” long-running MCP commands could appear completed when they were only queued, and the editor could stay pinned to an empty project after the Native Agent created a new AI project in the background.
+
+- transport events such as MCP connect/reconnect are excluded from the autonomous-work feed
+- self-test and connection diagnostics remain visible in Activity but do not occupy the creative-work status card
+- live progress uses a separate `job_live_snapshot` key and no longer overwrites the durable `job_recovery_snapshot` array
+- queued native jobs remain inflight in the MCP command journal until the backing JobManager job reaches a terminal state
+- prompt-video, animation, export, and rendered autonomous-edit commands require a readable published video before MCP completion is reported
+- failed/cancelled jobs return failed MCP command results instead of “completed + queued”
+- inflight command-to-job bindings are durable and are relinked when a recoverable job resumes after restart
+- if the editor is displaying an empty project and the Native Agent creates/selects a new active AI project, the editor follows that project automatically
+- non-empty projects are not force-switched, preserving the user’s current editing context
+- manual Prompt Video and Export buttons now submit to the same foreground Native Agent pipeline as ChatGPT, so progress, recovery, project switching, validation and final status use one execution authority
 
 ## v3.4.2 Always-Available Autonomous MCP
 

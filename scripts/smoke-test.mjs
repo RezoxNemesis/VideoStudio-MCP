@@ -28,6 +28,7 @@ const atmosphere = fs.readFileSync(new URL("../android/app/src/main/java/com/rez
 const creativeWorkspace = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/CreativeWorkspace.java", import.meta.url), "utf8");
 const motionScriptCompiler = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/MotionScriptCompiler.java", import.meta.url), "utf8");
 const activityLog = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/ActivityLog.java", import.meta.url), "utf8");
+const executionTruth = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/ExecutionTruthPolicy.java", import.meta.url), "utf8");
 const recoveryPlans = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/RecoveryPlanStore.java", import.meta.url), "utf8");
 const capabilityRegistry = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/CapabilityRegistry.java", import.meta.url), "utf8");
 const modelPackManager = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/ModelPackManager.java", import.meta.url), "utf8");
@@ -191,7 +192,7 @@ const checks = [
   ["MCP transport compatibility is decoupled from APK version", mcpConnectionCore.includes("transportDecoupledFromApkVersion") && mcpConnectionCore.includes("stable-major-additive-features") && mcpConnectionCore.includes("WIRE_SCHEMA_VERSION") && mcpConnectionCore.includes("FEATURE_LEVEL")],
   ["MCP connection identity survives compatible APK upgrades", mcpConnectionCore.includes("upgradeKeepsDeviceIdentity") && mcpConnectionCore.includes("upgradeKeepsOwnerCredential") && nativeProtocol.includes('PREFS = "videostudio_native_v1"') && nativeProtocol.includes('KEY_ALIAS = "videostudio_owner_key_v1"')],
   ["worker persists negotiated wire compatibility independently of app version", worker.includes("wireSchemaVersion") && worker.includes("featureLevel") && worker.includes("transportDecoupledFromApkVersion") && worker.includes('"stable-core-2"')],
-  ["native app identifies as VideoStudio 3.4.4 while retaining stable MCP v3", nativeProtocol.includes('APP_VERSION = "3.4.4"') && nativeProtocol.includes("PROTOCOL_VERSION = 3") && androidBuild.includes('versionName = "3.4.4"') && androidBuild.includes("versionCode = 344")],
+  ["native app identifies as VideoStudio 3.4.5 while retaining stable MCP v3", nativeProtocol.includes('APP_VERSION = "3.4.5"') && nativeProtocol.includes("PROTOCOL_VERSION = 3") && androidBuild.includes('versionName = "3.4.5"') && androidBuild.includes("versionCode = 345")],
   ["pairing message advertises stable upgrade-surviving endpoint", nativeProtocol.includes("Stable MCP endpoint:") && nativeProtocol.includes("survives compatible VideoStudio APK upgrades")],
   ["MCP Connection Core preserves stable endpoint across APK upgrades", mcpConnectionCore.includes('STABLE_MCP_PATH = "/app-mcp-v3/"') && mcpConnectionCore.includes("appGeneration") && mcpConnectionCore.includes("upgradeKeepsOwnerCredential") && mcpConnectionCore.includes("upgradeKeepsDeviceIdentity")],
   ["MCP Connection Core negotiates only an allow-listed same-origin API profile", mcpConnectionCore.includes("applyRegistrationResponse") && mcpConnectionCore.includes("safeApiPrefix") && mcpConnectionCore.includes("heartbeatMs") && mcpConnectionCore.includes("commandWaitMs")],
@@ -255,7 +256,7 @@ const checks = [
   ["native app has hard Gallery MCP boundary", nativeMain.includes("galleryAccess") && nativeMain.includes('lower.contains("gallery")')],
   ["Android manifest requests no Gallery read permission", !androidManifest.includes("READ_MEDIA_IMAGES") && !androidManifest.includes("READ_MEDIA_VIDEO") && !androidManifest.includes("READ_EXTERNAL_STORAGE")],
   ["native app has stop ChatGPT control", nativeMain.includes("STOP CHATGPT CONTROL") && nativeProtocol.includes("chatgpt_control_paused")],
-  ["native jobs persist crash recovery checkpoints", nativeJobs.includes("job_recovery_snapshot") && nativeJobs.includes("interrupted")],
+  ["native jobs persist crash recovery checkpoints", nativeJobs.includes("JOB_RECOVERY_PREF_KEY") && nativeJobs.includes("interrupted")],
   ["worker hard-blocks Gallery MCP actions", worker.includes('a.includes("gallery")') && worker.includes("Gallery privacy boundary")],
   ["worker exposes v3 prompt video tool", worker.includes('"app_create_prompt_video"') && worker.includes('"prompt_video"')],
   ["worker exposes native autonomous edit/export", worker.includes('"app_autonomous_edit"') && worker.includes('"app_export_project"')],
@@ -267,7 +268,7 @@ const checks = [
   ["editor exposes a real project Media Bin", nativeMain.includes('section("Media Bin")') && nativeMain.includes("asset.generated") && nativeMain.includes("+ Timeline") && nativeMain.includes("scheduleEditorRefresh")],
   ["app foreground self-heals Native Agent after updates", nativeMain.includes("startServiceWatchdog") && nativeMain.includes("control_service_requested_app_version") && nativeMain.includes("requestServiceSync();")],
   ["Native Agent heartbeat records the exact running app version", controlService.includes('"control_service_app_version"') && controlService.includes("AppProtocol.APP_VERSION")],
-  ["connection activity avoids heartbeat log spam", controlService.includes("connected != wasOnline") && controlService.includes("previousDetail")],
+  ["connection activity avoids heartbeat log spam", controlService.includes("connected != wasOnline") && !controlService.includes("previousDetail = prefs.getString(KEY_SERVICE_DETAIL") && controlService.includes('"transport", connected ? "MCP connected"')],
   ["background export registers generated MP4 in Media Bin", controlService.includes("Registering generated media") && controlService.includes("Generated video available") && controlService.includes("registerGeneratedAsset")],
   ["native agent can insert a media-bin asset into timeline", controlService.includes('case "insert_asset_timeline"') && projectStore.includes("appendAssetToTimeline") && worker.includes('"app_insert_asset_timeline"')],
   ["heavy jobs persist named recovery stages", nativeJobs.includes('public volatile String stage = "queued"') && nativeJobs.includes("lastCheckpointAt") && nativeJobs.includes("recoverable")],
@@ -344,9 +345,17 @@ const checks = [
   ["cached connector compatibility routes v3 devices to v3 queue", worker.includes("enqueueNative") && worker.includes("appEnqueueV3") && worker.includes("commandNative")],
   ["native analysis results render as MCP images", worker.includes("safeResult") && worker.includes('type:"image"')],
   ["Android editor exposes immutable preview checkpoints and explicit new-result handoff", nativeMain.includes("PreviewSnapshotStore") && nativeMain.includes("Play new result") && controlService.includes("previewSnapshots.publish")],
-  ["Android editor shows autonomous work status without replacing playback surface", nativeMain.includes("Autonomous work") && nativeMain.includes("job_recovery_snapshot")],
+  ["Android editor shows autonomous work status without replacing playback surface", nativeMain.includes("Autonomous work") && nativeMain.includes("LIVE_JOB_PREF_KEY") && nativeMain.includes("recentWork")],
   ["Android editor declares Media3 ExoPlayer and PlayerView dependencies", androidBuild.includes("media3-exoplayer:1.11.1") && androidBuild.includes("media3-ui:1.11.1")],
   ["Android editor uses reusable LiveEditPlayer instead of VideoView preview ownership", nativeMain.includes("LiveEditPlayer") && !nativeMain.includes("private VideoView preview")],
+  ["transport and diagnostics cannot masquerade as autonomous work", activityLog.includes("recentWork") && executionTruth.includes("isTransportActivity") && executionTruth.includes("running videostudio v3 self-test")],
+  ["live job display cannot overwrite crash recovery journal", executionTruth.includes('JOB_RECOVERY_PREF_KEY = "job_recovery_snapshot"') && executionTruth.includes('LIVE_JOB_PREF_KEY = "job_live_snapshot"') && controlService.includes("LIVE_JOB_PREF_KEY") && nativeJobs.includes("JOB_RECOVERY_PREF_KEY")],
+  ["empty editor follows a service-created active AI project", nativeMain.includes("shouldAdoptStoreActive") && nativeMain.includes("store.active()")],
+  ["queued MCP render commands remain inflight until native terminal state", controlService.includes("watchDeferredCommand") && commandJournal.includes("linkJob") && commandJournal.includes("inflight(String commandId)") && !controlService.includes('queued ? "queued" : (ok ? "success" : "failed")')],
+  ["video-producing native jobs require readable published output before MCP completion", controlService.includes("requiresValidatedMediaOutput") && controlService.includes("verifiedPlayableOutput") && controlService.includes("isReadableOutput(outputUri)")],
+  ["manual prompt video and export share the foreground Native Agent pipeline", controlService.includes("ACTION_LOCAL_PROMPT_VIDEO") && controlService.includes("ACTION_LOCAL_EXPORT") && nativeMain.includes("ControlService.ACTION_LOCAL_PROMPT_VIDEO") && nativeMain.includes("ControlService.ACTION_LOCAL_EXPORT")],
+
+
   ["native remote ingest has no legacy 350 MB application ceiling", !controlService.includes("MAX_REMOTE_IMPORT_BYTES") && !controlService.includes("350 MB")],
   ["native URL and direct attachment ingest delegate to resumable transfer engine", controlService.includes("ResumableTransferManager") && controlService.includes("ResumableTransferManager.Request") && controlService.includes(".download(")],
   ["native resumable HTTP path requests byte ranges and validates resume identity", controlService.includes('setRequestProperty("Range"') && controlService.includes('"If-Range"')],

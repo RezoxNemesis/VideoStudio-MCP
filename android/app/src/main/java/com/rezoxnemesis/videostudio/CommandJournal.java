@@ -56,9 +56,72 @@ public final class CommandJournal {
             entry.put("seq", command.optLong("seq", 0));
             entry.put("action", command.optString("action", ""));
             entry.put("status", "running");
+            entry.put("command", new JSONObject(command.toString()));
             entry.put("updatedAt", System.currentTimeMillis());
         } catch (Exception ignored) {}
         upsert(id, entry);
+    }
+
+    public synchronized void linkJob(JSONObject command,
+                                     String jobId,
+                                     String projectId,
+                                     JSONObject queuedResult) {
+        if (command == null) return;
+        String id = command.optString("id", "");
+        if (id.isEmpty() || jobId == null || jobId.isEmpty()) return;
+        JSONObject entry = existing(id);
+        if (entry == null) entry = new JSONObject();
+        try {
+            entry.put("id", id);
+            entry.put("seq", command.optLong("seq", entry.optLong("seq", 0)));
+            entry.put("action", command.optString("action", entry.optString("action", "")));
+            entry.put("status", "running");
+            entry.put("jobId", jobId);
+            entry.put("projectId", projectId == null ? "" : projectId);
+            entry.put("command", new JSONObject(command.toString()));
+            if (queuedResult != null) entry.put("queuedResult", new JSONObject(queuedResult.toString()));
+            entry.put("updatedAt", System.currentTimeMillis());
+        } catch (Exception ignored) {}
+        upsert(id, entry);
+    }
+
+    public synchronized void relinkJob(String commandId,
+                                       String jobId,
+                                       String projectId,
+                                       JSONObject queuedResult) {
+        if (commandId == null || commandId.isEmpty() || jobId == null || jobId.isEmpty()) return;
+        JSONObject entry = existing(commandId);
+        if (entry == null) return;
+        try {
+            entry.put("status", "running");
+            entry.put("jobId", jobId);
+            entry.put("projectId", projectId == null ? "" : projectId);
+            if (queuedResult != null) entry.put("queuedResult", new JSONObject(queuedResult.toString()));
+            entry.put("updatedAt", System.currentTimeMillis());
+        } catch (Exception ignored) {}
+        upsert(commandId, entry);
+    }
+
+    public synchronized JSONObject inflight(String commandId) {
+        if (commandId == null || commandId.isEmpty()) return null;
+        JSONObject entry = existing(commandId);
+        if (entry == null || !"running".equals(entry.optString("status"))) return null;
+        try { return new JSONObject(entry.toString()); }
+        catch (Exception ignored) { return entry; }
+    }
+
+    public synchronized JSONArray inflightEntries(int limit) {
+        JSONArray entries = read();
+        JSONArray out = new JSONArray();
+        int count = Math.max(1, Math.min(MAX, limit));
+        for (int i = 0; i < entries.length() && out.length() < count; i++) {
+            JSONObject item = entries.optJSONObject(i);
+            if (item != null && "running".equals(item.optString("status"))
+                    && !item.optString("jobId", "").isEmpty()) {
+                out.put(item);
+            }
+        }
+        return out;
     }
 
     public synchronized void finish(JSONObject command, JSONObject result, String status) {
@@ -86,6 +149,16 @@ public final class CommandJournal {
             if (item != null) out.put(item);
         }
         return out;
+    }
+
+    private JSONObject existing(String id) {
+        if (id == null || id.isEmpty()) return null;
+        JSONArray entries = read();
+        for (int i = 0; i < entries.length(); i++) {
+            JSONObject item = entries.optJSONObject(i);
+            if (item != null && id.equals(item.optString("id"))) return item;
+        }
+        return null;
     }
 
     private void upsert(String id, JSONObject value) {
