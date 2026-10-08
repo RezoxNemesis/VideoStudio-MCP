@@ -45,7 +45,24 @@ public class EditorEngineTest {
         assertEquals(5000, project.clips.get(1).inMs);
         assertEquals(2000, project.clips.get(1).startMs);
         assertEquals(4000, project.outputDurationMs());
-        assertEquals(1000, project.clips.get(1).keyframes.getJSONObject(0).getLong("timeMs"));
+        assertEquals(2, EditorEngine.valueAt(project.clips.get(1),"scale",0,1),.00001);
+        assertEquals(2, EditorEngine.valueAt(project.clips.get(0),"scale",1999,1),.00001);
+    }
+
+    @Test public void splitPreservesEverySampleOfAnEasedCurve() throws Exception {
+        for (String easing : new String[]{"linear","ease_in","ease_out","ease_in_out","hold"}) {
+            setup();
+            JSONObject first=args("{\"clipId\":\"clip\",\"property\":\"scale\",\"timeMs\":0,\"value\":1}");
+            first.put("easing",easing);edit("set_keyframe",first);
+            edit("set_keyframe",args("{\"clipId\":\"clip\",\"property\":\"scale\",\"timeMs\":4000,\"value\":3}"));
+            ProjectStore.Clip original=ProjectStore.Clip.fromJson(project.clips.get(0).toJson());
+            edit("split_clip",args("{\"clipId\":\"clip\",\"atMs\":1700}"));
+            for (long time : new long[]{0,250,1000,1699,1700,2000,3200,3999,4000}) {
+                ProjectStore.Clip side=project.clips.get(time<1700?0:1);
+                assertEquals(easing+" at "+time,EditorEngine.valueAt(original,"scale",time,1),
+                        EditorEngine.valueAt(side,"scale",time-side.startMs,1),.000001);
+            }
+        }
     }
 
     @Test public void rippleDeleteClosesOnlyTheChosenTrack() throws Exception {

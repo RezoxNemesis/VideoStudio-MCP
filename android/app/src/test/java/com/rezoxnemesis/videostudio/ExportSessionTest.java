@@ -45,4 +45,21 @@ public class ExportSessionTest {
         ExportSessionStore.Session read=new ExportSessionStore(context).get(s.id);
         assertEquals("completed",read.state);assertTrue(read.verified);assertEquals(100,read.progress);
     }
+
+    @Test public void failedSessionCannotBeCompletedByLateWorker() {
+        ExportSessionStore.Session s=sessions.create(project(),new JSONObject());
+        new ExportSessionStore(context).fail(s.id,"Decoder unavailable");
+        try { sessions.finish(s.id,"content://owned/output",true); fail("Failed session resurrected"); }
+        catch (IllegalStateException expected) { }
+        assertEquals("failed",sessions.get(s.id).state);
+    }
+
+    @Test public void completedSessionCannotChangeItsPublishedIdentity() {
+        ExportSessionStore.Session s=sessions.create(project(),new JSONObject());
+        sessions.finish(s.id,"content://owned/first",true);
+        sessions.finish(s.id,"content://owned/first",true);
+        try { new ExportSessionStore(context).finish(s.id,"content://owned/second",true); fail("Output replaced"); }
+        catch (IllegalStateException expected) { }
+        assertEquals("content://owned/first",sessions.get(s.id).uri);
+    }
 }

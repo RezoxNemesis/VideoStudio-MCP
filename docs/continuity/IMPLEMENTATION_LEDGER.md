@@ -16,3 +16,9 @@ Tasks 1–6: in progress; the complete roadmap is not claimed complete.
 Android RED evidence: run 37817933116 / job 113451244875 executed 64 tests, with exactly the 3 intended ProjectStoreEditorTest failures (duration, stale save, durable revision). Existing 61 tests passed. Node/Worker CI run 37817932905 succeeded including Wrangler dry run.
 
 The Java runtime includes jdk.compiler despite no javac executable. Direct java com.sun.tools.javac.Main with -source/-target 17 can run pure core tests; --release lacks ct.sym locally. Nested Node spawning of java is blocked by the execution sandbox, so use bash scripts/core-test.sh. Timeline core passes 33 checks.
+
+Core Android GREEN evidence: run 37819049832 succeeded. The integrated time-scaled editor, shared program preview/render factory and foreground export session built and passed unit tests in Android run 37826924864; Worker CI run 37826924950 succeeded. Commit 0bb836b6726ec8f4d47f73406d0f381d9cde1aee is on draft PR #35, not main. These are compilation/unit results, not yet device playback evidence.
+
+Installable debug APK from run 37826924864 is saved locally at `artifacts/editor-0bb836b/VideoStudio-editor-debug.apk` (98,737,203 bytes), SHA-256 `0dfb5fb7071d31b9cfcef5292ad00a8860f3d833e2a2dfba3ecc168594c88c5c`. Artifact 11571856567 is retained by GitHub. Artifact binaries are excluded from source commits.
+
+Next hardening: cross-instance export cancellation transactions; revision-safe background import/output registration; keyframe continuity at splits; Android emulator preview/export proof. Advanced model, cloud, 3D/VFX and audio roadmap remain in progress.
