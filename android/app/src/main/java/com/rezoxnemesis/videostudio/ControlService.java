@@ -1485,6 +1485,21 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 ActivityLog.add(this, "system", "Resuming interrupted work",
                         friendlyAction(action) + " • job " + shortId(queued.optString("jobId", "")),
                         "running", plan.optInt("progress", 0), null, projectId);
+
+                String deferredCommandId = parameters.optString("_mcpCommandId", "");
+                if (!deferredCommandId.isEmpty() && ExecutionTruthPolicy.isDeferredResult(queued)) {
+                    JSONObject inflight = commandJournal.inflight(deferredCommandId);
+                    if (inflight != null) {
+                        commandJournal.relinkJob(
+                                deferredCommandId,
+                                queued.optString("jobId", ""),
+                                queued.optString("projectId", projectId),
+                                queued
+                        );
+                        JSONObject originalCommand = inflight.optJSONObject("command");
+                        if (originalCommand != null) watchDeferredCommand(originalCommand, queued);
+                    }
+                }
             } catch (Exception error) {
                 ActivityLog.add(this, "system", "Recovery retry deferred",
                         friendlyAction(action) + " • " + (error.getMessage() == null ? "retry unavailable" : error.getMessage()),
