@@ -1,10 +1,10 @@
-# Native Scene Studio — 3.5.0 preview
+# Native Scene Studio — 3.5.0
 
-This APK adds executable native code, not just the proposed architecture document. You and ChatGPT use the same background-service operations. The existing 3.4.7 reliability, live-preview and large-transfer changes are integrated with the earlier cloud preview fixes. The original installed application's signing key is unavailable; this build uses the existing separate preview package.
+This APK adds executable native code, not just the proposed architecture document. You and ChatGPT use the same background-service operations. The existing 3.4.7 reliability, live-preview and large-transfer changes are integrated with the earlier cloud preview fixes. The dedicated GitHub APK workflow restores the original app's signing key and builds package `com.rezoxnemesis.videostudio`, version `3.5.0`, code `350`. It refuses to publish if that signing key is unavailable. The earlier locally signed ARM64 preview is a separate package.
 
 ## Use it directly
 
-Install the ARM64 preview and open **AI Tools → Native Scene Studio**. Open VSL Studio, edit the included demo, save scene memory, build a preview, or render native video. Inspect Saved Memory shows immutable revisions and the last run. Inspect Change Map shows green preserved pixels, yellow reconstruction scope and red missing providers. Follow jobs in Activity and use Stop jobs to cancel. Outputs appear in that project's Media Bin; scene renders preserve the existing timeline.
+Download `VideoStudio-3.5.0.apk` from the dedicated `videostudio-native-3.5.0` GitHub release after its workflow succeeds. Install over the original app; do not uninstall it, since that would remove its private projects and owner identity. Open **Connect ChatGPT** and check online status. Existing original-app projects and the MCP identity remain available on a compatible update. Custom MCP connectors require a supported ChatGPT account. Then open **AI Tools → Native Scene Studio**. Open VSL Studio, edit the included demo, save scene memory, build a preview, or render native video. Inspect Saved Memory shows immutable revisions and the last run. Inspect Change Map shows green preserved pixels, yellow reconstruction scope and red missing providers. Follow jobs in Activity and use Stop jobs to cancel. Outputs appear in that project's Media Bin; scene renders preserve the existing timeline.
 
 Cinematic Worlds Portal accepts an explicitly imported image or video. Image aspect is preserved within its plane. Video plates are decoded at at most 512 pixels and sampled at 15 fps, with one video decoder per scene. This visual compositor excludes source-video audio, explicitly reported in the operation result and UI. It is not a reconstructed 3D world or the entire Studio Web portal feature set.
 
@@ -14,7 +14,7 @@ Import a licensed model-pack ZIP with Import, then use Install Model Pack. The b
 
 ## What the seven components actually do
 
-| Requested component | Implemented in this preview | Remaining work |
+| Requested component | Implemented in this build | Remaining work |
 |---|---|---|
 | Scene Genome | Persistent entities, transforms, camera, lights, appearance and source bindings | Reconstructed real-world geometry and inferred body/hair structure |
 | Delta Generation | Revision deltas and retained raster pixels with conservative dirty rectangles | Model-conditioned sparse diffusion, occlusion reconstruction |
