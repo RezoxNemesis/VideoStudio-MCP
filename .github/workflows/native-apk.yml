@@ -38,7 +38,7 @@ jobs:
       - name: Require existing signing identity
         run: test -s "$HOME/.android/debug.keystore"
       - name: Validate relay compatibility
-        run: npm ci --no-audit --no-fund && npm test
+        run: npm install --no-audit --no-fund && npm test
       - name: Test and build native app
         working-directory: android
         run: gradle :app:testDebugUnitTest :app:assembleDebug --max-workers=4 --stacktrace
