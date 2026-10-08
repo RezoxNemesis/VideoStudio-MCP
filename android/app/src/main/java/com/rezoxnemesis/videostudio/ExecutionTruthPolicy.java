@@ -58,6 +58,7 @@ public final class ExecutionTruthPolicy {
         String value = action == null ? "" : action.trim().toLowerCase();
         return "prompt_video".equals(value)
                 || "animate_images".equals(value)
-                || "export_project".equals(value);
+                || "export_project".equals(value)
+                || "autonomous_edit".equals(value);
     }
 }
