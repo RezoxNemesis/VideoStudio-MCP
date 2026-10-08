@@ -191,7 +191,7 @@ const checks = [
   ["MCP transport compatibility is decoupled from APK version", mcpConnectionCore.includes("transportDecoupledFromApkVersion") && mcpConnectionCore.includes("stable-major-additive-features") && mcpConnectionCore.includes("WIRE_SCHEMA_VERSION") && mcpConnectionCore.includes("FEATURE_LEVEL")],
   ["MCP connection identity survives compatible APK upgrades", mcpConnectionCore.includes("upgradeKeepsDeviceIdentity") && mcpConnectionCore.includes("upgradeKeepsOwnerCredential") && nativeProtocol.includes('PREFS = "videostudio_native_v1"') && nativeProtocol.includes('KEY_ALIAS = "videostudio_owner_key_v1"')],
   ["worker persists negotiated wire compatibility independently of app version", worker.includes("wireSchemaVersion") && worker.includes("featureLevel") && worker.includes("transportDecoupledFromApkVersion") && worker.includes('"stable-core-2"')],
-  ["native app identifies as VideoStudio 3.4.3 while retaining stable MCP v3", nativeProtocol.includes('APP_VERSION = "3.4.3"') && nativeProtocol.includes("PROTOCOL_VERSION = 3") && androidBuild.includes('versionName = "3.4.3"') && androidBuild.includes("versionCode = 343")],
+  ["native app identifies as VideoStudio 3.4.4 while retaining stable MCP v3", nativeProtocol.includes('APP_VERSION = "3.4.4"') && nativeProtocol.includes("PROTOCOL_VERSION = 3") && androidBuild.includes('versionName = "3.4.4"') && androidBuild.includes("versionCode = 344")],
   ["pairing message advertises stable upgrade-surviving endpoint", nativeProtocol.includes("Stable MCP endpoint:") && nativeProtocol.includes("survives compatible VideoStudio APK upgrades")],
   ["MCP Connection Core preserves stable endpoint across APK upgrades", mcpConnectionCore.includes('STABLE_MCP_PATH = "/app-mcp-v3/"') && mcpConnectionCore.includes("appGeneration") && mcpConnectionCore.includes("upgradeKeepsOwnerCredential") && mcpConnectionCore.includes("upgradeKeepsDeviceIdentity")],
   ["MCP Connection Core negotiates only an allow-listed same-origin API profile", mcpConnectionCore.includes("applyRegistrationResponse") && mcpConnectionCore.includes("safeApiPrefix") && mcpConnectionCore.includes("heartbeatMs") && mcpConnectionCore.includes("commandWaitMs")],
@@ -370,6 +370,10 @@ const checks = [
   ["canonical native identity convergence keeps legacy owner URLs on one device", worker.includes("appConvergeOwnerAliases") && worker.includes("supersededByDeviceId") && worker.includes("ownerAliases") && worker.includes("converge_identity_to")],
   ["legacy v3 command history migrates into the canonical queue", worker.includes("migratedFromDeviceId") && worker.includes("app-v3-seq:") && worker.includes("retainedCommandCount")],
   ["Android refuses silent owner-key rotation after decrypt failure", nativeProtocol.includes("existing owner credential was not rotated") && nativeProtocol.includes("KEY_IDENTITY_RECOVERY_REQUIRED") && nativeProtocol.includes("OwnerLoadResult")],
+  ["Native Agent can autonomously redeem legacy stable endpoint aliases", nativeProtocol.includes("redeemRebindNow") && controlService.includes('case "redeem_rebind"') && controlService.includes("MCP identity alias repaired")],
+  ["native rebind runs in a light background job instead of blocking the command callback", controlService.includes('JobManager.Kind.LIGHT') && controlService.includes('"MCP identity rebind"') && controlService.includes("protocol.redeemRebindNow")],
+  ["rebind acknowledgement explicitly preserves owner credential and device identity", nativeProtocol.includes('result.put("identityPreserved", true)') && nativeProtocol.includes('result.put("ownerCredentialPreserved", true)') && nativeProtocol.includes('result.put("deviceId", deviceId)')],
+
 
 
 
