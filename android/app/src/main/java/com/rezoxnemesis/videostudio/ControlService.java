@@ -27,8 +27,12 @@ import java.net.InetAddress;
 import java.net.URL;
 import java.util.ArrayList;
 import java.util.Locale;
+import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -78,10 +82,14 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     private DriveWorkspaceProvider driveWorkspace;
     private SharedPreferences prefs;
     private CommandJournal commandJournal;
+    private final ExecutorService commandCompletionWatchers = Executors.newFixedThreadPool(2);
+    private final Set<String> watchedCommands = ConcurrentHashMap.newKeySet();
+    private volatile boolean serviceAlive;
 
     @Override
     public void onCreate() {
         super.onCreate();
+        serviceAlive = true;
         prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
         migrateAutonomyDefaultOnce();
         commandJournal = new CommandJournal(this);
@@ -117,6 +125,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                         + " • generation " + protocol.appGeneration(),
                 "success", null, null, null);
         recoverDurablePlans();
+        reattachInflightCommandWatchers();
         NativeAgentWatchdog.scheduleHealthy(this, "service_created");
     }
 
@@ -188,12 +197,14 @@ public final class ControlService extends Service implements AppProtocol.Callbac
 
     @Override
     public void onDestroy() {
-        ActivityLog.add(this, "system", "VideoStudio control stopped", "Background controller stopped", "info", null, null, null);
+        serviceAlive = false;
+        ActivityLog.add(this, "transport", "VideoStudio control stopped", "Background controller stopped", "info", null, null, null);
         markService(false, "Control service stopped");
         boolean paused = protocol != null && protocol.isControlPaused();
         if (activeRender != null) activeRender.cancel();
         if (jobs != null) jobs.shutdown();
         if (protocol != null) protocol.stop();
+        commandCompletionWatchers.shutdownNow();
         if (NativeAgentWatchdog.shouldRearm(paused)) {
             NativeAgentWatchdog.scheduleRetry(this, "service_destroyed");
         } else {
@@ -208,12 +219,11 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     @Override
     public void onConnection(boolean connected, String detail) {
         boolean wasOnline = prefs.getBoolean(KEY_SERVICE_ONLINE, false);
-        String previousDetail = prefs.getString(KEY_SERVICE_DETAIL, "");
         markService(connected, detail);
-        if (connected != wasOnline || !String.valueOf(detail).equals(previousDetail)) {
-            ActivityLog.add(this, "system", connected ? "MCP connected" : "MCP reconnecting",
+        if (connected != wasOnline) {
+            ActivityLog.add(this, "transport", connected ? "MCP connected" : "MCP reconnecting",
                     detail + " • app " + AppProtocol.APP_VERSION,
-                    connected ? "success" : "running", null, null, null);
+                    connected ? "info" : "running", null, null, null);
         }
         if (protocol != null && !protocol.isControlPaused()) {
             if (connected) NativeAgentWatchdog.scheduleHealthy(this, "connection_healthy");
@@ -246,7 +256,21 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             protocol.complete(command, priorResult, priorStatus);
             return;
         }
+
+        JSONObject inflight = commandJournal.inflight(commandId);
+        if (inflight != null) {
+            watchDeferredCommand(command, inflight.optJSONObject("queuedResult"));
+            ActivityLog.add(this, "chatgpt", friendlyAction(action),
+                    "Existing native job still running • " + shortId(inflight.optString("jobId", "")),
+                    "running", inflight.optInt("progress", 0), commandId,
+                    inflight.optString("projectId", projectId));
+            return;
+        }
+
         commandJournal.begin(command);
+        if (mayQueueBackgroundWork(action) && !commandId.isEmpty()) {
+            try { p.put("_mcpCommandId", commandId); } catch (Exception ignored) {}
+        }
         ActivityLog.add(this, "chatgpt", friendlyAction(action), commandDetail(action, p), "running", 0, commandId, projectId);
 
         if (!isAllowed(action, p)) {
