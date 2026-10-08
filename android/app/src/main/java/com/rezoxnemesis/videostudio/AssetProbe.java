@@ -79,6 +79,21 @@ public final class AssetProbe {
             }
         } catch (Exception ignored) {}
 
+        // Some explicit local/file-provider URIs omit both OpenableColumns and MIME.
+        // Derive metadata only from the selected URI, never by listing storage.
+        if ("Media".equals(name) && uri.getLastPathSegment() != null) name = uri.getLastPathSegment();
+        if ("application/octet-stream".equals(mime)) {
+            String extension = android.webkit.MimeTypeMap.getFileExtensionFromUrl(name);
+            if (extension.isEmpty()) {
+                int dot = name.lastIndexOf('.');
+                if (dot >= 0) extension = name.substring(dot + 1);
+            }
+            String detected = android.webkit.MimeTypeMap.getSingleton()
+                    .getMimeTypeFromExtension(extension.toLowerCase(java.util.Locale.ROOT));
+            if (detected == null) detected = java.net.URLConnection.guessContentTypeFromName(name);
+            if (detected != null) mime = detected;
+        }
+
         boolean persisted = hasPersistedReadAccess(resolver, uri);
         boolean readable = false;
         boolean seekable = false;

@@ -10,6 +10,7 @@ android {
         applicationId = "com.rezoxnemesis.videostudio"
         minSdk = 29
         targetSdk = 35
+        testInstrumentationRunner = "com.rezoxnemesis.videostudio.CloudSmokeInstrumentation"
         versionCode = 360
         versionName = "3.6.0"
         manifestPlaceholders["appLabel"] = "VideoStudio"

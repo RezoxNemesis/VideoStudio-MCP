@@ -26,7 +26,7 @@ public final class NativeEditorActivity extends Activity {
     private final Runnable refresh=new Runnable(){public void run(){if(isFinishing()||isDestroyed())return;ProjectStore.Project latest=store.get(project.id);if(latest!=null&&latest.updatedAt!=project.updatedAt){String id=selected==null?"":selected.id;project=latest;selected=find(id);build();}if(timeline!=null){if(compositionMode){playhead=composite.position();timeline.playheadMs=playhead;timeline.invalidate();}
                 else if(playing&&selected!=null){long local=still.getVisibility()==View.VISIBLE?SystemClock.uptimeMillis()-imageStarted:Math.max(0,(long)((player.currentPositionMs()-selected.inMs)/selected.speed));timeline.playheadMs=clipStart(selected)+local;timeline.invalidate();}}ui.postDelayed(this,500);}};
     private long imageStarted;
-    @Override public void onCreate(Bundle b){super.onCreate(b);store=new ProjectStore(this);project=store.get(getIntent().getStringExtra("projectId"));if(project==null)project=store.active();if(project==null)project=store.create("Untitled Project");player=new LiveEditPlayer(this);composite=new EditorCompositionPreview(this,message->Toast.makeText(this,"Preview: "+message,Toast.LENGTH_LONG).show());selected=project.clips.isEmpty()?null:project.clips.get(0);build();ui.post(refresh);}
+    @Override public void onCreate(Bundle b){super.onCreate(b);store=new ProjectStore(this);project=store.get(getIntent().getStringExtra("projectId"));if(project==null)project=store.active();if(project==null)project=store.create("Untitled Project");player=new LiveEditPlayer(this);composite=new EditorCompositionPreview(this,message->Toast.makeText(this,"Preview: "+message,Toast.LENGTH_LONG).show());composite.onFirstFrame(()->{if(compositionMode&&still!=null)still.setVisibility(View.GONE);});selected=project.clips.isEmpty()?null:project.clips.get(0);build();ui.post(refresh);}
     private ProjectStore.Clip find(String id){for(ProjectStore.Clip c:project.clips)if(c.id.equals(id))return c;return project.clips.isEmpty()?null:project.clips.get(0);}
     private int dp(int n){return Math.round(n*getResources().getDisplayMetrics().density);}
     private LinearLayout column(){LinearLayout c=new LinearLayout(this);c.setOrientation(1);return c;}
@@ -58,7 +58,27 @@ public final class NativeEditorActivity extends Activity {
         status=text("Edits save immediately. ChatGPT changes appear here automatically.",12);root.addView(status);if(selected!=null)showSelected(Math.max(0,playhead-clipStart(selected)));
     }
     private long clipStart(ProjectStore.Clip clip){if(clip.track!=0)return clip.timelineStartMs;long start=0;for(ProjectStore.Clip c:project.clips){if(c==clip)return start;if(c.track==0)start+=c.outputDurationMs();}return start;}
-    private void showSelected(long local){if(selected==null)return;ProjectStore.Asset asset=project.asset(selected.assetId);if(asset==null)return;selectedGeneration++;compositionMode=true;player.stop();player.setVisible(false);still.setVisibility(View.GONE);selectedLabel.setText("Selected: "+asset.name+" · "+String.format(Locale.US,"%.2fs / %.2fs",local/1000f,selected.outputDurationMs()/1000f));try{composite.show(project,clipStart(selected)+local,playing);}catch(Exception e){compositionMode=false;composite.hide();previewAsset(asset);error(e);}}
+    private void showSelected(long local){if(selected==null)return;ProjectStore.Asset asset=project.asset(selected.assetId);if(asset==null)return;selectedGeneration++;compositionMode=true;player.stop();player.setVisible(false);still.setVisibility(View.GONE);selectedLabel.setText("Selected: "+asset.name+" · "+String.format(Locale.US,"%.2fs / %.2fs",local/1000f,selected.outputDurationMs()/1000f));try{composite.show(project,clipStart(selected)+local,playing);if(!composite.hasRenderedFrame())loadPoster(asset,selected.effects);}catch(Exception e){compositionMode=false;composite.hide();previewAsset(asset);error(e);}}
+    private void loadPoster(ProjectStore.Asset asset,JSONObject effects){
+        if(!asset.mime.startsWith("image/")&&!asset.mime.startsWith("video/"))return;
+        final int generation=selectedGeneration;
+        final org.json.JSONArray crop=effects==null?null:effects.optJSONArray("cropBounds");
+        preview.submit(()->{try{
+            Bitmap bitmap=MediaThumbnail.load(this,asset,1024);
+            if(bitmap==null)return;
+            // Match the renderer's initial 9:16 presentation and explicit crop.
+            int width=bitmap.getWidth(),height=bitmap.getHeight();
+            int fittedWidth=Math.min(width,Math.round(height*9f/16f));
+            int fittedHeight=Math.min(height,Math.round(width*16f/9f));
+            int left=(width-fittedWidth)/2,top=(height-fittedHeight)/2;
+            if(crop!=null){left+=Math.round(fittedWidth*(float)crop.optDouble(0));top+=Math.round(fittedHeight*(float)crop.optDouble(1));fittedWidth=Math.max(1,Math.round(fittedWidth*(float)(crop.optDouble(2)-crop.optDouble(0))));fittedHeight=Math.max(1,Math.round(fittedHeight*(float)(crop.optDouble(3)-crop.optDouble(1))));}
+            Bitmap cut=Bitmap.createBitmap(bitmap,left,top,Math.min(fittedWidth,width-left),Math.min(fittedHeight,height-top));
+            if(cut!=bitmap)bitmap.recycle();final Bitmap poster=cut;
+            ui.post(()->{if(generation!=selectedGeneration||isDestroyed()||!compositionMode||composite.hasRenderedFrame()){poster.recycle();return;}
+                still.setImageBitmap(poster);if(stillBitmap!=null)stillBitmap.recycle();stillBitmap=poster;still.setVisibility(View.VISIBLE);
+            });
+        }catch(Exception e){ui.post(()->{if(generation==selectedGeneration)error(e);});}});
+    }
     private void previewAsset(ProjectStore.Asset asset){compositionMode=false;composite.hide();selectedGeneration++;final int generation=selectedGeneration;if(asset.mime.startsWith("image/")){player.pause();still.setVisibility(View.VISIBLE);player.setVisible(false);selectedLabel.setText("Loading "+asset.name+"…");preview.submit(()->{try{Bitmap bitmap=MediaThumbnail.load(this,asset,1024);ui.post(()->{if(generation!=selectedGeneration||isDestroyed()){if(bitmap!=null)bitmap.recycle();return;}still.setImageBitmap(bitmap);if(stillBitmap!=null)stillBitmap.recycle();stillBitmap=bitmap;selectedLabel.setText(asset.name+" · image");});}catch(Exception e){ui.post(()->error(e));}});}else if(asset.mime.startsWith("video/")||asset.mime.startsWith("audio/")){still.setVisibility(View.GONE);player.setVisible(true);player.play(Uri.parse(ProxyManager.previewUri(project,asset)),0,1,false);selectedLabel.setText(asset.name);}else{selectedLabel.setText("This file is a model/archive, not playable media");}}
     private void toggle(){if(selected==null)return;if(compositionMode){playing=!playing;composite.toggle(playing);return;}playing=!playing;if(!playing){player.pause();ui.removeCallbacks(imageBoundary);}else playCurrent();}
     private final Runnable imageBoundary=()->nextClip();

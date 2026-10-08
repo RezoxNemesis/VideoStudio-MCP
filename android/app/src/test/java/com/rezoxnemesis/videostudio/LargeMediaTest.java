@@ -55,4 +55,17 @@ public class LargeMediaTest {
         assertEquals("missing-provider", result.providerAuthority);
         assertFalse(result.readable);
     }
+
+    @org.junit.Test public void explicitLocalJpegUsesItsFilenameWhenProviderMetadataIsAbsent() throws Exception {
+        android.content.Context context = org.robolectric.RuntimeEnvironment.getApplication();
+        java.io.File source = new java.io.File(context.getFilesDir(), "picked-reference.JPG");
+        try (java.io.FileOutputStream out = new java.io.FileOutputStream(source)) { out.write(new byte[]{1,2,3}); }
+        AssetProbe.Result result = AssetProbe.probe(context.getContentResolver(), android.net.Uri.fromFile(source));
+        org.junit.Assert.assertEquals("image/jpeg", result.mime);
+        org.junit.Assert.assertEquals("picked-reference.JPG", result.displayName);
+        ProjectStore store = new ProjectStore(context);
+        ProjectStore.Project project = store.create("Explicit local source");
+        store.importUri(project, android.net.Uri.fromFile(source));
+        org.junit.Assert.assertEquals(1, store.get(project.id).clips.size());
+    }
 }
