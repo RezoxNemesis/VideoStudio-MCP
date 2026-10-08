@@ -53,9 +53,9 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     private static final String KEY_SERVICE_ONLINE = "control_service_online";
     private static final String KEY_SERVICE_DETAIL = "control_service_detail";
     private static final String KEY_AUTONOMY_MIGRATED = "autonomy_everything_v32_migrated";
-    // Private MCP JSON fallback for ChatGPT attachments when the host cannot expose a temporary HTTPS file URL.
-    // Kept deliberately small because this path is for still frames, not video payloads.
-    private static final long MAX_INLINE_IMAGE_BYTES = 12L * 1024L * 1024L;
+    // Private MCP JSON fallback for small ChatGPT attachments when the host cannot expose a usable temporary HTTPS file URL.
+    // Kept deliberately bounded so normal video transfer stays on the streaming handoff path.
+    private static final long MAX_INLINE_MEDIA_BYTES = 12L * 1024L * 1024L;
     private static final int MAX_INLINE_BASE64_CHARS = 17 * 1024 * 1024;
     private static final int MAX_REMOTE_REDIRECTS = 5;
 
@@ -2558,10 +2558,10 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     }
 
     /**
-     * Private inline still-image ingest used as a compatibility bridge when ChatGPT can read
-     * an attachment but cannot expose an Android-downloadable HTTPS URL to the installed MCP
-     * schema. The bytes travel inside the already owner-authenticated MCP command and are
-     * written directly to app-private storage. Nothing is published to Gallery or a public URL.
+     * Private inline small-media ingest used as a compatibility bridge when the normal
+     * Worker handoff cannot deliver a ChatGPT attachment. The bytes travel inside the already
+     * owner-authenticated MCP command and are written directly to app-private storage.
+     * Nothing is published to Gallery or a public URL.
      */
     private JSONObject importInlineBase64(JSONObject p) throws Exception {
         ProjectStore.Project project = resolveProject(p.optString("projectId", ""));
@@ -2590,7 +2590,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         } catch (IllegalArgumentException error) {
             throw new IllegalArgumentException("Invalid base64 media payload");
         }
-        if (bytes.length == 0 || bytes.length > MAX_INLINE_IMAGE_BYTES) {
+        if (bytes.length == 0 || bytes.length > MAX_INLINE_MEDIA_BYTES) {
             throw new IllegalArgumentException("Inline media exceeds VideoStudio's 12 MB decoded transfer limit");
         }
 
