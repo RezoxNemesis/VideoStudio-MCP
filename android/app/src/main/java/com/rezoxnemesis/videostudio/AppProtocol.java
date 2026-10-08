@@ -42,7 +42,7 @@ import javax.crypto.spec.GCMParameterSpec;
 public final class AppProtocol {
     public static final String BASE = "https://wispy-queen-f9b5.prakasharuntandon634.workers.dev";
     public static final int PROTOCOL_VERSION = 3;
-    public static final String APP_VERSION = "3.5.0";
+    public static final String APP_VERSION = "3.6.0";
     /** Stable compatibility URL. APK updates must not change this path. */
     public static final String MCP_PATH = McpConnectionCore.STABLE_MCP_PATH;
     /** Stable registration bootstrap. Runtime requests use the negotiated profile. */
@@ -74,6 +74,7 @@ public final class AppProtocol {
     private ConnectivityManager.NetworkCallback networkCallback;
     private volatile boolean running;
     private volatile String permissionMode = "everything";
+    private volatile String serverPermissionMode = "";
     private volatile JSONObject projectSummary = new JSONObject();
     private volatile int consecutiveFailures = 0;
     private final String deviceId;
@@ -325,7 +326,7 @@ public final class AppProtocol {
 
     private void heartbeatLoop() {
         while (running) {
-            if (!isControlPaused()) { register(); flushOutbox(); }
+            register(); if (!isControlPaused()) { flushOutbox(); }
             sleep(connectionCore.heartbeatMs());
         }
     }
@@ -346,7 +347,7 @@ public final class AppProtocol {
             }
         }
         meta.put("permissionMode", permissionMode);
-        meta.put("controlPaused", isControlPaused());
+        meta.put("controlPaused", isControlPaused() || (("manual".equals(permissionMode)||"assist".equals(permissionMode))&&!permissionMode.equals(serverPermissionMode)));
         meta.put("connectionSession", connectionSession);
         meta.put("galleryAccess", false);
         meta.put("directAttachmentIngest", true);
@@ -404,7 +405,7 @@ public final class AppProtocol {
     }
 
     private synchronized void register() {
-        if (!running || isControlPaused()) return;
+        if (!running) return;
         try {
             JSONObject meta = registrationMeta();
 
@@ -418,6 +419,8 @@ public final class AppProtocol {
                 notifyConnection(false, "Older Native Agent generation rejected • reopen current APK");
                 return;
             }
+            JSONObject serverDevice=result.optJSONObject("device");
+            if(serverDevice!=null)serverPermissionMode=serverDevice.optString("permissionMode","");
             connectionCore.applyRegistrationResponse(result);
             boolean ok = result.optBoolean("ok", false)
                     && result.optInt("protocolVersion", 0) == connectionCore.selectedProtocol();

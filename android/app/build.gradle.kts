@@ -10,8 +10,8 @@ android {
         applicationId = "com.rezoxnemesis.videostudio"
         minSdk = 29
         targetSdk = 35
-        versionCode = 350
-        versionName = "3.5.0"
+        versionCode = 360
+        versionName = "3.6.0"
         manifestPlaceholders["appLabel"] = "VideoStudio"
     }
 
@@ -23,6 +23,11 @@ android {
     }
 
     buildTypes {
+        create("mobile") {
+            initWith(getByName("debug"))
+            ndk { abiFilters += "arm64-v8a" }
+            matchingFallbacks += listOf("debug")
+        }
         create("preview") {
             initWith(getByName("debug"))
             applicationIdSuffix = ".preview"

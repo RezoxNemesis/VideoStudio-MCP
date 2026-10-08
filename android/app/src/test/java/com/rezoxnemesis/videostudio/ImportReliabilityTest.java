@@ -25,8 +25,8 @@ public class ImportReliabilityTest {
         // Simulate another renderer owning the process-wide heavy lane.
         java.lang.reflect.Field field = JobManager.class.getDeclaredField("PROCESS_HEAVY_LANE");
         field.setAccessible(true);
-        java.util.concurrent.Semaphore lane = (java.util.concurrent.Semaphore) field.get(null);
-        lane.acquire();
+        RenderGate lane = (RenderGate) field.get(null);
+        lane.acquire(false);
         JobManager jobs = new JobManager(context());
         CountDownLatch imported = new CountDownLatch(1);
         try {
@@ -72,7 +72,7 @@ public class ImportReliabilityTest {
         assertEquals(1, plans.pendingForAutoResume().length());
         assertEquals(1, plans.cancelActive()); assertEquals(0, plans.pendingForAutoResume().length());
         java.lang.reflect.Field field = JobManager.class.getDeclaredField("PROCESS_HEAVY_LANE"); field.setAccessible(true);
-        java.util.concurrent.Semaphore lane = (java.util.concurrent.Semaphore) field.get(null); lane.acquire();
+        RenderGate lane = (RenderGate) field.get(null); lane.acquire(false);
         JobManager jobs = new JobManager(context());
         String queued = plans.begin("animate_images", new JSONObject(), "project");
         try {

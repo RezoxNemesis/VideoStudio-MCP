@@ -134,6 +134,8 @@ public final class ExecutionTruthPolicy {
     public static boolean requiresValidatedMediaOutput(String action) {
         String value = action == null ? "" : action.trim().toLowerCase();
         return "prompt_video".equals(value)
+                || "animate_image".equals(value)
+                || "render_generated_video".equals(value)
                 || "animate_images".equals(value)
                 || "export_project".equals(value)
                 || "autonomous_edit".equals(value);

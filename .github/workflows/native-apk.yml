@@ -1,4 +1,4 @@
-name: VideoStudio 3.5 Native APK
+name: VideoStudio 3.6 Native APK
 
 on:
   push:
@@ -41,21 +41,21 @@ jobs:
         run: npm install --no-audit --no-fund && npm test
       - name: Test and build native app
         working-directory: android
-        run: gradle :app:testDebugUnitTest :app:assembleDebug --max-workers=4 --stacktrace
+        run: gradle :app:testDebugUnitTest :app:assembleMobile --max-workers=4 --stacktrace
       - name: Verify APK identity and version
         run: |
-          "$ANDROID_HOME/build-tools/35.0.0/aapt2" dump badging android/app/build/outputs/apk/debug/app-debug.apk > apk-metadata.txt
-          grep -F "package: name='com.rezoxnemesis.videostudio' versionCode='350' versionName='3.5.0'" apk-metadata.txt
-          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs android/app/build/outputs/apk/debug/app-debug.apk > apk-signature.txt
-          cp android/app/build/outputs/apk/debug/app-debug.apk VideoStudio-3.5.0.apk
-          sha256sum VideoStudio-3.5.0.apk > VideoStudio-3.5.0.apk.sha256
+          "$ANDROID_HOME/build-tools/35.0.0/aapt2" dump badging android/app/build/outputs/apk/mobile/app-mobile.apk > apk-metadata.txt
+          grep -F "package: name='com.rezoxnemesis.videostudio' versionCode='360' versionName='3.6.0'" apk-metadata.txt
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs android/app/build/outputs/apk/mobile/app-mobile.apk > apk-signature.txt
+          cp android/app/build/outputs/apk/mobile/app-mobile.apk VideoStudio-3.6.0.apk
+          sha256sum VideoStudio-3.6.0.apk > VideoStudio-3.6.0.apk.sha256
       - name: Upload installable APK
         uses: actions/upload-artifact@v4
         with:
-          name: VideoStudio-3.5.0-native-APK
+          name: VideoStudio-3.6.0-native-APK
           path: |
-            VideoStudio-3.5.0.apk
-            VideoStudio-3.5.0.apk.sha256
+            VideoStudio-3.6.0.apk
+            VideoStudio-3.6.0.apk.sha256
             apk-metadata.txt
             apk-signature.txt
           if-no-files-found: error
@@ -63,7 +63,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: VideoStudio-3.5.0-test-results
+          name: VideoStudio-3.6.0-test-results
           path: android/app/build/test-results/testDebugUnitTest/*.xml
           if-no-files-found: ignore
       - name: Publish direct APK download
@@ -71,18 +71,44 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           cat > native-release-notes.md <<'NOTES'
-          Native VideoStudio 3.5.0, with the existing app package and signing identity.
+          Native VideoStudio 3.6.0, with the existing app package and signing identity.
 
-          Includes bounded image imports, background command execution, durable job recovery, native Scene Studio, and compatibility with the existing ChatGPT MCP relay through app_execute.
+          Includes native multitrack editing, composition preview, shared editing commands, undo/redo, priority manual export, motion workspace, explicit Assist approvals, and authorised storage folders. ARM64 APK for devices such as Realme P1 Speed.
 
           Install over the existing app to retain its projects and MCP identity. Open Connect ChatGPT to check connection status. Custom MCP connectors require a supported ChatGPT account.
 
-          Phone crashes and optional learned-model inference still require physical-device validation. Trained model weights are not bundled. See docs/NATIVE_SCENE_STUDIO.md for implemented features and remaining limitations.
+          Physical-device GPU/codec/inference validation remains necessary. True character frame synthesis requires a compatible trained ONNX pack; no such weights are bundled or validated. See docs/EDITOR_MOTION_3_6.md for remaining work. Assist and named motion tools require the updated relay; app_execute works in Full Autonomous with the existing relay.
           NOTES
           printf '\nSource commit: %s\n' "$GITHUB_SHA" >> native-release-notes.md
-          if gh release view videostudio-native-3.5.0 --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release upload videostudio-native-3.5.0 VideoStudio-3.5.0.apk VideoStudio-3.5.0.apk.sha256 apk-metadata.txt apk-signature.txt --repo "$GITHUB_REPOSITORY" --clobber
-            gh release edit videostudio-native-3.5.0 --repo "$GITHUB_REPOSITORY" --title 'VideoStudio 3.5.0 Native APK' --notes-file native-release-notes.md
+          if gh release view videostudio-native-3.6.0 --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload videostudio-native-3.6.0 VideoStudio-3.6.0.apk VideoStudio-3.6.0.apk.sha256 apk-metadata.txt apk-signature.txt --repo "$GITHUB_REPOSITORY" --clobber
+            gh release edit videostudio-native-3.6.0 --repo "$GITHUB_REPOSITORY" --title 'VideoStudio 3.6.0 Native APK' --notes-file native-release-notes.md
           else
-            gh release create videostudio-native-3.5.0 VideoStudio-3.5.0.apk VideoStudio-3.5.0.apk.sha256 apk-metadata.txt apk-signature.txt --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title 'VideoStudio 3.5.0 Native APK' --notes-file native-release-notes.md --latest=false
+            gh release create videostudio-native-3.6.0 VideoStudio-3.6.0.apk VideoStudio-3.6.0.apk.sha256 apk-metadata.txt apk-signature.txt --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title 'VideoStudio 3.6.0 Native APK' --notes-file native-release-notes.md --latest=false
           fi
+
+  deploy-relay:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --no-audit --no-fund
+      - name: Check relay deployment credentials
+        id: cf
+        run: |
+          if [ -n "$CLOUDFLARE_API_TOKEN" ] && [ -n "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "Relay deployment skipped: Cloudflare repository secrets are missing. Assist requires updated relay."
+          fi
+      - name: Deploy compatible MCP relay
+        if: steps.cf.outputs.ready == 'true'
+        run: npx wrangler deploy

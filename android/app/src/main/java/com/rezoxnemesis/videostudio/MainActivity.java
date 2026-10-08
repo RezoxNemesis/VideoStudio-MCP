@@ -393,6 +393,12 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
     }
 
     private void showEditor() {
+        if(activeProject==null)activeProject=store.active();
+        if(activeProject==null)activeProject=store.create("Untitled Project");
+        startActivity(new Intent(this,NativeEditorActivity.class).putExtra("projectId",activeProject.id));
+    }
+
+    private void showLegacyEditor() {
         if (activeProject == null) {
             createProject("Untitled Project");
         }
@@ -983,9 +989,12 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         box.addView(title("Autonomous Control", 27));
         box.addView(body("Full Autonomous is the default. The MCP path is signalling/control only; projects, media and editing state live in the app. Gallery enumeration remains a hard technical boundary, not a permission toggle."));
         box.addView(section("Autonomy Mode"));
-        box.addView(permissionCard("everything", "Full Autonomous  •  Recommended", "ChatGPT can use every VideoStudio-native operation: explicit file imports, project management, analysis, AI animation, editing, rendering, inspection, retries and cleanup without repeated permission prompts. Gallery listing/browsing remains technically blocked."));
+        box.addView(permissionCard("manual", "Manual Mode", "You edit directly; ChatGPT can read connection and job diagnostics but cannot change projects."));
+        box.addView(permissionCard("assist", "ChatGPT Assist", "ChatGPT can analyse and plan. Project changes require approval in the app."));
+        box.addView(permissionCard("everything", "Full Autonomous", "ChatGPT can use every VideoStudio-native operation: explicit file imports, project management, analysis, AI animation, editing, rendering, inspection, retries and cleanup without repeated permission prompts. Gallery listing/browsing remains technically blocked."));
         box.addView(permissionCard("one_file", "One File Lock", "Optional manual safety lock. Restricts ChatGPT to the currently authorised media file until you switch back to Full Autonomous."));
 
+        Button approvals=compactButton("Review ChatGPT Assist Requests");approvals.setOnClickListener(v->startActivity(new Intent(this,AssistApprovalActivity.class)));box.addView(approvals);
         box.addView(section("Workload Safety"));
         LinearLayout safety = card(false);
         safety.addView(title("Heavy-work governor", 17));
@@ -1539,6 +1548,11 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
     }
 
     private void animateImagesDialog() {
+        if(activeProject==null)activeProject=store.active();if(activeProject==null){Toast.makeText(this,"Open a project and import an image first",Toast.LENGTH_LONG).show();return;}
+        startActivity(new Intent(this,AnimateImageActivity.class).putExtra("projectId",activeProject.id));
+    }
+
+    private void legacyAnimateImagesDialog() {
         if (activeProject == null) {
             Toast.makeText(this, "Create or open an image project first", Toast.LENGTH_SHORT).show();
             return;
@@ -2536,12 +2550,8 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
     }
 
     private String permissionMode() {
-        String raw = prefs.getString(KEY_MODE, "everything");
-        if ("one_file".equals(raw)) return "one_file";
-        if (!"everything".equals(raw)) {
-            prefs.edit().putString(KEY_MODE, "everything").apply();
-        }
-        return "everything";
+        String raw=prefs.getString(KEY_MODE,"everything");
+        return java.util.Arrays.asList("manual","assist","one_file","everything").contains(raw)?raw:"manual";
     }
 
     private void refreshCurrent() {

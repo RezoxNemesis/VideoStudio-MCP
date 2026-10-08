@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
@@ -34,6 +35,11 @@
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="VideoStudio v3 Native Agent: user-enabled private MCP control for local editing, analysis and rendering" />
         </service>
+        <activity android:name=".NativeEditorActivity" android:exported="false" />
+        <activity android:name=".AssistApprovalActivity" android:exported="false" />
+        <activity android:name=".ExportActivity" android:exported="false" />
+        <activity android:name=".AnimateImageActivity" android:exported="false" />
+        <activity android:name=".StorageHubActivity" android:exported="false" />
         <activity
             android:name=".MainActivity"
             android:exported="true"

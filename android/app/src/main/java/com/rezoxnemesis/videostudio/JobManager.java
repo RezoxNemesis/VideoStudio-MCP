@@ -19,7 +19,7 @@ import java.util.concurrent.Semaphore;
 import java.util.function.Consumer;
 
 public final class JobManager {
-    public enum Kind { LIGHT, HEAVY }
+    public enum Kind { LIGHT, HEAVY, MANUAL }
 
     public static final String STATE_QUEUED = "queued";
     public static final String STATE_PREPARING = "preparing";
@@ -50,6 +50,7 @@ public final class JobManager {
         public volatile JSONObject result;
         Future<?> future;
         private JobManager owner;
+        private volatile PowerManager.WakeLock renderWake;
 
         Job(String name, Kind kind) {
             this(UUID.randomUUID().toString(), name, kind, System.currentTimeMillis());
@@ -69,12 +70,13 @@ public final class JobManager {
         }
 
         public void checkpoint(String stage, int progress, String detail) {
-            if ("cancelled".equals(state)) return;
+            if ("cancelled".equals(state) || "completed".equals(state) || "failed".equals(state)) return;
             this.stage = stage == null || stage.trim().isEmpty() ? this.stage : stage.trim();
             this.progress = Math.max(0, Math.min(100, progress));
             this.detail = detail == null ? "" : detail;
             this.updatedAt = System.currentTimeMillis();
             this.lastCheckpointAt = this.updatedAt;
+            if(renderWake!=null)renderWake.acquire(10*60*1000L);
             if (owner != null) owner.persist();
         }
 
@@ -120,10 +122,11 @@ public final class JobManager {
     private final Context context;
     private final SharedPreferences prefs;
     private final String snapshotKey;
-    private static final Semaphore PROCESS_HEAVY_LANE = new Semaphore(1, true);
+    private static final RenderGate PROCESS_HEAVY_LANE = new RenderGate();
     private final ExecutorService lightPool = Executors.newFixedThreadPool(2);
     private final ExecutorService heavyPool = Executors.newSingleThreadExecutor();
-    private final Semaphore heavyLane = PROCESS_HEAVY_LANE;
+    private final RenderGate heavyLane = PROCESS_HEAVY_LANE;
+    private final ExecutorService manualPool = Executors.newSingleThreadExecutor();
     private final Map<String, Job> jobs = new ConcurrentHashMap<>();
     private volatile boolean restarting;
 
@@ -150,19 +153,20 @@ public final class JobManager {
         onQueued.accept(job);
         jobs.put(job.id, job);
         persist();
-        ExecutorService pool = kind == Kind.HEAVY ? heavyPool : lightPool;
+        ExecutorService pool = kind == Kind.MANUAL ? manualPool : kind == Kind.HEAVY ? heavyPool : lightPool;
         job.future = pool.submit(() -> {
             boolean locked = false;
             try {
                 setState(job, STATE_PREPARING,
                         kind == Kind.HEAVY ? "Waiting for safe render lane" : "Preparing");
-                if (kind == Kind.HEAVY) {
-                    heavyLane.acquire();
+                if (kind != Kind.LIGHT) {
+                    heavyLane.acquire(kind == Kind.MANUAL);
                     locked = true;
                     waitForSafeDevice(job);
                 }
                 if (Thread.currentThread().isInterrupted()) throw new InterruptedException();
                 setState(job, STATE_RUNNING, job.detail);
+                if(kind!=Kind.LIGHT){PowerManager power=(PowerManager)this.context.getSystemService(Context.POWER_SERVICE);if(power!=null){job.renderWake=power.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK,"VideoStudio:render");job.renderWake.setReferenceCounted(false);job.renderWake.acquire(10*60*1000L);}}
                 work.run(job);
                 if (!isTerminal(job.state)) {
                     job.progress = 100;
@@ -176,6 +180,7 @@ public final class JobManager {
             } catch (Exception error) {
                 setState(job, STATE_FAILED, error.getMessage() == null ? "Job failed" : error.getMessage());
             } finally {
+                if(job.renderWake!=null){try{if(job.renderWake.isHeld())job.renderWake.release();}catch(Exception ignored){}job.renderWake=null;}
                 if (locked) heavyLane.release();
                 persist();
             }
@@ -250,6 +255,7 @@ public final class JobManager {
         cancelAll();
         lightPool.shutdownNow();
         heavyPool.shutdownNow();
+        manualPool.shutdownNow();
         persist();
     }
 
@@ -261,6 +267,7 @@ public final class JobManager {
         }
         lightPool.shutdownNow();
         heavyPool.shutdownNow();
+        manualPool.shutdownNow();
         persist();
     }
 
@@ -353,7 +360,7 @@ public final class JobManager {
     }
 
     public void awaitSafeCheckpoint(Job job, String stage) throws InterruptedException {
-        if (job == null || job.kind != Kind.HEAVY) return;
+        if (job == null || job.kind == Kind.LIGHT) return;
         if (stage != null && !stage.trim().isEmpty()) job.stage = stage.trim();
         waitForSafeDevice(job);
         if (!STATE_CANCELLED.equals(job.state)) setState(job, STATE_RUNNING, job.detail);
@@ -411,7 +418,7 @@ public final class JobManager {
                 if (o == null) continue;
                 long updated = o.optLong("updatedAt", 0);
                 if (updated < cutoff) continue;
-                Kind kind = "heavy".equals(o.optString("kind")) ? Kind.HEAVY : Kind.LIGHT;
+                Kind kind = "manual".equals(o.optString("kind")) ? Kind.MANUAL : "heavy".equals(o.optString("kind")) ? Kind.HEAVY : Kind.LIGHT;
                 Job job = new Job(o.optString("id", UUID.randomUUID().toString()), o.optString("name", "Recovered job"), kind, o.optLong("createdAt", updated));
                 job.owner = this;
                 job.progress = o.optInt("progress", 0);

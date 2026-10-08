@@ -70,6 +70,26 @@ public final class DriveWorkspaceProvider {
         prefs.edit().remove(KEY_TREE).remove(KEY_LINKED_AT).apply();
     }
 
+    public Uri publishExportToTree(Uri tree,File file,String name) throws Exception {
+        if(!hasPersistedPermission(tree))throw new SecurityException("Export folder must be explicitly authorised through Android Files");
+        Uri exports=ensureDirectory(tree,rootDocumentUri(tree),"Exports");
+        Uri pending=DocumentsContract.createDocument(resolver,exports,"video/mp4",".pending_"+java.util.UUID.randomUUID()+".mp4");
+        if(pending==null)throw new java.io.IOException("Provider could not create export");
+        boolean committed=false;
+        try {
+            java.security.MessageDigest digest=java.security.MessageDigest.getInstance("SHA-256");
+            try(InputStream input=new FileInputStream(file);OutputStream output=resolver.openOutputStream(pending,"wt")) {
+                if(output==null)throw new java.io.IOException("Provider cannot write this folder");
+                byte[] buffer=new byte[BUFFER];int n;while((n=input.read(buffer))!=-1){if(Thread.currentThread().isInterrupted())throw new InterruptedException();output.write(buffer,0,n);digest.update(buffer,0,n);}output.flush();
+            }
+            byte[] expected=digest.digest();digest.reset();
+            try(InputStream verify=resolver.openInputStream(pending)){if(verify==null)throw new java.io.IOException("Provider cannot verify export");byte[] buffer=new byte[BUFFER];int n;while((n=verify.read(buffer))!=-1){if(Thread.currentThread().isInterrupted())throw new InterruptedException();digest.update(buffer,0,n);}}
+            if(!java.util.Arrays.equals(expected,digest.digest()))throw new java.io.IOException("Cloud export checksum mismatch");
+            Uri published=DocumentsContract.renameDocument(resolver,pending,safeName(name));
+            if(published==null)throw new java.io.IOException("Provider cannot commit the export filename");committed=true;return published;
+        }finally{if(!committed)try{DocumentsContract.deleteDocument(resolver,pending);}catch(Exception ignored){}}
+    }
+
     public synchronized boolean isLinked() {
         Uri tree = treeUri();
         return tree != null && canReadRoot(tree);

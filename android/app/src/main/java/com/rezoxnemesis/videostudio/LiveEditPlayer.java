@@ -133,6 +133,9 @@ public final class LiveEditPlayer {
         return player.getMediaItemCount() > 0;
     }
 
+    public void setVisible(boolean visible) {view.setVisibility(visible?android.view.View.VISIBLE:android.view.View.GONE);}
+    public void setVolume(float volume) {player.setVolume(Math.max(0,Math.min(1,volume)));}
+
     public void pause() {
         player.pause();
     }

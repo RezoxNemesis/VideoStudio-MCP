@@ -18,6 +18,36 @@ async function fixture(commands=[]) {
  return {relay,key,deviceId,storage};
 }
 const command=(seq,status,leaseUntil=0)=>({id:'cmd-'+seq,seq,protocolVersion:3,action:'ping',parameters:{},status,leaseUntil});
+
+test('Manual mode persists and blocks mutation while allowing native diagnostics',async()=>{
+ const f=await fixture();
+ const registration=await f.relay.appRegister(f.deviceId,f.key,{protocolVersion:3,appGeneration:1,permissionMode:'manual'});
+ assert.equal(registration.permissionMode,'manual');
+ await assert.rejects(f.relay.appEnqueueV3(f.key,'editor_edit',{operation:'remove'}),/permission mode/);
+ const queued=await f.relay.appEnqueueV3(f.key,'get_state',{});
+ assert.equal(queued.status,'queued');
+ await assert.rejects(f.relay.appEnqueueV3(f.key,'list_gallery',{}),/permission mode/);
+});
+
+test('Assist mutations stay on Android even when Studio Web is fresh and the phone sleeps',async()=>{
+ const f=await fixture(),web='assist-web-device';
+ await f.relay.register(web,{name:'Assist Web'});
+ await f.relay.createProject(web,'Web project','');
+ await f.relay.appBindStudioWebFallback(f.key,web);
+ await f.relay.appRegister(f.deviceId,f.key,{protocolVersion:3,appGeneration:1,permissionMode:'assist'});
+ const native=await f.storage.get('app-device:'+f.deviceId);native.lastSeenAt=new Date(Date.now()-120000).toISOString();await f.storage.put('app-device:'+f.deviceId,native);
+ const queued=await f.relay.appEnqueueV3(f.key,'export_project',{});
+ assert.equal(queued.status,'waiting_native');assert.equal(queued.hybridRoute,undefined);
+ assert.equal((await f.storage.get('app-device:'+f.deviceId)).permissionMode,'assist');
+});
+
+test('new editor and learned-animation operations stay native while offline',async()=>{
+ const f=await fixture();const native=await f.storage.get('app-device:'+f.deviceId);native.lastSeenAt=new Date(Date.now()-120000).toISOString();await f.storage.put('app-device:'+f.deviceId,native);
+ for(const action of ['editor_edit','analyse_image_motion','generate_motion_plan','animate_image','refine_motion','render_generated_video','critique_generated_video']){
+  const queued=await f.relay.appEnqueueV3(f.key,action,{projectId:'test',assetId:'source'});
+  assert.equal(queued.status,'waiting_native');assert.equal(queued.hybridRoute,undefined);
+ }
+});
 test('out-of-order acknowledgement cannot hide an older expired lease',async()=>{
  const f=await fixture([command(1,'claimed',Date.now()-1),command(2,'completed')]);
  const found=await f.relay.appCommandsV3(f.deviceId,f.key,2,0);

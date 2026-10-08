@@ -1,0 +1,13 @@
+package com.rezoxnemesis.videostudio;
+import android.content.Context;import android.content.SharedPreferences;import org.json.*;import java.nio.charset.StandardCharsets;import java.util.*;
+
+/** Single-use approvals bind the exact operation and parameters; an MCP caller cannot approve itself. */
+final class AssistApprovalStore {
+    private static final Object LOCK=new Object();private final SharedPreferences prefs;
+    AssistApprovalStore(Context c){prefs=c.getSharedPreferences("videostudio_native_v1",0);}
+    JSONArray list(){try{return new JSONArray(prefs.getString("assist_approvals","[]"));}catch(Exception e){return new JSONArray();}}
+    private static String digest(String action,JSONObject args)throws Exception{JSONObject copy=new JSONObject(args.toString());copy.remove("_approvedRequestId");copy.remove("_mcpCommandId");return SceneMemoryStore.hash((action+"\n"+SceneMemoryStore.canonical(copy)).getBytes(StandardCharsets.UTF_8));}
+    String request(String action,JSONObject args)throws Exception{synchronized(LOCK){if(args.toString().length()>96000)throw new IllegalArgumentException("Approval payload is too large; use a private attachment handoff");String hash=digest(action,args);JSONArray items=list(),keep=new JSONArray();long now=System.currentTimeMillis();for(int i=0;i<items.length();i++){JSONObject item=items.getJSONObject(i);if(item.optLong("expiresAt")<now)continue;if(hash.equals(item.optString("digest"))&&!item.optBoolean("used"))return item.getString("id");if(keep.length()<19)keep.put(item);}String id=UUID.randomUUID().toString();keep.put(new JSONObject().put("id",id).put("action",action).put("parameters",args).put("digest",hash).put("approved",false).put("used",false).put("expiresAt",now+10*60*1000));prefs.edit().putString("assist_approvals",keep.toString()).commit();return id;}}
+    void decide(String id,boolean approved)throws Exception{synchronized(LOCK){JSONArray items=list();for(int i=0;i<items.length();i++){JSONObject item=items.getJSONObject(i);if(id.equals(item.optString("id")))item.put("approved",approved).put("used",!approved);}prefs.edit().putString("assist_approvals",items.toString()).commit();}}
+    boolean consume(String action,JSONObject args){synchronized(LOCK){try{String id=args.optString("_approvedRequestId"),hash=digest(action,args);if(id.isEmpty())return false;JSONArray items=list();for(int i=0;i<items.length();i++){JSONObject item=items.getJSONObject(i);if(id.equals(item.optString("id"))&&item.optBoolean("approved")&&!item.optBoolean("used")&&item.optLong("expiresAt")>=System.currentTimeMillis()&&hash.equals(item.optString("digest"))){item.put("used",true);prefs.edit().putString("assist_approvals",items.toString()).commit();return true;}}}catch(Exception ignored){}return false;}}
+}

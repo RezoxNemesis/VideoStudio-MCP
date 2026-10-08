@@ -85,7 +85,9 @@ public final class NativeRenderEngine {
             }
             final boolean layeredAnimation = hasLayeredAnimation(project);
             Composition composition;
-            if (layeredAnimation) {
+            if (project.clips.stream().anyMatch(c -> c.track != 0)) {
+                composition = buildMultitrack(project,aspect,quality);
+            } else if (layeredAnimation) {
                 composition = buildLayeredAnimationComposition(project, aspect, quality);
             } else {
                 List<EditedMediaItem> edited = new ArrayList<>();
@@ -109,18 +111,22 @@ public final class NativeRenderEngine {
                 composition = new Composition.Builder(sequence).build();
             }
 
+            AtomicBoolean finished = new AtomicBoolean(false);
             Transformer transformer = new Transformer.Builder(context)
-                    .setVideoMimeType(MimeTypes.VIDEO_H264)
+                    .setVideoMimeType("hevc".equals(project.clips.get(0).effects.optString("_exportCodec"))?MimeTypes.VIDEO_H265:MimeTypes.VIDEO_H264)
                     .setAudioMimeType(MimeTypes.AUDIO_AAC)
                     .setEncoderFactory(new androidx.media3.transformer.DefaultEncoderFactory.Builder(context)
                             .setEnableFallback(true)
                             .setEnableFormatFallback(true)
+                            .setRequestedVideoEncoderSettings(new androidx.media3.transformer.VideoEncoderSettings.Builder()
+                                    .setBitrate(project.clips.get(0).effects.optInt("_exportBitrate",8000000)).build())
                             .setRequestedAudioEncoderSettings(new androidx.media3.transformer.AudioEncoderSettings.Builder()
                                     .setBitrate(128000).build())
                             .build())
                     .addListener(new Transformer.Listener() {
                         @Override
                         public void onCompleted(Composition composition, ExportResult result) {
+                            finished.set(true);
                             JSONObject info = new JSONObject();
                             try {
                                 info.put("ok", true);
@@ -146,6 +152,7 @@ public final class NativeRenderEngine {
 
                         @Override
                         public void onError(Composition composition, ExportResult result, ExportException exception) {
+                            finished.set(true);
                             listener.onError(exception.getMessage() == null ? "Native export failed" : exception.getMessage());
                         }
                     })
@@ -156,7 +163,7 @@ public final class NativeRenderEngine {
                 if (handle.isCancelled()) return;
                 try {
                     transformer.start(composition, outputFile.getAbsolutePath());
-                    startProgressPolling(handle, listener);
+                    startProgressPolling(handle, listener, finished);
                 } catch (Exception e) {
                     listener.onError(e.getMessage() == null ? "Could not start native export" : e.getMessage());
                 }
@@ -169,8 +176,39 @@ public final class NativeRenderEngine {
     }
 
     static int outputHeight(String aspect, String quality) {
-        int shortEdge = quality.equals("320p") ? 320 : quality.equals("512p") ? 512 : quality.equals("720p") ? 720 : 1080;
+        int shortEdge = quality.equals("320p") ? 320 : quality.equals("512p") ? 512 : quality.equals("480p") ? 480 : quality.equals("720p") ? 720 : 1080;
         return Math.round(shortEdge / Math.min(1f, aspectRatio(aspect)) / 2f) * 2;
+    }
+
+    public Composition previewComposition(ProjectStore.Project project,String aspect) {
+        ProjectStore.Project preview=ProjectStore.Project.fromJson(project.toJson());
+        for(ProjectStore.Asset asset:preview.assets){ProjectStore.Asset original=project.asset(asset.id);asset.uri=ProxyManager.previewUri(project,original);}
+        for(ProjectStore.Clip clip:preview.clips){clip.effects.remove("_exportFps");clip.effects.remove("_exportBitrate");}
+        if(hasLayeredAnimation(preview))return buildLayeredAnimationComposition(preview,aspect,"512p");
+        return buildMultitrack(preview,aspect,"512p");
+    }
+
+    private Composition buildMultitrack(ProjectStore.Project p,String aspect,String quality) {
+        ArrayList<EditedMediaItemSequence> sequences=new ArrayList<>();
+        for(int track=3;track>=0;track--) {
+            final int selected=track;
+            List<ProjectStore.Clip> clips=new ArrayList<>();for(ProjectStore.Clip c:p.clips)if(c.track==selected)clips.add(c);
+            if(clips.isEmpty())continue;
+            boolean audioOnly=clips.stream().allMatch(c->p.asset(c.assetId).mime.startsWith("audio/"));
+            if(clips.stream().anyMatch(c->p.asset(c.assetId).mime.startsWith("audio/"))&&!audioOnly)throw new IllegalArgumentException("Keep audio and visual media on separate tracks");
+            EditedMediaItemSequence.Builder builder=new EditedMediaItemSequence.Builder(audioOnly?Collections.singleton(C.TRACK_TYPE_AUDIO):new java.util.HashSet<>(java.util.Arrays.asList(C.TRACK_TYPE_AUDIO,C.TRACK_TYPE_VIDEO)));
+            if(track!=0)clips.sort(java.util.Comparator.comparingLong(c->c.timelineStartMs));
+            long cursor=0;
+            for(ProjectStore.Clip c:clips){
+                long start=track==0?cursor:c.timelineStartMs;
+                if(start<cursor)throw new IllegalArgumentException("Clips overlap on the same track; move one to another track");
+                if(start>cursor)builder.addGap((start-cursor)*1000);
+                ProjectStore.Asset a=p.asset(c.assetId);builder.addItem(buildItem(a,c,aspect,quality,a.mime.startsWith("image/")));cursor=start+c.outputDurationMs();
+            }
+            if(cursor<p.outputDurationMs())builder.addGap((p.outputDurationMs()-cursor)*1000);
+            sequences.add(builder.build());
+        }
+        return new Composition.Builder(sequences).build();
     }
 
     private boolean hasLayeredAnimation(ProjectStore.Project project) {
@@ -258,7 +296,7 @@ public final class NativeRenderEngine {
                 .build();
 
         EditedMediaItem.Builder item = new EditedMediaItem.Builder(media)
-                .setFrameRate(30)
+                .setFrameRate(clip.effects.optInt("_exportFps",30))
                 .setRemoveAudio(true);
 
         List<Effect> video = buildLayerEffects(clip, aspect, quality, durationMs, animationSpec, layerRole);
@@ -309,6 +347,8 @@ public final class NativeRenderEngine {
                     new AtmosphereOverlay(environment, atmosphere, durationUs)
             )));
         }
+        appendEditorGeometry(effects,clip,fx);
+        if(fx.has("mask")&&!fx.optString("mask").equals("none"))effects.add(new EditorMaskEffect(fx.optString("mask"),(float)fx.optDouble("maskFeather",.03)));
         return effects;
     }
 
@@ -356,7 +396,7 @@ public final class NativeRenderEngine {
 
         EditedMediaItem.Builder edited = new EditedMediaItem.Builder(media.build());
         if (image) edited.setFrameRate(clip.effects != null && clip.effects.optJSONObject("nativeScene") != null
-                ? clip.effects.optJSONObject("nativeScene").optInt("fps",30) : 30);
+                ? clip.effects.optJSONObject("nativeScene").optInt("fps",30) : clip.effects.optInt("_exportFps",30));
 
         if (!image && Math.abs(clip.speed - 1f) > .01f) {
             final float speed = Math.max(.25f, Math.min(4f, clip.speed));
@@ -367,20 +407,25 @@ public final class NativeRenderEngine {
         }
 
         List<AudioProcessor> audio = new ArrayList<>();
-        if (asset.mime != null && asset.mime.startsWith("video/")) {
+        if (asset.mime != null && (asset.mime.startsWith("video/") || asset.mime.startsWith("audio/"))) {
+            androidx.media3.common.audio.ChannelMixingAudioProcessor volume = new androidx.media3.common.audio.ChannelMixingAudioProcessor();
+            for(int channels=1;channels<=8;channels++) volume.putChannelMixingMatrix(androidx.media3.common.audio.ChannelMixingMatrix.createForConstantGain(channels,channels).scaleBy(clip.volume));
+            audio.add(volume);
             androidx.media3.common.audio.SonicAudioProcessor resampler = new androidx.media3.common.audio.SonicAudioProcessor();
             resampler.setOutputSampleRateHz(48000);
             audio.add(resampler);
         }
         List<Effect> video = buildEffects(clip, aspect, quality, inputDurationMs);
         edited.setEffects(new Effects(audio, video));
-        if (asset.mime == null || !asset.mime.startsWith("video/")) edited.setRemoveAudio(true);
+        if (asset.mime == null || (!asset.mime.startsWith("video/") && !asset.mime.startsWith("audio/"))) edited.setRemoveAudio(true);
+        if(asset.mime != null && asset.mime.startsWith("audio/")) edited.setRemoveVideo(true);
         return edited.build();
     }
 
     private List<Effect> buildEffects(ProjectStore.Clip clip, String aspect, String quality, long inputDurationMs) {
         ArrayList<Effect> effects = new ArrayList<>();
         JSONObject fx = clip.effects == null ? new JSONObject() : clip.effects;
+        if(fx.has("_exportFps"))effects.add(androidx.media3.effect.FrameDropEffect.createDefaultFrameDropEffect(fx.optInt("_exportFps",30)));
 
         float targetAspect = aspectRatio(aspect);
         effects.add(Presentation.createForAspectRatio(targetAspect, Presentation.LAYOUT_SCALE_TO_FIT_WITH_CROP));
@@ -408,9 +453,14 @@ public final class NativeRenderEngine {
             } catch (Exception error) { throw new IllegalArgumentException("Invalid procedural scene", error); }
         }
 
+        JSONObject generatedFrames=fx.optJSONObject("generatedFrames");
+        if(generatedFrames!=null)effects.add(new OverlayEffect(Collections.singletonList(new GeneratedFrameOverlay(new File(generatedFrames.optString("folder")),generatedFrames.optInt("count"),generatedFrames.optInt("fps")))));
+        appendEditorGeometry(effects,clip,fx);
         String preset = fx.optString("effectPreset", fx.optString("colorPreset", ""));
         applyColourEffects(effects, fx);
 
+        if(fx.has("mask")&&!fx.optString("mask").equals("none"))effects.add(new EditorMaskEffect(fx.optString("mask"),(float)fx.optDouble("maskFeather",.03)));
+        if(fx.optBoolean("chromaKey"))effects.add(new EditorMaskEffect("green_screen",(float)fx.optDouble("chromaTolerance",.12)));
         double blur = fx.optDouble("blur", 0);
         if ("gaussian_blur".equals(preset)) blur = Math.max(blur, 5);
         if ("soft_glow".equals(preset) || "dream".equals(preset)) blur = Math.max(blur, 1.6);
@@ -435,17 +485,27 @@ public final class NativeRenderEngine {
         return effects;
     }
 
-    private void startProgressPolling(Handle handle, Listener listener) {
+    private void appendEditorGeometry(List<Effect> effects,ProjectStore.Clip clip,JSONObject fx) {
+        if(!clip.title.isEmpty())effects.add(new OverlayEffect(Collections.singletonList(new EditorTitleOverlay(clip.title))));
+        org.json.JSONArray crop=fx.optJSONArray("cropBounds");
+        if(crop!=null){float left=(float)crop.optDouble(0),top=(float)crop.optDouble(1),right=(float)crop.optDouble(2),bottom=(float)crop.optDouble(3);if(left<0||top<0||right>1||bottom>1||right<=left||bottom<=top)throw new IllegalArgumentException("Invalid crop bounds");effects.add(new androidx.media3.effect.Crop(left*2-1,right*2-1,1-bottom*2,1-top*2));}
+        org.json.JSONArray keys=fx.optJSONArray("editorKeyframes");
+        if(keys!=null)effects.add(new MotionMatrixEffect("none",Math.max(1,clip.outputDurationMs()*1000),0,keyframeSpec(keys),"flat"));
+    }
+
+    private static JSONObject keyframeSpec(org.json.JSONArray keys) {JSONObject spec=new JSONObject();try{spec.put("keyframes",keys);}catch(Exception ignored){}return spec;}
+
+    private void startProgressPolling(Handle handle, Listener listener, AtomicBoolean finished) {
         ProgressHolder holder = new ProgressHolder();
         handle.progressTask = new Runnable() {
             @Override public void run() {
-                if (handle.isCancelled()) return;
+                if (handle.isCancelled() || finished.get()) return;
                 try {
                     int state = handle.transformer.getProgress(holder);
                     if (state == Transformer.PROGRESS_STATE_AVAILABLE) {
                         listener.onProgress(holder.progress, "Native export " + holder.progress + "%");
                     }
-                    if (state != Transformer.PROGRESS_STATE_NOT_STARTED && state != Transformer.PROGRESS_STATE_UNAVAILABLE) {
+                    if (!finished.get()) {
                         main.postDelayed(this, 450);
                     }
                 } catch (Exception ignored) {}
@@ -457,6 +517,7 @@ public final class NativeRenderEngine {
     private static float aspectRatio(String aspect) {
         if ("16:9".equals(aspect)) return 16f / 9f;
         if ("1:1".equals(aspect)) return 1f;
+        if ("4:3".equals(aspect)) return 4f / 3f;
         if ("4:5".equals(aspect)) return 4f / 5f;
         return 9f / 16f;
     }

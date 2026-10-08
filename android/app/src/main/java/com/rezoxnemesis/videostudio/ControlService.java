@@ -44,6 +44,8 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     public static final String ACTION_RESUME = "com.rezoxnemesis.videostudio.RESUME_CONTROL";
     public static final String ACTION_RECONNECT = "com.rezoxnemesis.videostudio.RECONNECT";
     public static final String ACTION_SYNC = "com.rezoxnemesis.videostudio.SYNC_STATE";
+    public static final String ACTION_LOCAL_CANCEL = "com.rezoxnemesis.videostudio.LOCAL_CANCEL";
+    public static final String ACTION_LOCAL_MOTION = "com.rezoxnemesis.videostudio.LOCAL_MOTION";
     public static final String ACTION_LOCAL_SCENE = "com.rezoxnemesis.videostudio.LOCAL_SCENE";
     public static final String ACTION_LOCAL_ANIMATE = "com.rezoxnemesis.videostudio.LOCAL_ANIMATE_IMAGES";
     public static final String ACTION_LOCAL_PROMPT_VIDEO = "com.rezoxnemesis.videostudio.LOCAL_PROMPT_VIDEO";
@@ -70,6 +72,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     private AppProtocol protocol;
     private NativeRenderEngine renderEngine;
     private volatile NativeRenderEngine.Handle activeRender;
+    private volatile String activeRenderJobId="";
     private final ExecutorService commandExecutor = Executors.newSingleThreadExecutor();
     private PromptVideoEngine promptVideoEngine;
     private NativeMediaAnalyzer mediaAnalyzer;
@@ -143,6 +146,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             ActivityLog.add(this, "user", "Cancel all jobs", cancelled + " active job(s) cancelled", "success", null, null, null);
         } else if (ACTION_PAUSE.equals(action)) {
             protocol.setControlPaused(true);
+            protocol.registerNow();
             int cancelled = cancelAllNativeWork();
             ActivityLog.add(this, "user", "ChatGPT control paused", cancelled + " active job(s) cancelled", "info", null, null, null);
             NativeAgentWatchdog.cancel(this);
@@ -160,6 +164,12 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         } else if (ACTION_SYNC.equals(action)) {
             syncProtocolState();
             protocol.registerNow();
+        } else if (ACTION_LOCAL_CANCEL.equals(action)) {
+            String id=intent.getStringExtra("jobId");jobs.cancel(id);recoveryPlans.cancelByJob(id);
+        } else if (ACTION_LOCAL_MOTION.equals(action)) {
+            String raw=intent.getStringExtra("parameters");android.os.ResultReceiver receiver=intent.getParcelableExtra("receiver");
+            commandExecutor.execute(()->{JSONObject result;try{JSONObject p=new JSONObject(raw);result=motionOperation(p.optString("operation","generate_motion_plan"),p);}catch(Exception e){result=new JSONObject();try{result.put("ok",false).put("error",e.getMessage());}catch(Exception ignored){}}
+                if(receiver!=null){android.os.Bundle reply=new android.os.Bundle();reply.putString("result",result.toString());receiver.send(result.optBoolean("ok")?0:1,reply);}});
         } else if (ACTION_LOCAL_SCENE.equals(action)) {
             android.os.ResultReceiver receiver = intent.getParcelableExtra("receiver");
             String operation = intent.getStringExtra("operation");
@@ -220,13 +230,19 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             try {
                 JSONObject p = new JSONObject();
                 p.put("projectId", intent.getStringExtra("projectId"));
+                p.put("_manual",true);
+                p.put("fps",intent.getIntExtra("fps",30));
+                p.put("bitrate",intent.getIntExtra("bitrate",8000000));
+                p.put("codec",intent.getStringExtra("codec"));
+                p.put("outputTreeUri",intent.getStringExtra("outputTreeUri"));
                 p.put("aspect", intent.getStringExtra("aspect") == null ? "9:16" : intent.getStringExtra("aspect"));
                 p.put("quality", intent.getStringExtra("quality") == null ? "1080p" : intent.getStringExtra("quality"));
                 p.put("fileName", intent.getStringExtra("fileName") == null
                         ? "VideoStudio_" + System.currentTimeMillis() + ".mp4"
                         : intent.getStringExtra("fileName"));
                 JSONObject queued = queueExport(p);
-                ActivityLog.add(this, "user", "Export queued",
+                queued.put("requestedAt",System.currentTimeMillis());prefs.edit().putString("manual_export_job",queued.toString()).apply();
+                ActivityLog.add(this, "user", "Manual export started",
                         "Native job " + shortId(queued.optString("jobId")),
                         "queued", 0, null, queued.optString("projectId", ""));
             } catch (Exception error) {
@@ -348,6 +364,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             try {
                 denied.put("ok", false);
                 denied.put("error", "Blocked by VideoStudio permission/privacy boundary: " + action);
+                if("assist".equals(permissionMode())&&!action.toLowerCase(Locale.US).contains("gallery")&&!action.toLowerCase(Locale.US).contains("media_library")&&!action.toLowerCase(Locale.US).contains("photo_library")){String approval=new AssistApprovalStore(this).request(action,p);denied.put("pendingApprovalId",approval).put("requiresUserApproval",true).put("retryInstruction","After approval in the app, retry identical parameters with _approvedRequestId="+approval);}
             } catch (Exception ignored) {}
             ActivityLog.add(this, "chatgpt", friendlyAction(action), denied.optString("error"), "denied", null, commandId, projectId);
             commandJournal.finish(command, denied, "denied");
@@ -357,6 +374,10 @@ public final class ControlService extends Service implements AppProtocol.Callbac
 
         try {
             switch (action) {
+                case "analyse_image_motion":case "generate_motion_plan":case "animate_image":case "refine_motion":case "render_generated_video":case "critique_generated_video":
+                    complete(command,motionOperation(action,p));return;
+                case "editor_edit":
+                    complete(command,EditorCommands.execute(store,p.optString("projectId"),p));return;
                 case "native_scene":
                     complete(command,sceneOperation(p.optString("operation","capabilities"),p));
                     return;
@@ -604,7 +625,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 case "cancel_job": {
                     String jobId = p.optString("jobId");
                     boolean cancelled = jobs.cancel(jobId);
-                    if (cancelled && activeRender != null) activeRender.cancel();
+                    if (cancelled && activeRender != null && jobId.equals(activeRenderJobId)) activeRender.cancel();
                     if (cancelled) recoveryPlans.cancelByJob(jobId);
                     JSONObject result = ok();
                     result.put("cancelled", cancelled);
@@ -1450,7 +1471,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         }
 
         final String durablePlanId = planId;
-        JobManager.Job job = jobs.submit(jobName, JobManager.Kind.HEAVY,
+        JobManager.Job job = jobs.submit(jobName, parameters.optBoolean("_manual",false) ? JobManager.Kind.MANUAL : JobManager.Kind.HEAVY,
                 state -> recoveryPlans.attachJob(durablePlanId, state.id), state -> {
             try {
                 work.run(state);
@@ -1527,6 +1548,10 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                     case "native_neural":
                         queued = queueNativeNeural(parameters);
                         break;
+                    case "analyse_image_motion":
+                        queued=motionOperation(action,parameters);break;
+                    case "animate_image":
+                        queued=queueImageMotion(parameters);break;
                     case "native_temporal":
                         queued = queueNativeTemporal(parameters);
                         break;
@@ -1908,6 +1933,53 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         result.put("assetId", assetId);
         result.put("durableRecovery", true);
         return result;
+    }
+
+    private JSONObject motionOperation(String operation,JSONObject p)throws Exception {
+        ProjectStore.Project project=resolveProject(p.optString("projectId",""));
+        if(operation.equals("generate_motion_plan")||operation.equals("refine_motion"))return ok().put("plan",ImageMotionPlan.compile(p)).put("modelInferenceValidated",false);
+        if(operation.equals("animate_image")||operation.equals("render_generated_video"))return queueImageMotion(p);
+        ProjectStore.Asset asset=project.asset(p.optString("assetId"));if(asset==null)throw new IllegalArgumentException("Select an imported asset");
+        if(operation.equals("analyse_image_motion")) {
+            if(!asset.mime.startsWith("image/"))throw new IllegalArgumentException("Motion analysis needs an image");
+            JobManager.Job job=submitRecoverableHeavy("analyse_image_motion",p,project.id,"Image motion analysis",state->{
+                NativePortraitMotionAnalyzer.Result layers=portraitMotionAnalyzer.analyseAndBuildLayers(asset,project.id);
+                state.setResult(ok().put("analysis",layers.analysis).put("depthEstimateAvailable",false).put("poseSynthesisAvailable",false).put("foregroundUri",layers.foregroundUri.toString()).put("backgroundUri",layers.backgroundUri.toString()));
+            });return ok().put("queued",true).put("jobId",job.id).put("projectId",project.id);
+        }
+        if(operation.equals("critique_generated_video"))return ok().put("analysis",mediaAnalyzer.analyse(asset,8,0,asset.durationMs)).put("semanticIdentityChecked",false).put("fingerAnatomyChecked",false);
+        throw new IllegalArgumentException("Unknown image motion operation");
+    }
+
+    private JSONObject queueImageMotion(JSONObject p)throws Exception {
+        ProjectStore.Project sourceProject=resolveProject(p.optString("projectId",""));ProjectStore.Asset asset=sourceProject.asset(p.optString("assetId"));
+        if(asset==null||!asset.mime.startsWith("image/"))throw new IllegalArgumentException("Select an imported image");
+        JSONObject plan=ImageMotionPlan.compile(p);String engine=plan.getString("engine"),packId=p.optString("packId",""),contract="";
+        if(engine.equals("learned")){
+            if(packId.isEmpty())throw new IllegalStateException("No trained image-to-video model selected. Install a compatible temporal pack; no learned weights are bundled.");
+            JSONObject manifest=new JSONObject(SceneMemoryStore.readSmall(new File(new ModelPackManager(this).installedDirectory(packId),"manifest.json")));
+            if(!NativeTemporalSynthesis.compatible(manifest))throw new IllegalArgumentException("A compatible trained image-to-video model pack is required; no substitute still-image animation will be reported as synthesis");
+            contract=NativeModelContract.fingerprint(manifest);
+            if(p.has("_modelContract")&&!contract.equals(p.getString("_modelContract")))throw new IllegalStateException("Temporal model changed; replan generation");
+        }else if(plan.getJSONArray("requirements").length()>0)throw new IllegalArgumentException("This prompt needs learned subject frame synthesis. Select a compatible model, or use a camera/head/cloth layered motion prompt.");
+        String generation=p.optString("_generationId",java.util.UUID.randomUUID().toString());if(!generation.matches("[a-zA-Z0-9-]{1,80}"))throw new IllegalArgumentException("Invalid generation identity");
+        JSONObject durable=new JSONObject(p.toString()).put("projectId",sourceProject.id).put("_generationId",generation).put("_modelContract",contract);
+        final String modelContract=contract;final String frozenId=generation;
+        JobManager.Job job=submitRecoverableHeavy("animate_image",durable,sourceProject.id,"Animate image · "+asset.name,state->{
+            ProjectStore.Project snapshot=ProjectStore.Project.fromJson(sourceProject.toJson());snapshot.clips.clear();
+            ProjectStore.Clip clip=new ProjectStore.Clip();clip.id=java.util.UUID.randomUUID().toString();clip.assetId=asset.id;clip.outMs=Math.round(plan.getDouble("durationSeconds")*1000);clip.effects.put("_exportFps",plan.getInt("fps"));snapshot.clips.add(clip);
+            if(engine.equals("learned")){
+                File folder=new File(new CreativeWorkspace(this).projectRoot(sourceProject.id),"motion/"+frozenId);
+                new NativeTemporalSynthesis(this).generate(packId,modelContract,asset,plan,folder,(frame,total,resident)->{if(!resident)jobs.awaitSafeCheckpoint(state,"frame_"+frame);checkpoint(state,"Synthesizing image motion","Frame "+frame+" / "+total,Math.min(68,2+frame*66/total),sourceProject.id);});
+                clip.effects.put("generatedFrames",new JSONObject().put("folder",folder.getAbsolutePath()).put("count",plan.getInt("frameCount")).put("fps",plan.getInt("fps")));
+            }else{
+                NativePortraitMotionAnalyzer.Result layers=portraitMotionAnalyzer.analyseAndBuildLayers(asset,sourceProject.id);
+                AnimatedSceneDirector.attachPlan(clip,layers,0,1,"cinematic",plan.getDouble("styleStrength"),clip.outMs,plan.getJSONObject("controls").optDouble("smoke")>0?"mist":"ambient");
+            }
+            runExportBlocking(snapshot,p.optString("aspect","9:16"),p.optString("quality","720p"),"VideoStudio_Motion_"+frozenId+".mp4",state);
+            state.setResult(ok().put("engine",engine).put("trueFrameSynthesis",engine.equals("learned")).put("semanticIdentityVerified",false).put("plan",plan));
+            checkpoint(state,"Image animation","Playable MP4 verified and registered in Media Bin",100,sourceProject.id);
+        });return ok().put("queued",true).put("jobId",job.id).put("projectId",sourceProject.id).put("generationId",generation).put("modelContract",contract).put("engine",engine).put("trueFrameSynthesis",engine.equals("learned"));
     }
 
     private JSONObject queueAnimatedImages(JSONObject p) throws Exception {
@@ -2295,7 +2367,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             ProjectStore.Asset asset=store.registerGeneratedAsset(fresh,Uri.fromFile(output),output.getName(),parameters.has("assetId")?"neural_region_repair":"neural_world_keyframe",false);
             asset.generationMetadata.put("provider","native.onnx.sd-turbo").put("prompt",prompt).put("seed",parameters.getLong("seed")).put("packId",parameters.getString("packId")).put("modelArchiveSha256",manifest.optString("archiveSha256")).put("semanticValidation","unchecked");
             if(parameters.has("assetId")) asset.generationMetadata.put("sourceAssetId",parameters.getString("assetId")).put("region",new JSONArray(new double[]{parameters.getDouble("left"),parameters.getDouble("top"),parameters.getDouble("right"),parameters.getDouble("bottom")})).put("conditioning","text-only-region-replacement");
-            store.save(fresh);
+            JSONObject pinnedMetadata=new JSONObject(asset.generationMetadata.toString());store.mutate(fresh.id,current->{ProjectStore.Asset target=current.asset(asset.id);if(target==null)throw new IllegalStateException("Generated asset removed by editor");target.generationMetadata=pinnedMetadata;});
             state.setResult(ok().put("assetId",asset.id).put("uri",asset.uri).put("provider","native.onnx.sd-turbo").put("semanticValidation","unchecked"));syncProtocolState();
         });
         return ok().put("queued",true).put("jobId",job.id).put("projectId",project.id).put("durableRecovery",true);
@@ -2418,8 +2490,11 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     }
 
     private JSONObject queueExport(JSONObject p) throws Exception {
-        ProjectStore.Project project = resolveProject(p.optString("projectId", ""));
+        ProjectStore.Project project = p.optJSONObject("_projectSnapshot") != null ? ProjectStore.Project.fromJson(p.getJSONObject("_projectSnapshot")) : resolveProject(p.optString("projectId", ""));
         if (project.clips.isEmpty()) throw new IllegalArgumentException("Timeline is empty");
+        int fps=p.optInt("fps",30),bitrate=p.optInt("bitrate",8000000);
+        if(!java.util.Arrays.asList(24,25,30,60).contains(fps)||bitrate<1000000||bitrate>40000000)throw new IllegalArgumentException("Unsupported export FPS or bitrate");
+        for(ProjectStore.Clip c:project.clips)c.effects.put("_exportFps",fps).put("_exportBitrate",bitrate).put("_exportCodec",p.optString("codec","h264")).put("_outputTreeUri",p.optString("outputTreeUri",""));
         String aspect = p.optString("aspect", "9:16");
         String quality = p.optString("quality", "1080p");
         String fileName = sanitizeFileName(p.optString("fileName", "VideoStudio_" + System.currentTimeMillis() + ".mp4"));
@@ -2427,6 +2502,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         JSONObject durableParameters = new JSONObject(p.toString());
         durableParameters.put("projectId", project.id);
         durableParameters.put("fileName", fileName);
+        durableParameters.put("_projectSnapshot",project.toJson());
         JobManager.Job job = submitRecoverableHeavy(
                 "export_project",
                 durableParameters,
@@ -2456,6 +2532,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         AtomicReference<String> error = new AtomicReference<>();
         AtomicReference<File> completed = new AtomicReference<>();
 
+        activeRenderJobId=state.id;
         activeRender = renderEngine.export(project, temp, aspect, quality, new NativeRenderEngine.Listener() {
             @Override public void onProgress(int progress, String detail) {
                 checkpoint(state, "Rendering video", detail, Math.max(20, Math.min(96, 20 + (int) (progress * .76))), project.id);
@@ -2473,15 +2550,19 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         });
         if (activeRender == null) throw new IllegalStateException("Could not start native render");
 
-        while (!latch.await(550, TimeUnit.MILLISECONDS)) {
+        try { while (!latch.await(550, TimeUnit.MILLISECONDS)) {
             if (Thread.currentThread().isInterrupted()) {
                 activeRender.cancel();
                 throw new InterruptedException();
             }
         }
+        } catch(InterruptedException cancelled) {if(activeRender!=null)activeRender.cancel();throw cancelled;}
+        if(Thread.currentThread().isInterrupted()||"cancelled".equals(state.state)){if(activeRender!=null)activeRender.cancel();throw new InterruptedException();}
         if (error.get() != null) throw new IllegalStateException(error.get());
         File ready = completed.get();
         if (ready == null || !ready.exists() || ready.length() == 0) throw new IllegalStateException("Native export produced no file");
+        verifyPlayableVideo(ready);
+        if(Thread.currentThread().isInterrupted()||"cancelled".equals(state.state))throw new InterruptedException();
 
         checkpoint(state, "Exporting video", "Publishing to Movies/VideoStudio", 97, project.id);
         JSONObject committed = recoveryPlans.outputForJob(state.id);
@@ -2497,7 +2578,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                     }
 
                     @Override public String publish(File source) throws Exception {
-                        return publishExport(source, fileName).toString();
+                        String tree=project.clips.get(0).effects.optString("_outputTreeUri","");return tree.isEmpty()?publishExport(source,fileName).toString():driveWorkspace.publishExportToTree(Uri.parse(tree),source,fileName).toString();
                     }
 
                     @Override public String displayName() {
@@ -2551,6 +2632,14 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         if (!ready.delete()) { /* cache cleanup best effort */ }
         activeRender = null;
         syncProtocolState();
+    }
+
+    private void verifyPlayableVideo(File file) throws Exception {
+        android.media.MediaMetadataRetriever verifier=new android.media.MediaMetadataRetriever();android.graphics.Bitmap frame=null;
+        try {verifier.setDataSource(file.getAbsolutePath());long duration=Long.parseLong(verifier.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION));
+            frame=verifier.getScaledFrameAtTime(0,android.media.MediaMetadataRetriever.OPTION_CLOSEST_SYNC,128,128);
+            if(duration<=0||frame==null)throw new IllegalStateException("Encoded MP4 has no decodable video frame");
+        }finally{if(frame!=null)frame.recycle();verifier.release();}
     }
 
     private void ensureProjectWorkspaceHydrated(ProjectStore.Project project,
@@ -3196,6 +3285,8 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         if (lower.contains("gallery") || lower.contains("media_library") || lower.contains("photo_library")) return false;
 
         String mode = permissionMode();
+        if("manual".equals(mode))return java.util.Arrays.asList("ping","get_state","self_test","connection_health","job_status").contains(action);
+        if("assist".equals(mode))return new AssistApprovalStore(this).consume(action,parameters)||java.util.Arrays.asList("ping","get_state","self_test","connection_health","job_status","analyse_media","analyse_image_motion","generate_motion_plan","critique_generated_video").contains(action);
         if ("one_file".equals(mode)) {
             String allowed = prefs.getString(KEY_FILE, "");
             if (allowed.isEmpty()) return false;
@@ -3265,6 +3356,9 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         if (action == null) return false;
         switch (action) {
             case "prompt_video":
+            case "animate_image":
+            case "render_generated_video":
+            case "analyse_image_motion":
             case "animate_images":
             case "export_project":
             case "autonomous_edit":
@@ -3519,7 +3613,8 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     private void checkpoint(JobManager.Job state, String action, String detail, int progress, String projectId) {
         state.checkpoint(action, progress, detail);
         recoveryPlans.checkpointForJob(state.id, action, progress, detail);
-        ActivityLog.progress(this, state.id, action, detail, progress, projectId);
+        if(state.kind==JobManager.Kind.MANUAL)ActivityLog.add(this,"user",action,detail,"running",progress,state.id,projectId);
+        else ActivityLog.progress(this, state.id, action, detail, progress, projectId);
         try {
             JSONObject live = new JSONObject();
             live.put("jobId", state.id);
@@ -3688,12 +3783,8 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     }
 
     private String permissionMode() {
-        String raw = prefs.getString(KEY_MODE, "everything");
-        if ("one_file".equals(raw)) return "one_file";
-        if (!"everything".equals(raw)) {
-            prefs.edit().putString(KEY_MODE, "everything").apply();
-        }
-        return "everything";
+        String raw=prefs.getString(KEY_MODE,"everything");
+        return java.util.Arrays.asList("manual","assist","one_file","everything").contains(raw)?raw:"manual";
     }
 
     private void syncProtocolState() {

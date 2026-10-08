@@ -105,6 +105,8 @@ public final class ProjectStore {
         public long outMs;
         public float speed = 1f;
         public float volume = 1f;
+        public int track = 0;
+        public long timelineStartMs = 0;
         public String transition = "none";
         public String title = "";
         public JSONObject effects = new JSONObject();
@@ -122,6 +124,8 @@ public final class ProjectStore {
                 o.put("outMs", outMs);
                 o.put("speed", speed);
                 o.put("volume", volume);
+                o.put("track", track);
+                o.put("timelineStartMs", timelineStartMs);
                 o.put("transition", transition);
                 o.put("title", title);
                 o.put("effects", effects == null ? new JSONObject() : effects);
@@ -137,6 +141,8 @@ public final class ProjectStore {
             c.outMs = o.optLong("outMs", 0);
             c.speed = (float) o.optDouble("speed", 1);
             c.volume = (float) o.optDouble("volume", 1);
+            c.track = Math.max(0,Math.min(3,o.optInt("track",0)));
+            c.timelineStartMs = Math.max(0,o.optLong("timelineStartMs",0));
             c.transition = o.optString("transition", "none");
             c.title = o.optString("title", "");
             c.effects = o.optJSONObject("effects");
@@ -158,7 +164,8 @@ public final class ProjectStore {
 
         public long outputDurationMs() {
             long total = 0;
-            for (Clip c : clips) total += c.outputDurationMs();
+            for (Clip c : clips) if(c.track==0) total += c.outputDurationMs();
+            for (Clip c : clips) if(c.track!=0) total=Math.max(total,c.timelineStartMs+c.outputDurationMs());
             return total;
         }
 
@@ -304,13 +311,46 @@ public final class ProjectStore {
     }
 
     public synchronized void save(Project project) {
-        if (project == null) return;
-        project.updatedAt = System.currentTimeMillis();
-        ContentValues values = new ContentValues();
-        values.put("id", project.id);
-        values.put("json", project.toJson().toString());
-        values.put("updated_at", project.updatedAt);
-        db.insertWithOnConflict("projects", null, values, SQLiteDatabase.CONFLICT_REPLACE);
+        if(project==null)return;
+        db.beginTransaction();
+        try {
+            Project latest=get(project.id);
+            if(latest!=null&&latest.updatedAt!=project.updatedAt)throw new IllegalStateException("Project changed since it was read; refresh before saving");
+            project.updatedAt=Math.max(System.currentTimeMillis(),project.updatedAt+1);
+            ContentValues values=new ContentValues();values.put("id",project.id);values.put("json",project.toJson().toString());values.put("updated_at",project.updatedAt);
+            if(db.insertWithOnConflict("projects",null,values,SQLiteDatabase.CONFLICT_REPLACE)==-1)throw new IllegalStateException("Project could not be saved");
+            db.setTransactionSuccessful();
+        }finally{db.endTransaction();}
+    }
+
+    interface Mutation { void apply(Project project) throws Exception; }
+    public synchronized Project mutate(String id, Mutation mutation) throws Exception {
+        db.beginTransaction();
+        try {
+            Project latest=get(id);
+            if(latest==null)throw new IllegalArgumentException("Project no longer exists");
+            mutation.apply(latest);save(latest);db.setTransactionSuccessful();return latest;
+        } finally {db.endTransaction();}
+    }
+    void recordTimelineHistory(String id,String before,String after) throws Exception {
+        if(before.equals(after))return;
+        JSONArray history;try{history=new JSONArray(getMeta("undo_"+id));}catch(Exception e){history=new JSONArray();}
+        JSONArray bounded=new JSONArray();for(int i=Math.max(0,history.length()-29);i<history.length();i++)bounded.put(history.get(i));
+        bounded.put(new JSONObject().put("before",before).put("after",after));
+        putMeta("undo_"+id,bounded.toString());putMeta("redo_"+id,"[]");
+    }
+    void restoreTimelineHistory(Project p,boolean redo) throws Exception {
+        String from=(redo?"redo_":"undo_")+p.id,to=(redo?"undo_":"redo_")+p.id;
+        JSONArray stack;try{stack=new JSONArray(getMeta(from));}catch(Exception e){stack=new JSONArray();}
+        if(stack.length()==0)throw new IllegalStateException(redo?"Nothing to redo":"Nothing to undo");
+        JSONObject item=stack.getJSONObject(stack.length()-1);
+        String current=EditorCommands.timeline(p).toString(),expected=item.getString(redo?"before":"after");
+        if(!current.equals(expected))throw new IllegalStateException("Timeline changed outside this edit history; refresh before undoing");
+        JSONArray restore=new JSONArray(item.getString(redo?"after":"before"));
+        for(int i=0;i<restore.length();i++)if(p.asset(restore.getJSONObject(i).getString("assetId"))==null)throw new IllegalStateException("Undo references an asset removed from the bin");
+        p.clips.clear();for(int i=0;i<restore.length();i++)p.clips.add(Clip.fromJson(restore.getJSONObject(i)));
+        JSONArray remaining=new JSONArray();for(int i=0;i<stack.length()-1;i++)remaining.put(stack.get(i));putMeta(from,remaining.toString());
+        JSONArray destination;try{destination=new JSONArray(getMeta(to));}catch(Exception e){destination=new JSONArray();}destination.put(item);putMeta(to,destination.toString());
     }
 
     public synchronized void delete(String id) {
@@ -322,31 +362,16 @@ public final class ProjectStore {
         }
     }
 
-    public synchronized Asset registerImportedAsset(String projectId, Uri uri, String name,
-                                                     String mime, long durationMs) {
-        Project project = get(projectId);
-        if (project == null) throw new IllegalArgumentException("Import project no longer exists");
-        Asset asset = new Asset();
-        asset.id = UUID.randomUUID().toString();
-        asset.uri = uri.toString();
-        asset.name = name;
-        asset.mime = mime == null ? "application/octet-stream" : mime;
-        asset.durationMs = durationMs;
-        asset.role = "source";
-        asset.createdAt = System.currentTimeMillis();
-        project.assets.add(asset);
-        if (asset.mime.startsWith("video/") || asset.mime.startsWith("image/")) {
-            Clip clip = new Clip();
-            clip.id = UUID.randomUUID().toString();
-            clip.assetId = asset.id;
-            clip.outMs = asset.mime.startsWith("image/") ? 3000 : Math.max(1000, durationMs);
-            project.clips.add(clip);
-        }
-        save(project);
-        return asset;
+    public Asset registerImportedAsset(String projectId,Uri uri,String name,String mime,long durationMs) {
+        Asset asset=new Asset();asset.id=UUID.randomUUID().toString();asset.uri=uri.toString();asset.name=name;asset.mime=mime==null?"application/octet-stream":mime;asset.durationMs=durationMs;asset.role="source";
+        try{mutate(projectId,p->{p.assets.add(asset);appendPlayable(p,asset,true);});return asset;}catch(RuntimeException e){throw e;}catch(Exception e){throw new IllegalStateException(e);}
     }
+    private static void appendPlayable(Project project,Asset asset,boolean append){if(append&&(asset.mime.startsWith("image/")||asset.mime.startsWith("video/"))){Clip clip=new Clip();clip.id=UUID.randomUUID().toString();clip.assetId=asset.id;clip.outMs=asset.mime.startsWith("image/")?3000:Math.max(1000,asset.durationMs);project.clips.add(clip);}}
+    private static void copyInto(Project destination,Project source){destination.id=source.id;destination.name=source.name;destination.updatedAt=source.updatedAt;destination.sourcePrompt=source.sourcePrompt;destination.latestExportUri=source.latestExportUri;destination.latestExportName=source.latestExportName;destination.latestExportAt=source.latestExportAt;destination.assets.clear();destination.assets.addAll(source.assets);destination.clips.clear();destination.clips.addAll(source.clips);}
 
-    public Asset importUri(Project project, Uri uri) {
+    public Asset importUri(Project project, Uri uri) {return importUri(project,uri,true);}
+
+    public Asset importUri(Project project,Uri uri,boolean append) {
         Asset a = new Asset();
         a.id = UUID.randomUUID().toString();
         a.uri = uri.toString();
@@ -357,22 +382,12 @@ public final class ProjectStore {
         a.seekable = probe.seekable;
         a.persistedReadAccess = probe.persistedReadAccess;
         a.providerAuthority = probe.providerAuthority;
-        a.durationMs = duration(uri);
+        a.durationMs = a.mime.startsWith("image/") ? 3000 : a.mime.startsWith("audio/") || a.mime.startsWith("video/") ? duration(uri) : 0;
         a.role = "source";
         a.generated = false;
         a.createdAt = System.currentTimeMillis();
 
-        project.assets.add(a);
-        if (a.mime.startsWith("video/") || a.mime.startsWith("image/")) {
-            Clip clip = new Clip();
-            clip.id = UUID.randomUUID().toString();
-            clip.assetId = a.id;
-            clip.inMs = 0;
-            clip.outMs = a.mime.startsWith("image/") ? 3000 : Math.max(1000, a.durationMs);
-            project.clips.add(clip);
-        }
-        save(project);
-        return a;
+        try{Project updated=mutate(project.id,p->{p.assets.add(a);appendPlayable(p,a,append);});copyInto(project,updated);return a;}catch(RuntimeException e){throw e;}catch(Exception e){throw new IllegalStateException(e);}
     }
 
     /**
@@ -380,57 +395,17 @@ public final class ProjectStore {
      * Generated outputs live in the project media bin even when they are not
      * automatically inserted into the timeline.
      */
-    public synchronized Asset registerGeneratedAsset(Project project,
-                                                     Uri uri,
-                                                     String name,
-                                                     String role,
-                                                     boolean appendToTimeline) {
-        if (project == null) throw new IllegalArgumentException("Project is required");
-        if (uri == null) throw new IllegalArgumentException("Generated asset URI is required");
-
-        String uriValue = uri.toString();
-        for (Asset existing : project.assets) {
-            if (uriValue.equals(existing.uri)) {
-                existing.generated = true;
-                existing.role = role == null || role.trim().isEmpty() ? "generated" : role.trim();
-                if (name != null && !name.trim().isEmpty()) existing.name = name.trim();
-                save(project);
-                return existing;
-            }
-        }
-
-        Asset asset = new Asset();
-        asset.id = UUID.randomUUID().toString();
-        asset.uri = uriValue;
-        asset.name = name == null || name.trim().isEmpty() ? "Generated media" : name.trim();
-        asset.mime = resolver.getType(uri);
-        if (asset.mime == null || asset.mime.isEmpty()) {
-            String lower = asset.name.toLowerCase();
-            asset.mime = lower.endsWith(".mp4") ? "video/mp4"
-                    : (lower.endsWith(".png") ? "image/png"
-                    : (lower.endsWith(".jpg") || lower.endsWith(".jpeg") ? "image/jpeg"
-                    : (lower.endsWith(".wav") ? "audio/wav"
-                    : (lower.endsWith(".mp3") ? "audio/mpeg"
-                    : (lower.endsWith(".m4a") ? "audio/mp4"
-                    : (lower.endsWith(".aac") ? "audio/aac" : "application/octet-stream"))))));
-        }
-        asset.durationMs = duration(uri);
-        asset.role = role == null || role.trim().isEmpty() ? "generated" : role.trim();
-        asset.generated = true;
-        asset.createdAt = System.currentTimeMillis();
-        project.assets.add(asset);
-
-        if (appendToTimeline && (asset.mime.startsWith("video/") || asset.mime.startsWith("image/"))) {
-            Clip clip = new Clip();
-            clip.id = UUID.randomUUID().toString();
-            clip.assetId = asset.id;
-            clip.inMs = 0;
-            clip.outMs = asset.mime.startsWith("image/") ? 3000 : Math.max(1000, asset.durationMs);
-            project.clips.add(clip);
-        }
-
-        save(project);
-        return asset;
+    public Asset registerGeneratedAsset(Project project,Uri uri,String name,String role,boolean appendToTimeline) {
+        if(project==null||uri==null)throw new IllegalArgumentException("Project and generated URI are required");
+        Asset prepared=new Asset();prepared.id=UUID.randomUUID().toString();prepared.uri=uri.toString();prepared.name=name==null||name.trim().isEmpty()?"Generated media":name.trim();prepared.mime=resolver.getType(uri);
+        if(prepared.mime==null||prepared.mime.isEmpty()){String lower=prepared.name.toLowerCase(java.util.Locale.ROOT);prepared.mime=lower.endsWith(".mp4")?"video/mp4":lower.endsWith(".png")?"image/png":lower.endsWith(".jpg")||lower.endsWith(".jpeg")?"image/jpeg":lower.endsWith(".wav")?"audio/wav":lower.endsWith(".mp3")?"audio/mpeg":lower.endsWith(".m4a")?"audio/mp4":lower.endsWith(".aac")?"audio/aac":"application/octet-stream";}
+        prepared.durationMs=prepared.mime.startsWith("image/")?3000:prepared.mime.startsWith("video/")||prepared.mime.startsWith("audio/")?duration(uri):0;prepared.role=role==null||role.trim().isEmpty()?"generated":role.trim();prepared.generated=true;
+        java.util.concurrent.atomic.AtomicReference<Asset> registered=new java.util.concurrent.atomic.AtomicReference<>();
+        try{Project updated=mutate(project.id,p->{
+            if(project.latestExportAt>p.latestExportAt){p.latestExportAt=project.latestExportAt;p.latestExportUri=project.latestExportUri;p.latestExportName=project.latestExportName;}
+            for(Asset a:p.assets)if(prepared.uri.equals(a.uri)){a.generated=true;a.role=prepared.role;a.name=prepared.name;registered.set(a);return;}
+            p.assets.add(prepared);appendPlayable(p,prepared,appendToTimeline);registered.set(prepared);
+        });copyInto(project,updated);return registered.get();}catch(RuntimeException e){throw e;}catch(Exception e){throw new IllegalStateException(e);}
     }
 
     public synchronized boolean appendAssetToTimeline(Project project, String assetId) {

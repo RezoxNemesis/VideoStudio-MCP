@@ -1,0 +1,27 @@
+package com.rezoxnemesis.videostudio;
+import android.app.*;import android.content.*;import android.net.Uri;import android.os.*;import android.view.*;import android.widget.*;import org.json.*;
+
+/** Foreground-service-owned export; leaving this screen never cancels the render. */
+public final class ExportActivity extends Activity {
+    private String projectId,jobId="";private Spinner resolution,fps,aspect,bitrate,location,codec;private TextView state;private ProgressBar progress;private Button start;
+    private long requestedAt;private final Handler ui=new Handler(Looper.getMainLooper());
+    private SharedPreferences prefs;
+    private final Runnable poll=new Runnable(){public void run(){try{
+        JSONObject binding=new JSONObject(prefs.getString("manual_export_job","{}"));
+        if(projectId.equals(binding.optString("projectId")) && binding.optLong("requestedAt")>=requestedAt)jobId=binding.optString("jobId");
+        JSONArray jobs=new JSONArray(prefs.getString(ExecutionTruthPolicy.JOB_RECOVERY_PREF_KEY,"[]"));
+        for(int i=0;i<jobs.length();i++){JSONObject job=jobs.getJSONObject(i);if(jobId.equals(job.optString("id"))){String value=job.optString("state");int percent=job.optInt("progress");state.setText(value+" · "+percent+"%\n"+job.optString("detail"));progress.setProgress(percent);start.setEnabled(JobManager.isTerminal(value));}}
+    }catch(Exception ignored){}ui.postDelayed(this,500);}};
+    @Override public void onCreate(Bundle saved){super.onCreate(saved);projectId=getIntent().getStringExtra("projectId");prefs=getSharedPreferences("videostudio_native_v1",0);LinearLayout root=new LinearLayout(this);root.setOrientation(1);root.setPadding(24,20,24,24);ScrollView scroll=new ScrollView(this);scroll.addView(root);setContentView(scroll);
+        root.addView(label("Export video",24));resolution=select(root,"Resolution",new String[]{"720p","1080p","480p"});fps=select(root,"FPS cap / still-animation FPS",new String[]{"30","24","25","60"});aspect=select(root,"Aspect",new String[]{"9:16","16:9","1:1","4:3"});codec=select(root,"Video codec · audio is AAC",new String[]{"H.264","HEVC"});bitrate=select(root,"Video bitrate",new String[]{"8 Mbps","4 Mbps","12 Mbps","20 Mbps"});location=select(root,"Output location",new String[]{"Movies/VideoStudio","Active authorised storage folder"});
+        root.addView(label("Manual export starts in its own native lane. It waits only for a busy renderer, storage, heat or memory. Editing remains available. The original source media is used for final export. A higher FPS setting does not synthesize extra motion in source video.",14));
+        state=label("Ready",16);root.addView(state);progress=new ProgressBar(this,null,android.R.attr.progressBarStyleHorizontal);progress.setMax(100);root.addView(progress);
+        start=button("Start Export / Retry",()->start());root.addView(start);root.addView(button("Cancel this export",()->{if(!jobId.isEmpty())startService(new Intent(this,ControlService.class).setAction(ControlService.ACTION_LOCAL_CANCEL).putExtra("jobId",jobId));}));
+        root.addView(button("Play finished file",()->{ProjectStore.Project p=new ProjectStore(this).get(projectId);if(p==null||p.latestExportUri.isEmpty()){state.setText("No finished export available");return;}Intent watch=new Intent(Intent.ACTION_VIEW).setDataAndType(Uri.parse(p.latestExportUri),"video/mp4").addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);try{startActivity(watch);}catch(Exception e){state.setText("No video player is available. Preview the finished file from the editor Media Bin.");}}));root.addView(button("Return to editor",this::finish));ui.post(poll);
+    }
+    private void start(){try{ProjectStore.Project p=new ProjectStore(this).get(projectId);if(p==null||p.clips.isEmpty())throw new IllegalStateException("Timeline is empty");String tree="";if(location.getSelectedItemPosition()==1){tree=prefs.getString("drive_workspace_tree_uri","");if(tree.isEmpty())throw new IllegalStateException("Choose a folder in Storage Hub first");}requestedAt=System.currentTimeMillis();Intent intent=new Intent(this,ControlService.class).setAction(ControlService.ACTION_LOCAL_EXPORT).putExtra("projectId",projectId).putExtra("quality",resolution.getSelectedItem().toString()).putExtra("fps",Integer.parseInt(fps.getSelectedItem().toString())).putExtra("aspect",aspect.getSelectedItem().toString()).putExtra("bitrate",new int[]{8000000,4000000,12000000,20000000}[bitrate.getSelectedItemPosition()]).putExtra("codec",codec.getSelectedItemPosition()==0?"h264":"hevc").putExtra("outputTreeUri",tree).putExtra("fileName","VideoStudio_"+requestedAt+".mp4");startForegroundService(intent);start.setEnabled(false);state.setText("Starting native export…");}catch(Exception e){state.setText(e.getMessage());}}
+    private TextView label(String value,int size){TextView t=new TextView(this);t.setText(value);t.setTextSize(size);t.setPadding(0,12,0,8);return t;}
+    private Button button(String value,Runnable action){Button b=new Button(this);b.setText(value);b.setOnClickListener(v->action.run());return b;}
+    private Spinner select(LinearLayout root,String caption,String[] values){root.addView(label(caption,14));Spinner s=new Spinner(this);s.setAdapter(new ArrayAdapter<>(this,android.R.layout.simple_spinner_dropdown_item,values));root.addView(s);return s;}
+    @Override protected void onDestroy(){ui.removeCallbacksAndMessages(null);super.onDestroy();}
+}

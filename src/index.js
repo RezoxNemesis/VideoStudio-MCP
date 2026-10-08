@@ -41,6 +41,10 @@ const appActionAllowed = (mode,action) => {
   // Permanent privacy wall. Full autonomy never means Gallery enumeration.
   if(a.includes("gallery")||a.includes("media_library")||a.includes("photo_library")) return false;
 
+  if(mode==="manual")return ["ping","get_state","self_test","connection_health","job_status"].includes(a);
+  // Assist mutations are approved by the native app; never route them to Web fallback.
+  if(mode==="assist")return true;
+
   // One-file mode is an explicit user lock, not the normal operating mode.
   if(mode==="one_file"){
     return ["ping","get_state","self_test","job_status","activity_note","apply_tool","preview_project","analyse_media","export_project","cancel_job","cancel_all_jobs","stop_all"].includes(a);
@@ -160,7 +164,7 @@ export class VideoStudioState extends DurableObject {
         device:safeOld
       };
     }
-    const mode=["one_file","all_tools","everything"].includes(meta.permissionMode)?meta.permissionMode:(old.permissionMode||"everything");
+    const mode=["manual","assist","one_file","all_tools","everything"].includes(meta.permissionMode)?meta.permissionMode:(old.permissionMode||"everything");
     const d={
       deviceId,
       name:clean(meta.name||old.name||"VideoStudio Android",80),
@@ -353,6 +357,8 @@ export class VideoStudioState extends DurableObject {
     return {binding,web,fresh,ageMs:age===Number.MAX_SAFE_INTEGER?null:age,project};
   }
   async appTryStudioWebFallback(ownerKey,action,parameters={}){
+    const native=await this.appResolve(ownerKey);
+    if(native && ["manual","assist"].includes(native.permissionMode))return null;
     const fallback=await this.appResolveStudioWebFallback(ownerKey);
     if(!fallback||!fallback.fresh||!fallback.project) return null;
     const webDeviceId=fallback.binding.webDeviceId;
@@ -1466,7 +1472,7 @@ function serverForApp(env,ownerKey,protocolVersion=1){
     architecture:isV3?"permanent hybrid control plane; native-first execution with bound Studio Web fallback and durable native queue":"native app with private MCP relay",
     privacy:{galleryAccess:false,boundary:"No MCP tool may list, browse or enumerate Gallery/media-library items. Only user-selected Android picker files, VideoStudio-owned files and explicit ChatGPT attachments are usable."},
     permissions:["everything","one_file"],
-    permissionModel:{default:"everything",legacyAlias:"all_tools",note:"Full Autonomous grants every VideoStudio-native action. One File Lock is the only restrictive mode. Gallery enumeration is always blocked."},
+    permissionModel:{default:"everything",modes:["manual","assist","everything"],legacyAlias:"all_tools",note:"Manual permits diagnostics only; Assist mutations require one matching approval inside Android and never use Web fallback. Gallery enumeration is always blocked."},
     connection:isV3
       ?["always-available stable MCP v3 control plane across APK updates","Android Keystore owner key","device binding","optional Studio Web fallback binding","persistent app-generation fencing","adaptive connection profile negotiation","isolated v3 command queue","waiting_native durable work","leased commands","durable command idempotency journal","persistent foreground Native Agent","self-rearm watchdog","secure reconnect backoff","live ChatGPT activity feed","STOP CHATGPT CONTROL"]
       :["Android Keystore owner key","device binding","persistent foreground control service","leased commands","crash-safe completion checkpoints","secure reconnect backoff","notification pause/cancel controls","live ChatGPT activity feed","STOP CHATGPT CONTROL"],
@@ -1513,6 +1519,11 @@ function serverForApp(env,ownerKey,protocolVersion=1){
   s.registerTool("app_autonomous_edit",{description:"Execute a structured autonomous native edit. ChatGPT may replace the timeline, apply a creator preset and optionally launch a safe native export in one request.",inputSchema:{instruction:z.string().max(5000).optional(),clips:z.array(z.record(z.string(),z.any())).max(80).optional(),preset:z.string().max(80).optional(),motion:z.string().max(80).optional(),transition:z.string().max(80).optional(),font:z.string().max(80).optional(),aspect:z.enum(["9:16","16:9","1:1","4:5"]).optional(),quality:z.enum(["720p","1080p"]).optional(),render:z.boolean().optional(),fileName:z.string().max(180).optional()}},async args=>queue("autonomous_edit",args));
 
   s.registerTool("app_create_prompt_video",{description:"Create and export a real local MP4 from a prompt. ChatGPT can provide a detailed scene plan with original titles, text, motion, transitions, effects and font choices; VideoStudio generates the scene visuals locally and renders them with its native engine.",inputSchema:{prompt:z.string().min(1).max(10000),durationSeconds:z.number().int().min(4).max(120).optional(),aspect:z.enum(["9:16","16:9","1:1","4:5"]).optional(),quality:z.enum(["720p","1080p"]).optional(),style:z.string().max(100).optional(),font:z.string().max(80).optional(),scenes:z.array(z.record(z.string(),z.any())).max(20).optional()}},async args=>queue("prompt_video",args));
+
+  if(isV3) s.registerTool("app_editor_edit",{description:"Apply a transactional edit to the shared native project. Expected updatedAt protects against stale edits. Supports trim, split, move, track, speed, volume, text, crop/keyframe/mask effects, add/remove/duplicate, bin rename/replace/delete and undo/redo. Same implementation as the human editor. Use app_execute for approval retries.",inputSchema:{projectId:z.string().min(1),operation:z.string().min(1).max(50),clipId:z.string().optional(),expectedUpdatedAt:z.number().optional(),settings:z.record(z.string(),z.any()).optional()}},async({projectId,operation,clipId,expectedUpdatedAt,settings})=>queue("editor_edit",{...(settings||{}),projectId,operation,clipId,expectedUpdatedAt}));
+  for(const action of ["analyse_image_motion","generate_motion_plan","animate_image","refine_motion","render_generated_video","critique_generated_video"]){
+    if(isV3)s.registerTool(action,{description:"Android-native image motion operation. Plan/analysis distinguish bundled layer warping from learned frame synthesis. Learned generation requires an installed trained onnx-image-to-video-v1 pack; none are bundled. Frame generation uses recurrent image conditioning, masks, pinned models and resumable checkpoints. Identity/pose semantic quality remains unchecked. A queued job is never completion; read command/job results.",inputSchema:{projectId:z.string().min(1),assetId:z.string().optional(),prompt:z.string().max(4000).optional(),engine:z.enum(["layered","learned"]).optional(),packId:z.string().optional(),durationSeconds:z.number().min(1).max(8).optional(),fps:z.union([z.literal(24),z.literal(30)]).optional(),subjectLock:z.boolean().optional(),styleStrength:z.number().min(0).max(1).optional(),camera:z.enum(["locked","parallax","shake"]).optional(),motionStrokes:z.array(z.object({x:z.number().min(0).max(1),y:z.number().min(0).max(1),radius:z.number().min(0).max(1)})).max(128).optional()}},async args=>queue(action,args));
+  }
 
   if(isV3) s.registerTool("app_native_scene",{
     description:"Use the Android-native VSL Scene Studio, shared with the user's AI Tools controls. Operations: capabilities, compile (save immutable memory), inspect, preview, render, portal (image perspective compositor), temporal (two observed image anchors using an installed verified RAFT pack), neural (phased SD-Turbo 512p keyframes with verified compatible weights), repair_region (text-only replacement inside normalized bounds, preserve outside the decoded reference raster; semantic quality unchecked), install_pack. Native-only route; inspect ready/missingCapabilities before render. Procedural/analytic motion is not neural human synthesis. Final results require app_command_result/job_status; queued work is not completion.",
