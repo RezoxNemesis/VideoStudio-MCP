@@ -6,7 +6,7 @@ import {webcrypto} from 'node:crypto';
 // Run the real relay class with an in-memory Durable Object store; SDK/network are not needed.
 const source=fs.readFileSync(new URL('../src/index.js',import.meta.url),'utf8');
 const end=source.indexOf('\n}\n',source.indexOf('export class VideoStudioState'))+3;
-const context={crypto:webcrypto,TextEncoder,Response,Request,Headers,setTimeout,DurableObject:class{constructor(ctx){this.ctx=ctx;}},Date};
+const context={crypto:webcrypto,TextEncoder,Response,Request,Headers,URL,setTimeout,DurableObject:class{constructor(ctx){this.ctx=ctx;}},Date};
 vm.createContext(context);
 vm.runInContext(source.slice(source.indexOf('const JH'),end).replace('export class VideoStudioState','globalThis.VideoStudioState = class VideoStudioState'),context);
 async function fixture(commands=[]) {
