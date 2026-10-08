@@ -971,6 +971,21 @@ export class VideoStudioState extends DurableObject {
     await this.ctx.storage.put("app-handoff:"+d.deviceId+":"+id,record);
     return {id,name:record.name,mime:record.mime,size:record.size,expiresAt:record.expiresAt};
   }
+  async appQueueAttachmentHandoff(ownerKey,file={},projectId=""){
+    const sourceUrl=String(file.download_url||"");
+    const name=clean(file.file_name||"ChatGPT attachment",180);
+    const mime=clean(file.mime_type||"",120);
+    const handoff=await this.appCreateHandoff(ownerKey,sourceUrl,{name,mime,size:0});
+    const command=await this.appEnqueueV3(ownerKey,"import_chat_file",{
+      handoffId:handoff.id,
+      name:handoff.name,
+      mime:handoff.mime,
+      size:handoff.size,
+      projectId:clean(projectId||"",120)
+    });
+    return command;
+  }
+
   async appCreateCachedHandoff(ownerKey,cacheUrl,meta={}){
     const d=await this.appResolve(ownerKey);
     if(!d) throw new Error("Private App MCP credential rejected");
@@ -1698,13 +1713,21 @@ function serverForApp(env,ownerKey,protocolVersion=1){
       projectId:z.string().min(8).optional()
     },
     _meta:{"openai/fileParams":["file"]}
-  },async({file,projectId})=>queue("import_attachment",{
-    sourceUrl:file.download_url,
-    sourceFileId:file.file_id,
-    name:file.file_name||"ChatGPT attachment",
-    mime:file.mime_type||"",
-    projectId:projectId||""
-  }));
+  },async({file,projectId})=>{
+    try{
+      const c=await st.appQueueAttachmentHandoff(ownerKey,file,projectId||"");
+      return out({
+        queued:true,
+        commandId:c.id,
+        sequence:c.seq,
+        action:"import_chat_file",
+        nativeApp:true,
+        protocolVersion:3,
+        route:"private-worker-handoff",
+        waitingNative:c.status==="waiting_native"
+      });
+    }catch(e){ return out({queued:false,error:e.message}); }
+  });
 
   if(isV3) s.registerTool("app_import_inline_base64",{
     description:"Private compatibility fallback for still-image attachments when ChatGPT can read the attachment but cannot expose an Android-downloadable temporary HTTPS URL. Bytes stay inside the owner-authenticated MCP command and are written directly to VideoStudio app-private storage. PNG, JPEG and WebP only, maximum 12 MB decoded.",
