@@ -43,6 +43,8 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     public static final String ACTION_RECONNECT = "com.rezoxnemesis.videostudio.RECONNECT";
     public static final String ACTION_SYNC = "com.rezoxnemesis.videostudio.SYNC_STATE";
     public static final String ACTION_LOCAL_ANIMATE = "com.rezoxnemesis.videostudio.LOCAL_ANIMATE_IMAGES";
+    public static final String ACTION_LOCAL_PROMPT_VIDEO = "com.rezoxnemesis.videostudio.LOCAL_PROMPT_VIDEO";
+    public static final String ACTION_LOCAL_EXPORT = "com.rezoxnemesis.videostudio.LOCAL_EXPORT_PROJECT";
     private static final String CHANNEL = "videostudio_private_control";
     private static final int NOTIFICATION_ID = 6101;
     private static final String PREFS = "videostudio_native_v1";
@@ -176,6 +178,44 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             } catch (Exception error) {
                 ActivityLog.add(this, "user", "AI image animation failed",
                         error.getMessage() == null ? "Could not queue animation" : error.getMessage(),
+                        "failed", null, null, intent.getStringExtra("projectId"));
+            }
+        } else if (ACTION_LOCAL_PROMPT_VIDEO.equals(action)) {
+            try {
+                JSONObject p = new JSONObject();
+                p.put("prompt", intent.getStringExtra("prompt") == null ? "" : intent.getStringExtra("prompt"));
+                p.put("durationSeconds", Math.max(4, Math.min(120, intent.getIntExtra("durationSeconds", 18))));
+                p.put("aspect", intent.getStringExtra("aspect") == null ? "9:16" : intent.getStringExtra("aspect"));
+                p.put("quality", intent.getStringExtra("quality") == null ? "1080p" : intent.getStringExtra("quality"));
+                p.put("style", intent.getStringExtra("style") == null ? "cinematic" : intent.getStringExtra("style"));
+                p.put("fileName", intent.getStringExtra("fileName") == null
+                        ? "VideoStudio_AI_" + System.currentTimeMillis() + ".mp4"
+                        : intent.getStringExtra("fileName"));
+                JSONObject queued = queuePromptVideo(p);
+                ActivityLog.add(this, "user", "Prompt video queued",
+                        "Native job " + shortId(queued.optString("jobId")) + " • project " + shortId(queued.optString("projectId")),
+                        "queued", 0, null, queued.optString("projectId", ""));
+            } catch (Exception error) {
+                ActivityLog.add(this, "user", "Prompt video failed",
+                        error.getMessage() == null ? "Could not queue prompt video" : error.getMessage(),
+                        "failed", null, null, null);
+            }
+        } else if (ACTION_LOCAL_EXPORT.equals(action)) {
+            try {
+                JSONObject p = new JSONObject();
+                p.put("projectId", intent.getStringExtra("projectId"));
+                p.put("aspect", intent.getStringExtra("aspect") == null ? "9:16" : intent.getStringExtra("aspect"));
+                p.put("quality", intent.getStringExtra("quality") == null ? "1080p" : intent.getStringExtra("quality"));
+                p.put("fileName", intent.getStringExtra("fileName") == null
+                        ? "VideoStudio_" + System.currentTimeMillis() + ".mp4"
+                        : intent.getStringExtra("fileName"));
+                JSONObject queued = queueExport(p);
+                ActivityLog.add(this, "user", "Export queued",
+                        "Native job " + shortId(queued.optString("jobId")),
+                        "queued", 0, null, queued.optString("projectId", ""));
+            } catch (Exception error) {
+                ActivityLog.add(this, "user", "Export failed",
+                        error.getMessage() == null ? "Could not queue export" : error.getMessage(),
                         "failed", null, null, intent.getStringExtra("projectId"));
             }
         }
