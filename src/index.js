@@ -1715,7 +1715,20 @@ function serverForApp(env,ownerKey,protocolVersion=1){
     _meta:{"openai/fileParams":["file"]}
   },async({file,projectId})=>{
     try{
-      const c=await st.appQueueAttachmentHandoff(ownerKey,file,projectId||"");
+      // Use RPC methods that already existed before the private-relay rollout.
+      // This keeps active Durable Object instances compatible during a rolling deploy.
+      const handoff=await st.appCreateHandoff(ownerKey,file.download_url,{
+        name:file.file_name||"ChatGPT attachment",
+        mime:file.mime_type||"",
+        size:0
+      });
+      const c=await st.appEnqueueV3(ownerKey,"import_chat_file",{
+        handoffId:handoff.id,
+        name:handoff.name,
+        mime:handoff.mime,
+        size:handoff.size,
+        projectId:projectId||""
+      });
       return out({
         queued:true,
         commandId:c.id,
