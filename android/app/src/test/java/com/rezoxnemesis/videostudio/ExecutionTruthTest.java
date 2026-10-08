@@ -14,6 +14,13 @@ public class ExecutionTruthTest {
         assertTrue(ExecutionTruthPolicy.shouldSurfaceAsWork("chatgpt", "Prompt video"));
     }
 
+    @Test public void diagnosticCommandsDoNotMasqueradeAsAutonomousCreativeWork() {
+        assertFalse(ExecutionTruthPolicy.shouldSurfaceAsWork("chatgpt", "Running VideoStudio v3 self-test"));
+        assertFalse(ExecutionTruthPolicy.shouldSurfaceAsWork("chatgpt", "Checking stable MCP connection"));
+        assertFalse(ExecutionTruthPolicy.shouldSurfaceAsWork("chatgpt", "Reading VideoStudio state"));
+        assertTrue(ExecutionTruthPolicy.shouldSurfaceAsWork("chatgpt", "Creating prompt video"));
+    }
+
     @Test public void emptyEditorFollowsServiceCreatedActiveProjectButRealWorkIsNotStolen() {
         assertTrue(ExecutionTruthPolicy.shouldAdoptStoreActive(
                 true, "empty-project", "ai-project"));
