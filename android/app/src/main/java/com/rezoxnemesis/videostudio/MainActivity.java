@@ -232,7 +232,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         liveTop.setGravity(Gravity.CENTER_VERTICAL);
         LinearLayout liveCopy = column();
         liveCopy.addView(title("◎  Live ChatGPT Activity", 18));
-        JSONArray latestActivity = ActivityLog.recent(this, 1);
+        JSONArray latestActivity = ActivityLog.recentWork(this, 1);
         JSONObject latest = latestActivity.optJSONObject(0);
         liveCopy.addView(body(latest == null ? "No autonomous actions yet" : latest.optString("action") + " • " + latest.optString("status")));
         liveTop.addView(liveCopy, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
@@ -423,7 +423,9 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         viewer.setBackground(rounded(Color.BLACK, Color.rgb(37, 51, 83), dp(18)));
         viewer.setMinimumHeight(dp(280));
         livePlayer.attach(viewer);
-        TextView hint = body(activeProject.assets.isEmpty() ? "Import media to begin" : "Select a clip below");
+        TextView hint = body(activeProject.assets.isEmpty()
+                ? "No source media yet. Import a file, or ask ChatGPT to create a prompt video."
+                : "Select a clip below");
         hint.setGravity(Gravity.CENTER);
         if (livePlayer.hasMedia()) hint.setVisibility(View.GONE);
         viewer.addView(hint, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(280)));
@@ -431,11 +433,11 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
 
         LinearLayout autonomousStrip = card(false);
         autonomousStrip.setBackground(neonCard());
-        JSONArray recentActivity = ActivityLog.recent(this, 1);
+        JSONArray recentActivity = ActivityLog.recentWork(this, 1);
         JSONObject latestActivity = recentActivity.optJSONObject(0);
         JSONObject recoverySnapshot;
         try {
-            recoverySnapshot = new JSONObject(prefs.getString("job_recovery_snapshot", "{}"));
+            recoverySnapshot = new JSONObject(prefs.getString(ExecutionTruthPolicy.LIVE_JOB_PREF_KEY, "{}"));
         } catch (Exception ignored) {
             recoverySnapshot = new JSONObject();
         }
@@ -542,7 +544,9 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
             }
             mediaItems.addView(mediaCard, margins(dp(205), -2, 0, dp(8), dp(8), 0));
         }
-        if (activeProject.assets.isEmpty()) mediaItems.addView(body("No media in this project yet."));
+        if (activeProject.assets.isEmpty()) mediaItems.addView(body(
+                "No media in this project yet. Import source media, or run Prompt Video to generate a new project."
+        ));
         mediaBin.addView(mediaItems);
         box.addView(mediaBin);
 
@@ -669,7 +673,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
 
     private JSONObject latestPersistedJob() {
         try {
-            JSONArray array = new JSONArray(prefs.getString("job_recovery_snapshot", "[]"));
+            JSONArray array = new JSONArray(prefs.getString(ExecutionTruthPolicy.JOB_RECOVERY_PREF_KEY, "[]"));
             JSONObject fallback = null;
             for (int i = 0; i < array.length(); i++) {
                 JSONObject item = array.optJSONObject(i);
@@ -699,6 +703,20 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         if (projectId == null || projectId.isEmpty()) return;
         activityRefresh = () -> {
             if (!"editor".equals(currentScreen)) return;
+
+            ProjectStore.Project storeActive = store.active();
+            boolean currentEmpty = activeProject == null
+                    || (activeProject.assets.isEmpty() && activeProject.clips.isEmpty());
+            if (storeActive != null && ExecutionTruthPolicy.shouldAdoptStoreActive(
+                    currentEmpty,
+                    activeProject == null ? "" : activeProject.id,
+                    storeActive.id)) {
+                activeProject = storeActive;
+                selectedClip = storeActive.clips.isEmpty() ? null : storeActive.clips.get(0);
+                showEditor();
+                return;
+            }
+
             ProjectStore.Project latest = store.get(projectId);
             if (latest != null && latest.updatedAt != knownUpdatedAt) {
                 String selectedId = selectedClip == null ? "" : selectedClip.id;
@@ -2347,7 +2365,18 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
     }
 
     private void refreshCurrent() {
-        activeProject = activeProject == null ? store.active() : store.get(activeProject.id);
+        ProjectStore.Project storeActive = store.active();
+        boolean currentEmpty = activeProject == null
+                || (activeProject.assets.isEmpty() && activeProject.clips.isEmpty());
+        if (storeActive != null && ExecutionTruthPolicy.shouldAdoptStoreActive(
+                currentEmpty,
+                activeProject == null ? "" : activeProject.id,
+                storeActive.id)) {
+            activeProject = storeActive;
+            selectedClip = storeActive.clips.isEmpty() ? null : storeActive.clips.get(0);
+        } else {
+            activeProject = activeProject == null ? storeActive : store.get(activeProject.id);
+        }
         if ("editor".equals(currentScreen)) showEditor();
         else if ("home".equals(currentScreen)) showHome();
         else if ("control".equals(currentScreen)) showControl();
