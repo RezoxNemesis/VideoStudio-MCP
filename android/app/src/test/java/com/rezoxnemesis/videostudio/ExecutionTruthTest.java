@@ -40,6 +40,7 @@ public class ExecutionTruthTest {
         assertTrue(ExecutionTruthPolicy.requiresValidatedMediaOutput("prompt_video"));
         assertTrue(ExecutionTruthPolicy.requiresValidatedMediaOutput("animate_images"));
         assertTrue(ExecutionTruthPolicy.requiresValidatedMediaOutput("export_project"));
+        assertTrue(ExecutionTruthPolicy.requiresValidatedMediaOutput("autonomous_edit"));
         assertFalse(ExecutionTruthPolicy.requiresValidatedMediaOutput("generate_image"));
     }
 
