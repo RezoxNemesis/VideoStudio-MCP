@@ -1,6 +1,6 @@
 # VideoStudio 3.6 native editor and motion workspace
 
-This release is an ARM64 Android APK, package `com.rezoxnemesis.videostudio`, version 3.6.0 (360), signed by the existing GitHub signing identity. Install over 3.4.7/3.5.0 without uninstalling to preserve local projects and connection identity.
+This release is an ARM64 Android APK, package `com.rezoxnemesis.videostudio`, version 3.6.0 (360), signed by an explicitly restored GitHub cache key. Previous 3.4.7 and 3.5.0 APKs were verified to have different certificates. Their original private keys are unavailable. An in-place upgrade may therefore be rejected: back up projects using the authorised workspace archive before any uninstall, then restore/reconnect after installation. Future builds explicitly use the restored key and verify that the APK certificate matches it.
 
 ## Implemented
 
@@ -44,7 +44,7 @@ Controls encode time, frame interval, blink, mouth, head, recoil, limb, cloth, s
 
 ## Realme P1 Speed acceptance checks
 
-1. Install the signed 3.6 APK over the existing app; confirm version in Control. Keep the existing private MCP URL.
+1. Save project backups before attempting installation. If Android rejects the update, preserve those backups before replacing the app. Confirm 3.6.0 in Control and check/reconnect the private MCP endpoint.
 2. Select a large image using Import. Confirm the native canvas displays it and no Gallery listing is performed.
 3. Add a video and audio on separate tracks; trim/split, seek and preview. Inspect thumbnails and waveform when available.
 4. Make a ChatGPT edit and a manual edit concurrently. Confirm fresh project revisions appear and stale changes are rejected.

@@ -47,7 +47,8 @@ jobs:
           "$ANDROID_HOME/build-tools/35.0.0/aapt2" dump badging android/app/build/outputs/apk/mobile/app-mobile.apk > apk-metadata.txt
           grep -F "package: name='com.rezoxnemesis.videostudio' versionCode='360' versionName='3.6.0'" apk-metadata.txt
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs android/app/build/outputs/apk/mobile/app-mobile.apk > apk-signature.txt
-          grep -F "certificate SHA-256 digest: 6798d7392a47fb2e30282dee28f7fcfa0c0a9bc7ee54670dc3ffb8318ac2d792" apk-signature.txt
+          SIGNING_CERT_SHA256=$(keytool -exportcert -keystore "$HOME/.android/debug.keystore" -storepass android -alias androiddebugkey | sha256sum | cut -d' ' -f1)
+          grep -F "certificate SHA-256 digest: $SIGNING_CERT_SHA256" apk-signature.txt
           cp android/app/build/outputs/apk/mobile/app-mobile.apk VideoStudio-3.6.0.apk
           sha256sum VideoStudio-3.6.0.apk > VideoStudio-3.6.0.apk.sha256
       - name: Upload installable APK
@@ -72,11 +73,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           cat > native-release-notes.md <<'NOTES'
-          Native VideoStudio 3.6.0, with the existing app package and signing identity.
+          Native VideoStudio 3.6.0, with the existing app package and an explicitly restored signing key verified against the APK.
 
           Includes native multitrack editing, composition preview, shared editing commands, undo/redo, priority manual export, motion workspace, explicit Assist approvals, and authorised storage folders. ARM64 APK for devices such as Realme P1 Speed.
 
-          Install over the existing app to retain its projects and MCP identity. Open Connect ChatGPT to check connection status. Custom MCP connectors require a supported ChatGPT account.
+          IMPORTANT: Previous 3.4.7 and 3.5.0 release certificates differ from this restored key. Back up projects before any uninstall; an in-place update may be rejected. The old signing private keys are unavailable. Open Connect ChatGPT after installation to check/reconnect its private endpoint. Custom MCP connectors require a supported ChatGPT account.
 
           Physical-device GPU/codec/inference validation remains necessary. True character frame synthesis requires a compatible trained ONNX pack; no such weights are bundled or validated. See docs/EDITOR_MOTION_3_6.md for remaining work. Assist and named motion tools require the updated relay; app_execute works in Full Autonomous with the existing relay.
           NOTES
