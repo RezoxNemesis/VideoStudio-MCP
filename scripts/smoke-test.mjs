@@ -353,6 +353,8 @@ const checks = [
   ["empty editor follows a service-created active AI project", nativeMain.includes("shouldAdoptStoreActive") && nativeMain.includes("store.active()")],
   ["queued MCP render commands remain inflight until native terminal state", controlService.includes("watchDeferredCommand") && commandJournal.includes("linkJob") && commandJournal.includes("inflight(String commandId)") && !controlService.includes('queued ? "queued" : (ok ? "success" : "failed")')],
   ["video-producing native jobs require readable published output before MCP completion", controlService.includes("requiresValidatedMediaOutput") && controlService.includes("verifiedPlayableOutput") && controlService.includes("isReadableOutput(outputUri)")],
+  ["manual prompt video and export share the foreground Native Agent pipeline", controlService.includes("ACTION_LOCAL_PROMPT_VIDEO") && controlService.includes("ACTION_LOCAL_EXPORT") && nativeMain.includes("ControlService.ACTION_LOCAL_PROMPT_VIDEO") && nativeMain.includes("ControlService.ACTION_LOCAL_EXPORT")],
+
 
   ["native remote ingest has no legacy 350 MB application ceiling", !controlService.includes("MAX_REMOTE_IMPORT_BYTES") && !controlService.includes("350 MB")],
   ["native URL and direct attachment ingest delegate to resumable transfer engine", controlService.includes("ResumableTransferManager") && controlService.includes("ResumableTransferManager.Request") && controlService.includes(".download(")],
