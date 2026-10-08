@@ -45,6 +45,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     public static final String ACTION_LOCAL_ANIMATE = "com.rezoxnemesis.videostudio.LOCAL_ANIMATE_IMAGES";
     public static final String ACTION_LOCAL_PROMPT_VIDEO = "com.rezoxnemesis.videostudio.LOCAL_PROMPT_VIDEO";
     public static final String ACTION_LOCAL_EXPORT = "com.rezoxnemesis.videostudio.LOCAL_EXPORT_PROJECT";
+    public static final String ACTION_LOCAL_IMPORT = "com.rezoxnemesis.videostudio.LOCAL_IMPORT_MEDIA";
     public static final String ACTION_CANCEL_MANUAL_EXPORT = "com.rezoxnemesis.videostudio.CANCEL_MANUAL_EXPORT";
     private static final String CHANNEL = "videostudio_private_control";
     private static final int NOTIFICATION_ID = 6101;
@@ -71,6 +72,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     private ExportSessionStore exportSessions;
     private final java.util.Map<String,String> manualExportJobs = new ConcurrentHashMap<>();
     private final java.util.Map<String,NativeRenderEngine.Handle> renderHandles = new ConcurrentHashMap<>();
+    private final Set<String> probingImports=ConcurrentHashMap.newKeySet();
     private PromptVideoEngine promptVideoEngine;
     private NativeMediaAnalyzer mediaAnalyzer;
     private NativePortraitMotionAnalyzer portraitMotionAnalyzer;
@@ -134,6 +136,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         recoverDurablePlans();
         reattachInflightCommandWatchers();
         resumeManualExports();
+        resumeImports();
         NativeAgentWatchdog.scheduleHealthy(this, "service_created");
     }
 
@@ -157,7 +160,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             ActivityLog.add(this, "user", "Cancel all jobs", cancelled + " active job(s) cancelled", "success", null, null, null);
         } else if (ACTION_PAUSE.equals(action)) {
             protocol.setControlPaused(true);
-            int cancelled = cancelAllNativeWork();
+            int cancelled = cancelAutonomousWork();
             ActivityLog.add(this, "user", "ChatGPT control paused", cancelled + " active job(s) cancelled", "info", null, null, null);
             NativeAgentWatchdog.cancel(this);
             updateNotification("ChatGPT control paused");
@@ -174,6 +177,10 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         } else if (ACTION_SYNC.equals(action)) {
             syncProtocolState();
             protocol.registerNow();
+        } else if (ACTION_LOCAL_IMPORT.equals(action)) {
+            String projectId=intent.getStringExtra("projectId");
+            ArrayList<String> ids=intent.getStringArrayListExtra("assetIds");
+            if(ids!=null)for(String id:ids)queueImportProbe(projectId,id);
         } else if (ACTION_LOCAL_ANIMATE.equals(action)) {
             try {
                 JSONObject p = new JSONObject();
@@ -2145,7 +2152,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             asset.generationMetadata.put("provider", "builtin.videostudio.procedural-scene");
             asset.generationMetadata.put("prompt", parameters.optString("prompt", ""));
             asset.generationMetadata.put("sceneGraph", scene);
-            store.save(project);
+            store.updateAssetMetadata(project.id,asset.id,asset.generationMetadata,file.length());
             JSONObject generated = ok(); generated.put("assetId", asset.id); generated.put("uri", asset.uri);
             generated.put("provider", "builtin.videostudio.procedural-scene"); state.setResult(generated);
             syncProtocolState();
@@ -2231,6 +2238,26 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         return result;
     }
 
+    private void resumeImports(){
+        for(ProjectStore.Project p:store.list())for(ProjectStore.Asset a:p.assets)
+            if("importing".equals(a.importState))queueImportProbe(p.id,a.id);
+    }
+    private void queueImportProbe(String projectId,String assetId){
+        if(projectId==null||assetId==null||!probingImports.add(assetId))return;
+        jobs.submit("Read selected media metadata",JobManager.Kind.LIGHT,state->{
+            try{
+                state.checkpoint("import_metadata",0,"Reading metadata without copying the source");
+                ProjectStore.Asset asset=store.completeImport(projectId,assetId);
+                if(asset!=null){
+                    if(!"ready".equals(asset.importState))throw new IllegalStateException(asset.importError);
+                    state.checkpoint("import_ready",100,"Media available in the project");
+                    if(ProxyManager.shouldProxy(asset))new ProxyManager(this,store,jobs).request(store.get(projectId),asset,"720p");
+                }
+                syncProtocolState();
+            }finally{probingImports.remove(assetId);}
+        });
+    }
+
     private void resumeManualExports(){
         JSONArray pending=exportSessions.resumable();
         for(int i=0;i<pending.length();i++){
@@ -2257,6 +2284,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         JobManager.Job job=jobs.submit("Owner export · "+snapshot.name,JobManager.Kind.MANUAL_RENDER,state->{
             manualExportJobs.put(state.id,sessionId);
             try{
+                checkExportActive(state);
                 exportSessions.progress(sessionId,"preparing",0,"Preparing revision "+snapshot.revision);
                 runExportBlocking(snapshot,aspect,quality,fileName,state);
                 JSONObject output=state.result;
@@ -2272,6 +2300,23 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     }
 
     private void runExportBlocking(ProjectStore.Project project, String aspect, String quality, String fileName, JobManager.Job state) throws Exception {
+        checkExportActive(state);
+        String manualSession=manualExportJobs.get(state.id);
+        ExportSessionStore.Session previous=manualSession==null?null:exportSessions.get(manualSession);
+        if(previous!=null&&!previous.uri.isEmpty()){
+            JSONObject recovered=null;
+            try{
+                checkpoint(state,"Verifying recovered output","Checking session-owned destination",96,project.id);
+                recovered=PlayableMediaVerifier.verify(this,Uri.parse(previous.uri),true);
+                if(!previous.outputProof.optString("sha256").isEmpty()&&!previous.outputProof.optString("sha256").equals(recovered.optString("sha256")))
+                    throw new IllegalStateException("Recovered output checksum does not match the render");
+            }catch(InterruptedException cancelled){throw cancelled;}
+            catch(Exception incomplete){recovered=null;discardSessionDestination(previous);exportSessions.discardOutput(manualSession);}
+            if(recovered!=null){
+                checkExportActive(state);makeSessionOutputVisible(previous);
+                registerVerifiedExport(project,Uri.parse(previous.uri),fileName,quality,state,recovered);return;
+            }
+        }
         ensureProjectWorkspaceHydrated(project, state);
         jobs.awaitSafeCheckpoint(state, "native_export_prepare");
         File dir = new File(getCacheDir(), "native_exports");
@@ -2280,8 +2325,9 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         CountDownLatch latch = new CountDownLatch(1);
         AtomicReference<String> error = new AtomicReference<>();
         AtomicReference<File> completed = new AtomicReference<>();
-
-        NativeRenderEngine.Handle renderHandle = renderEngine.export(project, temp, aspect, quality, new NativeRenderEngine.Listener() {
+        NativeRenderEngine.Handle renderHandle=null;boolean renderCompleted=false;
+        try{
+        renderHandle = renderEngine.export(project, temp, aspect, quality, new NativeRenderEngine.Listener() {
             @Override public void onProgress(int progress, String detail) {
                 checkpoint(state, "Rendering video", detail, Math.max(20, Math.min(96, 20 + (int) (progress * .76))), project.id);
             }
@@ -2301,22 +2347,17 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         if(state.kind!=JobManager.Kind.MANUAL_RENDER)activeRender=renderHandle;
 
         while (!latch.await(550, TimeUnit.MILLISECONDS)) {
-            if (Thread.currentThread().isInterrupted()) {
-                renderHandle.cancel();renderHandles.remove(state.id);
-                throw new InterruptedException();
-            }
+            checkExportActive(state);
         }
         if (error.get() != null) throw new IllegalStateException(error.get());
         File ready = completed.get();
         if (ready == null || !ready.exists() || ready.length() == 0) throw new IllegalStateException("Native export produced no file");
 
-        String manualSession=manualExportJobs.get(state.id);
-        if(Thread.currentThread().isInterrupted() || (manualSession!=null && "cancelled".equals(exportSessions.get(manualSession).state)))
-            throw new InterruptedException();
+        checkExportActive(state);
         checkpoint(state,"Verifying output","Decoding exported media before publication",96,project.id);
         JSONObject verification=PlayableMediaVerifier.verify(this,Uri.fromFile(ready),true);
 
-        checkpoint(state, "Exporting video", "Publishing to Movies/VideoStudio", 97, project.id);
+        checkpoint(state, "Exporting video", "Writing selected export destination", 97, project.id);
         JSONObject committed = recoveryPlans.outputForJob(state.id);
         final String reusableUri = committed != null
                 && isReadableOutput(committed.optString("uri", ""))
@@ -2330,7 +2371,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                     }
 
                     @Override public String publish(File source) throws Exception {
-                        return publishExportDestination(source, fileName, state).toString();
+                        return publishExportDestination(source, fileName, state,verification).toString();
                     }
 
                     @Override public String displayName() {
@@ -2339,12 +2380,32 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 }
         );
         Uri publicUri = Uri.parse(publication.uri);
-        PlayableMediaVerifier.verify(this,publicUri,true);
-        verification.put("uri",publicUri.toString());verification.put("projectId",project.id);
-        verification.put("projectRevision",project.revision);verification.put("fileName",fileName);state.setResult(verification);
+        JSONObject publishedProof=PlayableMediaVerifier.verify(this,publicUri,true);
+        if(!verification.optString("sha256").equals(publishedProof.optString("sha256")))throw new IllegalStateException("Published output checksum differs from encoded media");
+        checkExportActive(state);
         if (!publication.reused) {
             recoveryPlans.markOutputForJob(state.id, publicUri.toString(), fileName);
         }
+        registerVerifiedExport(project,publicUri,fileName,quality,state,publishedProof);renderCompleted=true;
+        syncProtocolState();
+        }finally{
+            if(renderHandle!=null&&!renderCompleted)renderHandle.cancel();
+            renderHandles.remove(state.id);if(activeRender==renderHandle)activeRender=null;
+            if(temp.exists()&&!temp.delete()){ /* cache cleanup best effort */ }
+        }
+    }
+
+    private void checkExportActive(JobManager.Job state)throws InterruptedException{
+        String id=manualExportJobs.get(state.id);ExportSessionStore.Session session=id==null?null:exportSessions.get(id);
+        if(Thread.currentThread().isInterrupted()||JobManager.STATE_CANCELLED.equals(state.state)||(session!=null&&session.terminal()))
+            throw new InterruptedException("Export cancelled");
+    }
+    private void registerVerifiedExport(ProjectStore.Project project,Uri publicUri,String fileName,String quality,
+                                        JobManager.Job state,JSONObject verification)throws Exception{
+        verification.put("uri",publicUri.toString());verification.put("projectId",project.id);
+        verification.put("projectRevision",project.revision);verification.put("fileName",fileName);
+        String sessionId=manualExportJobs.get(state.id);if(sessionId!=null)exportSessions.recordProof(sessionId,verification);
+        checkExportActive(state);state.setResult(verification);
         ProjectStore.Project fresh = store.get(project.id);
         if (fresh != null) {
             fresh.latestExportUri = publicUri.toString();
@@ -2384,9 +2445,6 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                     generated.name + " • Media Bin • asset " + shortId(generated.id),
                     "success", 100, null, fresh.id);
         }
-        if (!ready.delete()) { /* cache cleanup best effort */ }
-        renderHandles.remove(state.id);
-        if(activeRender==renderHandle)activeRender=null;
         syncProtocolState();
     }
 
@@ -2871,7 +2929,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         return asset;
     }
 
-    private Uri publishExport(File file, String displayName) throws Exception {
+    private Uri publishExport(File file, String displayName,JobManager.Job job,JSONObject proof) throws Exception {
         ContentValues values = new ContentValues();
         values.put(MediaStore.Video.Media.DISPLAY_NAME, displayName);
         values.put(MediaStore.Video.Media.MIME_TYPE, "video/mp4");
@@ -2880,34 +2938,37 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         Uri uri = getContentResolver().insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values);
         if (uri == null) throw new IllegalStateException("Could not create exported video");
         boolean success = false;
+        try {
+        String sessionId=manualExportJobs.get(job.id);if(sessionId!=null)exportSessions.stageOutput(sessionId,uri.toString(),proof);
         try (InputStream in = new FileInputStream(file);
              OutputStream out = getContentResolver().openOutputStream(uri, "w")) {
             if (out == null) throw new IllegalStateException("Could not open export destination");
             byte[] buffer = new byte[256 * 1024];
             int n;
             while ((n = in.read(buffer)) >= 0) {
-                if(Thread.currentThread().isInterrupted())throw new InterruptedException("Export publication cancelled");
+                checkExportActive(job);
                 out.write(buffer, 0, n);
             }
-            success = true;
+            out.flush();
+        }
+        checkExportActive(job);
+        ContentValues done = new ContentValues();done.put(MediaStore.Video.Media.IS_PENDING, 0);
+        getContentResolver().update(uri, done, null, null);success = true;
         } finally {
             if (!success) {
                 try { getContentResolver().delete(uri, null, null); } catch (Exception ignored) {}
             }
         }
-        ContentValues done = new ContentValues();
-        done.put(MediaStore.Video.Media.IS_PENDING, 0);
-        getContentResolver().update(uri, done, null, null);
         return uri;
     }
 
-    private Uri publishExportDestination(File file,String name,JobManager.Job job) throws Exception{
+    private Uri publishExportDestination(File file,String name,JobManager.Job job,JSONObject proof) throws Exception{
         String sessionId=manualExportJobs.get(job.id);
-        if(sessionId==null)return publishExport(file,name);
+        if(sessionId==null)return publishExport(file,name,job,proof);
         ExportSessionStore.Session session=exportSessions.get(sessionId);
         if(session==null || "cancelled".equals(session.state))throw new InterruptedException("Export cancelled");
         String destination=session.settings.optString("destination","movies");
-        if("movies".equals(destination))return publishExport(file,name);
+        if("movies".equals(destination))return publishExport(file,name,job,proof);
         Uri uri;
         if("app".equals(destination)){
             File dir=new File(getFilesDir(),"exports");if(!dir.isDirectory()&&!dir.mkdirs())throw new IllegalStateException("Could not create export folder");
@@ -2916,16 +2977,32 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             String selected=session.settings.optString("destinationUri");
             if(!selected.startsWith("content://"))throw new IllegalArgumentException("Pick an export file through Android first");uri=Uri.parse(selected);
         }
+        exportSessions.stageOutput(sessionId,uri.toString(),proof);checkExportActive(job);
         boolean complete=false;
         try(InputStream in=new FileInputStream(file);OutputStream out=getContentResolver().openOutputStream(uri,"w")){
             if(out==null)throw new IllegalStateException("Export destination is unavailable");byte[] buffer=new byte[1024*1024];int count;
-            while((count=in.read(buffer))!=-1){if(Thread.currentThread().isInterrupted())throw new InterruptedException();out.write(buffer,0,count);}out.flush();complete=true;
+            while((count=in.read(buffer))!=-1){checkExportActive(job);out.write(buffer,0,count);}out.flush();checkExportActive(job);complete=true;
         }finally{if(!complete && "app".equals(destination))new File(uri.getPath()).delete();}
         return uri;
     }
 
+    private void discardSessionDestination(ExportSessionStore.Session session){
+        String destination=session.settings.optString("destination","movies");
+        try{
+            Uri uri=Uri.parse(session.uri);
+            if("app".equals(destination)&&"file".equals(uri.getScheme()))new File(uri.getPath()).delete();
+            else if("movies".equals(destination)&&"media".equals(uri.getAuthority()))getContentResolver().delete(uri,null,null);
+        }catch(Exception ignored){}
+    }
+    private void makeSessionOutputVisible(ExportSessionStore.Session session){
+        if(!"movies".equals(session.settings.optString("destination","movies")))return;
+        ContentValues values=new ContentValues();values.put(MediaStore.Video.Media.IS_PENDING,0);
+        getContentResolver().update(Uri.parse(session.uri),values,null,null);
+    }
+
     private ProjectStore.Project resolveProject(String id) {
         ProjectStore.Project project = id == null || id.isEmpty() ? store.active() : store.get(id);
+        if (project == null && id!=null&&!id.isEmpty())throw new IllegalArgumentException("Project not found: "+id);
         if (project == null) project = store.create("ChatGPT Project");
         store.setActive(project.id);
         return project;

@@ -45,6 +45,7 @@ public final class TimelineCompositionFactory {
     public Composition build(ProjectStore.Project original, String aspect, String quality, boolean useProxies) {
         if (original == null || original.clips.isEmpty()) throw new IllegalArgumentException("Timeline is empty");
         ProjectStore.Project project = ProjectStore.Project.fromJson(original.toJson());
+        for(ProjectStore.Clip c:project.clips)if(project.track(c.trackId)==null)throw new IllegalArgumentException("Clip refers to a missing track: "+c.id);
         frameRate = project.settings.optInt("fps", 30);
         if (useProxies) for (ProjectStore.Asset a : project.assets) a.uri = ProxyManager.previewUri(original, a);
         boolean solo = false;

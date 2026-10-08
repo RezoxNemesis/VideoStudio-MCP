@@ -93,7 +93,6 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
     private StudioTimelineView timelineView;
     private long editorPlayhead;
     private Runnable playbackTick;
-    private final java.util.concurrent.ExecutorService importExecutor = java.util.concurrent.Executors.newSingleThreadExecutor();
     private final Handler ui = new Handler(Looper.getMainLooper());
     private Runnable activityRefresh;
     private Runnable serviceWatchdog;
@@ -165,7 +164,6 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         if (activityRefresh != null) ui.removeCallbacks(activityRefresh);
         if (serviceWatchdog != null) ui.removeCallbacks(serviceWatchdog);
         if (playbackTick != null) ui.removeCallbacks(playbackTick);
-        importExecutor.shutdownNow();
         if (monitor != null) monitor.release();
         if (livePlayer != null) livePlayer.release();
         if (activeRenderHandle != null) activeRenderHandle.cancel();
@@ -437,13 +435,13 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         box.addView(clock,margins(-1,-2,dp(6),dp(3),0,0));
         HorizontalScrollView transportScroll=new HorizontalScrollView(this);
         LinearLayout transport=new LinearLayout(this);
-        addEditorButton(transport,"◀ Frame",()->seekEditor(Math.max(0,editorPlayhead-34)));
+        addEditorButton(transport,"◀ Frame",()->stepEditorFrame(-1));
         addEditorButton(transport,"−5s",()->seekEditor(Math.max(0,editorPlayhead-5000)));
         addEditorButton(transport,"Play / Pause",()->{
             if(monitor.isPlaying())monitor.pause();else previewTimeline();
         });
         addEditorButton(transport,"+5s",()->seekEditor(TimelineMath.add(editorPlayhead,5000)));
-        addEditorButton(transport,"Frame ▶",()->seekEditor(TimelineMath.add(editorPlayhead,34)));
+        addEditorButton(transport,"Frame ▶",()->stepEditorFrame(1));
         addEditorButton(transport,"Source",this::previewSelectedClip);
         addEditorButton(transport,"Program",()->monitor.showProgram(activeProject,editorPlayhead,false));
         addEditorButton(transport,"Fullscreen",()->showFullscreenPreview(viewer));
@@ -506,7 +504,11 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         if(result!=null){Button playNew=compactButton("Play new result · "+result.qualityTier);
             playNew.setOnClickListener(v->{ProjectStore.Asset a=new ProjectStore.Asset();a.id=result.id;a.uri=result.uri;a.mime="video/mp4";a.name="Rendered result";monitor.showSource(activeProject,a,null,0,true);});box.addView(playNew);}
         setScreen(scroll,"editor");
-        if(!monitor.isPlaying() && selectedClip!=null)previewSelectedClip();
+        if(!monitor.isPlaying() && selectedClip!=null){
+            if(monitor.isProgram())monitor.showProgram(activeProject,editorPlayhead,false);
+            else monitor.showSource(activeProject,activeProject.asset(selectedClip.assetId),selectedClip,
+                    TimelineMath.sourceAt(selectedClip.inMs,selectedClip.outMs,selectedClip.speed,Math.max(0,editorPlayhead-selectedClip.startMs)),false);
+        }
         scheduleEditorRefresh(activeProject.id,activeProject.revision);
         playbackTick=new Runnable(){@Override public void run(){
             if(!"editor".equals(currentScreen))return;
@@ -523,6 +525,12 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
 
     private void addEditorButton(LinearLayout row,String label,Runnable action){
         Button button=compactButton(label);button.setContentDescription(label);button.setOnClickListener(v->action.run());row.addView(button);
+    }
+    private void stepEditorFrame(int direction){
+        int fps=activeProject.settings.optInt("fps",30);
+        long rounded=TimelineMath.frameIndex(TimelineMath.add(editorPlayhead,Math.max(1,500/fps)),fps);
+        long next=direction<0?Math.max(0,rounded-1):TimelineMath.add(rounded,1);
+        seekEditor(TimelineMath.frameTime(next,fps));
     }
     private boolean requireSelection(){
         if(selectedClip!=null)return true;Toast.makeText(this,"Select a timeline clip first",Toast.LENGTH_SHORT).show();return false;
@@ -1212,28 +1220,20 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
             } else if (data.getData() != null) {
                 uris.add(data.getData());
             }
+            if(activeProject==null)createProject("Imported media");
+            String importProjectId=activeProject.id;ArrayList<String> ids=new ArrayList<>();
             for (Uri uri : uris) {
                 try {
                     getContentResolver().takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
                 } catch (Exception ignored) {}
-                ProjectStore.Asset asset = store.importUri(activeProject, uri);
-                if (ProxyManager.shouldProxy(asset)) {
-                    try {
-                        proxyManager.request(activeProject, asset, "720p");
-                        ActivityLog.add(this, "system", "Heavy preview proxy queued",
-                                asset.name + " • original retained for final render",
-                                "queued", 0, null, activeProject.id);
-                    } catch (Exception proxyError) {
-                        ActivityLog.add(this, "system", "Heavy preview proxy unavailable",
-                                proxyError.getMessage() == null ? asset.name : proxyError.getMessage(),
-                                "info", null, null, activeProject.id);
-                    }
-                }
-                if (selectedClip == null && !activeProject.clips.isEmpty()) selectedClip = activeProject.clips.get(activeProject.clips.size() - 1);
+                ProjectStore.Asset asset=store.beginImport(importProjectId,uri,true);ids.add(asset.id);
                 if ("one_file".equals(permissionMode()) && prefs.getString(KEY_FILE, "").isEmpty()) {
                     prefs.edit().putString(KEY_FILE, asset.id).apply();
                 }
             }
+            activeProject=store.get(importProjectId);
+            startForegroundService(new Intent(this,ControlService.class).setAction(ControlService.ACTION_LOCAL_IMPORT)
+                    .putExtra("projectId",importProjectId).putStringArrayListExtra("assetIds",ids));
             syncProtocolState();
             requestServiceSync();
             showEditor();
@@ -1417,11 +1417,8 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                         long a = (long) (Float.parseFloat(start.getText().toString()) * 1000);
                         long b = (long) (Float.parseFloat(end.getText().toString()) * 1000);
                         if (b <= a) throw new IllegalArgumentException();
-                        selectedClip.inMs = Math.max(0, a);
-                        selectedClip.outMs = b;
-                        store.save(activeProject);
-                        syncProtocolState();
-                        showEditor();
+                        JSONObject args=new JSONObject();args.put("clipId",selectedClip.id);args.put("inMs",a);args.put("outMs",b);
+                        applyEditorOperation("trim_clip",args);
                     } catch (Exception error) {
                         Toast.makeText(this, "Invalid trim range", Toast.LENGTH_SHORT).show();
                     }
@@ -1440,10 +1437,8 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                 .setTitle("Clip title")
                 .setView(input)
                 .setPositiveButton("Apply", (d, w) -> {
-                    selectedClip.title = input.getText().toString().trim();
-                    store.save(activeProject);
-                    syncProtocolState();
-                    showEditor();
+                    try{JSONObject args=new JSONObject();args.put("clipId",selectedClip.id);args.put("text",input.getText().toString().trim());applyEditorOperation("set_title",args);}
+                    catch(Exception error){editorError(error);}
                 })
                 .setNegativeButton("Cancel", null)
                 .show();

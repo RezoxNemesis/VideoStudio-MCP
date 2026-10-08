@@ -74,6 +74,16 @@ jobs:
           path: android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
 
+      - name: Upload unit test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: VideoStudio-unit-test-results
+          path: |
+            android/app/build/test-results/testDebugUnitTest
+            android/app/build/reports/tests/testDebugUnitTest
+          if-no-files-found: warn
+
       - name: Prepare stable direct-download APK
         if: github.event_name == 'push'
         run: |

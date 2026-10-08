@@ -17,18 +17,21 @@ public final class ExportSessionStore {
         public int progress;
         public boolean verified;
         public JSONObject settings=new JSONObject();
+        public JSONObject outputProof=new JSONObject();
         JSONObject json(){
             JSONObject o=new JSONObject();try{
                 o.put("id",id);o.put("projectId",projectId);o.put("name",name);o.put("projectRevision",projectRevision);
                 o.put("state",state);o.put("detail",detail);o.put("progress",progress);o.put("jobId",jobId);
-                o.put("uri",uri);o.put("verified",verified);o.put("settings",settings);o.put("createdAt",createdAt);o.put("updatedAt",updatedAt);
+                o.put("uri",uri);o.put("verified",verified);o.put("settings",settings);o.put("outputProof",outputProof);o.put("createdAt",createdAt);o.put("updatedAt",updatedAt);
             }catch(Exception error){throw new IllegalStateException(error);}return o;
         }
         static Session from(JSONObject o){
             Session s=new Session();s.id=o.optString("id");s.projectId=o.optString("projectId");s.name=o.optString("name");
             s.projectRevision=o.optLong("projectRevision");s.state=o.optString("state","preparing");s.detail=o.optString("detail");
             s.progress=o.optInt("progress");s.jobId=o.optString("jobId");s.uri=o.optString("uri");s.verified=o.optBoolean("verified");
-            s.settings=o.optJSONObject("settings");if(s.settings==null)s.settings=new JSONObject();s.createdAt=o.optLong("createdAt");s.updatedAt=o.optLong("updatedAt");return s;
+            s.settings=o.optJSONObject("settings");if(s.settings==null)s.settings=new JSONObject();
+            s.outputProof=o.optJSONObject("outputProof");if(s.outputProof==null)s.outputProof=new JSONObject();
+            s.createdAt=o.optLong("createdAt");s.updatedAt=o.optLong("updatedAt");return s;
         }
         public boolean terminal(){return "completed".equals(state)||"failed".equals(state)||"cancelled".equals(state);}
     }
@@ -68,17 +71,43 @@ public final class ExportSessionStore {
     }
     private Session required(String id){Session s=get(id);if(s==null)throw new IllegalArgumentException("Export session not found");return s;}
     private void write(Session s){s.updatedAt=System.currentTimeMillis();ContentValues row=new ContentValues();row.put("json",s.json().toString());db.update("exports",row,"id=?",new String[]{s.id});}
-    public synchronized void bindJob(String id,String jobId){Session s=required(id);if(!s.terminal()){s.jobId=jobId;write(s);}}
-    public synchronized void progress(String id,String state,int percent,String detail){
-        Session s=required(id);if(s.terminal())return;
-        if(!java.util.Arrays.asList("preparing","running","checkpointed","verifying","waiting_memory","waiting_thermal","waiting_storage","waiting_network").contains(state))throw new IllegalArgumentException("Invalid export progress state");
-        s.state=state;s.progress=Math.max(0,Math.min(99,percent));s.detail=detail;write(s);
+    private interface Change { void apply(Session session) throws Exception; }
+    private void change(String id,Change mutation){
+        // A monitor only protects one Java object. The SQLite write transaction also
+        // serializes Activity and Service instances before either reads the row.
+        db.beginTransaction();
+        try{Session s=required(id);mutation.apply(s);write(s);db.setTransactionSuccessful();}
+        catch(RuntimeException error){throw error;}catch(Exception error){throw new IllegalStateException(error);}
+        finally{db.endTransaction();}
     }
-    public synchronized void cancel(String id){Session s=required(id);if(!s.terminal()){s.state="cancelled";s.detail="Export cancelled";write(s);}}
-    public synchronized void fail(String id,String detail){Session s=required(id);if(!s.terminal()){s.state="failed";s.detail=detail;write(s);}}
+    public synchronized void bindJob(String id,String jobId){change(id,s->{if(!s.terminal())s.jobId=jobId;});}
+    public synchronized void progress(String id,String state,int percent,String detail){
+        if(!java.util.Arrays.asList("preparing","running","checkpointed","verifying","waiting_memory","waiting_thermal","waiting_storage","waiting_network").contains(state))throw new IllegalArgumentException("Invalid export progress state");
+        change(id,s->{if(!s.terminal()){s.state=state;s.progress=Math.max(0,Math.min(99,percent));s.detail=detail;}});
+    }
+    public synchronized void cancel(String id){change(id,s->{if(!s.terminal()){s.state="cancelled";s.detail="Export cancelled";}});}
+    public synchronized void fail(String id,String detail){change(id,s->{if(!s.terminal()){s.state="failed";s.detail=detail;}});}
+    /** Persist the session-owned destination before bytes are copied; resume verifies it. */
+    public synchronized void stageOutput(String id,String uri){
+        stageOutput(id,uri,new JSONObject());
+    }
+    public synchronized void stageOutput(String id,String uri,JSONObject expectedProof){
+        if(uri==null||uri.isEmpty())throw new IllegalArgumentException("Output URI is required");
+        change(id,s->{if(s.terminal())throw new IllegalStateException("Export is "+s.state);s.uri=uri;s.verified=false;
+            s.outputProof=new JSONObject(expectedProof.toString());s.outputProof.put("uri",uri);});
+    }
+    public synchronized void discardOutput(String id){change(id,s->{if(!s.terminal()){s.uri="";s.verified=false;s.outputProof=new JSONObject();}});}
+    public synchronized void recordProof(String id,JSONObject proof){
+        if(proof==null||!proof.optBoolean("playable")||proof.optString("uri").isEmpty())throw new IllegalArgumentException("Playable output proof is required");
+        change(id,s->{if(s.terminal())throw new IllegalStateException("Export is "+s.state);
+            s.uri=proof.getString("uri");s.outputProof=new JSONObject(proof.toString());s.state="verifying";s.progress=99;});
+    }
     public synchronized void finish(String id,String uri,boolean verified){
         if(!verified || uri==null || uri.isEmpty())throw new IllegalArgumentException("Verified playable output is required");
-        Session s=required(id);if("cancelled".equals(s.state))throw new IllegalStateException("Export was cancelled");
-        s.state="completed";s.progress=100;s.detail="Playable export verified";s.uri=uri;s.verified=true;write(s);
+        change(id,s->{
+            if("completed".equals(s.state)&&uri.equals(s.uri)&&s.verified)return;
+            if(s.terminal())throw new IllegalStateException("Export is "+s.state);
+            s.state="completed";s.progress=100;s.detail="Playable export verified";s.uri=uri;s.verified=true;
+        });
     }
 }

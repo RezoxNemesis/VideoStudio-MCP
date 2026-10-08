@@ -62,4 +62,14 @@ public class ExportSessionTest {
         catch (IllegalStateException expected) { }
         assertEquals("content://owned/first",sessions.get(s.id).uri);
     }
+
+    @Test public void restartRetainsStagedOutputForVerificationWithoutPublishingAgain() throws Exception {
+        ExportSessionStore.Session s=sessions.create(project(),new JSONObject());
+        JSONObject expected=new JSONObject().put("sha256","expected-hash").put("sizeBytes",20_000_000_000L);
+        sessions.stageOutput(s.id,"content://owned/staged",expected);
+        ExportSessionStore.Session recovered=new ExportSessionStore(context).get(s.id);
+        assertEquals("content://owned/staged",recovered.uri);assertFalse(recovered.verified);
+        assertEquals(20_000_000_000L,recovered.outputProof.getLong("sizeBytes"));
+        assertEquals(1,new ExportSessionStore(context).resumable().length());
+    }
 }

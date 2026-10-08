@@ -138,6 +138,7 @@ public final class EditorEngine {
                 break;
             }
             case "trim_clip": {
+                ProjectStore.Clip before=ProjectStore.Clip.fromJson(c.toJson());
                 long oldEnd = TimelineMath.add(c.startMs, c.outputDurationMs());
                 if (a.has("startMs")) c.startMs = a.getLong("startMs");
                 if (c.startMs < 0) throw new IllegalArgumentException("Negative clip position");
@@ -145,7 +146,9 @@ public final class EditorEngine {
                 validateRange(c, asset);
                 if (a.optBoolean("ripple", false)) shiftAfter(p, c.trackId, oldEnd,
                         c.outputDurationMs() - (oldEnd - c.startMs), c.id);
-                noOverlap(p, c); trimKeyframes(c); break;
+                noOverlap(p, c);
+                long shift=Math.round((c.inMs-before.inMs)/(double)c.speed);
+                c.keyframes=sliceKeyframes(before,shift,Math.addExact(shift,c.outputDurationMs()));break;
             }
             case "split_clip": {
                 long at = a.optLong("atMs", -1);
@@ -155,9 +158,12 @@ public final class EditorEngine {
                 long source = TimelineMath.sourceAt(c.inMs, c.outMs, c.speed, local);
                 if (source <= c.inMs || source >= c.outMs) throw new IllegalArgumentException("Split has no source frame on one side");
                 ProjectStore.Clip right = ProjectStore.Clip.fromJson(c.toJson()); right.id = UUID.randomUUID().toString();
+                long originalDuration=c.outputDurationMs();
+                JSONArray leftFrames=sliceKeyframes(c,0,local);
+                JSONArray rightFrames=sliceKeyframes(c,local,originalDuration);
                 right.inMs = source; right.startMs = at; c.outMs = source;
-                right.keyframes = shiftedKeyframes(right.keyframes, local);
-                trimKeyframes(c); p.clips.add(p.clips.indexOf(c) + 1, right); break;
+                c.keyframes=leftFrames;right.keyframes=rightFrames;
+                p.clips.add(p.clips.indexOf(c) + 1, right); break;
             }
             case "remove_clip": {
                 long oldEnd = TimelineMath.add(c.startMs, c.outputDurationMs());
@@ -297,22 +303,42 @@ public final class EditorEngine {
         for (ProjectStore.Clip c : p.clips) if (c == source || (!source.linkGroup.isEmpty() && source.linkGroup.equals(c.linkGroup))) out.add(c);
         return out;
     }
-    private static JSONArray shiftedKeyframes(JSONArray original, long shift) throws Exception {
-        JSONArray next = new JSONArray();
-        for (int i = 0; i < original.length(); i++) {
-            JSONObject frame = new JSONObject(original.getJSONObject(i).toString());
-            if (frame.optLong("timeMs") < shift) continue;
-            frame.put("timeMs", frame.getLong("timeMs") - shift); next.put(frame);
-        }
-        return next;
-    }
     private static void trimKeyframes(ProjectStore.Clip c) throws Exception {
-        JSONArray next = new JSONArray();
-        for (int i = 0; i < c.keyframes.length(); i++) {
-            JSONObject frame = c.keyframes.getJSONObject(i);
-            if (frame.optLong("timeMs") <= c.outputDurationMs()) next.put(frame);
+        c.keyframes=sliceKeyframes(c,0,c.outputDurationMs());
+    }
+    /** Keep the curve's values and shape when a trim/split cuts through a segment. */
+    private static JSONArray sliceKeyframes(ProjectStore.Clip clip,long from,long to) throws Exception {
+        if(to<=from)throw new IllegalArgumentException("Empty keyframe slice");
+        java.util.LinkedHashSet<String> properties=new java.util.LinkedHashSet<>();
+        for(int i=0;i<clip.keyframes.length();i++)properties.add(clip.keyframes.getJSONObject(i).getString("property"));
+        ArrayList<JSONObject> output=new ArrayList<>();
+        for(String property:properties){
+            ArrayList<JSONObject> original=new ArrayList<>();
+            for(int i=0;i<clip.keyframes.length();i++){
+                JSONObject f=clip.keyframes.getJSONObject(i);if(property.equals(f.optString("property")))original.add(f);
+            }
+            original.sort(Comparator.comparingLong(f->f.optLong("timeMs")));
+            KeyframeCurve curve=new KeyframeCurve(clip,property,0);
+            ArrayList<Long> times=new ArrayList<>();times.add(from);
+            for(JSONObject f:original){long time=f.getLong("timeMs");if(time>from&&time<to)times.add(time);}
+            times.add(to);
+            for(int i=0;i<times.size();i++){
+                long time=times.get(i);JSONObject f=new JSONObject();
+                f.put("property",property);f.put("timeMs",Math.subtractExact(time,from));f.put("value",curve.valueAt(time));f.put("easing","hold");
+                for(int j=0;j+1<original.size()&&i+1<times.size();j++){
+                    JSONObject left=original.get(j),right=original.get(j+1);
+                    long begin=left.getLong("timeMs"),end=right.getLong("timeMs");
+                    if(time<begin||time>=end)continue;
+                    double s=left.optDouble("easingStart",0),e=left.optDouble("easingEnd",1);
+                    f.put("easing",left.optString("easing","linear"));
+                    f.put("easingStart",s+(e-s)*(time-begin)/(double)(end-begin));
+                    f.put("easingEnd",s+(e-s)*(Math.min(end,times.get(i+1))-begin)/(double)(end-begin));break;
+                }
+                output.add(f);
+            }
         }
-        c.keyframes = next;
+        output.sort(Comparator.comparingLong(f->f.optLong("timeMs")));
+        JSONArray next=new JSONArray();for(JSONObject f:output)next.put(f);return next;
     }
     public static void validateProperty(String property, double value) {
         if (!PROPERTIES.contains(property) || !Double.isFinite(value)) throw new IllegalArgumentException("Unknown or nonfinite property");
@@ -332,23 +358,7 @@ public final class EditorEngine {
             throw new IllegalArgumentException("Crop must retain some image area");
     }
     public static double valueAt(ProjectStore.Clip c, String property, long localMs, double fallback) {
-        ArrayList<JSONObject> frames = new ArrayList<>();
-        for (int i = 0; i < c.keyframes.length(); i++) {
-            JSONObject f = c.keyframes.optJSONObject(i);
-            if (f != null && property.equals(f.optString("property"))) frames.add(f);
-        }
-        if (frames.isEmpty()) {
-            if ("volume".equals(property)) return c.volume;
-            if ("pan".equals(property)) return c.pan;
-            return c.effects.optDouble(property, fallback);
-        }
-        frames.sort(Comparator.comparingLong(f -> f.optLong("timeMs")));
-        long[] times = new long[frames.size()]; double[] values = new double[frames.size()];
-        String easing = "linear";
-        for (int i = 0; i < frames.size(); i++) {
-            times[i] = frames.get(i).optLong("timeMs"); values[i] = frames.get(i).optDouble("value", fallback);
-            if (times[i] <= localMs) easing = frames.get(i).optString("easing", "linear");
-        }
-        return TimelineMath.interpolate(times, values, localMs, easing);
+        double base="volume".equals(property)?c.volume:"pan".equals(property)?c.pan:c.effects.optDouble(property,fallback);
+        return new KeyframeCurve(c,property,base).valueAt(localMs);
     }
 }

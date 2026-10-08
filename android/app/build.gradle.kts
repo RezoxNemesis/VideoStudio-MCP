@@ -12,6 +12,7 @@ android {
         targetSdk = 35
         versionCode = 347
         versionName = "3.4.7"
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     testOptions { unitTests.isIncludeAndroidResources = true }
@@ -29,6 +30,10 @@ android {
 }
 
 dependencies {
+    androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation("androidx.test:core:1.6.1")
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
+    androidTestImplementation("androidx.test.uiautomator:uiautomator:2.3.0")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.robolectric:robolectric:4.14.1")
     implementation("androidx.media3:media3-exoplayer:1.11.1")

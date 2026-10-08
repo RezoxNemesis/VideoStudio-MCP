@@ -22,3 +22,5 @@ Core Android GREEN evidence: run 37819049832 succeeded. The integrated time-scal
 Installable debug APK from run 37826924864 is saved locally at `artifacts/editor-0bb836b/VideoStudio-editor-debug.apk` (98,737,203 bytes), SHA-256 `0dfb5fb7071d31b9cfcef5292ad00a8860f3d833e2a2dfba3ecc168594c88c5c`. Artifact 11571856567 is retained by GitHub. Artifact binaries are excluded from source commits.
 
 Next hardening: cross-instance export cancellation transactions; revision-safe background import/output registration; keyframe continuity at splits; Android emulator preview/export proof. Advanced model, cloud, 3D/VFX and audio roadmap remain in progress.
+
+Hardening RED: commit f3c46b266ac481c08a2c128b34e97e195653b950 / Android run 37827936373 / job 113485510278 ran 89 tests. Six expected failures proved late terminal export replacement, stale generated/append merges, and split curve discontinuities. Existing remaining tests passed. Fixes use cross-instance SQLite transactions, narrow current-revision merges, and exact sliced easing intervals.

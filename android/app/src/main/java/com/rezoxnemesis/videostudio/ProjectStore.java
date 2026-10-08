@@ -48,6 +48,7 @@ public final class ProjectStore {
         public boolean persistedReadAccess = false;
         public String providerAuthority = "";
         public String role = "source";
+        public String importState = "ready", importError = "";
         public boolean generated = false;
         public JSONObject generationMetadata = new JSONObject();
         public long createdAt = System.currentTimeMillis();
@@ -65,6 +66,7 @@ public final class ProjectStore {
                 o.put("persistedReadAccess", persistedReadAccess);
                 o.put("providerAuthority", providerAuthority);
                 o.put("role", role);
+                o.put("importState",importState);o.put("importError",importError);
                 o.put("generated", generated);
                 o.put("generationMetadata", generationMetadata);
                 o.put("createdAt", createdAt);
@@ -90,6 +92,7 @@ public final class ProjectStore {
                 } catch (Exception ignored) {}
             }
             a.role = o.optString("role", "source");
+            a.importState=o.optString("importState","ready");a.importError=o.optString("importError","");
             a.generated = o.optBoolean("generated", false);
             JSONObject metadata = o.optJSONObject("generationMetadata");
             a.generationMetadata = metadata == null ? new JSONObject() : metadata;
@@ -577,33 +580,44 @@ public final class ProjectStore {
         }
     }
 
-    public Asset importUri(Project project, Uri uri) {
-        Asset a = new Asset();
-        a.id = UUID.randomUUID().toString();
-        a.uri = uri.toString();
-        AssetProbe.Result probe = AssetProbe.probe(resolver, uri);
-        a.mime = probe.mime;
-        a.name = probe.displayName;
-        a.sizeBytes = probe.sizeBytes;
-        a.seekable = probe.seekable;
-        a.persistedReadAccess = probe.persistedReadAccess;
-        a.providerAuthority = probe.providerAuthority;
-        a.durationMs = duration(uri);
-        a.role = "source";
-        a.generated = false;
-        a.createdAt = System.currentTimeMillis();
+    /** No provider query or media decoding: immediately journal the owner's selection. */
+    public Asset beginImport(String projectId,Uri uri,boolean appendToTimeline){
+        if(uri==null)throw new IllegalArgumentException("Media URI is required");
+        Asset placeholder=new Asset();placeholder.id=UUID.randomUUID().toString();placeholder.uri=uri.toString();
+        placeholder.name="Importing media";placeholder.mime=mimeForName(uri.getLastPathSegment());placeholder.importState="importing";
+        try{placeholder.generationMetadata.put("appendAfterImport",appendToTimeline);}catch(Exception error){throw new IllegalStateException(error);}
+        Project latest=transact(projectId,-1,"owner","","Import selected media",p->p.assets.add(placeholder));
+        return latest.asset(placeholder.id);
+    }
 
-        project.assets.add(a);
-        if (a.mime.startsWith("video/") || a.mime.startsWith("image/")) {
-            Clip clip = new Clip();
-            clip.id = UUID.randomUUID().toString();
-            clip.assetId = a.id;
-            clip.inMs = 0;
-            clip.outMs = a.mime.startsWith("image/") ? 3000 : Math.max(1000, a.durationMs);
-            project.clips.add(clip);
-        }
-        save(project);
-        return a;
+    /** Run on a background thread. Only this asset's metadata is merged into the current graph. */
+    public Asset completeImport(String projectId,String assetId){
+        Project snapshot=get(projectId);Asset source=snapshot==null?null:snapshot.asset(assetId);
+        if(source==null)return null;
+        if(!"importing".equals(source.importState))return source;
+        Uri uri=Uri.parse(source.uri);AssetProbe.Result probe=AssetProbe.probe(resolver,uri);
+        long durationMs=duration(uri);
+        Project latest=transact(projectId,-1,"system","","Probe imported media",p->{
+            Asset a=p.asset(assetId);if(a==null||!source.uri.equals(a.uri)||!"importing".equals(a.importState))return;
+            a.mime="application/octet-stream".equals(probe.mime)?mimeForName(probe.displayName.equals("Media")?uri.getLastPathSegment():probe.displayName):probe.mime;
+            if("Importing media".equals(a.name))a.name="Media".equals(probe.displayName)?uri.getLastPathSegment():probe.displayName;
+            a.sizeBytes=probe.sizeBytes;a.seekable=probe.seekable;a.persistedReadAccess=probe.persistedReadAccess;
+            a.providerAuthority=probe.providerAuthority;a.durationMs=durationMs;
+            a.importState=probe.readable?"ready":"unavailable";
+            a.importError=probe.readable?"":"Storage access is unavailable. Relink this media through Android.";
+            if(probe.readable&&(a.mime.startsWith("video/")||a.mime.startsWith("audio/"))&&durationMs<=0){
+                a.importState="unavailable";a.importError="The decoder could not read this source's duration. Try a compatible file or proxy.";
+            }
+            if("ready".equals(a.importState)&&a.generationMetadata.optBoolean("appendAfterImport")&&canUseOnTimeline(a))appendMedia(p,a);
+            a.generationMetadata.remove("appendAfterImport");
+        });
+        return latest.asset(assetId);
+    }
+
+    public Asset importUri(Project project, Uri uri) {
+        if(project==null)throw new IllegalArgumentException("Project is required");
+        Asset selected=beginImport(project.id,uri,true);completeImport(project.id,selected.id);
+        refreshReference(project,get(project.id));return project.asset(selected.id);
     }
 
     /**
@@ -619,65 +633,64 @@ public final class ProjectStore {
         if (project == null) throw new IllegalArgumentException("Project is required");
         if (uri == null) throw new IllegalArgumentException("Generated asset URI is required");
 
-        String uriValue = uri.toString();
-        for (Asset existing : project.assets) {
-            if (uriValue.equals(existing.uri)) {
-                existing.generated = true;
-                existing.role = role == null || role.trim().isEmpty() ? "generated" : role.trim();
-                if (name != null && !name.trim().isEmpty()) existing.name = name.trim();
-                save(project);
-                return existing;
-            }
-        }
-
         Asset asset = new Asset();
         asset.id = UUID.randomUUID().toString();
-        asset.uri = uriValue;
+        asset.uri = uri.toString();
         asset.name = name == null || name.trim().isEmpty() ? "Generated media" : name.trim();
         asset.mime = resolver.getType(uri);
         if (asset.mime == null || asset.mime.isEmpty()) {
-            String lower = asset.name.toLowerCase();
-            asset.mime = lower.endsWith(".mp4") ? "video/mp4"
-                    : (lower.endsWith(".png") ? "image/png"
-                    : (lower.endsWith(".jpg") || lower.endsWith(".jpeg") ? "image/jpeg"
-                    : (lower.endsWith(".wav") ? "audio/wav"
-                    : (lower.endsWith(".mp3") ? "audio/mpeg"
-                    : (lower.endsWith(".m4a") ? "audio/mp4"
-                    : (lower.endsWith(".aac") ? "audio/aac" : "application/octet-stream"))))));
+            asset.mime = mimeForName(asset.name);
         }
+        AssetProbe.Result probe=AssetProbe.probe(resolver,uri);
+        asset.sizeBytes=probe.sizeBytes;asset.seekable=probe.seekable;asset.persistedReadAccess=probe.persistedReadAccess;asset.providerAuthority=probe.providerAuthority;
         asset.durationMs = duration(uri);
         asset.role = role == null || role.trim().isEmpty() ? "generated" : role.trim();
         asset.generated = true;
         asset.createdAt = System.currentTimeMillis();
-        project.assets.add(asset);
-
-        if (appendToTimeline && (asset.mime.startsWith("video/") || asset.mime.startsWith("image/"))) {
-            Clip clip = new Clip();
-            clip.id = UUID.randomUUID().toString();
-            clip.assetId = asset.id;
-            clip.inMs = 0;
-            clip.outMs = asset.mime.startsWith("image/") ? 3000 : Math.max(1000, asset.durationMs);
-            project.clips.add(clip);
-        }
-
-        save(project);
-        return asset;
+        final String[] registered={asset.id};
+        Project latest=transact(project.id,-1,"system","","Register generated media",p->{
+            Asset existing=null;for(Asset a:p.assets)if(asset.uri.equals(a.uri)){existing=a;break;}
+            if(existing==null){p.assets.add(asset);if(appendToTimeline&&canUseOnTimeline(asset))appendMedia(p,asset);}
+            else{existing.generated=true;existing.role=asset.role;existing.name=asset.name;registered[0]=existing.id;}
+            if("final_render".equals(asset.role)){p.latestExportUri=asset.uri;p.latestExportName=asset.name;p.latestExportAt=System.currentTimeMillis();}
+        });
+        refreshReference(project,latest);return project.asset(registered[0]);
     }
 
     public synchronized boolean appendAssetToTimeline(Project project, String assetId) {
         if (project == null || assetId == null || assetId.isEmpty()) return false;
-        Asset asset = project.asset(assetId);
-        if (asset == null || asset.mime == null) return false;
-        if (!asset.mime.startsWith("video/") && !asset.mime.startsWith("image/")) return false;
+        final boolean[] appended={false};
+        Project latest=transact(project.id,-1,"owner","","Add owned media to timeline",p->{
+            Asset asset=p.asset(assetId);if(!canUseOnTimeline(asset))return;appendMedia(p,asset);appended[0]=true;
+        });
+        refreshReference(project,latest);return appended[0];
+    }
 
-        Clip clip = new Clip();
-        clip.id = UUID.randomUUID().toString();
-        clip.assetId = asset.id;
-        clip.inMs = 0;
-        clip.outMs = asset.mime.startsWith("image/") ? 3000 : Math.max(1000, asset.durationMs);
-        project.clips.add(clip);
-        save(project);
-        return true;
+    public Asset updateAssetMetadata(String projectId,String assetId,JSONObject metadata,long sizeBytes){
+        Project latest=transact(projectId,-1,"system","","Update generated media metadata",p->{
+            Asset a=p.asset(assetId);if(a==null)throw new IllegalArgumentException("Media was removed from this project");
+            a.generationMetadata=new JSONObject(metadata.toString());if(sizeBytes>=0)a.sizeBytes=sizeBytes;
+        });return latest.asset(assetId);
+    }
+    private static boolean canUseOnTimeline(Asset a){return a!=null&&a.mime!=null&&(a.mime.startsWith("video/")||a.mime.startsWith("image/")||a.mime.startsWith("audio/"));}
+    private static void appendMedia(Project p,Asset asset){
+        p.ensureTimelineDefaults();boolean audio=asset.mime.startsWith("audio/");Track target=null;
+        for(Track t:p.tracks)if(!t.locked&&t.audioOnly()==audio){target=t;break;}
+        if(target==null){target=new Track();target.type=audio?"audio_music":"video";target.name=audio?"Audio":"Video";target.order=p.tracks.size();p.tracks.add(target);}
+        Clip clip=new Clip();clip.id=UUID.randomUUID().toString();clip.assetId=asset.id;clip.trackId=target.id;
+        clip.startMs=EditorEngine.trackEnd(p,target.id);clip.outMs=asset.mime.startsWith("image/")?3000:asset.durationMs>0?asset.durationMs:1000;p.clips.add(clip);
+    }
+    private static String mimeForName(String name){
+        String lower=name==null?"":name.toLowerCase(java.util.Locale.US);
+        if(lower.endsWith(".mp4")||lower.endsWith(".m4v"))return "video/mp4";if(lower.endsWith(".webm"))return "video/webm";if(lower.endsWith(".mov"))return "video/quicktime";
+        if(lower.endsWith(".png"))return "image/png";if(lower.endsWith(".jpg")||lower.endsWith(".jpeg"))return "image/jpeg";if(lower.endsWith(".webp"))return "image/webp";
+        if(lower.endsWith(".wav"))return "audio/wav";if(lower.endsWith(".mp3"))return "audio/mpeg";if(lower.endsWith(".m4a"))return "audio/mp4";if(lower.endsWith(".aac"))return "audio/aac";return "application/octet-stream";
+    }
+    private static void refreshReference(Project target,Project current){
+        if(current==null)return;
+        target.name=current.name;target.revision=current.revision;target.updatedAt=current.updatedAt;target.settings=current.settings;target.markers=current.markers;
+        target.sourcePrompt=current.sourcePrompt;target.latestExportUri=current.latestExportUri;target.latestExportName=current.latestExportName;target.latestExportAt=current.latestExportAt;
+        target.tracks.clear();target.tracks.addAll(current.tracks);target.clips.clear();target.clips.addAll(current.clips);target.assets.clear();target.assets.addAll(current.assets);
     }
 
     public JSONObject summaries() {

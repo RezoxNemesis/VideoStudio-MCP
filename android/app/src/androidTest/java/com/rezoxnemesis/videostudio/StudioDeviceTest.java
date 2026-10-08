@@ -1,0 +1,161 @@
+package com.rezoxnemesis.videostudio;
+
+import android.content.Context;
+import android.content.Intent;
+import android.graphics.Bitmap;
+import android.graphics.Color;
+import android.graphics.Rect;
+import android.media.MediaMetadataRetriever;
+import android.net.Uri;
+import android.os.SystemClock;
+import android.view.MotionEvent;
+import android.view.View;
+import android.view.ViewGroup;
+import android.widget.Spinner;
+import androidx.test.core.app.ActivityScenario;
+import androidx.test.ext.junit.runners.AndroidJUnit4;
+import androidx.test.platform.app.InstrumentationRegistry;
+import androidx.test.uiautomator.By;
+import androidx.test.uiautomator.UiDevice;
+import androidx.test.uiautomator.UiObject2;
+import androidx.test.uiautomator.Until;
+import org.json.JSONObject;
+import org.junit.Before;
+import org.junit.Test;
+import org.junit.runner.RunWith;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+import java.util.ArrayList;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
+import static org.junit.Assert.*;
+
+/** Real decoder, GPU, UI and service tests; outputs are retained as CI evidence. */
+@RunWith(AndroidJUnit4.class)
+public class StudioDeviceTest {
+    private Context context;
+    private File evidence;
+    private UiDevice device;
+
+    @Before public void setup() {
+        context=InstrumentationRegistry.getInstrumentation().getTargetContext();
+        evidence=new File(context.getExternalFilesDir(null),"evidence");assertTrue(evidence.isDirectory()||evidence.mkdirs());
+        device=UiDevice.getInstance(InstrumentationRegistry.getInstrumentation());
+    }
+
+    @Test public void ownerImagePreviewSplitUndoAndForegroundExport() throws Exception {
+        ProjectStore store=new ProjectStore(context);
+        ProjectStore.Project project=store.create("Device editor proof");
+        ProjectStore.Asset image=asset("cyan",png("cyan.png",Color.CYAN),"image/png",0);
+        project.assets.add(image);project.clips.add(clip("photo",image.id,"video-1",0,3000));store.save(project);
+        try(ActivityScenario<MainActivity> scenario=ActivityScenario.launch(new Intent(context,MainActivity.class))) {
+            UiObject2 editor=device.wait(Until.findObject(By.text("Editor")),15000);assertNotNull("Editor navigation",editor);editor.click();
+            UiObject2 monitor=device.wait(Until.findObject(By.desc("VideoStudio preview monitor")),15000);assertNotNull(monitor);
+            Rect bounds=monitor.getVisibleBounds();assertPreviewColor(bounds,Color.CYAN);
+            assertNull("Image preview requires no render session",new ExportSessionStore(context).latest(project.id));
+            device.takeScreenshot(new File(evidence,"01-source-image.png"));
+            scenario.onActivity(activity->{
+                StudioTimelineView timeline=(StudioTimelineView)findClass(activity.getWindow().getDecorView(),StudioTimelineView.class);
+                assertNotNull(timeline);float density=activity.getResources().getDisplayMetrics().density;
+                long now=SystemClock.uptimeMillis();float x=timeline.headerWidth()+62*density;
+                MotionEvent down=MotionEvent.obtain(now,now,MotionEvent.ACTION_DOWN,x,10*density,0);
+                MotionEvent up=MotionEvent.obtain(now,now+10,MotionEvent.ACTION_UP,x,10*density,0);
+                timeline.dispatchTouchEvent(down);timeline.dispatchTouchEvent(up);down.recycle();up.recycle();
+                click(activity,"Split");
+            });
+            assertEquals(2,store.get(project.id).clips.size());
+            scenario.onActivity(a->click(a,"Undo"));assertEquals(1,store.get(project.id).clips.size());
+            scenario.onActivity(a->click(a,"Redo"));assertEquals(2,store.get(project.id).clips.size());
+            scenario.recreate();
+            device.wait(Until.findObject(By.text("Editor")),15000).click();
+            assertEquals(2,new ProjectStore(context).get(project.id).clips.size());
+            device.takeScreenshot(new File(evidence,"02-split-persisted.png"));
+            scenario.onActivity(a->{
+                click(a,"Export");ArrayList<Spinner> choices=new ArrayList<>();spinners(a.getWindow().getDecorView(),choices);
+                assertEquals(5,choices.size());choices.get(1).setSelection(1);choices.get(4).setSelection(1);click(a,"Start Export");
+            });
+            ExportSessionStore sessions=new ExportSessionStore(context);ExportSessionStore.Session session=sessions.latest(project.id);
+            assertNotNull("Export is an immediate durable session",session);assertNotEquals("queued",session.state);
+            device.takeScreenshot(new File(evidence,"03-foreground-export.png"));
+            long deadline=SystemClock.elapsedRealtime()+150000;
+            while(!session.terminal()&&SystemClock.elapsedRealtime()<deadline){SystemClock.sleep(250);session=sessions.get(session.id);}
+            assertEquals(session.detail,"completed",session.state);assertTrue(session.verified);
+            JSONObject proof=PlayableMediaVerifier.verify(context,Uri.parse(session.uri),true);
+            assertTrue(proof.getBoolean("decodedFrame"));assertTrue(proof.getLong("durationMs")>=2800);
+            copy(Uri.parse(session.uri),new File(evidence,"owner-image-export.mp4"));
+            write("owner-export-proof.json",session.json().toString(2));
+            device.takeScreenshot(new File(evidence,"04-export-complete.png"));
+        }
+    }
+
+    @Test public void mixedVideoImageGapAndAudioRenderPreservesTimeline() throws Exception {
+        ProjectStore.Project source=new ProjectStore.Project();source.id="fixture";source.name="Red fixture";
+        source.assets.add(asset("red",png("red.png",Color.RED),"image/png",0));source.clips.add(clip("red-clip","red","video-1",0,1000));
+        File video=new File(evidence,"red-source.mp4");render(source,video);
+        ProjectStore.Project p=new ProjectStore.Project();p.id="mixed";p.name="Mixed timeline proof";
+        ProjectStore.Track visual=new ProjectStore.Track();visual.id="video-1";visual.type="video";p.tracks.add(visual);
+        p.assets.add(asset("video",video,"video/mp4",1000));p.assets.add(asset("blue",png("blue.png",Color.BLUE),"image/png",0));
+        p.assets.add(asset("tone",wav("tone.wav",4),"audio/wav",4000));
+        p.clips.add(clip("first","video","video-1",0,1000));p.clips.add(clip("second","blue","video-1",2000,2000));
+        ProjectStore.Track audio=new ProjectStore.Track();audio.id="music";audio.type="audio_music";audio.name="Music";audio.order=1;p.tracks.add(audio);
+        ProjectStore.Clip sound=clip("audio","tone","music",0,4000);sound.volume=.4f;p.clips.add(sound);
+        File output=new File(evidence,"mixed-gap-audio.mp4");render(p,output);
+        JSONObject proof=PlayableMediaVerifier.verify(context,Uri.fromFile(output),true);
+        assertTrue("Source audio must survive mixed image/video export",proof.getBoolean("hasAudio"));
+        assertEquals(4000,proof.getLong("durationMs"),180);
+        assertFrame(output,250000,Color.RED);assertFrame(output,1500000,Color.BLACK);assertFrame(output,3000000,Color.BLUE);
+        write("mixed-render-proof.json",proof.toString(2));
+    }
+
+    private void render(ProjectStore.Project p,File output) throws Exception {
+        CountDownLatch complete=new CountDownLatch(1);AtomicReference<String> error=new AtomicReference<>();
+        AtomicReference<NativeRenderEngine.Handle> handle=new AtomicReference<>();
+        InstrumentationRegistry.getInstrumentation().runOnMainSync(()->handle.set(new NativeRenderEngine(context).export(p,output,"16:9","720p",new NativeRenderEngine.Listener(){
+            @Override public void onProgress(int progress,String detail){}
+            @Override public void onCompleted(File file,JSONObject result){complete.countDown();}
+            @Override public void onError(String detail){error.set(detail);complete.countDown();}
+        })));
+        boolean finished=complete.await(120,TimeUnit.SECONDS);
+        if(!finished&&handle.get()!=null)handle.get().cancel();
+        assertTrue("Native export timed out",finished);assertNull("Native render: "+error.get(),error.get());assertTrue(output.length()>0);
+    }
+    private File png(String name,int color)throws Exception {
+        File out=new File(evidence,name);Bitmap bitmap=Bitmap.createBitmap(640,360,Bitmap.Config.ARGB_8888);bitmap.eraseColor(color);
+        try(OutputStream stream=new FileOutputStream(out)){assertTrue(bitmap.compress(Bitmap.CompressFormat.PNG,100,stream));}finally{bitmap.recycle();}return out;
+    }
+    private File wav(String name,int seconds)throws Exception {
+        File out=new File(evidence,name);int rate=44100,bytes=rate*seconds*2;
+        ByteBuffer h=ByteBuffer.allocate(44).order(ByteOrder.LITTLE_ENDIAN);
+        h.put(new byte[]{'R','I','F','F'}).putInt(36+bytes).put(new byte[]{'W','A','V','E','f','m','t',' '}).putInt(16).putShort((short)1).putShort((short)1)
+                .putInt(rate).putInt(rate*2).putShort((short)2).putShort((short)16).put(new byte[]{'d','a','t','a'}).putInt(bytes);
+        try(OutputStream stream=new FileOutputStream(out)){stream.write(h.array());ByteBuffer chunk=ByteBuffer.allocate(4096).order(ByteOrder.LITTLE_ENDIAN);
+            for(int frame=0;frame<rate*seconds;frame++){chunk.putShort((short)(Math.sin(frame*2*Math.PI*440/rate)*12000));if(!chunk.hasRemaining()){stream.write(chunk.array());chunk.clear();}}
+            if(chunk.position()>0)stream.write(chunk.array(),0,chunk.position());}return out;
+    }
+    private static ProjectStore.Asset asset(String id,File file,String mime,long duration){ProjectStore.Asset a=new ProjectStore.Asset();a.id=id;a.name=file.getName();a.uri=Uri.fromFile(file).toString();a.mime=mime;a.durationMs=duration;return a;}
+    private static ProjectStore.Clip clip(String id,String asset,String track,long start,long duration){ProjectStore.Clip c=new ProjectStore.Clip();c.id=id;c.assetId=asset;c.trackId=track;c.startMs=start;c.outMs=duration;return c;}
+    private void assertPreviewColor(Rect bounds,int expected){
+        long deadline=SystemClock.elapsedRealtime()+20000;int pixel=Color.BLACK;
+        do{Bitmap screen=InstrumentationRegistry.getInstrumentation().getUiAutomation().takeScreenshot();
+            if(screen!=null){pixel=screen.getPixel(bounds.centerX(),bounds.centerY());screen.recycle();if(near(pixel,expected))return;}
+            SystemClock.sleep(100);
+        }while(SystemClock.elapsedRealtime()<deadline);
+        fail("Preview pixel was "+Integer.toHexString(pixel)+", expected "+Integer.toHexString(expected));
+    }
+    private static void assertFrame(File file,long time,int expected)throws Exception{
+        MediaMetadataRetriever r=new MediaMetadataRetriever();try{r.setDataSource(file.getAbsolutePath());Bitmap frame=r.getFrameAtTime(time,MediaMetadataRetriever.OPTION_CLOSEST);
+            assertNotNull("Decoded frame at "+time,frame);int pixel=frame.getPixel(frame.getWidth()/2,frame.getHeight()/2);frame.recycle();assertTrue("Frame at "+time+": "+Integer.toHexString(pixel),near(pixel,expected));}finally{r.release();}
+    }
+    private static boolean near(int a,int b){return Math.abs(Color.red(a)-Color.red(b))<35&&Math.abs(Color.green(a)-Color.green(b))<35&&Math.abs(Color.blue(a)-Color.blue(b))<35;}
+    private void copy(Uri source,File out)throws Exception{try(InputStream in=context.getContentResolver().openInputStream(source);OutputStream stream=new FileOutputStream(out)){assertNotNull(in);byte[] b=new byte[256*1024];int n;while((n=in.read(b))!=-1)stream.write(b,0,n);}}
+    private void write(String name,String text)throws Exception{try(OutputStream out=new FileOutputStream(new File(evidence,name))){out.write(text.getBytes(java.nio.charset.StandardCharsets.UTF_8));}}
+    private static View findClass(View root,Class<?> type){if(type.isInstance(root))return root;if(root instanceof ViewGroup)for(int i=0;i<((ViewGroup)root).getChildCount();i++){View found=findClass(((ViewGroup)root).getChildAt(i),type);if(found!=null)return found;}return null;}
+    private static View findDescription(View root,String label){if(label.equals(root.getContentDescription()))return root;if(root instanceof ViewGroup)for(int i=0;i<((ViewGroup)root).getChildCount();i++){View found=findDescription(((ViewGroup)root).getChildAt(i),label);if(found!=null)return found;}return null;}
+    private static void click(MainActivity activity,String label){View button=findDescription(activity.getWindow().getDecorView(),label);assertNotNull(label,button);assertTrue(label,button.performClick());}
+    private static void spinners(View root,ArrayList<Spinner> out){if(root instanceof Spinner)out.add((Spinner)root);if(root instanceof ViewGroup)for(int i=0;i<((ViewGroup)root).getChildCount();i++)spinners(((ViewGroup)root).getChildAt(i),out);}
+}

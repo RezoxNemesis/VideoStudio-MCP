@@ -78,4 +78,14 @@ public class ProjectStoreEditorTest {
         assertEquals("Owner changed",owner.get(project.id).name);
         assertEquals(1,owner.get(project.id).clips.size());
     }
+
+    @Test public void selectedUriIsJournalledBeforeAnyProviderProbe() {
+        ProjectStore store=new ProjectStore(context);ProjectStore.Project p=store.create("Import");
+        ProjectStore.Asset selected=store.beginImport(p.id,Uri.parse("content://offline-provider/media/large"),true);
+        assertEquals("importing",new ProjectStore(context).get(p.id).asset(selected.id).importState);
+        assertEquals(-1,selected.sizeBytes);assertTrue(store.get(p.id).clips.isEmpty());
+        ProjectStore.Asset probed=store.completeImport(p.id,selected.id);
+        assertEquals("unavailable",probed.importState);assertFalse(probed.importError.isEmpty());
+        assertTrue(store.get(p.id).clips.isEmpty());
+    }
 }

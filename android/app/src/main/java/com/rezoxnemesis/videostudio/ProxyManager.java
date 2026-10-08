@@ -207,11 +207,7 @@ public final class ProxyManager {
                 "preview_proxy",
                 false
         );
-        proxy.generationMetadata = proxyMetadata(source.id, tier, true);
-        proxy.sizeBytes = file.length();
-        proxy.seekable = true;
-        proxy.persistedReadAccess = true;
-        store.save(project);
+        store.updateAssetMetadata(project.id,proxy.id,proxyMetadata(source.id,tier,true),file.length());
     }
 
     private static String safeName(String value) {
