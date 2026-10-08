@@ -294,6 +294,33 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                     complete(command, result);
                     return;
                 }
+                case "redeem_rebind": {
+                    final String token = p.optString("token", "").trim();
+                    if (token.length() < 30) throw new IllegalArgumentException("Valid MCP rebind token is required");
+                    final JSONObject queuedCommand = command;
+                    JobManager.Job rebindJob = jobs.submit(
+                            "MCP identity rebind",
+                            JobManager.Kind.LIGHT,
+                            state -> {
+                                state.checkpoint("mcp_rebind", 20, "Redeeming legacy stable endpoint");
+                                JSONObject result = protocol.redeemRebindNow(token);
+                                state.checkpoint("mcp_rebind", 90, "Refreshing canonical Native Agent registration");
+                                syncProtocolState();
+                                result.put("rebindCompleted", true);
+                                result.put("stableMcpPath", McpConnectionCore.STABLE_MCP_PATH);
+                                state.setResult(result);
+                                ActivityLog.add(this, "system", "MCP identity alias repaired",
+                                        "Legacy endpoint now targets this Native Agent",
+                                        "success", 100, queuedCommand.optString("id", ""), null);
+                                commandJournal.finish(queuedCommand, result, "completed");
+                                protocol.complete(queuedCommand, result, "completed");
+                            }
+                    );
+                    ActivityLog.add(this, "chatgpt", "MCP identity rebind queued",
+                            "Repairing legacy stable endpoint • job " + shortId(rebindJob.id),
+                            "queued", 0, commandId, null);
+                    return;
+                }
                 case "activity_note": {
                     String note = p.optString("message", "ChatGPT is working");
                     String noteStatus = p.optString("status", "info");
