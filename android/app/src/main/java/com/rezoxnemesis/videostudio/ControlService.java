@@ -300,10 +300,17 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         JSONObject inflight = commandJournal.inflight(commandId);
         if (inflight != null) {
             watchDeferredCommand(command, inflight.optJSONObject("queuedResult"));
-            ActivityLog.add(this, "chatgpt", friendlyAction(action),
-                    "Existing native job still running • " + shortId(inflight.optString("jobId", "")),
-                    "running", inflight.optInt("progress", 0), commandId,
-                    inflight.optString("projectId", projectId));
+            String inflightJobId = inflight.optString("jobId", "");
+            JSONObject inflightState = inflightJobId.isEmpty() ? null : jobs.get(inflightJobId);
+            JSONObject inflightJob = inflightState == null ? null : inflightState.optJSONObject("job");
+            if (inflightJob != null) {
+                updateDeferredActivity(command, inflight, inflightJob);
+            } else {
+                ActivityLog.add(this, "chatgpt", friendlyAction(action),
+                        "Reattaching to native job • " + shortId(inflightJobId),
+                        "queued", inflight.optInt("progress", 0), commandId,
+                        inflight.optString("projectId", projectId));
+            }
             return;
         }
 
@@ -3025,6 +3032,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                     "Queued inside VideoStudio • job " + shortId(jobId),
                     "queued", 0, command.optString("id", ""), projectId);
             commandJournal.linkJob(command, jobId, projectId, result);
+            ActivityLog.bindJob(this, command.optString("id", ""), jobId);
             watchDeferredCommand(command, result);
             return;
         }
@@ -3072,6 +3080,29 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         }
     }
 
+    private void updateDeferredActivity(JSONObject command,
+                                        JSONObject binding,
+                                        JSONObject job) {
+        if (command == null || job == null) return;
+        String action = command.optString("action", "");
+        JSONObject presentation = ExecutionTruthPolicy.presentDeferredJob(friendlyAction(action), job);
+        String commandId = command.optString("id", "");
+        String jobId = binding == null ? "" : binding.optString("jobId", "");
+        String projectId = binding == null
+                ? ""
+                : binding.optString("projectId", "");
+        if (!commandId.isEmpty() && !jobId.isEmpty()) {
+            ActivityLog.bindJob(this, commandId, jobId);
+        }
+        ActivityLog.add(this, "chatgpt",
+                presentation.optString("action", friendlyAction(action)),
+                presentation.optString("detail", job.optString("detail", "")),
+                presentation.optString("status", "running"),
+                presentation.optInt("progress", job.optInt("progress", 0)),
+                commandId,
+                projectId);
+    }
+
     private void watchDeferredCommand(JSONObject command, JSONObject initialQueuedResult) {
         if (command == null) return;
         String commandId = command.optString("id", "");
@@ -3093,6 +3124,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         final JSONObject durableQueued = queuedCopy;
         commandCompletionWatchers.execute(() -> {
             long missingSince = 0L;
+            String lastActivityFingerprint = "";
             try {
                 while (serviceAlive && !Thread.currentThread().isInterrupted()) {
                     JSONObject binding = commandJournal.inflight(commandId);
@@ -3127,6 +3159,14 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                     }
                     String jobState = job.optString("state", "");
                     if (!JobManager.isTerminal(jobState)) {
+                        String fingerprint = jobState
+                                + "|" + job.optInt("progress", 0)
+                                + "|" + job.optString("stage", "")
+                                + "|" + job.optString("detail", "");
+                        if (!fingerprint.equals(lastActivityFingerprint)) {
+                            updateDeferredActivity(durableCommand, binding, job);
+                            lastActivityFingerprint = fingerprint;
+                        }
                         Thread.sleep(450L);
                         continue;
                     }
