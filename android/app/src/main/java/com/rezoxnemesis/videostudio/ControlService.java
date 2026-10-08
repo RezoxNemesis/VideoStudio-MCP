@@ -770,6 +770,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 result.put("queued", true);
                 result.put("jobId", export.optString("jobId", ""));
                 result.put("durableRecovery", export.optBoolean("durableRecovery", true));
+                result.put("render", true);
             }
         }
         return result;
@@ -3130,7 +3131,19 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         JSONObject jobResult = job.optJSONObject("result");
         if (jobResult != null) out.put("jobResult", new JSONObject(jobResult.toString()));
 
-        if (ExecutionTruthPolicy.requiresValidatedMediaOutput(action)) {
+        boolean requirePlayableOutput = ExecutionTruthPolicy.requiresValidatedMediaOutput(action);
+        if ("animate_images".equals(action)
+                && queuedResult != null
+                && !queuedResult.optBoolean("render", true)) {
+            requirePlayableOutput = false;
+        }
+        if ("autonomous_edit".equals(action)
+                && queuedResult != null
+                && !queuedResult.optBoolean("render", false)) {
+            requirePlayableOutput = false;
+        }
+
+        if (requirePlayableOutput) {
             ProjectStore.Project project = projectId == null || projectId.isEmpty()
                     ? null : store.get(projectId);
             if (project == null) {
