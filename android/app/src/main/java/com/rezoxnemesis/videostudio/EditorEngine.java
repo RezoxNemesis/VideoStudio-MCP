@@ -139,6 +139,8 @@ public final class EditorEngine {
             }
             case "trim_clip": {
                 long oldEnd = TimelineMath.add(c.startMs, c.outputDurationMs());
+                if (a.has("startMs")) c.startMs = a.getLong("startMs");
+                if (c.startMs < 0) throw new IllegalArgumentException("Negative clip position");
                 c.inMs = a.optLong("inMs", c.inMs); c.outMs = a.optLong("outMs", c.outMs);
                 validateRange(c, asset);
                 if (a.optBoolean("ripple", false)) shiftAfter(p, c.trackId, oldEnd,
@@ -193,9 +195,23 @@ public final class EditorEngine {
                 else c.effects.put(property, value);
                 validateCrop(c); break;
             }
+            case "set_properties": {
+                JSONObject values = a.getJSONObject("values");
+                java.util.Iterator<String> keys = values.keys();
+                while (keys.hasNext()) {
+                    String property = keys.next(); double value = values.getDouble(property);
+                    validateProperty(property, value);
+                    if ("volume".equals(property)) c.volume = (float)value;
+                    else if ("pan".equals(property)) c.pan = (float)value;
+                    else c.effects.put(property, value);
+                }
+                validateCrop(c); break;
+            }
             case "set_keyframe": {
                 String property = a.getString("property"); double value = a.getDouble("value");
                 validateProperty(property, value);
+                if (property.startsWith("crop") || "blur".equals(property))
+                    throw new IllegalArgumentException("This property supports static editing; animated crop/blur needs a dynamic effect provider");
                 long time = a.getLong("timeMs");
                 if (time < 0 || time > c.outputDurationMs()) throw new IllegalArgumentException("Keyframe must be within the clip");
                 String easing = a.optString("easing", "linear");

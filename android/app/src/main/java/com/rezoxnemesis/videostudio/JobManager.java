@@ -18,7 +18,7 @@ import java.util.concurrent.Future;
 import java.util.concurrent.Semaphore;
 
 public final class JobManager {
-    public enum Kind { LIGHT, HEAVY }
+    public enum Kind { LIGHT, HEAVY, MANUAL_RENDER }
 
     public static final String STATE_QUEUED = "queued";
     public static final String STATE_PREPARING = "preparing";
@@ -118,6 +118,8 @@ public final class JobManager {
     private final SharedPreferences prefs;
     private static final Semaphore PROCESS_HEAVY_LANE = new Semaphore(1, true);
     private final ExecutorService pool = Executors.newFixedThreadPool(3);
+    private final ExecutorService manualPool = Executors.newSingleThreadExecutor();
+    private static final Semaphore PROCESS_MANUAL_RENDER_LANE = new Semaphore(1, true);
     private final Semaphore heavyLane = PROCESS_HEAVY_LANE;
     private final Map<String, Job> jobs = new ConcurrentHashMap<>();
 
@@ -132,13 +134,15 @@ public final class JobManager {
         job.owner = this;
         jobs.put(job.id, job);
         persist();
-        job.future = pool.submit(() -> {
+        ExecutorService executor = kind == Kind.MANUAL_RENDER ? manualPool : pool;
+        Semaphore lane = kind == Kind.MANUAL_RENDER ? PROCESS_MANUAL_RENDER_LANE : heavyLane;
+        job.future = executor.submit(() -> {
             boolean locked = false;
             try {
                 setState(job, STATE_PREPARING,
                         kind == Kind.HEAVY ? "Waiting for safe render lane" : "Preparing");
-                if (kind == Kind.HEAVY) {
-                    heavyLane.acquire();
+                if (kind == Kind.HEAVY || kind == Kind.MANUAL_RENDER) {
+                    lane.acquire();
                     locked = true;
                     waitForSafeDevice(job);
                 }
@@ -155,7 +159,7 @@ public final class JobManager {
             } catch (Exception error) {
                 setState(job, STATE_FAILED, error.getMessage() == null ? "Job failed" : error.getMessage());
             } finally {
-                if (locked) heavyLane.release();
+                if (locked) lane.release();
                 persist();
             }
         });
@@ -177,6 +181,14 @@ public final class JobManager {
         }
         return count;
     }
+
+    public int cancelAutonomous() {
+        int count = 0;
+        for (Job job : jobs.values()) if (job.kind != Kind.MANUAL_RENDER && !isTerminal(job.state) && cancel(job.id)) count++;
+        return count;
+    }
+
+    public boolean isManual(String id) { Job job=jobs.get(id);return job!=null && job.kind==Kind.MANUAL_RENDER; }
 
     public JSONObject get(String id) {
         JSONObject out = new JSONObject();
@@ -215,6 +227,7 @@ public final class JobManager {
     public void shutdown() {
         cancelAll();
         pool.shutdownNow();
+        manualPool.shutdownNow();
         persist();
     }
 
@@ -307,7 +320,7 @@ public final class JobManager {
     }
 
     public void awaitSafeCheckpoint(Job job, String stage) throws InterruptedException {
-        if (job == null || job.kind != Kind.HEAVY) return;
+        if (job == null || (job.kind != Kind.HEAVY && job.kind != Kind.MANUAL_RENDER)) return;
         if (stage != null && !stage.trim().isEmpty()) job.stage = stage.trim();
         waitForSafeDevice(job);
         if (!STATE_CANCELLED.equals(job.state)) setState(job, STATE_RUNNING, job.detail);
@@ -365,7 +378,8 @@ public final class JobManager {
                 if (o == null) continue;
                 long updated = o.optLong("updatedAt", 0);
                 if (updated < cutoff) continue;
-                Kind kind = "heavy".equals(o.optString("kind")) ? Kind.HEAVY : Kind.LIGHT;
+                Kind kind = "manual_render".equals(o.optString("kind")) ? Kind.MANUAL_RENDER
+                        : "heavy".equals(o.optString("kind")) ? Kind.HEAVY : Kind.LIGHT;
                 Job job = new Job(o.optString("id", UUID.randomUUID().toString()), o.optString("name", "Recovered job"), kind, o.optLong("createdAt", updated));
                 job.owner = this;
                 job.progress = o.optInt("progress", 0);

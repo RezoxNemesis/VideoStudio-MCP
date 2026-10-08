@@ -84,32 +84,16 @@ public final class NativeRenderEngine {
                 return null;
             }
             final boolean layeredAnimation = hasLayeredAnimation(project);
-            Composition composition;
-            if (layeredAnimation) {
-                composition = buildLayeredAnimationComposition(project, aspect, quality);
-            } else {
-                List<EditedMediaItem> edited = new ArrayList<>();
-                boolean allVideoWithAudio = true;
-                for (ProjectStore.Clip clip : project.clips) {
-                    ProjectStore.Asset asset = project.asset(clip.assetId);
-                    if (asset == null) continue;
-                    boolean isImage = asset.mime != null && asset.mime.startsWith("image/");
-                    boolean isVideo = asset.mime != null && asset.mime.startsWith("video/");
-                    if (!isVideo) allVideoWithAudio = false;
-                    edited.add(buildItem(asset, clip, aspect, quality, isImage));
-                }
-                if (edited.isEmpty()) {
-                    listener.onError("No renderable clips");
-                    return null;
-                }
-
-                EditedMediaItemSequence sequence = allVideoWithAudio
-                        ? EditedMediaItemSequence.withAudioAndVideoFrom(edited)
-                        : EditedMediaItemSequence.withVideoFrom(edited);
-                composition = new Composition.Builder(sequence).build();
-            }
+            Composition composition = new TimelineCompositionFactory(context).build(project, aspect, quality, false);
 
             Transformer transformer = new Transformer.Builder(context)
+                    .setEncoderFactory(new androidx.media3.transformer.DefaultEncoderFactory.Builder(context)
+                            .setEnableFallback(true)
+                            .setRequestedVideoEncoderSettings(new androidx.media3.transformer.VideoEncoderSettings.Builder()
+                                    .setBitrate(Math.max(500_000,Math.min(50_000_000,project.settings.optInt("exportBitrate",8_000_000))))
+                                    .build())
+                            .setRequestedAudioEncoderSettings(new androidx.media3.transformer.AudioEncoderSettings.Builder().setBitrate(192_000).build())
+                            .build())
                     .setVideoMimeType(MimeTypes.VIDEO_H264)
                     .setAudioMimeType(MimeTypes.AUDIO_AAC)
                     .addListener(new Transformer.Listener() {
