@@ -53,25 +53,39 @@ public final class TimelineCompositionFactory {
         ArrayList<ProjectStore.Track> tracks = new ArrayList<>(project.tracks);
         tracks.sort((a, b) -> Integer.compare(b.order, a.order));
         ArrayList<EditedMediaItemSequence> sequences = new ArrayList<>();
+        ArrayList<EditedMediaItemSequence> audioSequences = new ArrayList<>();
         long durationMs = project.outputDurationMs();
         for (ProjectStore.Track track : tracks) {
             if (solo && !track.solo) continue;
             ArrayList<ProjectStore.Clip> clips = new ArrayList<>();
             boolean audio = false, video = false, animated = false;
+            java.util.HashSet<String> audible=new java.util.HashSet<>();
             for (ProjectStore.Clip c : project.clips) if (track.id.equals(c.trackId)) {
                 ProjectStore.Asset a = project.asset(c.assetId);
                 if (a == null) throw new IllegalArgumentException("Missing source for clip " + c.id);
                 if (a.mime == null) throw new IllegalArgumentException("Unknown source format");
                 clips.add(c);
-                audio |= !track.muted && (a.mime.startsWith("video/") || a.mime.startsWith("audio/"));
+                if(!track.muted&&hasSourceAudio(original.asset(a.id))){audio=true;audible.add(c.id);}
                 video |= !track.audioOnly() && track.visible && !a.mime.startsWith("audio/");
                 animated |= c.effects.optBoolean("animatedScene", false);
             }
             if (clips.isEmpty() || (!audio && !video)) continue;
             clips.sort(java.util.Comparator.comparingLong(c -> c.startMs));
-            java.util.HashSet<Integer> types = new java.util.HashSet<>();
-            if (audio) types.add(C.TRACK_TYPE_AUDIO);
-            if (video) types.add(C.TRACK_TYPE_VIDEO);
+            if(audio){
+                EditedMediaItemSequence.Builder sound=new EditedMediaItemSequence.Builder(java.util.Collections.singleton(C.TRACK_TYPE_AUDIO));
+                long cursor=0;
+                for(ProjectStore.Clip c:clips){
+                    if(c.startMs<cursor)throw new IllegalArgumentException("Clips overlap on track "+track.name);
+                    if(c.startMs>cursor)sound.addGap(Math.multiplyExact(c.startMs-cursor,1000L));
+                    long length=c.outputDurationMs();
+                    if(audible.contains(c.id))sound.addItem(buildItem(original.asset(c.assetId),c,aspect,quality,false,true,false));
+                    else sound.addGap(Math.multiplyExact(length,1000L));
+                    cursor=TimelineMath.add(c.startMs,length);
+                }
+                if(cursor<durationMs)sound.addGap(Math.multiplyExact(durationMs-cursor,1000L));
+                audioSequences.add(sound.build());
+            }
+            if(!video)continue;
             if (animated && video) {
                 for (String role : new String[]{"head", "torso", "lower", "foreground"}) {
                     EditedMediaItemSequence.Builder layer = new EditedMediaItemSequence.Builder(java.util.Collections.singleton(C.TRACK_TYPE_VIDEO));
@@ -90,7 +104,9 @@ public final class TimelineCompositionFactory {
                     if (used) sequences.add(layer.build());
                 }
             }
-            EditedMediaItemSequence.Builder sequence = new EditedMediaItemSequence.Builder(types);
+            // Keep media types in separate sequences. Mixed forced A/V gaps in
+            // Media3 1.11.1 can dereference an unready synthetic audio consumer.
+            EditedMediaItemSequence.Builder sequence = new EditedMediaItemSequence.Builder(java.util.Collections.singleton(C.TRACK_TYPE_VIDEO));
             long cursor = 0;
             for (ProjectStore.Clip c : clips) {
                 if (c.startMs < cursor) throw new IllegalArgumentException("Clips overlap on track " + track.name);
@@ -99,14 +115,22 @@ public final class TimelineCompositionFactory {
                 String background = c.effects.optString("backgroundUri", "");
                 if (video && c.effects.optBoolean("animatedScene", false) && !background.isEmpty())
                     sequence.addItem(buildLayerItem(background, c, aspect, quality, c.outputDurationMs(), c.effects.optJSONObject("animationSpec"), "background"));
-                else sequence.addItem(buildItem(a, c, aspect, quality, a.mime.startsWith("image/"), !video, !audio));
+                else sequence.addItem(buildItem(a, c, aspect, quality, a.mime.startsWith("image/"), false, true));
                 cursor = TimelineMath.add(c.startMs, c.outputDurationMs());
             }
             if (cursor < durationMs) sequence.addGap(Math.multiplyExact(durationMs - cursor, 1000L));
             sequences.add(sequence.build());
         }
+        sequences.addAll(audioSequences);
         if (sequences.isEmpty()) throw new IllegalArgumentException("No visible or audible tracks");
         return new Composition.Builder(sequences).build();
+    }
+
+    private boolean hasSourceAudio(ProjectStore.Asset asset){
+        if(asset.mime.startsWith("audio/"))return true;if(!asset.mime.startsWith("video/"))return false;
+        if(asset.generationMetadata.optBoolean("audioMetadataKnown"))return asset.generationMetadata.optBoolean("hasAudio");
+        try{return MediaTrackProbe.inspect(context.getContentResolver(),Uri.parse(asset.uri)).getBoolean("hasAudio");}
+        catch(Exception error){throw new IllegalArgumentException("Could not inspect audio tracks for "+asset.name+": "+error.getMessage(),error);}
     }
 
     private EditedMediaItem buildLayerItem(String uri,

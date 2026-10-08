@@ -336,6 +336,8 @@ public final class AppProtocol {
         meta.put("platform", "android-native");
         meta.put("appVersion", APP_VERSION);
         meta.put("protocolVersion", connectionCore.selectedProtocol());
+        meta.put("featureProtocolMax", 4);
+        meta.put("editorSchemaVersion", EditorProtocol.SCHEMA_VERSION);
         meta.put("nativeAgent", "videostudio-v3");
         JSONObject connectionMeta = connectionCore.registrationMeta();
         JSONArray connectionNames = connectionMeta.names();

@@ -35,6 +35,7 @@ public final class RecoveryPlanStore {
             plan.put("id", id);
             plan.put("action", clean(action, "unknown"));
             plan.put("projectId", clean(projectId, ""));
+            plan.put("origin", parameters!=null&&"owner".equals(parameters.optString("_origin"))?"owner":"autonomous");
             plan.put("parameters", parameters == null ? new JSONObject() : scrubInternal(parameters));
             plan.put("state", "queued");
             plan.put("stage", "queued");
@@ -176,12 +177,17 @@ public final class RecoveryPlanStore {
         upsert(plan);
     }
 
-    public synchronized int cancelActive() {
+    public synchronized int cancelActive() { return cancelActive(false); }
+
+    public synchronized int cancelAutonomous() { return cancelActive(true); }
+
+    private int cancelActive(boolean autonomousOnly) {
         JSONArray arr = read();
         int count = 0;
         for (int i = 0; i < arr.length(); i++) {
             JSONObject plan = arr.optJSONObject(i);
             if (plan == null) continue;
+            if(autonomousOnly&&"owner".equals(plan.optString("origin")))continue;
             String state = plan.optString("state");
             if ("queued".equals(state) || "running".equals(state) || "waiting_retry".equals(state)
                     || "interrupted".equals(state) || "waiting_thermal".equals(state)

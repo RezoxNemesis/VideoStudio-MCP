@@ -62,6 +62,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     private static final int MAX_REMOTE_REDIRECTS = 5;
 
     private ProjectStore store;
+    private EditorProtocol editorProtocol;
     private JobManager jobs;
     private PreviewSnapshotStore previewSnapshots;
     private TransferJournal transferJournal;
@@ -102,6 +103,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         migrateAutonomyDefaultOnce();
         commandJournal = new CommandJournal(this);
         store = new ProjectStore(this);
+        editorProtocol = new EditorProtocol(this, store);
         jobs = new JobManager(this);
         exportSessions = new ExportSessionStore(this);
         previewSnapshots = new PreviewSnapshotStore(this);
@@ -185,6 +187,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             try {
                 JSONObject p = new JSONObject();
                 p.put("projectId", intent.getStringExtra("projectId"));
+                p.put("_origin", "owner");
                 p.put("style", intent.getStringExtra("style") == null ? "cinematic" : intent.getStringExtra("style"));
                 p.put("environment", intent.getStringExtra("environment") == null ? "ambient" : intent.getStringExtra("environment"));
                 p.put("intensity", intent.getDoubleExtra("intensity", .78));
@@ -208,6 +211,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         } else if (ACTION_LOCAL_PROMPT_VIDEO.equals(action)) {
             try {
                 JSONObject p = new JSONObject();
+                p.put("_origin", "owner");
                 p.put("prompt", intent.getStringExtra("prompt") == null ? "" : intent.getStringExtra("prompt"));
                 p.put("durationSeconds", Math.max(4, Math.min(120, intent.getIntExtra("durationSeconds", 18))));
                 p.put("aspect", intent.getStringExtra("aspect") == null ? "9:16" : intent.getStringExtra("aspect"));
@@ -314,6 +318,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         JSONObject p = command.optJSONObject("parameters");
         if (p == null) p = new JSONObject();
 
+        try { p.put("_origin", "autonomous"); } catch (Exception invalid) { throw new IllegalArgumentException(invalid); }
         String commandId = command.optString("id", "");
         String projectId = p.optString("projectId", "");
 
@@ -366,6 +371,16 @@ public final class ControlService extends Service implements AppProtocol.Callbac
 
         try {
             switch (action) {
+                case "editor_schema":
+                    complete(command, ok().put("schema", editorProtocol.describe()));
+                    return;
+                case "project_query":
+                case "editor_operation":
+                case "editor_batch":
+                case "editor_history":
+                    complete(command, editorProtocol.execute(action, p));
+                    syncProtocolState();
+                    return;
                 case "ping":
                 case "get_state":
                     complete(command, stateJson());
@@ -609,9 +624,10 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                     return;
                 case "cancel_job": {
                     String jobId = p.optString("jobId");
-                    if(jobs.isManual(jobId))throw new IllegalArgumentException("Owner export sessions must be cancelled by the owner");
+                    if(jobs.isOwner(jobId))throw new IllegalArgumentException("Owner jobs must be cancelled by the owner");
                     boolean cancelled = jobs.cancel(jobId);
-                    if (cancelled && activeRender != null) activeRender.cancel();
+                    NativeRenderEngine.Handle handle=renderHandles.get(jobId);
+                    if (cancelled && handle != null) handle.cancel();
                     if (cancelled) recoveryPlans.cancelByJob(jobId);
                     JSONObject result = ok();
                     result.put("cancelled", cancelled);
@@ -674,6 +690,13 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             try {
                 result.put("ok", false);
                 result.put("error", error.getMessage() == null ? "Command failed" : error.getMessage());
+                if (error instanceof ProjectStore.RevisionConflict) {
+                    ProjectStore.RevisionConflict conflict = (ProjectStore.RevisionConflict) error;
+                    result.put("errorCode", "revision_conflict");
+                    result.put("projectId", conflict.projectId);
+                    result.put("expectedRevision", conflict.expectedRevision);
+                    result.put("actualRevision", conflict.actualRevision);
+                }
             } catch (Exception ignored) {}
             ActivityLog.add(this, "chatgpt", friendlyAction(action), result.optString("error"), "failed", null, commandId, projectId);
             commandJournal.finish(command, result, "failed");
@@ -1402,6 +1425,10 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         return completed;
     }
 
+    private static JobManager.Origin jobOrigin(JSONObject parameters){
+        return parameters!=null&&"owner".equals(parameters.optString("_origin"))?JobManager.Origin.OWNER:JobManager.Origin.AUTONOMOUS;
+    }
+
     private JobManager.Job submitRecoverableLight(String action,
                                                   JSONObject parameters,
                                                   String projectId,
@@ -1416,7 +1443,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         }
 
         final String durablePlanId = planId;
-        JobManager.Job job = jobs.submit(jobName, JobManager.Kind.LIGHT, state -> {
+        JobManager.Job job = jobs.submit(jobName, JobManager.Kind.LIGHT, jobOrigin(parameters), state -> {
             recoveryPlans.attachJob(durablePlanId, state.id);
             try {
                 work.run(state);
@@ -1451,7 +1478,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         }
 
         final String durablePlanId = planId;
-        JobManager.Job job = jobs.submit(jobName, JobManager.Kind.HEAVY, state -> {
+        JobManager.Job job = jobs.submit(jobName, JobManager.Kind.HEAVY, jobOrigin(parameters), state -> {
             recoveryPlans.attachJob(durablePlanId, state.id);
             try {
                 work.run(state);
@@ -1473,11 +1500,12 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     }
 
     private void recoverDurablePlans() {
-        if (recoveryPlans == null || protocol == null || protocol.isControlPaused()) return;
+        if (recoveryPlans == null || protocol == null) return;
         JSONArray pending = recoveryPlans.pendingForAutoResume();
         for (int i = 0; i < pending.length(); i++) {
             JSONObject plan = pending.optJSONObject(i);
             if (plan == null) continue;
+            if (protocol.isControlPaused() && !"owner".equals(plan.optString("origin"))) continue;
             String planId = plan.optString("id", "");
             String action = plan.optString("action", "");
             String projectId = plan.optString("projectId", "");
@@ -1517,6 +1545,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             try {
                 parameters = new JSONObject(parameters.toString());
                 parameters.put("_recoveryPlanId", planId);
+                parameters.put("_origin", plan.optString("origin", "autonomous"));
                 if (!projectId.isEmpty()) parameters.put("projectId", projectId);
                 recoveryPlans.markResuming(planId);
 
@@ -2244,7 +2273,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     }
     private void queueImportProbe(String projectId,String assetId){
         if(projectId==null||assetId==null||!probingImports.add(assetId))return;
-        jobs.submit("Read selected media metadata",JobManager.Kind.LIGHT,state->{
+        jobs.submit("Read selected media metadata",JobManager.Kind.LIGHT,JobManager.Origin.OWNER,state->{
             try{
                 state.checkpoint("import_metadata",0,"Reading metadata without copying the source");
                 ProjectStore.Asset asset=store.completeImport(projectId,assetId);
@@ -3204,8 +3233,8 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     }
 
     private int cancelAutonomousWork(){
-        for(java.util.Map.Entry<String,NativeRenderEngine.Handle> entry:renderHandles.entrySet())if(!jobs.isManual(entry.getKey()))entry.getValue().cancel();
-        int cancelled=jobs.cancelAutonomous();recoveryPlans.cancelActive();return cancelled;
+        for(java.util.Map.Entry<String,NativeRenderEngine.Handle> entry:renderHandles.entrySet())if(!jobs.isOwner(entry.getKey()))entry.getValue().cancel();
+        int cancelled=jobs.cancelAutonomous();recoveryPlans.cancelAutonomous();return cancelled;
     }
 
     private void complete(JSONObject command, JSONObject result) {
@@ -3503,7 +3532,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             live.put("detail", detail == null ? "" : detail);
             live.put("progress", Math.max(0, Math.min(100, progress)));
             live.put("state", state.state);
-            live.put("origin",state.kind==JobManager.Kind.MANUAL_RENDER?"owner":"agent");
+            live.put("origin",state.origin==JobManager.Origin.OWNER?"owner":"agent");
             live.put("updatedAt", System.currentTimeMillis());
             prefs.edit().putString(ExecutionTruthPolicy.LIVE_JOB_PREF_KEY, live.toString()).apply();
         } catch (Exception ignored) {}

@@ -16,6 +16,7 @@ android {
     }
 
     testOptions { unitTests.isIncludeAndroidResources = true }
+    sourceSets.getByName("main").assets.srcDir("../../protocol")
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17

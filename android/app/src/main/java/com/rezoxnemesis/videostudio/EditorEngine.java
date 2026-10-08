@@ -27,8 +27,35 @@ public final class EditorEngine {
     public ProjectStore.Project execute(String projectId, long expectedRevision, String actor,
                                         String commandId, String operation, JSONObject args) {
         if (args == null) throw new IllegalArgumentException("Operation arguments are required");
+        validateActorRevision(actor,expectedRevision,commandId);
         return store.transact(projectId, expectedRevision, actor, commandId,
-                operation.replace('_', ' '), p -> apply(p, operation, args));
+                operation.replace('_', ' '),fingerprint(operation,args,expectedRevision), p -> apply(p, operation, args));
+    }
+
+    public ProjectStore.Project executeBatch(String projectId,long expectedRevision,String actor,String commandId,JSONArray operations){
+        validateActorRevision(actor,expectedRevision,commandId);
+        if(operations==null||operations.length()<1||operations.length()>100)throw new IllegalArgumentException("Batch requires 1–100 operations");
+        JSONObject payload=new JSONObject();try{payload.put("operations",operations);}catch(Exception error){throw new IllegalArgumentException(error);}
+        return store.transact(projectId,expectedRevision,actor,commandId,"Apply editor batch",fingerprint("batch",payload,expectedRevision),p->{
+            for(int i=0;i<operations.length();i++){JSONObject op=operations.getJSONObject(i);apply(p,op.getString("operation"),op.getJSONObject("args"));}
+        });
+    }
+    private static void validateActorRevision(String actor,long revision,String commandId){
+        if("agent".equals(actor)&&(revision<1||commandId==null||commandId.length()<8))throw new IllegalArgumentException("Autonomous edits require an expected project revision and durable command ID");
+    }
+    public static String fingerprint(String operation,JSONObject args,long revision){
+        try{
+            String input=operation+":"+revision+":"+canonicalJson(args);
+            byte[] hash=java.security.MessageDigest.getInstance("SHA-256").digest(input.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            StringBuilder out=new StringBuilder();for(byte b:hash)out.append(String.format(java.util.Locale.US,"%02x",b&255));return out.toString();
+        }catch(Exception error){throw new IllegalArgumentException("Could not fingerprint editor request",error);}
+    }
+    private static String canonicalJson(Object value)throws Exception{
+        if(value instanceof JSONObject){JSONObject o=(JSONObject)value;java.util.TreeSet<String> keys=new java.util.TreeSet<>();java.util.Iterator<String> it=o.keys();while(it.hasNext())keys.add(it.next());
+            StringBuilder out=new StringBuilder("{");for(String k:keys){if(out.length()>1)out.append(',');out.append(JSONObject.quote(k)).append(':').append(canonicalJson(o.get(k)));}return out.append('}').toString();}
+        if(value instanceof JSONArray){JSONArray a=(JSONArray)value;StringBuilder out=new StringBuilder("[");for(int i=0;i<a.length();i++){if(i>0)out.append(',');out.append(canonicalJson(a.get(i)));}return out.append(']').toString();}
+        if(value==null||value==JSONObject.NULL)return "null";if(value instanceof String)return JSONObject.quote((String)value);
+        return value instanceof Number?JSONObject.numberToString((Number)value):value.toString();
     }
 
     private void apply(ProjectStore.Project p, String op, JSONObject a) throws Exception {
@@ -186,6 +213,18 @@ public final class EditorEngine {
                 c.inMs = Math.addExact(c.inMs, delta); c.outMs = Math.addExact(c.outMs, delta);
                 validateRange(c, asset); break;
             }
+            case "roll_clip": {
+                if(!c.linkGroup.isEmpty())throw new IllegalArgumentException("Unlink clips before rolling this boundary");
+                ProjectStore.Clip right=adjacent(p,c,false);rollBoundary(p,c,right,a.getLong("deltaMs"));break;
+            }
+            case "slide_clip": {
+                if(!c.linkGroup.isEmpty())throw new IllegalArgumentException("Unlink clips before sliding");
+                ProjectStore.Clip left=adjacent(p,c,true),right=adjacent(p,c,false);
+                long delta=a.getLong("deltaMs"),oldIn=c.inMs,oldOut=c.outMs;
+                JSONArray originalFrames=new JSONArray(c.keyframes.toString());
+                rollBoundary(p,left,c,delta);rollBoundary(p,c,right,delta);
+                c.inMs=oldIn;c.outMs=oldOut;c.keyframes=originalFrames;noOverlap(p,left);noOverlap(p,c);noOverlap(p,right);break;
+            }
             case "set_speed": {
                 double speed = a.getDouble("speed");
                 if (!Double.isFinite(speed) || speed < .25 || speed > 4) throw new IllegalArgumentException("Speed must be 0.25–4");
@@ -302,6 +341,22 @@ public final class EditorEngine {
         ArrayList<ProjectStore.Clip> out = new ArrayList<>();
         for (ProjectStore.Clip c : p.clips) if (c == source || (!source.linkGroup.isEmpty() && source.linkGroup.equals(c.linkGroup))) out.add(c);
         return out;
+    }
+    private static ProjectStore.Clip adjacent(ProjectStore.Project p,ProjectStore.Clip c,boolean before){
+        for(ProjectStore.Clip other:p.clips)if(other!=c&&other.trackId.equals(c.trackId)){
+            if(before&&TimelineMath.add(other.startMs,other.outputDurationMs())==c.startMs)return other;
+            if(!before&&other.startMs==TimelineMath.add(c.startMs,c.outputDurationMs()))return other;
+        }
+        throw new IllegalArgumentException("This operation needs adjacent clips without a gap");
+    }
+    private static void rollBoundary(ProjectStore.Project p,ProjectStore.Clip left,ProjectStore.Clip right,long delta)throws Exception{
+        editableTrack(p,left.trackId);editableTrack(p,right.trackId);
+        if(!left.linkGroup.isEmpty()||!right.linkGroup.isEmpty())throw new IllegalArgumentException("Unlink clips before rolling a boundary");
+        ProjectStore.Clip beforeLeft=ProjectStore.Clip.fromJson(left.toJson()),beforeRight=ProjectStore.Clip.fromJson(right.toJson());
+        left.outMs=Math.addExact(left.outMs,Math.round((double)delta*left.speed));right.inMs=Math.addExact(right.inMs,Math.round((double)delta*right.speed));right.startMs=Math.addExact(right.startMs,delta);
+        validateRange(left,p.asset(left.assetId));validateRange(right,p.asset(right.assetId));if(right.startMs<0)throw new IllegalArgumentException("Boundary would move before zero");
+        left.keyframes=sliceKeyframes(beforeLeft,0,left.outputDurationMs());right.keyframes=sliceKeyframes(beforeRight,delta,Math.addExact(delta,right.outputDurationMs()));
+        noOverlap(p,left);noOverlap(p,right);
     }
     private static void trimKeyframes(ProjectStore.Clip c) throws Exception {
         c.keyframes=sliceKeyframes(c,0,c.outputDurationMs());

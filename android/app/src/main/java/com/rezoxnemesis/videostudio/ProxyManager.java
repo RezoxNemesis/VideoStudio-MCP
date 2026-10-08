@@ -103,7 +103,7 @@ public final class ProxyManager {
         if (!shouldProxy(source)) throw new IllegalArgumentException("Source does not require a preview proxy");
 
         final String resolvedTier = "540p".equalsIgnoreCase(tier) ? "540p" : "720p";
-        return jobs.submit("Preview proxy • " + source.name, JobManager.Kind.HEAVY, state -> {
+        return jobs.submit("Preview proxy • " + source.name, JobManager.Kind.HEAVY, JobManager.Origin.OWNER, state -> {
             state.checkpoint("proxy_prepare", 2, "Preparing lightweight preview proxy");
             ProjectStore.Project latest = store.get(project.id);
             ProjectStore.Asset current = latest == null ? null : latest.asset(source.id);

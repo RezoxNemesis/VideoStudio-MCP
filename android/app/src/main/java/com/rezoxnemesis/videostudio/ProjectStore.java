@@ -33,7 +33,7 @@ public final class ProjectStore {
     private static final String LEGACY_ACTIVE = "active_project";
 
     private static final String DB_NAME = "videostudio_v3.db";
-    private static final int DB_VERSION = 2;
+    private static final int DB_VERSION = 3;
     private static final String META_ACTIVE = "active_project";
     private static final String META_MIGRATED = "legacy_projects_migrated";
 
@@ -336,6 +336,7 @@ public final class ProjectStore {
         @Override
         public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
             if (oldVersion < 2) createEditorTables(db);
+            else if(oldVersion<3)db.execSQL("ALTER TABLE project_receipts ADD COLUMN fingerprint TEXT NOT NULL DEFAULT ''");
         }
 
         private void createEditorTables(SQLiteDatabase db) {
@@ -348,7 +349,7 @@ public final class ProjectStore {
                     "id TEXT PRIMARY KEY, project_id TEXT NOT NULL, name TEXT NOT NULL," +
                     "json TEXT NOT NULL, created_at INTEGER NOT NULL)");
             db.execSQL("CREATE TABLE IF NOT EXISTS project_receipts (" +
-                    "command_id TEXT PRIMARY KEY, project_id TEXT NOT NULL, json TEXT NOT NULL)");
+                    "command_id TEXT PRIMARY KEY, project_id TEXT NOT NULL, json TEXT NOT NULL, fingerprint TEXT NOT NULL DEFAULT '')");
         }
     }
 
@@ -455,13 +456,18 @@ public final class ProjectStore {
 
     public synchronized Project transact(String id, long expectedRevision, String actor,
                                          String commandId, String description, Mutation mutation) {
+        return transact(id,expectedRevision,actor,commandId,description,"",mutation);
+    }
+    public synchronized Project transact(String id,long expectedRevision,String actor,String commandId,
+                                         String description,String fingerprint,Mutation mutation){
         db.beginTransaction();
         try {
             if (commandId != null && !commandId.isEmpty()) {
-                try (Cursor c = db.query("project_receipts", new String[]{"project_id", "json"},
+                try (Cursor c = db.query("project_receipts", new String[]{"project_id", "json","fingerprint"},
                         "command_id=?", new String[]{commandId}, null, null, null)) {
                     if (c.moveToFirst()) {
                         if (!id.equals(c.getString(0))) throw new IllegalArgumentException("Command ID belongs to another project");
+                        if(fingerprint!=null&&!fingerprint.isEmpty()&&!fingerprint.equals(c.getString(2)))throw new IllegalArgumentException("Command ID conflicts with a different edit or unverifiable legacy receipt");
                         Project result = Project.fromJson(new JSONObject(c.getString(1)));
                         db.setTransactionSuccessful(); return result;
                     }
@@ -478,6 +484,7 @@ public final class ProjectStore {
             if (commandId != null && !commandId.isEmpty()) {
                 ContentValues receipt = new ContentValues(); receipt.put("command_id", commandId);
                 receipt.put("project_id", id); receipt.put("json", next.toJson().toString());
+                receipt.put("fingerprint",fingerprint==null?"":fingerprint);
                 db.insertOrThrow("project_receipts", null, receipt);
             }
             db.setTransactionSuccessful(); return next;
@@ -506,23 +513,34 @@ public final class ProjectStore {
         }
     }
 
-    public synchronized Project undo(String id, long expectedRevision) { return historyStep(id, expectedRevision, false); }
-    public synchronized Project redo(String id, long expectedRevision) { return historyStep(id, expectedRevision, true); }
+    public synchronized Project undo(String id, long expectedRevision) { return historyStep(id, expectedRevision, false,""); }
+    public synchronized Project redo(String id, long expectedRevision) { return historyStep(id, expectedRevision, true,""); }
+    public synchronized Project undo(String id,long revision,String commandId){return historyStep(id,revision,false,commandId);}
+    public synchronized Project redo(String id,long revision,String commandId){return historyStep(id,revision,true,commandId);}
 
-    private Project historyStep(String id, long expectedRevision, boolean redo) {
+    public synchronized Project commandReceipt(String projectId,String commandId){
+        try(Cursor c=db.query("project_receipts",new String[]{"json"},"project_id=? AND command_id=?",new String[]{projectId,commandId},null,null,null,"1")){
+            return c.moveToFirst()?Project.fromJson(new JSONObject(c.getString(0))):null;
+        }catch(org.json.JSONException invalid){throw new IllegalStateException(invalid);}
+    }
+
+    private Project historyStep(String id, long expectedRevision, boolean redo,String commandId) {
         db.beginTransaction();
         try {
+            String fingerprint=EditorEngine.fingerprint(redo?"redo":"undo",new JSONObject(),expectedRevision);
+            Project replay=readReceipt(id,commandId,fingerprint);if(replay!=null){db.setTransactionSuccessful();return replay;}
             Project current = get(id);
             if (current == null) throw new IllegalArgumentException("Project not found");
             if (current.revision != expectedRevision) throw new RevisionConflict(id, expectedRevision, current.revision);
             try (Cursor c = db.query("project_history", new String[]{"seq", redo ? "after_json" : "before_json"},
                     "project_id=? AND applied=?", new String[]{id, redo ? "0" : "1"}, null, null,
                     "seq " + (redo ? "ASC" : "DESC"), "1")) {
-                if (!c.moveToFirst()) { db.setTransactionSuccessful(); return current; }
+                if (!c.moveToFirst()) { recordReceipt(current,commandId,fingerprint);db.setTransactionSuccessful(); return current; }
                 Project next = Project.fromJson(new JSONObject(c.getString(1)));
-                writeRevision(next, current, "owner", redo ? "Redo" : "Undo", false);
+                writeRevision(next, current, commandId.isEmpty()?"owner":"agent", redo ? "Redo" : "Undo", false);
                 ContentValues row = new ContentValues(); row.put("applied", redo ? 1 : 0);
                 db.update("project_history", row, "seq=?", new String[]{Long.toString(c.getLong(0))});
+                recordReceipt(next,commandId,fingerprint);
                 db.setTransactionSuccessful(); return next;
             }
         } catch (RuntimeException error) { throw error; }
@@ -535,9 +553,21 @@ public final class ProjectStore {
         if (p == null) throw new IllegalArgumentException("Project not found");
         return insertSnapshot(p, name == null || name.trim().isEmpty() ? "Snapshot" : name.trim());
     }
+    public synchronized String snapshot(String id,long revision,String name,String commandId){
+        if(name==null||name.trim().isEmpty()||name.length()>240)throw new IllegalArgumentException("Snapshot name is required (up to 240 characters)");
+        String snapshotId=UUID.nameUUIDFromBytes((id+":snapshot:"+commandId).getBytes(java.nio.charset.StandardCharsets.UTF_8)).toString();
+        db.beginTransaction();try{
+            JSONObject args=new JSONObject().put("name",name);String fingerprint=EditorEngine.fingerprint("snapshot",args,revision);
+            Project replay=readReceipt(id,commandId,fingerprint);if(replay!=null){db.setTransactionSuccessful();return snapshotId;}
+            Project p=get(id);if(p==null)throw new IllegalArgumentException("Project not found");if(p.revision!=revision)throw new RevisionConflict(id,revision,p.revision);
+            insertSnapshot(p,name,snapshotId);recordReceipt(p,commandId,fingerprint);db.setTransactionSuccessful();return snapshotId;
+        }catch(RuntimeException error){throw error;}catch(Exception error){throw new IllegalStateException(error);}finally{db.endTransaction();}
+    }
 
     private String insertSnapshot(Project project, String name) {
-        String id = UUID.randomUUID().toString();
+        return insertSnapshot(project,name,UUID.randomUUID().toString());
+    }
+    private String insertSnapshot(Project project,String name,String id){
         ContentValues row = new ContentValues(); row.put("id", id); row.put("project_id", project.id);
         row.put("name", name); row.put("json", project.toJson().toString()); row.put("created_at", System.currentTimeMillis());
         db.insertOrThrow("project_snapshots", null, row); return id;
@@ -558,7 +588,11 @@ public final class ProjectStore {
     }
 
     public synchronized Project restore(String projectId, long revision, String snapshotId) {
-        return transact(projectId, revision, "owner", "", "Restore snapshot", p -> {
+        return restore(projectId,revision,snapshotId,"");
+    }
+    public synchronized Project restore(String projectId,long revision,String snapshotId,String commandId){
+        JSONObject args=new JSONObject();try{args.put("snapshotId",snapshotId);}catch(Exception error){throw new IllegalArgumentException(error);}
+        return transact(projectId, revision, commandId.isEmpty()?"owner":"agent", commandId, "Restore snapshot",EditorEngine.fingerprint("restore",args,revision), p -> {
             try (Cursor c = db.query("project_snapshots", new String[]{"json"}, "id=? AND project_id=?",
                     new String[]{snapshotId, projectId}, null, null, null)) {
                 if (!c.moveToFirst()) throw new IllegalArgumentException("Snapshot not found in this project");
@@ -569,6 +603,18 @@ public final class ProjectStore {
                 for (Asset a : snapshot.assets) if (p.asset(a.id) == null) p.assets.add(a);
             }
         });
+    }
+
+    private Project readReceipt(String id,String commandId,String fingerprint)throws Exception{
+        if(commandId==null||commandId.isEmpty())return null;
+        try(Cursor c=db.query("project_receipts",new String[]{"project_id","json","fingerprint"},"command_id=?",new String[]{commandId},null,null,null)){
+            if(!c.moveToFirst())return null;if(!id.equals(c.getString(0))||!fingerprint.equals(c.getString(2)))throw new IllegalArgumentException("Command ID conflicts with a different edit");
+            return Project.fromJson(new JSONObject(c.getString(1)));
+        }
+    }
+    private void recordReceipt(Project p,String commandId,String fingerprint){
+        if(commandId==null||commandId.isEmpty())return;
+        ContentValues row=new ContentValues();row.put("command_id",commandId);row.put("project_id",p.id);row.put("json",p.toJson().toString());row.put("fingerprint",fingerprint);db.insertOrThrow("project_receipts",null,row);
     }
 
     public synchronized void delete(String id) {
@@ -597,12 +643,16 @@ public final class ProjectStore {
         if(!"importing".equals(source.importState))return source;
         Uri uri=Uri.parse(source.uri);AssetProbe.Result probe=AssetProbe.probe(resolver,uri);
         long durationMs=duration(uri);
+        JSONObject container=new JSONObject();
+        if(probe.mime.startsWith("video/")||probe.mime.startsWith("audio/"))try{container=MediaTrackProbe.inspect(resolver,uri);}catch(Exception ignored){}
+        final JSONObject containerMetadata=container;
         Project latest=transact(projectId,-1,"system","","Probe imported media",p->{
             Asset a=p.asset(assetId);if(a==null||!source.uri.equals(a.uri)||!"importing".equals(a.importState))return;
             a.mime="application/octet-stream".equals(probe.mime)?mimeForName(probe.displayName.equals("Media")?uri.getLastPathSegment():probe.displayName):probe.mime;
             if("Importing media".equals(a.name))a.name="Media".equals(probe.displayName)?uri.getLastPathSegment():probe.displayName;
             a.sizeBytes=probe.sizeBytes;a.seekable=probe.seekable;a.persistedReadAccess=probe.persistedReadAccess;
             a.providerAuthority=probe.providerAuthority;a.durationMs=durationMs;
+            java.util.Iterator<String> fields=containerMetadata.keys();while(fields.hasNext()){String key=fields.next();a.generationMetadata.put(key,containerMetadata.get(key));}
             a.importState=probe.readable?"ready":"unavailable";
             a.importError=probe.readable?"":"Storage access is unavailable. Relink this media through Android.";
             if(probe.readable&&(a.mime.startsWith("video/")||a.mime.startsWith("audio/"))&&durationMs<=0){
@@ -644,6 +694,7 @@ public final class ProjectStore {
         AssetProbe.Result probe=AssetProbe.probe(resolver,uri);
         asset.sizeBytes=probe.sizeBytes;asset.seekable=probe.seekable;asset.persistedReadAccess=probe.persistedReadAccess;asset.providerAuthority=probe.providerAuthority;
         asset.durationMs = duration(uri);
+        if(asset.mime.startsWith("video/")||asset.mime.startsWith("audio/"))try{asset.generationMetadata=MediaTrackProbe.inspect(resolver,uri);}catch(Exception ignored){}
         asset.role = role == null || role.trim().isEmpty() ? "generated" : role.trim();
         asset.generated = true;
         asset.createdAt = System.currentTimeMillis();
@@ -700,6 +751,8 @@ public final class ProjectStore {
             try {
                 o.put("id", p.id);
                 o.put("name", p.name);
+                o.put("revision", p.revision);
+                o.put("trackCount", p.tracks.size());
                 o.put("assetCount", p.assets.size());
                 o.put("clipCount", p.clips.size());
                 o.put("durationMs", p.outputDurationMs());

@@ -438,7 +438,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         addEditorButton(transport,"◀ Frame",()->stepEditorFrame(-1));
         addEditorButton(transport,"−5s",()->seekEditor(Math.max(0,editorPlayhead-5000)));
         addEditorButton(transport,"Play / Pause",()->{
-            if(monitor.isPlaying())monitor.pause();else previewTimeline();
+            if(monitor.isPlaying()||monitor.isPreparingToPlay())monitor.pause();else previewTimeline();
         });
         addEditorButton(transport,"+5s",()->seekEditor(TimelineMath.add(editorPlayhead,5000)));
         addEditorButton(transport,"Frame ▶",()->stepEditorFrame(1));
@@ -518,7 +518,8 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                 timelineView.setPlayhead(editorPlayhead);
             }
             int fps=activeProject.settings.optInt("fps",30);long frame=TimelineMath.frameIndex(editorPlayhead,fps);
-            clock.setText(String.format(Locale.US,"%02d:%02d:%02d:%02d · %s · r%d",editorPlayhead/3600000,editorPlayhead/60000%60,editorPlayhead/1000%60,frame%fps,monitor.isProgram()?"Program":"Source",activeProject.revision));
+            long shown=monitor.shownRevision();String revision=shown<0?"preparing r"+activeProject.revision:"r"+shown+(shown==activeProject.revision?"":" · project r"+activeProject.revision);
+            clock.setText(String.format(Locale.US,"%02d:%02d:%02d:%02d · %s · %s",editorPlayhead/3600000,editorPlayhead/60000%60,editorPlayhead/1000%60,frame%fps,monitor.isProgram()?"Program":"Source",revision));
             ui.postDelayed(this,120);
         }};ui.post(playbackTick);
     }
@@ -1106,7 +1107,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         }
         ProjectStore.Project project = store.get(activeProject.id);
         if (project == null) return;
-        JobManager.Job job = jobs.submit("Archive project • " + project.name, JobManager.Kind.LIGHT, state -> {
+        JobManager.Job job = jobs.submit("Archive project • " + project.name, JobManager.Kind.LIGHT, JobManager.Origin.OWNER, state -> {
             state.checkpoint("Cloud archive", 2, "Preparing project workspace");
             File workspace = new CreativeWorkspace(this).projectRoot(project.id);
             JSONObject result = driveWorkspace.syncProject(project, workspace, (progress, detail) -> {
@@ -1132,7 +1133,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         }
         ProjectStore.Project project = store.get(activeProject.id);
         if (project == null) return;
-        JobManager.Job job = jobs.submit("Cloud offload • " + project.name, JobManager.Kind.HEAVY, state -> {
+        JobManager.Job job = jobs.submit("Cloud offload • " + project.name, JobManager.Kind.HEAVY, JobManager.Origin.OWNER, state -> {
             File workspace = new CreativeWorkspace(this).projectRoot(project.id);
             state.checkpoint("Cloud offload", 2, "Archiving before local eviction");
             JSONObject archived = driveWorkspace.syncProject(project, workspace, (progress, detail) -> {
@@ -1161,7 +1162,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         }
         ProjectStore.Project project = store.get(activeProject.id);
         if (project == null) return;
-        JobManager.Job job = jobs.submit("Restore project • " + project.name, JobManager.Kind.LIGHT, state -> {
+        JobManager.Job job = jobs.submit("Restore project • " + project.name, JobManager.Kind.LIGHT, JobManager.Origin.OWNER, state -> {
             state.checkpoint("Cloud restore", 2, "Preparing project workspace");
             File workspace = new CreativeWorkspace(this).projectRoot(project.id);
             JSONObject result = driveWorkspace.restoreProjectWorkspace(project.id, workspace, (progress, detail) -> {
@@ -1586,7 +1587,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         String quality = parameters.optString("quality", "1080p");
         String fileName = "VideoStudio_AI_" + System.currentTimeMillis() + ".mp4";
 
-        JobManager.Job job = jobs.submit("Prompt video • " + titleText, JobManager.Kind.HEAVY, state -> {
+        JobManager.Job job = jobs.submit("Prompt video • " + titleText, JobManager.Kind.HEAVY, JobManager.Origin.OWNER, state -> {
             state.checkpoint(3, "Building original procedural scene geometry");
             PromptVideoEngine.BuildResult built = promptVideoEngine.build(store, project, parameters);
             state.checkpoint(18, "Scene plan ready • starting native render");
@@ -1615,7 +1616,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         if (!safeName.toLowerCase(Locale.US).endsWith(".mp4")) safeName += ".mp4";
         final String finalName = safeName;
 
-        JobManager.Job job = jobs.submit("Export • " + target.name, JobManager.Kind.HEAVY, state -> {
+        JobManager.Job job = jobs.submit("Export • " + target.name, JobManager.Kind.HEAVY, JobManager.Origin.OWNER, state -> {
             state.checkpoint(2, "Preparing Media3 native export");
             runExportBlocking(target, aspect, quality, finalName, state);
             state.checkpoint(100, "Export complete");
@@ -1740,7 +1741,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
             long startMs = parameters.has("startMs") ? parameters.optLong("startMs") : (long) (parameters.optDouble("start", 0) * 1000);
             long endMs = parameters.has("endMs") ? parameters.optLong("endMs") : (long) (parameters.optDouble("end", 0) * 1000);
 
-            jobs.submit("Analyse • " + target.name, JobManager.Kind.LIGHT, state -> {
+            jobs.submit("Analyse • " + target.name, JobManager.Kind.LIGHT, JobManager.Origin.OWNER, state -> {
                 try {
                     state.checkpoint(8, "Sampling frames locally");
                     JSONObject result = mediaAnalyzer.analyse(target, frames, startMs, endMs);
@@ -2086,7 +2087,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         if (requested == null) requested = store.create("ChatGPT Imports");
         ProjectStore.Project project = requested;
 
-        JobManager.Job job = jobs.submit("Private import " + name, JobManager.Kind.LIGHT, state -> {
+        JobManager.Job job = jobs.submit("Private import " + name, JobManager.Kind.LIGHT, JobManager.Origin.OWNER, state -> {
             state.progress = 4;
             File dir = new File(getFilesDir(), "imports");
             if (!dir.exists() && !dir.mkdirs()) throw new IllegalStateException("Could not create import directory");
@@ -2162,7 +2163,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         if (url == null || !url.startsWith("https://")) throw new IllegalArgumentException("Only HTTPS imports are allowed");
         if (activeProject == null) activeProject = store.create("ChatGPT Imports");
         ProjectStore.Project project = activeProject;
-        JobManager.Job job = jobs.submit("Import " + name, JobManager.Kind.LIGHT, state -> {
+        JobManager.Job job = jobs.submit("Import " + name, JobManager.Kind.LIGHT, JobManager.Origin.OWNER, state -> {
             state.progress = 5;
             File dir = new File(getFilesDir(), "imports");
             if (!dir.exists() && !dir.mkdirs()) throw new IllegalStateException("Could not create import directory");

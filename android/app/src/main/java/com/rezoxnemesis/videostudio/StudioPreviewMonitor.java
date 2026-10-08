@@ -35,13 +35,16 @@ public final class StudioPreviewMonitor {
     private final CompositionPlayer program;
     private final Handler main = new Handler(Looper.getMainLooper());
     private final ExecutorService decode = Executors.newSingleThreadExecutor();
-    private long generation;
+    private volatile long generation;
     private String boundSource = "";
     private String boundClip = "";
     private String programProject = "";
     private long programRevision = -1;
     private boolean programMode;
-    private boolean released;
+    private volatile boolean released;
+    private String composingProject="";
+    private long composingRevision=-1,pendingSeek,sourceRevision;
+    private boolean pendingPlay;
     private Bitmap bitmap;
 
     public StudioPreviewMonitor(Context context, LiveEditPlayer sourcePlayer) {
@@ -73,7 +76,7 @@ public final class StudioPreviewMonitor {
     }
     public void showSource(ProjectStore.Project p, ProjectStore.Asset asset, ProjectStore.Clip clip, long sourceMs, boolean play){
         if(released)return;
-        program.pause();programMode=false;programView.setVisibility(View.GONE);sourceHost.setVisibility(View.VISIBLE);
+        program.pause();programMode=false;sourceRevision=p.revision;composingRevision=-1;programView.setVisibility(View.GONE);sourceHost.setVisibility(View.VISIBLE);
         if(asset==null){showError("This clip's source media is missing. Relink it in Media.");return;}
         String kind=sourceKind(asset), clipId=clip==null ? "" : clip.id;
         String uri=ProxyManager.previewUri(p,asset);
@@ -105,20 +108,33 @@ public final class StudioPreviewMonitor {
     }
     public void showProgram(ProjectStore.Project p,long timeMs,boolean play){
         if(released)return;
-        generation++;sourcePlayer.pause();image.setVisibility(View.GONE);sourceHost.setVisibility(View.GONE);
+        sourcePlayer.pause();image.setVisibility(View.GONE);sourceHost.setVisibility(View.GONE);
         programView.setVisibility(View.VISIBLE);programMode=true;
-        try{
-            if(!p.id.equals(programProject) || p.revision!=programRevision){
-                program.setComposition(new TimelineCompositionFactory(context).build(p,p.settings.optString("aspect","16:9"),"540p",true));
-                programProject=p.id;programRevision=p.revision;program.prepare();
-            }
-            status.setVisibility(View.GONE);program.seekTo(Math.max(0,timeMs));program.setPlayWhenReady(play);
-        }catch(Exception error){showError("Program preview could not start: "+error.getMessage());}
+        pendingSeek=Math.max(0,timeMs);pendingPlay=play;
+        if(p.id.equals(programProject)&&p.revision==programRevision){generation++;status.setVisibility(View.GONE);program.seekTo(pendingSeek);program.setPlayWhenReady(play);return;}
+        if(p.id.equals(composingProject)&&p.revision==composingRevision)return;
+        long request=++generation;composingProject=p.id;composingRevision=p.revision;
+        ProjectStore.Project snapshot=ProjectStore.Project.fromJson(p.toJson());
+        program.pause();status.setText("Preparing program preview · r"+p.revision);status.setVisibility(View.VISIBLE);
+        decode.execute(()->{
+            if(released||generation!=request)return;
+            try{
+                androidx.media3.transformer.Composition composition=new TimelineCompositionFactory(context).build(snapshot,snapshot.settings.optString("aspect","16:9"),"540p",true);
+                main.post(()->{
+                    if(released||generation!=request||!programMode)return;
+                    try{program.setComposition(composition);programProject=snapshot.id;programRevision=snapshot.revision;composingRevision=-1;
+                        program.prepare();program.seekTo(pendingSeek);program.setPlayWhenReady(pendingPlay);
+                    }catch(Exception error){composingRevision=-1;showError("Program preview could not start: "+error.getMessage());}
+                });
+            }catch(Exception error){main.post(()->{if(!released&&generation==request){composingRevision=-1;showError("Program preview could not start: "+error.getMessage());}});}
+        });
     }
+    public long shownRevision(){return programMode?programRevision:sourceRevision;}
     public boolean isProgram(){return programMode;}
     public boolean isPlaying(){return programMode?program.isPlaying():sourcePlayer.isPlaying();}
     public long position(){return programMode?program.getCurrentPosition():sourcePlayer.currentPositionMs();}
-    public void pause(){program.pause();sourcePlayer.pause();}
+    public void pause(){pendingPlay=false;program.pause();sourcePlayer.pause();}
+    public boolean isPreparingToPlay(){return programMode&&composingRevision>=0&&pendingPlay;}
     public void setPlaying(boolean playing){if(programMode)program.setPlayWhenReady(playing);else sourcePlayer.setPlaying(playing);}
     public void seek(long timeMs){if(programMode)program.seekTo(Math.max(0,timeMs));else sourcePlayer.seekTo(timeMs);}
     public void showError(String detail){status.setText(detail);status.setVisibility(View.VISIBLE);}

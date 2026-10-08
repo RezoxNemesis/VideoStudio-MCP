@@ -19,6 +19,7 @@ import java.util.concurrent.Semaphore;
 
 public final class JobManager {
     public enum Kind { LIGHT, HEAVY, MANUAL_RENDER }
+    public enum Origin { OWNER, AUTONOMOUS }
 
     public static final String STATE_QUEUED = "queued";
     public static final String STATE_PREPARING = "preparing";
@@ -37,6 +38,7 @@ public final class JobManager {
         public final String id;
         public final String name;
         public final Kind kind;
+        public final Origin origin;
         public final long createdAt;
         public volatile long updatedAt;
         public volatile String state = STATE_QUEUED;
@@ -47,17 +49,19 @@ public final class JobManager {
         public volatile int retryCount = 0;
         public volatile long lastCheckpointAt;
         public volatile JSONObject result;
+        public volatile long journalRevision=1;
         Future<?> future;
         private JobManager owner;
 
         Job(String name, Kind kind) {
-            this(UUID.randomUUID().toString(), name, kind, System.currentTimeMillis());
+            this(UUID.randomUUID().toString(), name, kind, kind==Kind.MANUAL_RENDER?Origin.OWNER:Origin.AUTONOMOUS, System.currentTimeMillis());
         }
 
-        Job(String id, String name, Kind kind, long createdAt) {
+        Job(String id, String name, Kind kind, Origin origin, long createdAt) {
             this.id = id;
             this.name = name;
             this.kind = kind;
+            this.origin = origin;
             this.createdAt = createdAt;
             this.updatedAt = createdAt;
             this.lastCheckpointAt = createdAt;
@@ -68,15 +72,20 @@ public final class JobManager {
         }
 
         public void checkpoint(String stage, int progress, String detail) {
+            synchronized(this){
+            if(isTerminal(state))return;
             this.stage = stage == null || stage.trim().isEmpty() ? this.stage : stage.trim();
             this.progress = Math.max(0, Math.min(100, progress));
             this.detail = detail == null ? "" : detail;
             this.updatedAt = System.currentTimeMillis();
             this.lastCheckpointAt = this.updatedAt;
+            journalRevision++;
+            }
             if (owner != null) owner.persist();
         }
 
         public void setResult(JSONObject value) {
+            synchronized(this){
             if (value == null) {
                 this.result = null;
             } else {
@@ -84,15 +93,18 @@ public final class JobManager {
                 catch (Exception ignored) { this.result = value; }
             }
             this.updatedAt = System.currentTimeMillis();
+            journalRevision++;
+            }
             if (owner != null) owner.persist();
         }
 
-        JSONObject json() {
+        synchronized JSONObject json() {
             JSONObject o = new JSONObject();
             try {
                 o.put("id", id);
                 o.put("name", name);
-                o.put("kind", kind.name().toLowerCase());
+                o.put("kind", kind.name().toLowerCase(java.util.Locale.US));
+                o.put("origin", origin.name().toLowerCase(java.util.Locale.US));
                 o.put("state", state);
                 o.put("progress", progress);
                 o.put("detail", detail);
@@ -102,6 +114,7 @@ public final class JobManager {
                 o.put("lastCheckpointAt", lastCheckpointAt);
                 o.put("createdAt", createdAt);
                 o.put("updatedAt", updatedAt);
+                o.put("journalRevision",journalRevision);
                 if (result != null) o.put("result", result);
             } catch (Exception ignored) {}
             return o;
@@ -114,6 +127,8 @@ public final class JobManager {
 
     private static final String PREFS = "videostudio_native_v1";
     private static final String KEY_JOBS = ExecutionTruthPolicy.JOB_RECOVERY_PREF_KEY;
+    private static final Object JOURNAL_LOCK=new Object();
+    private static final Map<String,Job> PROCESS_RUNNING=new ConcurrentHashMap<>();
     private final Context context;
     private final SharedPreferences prefs;
     private static final Semaphore PROCESS_HEAVY_LANE = new Semaphore(1, true);
@@ -130,9 +145,15 @@ public final class JobManager {
     }
 
     public Job submit(String name, Kind kind, Work work) {
-        Job job = new Job(name, kind);
+        return submit(name,kind,kind==Kind.MANUAL_RENDER?Origin.OWNER:Origin.AUTONOMOUS,work);
+    }
+
+    public Job submit(String name,Kind kind,Origin origin,Work work) {
+        if(origin==null)throw new IllegalArgumentException("Job origin is required");
+        Job job = new Job(UUID.randomUUID().toString(),name,kind,origin,System.currentTimeMillis());
         job.owner = this;
         jobs.put(job.id, job);
+        PROCESS_RUNNING.put(job.id,job);
         persist();
         ExecutorService executor = kind == Kind.MANUAL_RENDER ? manualPool : pool;
         Semaphore lane = kind == Kind.MANUAL_RENDER ? PROCESS_MANUAL_RENDER_LANE : heavyLane;
@@ -161,22 +182,26 @@ public final class JobManager {
             } finally {
                 if (locked) lane.release();
                 persist();
+                PROCESS_RUNNING.remove(job.id,job);
             }
         });
         return job;
     }
 
     public boolean cancel(String id) {
-        Job job = jobs.get(id);
+        Job job = PROCESS_RUNNING.get(id);if(job!=null&&job.owner!=this)return job.owner.cancel(id);
+        if(job==null)job=jobs.get(id);
         if (job == null || isTerminal(job.state)) return false;
         setState(job, STATE_CANCELLED, "Cancelled");
         if (job.future != null) job.future.cancel(true);
+        PROCESS_RUNNING.remove(id,job);
         return true;
     }
 
     public int cancelAll() {
         int count = 0;
-        for (Job job : jobs.values()) {
+        Map<String,Job> all=new LinkedHashMap<>(jobs);all.putAll(PROCESS_RUNNING);
+        for (Job job : all.values()) {
             if (!isTerminal(job.state) && cancel(job.id)) count++;
         }
         return count;
@@ -184,60 +209,69 @@ public final class JobManager {
 
     public int cancelAutonomous() {
         int count = 0;
-        for (Job job : jobs.values()) if (job.kind != Kind.MANUAL_RENDER && !isTerminal(job.state) && cancel(job.id)) count++;
+        Map<String,Job> all=new LinkedHashMap<>(jobs);all.putAll(PROCESS_RUNNING);
+        for (Job job : all.values()) if (job.origin == Origin.AUTONOMOUS && !isTerminal(job.state) && cancel(job.id)) count++;
         return count;
     }
 
-    public boolean isManual(String id) { Job job=jobs.get(id);return job!=null && job.kind==Kind.MANUAL_RENDER; }
+    public boolean isManual(String id) { Job job=PROCESS_RUNNING.get(id);if(job==null)job=jobs.get(id);return job!=null && job.kind==Kind.MANUAL_RENDER; }
+
+    public boolean isOwner(String id) { return get(id).optJSONObject("job")!=null && "owner".equals(get(id).optJSONObject("job").optString("origin")); }
+
+    private Map<String,JSONObject> journalView(){
+        Map<String,JSONObject> rows=new LinkedHashMap<>();
+        try{
+            JSONArray saved=new JSONArray(prefs.getString(KEY_JOBS,"[]"));
+            for(int i=0;i<saved.length();i++){JSONObject row=saved.getJSONObject(i);rows.put(row.getString("id"),row);}
+            for(Job job:jobs.values()){
+                JSONObject local=job.json(),previous=rows.get(job.id);
+                if(previous==null||local.optLong("journalRevision")>previous.optLong("journalRevision"))rows.put(job.id,local);
+            }
+            for(Job job:PROCESS_RUNNING.values())rows.put(job.id,job.json());
+        }catch(org.json.JSONException invalid){throw new IllegalStateException("Invalid job journal",invalid);}
+        return rows;
+    }
 
     public JSONObject get(String id) {
         JSONObject out = new JSONObject();
         try {
-            Job job = id == null ? null : jobs.get(id);
-            if (job == null) {
-                out.put("found", false);
-                out.put("jobId", id == null ? "" : id);
-            } else {
-                out.put("found", true);
-                out.put("job", job.json());
-            }
-        } catch (Exception ignored) {}
+            JSONObject row=id==null?null:journalView().get(id);
+            out.put("found",row!=null);
+            if(row==null)out.put("jobId",id==null?"":id);else out.put("job",row);
+        } catch (org.json.JSONException invalid) {throw new IllegalStateException(invalid);}
         return out;
     }
 
     public JSONObject state() {
-        JSONObject root = new JSONObject();
-        JSONArray arr = new JSONArray();
-        Map<String, Job> sorted = new LinkedHashMap<>();
-        jobs.values().stream()
-                .sorted((a, b) -> Long.compare(b.updatedAt, a.updatedAt))
-                .limit(30)
-                .forEach(j -> sorted.put(j.id, j));
-        for (Job job : sorted.values()) arr.put(job.json());
-        try {
-            root.put("jobs", arr);
-            root.put("memory", memoryState());
-            root.put("thermal", thermalState());
-            root.put("heavyLaneBusy", heavyLane.availablePermits() == 0);
-            root.put("parallelLightCapacity", 2);
-        } catch (Exception ignored) {}
+        JSONObject root=new JSONObject();JSONArray arr=new JSONArray();
+        journalView().values().stream().sorted((a,b)->Long.compare(b.optLong("updatedAt"),a.optLong("updatedAt"))).limit(30).forEach(arr::put);
+        try{
+            root.put("jobs",arr);root.put("memory",memoryState());root.put("thermal",thermalState());
+            root.put("heavyLaneBusy",heavyLane.availablePermits()==0);
+            root.put("manualRenderLaneBusy",PROCESS_MANUAL_RENDER_LANE.availablePermits()==0);
+            root.put("parallelLightCapacity",2);
+        }catch(org.json.JSONException invalid){throw new IllegalStateException(invalid);}
         return root;
     }
 
     public void shutdown() {
-        cancelAll();
+        // Closing an Activity does not revoke Service work or restored checkpoints.
+        for(Job job:jobs.values())if(job.owner==this&&job.future!=null&&!isTerminal(job.state))cancel(job.id);
         pool.shutdownNow();
         manualPool.shutdownNow();
         persist();
     }
 
     private void setState(Job job, String state, String detail) {
+        synchronized(job){
         String current = canonicalState(job.state);
         String next = canonicalState(state);
         if (!canTransition(current, next)) return;
         job.state = next;
         job.detail = detail == null ? "" : detail;
         job.updatedAt = System.currentTimeMillis();
+        job.journalRevision++;
+        }
         persist();
     }
 
@@ -359,13 +393,23 @@ public final class JobManager {
         }
     }
 
-    private synchronized void persist() {
-        JSONArray arr = new JSONArray();
-        jobs.values().stream()
-                .sorted((a, b) -> Long.compare(b.updatedAt, a.updatedAt))
-                .limit(40)
-                .forEach(j -> arr.put(j.json()));
-        prefs.edit().putString(KEY_JOBS, arr.toString()).apply();
+    private void persist() {
+        java.util.ArrayList<JSONObject> updates=new java.util.ArrayList<>();
+        for(Job job:jobs.values())updates.add(job.json());
+        synchronized(JOURNAL_LOCK){
+            try{
+                Map<String,JSONObject> merged=new LinkedHashMap<>();JSONArray previous=new JSONArray(prefs.getString(KEY_JOBS,"[]"));
+                long cutoff=System.currentTimeMillis()-48L*60L*60L*1000L;
+                for(int i=0;i<previous.length();i++){JSONObject row=previous.optJSONObject(i);if(row!=null&&row.optLong("updatedAt")>=cutoff)merged.put(row.optString("id"),row);}
+                for(JSONObject row:updates){JSONObject old=merged.get(row.optString("id"));
+                    if(old==null||row.optLong("journalRevision",1)>old.optLong("journalRevision",1))merged.put(row.optString("id"),row);
+                }
+                java.util.ArrayList<JSONObject> rows=new java.util.ArrayList<>(merged.values());rows.sort((a,b)->Long.compare(b.optLong("updatedAt"),a.optLong("updatedAt")));
+                JSONArray out=new JSONArray();int terminal=0;
+                for(JSONObject row:rows)if(!isTerminal(row.optString("state"))||terminal++<40)out.put(row);
+                if(!prefs.edit().putString(KEY_JOBS,out.toString()).commit())throw new IllegalStateException("Could not persist job checkpoint");
+            }catch(org.json.JSONException invalid){throw new IllegalStateException("Invalid job journal",invalid);}
+        }
     }
 
     private void restoreRecoveryState() {
@@ -378,12 +422,14 @@ public final class JobManager {
                 if (o == null) continue;
                 long updated = o.optLong("updatedAt", 0);
                 if (updated < cutoff) continue;
+                if(PROCESS_RUNNING.containsKey(o.optString("id")))continue;
                 Kind kind = "manual_render".equals(o.optString("kind")) ? Kind.MANUAL_RENDER
                         : "heavy".equals(o.optString("kind")) ? Kind.HEAVY : Kind.LIGHT;
-                Job job = new Job(o.optString("id", UUID.randomUUID().toString()), o.optString("name", "Recovered job"), kind, o.optLong("createdAt", updated));
+                Job job = new Job(o.optString("id", UUID.randomUUID().toString()), o.optString("name", "Recovered job"), kind, "owner".equals(o.optString("origin"))||kind==Kind.MANUAL_RENDER?Origin.OWNER:Origin.AUTONOMOUS, o.optLong("createdAt", updated));
                 job.owner = this;
                 job.progress = o.optInt("progress", 0);
                 job.updatedAt = updated;
+                job.journalRevision=o.optLong("journalRevision",1);
                 job.stage = o.optString("stage", "recovered");
                 job.recoverable = o.optBoolean("recoverable", true);
                 job.retryCount = o.optInt("retryCount", 0);
@@ -398,6 +444,7 @@ public final class JobManager {
                     job.state = STATE_CHECKPOINTED;
                     job.recoverable = true;
                     job.detail = "App restarted after checkpoint '" + job.stage + "'. Recoverable work is preserved for retry.";
+                    job.journalRevision++;
                 } else {
                     job.state = state;
                     job.detail = o.optString("detail", "");

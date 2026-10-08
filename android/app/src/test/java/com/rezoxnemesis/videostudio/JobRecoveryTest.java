@@ -100,4 +100,22 @@ public class JobRecoveryTest {
             assertTrue(ids.contains(a.id));assertTrue("B must survive A's checkpoint",ids.contains(b.id));
         }finally{release.countDown();first.shutdown();second.shutdown();}
     }
+    @Test public void pausingAutonomousWorkKeepsOwnerImportsRunning() throws Exception {
+        Context context=RuntimeEnvironment.getApplication();context.getSharedPreferences("videostudio_native_v1",Context.MODE_PRIVATE).edit().clear().commit();
+        JobManager service=new JobManager(context);CountDownLatch started=new CountDownLatch(2),release=new CountDownLatch(1);
+        try{
+            JobManager.Job owner=service.submit("Owner import",JobManager.Kind.LIGHT,JobManager.Origin.OWNER,state->{started.countDown();release.await(5,TimeUnit.SECONDS);});
+            JobManager.Job agent=service.submit("Agent work",JobManager.Kind.LIGHT,JobManager.Origin.AUTONOMOUS,state->{started.countDown();release.await(5,TimeUnit.SECONDS);});
+            assertTrue(started.await(5,TimeUnit.SECONDS));assertEquals(1,service.cancelAutonomous());
+            assertEquals("running",service.get(owner.id).getJSONObject("job").getString("state"));assertEquals("cancelled",service.get(agent.id).getJSONObject("job").getString("state"));
+            assertTrue(service.isOwner(owner.id));assertFalse(service.isOwner(agent.id));
+        }finally{release.countDown();service.shutdown();}
+    }
+    @Test public void ownerRecoveryPlanSurvivesPause() throws Exception {
+        Context context=RuntimeEnvironment.getApplication();context.getSharedPreferences("videostudio_native_v1",Context.MODE_PRIVATE).edit().clear().commit();
+        RecoveryPlanStore plans=new RecoveryPlanStore(context);
+        String owner=plans.begin("animate_images",new JSONObject().put("_origin","owner"),"project");String agent=plans.begin("animate_images",new JSONObject(),"project");
+        assertEquals(1,plans.cancelAutonomous());assertEquals("queued",plans.get(owner).getString("state"));assertEquals("cancelled",plans.get(agent).getString("state"));
+    }
+
 }
