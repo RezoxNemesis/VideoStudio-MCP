@@ -231,6 +231,11 @@ public final class ProjectStore {
 
         JSONObject toJson() {
             ensureTimelineDefaults();
+            return snapshotJson();
+        }
+
+        /** Serialize the current raw graph without normalizing or changing the owner object. */
+        JSONObject snapshotJson() {
             JSONObject o = new JSONObject();
             JSONArray aa = new JSONArray();
             JSONArray cc = new JSONArray();

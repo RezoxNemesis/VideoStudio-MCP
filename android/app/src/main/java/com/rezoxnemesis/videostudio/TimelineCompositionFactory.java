@@ -42,9 +42,103 @@ public final class TimelineCompositionFactory {
     private int frameRate = 30;
     public TimelineCompositionFactory(Context context) { this.context = context.getApplicationContext(); }
 
+    Composition buildVideoWindow(ProjectStore.Project project,String aspect,String quality,TimelineWindow window){
+        if(project==null||project.clips.isEmpty())throw new IllegalArgumentException("Timeline is empty");
+        ProjectStore.Project captured=ProjectStore.Project.fromJson(project.snapshotJson());
+        if(window.endUs>exactProgramDurationUs(captured))throw new IllegalArgumentException("Render window extends past the program");
+        frameRate=captured.settings.optInt("fps",30);
+        for(ProjectStore.Clip clip:captured.clips)if(captured.track(clip.trackId)==null)throw new IllegalArgumentException("Clip refers to a missing track: "+clip.id);
+        boolean solo=false;for(ProjectStore.Track track:captured.tracks)solo|=track.solo;
+        ArrayList<ProjectStore.Track> tracks=new ArrayList<>(captured.tracks);tracks.sort((a,b)->Integer.compare(b.order,a.order));
+        ArrayList<EditedMediaItemSequence> sequences=new ArrayList<>();
+        for(ProjectStore.Track track:tracks){
+            if(track.audioOnly()||!track.visible||(solo&&!track.solo))continue;
+            ArrayList<ProjectStore.Clip> clips=new ArrayList<>();for(ProjectStore.Clip clip:captured.clips)if(track.id.equals(clip.trackId))clips.add(clip);
+            clips.sort(java.util.Comparator.comparingLong(c->c.startMs));ArrayList<WindowSlice> slices=new ArrayList<>();
+            long cursorMs=0,cursorUs=0;
+            for(ProjectStore.Clip clip:clips){
+                if(clip.startMs<cursorMs)throw new IllegalArgumentException("Clips overlap on track "+track.name);
+                cursorUs=Math.addExact(cursorUs,Math.multiplyExact(clip.startMs-cursorMs,1000L));
+                ProjectStore.Asset asset=captured.asset(clip.assetId);if(asset==null||asset.mime==null)throw new IllegalArgumentException("Missing source for clip "+clip.id);
+                long endUs=Math.addExact(cursorUs,itemOutputUs(clip,asset)),start=Math.max(window.startUs,cursorUs),end=Math.min(window.endUs,endUs);
+                if(end>start)slices.add(new WindowSlice(asset,clip,cursorUs,start,end));
+                cursorUs=endUs;cursorMs=TimelineMath.add(clip.startMs,clip.outputDurationMs());
+            }
+            for(String role:new String[]{"head","torso","lower","foreground","main"}){
+                EditedMediaItemSequence.Builder sequence=new EditedMediaItemSequence.Builder(java.util.Collections.singleton(C.TRACK_TYPE_VIDEO));long positionUs=0;boolean used=false;
+                for(WindowSlice slice:slices){
+                    long begin=slice.startUs-window.startUs;if(begin>positionUs)sequence.addGap(begin-positionUs);
+                    String uri="main".equals(role)?"":slice.clip.effects.optString(role+"Uri","");
+                    if("foreground".equals(role)&&!slice.clip.effects.optString("headUri").isEmpty())uri="";
+                    if(!slice.clip.effects.optBoolean("animatedScene"))uri="";
+                    if("main".equals(role)&&!slice.asset.mime.startsWith("audio/")){
+                        String background=slice.clip.effects.optBoolean("animatedScene")?slice.clip.effects.optString("backgroundUri",""):"";
+                        if(!background.isEmpty())sequence.addItem(buildWindowLayer(background,slice,aspect,quality,"background",window));
+                        else sequence.addItem(buildWindowItem(slice,aspect,quality,window));
+                        used=true;
+                    }else if(!uri.isEmpty()){sequence.addItem(buildWindowLayer(uri,slice,aspect,quality,role,window));used=true;}
+                    else sequence.addGap(slice.endUs-slice.startUs);
+                    positionUs=slice.endUs-window.startUs;
+                }
+                if(positionUs<window.durationUs())sequence.addGap(window.durationUs()-positionUs);
+                if(used)sequences.add(sequence.build());
+            }
+        }
+        ProjectStore.Asset black=new ProjectStore.Asset();black.uri=opaqueBlackUri();black.mime="image/png";
+        ProjectStore.Clip base=new ProjectStore.Clip();base.outMs=(window.durationUs()+999)/1000;
+        sequences.add(EditedMediaItemSequence.withVideoFrom(Collections.singletonList(buildItem(black,base,aspect,quality,true,false,true,0).buildUpon().setDurationUs(window.durationUs()).build())));
+        return new Composition.Builder(sequences).build();
+    }
+
+    static long programDurationUs(ProjectStore.Project project){return exactProgramDurationUs(ProjectStore.Project.fromJson(project.snapshotJson()));}
+    private static long exactProgramDurationUs(ProjectStore.Project captured){
+        long end=Math.multiplyExact(captured.outputDurationMs(),1000L);
+        boolean solo=false;for(ProjectStore.Track track:captured.tracks)solo|=track.solo;
+        for(ProjectStore.Track track:captured.tracks){
+            if(solo&&!track.solo)continue;
+            ArrayList<ProjectStore.Clip> clips=new ArrayList<>();for(ProjectStore.Clip clip:captured.clips)if(track.id.equals(clip.trackId))clips.add(clip);
+            clips.sort(java.util.Comparator.comparingLong(c->c.startMs));long cursorMs=0,cursorUs=0;
+            for(ProjectStore.Clip clip:clips){
+                if(clip.startMs<cursorMs)throw new IllegalArgumentException("Clips overlap on track "+track.name);
+                ProjectStore.Asset asset=captured.asset(clip.assetId);if(asset==null||asset.mime==null)throw new IllegalArgumentException("Missing source for clip "+clip.id);
+                cursorUs=Math.addExact(cursorUs,Math.multiplyExact(clip.startMs-cursorMs,1000L));cursorUs=Math.addExact(cursorUs,itemOutputUs(clip,asset));cursorMs=TimelineMath.add(clip.startMs,clip.outputDurationMs());
+            }
+            end=Math.max(end,cursorUs);
+        }
+        return end;
+    }
+
+    private static final class WindowSlice{
+        final ProjectStore.Asset asset;final ProjectStore.Clip clip;final long originalStartUs,startUs,endUs;
+        WindowSlice(ProjectStore.Asset asset,ProjectStore.Clip clip,long originalStartUs,long startUs,long endUs){this.asset=asset;this.clip=clip;this.originalStartUs=originalStartUs;this.startUs=startUs;this.endUs=endUs;}
+    }
+    private EditedMediaItem buildWindowLayer(String uri,WindowSlice slice,String aspect,String quality,String role,TimelineWindow window){
+        MediaItem media=new MediaItem.Builder().setUri(uri).setMimeType(MimeTypes.IMAGE_PNG).setImageDurationMs((slice.endUs-slice.startUs+999)/1000).build();
+        return new EditedMediaItem.Builder(media).setDurationUs(slice.endUs-slice.startUs).setFrameRate(frameRate).setRemoveAudio(true).setEffects(new Effects(Collections.emptyList(),
+                buildLayerEffects(slice.clip,aspect,quality,slice.clip.outputDurationMs(),slice.clip.effects.optJSONObject("animationSpec"),role,slice.originalStartUs-window.startUs))).build();
+    }
+    private EditedMediaItem buildWindowItem(WindowSlice slice,String aspect,String quality,TimelineWindow window){
+        boolean image=slice.asset.mime.startsWith("image/");MediaItem.Builder media=new MediaItem.Builder().setUri(slice.asset.uri).setMimeType(slice.asset.mime);
+        float speed=Math.abs(slice.clip.speed-1f)>.01f?Math.max(.25f,Math.min(4f,slice.clip.speed)):1f;
+        if(image)media.setImageDurationMs((slice.endUs-slice.startUs+999)/1000);
+        else{
+            long sourceBase=Math.multiplyExact(slice.clip.inMs,1000L),sourceEnd=Math.multiplyExact(slice.clip.outMs,1000L);
+            long start=Math.min(sourceEnd,Math.addExact(sourceBase,Math.round((slice.startUs-slice.originalStartUs)*(double)speed)));
+            long end=Math.min(sourceEnd,Math.addExact(sourceBase,Math.round((slice.endUs-slice.originalStartUs)*(double)speed)));
+            if(end<=start)throw new IllegalArgumentException("Render window contains no source samples for "+slice.clip.id);
+            media.setClippingConfiguration(new MediaItem.ClippingConfiguration.Builder().setStartPositionUs(start).setEndPositionUs(end).build());
+        }
+        EditedMediaItem.Builder item=new EditedMediaItem.Builder(media.build()).setRemoveAudio(true);
+        if(image)item.setDurationUs(slice.endUs-slice.startUs).setFrameRate(frameRate);else{
+            item.setDurationUs(sourceDurationUs(slice.asset));
+            if(speed!=1f)item.setSpeed(new SpeedProvider(){public float getSpeed(long timeUs){return speed;}public long getNextSpeedChangeTimeUs(long timeUs){return C.TIME_UNSET;}});
+        }
+        return item.setEffects(new Effects(Collections.emptyList(),buildEffects(slice.clip,aspect,quality,Math.max(100,slice.clip.outMs-slice.clip.inMs),slice.originalStartUs-window.startUs))).build();
+    }
+
     public Composition build(ProjectStore.Project original, String aspect, String quality, boolean useProxies) {
         if (original == null || original.clips.isEmpty()) throw new IllegalArgumentException("Timeline is empty");
-        ProjectStore.Project project = ProjectStore.Project.fromJson(original.toJson());
+        ProjectStore.Project project = ProjectStore.Project.fromJson(original.snapshotJson());
         for(ProjectStore.Clip c:project.clips)if(project.track(c.trackId)==null)throw new IllegalArgumentException("Clip refers to a missing track: "+c.id);
         frameRate = project.settings.optInt("fps", 30);
         if (useProxies) for (ProjectStore.Asset a : project.assets) a.uri = ProxyManager.previewUri(original, a);
@@ -174,6 +268,7 @@ public final class TimelineCompositionFactory {
                                            String layerRole,long sequenceStartUs) {
         MediaItem media = new MediaItem.Builder()
                 .setUri(Uri.parse(uri))
+                .setMimeType(MimeTypes.IMAGE_PNG)
                 .setImageDurationMs(durationMs)
                 .build();
 
@@ -299,7 +394,7 @@ public final class TimelineCompositionFactory {
     }
     private EditedMediaItem buildItem(ProjectStore.Asset asset,ProjectStore.Clip clip,String aspect,String quality,boolean image,boolean audioOnly,boolean removeAudio,long sequenceStartUs){
         long inputDurationMs = Math.max(100, clip.outMs - clip.inMs);
-        MediaItem.Builder media = new MediaItem.Builder().setUri(Uri.parse(asset.uri));
+        MediaItem.Builder media = new MediaItem.Builder().setUri(Uri.parse(asset.uri)).setMimeType(asset.mime);
 
         if (image) {
             media.setImageDurationMs(Math.max(1, clip.outputDurationMs()));

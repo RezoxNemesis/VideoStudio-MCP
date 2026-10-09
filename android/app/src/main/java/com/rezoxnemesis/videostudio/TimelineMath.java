@@ -4,8 +4,9 @@ package com.rezoxnemesis.videostudio;
 public final class TimelineMath {
     private TimelineMath() {}
     public static long effectLocalMs(long timestampUs,long sequenceStartUs){
-        if(sequenceStartUs<0)throw new IllegalArgumentException("Negative sequence start");
-        return timestampUs<=sequenceStartUs?0:(timestampUs-sequenceStartUs)/1000;
+        // A clip that began before a render window has a negative origin.
+        if(timestampUs<=sequenceStartUs)return 0;
+        return Math.subtractExact(timestampUs,sequenceStartUs)/1000;
     }
     public static long audioLocalMs(long positionOffsetUs,long frames,int sampleRate){
         if(frames<0||sampleRate<=0)throw new IllegalArgumentException("Invalid PCM clock");
