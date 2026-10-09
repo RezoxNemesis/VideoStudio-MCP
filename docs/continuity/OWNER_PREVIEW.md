@@ -2,6 +2,8 @@
 
 An installable checkpoint for trying the editor on your phone. The complete engineering blueprint is still in progress.
 
+[Download the APK](https://github.com/RezoxNemesis/VideoStudio-MCP/releases/download/videostudio-preview-3.4.11-7dd68f364bdd/VideoStudio-3.4.11-preview.apk) — 99.2 MB. The exact signed APK passed 409 Android unit tests and all 10 API33 emulator cases before publication. [Release and verification files](https://github.com/RezoxNemesis/VideoStudio-MCP/releases/tag/videostudio-preview-3.4.11-7dd68f364bdd).
+
 ## Try the app
 
 1. Install the preview APK. If Android reports an incompatible update, preserve your current installation/data; this development certificate may differ from an older APK.
@@ -16,6 +18,8 @@ The preview improves the home screen and corrects the measured Android13 softwar
 Use **Connect ChatGPT** for this device's private MCP pairing information, and keep that private. With the connector paired, ask ChatGPT to call `app_status`, inspect the project/schema, apply edits, export and inspect the completed job. **Control → Full Autonomous** permits app operations without repeated app-level confirmations. **STOP CHATGPT CONTROL** remains available.
 
 Owner-selected/imported media is available to the agent; Gallery enumeration remains blocked. The background foreground-service test exercises a real command, an idempotent retry, and an export while the editor is closed. This is device execution evidence; live external ChatGPT pairing and the owner's Realme background restrictions require separate verification. Android permissions and ChatGPT's connector controls remain platform-managed.
+
+Public connection probes disagree: a browser-backed read reaches the config endpoint, but the release runner's unauthenticated urllib request receives HTTP403. External authenticated transport is unverified. The checkpoint records this limitation and a separate diagnostic; the Android service test does not establish that a live ChatGPT session can reach your phone.
 
 ## Scope and continuation
 

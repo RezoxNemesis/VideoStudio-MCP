@@ -1,0 +1,128 @@
+{
+  "apk": {
+    "bytes": 99155533,
+    "certificateSha256": "7e0187470356616be2a45bc7f41445894085185db110edfdc0cdfd232942a6dd",
+    "name": "VideoStudio-3.4.11-preview.apk",
+    "sha256": "e25cc7aefd37c7cca40a5c1221e202232eb6d29b2ab40ccb41f513b59739580f"
+  },
+  "connectionService": {
+    "httpStatus": 403,
+    "liveChatGptSessionVerified": false,
+    "publicServiceReachable": false
+  },
+  "device": {
+    "api": 33,
+    "conclusion": "success",
+    "hardware": "x86_64 emulator",
+    "tests": 10
+  },
+  "externalChatGptTransportVerified": false,
+  "proofs": {
+    "audio": {
+      "joined": {
+        "channels": 1,
+        "decodedRawFrames": 444416,
+        "encoderDelay": 1600,
+        "encoderPadding": 1816,
+        "expectedFrames": 441000,
+        "playableFrames": 441000,
+        "sampleRate": 44100,
+        "sha256": "11a2ad0ea21e961f350d58ecd473be10c06a9de50e643e5c424a960f9ba09273",
+        "tailRms": 0.27451337625277705
+      },
+      "source": {
+        "channels": 1,
+        "decodedRawFrames": 444416,
+        "encoderDelay": 1600,
+        "encoderPadding": 1816,
+        "expectedFrames": 441000,
+        "playableFrames": 441000,
+        "sampleRate": 44100,
+        "sha256": "11a2ad0ea21e961f350d58ecd473be10c06a9de50e643e5c424a960f9ba09273",
+        "tailRms": 0.27451337625277705
+      }
+    },
+    "autonomous": {
+      "externalChatGptTransportVerified": false,
+      "originalRetained": true,
+      "ownerActivityDestroyedBeforeEdit": true,
+      "ownerEditorClosed": true,
+      "publishedOutputVerified": true,
+      "retryDidNotDuplicateEdit": true,
+      "retryDispatchObserved": true,
+      "serviceCommandDispatch": true,
+      "verification": {
+        "decodedFrame": true,
+        "decodedFrameSamples": 3,
+        "durationMs": 1000,
+        "hasAudio": false,
+        "hasVideo": true,
+        "ok": true,
+        "playable": true,
+        "sha256": "c01a82c13e0d9d0140aaf626dc95b31c24d75ab82664adf9012aa6ef542667ab",
+        "sizeBytes": 429651
+      }
+    },
+    "segments": {
+      "aacPacketsAndTimesIdentical": true,
+      "boundaryFramesMatched": 5,
+      "corruptWindowRepairedIndividually": true,
+      "firstRecoveredWithoutRerender": true,
+      "fractionalTailDurationUs": 10001000,
+      "fractionalTailFixture": "one native encoded sync frame with explicit1001us end; not a tiny Transformer window",
+      "joined": {
+        "audioPrerollUs": 36281,
+        "audioSamples": 434,
+        "continuousAudio": true,
+        "decodedFrame": true,
+        "decodedFrameSamples": 3,
+        "durationMs": 10000,
+        "hasAudio": true,
+        "hasVideo": true,
+        "joinedWithoutReencoding": true,
+        "ok": true,
+        "plannedDurationUs": 10000000,
+        "playable": true,
+        "sha256": "7d53d4e017154712ebcca18cd96a7c2e41cca3f0c855c2e0b6b75b81203aa2aa",
+        "sizeBytes": 1656024,
+        "videoSamples": 300,
+        "videoWindows": 2
+      },
+      "originalRetained": true,
+      "otherWindowRetained": true,
+      "sessionId": "cca2112c7eb16db09f55300f56e2e13e3867980e88166f167f65bfa60b92e62a"
+    }
+  },
+  "releaseTag": "videostudio-preview-3.4.11-7dd68f364bdd",
+  "runId": 37939858735,
+  "source": "7dd68f364bddd7933814bff023dfb17415565ad4",
+  "tree": "e5f91db709df17a61d261ee36f576c7fdb73fd0f",
+  "unit": {
+    "errors": 0,
+    "failures": 0,
+    "skipped": 0,
+    "tests": 409
+  },
+  "version": "3.4.11",
+  "versionCode": 351,
+  "wholeBlueprintComplete": false,
+  "downloadUrl": "https://github.com/RezoxNemesis/VideoStudio-MCP/releases/download/videostudio-preview-3.4.11-7dd68f364bdd/VideoStudio-3.4.11-preview.apk",
+  "releaseUrl": "https://github.com/RezoxNemesis/VideoStudio-MCP/releases/tag/videostudio-preview-3.4.11-7dd68f364bdd",
+  "assetDigestVerified": true,
+  "tagSourceVerified": true,
+  "localEquivalentCommit": "c7b813b756c5575298f5b1064d838486c7c59ee3",
+  "matchingRuns": {
+    "ownerPreview": 37939858735,
+    "android": 37939858779,
+    "worker": 37939858742,
+    "device": 37939859075
+  },
+  "inspection": "CI logs and release/tag/asset metadata inspected. Release binary/metadata asset bytes not independently downloaded.",
+  "additionalPublicConnectionObservation": {
+    "browserBackedConfigRead": true,
+    "unauthenticatedV3StatusHttp": 409,
+    "credentialUsed": false,
+    "liveChatGptSessionVerified": false,
+    "ciUrllibConfigHttp": 403
+  }
+}
