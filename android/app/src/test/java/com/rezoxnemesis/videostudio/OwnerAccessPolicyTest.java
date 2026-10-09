@@ -20,6 +20,15 @@ public class OwnerAccessPolicyTest {
         for(String id:new String[]{"allowed","private"}){ProjectStore.Asset a=new ProjectStore.Asset();a.id=id;a.mime="image/png";a.name=id;a.uri="file:///"+id+".png";project.assets.add(a);ProjectStore.Clip c=new ProjectStore.Clip();c.id=id;c.assetId=id;c.outMs=1000;c.startMs="allowed".equals(id)?0:1000;project.clips.add(c);}store.save(project);
     }
     private void selected(){prefs.edit().putString("permission_mode","selected_assets").putString("allowed_project_id",project.id).putString("allowed_asset_ids",new JSONArray().put("allowed").toString()).commit();}
+    @Test public void selectedMediaDoesNotExposeOtherAssetsJobResults()throws Exception{
+        selected();OwnerAccessPolicy policy=new OwnerAccessPolicy(context,store);
+        JSONObject job=new JSONObject().put("projectId",project.id).put("origin","owner").put("result",new JSONObject().put("uri","file:///private-vault-manifest"));
+        assertFalse("Legacy unbound jobs fail closed",policy.allowsJob(job));
+        job.put("inputAssetIds",new JSONArray().put("private"));assertFalse(policy.allowsJob(job));
+        job.put("inputAssetIds",new JSONArray().put("allowed").put("private"));assertFalse(policy.allowsJob(job));
+        job.put("inputAssetIds",new JSONArray().put("allowed"));assertTrue(policy.allowsJob(job));
+        prefs.edit().putString("allowed_asset_ids","[]").commit();assertFalse("Current scope wins over saved scope",policy.allowsJob(job));
+    }
     @Test public void projectScopeDoesNotChangeWhenOwnerOpensAnotherProject()throws Exception{
         prefs.edit().putString("permission_mode","project").putString("allowed_project_id",project.id).commit();store.setActive(privateProject.id);
         OwnerAccessPolicy p=new OwnerAccessPolicy(context,store);assertTrue(p.projectAllowed(project.id));assertFalse(p.projectAllowed(privateProject.id));assertEquals(1,p.summaries().getJSONArray("projects").length());

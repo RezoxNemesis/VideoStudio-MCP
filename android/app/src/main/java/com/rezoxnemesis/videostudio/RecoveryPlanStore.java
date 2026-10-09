@@ -66,7 +66,8 @@ public final class RecoveryPlanStore {
 
     public synchronized void attachJob(String planId, String jobId) {
         JSONObject plan = get(planId);
-        if (plan == null) return;
+        if(plan==null)return;
+        if(terminal(plan))throw new java.util.concurrent.CancellationException("Durable plan is terminal");
         try {
             plan.put("jobId", clean(jobId, ""));
             plan.put("state", "running");
@@ -78,9 +79,9 @@ public final class RecoveryPlanStore {
 
     public synchronized void checkpointForJob(String jobId, String stage, int progress, String detail) {
         JSONObject plan = findByJobId(jobId);
-        if (plan == null) return;
+        if(plan==null||terminal(plan))return;
         try {
-            plan.put("state", progress >= 100 ? "completed" : "running");
+            plan.put("state", "running");
             plan.put("stage", clean(stage, "working"));
             plan.put("progress", Math.max(0, Math.min(100, progress)));
             plan.put("detail", clean(detail, ""));
@@ -100,16 +101,24 @@ public final class RecoveryPlanStore {
             out.put("name", plan.optString("outputName", ""));
             out.put("stage", plan.optString("stage", ""));
             out.put("state", plan.optString("state", ""));
+            JSONObject proof=plan.optJSONObject("outputVerification");
+            if(proof!=null)out.put("verification",new JSONObject(proof.toString()));
         } catch (Exception ignored) {}
         return out;
     }
 
     public synchronized void markOutputForJob(String jobId, String uri, String name) {
+        markOutputForJob(jobId,uri,name,null);
+    }
+
+    public synchronized void markOutputForJob(String jobId,String uri,String name,JSONObject verification){
         JSONObject plan = findByJobId(jobId);
-        if (plan == null) return;
+        if(plan==null||terminal(plan))return;
         try {
             plan.put("outputUri", clean(uri, ""));
             plan.put("outputName", clean(name, ""));
+            if(verification!=null)plan.put("outputVerification",new JSONObject(verification.toString()));
+            else plan.remove("outputVerification");
             plan.put("stage", "output_published");
             plan.put("progress", Math.max(98, plan.optInt("progress", 0)));
             plan.put("updatedAt", System.currentTimeMillis());
@@ -117,9 +126,26 @@ public final class RecoveryPlanStore {
         upsert(plan);
     }
 
+    /** Forget a rejected binding, preserving the external file and any newer publication. */
+    public synchronized boolean invalidateOutput(String planId,String rejectedUri,String detail){
+        JSONObject plan=get(planId);
+        if(plan==null||terminal(plan)||rejectedUri==null||!rejectedUri.equals(plan.optString("outputUri","")))return false;
+        try{
+            plan.put("outputUri","");plan.put("outputName","");plan.remove("outputVerification");
+            plan.put("stage","output_invalidated");plan.put("detail",clean(detail,"Output verification failed; a new render is required"));
+            plan.put("updatedAt",System.currentTimeMillis());
+        }catch(Exception invalid){throw new IllegalArgumentException(invalid);}
+        upsert(plan);return true;
+    }
+
+    public synchronized boolean invalidateOutputForJob(String jobId,String rejectedUri,String detail){
+        JSONObject plan=findByJobId(jobId);
+        return plan!=null&&invalidateOutput(plan.optString("id"),rejectedUri,detail);
+    }
+
     public synchronized void completeByJob(String jobId) {
         JSONObject plan = findByJobId(jobId);
-        if (plan == null) return;
+        if(plan==null||terminal(plan))return;
         try {
             plan.put("state", "completed");
             plan.put("stage", "completed");
@@ -132,7 +158,7 @@ public final class RecoveryPlanStore {
 
     public synchronized void completePlan(String planId, String detail) {
         JSONObject plan = get(planId);
-        if (plan == null) return;
+        if(plan==null||terminal(plan))return;
         try {
             plan.put("state", "completed");
             plan.put("stage", "completed");
@@ -145,7 +171,8 @@ public final class RecoveryPlanStore {
 
     public synchronized void markResuming(String planId) {
         JSONObject plan = get(planId);
-        if (plan == null) return;
+        if(plan==null)return;
+        if(terminal(plan))throw new java.util.concurrent.CancellationException("Durable plan is terminal");
         try {
             plan.put("state", "retrying");
             plan.put("stage", "restart_recovery");
@@ -157,7 +184,7 @@ public final class RecoveryPlanStore {
 
     public synchronized void failByJob(String jobId, String error, boolean recoverable) {
         JSONObject plan = findByJobId(jobId);
-        if (plan == null) return;
+        if(plan==null||terminal(plan))return;
         try {
             plan.put("state", recoverable ? "waiting_retry" : "failed");
             plan.put("detail", clean(error, recoverable ? "Recoverable failure" : "Failed"));
@@ -168,7 +195,7 @@ public final class RecoveryPlanStore {
 
     public synchronized void cancelByJob(String jobId) {
         JSONObject plan = findByJobId(jobId);
-        if (plan == null) return;
+        if(plan==null||terminal(plan))return;
         try {
             plan.put("state", "cancelled");
             plan.put("detail", "Cancelled");
@@ -189,9 +216,7 @@ public final class RecoveryPlanStore {
             if (plan == null) continue;
             if(autonomousOnly&&"owner".equals(plan.optString("origin")))continue;
             String state = plan.optString("state");
-            if ("queued".equals(state) || "running".equals(state) || "waiting_retry".equals(state)
-                    || "interrupted".equals(state) || "waiting_thermal".equals(state)
-                    || "waiting_memory".equals(state)) {
+            if(!terminal(plan)){
                 try {
                     plan.put("state", "cancelled");
                     plan.put("detail", "Cancelled");
@@ -214,9 +239,7 @@ public final class RecoveryPlanStore {
             if (plan.optLong("updatedAt", 0) < cutoff) continue;
             if (plan.optInt("attempts", 0) >= MAX_AUTO_ATTEMPTS) continue;
             String state = plan.optString("state");
-            if ("queued".equals(state) || "running".equals(state) || "waiting_retry".equals(state)
-                    || "interrupted".equals(state) || "waiting_thermal".equals(state)
-                    || "waiting_memory".equals(state)) {
+            if(!terminal(plan)){
                 try { out.put(new JSONObject(plan.toString())); }
                 catch (Exception ignored) {}
             }
@@ -268,7 +291,7 @@ public final class RecoveryPlanStore {
     }
 
     private void write(JSONArray array) {
-        prefs.edit().putString(KEY, array == null ? "[]" : array.toString()).apply();
+        if(!prefs.edit().putString(KEY,array==null?"[]":array.toString()).commit())throw new IllegalStateException("Could not persist durable recovery plan");
     }
 
     private static JSONObject scrubInternal(JSONObject input) {
@@ -278,12 +301,22 @@ public final class RecoveryPlanStore {
         if (names == null) return out;
         for (int i = 0; i < names.length(); i++) {
             String key = names.optString(i);
-            if (key.startsWith("_")) continue;
+            if(key.startsWith("_")){
+                String value=input.optString(key,"");
+                if("_generationId".equals(key)&&value.matches("[a-zA-Z0-9_-]{8,80}")){
+                    try{out.put(key,value);}catch(Exception invalid){throw new IllegalArgumentException(invalid);}
+                }else if("_mcpCommandId".equals(key)&&value.matches("[a-zA-Z0-9._:-]{1,200}")){
+                    try{out.put(key,value);}catch(Exception invalid){throw new IllegalArgumentException(invalid);}
+                }
+                continue;
+            }
             try { out.put(key, input.opt(key)); }
             catch (Exception ignored) {}
         }
         return out;
     }
+
+    private static boolean terminal(JSONObject plan){String state=plan.optString("state");return "completed".equals(state)||"cancelled".equals(state)||"failed".equals(state);}
 
     private static String clean(String value, String fallback) {
         String out = value == null ? "" : value.trim();

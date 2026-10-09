@@ -174,4 +174,32 @@ public class EditorEngineTest {
         assertEquals(4500,project.clip(middle).startMs);assertEquals(1000,project.clip(middle).inMs);assertEquals(9000,project.clip(middle).outMs);
         assertEquals(12000,project.outputDurationMs());
     }
+    @Test public void audioDspPersistsAndUndoRestoresPreviousSettings()throws Exception{
+        edit("set_audio_effects",args("{\"clipId\":\"clip\",\"settings\":{\"lowDb\":6,\"thresholdDb\":-18,\"ratio\":3}}"));
+        assertEquals(6,new ProjectStore(RuntimeEnvironment.getApplication()).get(project.id).clip("clip").effects.getJSONObject("audioDsp").getDouble("lowDb"),.00001);
+        project=store.undo(project.id,project.revision);assertFalse(project.clip("clip").effects.has("audioDsp"));
+        try{edit("set_audio_effects",args("{\"clipId\":\"clip\",\"settings\":{\"delayFeedback\":2}}"));fail("Invalid delay committed");}catch(IllegalArgumentException expected){}
+    }
+
+    @Test public void creatorStylesUseDurableEditorHistory() throws Exception {
+        try { edit("set_creator_style", args("{\"clipId\":\"clip\",\"settings\":{\"colorPreset\":\"warm_film\",\"motionPreset\":\"push_in\",\"fontFamily\":\"monospace\",\"textAnimation\":\"typewriter\"}}")); }
+        catch (IllegalArgumentException missing) { fail("Shared creator style operation is missing: "+missing.getMessage()); }
+        ProjectStore.Clip persisted = new ProjectStore(RuntimeEnvironment.getApplication()).get(project.id).clip("clip");
+        assertEquals("warm_film", persisted.effects.getString("colorPreset"));
+        assertEquals("typewriter", persisted.effects.getString("textAnimation"));
+        project = store.undo(project.id, project.revision);
+        assertFalse(project.clip("clip").effects.has("colorPreset"));
+        assertFalse(project.clip("clip").effects.has("textAnimation"));
+    }
+
+    @Test public void creatorStylesCannotCommitUnknownPresetsOrEditLockedTracks() throws Exception {
+        long before=project.revision;
+        try { edit("set_creator_style", args("{\"clipId\":\"clip\",\"settings\":{\"motionPreset\":\"invented_motion\"}}")); fail("Unknown preset accepted"); }
+        catch (IllegalArgumentException expected) { }
+        assertEquals(before, store.get(project.id).revision);
+        edit("set_track",args("{\"trackId\":\"video-1\",\"locked\":true}"));
+        try { edit("set_creator_style",args("{\"clipId\":\"clip\",\"settings\":{\"colorPreset\":\"noir\"}}"));fail("Locked style edit accepted"); }
+        catch(IllegalArgumentException expected){assertTrue(expected.getMessage().contains("locked"));}
+    }
+
 }

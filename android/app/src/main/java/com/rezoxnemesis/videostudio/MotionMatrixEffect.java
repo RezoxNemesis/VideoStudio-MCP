@@ -24,6 +24,7 @@ public final class MotionMatrixEffect implements MatrixTransformation {
     private final long transitionUs;
     private final JSONObject animationSpec;
     private final String layerRole;
+    private final long sequenceStartUs;
 
     public MotionMatrixEffect(String preset, long durationUs, long transitionUs) {
         this(preset, durationUs, transitionUs, null, "flat");
@@ -34,6 +35,10 @@ public final class MotionMatrixEffect implements MatrixTransformation {
                               long transitionUs,
                               JSONObject animationSpec,
                               String layerRole) {
+        this(preset,durationUs,transitionUs,animationSpec,layerRole,0);
+    }
+    public MotionMatrixEffect(String preset,long durationUs,long transitionUs,JSONObject animationSpec,String layerRole,long sequenceStartUs){
+        this.sequenceStartUs=sequenceStartUs;
         this.preset = preset == null ? "none" : preset;
         this.durationUs = Math.max(1, durationUs);
         this.transitionUs = Math.max(0, Math.min(this.durationUs / 2, transitionUs));
@@ -48,6 +53,7 @@ public final class MotionMatrixEffect implements MatrixTransformation {
 
     @Override
     public Matrix getMatrix(long presentationTimeUs) {
+        presentationTimeUs=Math.max(0,presentationTimeUs-sequenceStartUs);
         float p = clamp(presentationTimeUs / (float) durationUs);
         Motion motion = animationSpec != null
                 ? keyframedMotion(p, presentationTimeUs)

@@ -1888,3 +1888,97 @@ The owner sees and controls every clip, image, audio file, generated asset, keyf
 The long-term differentiator is not “another AI video button.” It is one integrated system where deterministic editing, 2D/3D animation, generative models, VFX, audio, large-media engineering, multi-cloud storage, and autonomous agents operate on one editable project.
 
 That is the architecture that can support everything from quick social edits to Manhwa recaps, stylized cartoon animation, vehicle transformations, character animation, human-video generation, cinematic VFX, CGI sequences, and feature-length project assembly without turning the app into a collection of fragile demos.
+
+---
+
+# 35. Engineering continuation — 2026-10-09 UTC
+
+## 35.1 Actual repository, version and delivery state
+
+This section continues the original requirements; it does not declare the complete blueprint finished. Sections 0–34 above remain the product authority. The version stated at the top is the target, not the version of the delivered earlier APK.
+
+- Repository: `RezoxNemesis/VideoStudio-MCP`.
+- Local workspace: `/workspace/VideoStudio-MCP`; branch: `codex/studio-owner-editor`.
+- Latest implementation commit: `2c9e684ca6e8bd48f6bfbc1954e9efd0a3f36fcf`. The delivery manifest records the final source commit including this continuation and its build instructions.
+- Local baseline `f8a94cb` reconstructs upstream `d652066ce428e4f128514da4d1caee919974554e`. All 94 recovered file blobs matched; both baseline trees are `4e879210a997fdcde092a1978aee801d73e9f424`. Commit histories differ; do not force-push the reconstructed local history over upstream.
+- Last confirmed remote review head: `4e30ae1ee0fb33609674f7a5a540b6677ddc9d72`, tree `ba58ffd08f41897d70955f1b73df8078e3a77aac`.
+- Existing draft PR: [#35](https://github.com/RezoxNemesis/VideoStudio-MCP/pull/35). It contains the earlier verified source; the later local commits have not been published.
+- Actual Android version remains **3.4.7 / versionCode 347**; **3.5.0 is still the target**. Package, owner identity, database, v3 control identity and development signing workflow are preserved. Protocol v4 alias/schema 2 are additive and gate newer operations against older APKs.
+- Last verified debug APK: `artifacts/verified-4e30ae1/apk/app-debug.apk`, **98,805,842 bytes**, SHA-256 **`c3c6772d14a71154157006b0305fa50fc331f6b4c519886e047dc03b3a942122`**.
+- This APK predates the local Vault, DSP/narration, four-tier proxy, compositing and review fixes described below. It also predates fixes to inherited programme source-duration/audio-clock defects. It is an earlier installable build, not a build of the latest source or the completed professional app.
+
+## 35.2 Implemented work and remaining roadmap
+
+“Local source” means integrated implementation awaiting Android compilation/device execution. A passing pure Java, relay or software shader check does not substitute for that evidence.
+
+| Phase | Implemented foundation and evidence | Still required for the complete phase |
+| --- | --- | --- |
+| A — owner editor | Revisioned SQLite/WAL graph, shared owner/MCP editing engine, multitrack ruler/playhead/drag/trim/snap/zoom, Media Bin, source image/video/audio monitor, shared programme/render composition, undo/redo/history, inspector/keyframes, foreground owner export lane and verified publication. Earlier build has unit/emulator proof; latest timing, cancellation, fallback, alpha and recovery corrections are local source. | Compile/test the latest source; run all six authored device cases; prove programme effects/audio/seek/restart parity and codec/cancellation/recovery on devices. Complete remaining owner tools that still have placeholder tiles. |
+| B — large media/storage | Five authorized SAF profile slots, owner-selected external/USB/provider folders, role defaults, grant health and honest unknown quotas. Local source has four proxy tiers (240/360/540/720), manual small-video requests, original fallback, verified cache reuse and original-source export. Vault has checksummed 256 MB logical objects, bounded 1 MB AES-GCM records, manifests, random ranges, encrypted deduplication, durable chunk resume and full-source identity binding. | Direct five-provider OAuth adapters and credentials, cloud chunk upload/download integration, full sync reconciliation and segmented-render reuse; real 10–20 GB import/proxy/transfer/performance workloads. A sparse 20 GB seek test is not that benchmark. |
+| C — MCP/offline mirror | Stable v3 transport/durable queue, command IDs/receipts/leases/recovery, additive v4 alias and shared editor schema, revisions, owner project/selected-assets/one-file scopes, filtered queries and separate manual/autonomous cancellation. Existing folder-scoped archive/restore foundations remain available. | A cloud project mirror plus actual cloud executor, compute-backed offline editing/rendering, placeholders/download and conflict reconciliation. Queued native work while Android sleeps is not cloud execution. |
+| D — image/2D animation | Existing procedural/geometry/perspective and segmented portrait/face-aware 2.5D paths remain; motion effects share programme/export timing. | Complete owner-authored layers/meshes/bones/poses/depth, optical flow, frame interpolation, consistency locks and line-art protection, with actual rendered animation evidence. |
+| E — generative models | Existing registry/planner/install/provider capability structures and explicit procedural output labels remain. | Actual licensed/verified model weights and inference adapters for image/video/human generation, shot continuation, regeneration, interpolation/upscaling; local and remote runtime validation. Menus and registered capabilities alone do not satisfy this phase. |
+| F — 3D/CGI/VFX | Existing bounded procedural geometry plus local frame-evaluated alpha, RGB-distance chroma key, spill suppression, feathered rectangle/rounded/ellipse masks and an opaque compositor base. Owner and MCP settings persist/undo on the shared graph. Real shader source passes software pixel tests. | Android compositor proof, full glTF/PBR scene runtime/import, rigging/animation, particles/physics, node compositor, tracking/roto, transformation workflows and render passes. |
+| G — audio/narration/recap | Local shared PCM DSP applies EQ, high/low-pass filters, compressor, gate, delay, stereo width, limiter, gain/pan keyframes and seek-aware retimed audio. Long narration chunks Android TTS work, checkpoints SHA-256, assembles compatible PCM WAVs with bounded buffers and publishes unique outputs without replacing originals; optional append is explicit. | Android DSP and installed-voice execution/restart proof, ASR, voice/model registry completion, captions, lip sync, cleanup/recap workflows and long-form automation. The WAV/chunk tests do not prove TTS voice quality or runtime execution. |
+| H — polish/release | Earlier CI APK and emulator media/UI artifacts retained; local low-memory cores and software GLSL tests pass; isolated draft PR, source review and precise continuity exist. | Full latest-source build/regression, accessibility/tablet work, profiling/memory/thermal testing, migrations, real-device checks, crash analytics and release artifacts matching the final implementation. |
+
+## 35.3 Correctness fixes from independent review
+
+The latest source fixes concrete defects rather than only adding feature declarations:
+
+1. A real 256 MB encrypted Vault object caused a one-byte read to exhaust a 64 MB heap. Vault format 2 authenticates separate bounded records, with position/length AAD and provider-generated IVs. Range reads authenticate selected records without loading the logical object. Large legacy single-record encrypted objects require a new copy from retained originals.
+2. Vault chunk checkpoints persist before progress callbacks and reuse verified saved objects after restart. Resume identity now includes the live full-source SHA-256; reconstructed manifests and publication reject changed-document hybrids. Verification intentionally adds full source I/O; 20 GB throughput is unmeasured.
+3. Programme Media3 items use the original source duration before trim/speed. Video effects subtract the precise sequence offset once; audio processors use stream seek metadata without reapplying speed. Silent gaps match retimed video at microsecond precision.
+4. Proxy reuse checks current bytes/decoded frames against the stored proof. Missing/failed proxies fall back to originals, preserving programme seek/play state and avoiding an infinite retry loop.
+5. Jobs persist their input asset IDs, filter results against current owner scopes and revalidate recovery. Scope changes cancel autonomous work; narration publication/registration observes cancellation and owner authorization.
+6. Recovery preserves validated generation/MCP command identifiers. Terminal plans reject late callbacks and reattachment, so cancellation cannot resurrect work.
+7. Job completion is synchronously journaled before retiring its recovery plan. A 100% progress checkpoint alone remains running. Startup reconciles the commit/retire crash window off the service main thread.
+8. Recovered media must match every saved root or legacy nested checksum. Fresh proofs replace both result locations consistently. Invalid output bindings are cleared durably without deleting external files, guarded against clearing a newer URI.
+9. Export retries reuse only a decoded prior output matching the new encoded file's checksum. Graph recovery verifies its bound URI and invalidates final-render/downstream caches when output is deleted or invalid; cache persistence must succeed before forgetting the binding.
+10. Deferred MCP video completion verifies frames/container/checksum before reporting verified playable output. The focused reviewer confirmed the checksum, invalid-output reuse and graph invalidation findings closed by inspection. Android regressions for the latest changes remain authored/unrun.
+
+## 35.4 Evidence matrix
+
+| Evidence | Exact result | Scope/limit |
+| --- | --- | --- |
+| Latest local Node suites | 282 source smoke assertions, 20 executable connection cases, 12 executable editor-relay cases pass | Source smoke assertions are static checks; the connection/relay suites execute behavior. |
+| Pure Java core suite | 40 timeline, 52 Vault/range, 14 audio DSP, 510 narration assertions pass | Bounded core tests run under a 64 MB heap where applicable; include actual 256 MB encryption/resume and a sparse 20 GB 64-bit seek. They do not run Android UI/Keystore/TTS/codecs. |
+| Actual GLSL source | 15 EGL/llvmpipe ES pixel checks pass | Software shader execution; Android Media3 compositor/device proof pending. |
+| Java syntax | 99 Android source files parse | No Android symbol resolution, compilation, unit run or APK produced by this check. |
+| Earlier Android CI | Run `37835673775`, job `113511943425`, source `4e30ae1`; downloaded XML: 117 tests, zero failures/errors/skips | Earlier source only; artifact `11575522024` contains the verified APK, `11576095028` its unit results. |
+| Earlier Worker CI | Run `37835673723` passed at `4e30ae1` | Latest local Worker suites pass; latest source is unpublished. |
+| Earlier emulator CI | Run `37835673770`, job `113511946051` passed at `4e30ae1` | Earlier two device cases; latest six-case suite is not executed. |
+| Retained media/screenshots | Source `c28592a`, run `37833966966`, job `113506171407`, artifact `11574488092`; two instrumentation cases passed | Workflow evidence check then failed because `rg` was absent; repaired at `4e30ae1`. Retained exports/screenshots prove that earlier source, not the latest local work. |
+| Mixed timeline media inspection | H.264 1280×720, 30 fps, AAC mono 44.1 kHz, 4.000 s; audible signal mean −19.7 dB, peak −16.6 dB | Retained `c28592a` video/image/gap/audio render. |
+
+The delivery packet separates the current source, earlier APK, earlier unit/device evidence and local test logs. SHA-256 sums and a manifest identify every artifact. Do not replace these distinctions with a single “all tests passed” claim.
+
+## 35.5 Unavoidable build/publish ceiling
+
+The local executor has Node, Python, FFmpeg, EGL and a Java runtime/compiler module, but **no Gradle, Android SDK, adb or emulator**. It cannot build or device-test the latest Android source.
+
+The GitHub connector can read repository/CI data, but full tree writes stalled and were interrupted. Bounded attempts at a 26 KB tree, a 30-byte blob and a different Contents API update all timed out; a subsequent branch read confirmed the remote head stayed `4e30ae1`. The Contents API attempt was bounded to 20 seconds. The managed network proxy also refuses connections. No explicit authentication failure or automatic approval rejection was returned. Do not describe this as missing owner permission, wait indefinitely, bypass the managed proxy, or count an interrupted write as a published change.
+
+The repository is checkpointed locally and packaged for recovery at this external ceiling. The complete app remains unfinished. No main merge, release promotion or production deployment was performed.
+
+## 35.6 Exact next actions
+
+1. Restore the final source from the delivery ZIP or Git bundle. Read this section, `IMPLEMENTATION_LEDGER.md` and `BUILD_RESUME.md`; inspect the manifest's source commit and verify `SHA256SUMS`.
+2. First restore an Android build path: JDK 17, Gradle 8.9, Android SDK platform 36/build tools 35.0.0 and an API 33 emulator. Do not add more Android functionality before resolving compilation/test failures in this source.
+3. From the repository root, execute:
+
+   ```bash
+   npm ci
+   npm test
+   bash scripts/core-test.sh
+   python3 scripts/shader-test.py
+   gradle --project-dir android :app:testDebugUnitTest :app:assembleDebug :app:assembleDebugAndroidTest --stacktrace
+   bash scripts/run-device-evidence.sh
+   ```
+
+   `npm ci`/Gradle require dependencies and a working network/cache. The shader check needs EGL/GLES with a software or hardware renderer. This repository has no `gradlew`; the commands use installed Gradle.
+4. Run the six authored `StudioDeviceTest` cases: owner preview/edit/export; mixed video/image/gap/audio; Vault Android Keystore/original retention; alpha on a second timeline clip; chroma key/mask actual pixels; manual small-video proxy/audio/original export. Add/execute device proof for corrected audio seek/speed, narration cancellation/restart and durable completion/output replacement paths.
+5. Fix failures before continuing. Save XML, screenshots, actual MP4/WAV output, media inspection, APK SHA-256 and source/CI IDs. Verify a restart/upgrade using retained owner data and check stable development signing.
+6. When writes work, publish onto an isolated branch using upstream ancestry. The supplied patch is against the exact `d652066` baseline; it is not an incremental patch against the existing PR's `4e30ae1` head. Follow `BUILD_RESUME.md`, inspect current upstream and avoid overwriting others' changes.
+7. Continue Phases A–H in the original priority order, with real model/runtime/storage credentials only where actually required. Keep owner and MCP operations on the same persistent graph; every new heavy feature needs end-to-end output/recovery evidence.
+8. Promote the version/release only after the defined milestone is implemented and verified. Do not advertise the baseline APK or this uncompiled source as the complete 3.5.0 app.

@@ -18,6 +18,66 @@ import static org.junit.Assert.*;
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk=33, manifest=Config.NONE)
 public class JobRecoveryTest {
+    @Test public void rejectedOutputBindingIsClearedDurablyAndCannotClearANewerOutput()throws Exception{
+        Context context=RuntimeEnvironment.getApplication();context.getSharedPreferences("videostudio_native_v1",Context.MODE_PRIVATE).edit().clear().commit();
+        RecoveryPlanStore plans=new RecoveryPlanStore(context);String id=plans.begin("export_project",new JSONObject(),"project");plans.attachJob(id,"job");
+        plans.markOutputForJob("job","file:///old.mp4","Old.mp4",new JSONObject().put("sha256","a".repeat(64)));
+        assertNotNull(plans.outputForJob("job").getJSONObject("verification"));
+        assertTrue(plans.invalidateOutput(id,"file:///old.mp4","Checksum mismatch"));
+        RecoveryPlanStore restarted=new RecoveryPlanStore(context);assertNull(restarted.outputForJob("job"));
+        assertFalse(restarted.get(id).has("outputVerification"));assertEquals("output_invalidated",restarted.get(id).getString("stage"));
+        restarted.markOutputForJob("job","file:///new.mp4","New.mp4",new JSONObject().put("sha256","b".repeat(64)));
+        assertFalse(restarted.invalidateOutput(id,"file:///old.mp4","Late verification"));
+        assertEquals("file:///new.mp4",new RecoveryPlanStore(context).outputForJob("job").getString("uri"));
+    }
+    @Test public void durableCompletionPrecedesPlanRetirementAndHundredPercentIsNotTerminal()throws Exception{
+        Context context=RuntimeEnvironment.getApplication();SharedPreferences prefs=context.getSharedPreferences("videostudio_native_v1",Context.MODE_PRIVATE);prefs.edit().clear().commit();
+        RecoveryPlanStore plans=new RecoveryPlanStore(context);String planId=plans.begin("generate_voice",new JSONObject(),"project");JobManager manager=new JobManager(context);
+        CountDownLatch committed=new CountDownLatch(1),release=new CountDownLatch(1);java.util.concurrent.atomic.AtomicReference<Throwable> failure=new java.util.concurrent.atomic.AtomicReference<>();
+        try{
+            JobManager.Job job=manager.submit("Durable completion",JobManager.Kind.LIGHT,state->{
+                try{
+                    plans.attachJob(planId,state.id);state.setResult(new JSONObject().put("ok",true).put("assetId","registered"));state.checkpoint("ready",100,"Output registered");plans.checkpointForJob(state.id,"ready",100,"Output registered");
+                    assertEquals("running",plans.get(planId).getString("state"));assertEquals(1,plans.pendingForAutoResume().length());
+                    state.completeDurably();
+                    JSONArray saved=new JSONArray(prefs.getString("job_recovery_snapshot","[]"));boolean found=false;
+                    for(int i=0;i<saved.length();i++){JSONObject row=saved.getJSONObject(i);if(state.id.equals(row.getString("id"))){found=true;assertEquals("completed",row.getString("state"));assertEquals("registered",row.getJSONObject("result").getString("assetId"));}}
+                    assertTrue("Completion must be committed before returning",found);
+                }catch(Throwable error){failure.set(error);}finally{committed.countDown();}
+                release.await(5,TimeUnit.SECONDS);
+            });
+            assertTrue(committed.await(5,TimeUnit.SECONDS));if(failure.get()!=null)throw new AssertionError(failure.get());
+            assertEquals("completed",manager.get(job.id).getJSONObject("job").getString("state"));assertEquals("running",plans.get(planId).getString("state"));
+            plans.completeByJob(job.id);assertEquals("completed",plans.get(planId).getString("state"));assertEquals(0,plans.pendingForAutoResume().length());
+            assertFalse("A committed result cannot be cancelled afterwards",manager.cancel(job.id));
+        }finally{release.countDown();manager.shutdown();}
+    }
+    @Test public void cancelledDurablePlanCannotBeResurrectedByLateWorkerCallbacks()throws Exception{
+        Context context=RuntimeEnvironment.getApplication();context.getSharedPreferences("videostudio_native_v1",Context.MODE_PRIVATE).edit().clear().commit();
+        RecoveryPlanStore plans=new RecoveryPlanStore(context);String id=plans.begin("generate_voice",new JSONObject(),"project");plans.attachJob(id,"cancelled-job");plans.cancelByJob("cancelled-job");
+        plans.failByJob("cancelled-job","Worker unwinding",true);plans.checkpointForJob("cancelled-job","late",60,"Late progress");plans.completeByJob("cancelled-job");plans.markOutputForJob("cancelled-job","file:///late.wav","Late");
+        assertEquals("cancelled",plans.get(id).getString("state"));assertEquals("",plans.get(id).getString("outputUri"));assertEquals(0,plans.pendingForAutoResume().length());
+        try{plans.markResuming(id);fail("Terminal plan resumed");}catch(java.util.concurrent.CancellationException expected){}
+        try{plans.attachJob(id,"new-job");fail("Terminal plan attached another job");}catch(java.util.concurrent.CancellationException expected){}
+    }
+    @Test public void recoveryRetainsGenerationAndCommandIdentityWithoutOtherInternalParameters()throws Exception{
+        Context context=RuntimeEnvironment.getApplication();context.getSharedPreferences("videostudio_native_v1",Context.MODE_PRIVATE).edit().clear().commit();
+        RecoveryPlanStore plans=new RecoveryPlanStore(context);
+        String id=plans.begin("generate_voice",new JSONObject().put("_generationId","stable-generation-123").put("_mcpCommandId","command-123").put("_temporaryToken","discard-me").put("text","A script").put("fileName","voice.wav"),"project");
+        JSONObject saved=new RecoveryPlanStore(context).get(id).getJSONObject("parameters");
+        assertEquals("stable-generation-123",saved.getString("_generationId"));assertEquals("command-123",saved.getString("_mcpCommandId"));assertFalse(saved.has("_temporaryToken"));assertEquals("voice.wav",saved.getString("fileName"));
+        id=plans.begin("generate_voice",new JSONObject().put("_generationId","../unsafe").put("_mcpCommandId","bad/path"),"project");
+        saved=plans.get(id).getJSONObject("parameters");assertFalse(saved.has("_generationId"));assertFalse(saved.has("_mcpCommandId"));
+    }
+    @Test public void cancellationAndRevocationPreventPublication()throws Exception{
+        JobManager.Job job=new JobManager.Job("Publication",JobManager.Kind.LIGHT);java.util.concurrent.atomic.AtomicBoolean published=new java.util.concurrent.atomic.AtomicBoolean();
+        job.state=JobManager.STATE_CANCELLED;
+        try{job.commit(active->published.set(true));fail("Cancelled publication proceeded");}catch(java.util.concurrent.CancellationException expected){}
+        try{job.checkpoint("publish",99,"Cancelled");fail("Cancelled work kept progressing");}catch(java.util.concurrent.CancellationException expected){}
+        assertFalse(published.get());
+        job=new JobManager.Job("Revoked",JobManager.Kind.LIGHT);job.setAuthorizationGuard(()->{throw new java.util.concurrent.CancellationException("Revoked");});
+        try{job.commit(active->published.set(true));fail("Revoked publication proceeded");}catch(java.util.concurrent.CancellationException expected){}assertFalse(published.get());
+    }
     @Test public void canonicalTransitionsRejectTerminalResurrection() {
         assertTrue(JobManager.canTransition(JobManager.STATE_QUEUED, JobManager.STATE_PREPARING));
         assertTrue(JobManager.canTransition(JobManager.STATE_RUNNING, JobManager.STATE_WAITING_THERMAL));

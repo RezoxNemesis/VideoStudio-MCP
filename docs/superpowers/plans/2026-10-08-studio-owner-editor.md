@@ -32,42 +32,42 @@
 Files: ProjectStore.java, EditorEngine.java, TimelineMath.java, ProjectStoreEditorTest.java, EditorEngineTest.java.
 Interfaces: `Project.revision`, `Project.tracks`, `Clip.startMs/trackId/keyframes`; `ProjectStore.transact(id, expectedRevision, actor, commandId, description, mutation)` returns the committed Project. `undo/redo/snapshot/restore` return new authoritative revisions.
 
-- [ ] Write baseline behavioral regressions for explicit track duration and stale save.
-- [ ] Run Android regressions in CI and verify the intended failures.
-- [ ] Add additive migration, atomic revisions, bounded history and snapshots.
-- [ ] Implement timeline operations with source bounds, locked-track checks, keyframe interpolation and idempotent mutation IDs.
-- [ ] Run all Android unit tests; commit graph and tested editor engine.
+- [x] Write baseline behavioral regressions for explicit track duration and stale save.
+- [x] Run Android regressions in CI and verify the intended failures.
+- [x] Add additive migration, atomic revisions, bounded history and snapshots.
+- [x] Implement timeline operations with source bounds, locked-track checks, keyframe interpolation and idempotent mutation IDs.
+- [x] Run all Android unit tests; commit graph and tested editor engine.
 
 ## Task 2: Human editor, preview and inspector
 
 Files: MainActivity.java, StudioTimelineView.java, StudioPreviewMonitor.java, LiveEditPlayer.java, TimelineCompositionFactory.java, StudioEditorUiTest.java.
 Interfaces: timeline callbacks invoke EditorEngine operations; preview consumes the committed Project and playhead. NativeRenderEngine and program preview consume the same composition factory.
 
-- [ ] Add workflow regressions for image selection, visible preview and immediate owner edits.
-- [ ] Replace fixed cards with ruler/tracks, selection, drag/trim, playhead, zoom and snapping.
-- [ ] Wire undo/redo, inspector, keyframes, bin actions and bounded background metadata import.
-- [ ] Share composited timeline evaluation with render and surface actual unsupported capabilities.
-- [ ] Run unit/build/UI checks and commit the integrated editor.
+- [x] Add workflow regressions for image selection, visible preview and immediate owner edits.
+- [x] Replace fixed cards with ruler/tracks, selection, drag/trim, playhead, zoom and snapping.
+- [x] Wire undo/redo, inspector, keyframes, bin actions and bounded background metadata import.
+- [x] Share composited timeline evaluation with render and surface actual unsupported capabilities.
+- [x] Run unit/build/UI checks and commit the integrated editor.
 
 ## Task 3: Foreground export session and render parity
 
 Files: ExportSessionStore.java, ExportSessionView.java, ControlService.java, JobManager.java, NativeRenderEngine.java, ExportSessionTest.java.
 Interfaces: durable session ID immediately appears in the export screen; manual render lane runs independently from autonomous jobs; verified output merges into latest Project.
 
-- [ ] Add behavioral tests for preparing/progress/cancel/retry and immutable export revision.
-- [ ] Implement settings, immediate session handoff, separate lane and status persistence.
-- [ ] Preserve source audio, clip volume, mute, transforms and visible supported effects in final output.
-- [ ] Verify output before publishing, test cancellation/recovery and commit.
+- [x] Add behavioral tests for preparing/progress/cancel/retry and immutable export revision.
+- [x] Implement settings, immediate session handoff, separate lane and status persistence.
+- [ ] Preserve source audio, clip volume, mute, transforms and visible supported effects in final output. Audio and transforms verified; the corrected alpha shader awaits Android CI.
+- [x] Verify output before publishing, test cancellation/recovery and commit.
 
 ## Task 4: Stable MCP editor parity and capability truth
 
 Files: ControlService.java, AppProtocol.java, src/index.js, scripts/editor-protocol-test.mjs.
 Interfaces: compatible v3 calls and additive v4 schema use EditorEngine with command ID and expected revision. Query APIs expose actual capabilities and revision.
 
-- [ ] Add executable protocol tests for conflict/idempotency/privacy/owner controls.
-- [ ] Wire the shared editor actions and schema introspection without replacing stable endpoint identity.
-- [ ] Advertise only working capabilities and retain unavailable model/device states.
-- [ ] Run Node and Android suites; commit.
+- [x] Add executable protocol tests for conflict/idempotency/privacy/owner controls.
+- [x] Wire the shared editor actions and schema introspection without replacing stable endpoint identity.
+- [x] Advertise only working capabilities and retain unavailable model/device states.
+- [x] Run Node and Android suites; commit.
 
 ## Task 5: Continue the remaining product roadmap
 
@@ -84,6 +84,8 @@ Each subsystem receives its concrete tests/interfaces before product code. Missi
 ## Task 6: Release evidence and continuity
 
 - [ ] Run fresh full Node and Android tests and a source/build review.
-- [ ] Save APK, SHA-256, CI IDs, test matrix, media/UI evidence and known limitations.
-- [ ] Publish an isolated reviewable branch/draft PR; do not merge/deploy without authority.
-- [ ] Update the original continuity bundle with exact completed/pending requirements and next commands.
+- [x] Save the earlier verified 4e30 APK, SHA-256, CI IDs, test matrix, retained c285 media/UI evidence and explicit latest-source limitations.
+- [ ] Publish the latest source to an isolated reviewable branch/draft PR. Earlier PR #35 is at 4e30; newer local commits remain unpublished because writes time out. Do not merge/deploy without authority.
+- [x] Continue the original bundle in section 35 with exact completed/pending requirements, source provenance, the external build/publish ceiling and next commands; add BUILD_RESUME.md.
+
+2026-10-09 checkpoint: implementation commit 2c9e684 closes the final focused recovery review. Local suites: 282 static source smoke assertions, 20 executable connection cases, 12 executable relay cases, 40 timeline/52 Vault/14 DSP/510 narration pure-core assertions, 15 executed software GLSL pixel checks and 99 parsed Java sources. Latest Android compilation/device proof remains pending. Phases B–H are incomplete as detailed in bundle section 35; a queued job, menu tile or static assertion is not completion.

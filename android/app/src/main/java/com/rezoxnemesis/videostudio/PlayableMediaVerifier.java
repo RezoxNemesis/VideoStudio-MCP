@@ -14,6 +14,25 @@ import java.security.MessageDigest;
 /** Verifies a real container, media track and decoded video frame before publication. */
 public final class PlayableMediaVerifier {
     private PlayableMediaVerifier(){}
+    /** Both current root proofs and legacy nested proofs bind the saved job to its bytes. */
+    static boolean matchesSavedProof(JSONObject saved,JSONObject actual){
+        String hash=actual==null?"":actual.optString("sha256","");
+        if(!hash.matches("[0-9a-f]{64}"))return false;
+        if(saved==null)return true;
+        String rootHash=saved.optString("sha256","");
+        if(!rootHash.isEmpty()&&!rootHash.equals(hash))return false;
+        JSONObject nested=saved.optJSONObject("verification");
+        String nestedHash=nested==null?"":nested.optString("sha256","");
+        return nestedHash.isEmpty()||nestedHash.equals(hash);
+    }
+    static JSONObject withFreshProof(JSONObject saved,JSONObject proof)throws Exception{
+        if(!matchesSavedProof(null,proof))throw new IllegalArgumentException("Verified output checksum is missing");
+        JSONObject result=saved==null?new JSONObject():new JSONObject(saved.toString());
+        java.util.Iterator<String> keys=proof.keys();
+        while(keys.hasNext()){String key=keys.next();result.put(key,proof.get(key));}
+        result.put("verification",new JSONObject(proof.toString()));
+        return result;
+    }
     public static JSONObject verify(Context context,Uri uri,boolean requireVideo) throws Exception{
         JSONObject result=new JSONObject();MediaExtractor extractor=new MediaExtractor();MediaMetadataRetriever decoder=new MediaMetadataRetriever();
         try(ParcelFileDescriptor fd=context.getContentResolver().openFileDescriptor(uri,"r")){

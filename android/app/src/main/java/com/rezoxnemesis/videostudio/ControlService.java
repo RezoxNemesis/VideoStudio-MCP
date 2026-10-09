@@ -45,6 +45,9 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     public static final String ACTION_LOCAL_ANIMATE = "com.rezoxnemesis.videostudio.LOCAL_ANIMATE_IMAGES";
     public static final String ACTION_LOCAL_PROMPT_VIDEO = "com.rezoxnemesis.videostudio.LOCAL_PROMPT_VIDEO";
     public static final String ACTION_LOCAL_EXPORT = "com.rezoxnemesis.videostudio.LOCAL_EXPORT_PROJECT";
+    public static final String ACTION_LOCAL_VOICE = "com.rezoxnemesis.videostudio.LOCAL_VOICE";
+    public static final String ACTION_LOCAL_PROXY = "com.rezoxnemesis.videostudio.LOCAL_PROXY";
+    public static final String ACTION_LOCAL_VAULT = "com.rezoxnemesis.videostudio.LOCAL_VAULT";
     public static final String ACTION_LOCAL_IMPORT = "com.rezoxnemesis.videostudio.LOCAL_IMPORT_MEDIA";
     public static final String ACTION_CANCEL_MANUAL_EXPORT = "com.rezoxnemesis.videostudio.CANCEL_MANUAL_EXPORT";
     private static final String CHANNEL = "videostudio_private_control";
@@ -90,6 +93,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     private CreativeBuiltInRuntime builtInCreativeRuntime;
     private DriveWorkspaceProvider driveWorkspace;
     private SharedPreferences prefs;
+    private String lastOwnerScope;
     private CommandJournal commandJournal;
     private final ExecutorService commandCompletionWatchers = Executors.newFixedThreadPool(2);
     private final Set<String> watchedCommands = ConcurrentHashMap.newKeySet();
@@ -135,7 +139,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 "Stable MCP compatibility endpoint • app " + AppProtocol.APP_VERSION
                         + " • generation " + protocol.appGeneration(),
                 "success", null, null, null);
-        recoverDurablePlans();
+        commandCompletionWatchers.execute(this::recoverDurablePlans);
         reattachInflightCommandWatchers();
         resumeManualExports();
         resumeImports();
@@ -179,6 +183,12 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         } else if (ACTION_SYNC.equals(action)) {
             syncProtocolState();
             protocol.registerNow();
+        } else if(ACTION_LOCAL_PROXY.equals(action)){
+            try{queueProxy(new JSONObject().put("projectId",intent.getStringExtra("projectId")).put("assetId",intent.getStringExtra("assetId")).put("tier",intent.getStringExtra("tier")).put("_origin","owner"));}catch(Exception error){ActivityLog.add(this,"user","Preview proxy failed",error.getMessage(),"failed",null,null,intent.getStringExtra("projectId"));}
+        } else if(ACTION_LOCAL_VOICE.equals(action)){
+            try{JSONObject parameters=new JSONObject(intent.getStringExtra("parameters")).put("_origin","owner");queueGenerateVoice(parameters);}catch(Exception error){ActivityLog.add(this,"user","Narration failed",error.getMessage(),"failed",null,null,intent.getStringExtra("projectId"));}
+        } else if(ACTION_LOCAL_VAULT.equals(action)){
+            try{JSONObject parameters=new JSONObject().put("projectId",intent.getStringExtra("projectId")).put("assetId",intent.getStringExtra("assetId")).put("encrypted",intent.getBooleanExtra("encrypted",true)).put("_origin","owner");queueVault(parameters);}catch(Exception error){ActivityLog.add(this,"user","Vault copy failed",error.getMessage(),"failed",null,null,intent.getStringExtra("projectId"));}
         } else if (ACTION_LOCAL_IMPORT.equals(action)) {
             String projectId=intent.getStringExtra("projectId");
             ArrayList<String> ids=intent.getStringArrayListExtra("assetIds");
@@ -372,6 +382,13 @@ public final class ControlService extends Service implements AppProtocol.Callbac
 
         try {
             switch (action) {
+                case "storage_profiles": {
+                    JSONArray profiles=new StorageProfileStore(this).list();for(int i=0;i<profiles.length();i++)profiles.getJSONObject(i).remove("treeUri");
+                    complete(command,ok().put("profiles",profiles).put("maximumProfiles",StorageProfileStore.MAX_PROFILES));return;
+                }
+                case "vault_create": complete(command,queueVault(p));return;
+                case "create_proxy": complete(command,queueProxy(p));return;
+                case "vault_inspect": complete(command,new VaultManager(this,store).inspect(p.getString("projectId"),p.getString("assetId")));return;
                 case "editor_schema":
                     complete(command, ok().put("schema", editorProtocol.describe()));
                     return;
@@ -1430,6 +1447,20 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         return parameters!=null&&"owner".equals(parameters.optString("_origin"))?JobManager.Origin.OWNER:JobManager.Origin.AUTONOMOUS;
     }
 
+    private void configureJobAccess(JobManager.Job state,String action,JSONObject parameters,String projectId){
+        java.util.Set<String> inputs=new java.util.HashSet<>();
+        if(parameters!=null&&!parameters.optString("assetId","").isEmpty())inputs.add(parameters.optString("assetId"));
+        else{
+            ProjectStore.Project project=store.get(projectId);
+            if(project!=null)for(ProjectStore.Asset asset:project.assets)inputs.add(asset.id);
+        }
+        state.bindInputs(projectId,inputs);
+        if(state.origin==JobManager.Origin.AUTONOMOUS){
+            state.setAuthorizationGuard(()->{if(!isAllowed(action,parameters==null?new JSONObject():parameters))throw new java.util.concurrent.CancellationException("Owner access changed; background work stopped");});
+        }
+        state.checkActive();
+    }
+
     private JobManager.Job submitRecoverableLight(String action,
                                                   JSONObject parameters,
                                                   String projectId,
@@ -1445,10 +1476,14 @@ public final class ControlService extends Service implements AppProtocol.Callbac
 
         final String durablePlanId = planId;
         JobManager.Job job = jobs.submit(jobName, JobManager.Kind.LIGHT, jobOrigin(parameters), state -> {
+            configureJobAccess(state,action,parameters,projectId);
             recoveryPlans.attachJob(durablePlanId, state.id);
             try {
                 work.run(state);
+                state.completeDurably();
                 recoveryPlans.completeByJob(state.id);
+            }catch(java.util.concurrent.CancellationException cancelled){
+                recoveryPlans.cancelByJob(state.id);throw cancelled;
             } catch (InterruptedException interrupted) {
                 if ("cancelled".equals(state.state)) recoveryPlans.cancelByJob(state.id);
                 else recoveryPlans.failByJob(state.id, "Interrupted after checkpoint; safe to resume", true);
@@ -1481,10 +1516,14 @@ public final class ControlService extends Service implements AppProtocol.Callbac
 
         final String durablePlanId = planId;
         JobManager.Job job = jobs.submit(jobName, JobManager.Kind.HEAVY, jobOrigin(parameters), state -> {
+            configureJobAccess(state,action,parameters,projectId);
             recoveryPlans.attachJob(durablePlanId, state.id);
             try {
                 work.run(state);
+                state.completeDurably();
                 recoveryPlans.completeByJob(state.id);
+            }catch(java.util.concurrent.CancellationException cancelled){
+                recoveryPlans.cancelByJob(state.id);throw cancelled;
             } catch (InterruptedException interrupted) {
                 if ("cancelled".equals(state.state)) recoveryPlans.cancelByJob(state.id);
                 else recoveryPlans.failByJob(state.id, "Interrupted after checkpoint; safe to resume", true);
@@ -1506,20 +1545,37 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         if (recoveryPlans == null || protocol == null) return;
         JSONArray pending = recoveryPlans.pendingForAutoResume();
         for (int i = 0; i < pending.length(); i++) {
+            if(Thread.currentThread().isInterrupted())break;
             JSONObject plan = pending.optJSONObject(i);
             if (plan == null) continue;
             if (protocol.isControlPaused() && !"owner".equals(plan.optString("origin"))) continue;
             String planId = plan.optString("id", "");
             String action = plan.optString("action", "");
             String projectId = plan.optString("projectId", "");
+            JSONObject scopeParameters=plan.optJSONObject("parameters");
+            if(!"owner".equals(plan.optString("origin"))&&!isAllowed(action,scopeParameters==null?new JSONObject():scopeParameters))continue;
+            JSONObject oldJob=jobs.get(plan.optString("jobId","")).optJSONObject("job");
+            if(oldJob!=null&&JobManager.STATE_COMPLETED.equals(oldJob.optString("state"))){
+                recoveryPlans.completePlan(planId,"Recovered durable job completion");continue;
+            }
             String outputUri = plan.optString("outputUri", "");
 
-            if (!outputUri.isEmpty() && isReadableOutput(outputUri)) {
+            if(!outputUri.isEmpty()&&!isReadableOutput(outputUri)){
+                invalidateRecoveredOutput(plan,outputUri,"Published output is no longer readable; render a new file");
+            }else if (!outputUri.isEmpty()) {
                 if ("run_creative_graph".equals(action)) {
                     try {
-                        ProjectStore.Asset rendered = latestGeneratedVideo(projectId);
+                        JSONObject proof=PlayableMediaVerifier.verify(this,Uri.parse(outputUri),true);
+                        if(!PlayableMediaVerifier.matchesSavedProof(oldJob==null?null:oldJob.optJSONObject("result"),proof)
+                                ||!PlayableMediaVerifier.matchesSavedProof(plan.optJSONObject("outputVerification"),proof))
+                            throw new IllegalStateException("Creative render checksum changed");
+                        ProjectStore.Project recoveredProject=store.get(projectId);
+                        ProjectStore.Asset rendered=null;
+                        if(recoveredProject!=null)for(ProjectStore.Asset asset:recoveredProject.assets){
+                            if(outputUri.equals(asset.uri)&&asset.mime!=null&&asset.mime.startsWith("video/")){rendered=asset;break;}
+                        }
                         if (rendered != null) {
-                            JSONObject renderResult = new JSONObject();
+                            JSONObject renderResult = PlayableMediaVerifier.withFreshProof(null,proof);
                             renderResult.put("ok", true);
                             renderResult.put("assetId", rendered.id);
                             renderResult.put("uri", rendered.uri);
@@ -1531,18 +1587,19 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                                     rendered.name + " was already published; resuming downstream nodes only",
                                     "success", 98, null, projectId);
                         }
-                    } catch (Exception ignored) {
+                    }catch(InterruptedException interrupted){Thread.currentThread().interrupt();
+                    } catch (Exception invalid) {
+                        invalidateRecoveredOutput(plan,outputUri,"Creative render failed verification; rebuild its output");
                         // If graph metadata was not committed, the normal retry path will safely rebuild it.
                     }
-                } else {
-                    recoveryPlans.completePlan(planId, "Recovered published output; no duplicate render required");
-                    ActivityLog.add(this, "system", "Recovered completed render",
-                            plan.optString("outputName", "Generated video") + " was already published before restart",
-                            "success", 100, null, projectId);
+                }else if(finishRecoveredOutput(plan,oldJob,projectId,outputUri)){
+                    recoveryPlans.completePlan(planId,"Recovered verified output and durable job completion");
+                    ActivityLog.add(this,"system","Recovered completed render",plan.optString("outputName","Generated video")+" was verified after restart","success",100,null,projectId);
                     continue;
                 }
             }
 
+            if(Thread.currentThread().isInterrupted())break;
             JSONObject parameters = plan.optJSONObject("parameters");
             if (parameters == null) parameters = new JSONObject();
             try {
@@ -1554,6 +1611,12 @@ public final class ControlService extends Service implements AppProtocol.Callbac
 
                 JSONObject queued;
                 switch (action) {
+                    case "create_proxy":
+                        queued=queueProxy(parameters);
+                        break;
+                    case "vault_create":
+                        queued=queueVault(parameters);
+                        break;
                     case "animate_images":
                         queued = queueAnimatedImages(parameters);
                         break;
@@ -1619,6 +1682,44 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                         "info", plan.optInt("progress", 0), null, projectId);
             }
         }
+    }
+
+    private void invalidateRecoveredOutput(JSONObject plan,String outputUri,String detail){
+        if("run_creative_graph".equals(plan.optString("action"))){
+            // Clear graph caches first: a failed write must leave the rejected URI bound for the next retry.
+            try{creativeNodeStore.invalidate(plan.optString("projectId"),"render.final",true);
+            }catch(IllegalArgumentException missingNode){/* a fresh graph will create its render node */
+            }catch(Exception storageFailure){throw new IllegalStateException("Could not invalidate the recovered render graph",storageFailure);}
+        }
+        recoveryPlans.invalidateOutput(plan.optString("id"),outputUri,detail);
+    }
+
+    private boolean finishRecoveredOutput(JSONObject plan,JSONObject oldJob,String projectId,String outputUri){
+        if(oldJob==null||JobManager.isTerminal(oldJob.optString("state")))return false;
+        JSONObject saved=oldJob.optJSONObject("result"),proof;
+        try{
+            proof=PlayableMediaVerifier.verify(this,Uri.parse(outputUri),true);
+            if(!PlayableMediaVerifier.matchesSavedProof(saved,proof)
+                    ||!PlayableMediaVerifier.matchesSavedProof(plan.optJSONObject("outputVerification"),proof))
+                throw new IllegalStateException("Published output checksum changed");
+        }catch(InterruptedException interrupted){Thread.currentThread().interrupt();return false;
+        }catch(Exception invalid){
+            recoveryPlans.invalidateOutput(plan.optString("id"),outputUri,"Published output failed verification; render a new file");
+            return false;
+        }
+        try{
+            JSONObject recovered=PlayableMediaVerifier.withFreshProof(saved,proof);
+            JSONObject parameters=plan.optJSONObject("parameters");
+            if(!"owner".equals(plan.optString("origin"))&&!isAllowed(plan.optString("action"),parameters==null?new JSONObject():parameters))return false;
+            ProjectStore.Project project=store.get(projectId);if(project==null)return false;
+            final ProjectStore.Asset[] assets=new ProjectStore.Asset[1];
+            if(!jobs.commitRecovered(plan.optString("jobId",""),active->{
+                if(!"owner".equals(plan.optString("origin"))&&!isAllowed(plan.optString("action"),parameters==null?new JSONObject():parameters))throw new java.util.concurrent.CancellationException("Owner access changed during recovery");
+                assets[0]=store.registerGeneratedAsset(project,Uri.parse(outputUri),plan.optString("outputName","Recovered export.mp4"),"final_render",false);
+            }))return false;
+            ProjectStore.Asset asset=assets[0];recovered.put("ok",true).put("assetId",asset.id).put("uri",outputUri).put("projectId",projectId).put("fileName",asset.name).put("verification",proof);
+            return jobs.completeRecovered(plan.optString("jobId",""),recovered);
+        }catch(Exception invalid){return false;}
     }
 
     private boolean isReadableOutput(String rawUri) {
@@ -2102,6 +2203,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         durableParameters.put("pitch", pitch);
         durableParameters.put("offlineOnly", offlineOnly);
         durableParameters.put("fileName", fileName);
+        if(!durableParameters.has("_generationId"))durableParameters.put("_generationId",java.util.UUID.randomUUID().toString());
 
         JobManager.Job job = submitRecoverableLight(
                 "generate_voice",
@@ -2119,6 +2221,8 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                             pitch,
                             offlineOnly,
                             fileName,
+                            durableParameters.getString("_generationId"),
+                            state,
                             (progress, detail) -> checkpoint(
                                     state,
                                     "Local narration",
@@ -2131,19 +2235,18 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                     Uri uri = Uri.parse(generated.optString("uri", ""));
                     ProjectStore.Project fresh = store.get(project.id);
                     if (fresh == null) throw new IllegalStateException("Project disappeared during narration generation");
-                    ProjectStore.Asset asset = store.registerGeneratedAsset(
-                            fresh,
-                            uri,
-                            generated.optString("fileName", fileName),
-                            "generated_voice",
-                            false
-                    );
+                    final ProjectStore.Asset[] registered=new ProjectStore.Asset[1];
+                    state.commit(active->{
+                        registered[0]=store.registerGeneratedAsset(fresh,uri,generated.optString("fileName",fileName),"generated_voice",durableParameters.optBoolean("appendToTimeline",false));
+                        store.updateAssetMetadata(project.id,registered[0].id,generated,generated.optLong("bytes",registered[0].sizeBytes));
+                    });
+                    ProjectStore.Asset asset=registered[0];
                     generated.put("assetId", asset.id);
                     generated.put("mime", asset.mime);
                     generated.put("durationMs", asset.durationMs);
                     state.setResult(generated);
 
-                    checkpoint(state, "Local narration", "Narration available in project Media Bin", 100, project.id);
+                    checkpoint(state, "Local narration", durableParameters.optBoolean("appendToTimeline",false)?"Narration added to the audio timeline":"Narration available in project Media Bin", 100, project.id);
                     ActivityLog.add(this, "system", "Narration generated",
                             asset.name + " • Media Bin • asset " + shortId(asset.id),
                             "success", 100, null, project.id);
@@ -2270,6 +2373,25 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         return result;
     }
 
+    private JSONObject queueVault(JSONObject p)throws Exception{
+        String projectId=p.getString("projectId"),assetId=p.getString("assetId");
+        JSONObject saved=new JSONObject(p.toString());
+        JobManager.Job job=submitRecoverableHeavy("vault_create",saved,projectId,"Vault media copy",state->{state.setResult(new VaultManager(this,store).create(projectId,assetId,p.optBoolean("encrypted",true),state));syncProtocolState();});
+        return ok().put("queued",true).put("jobId",job.id).put("projectId",projectId).put("assetId",assetId).put("durableRecovery",true);
+    }
+
+    private JSONObject queueProxy(JSONObject parameters)throws Exception{
+        String projectId=parameters.getString("projectId"),assetId=parameters.getString("assetId");String tier=ProxyManager.normaliseTier(parameters.optString("tier","540p"));
+        JSONObject saved=new JSONObject(parameters.toString()).put("tier",tier);
+        ProjectStore.Project project=store.get(projectId);ProjectStore.Asset source=project==null?null:project.asset(assetId);
+        if(source==null||!source.mime.startsWith("video/"))throw new IllegalArgumentException("Select an owned video for a preview proxy");
+        JobManager.Job job=submitRecoverableHeavy("create_proxy",saved,projectId,"Create "+tier+" preview proxy",state->{
+            ProjectStore.Project fresh=store.get(projectId);ProjectStore.Asset asset=fresh==null?null:fresh.asset(assetId);
+            if(asset==null)throw new IllegalStateException("Proxy source was removed");
+            state.setResult(new ProxyManager(this,store,jobs).generate(fresh,asset,tier,state));syncProtocolState();
+        });
+        return ok().put("queued",true).put("jobId",job.id).put("projectId",projectId).put("assetId",assetId).put("tier",tier).put("durableRecovery",true);
+    }
     private void resumeImports(){
         for(ProjectStore.Project p:store.list())for(ProjectStore.Asset a:p.assets)
             if("importing".equals(a.importState))queueImportProbe(p.id,a.id);
@@ -2283,7 +2405,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 if(asset!=null){
                     if(!"ready".equals(asset.importState))throw new IllegalStateException(asset.importError);
                     state.checkpoint("import_ready",100,"Media available in the project");
-                    if(ProxyManager.shouldProxy(asset))new ProxyManager(this,store,jobs).request(store.get(projectId),asset,"720p");
+                    if(ProxyManager.shouldProxy(asset))queueProxy(new JSONObject().put("projectId",projectId).put("assetId",asset.id).put("tier","540p").put("_origin","owner"));
                 }
                 syncProtocolState();
             }finally{probingImports.remove(assetId);}
@@ -2391,10 +2513,19 @@ public final class ControlService extends Service implements AppProtocol.Callbac
 
         checkpoint(state, "Exporting video", "Writing selected export destination", 97, project.id);
         JSONObject committed = recoveryPlans.outputForJob(state.id);
-        final String reusableUri = committed != null
-                && isReadableOutput(committed.optString("uri", ""))
-                ? committed.optString("uri", "")
-                : "";
+        String verifiedReusableUri="";
+        if(committed!=null){
+            String candidate=committed.optString("uri","");
+            try{
+                JSONObject previousProof=PlayableMediaVerifier.verify(this,Uri.parse(candidate),true);
+                if(PlayableMediaVerifier.matchesSavedProof(verification,previousProof))verifiedReusableUri=candidate;
+                else recoveryPlans.invalidateOutputForJob(state.id,candidate,"Published checksum differs from the new render");
+            }catch(InterruptedException interrupted){Thread.currentThread().interrupt();throw interrupted;
+            }catch(Exception invalid){
+                recoveryPlans.invalidateOutputForJob(state.id,candidate,"Published output is invalid; publish the new render");
+            }
+        }
+        final String reusableUri=verifiedReusableUri;
         AtomicMediaPublisher.PublishResult publication = AtomicMediaPublisher.publish(
                 ready,
                 new AtomicMediaPublisher.PublishTarget() {
@@ -2416,7 +2547,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         if(!verification.optString("sha256").equals(publishedProof.optString("sha256")))throw new IllegalStateException("Published output checksum differs from encoded media");
         checkExportActive(state);
         if (!publication.reused) {
-            recoveryPlans.markOutputForJob(state.id, publicUri.toString(), fileName);
+            recoveryPlans.markOutputForJob(state.id, publicUri.toString(), fileName,publishedProof);
         }
         registerVerifiedExport(project,publicUri,fileName,quality,state,publishedProof);renderCompleted=true;
         syncProtocolState();
@@ -3179,7 +3310,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             JSONObject workload=jobs.state();
             if(access.restricted()){
                 JSONArray visibleJobs=new JSONArray(),allJobs=workload.optJSONArray("jobs");
-                if(allJobs!=null)for(int i=0;i<allJobs.length();i++){JSONObject job=allJobs.optJSONObject(i);if(job!=null&&access.projectAllowed(job.optString("projectId")))visibleJobs.put(job);}
+                if(allJobs!=null)for(int i=0;i<allJobs.length();i++){JSONObject job=allJobs.optJSONObject(i);if(access.allowsJob(job))visibleJobs.put(job);}
                 workload.put("jobs",visibleJobs);
             }
             out.put("workload",workload);
@@ -3203,7 +3334,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         OwnerAccessPolicy access=new OwnerAccessPolicy(this,store);
         if(access.restricted()){
             if("job_status".equals(action)||"cancel_job".equals(action)){
-                JSONObject job=jobs.get(parameters.optString("jobId")).optJSONObject("job");return job!=null&&access.projectAllowed(job.optString("projectId"))&&!"owner".equals(job.optString("origin"));
+                JSONObject job=jobs.get(parameters.optString("jobId")).optJSONObject("job");return access.allowsJob(job)&&!"owner".equals(job.optString("origin"));
             }
             return access.allows(action,parameters);
         }
@@ -3283,6 +3414,8 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     private boolean mayQueueBackgroundWork(String action) {
         if (action == null) return false;
         switch (action) {
+            case "create_proxy":
+            case "vault_create":
             case "prompt_video":
             case "animate_images":
             case "export_project":
@@ -3486,6 +3619,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                     ? null : store.get(projectId);
             if (project == null) {
                 out.put("ok", false);
+                out.put("completed",false);
                 out.put("error", "Native job completed but its project is missing");
                 return out;
             }
@@ -3502,12 +3636,27 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             }
             if (outputUri == null || outputUri.isEmpty() || !isReadableOutput(outputUri)) {
                 out.put("ok", false);
+                out.put("completed",false);
                 out.put("error", "Native job reached completed state without a readable published video");
                 out.put("verifiedPlayableOutput", false);
                 return out;
             }
 
+            JSONObject outputProof;
+            try{
+                outputProof=PlayableMediaVerifier.verify(this,Uri.parse(outputUri),true);
+                if(!PlayableMediaVerifier.matchesSavedProof(jobResult,outputProof)
+                        ||!PlayableMediaVerifier.matchesSavedProof(committed,outputProof))
+                    throw new IllegalStateException("Published video checksum differs from its saved proof");
+            }catch(InterruptedException interrupted){Thread.currentThread().interrupt();throw interrupted;
+            }catch(Exception invalid){
+                out.put("ok",false).put("completed",false).put("verifiedPlayableOutput",false);
+                out.put("error","Native job output failed media verification: "+(invalid.getMessage()==null?"invalid media":invalid.getMessage()));
+                return out;
+            }
+
             out.put("verifiedPlayableOutput", true);
+            out.put("verification",outputProof);
             out.put("outputUri", outputUri);
             out.put("outputName", outputName == null ? "" : outputName);
             out.put("projectId", project.id);
@@ -3718,6 +3867,10 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     }
 
     private void syncProtocolState() {
+        String scope=prefs.getString("permission_mode","everything")+"|"+prefs.getString("allowed_project_id","")+"|"+prefs.getString("allowed_asset_ids","[]")+"|"+prefs.getString("allowed_asset_id","")+"|"+prefs.getLong("permission_scope_updated_at",0);
+        boolean changed;
+        synchronized(this){changed=lastOwnerScope!=null&&!lastOwnerScope.equals(scope);lastOwnerScope=scope;}
+        if(changed){jobs.cancelAutonomous();recoveryPlans.cancelAutonomous();}
         protocol.setLocalState(permissionMode(), new OwnerAccessPolicy(this,store).summaries());
     }
 

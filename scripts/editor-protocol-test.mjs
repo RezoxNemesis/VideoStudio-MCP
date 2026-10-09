@@ -76,3 +76,31 @@ test('selected-assets authority rejects unselected analysis and clip edits',asyn
   await assert.rejects(f.relay.appEnqueueV3(f.key,'editor_history',edit({operation:'undo'})),/scope|permission/i);
   assert.ok((await f.relay.appEnqueueV3(f.key,'editor_operation',edit({operation:'set_property',args:{clipId:'clip-001',property:'volume',value:.5}}))).id);
 });
+
+test('new audio DSP operations require schema 2 while earlier editors retain existing edits',async()=>{
+  const f=await fixture();const dsp=edit({operation:'set_audio_effects',args:{clipId:'clip-001',settings:{lowDb:6,thresholdDb:-18,ratio:3}}});
+  await assert.rejects(f.relay.appEnqueueV3(f.key,'editor_operation',dsp),/schema version/i);
+  await f.relay.appRegister('editor-device-001',f.key,{protocolVersion:3,appGeneration:1,editorSchemaVersion:2,permissionMode:'everything'});
+  assert.ok((await f.relay.appEnqueueV3(f.key,'editor_operation',dsp)).id);
+  await assert.rejects(f.relay.appEnqueueV3(f.key,'editor_operation',edit({commandId:'dsp-invalid-001',operation:'set_audio_effects',args:{clipId:'clip-001',settings:{delayFeedback:1.1}}})),/numeric|value/i);
+});
+
+test('composite effects validate colour, shape, unknown settings and older APK compatibility',async()=>{
+  const f=await fixture();
+  const request=edit({operation:'set_composite_effects',args:{clipId:'clip-001',settings:{chromaKey:true,chromaColor:'#00FF00',mask:'ellipse',maskWidth:0.7}}});
+  await assert.rejects(f.relay.appEnqueueV3(f.key,'editor_operation',request),/schema|upgrade|version/i);
+  await f.relay.appRegister('editor-device-001',f.key,{protocolVersion:3,appGeneration:1,editorSchemaVersion:2,permissionMode:'everything'});
+  assert.ok((await f.relay.appEnqueueV3(f.key,'editor_operation',request)).id);
+  for(const settings of [{chromaColor:'garbage'},{mask:'unimplemented-heart'},{maskWidth:0},{unknownControl:true}])
+    await assert.rejects(f.relay.appEnqueueV3(f.key,'editor_operation',edit({commandId:crypto.randomUUID(),operation:'set_composite_effects',args:{clipId:'clip-001',settings}})),/argument|colour|pattern|enum|minimum|setting|match/i);
+});
+
+test('creator styles require schema 3 and validate the renderer preset names',async()=>{
+  const f=await fixture();
+  await f.relay.appRegister('editor-device-001',f.key,{protocolVersion:3,appGeneration:1,editorSchemaVersion:2,permissionMode:'everything'});
+  const request=edit({operation:'set_creator_style',args:{clipId:'clip-001',settings:{colorPreset:'warm_film',motionPreset:'push_in',fontFamily:'monospace',textAnimation:'typewriter'}}});
+  await assert.rejects(f.relay.appEnqueueV3(f.key,'editor_operation',request),/schema version/i);
+  await f.relay.appRegister('editor-device-001',f.key,{protocolVersion:3,appGeneration:1,editorSchemaVersion:3,permissionMode:'everything'});
+  assert.ok((await f.relay.appEnqueueV3(f.key,'editor_operation',request)).id);
+  await assert.rejects(f.relay.appEnqueueV3(f.key,'editor_operation',edit({commandId:'unknown-style-001',operation:'set_creator_style',args:{clipId:'clip-001',settings:{motionPreset:'invented_motion'}}})),/value|preset/i);
+});

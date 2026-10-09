@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 3,
   "featureProtocolVersion": 4,
   "transportProtocolVersion": 3,
   "timeUnit": "milliseconds",
@@ -765,6 +765,329 @@
       },
       "additionalProperties": false,
       "description": "Slide the middle clip while trimming its adjacent neighbours."
+    },
+    "set_audio_effects": {
+      "type": "object",
+      "required": [
+        "clipId",
+        "settings"
+      ],
+      "properties": {
+        "clipId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "settings": {
+          "type": "object",
+          "properties": {
+            "lowDb": {
+              "type": "number",
+              "minimum": -24,
+              "maximum": 24
+            },
+            "midDb": {
+              "type": "number",
+              "minimum": -24,
+              "maximum": 24
+            },
+            "highDb": {
+              "type": "number",
+              "minimum": -24,
+              "maximum": 24
+            },
+            "highpassHz": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 2000
+            },
+            "lowpassHz": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 20000
+            },
+            "thresholdDb": {
+              "type": "number",
+              "minimum": -60,
+              "maximum": 0
+            },
+            "ratio": {
+              "type": "number",
+              "minimum": 1,
+              "maximum": 20
+            },
+            "attackMs": {
+              "type": "number",
+              "minimum": 1,
+              "maximum": 200
+            },
+            "releaseMs": {
+              "type": "number",
+              "minimum": 10,
+              "maximum": 2000
+            },
+            "makeupDb": {
+              "type": "number",
+              "minimum": -24,
+              "maximum": 24
+            },
+            "gateDb": {
+              "type": "number",
+              "minimum": -120,
+              "maximum": 0
+            },
+            "delayMs": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 2000
+            },
+            "delayWet": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "delayFeedback": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 0.95
+            },
+            "stereoWidth": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 2
+            },
+            "limiterDb": {
+              "type": "number",
+              "minimum": -24,
+              "maximum": 0
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false,
+      "nativeSchemaVersion": 2,
+      "description": "Apply real PCM EQ, filtering, compression, gate, delay, stereo width and limiter. Empty settings remove DSP."
+    },
+    "set_preview_policy": {
+      "type": "object",
+      "required": [
+        "mode"
+      ],
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "original",
+            "240p",
+            "360p",
+            "540p",
+            "720p"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "nativeSchemaVersion": 2,
+      "description": "Select source/program preview derivatives; final export always uses originals."
+    },
+    "set_composite_effects": {
+      "type": "object",
+      "required": [
+        "clipId",
+        "settings"
+      ],
+      "properties": {
+        "clipId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "settings": {
+          "type": "object",
+          "properties": {
+            "chromaKey": {
+              "type": "boolean"
+            },
+            "chromaColor": {
+              "type": "string",
+              "pattern": "^#[0-9A-Fa-f]{6}$",
+              "minLength": 7,
+              "maxLength": 7
+            },
+            "mask": {
+              "type": "string",
+              "enum": [
+                "none",
+                "rectangle",
+                "rounded_rect",
+                "ellipse"
+              ]
+            },
+            "maskInvert": {
+              "type": "boolean"
+            },
+            "chromaTolerance": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "chromaSoftness": {
+              "type": "number",
+              "minimum": 0.001,
+              "maximum": 0.5
+            },
+            "spillSuppression": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "maskCenterX": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "maskCenterY": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "maskWidth": {
+              "type": "number",
+              "minimum": 0.01,
+              "maximum": 1
+            },
+            "maskHeight": {
+              "type": "number",
+              "minimum": 0.01,
+              "maximum": 1
+            },
+            "maskFeather": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 0.5
+            },
+            "maskCornerRadius": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 0.5
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false,
+      "nativeSchemaVersion": 2,
+      "description": "Replace chroma key and rectangle/ellipse mask controls used by preview and export. Empty settings remove these effects."
+    },
+    "set_creator_style": {
+      "type": "object",
+      "required": [
+        "clipId",
+        "settings"
+      ],
+      "properties": {
+        "clipId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "settings": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": false,
+          "properties": {
+            "colorPreset": {
+              "type": "string",
+              "enum": [
+                "none",
+                "cinematic",
+                "teal_orange",
+                "warm_film",
+                "cool_night",
+                "noir",
+                "high_contrast",
+                "soft_portrait",
+                "matte",
+                "golden_hour",
+                "cyberpunk"
+              ]
+            },
+            "motionPreset": {
+              "type": "string",
+              "enum": [
+                "none",
+                "push_in",
+                "pull_out",
+                "pan_left",
+                "pan_right",
+                "pan_up",
+                "pan_down",
+                "drift",
+                "orbit",
+                "handheld",
+                "micro_shake",
+                "impact_shake",
+                "float",
+                "ken_burns",
+                "snap_zoom",
+                "zoom_punch",
+                "tilt",
+                "roll",
+                "hero_reveal"
+              ]
+            },
+            "fontFamily": {
+              "type": "string",
+              "enum": [
+                "sans-serif",
+                "sans-serif-medium",
+                "sans-serif-condensed",
+                "sans-serif-light",
+                "sans-serif-black",
+                "serif",
+                "serif-monospace",
+                "monospace",
+                "cursive",
+                "casual",
+                "elegant",
+                "poster",
+                "tech",
+                "editorial"
+              ]
+            },
+            "textAnimation": {
+              "type": "string",
+              "enum": [
+                "none",
+                "fade",
+                "fade_up",
+                "fade_down",
+                "slide_left",
+                "slide_right",
+                "scale_in",
+                "pop",
+                "bounce",
+                "typewriter",
+                "word_reveal",
+                "line_reveal",
+                "blur_in",
+                "tracking_in",
+                "tracking_out",
+                "glitch",
+                "neon_flicker",
+                "kinetic",
+                "mask_reveal",
+                "cinematic_title",
+                "caption_pop"
+              ]
+            }
+          }
+        }
+      },
+      "additionalProperties": false,
+      "nativeSchemaVersion": 3,
+      "description": "Apply validated frame-rendered motion, colour and title styles in one undoable editor revision."
     }
   },
   "properties": {
@@ -910,6 +1233,13 @@
     "keyframes": true,
     "verifiedManualExport": true,
     "neuralVideoInference": false,
-    "opticalFlowRetime": false
+    "opticalFlowRetime": false,
+    "audioDsp": true,
+    "verifiedPreviewProxies": true,
+    "shapeMasks": [
+      "rectangle",
+      "rounded_rect",
+      "ellipse"
+    ]
   }
 }

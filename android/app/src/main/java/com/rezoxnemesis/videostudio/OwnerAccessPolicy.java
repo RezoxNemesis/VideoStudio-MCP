@@ -27,6 +27,13 @@ public final class OwnerAccessPolicy {
     }
     public boolean projectAllowed(String id){return !restricted()||(!projectId().isEmpty()&&projectId().equals(id));}
     public boolean assetAllowed(String projectId,String assetId){return projectAllowed(projectId)&&(!assetLimited()||assets().contains(assetId));}
+    public boolean allowsJob(JSONObject job){
+        if(job==null||!projectAllowed(job.optString("projectId","")))return false;
+        if(!assetLimited())return true;
+        JSONArray inputs=job.optJSONArray("inputAssetIds");if(inputs==null||inputs.length()==0)return false;
+        for(int i=0;i<inputs.length();i++)if(!assetAllowed(job.optString("projectId"),inputs.optString(i,"")))return false;
+        return true;
+    }
     public boolean allows(String action,JSONObject args){
         String lower=action==null?"":action.toLowerCase(java.util.Locale.US);
         if(lower.contains("gallery")||lower.contains("media_library")||lower.contains("photo_library"))return false;
@@ -37,7 +44,7 @@ public final class OwnerAccessPolicy {
         if("project".equals(mode()))return !Arrays.asList("create_project","delete_project").contains(action);
         ProjectStore.Project project=store.get(target);if(project==null)return false;
         if("project_query".equals(action))return !"snapshots".equals(args.optString("query","graph"));
-        if("analyse_media".equals(action))return assetAllowed(target,args.optString("assetId"));
+        if(Arrays.asList("analyse_media","vault_create","vault_inspect","create_proxy").contains(action))return assetAllowed(target,args.optString("assetId"));
         if("editor_operation".equals(action))return allowsEdit(project,args.optString("operation"),args.optJSONObject("args"));
         if("editor_batch".equals(action)){
             JSONArray operations=args.optJSONArray("operations");if(operations==null||operations.length()==0)return false;
@@ -51,7 +58,7 @@ public final class OwnerAccessPolicy {
     private boolean allowsEdit(ProjectStore.Project p,String operation,JSONObject args){
         if(args==null)return false;
         if(Arrays.asList("rename_asset","remove_asset","add_clip").contains(operation))return assetAllowed(p.id,args.optString("assetId"));
-        if(!Arrays.asList("set_property","set_keyframe","remove_keyframe","set_title","slip_clip","split_clip").contains(operation))return false;
+        if(!Arrays.asList("set_property","set_keyframe","remove_keyframe","set_title","slip_clip","split_clip","set_audio_effects","set_composite_effects","set_creator_style").contains(operation))return false;
         ProjectStore.Clip clip=p.clip(args.optString("clipId"));return clip!=null&&assetAllowed(p.id,clip.assetId);
     }
     public JSONObject redactProject(ProjectStore.Project project){

@@ -48,11 +48,11 @@ const appActionAllowed = (mode,action,parameters={},device={}) => {
     if(mode==="project")return !["create_project","delete_project"].includes(a);
     const assets=new Set(device.allowedAssetIds||[]),clips=new Set(device.allowedClipIds||[]);
     if(a==="project_query")return (parameters.query||"graph")!=="snapshots";
-    if(a==="analyse_media")return assets.has(parameters.assetId);
+    if(["analyse_media","vault_create","vault_inspect","create_proxy"].includes(a))return assets.has(parameters.assetId);
     const allowed=entry=>{
       const op=entry.operation,args=entry.args||{};
       if(["rename_asset","remove_asset","add_clip"].includes(op))return assets.has(args.assetId);
-      return ["set_property","set_keyframe","remove_keyframe","set_title","slip_clip","split_clip"].includes(op)&&clips.has(args.clipId);
+      return ["set_property","set_keyframe","remove_keyframe","set_title","slip_clip","split_clip","set_audio_effects","set_composite_effects","set_creator_style"].includes(op)&&clips.has(args.clipId);
     };
     if(a==="editor_operation")return allowed(parameters);
     if(a==="editor_batch")return Array.isArray(parameters.operations)&&parameters.operations.every(allowed);
@@ -864,7 +864,10 @@ export class VideoStudioState extends DurableObject {
     if(d.controlPaused) throw new Error("ChatGPT control is paused on the phone");
     if(!appActionAllowed(d.permissionMode,action,parameters,d)) throw new Error("Action blocked by device permission mode or Gallery privacy boundary: "+d.permissionMode);
     const editor=validateEditorRequest(action,parameters);
-    if(editor&&d.editorSchemaVersion<1)throw new Error("Installed app does not support the shared editor schema; install the compatible APK");
+    let requiredEditorSchema=1;
+    if(action==="editor_operation")requiredEditorSchema=EDITOR_SCHEMA.operations[parameters.operation]?.nativeSchemaVersion||1;
+    if(action==="editor_batch")requiredEditorSchema=Math.max(1,...parameters.operations.map(op=>EDITOR_SCHEMA.operations[op.operation]?.nativeSchemaVersion||1));
+    if(editor&&d.editorSchemaVersion<requiredEditorSchema)throw new Error("Installed app does not support this editor schema version; install the compatible APK");
     const queueKey="app-v3-cl:"+d.deviceId, existing=(await this.ctx.storage.get(queueKey))||[];
     const receiptKey=editor&&parameters.commandId?"app-v3-editor-receipt:"+d.deviceId+":"+parameters.commandId:"";
     const fingerprint=receiptKey?stableEditorJson({action,parameters}):"";
@@ -1638,6 +1641,12 @@ function serverForApp(env,ownerKey,protocolVersion=1){
     s.registerTool("app_editor_history",{description:"Undo, redo, save a named snapshot, or restore a snapshot using revision checks and durable command receipts. Restoring retains media imported after the snapshot.",inputSchema:{...revisionFields,operation:z.enum(["undo","redo","snapshot","restore"]),snapshotId:z.string().min(1).max(120).optional(),name:z.string().min(1).max(240).optional()}},async args=>queue("editor_history",args));
   }
 
+  if(isV3){
+    s.registerTool("app_storage_profiles",{description:"Read the owner's connected storage slots, real quota availability, health and roles. New connections require the owner's Android system picker.",inputSchema:{}},async()=>queue("storage_profiles",{}));
+    s.registerTool("app_vault_create",{description:"Create a checksummed Vault copy of already imported media in 256 MB chunks. Optional AES-GCM encryption uses the Android Keystore; the original remains untouched. Requires the Vault-enabled APK.",inputSchema:{projectId:z.string().min(1).max(120),assetId:z.string().min(1).max(120),encrypted:z.boolean().optional()}},async args=>queue("vault_create",args));
+    s.registerTool("app_vault_inspect",{description:"Read a project's Vault manifest, ordered chunks, checksums, sizes and encryption status.",inputSchema:{projectId:z.string().min(1).max(120),assetId:z.string().min(1).max(120)}},async args=>queue("vault_inspect",args));
+    s.registerTool("app_create_proxy",{description:"Create a decoded and checksummed 240p/360p/540p/720p preview derivative of an already imported video. Audio is retained, original media stays intact, final export uses originals. Requires the verified-proxy-enabled APK.",inputSchema:{projectId:z.string().min(1).max(120),assetId:z.string().min(1).max(120),tier:z.enum(["240p","360p","540p","720p"]).optional()}},async args=>queue("create_proxy",args));
+  }
   s.registerTool("app_state",{description:"Request full current native app/project state including active asset metadata, jobs, creator capabilities and recent on-device ChatGPT activity.",inputSchema:{}},async()=>queue("get_state",{}));
   if(isV3) s.registerTool("app_generate_image",{description:"Generate an original local procedural image from a sceneGraph or supported scene prompt. Not photorealistic diffusion. Registers output in the app Media Bin.",inputSchema:{prompt:z.string().max(10000).optional(),sceneGraph:z.record(z.string(),z.any()).optional(),projectId:z.string().min(8).optional(),width:z.number().int().min(128).max(1920).optional(),height:z.number().int().min(128).max(1920).optional(),appendToTimeline:z.boolean().optional()}},async args=>queue("generate_image",args));
   if(isV3) s.registerTool("app_self_test",{description:"Run VideoStudio v3's on-device native self-test before autonomous work. Verifies protocol v3, app-private storage, local project state, job/render/analysis engines, direct attachment ingest and the no-Gallery boundary.",inputSchema:{}},async()=>queue("self_test",{}));

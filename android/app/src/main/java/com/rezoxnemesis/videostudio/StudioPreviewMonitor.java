@@ -31,6 +31,7 @@ public final class StudioPreviewMonitor {
     private final FrameLayout sourceHost;
     private final ImageView image;
     private final TextView status;
+    private final TextView qualityBadge;
     private final PlayerView programView;
     private final CompositionPlayer program;
     private final Handler main = new Handler(Looper.getMainLooper());
@@ -38,6 +39,9 @@ public final class StudioPreviewMonitor {
     private volatile long generation;
     private String boundSource = "";
     private String boundClip = "";
+    private String boundOriginal="";
+    private float boundSourceSpeed=1;
+    private boolean boundSourcePlaying;
     private String programProject = "";
     private long programRevision = -1;
     private boolean programMode;
@@ -45,6 +49,8 @@ public final class StudioPreviewMonitor {
     private String composingProject="";
     private long composingRevision=-1,pendingSeek,sourceRevision;
     private boolean pendingPlay;
+    private ProjectStore.Project boundProgramSnapshot;
+    private boolean programHasProxy,programOriginalFallback;
     private Bitmap bitmap;
 
     public StudioPreviewMonitor(Context context, LiveEditPlayer sourcePlayer) {
@@ -56,11 +62,26 @@ public final class StudioPreviewMonitor {
         image=new ImageView(context);image.setScaleType(ImageView.ScaleType.FIT_CENTER);root.addView(image,fill());image.setVisibility(View.GONE);
         status=new TextView(context);status.setTextColor(Color.rgb(190,202,220));status.setGravity(Gravity.CENTER);
         status.setPadding(24,24,24,24);status.setText("Import media to begin editing");root.addView(status,fill());
+        qualityBadge=new TextView(context);qualityBadge.setTextColor(Color.WHITE);qualityBadge.setTextSize(11);qualityBadge.setBackgroundColor(0xb005070c);qualityBadge.setPadding(10,4,10,4);
+        FrameLayout.LayoutParams badgeLayout=new FrameLayout.LayoutParams(-2,-2,Gravity.BOTTOM|Gravity.LEFT);root.addView(qualityBadge,badgeLayout);qualityBadge.setVisibility(View.GONE);
         program.addListener(new Player.Listener(){
-            @Override public void onPlayerError(PlaybackException error){showError("Program preview: "+error.getMessage());}
+            @Override public void onPlayerError(PlaybackException error){
+                if(released||!programMode)return;
+                if(programMode&&programHasProxy&&!programOriginalFallback&&boundProgramSnapshot!=null){
+                    long seek=Math.max(0,program.getCurrentPosition());boolean play=program.getPlayWhenReady();
+                    programOriginalFallback=true;programHasProxy=false;programRevision=-1;composingRevision=-1;
+                    showProgram(boundProgramSnapshot,seek,play);
+                }else showError("Program preview: "+error.getMessage());
+            }
             @Override public void onRenderedFirstFrame(){if(programMode)status.setVisibility(View.GONE);}
         });
-        sourcePlayer.setErrorListener(this::showError);
+        sourcePlayer.setErrorListener(error->{
+            if(!programMode&&!boundOriginal.isEmpty()&&!boundOriginal.equals(boundSource)){
+                boundSource=boundOriginal;qualityBadge.setText("Source · Original");
+                long seek=Math.max(0,sourcePlayer.currentPositionMs());
+                sourcePlayer.play(Uri.parse(boundOriginal),seek,boundSourceSpeed,boundSourcePlaying);
+            }else showError(error);
+        });
     }
     private static FrameLayout.LayoutParams fill(){return new FrameLayout.LayoutParams(-1,-1);}
     public void attach(ViewGroup host){
@@ -80,6 +101,9 @@ public final class StudioPreviewMonitor {
         if(asset==null){showError("This clip's source media is missing. Relink it in Media.");return;}
         String kind=sourceKind(asset), clipId=clip==null ? "" : clip.id;
         String uri=ProxyManager.previewUri(p,asset);
+        boundOriginal=asset.uri;boundSourceSpeed=clip==null?1:clip.speed;boundSourcePlaying=play;
+        String quality="Original";for(ProjectStore.Asset candidate:p.assets)if(uri.equals(candidate.uri)&&"preview_proxy".equals(candidate.role))quality=candidate.generationMetadata.optString("proxyTier","Proxy")+" proxy";
+        qualityBadge.setText("Source · "+quality);qualityBadge.setVisibility(View.VISIBLE);
         if("image".equals(kind)){
             sourcePlayer.pause();image.setVisibility(View.VISIBLE);sourceHost.setVisibility(View.GONE);
             if(uri.equals(boundSource) && clipId.equals(boundClip) && bitmap!=null){status.setVisibility(View.GONE);return;}
@@ -107,7 +131,11 @@ public final class StudioPreviewMonitor {
         }else showError("This asset needs a compatible preview decoder: "+asset.mime);
     }
     public void showProgram(ProjectStore.Project p,long timeMs,boolean play){
+        qualityBadge.setText("Program · 540p preview");qualityBadge.setVisibility(View.VISIBLE);
         if(released)return;
+        if(boundProgramSnapshot==null||!p.id.equals(boundProgramSnapshot.id)||p.revision!=boundProgramSnapshot.revision){
+            boundProgramSnapshot=ProjectStore.Project.fromJson(p.toJson());programOriginalFallback=false;
+        }
         sourcePlayer.pause();image.setVisibility(View.GONE);sourceHost.setVisibility(View.GONE);
         programView.setVisibility(View.VISIBLE);programMode=true;
         pendingSeek=Math.max(0,timeMs);pendingPlay=play;
@@ -115,14 +143,18 @@ public final class StudioPreviewMonitor {
         if(p.id.equals(composingProject)&&p.revision==composingRevision)return;
         long request=++generation;composingProject=p.id;composingRevision=p.revision;
         ProjectStore.Project snapshot=ProjectStore.Project.fromJson(p.toJson());
+        boolean useProxies=!programOriginalFallback;
         program.pause();status.setText("Preparing program preview · r"+p.revision);status.setVisibility(View.VISIBLE);
         decode.execute(()->{
             if(released||generation!=request)return;
             try{
-                androidx.media3.transformer.Composition composition=new TimelineCompositionFactory(context).build(snapshot,snapshot.settings.optString("aspect","16:9"),"540p",true);
+                boolean selectedProxy=false;
+                if(useProxies)for(ProjectStore.Clip clip:snapshot.clips){ProjectStore.Asset asset=snapshot.asset(clip.assetId);if(asset!=null&&!asset.uri.equals(ProxyManager.previewUri(snapshot,asset))){selectedProxy=true;break;}}
+                final boolean compositionHasProxy=selectedProxy;
+                androidx.media3.transformer.Composition composition=new TimelineCompositionFactory(context).build(snapshot,snapshot.settings.optString("aspect","16:9"),"540p",useProxies);
                 main.post(()->{
                     if(released||generation!=request||!programMode)return;
-                    try{program.setComposition(composition);programProject=snapshot.id;programRevision=snapshot.revision;composingRevision=-1;
+                    try{programHasProxy=compositionHasProxy;program.setComposition(composition);programProject=snapshot.id;programRevision=snapshot.revision;composingRevision=-1;
                         program.prepare();program.seekTo(pendingSeek);program.setPlayWhenReady(pendingPlay);
                     }catch(Exception error){composingRevision=-1;showError("Program preview could not start: "+error.getMessage());}
                 });
@@ -133,10 +165,10 @@ public final class StudioPreviewMonitor {
     public boolean isProgram(){return programMode;}
     public boolean isPlaying(){return programMode?program.isPlaying():sourcePlayer.isPlaying();}
     public long position(){return programMode?program.getCurrentPosition():sourcePlayer.currentPositionMs();}
-    public void pause(){pendingPlay=false;program.pause();sourcePlayer.pause();}
+    public void pause(){pendingPlay=false;boundSourcePlaying=false;program.pause();sourcePlayer.pause();}
     public boolean isPreparingToPlay(){return programMode&&composingRevision>=0&&pendingPlay;}
-    public void setPlaying(boolean playing){if(programMode)program.setPlayWhenReady(playing);else sourcePlayer.setPlaying(playing);}
-    public void seek(long timeMs){if(programMode)program.seekTo(Math.max(0,timeMs));else sourcePlayer.seekTo(timeMs);}
+    public void setPlaying(boolean playing){pendingPlay=playing;if(programMode)program.setPlayWhenReady(playing);else{boundSourcePlaying=playing;sourcePlayer.setPlaying(playing);}}
+    public void seek(long timeMs){pendingSeek=Math.max(0,timeMs);if(programMode)program.seekTo(pendingSeek);else sourcePlayer.seekTo(pendingSeek);}
     public void showError(String detail){status.setText(detail);status.setVisibility(View.VISIBLE);}
     public void release(){released=true;generation++;decode.shutdownNow();programView.setPlayer(null);program.release();image.setImageDrawable(null);if(bitmap!=null)bitmap.recycle();}
 

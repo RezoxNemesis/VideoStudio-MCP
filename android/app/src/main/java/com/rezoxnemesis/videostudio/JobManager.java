@@ -51,6 +51,8 @@ public final class JobManager {
         public volatile JSONObject result;
         public volatile long journalRevision=1;
         public volatile String projectId="";
+        private volatile java.util.Set<String> inputAssetIds=java.util.Collections.emptySet();
+        private volatile Runnable authorizationGuard=()->{};
         volatile Future<?> future;
         private JobManager owner;
 
@@ -74,7 +76,7 @@ public final class JobManager {
 
         public void checkpoint(String stage, int progress, String detail) {
             synchronized(this){
-            if(isTerminal(state))return;
+            checkActive();
             this.stage = stage == null || stage.trim().isEmpty() ? this.stage : stage.trim();
             this.progress = Math.max(0, Math.min(100, progress));
             this.detail = detail == null ? "" : detail;
@@ -86,6 +88,21 @@ public final class JobManager {
         }
 
         public void bindProject(String id){ synchronized(this){projectId=id==null?"":id;journalRevision++;}if(owner!=null)owner.persist(); }
+
+        public void bindInputs(String id,java.util.Collection<String> assets){
+            synchronized(this){projectId=id==null?"":id;java.util.Set<String> copy=new java.util.TreeSet<>();
+                if(assets!=null)for(String asset:assets)if(asset!=null&&!asset.isEmpty())copy.add(asset);
+                inputAssetIds=java.util.Collections.unmodifiableSet(copy);journalRevision++;}
+            if(owner!=null)owner.persist();
+        }
+        public void setAuthorizationGuard(Runnable guard){authorizationGuard=guard==null?()->{}:guard;}
+        public synchronized void checkActive(){
+            if(Thread.currentThread().isInterrupted()||isTerminal(state))throw new java.util.concurrent.CancellationException("Job is no longer active");
+            authorizationGuard.run();
+        }
+        /** Cancellation and publication share this lock: the winning operation determines the outcome. */
+        public synchronized void commit(Work publication)throws Exception{checkActive();publication.run(this);}
+        public void completeDurably(){if(owner==null)throw new IllegalStateException("Job has no durable journal");owner.completeDurably(this,null);}
 
         public void setResult(JSONObject value) {
             synchronized(this){
@@ -119,6 +136,7 @@ public final class JobManager {
                 o.put("updatedAt", updatedAt);
                 o.put("journalRevision",journalRevision);
                 o.put("projectId",projectId);
+                o.put("inputAssetIds",new JSONArray(inputAssetIds));
                 if (result != null) o.put("result", result);
             } catch (Exception ignored) {}
             return o;
@@ -178,6 +196,8 @@ public final class JobManager {
                     job.progress = 100;
                     setState(job, STATE_COMPLETED, job.detail.isEmpty() ? "Completed" : job.detail);
                 }
+            } catch (java.util.concurrent.CancellationException cancelled) {
+                setState(job, STATE_CANCELLED, "Cancelled");
             } catch (InterruptedException interrupted) {
                 setState(job, STATE_CANCELLED, "Cancelled");
                 Thread.currentThread().interrupt();
@@ -221,6 +241,35 @@ public final class JobManager {
     public boolean isManual(String id) { Job job=PROCESS_RUNNING.get(id);if(job==null)job=jobs.get(id);return job!=null && job.kind==Kind.MANUAL_RENDER; }
 
     public boolean isOwner(String id) { return get(id).optJSONObject("job")!=null && "owner".equals(get(id).optJSONObject("job").optString("origin")); }
+
+    /** Used only after a recovered output has been independently verified. Never revives cancellation. */
+    public boolean completeRecovered(String id,JSONObject verifiedResult){
+        if(verifiedResult==null||!verifiedResult.optBoolean("ok"))throw new IllegalArgumentException("Verified recovered result is required");
+        Job job=PROCESS_RUNNING.get(id);if(job!=null&&job.owner!=this)return job.owner.completeRecovered(id,verifiedResult);
+        if(job==null)job=jobs.get(id);if(job==null)return false;
+        completeDurably(job,verifiedResult);return true;
+    }
+    public boolean commitRecovered(String id,Work publication)throws Exception{
+        Job job=PROCESS_RUNNING.get(id);if(job!=null&&job.owner!=this)return job.owner.commitRecovered(id,publication);
+        if(job==null)job=jobs.get(id);if(job==null)return false;job.commit(publication);return true;
+    }
+    private void completeDurably(Job job,JSONObject recovered){
+        // Snapshot other jobs BEFORE taking this job's monitor; persistence must not acquire other monitors.
+        java.util.ArrayList<JSONObject> snapshots=new java.util.ArrayList<>();
+        for(Job other:jobs.values())if(other!=job)snapshots.add(other.json());
+        synchronized(job){
+            if(STATE_COMPLETED.equals(job.state)){snapshots.add(job.json());persistSnapshots(snapshots);return;}
+            job.checkActive();long time=System.currentTimeMillis(),revision=job.journalRevision+1;
+            JSONObject result=recovered==null?job.result:recovered;
+            JSONObject completed=job.json();
+            try{completed.put("state",STATE_COMPLETED).put("progress",100).put("updatedAt",time).put("journalRevision",revision);
+                if(result!=null)completed.put("result",new JSONObject(result.toString()));}
+            catch(org.json.JSONException invalid){throw new IllegalStateException(invalid);}
+            snapshots.add(completed);persistSnapshots(snapshots);
+            // Expose terminal completion only after the synchronous journal commit succeeds.
+            job.state=STATE_COMPLETED;job.progress=100;job.updatedAt=time;job.journalRevision=revision;job.result=result;
+        }
+    }
 
     private Map<String,JSONObject> journalView(){
         Map<String,JSONObject> rows=new LinkedHashMap<>();
@@ -400,6 +449,9 @@ public final class JobManager {
     private void persist() {
         java.util.ArrayList<JSONObject> updates=new java.util.ArrayList<>();
         for(Job job:jobs.values())updates.add(job.json());
+        persistSnapshots(updates);
+    }
+    private void persistSnapshots(java.util.List<JSONObject> updates){
         synchronized(JOURNAL_LOCK){
             try{
                 Map<String,JSONObject> merged=new LinkedHashMap<>();JSONArray previous=new JSONArray(prefs.getString(KEY_JOBS,"[]"));
@@ -436,6 +488,9 @@ public final class JobManager {
                 job.journalRevision=o.optLong("journalRevision",1);
                 job.stage = o.optString("stage", "recovered");
                 job.projectId=o.optString("projectId","");
+                JSONArray inputs=o.optJSONArray("inputAssetIds");java.util.Set<String> ids=new java.util.TreeSet<>();
+                if(inputs!=null)for(int j=0;j<inputs.length();j++){String id=inputs.optString(j,"");if(!id.isEmpty())ids.add(id);}
+                job.inputAssetIds=java.util.Collections.unmodifiableSet(ids);
                 job.recoverable = o.optBoolean("recoverable", true);
                 job.retryCount = o.optInt("retryCount", 0);
                 job.lastCheckpointAt = o.optLong("lastCheckpointAt", updated);

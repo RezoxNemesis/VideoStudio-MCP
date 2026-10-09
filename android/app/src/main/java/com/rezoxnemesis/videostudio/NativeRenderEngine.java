@@ -155,11 +155,11 @@ public final class NativeRenderEngine {
         boolean found = false;
         for (ProjectStore.Clip clip : project.clips) {
             ProjectStore.Asset asset = project.asset(clip.assetId);
-            if (asset == null || asset.mime == null || !asset.mime.startsWith("image/")) return false;
+            if (asset == null || asset.mime == null || !asset.mime.startsWith("image/")) continue;
             JSONObject fx = clip.effects == null ? new JSONObject() : clip.effects;
-            if (!fx.optBoolean("animatedScene", false)) return false;
-            if (fx.optString("foregroundUri", "").isEmpty() || fx.optString("backgroundUri", "").isEmpty()) return false;
-            if (fx.optJSONObject("animationSpec") == null) return false;
+            if (!fx.optBoolean("animatedScene", false)) continue;
+            if (fx.optString("foregroundUri", "").isEmpty() || fx.optString("backgroundUri", "").isEmpty()) continue;
+            if (fx.optJSONObject("animationSpec") == null) continue;
             found = true;
         }
         return found;

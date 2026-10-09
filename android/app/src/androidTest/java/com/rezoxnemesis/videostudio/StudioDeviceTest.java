@@ -94,6 +94,14 @@ public class StudioDeviceTest {
         }
     }
 
+    @Test public void vaultUsesAndroidKeystoreAndRetainsOriginal() throws Exception {
+        ProjectStore store=new ProjectStore(context);ProjectStore.Project project=store.create("Vault device proof");File source=png("vault-source.png",Color.GREEN);
+        ProjectStore.Asset image=asset("vault-source",source,"image/png",0);image.sizeBytes=source.length();project.assets.add(image);store.save(project);
+        VaultManager vault=new VaultManager(context,store);JSONObject response=vault.create(project.id,image.id,true,null),manifest=response.getJSONObject("vault");assertTrue(manifest.getBoolean("encrypted"));assertTrue(source.isFile());
+        byte[] expected=java.nio.file.Files.readAllBytes(source.toPath());try(InputStream in=vault.openRange(manifest.getString("manifestId"),0,expected.length)){byte[] actual=new byte[expected.length];int offset=0,n;while(offset<actual.length&&(n=in.read(actual,offset,actual.length-offset))!=-1)offset+=n;assertArrayEquals(expected,actual);assertEquals(-1,in.read());}
+        assertNotNull(new ProjectStore(context).get(project.id).asset(image.id).generationMetadata.optJSONObject("vault"));write("vault-proof.json",manifest.toString(2));
+    }
+
     @Test public void mixedVideoImageGapAndAudioRenderPreservesTimeline() throws Exception {
         ProjectStore.Project source=new ProjectStore.Project();source.id="fixture";source.name="Red fixture";
         source.assets.add(asset("red",png("red.png",Color.RED),"image/png",0));source.clips.add(clip("red-clip","red","video-1",0,1000));
@@ -111,6 +119,49 @@ public class StudioDeviceTest {
         assertEquals(4000,proof.getLong("durationMs"),180);
         assertFrame(output,250000,Color.RED);assertFrame(output,1500000,Color.BLACK);assertFrame(output,3000000,Color.BLUE);
         write("mixed-render-proof.json",proof.toString(2));
+    }
+
+    @Test public void alphaKeyframesChangeExportedPixels() throws Exception {
+        ProjectStore store=new ProjectStore(context);ProjectStore.Project project=store.create("Alpha pixel proof");
+        File image=png("alpha-source.png",Color.RED);project.assets.add(asset("alpha-image",image,"image/png",0));
+        project.assets.add(asset("lead-image",png("alpha-lead.png",Color.BLUE),"image/png",0));
+        project.clips.add(clip("lead-clip","lead-image",project.tracks.get(0).id,0,1000));
+        ProjectStore.Clip layer=clip("alpha-clip","alpha-image",project.tracks.get(0).id,1000,2500);
+        layer.keyframes.put(new JSONObject().put("property","opacity").put("timeMs",0).put("value",0).put("easing","hold"));
+        layer.keyframes.put(new JSONObject().put("property","opacity").put("timeMs",1200).put("value",1).put("easing","hold"));
+        project.clips.add(layer);store.save(project);File output=new File(evidence,"alpha-keyframe-export.mp4");render(project,output);
+        assertFrame(output,200000,Color.BLUE);assertFrame(output,1200000,Color.BLACK);assertFrame(output,2900000,Color.RED);
+        write("alpha-render-proof.json",PlayableMediaVerifier.verify(context,Uri.fromFile(output),true).toString(2));
+    }
+
+    @Test public void chromaKeyAndEllipseMaskChangeActualExportPixels() throws Exception {
+        ProjectStore store=new ProjectStore(context);ProjectStore.Project project=store.create("Composite pixel proof");
+        File keyed=new File(evidence,"key-source.png");Bitmap image=Bitmap.createBitmap(640,360,Bitmap.Config.ARGB_8888);image.eraseColor(Color.GREEN);
+        android.graphics.Paint paint=new android.graphics.Paint();paint.setColor(Color.RED);new android.graphics.Canvas(image).drawRect(220,120,420,240,paint);
+        try(OutputStream out=new FileOutputStream(keyed)){assertTrue(image.compress(Bitmap.CompressFormat.PNG,100,out));}finally{image.recycle();}
+        project.assets.add(asset("key",keyed,"image/png",0));project.assets.add(asset("mask",png("mask-source.png",Color.RED),"image/png",0));
+        String track=project.tracks.get(0).id;ProjectStore.Clip key=clip("key-clip","key",track,0,2000);key.effects.put("chromaKey",true).put("chromaColor","#00FF00");
+        ProjectStore.Clip mask=clip("mask-clip","mask",track,2000,2000);mask.effects.put("mask","ellipse").put("maskWidth",.5).put("maskHeight",.5).put("maskFeather",0);
+        project.clips.add(key);project.clips.add(mask);store.save(project);File output=new File(evidence,"key-mask-export.mp4");render(project,output);
+        assertFrame(output,1000000,Color.RED);assertFramePixel(output,1000000,.1,.1,Color.BLACK);
+        assertFrame(output,3000000,Color.RED);assertFramePixel(output,3000000,.1,.1,Color.BLACK);
+        write("key-mask-proof.json",PlayableMediaVerifier.verify(context,Uri.fromFile(output),true).toString(2));
+    }
+
+    @Test public void smallVideoProxyRetainsAudioAndOriginalExport() throws Exception {
+        ProjectStore store=new ProjectStore(context);ProjectStore.Project fixture=store.create("Proxy source fixture");String visual=fixture.tracks.get(0).id;
+        fixture.assets.add(asset("red",png("proxy-red.png",Color.RED),"image/png",0));fixture.assets.add(asset("tone",wav("proxy-tone.wav",1),"audio/wav",1000));fixture.clips.add(clip("red-clip","red",visual,0,1000));
+        ProjectStore.Track track=new ProjectStore.Track();track.id="proxy-fixture-audio";track.type="audio_music";track.order=1;fixture.tracks.add(track);fixture.clips.add(clip("tone-clip","tone",track.id,0,1000));store.save(fixture);
+        File sourceFile=new File(evidence,"proxy-original.mp4");render(fixture,sourceFile);String originalHash=PlayableMediaVerifier.verify(context,Uri.fromFile(sourceFile),true).getString("sha256");
+        ProjectStore.Project project=store.create("Proxy owner proof");ProjectStore.Asset source=asset("proxy-owned-video",sourceFile,"video/mp4",1000);source.sizeBytes=sourceFile.length();project.assets.add(source);project.clips.add(clip("proxy-source-clip",source.id,project.tracks.get(0).id,0,1000));store.save(project);
+        JobManager jobs=new JobManager(context);ProxyManager proxies=new ProxyManager(context,store,jobs);CountDownLatch complete=new CountDownLatch(1);AtomicReference<Throwable> failure=new AtomicReference<>();AtomicReference<JSONObject> result=new AtomicReference<>();
+        jobs.submit("Device proxy proof",JobManager.Kind.HEAVY,JobManager.Origin.OWNER,state->{try{result.set(proxies.generate(project,source,"240p",state));}catch(Throwable error){failure.set(error);}finally{complete.countDown();}});
+        assertTrue("Proxy timed out",complete.await(120,TimeUnit.SECONDS));assertNull("Proxy failure: "+failure.get(),failure.get());assertNotNull(result.get());
+        JSONObject proof=PlayableMediaVerifier.verify(context,Uri.parse(result.get().getString("uri")),true);assertTrue(proof.getBoolean("hasAudio"));
+        MediaMetadataRetriever metadata=new MediaMetadataRetriever();try{metadata.setDataSource(result.get().getString("uri").substring("file://".length()));assertEquals("240",metadata.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT));}finally{metadata.release();}
+        ProjectStore.Project latest=store.get(project.id);assertNotEquals(source.uri,ProxyManager.previewUri(latest,source,"240p"));assertEquals(source.uri,ProxyManager.previewUri(latest,source,"original"));
+        File finalOutput=new File(evidence,"proxy-original-export.mp4");render(latest,finalOutput);assertFrame(finalOutput,500000,Color.RED);
+        assertEquals(originalHash,PlayableMediaVerifier.verify(context,Uri.fromFile(sourceFile),true).getString("sha256"));write("proxy-proof.json",result.get().toString(2));
     }
 
     private void render(ProjectStore.Project p,File output) throws Exception {
@@ -151,6 +202,9 @@ public class StudioDeviceTest {
     private static void assertFrame(File file,long time,int expected)throws Exception{
         MediaMetadataRetriever r=new MediaMetadataRetriever();try{r.setDataSource(file.getAbsolutePath());Bitmap frame=r.getFrameAtTime(time,MediaMetadataRetriever.OPTION_CLOSEST);
             assertNotNull("Decoded frame at "+time,frame);int pixel=frame.getPixel(frame.getWidth()/2,frame.getHeight()/2);frame.recycle();assertTrue("Frame at "+time+": "+Integer.toHexString(pixel),near(pixel,expected));}finally{r.release();}
+    }
+    private static void assertFramePixel(File file,long time,double x,double y,int expected)throws Exception{
+        MediaMetadataRetriever decoder=new MediaMetadataRetriever();try{decoder.setDataSource(file.getAbsolutePath());Bitmap frame=decoder.getFrameAtTime(time,MediaMetadataRetriever.OPTION_CLOSEST);assertNotNull(frame);int pixel=frame.getPixel((int)(frame.getWidth()*x),(int)(frame.getHeight()*y));frame.recycle();assertTrue("Export pixel "+Integer.toHexString(pixel)+" at "+x+","+y,near(pixel,expected));}finally{decoder.release();}
     }
     private static boolean near(int a,int b){return Math.abs(Color.red(a)-Color.red(b))<35&&Math.abs(Color.green(a)-Color.green(b))<35&&Math.abs(Color.blue(a)-Color.blue(b))<35;}
     private void copy(Uri source,File out)throws Exception{try(InputStream in=context.getContentResolver().openInputStream(source);OutputStream stream=new FileOutputStream(out)){assertNotNull(in);byte[] b=new byte[256*1024];int n;while((n=in.read(b))!=-1)stream.write(b,0,n);}}

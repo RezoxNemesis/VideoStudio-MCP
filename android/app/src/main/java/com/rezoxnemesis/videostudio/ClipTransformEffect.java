@@ -9,10 +9,12 @@ import androidx.media3.effect.MatrixTransformation;
 @UnstableApi
 public final class ClipTransformEffect implements MatrixTransformation {
     private final ProjectStore.Clip clip;
-    public ClipTransformEffect(ProjectStore.Clip clip) { this.clip = ProjectStore.Clip.fromJson(clip.toJson()); }
+    private final long sequenceStartUs;
+    public ClipTransformEffect(ProjectStore.Clip clip){this(clip,Math.multiplyExact(Math.max(0,clip.startMs),1000L));}
+    public ClipTransformEffect(ProjectStore.Clip clip,long sequenceStartUs){this.clip=ProjectStore.Clip.fromJson(clip.toJson());this.sequenceStartUs=sequenceStartUs;}
     @Override public Size configure(int width, int height) { return new Size(width, height); }
     @Override public Matrix getMatrix(long presentationTimeUs) {
-        long local = Math.max(0, presentationTimeUs / 1000);
+        long local=TimelineMath.effectLocalMs(presentationTimeUs,sequenceStartUs);
         float scale = (float)EditorEngine.valueAt(clip,"scale",local,clip.effects.optDouble("zoom",1));
         float sx = scale*(float)EditorEngine.valueAt(clip,"scaleX",local,1);
         float sy = scale*(float)EditorEngine.valueAt(clip,"scaleY",local,1);

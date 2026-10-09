@@ -18,6 +18,13 @@ public final class TimelineCoreTest {
     }
     public static void main(String[] args) {
         eq(3000, TimelineMath.duration(1000, 7000, 2));
+        eq(0,TimelineMath.effectLocalMs(5000000,5000000));
+        eq(500,TimelineMath.effectLocalMs(5500000,5000000));
+        eq(0,TimelineMath.effectLocalMs(333333,333333));
+        eq(1234,TimelineMath.effectLocalMs(1567333,333333));
+        eq(0,TimelineMath.effectLocalMs(100,5000000));
+        eq(2500,TimelineMath.audioLocalMs(2000000,24000,48000));
+        eq(1000,TimelineMath.audioLocalMs(0,48000,48000));
         eq(8000, TimelineMath.duration(0, 4000, .5));
         eq(0, TimelineMath.duration(10, 10, 1));
         invalid(() -> TimelineMath.duration(-1, 10, 1));

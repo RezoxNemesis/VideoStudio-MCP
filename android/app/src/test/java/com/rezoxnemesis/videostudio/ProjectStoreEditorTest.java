@@ -88,4 +88,31 @@ public class ProjectStoreEditorTest {
         assertEquals("unavailable",probed.importState);assertFalse(probed.importError.isEmpty());
         assertTrue(store.get(p.id).clips.isEmpty());
     }
+
+    private JSONObject nestedProjectJson() throws Exception {
+        return new JSONObject("{\"id\":\"snapshot\",\"settings\":{\"render\":{\"quality\":\"720p\"}},\"markers\":[{\"label\":\"Original\"}],\"assets\":[{\"id\":\"source\",\"generationMetadata\":{\"proof\":{\"sha256\":\"original\"}}}],\"clips\":[{\"id\":\"clip\",\"assetId\":\"source\",\"outMs\":1000,\"effects\":{\"audioDsp\":{\"lowDb\":0}},\"keyframes\":[{\"property\":\"scale\",\"timeMs\":0,\"value\":1}]}]}");
+    }
+
+    private void changeNestedFields(ProjectStore.Project p) throws Exception {
+        p.settings.getJSONObject("render").put("quality", "360p");
+        p.markers.getJSONObject(0).put("label", "Changed");
+        p.assets.get(0).generationMetadata.getJSONObject("proof").put("sha256", "changed");
+        p.clips.get(0).effects.getJSONObject("audioDsp").put("lowDb", 6);
+        p.clips.get(0).keyframes.getJSONObject(0).put("value", 2);
+    }
+
+    @Test public void deserializationDoesNotShareNestedJsonWithItsInput() throws Exception {
+        JSONObject input = nestedProjectJson();
+        String original = input.toString();
+        changeNestedFields(ProjectStore.Project.fromJson(input));
+        assertEquals("Editing a project must not mutate a snapshot used to load it", original, input.toString());
+    }
+
+    @Test public void serializedSnapshotDoesNotFollowLaterLiveEdits() throws Exception {
+        ProjectStore.Project p = ProjectStore.Project.fromJson(nestedProjectJson());
+        JSONObject snapshot = p.toJson();
+        String original = snapshot.toString();
+        changeNestedFields(p);
+        assertEquals("Export and history snapshots must retain their captured values", original, snapshot.toString());
+    }
 }

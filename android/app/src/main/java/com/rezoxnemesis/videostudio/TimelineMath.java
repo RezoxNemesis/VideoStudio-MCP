@@ -3,6 +3,14 @@ package com.rezoxnemesis.videostudio;
 /** Source/time mapping shared by editing, keyframes, preview and final render. */
 public final class TimelineMath {
     private TimelineMath() {}
+    public static long effectLocalMs(long timestampUs,long sequenceStartUs){
+        if(sequenceStartUs<0)throw new IllegalArgumentException("Negative sequence start");
+        return timestampUs<=sequenceStartUs?0:(timestampUs-sequenceStartUs)/1000;
+    }
+    public static long audioLocalMs(long positionOffsetUs,long frames,int sampleRate){
+        if(frames<0||sampleRate<=0)throw new IllegalArgumentException("Invalid PCM clock");
+        return add(Math.max(0,positionOffsetUs)/1000,Math.round(frames*1000d/sampleRate));
+    }
 
     public static long duration(long inMs, long outMs, double speed) {
         if (inMs < 0 || outMs < inMs) throw new IllegalArgumentException("Invalid source range");

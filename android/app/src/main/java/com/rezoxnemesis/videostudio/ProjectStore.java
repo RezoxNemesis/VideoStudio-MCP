@@ -37,6 +37,20 @@ public final class ProjectStore {
     private static final String META_ACTIVE = "active_project";
     private static final String META_MIGRATED = "legacy_projects_migrated";
 
+    // JSON containers are mutable. Snapshots, export sessions and transaction
+    // history must own their nested values rather than alias a live project.
+    private static JSONObject copyJson(JSONObject value) {
+        if (value == null) return new JSONObject();
+        try { return new JSONObject(value.toString()); }
+        catch (org.json.JSONException error) { throw new IllegalArgumentException("Invalid project object", error); }
+    }
+
+    private static JSONArray copyJson(JSONArray value) {
+        if (value == null) return new JSONArray();
+        try { return new JSONArray(value.toString()); }
+        catch (org.json.JSONException error) { throw new IllegalArgumentException("Invalid project array", error); }
+    }
+
     public static final class Asset {
         public String id;
         public String uri;
@@ -68,7 +82,7 @@ public final class ProjectStore {
                 o.put("role", role);
                 o.put("importState",importState);o.put("importError",importError);
                 o.put("generated", generated);
-                o.put("generationMetadata", generationMetadata);
+                o.put("generationMetadata", copyJson(generationMetadata));
                 o.put("createdAt", createdAt);
             } catch (Exception ignored) {}
             return o;
@@ -95,7 +109,7 @@ public final class ProjectStore {
             a.importState=o.optString("importState","ready");a.importError=o.optString("importError","");
             a.generated = o.optBoolean("generated", false);
             JSONObject metadata = o.optJSONObject("generationMetadata");
-            a.generationMetadata = metadata == null ? new JSONObject() : metadata;
+            a.generationMetadata = copyJson(metadata);
             a.createdAt = o.optLong("createdAt", System.currentTimeMillis());
             return a;
         }
@@ -162,13 +176,13 @@ public final class ProjectStore {
                 o.put("startMs", startMs);
                 o.put("trackId", trackId);
                 o.put("linkGroup", linkGroup);
-                o.put("keyframes", keyframes);
+                o.put("keyframes", copyJson(keyframes));
                 o.put("pan", pan);
                 o.put("speed", speed);
                 o.put("volume", volume);
                 o.put("transition", transition);
                 o.put("title", title);
-                o.put("effects", effects == null ? new JSONObject() : effects);
+                o.put("effects", copyJson(effects));
             } catch (Exception ignored) {}
             return o;
         }
@@ -182,15 +196,13 @@ public final class ProjectStore {
             c.startMs = o.optLong("startMs", -1);
             c.trackId = o.optString("trackId", "");
             c.linkGroup = o.optString("linkGroup", "");
-            c.keyframes = o.optJSONArray("keyframes");
-            if (c.keyframes == null) c.keyframes = new JSONArray();
+            c.keyframes = copyJson(o.optJSONArray("keyframes"));
             c.pan = (float) o.optDouble("pan", 0);
             c.speed = (float) o.optDouble("speed", 1);
             c.volume = (float) o.optDouble("volume", 1);
             c.transition = o.optString("transition", "none");
             c.title = o.optString("title", "");
-            c.effects = o.optJSONObject("effects");
-            if (c.effects == null) c.effects = new JSONObject();
+            c.effects = copyJson(o.optJSONObject("effects"));
             return c;
         }
     }
@@ -233,8 +245,8 @@ public final class ProjectStore {
                 o.put("schemaVersion", 2);
                 o.put("revision", revision);
                 o.put("tracks", tt);
-                o.put("settings", settings);
-                o.put("markers", markers);
+                o.put("settings", copyJson(settings));
+                o.put("markers", copyJson(markers));
                 o.put("sourcePrompt", sourcePrompt);
                 o.put("latestExportUri", latestExportUri);
                 o.put("latestExportName", latestExportName);
@@ -251,10 +263,8 @@ public final class ProjectStore {
             p.name = o.optString("name", "Untitled Project");
             p.updatedAt = o.optLong("updatedAt", System.currentTimeMillis());
             p.revision = o.optLong("revision", 0);
-            JSONObject settings = o.optJSONObject("settings");
-            if (settings != null) p.settings = settings;
-            JSONArray markers = o.optJSONArray("markers");
-            if (markers != null) p.markers = markers;
+            p.settings = copyJson(o.optJSONObject("settings"));
+            p.markers = copyJson(o.optJSONArray("markers"));
             JSONArray tracks = o.optJSONArray("tracks");
             if (tracks != null) for (int i = 0; i < tracks.length(); i++) {
                 JSONObject item = tracks.optJSONObject(i);
@@ -615,6 +625,13 @@ public final class ProjectStore {
     private void recordReceipt(Project p,String commandId,String fingerprint){
         if(commandId==null||commandId.isEmpty())return;
         ContentValues row=new ContentValues();row.put("command_id",commandId);row.put("project_id",p.id);row.put("json",p.toJson().toString());row.put("fingerprint",fingerprint);db.insertOrThrow("project_receipts",null,row);
+    }
+
+    public void updateAssetMetadataIfSource(String projectId,String assetId,String expectedUri,JSONObject metadata,long size){
+        transact(projectId,-1,"owner","","Update verified media metadata",p->{
+            Asset asset=p.asset(assetId);if(asset==null||!expectedUri.equals(asset.uri))throw new IllegalStateException("Source changed before Vault publication");
+            java.util.Iterator<String> names=metadata.keys();while(names.hasNext()){String name=names.next();asset.generationMetadata.put(name,metadata.get(name));}if(size>=0)asset.sizeBytes=size;
+        });
     }
 
     public synchronized void delete(String id) {

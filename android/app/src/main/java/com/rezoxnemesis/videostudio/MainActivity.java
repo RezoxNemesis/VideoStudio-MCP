@@ -474,6 +474,10 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         addEditorButton(editActions,"+ Track",this::showAddTrackDialog);
         addEditorButton(editActions,"Split",this::splitClip);
         addEditorButton(editActions,"Trim",()->{if(requireSelection())trimDialog();});
+        addEditorButton(editActions,"Speed",()->{if(requireSelection()){String[] speeds={"0.25","0.5","0.75","1","1.5","2","4"};new AlertDialog.Builder(this).setTitle("Clip speed").setItems(speeds,(d,index)->{try{JSONObject args=new JSONObject().put("clipId",selectedClip.id).put("speed",Double.parseDouble(speeds[index]));applyEditorOperation("set_speed",args);}catch(Exception error){editorError(error);}}).show();}});
+        addEditorButton(editActions,"Slip",()->showTimeDeltaEdit("slip_clip","Slip source"));
+        addEditorButton(editActions,"Roll",()->showTimeDeltaEdit("roll_clip","Roll right cut"));
+        addEditorButton(editActions,"Slide",()->showTimeDeltaEdit("slide_clip","Slide between neighbours"));
         addEditorButton(editActions,"Duplicate",()->selectedEditorAction("duplicate_clip",false));
         addEditorButton(editActions,"Delete",()->selectedEditorAction("remove_clip",false));
         addEditorButton(editActions,"Ripple delete",()->selectedEditorAction("remove_clip",true));
@@ -488,8 +492,12 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         HorizontalScrollView workspaceScroll=new HorizontalScrollView(this);
         LinearLayout workspaces=new LinearLayout(this);
         addEditorButton(workspaces,"Colour",this::showInspectorDialog);
-        addEditorButton(workspaces,"Audio",this::showInspectorDialog);
+        addEditorButton(workspaces,"Key / Masks",this::showCompositeWorkspace);
+        addEditorButton(workspaces,"Audio",this::showAudioWorkspace);
         addEditorButton(workspaces,"Text",()->{if(requireSelection())textDialog();});
+        addEditorButton(workspaces,"Title animation",()->applyTool("Text Animation"));
+        addEditorButton(workspaces,"Title font",()->applyTool("Fonts"));
+        addEditorButton(workspaces,"Colour looks",()->applyTool("Colour"));
         addEditorButton(workspaces,"Motion",()->{if(requireSelection())applyTool("Motion");});
         addEditorButton(workspaces,"Blur",()->{if(requireSelection())applyTool("Blur");});
         addEditorButton(workspaces,"Animate images",this::animateImagesDialog);
@@ -551,6 +559,10 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
     private void selectedEditorAction(String operation,boolean ripple){
         if(!requireSelection())return;try{JSONObject args=new JSONObject();args.put("clipId",selectedClip.id);args.put("ripple",ripple);applyEditorOperation(operation,args);}catch(Exception error){editorError(error);}
     }
+    private void showTimeDeltaEdit(String operation,String label){
+        if(!requireSelection())return;EditText delta=new EditText(this);delta.setText("100");delta.setInputType(android.text.InputType.TYPE_CLASS_NUMBER|android.text.InputType.TYPE_NUMBER_FLAG_SIGNED);
+        new AlertDialog.Builder(this).setTitle(label+" · milliseconds").setView(delta).setPositiveButton("Apply",(d,w)->{try{JSONObject args=new JSONObject().put("clipId",selectedClip.id).put("deltaMs",Long.parseLong(delta.getText().toString()));applyEditorOperation(operation,args);}catch(Exception error){editorError(error);}}).setNegativeButton("Cancel",null).show();
+    }
     private void editorError(Exception error){
         Toast.makeText(this,error.getMessage()==null?"Could not edit project":error.getMessage(),Toast.LENGTH_LONG).show();
         if(activeProject!=null){ProjectStore.Project fresh=store.get(activeProject.id);if(fresh!=null)activeProject=fresh;}
@@ -611,6 +623,37 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
             JSONObject args=new JSONObject();args.put("clipId",selectedClip.id);args.put("values",values);applyEditorOperation("set_properties",args);
         }catch(Exception error){editorError(error);}}).setNegativeButton("Close",null).show();
     }
+    private void showCompositeWorkspace(){
+        if(!requireSelection())return;
+        ScrollView scroll=baseScroll();LinearLayout form=column();form.setPadding(dp(16),dp(10),dp(16),dp(20));scroll.addView(form);JSONObject fx=selectedClip.effects;
+        android.widget.CheckBox key=new android.widget.CheckBox(this);key.setText("Enable chroma key");key.setTextColor(C_TEXT);key.setChecked(fx.optBoolean("chromaKey"));form.addView(key);
+        form.addView(body("Key colour (#RRGGBB)"));EditText color=new EditText(this);color.setTextColor(C_TEXT);color.setText(fx.optString("chromaColor","#00FF00"));form.addView(color);
+        android.widget.Spinner mask=exportChoice(form,"Mask shape",new String[]{"none","rectangle","rounded_rect","ellipse"});String shape=fx.optString("mask","none");for(int i=0;i<4;i++)if(shape.equals(mask.getItemAtPosition(i)))mask.setSelection(i);
+        android.widget.CheckBox invert=new android.widget.CheckBox(this);invert.setText("Invert mask");invert.setTextColor(C_TEXT);invert.setChecked(fx.optBoolean("maskInvert"));form.addView(invert);
+        String[] keys={"chromaTolerance","chromaSoftness","spillSuppression","maskCenterX","maskCenterY","maskWidth","maskHeight","maskFeather","maskCornerRadius"};
+        String[] labels={"Key tolerance (0–1)","Key softness (0.001–0.5)","Spill reduction (0–1)","Mask centre X (0–1)","Mask centre Y from top (0–1)","Mask width (0.01–1)","Mask height (0.01–1)","Feather (0–0.5)","Rounded corner radius (0–0.5)"};double[] defaults={.18,.08,.35,.5,.5,.9,.9,.08,.08};java.util.Map<String,EditText> fields=new java.util.LinkedHashMap<>();
+        for(int i=0;i<keys.length;i++){form.addView(body(labels[i]));EditText input=new EditText(this);input.setTextColor(C_TEXT);input.setInputType(android.text.InputType.TYPE_CLASS_NUMBER|android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL);input.setText(Double.toString(fx.optDouble(keys[i],defaults[i])));fields.put(keys[i],input);form.addView(input);}
+        new AlertDialog.Builder(this).setTitle("Chroma key and masks").setView(scroll).setPositiveButton("Apply",(d,w)->{try{JSONObject settings=new JSONObject().put("chromaKey",key.isChecked()).put("chromaColor",color.getText().toString().trim()).put("mask",mask.getSelectedItem().toString()).put("maskInvert",invert.isChecked());for(java.util.Map.Entry<String,EditText> field:fields.entrySet())settings.put(field.getKey(),Double.parseDouble(field.getValue().getText().toString()));applyEditorOperation("set_composite_effects",new JSONObject().put("clipId",selectedClip.id).put("settings",settings));}catch(Exception error){editorError(error);}}).setNeutralButton("Remove",(d,w)->{try{applyEditorOperation("set_composite_effects",new JSONObject().put("clipId",selectedClip.id).put("settings",new JSONObject()));}catch(Exception error){editorError(error);}}).setNegativeButton("Close",null).show();
+    }
+    private void showAudioWorkspace(){
+        ScrollView scroll=baseScroll();LinearLayout form=column();form.setPadding(dp(16),dp(10),dp(16),dp(20));scroll.addView(form);
+        form.addView(title("Audio",23));form.addView(body("Gain and pan automate in the clip inspector. EQ, filters, compressor, gate, delay, width and limiter process the same PCM samples in program preview and final export. Delay stays within the clip duration."));
+        Button voice=compactButton("Create narration with installed Android voices");voice.setOnClickListener(v->showNarrationDialog());form.addView(voice);
+        if(selectedClip==null){new AlertDialog.Builder(this).setTitle("Audio workspace").setView(scroll).setPositiveButton("Close",null).show();return;}
+        JSONObject saved=selectedClip.effects.optJSONObject("audioDsp");if(saved==null)saved=new JSONObject();
+        String[] keys={"lowDb","midDb","highDb","highpassHz","lowpassHz","thresholdDb","ratio","attackMs","releaseMs","makeupDb","gateDb","delayMs","delayWet","delayFeedback","stereoWidth","limiterDb"};
+        double[] defaults={0,0,0,0,0,0,1,10,100,0,-120,0,0,0,1,0};
+        String[] labels={"Low shelf (dB)","Mid EQ (dB)","High shelf (dB)","High-pass (Hz, 0 off)","Low-pass (Hz, 0 off)","Compressor threshold (dB)","Ratio (1–20)","Attack (ms)","Release (ms)","Makeup gain (dB)","Gate threshold (dB, -120 off)","Delay (ms)","Delay wet (0–1)","Feedback (0–0.95)","Stereo width (0–2)","Limiter ceiling (dB)"};
+        java.util.Map<String,EditText> fields=new java.util.LinkedHashMap<>();for(int i=0;i<keys.length;i++){form.addView(body(labels[i]));EditText input=new EditText(this);input.setTextColor(C_TEXT);input.setInputType(android.text.InputType.TYPE_CLASS_NUMBER|android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL|android.text.InputType.TYPE_NUMBER_FLAG_SIGNED);input.setText(Double.toString(saved.optDouble(keys[i],defaults[i])));fields.put(keys[i],input);form.addView(input);}
+        new AlertDialog.Builder(this).setTitle("Clip audio processing").setView(scroll).setPositiveButton("Apply",(d,w)->{try{JSONObject settings=new JSONObject();for(java.util.Map.Entry<String,EditText> field:fields.entrySet())settings.put(field.getKey(),Double.parseDouble(field.getValue().getText().toString()));applyEditorOperation("set_audio_effects",new JSONObject().put("clipId",selectedClip.id).put("settings",settings));}catch(Exception error){editorError(error);}}).setNeutralButton("Remove DSP",(d,w)->{try{applyEditorOperation("set_audio_effects",new JSONObject().put("clipId",selectedClip.id).put("settings",new JSONObject()));}catch(Exception error){editorError(error);}}).setNegativeButton("Close",null).show();
+    }
+    private void showNarrationDialog(){
+        LinearLayout form=column();form.setPadding(dp(18),dp(8),dp(18),dp(18));EditText text=new EditText(this);text.setHint("Narration text");text.setTextColor(C_TEXT);text.setMinLines(3);form.addView(text);
+        EditText language=new EditText(this);language.setText(java.util.Locale.getDefault().toLanguageTag());language.setHint("Language tag");form.addView(language);
+        EditText voice=new EditText(this);voice.setHint("Installed voice ID (optional)");form.addView(voice);
+        new AlertDialog.Builder(this).setTitle("Create offline narration").setView(form).setPositiveButton("Generate",(d,w)->{try{JSONObject parameters=new JSONObject().put("projectId",activeProject.id).put("text",text.getText().toString()).put("language",language.getText().toString()).put("voice",voice.getText().toString()).put("offlineOnly",true).put("appendToTimeline",true);startForegroundService(new Intent(this,ControlService.class).setAction(ControlService.ACTION_LOCAL_VOICE).putExtra("parameters",parameters.toString()).putExtra("projectId",activeProject.id));Toast.makeText(this,"Narration job started",Toast.LENGTH_SHORT).show();}catch(Exception error){editorError(error);}}).setNegativeButton("Cancel",null).show();
+    }
+
     private void showMediaBinDialog(){
         ScrollView scroll=baseScroll();LinearLayout items=column();items.setPadding(dp(14),dp(8),dp(14),dp(16));scroll.addView(items);
         for(ProjectStore.Asset asset:activeProject.assets){
@@ -619,11 +662,24 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
             LinearLayout actions=new LinearLayout(this);
             addEditorButton(actions,"Preview",()->{monitor.showSource(activeProject,asset,null,0,false);});
             addEditorButton(actions,"+ Timeline",()->showAddAssetDialog(asset));
+            if(asset.mime.startsWith("video/")&&!"preview_proxy".equals(asset.role))addEditorButton(actions,"Proxy",()->showProxyDialog(asset));
             addEditorButton(actions,"Rename",()->{EditText name=new EditText(this);name.setText(asset.name);new AlertDialog.Builder(this).setTitle("Rename media").setView(name).setPositiveButton("Save",(d,w)->{try{JSONObject a=new JSONObject();a.put("assetId",asset.id);a.put("name",name.getText().toString());applyEditorOperation("rename_asset",a);}catch(Exception error){editorError(error);}}).setNegativeButton("Cancel",null).show();});
-            item.addView(actions);items.addView(item,margins(-1,-2,0,dp(12),0,0));
+            addEditorButton(actions,"Remove",()->{try{applyEditorOperation("remove_asset",new JSONObject().put("assetId",asset.id));}catch(Exception error){editorError(error);}});
+            addEditorButton(actions,"Vault copy",()->new AlertDialog.Builder(this).setTitle("Vault copy").setMessage("Create a checksummed copy in 256 MB chunks. Encryption uses this device's Keystore; keep the original for portability.").setPositiveButton("Encrypted copy",(d,w)->startForegroundService(new Intent(this,ControlService.class).setAction(ControlService.ACTION_LOCAL_VAULT).putExtra("projectId",activeProject.id).putExtra("assetId",asset.id).putExtra("encrypted",true))).setNeutralButton("Plain copy",(d,w)->startForegroundService(new Intent(this,ControlService.class).setAction(ControlService.ACTION_LOCAL_VAULT).putExtra("projectId",activeProject.id).putExtra("assetId",asset.id).putExtra("encrypted",false))).setNegativeButton("Cancel",null).show());
+            HorizontalScrollView actionsScroll=new HorizontalScrollView(this);actionsScroll.addView(actions);item.addView(actionsScroll);items.addView(item,margins(-1,-2,0,dp(12),0,0));
         }
         if(activeProject.assets.isEmpty())items.addView(body("Import video, images or audio through the system picker."));
         new AlertDialog.Builder(this).setTitle("Media Bin").setView(scroll).setPositiveButton("Close",null).setNeutralButton("Import",(d,w)->pickMedia()).show();
+    }
+    private void showProxyDialog(ProjectStore.Asset asset){
+        String[] choices={"Use original media","Use available proxies automatically","Create 240p scrub proxy","Create 360p scrub proxy","Create 540p editing proxy","Create 720p editing proxy"};
+        new AlertDialog.Builder(this).setTitle("Preview quality · "+asset.name).setItems(choices,(dialog,index)->{
+            try{
+                String mode=index==0?"original":index==1?"auto":new String[]{"240p","360p","540p","720p"}[index-2];
+                applyEditorOperation("set_preview_policy",new JSONObject().put("mode",mode));
+                if(index>=2){startForegroundService(new Intent(this,ControlService.class).setAction(ControlService.ACTION_LOCAL_PROXY).putExtra("projectId",activeProject.id).putExtra("assetId",asset.id).putExtra("tier",mode));Toast.makeText(this,"Proxy job started; preview uses the original until verification finishes",Toast.LENGTH_LONG).show();}
+            }catch(Exception error){editorError(error);}
+        }).setNegativeButton("Cancel",null).show();
     }
     private void showAddAssetDialog(ProjectStore.Asset asset){
         ArrayList<ProjectStore.Track> tracks=new ArrayList<>();
@@ -890,11 +946,13 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                 tile.setOnClickListener(v -> {
                     if (tool.contains("Prompt Video")) promptVideoDialog();
                     else if (tool.contains("Animate Stills")) animateImagesDialog();
-                    else if (tool.contains("Green")) applyTool("Green Screen");
+                    else if (tool.contains("Green")||tool.contains("Masks")){showEditor();showCompositeWorkspace();}
+                    else if (tool.contains("Audio")){showEditor();showAudioWorkspace();}
                     else if (tool.contains("Transition")) applyTool("Transitions");
                     else if (tool.contains("Motion")) applyTool("Motion");
                     else if (tool.contains("Colour")) applyTool("Colour");
                     else if (tool.contains("Fonts")) applyTool("Fonts");
+                    else if (tool.contains("Text Animation")) applyTool("Text Animation");
                     else if (tool.contains("Blur")) applyTool("Blur");
                     else Toast.makeText(this, tool + " is available to the autonomous editor", Toast.LENGTH_SHORT).show();
                 });
@@ -1335,111 +1393,47 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
     }
 
     private void applyTool(String tool) {
-        if (activeProject == null || selectedClip == null) {
-            Toast.makeText(this, "Select a clip first", Toast.LENGTH_SHORT).show();
-            return;
-        }
+        if (!requireSelection()) return;
         try {
+            JSONObject args=new JSONObject().put("clipId",selectedClip.id);
             switch (tool) {
-                case "Split":
-                    splitClip();
-                    return;
-                case "Trim":
-                    trimDialog();
-                    return;
+                case "Split": splitClip(); return;
+                case "Trim": trimDialog(); return;
                 case "Slow Motion":
-                    selectedClip.speed = selectedClip.speed <= .55f ? .75f : selectedClip.speed <= .8f ? 1f : .5f;
-                    break;
-                case "Speed Ramp":
-                    selectedClip.effects.put("speedRamp", "smooth");
-                    break;
-                case "Green Screen":
-                    selectedClip.effects.put("chromaKey", true);
-                    selectedClip.effects.put("chromaColor", "#00FF00");
-                    selectedClip.effects.put("chromaTolerance", .18);
-                    selectedClip.effects.put("spillSuppression", .35);
-                    break;
-                case "Transitions":
-                    selectedClip.transition = CreatorCatalog.next(CreatorCatalog.TRANSITIONS, selectedClip.transition);
-                    break;
-                case "Motion":
-                    selectedClip.effects.put("motionPreset", CreatorCatalog.next(CreatorCatalog.MOTIONS, selectedClip.effects.optString("motionPreset", "none")));
-                    selectedClip.effects.put("ease", "easeInOut");
-                    break;
-                case "Effects":
-                    selectedClip.effects.put("effectPreset", CreatorCatalog.next(CreatorCatalog.EFFECTS, selectedClip.effects.optString("effectPreset", "none")));
-                    break;
-                case "Colour":
-                    String look = selectedClip.effects.optString("colorPreset", "none");
-                    String[] looks = {"cinematic","teal_orange","warm_film","cool_night","noir","golden_hour","matte","high_contrast","soft_portrait"};
-                    int li = java.util.Arrays.asList(looks).indexOf(look);
-                    selectedClip.effects.put("colorPreset", looks[(li + 1 + looks.length) % looks.length]);
-                    break;
-                case "Text":
-                    textDialog();
-                    return;
-                case "Fonts":
-                    selectedClip.effects.put("fontFamily", CreatorCatalog.next(CreatorCatalog.FONTS, selectedClip.effects.optString("fontFamily", "sans-serif-medium")));
-                    break;
+                    args.put("speed",selectedClip.speed<=.55f?.75:selectedClip.speed<=.8f?1:.5);
+                    applyEditorOperation("set_speed",args);return;
                 case "Volume":
-                    selectedClip.volume = selectedClip.volume > .8f ? .6f : selectedClip.volume > .3f ? 0f : 1f;
-                    break;
-                case "Reframe":
-                    selectedClip.effects.put("reframe", "9:16_subject_safe");
-                    break;
-                case "Mask":
-                    selectedClip.effects.put("mask", "rounded_rect");
-                    selectedClip.effects.put("maskFeather", .08);
-                    break;
-                case "Overlay":
-                    selectedClip.effects.put("overlaySlot", "ready");
-                    break;
-                case "Motion Blur":
-                    selectedClip.effects.put("motionBlur", .35);
-                    break;
-                case "Freeze":
-                    selectedClip.effects.put("freezeAtMs", Math.max(selectedClip.inMs, livePlayer == null ? selectedClip.inMs : livePlayer.currentPositionMs()));
-                    break;
-                case "Duplicate": {
-                    int index = activeProject.clips.indexOf(selectedClip);
-                    ProjectStore.Clip copy = ProjectStore.Clip.fromJson(selectedClip.toJson());
-                    copy.id = UUID.randomUUID().toString();
-                    activeProject.clips.add(index + 1, copy);
-                    selectedClip = copy;
-                    break;
-                }
-                case "Reverse":
-                    selectedClip.effects.put("reverse", !selectedClip.effects.optBoolean("reverse", false));
-                    break;
+                    args.put("property","volume").put("value",selectedClip.volume>.8f?.6:selectedClip.volume>.3f?0:1);
+                    applyEditorOperation("set_property",args);return;
+                case "Duplicate": selectedEditorAction("duplicate_clip",false);return;
+                case "Green Screen": case "Mask": showCompositeWorkspace();return;
+                case "Motion": showCreatorStyleChoices("motionPreset",CreatorStyleSettings.MOTIONS,"Clip motion");return;
+                case "Effects": case "Colour": showCreatorStyleChoices("colorPreset",CreatorStyleSettings.COLOURS,"Colour look");return;
+                case "Fonts": showCreatorStyleChoices("fontFamily",CreatorCatalog.FONTS,"Title font");return;
+                case "Text Animation": showCreatorStyleChoices("textAnimation",CreatorCatalog.TEXT_ANIMATIONS,"Title animation");return;
+                case "Text": textDialog();return;
                 case "Shake":
-                    selectedClip.effects.put("motionPreset", "impact_shake");
-                    break;
+                    args.put("settings",new JSONObject().put("motionPreset","impact_shake"));
+                    applyEditorOperation("set_creator_style",args);return;
                 case "Blur":
-                    selectedClip.effects.put("blur", selectedClip.effects.optDouble("blur", 0) > .1 ? 0 : 5.0);
-                    break;
-                case "Glow":
-                    selectedClip.effects.put("effectPreset", "soft_glow");
-                    selectedClip.effects.put("blur", 1.6);
-                    break;
-                case "Captions":
-                    selectedClip.effects.put("captionStyle", "creator_pop");
-                    selectedClip.effects.put("textAnimation", "caption_pop");
-                    break;
-                case "Audio Duck":
-                    selectedClip.effects.put("audioDucking", true);
-                    selectedClip.effects.put("duckLevel", .32);
-                    break;
-                case "Crop":
-                    selectedClip.effects.put("crop", "center_cover");
-                    break;
+                    args.put("property","blur").put("value",selectedClip.effects.optDouble("blur",0)>.1?0:5);
+                    applyEditorOperation("set_property",args);return;
+                case "Crop": case "Reframe": showInspectorDialog();return;
+                default: throw new IllegalArgumentException(tool+" needs its rendering workspace; no edit was applied");
             }
-            store.save(activeProject);
-            syncProtocolState();
-            Toast.makeText(this, tool + " applied", Toast.LENGTH_SHORT).show();
-            showEditor();
-        } catch (Exception error) {
-            Toast.makeText(this, "Could not apply " + tool, Toast.LENGTH_SHORT).show();
-        }
+        } catch (Exception error) { editorError(error); }
+    }
+
+    private void showCreatorStyleChoices(String key,java.util.List<String> choices,String title) {
+        if(!requireSelection())return;
+        String clipId=selectedClip.id;
+        String[] labels=new String[choices.size()];
+        for(int i=0;i<labels.length;i++)labels[i]=choices.get(i).replace('_',' ');
+        new AlertDialog.Builder(this).setTitle(title).setItems(labels,(dialog,index)->{
+            try{applyEditorOperation("set_creator_style",new JSONObject().put("clipId",clipId)
+                    .put("settings",new JSONObject().put(key,choices.get(index))));}
+            catch(Exception error){editorError(error);}
+        }).setNegativeButton("Close",null).show();
     }
 
     private void splitClip() {

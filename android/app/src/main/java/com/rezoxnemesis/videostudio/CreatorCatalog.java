@@ -94,7 +94,7 @@ public final class CreatorCatalog {
 
     public static JSONObject effectPreset(String name) {
         JSONObject src = EFFECT_PRESETS.get(name);
-        if (src == null) src = EFFECT_PRESETS.get("cinematic");
+        if (src == null) return new JSONObject();
         try { return new JSONObject(src.toString()); }
         catch (Exception e) { return new JSONObject(); }
     }

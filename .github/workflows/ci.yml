@@ -30,6 +30,21 @@ jobs:
           node --check src/index.js
           npm test
 
+      - name: Use Java 17 for bounded core checks
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Timeline, Vault, audio and narration behavior tests
+        run: bash scripts/core-test.sh
+
+      - name: Install software shader runtime
+        run: sudo apt-get update && sudo apt-get install -y libegl1 libgl1-mesa-dri
+
+      - name: Execute GLSL pixel regressions
+        run: python3 scripts/shader-test.py
+
       - name: Cloudflare dry-run build
         run: npx wrangler deploy --dry-run --outdir .wrangler-dist
 

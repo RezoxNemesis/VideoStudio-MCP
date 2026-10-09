@@ -129,6 +129,10 @@ public final class EditorEngine {
                 for (ProjectStore.Clip c : p.clips) if (asset.id.equals(c.assetId)) throw new IllegalArgumentException("Remove this asset's clips first");
                 p.assets.remove(asset); return;
             }
+            case "set_preview_policy": {
+                String mode=a.getString("mode");if(!"auto".equals(mode)&&!"original".equals(mode))mode=ProxyManager.normaliseTier(mode);
+                p.settings.put("previewTier",mode);return;
+            }
             case "set_project_settings": {
                 if (a.has("aspect")) {
                     String aspect = a.getString("aspect");
@@ -279,6 +283,22 @@ public final class EditorEngine {
                     if (!(a.optString("property").equals(f.optString("property")) && a.optLong("timeMs", -1) == f.optLong("timeMs"))) frames.put(f);
                 }
                 c.keyframes = frames; break;
+            }
+            case "set_creator_style": {
+                if(asset==null||asset.mime.startsWith("audio/"))throw new IllegalArgumentException("Creator styles require a video or image source");
+                JSONObject settings=a.getJSONObject("settings");CreatorStyleSettings.validate(settings);
+                java.util.Iterator<String> keys=settings.keys();while(keys.hasNext()){String key=keys.next();c.effects.put(key,settings.getString(key));}break;
+            }
+            case "set_composite_effects": {
+                if(asset==null||asset.mime.startsWith("audio/"))throw new IllegalArgumentException("Composite effects require a video or image source");
+                JSONObject settings=a.getJSONObject("settings");ClipCompositeSettings.validate(settings);
+                for(String key:ClipCompositeSettings.KEYS)c.effects.remove(key);
+                java.util.Iterator<String> keys=settings.keys();while(keys.hasNext()){String key=keys.next();c.effects.put(key,settings.get(key));}break;
+            }
+            case "set_audio_effects": {
+                if(asset==null||asset.mime.startsWith("image/"))throw new IllegalArgumentException("Audio effects require an audio or video source");
+                JSONObject settings=a.getJSONObject("settings");AudioDspSettings.read(settings);
+                if(settings.length()==0)c.effects.remove("audioDsp");else c.effects.put("audioDsp",new JSONObject(settings.toString()));break;
             }
             case "set_title": c.title = a.getString("text"); break;
             case "link_clips": {
