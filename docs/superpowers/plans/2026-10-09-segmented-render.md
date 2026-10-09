@@ -53,9 +53,9 @@ Files: modify NativeRenderEngine.java/TimelineCompositionFactory.java; create Se
 
 Interfaces: buildAudio(Project)->Composition or explicit absent; native exportComposition accepts requireVideo flag; mux verified segments with global timestamps plus optional verified AAC.
 
-- [ ] Add RED tests for absent audio, retained continuous DSP, exact timestamps, incompatible codec headers, missing initial sync sample, oversized buffer bounds and cancellation.
-- [ ] Implement full audio render and bounded sample copying, strict configuration compatibility and final checksum verification.
-- [ ] Run native tests and add device assertions for segment-boundary pixels/audio/container duration.
+- [x] Add RED tests for absent audio, retained continuous DSP, exact timestamps, incompatible codec headers, missing initial sync sample, oversized buffer bounds and cancellation.
+- [x] Implement full audio render and bounded sample copying, strict configuration compatibility and final checksum verification.
+- [x] Run native tests and add device assertions for segment-boundary pixels/audio/container duration. Device assertions are added but not yet executed; matching execution is required before Task4 completion.
 
 ### Task4: Shared resumable engine and device evidence
 
@@ -76,3 +76,5 @@ Task1 evidence: RED8/8; review timing/normalization RED4/13; solo RED2/15; final
 Task2 source component: RED10, bound/MIME RED3/14, review orphan/wait cancellation RED2/16; focused37/final302 native cases and Node282/20/22 pass with independent source-helper review closed. Content-addressed source snapshots are implemented; durable SQLite session/segment rows and caller integration remain pending.
 
 Task2 journal: RED12 precedes implementation; review stage-leak/mutable-identity RED3/18 and paired redirect/corrupt-pin RED2/20 precede fixes. Private frozen graph/manifest, canonical original-graph/session recomputation and full size/SHA validation of managed pinned files run before any lease mutation. Generation-specific stages prevent stale codec writes; durable encoded intent recovers before/after atomic rename. Missing/corrupt rows rerender individually, transient verification errors preserve valid checkpoints, duplicate completion is idempotent and retired writers cannot clear a newer lease. Focused51 and final83 main/43 test Java classes GREEN322; Node282/20/22 GREEN. Evidence is SQLite/filesystem/byte-stream unit fault injection, not new device process-death or shared engine integration. Cache references/eviction remain Task4.
+
+Task3 source: audio RED6 and mux RED10 precede implementation. Review owner-output/EOS RED4/14, selected duration/chunk cancellation RED11/21 and held-FD proof RED2/6 precede fixes. Focused42, held-FD focused29 and final84 main/46 test Java classes GREEN351; Node282/20/22 GREEN. Bounded review closes four original Important findings plus the residual proof inode race. Dedicated ninth device case is added for real2x5s encoding, encoded-stage fault recovery, independent corruption repair, continuous AAC packet/time identity, five sampled frame comparisons, original/inode protection and a synthetic native sync-frame1001us tail duration. These assertions still need matching APK/device execution. Public exports retain ordinary native dispatch until Task4.

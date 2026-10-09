@@ -29,9 +29,10 @@ public final class NativeRenderEngine {
     }
 
     public static final class Handle {
-        private final RenderRetryController controller;
-        Handle(RenderRetryController controller){this.controller=controller;}
-        public void cancel(){controller.cancel();}
+        private final Runnable cancellation;
+        Handle(RenderRetryController controller){this(controller::cancel);}
+        Handle(Runnable cancellation){this.cancellation=cancellation;}
+        public void cancel(){cancellation.run();}
     }
 
     private static final java.util.concurrent.ExecutorService VERIFICATION=java.util.concurrent.Executors.newFixedThreadPool(2,r->{Thread t=new Thread(r,"studio-render-verification");t.setDaemon(true);return t;});
@@ -46,16 +47,26 @@ public final class NativeRenderEngine {
     Handle export(ProjectStore.Project original,File outputFile,String aspect,String quality,Listener listener,RenderRetryController.Route initialRoute){
         if(original==null||original.clips.isEmpty()){listener.onError("Timeline is empty");return null;}
         try{
-            ProjectStore.Project project=ProjectStore.Project.fromJson(original.toJson());
+            ProjectStore.Project project=ProjectStore.Project.fromJson(original.snapshotJson());
             protectOriginals(project,outputFile);
             Composition composition=new TimelineCompositionFactory(context).build(project,aspect,quality,false);
+            return exportComposition(project,composition,outputFile,aspect,quality,true,listener,initialRoute);
+        }catch(Exception error){listener.onError(error.getMessage()==null?"Could not prepare native export":error.getMessage());return null;}
+    }
+
+    /** Bounded worker entry for original-clock windows and the separate continuous audio pass. */
+    Handle exportComposition(ProjectStore.Project original,Composition composition,File outputFile,String aspect,String quality,boolean requireVideo,Listener listener,RenderRetryController.Route initialRoute){
+        try{
+            if(composition==null)throw new IllegalArgumentException("Native composition is absent");
+            ProjectStore.Project project=ProjectStore.Project.fromJson(original.snapshotJson());protectOriginals(project,outputFile);
             RenderRetryController controller=new RenderRetryController(main::post,VERIFICATION,
                     (route,callback)->startAttempt(project,composition,outputFile,aspect,quality,route,callback),
-                    ()->PlayableMediaVerifier.verify(context,Uri.fromFile(outputFile),true),
+                    ()->PlayableMediaVerifier.verify(context,Uri.fromFile(outputFile),requireVideo),
                     new RenderRetryController.Observer(){
                         public void progress(int percent,String detail){listener.onProgress(percent,detail);}
                         public void failed(String detail){listener.onError(detail);}
                         public void completed(JSONObject result){
+                            if(requireVideo)
                             try(CodecReliabilityStore history=new CodecReliabilityStore(context)){
                                 history.verified(result.optString("videoEncoder"),result.optInt("codecWidth"),result.optInt("codecHeight"),result.optString("codecProfile"),result.optInt("codecFps",project.settings.optInt("fps",30)),result.getString("sha256"));
                                 result.put("codecReliabilityRecorded",true);
@@ -160,7 +171,7 @@ public final class NativeRenderEngine {
         try(CodecReliabilityStore history=new CodecReliabilityStore(context)){history.failure(error.codecInfo.name,width,height,profile,fps,error.getErrorCodeName());}
         catch(Exception unavailable){android.util.Log.w("VideoStudioRender","Could not record codec failure",unavailable);}
     }
-    private static void protectOriginals(ProjectStore.Project project,File output)throws java.io.IOException{
+    static void protectOriginals(ProjectStore.Project project,File output)throws java.io.IOException{
         File target=output.getCanonicalFile();
         for(ProjectStore.Asset asset:project.assets)protectSource(target,asset.uri);
         for(ProjectStore.Clip clip:project.clips)for(String layer:new String[]{"headUri","torsoUri","lowerUri","foregroundUri","backgroundUri"})protectSource(target,clip.effects.optString(layer));

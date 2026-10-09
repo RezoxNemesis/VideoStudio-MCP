@@ -42,6 +42,35 @@ public final class TimelineCompositionFactory {
     private int frameRate = 30;
     public TimelineCompositionFactory(Context context) { this.context = context.getApplicationContext(); }
 
+    /** One whole-program audio pass: video window boundaries never flush a clip's DSP. */
+    Composition buildAudio(ProjectStore.Project original){
+        if(original==null||original.clips.isEmpty())throw new IllegalArgumentException("Timeline is empty");
+        ProjectStore.Project project=ProjectStore.Project.fromJson(original.snapshotJson());
+        for(ProjectStore.Clip clip:project.clips)if(project.track(clip.trackId)==null)throw new IllegalArgumentException("Clip refers to a missing track: "+clip.id);
+        boolean solo=false;for(ProjectStore.Track track:project.tracks)solo|=track.solo;
+        long durationUs=exactProgramDurationUs(project);ArrayList<ProjectStore.Track> tracks=new ArrayList<>(project.tracks);tracks.sort((a,b)->Integer.compare(b.order,a.order));
+        ArrayList<EditedMediaItemSequence> sequences=new ArrayList<>();
+        for(ProjectStore.Track track:tracks){
+            if(track.muted||(solo&&!track.solo))continue;
+            ArrayList<ProjectStore.Clip> clips=new ArrayList<>();java.util.HashSet<String> audible=new java.util.HashSet<>();
+            for(ProjectStore.Clip clip:project.clips)if(track.id.equals(clip.trackId)){
+                ProjectStore.Asset asset=project.asset(clip.assetId);if(asset==null||asset.mime==null)throw new IllegalArgumentException("Missing source for clip "+clip.id);
+                clips.add(clip);if(hasSourceAudio(asset))audible.add(clip.id);
+            }
+            if(audible.isEmpty())continue;clips.sort(java.util.Comparator.comparingLong(clip->clip.startMs));
+            EditedMediaItemSequence.Builder sound=new EditedMediaItemSequence.Builder(Collections.singleton(C.TRACK_TYPE_AUDIO));long cursorMs=0,cursorUs=0;
+            for(ProjectStore.Clip clip:clips){
+                if(clip.startMs<cursorMs)throw new IllegalArgumentException("Clips overlap on track "+track.name);
+                long gapUs=Math.multiplyExact(clip.startMs-cursorMs,1000L);if(gapUs>0)sound.addGap(gapUs);cursorUs=Math.addExact(cursorUs,gapUs);
+                ProjectStore.Asset asset=project.asset(clip.assetId);long lengthUs=itemOutputUs(clip,asset);
+                if(audible.contains(clip.id))sound.addItem(buildItem(asset,clip,"16:9","720p",false,true,false));else sound.addGap(lengthUs);
+                cursorUs=Math.addExact(cursorUs,lengthUs);cursorMs=TimelineMath.add(clip.startMs,clip.outputDurationMs());
+            }
+            if(cursorUs<durationUs)sound.addGap(durationUs-cursorUs);sequences.add(sound.build());
+        }
+        return sequences.isEmpty()?null:new Composition.Builder(sequences).build();
+    }
+
     Composition buildVideoWindow(ProjectStore.Project project,String aspect,String quality,TimelineWindow window){
         if(project==null||project.clips.isEmpty())throw new IllegalArgumentException("Timeline is empty");
         ProjectStore.Project captured=ProjectStore.Project.fromJson(project.snapshotJson());
@@ -147,39 +176,23 @@ public final class TimelineCompositionFactory {
         ArrayList<ProjectStore.Track> tracks = new ArrayList<>(project.tracks);
         tracks.sort((a, b) -> Integer.compare(b.order, a.order));
         ArrayList<EditedMediaItemSequence> sequences = new ArrayList<>();
-        ArrayList<EditedMediaItemSequence> audioSequences = new ArrayList<>();
+        Composition audioComposition=buildAudio(original);
+        ArrayList<EditedMediaItemSequence> audioSequences = audioComposition==null?new ArrayList<>():new ArrayList<>(audioComposition.sequences);
         long durationMs = project.outputDurationMs();
         for (ProjectStore.Track track : tracks) {
             if (solo && !track.solo) continue;
             ArrayList<ProjectStore.Clip> clips = new ArrayList<>();
-            boolean audio = false, video = false, animated = false;
-            java.util.HashSet<String> audible=new java.util.HashSet<>();
+            boolean video = false, animated = false;
             for (ProjectStore.Clip c : project.clips) if (track.id.equals(c.trackId)) {
                 ProjectStore.Asset a = project.asset(c.assetId);
                 if (a == null) throw new IllegalArgumentException("Missing source for clip " + c.id);
                 if (a.mime == null) throw new IllegalArgumentException("Unknown source format");
                 clips.add(c);
-                if(!track.muted&&hasSourceAudio(original.asset(a.id))){audio=true;audible.add(c.id);}
                 video |= !track.audioOnly() && track.visible && !a.mime.startsWith("audio/");
                 animated |= c.effects.optBoolean("animatedScene", false);
             }
-            if (clips.isEmpty() || (!audio && !video)) continue;
+            if (clips.isEmpty() || !video) continue;
             clips.sort(java.util.Comparator.comparingLong(c -> c.startMs));
-            if(audio){
-                EditedMediaItemSequence.Builder sound=new EditedMediaItemSequence.Builder(java.util.Collections.singleton(C.TRACK_TYPE_AUDIO));
-                long cursor=0;
-                for(ProjectStore.Clip c:clips){
-                    if(c.startMs<cursor)throw new IllegalArgumentException("Clips overlap on track "+track.name);
-                    if(c.startMs>cursor)sound.addGap(Math.multiplyExact(c.startMs-cursor,1000L));
-                    long length=c.outputDurationMs();
-                    if(audible.contains(c.id))sound.addItem(buildItem(original.asset(c.assetId),c,aspect,quality,false,true,false));
-                    else sound.addGap(itemOutputUs(c,project.asset(c.assetId)));
-                    cursor=TimelineMath.add(c.startMs,length);
-                }
-                if(cursor<durationMs)sound.addGap(Math.multiplyExact(durationMs-cursor,1000L));
-                audioSequences.add(sound.build());
-            }
-            if(!video)continue;
             if (animated && video) {
                 for (String role : new String[]{"head", "torso", "lower", "foreground"}) {
                     EditedMediaItemSequence.Builder layer = new EditedMediaItemSequence.Builder(java.util.Collections.singleton(C.TRACK_TYPE_VIDEO));

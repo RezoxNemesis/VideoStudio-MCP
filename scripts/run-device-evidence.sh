@@ -16,6 +16,9 @@ for trace in pathlib.Path('artifacts/device-evidence').rglob('codec-reliability-
     proof=json.loads(trace.read_text())
     fields=['codecRoute','videoEncoder','audioEncoder','decoderNames','encodedWidth','encodedHeight','codecWidth','codecHeight','codecFps','requestedBitrate','configuredBitrate','hasAudio','durationMs','sha256','codecReliabilityRecorded']
     print('DEVICE_CODEC_EVIDENCE '+json.dumps({'originalRetained':proof['originalRetained'],'attempts':[{key:attempt.get(key) for key in fields} for attempt in proof['attempts']]}))
+for trace in pathlib.Path('artifacts/device-evidence').rglob('segment-window-proof.json'):
+    proof=json.loads(trace.read_text())
+    print('DEVICE_SEGMENT_EVIDENCE '+json.dumps(proof))
 PYUI
 }
 trap collect_evidence EXIT

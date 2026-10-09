@@ -1,0 +1,41 @@
+package com.rezoxnemesis.videostudio;
+
+import android.media.MediaExtractor;
+import android.media.MediaFormat;
+import java.io.InterruptedIOException;
+import java.nio.ByteBuffer;
+import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.robolectric.RobolectricTestRunner;
+import org.robolectric.annotation.Config;
+import org.robolectric.RuntimeEnvironment;
+import android.net.Uri;
+import java.io.File;
+import java.nio.file.Files;
+import static org.junit.Assert.*;
+
+@RunWith(RobolectricTestRunner.class) @Config(sdk=33,manifest=Config.NONE)
+public class SegmentMediaMuxerTest {
+    private MediaFormat format(){MediaFormat f=MediaFormat.createVideoFormat("video/avc",1280,720);f.setInteger(MediaFormat.KEY_FRAME_RATE,30);f.setInteger(MediaFormat.KEY_ROTATION,0);f.setByteBuffer("csd-0",ByteBuffer.wrap(new byte[]{0,0,0,1,103,66,31}));f.setByteBuffer("csd-1",ByteBuffer.wrap(new byte[]{0,0,0,1,104,4}));return f;}
+    @Test public void matchingHeadersAcceptDifferentMeasuredBitratesWithoutChangingBufferPositions(){var first=format();var next=format();first.setInteger(MediaFormat.KEY_BIT_RATE,1_800_000);next.setInteger(MediaFormat.KEY_BIT_RATE,2_100_000);SegmentMediaMuxer.compatible(first,next);assertEquals(0,first.getByteBuffer("csd-0").position());assertEquals(0,next.getByteBuffer("csd-1").position());}
+    @Test public void changedInitializationBytesAreRejected(){var changed=format();changed.setByteBuffer("csd-0",ByteBuffer.wrap(new byte[]{0,0,0,1,103,100,31}));assertThrows(IllegalArgumentException.class,()->SegmentMediaMuxer.compatible(format(),changed));}
+    @Test public void missingPpsIsRejectedBeforeWritingSamples(){var incomplete=format();incomplete.removeKey("csd-1");assertThrows(IllegalArgumentException.class,()->SegmentMediaMuxer.compatible(format(),incomplete));}
+    @Test public void resolutionFrameRateRotationAndColourMustStayCompatible(){for(String key:new String[]{MediaFormat.KEY_WIDTH,MediaFormat.KEY_FRAME_RATE,MediaFormat.KEY_ROTATION,MediaFormat.KEY_COLOR_TRANSFER}){var changed=format();changed.setInteger(key,77);assertThrows(key,IllegalArgumentException.class,()->SegmentMediaMuxer.compatible(format(),changed));}}
+    @Test public void globalVideoTimeRetainsWindowOffsetAndFractionalMicroseconds(){assertEquals(5_033_333,SegmentMediaMuxer.timestamp(33_333,5_000_000,10_000_000,4_999_999));assertEquals(10_000_000,SegmentMediaMuxer.timestamp(0,10_000_000,10_001_001,9_999_999));}
+    @Test public void backwardsDuplicateAndOutsideWindowTimestampsAreRefused(){assertThrows(IllegalArgumentException.class,()->SegmentMediaMuxer.timestamp(0,5_000_000,10_000_000,5_000_000));assertThrows(IllegalArgumentException.class,()->SegmentMediaMuxer.timestamp(-1,0,5_000_000,-1));assertThrows(IllegalArgumentException.class,()->SegmentMediaMuxer.timestamp(5_000_000,0,5_000_000,-1));}
+    @Test public void overflowAndInvalidWindowAreRefused(){assertThrows(IllegalArgumentException.class,()->SegmentMediaMuxer.timestamp(0,-1,5_000_000,-1));assertThrows(IllegalArgumentException.class,()->SegmentMediaMuxer.timestamp(Long.MAX_VALUE,1,Long.MAX_VALUE,-1));}
+    @Test public void sampleBuffersAreBoundedBeforeAllocation(){assertEquals(1,SegmentMediaMuxer.sampleCapacity(1));assertEquals(32*1024*1024,SegmentMediaMuxer.sampleCapacity(32L*1024*1024));assertThrows(IllegalArgumentException.class,()->SegmentMediaMuxer.sampleCapacity(32L*1024*1024+1));assertThrows(IllegalArgumentException.class,()->SegmentMediaMuxer.sampleCapacity(0));assertThrows(IllegalArgumentException.class,()->SegmentMediaMuxer.sampleCapacity(Long.MAX_VALUE));}
+    @Test public void eachVideoWindowMustStartOnACompleteUnencryptedSyncSample(){SegmentMediaMuxer.initialVideoSample(MediaExtractor.SAMPLE_FLAG_SYNC);assertThrows(IllegalArgumentException.class,()->SegmentMediaMuxer.initialVideoSample(0));assertThrows(IllegalArgumentException.class,()->SegmentMediaMuxer.initialVideoSample(MediaExtractor.SAMPLE_FLAG_SYNC|MediaExtractor.SAMPLE_FLAG_ENCRYPTED));assertThrows(IllegalArgumentException.class,()->SegmentMediaMuxer.initialVideoSample(MediaExtractor.SAMPLE_FLAG_SYNC|MediaExtractor.SAMPLE_FLAG_PARTIAL_FRAME));}
+    @Test public void cancellationIsCheckedWithoutClearingThreadInterruption()throws Exception{SegmentMediaMuxer.check(()->false);assertThrows(InterruptedIOException.class,()->SegmentMediaMuxer.check(()->true));Thread.currentThread().interrupt();try{assertThrows(InterruptedIOException.class,()->SegmentMediaMuxer.check(()->false));assertTrue(Thread.currentThread().isInterrupted());}finally{Thread.interrupted();}}
+    @Test public void ownerOriginalAliasAndMissingOriginalPathCannotBeUsedForJoinOutput()throws Exception{
+        File root=new File(RuntimeEnvironment.getApplication().getFilesDir(),"mux-guard-"+java.util.UUID.randomUUID());assertTrue(root.mkdirs());File original=new File(root,"original.png");Files.write(original.toPath(),new byte[]{1,2,3});var p=new ProjectStore.Project();var a=new ProjectStore.Asset();a.uri=Uri.fromFile(original).toString();p.assets.add(a);File alias=new File(root,"sub/../original.png");assertTrue(new File(root,"sub").mkdir());assertThrows(IllegalArgumentException.class,()->SegmentMediaMuxer.prepareOutput(p,alias));assertArrayEquals(new byte[]{1,2,3},Files.readAllBytes(original.toPath()));assertTrue(original.delete());assertThrows(IllegalArgumentException.class,()->SegmentMediaMuxer.prepareOutput(p,original));assertFalse(original.exists());
+    }
+    @Test public void preexistingUnrelatedFileIsPreservedAndNewWorkspaceIsExclusive()throws Exception{
+        File root=new File(RuntimeEnvironment.getApplication().getFilesDir(),"mux-fresh-"+java.util.UUID.randomUUID());assertTrue(root.mkdirs());File output=new File(root,"output.mp4");Files.write(output.toPath(),new byte[]{4,5,6});var p=new ProjectStore.Project();assertThrows(IllegalArgumentException.class,()->SegmentMediaMuxer.prepareOutput(p,output));assertArrayEquals(new byte[]{4,5,6},Files.readAllBytes(output.toPath()));assertTrue(output.delete());try(var workspace=SegmentMediaMuxer.prepareOutput(p,output)){workspace.ensureCurrent();assertTrue(output.exists());assertEquals(0,output.length());assertThrows(IllegalArgumentException.class,()->SegmentMediaMuxer.prepareOutput(p,output));}
+    }
+    @Test public void fractionalTailGetsAnExplicitEmptyEosAtThePlannedEnd(){var eos=SegmentMediaMuxer.endOfTrack(10_001_001,10_000_000);assertEquals(10_001_001,eos.presentationTimeUs);assertEquals(0,eos.size);assertEquals(android.media.MediaCodec.BUFFER_FLAG_END_OF_STREAM,eos.flags);assertThrows(IllegalArgumentException.class,()->SegmentMediaMuxer.endOfTrack(10_000_000,10_000_000));}
+    @Test public void aRepeatedLastFrameDurationCannotMasqueradeAsThePlannedTail(){SegmentMediaMuxer.trackDuration(10_001_001,10_001_001);SegmentMediaMuxer.trackDuration(10_001_010,10_001_001);assertThrows(IllegalArgumentException.class,()->SegmentMediaMuxer.trackDuration(10_033_333,10_001_001));assertThrows(IllegalArgumentException.class,()->SegmentMediaMuxer.trackDuration(0,10_001_001));}
+    @Test public void shortPlayableVideoCannotClaimALongerCheckpointInterval(){var f=format();f.setLong(MediaFormat.KEY_DURATION,1_000_000);assertThrows(IllegalArgumentException.class,()->SegmentMediaMuxer.interval(f,5_000_000));f.setLong(MediaFormat.KEY_DURATION,5_033_333);SegmentMediaMuxer.interval(f,5_000_000);f.removeKey(MediaFormat.KEY_DURATION);assertThrows(IllegalArgumentException.class,()->SegmentMediaMuxer.interval(f,5_000_000));}
+    @Test public void audioAllowsOneAacPacketOfRoundingButNotMissingProgramSeconds(){var f=MediaFormat.createAudioFormat("audio/mp4a-latm",44100,2);f.setLong(MediaFormat.KEY_DURATION,10_007_256);SegmentMediaMuxer.interval(f,10_000_000);f.setLong(MediaFormat.KEY_DURATION,5_000_000);assertThrows(IllegalArgumentException.class,()->SegmentMediaMuxer.interval(f,10_000_000));}
+    @Test public void missingOrLateFirstSampleCannotIntroduceAnUnplannedLeadingGap(){var f=format();SegmentMediaMuxer.initialTime(0,f);assertThrows(IllegalArgumentException.class,()->SegmentMediaMuxer.initialTime(-1,f));assertThrows(IllegalArgumentException.class,()->SegmentMediaMuxer.initialTime(1_000_000,f));}
+}
