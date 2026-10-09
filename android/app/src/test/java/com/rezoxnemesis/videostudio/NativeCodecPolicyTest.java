@@ -36,6 +36,15 @@ public class NativeCodecPolicyTest {
         assertFalse(NativeCodecPolicy.matchesConfiguredFormat(requested,actual.buildUpon().setFrameRate(15).build(),8_000_000));
         assertFalse(NativeCodecPolicy.matchesConfiguredFormat(requested,actual.buildUpon().setWidth(720).setHeight(1280).build(),8_000_000));
     }
+    @Test public void unspecifiedEncoderFrameRateAcceptsMedia3DefaultWithoutAcceptingDowngrades(){
+        androidx.media3.common.Format request=new androidx.media3.common.Format.Builder().setWidth(1280).setHeight(720).build();
+        assertEquals(androidx.media3.common.Format.NO_VALUE,request.frameRate,0);
+        androidx.media3.common.Format resolved=request.buildUpon().setFrameRate(30).setAverageBitrate(8_000_000).build();
+        assertTrue("Media3 resolves an unspecified encoder frame rate to 30",NativeCodecPolicy.matchesConfiguredFormat(request,resolved,8_000_000));
+        assertFalse(NativeCodecPolicy.matchesConfiguredFormat(request,resolved.buildUpon().setFrameRate(15).build(),8_000_000));
+        assertFalse(NativeCodecPolicy.matchesConfiguredFormat(request,resolved.buildUpon().setAverageBitrate(2_000_000).build(),8_000_000));
+        assertFalse(NativeCodecPolicy.matchesConfiguredFormat(request.buildUpon().setFrameRate(60).build(),resolved,8_000_000));
+    }
     @Test public void exportWorkspaceAliasCannotDeleteOriginalMedia()throws Exception{
         android.content.Context context=org.robolectric.RuntimeEnvironment.getApplication();java.io.File source=new java.io.File(context.getFilesDir(),"codec-original.png");java.nio.file.Files.write(source.toPath(),new byte[]{1,2,3});
         ProjectStore.Project p=new ProjectStore.Project();p.ensureTimelineDefaults();ProjectStore.Asset asset=new ProjectStore.Asset();asset.id="source";asset.uri=android.net.Uri.fromFile(source).toString();asset.mime="image/png";p.assets.add(asset);ProjectStore.Clip c=new ProjectStore.Clip();c.assetId=asset.id;c.trackId=p.tracks.get(0).id;c.outMs=1000;p.clips.add(c);

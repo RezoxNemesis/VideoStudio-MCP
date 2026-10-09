@@ -27,7 +27,14 @@ final class NativeCodecPolicy {
         return new int[]{Math.round(height*ratio)/2*2,height};
     }
     static boolean softwareDecoder(RenderRetryController.Route route,String mime){return route.ordinal()>=RenderRetryController.Route.SOFTWARE_DECODER.ordinal()&&mime.startsWith("video/");}
-    static boolean matchesConfiguredFormat(androidx.media3.common.Format requested,androidx.media3.common.Format actual,int bitrate){return actual.width==requested.width&&actual.height==requested.height&&Math.round(actual.frameRate)==Math.round(requested.frameRate)&&actual.bitrate==bitrate;}
+    /** Media3's DefaultEncoderFactory uses 30 fps when the composition leaves this unset. */
+    static androidx.media3.common.Format encoderRequest(androidx.media3.common.Format format){
+        return format.frameRate==androidx.media3.common.Format.NO_VALUE?format.buildUpon().setFrameRate(30).build():format;
+    }
+    static boolean matchesConfiguredFormat(androidx.media3.common.Format requested,androidx.media3.common.Format actual,int bitrate){
+        androidx.media3.common.Format normalized=encoderRequest(requested);
+        return actual.width==normalized.width&&actual.height==normalized.height&&Math.round(actual.frameRate)==Math.round(normalized.frameRate)&&actual.bitrate==bitrate;
+    }
     static <T> java.util.List<T> selectEncoders(java.util.List<T> codecs,java.util.function.Function<T,android.util.Range<Integer>> range,java.util.function.ToIntFunction<T> penalty,int bitrate){
         java.util.ArrayList<T> selected=new java.util.ArrayList<>();for(T codec:codecs)try{android.util.Range<Integer> supported=range.apply(codec);if(supported!=null&&supported.contains(bitrate))selected.add(codec);}catch(RuntimeException unavailable){}
         selected.sort(java.util.Comparator.comparingInt(penalty));return selected;

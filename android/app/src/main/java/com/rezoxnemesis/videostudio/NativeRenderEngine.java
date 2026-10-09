@@ -93,17 +93,18 @@ public final class NativeRenderEngine {
             }
             public androidx.media3.transformer.Codec createForAudioEncoding(androidx.media3.common.Format format,android.media.metrics.LogSessionId session)throws ExportException{return configured(format).createForAudioEncoding(format,session);}
             public androidx.media3.transformer.Codec createForVideoEncoding(androidx.media3.common.Format format,android.media.metrics.LogSessionId session)throws ExportException{
+                format=NativeCodecPolicy.encoderRequest(format);
                 encoderFormat.set(format);
                 androidx.media3.transformer.Codec codec=configured(format).createForVideoEncoding(format,session);
                 androidx.media3.common.Format actual=codec.getConfigurationFormat();
                 int requested=Math.max(500_000,Math.min(50_000_000,project.settings.optInt("exportBitrate",8_000_000)));
                 if(!NativeCodecPolicy.matchesConfiguredFormat(format,actual,requested)){
                     String name=codec.getName();codec.release();
-                    throw ExportException.createForCodec(new IllegalStateException("Encoder changed requested final resolution, frame rate or target bitrate"),ExportException.ERROR_CODE_ENCODING_FORMAT_UNSUPPORTED,new ExportException.CodecInfo(actual.toString(),true,false,name));
+                    throw ExportException.createForCodec(new IllegalStateException("Encoder changed requested final resolution, frame rate or target bitrate: requested "+format+", resolved "+actual+", target "+requested),ExportException.ERROR_CODE_ENCODING_FORMAT_UNSUPPORTED,new ExportException.CodecInfo(actual.toString(),true,false,name));
                 }
                 encoderFormat.set(actual);return codec;
             }
-            public boolean isVideoFormatSupported(androidx.media3.common.Format format){return configured(format).isVideoFormatSupported(format);}
+            public boolean isVideoFormatSupported(androidx.media3.common.Format format){format=NativeCodecPolicy.encoderRequest(format);return configured(format).isVideoFormatSupported(format);}
             public boolean audioNeedsEncoding(){return true;}
             public boolean videoNeedsEncoding(){return true;}
         };
