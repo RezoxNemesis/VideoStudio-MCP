@@ -16,6 +16,12 @@ import static org.junit.Assert.*;
 /** Admission guards only. Actual held-FD writing/trim must execute on Android. */
 @RunWith(RobolectricTestRunner.class) @Config(sdk=33,manifest=Config.NONE)
 public class GaplessAudioMuxerTest {
+    @Test public void unsupportedSourceMetadataCannotCrashAnOtherwiseSupportedMux()throws Exception{
+        File path=new File(RuntimeEnvironment.getApplication().getFilesDir(),"mux-metadata-"+UUID.randomUUID());try(var stream=new java.io.FileOutputStream(path)){var delegate=new androidx.media3.muxer.Mp4Muxer.Builder(stream).build();var muxer=new GaplessAudioMuxer(delegate,stream,null,new AtomicReference<>(),()->false,new AtomicReference<>());
+            muxer.addMetadataEntry(new androidx.media3.extractor.metadata.mp4.SmtaMetadataEntry(30,1));
+            muxer.addMetadataEntry(new androidx.media3.container.Mp4OrientationData(90));muxer.addMetadataEntry(new androidx.media3.container.Mp4LocationData(12f,34f));
+        }
+    }
     @Test public void replacedOutputAfterFinalizationCannotReceiveOriginalSuccessProof()throws Exception{
         File path=new File(RuntimeEnvironment.getApplication().getFilesDir(),"mux-swap-"+UUID.randomUUID());Files.write(path.toPath(),new byte[]{1,2,3});org.json.JSONObject held;try(var input=new java.io.FileInputStream(path)){held=PlayableMediaVerifier.bytesProof(input,()->false);}
         File replacement=new File(path.getParentFile(),"replacement-"+UUID.randomUUID());Files.write(replacement.toPath(),new byte[]{4,5,6});Files.move(replacement.toPath(),path.toPath(),java.nio.file.StandardCopyOption.REPLACE_EXISTING);org.json.JSONObject reopened;try(var input=new java.io.FileInputStream(path)){reopened=PlayableMediaVerifier.bytesProof(input,()->false);}

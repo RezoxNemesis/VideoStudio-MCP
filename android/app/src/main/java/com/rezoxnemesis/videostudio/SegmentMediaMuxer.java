@@ -35,10 +35,12 @@ final class SegmentMediaMuxer {
     static void interval(MediaFormat format,long plannedUs){if(!format.containsKey(MediaFormat.KEY_DURATION)||plannedUs<=0||Math.abs(PlayableMediaVerifier.presentationDurationUs(format)-plannedUs)>rounding(format))throw new IllegalArgumentException("Checkpoint media duration does not span its planned interval");}
     static void initialTime(long sampleUs,MediaFormat format){long minimum=format.getString(MediaFormat.KEY_MIME).startsWith("audio/")?-audioPrerollUs(format):0;if(sampleUs<minimum||sampleUs>rounding(format))throw new IllegalArgumentException("Checkpoint first sample has an unplanned leading gap: mime="+format.getString(MediaFormat.KEY_MIME)+", firstUs="+sampleUs+", allowedUs="+rounding(format));}
     private static long rounding(MediaFormat format){boolean video=format.getString(MediaFormat.KEY_MIME).startsWith("video/");double rate=number(format,video?MediaFormat.KEY_FRAME_RATE:MediaFormat.KEY_SAMPLE_RATE,video?30:44100);if(rate<=0||!Double.isFinite(rate))throw new IllegalArgumentException("Invalid checkpoint sample rate");return Math.min(100_000,(long)Math.ceil((video?1_000_000d:1_024_000_000d)/rate)+1000);}
-    static void compatible(MediaFormat first,MediaFormat next){
+    static void compatible(MediaFormat first,MediaFormat next){compatible(first,next,false);}
+    private static void compatible(MediaFormat first,MediaFormat next,boolean fractionalAverage){
         if(!"video/avc".equals(first.getString(MediaFormat.KEY_MIME))||!"video/avc".equals(next.getString(MediaFormat.KEY_MIME)))throw new IllegalArgumentException("Segment join requires matching AVC video tracks");
         for(String key:new String[]{MediaFormat.KEY_WIDTH,MediaFormat.KEY_HEIGHT})if(!first.containsKey(key)||!next.containsKey(key)||first.getInteger(key)<=0||first.getInteger(key)!=next.getInteger(key))throw incompatible(key);
         for(String key:new String[]{MediaFormat.KEY_FRAME_RATE,MediaFormat.KEY_ROTATION,MediaFormat.KEY_PROFILE,MediaFormat.KEY_LEVEL,MediaFormat.KEY_COLOR_STANDARD,MediaFormat.KEY_COLOR_RANGE,MediaFormat.KEY_COLOR_TRANSFER}){
+            if(fractionalAverage&&MediaFormat.KEY_FRAME_RATE.equals(key))continue;
             if(first.containsKey(key)!=next.containsKey(key)){
                 if(MediaFormat.KEY_ROTATION.equals(key)&&number(first,key,0)==number(next,key,0))continue;
                 throw incompatible(key);
@@ -47,6 +49,20 @@ final class SegmentMediaMuxer {
         }
         for(String key:new String[]{"csd-0","csd-1"})if(!first.containsKey(key)||!next.containsKey(key)||!sameBytes(first.getByteBuffer(key),next.getByteBuffer(key),true))throw incompatible(key);
         for(String key:new String[]{"csd-2",MediaFormat.KEY_HDR_STATIC_INFO})if(first.containsKey(key)!=next.containsKey(key)||(first.containsKey(key)&&!sameBytes(first.getByteBuffer(key),next.getByteBuffer(key),false)))throw incompatible(key);
+    }
+    static void compatibleWindow(MediaFormat first,MediaFormat next,long durationUs,boolean terminal,boolean oneSyncSample){compatible(first,next,fractionalAverage(first,next,durationUs,terminal,oneSyncSample));}
+    private static boolean fractionalAverage(MediaFormat first,MediaFormat next,long durationUs,boolean terminal,boolean oneSyncSample){
+        if(!terminal||!oneSyncSample||durationUs<=0||!first.containsKey(MediaFormat.KEY_FRAME_RATE)||!next.containsKey(MediaFormat.KEY_FRAME_RATE)||!next.containsKey(MediaFormat.KEY_DURATION))return false;
+        double fps=number(first,MediaFormat.KEY_FRAME_RATE,0),reported=number(next,MediaFormat.KEY_FRAME_RATE,0);long actual=next.getLong(MediaFormat.KEY_DURATION);
+        return Double.isFinite(fps)&&fps>=1&&fps<=240&&durationUs<1_000_000d/fps&&actual>0&&Math.abs(actual-durationUs)<=1000&&Double.isFinite(reported)&&Math.abs(reported-1_000_000d/actual)<=1;
+    }
+    /** A lone final sample has an average container rate, not a measurable cadence. */
+    private static void compatibleWindow(MediaFormat first,Input next,long durationUs,boolean terminal){
+        boolean single=false;
+        if(fractionalAverage(first,next.format,durationUs,terminal,true)&&next.extractor.getSampleTime()==0&&hasSample(next.extractor.getSampleSize())){
+            initialVideoSample(next.extractor.getSampleFlags());single=!next.extractor.advance();next.extractor.seekTo(0,MediaExtractor.SEEK_TO_PREVIOUS_SYNC);
+        }
+        compatibleWindow(first,next.format,durationUs,terminal,single);
     }
     private static double number(MediaFormat format,String key,double fallback){if(!format.containsKey(key))return fallback;try{return format.getInteger(key);}catch(ClassCastException floating){return format.getFloat(key);}}
     private static boolean sameBytes(ByteBuffer first,ByteBuffer next,boolean required){return first!=null&&next!=null&&(!required||first.hasRemaining())&&first.duplicate().equals(next.duplicate());}
@@ -63,12 +79,12 @@ final class SegmentMediaMuxer {
     static JSONObject mux(Context context,ProjectStore.Project originals,List<RenderSessionStore.Checkpoint> video,RenderSessionStore.Checkpoint audio,File output,BooleanSupplier cancelled)throws Exception{
         check(cancelled);if(video==null||video.isEmpty())throw new IllegalArgumentException("No verified video windows to join");
         if(originals==null)throw new IllegalArgumentException("Original source graph is required");NativeRenderEngine.protectOriginals(originals,output);
-        File target=output.getCanonicalFile();long endUs=0,firstAudioUs=0;MediaFormat common=null,audioFormat=null;
+        File target=output.getCanonicalFile();long endUs=0,firstAudioUs=0,plannedEndUs=video.get(video.size()-1).endUs;MediaFormat common=null,audioFormat=null;
         // Preflight every input before opening/truncating any destination; owner media are never accepted as outputs.
         for(RenderSessionStore.Checkpoint checkpoint:video){
             check(cancelled);if(checkpoint.startUs!=endUs||checkpoint.endUs<=checkpoint.startUs)throw new IllegalArgumentException("Video checkpoint plan has a gap or overlap");
             if(target.equals(checkpoint.file.getCanonicalFile()))throw new IllegalArgumentException("Join output refers to a checkpoint input");verifyBound(context,checkpoint,true,cancelled);
-            try(Input input=new Input(checkpoint.file,true)){interval(input.format,checkpoint.endUs-checkpoint.startUs);initialTime(input.extractor.getSampleTime(),input.format);if(common==null){common=input.format;compatible(common,common);}else compatible(common,input.format);initialVideoSample(input.extractor.getSampleFlags());}
+            try(Input input=new Input(checkpoint.file,true)){interval(input.format,checkpoint.endUs-checkpoint.startUs);initialTime(input.extractor.getSampleTime(),input.format);initialVideoSample(input.extractor.getSampleFlags());if(common==null){common=input.format;compatible(common,common);}else compatibleWindow(common,input,checkpoint.endUs-checkpoint.startUs,checkpoint.endUs==plannedEndUs);}
             endUs=checkpoint.endUs;
         }
         if(audio!=null){
@@ -84,7 +100,7 @@ final class SegmentMediaMuxer {
             muxer.start();started=true;long previous=-1;SampleBuffer buffer=new SampleBuffer();
             for(RenderSessionStore.Checkpoint checkpoint:video){
                 try(Input input=new Input(checkpoint.file,true)){
-                    compatible(common,input.format);interval(input.format,checkpoint.endUs-checkpoint.startUs);initialTime(input.extractor.getSampleTime(),input.format);initialVideoSample(input.extractor.getSampleFlags());boolean first=true;long copied=0;
+                    compatibleWindow(common,input,checkpoint.endUs-checkpoint.startUs,checkpoint.endUs==plannedEndUs);interval(input.format,checkpoint.endUs-checkpoint.startUs);initialTime(input.extractor.getSampleTime(),input.format);initialVideoSample(input.extractor.getSampleFlags());boolean first=true;long copied=0;
                     while(input.extractor.getSampleTime()>=0){
                         check(cancelled);long local=input.extractor.getSampleTime();if(local>=checkpoint.endUs-checkpoint.startUs)break;long global=timestamp(local,checkpoint.startUs,checkpoint.endUs,previous);int flags=input.extractor.getSampleFlags();if(first)initialVideoSample(flags);
                         write(muxer,videoTrack,input.extractor,global,flags,buffer);previous=global;first=false;copied++;if(!input.extractor.advance())break;

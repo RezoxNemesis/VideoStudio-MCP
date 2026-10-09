@@ -33,7 +33,7 @@ final class GaplessAudioMuxer implements Muxer {
     GaplessAudioMuxer(Mp4Muxer delegate,FileOutputStream stream,SegmentMediaMuxer.OutputWorkspace workspace,AtomicReference<AacDrainCodec.State> state,BooleanSupplier cancelled,AtomicReference<org.json.JSONObject> finalizedBytes){this.delegate=delegate;this.stream=stream;this.workspace=workspace;this.state=state;this.cancelled=cancelled;this.finalizedBytes=finalizedBytes;}
     public int addTrack(Format format)throws MuxerException{int id=delegate.addTrack(format);if(MimeTypes.isVideo(format.sampleMimeType))delegate.addMetadataEntry(new Mp4OrientationData(format.rotationDegrees));return id;}
     public void writeSampleData(int id,ByteBuffer bytes,BufferInfo info)throws MuxerException{delegate.writeSampleData(id,bytes,info);}
-    public void addMetadataEntry(Metadata.Entry entry){delegate.addMetadataEntry(entry);}
+    public void addMetadataEntry(Metadata.Entry entry){if(androidx.media3.muxer.MuxerUtil.isMetadataSupported(entry))delegate.addMetadataEntry(entry);}
     public void close()throws MuxerException{
         if(closed)return;closed=true;Exception failure=null;
         try{delegate.close();workspace.ensureCurrent();AacDrainCodec.State audio=state.get();if(audio!=null){if(!audio.eosForwarded||audio.appendedFrames!=AacDrainCodec.DRAIN_FRAMES)throw new IllegalStateException("AAC encoder drain did not complete");audio.trim=GaplessAudioMp4.trim(workspace.descriptor,audio.programmeUs(),maxPaddingUs(audio.sampleRate),cancelled);}workspace.ensureCurrent();android.system.Os.fsync(workspace.descriptor);org.json.JSONObject proof=PlayableMediaVerifier.descriptorBytes(workspace.descriptor,cancelled);workspace.ensureCurrent();finalizedBytes.set(proof);}

@@ -1,7 +1,7 @@
 {
   "version": "3.4.11",
   "versionCode": 351,
-  "checkpoint": "owner-preview-aac-platform-format-and-destroyed-activity-2",
+  "checkpoint": "owner-preview-supported-metadata-and-fractional-tail-3",
   "requestedByOwner": true,
   "requireNativeTests": true
 }
