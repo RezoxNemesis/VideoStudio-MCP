@@ -49,3 +49,5 @@ Create DocumentTreeBlobStore.java; update VaultManager, ControlService, MainActi
 2026-10-09: Original RED 6/6, review RED 4 native/1 relay, then focused recovery/migration/real DocumentsProvider GREEN 30 cases and full current-source GREEN 222. Node 282/20/21 and actual Wrangler bundle pass. Database v2 token intents, in-place repair, temporary failure retention and scoped discovery are included. Full matching-source Gradle/APK and seven-case device CI still pending publication; direct provider accounts/network evidence is pending.
 
 Read-only independent follow-up closes all three Important storage findings; no remaining Important issue within this bounded review. Owner dialog suite after null-safe metadata display passes 10 cases.
+
+4f296bf matching Gradle/Android APK succeeds with 222 tests, Worker succeeds. Device 37899690474 runs seven cases: original six pass, new SAF case fails before transfer because the fixture omitted the owner naming dialog Connect step; app/system grant alone does not connect a slot. Corrected that fixture step and retained failure screenshot/XML. Rerun pending; no third-party cloud claim.

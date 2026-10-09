@@ -126,6 +126,7 @@ public class StudioDeviceTest {
             });
             UiObject2 select=device.wait(Until.findObject(By.text(java.util.regex.Pattern.compile("(?i)use this folder"))),20000);assertNotNull("System folder-picker confirmation",select);select.click();
             UiObject2 allow=device.wait(Until.findObject(By.text(java.util.regex.Pattern.compile("(?i)allow"))),10000);assertNotNull("Owner folder capability grant",allow);allow.click();
+            UiObject2 connect=device.wait(Until.findObject(By.text("Connect")),10000);assertNotNull("Owner storage connection naming dialog",connect);connect.click();
             InstrumentationRegistry.getInstrumentation().waitForIdleSync();
             String profile=null;long deadline=SystemClock.elapsedRealtime()+10000;
             try(StorageProfileStore profiles=new StorageProfileStore(context)){
