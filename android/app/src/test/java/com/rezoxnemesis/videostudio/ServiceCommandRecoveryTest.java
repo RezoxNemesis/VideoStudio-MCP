@@ -32,6 +32,16 @@ public class ServiceCommandRecoveryTest {
             assertEquals(cmd.toString(),new CommandJournal(context).capturedCommand(cmd.getString("id")).toString());
         }
     }
+    @Test public void restoreSubmissionBindsTheManifestWithoutRequiringEvictedLocalCacheAndReusesOneJob()throws Exception{
+        Context context=RuntimeEnvironment.getApplication();ProjectStore.Project latest=store.get(project.id);latest.asset("owned-video").generationMetadata.put("vault",new JSONObject().put("complete",true).put("manifestId","b".repeat(64)));store.save(latest);
+        JobManager manager=new JobManager(context);RecoveryPlanStore plans=new RecoveryPlanStore(context);field("jobs",manager);field("recoveryPlans",plans);java.lang.reflect.Field lane=JobManager.class.getDeclaredField("heavyLane");lane.setAccessible(true);lane.set(manager,new java.util.concurrent.Semaphore(0));
+        java.lang.reflect.Method queue=ControlService.class.getDeclaredMethod("queueVaultRestore",JSONObject.class);queue.setAccessible(true);
+        JSONObject args=new JSONObject().put("projectId",project.id).put("assetId","owned-video").put("vaultManifestId","f".repeat(64)).put("_mcpCommandId","restore-bound-command-001");
+        try{
+            JSONObject first=(JSONObject)queue.invoke(service,args),retry=(JSONObject)queue.invoke(service,new JSONObject(args.toString()));assertTrue(first.getBoolean("durableRecovery"));assertEquals(first.getString("jobId"),retry.getString("jobId"));
+            JSONObject saved=plans.recent(24).getJSONObject(0);assertEquals("vault_restore",saved.getString("action"));assertEquals("b".repeat(64),saved.getJSONObject("parameters").getString("vaultManifestId"));assertEquals(latest.asset("owned-video").uri,saved.getJSONObject("parameters").getString("vaultSourceUri"));assertEquals("autonomous",manager.get(first.getString("jobId")).getJSONObject("job").getString("origin"));
+        }finally{shutdownJobs(manager);}
+    }
     @Test public void storageTransferRejectsUnconnectedProfileIdentifiersBeforeCreatingJobs()throws Exception{
         JSONObject cmd=new JSONObject().put("id","foreign-storage-001").put("action","vault_replicate").put("parameters",new JSONObject().put("projectId",project.id).put("assetId","owned-video").put("profileIds",new org.json.JSONArray().put("content://not-selected/folder")));
         service.onCommand(cmd);assertNotNull(completion.result);assertFalse(completion.result.getBoolean("ok"));assertTrue(completion.result.getString("error").contains("not connected"));assertFalse(completion.result.has("jobId"));

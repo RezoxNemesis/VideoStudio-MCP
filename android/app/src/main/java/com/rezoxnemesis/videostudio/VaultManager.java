@@ -16,6 +16,7 @@ import java.security.KeyStore;
 /** Owner-selected media -> optional checksummed/AES-GCM Vault copy. */
 public final class VaultManager {
     private static final String KEY_ALIAS="videostudio_vault_aes_v1";
+    private static final Object RESTORE_LOCK=new Object();
     private final Context context;
     private final ProjectStore store;
     private final File root;
@@ -64,12 +65,12 @@ public final class VaultManager {
         if(info!=null)try(VaultReplicaStore replicas=new VaultReplicaStore(context)){result.put("replication",new JSONObject().put("locations",replicas.list(info.optString("manifestId"))).put("lastKnown",asset.generationMetadata.opt("vaultReplication")).put("liveAvailabilityChecked",false));}
         return result;
     }
-    String manifestId(String projectId,String assetId)throws Exception{
-        ProjectStore.Project project=store.get(projectId);ProjectStore.Asset asset=project==null?null:project.asset(assetId);
-        JSONObject vault=asset==null?null:asset.generationMetadata.optJSONObject("vault");
+    String boundManifestId(String projectId,String assetId)throws Exception{
+        ProjectStore.Project project=store.get(projectId);ProjectStore.Asset asset=project==null?null:project.asset(assetId);JSONObject vault=asset==null?null:asset.generationMetadata.optJSONObject("vault");
         if(vault==null||!vault.optBoolean("complete"))throw new IllegalArgumentException("Create a complete Vault copy of this project-owned asset first");
-        String id=vault.getString("manifestId");new VaultChunkStore(root,VaultChunkStore.DEFAULT_CHUNK_BYTES).load(id);return id;
+        String id=vault.getString("manifestId");if(!id.matches("[a-f0-9]{64}(-[a-f0-9]{16})?"))throw new IllegalArgumentException("Invalid bound Vault manifest");return id;
     }
+    String manifestId(String projectId,String assetId)throws Exception{String id=boundManifestId(projectId,assetId);new VaultChunkStore(root,VaultChunkStore.DEFAULT_CHUNK_BYTES).load(id);return id;}
     public JSONObject replicate(String projectId,String assetId,String expectedManifest,java.util.List<String> profiles,int copies,JobManager.Job job)throws Exception{
         if(!expectedManifest.equals(manifestId(projectId,assetId)))throw new IllegalArgumentException("Asset's Vault source changed; start a new replication command");
         ProjectStore.Asset source=store.get(projectId).asset(assetId);String sourceUri=source.uri;
@@ -89,9 +90,75 @@ public final class VaultManager {
         });
         if(job==null)publication.run(null);else job.commit(publication);return result;
     }
+    public JSONObject restore(String projectId,String assetId,String expectedManifest,JobManager.Job job)throws Exception{
+        ProjectStore.Project project=store.get(projectId);ProjectStore.Asset asset=project==null?null:project.asset(assetId);if(asset==null)throw new IllegalArgumentException("Project-owned media is required");return restore(projectId,assetId,expectedManifest,asset.uri,job);
+    }
+    public JSONObject restore(String projectId,String assetId,String expectedManifest,String expectedSourceUri,JobManager.Job job)throws Exception{synchronized(RESTORE_LOCK){return restoreLocked(projectId,assetId,expectedManifest,expectedSourceUri,job);}}
+    private JSONObject restoreLocked(String projectId,String assetId,String expectedManifest,String expectedSourceUri,JobManager.Job job)throws Exception{
+        if(!expectedManifest.equals(boundManifestId(projectId,assetId)))throw new IllegalArgumentException("Asset's Vault source changed; start a new restore command");
+        ProjectStore.Asset source=store.get(projectId).asset(assetId);String sourceUri=source.uri;JSONObject priorRecovery=source.generationMetadata.optJSONObject("vaultRecovery");
+        boolean committedRetry=priorRecovery!=null&&priorRecovery.optBoolean("complete")&&sourceUri.equals(priorRecovery.optString("uri"))&&expectedSourceUri.equals(priorRecovery.optString("sourceUri"))&&expectedManifest.equals(priorRecovery.optString("manifestId"));
+        if(!expectedSourceUri.equals(sourceUri)&&!committedRetry)throw new IllegalArgumentException("Asset source changed after restore was queued; owner media preserved");
+        if(job!=null){job.bindInputs(projectId,java.util.Collections.singleton(assetId));job.checkActive();}
+        JSONObject hydration;final long[] reported={-1};
+        try(DocumentTreeBlobStore blobs=new DocumentTreeBlobStore(context);VaultStorageFabric fabric=new VaultStorageFabric(context,root,blobs)){
+            hydration=fabric.hydrate(expectedManifest,0,-1,(done,total)->{if(job!=null){job.checkActive();if(total>0&&done!=reported[0]){reported[0]=done;job.checkpoint("vault_hydration",(int)Math.min(40,40d*done/total),"Verified local Vault bytes · "+done);}}});
+        }
+        VaultChunkStore vault=new VaultChunkStore(root,VaultChunkStore.DEFAULT_CHUNK_BYTES);VaultChunkStore.Manifest manifest=vault.load(expectedManifest);
+        File restoredRoot=new File(context.getFilesDir(),"vault_restored_media");if(!restoredRoot.isDirectory()&&!restoredRoot.mkdirs()&&!restoredRoot.isDirectory())throw new IOException("Cannot create recovered media directory");
+        String extension=android.webkit.MimeTypeMap.getSingleton().getExtensionFromMimeType(source.mime);if(extension==null||!extension.matches("[a-zA-Z0-9]{1,12}"))extension="bin";
+        File target=new File(restoredRoot,manifest.id+"."+extension);String targetUri=Uri.fromFile(target).toString();
+        if(job!=null)job.checkpoint("vault_restore_write",45,"Restoring original media bytes");
+        boolean reusable=false;long resumedBytes=0;
+        if(target.isFile())try(InputStream input=new FileInputStream(target)){
+            VaultChunkStore.SourceDigest existing=VaultChunkStore.sourceChecksum(input,(done,total)->{if(job!=null)job.checkActive();});reusable=existing.bytes==manifest.totalBytes&&manifest.sha256.equals(existing.sha256);
+        }
+        if(!reusable){
+            File temporary=new File(restoredRoot,manifest.id+".restore.partial");long prefix=verifiedPrefix(temporary,manifest,job);resumedBytes=prefix;
+            StorageBudget.Check budget=StorageBudget.check(restoredRoot.getUsableSpace(),manifest.totalBytes-prefix,StorageBudget.DEFAULT_TRANSFER_RESERVE_BYTES);if(!budget.allowed)throw new IOException("Insufficient space for recovered original media");
+            try{
+                java.security.MessageDigest digest=java.security.MessageDigest.getInstance("SHA-256");long copied=prefix,lastReport=prefix;
+                if(prefix>0)try(InputStream saved=VaultChunkStore.openFileRange(temporary,0,prefix)){byte[] buffer=new byte[256*1024];int count;while((count=saved.read(buffer))!=-1){if(job!=null)job.checkActive();digest.update(buffer,0,count);}}
+                try(InputStream input=vault.openRange(manifest,prefix,manifest.totalBytes-prefix,readKey(manifest));FileOutputStream output=new FileOutputStream(temporary,true)){
+                    byte[] buffer=new byte[256*1024];int count;
+                    while((count=input.read(buffer))!=-1){if(job!=null)job.checkActive();if(Thread.currentThread().isInterrupted())throw new InterruptedIOException("Vault restore cancelled");digest.update(buffer,0,count);output.write(buffer,0,count);copied=Math.addExact(copied,count);if(job!=null&&copied-lastReport>=8L*1024*1024){lastReport=copied;job.checkpoint("vault_restore_write",45+(int)Math.min(50,50d*copied/Math.max(1,manifest.totalBytes)),"Restoring original media · "+copied+" bytes");}}
+                    output.flush();output.getFD().sync();
+                }
+                StringBuilder hash=new StringBuilder();for(byte value:digest.digest())hash.append(String.format(java.util.Locale.US,"%02x",value&255));if(copied!=manifest.totalBytes||!manifest.sha256.equals(hash.toString()))throw new IOException("Recovered original checksum/size mismatch");
+                if(job!=null)job.checkActive();
+                try{Files.move(temporary.toPath(),target.toPath(),StandardCopyOption.ATOMIC_MOVE,StandardCopyOption.REPLACE_EXISTING);}catch(AtomicMoveNotSupportedException unsupported){Files.move(temporary.toPath(),target.toPath(),StandardCopyOption.REPLACE_EXISTING);}
+            }catch(Exception failure){throw failure;}
+        }
+        JSONObject old=source.generationMetadata.optJSONObject("vaultRecovery");String original=old!=null&&targetUri.equals(sourceUri)&&expectedManifest.equals(old.optString("manifestId"))?old.optString("originalUri",sourceUri):sourceUri;
+        JSONObject recovery=new JSONObject().put("manifestId",expectedManifest).put("originalUri",original).put("sourceUri",expectedSourceUri).put("uri",targetUri).put("bytes",manifest.totalBytes).put("sha256",manifest.sha256).put("verifiedAt",System.currentTimeMillis()).put("originalRetained",true).put("complete",true);
+        JobManager.Work publication=active->store.transact(projectId,-1,"system","","Restore media from Vault",project->{
+            ProjectStore.Asset current=project.asset(assetId);JSONObject bound=current==null?null:current.generationMetadata.optJSONObject("vault");
+            if(current==null||!sourceUri.equals(current.uri)||bound==null||!expectedManifest.equals(bound.optString("manifestId")))throw new IllegalStateException("Asset changed during recovery; owner media preserved");
+            current.uri=targetUri;current.generationMetadata.put("vaultRecovery",new JSONObject(recovery.toString()));
+        });
+        if(!targetUri.equals(sourceUri)||old==null||!old.optBoolean("complete")){if(job==null)publication.run(null);else job.commit(publication);}else{
+            if(job!=null)job.checkActive();ProjectStore.Asset latest=store.get(projectId).asset(assetId);if(latest==null||!sourceUri.equals(latest.uri)||!expectedManifest.equals(boundManifestId(projectId,assetId)))throw new IllegalStateException("Asset changed during recovery");
+        }
+        return new JSONObject().put("ok",true).put("complete",true).put("projectId",projectId).put("assetId",assetId).put("manifestId",expectedManifest).put("uri",targetUri).put("sha256",manifest.sha256).put("bytes",manifest.totalBytes).put("originalRetained",true).put("resumedBytes",resumedBytes).put("reusedLocalMedia",reusable).put("hydration",hydration);
+    }
+    /** Only whole plaintext chunks whose SHA matches the bound manifest survive a process-death restart. */
+    private static long verifiedPrefix(File partial,VaultChunkStore.Manifest manifest,JobManager.Job job)throws Exception{
+        if(!partial.exists())return 0;long prefix=0;
+        for(VaultChunkStore.Chunk chunk:manifest.chunks){
+            if(chunk.offset+chunk.size>partial.length())break;
+            try(InputStream input=VaultChunkStore.openFileRange(partial,chunk.offset,chunk.size)){
+                VaultChunkStore.SourceDigest hash=VaultChunkStore.sourceChecksum(input,(done,total)->{if(job!=null)job.checkActive();});if(!chunk.sha256.equals(hash.sha256))break;prefix=chunk.offset+chunk.size;
+            }
+        }
+        try(RandomAccessFile file=new RandomAccessFile(partial,"rw")){file.setLength(prefix);file.getFD().sync();}return prefix;
+    }
     public InputStream openRange(String manifestId,long offset,long length)throws Exception{
-        VaultChunkStore vault=new VaultChunkStore(root,VaultChunkStore.DEFAULT_CHUNK_BYTES);VaultChunkStore.Manifest manifest=vault.load(manifestId);
-        return vault.openRange(manifest,offset,length,manifest.encrypted?key():null);
+        try(DocumentTreeBlobStore blobs=new DocumentTreeBlobStore(context);VaultStorageFabric fabric=new VaultStorageFabric(context,root,blobs)){fabric.hydrate(manifestId,offset,length,null);}
+        VaultChunkStore vault=new VaultChunkStore(root,VaultChunkStore.DEFAULT_CHUNK_BYTES);VaultChunkStore.Manifest manifest=vault.load(manifestId);return vault.openRange(manifest,offset,length,readKey(manifest));
+    }
+    private static SecretKey readKey(VaultChunkStore.Manifest manifest)throws Exception{
+        if(!manifest.encrypted)return null;KeyStore keys=KeyStore.getInstance("AndroidKeyStore");keys.load(null);
+        if(!KEY_ALIAS.equals(manifest.keyId)||!keys.containsAlias(manifest.keyId))throw new IOException("This device's original Vault encryption key is unavailable");return (SecretKey)keys.getKey(manifest.keyId,null);
     }
     public JSONObject describe(VaultChunkStore.Manifest manifest)throws Exception{
         JSONArray chunks=new JSONArray();for(VaultChunkStore.Chunk c:manifest.chunks)chunks.put(new JSONObject().put("offset",c.offset).put("bytes",c.size).put("storedBytes",c.storedBytes).put("recordBytes",c.recordBytes).put("sha256",c.sha256).put("storedSha256",c.storedSha256).put("iv",c.iv).put("location",Uri.fromFile(new File(root,"objects/"+c.objectName)).toString()).put("storage","internal"));

@@ -105,9 +105,67 @@ public class VaultStorageFabricTest {
             migrated.pending(manifest.id,"new","a","",1,"hash",UUID.randomUUID().toString());assertEquals("pending",migrated.get(manifest.id,"new","a").getString("state"));
         }
     }
+    @Test public void missingManifestAndChunksRestoreFromVerifiedReplicaBytes()throws Exception{
+        replicate(manifest.id,List.of("a","b"),2,null);int writes=remote.puts;
+        Files.delete(root.resolve("vault/manifests/"+manifest.id+".manifest"));for(VaultChunkStore.Chunk c:manifest.chunks)Files.delete(root.resolve("vault/objects/"+c.objectName));
+        try(VaultStorageFabric restored=fabric()){JSONObject result=restored.hydrate(manifest.id,0,-1,null);assertTrue(result.getBoolean("complete"));assertEquals(3,result.getInt("downloadedObjects"));}
+        VaultChunkStore vault=new VaultChunkStore(root.resolve("vault").toFile(),4096);VaultChunkStore.Manifest loaded=vault.load(manifest.id);try(InputStream original=vault.openRange(loaded,0,loaded.totalBytes,null)){assertEquals(9000,original.readAllBytes().length);}
+        assertEquals(writes,remote.puts);assertEquals(0,remote.deletes);
+    }
+    @Test public void rangeHydrationDownloadsOnlyIntersectingChunksAndRetriesReuseThem()throws Exception{
+        replicate(manifest.id,List.of("a"),1,null);for(VaultChunkStore.Chunk c:manifest.chunks)Files.delete(root.resolve("vault/objects/"+c.objectName));
+        try(VaultStorageFabric restored=fabric()){
+            JSONObject result=restored.hydrate(manifest.id,4100,100,null);assertFalse(result.getBoolean("complete"));assertEquals(1,result.getInt("downloadedObjects"));
+            assertFalse(Files.exists(root.resolve("vault/objects/"+manifest.chunks.get(0).objectName)));assertTrue(Files.exists(root.resolve("vault/objects/"+manifest.chunks.get(1).objectName)));
+            assertEquals(0,restored.hydrate(manifest.id,4100,100,null).getInt("downloadedObjects"));
+            try{restored.hydrate(manifest.id,Long.MAX_VALUE,1,null);fail("Invalid range accepted");}catch(IllegalArgumentException expected){}
+        }
+    }
+    @Test public void hydrationFallsBackFromCorruptReplicaWithoutModifyingRemoteObjects()throws Exception{
+        replicate(manifest.id,List.of("a","b"),2,null);VaultChunkStore.Chunk chunk=manifest.chunks.get(0);Files.delete(root.resolve("vault/objects/"+chunk.objectName));
+        Path bad=remote.files.entrySet().stream().filter(e->e.getKey().startsWith("a:")&&e.getValue().getFileName().toString().endsWith(chunk.objectName)).findFirst().orElseThrow().getValue();Files.write(bad,new byte[]{1});
+        try(VaultStorageFabric restored=fabric()){assertEquals(1,restored.hydrate(manifest.id,0,1,null).getInt("downloadedObjects"));}
+        assertEquals(8,remote.puts);assertEquals(0,remote.deletes);assertEquals(1,Files.size(bad));
+    }
+    @Test public void failedHydrationLeavesOldLocalBytesIntactAndNeverPublishesCorruptDownload()throws Exception{
+        replicate(manifest.id,List.of("a"),1,null);VaultChunkStore.Chunk chunk=manifest.chunks.get(0);Path local=root.resolve("vault/objects/"+chunk.objectName);byte[] old={7,8,9};Files.write(local,old);
+        Path remoteFile=remote.files.values().stream().filter(p->p.getFileName().toString().endsWith(chunk.objectName)).findFirst().orElseThrow();Files.write(remoteFile,new byte[]{1});
+        try(VaultStorageFabric restored=fabric()){try{restored.hydrate(manifest.id,0,1,null);fail("Bad replica accepted");}catch(IOException expected){}}
+        assertArrayEquals(old,Files.readAllBytes(local));try(var files=Files.list(root.resolve("vault/partial"))){assertEquals(0,files.count());}assertEquals(0,remote.deletes);
+    }
+    @Test public void cancelledHydrationRestartsFromPreviouslyVerifiedDownloads()throws Exception{
+        replicate(manifest.id,List.of("a"),1,null);for(VaultChunkStore.Chunk c:manifest.chunks)Files.delete(root.resolve("vault/objects/"+c.objectName));
+        try(VaultStorageFabric restored=fabric()){try{restored.hydrate(manifest.id,0,-1,(done,total)->{if(done>=4096)throw new InterruptedIOException("Stop");});fail("Cancellation ignored");}catch(InterruptedIOException expected){}}
+        try(VaultStorageFabric restored=fabric()){assertEquals(2,restored.hydrate(manifest.id,0,-1,null).getInt("downloadedObjects"));}assertEquals(4,remote.puts);
+    }
+    @Test public void encryptedHydrationPreservesAuthenticatedBytesAndOriginalKeyRestoresSource()throws Exception{
+        byte[] source=new byte[9000];new Random(27).nextBytes(source);javax.crypto.SecretKey key=new javax.crypto.spec.SecretKeySpec(new byte[32],"AES");VaultChunkStore vault=new VaultChunkStore(root.resolve("vault").toFile(),4096);VaultChunkStore.Manifest encrypted=vault.pack(new ByteArrayInputStream(source),source.length,key,"private",null);
+        replicate(encrypted.id,List.of("a"),1,null);for(VaultChunkStore.Chunk c:encrypted.chunks)Files.delete(root.resolve("vault/objects/"+c.objectName));
+        try(VaultStorageFabric restored=fabric()){assertTrue(restored.hydrate(encrypted.id,0,-1,null).getBoolean("complete"));}
+        try(InputStream input=vault.openRange(vault.load(encrypted.id),0,source.length,key)){assertArrayEquals(source,input.readAllBytes());}
+    }
+    @Test public void revokedProviderGrantFallsBackToAnotherReplica()throws Exception{
+        replicate(manifest.id,List.of("a","b"),2,null);VaultChunkStore.Chunk chunk=manifest.chunks.get(0);Files.delete(root.resolve("vault/objects/"+chunk.objectName));remote.deniedProfile="a";
+        try(VaultStorageFabric restored=fabric()){assertEquals(1,restored.hydrate(manifest.id,0,1,null).getInt("downloadedObjects"));}assertEquals(8,remote.puts);assertEquals(0,remote.deletes);
+    }
+    @Test public void syntacticallyValidManifestCorruptionRestoresTheVerifiedBinaryManifest()throws Exception{
+        replicate(manifest.id,List.of("a"),1,null);Path file=root.resolve("vault/manifests/"+manifest.id+".manifest");byte[] valid=Files.readAllBytes(file),corrupt=valid.clone();byte[] marker=manifest.chunks.get(0).sha256.getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+        for(int i=0;i<=corrupt.length-marker.length;i++){boolean same=true;for(int j=0;j<marker.length;j++)if(corrupt[i+j]!=marker[j]){same=false;break;}if(same){corrupt[i]=corrupt[i]=='a'?(byte)'b':(byte)'a';break;}}
+        Files.write(file,corrupt);assertNotEquals(manifest.chunks.get(0).sha256,new VaultChunkStore(root.resolve("vault").toFile(),4096).load(manifest.id).chunks.get(0).sha256);
+        try(VaultStorageFabric restored=fabric()){restored.hydrate(manifest.id,0,-1,null);}assertArrayEquals(valid,Files.readAllBytes(file));assertEquals(4,remote.puts);
+    }
+    @Test public void abandonedDownloadStageIsReclaimedBeforeRestartWithoutLeavingDuplicates()throws Exception{
+        replicate(manifest.id,List.of("a"),1,null);VaultChunkStore.Chunk chunk=manifest.chunks.get(0);Files.delete(root.resolve("vault/objects/"+chunk.objectName));Path stale=root.resolve("vault/partial/"+chunk.objectName+".download.partial");Files.write(stale,new byte[4000]);
+        try(VaultStorageFabric restored=fabric()){restored.hydrate(manifest.id,0,1,null);}assertFalse(Files.exists(stale));try(var files=Files.list(root.resolve("vault/partial"))){assertEquals(0,files.count());}
+    }
+    @Test public void cancellationDuringLocalManifestVerificationCannotFallThroughToRemoteDownload()throws Exception{
+        replicate(manifest.id,List.of("a"),1,null);int before=remote.opens;int[] checks={0};
+        try(VaultStorageFabric restored=fabric()){try{restored.hydrate(manifest.id,0,-1,(done,total)->{if(++checks[0]==2)throw new InterruptedIOException("Owner stopped during manifest checksum");});fail("Cancellation ignored");}catch(InterruptedIOException expected){}}
+        assertEquals("Cancellation must not trigger a provider read",before,remote.opens);
+    }
     private static final class SimulatedDeath extends Error {}
     private static final class Remote implements VaultStorageFabric.BlobStore {
-        final Path root;final Map<String,Path> files=new LinkedHashMap<>();final Set<String> writtenProfiles=new HashSet<>();int puts,deletes;boolean corrupt,dieAfterWrite,unavailable;long free=-1;
+        final Path root;final Map<String,Path> files=new LinkedHashMap<>();final Set<String> writtenProfiles=new HashSet<>();int puts,deletes,opens;boolean corrupt,dieAfterWrite,unavailable;long free=-1;String deniedProfile="";
         Remote(Path root)throws IOException{this.root=root;Files.createDirectories(root);}
         public long freeBytes(String profile){return free;}
         public String put(String profile,String name,String token,File source,VaultStorageFabric.Progress progress)throws Exception{
@@ -116,7 +174,7 @@ public class VaultStorageFabricTest {
         }
         public String resolve(String profile,String name,String token){Path target=root.resolve(profile+"-"+token+"-"+name);String location=target.toUri().toString();return files.containsKey(profile+":"+location)?location:null;}
         public String repair(String profile,String location,File source,VaultStorageFabric.Progress progress)throws Exception{Path target=files.get(profile+":"+location);Files.copy(source.toPath(),target,StandardCopyOption.REPLACE_EXISTING);puts++;return location;}
-        public InputStream open(String profile,String location)throws Exception{if(unavailable)throw new IOException("Temporary provider outage");Path path=files.get(profile+":"+location);if(path==null)throw new FileNotFoundException();return Files.newInputStream(path);}
+        public InputStream open(String profile,String location)throws Exception{opens++;if(profile.equals(deniedProfile))throw new SecurityException("Owner revoked this provider grant");if(unavailable)throw new IOException("Temporary provider outage");Path path=files.get(profile+":"+location);if(path==null)throw new FileNotFoundException();return Files.newInputStream(path);}
         public void delete(String profile,String location)throws Exception{deletes++;Path path=files.remove(profile+":"+location);if(path!=null)Files.deleteIfExists(path);}
     }
 }

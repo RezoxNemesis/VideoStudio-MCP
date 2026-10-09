@@ -29,9 +29,9 @@ public class OwnerAccessPolicyTest {
     }
     @Test public void storageReplicationUsesTheCurrentSelectedAssetScope()throws Exception{
         selected();OwnerAccessPolicy policy=new OwnerAccessPolicy(context,store);
-        JSONObject request=new JSONObject().put("projectId",project.id).put("assetId","allowed");assertTrue(policy.allows("vault_replicate",request));
-        request.put("assetId","private");assertFalse(policy.allows("vault_replicate",request));
-        request.put("projectId",privateProject.id).put("assetId","allowed");assertFalse(policy.allows("vault_replicate",request));
+        JSONObject request=new JSONObject().put("projectId",project.id).put("assetId","allowed");assertTrue(policy.allows("vault_replicate",request));assertTrue(policy.allows("vault_restore",request));
+        request.put("assetId","private");assertFalse(policy.allows("vault_replicate",request));assertFalse(policy.allows("vault_restore",request));
+        request.put("projectId",privateProject.id).put("assetId","allowed");assertFalse(policy.allows("vault_replicate",request));assertFalse(policy.allows("vault_restore",request));
     }
     @Test public void selectedMediaDoesNotExposeOtherAssetsJobResults()throws Exception{
         selected();OwnerAccessPolicy policy=new OwnerAccessPolicy(context,store);

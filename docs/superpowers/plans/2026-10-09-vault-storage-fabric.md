@@ -43,11 +43,13 @@ Create DocumentTreeBlobStore.java; update VaultManager, ControlService, MainActi
 - [x] Implement app-namespace-only SAF object creation and read-back verification, using existing connected profiles.
 - [x] Add owner Vault replication dialog and durable autonomous MCP job/recovery routing.
 - [x] Return durable verified replica status through vault_inspect without exposing unrelated folders.
-- [ ] Run current-source Android/Node/Worker checks, bounded independent review, publish exact tree and verify matching APK/device CI.
-- [ ] Append continuity with measured local/provider evidence and explicit direct-OAuth/device limits; continue the remaining blueprint.
+- [x] Run current-source Android/Node/Worker checks, bounded independent review, publish exact tree and verify matching APK/device CI.
+- [x] Append continuity with measured local/provider evidence and explicit direct-OAuth/device limits; continue the remaining blueprint.
 
 2026-10-09: Original RED 6/6, review RED 4 native/1 relay, then focused recovery/migration/real DocumentsProvider GREEN 30 cases and full current-source GREEN 222. Node 282/20/21 and actual Wrangler bundle pass. Database v2 token intents, in-place repair, temporary failure retention and scoped discovery are included. Full matching-source Gradle/APK and seven-case device CI still pending publication; direct provider accounts/network evidence is pending.
 
 Read-only independent follow-up closes all three Important storage findings; no remaining Important issue within this bounded review. Owner dialog suite after null-safe metadata display passes 10 cases.
 
 4f296bf matching Gradle/Android APK succeeds with 222 tests, Worker succeeds. Device 37899690474 runs seven cases: original six pass, new SAF case fails before transfer because the fixture omitted the owner naming dialog Connect step; app/system grant alone does not connect a slot. Corrected that fixture step and retained failure screenshot/XML. Rerun pending; no third-party cloud claim.
+
+806620a / local ba07402 tree22ece642: full Android CI37901073791 succeeds222 unit tests, 98,991,611-byte APK SHA1969af653b21a380ddac60fcd8d70cc49bd1352828991285611b99898b165c30 / certificate7e0187470356616be2a45bc7f41445894085185db110edfdc0cdfd232942a6dd. Worker37901073863 succeeds. Actual device37901073760 succeeds all7 cases,31 retained files. Corrected Connect selector is case-insensitive; the owner naming step is required. Evidence logs/metadata inspected; artifact bytes not fetched. Continued recovery work is tracked in vault-recovery plan.

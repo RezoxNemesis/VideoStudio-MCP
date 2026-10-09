@@ -32,6 +32,15 @@ public class OwnerToolUiTest {
             JSONObject parameters=new JSONObject(intent.getStringExtra("parameters"));assertEquals(p.id,parameters.getString("projectId"));assertEquals("image",parameters.getString("assetId"));assertEquals(profile,parameters.getJSONArray("profileIds").getString(0));assertEquals(1,parameters.getInt("replicas"));assertFalse(parameters.has("treeUri"));
         }
     }
+    @Test public void ownerVaultRestoreRemainsAvailableWhenRemoteControlIsStopped()throws Exception{
+        Context c=RuntimeEnvironment.getApplication();c.deleteDatabase("videostudio_v3.db");ProjectStore store=new ProjectStore(c);ProjectStore.Project p=fixture(store,false);p.asset("image").generationMetadata.put("vault",new JSONObject().put("complete",true).put("manifestId","a".repeat(64)));store.save(p);
+        try(ActivityController<MainActivity> controller=Robolectric.buildActivity(MainActivity.class).setup()){
+            java.lang.reflect.Field protocol=MainActivity.class.getDeclaredField("protocol");protocol.setAccessible(true);((AppProtocol)protocol.get(controller.get())).setControlPaused(true);
+            java.lang.reflect.Method bin=MainActivity.class.getDeclaredMethod("showMediaBinDialog");bin.setAccessible(true);bin.invoke(controller.get());android.app.AlertDialog media=ShadowAlertDialog.getLatestAlertDialog();android.view.View restore=findButton(media.getWindow().getDecorView(),"Restore media from Vault");assertNotNull(restore);
+            org.robolectric.shadows.ShadowApplication app=org.robolectric.Shadows.shadowOf(RuntimeEnvironment.getApplication());while(app.getNextStartedService()!=null){}
+            restore.performClick();android.content.Intent intent=app.getNextStartedService();assertNotNull(intent);assertEquals("com.rezoxnemesis.videostudio.LOCAL_VAULT_RESTORE",intent.getAction());assertEquals(p.id,intent.getStringExtra("projectId"));assertEquals("image",intent.getStringExtra("assetId"));assertNull(intent.getStringExtra("uri"));
+        }
+    }
     private android.view.View findButton(android.view.View view,String text){
         if(view instanceof android.widget.Button&&text.contentEquals(((android.widget.Button)view).getText()))return view;
         if(view instanceof android.view.ViewGroup){android.view.ViewGroup group=(android.view.ViewGroup)view;for(int i=0;i<group.getChildCount();i++){android.view.View result=findButton(group.getChildAt(i),text);if(result!=null)return result;}}

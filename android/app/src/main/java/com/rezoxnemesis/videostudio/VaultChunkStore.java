@@ -105,8 +105,12 @@ public final class VaultChunkStore {
         Manifest manifest=new Manifest(hash+tag,hash,total,chunkBytes,keyName,encrypted,2,chunks);writeManifest(manifest);return manifest;
     }
     public Manifest load(String id)throws IOException{
+        return validateManifest(new File(manifests,id+".manifest"),id);
+    }
+    /** Validate a staged binary manifest before publishing recovered bytes. */
+    public static Manifest validateManifest(File file,String id)throws IOException{
         if(id==null||!id.matches("[a-f0-9]{64}(-[a-f0-9]{16})?"))throw new IllegalArgumentException("Invalid Vault manifest ID");
-        try(DataInputStream in=new DataInputStream(new BufferedInputStream(new FileInputStream(new File(manifests,id+".manifest"))))){
+        try(DataInputStream in=new DataInputStream(new BufferedInputStream(new FileInputStream(file)))){
             if(in.readInt()!=MAGIC)throw new IOException("Unsupported Vault manifest");int version=in.readInt();if(version!=1&&version!=2)throw new IOException("Unsupported Vault manifest version");
             String sha=in.readUTF();long total=in.readLong(),chunkSize=in.readLong();boolean encrypted=in.readBoolean();String keyId=in.readUTF();
             if(total<0||chunkSize<1024||chunkSize>1L<<30||!sha.matches("[a-f0-9]{64}"))throw new IOException("Invalid Vault manifest header");

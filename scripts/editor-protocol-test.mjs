@@ -42,6 +42,17 @@ test('project-bound storage discovery works in project and selected-media modes'
   }
 });
 
+test('Vault restore requires schema 7 and only relinks selected project media',async()=>{
+  const f=await fixture(),parameters={projectId:'project-001',assetId:'owned'};
+  await f.relay.appRegister('editor-device-001',f.key,{protocolVersion:3,appGeneration:1,editorSchemaVersion:6,permissionMode:'everything'});
+  await assert.rejects(f.relay.appEnqueueV3(f.key,'vault_restore',parameters),/restore|compatible APK/i);
+  await f.relay.appRegister('editor-device-001',f.key,{protocolVersion:3,appGeneration:1,editorSchemaVersion:7,permissionMode:'selected_assets',allowedProjectId:'project-001',allowedAssetIds:['owned']});
+  const tool=context.serverForApp({relay:f.relay},f.key,3).tools.get('app_vault_restore');assert.ok(tool);
+  const input=z.object(tool.spec.inputSchema).strict().parse(parameters);assert.equal(JSON.parse((await tool.handler(input)).content[0].text).queued,true);
+  await assert.rejects(f.relay.appEnqueueV3(f.key,'vault_restore',{...parameters,assetId:'private'}),/permission|scope/i);
+  assert.throws(()=>z.object(tool.spec.inputSchema).strict().parse({...parameters,uri:'content://arbitrary-source'}));
+});
+
 test('Vault replication requires its native capability and respects selected media scope',async()=>{
   const f=await fixture(),parameters={projectId:'project-001',assetId:'owned',profileIds:['profile-a'],replicas:1};
   await f.relay.appRegister('editor-device-001',f.key,{protocolVersion:3,appGeneration:1,editorSchemaVersion:5,permissionMode:'everything'});

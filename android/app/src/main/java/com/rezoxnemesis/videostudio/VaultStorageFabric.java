@@ -72,6 +72,64 @@ public final class VaultStorageFabric implements AutoCloseable {
             return new JSONObject().put("ok",true).put("complete",true).put("manifestId",manifestId).put("logicalChunks",manifest.chunks.size()).put("chunkReplicas",chunkReplicas).put("manifestReplicas",manifestReplicas).put("verifiedBytes",done).put("replicasPerChunk",copies).put("profileIds",new org.json.JSONArray(profiles)).put("locations",verifiedLocations).put("originalRetained",true).put("localVaultRetained",true).put("scope","owner-connected-document-folders");
         }
     }
+    /** Download whole intersecting stored chunks, verify them, then publish atomic local cache entries. */
+    public JSONObject hydrate(String manifestId,long offset,long length,Progress progress)throws Exception{
+        synchronized(COPY_LOCK){
+            VaultChunkStore vault=new VaultChunkStore(root,VaultChunkStore.DEFAULT_CHUNK_BYTES);active(progress,0,0);
+            VaultChunkStore.Manifest manifest=localOrRecoveredManifest(vault,manifestId,progress);
+            if(length==-1){if(offset<0||offset>manifest.totalBytes)throw new IllegalArgumentException("Vault range is outside the asset");length=manifest.totalBytes-offset;}
+            if(offset<0||length<0||offset>manifest.totalBytes||length>manifest.totalBytes-offset)throw new IllegalArgumentException("Vault range is outside the asset");
+            LinkedHashMap<String,VaultChunkStore.Chunk> needed=new LinkedHashMap<>();long end=offset+length;
+            for(VaultChunkStore.Chunk chunk:manifest.chunks)if(length>0&&chunk.offset<end&&chunk.offset+chunk.size>offset)needed.putIfAbsent(chunk.objectName,chunk);
+            long total=0;for(VaultChunkStore.Chunk chunk:needed.values())total=Math.addExact(total,chunk.storedBytes);
+            long done=0;int downloaded=0;
+            for(VaultChunkStore.Chunk chunk:needed.values()){
+                active(progress,done,total);File local=new File(root,"objects/"+chunk.objectName);boolean valid=false;
+                try{verifyFile(local,chunk.storedBytes,chunk.storedSha256,()->active(progress,0,0));valid=true;}catch(InterruptedIOException cancelled){throw cancelled;}catch(IOException missingOrCorrupt){}
+                if(!valid){
+                    File staged=download(manifest.id,chunk.objectName,chunk.storedBytes,chunk.storedSha256,progress,null);
+                    try{active(progress,0,0);publish(staged,local);}finally{java.nio.file.Files.deleteIfExists(staged.toPath());}downloaded++;
+                }
+                done=Math.addExact(done,chunk.storedBytes);active(progress,done,total);
+            }
+            return new JSONObject().put("ok",true).put("manifestId",manifest.id).put("complete",offset==0&&length==manifest.totalBytes).put("rangeOffset",offset).put("rangeBytes",length).put("verifiedStoredBytes",done).put("requiredObjects",needed.size()).put("downloadedObjects",downloaded).put("remoteObjectsRetained",true).put("originalRetained",true);
+        }
+    }
+    private VaultChunkStore.Manifest localOrRecoveredManifest(VaultChunkStore vault,String id,Progress progress)throws Exception{
+        try{
+            File local=new File(root,"manifests/"+id+".manifest");org.json.JSONArray rows=index.list(id);boolean hasProof=false,matches=false;
+            for(int i=0;i<rows.length();i++){JSONObject row=rows.getJSONObject(i);if((id+".manifest").equals(row.optString("object"))&&"verified".equals(row.optString("state"))){hasProof=true;try{verifyFile(local,row.getLong("bytes"),row.getString("sha256"),()->active(progress,0,0));matches=true;break;}catch(InterruptedIOException cancelled){throw cancelled;}catch(IOException invalid){}}}
+            if(hasProof&&!matches)throw new IntegrityException("Local binary manifest differs from its verified replica proof");return vault.load(id);
+        }catch(InterruptedIOException cancelled){throw cancelled;}catch(IOException missingOrCorrupt){
+            File staged=download(id,id+".manifest",-1,null,progress,file->VaultChunkStore.validateManifest(file,id));
+            try{active(progress,0,0);publish(staged,new File(root,"manifests/"+id+".manifest"));return vault.load(id);}finally{java.nio.file.Files.deleteIfExists(staged.toPath());}
+        }
+    }
+    private interface StagedCheck {void validate(File file)throws Exception;}
+    private File download(String manifest,String object,long expected,String sha,Progress progress,StagedCheck validate)throws Exception{
+        org.json.JSONArray locations=index.list(manifest);IOException unavailable=new IOException("No connected, valid replica can restore this Vault object");
+        for(int i=0;i<locations.length();i++){
+            JSONObject row=locations.getJSONObject(i);if(!object.equals(row.optString("object"))||!"verified".equals(row.optString("state")))continue;
+            long bytes=expected<0?row.optLong("bytes",-1):expected;String hash=sha==null?row.optString("sha256"):sha;
+            if(bytes<0||expected<0&&bytes>64L*1024*1024||!hash.matches("[a-f0-9]{64}")||row.optLong("bytes",-1)!=bytes||!hash.equals(row.optString("sha256")))continue;
+            active(progress,0,0);File staged=new File(root,"partial/"+object+".download.partial");java.nio.file.Files.deleteIfExists(staged.toPath());
+            long free=root.getUsableSpace();if(free<bytes+64L*1024*1024)throw new IOException("Insufficient local space to safely restore a Vault object");boolean accepted=false;
+            try{
+                try(InputStream input=blobs.open(row.getString("profileId"),row.getString("location"));FileOutputStream output=new FileOutputStream(staged)){
+                    MessageDigest digest=MessageDigest.getInstance("SHA-256");byte[] buffer=new byte[256*1024];long copied=0;int count;
+                    while((count=input.read(buffer))!=-1){downloadActive(progress);if(count==0){int one=input.read();if(one<0)break;buffer[0]=(byte)one;count=1;}copied=Math.addExact(copied,count);if(copied>bytes)throw new IntegrityException("Downloaded Vault replica exceeds its recorded size");digest.update(buffer,0,count);output.write(buffer,0,count);}
+                    StringBuilder actual=new StringBuilder();for(byte value:digest.digest())actual.append(String.format(java.util.Locale.US,"%02x",value&255));
+                    if(copied!=bytes||!hash.equals(actual.toString()))throw new IntegrityException("Downloaded Vault replica checksum/size mismatch");output.flush();output.getFD().sync();
+                }
+                if(validate!=null)validate.validate(staged);downloadActive(progress);accepted=true;return staged;
+            }catch(ProgressFailure stopped){throw stopped.failure;}catch(java.util.concurrent.CancellationException cancelled){throw cancelled;}catch(Exception failure){active(progress,0,0);unavailable.addSuppressed(failure);}finally{if(!accepted)java.nio.file.Files.deleteIfExists(staged.toPath());}
+        }throw unavailable;
+    }
+    private static final class ProgressFailure extends Exception {final Exception failure;ProgressFailure(Exception failure){this.failure=failure;}}
+    private static void downloadActive(Progress progress)throws ProgressFailure{try{active(progress,0,0);}catch(Exception failure){throw new ProgressFailure(failure);}}
+    private static void publish(File staged,File target)throws IOException{
+        try{java.nio.file.Files.move(staged.toPath(),target.toPath(),java.nio.file.StandardCopyOption.ATOMIC_MOVE,java.nio.file.StandardCopyOption.REPLACE_EXISTING);}catch(java.nio.file.AtomicMoveNotSupportedException unsupported){java.nio.file.Files.move(staged.toPath(),target.toPath(),java.nio.file.StandardCopyOption.REPLACE_EXISTING);}
+    }
     private interface Check {void run()throws Exception;}
     private static final class IntegrityException extends IOException {IntegrityException(String detail){super(detail);}}
     private static void active(Progress progress,long done,long total)throws Exception{if(Thread.currentThread().isInterrupted())throw new InterruptedIOException("Vault replication cancelled");if(progress!=null)progress.update(done,total);}

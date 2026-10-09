@@ -49,7 +49,7 @@ const appActionAllowed = (mode,action,parameters={},device={}) => {
     const assets=new Set(device.allowedAssetIds||[]),clips=new Set(device.allowedClipIds||[]);
     if(a==="storage_profiles")return true;
     if(a==="project_query")return (parameters.query||"graph")!=="snapshots";
-    if(["analyse_media","vault_create","vault_inspect","vault_replicate","create_proxy"].includes(a))return assets.has(parameters.assetId);
+    if(["analyse_media","vault_create","vault_inspect","vault_replicate","vault_restore","create_proxy"].includes(a))return assets.has(parameters.assetId);
     const allowed=entry=>{
       const op=entry.operation,args=entry.args||{};
       if(["rename_asset","remove_asset","add_clip"].includes(op))return assets.has(args.assetId);
@@ -872,6 +872,7 @@ export class VideoStudioState extends DurableObject {
     const legacyTarget=parameters.expectedRevision!==undefined||!!parameters.projectId;
     const legacyMinimum=legacyTarget?(action==="apply_tool"?4:["apply_edit_plan","creator_preset","autonomous_edit"].includes(action)?5:0):0;
     if(legacyMinimum&&(d.editorSchemaVersion||1)<legacyMinimum)throw new Error("Installed app does not support this editor schema version for project/revision targeting; install the compatible APK");
+    if(action==="vault_restore"&&(d.editorSchemaVersion||1)<7)throw new Error("Installed app does not support verified Vault media restore; install the compatible APK");
     if(action==="vault_replicate"&&(d.editorSchemaVersion||1)<6)throw new Error("Installed app does not support verified Vault storage replication; install the compatible APK");
     if(editor&&d.editorSchemaVersion<requiredEditorSchema)throw new Error("Installed app does not support this editor schema version; install the compatible APK");
     const queueKey="app-v3-cl:"+d.deviceId, existing=(await this.ctx.storage.get(queueKey))||[];
@@ -1555,7 +1556,7 @@ function serverForApp(env,ownerKey,protocolVersion=1){
   const isV3=Number(protocolVersion)>=3, isV4=Number(protocolVersion)===4;
   const s=new McpServer({
     name:isV4?"VideoStudio-App-MCP-v4":isV3?"VideoStudio-App-MCP-v3":"VideoStudio-App-MCP",
-    version:isV3?"3.4.8":"1.1.2"
+    version:isV3?"3.4.9":"1.1.2"
   }), st=state(env);
   const enqueueCommand=(action,parameters={})=>isV3
     ? st.appEnqueueV3(ownerKey,action,parameters)
@@ -1601,7 +1602,7 @@ function serverForApp(env,ownerKey,protocolVersion=1){
   s.registerTool("app_status",{description:isV3?"Check the VideoStudio v3 Native Agent connection, protocol version, permission mode, projects and pending native work. Gallery access is always false.":"Check the private native VideoStudio Android connection, permission mode, projects, control-pause state and pending work. Gallery access is always false.",inputSchema:{}},async()=>out(await readStatus()));
 
   s.registerTool("app_capabilities",{description:isV3?"Read VideoStudio v3 Native Agent capabilities and architecture guarantees.":"Read the native v1.1 editing, AI, render and privacy capabilities available to ChatGPT.",inputSchema:{}},async()=>out({
-    version:isV3?"3.4.8":"1.1.2",
+    version:isV3?"3.4.9":"1.1.2",
     featureProtocolVersion:isV3?4:1,
     editorSchema:isV3?EDITOR_SCHEMA:undefined,
     protocolVersion:isV3?3:1,
@@ -1660,6 +1661,7 @@ function serverForApp(env,ownerKey,protocolVersion=1){
     s.registerTool("app_storage_profiles",{description:"Read connected storage IDs, labels, provider health and reported quota. Supply projectId in project or selected-media permission modes. Folder capabilities and private project pins are withheld. New connections require the owner Android system picker.",inputSchema:{projectId:z.string().min(1).max(120).optional()}},async args=>queue("storage_profiles",args));
     s.registerTool("app_vault_create",{description:"Create a checksummed Vault copy of already imported media in 256 MB chunks. Optional AES-GCM encryption uses the Android Keystore; the original remains untouched. Requires the Vault-enabled APK.",inputSchema:{projectId:z.string().min(1).max(120),assetId:z.string().min(1).max(120),encrypted:z.boolean().optional()}},async args=>queue("vault_create",args));
     s.registerTool("app_vault_inspect",{description:"Read a project's Vault manifest, ordered chunks, checksums, sizes and encryption status.",inputSchema:{projectId:z.string().min(1).max(120),assetId:z.string().min(1).max(120)}},async args=>queue("vault_inspect",args));
+    s.registerTool("app_vault_restore",{description:"Restore a project-owned asset from its bound Vault and previously indexed owner-connected storage replicas. Verifies downloads and the full original checksum, then relinks that same asset to playable local bytes. Retains original files and records their URI; no caller URI or new folder connection. Uses the device's original encryption key. Requires the Vault-recovery APK.",inputSchema:{projectId:z.string().min(1).max(120),assetId:z.string().min(1).max(120)}},async args=>queue("vault_restore",args));
     s.registerTool("app_vault_replicate",{description:"Replicate a complete project-owned Vault copy across 1–5 existing owner-connected storage folders. Streams and rechecks every uploaded chunk and manifest, resumes verified copies after interruption, preserves originals and local Vault data. Read app_storage_profiles first; this action cannot connect new folders. Requires the storage-fabric APK.",inputSchema:{projectId:z.string().min(1).max(120),assetId:z.string().min(1).max(120),profileIds:z.array(z.string().min(1).max(120)).min(1).max(5),replicas:z.number().int().min(1).max(5).optional()}},async args=>queue("vault_replicate",args));
     s.registerTool("app_create_proxy",{description:"Create a decoded and checksummed 240p/360p/540p/720p preview derivative of an already imported video. Audio is retained, original media stays intact, final export uses originals. Requires the verified-proxy-enabled APK.",inputSchema:{projectId:z.string().min(1).max(120),assetId:z.string().min(1).max(120),tier:z.enum(["240p","360p","540p","720p"]).optional()}},async args=>queue("create_proxy",args));
   }

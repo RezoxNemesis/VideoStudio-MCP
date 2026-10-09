@@ -113,7 +113,7 @@ public class StudioDeviceTest {
         String folder="VideoStudio_SAF_Replication_Test";
         device.executeShellCommand("mkdir -p /sdcard/Documents/"+folder);
         ProjectStore store=new ProjectStore(context);ProjectStore.Project project=store.create("SAF replica device proof");
-        File source=png("saf-vault-original.png",Color.MAGENTA);ProjectStore.Asset image=asset("saf-vault",source,"image/png",0);image.sizeBytes=source.length();project.assets.add(image);store.save(project);
+        File source=png("saf-vault-original.png",Color.MAGENTA);ProjectStore.Asset image=asset("saf-vault",source,"image/png",0);image.sizeBytes=source.length();project.assets.add(image);project.clips.add(clip("saf-owned-clip",image.id,project.tracks.get(0).id,0,3000));store.save(project);
         VaultManager manager=new VaultManager(context,store);String manifest=manager.create(project.id,image.id,true,null).getJSONObject("vault").getString("manifestId");
         try(ActivityScenario<MainActivity> scenario=ActivityScenario.launch(new Intent(context,MainActivity.class))){
             scenario.onActivity(activity->{
@@ -140,7 +140,15 @@ public class StudioDeviceTest {
                 org.json.JSONArray before=replicated.getJSONArray("locations"),after=replay.getJSONArray("locations");assertEquals(before.length(),after.length());for(int i=0;i<before.length();i++)assertEquals(before.getJSONObject(i).getString("location"),after.getJSONObject(i).getString("location"));
                 assertTrue(source.isFile());assertTrue(new ProjectStore(context).get(project.id).asset(image.id).generationMetadata.getJSONObject("vaultReplication").getBoolean("complete"));
                 write("saf-vault-replication-proof.json",replay.toString(2));
+                File localRoot=new File(context.getFilesDir(),"videostudio_vault");VaultChunkStore.Manifest originalManifest=new VaultChunkStore(localRoot,VaultChunkStore.DEFAULT_CHUNK_BYTES).load(manifest);
+                for(VaultChunkStore.Chunk chunk:originalManifest.chunks)assertTrue("Remove only this fixture's local cached object",new File(localRoot,"objects/"+chunk.objectName).delete());assertTrue(new File(localRoot,"manifests/"+manifest+".manifest").delete());
+                JSONObject recovery=manager.restore(project.id,image.id,manifest,image.uri,null);assertTrue(recovery.getBoolean("complete"));assertEquals(image.uri,new ProjectStore(context).get(project.id).asset(image.id).generationMetadata.getJSONObject("vaultRecovery").getString("originalUri"));
+                byte[] originalBytes=java.nio.file.Files.readAllBytes(source.toPath());try(InputStream restored=context.getContentResolver().openInputStream(Uri.parse(recovery.getString("uri")))){java.io.ByteArrayOutputStream bytes=new java.io.ByteArrayOutputStream();byte[] buffer=new byte[4096];int count;while((count=restored.read(buffer))!=-1)bytes.write(buffer,0,count);assertArrayEquals(originalBytes,bytes.toByteArray());}
+                Bitmap recoveredImage=android.graphics.BitmapFactory.decodeFile(Uri.parse(recovery.getString("uri")).getPath());assertNotNull("Recovered media is independently decodable",recoveredImage);assertEquals(Color.MAGENTA,recoveredImage.getPixel(recoveredImage.getWidth()/2,recoveredImage.getHeight()/2));recoveredImage.recycle();
+                assertTrue(source.isFile());write("saf-vault-recovery-proof.json",recovery.toString(2));
             }
+            scenario.onActivity(activity->{try{java.lang.reflect.Method editor=MainActivity.class.getDeclaredMethod("showEditor");editor.setAccessible(true);editor.invoke(activity);}catch(Exception failure){throw new RuntimeException(failure);}});
+            UiObject2 recoveredPreview=device.wait(Until.findObject(By.desc("VideoStudio preview monitor")),15000);assertNotNull(recoveredPreview);assertPreviewColor(recoveredPreview.getVisibleBounds(),Color.MAGENTA);
             device.takeScreenshot(new File(evidence,"07-saf-vault-replication.png"));
         }
     }

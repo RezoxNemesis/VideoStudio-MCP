@@ -48,6 +48,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     public static final String ACTION_LOCAL_VOICE = "com.rezoxnemesis.videostudio.LOCAL_VOICE";
     public static final String ACTION_LOCAL_PROXY = "com.rezoxnemesis.videostudio.LOCAL_PROXY";
     public static final String ACTION_LOCAL_VAULT = "com.rezoxnemesis.videostudio.LOCAL_VAULT";
+    public static final String ACTION_LOCAL_VAULT_RESTORE = "com.rezoxnemesis.videostudio.LOCAL_VAULT_RESTORE";
     public static final String ACTION_LOCAL_VAULT_REPLICATE = "com.rezoxnemesis.videostudio.LOCAL_VAULT_REPLICATE";
     public static final String ACTION_LOCAL_IMPORT = "com.rezoxnemesis.videostudio.LOCAL_IMPORT_MEDIA";
     public static final String ACTION_REMOTE_COMMAND = "com.rezoxnemesis.videostudio.REMOTE_COMMAND";
@@ -195,6 +196,8 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             try{queueProxy(new JSONObject().put("projectId",intent.getStringExtra("projectId")).put("assetId",intent.getStringExtra("assetId")).put("tier",intent.getStringExtra("tier")).put("_origin","owner"));}catch(Exception error){ActivityLog.add(this,"user","Preview proxy failed",error.getMessage(),"failed",null,null,intent.getStringExtra("projectId"));}
         } else if(ACTION_LOCAL_VOICE.equals(action)){
             try{JSONObject parameters=new JSONObject(intent.getStringExtra("parameters")).put("_origin","owner");queueGenerateVoice(parameters);}catch(Exception error){ActivityLog.add(this,"user","Narration failed",error.getMessage(),"failed",null,null,intent.getStringExtra("projectId"));}
+        } else if(ACTION_LOCAL_VAULT_RESTORE.equals(action)){
+            try{JSONObject parameters=new JSONObject().put("projectId",intent.getStringExtra("projectId")).put("assetId",intent.getStringExtra("assetId")).put("_origin","owner");queueVaultRestore(parameters);}catch(Exception error){ActivityLog.add(this,"user","Vault restore failed",error.getMessage(),"failed",null,null,intent.getStringExtra("projectId"));}
         } else if(ACTION_LOCAL_VAULT_REPLICATE.equals(action)){
             try{JSONObject parameters=new JSONObject(intent.getStringExtra("parameters")).put("_origin","owner");queueVaultReplication(parameters);}catch(Exception error){ActivityLog.add(this,"user","Vault replication failed",error.getMessage(),"failed",null,null,intent.getStringExtra("projectId"));}
         } else if(ACTION_LOCAL_VAULT.equals(action)){
@@ -359,7 +362,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         OwnerAccessPolicy commandAccess=new OwnerAccessPolicy(this,store);
         try{
             commandJournal.validateReplay(command);
-            if(java.util.Arrays.asList("apply_tool","apply_edit_plan","creator_preset","autonomous_edit","export_project","vault_replicate").contains(action)){
+            if(java.util.Arrays.asList("apply_tool","apply_edit_plan","creator_preset","autonomous_edit","export_project","vault_replicate","vault_restore").contains(action)){
                 String bound=commandJournal.boundProject(commandId);
                 if(bound.isEmpty())bound=resolveProject(projectId).id;
                 else if(!projectId.isEmpty()&&!projectId.equals(bound))throw new IllegalArgumentException("Command ID belongs to another project");
@@ -430,6 +433,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 }
                 case "vault_create": complete(command,queueVault(p));return;
                 case "vault_replicate": complete(command,queueVaultReplication(p));return;
+                case "vault_restore": complete(command,queueVaultRestore(p));return;
                 case "create_proxy": complete(command,queueProxy(p));return;
                 case "vault_inspect": complete(command,new VaultManager(this,store).inspect(p.getString("projectId"),p.getString("assetId")));return;
                 case "editor_schema":
@@ -1552,6 +1556,9 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                     case "vault_create":
                         queued=queueVault(parameters);
                         break;
+                    case "vault_restore":
+                        queued=queueVaultRestore(parameters);
+                        break;
                     case "vault_replicate":
                         queued=queueVaultReplication(parameters);
                         break;
@@ -2343,6 +2350,15 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         String projectId=p.getString("projectId"),assetId=p.getString("assetId");
         JSONObject saved=new JSONObject(p.toString());
         JobManager.Job job=submitRecoverableHeavy("vault_create",saved,projectId,"Vault media copy",state->{state.setResult(new VaultManager(this,store).create(projectId,assetId,p.optBoolean("encrypted",true),state));syncProtocolState();});
+        return ok().put("queued",true).put("jobId",job.id).put("projectId",projectId).put("assetId",assetId).put("durableRecovery",true);
+    }
+
+    private JSONObject queueVaultRestore(JSONObject p)throws Exception{
+        String projectId=p.getString("projectId"),assetId=p.getString("assetId");VaultManager manager=new VaultManager(this,store);String current=manager.boundManifestId(projectId,assetId);
+        String manifest=p.optString("_recoveryPlanId","").isEmpty()?current:p.optString("vaultManifestId",current);if(!manifest.equals(current))throw new IllegalArgumentException("Asset's Vault source changed before recovery");
+        String source=p.optString("_recoveryPlanId","").isEmpty()?store.get(projectId).asset(assetId).uri:p.getString("vaultSourceUri");
+        JSONObject saved=new JSONObject(p.toString()).put("vaultManifestId",manifest).put("vaultSourceUri",source);
+        JobManager.Job job=submitRecoverableHeavy("vault_restore",saved,projectId,"Restore media from Vault",state->{state.setResult(manager.restore(projectId,assetId,manifest,source,state));syncProtocolState();});
         return ok().put("queued",true).put("jobId",job.id).put("projectId",projectId).put("assetId",assetId).put("durableRecovery",true);
     }
 
@@ -3401,6 +3417,8 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         switch (action) {
             case "create_proxy":
             case "vault_create":
+            case "vault_replicate":
+            case "vault_restore":
             case "prompt_video":
             case "animate_images":
             case "export_project":

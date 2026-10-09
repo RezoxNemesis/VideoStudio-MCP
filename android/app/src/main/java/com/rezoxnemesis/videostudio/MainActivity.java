@@ -670,7 +670,10 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
             addEditorButton(actions,"Remove",()->{try{applyEditorOperation("remove_asset",new JSONObject().put("assetId",asset.id));}catch(Exception error){editorError(error);}});
             addEditorButton(actions,"Vault copy",()->new AlertDialog.Builder(this).setTitle("Vault copy").setMessage("Create a checksummed copy in 256 MB chunks. Encryption uses this device's Keystore; keep the original for portability.").setPositiveButton("Encrypted copy",(d,w)->startForegroundService(new Intent(this,ControlService.class).setAction(ControlService.ACTION_LOCAL_VAULT).putExtra("projectId",activeProject.id).putExtra("assetId",asset.id).putExtra("encrypted",true))).setNeutralButton("Plain copy",(d,w)->startForegroundService(new Intent(this,ControlService.class).setAction(ControlService.ACTION_LOCAL_VAULT).putExtra("projectId",activeProject.id).putExtra("assetId",asset.id).putExtra("encrypted",false))).setNegativeButton("Cancel",null).show());
             JSONObject vault=asset.generationMetadata.optJSONObject("vault");
-            if(vault!=null&&vault.optBoolean("complete"))addEditorButton(actions,"Replicate Vault",()->showVaultReplication(asset));
+            if(vault!=null&&vault.optBoolean("complete")){
+                addEditorButton(actions,"Replicate Vault",()->showVaultReplication(asset));
+                addEditorButton(actions,"Restore media from Vault",()->{startForegroundService(new Intent(this,ControlService.class).setAction(ControlService.ACTION_LOCAL_VAULT_RESTORE).putExtra("projectId",activeProject.id).putExtra("assetId",asset.id));Toast.makeText(this,"Restoring verified media; see Jobs for progress",Toast.LENGTH_LONG).show();});
+            }
             JSONObject replicas=asset.generationMetadata.optJSONObject("vaultReplication");
             if(replicas!=null&&replicas.optBoolean("complete"))item.addView(body("Vault storage · "+replicas.optInt("chunkReplicas")+" verified chunk copies across "+(replicas.optJSONArray("profileIds")==null?0:replicas.optJSONArray("profileIds").length())+" folders. Last verification: "+new java.text.SimpleDateFormat("MMM d, HH:mm",java.util.Locale.getDefault()).format(new java.util.Date(replicas.optLong("verifiedAt")))));
             HorizontalScrollView actionsScroll=new HorizontalScrollView(this);actionsScroll.addView(actions);item.addView(actionsScroll);items.addView(item,margins(-1,-2,0,dp(12),0,0));
@@ -1900,7 +1903,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         try {
             CommandJournal remoteJournal=new CommandJournal(this);
             remoteJournal.validateReplay(command);
-            if(java.util.Arrays.asList("apply_tool","apply_edit_plan","creator_preset","autonomous_edit","export_project","vault_replicate").contains(action)){
+            if(java.util.Arrays.asList("apply_tool","apply_edit_plan","creator_preset","autonomous_edit","export_project","vault_replicate","vault_restore").contains(action)){
                 String target=p.optString("projectId",""),bound=remoteJournal.boundProject(command.optString("id",""));
                 if(!bound.isEmpty()){
                     if(!target.isEmpty()&&!target.equals(bound))throw new IllegalArgumentException("Command ID belongs to another project");
@@ -1911,7 +1914,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                 remoteJournal.bindProject(command,target);p.put("projectId",target);
                 if(!isAllowed(action,p))throw new SecurityException("Owner access does not allow this project's command");
             }
-            if("vault_replicate".equals(action)||"export_project".equals(action)||"autonomous_edit".equals(action)&&p.optBoolean("render",false)){
+            if("vault_restore".equals(action)||"vault_replicate".equals(action)||"export_project".equals(action)||"autonomous_edit".equals(action)&&p.optBoolean("render",false)){
                 String target=p.optString("projectId","");if(target.isEmpty()&&activeProject!=null)target=activeProject.id;
                 if(store.get(target)==null)throw new IllegalArgumentException("Project not found");
                 startForegroundService(new Intent(this,ControlService.class).setAction(ControlService.ACTION_REMOTE_COMMAND)

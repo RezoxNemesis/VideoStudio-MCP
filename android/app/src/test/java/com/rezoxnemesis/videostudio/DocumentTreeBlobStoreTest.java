@@ -69,6 +69,17 @@ public class DocumentTreeBlobStoreTest {
             try(var files=Files.list(directory.resolve("VideoStudioVault/Objects"))){assertEquals(1,files.count());}assertArrayEquals(bytes,Files.readAllBytes(source.toPath()));
         }
     }
+    @Test public void sharedRecoveryJobRestoresMissingLocalVaultThroughTheRealDocumentAdapter()throws Exception{
+        context.deleteDatabase("videostudio_v3.db");context.deleteDatabase("videostudio_vault_replicas.db");ProjectStore store=new ProjectStore(context);ProjectStore.Project project=store.create("Adapter recovery");
+        byte[] sourceBytes=new byte[19000];new Random(139).nextBytes(sourceBytes);Path source=directory.resolve("owner-source");Files.write(source,sourceBytes);
+        ProjectStore.Asset asset=new ProjectStore.Asset();asset.id="adapter-owned";asset.uri=source.toUri().toString();asset.mime="application/octet-stream";asset.sizeBytes=sourceBytes.length;project.assets.add(asset);store.save(project);
+        VaultManager manager=new VaultManager(context,store);String id=manager.create(project.id,asset.id,false,null).getJSONObject("vault").getString("manifestId");manager.replicate(project.id,asset.id,id,List.of(profile),1,null);
+        File vaultRoot=new File(context.getFilesDir(),"videostudio_vault");VaultChunkStore.Manifest manifest=new VaultChunkStore(vaultRoot,VaultChunkStore.DEFAULT_CHUNK_BYTES).load(id);
+        for(VaultChunkStore.Chunk chunk:manifest.chunks)Files.delete(new File(vaultRoot,"objects/"+chunk.objectName).toPath());Files.delete(new File(vaultRoot,"manifests/"+id+".manifest").toPath());
+        org.json.JSONObject restored=manager.restore(project.id,asset.id,id,null);assertTrue(restored.getBoolean("complete"));
+        assertArrayEquals(sourceBytes,Files.readAllBytes(Path.of(java.net.URI.create(restored.getString("uri")))));assertArrayEquals(sourceBytes,Files.readAllBytes(source));assertEquals(restored.getString("uri"),store.get(project.id).asset(asset.id).uri);
+        try(var files=Files.list(directory.resolve("VideoStudioVault/Objects"))){assertEquals("Downloads never mutate or delete replicas",2,files.count());}
+    }
     private static final class SimulatedDeath extends Error {}
     public static final class Provider extends DocumentsProvider {
         private final Path root;boolean dieOnRename;Provider(Path root){this.root=root;}
