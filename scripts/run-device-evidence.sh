@@ -4,6 +4,15 @@ mkdir -p artifacts/device-evidence
 collect_evidence() {
   adb pull /sdcard/Android/data/com.rezoxnemesis.videostudio/files/evidence artifacts/device-evidence || true
   adb logcat -d > artifacts/device-evidence/logcat.txt || true
+  python3 - <<'PYUI'
+import pathlib,json,xml.etree.ElementTree as ET
+for trace in pathlib.Path('artifacts/device-evidence').rglob('failure-*.xml'):
+    labels=[]
+    for node in ET.parse(trace).getroot().iter('node'):
+        text=node.get('text','') or node.get('content-desc','')
+        if text and '://' not in text: labels.append({'package':node.get('package',''),'text':text[:160]})
+    print('DEVICE_FAILURE_UI '+json.dumps({'file':trace.name,'labels':labels[:50]}))
+PYUI
 }
 trap collect_evidence EXIT
 adb logcat -c
