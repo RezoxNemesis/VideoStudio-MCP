@@ -241,6 +241,7 @@ public class StudioDeviceTest {
         MediaMetadataRetriever metadata=new MediaMetadataRetriever();try{metadata.setDataSource(result.get().getString("uri").substring("file://".length()));assertEquals("240",metadata.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT));}finally{metadata.release();}
         ProjectStore.Project latest=store.get(project.id);assertNotEquals(source.uri,ProxyManager.previewUri(latest,source,"240p"));assertEquals(source.uri,ProxyManager.previewUri(latest,source,"original"));
         File finalOutput=new File(evidence,"proxy-original-export.mp4");render(latest,finalOutput);assertFrame(finalOutput,500000,Color.RED);
+        result.get().put("reimportedAudio",decodedAudioProof(finalOutput,1_000_000));
         assertEquals(originalHash,PlayableMediaVerifier.verify(context,Uri.fromFile(sourceFile),true).getString("sha256"));write("proxy-proof.json",result.get().toString(2));
     }
 
@@ -261,7 +262,7 @@ public class StudioDeviceTest {
                 }
                 assertTrue("Actual software video encoder",softwareEncoder);assertTrue("Actual software video decoder",softwareDecoder);
             }
-            attempts.put(proof);
+            proof.put("reimportedAudio",decodedAudioProof(output,1_000_000));attempts.put(proof);
         }
         assertEquals(sourceHash,PlayableMediaVerifier.verify(context,Uri.fromFile(original),true).getString("sha256"));
         try(CodecReliabilityStore history=new CodecReliabilityStore(context)){assertTrue(history.entries().length()>0);write("codec-reliability-proof.json",new JSONObject().put("attempts",attempts).put("history",history.entries()).put("originalRetained",true).toString(2));}

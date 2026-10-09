@@ -30,8 +30,10 @@ for trace in pathlib.Path('artifacts/device-evidence').rglob('failure-*.xml'):
     print('DEVICE_FAILURE_UI '+json.dumps({'file':trace.name,'labels':labels[:50]}))
 for trace in pathlib.Path('artifacts/device-evidence').rglob('codec-reliability-proof.json'):
     proof=json.loads(trace.read_text())
-    fields=['codecRoute','videoEncoder','audioEncoder','decoderNames','encodedWidth','encodedHeight','codecWidth','codecHeight','codecFps','requestedBitrate','configuredBitrate','hasAudio','durationMs','sha256','codecReliabilityRecorded']
+    fields=['codecRoute','videoEncoder','audioEncoder','decoderNames','encodedWidth','encodedHeight','codecWidth','codecHeight','codecFps','requestedBitrate','configuredBitrate','hasAudio','durationMs','sha256','codecReliabilityRecorded','reimportedAudio']
     print('DEVICE_CODEC_EVIDENCE '+json.dumps({'originalRetained':proof['originalRetained'],'attempts':[{key:attempt.get(key) for key in fields} for attempt in proof['attempts']]}))
+for trace in pathlib.Path('artifacts/device-evidence').rglob('proxy-proof.json'):
+    print('DEVICE_PROXY_EVIDENCE '+json.dumps(json.loads(trace.read_text())))
 for trace in pathlib.Path('artifacts/device-evidence').rglob('segment-window-proof.json'):
     proof=json.loads(trace.read_text())
     print('DEVICE_SEGMENT_EVIDENCE '+json.dumps(proof))

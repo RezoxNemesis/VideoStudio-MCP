@@ -58,4 +58,37 @@ public class GaplessAudioMp4Test {
             assertEquals(1024,GaplessAudioMp4.trim(bounded,10_000_000,200_000,()->false).paddingUnits());assertEquals(size,opened.length());assertTrue(count.get()<10000);
         }finally{assertTrue(f.delete());}
     }
+
+    /** Real mux/extractor round trip of synthetic packets; actual decoded PCM is a device check. */
+    @Test public void drainedOutputCanBeReimportedWithExactGaplessSampleCounts()throws Exception{
+        for(int rate:new int[]{8000,44100,48000})for(long programmeUs:new long[]{100_000,1_000_000,10_000_000}){
+            long frames=programmeUs*rate/1_000_000,rawFrames=(frames+AacDrainCodec.DRAIN_FRAMES)/1024*1024;
+            File output=file(new byte[0]);
+            try(var stream=new FileOutputStream(output)){
+                var muxer=new androidx.media3.muxer.Mp4Muxer.Builder(stream).build();
+                var format=new androidx.media3.common.Format.Builder().setSampleMimeType("audio/mp4a-latm").setSampleRate(rate).setChannelCount(1)
+                        .setInitializationData(java.util.List.of(androidx.media3.extractor.AacUtil.buildAacLcAudioSpecificConfig(rate,1))).build();
+                int track=muxer.addTrack(format);
+                for(long at=0;at<rawFrames;at+=1024)muxer.writeSampleData(track,ByteBuffer.wrap(new byte[]{1,2,3}),new androidx.media3.muxer.BufferInfo((at-1600)*1_000_000/rate,3,androidx.media3.common.C.BUFFER_FLAG_KEY_FRAME));
+                muxer.close();
+            }
+            GaplessAudioMp4.TrimInfo proof;
+            try(var opened=new RandomAccessFile(output,"rw")){proof=GaplessAudioMp4.trim(borrowed(opened),programmeUs,GaplessAudioMuxer.maxPaddingUs(rate),()->false);}
+            var extracted=new java.util.concurrent.atomic.AtomicReference<androidx.media3.common.Format>();
+            var extractor=new androidx.media3.extractor.mp4.Mp4Extractor();
+            extractor.init(new androidx.media3.extractor.ExtractorOutput(){
+                public androidx.media3.extractor.TrackOutput track(int id,int type){assertEquals(androidx.media3.common.C.TRACK_TYPE_AUDIO,type);return new androidx.media3.extractor.ForwardingTrackOutput(new androidx.media3.extractor.DiscardingTrackOutput()){
+                    @Override public void format(androidx.media3.common.Format format){extracted.set(format);super.format(format);}
+                };}
+                public void endTracks(){}public void seekMap(androidx.media3.extractor.SeekMap map){}
+            });
+            try(var opened=new RandomAccessFile(output,"r")){
+                var input=new androidx.media3.extractor.DefaultExtractorInput(opened::read,0,opened.length());var seek=new androidx.media3.extractor.PositionHolder();boolean ended=false;
+                for(int n=0;n<2000;n++){int result=extractor.read(input,seek);if(result==androidx.media3.extractor.Extractor.RESULT_END_OF_INPUT){ended=true;break;}if(result==androidx.media3.extractor.Extractor.RESULT_SEEK){opened.seek(seek.position);input=new androidx.media3.extractor.DefaultExtractorInput(opened::read,seek.position,opened.length());}}
+                assertTrue("Bounded mux/extractor fixture must finish",ended);
+            }finally{extractor.release();}
+            assertNotNull(extracted.get());assertEquals("Decoder must receive the exact leading trim at "+rate+"Hz",proof.delayUnits(),extracted.get().encoderDelay);
+            assertEquals("Decoder must receive the exact trailing trim at "+rate+"Hz for "+programmeUs+"us",proof.paddingUnits(),extracted.get().encoderPadding);
+        }
+    }
 }

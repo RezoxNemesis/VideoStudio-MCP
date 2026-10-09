@@ -11,7 +11,9 @@ import java.nio.ByteBuffer;
 
 /** Codec-boundary drain padding; the mux metadata must remove only the added tail. */
 final class AacDrainCodec implements Codec {
-    static final int DRAIN_FRAMES=8192;
+    // Four LC AAC frames flush the measured C2 tail. More can place the edit
+    // outside Media3's four-packet gapless trim window and break exact re-import.
+    static final int DRAIN_FRAMES=4096;
     static final class State {
         final long expectedUs;long programmeFrames,appendedFrames;int sampleRate,frameBytes;boolean eosForwarded;GaplessAudioMp4.TrimInfo trim;
         State(long expectedUs){if(expectedUs<=0)throw new IllegalArgumentException("Invalid audio programme duration");this.expectedUs=expectedUs;}
@@ -38,7 +40,7 @@ final class AacDrainCodec implements Codec {
         int bytes=buffer.data==null?0:buffer.data.remaining();if(bytes%state.frameBytes!=0)throw new IllegalArgumentException("Incomplete AAC PCM input frame");
         state.programmeFrames=Math.addExact(state.programmeFrames,bytes/state.frameBytes);
         if(!buffer.isEndOfStream()){delegate.queueInputBuffer(buffer);return;}
-        if(state.programmeFrames==0||Math.abs(state.programmeUs()-state.expectedUs)>1000)throw new IllegalArgumentException("PCM programme does not span the planned audio interval");
+        if(state.programmeFrames==0||Math.abs(state.programmeUs()-state.expectedUs)>1000)throw new IllegalArgumentException("PCM programme does not span the planned audio interval: "+state.programmeFrames+" frames at "+state.sampleRate+"Hz, "+state.programmeUs()+"us, expected "+state.expectedUs+"us");
         draining=true;
         if(bytes>0){buffer.setFlags(0);delegate.queueInputBuffer(buffer);}else feedPadding(buffer);
     }
