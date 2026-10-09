@@ -1,14 +1,16 @@
 # Build and resume VideoStudio
 
-Continue the complete blueprint in `VideoStudio_Complete_Engineering_Continuity_Bundle_v1.md`. Sections 36–37 supersede the former missing-toolchain/publishing ceiling in section 35. The complete product is still unfinished.
+Continue the complete blueprint in `VideoStudio_Complete_Engineering_Continuity_Bundle_v1.md`. Sections 36–38 supersede the former missing-toolchain/publishing ceiling in section 35. The complete product is still unfinished.
 
 ## Current verified checkpoint
 
-GitHub review branch `codex/studio-owner-editor`, draft PR #35, published `82c600faf7dc18e5f4a772f14d9a42ecdc7a0dfe` matches local `d8ee058d9412f7e89cbd37cb6540c133cf3d9b2c` at tree `6b415c64a2e6fe5656906ee5f8fb188ba6406f26`.
+GitHub review branch `codex/studio-owner-editor`, draft PR #35, published `4129378b4fbfaba80b0e59a078c03abc00081e31` matches local `9d1f92da5dc5afdcd53fd71d46b8717c541986fe` at tree `475e13e8a3671488ff804e1aa12777de3c478cea`.
 
-Android run 37890111134, device run 37890111246 and Worker run 37890111099 all succeeded. Device logs report all six API 33 cases passed and 28 evidence files retained. These CI logs/metadata were inspected; 82c artifact bytes and APK certificate were not independently fetched. The earlier b3fb checkpoint has downloaded XML, APK and four fully decoded MP4s, saved in `artifacts/verified-b3fb1ba/verification-manifest.json`.
+All matching 4129378 workflows succeeded: Android run 37895158494 reports 200 tests with zero failures/errors/skips, signed APK 98,958,847 bytes / SHA-256 `a3d73795ad4bea97447ada593bb0ad958a2af663cfc100505ac0afe30dc4b676`, certificate `7e0187470356616be2a45bc7f41445894085185db110edfdc0cdfd232942a6dd`; device run 37895158443 reports OK (6 tests) and 28 retained evidence files; Worker run 37895158717 succeeds. These logs/metadata were inspected; artifact bytes were not independently fetched. Certificate differs from downloaded b3fb evidence, so owner upgrade compatibility remains unproven.
 
-Current schema 5 bulk editing/export recovery changes freshly compile 73 main and 33 test Java sources and pass 200 JUnit/Robolectric cases. Node: 282 smoke assertions, 20 connection cases, 19 executable relay cases. Actual Wrangler bundle compilation passes. These newest changes still require matching Gradle/APK/device CI before claiming device verification. See section 37 and `artifacts/current-2026-10-09/bulk-recovery-*-final.log`.
+Newest schema 6 / app 3.4.8 Vault storage source freshly compiles 76 main and 35 test Java classes and passes 222 JUnit/Robolectric cases. Node: 282 smoke assertions, 20 connection cases, 21 executable relay cases. Actual Wrangler bundle compilation passes. It replicates verified encrypted/plain Vault objects across existing owner-connected folders, persists upload identity before writes, repairs corruption in place and shares owner/MCP durable jobs. A seventh device case exercises the actual system folder picker and encrypted replication; matching Gradle/APK/device CI is pending. See bundle section 38 and `artifacts/current-2026-10-09/vault-fabric-*`.
+
+Local 20 GiB benchmark (`artifacts/large-media-20GiB-2026-10-09/evidence.json`): every logical byte hashed/packed/restored, 80 × 256 MiB chunks, restart at 2 GiB, exact full restored checksum, -Xmx64m. Sparse synthetic plaintext fixture; this is not cloud transfer, encrypted-large-video or Android device performance evidence.
 
 ## Build and test
 
@@ -46,4 +48,4 @@ The downloaded b3fb APK SHA-256 is `865fa790151d0a87261bcc19ec29f8f981d4b3af9e60
 
 Legacy `apply_tool` now shares atomic editor transactions, locks, source bounds, history, keyframes and command receipts in both service and foreground paths. Journal replay binds action/arguments; interrupted synchronous edits use SQLite receipts. Schema 4 adds executing effect presets with older operation versions retained. STOP rejects delayed callbacks and old success replay while keeping owner editing available.
 
-Legacy plans, creator presets and autonomous edits now use atomic shared operations. Foreground remote exports use the service, retain the exact graph revision and resume a command-bound job. Next: finish their matching-source CI verification, then continue remaining editor depth and full phase A–H requirements. Direct cloud-provider OAuth, cloud execution/mirror reconciliation, full articulated 2D, model-backed video, complete 3D/VFX, ASR/captions/lip-sync/recap, accessibility/tablet/performance and large cloud benchmarks remain unfinished. Keep unavailable providers explicit and preserve original media.
+Legacy plans, creator presets and autonomous edits now use atomic shared operations. Foreground remote exports use the service, retain the exact graph revision and resume a command-bound job. Their matching-source CI is verified. Next: publish and verify storage-fabric APK/device CI, implement cloud-backed hydration/range reads, then continue remaining editor depth and full phase A–H requirements. Direct cloud-provider OAuth, cloud execution/mirror reconciliation, full articulated 2D, model-backed video, complete 3D/VFX, ASR/captions/lip-sync/recap, accessibility/tablet/performance and large cloud benchmarks remain unfinished. Keep unavailable providers explicit and preserve original media.

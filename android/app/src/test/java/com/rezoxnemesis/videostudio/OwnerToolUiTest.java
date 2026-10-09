@@ -15,6 +15,28 @@ import static org.junit.Assert.*;
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk=33)
 public class OwnerToolUiTest {
+    @Test public void ownerReplicationDialogUsesConnectedProfilesAndFreshVaultMetadataWhileRemoteControlIsStopped()throws Exception{
+        Context c=RuntimeEnvironment.getApplication();c.deleteDatabase("videostudio_v3.db");c.deleteDatabase("videostudio_storage.db");
+        ProjectStore store=new ProjectStore(c);ProjectStore.Project p=fixture(store,false);
+        String profile;try(StorageProfileStore profiles=new StorageProfileStore(c)){profile=profiles.connect(android.net.Uri.parse("content://com.android.externalstorage.documents/tree/primary%3Ftest"),"Selected folder");}
+        try(ActivityController<MainActivity> controller=Robolectric.buildActivity(MainActivity.class).setup()){
+            java.lang.reflect.Field protocol=MainActivity.class.getDeclaredField("protocol");protocol.setAccessible(true);((AppProtocol)protocol.get(controller.get())).setControlPaused(true);
+            ProjectStore.Project fresh=store.get(p.id);fresh.asset("image").generationMetadata.put("vault",new JSONObject().put("complete",true).put("manifestId","test-manifest"));store.save(fresh);
+            java.lang.reflect.Method bin=MainActivity.class.getDeclaredMethod("showMediaBinDialog");bin.setAccessible(true);bin.invoke(controller.get());
+            android.app.AlertDialog media=ShadowAlertDialog.getLatestAlertDialog();android.view.View replicate=findButton(media.getWindow().getDecorView(),"Replicate Vault");assertNotNull("Fresh service metadata should expose replication without restarting the owner editor",replicate);replicate.performClick();
+            android.app.AlertDialog choices=ShadowAlertDialog.getLatestAlertDialog();android.widget.ListView profiles=choices.getListView();profiles.performItemClick(null,0,profiles.getAdapter().getItemId(0));choices.getButton(android.content.DialogInterface.BUTTON_POSITIVE).performClick();org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle();
+            android.app.AlertDialog counts=ShadowAlertDialog.getLatestAlertDialog();assertEquals("Replica count",org.robolectric.Shadows.shadowOf(counts).getTitle());
+            org.robolectric.shadows.ShadowApplication app=org.robolectric.Shadows.shadowOf(RuntimeEnvironment.getApplication());while(app.getNextStartedService()!=null){}
+            android.widget.ListView countList=counts.getListView();countList.performItemClick(null,0,countList.getAdapter().getItemId(0));
+            android.content.Intent intent=app.getNextStartedService();assertNotNull(intent);assertEquals(ControlService.ACTION_LOCAL_VAULT_REPLICATE,intent.getAction());
+            JSONObject parameters=new JSONObject(intent.getStringExtra("parameters"));assertEquals(p.id,parameters.getString("projectId"));assertEquals("image",parameters.getString("assetId"));assertEquals(profile,parameters.getJSONArray("profileIds").getString(0));assertEquals(1,parameters.getInt("replicas"));assertFalse(parameters.has("treeUri"));
+        }
+    }
+    private android.view.View findButton(android.view.View view,String text){
+        if(view instanceof android.widget.Button&&text.contentEquals(((android.widget.Button)view).getText()))return view;
+        if(view instanceof android.view.ViewGroup){android.view.ViewGroup group=(android.view.ViewGroup)view;for(int i=0;i<group.getChildCount();i++){android.view.View result=findButton(group.getChildAt(i),text);if(result!=null)return result;}}
+        return null;
+    }
     @Test public void foregroundBulkPlanCannotReplaceLockedOwnerClips()throws Exception{
         Context c=RuntimeEnvironment.getApplication();c.deleteDatabase("videostudio_v3.db");
         ProjectStore store=new ProjectStore(c);ProjectStore.Project p=fixture(store,true);

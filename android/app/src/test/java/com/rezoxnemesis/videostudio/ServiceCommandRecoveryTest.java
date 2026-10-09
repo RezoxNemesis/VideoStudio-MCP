@@ -21,6 +21,21 @@ import static org.junit.Assert.*;
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk=33,shadows=ServiceCommandRecoveryTest.RecordingProtocol.class)
 public class ServiceCommandRecoveryTest {
+    @Test public void foregroundStorageCommandsUseTheDurableAutonomousServiceHandoff()throws Exception{
+        Context context=RuntimeEnvironment.getApplication();
+        try(org.robolectric.android.controller.ActivityController<MainActivity> controller=Robolectric.buildActivity(MainActivity.class).setup()){
+            org.robolectric.shadows.ShadowApplication app=org.robolectric.Shadows.shadowOf(RuntimeEnvironment.getApplication());while(app.getNextStartedService()!=null){}
+            java.lang.reflect.Field field=MainActivity.class.getDeclaredField("protocol");field.setAccessible(true);RecordingProtocol foreground=Shadow.extract((AppProtocol)field.get(controller.get()));
+            JSONObject cmd=new JSONObject().put("id","foreground-storage-001").put("action","vault_replicate").put("parameters",new JSONObject().put("projectId",project.id).put("assetId","owned-video").put("profileIds",new org.json.JSONArray().put("selected-profile")));
+            controller.get().onCommand(cmd);assertNull("Storage handoff cannot claim completion",foreground.result);
+            android.content.Intent intent=app.getNextStartedService();assertNotNull(intent);assertEquals(ControlService.ACTION_REMOTE_COMMAND,intent.getAction());assertEquals(cmd.getString("id"),intent.getStringExtra("commandId"));
+            assertEquals(cmd.toString(),new CommandJournal(context).capturedCommand(cmd.getString("id")).toString());
+        }
+    }
+    @Test public void storageTransferRejectsUnconnectedProfileIdentifiersBeforeCreatingJobs()throws Exception{
+        JSONObject cmd=new JSONObject().put("id","foreign-storage-001").put("action","vault_replicate").put("parameters",new JSONObject().put("projectId",project.id).put("assetId","owned-video").put("profileIds",new org.json.JSONArray().put("content://not-selected/folder")));
+        service.onCommand(cmd);assertNotNull(completion.result);assertFalse(completion.result.getBoolean("ok"));assertTrue(completion.result.getString("error").contains("not connected"));assertFalse(completion.result.has("jobId"));
+    }
     @Test public void interruptedImplicitProjectEditRemainsBoundAfterOwnerSwitchesProjects()throws Exception{
         JSONObject command=new JSONObject().put("id","implicit-project-edit-001").put("action","creator_preset").put("parameters",new JSONObject().put("preset","noir"));
         service.onCommand(command);assertTrue(completion.result.getBoolean("ok"));

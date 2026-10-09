@@ -10,8 +10,8 @@ android {
         applicationId = "com.rezoxnemesis.videostudio"
         minSdk = 29
         targetSdk = 35
-        versionCode = 347
-        versionName = "3.4.7"
+        versionCode = 348
+        versionName = "3.4.8"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -53,3 +53,7 @@ dependencies {
     implementation("com.google.mlkit:face-mesh-detection:16.0.0-beta1")
 }
 
+
+tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
+    jvmArgs("--add-opens=java.base/java.io=ALL-UNNAMED")
+}

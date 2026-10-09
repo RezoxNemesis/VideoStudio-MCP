@@ -52,7 +52,7 @@ public class EditorProtocolTest {
     private JSONObject request(String command)throws Exception{return new JSONObject().put("projectId",project.id).put("expectedRevision",store.get(project.id).revision).put("commandId",command);}
     private JSONObject operation(String name,String args)throws Exception{return new JSONObject().put("operation",name).put("args",new JSONObject(args));}
     @Test public void packagedContractAndGraphExposeTheSameRevision()throws Exception{
-        assertEquals(5,protocol.describe().getInt("schemaVersion"));assertTrue(protocol.describe().getJSONObject("operations").has("roll_clip"));
+        assertEquals(6,protocol.describe().getInt("schemaVersion"));assertTrue(protocol.describe().getJSONObject("operations").has("roll_clip"));
         JSONObject response=protocol.execute("project_query",new JSONObject().put("projectId",project.id));
         assertEquals(project.revision,response.getLong("revision"));assertEquals(project.revision,response.getJSONObject("project").getLong("revision"));
     }

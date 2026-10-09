@@ -48,6 +48,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     public static final String ACTION_LOCAL_VOICE = "com.rezoxnemesis.videostudio.LOCAL_VOICE";
     public static final String ACTION_LOCAL_PROXY = "com.rezoxnemesis.videostudio.LOCAL_PROXY";
     public static final String ACTION_LOCAL_VAULT = "com.rezoxnemesis.videostudio.LOCAL_VAULT";
+    public static final String ACTION_LOCAL_VAULT_REPLICATE = "com.rezoxnemesis.videostudio.LOCAL_VAULT_REPLICATE";
     public static final String ACTION_LOCAL_IMPORT = "com.rezoxnemesis.videostudio.LOCAL_IMPORT_MEDIA";
     public static final String ACTION_REMOTE_COMMAND = "com.rezoxnemesis.videostudio.REMOTE_COMMAND";
     public static final String ACTION_CANCEL_MANUAL_EXPORT = "com.rezoxnemesis.videostudio.CANCEL_MANUAL_EXPORT";
@@ -194,6 +195,8 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             try{queueProxy(new JSONObject().put("projectId",intent.getStringExtra("projectId")).put("assetId",intent.getStringExtra("assetId")).put("tier",intent.getStringExtra("tier")).put("_origin","owner"));}catch(Exception error){ActivityLog.add(this,"user","Preview proxy failed",error.getMessage(),"failed",null,null,intent.getStringExtra("projectId"));}
         } else if(ACTION_LOCAL_VOICE.equals(action)){
             try{JSONObject parameters=new JSONObject(intent.getStringExtra("parameters")).put("_origin","owner");queueGenerateVoice(parameters);}catch(Exception error){ActivityLog.add(this,"user","Narration failed",error.getMessage(),"failed",null,null,intent.getStringExtra("projectId"));}
+        } else if(ACTION_LOCAL_VAULT_REPLICATE.equals(action)){
+            try{JSONObject parameters=new JSONObject(intent.getStringExtra("parameters")).put("_origin","owner");queueVaultReplication(parameters);}catch(Exception error){ActivityLog.add(this,"user","Vault replication failed",error.getMessage(),"failed",null,null,intent.getStringExtra("projectId"));}
         } else if(ACTION_LOCAL_VAULT.equals(action)){
             try{JSONObject parameters=new JSONObject().put("projectId",intent.getStringExtra("projectId")).put("assetId",intent.getStringExtra("assetId")).put("encrypted",intent.getBooleanExtra("encrypted",true)).put("_origin","owner");queueVault(parameters);}catch(Exception error){ActivityLog.add(this,"user","Vault copy failed",error.getMessage(),"failed",null,null,intent.getStringExtra("projectId"));}
         } else if (ACTION_LOCAL_IMPORT.equals(action)) {
@@ -356,7 +359,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         OwnerAccessPolicy commandAccess=new OwnerAccessPolicy(this,store);
         try{
             commandJournal.validateReplay(command);
-            if(java.util.Arrays.asList("apply_tool","apply_edit_plan","creator_preset","autonomous_edit","export_project").contains(action)){
+            if(java.util.Arrays.asList("apply_tool","apply_edit_plan","creator_preset","autonomous_edit","export_project","vault_replicate").contains(action)){
                 String bound=commandJournal.boundProject(commandId);
                 if(bound.isEmpty())bound=resolveProject(projectId).id;
                 else if(!projectId.isEmpty()&&!projectId.equals(bound))throw new IllegalArgumentException("Command ID belongs to another project");
@@ -421,10 +424,12 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         try {
             switch (action) {
                 case "storage_profiles": {
-                    JSONArray profiles=new StorageProfileStore(this).list();for(int i=0;i<profiles.length();i++)profiles.getJSONObject(i).remove("treeUri");
+                    String target=p.optString("projectId","");if(!target.isEmpty()&&store.get(target)==null)throw new IllegalArgumentException("Project not found");
+                    JSONArray profiles;try(StorageProfileStore storage=new StorageProfileStore(this)){profiles=storage.discover();}
                     complete(command,ok().put("profiles",profiles).put("maximumProfiles",StorageProfileStore.MAX_PROFILES));return;
                 }
                 case "vault_create": complete(command,queueVault(p));return;
+                case "vault_replicate": complete(command,queueVaultReplication(p));return;
                 case "create_proxy": complete(command,queueProxy(p));return;
                 case "vault_inspect": complete(command,new VaultManager(this,store).inspect(p.getString("projectId"),p.getString("assetId")));return;
                 case "editor_schema":
@@ -1547,6 +1552,9 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                     case "vault_create":
                         queued=queueVault(parameters);
                         break;
+                    case "vault_replicate":
+                        queued=queueVaultReplication(parameters);
+                        break;
                     case "animate_images":
                         queued = queueAnimatedImages(parameters);
                         break;
@@ -2336,6 +2344,24 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         JSONObject saved=new JSONObject(p.toString());
         JobManager.Job job=submitRecoverableHeavy("vault_create",saved,projectId,"Vault media copy",state->{state.setResult(new VaultManager(this,store).create(projectId,assetId,p.optBoolean("encrypted",true),state));syncProtocolState();});
         return ok().put("queued",true).put("jobId",job.id).put("projectId",projectId).put("assetId",assetId).put("durableRecovery",true);
+    }
+
+    private JSONObject queueVaultReplication(JSONObject p)throws Exception{
+        String projectId=p.getString("projectId"),assetId=p.getString("assetId");
+        JSONArray selected=p.getJSONArray("profileIds");java.util.List<String> profiles=new java.util.ArrayList<>();
+        if(selected.length()<1||selected.length()>5)throw new IllegalArgumentException("Choose 1–5 connected profiles");
+        try(StorageProfileStore storage=new StorageProfileStore(this)){
+            for(int i=0;i<selected.length();i++){Object id=selected.get(i);if(!(id instanceof String)||storage.get((String)id)==null)throw new IllegalArgumentException("Storage profile is not connected");profiles.add((String)id);}
+        }
+        Object count=p.has("replicas")?p.get("replicas"):1;
+        if(!(count instanceof Number)||!Double.isFinite(((Number)count).doubleValue())||((Number)count).doubleValue()!=((Number)count).intValue())throw new IllegalArgumentException("Replica count must be an integer");
+        int copies=((Number)count).intValue();if(copies<1||copies>profiles.size()||new java.util.HashSet<>(profiles).size()!=profiles.size())throw new IllegalArgumentException("Choose distinct profiles and a valid replica count");
+        VaultManager manager=new VaultManager(this,store);String current=manager.manifestId(projectId,assetId);
+        String manifest=p.optString("_recoveryPlanId","").isEmpty()?current:p.optString("vaultManifestId",current);
+        if(!manifest.equals(current))throw new IllegalArgumentException("Asset's Vault copy changed before recovery");
+        JSONObject saved=new JSONObject(p.toString()).put("vaultManifestId",manifest).put("replicas",copies);
+        JobManager.Job job=submitRecoverableHeavy("vault_replicate",saved,projectId,"Replicate Vault media",state->{state.setResult(manager.replicate(projectId,assetId,manifest,profiles,copies,state));syncProtocolState();});
+        return ok().put("queued",true).put("jobId",job.id).put("durableRecovery",true).put("projectId",projectId).put("assetId",assetId);
     }
 
     private JSONObject queueProxy(JSONObject parameters)throws Exception{

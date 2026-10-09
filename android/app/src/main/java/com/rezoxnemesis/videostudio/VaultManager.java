@@ -60,7 +60,34 @@ public final class VaultManager {
     }
     public JSONObject inspect(String projectId,String assetId)throws Exception{
         ProjectStore.Project project=store.get(projectId);ProjectStore.Asset asset=project==null?null:project.asset(assetId);if(asset==null)throw new IllegalArgumentException("Project-owned media is required");
-        JSONObject info=asset.generationMetadata.optJSONObject("vault");return new JSONObject().put("ok",true).put("projectId",projectId).put("assetId",assetId).put("available",info!=null&&info.optBoolean("complete")).put("vault",info==null?JSONObject.NULL:info);
+        JSONObject info=asset.generationMetadata.optJSONObject("vault");JSONObject result=new JSONObject().put("ok",true).put("projectId",projectId).put("assetId",assetId).put("available",info!=null&&info.optBoolean("complete")).put("vault",info==null?JSONObject.NULL:info);
+        if(info!=null)try(VaultReplicaStore replicas=new VaultReplicaStore(context)){result.put("replication",new JSONObject().put("locations",replicas.list(info.optString("manifestId"))).put("lastKnown",asset.generationMetadata.opt("vaultReplication")).put("liveAvailabilityChecked",false));}
+        return result;
+    }
+    String manifestId(String projectId,String assetId)throws Exception{
+        ProjectStore.Project project=store.get(projectId);ProjectStore.Asset asset=project==null?null:project.asset(assetId);
+        JSONObject vault=asset==null?null:asset.generationMetadata.optJSONObject("vault");
+        if(vault==null||!vault.optBoolean("complete"))throw new IllegalArgumentException("Create a complete Vault copy of this project-owned asset first");
+        String id=vault.getString("manifestId");new VaultChunkStore(root,VaultChunkStore.DEFAULT_CHUNK_BYTES).load(id);return id;
+    }
+    public JSONObject replicate(String projectId,String assetId,String expectedManifest,java.util.List<String> profiles,int copies,JobManager.Job job)throws Exception{
+        if(!expectedManifest.equals(manifestId(projectId,assetId)))throw new IllegalArgumentException("Asset's Vault source changed; start a new replication command");
+        ProjectStore.Asset source=store.get(projectId).asset(assetId);String sourceUri=source.uri;
+        if(job!=null){job.bindInputs(projectId,java.util.Collections.singleton(assetId));job.checkActive();}
+        JSONObject result;final long[] reported={-1};
+        try(DocumentTreeBlobStore blobs=new DocumentTreeBlobStore(context);VaultStorageFabric fabric=new VaultStorageFabric(context,root,blobs)){
+            result=fabric.replicate(expectedManifest,profiles,copies,(done,total)->{
+                if(job!=null){job.checkActive();if(total>0&&done!=reported[0]){reported[0]=done;job.checkpoint("vault_replication",(int)Math.min(98,98d*done/total),"Verified "+done+" / "+total+" storage bytes");}}
+            });
+        }
+        result.put("projectId",projectId).put("assetId",assetId).put("verifiedAt",System.currentTimeMillis());
+        JobManager.Work publication=active->store.transact(projectId,-1,"system","","Verify Vault storage replicas",project->{
+            ProjectStore.Asset current=project.asset(assetId);
+            JSONObject vault=current==null?null:current.generationMetadata.optJSONObject("vault");
+            if(current==null||!sourceUri.equals(current.uri)||vault==null||!expectedManifest.equals(vault.optString("manifestId")))throw new IllegalStateException("Asset changed during replication; existing owner metadata preserved");
+            current.generationMetadata.put("vaultReplication",new JSONObject(result.toString()));
+        });
+        if(job==null)publication.run(null);else job.commit(publication);return result;
     }
     public InputStream openRange(String manifestId,long offset,long length)throws Exception{
         VaultChunkStore vault=new VaultChunkStore(root,VaultChunkStore.DEFAULT_CHUNK_BYTES);VaultChunkStore.Manifest manifest=vault.load(manifestId);

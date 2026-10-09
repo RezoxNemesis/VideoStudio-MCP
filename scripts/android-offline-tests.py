@@ -55,7 +55,7 @@ for jar in (toolchains/'test-user-home/.m2/repository/org/robolectric/android-al
  target=sdks/jar.name
  if not target.exists(): target.symlink_to(jar)
 classes=sys.argv[1:] or ['com.rezoxnemesis.videostudio.'+p.stem for p in sorted((app/'src/test/java/com/rezoxnemesis/videostudio').glob('*Test.java'))]
-cmd=[java,'-Xmx2048m','-Duser.home='+str(toolchains/'test-user-home'),'-Drobolectric.offline=true','-Drobolectric.dependency.dir='+str(sdks),'-cp',':'.join([str(tests),str(main)]+cp),'org.junit.runner.JUnitCore']+classes
+cmd=[java,'-Xmx2048m','--add-opens=java.base/java.io=ALL-UNNAMED','-Duser.home='+str(toolchains/'test-user-home'),'-Drobolectric.offline=true','-Drobolectric.dependency.dir='+str(sdks),'-cp',':'.join([str(tests),str(main)]+cp),'org.junit.runner.JUnitCore']+classes
 print('Running',len(classes),'JUnit test classes offline',flush=True)
 r=subprocess.run(cmd,cwd=app)
 sys.exit(r.returncode)

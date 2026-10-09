@@ -30,6 +30,8 @@ public final class StorageProfileStore extends SQLiteOpenHelper {
     }
     public synchronized JSONObject get(String id){try(Cursor c=db.query("profiles",new String[]{"json"},"id=?",new String[]{id==null?"":id},null,null,null)){return c.moveToFirst()?new JSONObject(c.getString(0)):null;}catch(Exception error){throw new IllegalStateException(error);}}
     public synchronized JSONArray list(){JSONArray out=new JSONArray();try(Cursor c=db.query("profiles",new String[]{"json"},null,null,null,null,"rowid ASC")){while(c.moveToNext())out.put(new JSONObject(c.getString(0)));return out;}catch(Exception error){throw new IllegalStateException(error);}}
+    /** Capability URLs and project pins are local owner state, never remote storage-discovery output. */
+    public synchronized JSONArray discover(){JSONArray rows=list();for(int i=0;i<rows.length();i++){JSONObject row=rows.optJSONObject(i);row.remove("treeUri");row.remove("pinnedProjects");row.remove("authority");row.remove("healthDetail");}return rows;}
     public synchronized JSONObject defaultProfile(String role){try(Cursor c=db.query("defaults",new String[]{"profile_id"},"role=?",new String[]{role},null,null,null)){return c.moveToFirst()?get(c.getString(0)):null;}}
     public synchronized void setDefault(String role,String id){
         if(!Arrays.asList("source","proxy","cache","export","archive").contains(role)||get(id)==null)throw new IllegalArgumentException("Unknown role or storage profile");ContentValues row=new ContentValues();row.put("role",role);row.put("profile_id",id);db.insertWithOnConflict("defaults",null,row,SQLiteDatabase.CONFLICT_REPLACE);

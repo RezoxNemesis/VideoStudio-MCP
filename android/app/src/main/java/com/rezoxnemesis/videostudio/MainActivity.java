@@ -655,6 +655,9 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
     }
 
     private void showMediaBinDialog(){
+        ProjectStore.Project latest=activeProject==null?null:store.get(activeProject.id);
+        if(latest==null){Toast.makeText(this,"Open a project first",Toast.LENGTH_SHORT).show();return;}
+        activeProject=latest;if(selectedClip!=null)selectedClip=latest.clip(selectedClip.id);
         ScrollView scroll=baseScroll();LinearLayout items=column();items.setPadding(dp(14),dp(8),dp(14),dp(16));scroll.addView(items);
         for(ProjectStore.Asset asset:activeProject.assets){
             LinearLayout item=column();item.addView(title(asset.name,15));
@@ -666,6 +669,10 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
             addEditorButton(actions,"Rename",()->{EditText name=new EditText(this);name.setText(asset.name);new AlertDialog.Builder(this).setTitle("Rename media").setView(name).setPositiveButton("Save",(d,w)->{try{JSONObject a=new JSONObject();a.put("assetId",asset.id);a.put("name",name.getText().toString());applyEditorOperation("rename_asset",a);}catch(Exception error){editorError(error);}}).setNegativeButton("Cancel",null).show();});
             addEditorButton(actions,"Remove",()->{try{applyEditorOperation("remove_asset",new JSONObject().put("assetId",asset.id));}catch(Exception error){editorError(error);}});
             addEditorButton(actions,"Vault copy",()->new AlertDialog.Builder(this).setTitle("Vault copy").setMessage("Create a checksummed copy in 256 MB chunks. Encryption uses this device's Keystore; keep the original for portability.").setPositiveButton("Encrypted copy",(d,w)->startForegroundService(new Intent(this,ControlService.class).setAction(ControlService.ACTION_LOCAL_VAULT).putExtra("projectId",activeProject.id).putExtra("assetId",asset.id).putExtra("encrypted",true))).setNeutralButton("Plain copy",(d,w)->startForegroundService(new Intent(this,ControlService.class).setAction(ControlService.ACTION_LOCAL_VAULT).putExtra("projectId",activeProject.id).putExtra("assetId",asset.id).putExtra("encrypted",false))).setNegativeButton("Cancel",null).show());
+            JSONObject vault=asset.generationMetadata.optJSONObject("vault");
+            if(vault!=null&&vault.optBoolean("complete"))addEditorButton(actions,"Replicate Vault",()->showVaultReplication(asset));
+            JSONObject replicas=asset.generationMetadata.optJSONObject("vaultReplication");
+            if(replicas!=null&&replicas.optBoolean("complete"))item.addView(body("Vault storage · "+replicas.optInt("chunkReplicas")+" verified chunk copies across "+(replicas.optJSONArray("profileIds")==null?0:replicas.optJSONArray("profileIds").length())+" folders. Last verification: "+new java.text.SimpleDateFormat("MMM d, HH:mm",java.util.Locale.getDefault()).format(new java.util.Date(replicas.optLong("verifiedAt")))));
             HorizontalScrollView actionsScroll=new HorizontalScrollView(this);actionsScroll.addView(actions);item.addView(actionsScroll);items.addView(item,margins(-1,-2,0,dp(12),0,0));
         }
         if(activeProject.assets.isEmpty())items.addView(body("Import video, images or audio through the system picker."));
@@ -1188,6 +1195,25 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         Button back=compactButton("Back to Control");back.setOnClickListener(v->showControl());box.addView(back,margins(-1,dp(48),dp(12),0,0,0));setScreen(scroll,"storage");
     }
     private static String humanStorage(long bytes){if(bytes<0)return "unknown";if(bytes>=1L<<30)return String.format(java.util.Locale.US,"%.1f GB",bytes/(double)(1L<<30));if(bytes>=1L<<20)return String.format(java.util.Locale.US,"%.1f MB",bytes/(double)(1L<<20));return bytes+" B";}
+
+    private void showVaultReplication(ProjectStore.Asset asset){
+        JSONArray connected=storageProfiles.list();
+        if(connected.length()==0){Toast.makeText(this,"Connect storage folders in Storage Hub first",Toast.LENGTH_LONG).show();return;}
+        String projectId=activeProject.id,assetId=asset.id;String[] labels=new String[connected.length()];boolean[] selected=new boolean[connected.length()];
+        for(int i=0;i<labels.length;i++){JSONObject profile=connected.optJSONObject(i);labels[i]=profile.optString("label")+" · "+profile.optString("provider");}
+        new AlertDialog.Builder(this).setTitle("Replicate Vault to storage folders").setMultiChoiceItems(labels,selected,(dialog,index,value)->selected[index]=value)
+            .setPositiveButton("Continue",(dialog,which)->{
+                JSONArray profiles=new JSONArray();for(int i=0;i<selected.length;i++)if(selected[i])profiles.put(connected.optJSONObject(i).optString("id"));
+                if(profiles.length()==0){Toast.makeText(this,"Choose at least one connected folder",Toast.LENGTH_SHORT).show();return;}
+                String[] counts=new String[profiles.length()];for(int i=0;i<counts.length;i++)counts[i]=(i+1)+" verified "+(i==0?"copy":"copies")+" of each chunk";
+                new AlertDialog.Builder(this).setTitle("Replica count").setItems(counts,(countDialog,index)->{
+                    try{JSONObject parameters=new JSONObject().put("projectId",projectId).put("assetId",assetId).put("profileIds",profiles).put("replicas",index+1);
+                        startForegroundService(new Intent(this,ControlService.class).setAction(ControlService.ACTION_LOCAL_VAULT_REPLICATE).putExtra("parameters",parameters.toString()).putExtra("projectId",projectId));
+                        Toast.makeText(this,"Vault replication is running; see Jobs for progress",Toast.LENGTH_LONG).show();
+                    }catch(Exception error){Toast.makeText(this,error.getMessage(),Toast.LENGTH_LONG).show();}
+                }).show();
+            }).setNegativeButton("Cancel",null).show();
+    }
 
     private void pickCloudWorkspace() {
         Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
@@ -1874,7 +1900,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         try {
             CommandJournal remoteJournal=new CommandJournal(this);
             remoteJournal.validateReplay(command);
-            if(java.util.Arrays.asList("apply_tool","apply_edit_plan","creator_preset","autonomous_edit","export_project").contains(action)){
+            if(java.util.Arrays.asList("apply_tool","apply_edit_plan","creator_preset","autonomous_edit","export_project","vault_replicate").contains(action)){
                 String target=p.optString("projectId",""),bound=remoteJournal.boundProject(command.optString("id",""));
                 if(!bound.isEmpty()){
                     if(!target.isEmpty()&&!target.equals(bound))throw new IllegalArgumentException("Command ID belongs to another project");
@@ -1885,7 +1911,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                 remoteJournal.bindProject(command,target);p.put("projectId",target);
                 if(!isAllowed(action,p))throw new SecurityException("Owner access does not allow this project's command");
             }
-            if("export_project".equals(action)||"autonomous_edit".equals(action)&&p.optBoolean("render",false)){
+            if("vault_replicate".equals(action)||"export_project".equals(action)||"autonomous_edit".equals(action)&&p.optBoolean("render",false)){
                 String target=p.optString("projectId","");if(target.isEmpty()&&activeProject!=null)target=activeProject.id;
                 if(store.get(target)==null)throw new IllegalArgumentException("Project not found");
                 startForegroundService(new Intent(this,ControlService.class).setAction(ControlService.ACTION_REMOTE_COMMAND)

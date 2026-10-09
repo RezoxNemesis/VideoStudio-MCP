@@ -30,6 +30,31 @@ async function fixture(){
 }
 const edit=(patch={})=>({projectId:'project-001',expectedRevision:12,commandId:'edit-command-001',operation:'move_clip',args:{clipId:'clip-001',startMs:2000},...patch});
 
+test('project-bound storage discovery works in project and selected-media modes',async()=>{
+  for(const permissionMode of ['project','selected_assets']){
+    const f=await fixture();await f.relay.appRegister('editor-device-001',f.key,{protocolVersion:3,appGeneration:1,editorSchemaVersion:6,permissionMode,allowedProjectId:'project-001',allowedAssetIds:['owned']});
+    const tool=context.serverForApp({relay:f.relay},f.key,3).tools.get('app_storage_profiles');
+    const input=z.object(tool.spec.inputSchema).strict().parse({projectId:'project-001'});
+    assert.equal(JSON.parse((await tool.handler(input)).content[0].text).queued,true);
+    assert.equal((await f.storage.get('app-v3-cl:editor-device-001'))[0].parameters.projectId,'project-001');
+    await assert.rejects(f.relay.appEnqueueV3(f.key,'storage_profiles',{}),/permission|scope/i);
+    await assert.rejects(f.relay.appEnqueueV3(f.key,'storage_profiles',{projectId:'private'}),/permission|scope/i);
+  }
+});
+
+test('Vault replication requires its native capability and respects selected media scope',async()=>{
+  const f=await fixture(),parameters={projectId:'project-001',assetId:'owned',profileIds:['profile-a'],replicas:1};
+  await f.relay.appRegister('editor-device-001',f.key,{protocolVersion:3,appGeneration:1,editorSchemaVersion:5,permissionMode:'everything'});
+  await assert.rejects(f.relay.appEnqueueV3(f.key,'vault_replicate',parameters),/replication|compatible APK/i);
+  await f.relay.appRegister('editor-device-001',f.key,{protocolVersion:3,appGeneration:1,editorSchemaVersion:6,permissionMode:'selected_assets',allowedProjectId:'project-001',allowedAssetIds:['owned']});
+  const server=context.serverForApp({relay:f.relay},f.key,3),tool=server.tools.get('app_vault_replicate');
+  const input=z.object(tool.spec.inputSchema).strict().parse(parameters);
+  assert.equal(JSON.parse((await tool.handler(input)).content[0].text).queued,true);
+  const queued=(await f.storage.get('app-v3-cl:editor-device-001'))[0];assert.deepEqual(JSON.parse(JSON.stringify(queued.parameters)),parameters);
+  await assert.rejects(f.relay.appEnqueueV3(f.key,'vault_replicate',{...parameters,assetId:'unselected'}),/permission|scope/i);
+  assert.throws(()=>z.object(tool.spec.inputSchema).strict().parse({...parameters,treeUri:'content://unselected-folder'}));
+});
+
 test('shared editor requests require the owner revision and durable command ID',async()=>{
   const f=await fixture();
   await assert.rejects(f.relay.appEnqueueV3(f.key,'editor_operation',edit({expectedRevision:-1})),/revision/i);

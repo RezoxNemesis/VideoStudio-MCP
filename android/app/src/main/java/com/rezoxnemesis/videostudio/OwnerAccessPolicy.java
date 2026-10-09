@@ -43,8 +43,9 @@ public final class OwnerAccessPolicy {
         if(!projectAllowed(target))return false;
         if("project".equals(mode()))return !Arrays.asList("create_project","delete_project").contains(action);
         ProjectStore.Project project=store.get(target);if(project==null)return false;
+        if("storage_profiles".equals(action))return true;
         if("project_query".equals(action))return !"snapshots".equals(args.optString("query","graph"));
-        if(Arrays.asList("analyse_media","vault_create","vault_inspect","create_proxy").contains(action))return assetAllowed(target,args.optString("assetId"));
+        if(Arrays.asList("analyse_media","vault_create","vault_inspect","vault_replicate","create_proxy").contains(action))return assetAllowed(target,args.optString("assetId"));
         if("editor_operation".equals(action))return allowsEdit(project,args.optString("operation"),args.optJSONObject("args"));
         if("editor_batch".equals(action)){
             JSONArray operations=args.optJSONArray("operations");if(operations==null||operations.length()==0)return false;

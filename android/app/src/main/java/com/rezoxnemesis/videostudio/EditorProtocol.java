@@ -8,7 +8,7 @@ import org.json.JSONObject;
 
 /** Shared, introspectable wire schema for owner/agent editing. No arbitrary URI import. */
 public final class EditorProtocol {
-    public static final int SCHEMA_VERSION=5;
+    public static final int SCHEMA_VERSION=6;
     private final JSONObject schema;
     private final ProjectStore store;
     private final EditorEngine editor;

@@ -42,6 +42,13 @@ public class StudioDeviceTest {
     private File evidence;
     private UiDevice device;
 
+    @org.junit.Rule public final org.junit.rules.TestWatcher failureEvidence=new org.junit.rules.TestWatcher(){
+        @Override protected void failed(Throwable failure,org.junit.runner.Description description){
+            if(device==null||evidence==null)return;
+            try{device.takeScreenshot(new File(evidence,"failure-"+description.getMethodName()+".png"));device.dumpWindowHierarchy(new File(evidence,"failure-"+description.getMethodName()+".xml"));}catch(Exception ignored){}
+        }
+    };
+
     @Before public void setup() {
         context=InstrumentationRegistry.getInstrumentation().getTargetContext();
         evidence=new File(context.getExternalFilesDir(null),"evidence");assertTrue(evidence.isDirectory()||evidence.mkdirs());
@@ -100,6 +107,41 @@ public class StudioDeviceTest {
         VaultManager vault=new VaultManager(context,store);JSONObject response=vault.create(project.id,image.id,true,null),manifest=response.getJSONObject("vault");assertTrue(manifest.getBoolean("encrypted"));assertTrue(source.isFile());
         byte[] expected=java.nio.file.Files.readAllBytes(source.toPath());try(InputStream in=vault.openRange(manifest.getString("manifestId"),0,expected.length)){byte[] actual=new byte[expected.length];int offset=0,n;while(offset<actual.length&&(n=in.read(actual,offset,actual.length-offset))!=-1)offset+=n;assertArrayEquals(expected,actual);assertEquals(-1,in.read());}
         assertNotNull(new ProjectStore(context).get(project.id).asset(image.id).generationMetadata.optJSONObject("vault"));write("vault-proof.json",manifest.toString(2));
+    }
+
+    @Test public void ownerSelectedDocumentFolderReplicatesEncryptedVaultAndReusesVerifiedObjects()throws Exception{
+        String folder="VideoStudio_SAF_Replication_Test";
+        device.executeShellCommand("mkdir -p /sdcard/Documents/"+folder);
+        ProjectStore store=new ProjectStore(context);ProjectStore.Project project=store.create("SAF replica device proof");
+        File source=png("saf-vault-original.png",Color.MAGENTA);ProjectStore.Asset image=asset("saf-vault",source,"image/png",0);image.sizeBytes=source.length();project.assets.add(image);store.save(project);
+        VaultManager manager=new VaultManager(context,store);String manifest=manager.create(project.id,image.id,true,null).getJSONObject("vault").getString("manifestId");
+        try(ActivityScenario<MainActivity> scenario=ActivityScenario.launch(new Intent(context,MainActivity.class))){
+            scenario.onActivity(activity->{
+                try{
+                    java.lang.reflect.Field request=MainActivity.class.getDeclaredField("PICK_STORAGE_PROFILE");request.setAccessible(true);
+                    Intent picker=new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION|Intent.FLAG_GRANT_WRITE_URI_PERMISSION|Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION|Intent.FLAG_GRANT_PREFIX_URI_PERMISSION)
+                        .putExtra(android.provider.DocumentsContract.EXTRA_INITIAL_URI,android.provider.DocumentsContract.buildDocumentUri("com.android.externalstorage.documents","primary:Documents/"+folder));
+                    activity.startActivityForResult(picker,request.getInt(null));
+                }catch(Exception failure){throw new RuntimeException(failure);}
+            });
+            UiObject2 select=device.wait(Until.findObject(By.text(java.util.regex.Pattern.compile("(?i)use this folder"))),20000);assertNotNull("System folder-picker confirmation",select);select.click();
+            UiObject2 allow=device.wait(Until.findObject(By.text(java.util.regex.Pattern.compile("(?i)allow"))),10000);assertNotNull("Owner folder capability grant",allow);allow.click();
+            InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+            String profile=null;long deadline=SystemClock.elapsedRealtime()+10000;
+            try(StorageProfileStore profiles=new StorageProfileStore(context)){
+                while(profile==null&&SystemClock.elapsedRealtime()<deadline){org.json.JSONArray entries=profiles.list();for(int i=0;i<entries.length();i++){JSONObject item=entries.getJSONObject(i);if(item.optString("treeUri").contains(folder))profile=item.getString("id");}if(profile==null)SystemClock.sleep(100);}
+                assertNotNull("Actual persisted system-picker profile",profile);
+                JSONObject replicated=manager.replicate(project.id,image.id,manifest,java.util.Collections.singletonList(profile),1,null);
+                assertTrue(replicated.getBoolean("complete"));assertEquals(1,replicated.getInt("chunkReplicas"));assertEquals(1,replicated.getInt("manifestReplicas"));
+                long uploaded=profiles.get(profile).getLong("uploadedBytes");assertTrue(uploaded>0);assertTrue(profiles.get(profile).getLong("downloadedBytes")>0);
+                JSONObject replay=new VaultManager(context,new ProjectStore(context)).replicate(project.id,image.id,manifest,java.util.Collections.singletonList(profile),1,null);
+                assertEquals("Verified restart reuses stored remote objects",uploaded,profiles.get(profile).getLong("uploadedBytes"));
+                org.json.JSONArray before=replicated.getJSONArray("locations"),after=replay.getJSONArray("locations");assertEquals(before.length(),after.length());for(int i=0;i<before.length();i++)assertEquals(before.getJSONObject(i).getString("location"),after.getJSONObject(i).getString("location"));
+                assertTrue(source.isFile());assertTrue(new ProjectStore(context).get(project.id).asset(image.id).generationMetadata.getJSONObject("vaultReplication").getBoolean("complete"));
+                write("saf-vault-replication-proof.json",replay.toString(2));
+            }
+            device.takeScreenshot(new File(evidence,"07-saf-vault-replication.png"));
+        }
     }
 
     @Test public void mixedVideoImageGapAndAudioRenderPreservesTimeline() throws Exception {
