@@ -102,6 +102,15 @@ public final class CreatorCatalog {
     public static JSONObject describe() {
         JSONObject o = new JSONObject();
         try {
+            JSONObject editorPresets=new JSONObject();
+            editorPresets.put("effects",new JSONArray(CreatorStyleSettings.EFFECTS));
+            editorPresets.put("motions",new JSONArray(CreatorStyleSettings.MOTIONS));
+            editorPresets.put("transitions",new JSONArray(Arrays.asList("none","cut")));
+            editorPresets.put("fonts",new JSONArray(FONTS));
+            editorPresets.put("textAnimations",new JSONArray(TEXT_ANIMATIONS));
+            editorPresets.put("blurPresetBehaviour","gaussian_blur is Gaussian blur; soft_glow and dream currently use a mild Gaussian blur");
+            o.put("editorPresets",editorPresets);
+            o.put("catalogNote","The broader lists include roadmap names. Use editorPresets for executing editor choices and the capability registry for other native operations.");
             o.put("transitions", new JSONArray(TRANSITIONS));
             o.put("motions", new JSONArray(MOTIONS));
             o.put("effects", new JSONArray(EFFECTS));

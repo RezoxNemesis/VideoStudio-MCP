@@ -1811,30 +1811,25 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
     }
 
     private JSONObject applyCreatorPreset(JSONObject parameters) throws Exception {
-        if (activeProject == null || activeProject.clips.isEmpty()) throw new IllegalArgumentException("No clips");
-        String preset = parameters.optString("preset", "cinematic");
-        String motion = parameters.optString("motion", "");
-        String transition = parameters.optString("transition", "");
-        String font = parameters.optString("font", "");
-        boolean all = parameters.optBoolean("allClips", true);
-        int selectedIndex = Math.max(0, parameters.optInt("clipIndex", 0));
+        JSONObject result=applyLegacyBulk(parameters,"creator_preset");
+        return result.put("preset",parameters.optString("preset","cinematic"));
+    }
 
-        int changed = 0;
-        for (int i = 0; i < activeProject.clips.size(); i++) {
-            if (!all && i != selectedIndex) continue;
-            ProjectStore.Clip c = activeProject.clips.get(i);
-            c.effects.put("effectPreset", preset);
-            if (!motion.isEmpty()) c.effects.put("motionPreset", motion);
-            if (!transition.isEmpty()) c.transition = transition;
-            if (!font.isEmpty()) c.effects.put("fontFamily", font);
-            changed++;
-        }
-        store.save(activeProject);
-        JSONObject result = new JSONObject();
-        result.put("ok", true);
-        result.put("changedClips", changed);
-        result.put("preset", preset);
-        return result;
+    private JSONObject applyLegacyBulk(JSONObject parameters,String action)throws Exception{
+        String id=parameters.optString("projectId","");if(id.isEmpty()&&activeProject!=null)id=activeProject.id;
+        ProjectStore.Project current=store.get(id);if(current==null)throw new IllegalArgumentException("Project not found");
+        if(parameters.has("render")&&!(parameters.get("render") instanceof Boolean))throw new IllegalArgumentException("render must be a boolean");
+        LegacyEditorAdapter adapter=new LegacyEditorAdapter(store);ProjectStore.Project receipt;
+        if("apply_edit_plan".equals(action))receipt=adapter.applyPlan(id,parameters);
+        else if("creator_preset".equals(action))receipt=adapter.applyPreset(id,parameters);
+        else if(parameters.has("clips")||parameters.has("preset"))receipt=adapter.applyAutonomousEdit(id,parameters);
+        else if(parameters.optBoolean("render",false)){LegacyEditorAdapter.validateRenderRevision(current,parameters);receipt=current;}
+        else throw new IllegalArgumentException("Supply a structured edit or render request");
+        activeProject=store.get(id);store.setActive(id);selectedClip=activeProject.clips.isEmpty()?null:activeProject.clips.get(0);
+        return new JSONObject().put("ok",true).put("projectId",receipt.id).put("revision",receipt.revision)
+                .put("clipCount",receipt.clips.size()).put("durationMs",receipt.outputDurationMs())
+                .put("commandId",parameters.optString("_mcpCommandId",parameters.optString("commandId","")))
+                .put("changedClips",LegacyEditorAdapter.changedClipCount(receipt,parameters));
     }
 
     private void sharePairing() {
@@ -1864,7 +1859,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
     public void onCommand(JSONObject command) {
         String action = command.optString("action");
         JSONObject p = command.optJSONObject("parameters");
-        if (p == null) p = new JSONObject();
+        try{p=p==null?new JSONObject():new JSONObject(p.toString());}catch(Exception invalid){throw new IllegalArgumentException(invalid);}
 
         if (!isAllowed(action, p)) {
             JSONObject result = new JSONObject();
@@ -1877,6 +1872,27 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         }
 
         try {
+            CommandJournal remoteJournal=new CommandJournal(this);
+            remoteJournal.validateReplay(command);
+            if(java.util.Arrays.asList("apply_tool","apply_edit_plan","creator_preset","autonomous_edit","export_project").contains(action)){
+                String target=p.optString("projectId",""),bound=remoteJournal.boundProject(command.optString("id",""));
+                if(!bound.isEmpty()){
+                    if(!target.isEmpty()&&!target.equals(bound))throw new IllegalArgumentException("Command ID belongs to another project");
+                    target=bound;
+                }
+                if(target.isEmpty()&&activeProject!=null)target=activeProject.id;
+                if(store.get(target)==null)throw new IllegalArgumentException("Project not found");
+                remoteJournal.bindProject(command,target);p.put("projectId",target);
+                if(!isAllowed(action,p))throw new SecurityException("Owner access does not allow this project's command");
+            }
+            if("export_project".equals(action)||"autonomous_edit".equals(action)&&p.optBoolean("render",false)){
+                String target=p.optString("projectId","");if(target.isEmpty()&&activeProject!=null)target=activeProject.id;
+                if(store.get(target)==null)throw new IllegalArgumentException("Project not found");
+                startForegroundService(new Intent(this,ControlService.class).setAction(ControlService.ACTION_REMOTE_COMMAND)
+                        .putExtra("commandId",command.optString("id","")).putExtra("projectId",target));
+                return;
+            }
+            p.put("_mcpCommandId",command.optString("id",""));
             JSONObject result = new JSONObject();
             switch (action) {
                 case "ping":
@@ -1951,10 +1967,9 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                     refreshCurrent();
                     break;
                 case "autonomous_edit": {
-                    JSONObject planResult = p.optJSONArray("clips") == null ? new JSONObject().put("ok", true) : applyRemotePlan(p);
-                    if (p.has("preset")) applyCreatorPreset(p);
-                    result.put("ok", true);
-                    result.put("plan", planResult);
+                    result=applyLegacyBulk(p,"autonomous_edit");
+                    if(p.has("clips"))result.put("plan",new JSONObject().put("ok",true).put("revision",result.getLong("revision")));
+                    if(p.has("preset"))result.put("preset",p.getString("preset"));
                     if (p.optBoolean("render", false)) {
                         JSONObject export = queueNativeExport(
                                 activeProject,
@@ -2022,40 +2037,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
     }
 
     private JSONObject applyRemotePlan(JSONObject p) throws Exception {
-        if (activeProject == null) throw new IllegalArgumentException("No active project");
-        JSONArray clips = p.optJSONArray("clips");
-        if (clips == null || clips.length() == 0) throw new IllegalArgumentException("clips are required");
-        ArrayList<ProjectStore.Clip> next = new ArrayList<>();
-        for (int i = 0; i < clips.length() && i < 80; i++) {
-            JSONObject raw = clips.optJSONObject(i);
-            if (raw == null) continue;
-            String assetId = raw.optString("assetId");
-            ProjectStore.Asset asset = activeProject.asset(assetId);
-            if (asset == null) throw new IllegalArgumentException("Unknown asset " + assetId);
-            ProjectStore.Clip c = new ProjectStore.Clip();
-            c.id = UUID.randomUUID().toString();
-            c.assetId = assetId;
-            c.inMs = raw.has("inMs") ? raw.optLong("inMs") : (long) (raw.optDouble("start", 0) * 1000);
-            c.outMs = raw.has("outMs") ? raw.optLong("outMs") : (long) (raw.optDouble("end", asset.durationMs / 1000d) * 1000);
-            c.inMs = Math.max(0, c.inMs);
-            c.outMs = Math.max(c.inMs + 100, Math.min(asset.durationMs > 0 ? asset.durationMs : c.outMs, c.outMs));
-            c.speed = (float) Math.max(.5, Math.min(2, raw.optDouble("speed", 1)));
-            c.volume = (float) Math.max(0, Math.min(2, raw.optDouble("volume", 1)));
-            c.transition = raw.optString("transition", "none");
-            c.title = raw.optString("title", "");
-            JSONObject effects = raw.optJSONObject("effects");
-            c.effects = effects == null ? new JSONObject() : effects;
-            next.add(c);
-        }
-        activeProject.clips.clear();
-        activeProject.clips.addAll(next);
-        selectedClip = next.isEmpty() ? null : next.get(0);
-        store.save(activeProject);
-        JSONObject result = new JSONObject();
-        result.put("ok", true);
-        result.put("clipCount", next.size());
-        result.put("durationMs", activeProject.outputDurationMs());
-        return result;
+        return applyLegacyBulk(p,"apply_edit_plan");
     }
 
     private JSONObject queuePrivateHandoffImport(String handoffId, String name, String mimeHint, String projectId) throws Exception {

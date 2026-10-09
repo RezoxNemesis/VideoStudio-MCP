@@ -17,6 +17,7 @@ public final class CommandJournal {
     private static final String PREFS = "videostudio_native_v1";
     private static final String KEY = "mcp_v3_command_journal";
     private static final int MAX = 160;
+    private static final Object JOURNAL_LOCK=new Object();
 
     private final SharedPreferences prefs;
 
@@ -24,39 +25,45 @@ public final class CommandJournal {
         prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
         // Legacy get_state snapshots contain the journal itself. Purge them on upgrade,
         // preventing exponential diagnostic growth and associated memory pressure.
-        prefs.edit().putString(KEY, read().toString()).commit();
+        synchronized(JOURNAL_LOCK){if(!prefs.edit().putString(KEY, read().toString()).commit())throw new IllegalStateException("Could not migrate command journal");}
     }
 
-    public synchronized JSONObject terminal(String commandId) {
-        if (commandId == null || commandId.isEmpty()) return null;
-        JSONArray entries = read();
-        for (int i = 0; i < entries.length(); i++) {
-            JSONObject item = entries.optJSONObject(i);
-            if (item == null || !commandId.equals(item.optString("id"))) continue;
-            String status = item.optString("status");
-            if (!"completed".equals(status) && !"failed".equals(status) && !"denied".equals(status)) return null;
-            JSONObject out = new JSONObject();
-            try {
-                out.put("status", status);
-                JSONObject result = item.optJSONObject("result");
-                out.put("result", result == null ? new JSONObject() : result);
-            } catch (Exception ignored) {}
-            return out;
+    public JSONObject terminal(String commandId) {
+        synchronized(JOURNAL_LOCK){
+
+            if (commandId == null || commandId.isEmpty()) return null;
+            JSONArray entries = read();
+            for (int i = 0; i < entries.length(); i++) {
+                JSONObject item = entries.optJSONObject(i);
+                if (item == null || !commandId.equals(item.optString("id"))) continue;
+                String status = item.optString("status");
+                if (!"completed".equals(status) && !"failed".equals(status) && !"denied".equals(status)) return null;
+                JSONObject out = new JSONObject();
+                try {
+                    out.put("status", status);
+                    JSONObject result = item.optJSONObject("result");
+                    out.put("result", result == null ? new JSONObject() : result);
+                } catch (Exception ignored) {}
+                return out;
+            }
+            return null;
         }
-        return null;
     }
 
     /** A command ID is bound to its action and arguments, not merely its result. */
-    public synchronized void validateReplay(JSONObject command){
-        String candidate=requestFingerprint(command);
-        JSONObject prior=existing(command.optString("id",""));if(prior==null)return;
-        String saved=prior.optString("requestFingerprint","");
-        if(saved.isEmpty()){
-            JSONObject captured=prior.optJSONObject("command");
-            if(captured==null)throw new IllegalArgumentException("Cannot verify an older command ID; use a new command ID");
-            saved=requestFingerprint(captured);
+    public void validateReplay(JSONObject command){
+        synchronized(JOURNAL_LOCK){
+
+            String candidate=requestFingerprint(command);
+            JSONObject prior=existing(command.optString("id",""));if(prior==null)return;
+            String saved=prior.optString("requestFingerprint","");
+            if(saved.isEmpty()){
+                JSONObject captured=prior.optJSONObject("command");
+                if(captured==null)throw new IllegalArgumentException("Cannot verify an older command ID; use a new command ID");
+                saved=requestFingerprint(captured);
+            }
+            if(!saved.equals(candidate))throw new IllegalArgumentException("Command ID conflicts with a different request");
         }
-        if(!saved.equals(candidate))throw new IllegalArgumentException("Command ID conflicts with a different request");
     }
 
     private static String requestFingerprint(JSONObject command){
@@ -70,115 +77,172 @@ public final class CommandJournal {
         }catch(org.json.JSONException invalid){throw new IllegalArgumentException("Invalid command arguments",invalid);}
     }
 
-    public synchronized void begin(JSONObject command) {
-        if (command == null || "get_state".equals(command.optString("action"))) return;
-        String id = command.optString("id");
-        if (id.isEmpty()) return;
-        String binding=requestFingerprint(command);
-        JSONObject entry = new JSONObject();
-        try {
-            entry.put("id", id);
-            entry.put("seq", command.optLong("seq", 0));
-            entry.put("action", command.optString("action", ""));
-            entry.put("status", "running");
-            entry.put("requestFingerprint",binding);
-            entry.put("command", new JSONObject(command.toString()));
-            entry.put("updatedAt", System.currentTimeMillis());
-        } catch (Exception ignored) {}
-        upsert(id, entry);
+    public void begin(JSONObject command) {
+        synchronized(JOURNAL_LOCK){
+
+            if (command == null || "get_state".equals(command.optString("action"))) return;
+            String id = command.optString("id");
+            if (id.isEmpty()) return;
+            String binding=requestFingerprint(command);
+            String project=boundProject(id);
+            JSONObject entry = new JSONObject();
+            try {
+                entry.put("id", id);
+                entry.put("seq", command.optLong("seq", 0));
+                entry.put("action", command.optString("action", ""));
+                entry.put("status", "running");
+                entry.put("requestFingerprint",binding);
+                if(!project.isEmpty())entry.put("projectId",project);
+                entry.put("command", new JSONObject(command.toString()));
+                entry.put("updatedAt", System.currentTimeMillis());
+            } catch (Exception ignored) {}
+            upsert(id, entry);
+        }
     }
 
-    public synchronized void linkJob(JSONObject command,
+    public String boundProject(String commandId){
+        synchronized(JOURNAL_LOCK){
+
+            JSONObject prior=existing(commandId);return prior==null?"":prior.optString("projectId","");
+        }
+    }
+
+    public JSONObject capturedCommand(String commandId){
+        synchronized(JOURNAL_LOCK){
+
+            JSONObject prior=existing(commandId),command=prior==null?null:prior.optJSONObject("command");
+            try{return command==null?null:new JSONObject(command.toString());}catch(Exception invalid){throw new IllegalStateException("Invalid saved command",invalid);}
+        }
+    }
+
+    /** Persist active-project resolution before an edit or render can begin. */
+    public void bindProject(JSONObject command,String projectId){
+        synchronized(JOURNAL_LOCK){
+
+            if(command==null||command.optString("id","").isEmpty())return;
+            validateReplay(command);
+            String id=command.optString("id"),prior=boundProject(id);
+            if(!prior.isEmpty()&&!prior.equals(projectId))throw new IllegalArgumentException("Command ID belongs to another project");
+            if(existing(id)==null)begin(command);
+            JSONObject entry=existing(id);
+            try{entry.put("projectId",projectId);entry.put("command",new JSONObject(command.toString()));}catch(Exception invalid){throw new IllegalArgumentException(invalid);}
+            upsert(id,entry);
+        }
+    }
+
+    public void linkJob(JSONObject command,
                                      String jobId,
                                      String projectId,
                                      JSONObject queuedResult) {
-        if (command == null) return;
-        String id = command.optString("id", "");
-        if (id.isEmpty() || jobId == null || jobId.isEmpty()) return;
-        String binding=requestFingerprint(command);
-        JSONObject entry = existing(id);
-        if (entry == null) entry = new JSONObject();
-        try {
-            entry.put("id", id);
-            entry.put("seq", command.optLong("seq", entry.optLong("seq", 0)));
-            entry.put("action", command.optString("action", entry.optString("action", "")));
-            entry.put("status", "running");
-            entry.put("jobId", jobId);
-            entry.put("projectId", projectId == null ? "" : projectId);
-            entry.put("command", new JSONObject(command.toString()));
-            entry.put("requestFingerprint",binding);
-            if (queuedResult != null) entry.put("queuedResult", new JSONObject(queuedResult.toString()));
-            entry.put("updatedAt", System.currentTimeMillis());
-        } catch (Exception ignored) {}
-        upsert(id, entry);
+        synchronized(JOURNAL_LOCK){
+
+            if (command == null) return;
+            String id = command.optString("id", "");
+            if (id.isEmpty() || jobId == null || jobId.isEmpty()) return;
+            String binding=requestFingerprint(command);
+            JSONObject entry = existing(id);
+            if (entry == null) entry = new JSONObject();
+            try {
+                entry.put("id", id);
+                entry.put("seq", command.optLong("seq", entry.optLong("seq", 0)));
+                entry.put("action", command.optString("action", entry.optString("action", "")));
+                entry.put("status", "running");
+                entry.put("jobId", jobId);
+                entry.put("projectId", projectId == null ? "" : projectId);
+                entry.put("command", new JSONObject(command.toString()));
+                entry.put("requestFingerprint",binding);
+                if (queuedResult != null) entry.put("queuedResult", new JSONObject(queuedResult.toString()));
+                entry.put("updatedAt", System.currentTimeMillis());
+            } catch (Exception ignored) {}
+            upsert(id, entry);
+        }
     }
 
-    public synchronized void relinkJob(String commandId,
+    public void relinkJob(String commandId,
                                        String jobId,
                                        String projectId,
                                        JSONObject queuedResult) {
-        if (commandId == null || commandId.isEmpty() || jobId == null || jobId.isEmpty()) return;
-        JSONObject entry = existing(commandId);
-        if (entry == null) return;
-        try {
-            entry.put("status", "running");
-            entry.put("jobId", jobId);
-            entry.put("projectId", projectId == null ? "" : projectId);
-            if (queuedResult != null) entry.put("queuedResult", new JSONObject(queuedResult.toString()));
-            entry.put("updatedAt", System.currentTimeMillis());
-        } catch (Exception ignored) {}
-        upsert(commandId, entry);
+        synchronized(JOURNAL_LOCK){
+
+            if (commandId == null || commandId.isEmpty() || jobId == null || jobId.isEmpty()) return;
+            JSONObject entry = existing(commandId);
+            if (entry == null) return;
+            try {
+                entry.put("status", "running");
+                entry.put("jobId", jobId);
+                entry.put("projectId", projectId == null ? "" : projectId);
+                if (queuedResult != null) entry.put("queuedResult", new JSONObject(queuedResult.toString()));
+                entry.put("updatedAt", System.currentTimeMillis());
+            } catch (Exception ignored) {}
+            upsert(commandId, entry);
+        }
     }
 
-    public synchronized JSONObject inflight(String commandId) {
-        if (commandId == null || commandId.isEmpty()) return null;
-        JSONObject entry = existing(commandId);
-        if (entry == null || !"running".equals(entry.optString("status"))) return null;
-        try { return new JSONObject(entry.toString()); }
-        catch (Exception ignored) { return entry; }
+    public JSONObject inflight(String commandId) {
+        synchronized(JOURNAL_LOCK){
+
+            if (commandId == null || commandId.isEmpty()) return null;
+            JSONObject entry = existing(commandId);
+            if (entry == null || !"running".equals(entry.optString("status"))) return null;
+            try { return new JSONObject(entry.toString()); }
+            catch (Exception ignored) { return entry; }
+        }
     }
 
-    public synchronized JSONArray inflightEntries(int limit) {
-        JSONArray entries = read();
-        JSONArray out = new JSONArray();
-        int count = Math.max(1, Math.min(MAX, limit));
-        for (int i = 0; i < entries.length() && out.length() < count; i++) {
-            JSONObject item = entries.optJSONObject(i);
-            if (item != null && "running".equals(item.optString("status"))
-                    && !item.optString("jobId", "").isEmpty()) {
-                out.put(item);
+    public JSONArray inflightEntries(int limit) {
+        synchronized(JOURNAL_LOCK){
+
+            JSONArray entries = read();
+            JSONArray out = new JSONArray();
+            int count = Math.max(1, Math.min(MAX, limit));
+            for (int i = 0; i < entries.length() && out.length() < count; i++) {
+                JSONObject item = entries.optJSONObject(i);
+                if (item != null && "running".equals(item.optString("status"))
+                        && !item.optString("jobId", "").isEmpty()) {
+                    out.put(item);
+                }
             }
+            return out;
         }
-        return out;
     }
 
-    public synchronized void finish(JSONObject command, JSONObject result, String status) {
-        if (command == null || "get_state".equals(command.optString("action"))) return;
-        String id = command.optString("id");
-        if (id.isEmpty()) return;
-        String binding=requestFingerprint(command);
-        JSONObject entry = new JSONObject();
-        try {
-            entry.put("id", id);
-            entry.put("seq", command.optLong("seq", 0));
-            entry.put("action", command.optString("action", ""));
-            entry.put("status", status == null ? "completed" : status);
-            entry.put("requestFingerprint",binding);
-            entry.put("result", result == null ? new JSONObject() : result);
-            entry.put("updatedAt", System.currentTimeMillis());
-        } catch (Exception ignored) {}
-        upsert(id, entry);
+    public void finish(JSONObject command, JSONObject result, String status) {
+        synchronized(JOURNAL_LOCK){
+
+            if (command == null || "get_state".equals(command.optString("action"))) return;
+            String id = command.optString("id");
+            if (id.isEmpty()) return;
+            String binding=requestFingerprint(command);
+            String project=boundProject(id);
+            JSONObject captured=capturedCommand(id);
+            JSONObject entry = new JSONObject();
+            try {
+                entry.put("id", id);
+                entry.put("seq", command.optLong("seq", 0));
+                entry.put("action", command.optString("action", ""));
+                entry.put("status", status == null ? "completed" : status);
+                entry.put("requestFingerprint",binding);
+                if(!project.isEmpty())entry.put("projectId",project);
+                if(captured!=null)entry.put("command",captured);
+                entry.put("result", result == null ? new JSONObject() : result);
+                entry.put("updatedAt", System.currentTimeMillis());
+            } catch (Exception ignored) {}
+            upsert(id, entry);
+        }
     }
 
-    public synchronized JSONArray recent(int limit) {
-        JSONArray entries = read();
-        JSONArray out = new JSONArray();
-        int count = Math.max(1, Math.min(MAX, limit));
-        for (int i = 0; i < entries.length() && out.length() < count; i++) {
-            JSONObject item = entries.optJSONObject(i);
-            if (item != null) out.put(item);
+    public JSONArray recent(int limit) {
+        synchronized(JOURNAL_LOCK){
+
+            JSONArray entries = read();
+            JSONArray out = new JSONArray();
+            int count = Math.max(1, Math.min(MAX, limit));
+            for (int i = 0; i < entries.length() && out.length() < count; i++) {
+                JSONObject item = entries.optJSONObject(i);
+                if (item != null) out.put(item);
+            }
+            return out;
         }
-        return out;
     }
 
     private JSONObject existing(String id) {

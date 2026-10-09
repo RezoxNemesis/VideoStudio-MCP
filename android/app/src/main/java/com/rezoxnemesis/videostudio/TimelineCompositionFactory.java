@@ -213,15 +213,25 @@ public final class TimelineCompositionFactory {
 
         applyBlurEffects(effects,fx);
 
-        String preset = animationSpec == null
+        JSONObject renderSpec=animationSpec;
+        if(animationSpec!=null&&(fx.optBoolean("motionStyleOverride")||fx.optBoolean("transitionStyleOverride"))){
+            try{
+                renderSpec=new JSONObject(animationSpec.toString());
+                if(fx.optBoolean("motionStyleOverride")){
+                    renderSpec.remove("keyframes");renderSpec.put("cameraPreset",fx.optString("motionPreset","none"));
+                }
+                if(fx.optBoolean("transitionStyleOverride"))renderSpec.put("transitionPreset",clip.transition);
+            }catch(Exception invalid){throw new IllegalArgumentException("Invalid animation style override",invalid);}
+        }
+        String preset = renderSpec == null
                 ? fx.optString("motionPreset", "push_in")
-                : animationSpec.optString("cameraPreset", fx.optString("motionPreset", "push_in"));
+                : renderSpec.optString("cameraPreset", fx.optString("motionPreset", "push_in"));
         long durationUs = Math.max(100_000L, durationMs * 1000L);
         effects.add(new MotionMatrixEffect(
                 preset,
                 durationUs,
                 Math.min(320_000L, Math.max(180_000L, durationUs / 12)),
-                animationSpec,
+                renderSpec,
                 layerRole,sequenceStartUs
         ));
 

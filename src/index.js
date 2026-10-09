@@ -52,6 +52,7 @@ const appActionAllowed = (mode,action,parameters={},device={}) => {
     const allowed=entry=>{
       const op=entry.operation,args=entry.args||{};
       if(["rename_asset","remove_asset","add_clip"].includes(op))return assets.has(args.assetId);
+      if(op==="apply_creator_preset")return Array.isArray(args.clipIds)&&args.clipIds.length>0&&args.clipIds.every(id=>clips.has(id));
       return ["set_property","set_keyframe","remove_keyframe","set_title","slip_clip","split_clip","set_audio_effects","set_composite_effects","set_creator_style","set_effect_preset"].includes(op)&&clips.has(args.clipId);
     };
     if(a==="editor_operation")return allowed(parameters);
@@ -867,6 +868,9 @@ export class VideoStudioState extends DurableObject {
     let requiredEditorSchema=1;
     if(action==="editor_operation")requiredEditorSchema=EDITOR_SCHEMA.operations[parameters.operation]?.nativeSchemaVersion||1;
     if(action==="editor_batch")requiredEditorSchema=Math.max(1,...parameters.operations.map(op=>EDITOR_SCHEMA.operations[op.operation]?.nativeSchemaVersion||1));
+    const legacyTarget=parameters.expectedRevision!==undefined||!!parameters.projectId;
+    const legacyMinimum=legacyTarget?(action==="apply_tool"?4:["apply_edit_plan","creator_preset","autonomous_edit"].includes(action)?5:0):0;
+    if(legacyMinimum&&(d.editorSchemaVersion||1)<legacyMinimum)throw new Error("Installed app does not support this editor schema version for project/revision targeting; install the compatible APK");
     if(editor&&d.editorSchemaVersion<requiredEditorSchema)throw new Error("Installed app does not support this editor schema version; install the compatible APK");
     const queueKey="app-v3-cl:"+d.deviceId, existing=(await this.ctx.storage.get(queueKey))||[];
     const receiptKey=editor&&parameters.commandId?"app-v3-editor-receipt:"+d.deviceId+":"+parameters.commandId:"";
@@ -1622,7 +1626,16 @@ function serverForApp(env,ownerKey,protocolVersion=1){
       :["persistent background MCP controller","bounded light/heavy job lanes","one process-wide heavy export at a time","RAM guard","thermal guard","persistent job checkpoints","cancel single/all jobs"]
   }));
 
-  s.registerTool("app_catalog",{description:isV3?"List creator effects, motions, transitions, text animations, fonts and AI operations understood by VideoStudio v3.":"List creator effects, motions, transitions, text animations, fonts and AI editing operations understood by VideoStudio v1.1.",inputSchema:{}},async()=>out({
+  s.registerTool("app_catalog",{description:"Read executing editor preset choices alongside the broader product roadmap. Use editorPresets when editing; consult the native capability registry for other operations.",inputSchema:{}},async()=>out({
+    editorPresets:isV3?{
+      effects:EDITOR_SCHEMA.operations.set_effect_preset.properties.preset.enum,
+      motions:EDITOR_SCHEMA.operations.set_creator_style.properties.settings.properties.motionPreset.enum,
+      fonts:EDITOR_SCHEMA.operations.set_creator_style.properties.settings.properties.fontFamily.enum,
+      textAnimations:EDITOR_SCHEMA.operations.set_creator_style.properties.settings.properties.textAnimation.enum,
+      transitions:["none","cut"],
+      blurPresetBehaviour:"gaussian_blur is Gaussian blur; soft_glow and dream currently use a mild Gaussian blur"
+    }:undefined,
+    catalogNote:"Broader lists include roadmap names; they do not establish availability on the installed APK. Use app_status/app_editor_schema and the native capability registry.",
     transitions:["none","cut","fade","dip_black","dip_white","slide_left","slide_right","slide_up","slide_down","push_left","push_right","zoom_in","zoom_out","whip_left","whip_right","spin","blur","flash","glitch","rgb_split","light_leak","film_burn","luma_wipe","mask_wipe","camera_shutter"],
     motions:["none","push_in","pull_out","pan_left","pan_right","pan_up","pan_down","drift","orbit","handheld","micro_shake","impact_shake","bounce","elastic_pop","float","parallax","ken_burns","snap_zoom","zoom_punch","rack_focus_sim","tilt","roll","hero_reveal"],
     effects:["none","cinematic","film_grain","soft_glow","bloom","dream","vignette","sharpen","clarity","motion_blur","radial_blur","gaussian_blur","chromatic_aberration","rgb_split","glitch","scanlines","vhs","retro_cam","super8","film_burn","light_leak","halation","neon","cyberpunk","noir","bleach_bypass","teal_orange","warm_film","cool_night","golden_hour","matte","high_contrast","soft_portrait","crush_black","fade_black","duotone","posterize","pixelate","fisheye","shake","strobe","flash","edge_glow"],
@@ -1660,7 +1673,8 @@ function serverForApp(env,ownerKey,protocolVersion=1){
     return queue("analyse_media",p);
   });
 
-  s.registerTool("app_apply_edit_plan",{description:"Replace the active project's timeline with a structured multi-cut plan referencing already imported local asset IDs.",inputSchema:{clips:z.array(z.record(z.string(),z.any())).min(1).max(80)}},async({clips})=>queue("apply_edit_plan",{clips}));
+  const legacyEditFields=isV3?{projectId:z.string().min(1).max(120).optional(),expectedRevision:z.number().int().min(1).max(Number.MAX_SAFE_INTEGER).optional()}:{};
+  s.registerTool("app_apply_edit_plan",{description:"Replace a project's timeline with 1–80 structured cuts of imported source IDs, in one atomic undoable edit. Locks/source bounds apply. Use only the executing effects in app_editor_schema; invalid providers roll back all clips.",inputSchema:{...legacyEditFields,clips:z.array(z.record(z.string(),z.any())).min(1).max(80)}},async args=>queue("apply_edit_plan",args));
 
   s.registerTool("app_apply_tool",{
     description:"Apply one validated native clip edit. Supports trim, speed, slow_motion, volume, green_screen, motion, effect, color, mask, font, text_animation, blur, transform, title and keyframes. This tool enforces track locks and atomic undo. Use app_editor_schema for the shared editor operations. projectId and expectedRevision optionally protect the target and revision for existing v3 clients.",
@@ -1672,9 +1686,9 @@ function serverForApp(env,ownerKey,protocolVersion=1){
     return queue("apply_tool",parameters);
   });
 
-  s.registerTool("app_creator_preset",{description:"Apply a creator look plus optional motion, transition and font to one clip or the full active timeline.",inputSchema:{preset:z.string().min(1).max(80),motion:z.string().max(80).optional(),transition:z.string().max(80).optional(),font:z.string().max(80).optional(),allClips:z.boolean().optional(),clipIndex:z.number().int().min(0).optional()}},async args=>queue("creator_preset",args));
+  s.registerTool("app_creator_preset",{description:"Apply an executing colour/Gaussian preset plus optional verified motion/font to a clip or all visual clips as one undoable edit. Consult app_editor_schema; transitions currently accept none/cut.",inputSchema:{...legacyEditFields,preset:z.string().min(1).max(80),motion:z.string().max(80).optional(),transition:z.string().max(80).optional(),font:z.string().max(80).optional(),allClips:z.boolean().optional(),clipIndex:z.number().int().min(0).optional()}},async args=>queue("creator_preset",args));
 
-  s.registerTool("app_autonomous_edit",{description:"Execute a structured autonomous native edit. ChatGPT may replace the timeline, apply a creator preset and optionally launch a safe native export in one request.",inputSchema:{instruction:z.string().max(5000).optional(),clips:z.array(z.record(z.string(),z.any())).max(80).optional(),preset:z.string().max(80).optional(),motion:z.string().max(80).optional(),transition:z.string().max(80).optional(),font:z.string().max(80).optional(),aspect:z.enum(["9:16","16:9","1:1","4:5"]).optional(),quality:z.enum(["720p","1080p"]).optional(),render:z.boolean().optional(),fileName:z.string().max(180).optional()}},async args=>queue("autonomous_edit",args));
+  s.registerTool("app_autonomous_edit",{description:"Commit a structured timeline and creator preset atomically, then optionally queue verified native export. Invalid edits roll back together; rendering remains a separately tracked job.",inputSchema:{...legacyEditFields,allClips:z.boolean().optional(),clipIndex:z.number().int().min(0).optional(),instruction:z.string().max(5000).optional(),clips:z.array(z.record(z.string(),z.any())).max(80).optional(),preset:z.string().max(80).optional(),motion:z.string().max(80).optional(),transition:z.string().max(80).optional(),font:z.string().max(80).optional(),aspect:z.enum(["9:16","16:9","1:1","4:5"]).optional(),quality:z.enum(["720p","1080p"]).optional(),render:z.boolean().optional(),fileName:z.string().max(180).optional()}},async args=>queue("autonomous_edit",args));
 
   s.registerTool("app_create_prompt_video",{description:"Create and export a real local MP4 from a prompt. ChatGPT can provide a detailed scene plan with original titles, text, motion, transitions, effects and font choices; VideoStudio generates the scene visuals locally and renders them with its native engine.",inputSchema:{prompt:z.string().min(1).max(10000),durationSeconds:z.number().int().min(4).max(120).optional(),aspect:z.enum(["9:16","16:9","1:1","4:5"]).optional(),quality:z.enum(["720p","1080p"]).optional(),style:z.string().max(100).optional(),font:z.string().max(80).optional(),scenes:z.array(z.record(z.string(),z.any())).max(20).optional()}},async args=>queue("prompt_video",args));
 

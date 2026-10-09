@@ -1,14 +1,14 @@
 # Build and resume VideoStudio
 
-Continue the complete blueprint in `VideoStudio_Complete_Engineering_Continuity_Bundle_v1.md`. Section 36 supersedes the former missing-toolchain/publishing ceiling in section 35. The complete product is still unfinished.
+Continue the complete blueprint in `VideoStudio_Complete_Engineering_Continuity_Bundle_v1.md`. Sections 36–37 supersede the former missing-toolchain/publishing ceiling in section 35. The complete product is still unfinished.
 
 ## Current verified checkpoint
 
-GitHub review branch `codex/studio-owner-editor`, draft PR #35, published commit `b3fb1ba3560175d6d02b6c7cd8f0d6c7bcd9b434` has the same source tree `eab22ffae481651104efc7e7e5cd468442d774be` as local commit `6d844343dcb11edcd4fbb139a727b2a70f012b13`.
+GitHub review branch `codex/studio-owner-editor`, draft PR #35, published `82c600faf7dc18e5f4a772f14d9a42ecdc7a0dfe` matches local `d8ee058d9412f7e89cbd37cb6540c133cf3d9b2c` at tree `6b415c64a2e6fe5656906ee5f8fb188ba6406f26`.
 
-That published checkpoint passed 145 Android unit tests, all six API 33 hardware-accelerated device cases, and Worker CI. All four retained device exports decoded with FFmpeg and matched their proof checksums. CI runs: Android 37882409101; device 37882409116; Worker 37882409117. Evidence is retained locally in `artifacts/verified-b3fb1ba/verification-manifest.json`.
+Android run 37890111134, device run 37890111246 and Worker run 37890111099 all succeeded. Device logs report all six API 33 cases passed and 28 evidence files retained. These CI logs/metadata were inspected; 82c artifact bytes and APK certificate were not independently fetched. The earlier b3fb checkpoint has downloaded XML, APK and four fully decoded MP4s, saved in `artifacts/verified-b3fb1ba/verification-manifest.json`.
 
-The subsequent legacy editor fixes have freshly compiled 73 main Java sources and 31 test sources, with all 172 JUnit/Robolectric cases passing. Node: 282 static smoke checks, 20 connection cases, 15 executable relay cases. Real Wrangler bundle compilation passed with `deploy --dry-run`; this did not deploy production. Pure core: timeline 40, Vault/range 52 under a 64 MB heap, audio DSP 14, narration 510; software GLES pixel checks 15. A matching APK/device run for these subsequent fixes must be collected from the new CI commit before claiming device verification.
+Current schema 5 bulk editing/export recovery changes freshly compile 73 main and 33 test Java sources and pass 200 JUnit/Robolectric cases. Node: 282 smoke assertions, 20 connection cases, 19 executable relay cases. Actual Wrangler bundle compilation passes. These newest changes still require matching Gradle/APK/device CI before claiming device verification. See section 37 and `artifacts/current-2026-10-09/bulk-recovery-*-final.log`.
 
 ## Build and test
 
@@ -46,4 +46,4 @@ The downloaded b3fb APK SHA-256 is `865fa790151d0a87261bcc19ec29f8f981d4b3af9e60
 
 Legacy `apply_tool` now shares atomic editor transactions, locks, source bounds, history, keyframes and command receipts in both service and foreground paths. Journal replay binds action/arguments; interrupted synchronous edits use SQLite receipts. Schema 4 adds executing effect presets with older operation versions retained. STOP rejects delayed callbacks and old success replay while keeping owner editing available.
 
-Next: replace direct mutations in legacy edit plans/creator presets/autonomous edits with atomic shared-engine operations, then continue the full phase A–H requirements. Direct cloud-provider OAuth, cloud execution/mirror reconciliation, full articulated 2D, model-backed video, complete 3D/VFX, ASR/captions/lip-sync/recap, accessibility/tablet/performance and large cloud benchmarks remain unfinished. Keep unavailable providers explicit and preserve original media.
+Legacy plans, creator presets and autonomous edits now use atomic shared operations. Foreground remote exports use the service, retain the exact graph revision and resume a command-bound job. Next: finish their matching-source CI verification, then continue remaining editor depth and full phase A–H requirements. Direct cloud-provider OAuth, cloud execution/mirror reconciliation, full articulated 2D, model-backed video, complete 3D/VFX, ASR/captions/lip-sync/recap, accessibility/tablet/performance and large cloud benchmarks remain unfinished. Keep unavailable providers explicit and preserve original media.

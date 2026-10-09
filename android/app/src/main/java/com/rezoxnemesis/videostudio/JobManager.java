@@ -171,12 +171,18 @@ public final class JobManager {
     }
 
     public Job submit(String name,Kind kind,Origin origin,Work work) {
+        return submit(name,kind,origin,null,work);
+    }
+
+    public Job submit(String name,Kind kind,Origin origin,java.util.function.Consumer<Job> beforeStart,Work work) {
         if(origin==null)throw new IllegalArgumentException("Job origin is required");
         Job job = new Job(UUID.randomUUID().toString(),name,kind,origin,System.currentTimeMillis());
         job.owner = this;
         jobs.put(job.id, job);
         PROCESS_RUNNING.put(job.id,job);
         persist();
+        try{if(beforeStart!=null)beforeStart.accept(job);}
+        catch(RuntimeException failed){PROCESS_RUNNING.remove(job.id,job);setState(job,STATE_FAILED,failed.getMessage());throw failed;}
         ExecutorService executor = kind == Kind.MANUAL_RENDER ? manualPool : pool;
         Semaphore lane = kind == Kind.MANUAL_RENDER ? PROCESS_MANUAL_RENDER_LANE : heavyLane;
         job.future = executor.submit(() -> {
@@ -211,6 +217,9 @@ public final class JobManager {
         });
         return job;
     }
+
+    Job liveJob(String id){Job job=PROCESS_RUNNING.get(id);return job!=null&&!isTerminal(job.state)?job:null;}
+    Job jobRecord(String id){Job job=PROCESS_RUNNING.get(id);return job==null?jobs.get(id):job;}
 
     public boolean cancel(String id) {
         Job job = PROCESS_RUNNING.get(id);if(job!=null&&job.owner!=this)return job.owner.cancel(id);

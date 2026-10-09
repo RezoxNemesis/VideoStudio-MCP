@@ -15,6 +15,24 @@ import static org.junit.Assert.*;
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk=33)
 public class OwnerToolUiTest {
+    @Test public void foregroundBulkPlanCannotReplaceLockedOwnerClips()throws Exception{
+        Context c=RuntimeEnvironment.getApplication();c.deleteDatabase("videostudio_v3.db");
+        ProjectStore store=new ProjectStore(c);ProjectStore.Project p=fixture(store,true);
+        try(ActivityController<MainActivity> controller=Robolectric.buildActivity(MainActivity.class).setup()){
+            JSONObject params=new JSONObject().put("projectId",p.id).put("clips",new org.json.JSONArray().put(new JSONObject().put("assetId","image").put("outMs",1000)));
+            controller.get().onCommand(new JSONObject().put("id","foreground-plan-001").put("action","apply_edit_plan").put("parameters",params));
+            assertEquals("original",store.get(p.id).clips.get(0).id);assertEquals(p.revision,store.get(p.id).revision);
+        }
+    }
+    @Test public void foregroundCompoundEditRollsBackThePlanWhenPresetFails()throws Exception{
+        Context c=RuntimeEnvironment.getApplication();c.deleteDatabase("videostudio_v3.db");
+        ProjectStore store=new ProjectStore(c);ProjectStore.Project p=fixture(store,false);
+        try(ActivityController<MainActivity> controller=Robolectric.buildActivity(MainActivity.class).setup()){
+            JSONObject params=new JSONObject().put("projectId",p.id).put("preset","invalid-provider").put("clips",new org.json.JSONArray().put(new JSONObject().put("assetId","image").put("outMs",1000)));
+            controller.get().onCommand(new JSONObject().put("id","foreground-compound-001").put("action","autonomous_edit").put("parameters",params));
+            assertEquals("original",store.get(p.id).clips.get(0).id);assertEquals(p.revision,store.get(p.id).revision);
+        }
+    }
     @Test public void stoppedForegroundControlDeniesLeasedEditsButOwnerToolsRemainAvailable()throws Exception{
         Context c=RuntimeEnvironment.getApplication();c.deleteDatabase("videostudio_v3.db");
         ProjectStore store=new ProjectStore(c);ProjectStore.Project p=fixture(store,false);

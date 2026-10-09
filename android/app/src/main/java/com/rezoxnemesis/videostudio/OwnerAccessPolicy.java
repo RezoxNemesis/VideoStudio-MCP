@@ -57,6 +57,11 @@ public final class OwnerAccessPolicy {
     }
     private boolean allowsEdit(ProjectStore.Project p,String operation,JSONObject args){
         if(args==null)return false;
+        if("apply_creator_preset".equals(operation)){
+            JSONArray ids=args.optJSONArray("clipIds");if(ids==null||ids.length()==0)return false;
+            for(int i=0;i<ids.length();i++){ProjectStore.Clip clip=p.clip(ids.optString(i,""));if(clip==null||!assetAllowed(p.id,clip.assetId))return false;}
+            return true;
+        }
         if(Arrays.asList("rename_asset","remove_asset","add_clip").contains(operation))return assetAllowed(p.id,args.optString("assetId"));
         if(!Arrays.asList("set_property","set_keyframe","remove_keyframe","set_title","slip_clip","split_clip","set_audio_effects","set_composite_effects","set_creator_style","set_effect_preset").contains(operation))return false;
         ProjectStore.Clip clip=p.clip(args.optString("clipId"));return clip!=null&&assetAllowed(p.id,clip.assetId);

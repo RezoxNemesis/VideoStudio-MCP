@@ -10,6 +10,90 @@ final class LegacyEditorAdapter {
     private final EditorEngine editor;
     LegacyEditorAdapter(ProjectStore store){editor=new EditorEngine(store);}
 
+    ProjectStore.Project applyPlan(String projectId,JSONObject parameters)throws Exception{return applyBulk(projectId,parameters,"apply_edit_plan");}
+    ProjectStore.Project applyPreset(String projectId,JSONObject parameters)throws Exception{return applyBulk(projectId,parameters,"creator_preset");}
+    ProjectStore.Project applyAutonomousEdit(String projectId,JSONObject parameters)throws Exception{return applyBulk(projectId,parameters,"autonomous_edit");}
+
+    private ProjectStore.Project applyBulk(String projectId,JSONObject parameters,String action)throws Exception{
+        java.util.ArrayList<String> permitted=new java.util.ArrayList<>(Arrays.asList("projectId","expectedRevision","commandId","_mcpCommandId","_origin"));
+        if(!"creator_preset".equals(action))permitted.add("clips");
+        if(!"apply_edit_plan".equals(action))permitted.addAll(Arrays.asList("preset","motion","font","transition","allClips","clipIndex"));
+        if("autonomous_edit".equals(action))permitted.addAll(Arrays.asList("instruction","render","aspect","quality","fileName"));
+        keys(parameters,permitted.toArray(new String[0]));
+        JSONObject request=new JSONObject(parameters.toString());request.remove("_origin");request.remove("_mcpCommandId");request.remove("commandId");request.remove("projectId");
+        long revision=parameters.has("expectedRevision")?integer(parameters.get("expectedRevision"),"expectedRevision",1,9007199254740991L):-1;
+        String commandId=string(parameters,"_mcpCommandId",string(parameters,"commandId",""));
+        if(parameters.has("render"))bool(parameters,"render",false);
+        return editor.executeLegacyMappedBatch(projectId,revision,commandId,action,request,p->{
+            JSONArray operations=new JSONArray();
+            if("apply_edit_plan".equals(action)||parameters.has("clips")){
+                Object raw=parameters.opt("clips");if(!(raw instanceof JSONArray))throw new IllegalArgumentException("clips must be an array");
+                JSONArray clips=(JSONArray)raw,normalized=new JSONArray();
+                if(clips.length()<1||clips.length()>80)throw new IllegalArgumentException("Timeline plan requires 1–80 clips");
+                for(int i=0;i<clips.length();i++){
+                    if(!(clips.get(i) instanceof JSONObject))throw new IllegalArgumentException("Each clip must be an object");
+                    normalized.put(normalizePlanClip(p,clips.getJSONObject(i)));
+                }
+                add(operations,"replace_timeline",new JSONObject().put("clips",normalized));
+            }
+            if("creator_preset".equals(action)||parameters.has("preset")){
+                // Plan IDs are created by replace_timeline inside the same transaction.
+                // The selector is evaluated by the shared bulk operation after replacement.
+                JSONObject preset=new JSONObject().put("preset",string(parameters,"preset","cinematic"))
+                        .put("allClips",bool(parameters,"allClips",true)).put("clipIndex",integer(parameters.opt("clipIndex")==null?0:parameters.get("clipIndex"),"clipIndex",0,Integer.MAX_VALUE));
+                for(String key:new String[]{"motion","font","transition"}){
+                    String value=string(parameters,key,"");if(!value.isEmpty())preset.put(key,value);
+                }
+                add(operations,"apply_creator_preset",preset);
+            }
+            if(operations.length()==0)throw new IllegalArgumentException("Supply a structured timeline plan or creator preset");
+            return operations;
+        });
+    }
+
+    private JSONObject normalizePlanClip(ProjectStore.Project project,JSONObject raw)throws Exception{
+        keys(raw,"assetId","trackId","inMs","outMs","start","end","startMs","speed","volume","pan","title","transition","effects","keyframes");
+        ProjectStore.Asset asset=project.asset(string(raw,"assetId",""));if(asset==null)throw new IllegalArgumentException("Unknown project-owned source");
+        if(raw.has("inMs")&&raw.has("start")||raw.has("outMs")&&raw.has("end"))throw new IllegalArgumentException("Choose milliseconds or seconds for a source bound");
+        long in=raw.has("inMs")?integer(raw.get("inMs"),"inMs",0,9007199254740991L):seconds(raw,"start",0);
+        long fallbackOut=asset.mime.startsWith("image/")?3000:asset.durationMs;
+        long out=raw.has("outMs")?integer(raw.get("outMs"),"outMs",1,9007199254740991L):seconds(raw,"end",fallbackOut/1000d);
+        JSONObject result=new JSONObject().put("assetId",asset.id).put("inMs",in).put("outMs",out).put("speed",number(raw,"speed",1))
+                .put("volume",number(raw,"volume",1)).put("pan",number(raw,"pan",0));
+        if(raw.has("startMs"))result.put("startMs",integer(raw.get("startMs"),"startMs",0,9007199254740991L));
+        for(String key:new String[]{"trackId","title","transition"})if(raw.has(key))result.put(key,string(raw,key,""));
+        if(raw.has("effects")){
+            if(!(raw.get("effects") instanceof JSONObject))throw new IllegalArgumentException("effects must be an object");
+            result.put("effects",new JSONObject(raw.getJSONObject("effects").toString()));
+        }
+        if(raw.has("keyframes")){
+            if(!(raw.get("keyframes") instanceof JSONArray))throw new IllegalArgumentException("keyframes must be an array");
+            JSONArray frames=raw.getJSONArray("keyframes"),normalized=new JSONArray();if(frames.length()>100)throw new IllegalArgumentException("Clip exceeds 100 keyframes");
+            for(int i=0;i<frames.length();i++){
+                if(!(frames.get(i) instanceof JSONObject))throw new IllegalArgumentException("Each keyframe must be an object");
+                JSONObject frame=frames.getJSONObject(i);keys(frame,"property","timeMs","value","easing");
+                normalized.put(new JSONObject().put("property",string(frame,"property","")).put("timeMs",integer(frame.opt("timeMs"),"timeMs",0,9007199254740991L))
+                        .put("value",number(frame,"value",Double.NaN)).put("easing",string(frame,"easing","linear")));
+            }
+            result.put("keyframes",normalized);
+        }
+        return result;
+    }
+    private static long seconds(JSONObject raw,String key,double fallback){
+        double milliseconds=number(raw,key,fallback)*1000;
+        if(milliseconds<0||milliseconds>9007199254740991L)throw new IllegalArgumentException(key+" is out of range");return Math.round(milliseconds);
+    }
+
+    static int changedClipCount(ProjectStore.Project project,JSONObject parameters){
+        if(!parameters.optBoolean("allClips",true))return 1;
+        int count=0;for(ProjectStore.Clip clip:project.clips){ProjectStore.Asset asset=project.asset(clip.assetId);if(asset!=null&&!asset.mime.startsWith("audio/"))count++;}return count;
+    }
+    static void validateRenderRevision(ProjectStore.Project project,JSONObject parameters)throws Exception{
+        if(!parameters.has("expectedRevision"))return;
+        long expected=integer(parameters.get("expectedRevision"),"expectedRevision",1,9007199254740991L);
+        if(expected!=project.revision)throw new ProjectStore.RevisionConflict(project.id,expected,project.revision);
+    }
+
     ProjectStore.Project applyTool(String projectId,JSONObject parameters)throws Exception{
         Object rawIndex=parameters.opt("clipIndex");
         int index=(int)integer(rawIndex==null?0:rawIndex,"clipIndex",0,Integer.MAX_VALUE);

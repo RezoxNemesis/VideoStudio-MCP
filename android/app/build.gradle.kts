@@ -23,6 +23,11 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
+    // CI restores one private development key; bind Gradle to that exact file.
+    System.getenv("VIDEOSTUDIO_DEBUG_KEYSTORE")?.let { keyPath ->
+        signingConfigs.getByName("debug").storeFile = file(keyPath)
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false

@@ -87,6 +87,8 @@ public final class EditorEngine {
     private void apply(ProjectStore.Project p, String op, JSONObject a) throws Exception {
         p.ensureTimelineDefaults();
         switch (op) {
+            case "replace_timeline": replaceTimeline(p,a.getJSONArray("clips"));return;
+            case "apply_creator_preset": applyCreatorPreset(p,a);return;
             case "rename_project":
                 String name = a.optString("name", "").trim();
                 if (name.isEmpty() || name.length() > 240) throw new IllegalArgumentException("Project name is required (up to 240 characters)");
@@ -321,7 +323,9 @@ public final class EditorEngine {
             case "set_creator_style": {
                 if(asset==null||asset.mime.startsWith("audio/"))throw new IllegalArgumentException("Creator styles require a video or image source");
                 JSONObject settings=a.getJSONObject("settings");CreatorStyleSettings.validate(settings);
-                java.util.Iterator<String> keys=settings.keys();while(keys.hasNext()){String key=keys.next();c.effects.put(key,settings.getString(key));}break;
+                java.util.Iterator<String> keys=settings.keys();while(keys.hasNext()){String key=keys.next();c.effects.put(key,settings.getString(key));}
+                if(settings.has("motionPreset"))c.effects.put("motionStyleOverride",true);
+                break;
             }
             case "set_composite_effects": {
                 if(asset==null||asset.mime.startsWith("audio/"))throw new IllegalArgumentException("Composite effects require a video or image source");
@@ -360,6 +364,86 @@ public final class EditorEngine {
         ProjectStore.Track t = requireTrack(p, id);
         if (t.locked) throw new IllegalArgumentException("Track is locked: " + t.name); return t;
     }
+    private void replaceTimeline(ProjectStore.Project p,JSONArray clips)throws Exception{
+        if(clips.length()<1||clips.length()>80)throw new IllegalArgumentException("Timeline plan requires 1–80 clips");
+        for(ProjectStore.Clip old:p.clips)editableTrack(p,old.trackId);
+        p.clips.clear();
+        for(int i=0;i<clips.length();i++){
+            JSONObject raw=clips.getJSONObject(i);ProjectStore.Asset asset=p.asset(raw.getString("assetId"));
+            if(asset==null)throw new IllegalArgumentException("Unknown project-owned source on clip "+i);
+            String trackId=raw.optString("trackId","");
+            if(trackId.isEmpty()){
+                boolean audio=asset.mime!=null&&asset.mime.startsWith("audio/");
+                for(ProjectStore.Track track:p.tracks)if(track.audioOnly()==audio){trackId=track.id;break;}
+                if(trackId.isEmpty()){
+                    apply(p,"add_track",new JSONObject().put("type",audio?"audio_music":"video"));
+                    trackId=p.tracks.get(p.tracks.size()-1).id;
+                }
+            }
+            JSONObject add=new JSONObject(raw.toString()).put("trackId",trackId);
+            apply(p,"add_clip",add);ProjectStore.Clip clip=p.clips.get(p.clips.size()-1);
+            for(String property:new String[]{"volume","pan"})if(raw.has(property))apply(p,"set_property",new JSONObject().put("clipId",clip.id).put("property",property).put("value",raw.get(property)));
+            if(raw.has("title")){
+                String title=raw.getString("title");if(title.length()>5000)throw new IllegalArgumentException("Title exceeds 5000 characters");
+                if(!title.isEmpty()&&asset.mime.startsWith("audio/"))throw new IllegalArgumentException("Visible titles require a visual source");
+                apply(p,"set_title",new JSONObject().put("clipId",clip.id).put("text",title));
+            }
+            if(raw.has("transition"))clip.transition=verifiedCut(raw.getString("transition"));
+            JSONObject fx=raw.optJSONObject("effects");if(fx!=null)applyPlanEffects(p,clip,fx);
+            JSONArray frames=raw.optJSONArray("keyframes");if(frames!=null){
+                if(frames.length()>100)throw new IllegalArgumentException("Clip exceeds 100 keyframes");
+                for(int j=0;j<frames.length();j++)apply(p,"set_keyframe",new JSONObject(frames.getJSONObject(j).toString()).put("clipId",clip.id));
+            }
+        }
+    }
+
+    private void applyPlanEffects(ProjectStore.Project p,ProjectStore.Clip clip,JSONObject fx)throws Exception{
+        JSONObject style=new JSONObject(),composite=new JSONObject();java.util.Iterator<String> keys=fx.keys();
+        while(keys.hasNext()){
+            String key=keys.next();Object value=fx.get(key);JSONObject args=new JSONObject().put("clipId",clip.id);
+            if(PROPERTIES.contains(key)){
+                if(!(value instanceof Number))throw new IllegalArgumentException(key+" must be a number");
+                apply(p,"set_property",args.put("property",key).put("value",value));
+            }else if(Arrays.asList("colorPreset","motionPreset","fontFamily","textAnimation").contains(key))style.put(key,value);
+            else if("effectPreset".equals(key))apply(p,"set_effect_preset",args.put("preset",value));
+            else if(Arrays.asList(ClipCompositeSettings.KEYS).contains(key))composite.put(key,value);
+            else if("audioDsp".equals(key))apply(p,"set_audio_effects",args.put("settings",value));
+            else throw new IllegalArgumentException("Unsupported timeline effect: "+key);
+        }
+        if(style.length()>0)apply(p,"set_creator_style",new JSONObject().put("clipId",clip.id).put("settings",style));
+        if(composite.length()>0)apply(p,"set_composite_effects",new JSONObject().put("clipId",clip.id).put("settings",composite));
+    }
+
+    private void applyCreatorPreset(ProjectStore.Project p,JSONObject args)throws Exception{
+        JSONArray ids=args.optJSONArray("clipIds");
+        if(ids==null){
+            ids=new JSONArray();boolean all=args.getBoolean("allClips");int selected=args.getInt("clipIndex");
+            if(!all&&(selected<0||selected>=p.clips.size()))throw new IllegalArgumentException("Clip not found");
+            for(int i=0;i<p.clips.size();i++){
+                ProjectStore.Clip clip=p.clips.get(i);ProjectStore.Asset asset=p.asset(clip.assetId);
+                if(asset==null)throw new IllegalArgumentException("Project-owned media is missing");
+                if(!all&&i==selected||all&&!asset.mime.startsWith("audio/"))ids.put(clip.id);
+            }
+        }
+        if(ids.length()<1||ids.length()>120)throw new IllegalArgumentException("Choose 1–120 visual clips");
+        Set<String> unique=new HashSet<>();
+        for(int i=0;i<ids.length();i++){
+            String id=ids.getString(i);if(!unique.add(id))throw new IllegalArgumentException("Duplicate preset clip");
+            ProjectStore.Clip clip=requireClip(p,id);editableTrack(p,clip.trackId);
+            apply(p,"set_effect_preset",new JSONObject().put("clipId",id).put("preset",args.get("preset")));
+            JSONObject styles=new JSONObject();
+            if(args.has("motion"))styles.put("motionPreset",args.get("motion"));
+            if(args.has("font"))styles.put("fontFamily",args.get("font"));
+            if(styles.length()>0)apply(p,"set_creator_style",new JSONObject().put("clipId",id).put("settings",styles));
+            if(args.has("transition")){clip.transition=verifiedCut(args.getString("transition"));clip.effects.put("transitionStyleOverride",true);}
+        }
+    }
+
+    private static String verifiedCut(String transition){
+        if(!"none".equals(transition)&&!"cut".equals(transition))throw new IllegalArgumentException("This transition needs a verified overlap compositor; choose none or cut");
+        return transition;
+    }
+
     private static void compatible(ProjectStore.Track t, ProjectStore.Asset a) {
         if (a == null || a.mime == null) throw new IllegalArgumentException("Project-owned media is missing");
         if (t.audioOnly() && !a.mime.startsWith("audio/") && !a.mime.startsWith("video/"))

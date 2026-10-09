@@ -58,7 +58,8 @@ test('legacy v3 queue still accepts its existing commands',async()=>{
   assert.equal(command.protocolVersion,3);assert.equal(command.action,'ping');
 });
 test('the legacy MCP tool forwards explicit project and revision to its durable native command',async()=>{
-  const f=await fixture(),server=context.serverForApp({relay:f.relay},f.key,3),tool=server.tools.get('app_apply_tool');
+  const f=await fixture();await f.relay.appRegister('editor-device-001',f.key,{protocolVersion:3,appGeneration:1,editorSchemaVersion:4,permissionMode:'everything'});
+  const server=context.serverForApp({relay:f.relay},f.key,3),tool=server.tools.get('app_apply_tool');
   const input=z.object(tool.spec.inputSchema).strict().parse({projectId:'project-001',expectedRevision:12,clipIndex:0,tool:'volume',settings:{volume:.4}});
   const response=JSON.parse((await tool.handler(input)).content[0].text);assert.equal(response.queued,true);
   const command=(await f.storage.get('app-v3-cl:editor-device-001'))[0];
@@ -132,4 +133,40 @@ test('effect presets require schema 4, retain older styles and restrict selected
   assert.ok((await f.relay.appEnqueueV3(f.key,'editor_operation',request)).id);
   await assert.rejects(f.relay.appEnqueueV3(f.key,'editor_operation',edit({commandId:'wrong-clip-fx-001',operation:'set_effect_preset',args:{clipId:'private-clip',preset:'none'}})),/scope|permission/i);
   await assert.rejects(f.relay.appEnqueueV3(f.key,'editor_operation',edit({commandId:'wrong-effect-001',operation:'set_effect_preset',args:{clipId:'clip-001',preset:'unimplemented-bloom'}})),/value|preset/i);
+});
+
+test('bulk legacy MCP tools forward explicit projects and revisions',async()=>{
+  const f=await fixture();await f.relay.appRegister('editor-device-001',f.key,{protocolVersion:3,appGeneration:1,editorSchemaVersion:5,permissionMode:'everything'});
+  const server=context.serverForApp({relay:f.relay},f.key,3);
+  for(const [name,extras] of [['app_apply_edit_plan',{clips:[{assetId:'asset-001',outMs:1000}]}],['app_creator_preset',{preset:'noir'}],['app_autonomous_edit',{preset:'noir',render:false}]]){
+    const tool=server.tools.get(name),input=z.object(tool.spec.inputSchema).strict().parse({projectId:'project-001',expectedRevision:12,...extras});
+    await tool.handler(input);const entries=await f.storage.get('app-v3-cl:editor-device-001');
+    assert.equal(entries.at(-1).parameters.projectId,'project-001');assert.equal(entries.at(-1).parameters.expectedRevision,12);
+  }
+});
+
+test('shared timeline and bulk preset operations are typed and require schema 5',async()=>{
+  const f=await fixture();
+  const plan=edit({operation:'replace_timeline',args:{clips:[{assetId:'asset-001',outMs:1000,effects:{effectPreset:'gaussian_blur'}}]}});
+  await f.relay.appRegister('editor-device-001',f.key,{protocolVersion:3,appGeneration:1,editorSchemaVersion:4,permissionMode:'everything'});
+  await assert.rejects(f.relay.appEnqueueV3(f.key,'editor_operation',plan),/schema version/i);
+  await f.relay.appRegister('editor-device-001',f.key,{protocolVersion:3,appGeneration:1,editorSchemaVersion:5,permissionMode:'everything'});
+  assert.ok((await f.relay.appEnqueueV3(f.key,'editor_operation',plan)).id);
+  await assert.rejects(f.relay.appEnqueueV3(f.key,'editor_operation',edit({commandId:'bad-effect-plan-001',operation:'replace_timeline',args:{clips:[{assetId:'asset-001',outMs:1000,effects:{fakeEffect:true}}]}})),/argument|effect/i);
+  assert.ok((await f.relay.appEnqueueV3(f.key,'editor_operation',edit({commandId:'bulk-style-command-001',operation:'apply_creator_preset',args:{clipIds:['clip-001'],preset:'noir'}}))).id);
+});
+
+test('legacy revision guarantees are refused by APKs that do not implement them',async()=>{
+  const f=await fixture();await f.relay.appRegister('editor-device-001',f.key,{protocolVersion:3,appGeneration:1,editorSchemaVersion:3,permissionMode:'everything'});
+  await assert.rejects(f.relay.appEnqueueV3(f.key,'apply_tool',{projectId:'project-001',expectedRevision:12,tool:'volume',settings:{volume:.4}}),/schema version|revision.*upgrade/i);
+  await f.relay.appRegister('editor-device-001',f.key,{protocolVersion:3,appGeneration:1,editorSchemaVersion:4,permissionMode:'everything'});
+  await assert.rejects(f.relay.appEnqueueV3(f.key,'creator_preset',{projectId:'project-001',expectedRevision:12,preset:'noir'}),/schema version|revision.*upgrade/i);
+});
+
+test('selected clip authority permits bounded preset edits and refuses timeline replacement',async()=>{
+  const f=await fixture();await f.relay.appRegister('editor-device-001',f.key,{protocolVersion:3,appGeneration:1,editorSchemaVersion:5,permissionMode:'selected_assets',allowedProjectId:'project-001',allowedAssetIds:['asset-001'],allowedClipIds:['clip-001']});
+  const preset=edit({operation:'apply_creator_preset',args:{clipIds:['clip-001'],preset:'noir'}});
+  assert.ok((await f.relay.appEnqueueV3(f.key,'editor_operation',preset)).id);
+  await assert.rejects(f.relay.appEnqueueV3(f.key,'editor_operation',edit({commandId:'private-bulk-command-001',operation:'apply_creator_preset',args:{clipIds:['clip-001','private-clip'],preset:'noir'}})),/scope|permission/i);
+  await assert.rejects(f.relay.appEnqueueV3(f.key,'editor_operation',edit({commandId:'replace-bulk-command-001',operation:'replace_timeline',args:{clips:[{assetId:'asset-001',outMs:1000}]}})),/scope|permission/i);
 });

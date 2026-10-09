@@ -21,6 +21,110 @@ import static org.junit.Assert.*;
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk=33,shadows=ServiceCommandRecoveryTest.RecordingProtocol.class)
 public class ServiceCommandRecoveryTest {
+    @Test public void interruptedImplicitProjectEditRemainsBoundAfterOwnerSwitchesProjects()throws Exception{
+        JSONObject command=new JSONObject().put("id","implicit-project-edit-001").put("action","creator_preset").put("parameters",new JSONObject().put("preset","noir"));
+        service.onCommand(command);assertTrue(completion.result.getBoolean("ok"));
+        ProjectStore.Project second=store.create("Owner second project");second.assets.add(ProjectStore.Asset.fromJson(project.assets.get(0).toJson()));second.clips.add(ProjectStore.Clip.fromJson(project.clips.get(0).toJson()));store.save(second);store.setActive(second.id);
+        journal.begin(command);completion.result=null;service.onCommand(new JSONObject(command.toString()));
+        assertNotNull(completion.result);assertTrue(completion.result.toString(),completion.result.getBoolean("ok"));assertEquals(project.id,completion.result.getString("projectId"));
+        assertFalse(store.get(second.id).clips.get(0).effects.has("effectPreset"));
+    }
+    @Test public void renderOnlyRetryUsesItsOriginalRevisionAndRejectsChangedSettings()throws Exception{
+        Context context=RuntimeEnvironment.getApplication();JobManager manager=new JobManager(context);RecoveryPlanStore plans=new RecoveryPlanStore(context);
+        field("jobs",manager);field("recoveryPlans",plans);
+        java.lang.reflect.Field lane=JobManager.class.getDeclaredField("heavyLane");lane.setAccessible(true);lane.set(manager,new java.util.concurrent.Semaphore(0));
+        JSONObject args=new JSONObject().put("projectId",project.id).put("_mcpCommandId","render-only-snapshot-001").put("render",true).put("expectedRevision",project.revision);
+        java.lang.reflect.Method method=ControlService.class.getDeclaredMethod("autonomousEdit",JSONObject.class);method.setAccessible(true);
+        try{
+            JSONObject first=(JSONObject)method.invoke(service,args);
+            new EditorEngine(store).execute(project.id,project.revision,"owner","","set_title",new JSONObject().put("clipId","original").put("text","Next draft"));
+            JSONObject retry=(JSONObject)method.invoke(service,new JSONObject(args.toString()));
+            assertEquals(first.getString("jobId"),retry.getString("jobId"));assertEquals(project.revision,retry.getLong("revision"));
+            try{method.invoke(service,new JSONObject(args.toString()).put("quality","720p"));fail("Retry cannot change render settings");}
+            catch(java.lang.reflect.InvocationTargetException expected){assertTrue(expected.getCause() instanceof IllegalArgumentException);}
+            assertEquals(1,plans.recent(24).length());assertEquals("Next draft",store.get(project.id).clips.get(0).title);
+        }finally{shutdownJobs(manager);}
+    }
+    @Test public void remoteParametersCannotSupplyServiceRecoveryHandles()throws Exception{
+        JSONObject command=new JSONObject().put("id","public-internal-keys-001").put("action","creator_preset")
+                .put("parameters",new JSONObject().put("projectId",project.id).put("preset","noir")
+                        .put("_origin","owner").put("_recoveryPlanId","someone-elses-plan").put("_mcpCommandId","forged-id"));
+        service.onCommand(command);
+        assertNotNull(completion.result);assertTrue(completion.result.toString(),completion.result.getBoolean("ok"));
+        assertEquals(command.getString("id"),completion.result.getString("commandId"));
+        assertEquals("noir",store.get(project.id).clips.get(0).effects.getString("effectPreset"));
+        assertNull(store.commandReceipt(project.id,"forged-id"));
+    }
+    private void shutdownJobs(JobManager manager)throws Exception{
+        manager.shutdown();
+        // Finish checkpoint writes before Robolectric resets Android queued work.
+        for(String name:new String[]{"pool","manualPool"}){
+            java.lang.reflect.Field executor=JobManager.class.getDeclaredField(name);executor.setAccessible(true);
+            assertTrue("Job workers must finish before fixture teardown",((java.util.concurrent.ExecutorService)executor.get(manager)).awaitTermination(5,java.util.concurrent.TimeUnit.SECONDS));
+        }
+    }
+    @Test public void autonomousExportRetryKeepsOneJobAndTheCommittedGraphSnapshot()throws Exception{
+        Context context=RuntimeEnvironment.getApplication();JobManager manager=new JobManager(context);RecoveryPlanStore plans=new RecoveryPlanStore(context);
+        field("jobs",manager);field("recoveryPlans",plans);
+        java.lang.reflect.Field lane=JobManager.class.getDeclaredField("heavyLane");lane.setAccessible(true);lane.set(manager,new java.util.concurrent.Semaphore(0));
+        JSONObject args=new JSONObject().put("projectId",project.id).put("_mcpCommandId","snapshot-export-command-001").put("render",true).put("preset","noir");
+        java.lang.reflect.Method method=ControlService.class.getDeclaredMethod("autonomousEdit",JSONObject.class);method.setAccessible(true);
+        try{
+            JSONObject first=(JSONObject)method.invoke(service,args);ProjectStore.Project edited=store.get(project.id);
+            new EditorEngine(store).execute(project.id,edited.revision,"owner","","set_title",new JSONObject().put("clipId","original").put("text","New owner draft"));
+            JSONObject retry=(JSONObject)method.invoke(service,new JSONObject(args.toString()));
+            assertEquals(first.getString("jobId"),retry.getString("jobId"));assertEquals(1,plans.recent(24).length());
+            JSONObject saved=plans.recent(24).getJSONObject(0).getJSONObject("parameters").getJSONObject("projectSnapshot");
+            assertEquals(edited.revision,saved.getLong("revision"));assertEquals("",saved.getJSONArray("clips").getJSONObject(0).getString("title"));
+            assertEquals("New owner draft",store.get(project.id).clips.get(0).title);
+        }finally{shutdownJobs(manager);}
+    }
+    @Test public void retriedSubmissionReusesTheLiveCommandBoundJob()throws Exception{
+        Context context=RuntimeEnvironment.getApplication();JobManager manager=new JobManager(context);RecoveryPlanStore plans=new RecoveryPlanStore(context);
+        field("jobs",manager);field("recoveryPlans",plans);
+        java.util.concurrent.CountDownLatch started=new java.util.concurrent.CountDownLatch(1),release=new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.atomic.AtomicInteger executions=new java.util.concurrent.atomic.AtomicInteger();
+        JobManager.Work work=state->{executions.incrementAndGet();started.countDown();release.await(5,java.util.concurrent.TimeUnit.SECONDS);state.setResult(new JSONObject().put("ok",true));};
+        java.lang.reflect.Method method=ControlService.class.getDeclaredMethod("submitRecoverableLight",String.class,JSONObject.class,String.class,String.class,JobManager.Work.class);method.setAccessible(true);
+        JSONObject args=new JSONObject().put("projectId",project.id).put("_mcpCommandId","one-job-command-001");
+        try{
+            JobManager.Job first=(JobManager.Job)method.invoke(service,"export_project",args,project.id,"One job",work);
+            assertTrue(started.await(3,java.util.concurrent.TimeUnit.SECONDS));
+            JobManager.Job retry=(JobManager.Job)method.invoke(service,"export_project",new JSONObject(args.toString()),project.id,"Retry",work);
+            assertEquals(first.id,retry.id);assertEquals(1,plans.recent(24).length());assertEquals(1,executions.get());
+        }finally{release.countDown();shutdownJobs(manager);}
+    }
+    @Test public void foregroundRemoteRenderHandsOffWithoutClaimingCompletion()throws Exception{
+        android.content.Context context=RuntimeEnvironment.getApplication();
+        try(org.robolectric.android.controller.ActivityController<MainActivity> controller=Robolectric.buildActivity(MainActivity.class).setup()){
+            org.robolectric.shadows.ShadowApplication app=org.robolectric.Shadows.shadowOf(RuntimeEnvironment.getApplication());
+            while(app.getNextStartedService()!=null){}
+            java.lang.reflect.Field field=MainActivity.class.getDeclaredField("protocol");field.setAccessible(true);
+            RecordingProtocol ownerCompletion=Shadow.extract((AppProtocol)field.get(controller.get()));
+            JSONObject cmd=new JSONObject().put("id","foreground-render-001").put("action","autonomous_edit")
+                    .put("parameters",new JSONObject().put("projectId",project.id).put("render",true).put("expectedRevision",project.revision));
+            controller.get().onCommand(cmd);
+            assertNull("Queued foreground export must not be acknowledged as completed",ownerCompletion.result);
+            android.content.Intent intent=app.getNextStartedService();assertNotNull("Remote export needs the foreground service",intent);
+            assertEquals("com.rezoxnemesis.videostudio.REMOTE_COMMAND",intent.getAction());
+            assertNull("Binder carries only the durable reference",intent.getStringExtra("command"));
+            JSONObject handed=new CommandJournal(context).capturedCommand(intent.getStringExtra("commandId"));assertEquals(cmd.getString("id"),handed.getString("id"));
+            assertEquals(project.id,handed.getJSONObject("parameters").getString("projectId"));
+        }
+    }
+    @Test public void bulkPlanRecoversThroughItsTransactionReceipt()throws Exception{
+        JSONObject cmd=new JSONObject().put("id","public-plan-command-001").put("action","apply_edit_plan")
+                .put("parameters",new JSONObject().put("projectId",project.id).put("clips",new org.json.JSONArray().put(new JSONObject().put("assetId","owned-video").put("outMs",2000))));
+        journal.begin(cmd);service.onCommand(cmd);
+        assertNotNull(completion.result);assertTrue(completion.result.toString(),completion.result.getBoolean("ok"));
+        ProjectStore.Project edited=store.get(project.id);
+        new EditorEngine(store).execute(project.id,edited.revision,"owner","","set_title",new JSONObject().put("clipId",edited.clips.get(0).id).put("text","Owner after plan"));
+        long revision=store.get(project.id).revision;
+        // Model a lost terminal journal write while preserving the SQLite receipt.
+        journal.begin(cmd);completion.result=null;service.onCommand(new JSONObject(cmd.toString()));
+        assertNotNull(completion.result);assertTrue(completion.result.getBoolean("ok"));assertEquals(revision,store.get(project.id).revision);
+        assertEquals("Owner after plan",store.get(project.id).clips.get(0).title);
+    }
     @Test public void stopControlDeniesAnAlreadyLeasedEditBeforeRecovery()throws Exception{
         JSONObject command=command(.4);journal.begin(command);long revision=project.revision;
         protocol.setControlPaused(true);service.onCommand(command);

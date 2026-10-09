@@ -49,6 +49,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     public static final String ACTION_LOCAL_PROXY = "com.rezoxnemesis.videostudio.LOCAL_PROXY";
     public static final String ACTION_LOCAL_VAULT = "com.rezoxnemesis.videostudio.LOCAL_VAULT";
     public static final String ACTION_LOCAL_IMPORT = "com.rezoxnemesis.videostudio.LOCAL_IMPORT_MEDIA";
+    public static final String ACTION_REMOTE_COMMAND = "com.rezoxnemesis.videostudio.REMOTE_COMMAND";
     public static final String ACTION_CANCEL_MANUAL_EXPORT = "com.rezoxnemesis.videostudio.CANCEL_MANUAL_EXPORT";
     private static final String CHANNEL = "videostudio_private_control";
     private static final int NOTIFICATION_ID = 6101;
@@ -149,7 +150,13 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         String action = intent == null ? "" : intent.getAction();
-        if (ACTION_CANCEL_MANUAL_EXPORT.equals(action)) {
+        if(ACTION_REMOTE_COMMAND.equals(action)){
+            try{
+                JSONObject command=commandJournal.capturedCommand(intent.getStringExtra("commandId"));
+                if(command==null)throw new IllegalArgumentException("Saved remote command is unavailable");
+                command.put("_handoffProjectId",intent.getStringExtra("projectId"));onCommand(command);
+            }catch(Exception invalid){ActivityLog.add(this,"transport","Remote handoff failed",invalid.getMessage(),"failed",null,null,null);}
+        } else if (ACTION_CANCEL_MANUAL_EXPORT.equals(action)) {
             String sessionId=intent.getStringExtra("sessionId");
             ExportSessionStore.Session session=exportSessions.get(sessionId);
             if(session!=null){
@@ -331,14 +338,31 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             protocol.complete(command,denied,"denied");return;
         }
         JSONObject p = command.optJSONObject("parameters");
-        if (p == null) p = new JSONObject();
+        try{p=p==null?new JSONObject():new JSONObject(p.toString());}
+        catch(Exception invalid){throw new IllegalArgumentException("Invalid command parameters",invalid);}
+        // Recovery handles belong to the service, never to a remote caller.
+        java.util.ArrayList<String> internalKeys=new java.util.ArrayList<>();
+        java.util.Iterator<String> parameterKeys=p.keys();
+        while(parameterKeys.hasNext()){String key=parameterKeys.next();if(key.startsWith("_"))internalKeys.add(key);}
+        for(String key:internalKeys)p.remove(key);
+        if(p.optString("projectId","").isEmpty()&&!command.optString("_handoffProjectId","").isEmpty()){
+            try{p.put("projectId",command.getString("_handoffProjectId"));}catch(Exception invalid){throw new IllegalArgumentException(invalid);}
+        }
 
         try { p.put("_origin", "autonomous"); } catch (Exception invalid) { throw new IllegalArgumentException(invalid); }
         String commandId = command.optString("id", "");
         String projectId = p.optString("projectId", "");
 
         OwnerAccessPolicy commandAccess=new OwnerAccessPolicy(this,store);
-        try{commandJournal.validateReplay(command);}
+        try{
+            commandJournal.validateReplay(command);
+            if(java.util.Arrays.asList("apply_tool","apply_edit_plan","creator_preset","autonomous_edit","export_project").contains(action)){
+                String bound=commandJournal.boundProject(commandId);
+                if(bound.isEmpty())bound=resolveProject(projectId).id;
+                else if(!projectId.isEmpty()&&!projectId.equals(bound))throw new IllegalArgumentException("Command ID belongs to another project");
+                commandJournal.bindProject(command,bound);p.put("projectId",bound);projectId=bound;
+            }
+        }
         catch(Exception conflict){
             JSONObject failed=new JSONObject();
             try{failed.put("ok",false).put("errorCode","command_id_conflict").put("error",conflict.getMessage());}catch(Exception ignored){}
@@ -358,8 +382,9 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         }
 
         JSONObject inflight = isAllowed(action,p)&&!commandAccess.resultPredatesScope(command)?commandJournal.inflight(commandId):null;
-        boolean receiptBackedEdit=java.util.Arrays.asList("apply_tool","editor_operation","editor_batch","editor_history").contains(action);
-        if (inflight != null && !receiptBackedEdit) {
+        boolean receiptBackedEdit=java.util.Arrays.asList("apply_tool","apply_edit_plan","creator_preset","editor_operation","editor_batch","editor_history").contains(action);
+        if("autonomous_edit".equals(action)&&(inflight==null||inflight.optString("jobId","").isEmpty()))receiptBackedEdit=true;
+        if (inflight != null && !receiptBackedEdit&&!inflight.optString("jobId","").isEmpty()) {
             watchDeferredCommand(command, inflight.optJSONObject("queuedResult"));
             String inflightJobId = inflight.optString("jobId", "");
             JSONObject inflightState = inflightJobId.isEmpty() ? null : jobs.get(inflightJobId);
@@ -736,38 +761,14 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     }
 
     private JSONObject applyEditPlan(JSONObject p) throws Exception {
-        ProjectStore.Project project = resolveProject(p.optString("projectId", ""));
-        JSONArray clips = p.optJSONArray("clips");
-        if (clips == null || clips.length() == 0) throw new IllegalArgumentException("clips are required");
-        ArrayList<ProjectStore.Clip> next = new ArrayList<>();
-        for (int i = 0; i < clips.length() && i < 120; i++) {
-            JSONObject raw = clips.optJSONObject(i);
-            if (raw == null) continue;
-            ProjectStore.Asset asset = project.asset(raw.optString("assetId"));
-            if (asset == null) throw new IllegalArgumentException("Unknown asset on clip " + i);
-            ProjectStore.Clip clip = new ProjectStore.Clip();
-            clip.id = UUID.randomUUID().toString();
-            clip.assetId = asset.id;
-            clip.inMs = raw.has("inMs") ? raw.optLong("inMs") : (long) (raw.optDouble("start", 0) * 1000);
-            clip.outMs = raw.has("outMs") ? raw.optLong("outMs") : (long) (raw.optDouble("end", asset.durationMs / 1000d) * 1000);
-            clip.inMs = Math.max(0, clip.inMs);
-            clip.outMs = Math.max(clip.inMs + 100, Math.min(asset.durationMs > 0 ? asset.durationMs : clip.outMs, clip.outMs));
-            clip.speed = (float) Math.max(.25, Math.min(4, raw.optDouble("speed", 1)));
-            clip.volume = (float) Math.max(0, Math.min(2, raw.optDouble("volume", 1)));
-            clip.transition = raw.optString("transition", "none");
-            clip.title = raw.optString("title", "");
-            JSONObject effects = raw.optJSONObject("effects");
-            clip.effects = effects == null ? new JSONObject() : effects;
-            next.add(clip);
-        }
-        project.clips.clear();
-        project.clips.addAll(next);
-        store.save(project);
-        JSONObject result = ok();
-        result.put("projectId", project.id);
-        result.put("clipCount", next.size());
-        result.put("durationMs", project.outputDurationMs());
-        return result;
+        ProjectStore.Project project=resolveProject(p.optString("projectId",""));
+        ProjectStore.Project receipt=new LegacyEditorAdapter(store).applyPlan(project.id,p);
+        return legacyEditResult(receipt,p);
+    }
+
+    private JSONObject legacyEditResult(ProjectStore.Project project,JSONObject p)throws Exception{
+        return ok().put("projectId",project.id).put("revision",project.revision).put("clipCount",project.clips.size())
+                .put("durationMs",project.outputDurationMs()).put("commandId",p.optString("_mcpCommandId",p.optString("commandId","")));
     }
 
     private JSONObject applyTool(JSONObject p) throws Exception {
@@ -779,46 +780,32 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     }
 
     private JSONObject applyCreatorPreset(JSONObject p) throws Exception {
-        ProjectStore.Project project = resolveProject(p.optString("projectId", ""));
-        if (project.clips.isEmpty()) throw new IllegalArgumentException("No clips");
-        String preset = p.optString("preset", "cinematic");
-        String motion = p.optString("motion", "");
-        String transition = p.optString("transition", "");
-        String font = p.optString("font", "");
-        boolean all = p.optBoolean("allClips", true);
-        int selected = Math.max(0, p.optInt("clipIndex", 0));
-        int changed = 0;
-        for (int i = 0; i < project.clips.size(); i++) {
-            if (!all && i != selected) continue;
-            ProjectStore.Clip clip = project.clips.get(i);
-            clip.effects.put("effectPreset", preset);
-            if (!motion.isEmpty()) clip.effects.put("motionPreset", motion);
-            if (!transition.isEmpty()) clip.transition = transition;
-            if (!font.isEmpty()) clip.effects.put("fontFamily", font);
-            changed++;
-        }
-        store.save(project);
-        JSONObject result = ok();
-        result.put("projectId", project.id);
-        result.put("changedClips", changed);
-        result.put("preset", preset);
-        return result;
+        ProjectStore.Project project=resolveProject(p.optString("projectId",""));
+        ProjectStore.Project receipt=new LegacyEditorAdapter(store).applyPreset(project.id,p);
+        return legacyEditResult(receipt,p).put("preset",p.optString("preset","cinematic")).put("changedClips",LegacyEditorAdapter.changedClipCount(receipt,p));
     }
 
     private JSONObject autonomousEdit(JSONObject p) throws Exception {
-        JSONObject result = ok();
-        if (p.optJSONArray("clips") != null) result.put("plan", applyEditPlan(p));
-        if (p.has("preset")) result.put("preset", applyCreatorPreset(p));
-        ProjectStore.Project project = resolveProject(p.optString("projectId", ""));
-        result.put("projectId", project.id);
+        if(p.has("render")&&!(p.get("render") instanceof Boolean))throw new IllegalArgumentException("render must be a boolean");
+        ProjectStore.Project project=resolveProject(p.optString("projectId",""));
+        if(p.has("clips")||p.has("preset"))project=new LegacyEditorAdapter(store).applyAutonomousEdit(project.id,p);
+        else if(!p.optBoolean("render",false))throw new IllegalArgumentException("Supply a structured edit or render request");
+        else {
+            JSONObject prior=exportPlan(p,project.id);
+            project=exportSnapshot(prior,project);
+            LegacyEditorAdapter.validateRenderRevision(project,p);
+        }
+        JSONObject result=legacyEditResult(project,p);
+        if(p.has("clips"))result.put("plan",legacyEditResult(project,p));
+        if(p.has("preset"))result.put("preset",p.optString("preset"));
         if (p.optBoolean("render", false)) {
             JSONObject exportArgs = new JSONObject();
             exportArgs.put("projectId", project.id);
             exportArgs.put("aspect", p.optString("aspect", "9:16"));
             exportArgs.put("quality", p.optString("quality", "1080p"));
-            exportArgs.put("fileName", p.optString("fileName", "VideoStudio_AI_Edit_" + System.currentTimeMillis() + ".mp4"));
+            if(p.has("fileName"))exportArgs.put("fileName",p.getString("fileName"));
             if (p.has("_mcpCommandId")) exportArgs.put("_mcpCommandId", p.optString("_mcpCommandId", ""));
-            JSONObject export = queueExport(exportArgs);
+            JSONObject export = queueExport(exportArgs,project);
             result.put("export", export);
             if (ExecutionTruthPolicy.isDeferredResult(export)) {
                 result.put("queued", true);
@@ -1394,7 +1381,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         state.checkActive();
     }
 
-    private JobManager.Job submitRecoverableLight(String action,
+    private synchronized JobManager.Job submitRecoverableLight(String action,
                                                   JSONObject parameters,
                                                   String projectId,
                                                   String jobName,
@@ -1403,14 +1390,19 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         String planId = requestedPlan;
         if (planId.isEmpty() || recoveryPlans.get(planId) == null) {
             planId = recoveryPlans.begin(action, parameters, projectId);
-        } else {
-            recoveryPlans.markResuming(planId);
         }
-
+        JSONObject plan=recoveryPlans.get(planId);
+        JobManager.Job live=jobs.liveJob(plan.optString("jobId",""));if(live!=null)return live;
+        String planState=plan.optString("state");
+        if(java.util.Arrays.asList("completed","failed","cancelled").contains(planState)){
+            JobManager.Job terminal=jobs.jobRecord(plan.optString("jobId",""));
+            if(terminal!=null)return terminal;
+            throw new IllegalStateException("Durable work is terminal; use a new command ID");
+        }
+        if(!plan.optString("jobId","").isEmpty())recoveryPlans.markResuming(planId);
         final String durablePlanId = planId;
-        JobManager.Job job = jobs.submit(jobName, JobManager.Kind.LIGHT, jobOrigin(parameters), state -> {
+        JobManager.Job job = jobs.submit(jobName, JobManager.Kind.LIGHT, jobOrigin(parameters), state->{state.bindProject(projectId);recoveryPlans.attachJob(durablePlanId,state.id);}, state -> {
             configureJobAccess(state,action,parameters,projectId);
-            recoveryPlans.attachJob(durablePlanId, state.id);
             try {
                 work.run(state);
                 state.completeDurably();
@@ -1434,7 +1426,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         return job;
     }
 
-    private JobManager.Job submitRecoverableHeavy(String action,
+    private synchronized JobManager.Job submitRecoverableHeavy(String action,
                                                   JSONObject parameters,
                                                   String projectId,
                                                   String jobName,
@@ -1443,14 +1435,19 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         String planId = requestedPlan;
         if (planId.isEmpty() || recoveryPlans.get(planId) == null) {
             planId = recoveryPlans.begin(action, parameters, projectId);
-        } else {
-            recoveryPlans.markResuming(planId);
         }
-
+        JSONObject plan=recoveryPlans.get(planId);
+        JobManager.Job live=jobs.liveJob(plan.optString("jobId",""));if(live!=null)return live;
+        String planState=plan.optString("state");
+        if(java.util.Arrays.asList("completed","failed","cancelled").contains(planState)){
+            JobManager.Job terminal=jobs.jobRecord(plan.optString("jobId",""));
+            if(terminal!=null)return terminal;
+            throw new IllegalStateException("Durable work is terminal; use a new command ID");
+        }
+        if(!plan.optString("jobId","").isEmpty())recoveryPlans.markResuming(planId);
         final String durablePlanId = planId;
-        JobManager.Job job = jobs.submit(jobName, JobManager.Kind.HEAVY, jobOrigin(parameters), state -> {
+        JobManager.Job job = jobs.submit(jobName, JobManager.Kind.HEAVY, jobOrigin(parameters), state->{state.bindProject(projectId);recoveryPlans.attachJob(durablePlanId,state.id);}, state -> {
             configureJobAccess(state,action,parameters,projectId);
-            recoveryPlans.attachJob(durablePlanId, state.id);
             try {
                 work.run(state);
                 state.completeDurably();
@@ -2278,15 +2275,43 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     }
 
     private JSONObject queueExport(JSONObject p) throws Exception {
-        ProjectStore.Project project = resolveProject(p.optString("projectId", ""));
+        return queueExport(p,resolveProject(p.optString("projectId","")));
+    }
+
+    private JSONObject exportPlan(JSONObject p,String projectId){
+        String requested=p.optString("_recoveryPlanId","");
+        JSONObject plan=requested.isEmpty()?recoveryPlans.findByCommand("export_project",p.optString("_mcpCommandId","")):recoveryPlans.get(requested);
+        if(!requested.isEmpty()&&plan==null)throw new IllegalArgumentException("Export recovery plan is missing");
+        if(plan!=null&&(!"export_project".equals(plan.optString("action"))||!projectId.equals(plan.optString("projectId"))))throw new IllegalArgumentException("Export recovery plan belongs to different work");
+        return plan;
+    }
+
+    private ProjectStore.Project exportSnapshot(JSONObject plan,ProjectStore.Project fallback)throws Exception{
+        JSONObject parameters=plan==null?null:plan.optJSONObject("parameters");
+        JSONObject saved=parameters==null?null:parameters.optJSONObject("projectSnapshot");
+        ProjectStore.Project snapshot=ProjectStore.Project.fromJson(new JSONObject((saved==null?fallback.toJson():saved).toString()));
+        if(!fallback.id.equals(snapshot.id))throw new IllegalStateException("Export snapshot belongs to another project");
+        return snapshot;
+    }
+
+    private JSONObject queueExport(JSONObject p,ProjectStore.Project source) throws Exception {
+        JSONObject prior=exportPlan(p,source.id);
+        ProjectStore.Project project=exportSnapshot(prior,source);
         if (project.clips.isEmpty()) throw new IllegalArgumentException("Timeline is empty");
         String aspect = p.optString("aspect", "9:16");
         String quality = p.optString("quality", "1080p");
-        String fileName = sanitizeFileName(p.optString("fileName", "VideoStudio_" + System.currentTimeMillis() + ".mp4"));
+        String commandId=p.optString("_mcpCommandId","");
+        String suffix=commandId.isEmpty()?Long.toString(System.currentTimeMillis()):commandId;
+        String fileName = sanitizeFileName(p.optString("fileName", "VideoStudio_" + suffix + ".mp4"));
+        if(prior!=null){
+            JSONObject saved=prior.getJSONObject("parameters");
+            if(!aspect.equals(saved.optString("aspect","9:16"))||!quality.equals(saved.optString("quality","1080p"))||!fileName.equals(saved.optString("fileName")))throw new IllegalArgumentException("Command ID conflicts with different export settings");
+        }
 
         JSONObject durableParameters = new JSONObject(p.toString());
         durableParameters.put("projectId", project.id);
         durableParameters.put("fileName", fileName);
+        durableParameters.put("projectSnapshot",project.toJson());
         JobManager.Job job = submitRecoverableHeavy(
                 "export_project",
                 durableParameters,

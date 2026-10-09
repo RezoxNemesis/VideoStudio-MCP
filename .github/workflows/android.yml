@@ -65,7 +65,23 @@ jobs:
 
       - name: Build debug APK
         working-directory: android
-        run: gradle :app:testDebugUnitTest :app:assembleDebug --stacktrace
+        run: |
+          export VIDEOSTUDIO_DEBUG_KEYSTORE="$HOME/.android/debug.keystore"
+          gradle :app:testDebugUnitTest :app:assembleDebug --stacktrace
+
+      - name: Report matching-source tests and APK identity
+        run: |
+          python3 - <<'PY'
+          import json, pathlib, hashlib, xml.etree.ElementTree as ET
+          reports=list(pathlib.Path('android/app/build/test-results/testDebugUnitTest').glob('TEST-*.xml'))
+          totals={key:sum(int(ET.parse(p).getroot().get(key,0)) for p in reports) for key in ['tests','failures','errors','skipped']}
+          assert reports and totals['tests']>0 and not totals['failures'] and not totals['errors'], totals
+          print('ANDROID_UNIT_EVIDENCE '+json.dumps(totals,sort_keys=True))
+          apk=pathlib.Path('android/app/build/outputs/apk/debug/app-debug.apk')
+          with apk.open('rb') as stream: digest=hashlib.file_digest(stream,'sha256').hexdigest()
+          print('ANDROID_APK_EVIDENCE '+json.dumps({'bytes':apk.stat().st_size,'sha256':digest},sort_keys=True))
+          PY
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --print-certs android/app/build/outputs/apk/debug/app-debug.apk
 
       - name: Upload installable APK
         uses: actions/upload-artifact@v4

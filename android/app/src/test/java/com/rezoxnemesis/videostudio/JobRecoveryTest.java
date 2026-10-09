@@ -18,6 +18,29 @@ import static org.junit.Assert.*;
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk=33, manifest=Config.NONE)
 public class JobRecoveryTest {
+    @Test public void fullRecoveryQueueNeverEvictsAnUnfinishedCommand()throws Exception{
+        Context context=RuntimeEnvironment.getApplication();context.getSharedPreferences("videostudio_native_v1",Context.MODE_PRIVATE).edit().clear().commit();
+        RecoveryPlanStore plans=new RecoveryPlanStore(context);String first="";
+        for(int i=0;i<24;i++){String id=plans.begin("export_project",new JSONObject().put("_mcpCommandId","capacity-"+i),"project");if(i==0)first=id;}
+        assertEquals("A single restart must resubmit every preserved plan through bounded execution lanes",24,plans.pendingForAutoResume().length());
+        try{plans.begin("export_project",new JSONObject().put("_mcpCommandId","overflow"),"project");fail("A full queue must reject new work without losing unfinished intent");}catch(IllegalStateException expected){}
+        assertNotNull(plans.get(first));assertEquals(24,plans.recent(24).length());
+        plans.completePlan(first,"Completed");
+        String replacement=plans.begin("export_project",new JSONObject().put("_mcpCommandId","replacement"),"project");
+        assertNotNull(plans.get(replacement));
+        for(int i=1;i<24;i++)assertNotNull(plans.findByCommand("export_project","capacity-"+i,"project"));
+    }
+    @Test public void commandBoundPlanIsCreatedOnlyOnceAndRejectsChangedInputs()throws Exception{
+        Context context=RuntimeEnvironment.getApplication();context.getSharedPreferences("videostudio_native_v1",Context.MODE_PRIVATE).edit().clear().commit();
+        RecoveryPlanStore plans=new RecoveryPlanStore(context);
+        JSONObject p=new JSONObject().put("projectId","project").put("_mcpCommandId","export-command-001").put("quality","720p");
+        String first=plans.begin("export_project",p,"project");
+        assertEquals("Crash retry must reuse the original durable plan",first,new RecoveryPlanStore(context).begin("export_project",new JSONObject(p.toString()),"project"));
+        assertEquals(1,plans.recent(24).length());
+        try{plans.begin("export_project",new JSONObject(p.toString()).put("projectId","other"),"other");fail("One command must retain its original project binding");}catch(IllegalArgumentException expected){}
+        try{plans.begin("export_project",new JSONObject(p.toString()).put("quality","1080p"),"project");fail("One command cannot silently change export inputs");}catch(IllegalArgumentException expected){}
+        assertEquals(1,plans.recent(24).length());
+    }
     @Test public void rejectedOutputBindingIsClearedDurablyAndCannotClearANewerOutput()throws Exception{
         Context context=RuntimeEnvironment.getApplication();context.getSharedPreferences("videostudio_native_v1",Context.MODE_PRIVATE).edit().clear().commit();
         RecoveryPlanStore plans=new RecoveryPlanStore(context);String id=plans.begin("export_project",new JSONObject(),"project");plans.attachJob(id,"job");
