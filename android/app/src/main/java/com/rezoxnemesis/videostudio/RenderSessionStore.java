@@ -51,13 +51,13 @@ final class RenderSessionStore implements AutoCloseable {
         if(processIdentity==null||processIdentity.isEmpty()||processIdentity.contains(":"))throw new IllegalArgumentException("Invalid render process identity");
         this.root=root;process=processIdentity;this.verifier=verifier;this.faults=faults;
         if(!root.isDirectory()&&!root.mkdirs())throw new IllegalStateException("Could not create render session storage");
-        helper=new SQLiteOpenHelper(context.getApplicationContext(),new File(root,"journal.sqlite").getAbsolutePath(),null,1){
+        helper=new SQLiteOpenHelper(context.getApplicationContext(),new File(root,"journal.sqlite").getAbsolutePath(),null,2){
             public void onConfigure(SQLiteDatabase db){db.setForeignKeyConstraintsEnabled(true);}
             public void onCreate(SQLiteDatabase db){
-                db.execSQL("CREATE TABLE sessions(id TEXT PRIMARY KEY,manifest TEXT NOT NULL,graph TEXT NOT NULL,generation INTEGER NOT NULL,writer TEXT NOT NULL,updated_at INTEGER NOT NULL)");
+                db.execSQL("CREATE TABLE sessions(id TEXT PRIMARY KEY,manifest TEXT NOT NULL,graph TEXT NOT NULL,generation INTEGER NOT NULL,writer TEXT NOT NULL,updated_at INTEGER NOT NULL,codec_route TEXT NOT NULL DEFAULT 'conservative')");
                 db.execSQL("CREATE TABLE checkpoints(session TEXT NOT NULL,kind TEXT NOT NULL,ordinal INTEGER NOT NULL,start_us INTEGER NOT NULL,end_us INTEGER NOT NULL,state TEXT NOT NULL,stage_generation INTEGER NOT NULL,bytes INTEGER NOT NULL,sha TEXT NOT NULL,metadata TEXT NOT NULL,PRIMARY KEY(session,kind,ordinal),FOREIGN KEY(session) REFERENCES sessions(id))");
             }
-            public void onUpgrade(SQLiteDatabase db,int oldVersion,int newVersion){throw new IllegalStateException("Unsupported render journal version "+oldVersion);}
+            public void onUpgrade(SQLiteDatabase db,int oldVersion,int newVersion){if(oldVersion==1&&newVersion==2)db.execSQL("ALTER TABLE sessions ADD COLUMN codec_route TEXT NOT NULL DEFAULT 'conservative'");else throw new IllegalStateException("Unsupported render journal version "+oldVersion);}
         };
         helper.setWriteAheadLoggingEnabled(true);
     }
@@ -129,6 +129,10 @@ final class RenderSessionStore implements AutoCloseable {
     Checkpoint reusable(Writer writer,Kind kind,int index,long startUs,long endUs)throws Exception{
         bounds(kind,index,startUs,endUs);Row saved;
         synchronized(LOCK){saved=row(active(writer),writer,kind,index);}
+        if(saved!=null&&saved.state.equals("retiring")){
+            synchronized(LOCK){unchanged(saved,row(active(writer),writer,kind,index));invalidate(writer,kind,index);}
+            return null;
+        }
         if(saved==null||saved.state.equals("pending")||saved.start!=startUs||saved.end!=endUs)return null;
         File target=finalFile(writer,kind,index),candidate=target;JSONObject fresh=freshIfBound(target,saved,kind);
         if(fresh==null&&saved.state.equals("encoded")){candidate=stage(writer,kind,index,saved.stageGeneration);fresh=freshIfBound(candidate,saved,kind);}
@@ -148,8 +152,31 @@ final class RenderSessionStore implements AutoCloseable {
 
     JSONObject session(Writer writer)throws Exception{
         synchronized(LOCK){try(Cursor row=active(writer).query("sessions",null,"id=?",new String[]{writer.sessionId},null,null,null)){
-            if(!row.moveToFirst())throw new IllegalStateException("Render session disappeared");return new JSONObject().put("project",new JSONObject(string(row,"graph"))).put("manifest",new JSONObject(string(row,"manifest")));
+            if(!row.moveToFirst())throw new IllegalStateException("Render session disappeared");return new JSONObject().put("project",new JSONObject(string(row,"graph"))).put("manifest",new JSONObject(string(row,"manifest"))).put("codecRoute",string(row,"codec_route"));
         }}
+    }
+    void codecRoute(Writer writer,RenderRetryController.Route route)throws Exception{
+        if(route==null||route==RenderRetryController.Route.DEFAULT)throw new IllegalArgumentException("Invalid segmented codec route");
+        synchronized(LOCK){SQLiteDatabase db=active(writer);RenderRetryController.Route prior=RenderRetryController.Route.valueOf(session(writer).getString("codecRoute").toUpperCase(java.util.Locale.ROOT));if(route.ordinal()<prior.ordinal())throw new IllegalArgumentException("Codec repair route cannot regress");if(route==prior)return;
+            // Route choice and every old-video retirement intent commit together. New verified
+            // windows replace these rows, so recovery retains the prefix from the new route.
+            db.beginTransaction();try{ContentValues values=new ContentValues();values.put("codec_route",route.name().toLowerCase(java.util.Locale.ROOT));if(db.update("sessions",values,"id=? AND generation=? AND writer=?",new String[]{writer.sessionId,Long.toString(writer.generation),writer.token})!=1)throw new IllegalStateException("Render codec policy disappeared");ContentValues retired=new ContentValues();retired.put("state","retiring");db.update("checkpoints",retired,"session=? AND kind=?",new String[]{writer.sessionId,Kind.VIDEO.name()});db.setTransactionSuccessful();}finally{db.endTransaction();}
+        }
+    }
+    /** Lease-bound metadata only. The muxer must freshly verify these bytes before copying. */
+    Checkpoint recorded(Writer writer,Kind kind,int index,long startUs,long endUs)throws Exception{
+        bounds(kind,index,startUs,endUs);synchronized(LOCK){Row saved=row(active(writer),writer,kind,index);if(saved==null||!saved.state.equals("verified")||saved.start!=startUs||saved.end!=endUs)return null;
+            return new Checkpoint(finalFile(writer,kind,index),new JSONObject(saved.metadata.toString()),saved.start,saved.end);
+        }
+    }
+    void invalidate(Writer writer,Kind kind,int index)throws Exception{
+        key(kind,index);synchronized(LOCK){SQLiteDatabase db=active(writer);Row saved=row(db,writer,kind,index);if(saved==null)return;
+            // Retain the durable generation until every owned file has been removed.
+            // Death or unlink failure is replayable through reusable()/begin() on the next lease.
+            remove(finalFile(writer,kind,index));faults.at("invalidated_final");if(saved.stageGeneration>0)remove(stage(writer,kind,index,saved.stageGeneration));
+            ContentValues values=new ContentValues();values.put("state","pending");values.put("stage_generation",0);values.put("bytes",0);values.put("sha","");
+            if(db.update("checkpoints",values,where(),args(writer,kind,index))!=1)throw new IllegalStateException("Checkpoint disappeared during route repair");
+        }
     }
     private JSONObject freshIfBound(File file,Row saved,Kind kind)throws Exception{
         interrupted();if(!file.isFile()||file.length()!=saved.bytes)return null;

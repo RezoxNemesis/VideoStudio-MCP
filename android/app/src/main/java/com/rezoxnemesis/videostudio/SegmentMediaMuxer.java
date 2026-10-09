@@ -50,7 +50,7 @@ final class SegmentMediaMuxer {
     }
     private static double number(MediaFormat format,String key,double fallback){if(!format.containsKey(key))return fallback;try{return format.getInteger(key);}catch(ClassCastException floating){return format.getFloat(key);}}
     private static boolean sameBytes(ByteBuffer first,ByteBuffer next,boolean required){return first!=null&&next!=null&&(!required||first.hasRemaining())&&first.duplicate().equals(next.duplicate());}
-    private static IllegalArgumentException incompatible(String key){return new IllegalArgumentException("Segment codec configuration differs at "+key+"; retry with a consistent codec route before joining");}
+    private static IllegalArgumentException incompatible(String key){return new IncompatibleConfigurationException("Segment codec configuration differs at "+key+"; retry with a consistent codec route before joining");}
     static long timestamp(long localUs,long startUs,long endUs,long previousUs){
         if(startUs<0||endUs<=startUs||localUs<0||localUs>=endUs-startUs)throw new IllegalArgumentException("Encoded sample is outside its planned window");
         long global;try{global=Math.addExact(startUs,localUs);}catch(ArithmeticException overflow){throw new IllegalArgumentException("Encoded timestamp overflow",overflow);}

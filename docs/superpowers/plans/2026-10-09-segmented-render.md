@@ -63,7 +63,7 @@ Files: create SegmentedRenderEngine.java; modify NativeRenderEngine.java, Contro
 
 Interfaces: existing public export/Handle/Listener stay available; long-timeline dispatch creates or resumes a checksum-bound session and each window uses the bounded codec engine.
 
-- [ ] Add RED lifecycle tests for partial completion/restart, verified reuse, individual corrupt rerender, route incompatibility repair, active STOP and stale callbacks.
+- [x] Add RED lifecycle tests for partial completion/restart, verified reuse, individual corrupt rerender, route incompatibility repair, active STOP and stale callbacks.
 - [ ] Implement serialized stages and per-session writer exclusion; keep immutable recovery graph/scopes/owner independence.
 - [ ] Run fresh full tests/build/Worker checks, bounded independent review and publish the exact tree.
 - [ ] Inspect matching APK and actual device window/reuse/corruption/mux evidence; fix failures before any completion claim.
@@ -84,3 +84,7 @@ Matching8eab084 Android/APK351 and Worker succeed; device9 runs with1 failure in
 Diagnostic b10bdeac repeats351/APK/Worker success, device9/1failure measured AAC firstPTS=-36281us. AAC preroll/size-driven iteration/EOS regression RED3/20 then RED4/21 precede focused33 GREEN and instrumentation source compilation. Corrected matching native execution remains pending. Private evidence location replaces a demonstrated truncated external-storage tar. Task4 lifecycle12-case contract is untracked/unpublished and fails10 cases before implementation.
 
 AAC bounded review RED4/32, paired preflight RED1/24 and API29 RED2/25 precede final40 GREEN. Gapless presentation extent and internally shifted short-program EOS are consistent; API29 negative platform mux rejects before output, requiring an alternative lossless mux or ordinary whole export. Review closes current Important corrections; matching native runtime remains pending. Task4 journal lazy-read/route-invalidation contract RED2/22 is also local/unpublished.
+
+Task4 local coordinator: initial10/12RED and journal2/22RED precede implementation. Review5/39RED, chosen-route1/41RED and interrupted-final-route retirement1/43RED precede focused43GREEN. Per-row durable retirement states and the chosen route commit together, preserving audio and current-route prefixes; schema1->2 migration retains captured graphs. Source hashes/SQLite are real; codecs/mux are synthetic. Progress coalesces to one pending notification, retired stages cannot report after completion, STOP suppresses queued success, and failed completion persistence signals an error to wake callers. Shared public dispatch/cache references and native shared export remain unfinished.
+
+Matching678e633 Android37927569481 passes362 unit tests, APK unchanged99,106,323 bytes/SHA2568d86d9e4bc02dc437b0e213f12d4956e43d39aa5f34c5810eedda0f6153cf779; Worker37927569291 succeeds. Device37927569295 existing8pass/new segmented1fails. Fresh complete-track diagnostics prove exactly430 AAC packets, first-36281us,last9925079us,raw9984580us,presentation9948299us for whole and continuous audio-only10s sources. Encoder draining and proper codec-padding trim are required before native join proof.
