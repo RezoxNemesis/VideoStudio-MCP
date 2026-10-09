@@ -269,7 +269,18 @@ public class StudioDeviceTest {
     }
 
     private org.json.JSONArray mediaTiming(File file)throws Exception {
-        var extractor=new android.media.MediaExtractor();var tracks=new org.json.JSONArray();try{extractor.setDataSource(file.getAbsolutePath());for(int track=0;track<extractor.getTrackCount();track++){var format=extractor.getTrackFormat(track);extractor.selectTrack(track);extractor.seekTo(0,android.media.MediaExtractor.SEEK_TO_CLOSEST_SYNC);var times=new org.json.JSONArray();for(int sample=0;sample<4&&extractor.getSampleTime()>=0;sample++){times.put(extractor.getSampleTime());if(!extractor.advance())break;}extractor.unselectTrack(track);tracks.put(new JSONObject().put("format",format.toString()).put("initialSampleTimesUs",times));}return tracks;}finally{extractor.release();}
+        var tracks=new org.json.JSONArray();int count;
+        var index=new android.media.MediaExtractor();try{index.setDataSource(file.getAbsolutePath());count=index.getTrackCount();}finally{index.release();}
+        // Seeking to zero skips AAC preroll. Use a fresh extractor for each complete track.
+        for(int track=0;track<count;track++){
+            var extractor=new android.media.MediaExtractor();try{
+                extractor.setDataSource(file.getAbsolutePath());var format=extractor.getTrackFormat(track);extractor.selectTrack(track);
+                var times=new org.json.JSONArray();long packets=0,bytes=0,last=Long.MIN_VALUE;
+                while(extractor.getSampleSize()>=0){long time=extractor.getSampleTime();if(packets<4)times.put(time);last=time;bytes=Math.addExact(bytes,extractor.getSampleSize());packets++;if(!extractor.advance())break;}
+                tracks.put(new JSONObject().put("format",format.toString()).put("initialSampleTimesUs",times).put("packetCount",packets).put("sampleBytes",bytes).put("lastSampleTimeUs",last));
+            }finally{extractor.release();}
+        }
+        return tracks;
     }
 
     private JSONObject renderPrepared(ProjectStore.Project project,androidx.media3.transformer.Composition composition,File output,boolean video)throws Exception {
