@@ -27,6 +27,13 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify matching MCP and relay source
+        run: |
+          npm ci --no-audit --no-fund
+          npm test
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
