@@ -2,7 +2,22 @@
 set -euo pipefail
 mkdir -p artifacts/device-evidence
 collect_evidence() {
-  adb pull /sdcard/Android/data/com.rezoxnemesis.videostudio/files/evidence artifacts/device-evidence || true
+  # Mux workspaces are private0600 files. Collect as the app UID without broadening file access.
+  if adb exec-out run-as com.rezoxnemesis.videostudio tar -cf - -C /sdcard/Android/data/com.rezoxnemesis.videostudio/files evidence > artifacts/device-evidence/evidence.tar; then
+    python3 - <<'PYARCHIVE'
+import pathlib,tarfile
+root=pathlib.Path('artifacts/device-evidence').resolve()
+with tarfile.open(root/'evidence.tar') as archive:
+    for entry in archive.getmembers():
+        destination=(root/entry.name).resolve()
+        if not destination.is_relative_to(root) or entry.issym() or entry.islnk():
+            raise ValueError('Unsafe device evidence archive member')
+    archive.extractall(root,filter='data')
+(root/'evidence.tar').unlink()
+PYARCHIVE
+  else
+    adb pull /sdcard/Android/data/com.rezoxnemesis.videostudio/files/evidence artifacts/device-evidence || true
+  fi
   adb logcat -d > artifacts/device-evidence/logcat.txt || true
   python3 - <<'PYUI'
 import pathlib,json,xml.etree.ElementTree as ET
@@ -19,6 +34,8 @@ for trace in pathlib.Path('artifacts/device-evidence').rglob('codec-reliability-
 for trace in pathlib.Path('artifacts/device-evidence').rglob('segment-window-proof.json'):
     proof=json.loads(trace.read_text())
     print('DEVICE_SEGMENT_EVIDENCE '+json.dumps(proof))
+for trace in pathlib.Path('artifacts/device-evidence').rglob('segment-input-timing.json'):
+    print('DEVICE_SEGMENT_TIMING_EVIDENCE '+json.dumps(json.loads(trace.read_text())))
 PYUI
 }
 trap collect_evidence EXIT
