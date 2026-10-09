@@ -19,7 +19,7 @@ Use **Connect ChatGPT** for this device's private MCP pairing information, and k
 
 Owner-selected/imported media is available to the agent; Gallery enumeration remains blocked. The background foreground-service test exercises a real command, an idempotent retry, and an export while the editor is closed. This is device execution evidence; live external ChatGPT pairing and the owner's Realme background restrictions require separate verification. Android permissions and ChatGPT's connector controls remain platform-managed.
 
-Public connection probes disagree: a browser-backed read reaches the config endpoint, but the release runner's unauthenticated urllib request receives HTTP403. External authenticated transport is unverified. The checkpoint records this limitation and a separate diagnostic; the Android service test does not establish that a live ChatGPT session can reach your phone.
+The public connection service accepts the APK's existing headers: a later read-only diagnostic receives configHTTP200 and v3HTTP409 without credentials, as expected. Cloudflare rejects the release runner's bare Python probe with HTTP403/error1010; that result is retained in the original release manifest. No app change was required. A live authenticated ChatGPT session on your phone remains unverified.
 
 ## Scope and continuation
 

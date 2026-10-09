@@ -1,0 +1,56 @@
+{
+  "runId": 37941692108,
+  "jobId": 113857406344,
+  "credentialUsed": false,
+  "liveChatGptSessionVerified": false,
+  "results": [
+    {
+      "authenticated": false,
+      "body": "error code: 1010\n",
+      "client": "urllib",
+      "httpStatus": 403,
+      "path": "/api/web/config",
+      "responseHeaders": {
+        "CF-Mitigated": null,
+        "Content-Type": "text/plain; charset=UTF-8",
+        "Server": "cloudflare"
+      }
+    },
+    {
+      "authenticated": false,
+      "body": "error code: 1010\n",
+      "client": "urllib",
+      "httpStatus": 403,
+      "path": "/api/v3/app/status",
+      "responseHeaders": {
+        "CF-Mitigated": null,
+        "Content-Type": "text/plain; charset=UTF-8",
+        "Server": "cloudflare"
+      }
+    },
+    {
+      "authenticated": false,
+      "body": "{\"googleDriveClientId\":\"\",\"driveScope\":\"https://www.googleapis.com/auth/drive.file\",\"storageMode\":\"user-owned-google-drive\"}",
+      "client": "android-app",
+      "httpStatus": 200,
+      "path": "/api/web/config"
+    },
+    {
+      "authenticated": false,
+      "body": "{\"connected\":false,\"registered\":false,\"protocolVersion\":3,\"error\":\"VideoStudio stable MCP credential rejected\"}",
+      "client": "android-app",
+      "httpStatus": 409,
+      "path": "/api/v3/app/status",
+      "responseHeaders": {
+        "CF-Mitigated": null,
+        "Content-Type": "application/json; charset=UTF-8",
+        "Server": "cloudflare"
+      }
+    }
+  ],
+  "source": "9e915fcb44c3678b219a9b01bed07be56ec04006",
+  "stateMutated": false,
+  "apkSource": "7dd68f364bddd7933814bff023dfb17415565ad4",
+  "interpretation": "Bare urllib is rejected by Cloudflare1010. The APK's existing public app headers reach config200 and the unauthenticated v3 credential boundary409. No authenticated owner session or ChatGPT connector was tested.",
+  "workflowCheckout": "Synthetic pull-request merge; only static public read-only requests with the release app's headers."
+}
