@@ -5,24 +5,9 @@ import android.net.Uri;
 import android.os.Handler;
 import android.os.Looper;
 
-import androidx.media3.common.C;
-import androidx.media3.common.Effect;
-import androidx.media3.common.MediaItem;
 import androidx.media3.common.MimeTypes;
-import androidx.media3.common.audio.AudioProcessor;
-import androidx.media3.common.audio.SpeedProvider;
 import androidx.media3.common.util.UnstableApi;
-import androidx.media3.effect.Brightness;
-import androidx.media3.effect.Contrast;
-import androidx.media3.effect.GaussianBlur;
-import androidx.media3.effect.HslAdjustment;
-import androidx.media3.effect.OverlayEffect;
-import androidx.media3.effect.Presentation;
-import androidx.media3.effect.ScaleAndRotateTransformation;
 import androidx.media3.transformer.Composition;
-import androidx.media3.transformer.EditedMediaItem;
-import androidx.media3.transformer.EditedMediaItemSequence;
-import androidx.media3.transformer.Effects;
 import androidx.media3.transformer.ExportException;
 import androidx.media3.transformer.ExportResult;
 import androidx.media3.transformer.ProgressHolder;
@@ -32,7 +17,6 @@ import org.json.JSONObject;
 
 import java.io.File;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -45,109 +29,144 @@ public final class NativeRenderEngine {
     }
 
     public static final class Handle {
-        private final Transformer transformer;
-        private final Handler main;
-        private final AtomicBoolean cancelled = new AtomicBoolean(false);
-        private Runnable progressTask;
-
-        Handle(Transformer transformer, Handler main) {
-            this.transformer = transformer;
-            this.main = main;
-        }
-
-        public void cancel() {
-            cancelled.set(true);
-            main.post(() -> {
-                try { transformer.cancel(); } catch (Exception ignored) {}
-                if (progressTask != null) main.removeCallbacks(progressTask);
-            });
-        }
-
-        boolean isCancelled() { return cancelled.get(); }
+        private final RenderRetryController controller;
+        Handle(RenderRetryController controller){this.controller=controller;}
+        public void cancel(){controller.cancel();}
     }
 
+    private static final java.util.concurrent.ExecutorService VERIFICATION=java.util.concurrent.Executors.newFixedThreadPool(2,r->{Thread t=new Thread(r,"studio-render-verification");t.setDaemon(true);return t;});
     private final Context context;
-    private final Handler main = new Handler(Looper.getMainLooper());
+    private final Handler main=new Handler(Looper.getMainLooper());
+    public NativeRenderEngine(Context context){this.context=context.getApplicationContext();}
 
-    public NativeRenderEngine(Context context) {
-        this.context = context.getApplicationContext();
+    public Handle export(ProjectStore.Project project,File outputFile,String aspect,String quality,Listener listener){
+        return export(project,outputFile,aspect,quality,listener,RenderRetryController.Route.DEFAULT);
+    }
+    /** Package-private route entry also supports real codec-path device diagnostics. */
+    Handle export(ProjectStore.Project original,File outputFile,String aspect,String quality,Listener listener,RenderRetryController.Route initialRoute){
+        if(original==null||original.clips.isEmpty()){listener.onError("Timeline is empty");return null;}
+        try{
+            ProjectStore.Project project=ProjectStore.Project.fromJson(original.toJson());
+            protectOriginals(project,outputFile);
+            Composition composition=new TimelineCompositionFactory(context).build(project,aspect,quality,false);
+            RenderRetryController controller=new RenderRetryController(main::post,VERIFICATION,
+                    (route,callback)->startAttempt(project,composition,outputFile,aspect,quality,route,callback),
+                    ()->PlayableMediaVerifier.verify(context,Uri.fromFile(outputFile),true),
+                    new RenderRetryController.Observer(){
+                        public void progress(int percent,String detail){listener.onProgress(percent,detail);}
+                        public void failed(String detail){listener.onError(detail);}
+                        public void completed(JSONObject result){
+                            try(CodecReliabilityStore history=new CodecReliabilityStore(context)){
+                                history.verified(result.optString("videoEncoder"),result.optInt("codecWidth"),result.optInt("codecHeight"),result.optString("codecProfile"),result.optInt("codecFps",project.settings.optInt("fps",30)),result.getString("sha256"));
+                                result.put("codecReliabilityRecorded",true);
+                            }catch(Exception unavailable){android.util.Log.w("VideoStudioRender","Could not record codec success",unavailable);}
+                            listener.onCompleted(outputFile,result);
+                        }
+                    });
+            controller.start(initialRoute);return new Handle(controller);
+        }catch(Exception error){listener.onError(error.getMessage()==null?"Could not prepare native export":error.getMessage());return null;}
     }
 
-    public Handle export(ProjectStore.Project project, File outputFile, String aspect, String quality, Listener listener) {
-        if (project == null || project.clips.isEmpty()) {
-            listener.onError("Timeline is empty");
-            return null;
-        }
-        try {
-            if (outputFile.exists() && !outputFile.delete()) {
-                listener.onError("Could not replace previous export");
-                return null;
+    private RenderRetryController.Attempt startAttempt(ProjectStore.Project project,Composition composition,File outputFile,String aspect,String quality,RenderRetryController.Route route,RenderRetryController.Callback callback)throws Exception{
+        // outputFile is the caller's dedicated render workspace, never an input asset.
+        protectOriginals(project,outputFile);
+        if(outputFile.exists()&&!outputFile.delete())throw new java.io.IOException("Could not replace failed export workspace");
+        int[] dimensions=NativeCodecPolicy.dimensions(aspect,quality);int fps=project.settings.optInt("fps",30);
+        String profile=route==RenderRetryController.Route.DEFAULT?"default":"baseline";
+        ReliableDecoderFactory decoder=new ReliableDecoderFactory(context,route,fps);
+        java.util.Set<String> recordedErrors=java.util.concurrent.ConcurrentHashMap.newKeySet();
+        java.util.concurrent.atomic.AtomicReference<androidx.media3.common.Format> encoderFormat=new java.util.concurrent.atomic.AtomicReference<>();
+        androidx.media3.transformer.Codec.EncoderFactory encoder=new androidx.media3.transformer.Codec.EncoderFactory(){
+            private androidx.media3.transformer.DefaultEncoderFactory configured(androidx.media3.common.Format format){
+                int rate=format.frameRate>0?Math.max(1,Math.round(format.frameRate)):fps;
+                int width=format.width>0?format.width:dimensions[0],height=format.height>0?format.height:dimensions[1];
+                androidx.media3.transformer.VideoEncoderSettings settings=NativeCodecPolicy.settings(route,project.settings.optInt("exportBitrate",8_000_000),rate,width,height);
+                androidx.media3.transformer.EncoderSelector selector=mime->{
+                    List<android.media.MediaCodecInfo> codecs=new ArrayList<>(androidx.media3.transformer.EncoderSelector.DEFAULT.selectEncoderInfos(mime));
+                    if(route==RenderRetryController.Route.SOFTWARE_CODECS)codecs.removeIf(codec->!codec.isSoftwareOnly());
+                    try(CodecReliabilityStore history=new CodecReliabilityStore(context)){
+                        return com.google.common.collect.ImmutableList.copyOf(NativeCodecPolicy.selectEncoders(codecs,codec->{android.media.MediaCodecInfo.VideoCapabilities video=codec.getCapabilitiesForType(mime).getVideoCapabilities();return video==null?null:video.getBitrateRange();},codec->history.penalty(codec.getName(),width,height,profile,rate),settings.bitrate));
+                    }
+                };
+                return new androidx.media3.transformer.DefaultEncoderFactory.Builder(context).setEnableFallback(true).setEnableFormatFallback(false).setVideoEncoderSelector(selector)
+                        .setRequestedVideoEncoderSettings(settings).setRequestedAudioEncoderSettings(new androidx.media3.transformer.AudioEncoderSettings.Builder().setBitrate(192_000).build()).build();
             }
-            final boolean layeredAnimation = hasLayeredAnimation(project);
-            Composition composition = new TimelineCompositionFactory(context).build(project, aspect, quality, false);
-
-            Transformer transformer = new Transformer.Builder(context)
-                    .setEncoderFactory(new androidx.media3.transformer.DefaultEncoderFactory.Builder(context)
-                            .setEnableFallback(true)
-                            .setRequestedVideoEncoderSettings(new androidx.media3.transformer.VideoEncoderSettings.Builder()
-                                    .setBitrate(Math.max(500_000,Math.min(50_000_000,project.settings.optInt("exportBitrate",8_000_000))))
-                                    .build())
-                            .setRequestedAudioEncoderSettings(new androidx.media3.transformer.AudioEncoderSettings.Builder().setBitrate(192_000).build())
-                            .build())
-                    .setVideoMimeType(MimeTypes.VIDEO_H264)
-                    .setAudioMimeType(MimeTypes.AUDIO_AAC)
-                    .addListener(new Transformer.Listener() {
-                        @Override
-                        public void onCompleted(Composition composition, ExportResult result) {
-                            JSONObject info = new JSONObject();
-                            try {
-                                info.put("ok", true);
-                                info.put("path", outputFile.getAbsolutePath());
-                                info.put("sizeBytes", outputFile.length());
-                                info.put("durationMs", project.outputDurationMs());
-                                info.put("clipCount", project.clips.size());
-                                info.put("aspect", aspect);
-                                info.put("quality", quality);
-                                info.put("engine", layeredAnimation
-                                        ? (hasArticulatedAnimation(project)
-                                                ? "VideoStudio v3.2 Media3 articulated portrait"
-                                                : "VideoStudio v3.1 Media3 layered parallax")
-                                        : "Media3 Transformer 1.11.1");
-                                info.put("layeredAnimation", layeredAnimation);
-                                info.put("animationMode", layeredAnimation
-                                        ? (hasArticulatedAnimation(project) ? "articulated-subject-2.5d" : "subject-aware-2.5d")
-                                        : "standard");
-                            } catch (Exception ignored) {}
-                            listener.onProgress(100, "Export complete");
-                            listener.onCompleted(outputFile, info);
-                        }
-
-                        @Override
-                        public void onError(Composition composition, ExportResult result, ExportException exception) {
-                            android.util.Log.e("VideoStudioRender","Native export failed",exception);
-                            String detail=exception.getMessage()==null?"Native export failed":exception.getMessage();
-                            Throwable cause=exception.getCause();int depth=0;
-                            while(cause!=null&&depth++<3){detail+=" · "+cause.getClass().getSimpleName()+": "+cause.getMessage();cause=cause.getCause();}
-                            listener.onError(detail);
-                        }
-                    })
-                    .build();
-
-            Handle handle = new Handle(transformer, main);
-            main.post(() -> {
-                if (handle.isCancelled()) return;
-                try {
-                    transformer.start(composition, outputFile.getAbsolutePath());
-                    startProgressPolling(handle, listener);
-                } catch (Exception e) {
-                    listener.onError(e.getMessage() == null ? "Could not start native export" : e.getMessage());
+            public androidx.media3.transformer.Codec createForAudioEncoding(androidx.media3.common.Format format,android.media.metrics.LogSessionId session)throws ExportException{return configured(format).createForAudioEncoding(format,session);}
+            public androidx.media3.transformer.Codec createForVideoEncoding(androidx.media3.common.Format format,android.media.metrics.LogSessionId session)throws ExportException{
+                encoderFormat.set(format);
+                androidx.media3.transformer.Codec codec=configured(format).createForVideoEncoding(format,session);
+                androidx.media3.common.Format actual=codec.getConfigurationFormat();
+                int requested=Math.max(500_000,Math.min(50_000_000,project.settings.optInt("exportBitrate",8_000_000)));
+                if(!NativeCodecPolicy.matchesConfiguredFormat(format,actual,requested)){
+                    String name=codec.getName();codec.release();
+                    throw ExportException.createForCodec(new IllegalStateException("Encoder changed requested final resolution, frame rate or target bitrate"),ExportException.ERROR_CODE_ENCODING_FORMAT_UNSUPPORTED,new ExportException.CodecInfo(actual.toString(),true,false,name));
                 }
-            });
-            return handle;
-        } catch (Exception error) {
-            listener.onError(error.getMessage() == null ? "Could not prepare native export" : error.getMessage());
-            return null;
-        }
+                encoderFormat.set(actual);return codec;
+            }
+            public boolean isVideoFormatSupported(androidx.media3.common.Format format){return configured(format).isVideoFormatSupported(format);}
+            public boolean audioNeedsEncoding(){return true;}
+            public boolean videoNeedsEncoding(){return true;}
+        };
+        AtomicBoolean stopped=new AtomicBoolean();ProgressHolder progress=new ProgressHolder();Transformer[] active=new Transformer[1];Runnable[] poll=new Runnable[1];
+        Transformer transformer=new Transformer.Builder(context)
+                .setAssetLoaderFactory(new androidx.media3.transformer.DefaultAssetLoaderFactory(context,decoder,androidx.media3.common.util.Clock.DEFAULT,
+                        new androidx.media3.exoplayer.source.DefaultMediaSourceFactory(context),new androidx.media3.datasource.DataSourceBitmapLoader(context)))
+                .setEncoderFactory(encoder)
+                .setVideoMimeType(MimeTypes.VIDEO_H264).setAudioMimeType(MimeTypes.AUDIO_AAC)
+                .addListener(new Transformer.Listener(){
+                    @Override public void onCompleted(Composition completed,ExportResult result){
+                        if(stopped.get())return;
+                        try{
+                            boolean layered=hasLayeredAnimation(project);
+                            JSONObject info=new JSONObject().put("path",outputFile.getAbsolutePath()).put("clipCount",project.clips.size()).put("aspect",aspect).put("quality",quality)
+                                    .put("engine","Media3 Transformer 1.11.1").put("layeredAnimation",layered)
+                                    .put("animationMode",layered?(hasArticulatedAnimation(project)?"articulated-subject-2.5d":"subject-aware-2.5d"):"standard")
+                                    .put("codecRoute",route.name().toLowerCase(java.util.Locale.ROOT)).put("codecProfile",profile)
+                                    .put("videoEncoder",result.videoEncoderName==null?"":result.videoEncoderName).put("audioEncoder",result.audioEncoderName==null?"":result.audioEncoderName)
+                                    .put("decoderNames",decoder.names()).put("encodedWidth",result.width).put("encodedHeight",result.height).put("requestedBitrate",NativeCodecPolicy.settings(route,project.settings.optInt("exportBitrate",8_000_000),fps).bitrate);
+                            androidx.media3.common.Format configuration=encoderFormat.get();
+                            if(configuration!=null)info.put("codecWidth",configuration.width).put("codecHeight",configuration.height).put("codecFps",Math.round(configuration.frameRate)).put("configuredBitrate",configuration.bitrate);
+                            callback.encoded(info);
+                        }catch(Exception error){callback.failed(new RenderRetryController.Failure(ExportException.ERROR_CODE_UNSPECIFIED,error.getMessage()));}
+                    }
+                    @Override public void onError(Composition failed,ExportResult result,ExportException error){
+                        if(stopped.get())return;
+                        android.util.Log.e("VideoStudioRender","Codec route "+route+" failed",error);
+                        if(error.codecInfo!=null&&error.codecInfo.isDecoder)decoder.record(error);
+                        else{
+                            androidx.media3.common.Format configuration=encoderFormat.get();
+                            recordCodecFailure(error,configuration==null?dimensions[0]:configuration.width,configuration==null?dimensions[1]:configuration.height,profile,configuration==null?fps:Math.max(1,Math.round(configuration.frameRate)),recordedErrors);
+                        }
+                        String detail=error.getMessage()==null?"Native export failed":error.getMessage();Throwable cause=error.getCause();int depth=0;
+                        while(cause!=null&&depth++<3){detail+=" · "+cause.getClass().getSimpleName()+": "+cause.getMessage();cause=cause.getCause();}
+                        callback.failed(new RenderRetryController.Failure(error.errorCode,detail));
+                    }
+                }).build();
+        active[0]=transformer;
+        poll[0]=()->{
+            if(stopped.get())return;
+            try{if(transformer.getProgress(progress)==Transformer.PROGRESS_STATE_AVAILABLE)callback.progress(progress.progress,"Native export "+progress.progress+"%");}
+            catch(Exception ignored){}
+            if(!stopped.get())main.postDelayed(poll[0],450);
+        };
+        try{transformer.start(composition,outputFile.getAbsolutePath());main.post(poll[0]);}
+        catch(Exception failure){stopped.set(true);try{transformer.cancel();}catch(Exception ignored){}throw failure;}
+        return ()->{if(stopped.compareAndSet(false,true)){main.removeCallbacks(poll[0]);try{active[0].cancel();}catch(Exception ignored){}}};
+    }
+
+    private void recordCodecFailure(ExportException error,int width,int height,String profile,int fps,java.util.Set<String> recorded){
+        if(error.codecInfo==null||!RenderRetryController.codecFailure(error.errorCode)||!recorded.add(error.timestampMs+":"+error.codecInfo.name+":"+error.errorCode))return;
+        try(CodecReliabilityStore history=new CodecReliabilityStore(context)){history.failure(error.codecInfo.name,width,height,profile,fps,error.getErrorCodeName());}
+        catch(Exception unavailable){android.util.Log.w("VideoStudioRender","Could not record codec failure",unavailable);}
+    }
+    private static void protectOriginals(ProjectStore.Project project,File output)throws java.io.IOException{
+        File target=output.getCanonicalFile();
+        for(ProjectStore.Asset asset:project.assets)protectSource(target,asset.uri);
+        for(ProjectStore.Clip clip:project.clips)for(String layer:new String[]{"headUri","torsoUri","lowerUri","foregroundUri","backgroundUri"})protectSource(target,clip.effects.optString(layer));
+    }
+    private static void protectSource(File target,String source)throws java.io.IOException{
+        Uri uri=Uri.parse(source);
+        if("file".equals(uri.getScheme())&&target.equals(new File(uri.getPath()).getCanonicalFile()))throw new IllegalArgumentException("Export workspace refers to an original source");
     }
 
     private boolean hasLayeredAnimation(ProjectStore.Project project) {
@@ -165,51 +184,6 @@ public final class NativeRenderEngine {
         return found;
     }
 
-    private Composition buildLayeredAnimationComposition(ProjectStore.Project project, String aspect, String quality) {
-        boolean articulated = hasArticulatedAnimation(project);
-        if (articulated) {
-            List<EditedMediaItem> head = new ArrayList<>();
-            List<EditedMediaItem> torso = new ArrayList<>();
-            List<EditedMediaItem> lower = new ArrayList<>();
-            List<EditedMediaItem> background = new ArrayList<>();
-
-            for (ProjectStore.Clip clip : project.clips) {
-                JSONObject fx = clip.effects == null ? new JSONObject() : clip.effects;
-                JSONObject spec = fx.optJSONObject("animationSpec");
-                long durationMs = Math.max(700, clip.outputDurationMs());
-
-                head.add(buildLayerItem(fx.optString("headUri"), clip, aspect, quality, durationMs, spec, "head"));
-                torso.add(buildLayerItem(fx.optString("torsoUri"), clip, aspect, quality, durationMs, spec, "torso"));
-                lower.add(buildLayerItem(fx.optString("lowerUri"), clip, aspect, quality, durationMs, spec, "lower"));
-                background.add(buildLayerItem(fx.optString("backgroundUri"), clip, aspect, quality, durationMs, spec, "background"));
-            }
-
-            // Earlier sequences are composited above later sequences. The
-            // feathered bands add back up to the original subject alpha while
-            // their independent transforms create articulated motion.
-            return new Composition.Builder(
-                    EditedMediaItemSequence.withVideoFrom(head),
-                    EditedMediaItemSequence.withVideoFrom(torso),
-                    EditedMediaItemSequence.withVideoFrom(lower),
-                    EditedMediaItemSequence.withVideoFrom(background)
-            ).build();
-        }
-
-        List<EditedMediaItem> foreground = new ArrayList<>();
-        List<EditedMediaItem> background = new ArrayList<>();
-        for (ProjectStore.Clip clip : project.clips) {
-            JSONObject fx = clip.effects == null ? new JSONObject() : clip.effects;
-            JSONObject spec = fx.optJSONObject("animationSpec");
-            long durationMs = Math.max(700, clip.outputDurationMs());
-            foreground.add(buildLayerItem(fx.optString("foregroundUri"), clip, aspect, quality, durationMs, spec, "foreground"));
-            background.add(buildLayerItem(fx.optString("backgroundUri"), clip, aspect, quality, durationMs, spec, "background"));
-        }
-        return new Composition.Builder(
-                EditedMediaItemSequence.withVideoFrom(foreground),
-                EditedMediaItemSequence.withVideoFrom(background)
-        ).build();
-    }
-
     private boolean hasArticulatedAnimation(ProjectStore.Project project) {
         if (project == null || project.clips.isEmpty()) return false;
         for (ProjectStore.Clip clip : project.clips) {
@@ -222,207 +196,4 @@ public final class NativeRenderEngine {
         return true;
     }
 
-    private EditedMediaItem buildLayerItem(String uri,
-                                           ProjectStore.Clip clip,
-                                           String aspect,
-                                           String quality,
-                                           long durationMs,
-                                           JSONObject animationSpec,
-                                           String layerRole) {
-        MediaItem media = new MediaItem.Builder()
-                .setUri(Uri.parse(uri))
-                .setImageDurationMs(durationMs)
-                .build();
-
-        EditedMediaItem.Builder item = new EditedMediaItem.Builder(media)
-                .setFrameRate(30)
-                .setRemoveAudio(true);
-
-        List<Effect> video = buildLayerEffects(clip, aspect, quality, durationMs, animationSpec, layerRole);
-        item.setEffects(new Effects(Collections.emptyList(), video));
-        return item.build();
-    }
-
-    private List<Effect> buildLayerEffects(ProjectStore.Clip clip,
-                                           String aspect,
-                                           String quality,
-                                           long durationMs,
-                                           JSONObject animationSpec,
-                                           String layerRole) {
-        ArrayList<Effect> effects = new ArrayList<>();
-        JSONObject fx = clip.effects == null ? new JSONObject() : clip.effects;
-
-        effects.add(Presentation.createForAspectRatio(aspectRatio(aspect), Presentation.LAYOUT_SCALE_TO_FIT_WITH_CROP));
-        int height = "720p".equalsIgnoreCase(quality)
-                ? ("16:9".equals(aspect) ? 720 : 1280)
-                : ("16:9".equals(aspect) ? 1080 : 1920);
-        effects.add(Presentation.createForHeight(height));
-
-        // Keep a safety overscan so parallax never reveals the edge of a plate.
-        float overscan = "background".equals(layerRole) ? 1.10f : 1.035f;
-        effects.add(new ScaleAndRotateTransformation.Builder()
-                .setScale(overscan, overscan)
-                .build());
-
-        applyColourEffects(effects, fx);
-
-        String preset = animationSpec == null
-                ? fx.optString("motionPreset", "push_in")
-                : animationSpec.optString("cameraPreset", fx.optString("motionPreset", "push_in"));
-        long durationUs = Math.max(100_000L, durationMs * 1000L);
-        effects.add(new MotionMatrixEffect(
-                preset,
-                durationUs,
-                Math.min(320_000L, Math.max(180_000L, durationUs / 12)),
-                animationSpec,
-                layerRole
-        ));
-
-        // Atmosphere is drawn only once on the topmost subject sequence.
-        // Articulated renders use the head layer; older layered projects use
-        // the single foreground layer.
-        if (("head".equals(layerRole) || "foreground".equals(layerRole)) && animationSpec != null) {
-            String environment = animationSpec.optString("environmentMotion", "ambient_drift");
-            double atmosphere = animationSpec.optDouble("atmosphereIntensity", .42);
-            effects.add(new OverlayEffect(Collections.singletonList(
-                    new AtmosphereOverlay(environment, atmosphere, durationUs)
-            )));
-        }
-        return effects;
-    }
-
-    private void applyColourEffects(List<Effect> effects, JSONObject fx) {
-        double brightness = fx.optDouble("brightness", 0);
-        double contrast = fx.optDouble("contrast", 0);
-        double saturation = fx.optDouble("saturationAdjust", fx.optDouble("saturation", 0));
-        double lightness = fx.optDouble("lightnessAdjust", 0);
-        String preset = fx.optString("effectPreset", fx.optString("colorPreset", ""));
-        if (!preset.isEmpty() && !"none".equals(preset)) {
-            JSONObject p = CreatorCatalog.effectPreset(preset);
-            if (!fx.has("brightness")) brightness = p.optDouble("brightness", brightness);
-            if (!fx.has("contrast")) contrast = p.optDouble("contrast", contrast);
-            if (!fx.has("saturationAdjust") && !fx.has("saturation")) saturation = p.optDouble("saturationAdjust", saturation);
-            if (!fx.has("lightnessAdjust")) lightness = p.optDouble("lightnessAdjust", lightness);
-        }
-
-        brightness = clamp(brightness, -1, 1);
-        contrast = clamp(contrast, -1, 1);
-        saturation = clamp(saturation, -100, 100);
-        lightness = clamp(lightness, -100, 100);
-        if (Math.abs(brightness) > .001) effects.add(new Brightness((float) brightness));
-        if (Math.abs(contrast) > .001) effects.add(new Contrast((float) contrast));
-        if (Math.abs(saturation) > .001 || Math.abs(lightness) > .001) {
-            effects.add(new HslAdjustment.Builder()
-                    .adjustSaturation((float) saturation)
-                    .adjustLightness((float) lightness)
-                    .build());
-        }
-    }
-
-    private EditedMediaItem buildItem(ProjectStore.Asset asset, ProjectStore.Clip clip, String aspect, String quality, boolean image) {
-        long inputDurationMs = Math.max(100, clip.outMs - clip.inMs);
-        MediaItem.Builder media = new MediaItem.Builder().setUri(Uri.parse(asset.uri));
-
-        if (image) {
-            media.setImageDurationMs(Math.max(250, clip.outputDurationMs()));
-        } else {
-            media.setClippingConfiguration(
-                    new MediaItem.ClippingConfiguration.Builder()
-                            .setStartPositionMs(Math.max(0, clip.inMs))
-                            .setEndPositionMs(Math.max(clip.inMs + 100, clip.outMs))
-                            .build());
-        }
-
-        EditedMediaItem.Builder edited = new EditedMediaItem.Builder(media.build());
-        if (image) edited.setFrameRate(30);
-
-        if (!image && Math.abs(clip.speed - 1f) > .01f) {
-            final float speed = Math.max(.25f, Math.min(4f, clip.speed));
-            edited.setSpeed(new SpeedProvider() {
-                @Override public float getSpeed(long timeUs) { return speed; }
-                @Override public long getNextSpeedChangeTimeUs(long timeUs) { return C.TIME_UNSET; }
-            });
-        }
-
-        List<AudioProcessor> audio = Collections.emptyList();
-        List<Effect> video = buildEffects(clip, aspect, quality, inputDurationMs);
-        edited.setEffects(new Effects(audio, video));
-        if (asset.mime == null || !asset.mime.startsWith("video/")) edited.setRemoveAudio(true);
-        return edited.build();
-    }
-
-    private List<Effect> buildEffects(ProjectStore.Clip clip, String aspect, String quality, long inputDurationMs) {
-        ArrayList<Effect> effects = new ArrayList<>();
-        JSONObject fx = clip.effects == null ? new JSONObject() : clip.effects;
-
-        float targetAspect = aspectRatio(aspect);
-        effects.add(Presentation.createForAspectRatio(targetAspect, Presentation.LAYOUT_SCALE_TO_FIT_WITH_CROP));
-        int height = "720p".equalsIgnoreCase(quality) ? ("16:9".equals(aspect) ? 720 : 1280) : ("16:9".equals(aspect) ? 1080 : 1920);
-        effects.add(Presentation.createForHeight(height));
-
-        JSONObject proceduralGraph = fx.optJSONObject("proceduralScene");
-        if (proceduralGraph != null) {
-            try {
-                effects.add(new OverlayEffect(Collections.singletonList(new ProceduralSceneOverlay(
-                        proceduralGraph, Math.max(100_000, clip.outputDurationMs() * 1000L)))));
-            } catch (Exception error) { throw new IllegalArgumentException("Invalid procedural scene", error); }
-        }
-
-        String preset = fx.optString("effectPreset", fx.optString("colorPreset", ""));
-        applyColourEffects(effects, fx);
-
-        double blur = fx.optDouble("blur", 0);
-        if ("gaussian_blur".equals(preset)) blur = Math.max(blur, 5);
-        if ("soft_glow".equals(preset) || "dream".equals(preset)) blur = Math.max(blur, 1.6);
-        if (blur > .1) effects.add(new GaussianBlur((float) Math.min(18, blur)));
-
-        double rotation = clamp(fx.optDouble("rotate", 0), -45, 45);
-        double scale = clamp(fx.optDouble("scale", fx.optDouble("zoom", 1)), .5, 2.5);
-        if (Math.abs(rotation) > .01 || Math.abs(scale - 1) > .01) {
-            effects.add(new ScaleAndRotateTransformation.Builder()
-                    .setRotationDegrees((float) rotation)
-                    .setScale((float) scale, (float) scale)
-                    .build());
-        }
-
-        String motion = fx.optString("motionPreset", "none");
-        String transition = clip.transition == null ? "none" : clip.transition;
-        if (!"none".equals(motion) || (!"none".equals(transition) && !"cut".equals(transition))) {
-            String matrixPreset = "none".equals(motion) ? transition : motion;
-            effects.add(new MotionMatrixEffect(matrixPreset, Math.max(100_000, clip.outputDurationMs() * 1000L), 280_000));
-        }
-
-        return effects;
-    }
-
-    private void startProgressPolling(Handle handle, Listener listener) {
-        ProgressHolder holder = new ProgressHolder();
-        handle.progressTask = new Runnable() {
-            @Override public void run() {
-                if (handle.isCancelled()) return;
-                try {
-                    int state = handle.transformer.getProgress(holder);
-                    if (state == Transformer.PROGRESS_STATE_AVAILABLE) {
-                        listener.onProgress(holder.progress, "Native export " + holder.progress + "%");
-                    }
-                    if (state != Transformer.PROGRESS_STATE_NOT_STARTED && state != Transformer.PROGRESS_STATE_UNAVAILABLE) {
-                        main.postDelayed(this, 450);
-                    }
-                } catch (Exception ignored) {}
-            }
-        };
-        main.post(handle.progressTask);
-    }
-
-    private static float aspectRatio(String aspect) {
-        if ("16:9".equals(aspect)) return 16f / 9f;
-        if ("1:1".equals(aspect)) return 1f;
-        if ("4:5".equals(aspect)) return 4f / 5f;
-        return 9f / 16f;
-    }
-
-    private static double clamp(double v, double min, double max) {
-        return Math.max(min, Math.min(max, v));
-    }
 }
-

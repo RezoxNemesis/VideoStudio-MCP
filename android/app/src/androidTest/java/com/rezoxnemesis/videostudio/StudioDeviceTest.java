@@ -215,17 +215,42 @@ public class StudioDeviceTest {
         assertEquals(originalHash,PlayableMediaVerifier.verify(context,Uri.fromFile(sourceFile),true).getString("sha256"));write("proxy-proof.json",result.get().toString(2));
     }
 
-    private void render(ProjectStore.Project p,File output) throws Exception {
+    @Test public void conservativeAndSoftwareCodecsRenderOriginalVideoWithAudio()throws Exception {
+        ProjectStore store=new ProjectStore(context);ProjectStore.Project fixture=store.create("Codec source fixture");fixture.assets.add(asset("codec-red",png("codec-red.png",Color.RED),"image/png",0));fixture.assets.add(asset("codec-tone",wav("codec-tone.wav",1),"audio/wav",1000));
+        fixture.clips.add(clip("codec-image","codec-red",fixture.tracks.get(0).id,0,1000));ProjectStore.Track sound=new ProjectStore.Track();sound.id="codec-audio";sound.type="audio_music";sound.order=1;fixture.tracks.add(sound);fixture.clips.add(clip("codec-sound","codec-tone",sound.id,0,1000));store.save(fixture);
+        File original=new File(evidence,"codec-source.mp4");render(fixture,original);String sourceHash=PlayableMediaVerifier.verify(context,Uri.fromFile(original),true).getString("sha256");
+        ProjectStore.Project project=store.create("Codec path evidence");ProjectStore.Asset source=asset("codec-video",original,"video/mp4",1000);project.assets.add(source);project.clips.add(clip("codec-video-clip",source.id,project.tracks.get(0).id,0,1000));project.settings.put("fps",30).put("exportBitrate",2_000_000);store.save(project);
+        org.json.JSONArray attempts=new org.json.JSONArray();
+        for(RenderRetryController.Route route:new RenderRetryController.Route[]{RenderRetryController.Route.CONSERVATIVE,RenderRetryController.Route.SOFTWARE_CODECS}){
+            File output=new File(evidence,"codec-"+route.name().toLowerCase(java.util.Locale.ROOT)+".mp4");JSONObject proof=render(project,output,route);assertEquals(route.name().toLowerCase(java.util.Locale.ROOT),proof.getString("codecRoute"));assertTrue(proof.getBoolean("playable"));assertTrue(proof.getBoolean("hasAudio"));assertEquals(1280,proof.getInt("encodedWidth"));assertEquals(720,proof.getInt("encodedHeight"));assertEquals(2_000_000,proof.getInt("requestedBitrate"));assertTrue(proof.getBoolean("codecReliabilityRecorded"));assertFrame(output,500000,Color.RED);
+            assertEquals(2_000_000,proof.getInt("configuredBitrate"));
+            if(route==RenderRetryController.Route.SOFTWARE_CODECS){
+                boolean softwareEncoder=false,softwareDecoder=false;
+                for(android.media.MediaCodecInfo codec:new android.media.MediaCodecList(android.media.MediaCodecList.ALL_CODECS).getCodecInfos()){
+                    if(codec.getName().equals(proof.getString("videoEncoder")))softwareEncoder=codec.isSoftwareOnly();
+                    org.json.JSONArray names=proof.getJSONArray("decoderNames");for(int i=0;i<names.length();i++)if(codec.getName().equals(names.getString(i))&&!codec.isEncoder()&&codec.isSoftwareOnly())for(String mime:codec.getSupportedTypes())if(mime.startsWith("video/"))softwareDecoder=true;
+                }
+                assertTrue("Actual software video encoder",softwareEncoder);assertTrue("Actual software video decoder",softwareDecoder);
+            }
+            attempts.put(proof);
+        }
+        assertEquals(sourceHash,PlayableMediaVerifier.verify(context,Uri.fromFile(original),true).getString("sha256"));
+        try(CodecReliabilityStore history=new CodecReliabilityStore(context)){assertTrue(history.entries().length()>0);write("codec-reliability-proof.json",new JSONObject().put("attempts",attempts).put("history",history.entries()).put("originalRetained",true).toString(2));}
+    }
+
+    private void render(ProjectStore.Project p,File output) throws Exception {render(p,output,RenderRetryController.Route.DEFAULT);}
+    private JSONObject render(ProjectStore.Project p,File output,RenderRetryController.Route route) throws Exception {
         CountDownLatch complete=new CountDownLatch(1);AtomicReference<String> error=new AtomicReference<>();
+        AtomicReference<JSONObject> proof=new AtomicReference<>();
         AtomicReference<NativeRenderEngine.Handle> handle=new AtomicReference<>();
         InstrumentationRegistry.getInstrumentation().runOnMainSync(()->handle.set(new NativeRenderEngine(context).export(p,output,"16:9","720p",new NativeRenderEngine.Listener(){
             @Override public void onProgress(int progress,String detail){}
-            @Override public void onCompleted(File file,JSONObject result){complete.countDown();}
+            @Override public void onCompleted(File file,JSONObject result){proof.set(result);complete.countDown();}
             @Override public void onError(String detail){error.set(detail);complete.countDown();}
-        })));
+        },route)));
         boolean finished=complete.await(120,TimeUnit.SECONDS);
         if(!finished&&handle.get()!=null)handle.get().cancel();
-        assertTrue("Native export timed out",finished);assertNull("Native render: "+error.get(),error.get());assertTrue(output.length()>0);
+        assertTrue("Native export timed out",finished);assertNull("Native render: "+error.get(),error.get());assertTrue(output.length()>0);assertNotNull(proof.get());return proof.get();
     }
     private File png(String name,int color)throws Exception {
         File out=new File(evidence,name);Bitmap bitmap=Bitmap.createBitmap(640,360,Bitmap.Config.ARGB_8888);bitmap.eraseColor(color);

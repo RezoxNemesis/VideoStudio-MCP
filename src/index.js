@@ -1556,7 +1556,7 @@ function serverForApp(env,ownerKey,protocolVersion=1){
   const isV3=Number(protocolVersion)>=3, isV4=Number(protocolVersion)===4;
   const s=new McpServer({
     name:isV4?"VideoStudio-App-MCP-v4":isV3?"VideoStudio-App-MCP-v3":"VideoStudio-App-MCP",
-    version:isV3?"3.4.9":"1.1.2"
+    version:isV3?"3.4.10":"1.1.2"
   }), st=state(env);
   const enqueueCommand=(action,parameters={})=>isV3
     ? st.appEnqueueV3(ownerKey,action,parameters)
@@ -1602,7 +1602,7 @@ function serverForApp(env,ownerKey,protocolVersion=1){
   s.registerTool("app_status",{description:isV3?"Check the VideoStudio v3 Native Agent connection, protocol version, permission mode, projects and pending native work. Gallery access is always false.":"Check the private native VideoStudio Android connection, permission mode, projects, control-pause state and pending work. Gallery access is always false.",inputSchema:{}},async()=>out(await readStatus()));
 
   s.registerTool("app_capabilities",{description:isV3?"Read VideoStudio v3 Native Agent capabilities and architecture guarantees.":"Read the native v1.1 editing, AI, render and privacy capabilities available to ChatGPT.",inputSchema:{}},async()=>out({
-    version:isV3?"3.4.9":"1.1.2",
+    version:isV3?"3.4.10":"1.1.2",
     featureProtocolVersion:isV3?4:1,
     editorSchema:isV3?EDITOR_SCHEMA:undefined,
     protocolVersion:isV3?3:1,

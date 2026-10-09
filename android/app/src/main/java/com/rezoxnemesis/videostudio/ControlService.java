@@ -2479,6 +2479,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         CountDownLatch latch = new CountDownLatch(1);
         AtomicReference<String> error = new AtomicReference<>();
         AtomicReference<File> completed = new AtomicReference<>();
+        AtomicReference<JSONObject> encodedMetadata=new AtomicReference<>();
         NativeRenderEngine.Handle renderHandle=null;boolean renderCompleted=false;
         try{
         renderHandle = renderEngine.export(project, temp, aspect, quality, new NativeRenderEngine.Listener() {
@@ -2487,7 +2488,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             }
 
             @Override public void onCompleted(File file, JSONObject result) {
-                completed.set(file);
+                encodedMetadata.set(result);completed.set(file);
                 latch.countDown();
             }
 
@@ -2509,7 +2510,8 @@ public final class ControlService extends Service implements AppProtocol.Callbac
 
         checkExportActive(state);
         checkpoint(state,"Verifying output","Decoding exported media before publication",96,project.id);
-        JSONObject verification=PlayableMediaVerifier.verify(this,Uri.fromFile(ready),true);
+        JSONObject verification=PlayableMediaVerifier.withFreshProof(encodedMetadata.get(),PlayableMediaVerifier.verify(this,Uri.fromFile(ready),true));
+        verification.remove("path");
 
         checkpoint(state, "Exporting video", "Writing selected export destination", 97, project.id);
         JSONObject committed = recoveryPlans.outputForJob(state.id);
@@ -2543,7 +2545,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 }
         );
         Uri publicUri = Uri.parse(publication.uri);
-        JSONObject publishedProof=PlayableMediaVerifier.verify(this,publicUri,true);
+        JSONObject publishedProof=PlayableMediaVerifier.withFreshProof(verification,PlayableMediaVerifier.verify(this,publicUri,true));
         if(!verification.optString("sha256").equals(publishedProof.optString("sha256")))throw new IllegalStateException("Published output checksum differs from encoded media");
         checkExportActive(state);
         if (!publication.reused) {

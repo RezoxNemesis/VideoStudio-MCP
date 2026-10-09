@@ -12,6 +12,10 @@ for trace in pathlib.Path('artifacts/device-evidence').rglob('failure-*.xml'):
         text=node.get('text','') or node.get('content-desc','')
         if text and '://' not in text: labels.append({'package':node.get('package',''),'text':text[:160]})
     print('DEVICE_FAILURE_UI '+json.dumps({'file':trace.name,'labels':labels[:50]}))
+for trace in pathlib.Path('artifacts/device-evidence').rglob('codec-reliability-proof.json'):
+    proof=json.loads(trace.read_text())
+    fields=['codecRoute','videoEncoder','audioEncoder','decoderNames','encodedWidth','encodedHeight','codecWidth','codecHeight','codecFps','requestedBitrate','configuredBitrate','hasAudio','durationMs','sha256','codecReliabilityRecorded']
+    print('DEVICE_CODEC_EVIDENCE '+json.dumps({'originalRetained':proof['originalRetained'],'attempts':[{key:attempt.get(key) for key in fields} for attempt in proof['attempts']]}))
 PYUI
 }
 trap collect_evidence EXIT
