@@ -114,13 +114,14 @@ public class StudioDeviceTest {
         project.assets.add(asset("autonomous-image",source,"image/png",0));project.clips.add(clip("autonomous-clip","autonomous-image",project.tracks.get(0).id,0,1000));store.save(project);
         CommandJournal journal=new CommandJournal(context);String id="device-agent-"+java.util.UUID.randomUUID();JSONObject edit=new JSONObject().put("id",id).put("action","editor_operation").put("parameters",new JSONObject().put("projectId",project.id).put("expectedRevision",project.revision).put("commandId",id).put("operation","set_title").put("args",new JSONObject().put("clipId","autonomous-clip").put("text","AUTONOMOUS")));
         try(ActivityScenario<MainActivity> scenario=ActivityScenario.launch(new Intent(context,MainActivity.class))){
-            journal.begin(edit);context.startForegroundService(new Intent(context,ControlService.class).setAction(ControlService.ACTION_REMOTE_COMMAND).putExtra("commandId",id).putExtra("projectId",project.id));
-            scenario.moveToState(androidx.lifecycle.Lifecycle.State.CREATED);JSONObject edited=awaitCommand(journal,id,30_000);assertEquals(edited.toString(),"completed",edited.getString("status"));assertEquals("AUTONOMOUS",store.get(project.id).clips.get(0).title);long revision=store.get(project.id).revision;
-            context.startService(new Intent(context,ControlService.class).setAction(ControlService.ACTION_REMOTE_COMMAND).putExtra("commandId",id).putExtra("projectId",project.id));SystemClock.sleep(500);assertEquals("Retry cannot edit twice",revision,store.get(project.id).revision);
+            context.startForegroundService(new Intent(context,ControlService.class).setAction(ControlService.ACTION_SYNC));awaitForegroundService();scenario.moveToState(androidx.lifecycle.Lifecycle.State.DESTROYED);assertEquals(androidx.lifecycle.Lifecycle.State.DESTROYED,scenario.getState());
+            journal.begin(edit);context.startService(new Intent(context,ControlService.class).setAction(ControlService.ACTION_REMOTE_COMMAND).putExtra("commandId",id).putExtra("projectId",project.id));
+            JSONObject edited=awaitCommand(journal,id,30_000);assertEquals(edited.toString(),"completed",edited.getString("status"));assertEquals("AUTONOMOUS",store.get(project.id).clips.get(0).title);long revision=store.get(project.id).revision;
+            context.startService(new Intent(context,ControlService.class).setAction(ControlService.ACTION_REMOTE_COMMAND).putExtra("commandId",id).putExtra("projectId",project.id));awaitReplay(id);assertEquals("Retry cannot edit twice",revision,store.get(project.id).revision);
             String exportId="device-export-"+java.util.UUID.randomUUID();JSONObject export=new JSONObject().put("id",exportId).put("action","autonomous_edit").put("parameters",new JSONObject().put("projectId",project.id).put("expectedRevision",revision).put("render",true).put("aspect","16:9").put("quality","720p").put("fileName","DeviceAutonomousPreview.mp4"));journal.begin(export);
             context.startService(new Intent(context,ControlService.class).setAction(ControlService.ACTION_REMOTE_COMMAND).putExtra("commandId",exportId).putExtra("projectId",project.id));JSONObject completed=awaitCommand(journal,exportId,180_000);assertEquals(completed.toString(),"completed",completed.getString("status"));JSONObject result=completed.getJSONObject("result");assertTrue(result.toString(),result.getBoolean("verifiedPlayableOutput"));JSONObject actual=PlayableMediaVerifier.verify(context,Uri.parse(result.getString("outputUri")),true);assertEquals(result.getJSONObject("verification").getString("sha256"),actual.getString("sha256"));copy(Uri.parse(result.getString("outputUri")),new File(evidence,"autonomous-service-export.mp4"));
             assertEquals("Export retains the edited timeline",1,store.get(project.id).clips.size());assertEquals("AUTONOMOUS",store.get(project.id).clips.get(0).title);assertArrayEquals(original,java.nio.file.Files.readAllBytes(source.toPath()));
-            write("autonomous-service-proof.json",new JSONObject().put("serviceCommandDispatch",true).put("ownerEditorClosed",true).put("retryDidNotDuplicateEdit",true).put("originalRetained",true).put("publishedOutputVerified",true).put("verification",actual).put("externalChatGptTransportVerified",false).toString(2));
+            write("autonomous-service-proof.json",new JSONObject().put("serviceCommandDispatch",true).put("ownerEditorClosed",true).put("ownerActivityDestroyedBeforeEdit",true).put("retryDispatchObserved",true).put("retryDidNotDuplicateEdit",true).put("originalRetained",true).put("publishedOutputVerified",true).put("verification",actual).put("externalChatGptTransportVerified",false).toString(2));
         }
     }
 
@@ -128,6 +129,13 @@ public class StudioDeviceTest {
         long end=SystemClock.elapsedRealtime()+timeout;JSONObject terminal;
         while((terminal=journal.terminal(id))==null&&SystemClock.elapsedRealtime()<end)SystemClock.sleep(100);
         assertNotNull("Service command timed out: "+id,terminal);return terminal;
+    }
+    private void awaitForegroundService(){
+        long end=SystemClock.elapsedRealtime()+20_000;android.app.ActivityManager manager=(android.app.ActivityManager)context.getSystemService(Context.ACTIVITY_SERVICE);
+        while(SystemClock.elapsedRealtime()<end){for(android.app.ActivityManager.RunningServiceInfo service:manager.getRunningServices(Integer.MAX_VALUE))if(service.foreground&&ControlService.class.getName().equals(service.service.getClassName()))return;SystemClock.sleep(100);}fail("Native foreground service did not start");
+    }
+    private void awaitReplay(String id)throws Exception{
+        long end=SystemClock.elapsedRealtime()+10_000;while(SystemClock.elapsedRealtime()<end){org.json.JSONArray entries=ActivityLog.recent(context,220);for(int i=0;i<entries.length();i++){JSONObject entry=entries.getJSONObject(i);if(id.equals(entry.optString("commandId"))&&"MCP v3 command replay prevented".equals(entry.optString("action")))return;}SystemClock.sleep(100);}fail("Retried command was not processed by the service");
     }
 
     @Test public void ownerSelectedDocumentFolderReplicatesEncryptedVaultAndReusesVerifiedObjects()throws Exception{
