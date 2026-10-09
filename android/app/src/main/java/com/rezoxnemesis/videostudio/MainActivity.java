@@ -213,16 +213,27 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         box.addView(brandHeader());
 
         LinearLayout hero = card(true);
-        TextView heroTitle = title("Create Without Limits", 28);
+        TextView heroTitle = title("Create your next video", 28);
         hero.addView(heroTitle);
-        hero.addView(body("Native " + AppProtocol.APP_VERSION + " Creative Runtime • stable MCP compatibility core • on-device portrait AI • MotionScript/CreativeIR • local Media3 export"));
-        Button promptVideo = neonButton("✦  Create Video from a Prompt", C_MAGENTA);
+        hero.addView(body("VideoStudio " + AppProtocol.APP_VERSION + " • edit media, animate stills and export on your phone."));
+        Button importMedia = neonButton("Import video, images or audio", C_CYAN);
+        importMedia.setOnClickListener(v -> pickMedia());
+        hero.addView(importMedia, margins(-1, dp(54), dp(14), dp(8), 0, 0));
+        Button openEditor = compactButton("Open editor");
+        openEditor.setOnClickListener(v -> showEditor());
+        hero.addView(openEditor, margins(-1, dp(46), 0, dp(4), 0, 0));
+        Button promptVideo = compactButton("✦ Create a prompt storyboard");
         promptVideo.setOnClickListener(v -> promptVideoDialog());
-        hero.addView(promptVideo, margins(-1, dp(54), dp(14), dp(8), 0, 0));
+        hero.addView(promptVideo, margins(-1, dp(46), 0, dp(4), 0, 0));
         Button create = compactButton("+ New project");
         create.setOnClickListener(v -> createProjectDialog());
         hero.addView(create, margins(-1, dp(46), 0, dp(4), 0, 0));
         box.addView(hero, margins(-1, -2, 0, dp(22), 0, 0));
+
+        LinearLayout guide = card(false);
+        guide.addView(title("Start with your own media", 17));
+        guide.addView(body("Import media into a project. Open the editor to split, trim and add effects. Export to save an MP4. ChatGPT is optional for editing."));
+        box.addView(guide, margins(-1, -2, 0, dp(16), 0, 0));
 
         LinearLayout connect = card(false);
         connect.setBackground(neonCard());
@@ -281,8 +292,8 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
 
         box.addView(section("Foundation"));
         LinearLayout foundation = card(false);
-        foundation.addView(title("Creator-grade native foundation", 17));
-        foundation.addView(body("Media3 layered export • bundled person segmentation + face mesh • 2.5D parallax • keyframed motion • crash recovery • thermal/RAM governor • no Gallery browsing permission."));
+        foundation.addView(title("Made for your phone", 17));
+        foundation.addView(body("Work on imported media in the editor, animate still images and export an MP4. Connect ChatGPT when you want it to operate the app."));
         box.addView(foundation);
 
         setScreen(scroll, "home");

@@ -37,6 +37,10 @@ for trace in pathlib.Path('artifacts/device-evidence').rglob('segment-window-pro
     print('DEVICE_SEGMENT_EVIDENCE '+json.dumps(proof))
 for trace in pathlib.Path('artifacts/device-evidence').rglob('segment-input-timing.json'):
     print('DEVICE_SEGMENT_TIMING_EVIDENCE '+json.dumps(json.loads(trace.read_text())))
+for trace in pathlib.Path('artifacts/device-evidence').rglob('segment-decoded-audio-proof.json'):
+    print('DEVICE_SEGMENT_DECODED_AUDIO '+json.dumps(json.loads(trace.read_text())))
+for trace in pathlib.Path('artifacts/device-evidence').rglob('autonomous-service-proof.json'):
+    print('DEVICE_AUTONOMOUS_SERVICE '+json.dumps(json.loads(trace.read_text())))
 PYUI
 }
 trap collect_evidence EXIT

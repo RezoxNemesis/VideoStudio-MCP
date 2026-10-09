@@ -2510,7 +2510,9 @@ public final class ControlService extends Service implements AppProtocol.Callbac
 
         checkExportActive(state);
         checkpoint(state,"Verifying output","Decoding exported media before publication",96,project.id);
-        JSONObject verification=PlayableMediaVerifier.withFreshProof(encodedMetadata.get(),PlayableMediaVerifier.verify(this,Uri.fromFile(ready),true));
+        JSONObject currentProof=PlayableMediaVerifier.verify(this,Uri.fromFile(ready),true);
+        GaplessAudioMuxer.bindVerifiedBytes(encodedMetadata.get(),currentProof);
+        JSONObject verification=PlayableMediaVerifier.withFreshProof(encodedMetadata.get(),currentProof);
         verification.remove("path");
 
         checkpoint(state, "Exporting video", "Writing selected export destination", 97, project.id);

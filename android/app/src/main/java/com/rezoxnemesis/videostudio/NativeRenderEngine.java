@@ -59,9 +59,10 @@ public final class NativeRenderEngine {
         try{
             if(composition==null)throw new IllegalArgumentException("Native composition is absent");
             ProjectStore.Project project=ProjectStore.Project.fromJson(original.snapshotJson());protectOriginals(project,outputFile);
+            java.util.concurrent.atomic.AtomicReference<JSONObject> finalizedBytes=new java.util.concurrent.atomic.AtomicReference<>();
             RenderRetryController controller=new RenderRetryController(main::post,VERIFICATION,
-                    (route,callback)->startAttempt(project,composition,outputFile,aspect,quality,route,callback),
-                    ()->PlayableMediaVerifier.verify(context,Uri.fromFile(outputFile),requireVideo),
+                    (route,callback)->startAttempt(project,composition,outputFile,aspect,quality,route,callback,finalizedBytes),
+                    ()->GaplessAudioMuxer.bindVerifiedBytes(finalizedBytes.get(),PlayableMediaVerifier.verify(context,Uri.fromFile(outputFile),requireVideo)),
                     new RenderRetryController.Observer(){
                         public void progress(int percent,String detail){listener.onProgress(percent,detail);}
                         public void failed(String detail){listener.onError(detail);}
@@ -78,15 +79,17 @@ public final class NativeRenderEngine {
         }catch(Exception error){listener.onError(error.getMessage()==null?"Could not prepare native export":error.getMessage());return null;}
     }
 
-    private RenderRetryController.Attempt startAttempt(ProjectStore.Project project,Composition composition,File outputFile,String aspect,String quality,RenderRetryController.Route route,RenderRetryController.Callback callback)throws Exception{
+    private RenderRetryController.Attempt startAttempt(ProjectStore.Project project,Composition composition,File outputFile,String aspect,String quality,RenderRetryController.Route route,RenderRetryController.Callback callback,java.util.concurrent.atomic.AtomicReference<JSONObject> finalizedBytes)throws Exception{
         // outputFile is the caller's dedicated render workspace, never an input asset.
         protectOriginals(project,outputFile);
+        finalizedBytes.set(null);
         if(outputFile.exists()&&!outputFile.delete())throw new java.io.IOException("Could not replace failed export workspace");
         int[] dimensions=NativeCodecPolicy.dimensions(aspect,quality);int fps=project.settings.optInt("fps",30);
         String profile=route==RenderRetryController.Route.DEFAULT?"default":"baseline";
         ReliableDecoderFactory decoder=new ReliableDecoderFactory(context,route,fps);
         java.util.Set<String> recordedErrors=java.util.concurrent.ConcurrentHashMap.newKeySet();
         java.util.concurrent.atomic.AtomicReference<androidx.media3.common.Format> encoderFormat=new java.util.concurrent.atomic.AtomicReference<>();
+        java.util.concurrent.atomic.AtomicReference<AacDrainCodec.State> audioDrain=new java.util.concurrent.atomic.AtomicReference<>();AtomicBoolean stopped=new AtomicBoolean();
         androidx.media3.transformer.Codec.EncoderFactory encoder=new androidx.media3.transformer.Codec.EncoderFactory(){
             private androidx.media3.transformer.DefaultEncoderFactory configured(androidx.media3.common.Format format){
                 int rate=format.frameRate>0?Math.max(1,Math.round(format.frameRate)):fps;
@@ -102,7 +105,12 @@ public final class NativeRenderEngine {
                 return new androidx.media3.transformer.DefaultEncoderFactory.Builder(context).setEnableFallback(true).setEnableFormatFallback(false).setVideoEncoderSelector(selector)
                         .setRequestedVideoEncoderSettings(settings).setRequestedAudioEncoderSettings(new androidx.media3.transformer.AudioEncoderSettings.Builder().setBitrate(192_000).build()).build();
             }
-            public androidx.media3.transformer.Codec createForAudioEncoding(androidx.media3.common.Format format,android.media.metrics.LogSessionId session)throws ExportException{return configured(format).createForAudioEncoding(format,session);}
+            public androidx.media3.transformer.Codec createForAudioEncoding(androidx.media3.common.Format format,android.media.metrics.LogSessionId session)throws ExportException{
+                androidx.media3.transformer.Codec codec=configured(format).createForAudioEncoding(format,session);
+                // The measured C2 AAC route loses its partial frame/delay on empty EOS.
+                if(!"c2.android.aac.encoder".equals(codec.getName()))return codec;
+                try{AacDrainCodec.State state=new AacDrainCodec.State(TimelineCompositionFactory.programDurationUs(project));AacDrainCodec wrapped=new AacDrainCodec(codec,state);audioDrain.set(state);return wrapped;}catch(ExportException|RuntimeException error){codec.release();throw error;}
+            }
             public androidx.media3.transformer.Codec createForVideoEncoding(androidx.media3.common.Format format,android.media.metrics.LogSessionId session)throws ExportException{
                 format=NativeCodecPolicy.encoderRequest(format);
                 encoderFormat.set(format);
@@ -119,11 +127,12 @@ public final class NativeRenderEngine {
             public boolean audioNeedsEncoding(){return true;}
             public boolean videoNeedsEncoding(){return true;}
         };
-        AtomicBoolean stopped=new AtomicBoolean();ProgressHolder progress=new ProgressHolder();Transformer[] active=new Transformer[1];Runnable[] poll=new Runnable[1];
+        ProgressHolder progress=new ProgressHolder();Transformer[] active=new Transformer[1];Runnable[] poll=new Runnable[1];
         Transformer transformer=new Transformer.Builder(context)
                 .setAssetLoaderFactory(new androidx.media3.transformer.DefaultAssetLoaderFactory(context,decoder,androidx.media3.common.util.Clock.DEFAULT,
                         new androidx.media3.exoplayer.source.DefaultMediaSourceFactory(context),new androidx.media3.datasource.DataSourceBitmapLoader(context)))
                 .setEncoderFactory(encoder)
+                .setMuxerFactory(new GaplessAudioMuxer.Factory(project,audioDrain,stopped::get,finalizedBytes))
                 .setVideoMimeType(MimeTypes.VIDEO_H264).setAudioMimeType(MimeTypes.AUDIO_AAC)
                 .addListener(new Transformer.Listener(){
                     @Override public void onCompleted(Composition completed,ExportResult result){
@@ -137,6 +146,7 @@ public final class NativeRenderEngine {
                                     .put("videoEncoder",result.videoEncoderName==null?"":result.videoEncoderName).put("audioEncoder",result.audioEncoderName==null?"":result.audioEncoderName)
                                     .put("decoderNames",decoder.names()).put("encodedWidth",result.width).put("encodedHeight",result.height).put("requestedBitrate",NativeCodecPolicy.settings(route,project.settings.optInt("exportBitrate",8_000_000),fps).bitrate);
                             androidx.media3.common.Format configuration=encoderFormat.get();
+                            AacDrainCodec.State audio=audioDrain.get();if(audio!=null){if(audio.trim==null)throw new IllegalStateException("AAC presentation padding was not verified");info.put("audioDrainPaddingFrames",audio.appendedFrames).put("audioProgrammeFrames",audio.programmeFrames).put("audioPaddingMetadataTrimmed",true).put("audioEncoderDelaySamples",audio.trim.delayUnits()).put("audioEncoderPaddingSamples",audio.trim.paddingUnits());}
                             if(configuration!=null)info.put("codecWidth",configuration.width).put("codecHeight",configuration.height).put("codecFps",Math.round(configuration.frameRate)).put("configuredBitrate",configuration.bitrate);
                             callback.encoded(info);
                         }catch(Exception error){callback.failed(new RenderRetryController.Failure(ExportException.ERROR_CODE_UNSPECIFIED,error.getMessage()));}

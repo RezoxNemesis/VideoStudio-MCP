@@ -94,10 +94,11 @@ final class SegmentMediaMuxer {
             }
             ByteBuffer eos=ByteBuffer.allocateDirect(1);eos.limit(0);muxer.writeSampleData(videoTrack,eos,endOfTrack(endUs,previous));
             if(audio!=null)try(Input input=new Input(audio.file,false)){
-                long previousAudio=Long.MIN_VALUE;while(hasSample(input.extractor.getSampleSize())){check(cancelled);long local=input.extractor.getSampleTime();
-                    // AAC padding can extend the final sample; keep the sample starting within the program.
-                    if(local>=endUs)break;long global=audioTimestamp(local,endUs,previousAudio,input.format);write(muxer,audioTrack,input.extractor,global,input.extractor.getSampleFlags(),buffer);previousAudio=global;audioSamples++;if(!input.extractor.advance())break;
-                }if(audioSamples==0)throw new IllegalArgumentException("Audio checkpoint has no AAC samples");eos.clear();eos.limit(0);muxer.writeSampleData(audioTrack,eos,audioEndOfTrack(endUs,firstAudioUs,previousAudio));
+                long encodedEndUs=Math.addExact(input.format.getLong(MediaFormat.KEY_DURATION),Math.min(0,firstAudioUs));long previousAudio=Long.MIN_VALUE;
+                // Preserve every full AAC packet, including codec-only padding. Edit metadata
+                // trims playback; shortening the raw last packet would erase padding accounting.
+                while(hasSample(input.extractor.getSampleSize())){check(cancelled);long local=input.extractor.getSampleTime();long global=audioTimestamp(local,encodedEndUs,previousAudio,input.format);write(muxer,audioTrack,input.extractor,global,input.extractor.getSampleFlags(),buffer);previousAudio=global;audioSamples++;if(!input.extractor.advance())break;
+                }if(audioSamples==0)throw new IllegalArgumentException("Audio checkpoint has no AAC samples");eos.clear();eos.limit(0);muxer.writeSampleData(audioTrack,eos,audioEndOfTrack(encodedEndUs,firstAudioUs,previousAudio));
             }
             check(cancelled);muxer.stop();started=false;finished=true;
         }catch(Exception error){failure=error;throw error;}
@@ -107,7 +108,7 @@ final class SegmentMediaMuxer {
             if(!finished)try{workspace.discard();}catch(Exception cleanup){if(failure!=null)failure.addSuppressed(cleanup);else throw cleanup;}
         }
         try{
-        workspace.ensureCurrent();android.system.Os.fsync(workspace.descriptor);check(cancelled);
+        workspace.ensureCurrent();if(audio!=null)GaplessAudioMp4.trim(workspace.descriptor,endUs,GaplessAudioMuxer.maxPaddingUs(audioFormat.getInteger(MediaFormat.KEY_SAMPLE_RATE)),cancelled);android.system.Os.fsync(workspace.descriptor);check(cancelled);
         try(Input input=new Input(workspace.descriptor,true)){trackDuration(input.format.getLong(MediaFormat.KEY_DURATION),endUs);}
         if(audio!=null)try(Input input=new Input(workspace.descriptor,false)){trackDuration(PlayableMediaVerifier.presentationDurationUs(input.format),endUs);}
         JSONObject proof=PlayableMediaVerifier.verifyDescriptor(workspace.descriptor,true,cancelled);check(cancelled);workspace.ensureCurrent();

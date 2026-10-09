@@ -1,0 +1,7 @@
+{
+  "version": "3.4.11",
+  "versionCode": 351,
+  "checkpoint": "owner-preview-aac-drain-and-autonomous-service-1",
+  "requestedByOwner": true,
+  "requireNativeTests": true
+}
