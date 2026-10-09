@@ -308,7 +308,9 @@ public final class AppProtocol {
                         if (!"queued".equals(commandStatus) && !"claimed".equals(commandStatus)) continue;
                         if (callback != null) {
                             JSONObject dispatch = cmd;
-                            main.post(() -> callback.onCommand(dispatch));
+                            main.post(() -> {
+                                if(running&&!isControlPaused())callback.onCommand(dispatch);
+                            });
                         }
                     }
                 }

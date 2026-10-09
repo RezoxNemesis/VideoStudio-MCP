@@ -211,6 +211,8 @@ public final class TimelineCompositionFactory {
 
         applyColourEffects(effects,fx,clip,sequenceStartUs);
 
+        applyBlurEffects(effects,fx);
+
         String preset = animationSpec == null
                 ? fx.optString("motionPreset", "push_in")
                 : animationSpec.optString("cameraPreset", fx.optString("motionPreset", "push_in"));
@@ -236,6 +238,14 @@ public final class TimelineCompositionFactory {
         effects.add(new ClipTransformEffect(clip,sequenceStartUs));
         effects.add(new ClipOpacityEffect(clip,sequenceStartUs));
         return effects;
+    }
+
+    private void applyBlurEffects(List<Effect> effects,JSONObject fx){
+        String preset=fx.optString("effectPreset",fx.optString("colorPreset",""));
+        double blur=fx.optDouble("blur",0);
+        if("gaussian_blur".equals(preset))blur=Math.max(blur,5);
+        if("soft_glow".equals(preset)||"dream".equals(preset))blur=Math.max(blur,1.6);
+        if(blur>.1)effects.add(new GaussianBlur((float)Math.min(18,blur)));
     }
 
     private void applyColourEffects(List<Effect> effects,JSONObject fx,ProjectStore.Clip clip,long sequenceStartUs){
@@ -330,13 +340,8 @@ public final class TimelineCompositionFactory {
             } catch (Exception error) { throw new IllegalArgumentException("Invalid procedural scene", error); }
         }
 
-        String preset = fx.optString("effectPreset", fx.optString("colorPreset", ""));
         applyColourEffects(effects,fx,clip,sequenceStartUs);
-
-        double blur = fx.optDouble("blur", 0);
-        if ("gaussian_blur".equals(preset)) blur = Math.max(blur, 5);
-        if ("soft_glow".equals(preset) || "dream".equals(preset)) blur = Math.max(blur, 1.6);
-        if (blur > .1) effects.add(new GaussianBlur((float) Math.min(18, blur)));
+        applyBlurEffects(effects,fx);
 
         effects.add(new ClipTransformEffect(clip,sequenceStartUs));
         float cropLeft=(float)fx.optDouble("cropLeft"), cropRight=(float)fx.optDouble("cropRight");

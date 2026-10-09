@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import {webcrypto} from 'node:crypto';
+import {z} from 'zod';
 
 const source=fs.readFileSync(new URL('../src/index.js',import.meta.url),'utf8');
 const schemaPath=new URL('../protocol/editor-operations.json',import.meta.url);
@@ -12,6 +13,14 @@ const context={crypto:webcrypto,TextEncoder,Response,Request,Headers,URL,setTime
 vm.createContext(context);
 const end=source.indexOf('\n}\n',source.indexOf('export class VideoStudioState'))+3;
 vm.runInContext(source.slice(source.indexOf('const JH'),end).replace('export class VideoStudioState','globalThis.VideoStudioState=class VideoStudioState'),context);
+context.z=z;
+context.McpServer=class {
+  constructor(){this.tools=new Map();}
+  registerTool(name,spec,handler){this.tools.set(name,{spec,handler});}
+};
+context.state=env=>env.relay;
+context.out=value=>({content:[{type:'text',text:JSON.stringify(value)}]});
+vm.runInContext(source.slice(source.indexOf('function editorZod('),source.indexOf('async function api(')),context);
 async function fixture(){
   const rows=new Map();const storage={get:async k=>structuredClone(rows.get(k)),put:async(k,v)=>rows.set(k,structuredClone(v)),delete:async k=>rows.delete(k)};
   storage.transaction=async fn=>fn(storage);
@@ -47,6 +56,14 @@ test('paused control refuses shared editor work without affecting native owner c
 test('legacy v3 queue still accepts its existing commands',async()=>{
   const f=await fixture();const command=await f.relay.appEnqueueV3(f.key,'ping',{});
   assert.equal(command.protocolVersion,3);assert.equal(command.action,'ping');
+});
+test('the legacy MCP tool forwards explicit project and revision to its durable native command',async()=>{
+  const f=await fixture(),server=context.serverForApp({relay:f.relay},f.key,3),tool=server.tools.get('app_apply_tool');
+  const input=z.object(tool.spec.inputSchema).strict().parse({projectId:'project-001',expectedRevision:12,clipIndex:0,tool:'volume',settings:{volume:.4}});
+  const response=JSON.parse((await tool.handler(input)).content[0].text);assert.equal(response.queued,true);
+  const command=(await f.storage.get('app-v3-cl:editor-device-001'))[0];
+  assert.equal(command.parameters.projectId,'project-001');assert.equal(command.parameters.expectedRevision,12);assert.equal(command.parameters.settings.volume,.4);
+  assert.throws(()=>z.object(tool.spec.inputSchema).parse({...input,expectedRevision:0}));
 });
 
 test('prototype names cannot masquerade as editor operations',async()=>{
@@ -103,4 +120,16 @@ test('creator styles require schema 3 and validate the renderer preset names',as
   await f.relay.appRegister('editor-device-001',f.key,{protocolVersion:3,appGeneration:1,editorSchemaVersion:3,permissionMode:'everything'});
   assert.ok((await f.relay.appEnqueueV3(f.key,'editor_operation',request)).id);
   await assert.rejects(f.relay.appEnqueueV3(f.key,'editor_operation',edit({commandId:'unknown-style-001',operation:'set_creator_style',args:{clipId:'clip-001',settings:{motionPreset:'invented_motion'}}})),/value|preset/i);
+});
+
+test('effect presets require schema 4, retain older styles and restrict selected clip authority',async()=>{
+  const f=await fixture();
+  const request=edit({operation:'set_effect_preset',args:{clipId:'clip-001',preset:'gaussian_blur'}});
+  await f.relay.appRegister('editor-device-001',f.key,{protocolVersion:3,appGeneration:1,editorSchemaVersion:3,permissionMode:'everything'});
+  await assert.rejects(f.relay.appEnqueueV3(f.key,'editor_operation',request),/schema version/i);
+  assert.ok((await f.relay.appEnqueueV3(f.key,'editor_operation',edit({commandId:'older-style-001',operation:'set_creator_style',args:{clipId:'clip-001',settings:{colorPreset:'none'}}}))).id);
+  await f.relay.appRegister('editor-device-001',f.key,{protocolVersion:3,appGeneration:1,editorSchemaVersion:4,permissionMode:'selected_assets',allowedProjectId:'project-001',allowedAssetIds:['asset-001'],allowedClipIds:['clip-001']});
+  assert.ok((await f.relay.appEnqueueV3(f.key,'editor_operation',request)).id);
+  await assert.rejects(f.relay.appEnqueueV3(f.key,'editor_operation',edit({commandId:'wrong-clip-fx-001',operation:'set_effect_preset',args:{clipId:'private-clip',preset:'none'}})),/scope|permission/i);
+  await assert.rejects(f.relay.appEnqueueV3(f.key,'editor_operation',edit({commandId:'wrong-effect-001',operation:'set_effect_preset',args:{clipId:'clip-001',preset:'unimplemented-bloom'}})),/value|preset/i);
 });

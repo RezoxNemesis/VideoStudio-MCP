@@ -56,7 +56,7 @@ Interfaces: durable session ID immediately appears in the export screen; manual 
 
 - [x] Add behavioral tests for preparing/progress/cancel/retry and immutable export revision.
 - [x] Implement settings, immediate session handoff, separate lane and status persistence.
-- [ ] Preserve source audio, clip volume, mute, transforms and visible supported effects in final output. Audio and transforms verified; the corrected alpha shader awaits Android CI.
+- [x] Preserve source audio, clip volume, mute, transforms and visible supported effects in final output. b3fb hardware device CI verified alpha/chroma/mask and mixed audio output.
 - [x] Verify output before publishing, test cancellation/recovery and commit.
 
 ## Task 4: Stable MCP editor parity and capability truth
@@ -83,9 +83,11 @@ Each subsystem receives its concrete tests/interfaces before product code. Missi
 
 ## Task 6: Release evidence and continuity
 
-- [ ] Run fresh full Node and Android tests and a source/build review.
+- [x] Run fresh full Node and Android tests and a source/build review. b3fb 145/6 CI; later legacy parity 172 offline Java cases plus Node 282/20/15 and actual Worker dry-run; latest APK/device CI still required.
 - [x] Save the earlier verified 4e30 APK, SHA-256, CI IDs, test matrix, retained c285 media/UI evidence and explicit latest-source limitations.
-- [ ] Publish the latest source to an isolated reviewable branch/draft PR. Earlier PR #35 is at 4e30; newer local commits remain unpublished because writes time out. Do not merge/deploy without authority.
+- [x] Publish matching tree eab22 to draft PR #35 as b3fb1ba and verify all three CI jobs. Publish subsequent legacy parity checkpoint without replacing upstream history; user authorizes repository changes. Do not promote an unfinished product to a complete release.
 - [x] Continue the original bundle in section 35 with exact completed/pending requirements, source provenance, the external build/publish ceiling and next commands; add BUILD_RESUME.md.
 
 2026-10-09 checkpoint: implementation commit 2c9e684 closes the final focused recovery review. Local suites: 282 static source smoke assertions, 20 executable connection cases, 12 executable relay cases, 40 timeline/52 Vault/14 DSP/510 narration pure-core assertions, 15 executed software GLSL pixel checks and 99 parsed Java sources. Latest Android compilation/device proof remains pending. Phases B–H are incomplete as detailed in bundle section 35; a queued job, menu tile or static assertion is not completion.
+
+2026-10-09 resumed checkpoint: section 36 supersedes the earlier SDK/publishing ceiling. Installed JDK/SDK/Gradle/emulator; b3fb CI verifies 145 unit cases and all six authored device cases. Later atomic legacy tool mapping, public recovery/fingerprint fixes, schema 4 effect providers and delayed-STOP guards pass 172 fresh offline Java cases, Node 282/20/15, and real Worker bundle compilation. Remaining legacy plans/presets and full phase B–H completion stay open. Orez is monitoring issue #36.

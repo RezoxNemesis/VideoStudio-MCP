@@ -37,8 +37,30 @@ public final class EditorEngine {
         if(operations==null||operations.length()<1||operations.length()>100)throw new IllegalArgumentException("Batch requires 1–100 operations");
         JSONObject payload=new JSONObject();try{payload.put("operations",operations);}catch(Exception error){throw new IllegalArgumentException(error);}
         return store.transact(projectId,expectedRevision,actor,commandId,"Apply editor batch",fingerprint("batch",payload,expectedRevision),p->{
-            for(int i=0;i<operations.length();i++){JSONObject op=operations.getJSONObject(i);apply(p,op.getString("operation"),op.getJSONObject("args"));}
+            applyBatch(p,operations);
         });
+    }
+
+    interface LegacyPlanner { JSONArray plan(ProjectStore.Project project) throws Exception; }
+
+    /** V3 had no required revision field. Resolve its clip indices inside the transaction,
+     * while retaining shared edit validation, atomic history and request-bound receipts. */
+    ProjectStore.Project executeLegacyMappedBatch(String projectId,long expectedRevision,String commandId,
+                                                   String action,JSONObject request,LegacyPlanner planner){
+        if(expectedRevision==0||expectedRevision < -1)throw new IllegalArgumentException("Invalid expected revision");
+        if(commandId==null||commandId.length()<8||commandId.length()>120)throw new IllegalArgumentException("A durable command ID is required");
+        if(request.toString().length()>65536)throw new IllegalArgumentException("Legacy editor request exceeds 64 KiB");
+        JSONObject capture;
+        try{capture=new JSONObject(request.toString());}catch(Exception error){throw new IllegalArgumentException(error);}
+        return store.transact(projectId,expectedRevision,"agent",commandId,"Legacy "+action,
+                fingerprint("legacy_"+action,capture,expectedRevision),p->{p.ensureTimelineDefaults();applyBatch(p,planner.plan(p));});
+    }
+
+    private void applyBatch(ProjectStore.Project project,JSONArray operations)throws Exception{
+        if(operations==null||operations.length()<1||operations.length()>100)throw new IllegalArgumentException("Batch requires 1–100 operations");
+        for(int i=0;i<operations.length();i++){
+            JSONObject op=operations.getJSONObject(i);apply(project,op.getString("operation"),op.getJSONObject("args"));
+        }
     }
     private static void validateActorRevision(String actor,long revision,String commandId){
         if("agent".equals(actor)&&(revision<1||commandId==null||commandId.length()<8))throw new IllegalArgumentException("Autonomous edits require an expected project revision and durable command ID");
@@ -51,9 +73,13 @@ public final class EditorEngine {
         }catch(Exception error){throw new IllegalArgumentException("Could not fingerprint editor request",error);}
     }
     private static String canonicalJson(Object value)throws Exception{
+        return canonicalJson(value,0);
+    }
+    private static String canonicalJson(Object value,int depth)throws Exception{
+        if(depth>12)throw new IllegalArgumentException("Editor arguments exceed nesting limit");
         if(value instanceof JSONObject){JSONObject o=(JSONObject)value;java.util.TreeSet<String> keys=new java.util.TreeSet<>();java.util.Iterator<String> it=o.keys();while(it.hasNext())keys.add(it.next());
-            StringBuilder out=new StringBuilder("{");for(String k:keys){if(out.length()>1)out.append(',');out.append(JSONObject.quote(k)).append(':').append(canonicalJson(o.get(k)));}return out.append('}').toString();}
-        if(value instanceof JSONArray){JSONArray a=(JSONArray)value;StringBuilder out=new StringBuilder("[");for(int i=0;i<a.length();i++){if(i>0)out.append(',');out.append(canonicalJson(a.get(i)));}return out.append(']').toString();}
+            StringBuilder out=new StringBuilder("{");for(String k:keys){if(out.length()>1)out.append(',');out.append(JSONObject.quote(k)).append(':').append(canonicalJson(o.get(k),depth+1));}return out.append('}').toString();}
+        if(value instanceof JSONArray){JSONArray a=(JSONArray)value;StringBuilder out=new StringBuilder("[");for(int i=0;i<a.length();i++){if(i>0)out.append(',');out.append(canonicalJson(a.get(i),depth+1));}return out.append(']').toString();}
         if(value==null||value==JSONObject.NULL)return "null";if(value instanceof String)return JSONObject.quote((String)value);
         return value instanceof Number?JSONObject.numberToString((Number)value):value.toString();
     }
@@ -283,6 +309,14 @@ public final class EditorEngine {
                     if (!(a.optString("property").equals(f.optString("property")) && a.optLong("timeMs", -1) == f.optLong("timeMs"))) frames.put(f);
                 }
                 c.keyframes = frames; break;
+            }
+            case "set_effect_preset": {
+                if(asset==null||asset.mime.startsWith("audio/"))throw new IllegalArgumentException("Effect presets require a video or image source");
+                Object preset=a.get("preset");
+                if(!(preset instanceof String)||!CreatorStyleSettings.EFFECTS.contains(preset))throw new IllegalArgumentException("Unsupported effect preset");
+                c.effects.put("effectPreset",preset);
+                if(CreatorStyleSettings.COLOURS.contains(preset))c.effects.put("colorPreset",preset);
+                break;
             }
             case "set_creator_style": {
                 if(asset==null||asset.mime.startsWith("audio/"))throw new IllegalArgumentException("Creator styles require a video or image source");

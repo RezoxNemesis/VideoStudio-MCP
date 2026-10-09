@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 3,
+  "schemaVersion": 4,
   "featureProtocolVersion": 4,
   "transportProtocolVersion": 3,
   "timeUnit": "milliseconds",
@@ -1088,6 +1088,42 @@
       "additionalProperties": false,
       "nativeSchemaVersion": 3,
       "description": "Apply validated frame-rendered motion, colour and title styles in one undoable editor revision."
+    },
+    "set_effect_preset": {
+      "type": "object",
+      "required": [
+        "clipId",
+        "preset"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "clipId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "preset": {
+          "type": "string",
+          "enum": [
+            "none",
+            "cinematic",
+            "teal_orange",
+            "warm_film",
+            "cool_night",
+            "noir",
+            "high_contrast",
+            "soft_portrait",
+            "matte",
+            "golden_hour",
+            "cyberpunk",
+            "gaussian_blur",
+            "soft_glow",
+            "dream"
+          ]
+        }
+      },
+      "nativeSchemaVersion": 4,
+      "description": "Select the executing colour or Gaussian blur preset. none clears preset effects; explicit numeric blur remains independent. soft_glow and dream use a mild Gaussian blur."
     }
   },
   "properties": {

@@ -1982,3 +1982,38 @@ The repository is checkpointed locally and packaged for recovery at this externa
 6. When writes work, publish onto an isolated branch using upstream ancestry. The supplied patch is against the exact `d652066` baseline; it is not an incremental patch against the existing PR's `4e30ae1` head. Follow `BUILD_RESUME.md`, inspect current upstream and avoid overwriting others' changes.
 7. Continue Phases A–H in the original priority order, with real model/runtime/storage credentials only where actually required. Keep owner and MCP operations on the same persistent graph; every new heavy feature needs end-to-end output/recovery evidence.
 8. Promote the version/release only after the defined milestone is implemented and verified. Do not advertise the baseline APK or this uncompiled source as the complete 3.5.0 app.
+
+
+# 36. Continued engineering and verified build recovery — 2026-10-09 UTC
+
+This section supersedes the build/publish ceiling in section 35 while preserving the original instructions and historical evidence. The whole product remains unfinished; phase ordering and the definition of done still apply.
+
+## 36.1 Published matching-source evidence
+
+The review branch is codex/studio-owner-editor and draft PR #35. Published b3fb1ba3560175d6d02b6c7cd8f0d6c7bcd9b434 and local 6d844343dcb11edcd4fbb139a727b2a70f012b13 have the same tree eab22ffae481651104efc7e7e5cd468442d774be. Android run 37882409101 passed 145 unit tests; device run 37882409116 passed all six API 33 cases; Worker run 37882409117 succeeded. Downloaded unit XML has zero failures/errors/skips. Four retained MP4 exports matched their device proof hashes and fully decoded with FFmpeg. Actual Keystore/proxy/audio/alpha/chroma/mask/owner export evidence is retained in artifacts/verified-b3fb1ba.
+
+APK SHA-256: 865fa790151d0a87261bcc19ec29f8f981d4b3af9e60eae7af17d0242b056947. Certificate SHA-256: 51a213102b466f2a974d84b5274d8a899228d5a25be1b66f9bb693f13cb2e253. The archived 4e30 certificate differs. Never claim these two APKs can upgrade each other or wipe owner data to install a test build. Signing keys remain private.
+
+## 36.2 Current legacy editor correctness work
+
+Supported legacy apply_tool commands now use one shared editor transaction in service and foreground paths. They enforce track locks, source ranges, strict numeric/settings validation, speed ripple, actual clip keyframes, undo and request-bound durable receipts. Optional legacy revisions remain compatible; shared editor operations still require explicit revisions and command IDs. Invalid tools/settings fail before edits. A replay returns its original receipt without overwriting newer owner edits.
+
+Public command dispatch also validates action/argument binding before terminal replay; a changed payload cannot receive another command's success. Interrupted synchronous editor actions recover through SQLite receipts instead of waiting for a nonexistent job. Journal writes are synchronously committed before dispatch.
+
+Schema 4 adds set_effect_preset while retaining set_creator_style at minimum native schema 3. Only executing colour/Gaussian providers are selectable; soft_glow/dream currently mean mild Gaussian blur. Clear removes the migrated preset; undo restores it. Shared blur construction now reaches generated animation layers. Owner Effects, legacy tool, shared operation and relay gates agree, including selected-clip scope.
+
+STOP is rechecked when executing posted protocol callbacks, before public service replay/recovery and in foreground dispatch. Stopped remote control cannot return old success or mutate projects; independent owner editing remains available. Legacy plans/creator presets/autonomous_edit still require further atomic parity work.
+
+## 36.3 Fresh local verification and execution limits
+
+All 73 main Java and 31 test sources compiled fresh; 172 actual JUnit/Robolectric tests passed. Node: 282 static smoke assertions, 20 connection cases, 15 executable relay cases. Real Wrangler deploy --dry-run compiled the Worker; no production deploy occurred. Pure core: timeline 40, Vault/range 52 with a 64 MB heap, audio DSP 14, narration 510; actual software GLES pixel cases 15. Saved logs include intended RED regressions, final GREEN and environment failures. Latest source still needs matching Gradle APK/device CI; the preceding six device cases verify b3fb, not later source.
+
+Free JDK 17, Gradle 8.9, SDK 36/build tools, emulator and API 33 images are installed in /workspace/toolchains. npm dependencies and package-lock.json are installed. Default managed Terminal execution still rejects Gradle daemon socket creation and network grants can prompt. Use the authorized GitHub runner for full builds/devices; scripts/android-offline-tests.py provides isolated fresh Java tests using exact cached dependencies and a copied test resource archive with current schema. It does not rebuild Android resources/manifests or assemble an APK. Do not label it a device test.
+
+Orez acknowledged issue #36 and is monitoring without overlapping implementation: https://github.com/RezoxNemesis/VideoStudio-MCP/issues/36. This is the verified coordination route; no direct assistant messaging or unattended Terminal control was established. Routine repository work, installations, commits, PR updates and fixes remain authorized. Platform approval policy cannot be self-approved from source changes.
+
+## 36.4 Continue the full blueprint
+
+Next priority: shared atomic legacy plans/presets/autonomous edits, then remaining editor depth. Existing working cores include SQLite history, owner timeline/bin/preview/export, durable scoped MCP, four proxy tiers, bounded encrypted Vault records, five SAF profiles, PCM DSP, chunked Android TTS, actual title animation and procedural/layered image animation.
+
+Still incomplete: direct five-provider OAuth adapters; cloud mirror/executor and offline reconciliation; complete 2D mesh/bone/IK/frame/flow authoring; model-backed image/text video and identity/temporal control; full 3D import/PBR/rig/physics/VFX/compositor/tracking/render passes; ASR/subtitles/lip-sync/recap; full accessibility/tablet/performance/crash tooling and 10–20 GB cloud benchmark. Treat missing weights/provider configuration as concrete dependencies, never simulated success. Preserve originals and owner scope; keep progressing through independent work.

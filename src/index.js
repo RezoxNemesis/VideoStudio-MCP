@@ -52,7 +52,7 @@ const appActionAllowed = (mode,action,parameters={},device={}) => {
     const allowed=entry=>{
       const op=entry.operation,args=entry.args||{};
       if(["rename_asset","remove_asset","add_clip"].includes(op))return assets.has(args.assetId);
-      return ["set_property","set_keyframe","remove_keyframe","set_title","slip_clip","split_clip","set_audio_effects","set_composite_effects","set_creator_style"].includes(op)&&clips.has(args.clipId);
+      return ["set_property","set_keyframe","remove_keyframe","set_title","slip_clip","split_clip","set_audio_effects","set_composite_effects","set_creator_style","set_effect_preset"].includes(op)&&clips.has(args.clipId);
     };
     if(a==="editor_operation")return allowed(parameters);
     if(a==="editor_batch")return Array.isArray(parameters.operations)&&parameters.operations.every(allowed);
@@ -1662,7 +1662,15 @@ function serverForApp(env,ownerKey,protocolVersion=1){
 
   s.registerTool("app_apply_edit_plan",{description:"Replace the active project's timeline with a structured multi-cut plan referencing already imported local asset IDs.",inputSchema:{clips:z.array(z.record(z.string(),z.any())).min(1).max(80)}},async({clips})=>queue("apply_edit_plan",{clips}));
 
-  s.registerTool("app_apply_tool",{description:"Apply a precise native edit primitive to one clip. Tool names include trim, speed, slow_motion, green_screen, transition, motion, effect, color, reframe, mask, font, text_animation, blur, transform, audio_duck, title and volume.",inputSchema:{clipIndex:z.number().int().min(0),tool:z.string().min(1).max(80),settings:z.record(z.string(),z.any()).optional()}},async({clipIndex,tool,settings})=>queue("apply_tool",{clipIndex,tool,settings:settings||{}}));
+  s.registerTool("app_apply_tool",{
+    description:"Apply one validated native clip edit. Supports trim, speed, slow_motion, volume, green_screen, motion, effect, color, mask, font, text_animation, blur, transform, title and keyframes. This tool enforces track locks and atomic undo. Use app_editor_schema for the shared editor operations. projectId and expectedRevision optionally protect the target and revision for existing v3 clients.",
+    inputSchema:{projectId:z.string().min(8).max(120).optional(),expectedRevision:z.number().int().min(1).max(Number.MAX_SAFE_INTEGER).optional(),clipIndex:z.number().int().min(0),tool:z.string().min(1).max(80),settings:z.record(z.string(),z.any()).optional()}
+  },async({projectId,expectedRevision,clipIndex,tool,settings})=>{
+    const parameters={clipIndex,tool,settings:settings||{}};
+    if(projectId!==undefined)parameters.projectId=projectId;
+    if(expectedRevision!==undefined)parameters.expectedRevision=expectedRevision;
+    return queue("apply_tool",parameters);
+  });
 
   s.registerTool("app_creator_preset",{description:"Apply a creator look plus optional motion, transition and font to one clip or the full active timeline.",inputSchema:{preset:z.string().min(1).max(80),motion:z.string().max(80).optional(),transition:z.string().max(80).optional(),font:z.string().max(80).optional(),allClips:z.boolean().optional(),clipIndex:z.number().int().min(0).optional()}},async args=>queue("creator_preset",args));
 

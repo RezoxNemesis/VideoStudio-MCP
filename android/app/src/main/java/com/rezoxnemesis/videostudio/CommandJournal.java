@@ -46,16 +46,42 @@ public final class CommandJournal {
         return null;
     }
 
+    /** A command ID is bound to its action and arguments, not merely its result. */
+    public synchronized void validateReplay(JSONObject command){
+        String candidate=requestFingerprint(command);
+        JSONObject prior=existing(command.optString("id",""));if(prior==null)return;
+        String saved=prior.optString("requestFingerprint","");
+        if(saved.isEmpty()){
+            JSONObject captured=prior.optJSONObject("command");
+            if(captured==null)throw new IllegalArgumentException("Cannot verify an older command ID; use a new command ID");
+            saved=requestFingerprint(captured);
+        }
+        if(!saved.equals(candidate))throw new IllegalArgumentException("Command ID conflicts with a different request");
+    }
+
+    private static String requestFingerprint(JSONObject command){
+        try{
+            if(command.has("parameters")&&!(command.opt("parameters") instanceof JSONObject))throw new IllegalArgumentException("Command parameters must be an object");
+            JSONObject parameters=command.optJSONObject("parameters");
+            JSONObject copy=parameters==null?new JSONObject():new JSONObject(parameters.toString());
+            copy.remove("_origin");copy.remove("_mcpCommandId");
+            if(copy.toString().length()>20*1024*1024)throw new IllegalArgumentException("Command arguments exceed the supported transfer envelope");
+            return EditorEngine.fingerprint("command:"+command.optString("action",""),copy,0);
+        }catch(org.json.JSONException invalid){throw new IllegalArgumentException("Invalid command arguments",invalid);}
+    }
+
     public synchronized void begin(JSONObject command) {
         if (command == null || "get_state".equals(command.optString("action"))) return;
         String id = command.optString("id");
         if (id.isEmpty()) return;
+        String binding=requestFingerprint(command);
         JSONObject entry = new JSONObject();
         try {
             entry.put("id", id);
             entry.put("seq", command.optLong("seq", 0));
             entry.put("action", command.optString("action", ""));
             entry.put("status", "running");
+            entry.put("requestFingerprint",binding);
             entry.put("command", new JSONObject(command.toString()));
             entry.put("updatedAt", System.currentTimeMillis());
         } catch (Exception ignored) {}
@@ -69,6 +95,7 @@ public final class CommandJournal {
         if (command == null) return;
         String id = command.optString("id", "");
         if (id.isEmpty() || jobId == null || jobId.isEmpty()) return;
+        String binding=requestFingerprint(command);
         JSONObject entry = existing(id);
         if (entry == null) entry = new JSONObject();
         try {
@@ -79,6 +106,7 @@ public final class CommandJournal {
             entry.put("jobId", jobId);
             entry.put("projectId", projectId == null ? "" : projectId);
             entry.put("command", new JSONObject(command.toString()));
+            entry.put("requestFingerprint",binding);
             if (queuedResult != null) entry.put("queuedResult", new JSONObject(queuedResult.toString()));
             entry.put("updatedAt", System.currentTimeMillis());
         } catch (Exception ignored) {}
@@ -128,12 +156,14 @@ public final class CommandJournal {
         if (command == null || "get_state".equals(command.optString("action"))) return;
         String id = command.optString("id");
         if (id.isEmpty()) return;
+        String binding=requestFingerprint(command);
         JSONObject entry = new JSONObject();
         try {
             entry.put("id", id);
             entry.put("seq", command.optLong("seq", 0));
             entry.put("action", command.optString("action", ""));
             entry.put("status", status == null ? "completed" : status);
+            entry.put("requestFingerprint",binding);
             entry.put("result", result == null ? new JSONObject() : result);
             entry.put("updatedAt", System.currentTimeMillis());
         } catch (Exception ignored) {}
@@ -170,7 +200,7 @@ public final class CommandJournal {
             if (item == null || id.equals(item.optString("id"))) continue;
             next.put(item);
         }
-        prefs.edit().putString(KEY, next.toString()).apply();
+        if(!prefs.edit().putString(KEY, next.toString()).commit())throw new IllegalStateException("Could not persist command journal");
     }
 
     private JSONArray read() {

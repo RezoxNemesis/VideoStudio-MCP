@@ -325,6 +325,11 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     @Override
     public void onCommand(JSONObject command) {
         String action = command.optString("action");
+        if(protocol!=null&&protocol.isControlPaused()){
+            JSONObject denied=new JSONObject();
+            try{denied.put("ok",false).put("error","ChatGPT control is paused by the owner");}catch(Exception ignored){}
+            protocol.complete(command,denied,"denied");return;
+        }
         JSONObject p = command.optJSONObject("parameters");
         if (p == null) p = new JSONObject();
 
@@ -333,6 +338,13 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         String projectId = p.optString("projectId", "");
 
         OwnerAccessPolicy commandAccess=new OwnerAccessPolicy(this,store);
+        try{commandJournal.validateReplay(command);}
+        catch(Exception conflict){
+            JSONObject failed=new JSONObject();
+            try{failed.put("ok",false).put("errorCode","command_id_conflict").put("error",conflict.getMessage());}catch(Exception ignored){}
+            ActivityLog.add(this,"chatgpt",friendlyAction(action),failed.optString("error"),"failed",null,commandId,projectId);
+            protocol.complete(command,failed,"failed");return;
+        }
         JSONObject terminal = isAllowed(action,p)&&!commandAccess.resultPredatesScope(command)?commandJournal.terminal(commandId):null;
         if (terminal != null) {
             JSONObject priorResult = terminal.optJSONObject("result");
@@ -345,8 +357,9 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             return;
         }
 
-        JSONObject inflight = commandJournal.inflight(commandId);
-        if (inflight != null) {
+        JSONObject inflight = isAllowed(action,p)&&!commandAccess.resultPredatesScope(command)?commandJournal.inflight(commandId):null;
+        boolean receiptBackedEdit=java.util.Arrays.asList("apply_tool","editor_operation","editor_batch","editor_history").contains(action);
+        if (inflight != null && !receiptBackedEdit) {
             watchDeferredCommand(command, inflight.optJSONObject("queuedResult"));
             String inflightJobId = inflight.optString("jobId", "");
             JSONObject inflightState = inflightJobId.isEmpty() ? null : jobs.get(inflightJobId);
@@ -363,7 +376,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         }
 
         commandJournal.begin(command);
-        if (mayQueueBackgroundWork(action) && !commandId.isEmpty()) {
+        if (!commandId.isEmpty()) {
             try { p.put("_mcpCommandId", commandId); } catch (Exception ignored) {}
         }
         ActivityLog.add(this, "chatgpt", friendlyAction(action), commandDetail(action, p), "running", 0, commandId, projectId);
@@ -759,90 +772,10 @@ public final class ControlService extends Service implements AppProtocol.Callbac
 
     private JSONObject applyTool(JSONObject p) throws Exception {
         ProjectStore.Project project = resolveProject(p.optString("projectId", ""));
-        int index = p.optInt("clipIndex", 0);
-        if (index < 0 || index >= project.clips.size()) throw new IllegalArgumentException("Clip not found");
-        ProjectStore.Clip clip = project.clips.get(index);
-        String tool = p.optString("tool", "effect");
-        JSONObject settings = p.optJSONObject("settings");
-        if (settings == null) settings = new JSONObject();
-
-        switch (tool) {
-            case "trim":
-                clip.inMs = Math.max(0, settings.optLong("inMs", clip.inMs));
-                clip.outMs = Math.max(clip.inMs + 100, settings.optLong("outMs", clip.outMs));
-                break;
-            case "speed":
-            case "slow_motion":
-                clip.speed = (float) Math.max(.25, Math.min(4, settings.optDouble("speed", .5)));
-                break;
-            case "volume":
-                clip.volume = (float) Math.max(0, Math.min(2, settings.optDouble("volume", 1)));
-                break;
-            case "transition":
-                clip.transition = settings.optString("name", "fade");
-                break;
-            case "green_screen":
-                clip.effects.put("chromaKey", true);
-                clip.effects.put("chromaColor", settings.optString("color", "#00FF00"));
-                clip.effects.put("chromaTolerance", settings.optDouble("tolerance", .18));
-                clip.effects.put("spillSuppression", settings.optDouble("spill", .35));
-                break;
-            case "motion":
-                clip.effects.put("motionPreset", settings.optString("preset", "push_in"));
-                clip.effects.put("ease", settings.optString("ease", "easeInOut"));
-                break;
-            case "effect":
-                clip.effects.put("effectPreset", settings.optString("preset", "cinematic"));
-                copyNumeric(settings, clip.effects, "blur", "brightness", "contrast", "saturation", "lightness");
-                break;
-            case "color":
-                clip.effects.put("colorPreset", settings.optString("preset", "cinematic"));
-                if (settings.has("brightness")) clip.effects.put("brightness", settings.optDouble("brightness"));
-                if (settings.has("contrast")) clip.effects.put("contrast", settings.optDouble("contrast"));
-                if (settings.has("saturation")) clip.effects.put("saturationAdjust", settings.optDouble("saturation"));
-                if (settings.has("lightness")) clip.effects.put("lightnessAdjust", settings.optDouble("lightness"));
-                break;
-            case "reframe":
-                clip.effects.put("reframe", settings.optString("preset", "9:16_subject_safe"));
-                break;
-            case "mask":
-                clip.effects.put("mask", settings.optString("shape", "rounded_rect"));
-                clip.effects.put("maskFeather", settings.optDouble("feather", .08));
-                break;
-            case "font":
-                clip.effects.put("fontFamily", settings.optString("family", "sans-serif-medium"));
-                break;
-            case "text_animation":
-                clip.effects.put("textAnimation", settings.optString("preset", "fade_up"));
-                break;
-            case "title":
-                clip.title = settings.optString("text", "");
-                if (settings.has("font")) clip.effects.put("fontFamily", settings.optString("font"));
-                if (settings.has("animation")) clip.effects.put("textAnimation", settings.optString("animation"));
-                break;
-            case "blur":
-                clip.effects.put("blur", Math.max(0, Math.min(18, settings.optDouble("sigma", 4))));
-                break;
-            case "transform":
-                if (settings.has("scale")) clip.effects.put("scale", settings.optDouble("scale", 1));
-                if (settings.has("rotate")) clip.effects.put("rotate", settings.optDouble("rotate", 0));
-                break;
-            case "audio_duck":
-                clip.effects.put("audioDucking", true);
-                clip.effects.put("duckLevel", settings.optDouble("level", .32));
-                break;
-            case "keyframes":
-                clip.effects.put("keyframes", settings.optJSONArray("keyframes") == null ? new JSONArray() : settings.optJSONArray("keyframes"));
-                break;
-            default:
-                clip.effects.put(tool, settings);
-        }
-        store.save(project);
-        JSONObject result = ok();
-        result.put("projectId", project.id);
-        result.put("clipIndex", index);
-        result.put("tool", tool);
-        return result;
+        ProjectStore.Project result = new LegacyEditorAdapter(store).applyTool(project.id, p);
+        return ok().put("projectId", result.id).put("revision", result.revision)
+                .put("clipIndex", p.optInt("clipIndex", 0)).put("tool", p.optString("tool", "effect"))
+                .put("commandId", p.optString("_mcpCommandId", p.optString("commandId", "")));
     }
 
     private JSONObject applyCreatorPreset(JSONObject p) throws Exception {
@@ -3325,6 +3258,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     }
 
     private boolean isAllowed(String action, JSONObject parameters) {
+        if(protocol!=null&&protocol.isControlPaused())return false;
         String lower = action == null ? "" : action.toLowerCase(Locale.US);
 
         // This is an architectural privacy wall, not a user permission tier.

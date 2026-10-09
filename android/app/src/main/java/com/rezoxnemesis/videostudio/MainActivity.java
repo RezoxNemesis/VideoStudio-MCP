@@ -1408,7 +1408,8 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                 case "Duplicate": selectedEditorAction("duplicate_clip",false);return;
                 case "Green Screen": case "Mask": showCompositeWorkspace();return;
                 case "Motion": showCreatorStyleChoices("motionPreset",CreatorStyleSettings.MOTIONS,"Clip motion");return;
-                case "Effects": case "Colour": showCreatorStyleChoices("colorPreset",CreatorStyleSettings.COLOURS,"Colour look");return;
+                case "Effects": showCreatorStyleChoices("effectPreset",CreatorStyleSettings.EFFECTS,"Effect preset");return;
+                case "Colour": showCreatorStyleChoices("colorPreset",CreatorStyleSettings.COLOURS,"Colour look");return;
                 case "Fonts": showCreatorStyleChoices("fontFamily",CreatorCatalog.FONTS,"Title font");return;
                 case "Text Animation": showCreatorStyleChoices("textAnimation",CreatorCatalog.TEXT_ANIMATIONS,"Title animation");return;
                 case "Text": textDialog();return;
@@ -1430,8 +1431,11 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         String[] labels=new String[choices.size()];
         for(int i=0;i<labels.length;i++)labels[i]=choices.get(i).replace('_',' ');
         new AlertDialog.Builder(this).setTitle(title).setItems(labels,(dialog,index)->{
-            try{applyEditorOperation("set_creator_style",new JSONObject().put("clipId",clipId)
-                    .put("settings",new JSONObject().put(key,choices.get(index))));}
+            try{
+                JSONObject args=new JSONObject().put("clipId",clipId);
+                if("effectPreset".equals(key))applyEditorOperation("set_effect_preset",args.put("preset",choices.get(index)));
+                else applyEditorOperation("set_creator_style",args.put("settings",new JSONObject().put(key,choices.get(index))));
+            }
             catch(Exception error){editorError(error);}
         }).setNegativeButton("Close",null).show();
     }
@@ -1903,14 +1907,21 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                     refreshCurrent();
                     break;
                 case "apply_tool": {
+                    String projectId = p.optString("projectId", "");
+                    if (projectId.isEmpty() && activeProject != null) projectId = activeProject.id;
+                    if (projectId.isEmpty() || store.get(projectId) == null) throw new IllegalArgumentException("Project not found");
+                    p.put("_mcpCommandId", command.optString("id", ""));
+                    ProjectStore.Project receipt = new LegacyEditorAdapter(store).applyTool(projectId, p);
+                    activeProject = store.get(projectId);
+                    store.setActive(projectId);
                     int index = p.optInt("clipIndex", 0);
-                    if (activeProject == null || index < 0 || index >= activeProject.clips.size()) throw new IllegalArgumentException("Clip not found");
-                    selectedClip = activeProject.clips.get(index);
-                    String tool = p.optString("tool");
-                    applyRemoteTool(tool, p.optJSONObject("settings"));
+                    selectedClip = index < activeProject.clips.size() ? activeProject.clips.get(index) : null;
                     result.put("ok", true);
+                    result.put("projectId", receipt.id);
+                    result.put("revision", receipt.revision);
+                    result.put("commandId", command.optString("id", ""));
                     result.put("clipIndex", index);
-                    result.put("tool", tool);
+                    result.put("tool", p.optString("tool", "effect"));
                     refreshCurrent();
                     break;
                 }
@@ -2045,80 +2056,6 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         result.put("clipCount", next.size());
         result.put("durationMs", activeProject.outputDurationMs());
         return result;
-    }
-
-    private void applyRemoteTool(String tool, JSONObject settings) throws Exception {
-        if (selectedClip == null) throw new IllegalArgumentException("No selected clip");
-        if (settings == null) settings = new JSONObject();
-        switch (tool) {
-            case "speed":
-            case "slow_motion":
-                selectedClip.speed = (float) Math.max(.25, Math.min(4, settings.optDouble("speed", .5)));
-                break;
-            case "trim":
-                selectedClip.inMs = settings.optLong("inMs", selectedClip.inMs);
-                selectedClip.outMs = settings.optLong("outMs", selectedClip.outMs);
-                break;
-            case "green_screen":
-                selectedClip.effects.put("chromaKey", true);
-                selectedClip.effects.put("chromaColor", settings.optString("color", "#00FF00"));
-                selectedClip.effects.put("chromaTolerance", settings.optDouble("tolerance", .18));
-                selectedClip.effects.put("spillSuppression", settings.optDouble("spill", .35));
-                break;
-            case "transition":
-                selectedClip.transition = settings.optString("name", "fade");
-                break;
-            case "motion":
-                selectedClip.effects.put("motionPreset", settings.optString("preset", "push_in"));
-                selectedClip.effects.put("ease", settings.optString("ease", "easeInOut"));
-                break;
-            case "effect":
-                selectedClip.effects.put("effectPreset", settings.optString("preset", "cinematic"));
-                if (settings.has("blur")) selectedClip.effects.put("blur", settings.optDouble("blur"));
-                break;
-            case "color":
-                selectedClip.effects.put("colorPreset", settings.optString("preset", "cinematic"));
-                if (settings.has("brightness")) selectedClip.effects.put("brightness", settings.optDouble("brightness"));
-                if (settings.has("contrast")) selectedClip.effects.put("contrast", settings.optDouble("contrast"));
-                if (settings.has("saturation")) selectedClip.effects.put("saturationAdjust", settings.optDouble("saturation"));
-                if (settings.has("lightness")) selectedClip.effects.put("lightnessAdjust", settings.optDouble("lightness"));
-                break;
-            case "reframe":
-                selectedClip.effects.put("reframe", settings.optString("preset", "9:16_subject_safe"));
-                break;
-            case "mask":
-                selectedClip.effects.put("mask", settings.optString("shape", "rounded_rect"));
-                selectedClip.effects.put("maskFeather", settings.optDouble("feather", .08));
-                break;
-            case "font":
-                selectedClip.effects.put("fontFamily", settings.optString("family", "sans-serif-medium"));
-                break;
-            case "text_animation":
-                selectedClip.effects.put("textAnimation", settings.optString("preset", "fade_up"));
-                break;
-            case "blur":
-                selectedClip.effects.put("blur", Math.max(0, Math.min(18, settings.optDouble("sigma", 4))));
-                break;
-            case "transform":
-                if (settings.has("scale")) selectedClip.effects.put("scale", settings.optDouble("scale", 1));
-                if (settings.has("rotate")) selectedClip.effects.put("rotate", settings.optDouble("rotate", 0));
-                break;
-            case "audio_duck":
-                selectedClip.effects.put("audioDucking", true);
-                selectedClip.effects.put("duckLevel", settings.optDouble("level", .32));
-                break;
-            case "title":
-                selectedClip.title = settings.optString("text", "");
-                if (settings.has("font")) selectedClip.effects.put("fontFamily", settings.optString("font"));
-                if (settings.has("animation")) selectedClip.effects.put("textAnimation", settings.optString("animation"));
-                break;
-            case "volume":
-                selectedClip.volume = (float) Math.max(0, Math.min(2, settings.optDouble("volume", 1)));
-                break;
-            default:
-                selectedClip.effects.put(tool, settings);
-        }
-        store.save(activeProject);
     }
 
     private JSONObject queuePrivateHandoffImport(String handoffId, String name, String mimeHint, String projectId) throws Exception {
@@ -2269,6 +2206,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
     }
 
     private boolean isAllowed(String action, JSONObject parameters) {
+        if(protocol!=null&&protocol.isControlPaused())return false;
         String lower = action == null ? "" : action.toLowerCase(Locale.US);
         // Hard boundary: no MCP mode may enumerate or browse the user's Gallery.
         if (lower.contains("gallery") || lower.contains("media_library") || lower.contains("photo_library")) return false;
