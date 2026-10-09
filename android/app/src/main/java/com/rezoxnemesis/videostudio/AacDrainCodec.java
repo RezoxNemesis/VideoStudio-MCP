@@ -22,8 +22,11 @@ final class AacDrainCodec implements Codec {
     private boolean draining;private volatile boolean released;
     AacDrainCodec(Codec delegate,State state)throws ExportException {
         this.delegate=delegate;this.state=state;Format input=delegate.getInputFormat();
-        if(input.sampleRate<=0||input.channelCount<1||input.channelCount>32||(input.pcmEncoding!=C.ENCODING_PCM_16BIT&&input.pcmEncoding!=C.ENCODING_PCM_FLOAT))throw new IllegalArgumentException("Unsupported AAC drain PCM format");
-        state.sampleRate=input.sampleRate;state.frameBytes=Math.multiplyExact(input.channelCount,input.pcmEncoding==C.ENCODING_PCM_FLOAT?4:2);
+        // C2 may omit KEY_PCM_ENCODING from its input report. Use the explicit format
+        // actually configured by AudioSampleExporter, never assume a default PCM type.
+        int encoding=input.pcmEncoding==Format.NO_VALUE?delegate.getConfigurationFormat().pcmEncoding:input.pcmEncoding;
+        if(input.sampleRate<=0||input.channelCount<1||input.channelCount>32||(encoding!=C.ENCODING_PCM_16BIT&&encoding!=C.ENCODING_PCM_FLOAT))throw new IllegalArgumentException("Unsupported AAC drain PCM format: "+input+", configuredPCM="+encoding);
+        state.sampleRate=input.sampleRate;state.frameBytes=Math.multiplyExact(input.channelCount,encoding==C.ENCODING_PCM_FLOAT?4:2);
     }
     public Format getConfigurationFormat(){return delegate.getConfigurationFormat();}
     public String getName(){return delegate.getName();}

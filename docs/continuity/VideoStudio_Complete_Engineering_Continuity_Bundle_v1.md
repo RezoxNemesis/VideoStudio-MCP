@@ -2189,3 +2189,12 @@ The home screen prioritizes media import and opening the editor and adds a short
 The owner-preview workflow checks out exact PR-head source, restores the established development key, builds unit/app/test APKs, executes API33 emulator checks on that signed app, and only then creates a separate immutable preview release with APK/SHA/verification manifest. Full cloud/model/3D work, owner Realme tests and public segmented dispatch/cache references remain unfinished. No main history or latest release is overwritten.
 
 Next resume: inspect owner preview findings first, preserve source/identity/signing/project data, reproduce relevant failures, then complete matching native segmented engine integration, reference-aware cache lifecycle and remaining blueprint phases. The released verification manifest is authoritative for source/tree/APK/certificate/run identity.
+
+
+### 50.1 Preview native integration failure retained and corrected in source
+
+First preview sourceeb5aeef/local a4e5a1e passes actual Gradle402unit/APK,99,155,533bytes SHA2564f6b8084e1286d9a9201f6f3f7ac0210011c3012e0c245072f8674ddc306aec8, established7e018747 certificate. Owner-preview37934598520 and device37934598285 run10cases/4failures: every audio route rejects missing PCM encoding in the actual C2 input report. No preview release publishes. Preserve this failure; JVM fake configuration initially omitted this platform behaviour.
+
+The adapter now falls back only from an absent reported PCM key to the explicit encoder configuration supplied by Media3 AudioSampleExporter/DefaultEncoderFactory. Actual input sample rate/channels remain authoritative and unknown/unsupported PCM remains rejected. A new RED1/7 precedes this correction; matching device evidence remains pending. Review also strengthens the service fixture: Activity DESTROYED before any edit/replay/export, and retry waits for command-specific replay-prevention activity instead of a timed sleep. Important test findings closed. External live ChatGPT transport remains a separate unverified boundary.
+
+Worker source checks initially failed two stale3.4.10/home-copy assertions; intended3.4.11 copy/version correction passes npm tests, and matching9b9fdb6957cc02e0cd38c75d79d2b81fcbd8610e Worker37935220273 succeeds. MCP+relay tests are now a required preview-publish step. Android protocol identity/namespace remains stable.
