@@ -6,3 +6,6 @@ dist/
 *.log
 .env
 .dev.vars
+artifacts/
+android/.gradle/
+android/**/build/

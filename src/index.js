@@ -7,6 +7,7 @@ import STUDIO_RUNTIME_JS from "./studio-runtime.js";
 import STUDIO_CINEMATIC_JS from "./studio-cinematic.js";
 import STUDIO_NEURAL_JS from "./studio-neural.js";
 import STUDIO_TEMPORAL_JS from "./studio-temporal.js";
+import EDITOR_SCHEMA from "../protocol/editor-operations.json";
 
 const JH = {"content-type":"application/json; charset=UTF-8","cache-control":"no-store"};
 const now = () => new Date().toISOString();
@@ -35,11 +36,30 @@ const studioMcpAuthorized = async (request,env) => {
   for(let i=0;i<n;i++) diff|=(a.charCodeAt(i)||0)^(b.charCodeAt(i)||0);
   return diff===0;
 };
-const appActionAllowed = (mode,action) => {
+const appActionAllowed = (mode,action,parameters={},device={}) => {
   const a=String(action||"").toLowerCase();
 
   // Permanent privacy wall. Full autonomy never means Gallery enumeration.
   if(a.includes("gallery")||a.includes("media_library")||a.includes("photo_library")) return false;
+
+  if(mode==="project"||mode==="selected_assets"){
+    if(["ping","get_state","self_test","connection_health","reconnect_mcp","job_status","activity_note","cancel_job","cancel_all_jobs","stop_all","editor_schema"].includes(a))return true;
+    if(!device.allowedProjectId||parameters.projectId!==device.allowedProjectId)return false;
+    if(mode==="project")return !["create_project","delete_project"].includes(a);
+    const assets=new Set(device.allowedAssetIds||[]),clips=new Set(device.allowedClipIds||[]);
+    if(a==="storage_profiles")return true;
+    if(a==="project_query")return (parameters.query||"graph")!=="snapshots";
+    if(["analyse_media","vault_create","vault_inspect","vault_replicate","vault_restore","create_proxy"].includes(a))return assets.has(parameters.assetId);
+    const allowed=entry=>{
+      const op=entry.operation,args=entry.args||{};
+      if(["rename_asset","remove_asset","add_clip"].includes(op))return assets.has(args.assetId);
+      if(op==="apply_creator_preset")return Array.isArray(args.clipIds)&&args.clipIds.length>0&&args.clipIds.every(id=>clips.has(id));
+      return ["set_property","set_keyframe","remove_keyframe","set_title","slip_clip","split_clip","set_audio_effects","set_composite_effects","set_creator_style","set_effect_preset"].includes(op)&&clips.has(args.clipId);
+    };
+    if(a==="editor_operation")return allowed(parameters);
+    if(a==="editor_batch")return Array.isArray(parameters.operations)&&parameters.operations.every(allowed);
+    return false;
+  }
 
   // One-file mode is an explicit user lock, not the normal operating mode.
   if(mode==="one_file"){
@@ -53,8 +73,66 @@ const appActionAllowed = (mode,action) => {
   return true;
 };
 
+const validateEditorValue = (schema,value,path="arguments",depth=0) => {
+  if(depth>12) throw new Error("Editor arguments exceed nesting limit");
+  const type=schema.type;
+  if(type==="object"){
+    if(!value||typeof value!=="object"||Array.isArray(value)) throw new Error(path+" must be an object");
+    const keys=Object.keys(value), props=schema.properties||{};
+    if(schema.minProperties&&keys.length<schema.minProperties) throw new Error(path+" is empty");
+    for(const required of schema.required||[]) if(!Object.hasOwn(value,required)) throw new Error(path+" requires "+required);
+    for(const key of keys){if(!Object.hasOwn(props,key)){if(schema.additionalProperties===false)throw new Error(path+" does not accept argument "+key);continue;}validateEditorValue(props[key],value[key],path+"."+key,depth+1);}
+  }else if(type==="array"){
+    if(!Array.isArray(value)||value.length<(schema.minItems||0)||value.length>(schema.maxItems||100))throw new Error(path+" has invalid items");
+    for(const item of value)validateEditorValue(schema.items,item,path+"[]",depth+1);
+  }else if(type==="string"){
+    if(typeof value!=="string"||value.length<(schema.minLength||0)||value.length>(schema.maxLength||5000))throw new Error(path+" must be a bounded string");
+    if(schema.pattern&&!new RegExp(schema.pattern).test(value))throw new Error(path+" has an invalid format");
+  }else if(type==="number"||type==="integer"){
+    if(typeof value!=="number"||!Number.isFinite(value)||(type==="integer"&&!Number.isSafeInteger(value))||
+       (schema.minimum!=null&&value<schema.minimum)||(schema.maximum!=null&&value>schema.maximum))throw new Error(path+" has an invalid numeric value");
+  }else if(type==="boolean"&&typeof value!=="boolean")throw new Error(path+" must be boolean");
+  if(schema.enum&&!schema.enum.includes(value))throw new Error(path+" has an unsupported value");
+};
+const validateEditorRequest = (action,p) => {
+  if(!["editor_operation","editor_batch","editor_history","project_query"].includes(action))return false;
+  if(!p||typeof p!=="object"||Array.isArray(p))throw new Error("Editor arguments are required");
+  validateEditorValue({type:"string",minLength:1,maxLength:120},p.projectId,"projectId");
+  if(action==="project_query"){
+    if(!["graph","assets","timeline","snapshots"].includes(p.query||"graph"))throw new Error("Unknown project query");return true;
+  }
+  if(!Number.isSafeInteger(p.expectedRevision)||p.expectedRevision<1)throw new Error("Expected project revision is required");
+  validateEditorValue({type:"string",minLength:8,maxLength:120},p.commandId,"command ID");
+  if(JSON.stringify(p).length>65536)throw new Error("Editor request exceeds 64 KiB");
+  const validateOperation=entry=>{
+    const schema=Object.hasOwn(EDITOR_SCHEMA.operations,entry.operation)?EDITOR_SCHEMA.operations[entry.operation]:null;if(!schema)throw new Error("Unknown editor operation: "+entry.operation);
+    validateEditorValue(schema,entry.args||{});
+    if((entry.operation==="set_property"||entry.operation==="set_keyframe")&&EDITOR_SCHEMA.properties[entry.args.property])
+      validateEditorValue(EDITOR_SCHEMA.properties[entry.args.property],entry.args.value,"property value");
+  };
+  if(action==="editor_operation")validateOperation(p);
+  if(action==="editor_batch"){
+    if(!Array.isArray(p.operations)||p.operations.length<1||p.operations.length>100)throw new Error("Editor batch must contain 1–100 operations");
+    p.operations.forEach(validateOperation);
+  }
+  if(action==="editor_history"){
+    if(!["undo","redo","snapshot","restore"].includes(p.operation))throw new Error("Unknown editor history operation");
+    if(p.operation==="restore")validateEditorValue({type:"string",minLength:1,maxLength:120},p.snapshotId,"snapshotId");
+    if(p.name!=null)validateEditorValue({type:"string",minLength:1,maxLength:240},p.name,"snapshot name");
+  }
+  return true;
+};
+const stableEditorJson = value => {
+  if(Array.isArray(value))return "["+value.map(stableEditorJson).join(",")+"]";
+  if(value&&typeof value==="object")return "{"+Object.keys(value).sort().map(k=>JSON.stringify(k)+":"+stableEditorJson(value[k])).join(",")+"}";
+  return JSON.stringify(value);
+};
+
 export class VideoStudioState extends DurableObject {
   constructor(ctx,env){ super(ctx,env); }
+  async nativeQueueTransaction(work){
+    return this.ctx.storage.transaction?this.ctx.storage.transaction(work):work(this.ctx.storage);
+  }
   async register(deviceId,meta={}){
     const k="d:"+deviceId, old=(await this.ctx.storage.get(k))||{};
     const d={
@@ -160,7 +238,7 @@ export class VideoStudioState extends DurableObject {
         device:safeOld
       };
     }
-    const mode=["one_file","all_tools","everything"].includes(meta.permissionMode)?meta.permissionMode:(old.permissionMode||"everything");
+    const mode=["one_file","all_tools","everything","project","selected_assets"].includes(meta.permissionMode)?meta.permissionMode:(old.permissionMode||"everything");
     const d={
       deviceId,
       name:clean(meta.name||old.name||"VideoStudio Android",80),
@@ -186,6 +264,12 @@ export class VideoStudioState extends DurableObject {
       portraitAnimationEngine:clean(meta.portraitAnimationEngine||old.portraitAnimationEngine||"",80),
       onDevicePortraitAi:!!meta.onDevicePortraitAi,
       permissionMode:mode,
+      allowedProjectId:clean(meta.allowedProjectId||"",120),
+      allowedAssetIds:Array.isArray(meta.allowedAssetIds)?meta.allowedAssetIds.filter(x=>typeof x==="string").slice(0,1000):[],
+      allowedClipIds:Array.isArray(meta.allowedClipIds)?meta.allowedClipIds.filter(x=>typeof x==="string").slice(0,5000):[],
+      permissionScopeUpdatedAt:Math.max(0,Number(meta.permissionScopeUpdatedAt||0)),
+      editorSchemaVersion:Math.max(0,Number(meta.editorSchemaVersion||0)),
+      featureProtocolMax:Math.max(3,Number(meta.featureProtocolMax||3)),
       projects:Array.isArray(meta.projects)?meta.projects.slice(0,100):(old.projects||[]),
       controlPaused:!!meta.controlPaused,
       connectionSession:clean(meta.connectionSession||old.connectionSession||"",80),
@@ -536,7 +620,7 @@ export class VideoStudioState extends DurableObject {
     const min=Number(d.protocolMin||d.protocolVersion||0), max=Number(d.protocolMax||d.protocolVersion||0);
     if(!(min<=3&&max>=3)) throw new Error("Hybrid native device does not support MCP v3");
     if(d.controlPaused) throw new Error("ChatGPT control is paused on the phone");
-    if(!appActionAllowed(d.permissionMode,action)) throw new Error("Action blocked by device permission mode or Gallery privacy boundary: "+d.permissionMode);
+    if(!appActionAllowed(d.permissionMode,action,parameters,d)) throw new Error("Action blocked by device permission mode or Gallery privacy boundary: "+d.permissionMode);
     const queueKey="app-v3-cl:"+d.deviceId, existing=(await this.ctx.storage.get(queueKey))||[];
     if(existing.filter(c=>c.status==="queued"||c.status==="claimed"||c.status==="waiting_native").length>=160) throw new Error("Native command queue is full; reconnect the app before adding work");
     const lastSeenMs=Date.parse(String(d.lastSeenAt||""))||0;
@@ -602,7 +686,7 @@ export class VideoStudioState extends DurableObject {
       },
       pendingNativeCommands:pending,
       waitingNative:!nativeFresh&&pending>0,
-      lastCommand:list[list.length-1]||null,
+      lastCommand:list.filter(c=>appActionAllowed(d.permissionMode,c.action,c.parameters||{},d)&&Date.parse(c.createdAt||"")>=d.permissionScopeUpdatedAt).at(-1)||null,
       galleryAccess:false
     };
   }
@@ -695,7 +779,7 @@ export class VideoStudioState extends DurableObject {
     const d=await this.appResolve(ownerKey);
     if(!d) throw new Error("Private App MCP credential rejected");
     if(d.controlPaused) throw new Error("ChatGPT control is paused on the phone");
-    if(!appActionAllowed(d.permissionMode,action)) throw new Error("Action blocked by device permission mode or Gallery privacy boundary: "+d.permissionMode);
+    if(!appActionAllowed(d.permissionMode,action,parameters,d)) throw new Error("Action blocked by device permission mode or Gallery privacy boundary: "+d.permissionMode);
     const sk="app-seq:"+d.deviceId, seq=((await this.ctx.storage.get(sk))||0)+1;
     await this.ctx.storage.put(sk,seq);
     const c={id:crypto.randomUUID(),seq,deviceId:d.deviceId,action,parameters,status:"queued",createdAt:now(),completedAt:null,result:null};
@@ -758,7 +842,7 @@ export class VideoStudioState extends DurableObject {
       connected:true,
       device:((({ownerHash,...safe})=>safe)(d)),
       pendingCommands:list.filter(c=>c.status==="queued"||c.status==="claimed"||c.status==="waiting_native").length,
-      lastCommand:list[list.length-1]||null,
+      lastCommand:list.filter(c=>appActionAllowed(d.permissionMode,c.action,c.parameters||{},d)&&Date.parse(c.createdAt||"")>=d.permissionScopeUpdatedAt).at(-1)||null,
       projectCount:Array.isArray(d.projects)?d.projects.length:0
     };
   }
@@ -771,19 +855,47 @@ export class VideoStudioState extends DurableObject {
     return d;
   }
   async appEnqueueV3(ownerKey,action,parameters={}){
+    const previous=this._queueWriter||Promise.resolve();let release;
+    this._queueWriter=new Promise(resolve=>{release=resolve;});
+    await previous;
+    try{return await this.appEnqueueV3Serialized(ownerKey,action,parameters);}
+    finally{release();}
+  }
+  async appEnqueueV3Serialized(ownerKey,action,parameters={}){
     const d=await this.appV3Device(ownerKey);
     if(d.controlPaused) throw new Error("ChatGPT control is paused on the phone");
-    if(!appActionAllowed(d.permissionMode,action)) throw new Error("Action blocked by device permission mode or Gallery privacy boundary: "+d.permissionMode);
+    if(!appActionAllowed(d.permissionMode,action,parameters,d)) throw new Error("Action blocked by device permission mode or Gallery privacy boundary: "+d.permissionMode);
+    const editor=validateEditorRequest(action,parameters);
+    let requiredEditorSchema=1;
+    if(action==="editor_operation")requiredEditorSchema=EDITOR_SCHEMA.operations[parameters.operation]?.nativeSchemaVersion||1;
+    if(action==="editor_batch")requiredEditorSchema=Math.max(1,...parameters.operations.map(op=>EDITOR_SCHEMA.operations[op.operation]?.nativeSchemaVersion||1));
+    const legacyTarget=parameters.expectedRevision!==undefined||!!parameters.projectId;
+    const legacyMinimum=legacyTarget?(action==="apply_tool"?4:["apply_edit_plan","creator_preset","autonomous_edit"].includes(action)?5:0):0;
+    if(legacyMinimum&&(d.editorSchemaVersion||1)<legacyMinimum)throw new Error("Installed app does not support this editor schema version for project/revision targeting; install the compatible APK");
+    if(action==="vault_restore"&&(d.editorSchemaVersion||1)<7)throw new Error("Installed app does not support verified Vault media restore; install the compatible APK");
+    if(action==="vault_replicate"&&(d.editorSchemaVersion||1)<6)throw new Error("Installed app does not support verified Vault storage replication; install the compatible APK");
+    if(editor&&d.editorSchemaVersion<requiredEditorSchema)throw new Error("Installed app does not support this editor schema version; install the compatible APK");
     const queueKey="app-v3-cl:"+d.deviceId, existing=(await this.ctx.storage.get(queueKey))||[];
+    const receiptKey=editor&&parameters.commandId?"app-v3-editor-receipt:"+d.deviceId+":"+parameters.commandId:"";
+    const fingerprint=receiptKey?stableEditorJson({action,parameters}):"";
+    if(receiptKey){
+      const saved=await this.ctx.storage.get(receiptKey);
+      if(saved){if(saved.fingerprint!==fingerprint)throw new Error("Command ID conflicts with a different editor request");
+        return existing.find(c=>c.id===saved.command.id)||saved.command;}
+    }
     if(existing.filter(c=>c.status==="queued"||c.status==="claimed"||c.status==="waiting_native").length>=160) throw new Error("Native command queue is full; reconnect the app before adding work");
     const lastSeenMs=Date.parse(String(d.lastSeenAt||""))||0;
     const fresh=lastSeenMs>0&&(Date.now()-lastSeenMs)<=45000;
-    if(!fresh){
+    if(!fresh&&!editor){
       const webCommand=await this.appTryStudioWebFallback(ownerKey,action,parameters);
       if(webCommand) return webCommand;
     }
-    const sk="app-v3-seq:"+d.deviceId, seq=((await this.ctx.storage.get(sk))||0)+1;
-    await this.ctx.storage.put(sk,seq);
+    return this.nativeQueueTransaction(async storage=>{
+    const k="app-v3-cl:"+d.deviceId,list=(await storage.get(k))||[];
+    if(receiptKey){const saved=await storage.get(receiptKey);if(saved){if(saved.fingerprint!==fingerprint)throw new Error("Command ID conflicts with a different editor request");return list.find(c=>c.id===saved.command.id)||saved.command;}}
+    if(list.filter(c=>["queued","claimed","waiting_native"].includes(c.status)).length>=160)throw new Error("Native command queue is full; reconnect the app before adding work");
+    const sk="app-v3-seq:"+d.deviceId, seq=((await storage.get(sk))||0)+1;
+    await storage.put(sk,seq);
     const c={
       id:crypto.randomUUID(),
       seq,
@@ -797,14 +909,16 @@ export class VideoStudioState extends DurableObject {
       completedAt:null,
       result:null
     };
-    const k="app-v3-cl:"+d.deviceId, list=(await this.ctx.storage.get(k))||[];
+    if(receiptKey)c.editorRequestId=parameters.commandId;
     list.push(c);
     const pending=list.filter(c=>c.status==="queued"||c.status==="claimed"||c.status==="waiting_native");
     const terminal=list.filter(c=>c.status!=="queued"&&c.status!=="claimed"&&c.status!=="waiting_native");
     const terminalSlots=Math.max(0,160-pending.length);
     const retained=[...(terminalSlots?terminal.slice(-terminalSlots):[]),...pending].sort((a,b)=>a.seq-b.seq);
-    await this.ctx.storage.put(k,retained.slice(-160));
+    await storage.put(k,retained.slice(-160));
+    if(receiptKey)await storage.put(receiptKey,{fingerprint,command:c});
     return c;
+    });
   }
   async appCommandsV3(deviceId,ownerKey,after=0,waitMs=0){
     const d=await this.appAuth(deviceId,ownerKey);
@@ -814,8 +928,9 @@ export class VideoStudioState extends DurableObject {
     const until=Date.now()+Math.max(0,Math.min(20000,Number(waitMs||0)));
     const key="app-v3-cl:"+deviceId;
     while(true){
-      const list=(await this.ctx.storage.get(key))||[], nowMs=Date.now();
-      const found=[];
+      const found=await this.nativeQueueTransaction(async storage=>{
+      const list=(await storage.get(key))||[], nowMs=Date.now();
+      const claimed=[];
       let changed=false;
       for(let i=0;i<list.length;i++){
         const c=list[i];
@@ -824,12 +939,14 @@ export class VideoStudioState extends DurableObject {
         const expired=c.status==="claimed"&&Number(c.leaseUntil||0)<=nowMs;
         if(c.status==="queued"||c.status==="waiting_native"||expired){
           list[i]={...c,status:"claimed",waitingReason:"",claimedAt:now(),leaseUntil:nowMs+60000,claimCount:Number(c.claimCount||0)+1};
-          found.push(list[i]);
+          claimed.push(list[i]);
           changed=true;
-          if(found.length>=4) break;
+          if(claimed.length>=4) break;
         }
       }
-      if(changed) await this.ctx.storage.put(key,list.slice(-160));
+      if(changed) await storage.put(key,list.slice(-160));
+      return claimed;
+      });
       if(found.length||Date.now()>=until) return found;
       await new Promise(resolve=>setTimeout(resolve,500));
     }
@@ -839,7 +956,8 @@ export class VideoStudioState extends DurableObject {
     if(!d) throw new Error("VideoStudio v3 native authorization failed");
     const min=Number(d.protocolMin||d.protocolVersion||0), max=Number(d.protocolMax||d.protocolVersion||0);
     if(!(min<=3&&max>=3)) throw new Error("VideoStudio stable MCP compatibility lane v3 is not registered");
-    const k="app-v3-cl:"+deviceId, list=(await this.ctx.storage.get(k))||[], i=list.findIndex(c=>c.id===id);
+    const completed=await this.nativeQueueTransaction(async storage=>{
+    const k="app-v3-cl:"+deviceId, list=(await storage.get(k))||[], i=list.findIndex(c=>c.id===id);
     if(i<0) return null;
     const completedParameters={...(list[i].parameters||{})};
     if(list[i].action==="import_attachment"&&completedParameters.sourceUrl){
@@ -851,17 +969,25 @@ export class VideoStudioState extends DurableObject {
         list[j]={...list[j],result:{...list[j].result,contactSheet:{...list[j].result.contactSheet,base64:undefined,expired:true}}};
       }
     }
-    await this.ctx.storage.put(k,list.slice(-160));
+    await storage.put(k,list.slice(-160));
+    if(list[i].editorRequestId){
+      const receiptKey="app-v3-editor-receipt:"+deviceId+":"+list[i].editorRequestId;
+      const receipt=await storage.get(receiptKey);if(receipt)await storage.put(receiptKey,{...receipt,command:list[i]});
+      await storage.put("app-v3-editor-result:"+deviceId+":"+id,list[i]);
+    }
+    return list[i];
+    });
     const stored=(await this.ctx.storage.get("app-device:"+deviceId))||d;
     stored.lastSeenAt=now();
     await this.ctx.storage.put("app-device:"+deviceId,stored);
-    return list[i];
+    return completed;
   }
   async appCommandV3(ownerKey,id){
     const d=await this.appV3Device(ownerKey);
     const list=(await this.ctx.storage.get("app-v3-cl:"+d.deviceId))||[];
     const native=list.find(c=>c.id===id);
-    if(native) return native;
+    if(native){if(!appActionAllowed(d.permissionMode,native.action,native.parameters||{},d)||Date.parse(native.createdAt||"")<d.permissionScopeUpdatedAt)throw new Error("Command result is outside the current owner scope");return native;}
+    const receipt=await this.ctx.storage.get("app-v3-editor-result:"+d.deviceId+":"+id);if(receipt){if(!appActionAllowed(d.permissionMode,receipt.action,receipt.parameters||{},d)||Date.parse(receipt.createdAt||"")<d.permissionScopeUpdatedAt)throw new Error("Command result is outside the current owner scope");return receipt;}
     const fallback=await this.appResolveStudioWebFallback(ownerKey);
     if(!fallback) return null;
     const webDeviceId=fallback.binding.webDeviceId;
@@ -938,7 +1064,7 @@ export class VideoStudioState extends DurableObject {
       waitingNativeCommands:waitingNative,
       canAcceptAutonomousWork:true,
       queuedExecutionPolicy:fallbackConnected?"studio-web-when-compatible-otherwise-native-on-reconnect":"native-on-reconnect",
-      lastCommand:list[list.length-1]||null,
+      lastCommand:list.filter(c=>appActionAllowed(d.permissionMode,c.action,c.parameters||{},d)&&Date.parse(c.createdAt||"")>=d.permissionScopeUpdatedAt).at(-1)||null,
       projectCount:Array.isArray(d.projects)?d.projects.length:0,
       galleryAccess:false,
       directAttachmentIngest:true,
@@ -1408,11 +1534,29 @@ function serverFor(env,hybridKey=""){
   return s;
 }
 
+function editorZod(spec){
+  let value;
+  if(spec.enum)value=z.union(spec.enum.map(choice=>z.literal(choice)));
+  else if(spec.type==="object"){
+    const required=new Set(spec.required||[]),shape={};
+    for(const [key,child] of Object.entries(spec.properties||{}))shape[key]=required.has(key)?editorZod(child):editorZod(child).optional();
+    value=z.object(shape);if(spec.additionalProperties===false)value=value.strict();
+  }else if(spec.type==="array")value=z.array(editorZod(spec.items)).min(spec.minItems||0).max(spec.maxItems||100);
+  else if(spec.type==="string"){
+    value=z.string().min(spec.minLength||0).max(spec.maxLength||5000);if(spec.pattern)value=value.regex(new RegExp(spec.pattern));
+  }else if(spec.type==="boolean")value=z.boolean();
+  else if(spec.type==="number"||spec.type==="integer"){
+    value=z.number().finite();if(spec.type==="integer")value=value.int().min(Number.MIN_SAFE_INTEGER).max(Number.MAX_SAFE_INTEGER);
+    if(spec.minimum!=null)value=value.min(spec.minimum);if(spec.maximum!=null)value=value.max(spec.maximum);
+  }else value=z.any();
+  return value;
+}
+
 function serverForApp(env,ownerKey,protocolVersion=1){
-  const isV3=Number(protocolVersion)===3;
+  const isV3=Number(protocolVersion)>=3, isV4=Number(protocolVersion)===4;
   const s=new McpServer({
-    name:isV3?"VideoStudio-App-MCP-v3":"VideoStudio-App-MCP",
-    version:isV3?"3.4.7":"1.1.2"
+    name:isV4?"VideoStudio-App-MCP-v4":isV3?"VideoStudio-App-MCP-v3":"VideoStudio-App-MCP",
+    version:isV3?"3.4.11":"1.1.2"
   }), st=state(env);
   const enqueueCommand=(action,parameters={})=>isV3
     ? st.appEnqueueV3(ownerKey,action,parameters)
@@ -1458,22 +1602,25 @@ function serverForApp(env,ownerKey,protocolVersion=1){
   s.registerTool("app_status",{description:isV3?"Check the VideoStudio v3 Native Agent connection, protocol version, permission mode, projects and pending native work. Gallery access is always false.":"Check the private native VideoStudio Android connection, permission mode, projects, control-pause state and pending work. Gallery access is always false.",inputSchema:{}},async()=>out(await readStatus()));
 
   s.registerTool("app_capabilities",{description:isV3?"Read VideoStudio v3 Native Agent capabilities and architecture guarantees.":"Read the native v1.1 editing, AI, render and privacy capabilities available to ChatGPT.",inputSchema:{}},async()=>out({
-    version:isV3?"3.4.2":"1.1.2",
+    version:isV3?"3.4.11":"1.1.2",
+    featureProtocolVersion:isV3?4:1,
+    editorSchema:isV3?EDITOR_SCHEMA:undefined,
     protocolVersion:isV3?3:1,
     stableEndpoint:isV3,
     stableEndpointPath:isV3?"/app-mcp-v3/":"",
     primary:"Android native app",
     architecture:isV3?"permanent hybrid control plane; native-first execution with bound Studio Web fallback and durable native queue":"native app with private MCP relay",
     privacy:{galleryAccess:false,boundary:"No MCP tool may list, browse or enumerate Gallery/media-library items. Only user-selected Android picker files, VideoStudio-owned files and explicit ChatGPT attachments are usable."},
-    permissions:["everything","one_file"],
-    permissionModel:{default:"everything",legacyAlias:"all_tools",note:"Full Autonomous grants every VideoStudio-native action. One File Lock is the only restrictive mode. Gallery enumeration is always blocked."},
+    permissions:["everything","project","selected_assets","one_file"],
+    permissionModel:{default:"everything",legacyAlias:"all_tools",note:"Full Autonomous grants every VideoStudio-native action. Owners can restrict control to one project or selected assets. One File Lock remains a legacy option. Gallery enumeration is always blocked."},
     connection:isV3
       ?["always-available stable MCP v3 control plane across APK updates","Android Keystore owner key","device binding","optional Studio Web fallback binding","persistent app-generation fencing","adaptive connection profile negotiation","isolated v3 command queue","waiting_native durable work","leased commands","durable command idempotency journal","persistent foreground Native Agent","self-rearm watchdog","secure reconnect backoff","live ChatGPT activity feed","STOP CHATGPT CONTROL"]
       :["Android Keystore owner key","device binding","persistent foreground control service","leased commands","crash-safe completion checkpoints","secure reconnect backoff","notification pause/cancel controls","live ChatGPT activity feed","STOP CHATGPT CONTROL"],
     media:isV3
       ?["direct ChatGPT attachment ingest to app-private storage","owner-authenticated inline still-frame fallback","VideoStudio-owned media","explicit HTTPS import","manual Android picker","no Gallery enumeration","legacy short-lived relay fallback"]
       :["VideoStudio-owned media","explicit HTTPS import","manual Android picker","private handoff"],
-    editing:["trim","split","0.25x-4x speed","slow motion","volume","titles","fonts","text animations","scale","rotate","blur","colour/HSL","motion presets","transition presets","reframe model","mask model","green-screen model","audio-duck model"],
+    editing:isV3?Object.keys(EDITOR_SCHEMA.operations):["trim","speed","volume","titles","scale","rotate","blur","colour/HSL"],
+    unavailable:["neural text-to-video inference","optical-flow retiming","tracked masks","3D rig runtime","speech transcription"],
     ai:["native visual analysis","scene-change sampling","bundled person segmentation","bundled face mesh","subject-aware image animation","2.5D parallax","autonomous edit plans","creator presets","prompt-to-video","multi-variant planning","short-form recut planning","render/export orchestration"],
     animation:isV3?["AI subject/background layer extraction","feathered head/hair torso and lower-drape layers","face-aware camera anchoring","multi-keyframe easing","head drift/nod","torso breathing","lower-drape sway","independent depth motion","story-shot reordering","procedural atmosphere","layered Media3 composition"]:[],
     export:["Media3 native MP4","H.264","AAC","720p","1080p","9:16","16:9","1:1","4:5","Movies/VideoStudio"],
@@ -1482,7 +1629,16 @@ function serverForApp(env,ownerKey,protocolVersion=1){
       :["persistent background MCP controller","bounded light/heavy job lanes","one process-wide heavy export at a time","RAM guard","thermal guard","persistent job checkpoints","cancel single/all jobs"]
   }));
 
-  s.registerTool("app_catalog",{description:isV3?"List creator effects, motions, transitions, text animations, fonts and AI operations understood by VideoStudio v3.":"List creator effects, motions, transitions, text animations, fonts and AI editing operations understood by VideoStudio v1.1.",inputSchema:{}},async()=>out({
+  s.registerTool("app_catalog",{description:"Read executing editor preset choices alongside the broader product roadmap. Use editorPresets when editing; consult the native capability registry for other operations.",inputSchema:{}},async()=>out({
+    editorPresets:isV3?{
+      effects:EDITOR_SCHEMA.operations.set_effect_preset.properties.preset.enum,
+      motions:EDITOR_SCHEMA.operations.set_creator_style.properties.settings.properties.motionPreset.enum,
+      fonts:EDITOR_SCHEMA.operations.set_creator_style.properties.settings.properties.fontFamily.enum,
+      textAnimations:EDITOR_SCHEMA.operations.set_creator_style.properties.settings.properties.textAnimation.enum,
+      transitions:["none","cut"],
+      blurPresetBehaviour:"gaussian_blur is Gaussian blur; soft_glow and dream currently use a mild Gaussian blur"
+    }:undefined,
+    catalogNote:"Broader lists include roadmap names; they do not establish availability on the installed APK. Use app_status/app_editor_schema and the native capability registry.",
     transitions:["none","cut","fade","dip_black","dip_white","slide_left","slide_right","slide_up","slide_down","push_left","push_right","zoom_in","zoom_out","whip_left","whip_right","spin","blur","flash","glitch","rgb_split","light_leak","film_burn","luma_wipe","mask_wipe","camera_shutter"],
     motions:["none","push_in","pull_out","pan_left","pan_right","pan_up","pan_down","drift","orbit","handheld","micro_shake","impact_shake","bounce","elastic_pop","float","parallax","ken_burns","snap_zoom","zoom_punch","rack_focus_sim","tilt","roll","hero_reveal"],
     effects:["none","cinematic","film_grain","soft_glow","bloom","dream","vignette","sharpen","clarity","motion_blur","radial_blur","gaussian_blur","chromatic_aberration","rgb_split","glitch","scanlines","vhs","retro_cam","super8","film_burn","light_leak","halation","neon","cyberpunk","noir","bleach_bypass","teal_orange","warm_film","cool_night","golden_hour","matte","high_contrast","soft_portrait","crush_black","fade_black","duotone","posterize","pixelate","fisheye","shake","strobe","flash","edge_glow"],
@@ -1491,6 +1647,24 @@ function serverForApp(env,ownerKey,protocolVersion=1){
     aiTools:["auto_cut","scene_detect","silence_trim","highlight_extract","smart_reframe","caption_plan","hook_builder","beat_sync","b_roll_plan","pace_rewrite","shorts_recut","story_recut","colour_match","audio_ducking","title_writer","thumbnail_frame_pick","render_critique","prompt_video","animate_images","portrait_parallax","motion_script_compile","motion_script_run","creative_graph_plan","creative_graph_execute","creative_graph_targeted_regeneration","creative_workspace","generated_media_bin","capability_registry","model_pack_install","cloud_workspace_archive","stable_connection_health","stable_connection_reconnect","multi_variant_edit","platform_adapt","continuity_check"]
   }));
 
+  if(isV3){
+    const revisionFields={projectId:z.string().min(1).max(120),expectedRevision:z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),commandId:z.string().min(8).max(120)};
+    const edit=z.discriminatedUnion("operation",Object.entries(EDITOR_SCHEMA.operations).map(([operation,args])=>z.object({operation:z.literal(operation),args:editorZod(args)}).strict()));
+    s.registerTool("app_editor_schema",{description:"Read the shared Android editor contract, supported operations, property limits and capability gaps. Native execution requires editor schema version 1 or newer.",inputSchema:{}},async()=>out(EDITOR_SCHEMA));
+    s.registerTool("app_project_query",{description:"Read the native project graph, tracks, owned media or named snapshots, with the current revision. Read before editing; use that revision and a stable command ID for each mutation.",inputSchema:{projectId:revisionFields.projectId,query:z.enum(["graph","assets","timeline","snapshots"]).optional()}},async args=>queue("project_query",args));
+    s.registerTool("app_editor_operation",{description:"Apply one typed edit through the same transaction engine as the owner UI. A stale revision fails without changing the project. Retrying the same command ID returns its durable receipt.",inputSchema:{...revisionFields,edit}},async({edit,...revision})=>queue("editor_operation",{...revision,...edit}));
+    s.registerTool("app_editor_batch",{description:"Commit 1–100 typed edits as one atomic project revision and one undo step. If any edit fails, the entire batch rolls back.",inputSchema:{...revisionFields,edits:z.array(edit).min(1).max(100)}},async({edits,...revision})=>queue("editor_batch",{...revision,operations:edits}));
+    s.registerTool("app_editor_history",{description:"Undo, redo, save a named snapshot, or restore a snapshot using revision checks and durable command receipts. Restoring retains media imported after the snapshot.",inputSchema:{...revisionFields,operation:z.enum(["undo","redo","snapshot","restore"]),snapshotId:z.string().min(1).max(120).optional(),name:z.string().min(1).max(240).optional()}},async args=>queue("editor_history",args));
+  }
+
+  if(isV3){
+    s.registerTool("app_storage_profiles",{description:"Read connected storage IDs, labels, provider health and reported quota. Supply projectId in project or selected-media permission modes. Folder capabilities and private project pins are withheld. New connections require the owner Android system picker.",inputSchema:{projectId:z.string().min(1).max(120).optional()}},async args=>queue("storage_profiles",args));
+    s.registerTool("app_vault_create",{description:"Create a checksummed Vault copy of already imported media in 256 MB chunks. Optional AES-GCM encryption uses the Android Keystore; the original remains untouched. Requires the Vault-enabled APK.",inputSchema:{projectId:z.string().min(1).max(120),assetId:z.string().min(1).max(120),encrypted:z.boolean().optional()}},async args=>queue("vault_create",args));
+    s.registerTool("app_vault_inspect",{description:"Read a project's Vault manifest, ordered chunks, checksums, sizes and encryption status.",inputSchema:{projectId:z.string().min(1).max(120),assetId:z.string().min(1).max(120)}},async args=>queue("vault_inspect",args));
+    s.registerTool("app_vault_restore",{description:"Restore a project-owned asset from its bound Vault and previously indexed owner-connected storage replicas. Verifies downloads and the full original checksum, then relinks that same asset to playable local bytes. Retains original files and records their URI; no caller URI or new folder connection. Uses the device's original encryption key. Requires the Vault-recovery APK.",inputSchema:{projectId:z.string().min(1).max(120),assetId:z.string().min(1).max(120)}},async args=>queue("vault_restore",args));
+    s.registerTool("app_vault_replicate",{description:"Replicate a complete project-owned Vault copy across 1–5 existing owner-connected storage folders. Streams and rechecks every uploaded chunk and manifest, resumes verified copies after interruption, preserves originals and local Vault data. Read app_storage_profiles first; this action cannot connect new folders. Requires the storage-fabric APK.",inputSchema:{projectId:z.string().min(1).max(120),assetId:z.string().min(1).max(120),profileIds:z.array(z.string().min(1).max(120)).min(1).max(5),replicas:z.number().int().min(1).max(5).optional()}},async args=>queue("vault_replicate",args));
+    s.registerTool("app_create_proxy",{description:"Create a decoded and checksummed 240p/360p/540p/720p preview derivative of an already imported video. Audio is retained, original media stays intact, final export uses originals. Requires the verified-proxy-enabled APK.",inputSchema:{projectId:z.string().min(1).max(120),assetId:z.string().min(1).max(120),tier:z.enum(["240p","360p","540p","720p"]).optional()}},async args=>queue("create_proxy",args));
+  }
   s.registerTool("app_state",{description:"Request full current native app/project state including active asset metadata, jobs, creator capabilities and recent on-device ChatGPT activity.",inputSchema:{}},async()=>queue("get_state",{}));
   if(isV3) s.registerTool("app_generate_image",{description:"Generate an original local procedural image from a sceneGraph or supported scene prompt. Not photorealistic diffusion. Registers output in the app Media Bin.",inputSchema:{prompt:z.string().max(10000).optional(),sceneGraph:z.record(z.string(),z.any()).optional(),projectId:z.string().min(8).optional(),width:z.number().int().min(128).max(1920).optional(),height:z.number().int().min(128).max(1920).optional(),appendToTimeline:z.boolean().optional()}},async args=>queue("generate_image",args));
   if(isV3) s.registerTool("app_self_test",{description:"Run VideoStudio v3's on-device native self-test before autonomous work. Verifies protocol v3, app-private storage, local project state, job/render/analysis engines, direct attachment ingest and the no-Gallery boundary.",inputSchema:{}},async()=>queue("self_test",{}));
@@ -1504,13 +1678,22 @@ function serverForApp(env,ownerKey,protocolVersion=1){
     return queue("analyse_media",p);
   });
 
-  s.registerTool("app_apply_edit_plan",{description:"Replace the active project's timeline with a structured multi-cut plan referencing already imported local asset IDs.",inputSchema:{clips:z.array(z.record(z.string(),z.any())).min(1).max(80)}},async({clips})=>queue("apply_edit_plan",{clips}));
+  const legacyEditFields=isV3?{projectId:z.string().min(1).max(120).optional(),expectedRevision:z.number().int().min(1).max(Number.MAX_SAFE_INTEGER).optional()}:{};
+  s.registerTool("app_apply_edit_plan",{description:"Replace a project's timeline with 1–80 structured cuts of imported source IDs, in one atomic undoable edit. Locks/source bounds apply. Use only the executing effects in app_editor_schema; invalid providers roll back all clips.",inputSchema:{...legacyEditFields,clips:z.array(z.record(z.string(),z.any())).min(1).max(80)}},async args=>queue("apply_edit_plan",args));
 
-  s.registerTool("app_apply_tool",{description:"Apply a precise native edit primitive to one clip. Tool names include trim, speed, slow_motion, green_screen, transition, motion, effect, color, reframe, mask, font, text_animation, blur, transform, audio_duck, title and volume.",inputSchema:{clipIndex:z.number().int().min(0),tool:z.string().min(1).max(80),settings:z.record(z.string(),z.any()).optional()}},async({clipIndex,tool,settings})=>queue("apply_tool",{clipIndex,tool,settings:settings||{}}));
+  s.registerTool("app_apply_tool",{
+    description:"Apply one validated native clip edit. Supports trim, speed, slow_motion, volume, green_screen, motion, effect, color, mask, font, text_animation, blur, transform, title and keyframes. This tool enforces track locks and atomic undo. Use app_editor_schema for the shared editor operations. projectId and expectedRevision optionally protect the target and revision for existing v3 clients.",
+    inputSchema:{projectId:z.string().min(8).max(120).optional(),expectedRevision:z.number().int().min(1).max(Number.MAX_SAFE_INTEGER).optional(),clipIndex:z.number().int().min(0),tool:z.string().min(1).max(80),settings:z.record(z.string(),z.any()).optional()}
+  },async({projectId,expectedRevision,clipIndex,tool,settings})=>{
+    const parameters={clipIndex,tool,settings:settings||{}};
+    if(projectId!==undefined)parameters.projectId=projectId;
+    if(expectedRevision!==undefined)parameters.expectedRevision=expectedRevision;
+    return queue("apply_tool",parameters);
+  });
 
-  s.registerTool("app_creator_preset",{description:"Apply a creator look plus optional motion, transition and font to one clip or the full active timeline.",inputSchema:{preset:z.string().min(1).max(80),motion:z.string().max(80).optional(),transition:z.string().max(80).optional(),font:z.string().max(80).optional(),allClips:z.boolean().optional(),clipIndex:z.number().int().min(0).optional()}},async args=>queue("creator_preset",args));
+  s.registerTool("app_creator_preset",{description:"Apply an executing colour/Gaussian preset plus optional verified motion/font to a clip or all visual clips as one undoable edit. Consult app_editor_schema; transitions currently accept none/cut.",inputSchema:{...legacyEditFields,preset:z.string().min(1).max(80),motion:z.string().max(80).optional(),transition:z.string().max(80).optional(),font:z.string().max(80).optional(),allClips:z.boolean().optional(),clipIndex:z.number().int().min(0).optional()}},async args=>queue("creator_preset",args));
 
-  s.registerTool("app_autonomous_edit",{description:"Execute a structured autonomous native edit. ChatGPT may replace the timeline, apply a creator preset and optionally launch a safe native export in one request.",inputSchema:{instruction:z.string().max(5000).optional(),clips:z.array(z.record(z.string(),z.any())).max(80).optional(),preset:z.string().max(80).optional(),motion:z.string().max(80).optional(),transition:z.string().max(80).optional(),font:z.string().max(80).optional(),aspect:z.enum(["9:16","16:9","1:1","4:5"]).optional(),quality:z.enum(["720p","1080p"]).optional(),render:z.boolean().optional(),fileName:z.string().max(180).optional()}},async args=>queue("autonomous_edit",args));
+  s.registerTool("app_autonomous_edit",{description:"Commit a structured timeline and creator preset atomically, then optionally queue verified native export. Invalid edits roll back together; rendering remains a separately tracked job.",inputSchema:{...legacyEditFields,allClips:z.boolean().optional(),clipIndex:z.number().int().min(0).optional(),instruction:z.string().max(5000).optional(),clips:z.array(z.record(z.string(),z.any())).max(80).optional(),preset:z.string().max(80).optional(),motion:z.string().max(80).optional(),transition:z.string().max(80).optional(),font:z.string().max(80).optional(),aspect:z.enum(["9:16","16:9","1:1","4:5"]).optional(),quality:z.enum(["720p","1080p"]).optional(),render:z.boolean().optional(),fileName:z.string().max(180).optional()}},async args=>queue("autonomous_edit",args));
 
   s.registerTool("app_create_prompt_video",{description:"Create and export a real local MP4 from a prompt. ChatGPT can provide a detailed scene plan with original titles, text, motion, transitions, effects and font choices; VideoStudio generates the scene visuals locally and renders them with its native engine.",inputSchema:{prompt:z.string().min(1).max(10000),durationSeconds:z.number().int().min(4).max(120).optional(),aspect:z.enum(["9:16","16:9","1:1","4:5"]).optional(),quality:z.enum(["720p","1080p"]).optional(),style:z.string().max(100).optional(),font:z.string().max(80).optional(),scenes:z.array(z.record(z.string(),z.any())).max(20).optional()}},async args=>queue("prompt_video",args));
 
@@ -1811,7 +1994,7 @@ function serverForApp(env,ownerKey,protocolVersion=1){
   });
 
   s.registerTool("app_cancel_job",{description:"Cancel one native VideoStudio background job.",inputSchema:{jobId:z.string().min(8)}},async({jobId})=>queue("cancel_job",{jobId}));
-  s.registerTool("app_cancel_all_jobs",{description:"Cancel every active VideoStudio job and current export.",inputSchema:{}},async()=>queue("cancel_all_jobs",{}));
+  s.registerTool("app_cancel_all_jobs",{description:"Cancel active ChatGPT jobs. Owner imports, generation and manual exports remain under owner control.",inputSchema:{}},async()=>queue("cancel_all_jobs",{}));
   s.registerTool("app_get_command_result",{description:"Read completion status/result for a native command. Analysis results render their contact sheet directly for ChatGPT to inspect.",inputSchema:{commandId:z.string().min(8)}},async({commandId})=>commandResult(commandId));
   return s;
 }
@@ -2105,6 +2288,8 @@ export default {
     if(u.pathname.startsWith("/api/")) return api(request,env);
     // Permanent compatibility endpoint. Do not rename this route for APK releases.
     // Future app versions evolve behind protocol-v3 additive actions/app_execute.
+    const appMcpV4=u.pathname.match(/^\/app-mcp-v4\/([A-Za-z0-9_-]{32,})$/);
+    if(appMcpV4)return createMcpHandler(()=>serverForApp(env,appMcpV4[1],4),{route:u.pathname,responseMode:"auto"})(request,env,ctx);
     const appMcpV3=u.pathname.match(/^\/app-mcp-v3\/([A-Za-z0-9_-]{32,})$/);
     if(appMcpV3){
       const ownerKey=appMcpV3[1];

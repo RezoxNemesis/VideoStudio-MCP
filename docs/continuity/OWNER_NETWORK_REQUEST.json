@@ -1,0 +1,5 @@
+{
+  "checkpoint": "owner-preview-3.4.11-public-route-diagnostics-1",
+  "readOnly": true,
+  "reason": "Resolve browser reachability versus the preview runner's unauthenticated urllib HTTP403 before external pairing claims."
+}

@@ -55,6 +55,10 @@ import java.util.concurrent.atomic.AtomicReference;
 public class MainActivity extends Activity implements AppProtocol.Callback {
     private static final int PICK_MEDIA = 1201;
     private static final int PICK_CLOUD_WORKSPACE = 1202;
+    private static final int PICK_EXPORT_DESTINATION = 1203;
+    private static final int PICK_STORAGE_PROFILE = 1204;
+    private JSONObject pendingExportSettings;
+    private String pendingExportProjectId;
     private static final int C_BG = Color.rgb(5, 8, 18);
     private static final int C_CARD = Color.rgb(13, 20, 37);
     private static final int C_CARD_2 = Color.rgb(17, 27, 48);
@@ -77,6 +81,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
     private PromptVideoEngine promptVideoEngine;
     private NativeMediaAnalyzer mediaAnalyzer;
     private DriveWorkspaceProvider driveWorkspace;
+    private StorageProfileStore storageProfiles;
     private PreviewSnapshotStore previewSnapshots;
     private ProxyManager proxyManager;
     private SharedPreferences prefs;
@@ -85,6 +90,11 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
     private ProjectStore.Project activeProject;
     private ProjectStore.Clip selectedClip;
     private LiveEditPlayer livePlayer;
+    private EditorEngine editor;
+    private StudioPreviewMonitor monitor;
+    private StudioTimelineView timelineView;
+    private long editorPlayhead;
+    private Runnable playbackTick;
     private final Handler ui = new Handler(Looper.getMainLooper());
     private Runnable activityRefresh;
     private Runnable serviceWatchdog;
@@ -107,9 +117,12 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         promptVideoEngine = new PromptVideoEngine(this);
         mediaAnalyzer = new NativeMediaAnalyzer(this);
         driveWorkspace = new DriveWorkspaceProvider(this);
+        storageProfiles = new StorageProfileStore(this);
         previewSnapshots = new PreviewSnapshotStore(this);
         proxyManager = new ProxyManager(this, store, jobs);
         livePlayer = new LiveEditPlayer(this);
+        editor = new EditorEngine(store);
+        monitor = new StudioPreviewMonitor(this, livePlayer);
         activeProject = store.active();
         protocol = new AppProtocol(this, this);
         syncProtocolState();
@@ -153,6 +166,8 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         timelinePreviewRunning = false;
         if (activityRefresh != null) ui.removeCallbacks(activityRefresh);
         if (serviceWatchdog != null) ui.removeCallbacks(serviceWatchdog);
+        if (playbackTick != null) ui.removeCallbacks(playbackTick);
+        if (monitor != null) monitor.release();
         if (livePlayer != null) livePlayer.release();
         if (activeRenderHandle != null) activeRenderHandle.cancel();
         if (protocol != null) protocol.stop();
@@ -183,6 +198,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
 
     private void setScreen(View view, String name) {
         if (activityRefresh != null) ui.removeCallbacks(activityRefresh);
+        if (playbackTick != null) ui.removeCallbacks(playbackTick);
         currentScreen = name;
         content.removeAllViews();
         content.addView(view, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
@@ -197,16 +213,27 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         box.addView(brandHeader());
 
         LinearLayout hero = card(true);
-        TextView heroTitle = title("Create Without Limits", 28);
+        TextView heroTitle = title("Create your next video", 28);
         hero.addView(heroTitle);
-        hero.addView(body("Native " + AppProtocol.APP_VERSION + " Creative Runtime • stable MCP compatibility core • on-device portrait AI • MotionScript/CreativeIR • local Media3 export"));
-        Button promptVideo = neonButton("✦  Create Video from a Prompt", C_MAGENTA);
+        hero.addView(body("VideoStudio " + AppProtocol.APP_VERSION + " • edit media, animate stills and export on your phone."));
+        Button importMedia = neonButton("Import video, images or audio", C_CYAN);
+        importMedia.setOnClickListener(v -> pickMedia());
+        hero.addView(importMedia, margins(-1, dp(54), dp(14), dp(8), 0, 0));
+        Button openEditor = compactButton("Open editor");
+        openEditor.setOnClickListener(v -> showEditor());
+        hero.addView(openEditor, margins(-1, dp(46), 0, dp(4), 0, 0));
+        Button promptVideo = compactButton("✦ Create a prompt storyboard");
         promptVideo.setOnClickListener(v -> promptVideoDialog());
-        hero.addView(promptVideo, margins(-1, dp(54), dp(14), dp(8), 0, 0));
+        hero.addView(promptVideo, margins(-1, dp(46), 0, dp(4), 0, 0));
         Button create = compactButton("+ New project");
         create.setOnClickListener(v -> createProjectDialog());
         hero.addView(create, margins(-1, dp(46), 0, dp(4), 0, 0));
         box.addView(hero, margins(-1, -2, 0, dp(22), 0, 0));
+
+        LinearLayout guide = card(false);
+        guide.addView(title("Start with your own media", 17));
+        guide.addView(body("Import media into a project. Open the editor to split, trim and add effects. Export to save an MP4. ChatGPT is optional for editing."));
+        box.addView(guide, margins(-1, -2, 0, dp(16), 0, 0));
 
         LinearLayout connect = card(false);
         connect.setBackground(neonCard());
@@ -265,8 +292,8 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
 
         box.addView(section("Foundation"));
         LinearLayout foundation = card(false);
-        foundation.addView(title("Creator-grade native foundation", 17));
-        foundation.addView(body("Media3 layered export • bundled person segmentation + face mesh • 2.5D parallax • keyframed motion • crash recovery • thermal/RAM governor • no Gallery browsing permission."));
+        foundation.addView(title("Made for your phone", 17));
+        foundation.addView(body("Work on imported media in the editor, animate still images and export an MP4. Connect ChatGPT when you want it to operate the app."));
         box.addView(foundation);
 
         setScreen(scroll, "home");
@@ -393,234 +420,363 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
     }
 
     private void showEditor() {
-        if (activeProject == null) {
-            createProject("Untitled Project");
-        }
+        if (activeProject == null) createProject("Untitled Project");
+        ProjectStore.Project latest = store.get(activeProject.id);
+        if (latest != null) activeProject = latest;
+        if (selectedClip != null) selectedClip = activeProject.clip(selectedClip.id);
+        if (selectedClip == null && !activeProject.clips.isEmpty()) selectedClip = activeProject.clips.get(0);
         ScrollView scroll = baseScroll();
-        LinearLayout box = column();
-        box.setPadding(dp(14), dp(14), dp(14), dp(28));
-        scroll.addView(box);
-
-        LinearLayout top = new LinearLayout(this);
-        top.setGravity(Gravity.CENTER_VERTICAL);
+        LinearLayout box = column(); box.setPadding(dp(12), dp(8), dp(12), dp(20)); scroll.addView(box);
+        LinearLayout heading = new LinearLayout(this); heading.setGravity(Gravity.CENTER_VERTICAL);
         TextView name = title(activeProject.name, 20);
-        top.addView(name, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
-        Button importButton = compactButton("Import");
-        importButton.setOnClickListener(v -> pickMedia());
-        top.addView(importButton);
-        Button playButton = compactButton("Preview");
-        playButton.setOnClickListener(v -> previewTimeline());
-        top.addView(playButton);
-        Button exportButton = compactButton("Export");
-        exportButton.setOnClickListener(v -> {
-            if (activeProject == null || activeProject.clips.isEmpty()) {
-                Toast.makeText(this, "Timeline is empty", Toast.LENGTH_SHORT).show();
-                return;
-            }
-            Intent export = new Intent(this, ControlService.class)
-                    .setAction(ControlService.ACTION_LOCAL_EXPORT)
-                    .putExtra("projectId", activeProject.id)
-                    .putExtra("aspect", "9:16")
-                    .putExtra("quality", "1080p")
-                    .putExtra("fileName", "VideoStudio_" + System.currentTimeMillis() + ".mp4");
-            startForegroundService(export);
-            Toast.makeText(this, "Export queued in Native Agent • watch Autonomous work", Toast.LENGTH_LONG).show();
-        });
-        top.addView(exportButton);
-        box.addView(top, margins(-1, -2, 0, dp(10), 0, 0));
-
+        heading.addView(name,new LinearLayout.LayoutParams(0,-2,1));
+        heading.addView(accent("Saved · r" + activeProject.revision, C_CYAN)); box.addView(heading);
+        HorizontalScrollView toolbar = new HorizontalScrollView(this);
+        LinearLayout top = new LinearLayout(this);
+        addEditorButton(top,"Import",this::pickMedia);
+        addEditorButton(top,"Undo",()->historyEditor(false));
+        addEditorButton(top,"Redo",()->historyEditor(true));
+        addEditorButton(top,"Media",this::showMediaBinDialog);
+        addEditorButton(top,"Inspector",this::showInspectorDialog);
+        addEditorButton(top,"Export",this::showExportPage);
+        toolbar.addView(top);box.addView(toolbar,margins(-1,dp(48),dp(6),dp(6),0,0));
         FrameLayout viewer = new FrameLayout(this);
-        viewer.setBackground(rounded(Color.BLACK, Color.rgb(37, 51, 83), dp(18)));
-        viewer.setMinimumHeight(dp(280));
-        livePlayer.attach(viewer);
-        TextView hint = body(activeProject.assets.isEmpty()
-                ? "No source media yet. Import a file, or ask ChatGPT to create a prompt video."
-                : "Select a clip below");
-        hint.setGravity(Gravity.CENTER);
-        if (livePlayer.hasMedia()) hint.setVisibility(View.GONE);
-        viewer.addView(hint, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(280)));
-        box.addView(viewer, margins(-1, dp(280), 0, 0, 0, 0));
-
-        LinearLayout autonomousStrip = card(false);
-        autonomousStrip.setBackground(neonCard());
-        JSONArray recentActivity = ActivityLog.recentWork(this, 1);
-        JSONObject latestActivity = recentActivity.optJSONObject(0);
-        JSONObject recoverySnapshot;
-        try {
-            recoverySnapshot = new JSONObject(prefs.getString(ExecutionTruthPolicy.LIVE_JOB_PREF_KEY, "{}"));
-        } catch (Exception ignored) {
-            recoverySnapshot = new JSONObject();
-        }
-        boolean recoveryMatchesProject = activeProject != null
-                && (recoverySnapshot.optString("projectId", "").isEmpty()
-                || activeProject.id.equals(recoverySnapshot.optString("projectId", "")));
-        String activityTitle = recoveryMatchesProject && !recoverySnapshot.optString("jobId", "").isEmpty()
-                ? recoverySnapshot.optString("action", "Autonomous work")
-                : latestActivity == null ? "Autonomous work" : latestActivity.optString("action", "Autonomous work");
-        String activityDetail = recoveryMatchesProject && !recoverySnapshot.optString("jobId", "").isEmpty()
-                ? recoverySnapshot.optString("detail", recoverySnapshot.optString("state", "VideoStudio is working."))
-                : latestActivity == null
-                ? "Ready for ChatGPT edits while playback remains interactive."
-                : latestActivity.optString("detail", "VideoStudio is working.");
-        autonomousStrip.addView(title("✦  Autonomous work", 15));
-        autonomousStrip.addView(body(activityTitle + "\n" + activityDetail));
-        int liveProgressValue = recoveryMatchesProject && recoverySnapshot.has("progress")
-                ? recoverySnapshot.optInt("progress", 0)
-                : latestActivity != null && latestActivity.has("progress")
-                ? latestActivity.optInt("progress", 0)
-                : -1;
-        if (liveProgressValue >= 0) {
-            ProgressBar liveProgress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
-            liveProgress.setMax(100);
-            liveProgress.setProgress(Math.max(0, Math.min(100, liveProgressValue)));
-            autonomousStrip.addView(liveProgress, margins(-1, dp(8), dp(6), 0, 0, 0));
-        }
-        LinearLayout liveActions = new LinearLayout(this);
-        liveActions.setGravity(Gravity.CENTER_VERTICAL);
-        PreviewSnapshotStore.Snapshot latestPreview = previewSnapshots.latest(activeProject.id);
-        LivePlaybackState playbackState = livePlayer.snapshotState();
-        if (latestPreview != null && !latestPreview.id.equals(playbackState.snapshotId)) {
-            Button playNew = compactButton("Play new result");
-            playNew.setOnClickListener(v -> {
-                livePlayer.setContextIds(latestPreview.id, "");
-                livePlayer.play(Uri.parse(latestPreview.uri), 0L);
-                Toast.makeText(this, "Playing latest " + latestPreview.qualityTier + " result", Toast.LENGTH_SHORT).show();
-            });
-            liveActions.addView(playNew);
-            TextView resultBadge = accent(
-                    "  " + latestPreview.sourceType.toUpperCase(Locale.US) + " • " + latestPreview.qualityTier.toUpperCase(Locale.US),
-                    C_CYAN
-            );
-            liveActions.addView(resultBadge);
-        }
-        Button stopJobs = compactButton("Stop jobs");
-        stopJobs.setOnClickListener(v -> {
-            try {
-                jobs.cancelAll();
-                if (activeRenderHandle != null) activeRenderHandle.cancel();
-                Intent stop = new Intent(this, ControlService.class);
-                stop.setAction(ControlService.ACTION_CANCEL_ALL);
-                startForegroundService(stop);
-                Toast.makeText(this, "Active VideoStudio jobs cancelled", Toast.LENGTH_SHORT).show();
-            } catch (Exception error) {
-                Toast.makeText(this, "Could not stop every job", Toast.LENGTH_SHORT).show();
-            }
+        viewer.setBackgroundColor(Color.BLACK);viewer.setContentDescription("VideoStudio preview monitor");
+        monitor.attach(viewer);
+        int previewHeight=getResources().getConfiguration().orientation==android.content.res.Configuration.ORIENTATION_LANDSCAPE?dp(210):dp(245);
+        box.addView(viewer,margins(-1,previewHeight,0,0,0,0));
+        TextView clock = accent("00:00:00:00 · Source · full/proxy",C_MUTED);
+        box.addView(clock,margins(-1,-2,dp(6),dp(3),0,0));
+        HorizontalScrollView transportScroll=new HorizontalScrollView(this);
+        LinearLayout transport=new LinearLayout(this);
+        addEditorButton(transport,"◀ Frame",()->stepEditorFrame(-1));
+        addEditorButton(transport,"−5s",()->seekEditor(Math.max(0,editorPlayhead-5000)));
+        addEditorButton(transport,"Play / Pause",()->{
+            if(monitor.isPlaying()||monitor.isPreparingToPlay())monitor.pause();else previewTimeline();
         });
-        liveActions.addView(stopJobs);
-        autonomousStrip.addView(liveActions, margins(-1, -2, dp(8), 0, 0, 0));
-        box.addView(autonomousStrip, margins(-1, -2, dp(10), dp(2), 0, 0));
-
-        box.addView(section("Media Bin"));
-        HorizontalScrollView mediaBin = new HorizontalScrollView(this);
-        mediaBin.setHorizontalScrollBarEnabled(false);
-        LinearLayout mediaItems = new LinearLayout(this);
-        mediaItems.setPadding(0, dp(4), dp(12), dp(8));
-        for (ProjectStore.Asset asset : activeProject.assets) {
-            LinearLayout mediaCard = card(false);
-            mediaCard.setMinimumWidth(dp(205));
-            mediaCard.addView(title(asset.name, 13));
-            String role = asset.role == null || asset.role.isEmpty() ? "source" : asset.role.replace('_', ' ');
-            String meta = (asset.generated ? "GENERATED" : "SOURCE") + " • " + role.toUpperCase(Locale.US);
-            mediaCard.addView(accent(meta, asset.generated ? C_CYAN : C_MUTED));
-            mediaCard.addView(body((asset.mime == null ? "media" : asset.mime) + (asset.durationMs > 0 ? " • " + time(asset.durationMs) : "")));
-
-            boolean onTimeline = assetOnTimeline(activeProject, asset.id);
-            if (asset.mime != null && asset.mime.startsWith("video/")) {
-                Button previewAsset = compactButton("Preview");
-                previewAsset.setOnClickListener(v -> {
-                    try {
-                        hint.setVisibility(View.GONE);
-                        livePlayer.setContextIds("", "");
-                        livePlayer.play(Uri.parse(ProxyManager.previewUri(activeProject, asset)), 0L);
-                    } catch (Exception error) {
-                        Toast.makeText(this, "Could not preview media", Toast.LENGTH_SHORT).show();
-                    }
-                });
-                mediaCard.addView(previewAsset, margins(-1, dp(42), dp(8), 0, 0, 0));
-            }
-            if (!onTimeline && asset.mime != null && (asset.mime.startsWith("video/") || asset.mime.startsWith("image/"))) {
-                Button add = compactButton("+ Timeline");
-                add.setOnClickListener(v -> {
-                    ProjectStore.Project latest = store.get(activeProject.id);
-                    if (latest != null && store.appendAssetToTimeline(latest, asset.id)) {
-                        activeProject = store.get(latest.id);
-                        selectedClip = activeProject.clips.isEmpty() ? null : activeProject.clips.get(activeProject.clips.size() - 1);
-                        syncProtocolState();
-                        showEditor();
-                        Toast.makeText(this, "Added to timeline", Toast.LENGTH_SHORT).show();
-                    }
-                });
-                mediaCard.addView(add, margins(-1, dp(42), dp(6), 0, 0, 0));
-            }
-            mediaItems.addView(mediaCard, margins(dp(205), -2, 0, dp(8), dp(8), 0));
+        addEditorButton(transport,"+5s",()->seekEditor(TimelineMath.add(editorPlayhead,5000)));
+        addEditorButton(transport,"Frame ▶",()->stepEditorFrame(1));
+        addEditorButton(transport,"Source",this::previewSelectedClip);
+        addEditorButton(transport,"Program",()->monitor.showProgram(activeProject,editorPlayhead,false));
+        addEditorButton(transport,"Fullscreen",()->showFullscreenPreview(viewer));
+        transportScroll.addView(transport);box.addView(transportScroll,margins(-1,dp(46),0,dp(7),0,0));
+        HorizontalScrollView timelineScroll=new HorizontalScrollView(this);
+        timelineScroll.setHorizontalScrollBarEnabled(true);
+        timelineView=new StudioTimelineView(this);timelineView.setProject(activeProject,selectedClip==null?"":selectedClip.id);
+        timelineView.setPlayhead(editorPlayhead);
+        timelineView.setListener(new StudioTimelineView.Listener(){
+            @Override public void onSelect(String id){selectedClip=activeProject.clip(id);previewSelectedClip();}
+            @Override public void onSeek(long ms){seekEditor(ms);}
+            @Override public void onMove(String id,long ms,String track){try{
+                JSONObject args=new JSONObject();args.put("clipId",id);args.put("startMs",ms);args.put("trackId",track);
+                applyEditorOperation("move_clip",args);
+            }catch(Exception error){editorError(error);}}
+            @Override public void onTrim(String id,long in,long out,long start){try{
+                JSONObject args=new JSONObject();args.put("clipId",id);args.put("inMs",in);args.put("outMs",out);args.put("startMs",start);
+                applyEditorOperation("trim_clip",args);
+            }catch(Exception error){editorError(error);}}
+            @Override public void onTrackControl(String id,String property,boolean value){try{
+                JSONObject args=new JSONObject();args.put("trackId",id);args.put(property,value);applyEditorOperation("set_track",args);
+            }catch(Exception error){editorError(error);}}
+        });
+        timelineScroll.addView(timelineView);box.addView(timelineScroll,margins(-1,-2,0,dp(8),0,0));
+        HorizontalScrollView editScroll=new HorizontalScrollView(this);
+        LinearLayout editActions=new LinearLayout(this);
+        addEditorButton(editActions,"+ Track",this::showAddTrackDialog);
+        addEditorButton(editActions,"Split",this::splitClip);
+        addEditorButton(editActions,"Trim",()->{if(requireSelection())trimDialog();});
+        addEditorButton(editActions,"Speed",()->{if(requireSelection()){String[] speeds={"0.25","0.5","0.75","1","1.5","2","4"};new AlertDialog.Builder(this).setTitle("Clip speed").setItems(speeds,(d,index)->{try{JSONObject args=new JSONObject().put("clipId",selectedClip.id).put("speed",Double.parseDouble(speeds[index]));applyEditorOperation("set_speed",args);}catch(Exception error){editorError(error);}}).show();}});
+        addEditorButton(editActions,"Slip",()->showTimeDeltaEdit("slip_clip","Slip source"));
+        addEditorButton(editActions,"Roll",()->showTimeDeltaEdit("roll_clip","Roll right cut"));
+        addEditorButton(editActions,"Slide",()->showTimeDeltaEdit("slide_clip","Slide between neighbours"));
+        addEditorButton(editActions,"Duplicate",()->selectedEditorAction("duplicate_clip",false));
+        addEditorButton(editActions,"Delete",()->selectedEditorAction("remove_clip",false));
+        addEditorButton(editActions,"Ripple delete",()->selectedEditorAction("remove_clip",true));
+        addEditorButton(editActions,"+ Marker",()->{try{
+            JSONObject args=new JSONObject();args.put("timeMs",editorPlayhead);args.put("name","Marker");applyEditorOperation("add_marker",args);
+        }catch(Exception error){editorError(error);}});
+        addEditorButton(editActions,"Snapshot",()->{try{store.snapshot(activeProject.id,"Snapshot r"+activeProject.revision);Toast.makeText(this,"Snapshot saved",Toast.LENGTH_SHORT).show();}catch(Exception e){editorError(e);}});
+        addEditorButton(editActions,"Restore",this::showSnapshotsDialog);
+        addEditorButton(editActions,"Zoom +",()->timelineView.setPixelsPerSecond(125*getResources().getDisplayMetrics().density));
+        addEditorButton(editActions,"Zoom −",()->timelineView.setPixelsPerSecond(30*getResources().getDisplayMetrics().density));
+        editScroll.addView(editActions);box.addView(editScroll,margins(-1,dp(46),0,dp(6),0,0));
+        HorizontalScrollView workspaceScroll=new HorizontalScrollView(this);
+        LinearLayout workspaces=new LinearLayout(this);
+        addEditorButton(workspaces,"Colour",this::showInspectorDialog);
+        addEditorButton(workspaces,"Key / Masks",this::showCompositeWorkspace);
+        addEditorButton(workspaces,"Audio",this::showAudioWorkspace);
+        addEditorButton(workspaces,"Text",()->{if(requireSelection())textDialog();});
+        addEditorButton(workspaces,"Title animation",()->applyTool("Text Animation"));
+        addEditorButton(workspaces,"Title font",()->applyTool("Fonts"));
+        addEditorButton(workspaces,"Colour looks",()->applyTool("Colour"));
+        addEditorButton(workspaces,"Motion",()->{if(requireSelection())applyTool("Motion");});
+        addEditorButton(workspaces,"Blur",()->{if(requireSelection())applyTool("Blur");});
+        addEditorButton(workspaces,"Animate images",this::animateImagesDialog);
+        addEditorButton(workspaces,"Procedural video",this::promptVideoDialog);
+        workspaceScroll.addView(workspaces);box.addView(workspaceScroll,margins(-1,dp(46),0,0,0,0));
+        TextView studioActivity=body("Studio activity");
+        JSONArray recent=ActivityLog.recentWork(this,1);JSONObject work=recent.optJSONObject(0);
+        try{JSONObject live=new JSONObject(prefs.getString(ExecutionTruthPolicy.LIVE_JOB_PREF_KEY,"{}"));
+            if(activeProject.id.equals(live.optString("projectId")) && !live.optString("detail").isEmpty())
+                studioActivity.setText(("owner".equals(live.optString("origin"))?"Owner export":"ChatGPT activity")+" · "+live.optString("detail"));
+            else if(work!=null)studioActivity.setText("Studio activity · "+work.optString("action")+" · "+work.optString("state"));
+        }catch(Exception ignored){}
+        studioActivity.setOnClickListener(v->showActivity());box.addView(studioActivity);
+        PreviewSnapshotStore.Snapshot result=previewSnapshots.latest(activeProject.id);
+        if(result!=null){Button playNew=compactButton("Play new result · "+result.qualityTier);
+            playNew.setOnClickListener(v->{ProjectStore.Asset a=new ProjectStore.Asset();a.id=result.id;a.uri=result.uri;a.mime="video/mp4";a.name="Rendered result";monitor.showSource(activeProject,a,null,0,true);});box.addView(playNew);}
+        setScreen(scroll,"editor");
+        if(!monitor.isPlaying() && selectedClip!=null){
+            if(monitor.isProgram())monitor.showProgram(activeProject,editorPlayhead,false);
+            else monitor.showSource(activeProject,activeProject.asset(selectedClip.assetId),selectedClip,
+                    TimelineMath.sourceAt(selectedClip.inMs,selectedClip.outMs,selectedClip.speed,Math.max(0,editorPlayhead-selectedClip.startMs)),false);
         }
-        if (activeProject.assets.isEmpty()) mediaItems.addView(body(
-                "No media in this project yet. Import source media, or run Prompt Video to generate a new project."
-        ));
-        mediaBin.addView(mediaItems);
-        box.addView(mediaBin);
-
-        box.addView(section("Timeline"));
-        HorizontalScrollView timeline = new HorizontalScrollView(this);
-        timeline.setHorizontalScrollBarEnabled(false);
-        LinearLayout clips = new LinearLayout(this);
-        clips.setPadding(0, dp(4), dp(12), dp(8));
-        for (int i = 0; i < activeProject.clips.size(); i++) {
-            final int index = i;
-            ProjectStore.Clip clip = activeProject.clips.get(i);
-            ProjectStore.Asset asset = activeProject.asset(clip.assetId);
-            LinearLayout chip = card(false);
-            chip.setMinimumWidth(dp(170));
-            boolean selected = selectedClip != null && selectedClip.id.equals(clip.id);
-            chip.setBackground(rounded(selected ? Color.rgb(38, 48, 89) : C_CARD_2, selected ? C_CYAN : Color.rgb(35, 48, 72), dp(14)));
-            chip.addView(title((index + 1) + "  " + (asset == null ? "Clip" : asset.name), 13));
-            chip.addView(body(time(clip.outputDurationMs()) + " • " + trimFloat(clip.speed) + "× • " + clip.transition));
-            if (clip.effects != null && clip.effects.length() > 0) {
-                chip.addView(accent("✦ " + effectSummary(clip.effects), C_CYAN));
+        scheduleEditorRefresh(activeProject.id,activeProject.revision);
+        playbackTick=new Runnable(){@Override public void run(){
+            if(!"editor".equals(currentScreen))return;
+            if(monitor.isPlaying()){
+                long position=monitor.position();
+                editorPlayhead=monitor.isProgram()?position:selectedClip==null?position:TimelineMath.add(selectedClip.startMs,TimelineMath.localAt(position,selectedClip.inMs,selectedClip.speed));
+                timelineView.setPlayhead(editorPlayhead);
             }
-            chip.setOnClickListener(v -> {
-                selectedClip = clip;
-                previewSelectedClip();
-                showEditor();
-            });
-            clips.addView(chip, margins(dp(170), -2, 0, dp(8), dp(8), 0));
-        }
-        if (activeProject.clips.isEmpty()) {
-            clips.addView(body("Timeline is empty."));
-        }
-        timeline.addView(clips);
-        box.addView(timeline);
+            int fps=activeProject.settings.optInt("fps",30);long frame=TimelineMath.frameIndex(editorPlayhead,fps);
+            long shown=monitor.shownRevision();String revision=shown<0?"preparing r"+activeProject.revision:"r"+shown+(shown==activeProject.revision?"":" · project r"+activeProject.revision);
+            clock.setText(String.format(Locale.US,"%02d:%02d:%02d:%02d · %s · %s",editorPlayhead/3600000,editorPlayhead/60000%60,editorPlayhead/1000%60,frame%fps,monitor.isProgram()?"Program":"Source",revision));
+            ui.postDelayed(this,120);
+        }};ui.post(playbackTick);
+    }
 
-        box.addView(section("Creator Tools"));
-        String[][] tools = {
-                {"✂", "Split"}, {"↔", "Trim"}, {"½", "Slow Motion"}, {"⌁", "Speed Ramp"},
-                {"◆", "Green Screen"}, {"⇄", "Transitions"}, {"↗", "Motion"}, {"✦", "Effects"},
-                {"◉", "Colour"}, {"T", "Text"}, {"Aa", "Fonts"}, {"♫", "Volume"},
-                {"▣", "Reframe"}, {"◐", "Mask"}, {"▥", "Overlay"}, {"≈", "Motion Blur"},
-                {"❄", "Freeze"}, {"⧉", "Duplicate"}, {"↺", "Reverse"}, {"↯", "Shake"},
-                {"◌", "Blur"}, {"☼", "Glow"}, {"CC", "Captions"}, {"⌁", "Audio Duck"}
-        };
-        LinearLayout toolGrid = column();
-        for (int i = 0; i < tools.length; i += 4) {
-            LinearLayout row = new LinearLayout(this);
-            row.setOrientation(LinearLayout.HORIZONTAL);
-            for (int j = 0; j < 4 && i + j < tools.length; j++) {
-                String icon = tools[i + j][0];
-                String label = tools[i + j][1];
-                row.addView(actionTile(icon, label, j % 2 == 0 ? C_BLUE : C_PURPLE, () -> applyTool(label)), weightWithMargin());
+    private void addEditorButton(LinearLayout row,String label,Runnable action){
+        Button button=compactButton(label);button.setContentDescription(label);button.setOnClickListener(v->action.run());row.addView(button);
+    }
+    private void stepEditorFrame(int direction){
+        int fps=activeProject.settings.optInt("fps",30);
+        long rounded=TimelineMath.frameIndex(TimelineMath.add(editorPlayhead,Math.max(1,500/fps)),fps);
+        long next=direction<0?Math.max(0,rounded-1):TimelineMath.add(rounded,1);
+        seekEditor(TimelineMath.frameTime(next,fps));
+    }
+    private boolean requireSelection(){
+        if(selectedClip!=null)return true;Toast.makeText(this,"Select a timeline clip first",Toast.LENGTH_SHORT).show();return false;
+    }
+    private void applyEditorOperation(String operation,JSONObject args){
+        try{
+            String selectedId=selectedClip==null?"":selectedClip.id;
+            activeProject=editor.execute(activeProject.id,activeProject.revision,"owner","",operation,args);
+            selectedClip=activeProject.clip(selectedId);
+            syncProtocolState();showEditor();
+            if(!activeProject.clips.isEmpty())monitor.showProgram(activeProject,editorPlayhead,false);
+        }catch(Exception error){editorError(error);}
+    }
+    private void selectedEditorAction(String operation,boolean ripple){
+        if(!requireSelection())return;try{JSONObject args=new JSONObject();args.put("clipId",selectedClip.id);args.put("ripple",ripple);applyEditorOperation(operation,args);}catch(Exception error){editorError(error);}
+    }
+    private void showTimeDeltaEdit(String operation,String label){
+        if(!requireSelection())return;EditText delta=new EditText(this);delta.setText("100");delta.setInputType(android.text.InputType.TYPE_CLASS_NUMBER|android.text.InputType.TYPE_NUMBER_FLAG_SIGNED);
+        new AlertDialog.Builder(this).setTitle(label+" · milliseconds").setView(delta).setPositiveButton("Apply",(d,w)->{try{JSONObject args=new JSONObject().put("clipId",selectedClip.id).put("deltaMs",Long.parseLong(delta.getText().toString()));applyEditorOperation(operation,args);}catch(Exception error){editorError(error);}}).setNegativeButton("Cancel",null).show();
+    }
+    private void editorError(Exception error){
+        Toast.makeText(this,error.getMessage()==null?"Could not edit project":error.getMessage(),Toast.LENGTH_LONG).show();
+        if(activeProject!=null){ProjectStore.Project fresh=store.get(activeProject.id);if(fresh!=null)activeProject=fresh;}
+    }
+    private void historyEditor(boolean redo){
+        try{activeProject=redo?store.redo(activeProject.id,activeProject.revision):store.undo(activeProject.id,activeProject.revision);syncProtocolState();showEditor();}
+        catch(Exception error){editorError(error);}
+    }
+    private void seekEditor(long timeMs){
+        editorPlayhead=Math.max(0,Math.min(activeProject.outputDurationMs(),timeMs));
+        if(timelineView!=null)timelineView.setPlayhead(editorPlayhead);
+        monitor.showProgram(activeProject,editorPlayhead,false);
+    }
+    private void showFullscreenPreview(FrameLayout previous){
+        FrameLayout full=new FrameLayout(this);monitor.attach(full);
+        AlertDialog dialog=new AlertDialog.Builder(this).setView(full).setPositiveButton("Back to editor",null).create();
+        dialog.setOnDismissListener(d->monitor.attach(previous));dialog.show();
+        if(dialog.getWindow()!=null)dialog.getWindow().setLayout(-1,-1);
+    }
+    private void showAddTrackDialog(){
+        String[] labels={"Video","Image / graphics","Audio music","Audio dialogue","Audio SFX","Voice-over"};
+        String[] types={"video","image","audio_music","audio_dialogue","audio_sfx","voice_over"};
+        new AlertDialog.Builder(this).setTitle("Add track").setItems(labels,(d,index)->{try{JSONObject a=new JSONObject();a.put("type",types[index]);a.put("name",labels[index]+" "+(activeProject.tracks.size()+1));applyEditorOperation("add_track",a);}catch(Exception error){editorError(error);}}).show();
+    }
+    private void showSnapshotsDialog(){
+        JSONArray snapshots=store.snapshots(activeProject.id);
+        if(snapshots.length()==0){Toast.makeText(this,"No snapshots yet",Toast.LENGTH_SHORT).show();return;}
+        String[] names=new String[snapshots.length()];for(int i=0;i<names.length;i++)names[i]=snapshots.optJSONObject(i).optString("name");
+        new AlertDialog.Builder(this).setTitle("Restore project snapshot").setItems(names,(d,index)->{try{
+            activeProject=store.restore(activeProject.id,activeProject.revision,snapshots.optJSONObject(index).optString("id"));syncProtocolState();showEditor();
+        }catch(Exception error){editorError(error);}}).show();
+    }
+    private void showInspectorDialog(){
+        if(!requireSelection())return;
+        ScrollView scroll=baseScroll();LinearLayout form=column();form.setPadding(dp(14),dp(8),dp(14),dp(12));scroll.addView(form);
+        form.addView(body("◆ adds a keyframe at the playhead. Values use normalized frame coordinates."));
+        java.util.LinkedHashMap<String,EditText> fields=new java.util.LinkedHashMap<>();
+        String[] properties={"x","y","scale","scaleX","scaleY","rotate","opacity","anchorX","anchorY","brightness","contrast","saturationAdjust","lightnessAdjust","volume","pan","blur","cropLeft","cropRight","cropTop","cropBottom"};
+        android.widget.Spinner easing=new android.widget.Spinner(this);
+        easing.setAdapter(new android.widget.ArrayAdapter<String>(this,android.R.layout.simple_spinner_dropdown_item,new String[]{"linear","ease_in_out","ease_in","ease_out","hold"}));form.addView(easing);
+        for(String property:properties){
+            double fallback=property.startsWith("scale")||"opacity".equals(property)?1:0;
+            double value=EditorEngine.valueAt(selectedClip,property,Math.max(0,editorPlayhead-selectedClip.startMs),fallback);
+            LinearLayout row=new LinearLayout(this);row.setGravity(Gravity.CENTER_VERTICAL);
+            TextView label=body(property);row.addView(label,new LinearLayout.LayoutParams(0,-2,1));
+            EditText input=numberInput((float)value);fields.put(property,input);row.addView(input,new LinearLayout.LayoutParams(dp(90),dp(45)));
+            if(!property.startsWith("crop")&&!"blur".equals(property)){
+                Button key=compactButton("◆");key.setOnClickListener(v->{try{
+                    JSONObject a=new JSONObject();a.put("clipId",selectedClip.id);a.put("property",property);a.put("value",Double.parseDouble(input.getText().toString()));
+                    a.put("timeMs",Math.max(0,Math.min(selectedClip.outputDurationMs(),editorPlayhead-selectedClip.startMs)));a.put("easing",easing.getSelectedItem().toString());
+                    applyEditorOperation("set_keyframe",a);
+                }catch(Exception error){editorError(error);}});row.addView(key);
             }
-            toolGrid.addView(row, margins(-1, -2, 0, dp(8), 0, 0));
+            form.addView(row);
         }
-        box.addView(toolGrid);
+        new AlertDialog.Builder(this).setTitle("Clip inspector").setView(scroll).setPositiveButton("Apply",(d,w)->{try{
+            JSONObject values=new JSONObject();for(java.util.Map.Entry<String,EditText> field:fields.entrySet())values.put(field.getKey(),Double.parseDouble(field.getValue().getText().toString()));
+            JSONObject args=new JSONObject();args.put("clipId",selectedClip.id);args.put("values",values);applyEditorOperation("set_properties",args);
+        }catch(Exception error){editorError(error);}}).setNegativeButton("Close",null).show();
+    }
+    private void showCompositeWorkspace(){
+        if(!requireSelection())return;
+        ScrollView scroll=baseScroll();LinearLayout form=column();form.setPadding(dp(16),dp(10),dp(16),dp(20));scroll.addView(form);JSONObject fx=selectedClip.effects;
+        android.widget.CheckBox key=new android.widget.CheckBox(this);key.setText("Enable chroma key");key.setTextColor(C_TEXT);key.setChecked(fx.optBoolean("chromaKey"));form.addView(key);
+        form.addView(body("Key colour (#RRGGBB)"));EditText color=new EditText(this);color.setTextColor(C_TEXT);color.setText(fx.optString("chromaColor","#00FF00"));form.addView(color);
+        android.widget.Spinner mask=exportChoice(form,"Mask shape",new String[]{"none","rectangle","rounded_rect","ellipse"});String shape=fx.optString("mask","none");for(int i=0;i<4;i++)if(shape.equals(mask.getItemAtPosition(i)))mask.setSelection(i);
+        android.widget.CheckBox invert=new android.widget.CheckBox(this);invert.setText("Invert mask");invert.setTextColor(C_TEXT);invert.setChecked(fx.optBoolean("maskInvert"));form.addView(invert);
+        String[] keys={"chromaTolerance","chromaSoftness","spillSuppression","maskCenterX","maskCenterY","maskWidth","maskHeight","maskFeather","maskCornerRadius"};
+        String[] labels={"Key tolerance (0–1)","Key softness (0.001–0.5)","Spill reduction (0–1)","Mask centre X (0–1)","Mask centre Y from top (0–1)","Mask width (0.01–1)","Mask height (0.01–1)","Feather (0–0.5)","Rounded corner radius (0–0.5)"};double[] defaults={.18,.08,.35,.5,.5,.9,.9,.08,.08};java.util.Map<String,EditText> fields=new java.util.LinkedHashMap<>();
+        for(int i=0;i<keys.length;i++){form.addView(body(labels[i]));EditText input=new EditText(this);input.setTextColor(C_TEXT);input.setInputType(android.text.InputType.TYPE_CLASS_NUMBER|android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL);input.setText(Double.toString(fx.optDouble(keys[i],defaults[i])));fields.put(keys[i],input);form.addView(input);}
+        new AlertDialog.Builder(this).setTitle("Chroma key and masks").setView(scroll).setPositiveButton("Apply",(d,w)->{try{JSONObject settings=new JSONObject().put("chromaKey",key.isChecked()).put("chromaColor",color.getText().toString().trim()).put("mask",mask.getSelectedItem().toString()).put("maskInvert",invert.isChecked());for(java.util.Map.Entry<String,EditText> field:fields.entrySet())settings.put(field.getKey(),Double.parseDouble(field.getValue().getText().toString()));applyEditorOperation("set_composite_effects",new JSONObject().put("clipId",selectedClip.id).put("settings",settings));}catch(Exception error){editorError(error);}}).setNeutralButton("Remove",(d,w)->{try{applyEditorOperation("set_composite_effects",new JSONObject().put("clipId",selectedClip.id).put("settings",new JSONObject()));}catch(Exception error){editorError(error);}}).setNegativeButton("Close",null).show();
+    }
+    private void showAudioWorkspace(){
+        ScrollView scroll=baseScroll();LinearLayout form=column();form.setPadding(dp(16),dp(10),dp(16),dp(20));scroll.addView(form);
+        form.addView(title("Audio",23));form.addView(body("Gain and pan automate in the clip inspector. EQ, filters, compressor, gate, delay, width and limiter process the same PCM samples in program preview and final export. Delay stays within the clip duration."));
+        Button voice=compactButton("Create narration with installed Android voices");voice.setOnClickListener(v->showNarrationDialog());form.addView(voice);
+        if(selectedClip==null){new AlertDialog.Builder(this).setTitle("Audio workspace").setView(scroll).setPositiveButton("Close",null).show();return;}
+        JSONObject saved=selectedClip.effects.optJSONObject("audioDsp");if(saved==null)saved=new JSONObject();
+        String[] keys={"lowDb","midDb","highDb","highpassHz","lowpassHz","thresholdDb","ratio","attackMs","releaseMs","makeupDb","gateDb","delayMs","delayWet","delayFeedback","stereoWidth","limiterDb"};
+        double[] defaults={0,0,0,0,0,0,1,10,100,0,-120,0,0,0,1,0};
+        String[] labels={"Low shelf (dB)","Mid EQ (dB)","High shelf (dB)","High-pass (Hz, 0 off)","Low-pass (Hz, 0 off)","Compressor threshold (dB)","Ratio (1–20)","Attack (ms)","Release (ms)","Makeup gain (dB)","Gate threshold (dB, -120 off)","Delay (ms)","Delay wet (0–1)","Feedback (0–0.95)","Stereo width (0–2)","Limiter ceiling (dB)"};
+        java.util.Map<String,EditText> fields=new java.util.LinkedHashMap<>();for(int i=0;i<keys.length;i++){form.addView(body(labels[i]));EditText input=new EditText(this);input.setTextColor(C_TEXT);input.setInputType(android.text.InputType.TYPE_CLASS_NUMBER|android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL|android.text.InputType.TYPE_NUMBER_FLAG_SIGNED);input.setText(Double.toString(saved.optDouble(keys[i],defaults[i])));fields.put(keys[i],input);form.addView(input);}
+        new AlertDialog.Builder(this).setTitle("Clip audio processing").setView(scroll).setPositiveButton("Apply",(d,w)->{try{JSONObject settings=new JSONObject();for(java.util.Map.Entry<String,EditText> field:fields.entrySet())settings.put(field.getKey(),Double.parseDouble(field.getValue().getText().toString()));applyEditorOperation("set_audio_effects",new JSONObject().put("clipId",selectedClip.id).put("settings",settings));}catch(Exception error){editorError(error);}}).setNeutralButton("Remove DSP",(d,w)->{try{applyEditorOperation("set_audio_effects",new JSONObject().put("clipId",selectedClip.id).put("settings",new JSONObject()));}catch(Exception error){editorError(error);}}).setNegativeButton("Close",null).show();
+    }
+    private void showNarrationDialog(){
+        LinearLayout form=column();form.setPadding(dp(18),dp(8),dp(18),dp(18));EditText text=new EditText(this);text.setHint("Narration text");text.setTextColor(C_TEXT);text.setMinLines(3);form.addView(text);
+        EditText language=new EditText(this);language.setText(java.util.Locale.getDefault().toLanguageTag());language.setHint("Language tag");form.addView(language);
+        EditText voice=new EditText(this);voice.setHint("Installed voice ID (optional)");form.addView(voice);
+        new AlertDialog.Builder(this).setTitle("Create offline narration").setView(form).setPositiveButton("Generate",(d,w)->{try{JSONObject parameters=new JSONObject().put("projectId",activeProject.id).put("text",text.getText().toString()).put("language",language.getText().toString()).put("voice",voice.getText().toString()).put("offlineOnly",true).put("appendToTimeline",true);startForegroundService(new Intent(this,ControlService.class).setAction(ControlService.ACTION_LOCAL_VOICE).putExtra("parameters",parameters.toString()).putExtra("projectId",activeProject.id));Toast.makeText(this,"Narration job started",Toast.LENGTH_SHORT).show();}catch(Exception error){editorError(error);}}).setNegativeButton("Cancel",null).show();
+    }
 
-        LinearLayout status = card(false);
-        status.addView(title("Native creator pipeline", 16));
-        status.addView(body("Cuts, speed, colour, blur, transforms, motion and prompt scenes now feed the Media3 native exporter. Advanced chroma, masks and creator transitions remain in the timeline model for progressive renderer coverage."));
-        box.addView(status, margins(-1, -2, dp(6), 0, 0, 0));
+    private void showMediaBinDialog(){
+        ProjectStore.Project latest=activeProject==null?null:store.get(activeProject.id);
+        if(latest==null){Toast.makeText(this,"Open a project first",Toast.LENGTH_SHORT).show();return;}
+        activeProject=latest;if(selectedClip!=null)selectedClip=latest.clip(selectedClip.id);
+        ScrollView scroll=baseScroll();LinearLayout items=column();items.setPadding(dp(14),dp(8),dp(14),dp(16));scroll.addView(items);
+        for(ProjectStore.Asset asset:activeProject.assets){
+            LinearLayout item=column();item.addView(title(asset.name,15));
+            item.addView(body((asset.generated?"Generated":"Imported")+" · "+asset.mime+" · "+time(asset.durationMs)+" · "+(asset.seekable?"seekable":"provider stream")));
+            LinearLayout actions=new LinearLayout(this);
+            addEditorButton(actions,"Preview",()->{monitor.showSource(activeProject,asset,null,0,false);});
+            addEditorButton(actions,"+ Timeline",()->showAddAssetDialog(asset));
+            if(asset.mime.startsWith("video/")&&!"preview_proxy".equals(asset.role))addEditorButton(actions,"Proxy",()->showProxyDialog(asset));
+            addEditorButton(actions,"Rename",()->{EditText name=new EditText(this);name.setText(asset.name);new AlertDialog.Builder(this).setTitle("Rename media").setView(name).setPositiveButton("Save",(d,w)->{try{JSONObject a=new JSONObject();a.put("assetId",asset.id);a.put("name",name.getText().toString());applyEditorOperation("rename_asset",a);}catch(Exception error){editorError(error);}}).setNegativeButton("Cancel",null).show();});
+            addEditorButton(actions,"Remove",()->{try{applyEditorOperation("remove_asset",new JSONObject().put("assetId",asset.id));}catch(Exception error){editorError(error);}});
+            addEditorButton(actions,"Vault copy",()->new AlertDialog.Builder(this).setTitle("Vault copy").setMessage("Create a checksummed copy in 256 MB chunks. Encryption uses this device's Keystore; keep the original for portability.").setPositiveButton("Encrypted copy",(d,w)->startForegroundService(new Intent(this,ControlService.class).setAction(ControlService.ACTION_LOCAL_VAULT).putExtra("projectId",activeProject.id).putExtra("assetId",asset.id).putExtra("encrypted",true))).setNeutralButton("Plain copy",(d,w)->startForegroundService(new Intent(this,ControlService.class).setAction(ControlService.ACTION_LOCAL_VAULT).putExtra("projectId",activeProject.id).putExtra("assetId",asset.id).putExtra("encrypted",false))).setNegativeButton("Cancel",null).show());
+            JSONObject vault=asset.generationMetadata.optJSONObject("vault");
+            if(vault!=null&&vault.optBoolean("complete")){
+                addEditorButton(actions,"Replicate Vault",()->showVaultReplication(asset));
+                addEditorButton(actions,"Restore media from Vault",()->{startForegroundService(new Intent(this,ControlService.class).setAction(ControlService.ACTION_LOCAL_VAULT_RESTORE).putExtra("projectId",activeProject.id).putExtra("assetId",asset.id));Toast.makeText(this,"Restoring verified media; see Jobs for progress",Toast.LENGTH_LONG).show();});
+            }
+            JSONObject replicas=asset.generationMetadata.optJSONObject("vaultReplication");
+            if(replicas!=null&&replicas.optBoolean("complete"))item.addView(body("Vault storage · "+replicas.optInt("chunkReplicas")+" verified chunk copies across "+(replicas.optJSONArray("profileIds")==null?0:replicas.optJSONArray("profileIds").length())+" folders. Last verification: "+new java.text.SimpleDateFormat("MMM d, HH:mm",java.util.Locale.getDefault()).format(new java.util.Date(replicas.optLong("verifiedAt")))));
+            HorizontalScrollView actionsScroll=new HorizontalScrollView(this);actionsScroll.addView(actions);item.addView(actionsScroll);items.addView(item,margins(-1,-2,0,dp(12),0,0));
+        }
+        if(activeProject.assets.isEmpty())items.addView(body("Import video, images or audio through the system picker."));
+        new AlertDialog.Builder(this).setTitle("Media Bin").setView(scroll).setPositiveButton("Close",null).setNeutralButton("Import",(d,w)->pickMedia()).show();
+    }
+    private void showProxyDialog(ProjectStore.Asset asset){
+        String[] choices={"Use original media","Use available proxies automatically","Create 240p scrub proxy","Create 360p scrub proxy","Create 540p editing proxy","Create 720p editing proxy"};
+        new AlertDialog.Builder(this).setTitle("Preview quality · "+asset.name).setItems(choices,(dialog,index)->{
+            try{
+                String mode=index==0?"original":index==1?"auto":new String[]{"240p","360p","540p","720p"}[index-2];
+                applyEditorOperation("set_preview_policy",new JSONObject().put("mode",mode));
+                if(index>=2){startForegroundService(new Intent(this,ControlService.class).setAction(ControlService.ACTION_LOCAL_PROXY).putExtra("projectId",activeProject.id).putExtra("assetId",asset.id).putExtra("tier",mode));Toast.makeText(this,"Proxy job started; preview uses the original until verification finishes",Toast.LENGTH_LONG).show();}
+            }catch(Exception error){editorError(error);}
+        }).setNegativeButton("Cancel",null).show();
+    }
+    private void showAddAssetDialog(ProjectStore.Asset asset){
+        ArrayList<ProjectStore.Track> tracks=new ArrayList<>();
+        for(ProjectStore.Track t:activeProject.tracks)if(!t.locked && (asset.mime.startsWith("audio/")?t.audioOnly():!t.audioOnly()))tracks.add(t);
+        if(tracks.isEmpty()){Toast.makeText(this,"Add a compatible track first",Toast.LENGTH_LONG).show();return;}
+        String[] names=new String[tracks.size()];for(int i=0;i<names.length;i++)names[i]=tracks.get(i).name;
+        new AlertDialog.Builder(this).setTitle("Add to track").setItems(names,(d,index)->{try{JSONObject a=new JSONObject();a.put("assetId",asset.id);a.put("trackId",tracks.get(index).id);applyEditorOperation("add_clip",a);}catch(Exception error){editorError(error);}}).show();
+    }
 
-        setScreen(scroll, "editor");
-        scheduleEditorRefresh(activeProject == null ? "" : activeProject.id,
-                activeProject == null ? 0 : activeProject.updatedAt);
+    private void showExportPage(){
+        if(activeProject==null || activeProject.clips.isEmpty()){Toast.makeText(this,"Timeline is empty",Toast.LENGTH_SHORT).show();return;}
+        ScrollView scroll=baseScroll();LinearLayout form=column();form.setPadding(dp(16),dp(12),dp(16),dp(24));scroll.addView(form);
+        form.addView(title("Export video",24));form.addView(body(activeProject.name+" · revision "+activeProject.revision+" · "+time(activeProject.outputDurationMs())));
+        EditText fileName=new EditText(this);fileName.setSingleLine();fileName.setText("VideoStudio_"+System.currentTimeMillis()+".mp4");fileName.setTextColor(C_TEXT);
+        form.addView(body("Filename"));form.addView(fileName);
+        android.widget.Spinner aspect=exportChoice(form,"Aspect ratio",new String[]{"16:9","9:16","1:1","4:5"});
+        String aspectValue=activeProject.settings.optString("aspect","16:9");for(int i=0;i<4;i++)if(aspectValue.equals(aspect.getItemAtPosition(i)))aspect.setSelection(i);
+        android.widget.Spinner quality=exportChoice(form,"Resolution",new String[]{"1080p","720p"});
+        android.widget.Spinner fps=exportChoice(form,"Frames per second",new String[]{"30","24","25","50","60"});
+        android.widget.Spinner bitrate=exportChoice(form,"Video bitrate",new String[]{"8 Mbps","4 Mbps","12 Mbps","20 Mbps"});
+        android.widget.Spinner destination=exportChoice(form,"Destination",new String[]{"Movies / VideoStudio","App project storage","Choose a file through Android"});
+        form.addView(body("H.264 video · AAC audio · SDR. The native encoder uses codec fallback. Source media stays unchanged."));
+        Button start=neonButton("Start Export",C_CYAN);start.setTextColor(Color.BLACK);start.setContentDescription("Start Export");
+        start.setOnClickListener(v->{try{
+            JSONObject settings=new JSONObject();String name=fileName.getText().toString().trim();
+            if(name.isEmpty())throw new IllegalArgumentException("Filename is required");if(!name.toLowerCase(Locale.US).endsWith(".mp4"))name+=".mp4";
+            settings.put("fileName",name);settings.put("aspect",aspect.getSelectedItem().toString());settings.put("quality",quality.getSelectedItem().toString());
+            settings.put("fps",Integer.parseInt(fps.getSelectedItem().toString()));
+            int[] rates={8_000_000,4_000_000,12_000_000,20_000_000};settings.put("bitrate",rates[bitrate.getSelectedItemPosition()]);
+            settings.put("destination",destination.getSelectedItemPosition()==1?"app":"movies");
+            if(destination.getSelectedItemPosition()==2){
+                pendingExportSettings=settings;pendingExportProjectId=activeProject.id;
+                Intent pick=new Intent(Intent.ACTION_CREATE_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("video/mp4").putExtra(Intent.EXTRA_TITLE,name);
+                startActivityForResult(pick,PICK_EXPORT_DESTINATION);
+            }else startOwnerExport(activeProject,settings);
+        }catch(Exception error){editorError(error);}});
+        form.addView(start,margins(-1,dp(52),dp(12),0,0,0));
+        ExportSessionStore.Session previous=new ExportSessionStore(this).latest(activeProject.id);
+        if(previous!=null){Button last=compactButton("Last export · "+previous.state);last.setOnClickListener(v->showExportSession(previous.id));form.addView(last);}
+        Button back=compactButton("Back to editor");back.setOnClickListener(v->showEditor());form.addView(back);setScreen(scroll,"export");
+    }
+    private android.widget.Spinner exportChoice(LinearLayout form,String label,String[] values){
+        form.addView(body(label));android.widget.Spinner choice=new android.widget.Spinner(this);
+        choice.setAdapter(new android.widget.ArrayAdapter<String>(this,android.R.layout.simple_spinner_dropdown_item,values));form.addView(choice,margins(-1,dp(48),0,dp(6),0,0));return choice;
+    }
+    private void startOwnerExport(ProjectStore.Project project,JSONObject settings){
+        ExportSessionStore sessions=new ExportSessionStore(this);ExportSessionStore.Session session=sessions.create(project,settings);
+        try{startForegroundService(new Intent(this,ControlService.class).setAction(ControlService.ACTION_LOCAL_EXPORT).putExtra("sessionId",session.id));}
+        catch(Exception error){sessions.fail(session.id,error.getMessage());}
+        showExportSession(session.id);
+    }
+    private void showExportSession(String sessionId){
+        ExportSessionStore sessions=new ExportSessionStore(this);ExportSessionStore.Session initial=sessions.get(sessionId);if(initial==null)return;
+        ScrollView scroll=baseScroll();LinearLayout page=column();page.setPadding(dp(18),dp(18),dp(18),dp(24));scroll.addView(page);
+        page.addView(title("Export session",25));page.addView(body(initial.name+" · revision "+initial.projectRevision));
+        TextView stage=body("Preparing export");page.addView(stage);
+        ProgressBar progress=new ProgressBar(this,null,android.R.attr.progressBarStyleHorizontal);progress.setMax(100);page.addView(progress,margins(-1,dp(12),dp(12),dp(12),0,0));
+        TextView detail=body("");page.addView(detail);
+        Button cancel=compactButton("Cancel Export");cancel.setOnClickListener(v->{sessions.cancel(sessionId);startForegroundService(new Intent(this,ControlService.class).setAction(ControlService.ACTION_CANCEL_MANUAL_EXPORT).putExtra("sessionId",sessionId));});page.addView(cancel);
+        Button retry=compactButton("Retry Export");retry.setVisibility(View.GONE);retry.setOnClickListener(v->startOwnerExport(sessions.project(sessionId),sessions.get(sessionId).settings));page.addView(retry);
+        Button play=compactButton("Play verified export");play.setVisibility(View.GONE);play.setOnClickListener(v->{
+            ExportSessionStore.Session done=sessions.get(sessionId);showEditor();ProjectStore.Asset a=new ProjectStore.Asset();a.id=sessionId;a.uri=done.uri;a.mime="video/mp4";a.name=done.name;monitor.showSource(activeProject,a,null,0,true);
+        });page.addView(play);
+        Button editorButton=compactButton("Continue editing");editorButton.setOnClickListener(v->showEditor());page.addView(editorButton);
+        setScreen(scroll,"export-session");
+        activityRefresh=new Runnable(){@Override public void run(){
+            if(!"export-session".equals(currentScreen))return;ExportSessionStore.Session current=sessions.get(sessionId);if(current==null)return;
+            String state=current.state,description=current.detail;
+            try{JSONArray live=new JSONArray(prefs.getString(ExecutionTruthPolicy.JOB_RECOVERY_PREF_KEY,"[]"));
+                for(int i=0;i<live.length();i++){JSONObject job=live.optJSONObject(i);if(job!=null && current.jobId.equals(job.optString("id")) && job.optString("state").startsWith("waiting_")){state=job.optString("state");description=job.optString("detail");}}
+            }catch(Exception ignored){}
+            stage.setText(state.replace('_',' ')+" · "+current.progress+"%");detail.setText(description);progress.setProgress(current.progress);
+            cancel.setVisibility(current.terminal()?View.GONE:View.VISIBLE);retry.setVisibility("failed".equals(current.state)||"cancelled".equals(current.state)?View.VISIBLE:View.GONE);
+            play.setVisibility(current.verified && "completed".equals(current.state)?View.VISIBLE:View.GONE);
+            if(!current.terminal())ui.postDelayed(this,350);
+        }};ui.post(activityRefresh);
     }
 
     private View autonomousEditorCard() {
@@ -709,7 +865,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         return false;
     }
 
-    private void scheduleEditorRefresh(String projectId, long knownUpdatedAt) {
+    private void scheduleEditorRefresh(String projectId, long knownRevision) {
         if (projectId == null || projectId.isEmpty()) return;
         activityRefresh = () -> {
             if (!"editor".equals(currentScreen)) return;
@@ -728,7 +884,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
             }
 
             ProjectStore.Project latest = store.get(projectId);
-            if (latest != null && latest.updatedAt != knownUpdatedAt) {
+            if (latest != null && latest.revision != knownRevision) {
                 String selectedId = selectedClip == null ? "" : selectedClip.id;
                 activeProject = latest;
                 selectedClip = null;
@@ -811,11 +967,13 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                 tile.setOnClickListener(v -> {
                     if (tool.contains("Prompt Video")) promptVideoDialog();
                     else if (tool.contains("Animate Stills")) animateImagesDialog();
-                    else if (tool.contains("Green")) applyTool("Green Screen");
+                    else if (tool.contains("Green")||tool.contains("Masks")){showEditor();showCompositeWorkspace();}
+                    else if (tool.contains("Audio")){showEditor();showAudioWorkspace();}
                     else if (tool.contains("Transition")) applyTool("Transitions");
                     else if (tool.contains("Motion")) applyTool("Motion");
                     else if (tool.contains("Colour")) applyTool("Colour");
                     else if (tool.contains("Fonts")) applyTool("Fonts");
+                    else if (tool.contains("Text Animation")) applyTool("Text Animation");
                     else if (tool.contains("Blur")) applyTool("Blur");
                     else Toast.makeText(this, tool + " is available to the autonomous editor", Toast.LENGTH_SHORT).show();
                 });
@@ -847,6 +1005,8 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         box.addView(body("Full Autonomous is the default. The MCP path is signalling/control only; projects, media and editing state live in the app. Gallery enumeration remains a hard technical boundary, not a permission toggle."));
         box.addView(section("Autonomy Mode"));
         box.addView(permissionCard("everything", "Full Autonomous  •  Recommended", "ChatGPT can use every VideoStudio-native operation: explicit file imports, project management, analysis, AI animation, editing, rendering, inspection, retries and cleanup without repeated permission prompts. Gallery listing/browsing remains technically blocked."));
+        box.addView(permissionCard("project", "Allow This Project Only", "Limit ChatGPT to this project's imported media and edits. Your other projects stay outside its scope."));
+        box.addView(permissionCard("selected_assets", "Allow Selected Assets Only", "Choose which media ChatGPT can inspect and edit. Project-wide history and exports remain under your control."));
         box.addView(permissionCard("one_file", "One File Lock", "Optional manual safety lock. Restricts ChatGPT to the currently authorised media file until you switch back to Full Autonomous."));
 
         box.addView(section("Workload Safety"));
@@ -861,6 +1021,8 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         safety.addView(body(detail));
         box.addView(safety);
 
+        Button storageHub=compactButton("Storage Hub · "+storageProfiles.list().length()+" / 5 profiles");
+        storageHub.setOnClickListener(v->showStorageHub());box.addView(storageHub,margins(-1,dp(48),dp(10),0,0,0));
         box.addView(section("Cloud Workspace"));
         LinearLayout cloud = card(false);
         JSONObject cloudState = driveWorkspace.status();
@@ -907,8 +1069,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                     .setAction(next ? ControlService.ACTION_PAUSE : ControlService.ACTION_RESUME);
             startService(control);
             if (next) {
-                if (activeRenderHandle != null) activeRenderHandle.cancel();
-                jobs.cancelAll();
+                jobs.cancelAutonomous();
             }
             ui.postDelayed(this::showControl, 120);
         });
@@ -975,6 +1136,9 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                 pickMedia();
                 return;
             }
+            if(("project".equals(value)||"selected_assets".equals(value))&&activeProject==null){Toast.makeText(this,"Open a project first",Toast.LENGTH_SHORT).show();return;}
+            if("selected_assets".equals(value)){selectAgentAssets();return;}
+            prefs.edit().putLong("permission_scope_updated_at",System.currentTimeMillis()).putString("allowed_project_id",activeProject==null?"":activeProject.id).apply();
             prefs.edit().putString(KEY_MODE, value).apply();
             if ("one_file".equals(value) && selectedClip != null) {
                 prefs.edit().putString(KEY_FILE, selectedClip.assetId).apply();
@@ -984,6 +1148,17 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
             showControl();
         });
         return card;
+    }
+
+    private void selectAgentAssets(){
+        java.util.List<ProjectStore.Asset> assets=activeProject.assets;String[] names=new String[assets.size()];boolean[] selected=new boolean[assets.size()];
+        java.util.Set<String> allowed=new OwnerAccessPolicy(this,store).assets();for(int i=0;i<assets.size();i++){names[i]=assets.get(i).name;selected[i]=allowed.contains(assets.get(i).id);}
+        new AlertDialog.Builder(this).setTitle("Allow selected project media").setMultiChoiceItems(names,selected,(dialog,index,checked)->selected[index]=checked)
+            .setPositiveButton("Allow",(dialog,which)->{
+                JSONArray ids=new JSONArray();for(int i=0;i<selected.length;i++)if(selected[i])ids.put(assets.get(i).id);
+                prefs.edit().putString(KEY_MODE,"selected_assets").putString("allowed_project_id",activeProject.id).putString("allowed_asset_ids",ids.toString()).putLong("permission_scope_updated_at",System.currentTimeMillis()).commit();
+                syncProtocolState();requestServiceSync();showControl();
+            }).setNegativeButton("Cancel",null).show();
     }
 
     private void createProjectDialog() {
@@ -1011,6 +1186,49 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         showEditor();
     }
 
+    private void showStorageHub(){
+        ScrollView scroll=baseScroll();LinearLayout box=column();box.setPadding(dp(16),dp(12),dp(16),dp(24));scroll.addView(box);
+        box.addView(title("Storage Hub",26));box.addView(body("Keep media on this device, SD card, USB, or up to five folders connected through Android's document providers. Select each account and folder in the system picker."));
+        box.addView(body("Internal workspace · "+humanStorage(getFilesDir().getUsableSpace())+" free. Originals stay in their selected location. Provider quotas appear when the provider reports them."));
+        JSONArray profiles=storageProfiles.list();
+        for(int i=0;i<profiles.length();i++){
+            JSONObject p=profiles.optJSONObject(i);if(p==null)continue;String id=p.optString("id");LinearLayout item=column();
+            item.addView(title(p.optString("label"),19));item.addView(body(p.optString("provider")+" · "+p.optString("health","unchecked")));
+            item.addView(body(p.optBoolean("quotaKnown")?humanStorage(p.optLong("usedBytes"))+" used / "+humanStorage(p.optLong("totalBytes"))+" total":"Quota not reported by this document provider"));
+            item.addView(body("Roles: "+p.optJSONArray("roles")+" · "+humanStorage(p.optLong("lastSpeedBytesPerSecond"))+"/s last transfer\nPinned projects: "+p.optJSONArray("pinnedProjects")));
+            LinearLayout actions=new LinearLayout(this);addEditorButton(actions,"Check",()->{
+                jobs.submit("Check storage folder",JobManager.Kind.LIGHT,JobManager.Origin.OWNER,state->{JSONObject status=new DriveWorkspaceProvider(this,id).status();storageProfiles.reportHealth(id,status.optBoolean("linked"),status.optString("displayName"));ui.post(this::showStorageHub);});
+            });
+            addEditorButton(actions,"Use for archive",()->{storageProfiles.setDefault("archive",id);Toast.makeText(this,"Archive destination selected",Toast.LENGTH_SHORT).show();});
+            addEditorButton(actions,"Roles",()->{String[] roles={"source","proxy","cache","export","archive"};boolean[] picked=new boolean[roles.length];String saved=p.optJSONArray("roles").toString();for(int n=0;n<roles.length;n++)picked[n]=saved.contains("\""+roles[n]+"\"");new AlertDialog.Builder(this).setTitle("Storage roles").setMultiChoiceItems(roles,picked,(d,n,v)->picked[n]=v).setPositiveButton("Save",(d,w)->{JSONArray chosen=new JSONArray();for(int n=0;n<roles.length;n++)if(picked[n])chosen.put(roles[n]);storageProfiles.setRoles(id,chosen);showStorageHub();}).setNegativeButton("Cancel",null).show();});
+            if(activeProject!=null)addEditorButton(actions,"Pin project",()->{storageProfiles.pinProject(id,activeProject.id,true);showStorageHub();});
+            addEditorButton(actions,"Disconnect",()->{storageProfiles.disconnect(id);try{getContentResolver().releasePersistableUriPermission(Uri.parse(p.optString("treeUri")),Intent.FLAG_GRANT_READ_URI_PERMISSION|Intent.FLAG_GRANT_WRITE_URI_PERMISSION);}catch(SecurityException ignored){}showStorageHub();});
+            HorizontalScrollView actionScroll=new HorizontalScrollView(this);actionScroll.addView(actions);item.addView(actionScroll);box.addView(item,margins(-1,-2,dp(16),0,0,0));
+        }
+        if(profiles.length()<StorageProfileStore.MAX_PROFILES){Button add=neonButton("Connect storage folder",C_CYAN);add.setOnClickListener(v->{Intent picker=new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION|Intent.FLAG_GRANT_WRITE_URI_PERMISSION|Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION|Intent.FLAG_GRANT_PREFIX_URI_PERMISSION);startActivityForResult(picker,PICK_STORAGE_PROFILE);});box.addView(add,margins(-1,dp(48),dp(20),0,0,0));}
+        Button back=compactButton("Back to Control");back.setOnClickListener(v->showControl());box.addView(back,margins(-1,dp(48),dp(12),0,0,0));setScreen(scroll,"storage");
+    }
+    private static String humanStorage(long bytes){if(bytes<0)return "unknown";if(bytes>=1L<<30)return String.format(java.util.Locale.US,"%.1f GB",bytes/(double)(1L<<30));if(bytes>=1L<<20)return String.format(java.util.Locale.US,"%.1f MB",bytes/(double)(1L<<20));return bytes+" B";}
+
+    private void showVaultReplication(ProjectStore.Asset asset){
+        JSONArray connected=storageProfiles.list();
+        if(connected.length()==0){Toast.makeText(this,"Connect storage folders in Storage Hub first",Toast.LENGTH_LONG).show();return;}
+        String projectId=activeProject.id,assetId=asset.id;String[] labels=new String[connected.length()];boolean[] selected=new boolean[connected.length()];
+        for(int i=0;i<labels.length;i++){JSONObject profile=connected.optJSONObject(i);labels[i]=profile.optString("label")+" · "+profile.optString("provider");}
+        new AlertDialog.Builder(this).setTitle("Replicate Vault to storage folders").setMultiChoiceItems(labels,selected,(dialog,index,value)->selected[index]=value)
+            .setPositiveButton("Continue",(dialog,which)->{
+                JSONArray profiles=new JSONArray();for(int i=0;i<selected.length;i++)if(selected[i])profiles.put(connected.optJSONObject(i).optString("id"));
+                if(profiles.length()==0){Toast.makeText(this,"Choose at least one connected folder",Toast.LENGTH_SHORT).show();return;}
+                String[] counts=new String[profiles.length()];for(int i=0;i<counts.length;i++)counts[i]=(i+1)+" verified "+(i==0?"copy":"copies")+" of each chunk";
+                new AlertDialog.Builder(this).setTitle("Replica count").setItems(counts,(countDialog,index)->{
+                    try{JSONObject parameters=new JSONObject().put("projectId",projectId).put("assetId",assetId).put("profileIds",profiles).put("replicas",index+1);
+                        startForegroundService(new Intent(this,ControlService.class).setAction(ControlService.ACTION_LOCAL_VAULT_REPLICATE).putExtra("parameters",parameters.toString()).putExtra("projectId",projectId));
+                        Toast.makeText(this,"Vault replication is running; see Jobs for progress",Toast.LENGTH_LONG).show();
+                    }catch(Exception error){Toast.makeText(this,error.getMessage(),Toast.LENGTH_LONG).show();}
+                }).show();
+            }).setNegativeButton("Cancel",null).show();
+    }
+
     private void pickCloudWorkspace() {
         Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
         intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION
@@ -1031,7 +1249,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         }
         ProjectStore.Project project = store.get(activeProject.id);
         if (project == null) return;
-        JobManager.Job job = jobs.submit("Archive project • " + project.name, JobManager.Kind.LIGHT, state -> {
+        JobManager.Job job = jobs.submit("Archive project • " + project.name, JobManager.Kind.LIGHT, JobManager.Origin.OWNER, state -> {
             state.checkpoint("Cloud archive", 2, "Preparing project workspace");
             File workspace = new CreativeWorkspace(this).projectRoot(project.id);
             JSONObject result = driveWorkspace.syncProject(project, workspace, (progress, detail) -> {
@@ -1057,7 +1275,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         }
         ProjectStore.Project project = store.get(activeProject.id);
         if (project == null) return;
-        JobManager.Job job = jobs.submit("Cloud offload • " + project.name, JobManager.Kind.HEAVY, state -> {
+        JobManager.Job job = jobs.submit("Cloud offload • " + project.name, JobManager.Kind.HEAVY, JobManager.Origin.OWNER, state -> {
             File workspace = new CreativeWorkspace(this).projectRoot(project.id);
             state.checkpoint("Cloud offload", 2, "Archiving before local eviction");
             JSONObject archived = driveWorkspace.syncProject(project, workspace, (progress, detail) -> {
@@ -1086,7 +1304,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         }
         ProjectStore.Project project = store.get(activeProject.id);
         if (project == null) return;
-        JobManager.Job job = jobs.submit("Restore project • " + project.name, JobManager.Kind.LIGHT, state -> {
+        JobManager.Job job = jobs.submit("Restore project • " + project.name, JobManager.Kind.LIGHT, JobManager.Origin.OWNER, state -> {
             state.checkpoint("Cloud restore", 2, "Preparing project workspace");
             File workspace = new CreativeWorkspace(this).projectRoot(project.id);
             JSONObject result = driveWorkspace.restoreProjectWorkspace(project.id, workspace, (progress, detail) -> {
@@ -1113,7 +1331,20 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
 
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
-        if (requestCode == PICK_CLOUD_WORKSPACE && resultCode == RESULT_OK && data != null && data.getData() != null) {
+        if(requestCode==PICK_STORAGE_PROFILE&&resultCode==RESULT_OK&&data!=null&&data.getData()!=null){
+            Uri tree=data.getData();int flags=data.getFlags()&(Intent.FLAG_GRANT_READ_URI_PERMISSION|Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+            try{getContentResolver().takePersistableUriPermission(tree,flags);EditText label=new EditText(this);label.setText("Storage "+(storageProfiles.list().length()+1));new AlertDialog.Builder(this).setTitle("Name this storage connection").setView(label).setPositiveButton("Connect",(d,w)->{try{storageProfiles.connect(tree,label.getText().toString());showStorageHub();}catch(Exception error){editorError(error);}}).setNegativeButton("Cancel",null).show();}catch(Exception error){editorError(error);}
+        } else if (requestCode == PICK_EXPORT_DESTINATION && resultCode == RESULT_OK && data != null && data.getData() != null) {
+            try {
+                Uri destination=data.getData();
+                int flags=data.getFlags() & (Intent.FLAG_GRANT_READ_URI_PERMISSION|Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+                try { getContentResolver().takePersistableUriPermission(destination,flags); } catch(Exception ignored) {}
+                if(pendingExportSettings==null || pendingExportProjectId==null)throw new IllegalStateException("Export settings expired; open Export again");
+                pendingExportSettings.put("destination","document");pendingExportSettings.put("destinationUri",destination.toString());
+                startOwnerExport(store.get(pendingExportProjectId),pendingExportSettings);
+                pendingExportSettings=null;pendingExportProjectId=null;
+            }catch(Exception error){editorError(error);}
+        } else if (requestCode == PICK_CLOUD_WORKSPACE && resultCode == RESULT_OK && data != null && data.getData() != null) {
             Uri tree = data.getData();
             int takeFlags = data.getFlags() & (Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
             try {
@@ -1135,28 +1366,20 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
             } else if (data.getData() != null) {
                 uris.add(data.getData());
             }
+            if(activeProject==null)createProject("Imported media");
+            String importProjectId=activeProject.id;ArrayList<String> ids=new ArrayList<>();
             for (Uri uri : uris) {
                 try {
                     getContentResolver().takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
                 } catch (Exception ignored) {}
-                ProjectStore.Asset asset = store.importUri(activeProject, uri);
-                if (ProxyManager.shouldProxy(asset)) {
-                    try {
-                        proxyManager.request(activeProject, asset, "720p");
-                        ActivityLog.add(this, "system", "Heavy preview proxy queued",
-                                asset.name + " • original retained for final render",
-                                "queued", 0, null, activeProject.id);
-                    } catch (Exception proxyError) {
-                        ActivityLog.add(this, "system", "Heavy preview proxy unavailable",
-                                proxyError.getMessage() == null ? asset.name : proxyError.getMessage(),
-                                "info", null, null, activeProject.id);
-                    }
-                }
-                if (selectedClip == null && !activeProject.clips.isEmpty()) selectedClip = activeProject.clips.get(activeProject.clips.size() - 1);
+                ProjectStore.Asset asset=store.beginImport(importProjectId,uri,true);ids.add(asset.id);
                 if ("one_file".equals(permissionMode()) && prefs.getString(KEY_FILE, "").isEmpty()) {
                     prefs.edit().putString(KEY_FILE, asset.id).apply();
                 }
             }
+            activeProject=store.get(importProjectId);
+            startForegroundService(new Intent(this,ControlService.class).setAction(ControlService.ACTION_LOCAL_IMPORT)
+                    .putExtra("projectId",importProjectId).putStringArrayListExtra("assetIds",ids));
             syncProtocolState();
             requestServiceSync();
             showEditor();
@@ -1165,35 +1388,17 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
     }
 
     private void previewSelectedClip() {
-        if (selectedClip == null || activeProject == null || livePlayer == null) return;
-        ProjectStore.Asset asset = activeProject.asset(selectedClip.assetId);
-        if (asset == null || asset.mime == null || !asset.mime.startsWith("video/")) return;
+        if (selectedClip == null || activeProject == null) return;
         timelinePreviewRunning = false;
-        playClip(selectedClip, null);
+        monitor.showSource(activeProject, activeProject.asset(selectedClip.assetId), selectedClip, selectedClip.inMs, false);
+        editorPlayhead = selectedClip.startMs;
+        if (timelineView != null) timelineView.setPlayhead(editorPlayhead);
     }
 
     private void previewTimeline() {
-        if (activeProject == null || activeProject.clips.isEmpty() || livePlayer == null) return;
-        boolean hasVideoClip = false;
-        for (ProjectStore.Clip clip : activeProject.clips) {
-            ProjectStore.Asset asset = activeProject.asset(clip.assetId);
-            if (asset != null && asset.mime != null && asset.mime.startsWith("video/")) {
-                hasVideoClip = true;
-                break;
-            }
-        }
-        if (!hasVideoClip) {
-            if (activeProject.latestExportUri != null && !activeProject.latestExportUri.isEmpty()) {
-                timelinePreviewRunning = false;
-                livePlayer.setContextIds("final:" + activeProject.latestExportAt, "");
-                livePlayer.play(Uri.parse(activeProject.latestExportUri), 0L);
-            } else {
-                Toast.makeText(this, "Render the animated image timeline first", Toast.LENGTH_SHORT).show();
-            }
-            return;
-        }
+        if (activeProject == null || activeProject.clips.isEmpty()) return;
         timelinePreviewRunning = true;
-        playTimelineIndex(0);
+        monitor.showProgram(activeProject, editorPlayhead, true);
     }
 
     private void playTimelineIndex(int index) {
@@ -1228,128 +1433,57 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
     }
 
     private void applyTool(String tool) {
-        if (activeProject == null || selectedClip == null) {
-            Toast.makeText(this, "Select a clip first", Toast.LENGTH_SHORT).show();
-            return;
-        }
+        if (!requireSelection()) return;
         try {
+            JSONObject args=new JSONObject().put("clipId",selectedClip.id);
             switch (tool) {
-                case "Split":
-                    splitClip();
-                    return;
-                case "Trim":
-                    trimDialog();
-                    return;
+                case "Split": splitClip(); return;
+                case "Trim": trimDialog(); return;
                 case "Slow Motion":
-                    selectedClip.speed = selectedClip.speed <= .55f ? .75f : selectedClip.speed <= .8f ? 1f : .5f;
-                    break;
-                case "Speed Ramp":
-                    selectedClip.effects.put("speedRamp", "smooth");
-                    break;
-                case "Green Screen":
-                    selectedClip.effects.put("chromaKey", true);
-                    selectedClip.effects.put("chromaColor", "#00FF00");
-                    selectedClip.effects.put("chromaTolerance", .18);
-                    selectedClip.effects.put("spillSuppression", .35);
-                    break;
-                case "Transitions":
-                    selectedClip.transition = CreatorCatalog.next(CreatorCatalog.TRANSITIONS, selectedClip.transition);
-                    break;
-                case "Motion":
-                    selectedClip.effects.put("motionPreset", CreatorCatalog.next(CreatorCatalog.MOTIONS, selectedClip.effects.optString("motionPreset", "none")));
-                    selectedClip.effects.put("ease", "easeInOut");
-                    break;
-                case "Effects":
-                    selectedClip.effects.put("effectPreset", CreatorCatalog.next(CreatorCatalog.EFFECTS, selectedClip.effects.optString("effectPreset", "none")));
-                    break;
-                case "Colour":
-                    String look = selectedClip.effects.optString("colorPreset", "none");
-                    String[] looks = {"cinematic","teal_orange","warm_film","cool_night","noir","golden_hour","matte","high_contrast","soft_portrait"};
-                    int li = java.util.Arrays.asList(looks).indexOf(look);
-                    selectedClip.effects.put("colorPreset", looks[(li + 1 + looks.length) % looks.length]);
-                    break;
-                case "Text":
-                    textDialog();
-                    return;
-                case "Fonts":
-                    selectedClip.effects.put("fontFamily", CreatorCatalog.next(CreatorCatalog.FONTS, selectedClip.effects.optString("fontFamily", "sans-serif-medium")));
-                    break;
+                    args.put("speed",selectedClip.speed<=.55f?.75:selectedClip.speed<=.8f?1:.5);
+                    applyEditorOperation("set_speed",args);return;
                 case "Volume":
-                    selectedClip.volume = selectedClip.volume > .8f ? .6f : selectedClip.volume > .3f ? 0f : 1f;
-                    break;
-                case "Reframe":
-                    selectedClip.effects.put("reframe", "9:16_subject_safe");
-                    break;
-                case "Mask":
-                    selectedClip.effects.put("mask", "rounded_rect");
-                    selectedClip.effects.put("maskFeather", .08);
-                    break;
-                case "Overlay":
-                    selectedClip.effects.put("overlaySlot", "ready");
-                    break;
-                case "Motion Blur":
-                    selectedClip.effects.put("motionBlur", .35);
-                    break;
-                case "Freeze":
-                    selectedClip.effects.put("freezeAtMs", Math.max(selectedClip.inMs, livePlayer == null ? selectedClip.inMs : livePlayer.currentPositionMs()));
-                    break;
-                case "Duplicate": {
-                    int index = activeProject.clips.indexOf(selectedClip);
-                    ProjectStore.Clip copy = ProjectStore.Clip.fromJson(selectedClip.toJson());
-                    copy.id = UUID.randomUUID().toString();
-                    activeProject.clips.add(index + 1, copy);
-                    selectedClip = copy;
-                    break;
-                }
-                case "Reverse":
-                    selectedClip.effects.put("reverse", !selectedClip.effects.optBoolean("reverse", false));
-                    break;
+                    args.put("property","volume").put("value",selectedClip.volume>.8f?.6:selectedClip.volume>.3f?0:1);
+                    applyEditorOperation("set_property",args);return;
+                case "Duplicate": selectedEditorAction("duplicate_clip",false);return;
+                case "Green Screen": case "Mask": showCompositeWorkspace();return;
+                case "Motion": showCreatorStyleChoices("motionPreset",CreatorStyleSettings.MOTIONS,"Clip motion");return;
+                case "Effects": showCreatorStyleChoices("effectPreset",CreatorStyleSettings.EFFECTS,"Effect preset");return;
+                case "Colour": showCreatorStyleChoices("colorPreset",CreatorStyleSettings.COLOURS,"Colour look");return;
+                case "Fonts": showCreatorStyleChoices("fontFamily",CreatorCatalog.FONTS,"Title font");return;
+                case "Text Animation": showCreatorStyleChoices("textAnimation",CreatorCatalog.TEXT_ANIMATIONS,"Title animation");return;
+                case "Text": textDialog();return;
                 case "Shake":
-                    selectedClip.effects.put("motionPreset", "impact_shake");
-                    break;
+                    args.put("settings",new JSONObject().put("motionPreset","impact_shake"));
+                    applyEditorOperation("set_creator_style",args);return;
                 case "Blur":
-                    selectedClip.effects.put("blur", selectedClip.effects.optDouble("blur", 0) > .1 ? 0 : 5.0);
-                    break;
-                case "Glow":
-                    selectedClip.effects.put("effectPreset", "soft_glow");
-                    selectedClip.effects.put("blur", 1.6);
-                    break;
-                case "Captions":
-                    selectedClip.effects.put("captionStyle", "creator_pop");
-                    selectedClip.effects.put("textAnimation", "caption_pop");
-                    break;
-                case "Audio Duck":
-                    selectedClip.effects.put("audioDucking", true);
-                    selectedClip.effects.put("duckLevel", .32);
-                    break;
-                case "Crop":
-                    selectedClip.effects.put("crop", "center_cover");
-                    break;
+                    args.put("property","blur").put("value",selectedClip.effects.optDouble("blur",0)>.1?0:5);
+                    applyEditorOperation("set_property",args);return;
+                case "Crop": case "Reframe": showInspectorDialog();return;
+                default: throw new IllegalArgumentException(tool+" needs its rendering workspace; no edit was applied");
             }
-            store.save(activeProject);
-            syncProtocolState();
-            Toast.makeText(this, tool + " applied", Toast.LENGTH_SHORT).show();
-            showEditor();
-        } catch (Exception error) {
-            Toast.makeText(this, "Could not apply " + tool, Toast.LENGTH_SHORT).show();
-        }
+        } catch (Exception error) { editorError(error); }
+    }
+
+    private void showCreatorStyleChoices(String key,java.util.List<String> choices,String title) {
+        if(!requireSelection())return;
+        String clipId=selectedClip.id;
+        String[] labels=new String[choices.size()];
+        for(int i=0;i<labels.length;i++)labels[i]=choices.get(i).replace('_',' ');
+        new AlertDialog.Builder(this).setTitle(title).setItems(labels,(dialog,index)->{
+            try{
+                JSONObject args=new JSONObject().put("clipId",clipId);
+                if("effectPreset".equals(key))applyEditorOperation("set_effect_preset",args.put("preset",choices.get(index)));
+                else applyEditorOperation("set_creator_style",args.put("settings",new JSONObject().put(key,choices.get(index))));
+            }
+            catch(Exception error){editorError(error);}
+        }).setNegativeButton("Close",null).show();
     }
 
     private void splitClip() {
-        long at = livePlayer != null ? livePlayer.currentPositionMs() : selectedClip.inMs + (selectedClip.outMs - selectedClip.inMs) / 2;
-        if (at <= selectedClip.inMs + 250 || at >= selectedClip.outMs - 250) {
-            Toast.makeText(this, "Move playback inside the clip before splitting", Toast.LENGTH_SHORT).show();
-            return;
-        }
-        int index = activeProject.clips.indexOf(selectedClip);
-        ProjectStore.Clip second = ProjectStore.Clip.fromJson(selectedClip.toJson());
-        second.id = UUID.randomUUID().toString();
-        second.inMs = at;
-        selectedClip.outMs = at;
-        activeProject.clips.add(index + 1, second);
-        store.save(activeProject);
-        syncProtocolState();
-        showEditor();
+        if(!requireSelection())return;
+        try{JSONObject args=new JSONObject();args.put("clipId",selectedClip.id);args.put("atMs",editorPlayhead);applyEditorOperation("split_clip",args);}
+        catch(Exception error){editorError(error);}
     }
 
     private void trimDialog() {
@@ -1369,11 +1503,8 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                         long a = (long) (Float.parseFloat(start.getText().toString()) * 1000);
                         long b = (long) (Float.parseFloat(end.getText().toString()) * 1000);
                         if (b <= a) throw new IllegalArgumentException();
-                        selectedClip.inMs = Math.max(0, a);
-                        selectedClip.outMs = b;
-                        store.save(activeProject);
-                        syncProtocolState();
-                        showEditor();
+                        JSONObject args=new JSONObject();args.put("clipId",selectedClip.id);args.put("inMs",a);args.put("outMs",b);
+                        applyEditorOperation("trim_clip",args);
                     } catch (Exception error) {
                         Toast.makeText(this, "Invalid trim range", Toast.LENGTH_SHORT).show();
                     }
@@ -1392,10 +1523,8 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                 .setTitle("Clip title")
                 .setView(input)
                 .setPositiveButton("Apply", (d, w) -> {
-                    selectedClip.title = input.getText().toString().trim();
-                    store.save(activeProject);
-                    syncProtocolState();
-                    showEditor();
+                    try{JSONObject args=new JSONObject();args.put("clipId",selectedClip.id);args.put("text",input.getText().toString().trim());applyEditorOperation("set_title",args);}
+                    catch(Exception error){editorError(error);}
                 })
                 .setNegativeButton("Cancel", null)
                 .show();
@@ -1543,7 +1672,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         String quality = parameters.optString("quality", "1080p");
         String fileName = "VideoStudio_AI_" + System.currentTimeMillis() + ".mp4";
 
-        JobManager.Job job = jobs.submit("Prompt video • " + titleText, JobManager.Kind.HEAVY, state -> {
+        JobManager.Job job = jobs.submit("Prompt video • " + titleText, JobManager.Kind.HEAVY, JobManager.Origin.OWNER, state -> {
             state.checkpoint(3, "Building original procedural scene geometry");
             PromptVideoEngine.BuildResult built = promptVideoEngine.build(store, project, parameters);
             state.checkpoint(18, "Scene plan ready • starting native render");
@@ -1572,7 +1701,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         if (!safeName.toLowerCase(Locale.US).endsWith(".mp4")) safeName += ".mp4";
         final String finalName = safeName;
 
-        JobManager.Job job = jobs.submit("Export • " + target.name, JobManager.Kind.HEAVY, state -> {
+        JobManager.Job job = jobs.submit("Export • " + target.name, JobManager.Kind.HEAVY, JobManager.Origin.OWNER, state -> {
             state.checkpoint(2, "Preparing Media3 native export");
             runExportBlocking(target, aspect, quality, finalName, state);
             state.checkpoint(100, "Export complete");
@@ -1697,7 +1826,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
             long startMs = parameters.has("startMs") ? parameters.optLong("startMs") : (long) (parameters.optDouble("start", 0) * 1000);
             long endMs = parameters.has("endMs") ? parameters.optLong("endMs") : (long) (parameters.optDouble("end", 0) * 1000);
 
-            jobs.submit("Analyse • " + target.name, JobManager.Kind.LIGHT, state -> {
+            jobs.submit("Analyse • " + target.name, JobManager.Kind.LIGHT, JobManager.Origin.OWNER, state -> {
                 try {
                     state.checkpoint(8, "Sampling frames locally");
                     JSONObject result = mediaAnalyzer.analyse(target, frames, startMs, endMs);
@@ -1722,30 +1851,25 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
     }
 
     private JSONObject applyCreatorPreset(JSONObject parameters) throws Exception {
-        if (activeProject == null || activeProject.clips.isEmpty()) throw new IllegalArgumentException("No clips");
-        String preset = parameters.optString("preset", "cinematic");
-        String motion = parameters.optString("motion", "");
-        String transition = parameters.optString("transition", "");
-        String font = parameters.optString("font", "");
-        boolean all = parameters.optBoolean("allClips", true);
-        int selectedIndex = Math.max(0, parameters.optInt("clipIndex", 0));
+        JSONObject result=applyLegacyBulk(parameters,"creator_preset");
+        return result.put("preset",parameters.optString("preset","cinematic"));
+    }
 
-        int changed = 0;
-        for (int i = 0; i < activeProject.clips.size(); i++) {
-            if (!all && i != selectedIndex) continue;
-            ProjectStore.Clip c = activeProject.clips.get(i);
-            c.effects.put("effectPreset", preset);
-            if (!motion.isEmpty()) c.effects.put("motionPreset", motion);
-            if (!transition.isEmpty()) c.transition = transition;
-            if (!font.isEmpty()) c.effects.put("fontFamily", font);
-            changed++;
-        }
-        store.save(activeProject);
-        JSONObject result = new JSONObject();
-        result.put("ok", true);
-        result.put("changedClips", changed);
-        result.put("preset", preset);
-        return result;
+    private JSONObject applyLegacyBulk(JSONObject parameters,String action)throws Exception{
+        String id=parameters.optString("projectId","");if(id.isEmpty()&&activeProject!=null)id=activeProject.id;
+        ProjectStore.Project current=store.get(id);if(current==null)throw new IllegalArgumentException("Project not found");
+        if(parameters.has("render")&&!(parameters.get("render") instanceof Boolean))throw new IllegalArgumentException("render must be a boolean");
+        LegacyEditorAdapter adapter=new LegacyEditorAdapter(store);ProjectStore.Project receipt;
+        if("apply_edit_plan".equals(action))receipt=adapter.applyPlan(id,parameters);
+        else if("creator_preset".equals(action))receipt=adapter.applyPreset(id,parameters);
+        else if(parameters.has("clips")||parameters.has("preset"))receipt=adapter.applyAutonomousEdit(id,parameters);
+        else if(parameters.optBoolean("render",false)){LegacyEditorAdapter.validateRenderRevision(current,parameters);receipt=current;}
+        else throw new IllegalArgumentException("Supply a structured edit or render request");
+        activeProject=store.get(id);store.setActive(id);selectedClip=activeProject.clips.isEmpty()?null:activeProject.clips.get(0);
+        return new JSONObject().put("ok",true).put("projectId",receipt.id).put("revision",receipt.revision)
+                .put("clipCount",receipt.clips.size()).put("durationMs",receipt.outputDurationMs())
+                .put("commandId",parameters.optString("_mcpCommandId",parameters.optString("commandId","")))
+                .put("changedClips",LegacyEditorAdapter.changedClipCount(receipt,parameters));
     }
 
     private void sharePairing() {
@@ -1775,7 +1899,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
     public void onCommand(JSONObject command) {
         String action = command.optString("action");
         JSONObject p = command.optJSONObject("parameters");
-        if (p == null) p = new JSONObject();
+        try{p=p==null?new JSONObject():new JSONObject(p.toString());}catch(Exception invalid){throw new IllegalArgumentException(invalid);}
 
         if (!isAllowed(action, p)) {
             JSONObject result = new JSONObject();
@@ -1788,6 +1912,27 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         }
 
         try {
+            CommandJournal remoteJournal=new CommandJournal(this);
+            remoteJournal.validateReplay(command);
+            if(java.util.Arrays.asList("apply_tool","apply_edit_plan","creator_preset","autonomous_edit","export_project","vault_replicate","vault_restore").contains(action)){
+                String target=p.optString("projectId",""),bound=remoteJournal.boundProject(command.optString("id",""));
+                if(!bound.isEmpty()){
+                    if(!target.isEmpty()&&!target.equals(bound))throw new IllegalArgumentException("Command ID belongs to another project");
+                    target=bound;
+                }
+                if(target.isEmpty()&&activeProject!=null)target=activeProject.id;
+                if(store.get(target)==null)throw new IllegalArgumentException("Project not found");
+                remoteJournal.bindProject(command,target);p.put("projectId",target);
+                if(!isAllowed(action,p))throw new SecurityException("Owner access does not allow this project's command");
+            }
+            if("vault_restore".equals(action)||"vault_replicate".equals(action)||"export_project".equals(action)||"autonomous_edit".equals(action)&&p.optBoolean("render",false)){
+                String target=p.optString("projectId","");if(target.isEmpty()&&activeProject!=null)target=activeProject.id;
+                if(store.get(target)==null)throw new IllegalArgumentException("Project not found");
+                startForegroundService(new Intent(this,ControlService.class).setAction(ControlService.ACTION_REMOTE_COMMAND)
+                        .putExtra("commandId",command.optString("id","")).putExtra("projectId",target));
+                return;
+            }
+            p.put("_mcpCommandId",command.optString("id",""));
             JSONObject result = new JSONObject();
             switch (action) {
                 case "ping":
@@ -1818,14 +1963,21 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                     refreshCurrent();
                     break;
                 case "apply_tool": {
+                    String projectId = p.optString("projectId", "");
+                    if (projectId.isEmpty() && activeProject != null) projectId = activeProject.id;
+                    if (projectId.isEmpty() || store.get(projectId) == null) throw new IllegalArgumentException("Project not found");
+                    p.put("_mcpCommandId", command.optString("id", ""));
+                    ProjectStore.Project receipt = new LegacyEditorAdapter(store).applyTool(projectId, p);
+                    activeProject = store.get(projectId);
+                    store.setActive(projectId);
                     int index = p.optInt("clipIndex", 0);
-                    if (activeProject == null || index < 0 || index >= activeProject.clips.size()) throw new IllegalArgumentException("Clip not found");
-                    selectedClip = activeProject.clips.get(index);
-                    String tool = p.optString("tool");
-                    applyRemoteTool(tool, p.optJSONObject("settings"));
+                    selectedClip = index < activeProject.clips.size() ? activeProject.clips.get(index) : null;
                     result.put("ok", true);
+                    result.put("projectId", receipt.id);
+                    result.put("revision", receipt.revision);
+                    result.put("commandId", command.optString("id", ""));
                     result.put("clipIndex", index);
-                    result.put("tool", tool);
+                    result.put("tool", p.optString("tool", "effect"));
                     refreshCurrent();
                     break;
                 }
@@ -1855,10 +2007,9 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                     refreshCurrent();
                     break;
                 case "autonomous_edit": {
-                    JSONObject planResult = p.optJSONArray("clips") == null ? new JSONObject().put("ok", true) : applyRemotePlan(p);
-                    if (p.has("preset")) applyCreatorPreset(p);
-                    result.put("ok", true);
-                    result.put("plan", planResult);
+                    result=applyLegacyBulk(p,"autonomous_edit");
+                    if(p.has("clips"))result.put("plan",new JSONObject().put("ok",true).put("revision",result.getLong("revision")));
+                    if(p.has("preset"))result.put("preset",p.getString("preset"));
                     if (p.optBoolean("render", false)) {
                         JSONObject export = queueNativeExport(
                                 activeProject,
@@ -1926,114 +2077,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
     }
 
     private JSONObject applyRemotePlan(JSONObject p) throws Exception {
-        if (activeProject == null) throw new IllegalArgumentException("No active project");
-        JSONArray clips = p.optJSONArray("clips");
-        if (clips == null || clips.length() == 0) throw new IllegalArgumentException("clips are required");
-        ArrayList<ProjectStore.Clip> next = new ArrayList<>();
-        for (int i = 0; i < clips.length() && i < 80; i++) {
-            JSONObject raw = clips.optJSONObject(i);
-            if (raw == null) continue;
-            String assetId = raw.optString("assetId");
-            ProjectStore.Asset asset = activeProject.asset(assetId);
-            if (asset == null) throw new IllegalArgumentException("Unknown asset " + assetId);
-            ProjectStore.Clip c = new ProjectStore.Clip();
-            c.id = UUID.randomUUID().toString();
-            c.assetId = assetId;
-            c.inMs = raw.has("inMs") ? raw.optLong("inMs") : (long) (raw.optDouble("start", 0) * 1000);
-            c.outMs = raw.has("outMs") ? raw.optLong("outMs") : (long) (raw.optDouble("end", asset.durationMs / 1000d) * 1000);
-            c.inMs = Math.max(0, c.inMs);
-            c.outMs = Math.max(c.inMs + 100, Math.min(asset.durationMs > 0 ? asset.durationMs : c.outMs, c.outMs));
-            c.speed = (float) Math.max(.5, Math.min(2, raw.optDouble("speed", 1)));
-            c.volume = (float) Math.max(0, Math.min(2, raw.optDouble("volume", 1)));
-            c.transition = raw.optString("transition", "none");
-            c.title = raw.optString("title", "");
-            JSONObject effects = raw.optJSONObject("effects");
-            c.effects = effects == null ? new JSONObject() : effects;
-            next.add(c);
-        }
-        activeProject.clips.clear();
-        activeProject.clips.addAll(next);
-        selectedClip = next.isEmpty() ? null : next.get(0);
-        store.save(activeProject);
-        JSONObject result = new JSONObject();
-        result.put("ok", true);
-        result.put("clipCount", next.size());
-        result.put("durationMs", activeProject.outputDurationMs());
-        return result;
-    }
-
-    private void applyRemoteTool(String tool, JSONObject settings) throws Exception {
-        if (selectedClip == null) throw new IllegalArgumentException("No selected clip");
-        if (settings == null) settings = new JSONObject();
-        switch (tool) {
-            case "speed":
-            case "slow_motion":
-                selectedClip.speed = (float) Math.max(.25, Math.min(4, settings.optDouble("speed", .5)));
-                break;
-            case "trim":
-                selectedClip.inMs = settings.optLong("inMs", selectedClip.inMs);
-                selectedClip.outMs = settings.optLong("outMs", selectedClip.outMs);
-                break;
-            case "green_screen":
-                selectedClip.effects.put("chromaKey", true);
-                selectedClip.effects.put("chromaColor", settings.optString("color", "#00FF00"));
-                selectedClip.effects.put("chromaTolerance", settings.optDouble("tolerance", .18));
-                selectedClip.effects.put("spillSuppression", settings.optDouble("spill", .35));
-                break;
-            case "transition":
-                selectedClip.transition = settings.optString("name", "fade");
-                break;
-            case "motion":
-                selectedClip.effects.put("motionPreset", settings.optString("preset", "push_in"));
-                selectedClip.effects.put("ease", settings.optString("ease", "easeInOut"));
-                break;
-            case "effect":
-                selectedClip.effects.put("effectPreset", settings.optString("preset", "cinematic"));
-                if (settings.has("blur")) selectedClip.effects.put("blur", settings.optDouble("blur"));
-                break;
-            case "color":
-                selectedClip.effects.put("colorPreset", settings.optString("preset", "cinematic"));
-                if (settings.has("brightness")) selectedClip.effects.put("brightness", settings.optDouble("brightness"));
-                if (settings.has("contrast")) selectedClip.effects.put("contrast", settings.optDouble("contrast"));
-                if (settings.has("saturation")) selectedClip.effects.put("saturationAdjust", settings.optDouble("saturation"));
-                if (settings.has("lightness")) selectedClip.effects.put("lightnessAdjust", settings.optDouble("lightness"));
-                break;
-            case "reframe":
-                selectedClip.effects.put("reframe", settings.optString("preset", "9:16_subject_safe"));
-                break;
-            case "mask":
-                selectedClip.effects.put("mask", settings.optString("shape", "rounded_rect"));
-                selectedClip.effects.put("maskFeather", settings.optDouble("feather", .08));
-                break;
-            case "font":
-                selectedClip.effects.put("fontFamily", settings.optString("family", "sans-serif-medium"));
-                break;
-            case "text_animation":
-                selectedClip.effects.put("textAnimation", settings.optString("preset", "fade_up"));
-                break;
-            case "blur":
-                selectedClip.effects.put("blur", Math.max(0, Math.min(18, settings.optDouble("sigma", 4))));
-                break;
-            case "transform":
-                if (settings.has("scale")) selectedClip.effects.put("scale", settings.optDouble("scale", 1));
-                if (settings.has("rotate")) selectedClip.effects.put("rotate", settings.optDouble("rotate", 0));
-                break;
-            case "audio_duck":
-                selectedClip.effects.put("audioDucking", true);
-                selectedClip.effects.put("duckLevel", settings.optDouble("level", .32));
-                break;
-            case "title":
-                selectedClip.title = settings.optString("text", "");
-                if (settings.has("font")) selectedClip.effects.put("fontFamily", settings.optString("font"));
-                if (settings.has("animation")) selectedClip.effects.put("textAnimation", settings.optString("animation"));
-                break;
-            case "volume":
-                selectedClip.volume = (float) Math.max(0, Math.min(2, settings.optDouble("volume", 1)));
-                break;
-            default:
-                selectedClip.effects.put(tool, settings);
-        }
-        store.save(activeProject);
+        return applyLegacyBulk(p,"apply_edit_plan");
     }
 
     private JSONObject queuePrivateHandoffImport(String handoffId, String name, String mimeHint, String projectId) throws Exception {
@@ -2043,7 +2087,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         if (requested == null) requested = store.create("ChatGPT Imports");
         ProjectStore.Project project = requested;
 
-        JobManager.Job job = jobs.submit("Private import " + name, JobManager.Kind.LIGHT, state -> {
+        JobManager.Job job = jobs.submit("Private import " + name, JobManager.Kind.LIGHT, JobManager.Origin.OWNER, state -> {
             state.progress = 4;
             File dir = new File(getFilesDir(), "imports");
             if (!dir.exists() && !dir.mkdirs()) throw new IllegalStateException("Could not create import directory");
@@ -2119,7 +2163,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         if (url == null || !url.startsWith("https://")) throw new IllegalArgumentException("Only HTTPS imports are allowed");
         if (activeProject == null) activeProject = store.create("ChatGPT Imports");
         ProjectStore.Project project = activeProject;
-        JobManager.Job job = jobs.submit("Import " + name, JobManager.Kind.LIGHT, state -> {
+        JobManager.Job job = jobs.submit("Import " + name, JobManager.Kind.LIGHT, JobManager.Origin.OWNER, state -> {
             state.progress = 5;
             File dir = new File(getFilesDir(), "imports");
             if (!dir.exists() && !dir.mkdirs()) throw new IllegalStateException("Could not create import directory");
@@ -2184,10 +2228,13 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
     }
 
     private boolean isAllowed(String action, JSONObject parameters) {
+        if(protocol!=null&&protocol.isControlPaused())return false;
         String lower = action == null ? "" : action.toLowerCase(Locale.US);
         // Hard boundary: no MCP mode may enumerate or browse the user's Gallery.
         if (lower.contains("gallery") || lower.contains("media_library") || lower.contains("photo_library")) return false;
 
+        OwnerAccessPolicy access=new OwnerAccessPolicy(this,store);
+        if(access.restricted())return access.allows(action,parameters);
         if ("one_file".equals(permissionMode())) {
             String allowed = prefs.getString(KEY_FILE, "");
             if (allowed.isEmpty()) return false;
@@ -2270,7 +2317,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
     }
 
     private void syncProtocolState() {
-        if (protocol != null) protocol.setLocalState(permissionMode(), store.summaries());
+        if (protocol != null) protocol.setLocalState(permissionMode(), new OwnerAccessPolicy(this,store).summaries());
         requestServiceSync();
     }
 
@@ -2376,7 +2423,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
 
     private String permissionMode() {
         String raw = prefs.getString(KEY_MODE, "everything");
-        if ("one_file".equals(raw)) return "one_file";
+        if (java.util.Arrays.asList("one_file","project","selected_assets").contains(raw)) return raw;
         if (!"everything".equals(raw)) {
             prefs.edit().putString(KEY_MODE, "everything").apply();
         }

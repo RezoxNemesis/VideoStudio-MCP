@@ -45,6 +45,14 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     public static final String ACTION_LOCAL_ANIMATE = "com.rezoxnemesis.videostudio.LOCAL_ANIMATE_IMAGES";
     public static final String ACTION_LOCAL_PROMPT_VIDEO = "com.rezoxnemesis.videostudio.LOCAL_PROMPT_VIDEO";
     public static final String ACTION_LOCAL_EXPORT = "com.rezoxnemesis.videostudio.LOCAL_EXPORT_PROJECT";
+    public static final String ACTION_LOCAL_VOICE = "com.rezoxnemesis.videostudio.LOCAL_VOICE";
+    public static final String ACTION_LOCAL_PROXY = "com.rezoxnemesis.videostudio.LOCAL_PROXY";
+    public static final String ACTION_LOCAL_VAULT = "com.rezoxnemesis.videostudio.LOCAL_VAULT";
+    public static final String ACTION_LOCAL_VAULT_RESTORE = "com.rezoxnemesis.videostudio.LOCAL_VAULT_RESTORE";
+    public static final String ACTION_LOCAL_VAULT_REPLICATE = "com.rezoxnemesis.videostudio.LOCAL_VAULT_REPLICATE";
+    public static final String ACTION_LOCAL_IMPORT = "com.rezoxnemesis.videostudio.LOCAL_IMPORT_MEDIA";
+    public static final String ACTION_REMOTE_COMMAND = "com.rezoxnemesis.videostudio.REMOTE_COMMAND";
+    public static final String ACTION_CANCEL_MANUAL_EXPORT = "com.rezoxnemesis.videostudio.CANCEL_MANUAL_EXPORT";
     private static final String CHANNEL = "videostudio_private_control";
     private static final int NOTIFICATION_ID = 6101;
     private static final String PREFS = "videostudio_native_v1";
@@ -60,6 +68,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     private static final int MAX_REMOTE_REDIRECTS = 5;
 
     private ProjectStore store;
+    private EditorProtocol editorProtocol;
     private JobManager jobs;
     private PreviewSnapshotStore previewSnapshots;
     private TransferJournal transferJournal;
@@ -67,6 +76,10 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     private AppProtocol protocol;
     private NativeRenderEngine renderEngine;
     private NativeRenderEngine.Handle activeRender;
+    private ExportSessionStore exportSessions;
+    private final java.util.Map<String,String> manualExportJobs = new ConcurrentHashMap<>();
+    private final java.util.Map<String,NativeRenderEngine.Handle> renderHandles = new ConcurrentHashMap<>();
+    private final Set<String> probingImports=ConcurrentHashMap.newKeySet();
     private PromptVideoEngine promptVideoEngine;
     private NativeMediaAnalyzer mediaAnalyzer;
     private NativePortraitMotionAnalyzer portraitMotionAnalyzer;
@@ -83,6 +96,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     private CreativeBuiltInRuntime builtInCreativeRuntime;
     private DriveWorkspaceProvider driveWorkspace;
     private SharedPreferences prefs;
+    private String lastOwnerScope;
     private CommandJournal commandJournal;
     private final ExecutorService commandCompletionWatchers = Executors.newFixedThreadPool(2);
     private final Set<String> watchedCommands = ConcurrentHashMap.newKeySet();
@@ -96,7 +110,9 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         migrateAutonomyDefaultOnce();
         commandJournal = new CommandJournal(this);
         store = new ProjectStore(this);
+        editorProtocol = new EditorProtocol(this, store);
         jobs = new JobManager(this);
+        exportSessions = new ExportSessionStore(this);
         previewSnapshots = new PreviewSnapshotStore(this);
         transferJournal = new TransferJournal(this);
         transferManager = new ResumableTransferManager(transferJournal);
@@ -126,20 +142,40 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 "Stable MCP compatibility endpoint • app " + AppProtocol.APP_VERSION
                         + " • generation " + protocol.appGeneration(),
                 "success", null, null, null);
-        recoverDurablePlans();
+        commandCompletionWatchers.execute(this::recoverDurablePlans);
         reattachInflightCommandWatchers();
+        resumeManualExports();
+        resumeImports();
         NativeAgentWatchdog.scheduleHealthy(this, "service_created");
     }
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         String action = intent == null ? "" : intent.getAction();
+        if(ACTION_REMOTE_COMMAND.equals(action)){
+            try{
+                JSONObject command=commandJournal.capturedCommand(intent.getStringExtra("commandId"));
+                if(command==null)throw new IllegalArgumentException("Saved remote command is unavailable");
+                command.put("_handoffProjectId",intent.getStringExtra("projectId"));onCommand(command);
+            }catch(Exception invalid){ActivityLog.add(this,"transport","Remote handoff failed",invalid.getMessage(),"failed",null,null,null);}
+        } else if (ACTION_CANCEL_MANUAL_EXPORT.equals(action)) {
+            String sessionId=intent.getStringExtra("sessionId");
+            ExportSessionStore.Session session=exportSessions.get(sessionId);
+            if(session!=null){
+                exportSessions.cancel(sessionId);
+                if(!session.jobId.isEmpty()){
+                    jobs.cancel(session.jobId);
+                    NativeRenderEngine.Handle handle=renderHandles.get(session.jobId);if(handle!=null)handle.cancel();
+                }
+            }
+            return START_STICKY;
+        }
         if (ACTION_CANCEL_ALL.equals(action)) {
             int cancelled = cancelAllNativeWork();
             ActivityLog.add(this, "user", "Cancel all jobs", cancelled + " active job(s) cancelled", "success", null, null, null);
         } else if (ACTION_PAUSE.equals(action)) {
             protocol.setControlPaused(true);
-            int cancelled = cancelAllNativeWork();
+            int cancelled = cancelAutonomousWork();
             ActivityLog.add(this, "user", "ChatGPT control paused", cancelled + " active job(s) cancelled", "info", null, null, null);
             NativeAgentWatchdog.cancel(this);
             updateNotification("ChatGPT control paused");
@@ -156,10 +192,25 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         } else if (ACTION_SYNC.equals(action)) {
             syncProtocolState();
             protocol.registerNow();
+        } else if(ACTION_LOCAL_PROXY.equals(action)){
+            try{queueProxy(new JSONObject().put("projectId",intent.getStringExtra("projectId")).put("assetId",intent.getStringExtra("assetId")).put("tier",intent.getStringExtra("tier")).put("_origin","owner"));}catch(Exception error){ActivityLog.add(this,"user","Preview proxy failed",error.getMessage(),"failed",null,null,intent.getStringExtra("projectId"));}
+        } else if(ACTION_LOCAL_VOICE.equals(action)){
+            try{JSONObject parameters=new JSONObject(intent.getStringExtra("parameters")).put("_origin","owner");queueGenerateVoice(parameters);}catch(Exception error){ActivityLog.add(this,"user","Narration failed",error.getMessage(),"failed",null,null,intent.getStringExtra("projectId"));}
+        } else if(ACTION_LOCAL_VAULT_RESTORE.equals(action)){
+            try{JSONObject parameters=new JSONObject().put("projectId",intent.getStringExtra("projectId")).put("assetId",intent.getStringExtra("assetId")).put("_origin","owner");queueVaultRestore(parameters);}catch(Exception error){ActivityLog.add(this,"user","Vault restore failed",error.getMessage(),"failed",null,null,intent.getStringExtra("projectId"));}
+        } else if(ACTION_LOCAL_VAULT_REPLICATE.equals(action)){
+            try{JSONObject parameters=new JSONObject(intent.getStringExtra("parameters")).put("_origin","owner");queueVaultReplication(parameters);}catch(Exception error){ActivityLog.add(this,"user","Vault replication failed",error.getMessage(),"failed",null,null,intent.getStringExtra("projectId"));}
+        } else if(ACTION_LOCAL_VAULT.equals(action)){
+            try{JSONObject parameters=new JSONObject().put("projectId",intent.getStringExtra("projectId")).put("assetId",intent.getStringExtra("assetId")).put("encrypted",intent.getBooleanExtra("encrypted",true)).put("_origin","owner");queueVault(parameters);}catch(Exception error){ActivityLog.add(this,"user","Vault copy failed",error.getMessage(),"failed",null,null,intent.getStringExtra("projectId"));}
+        } else if (ACTION_LOCAL_IMPORT.equals(action)) {
+            String projectId=intent.getStringExtra("projectId");
+            ArrayList<String> ids=intent.getStringArrayListExtra("assetIds");
+            if(ids!=null)for(String id:ids)queueImportProbe(projectId,id);
         } else if (ACTION_LOCAL_ANIMATE.equals(action)) {
             try {
                 JSONObject p = new JSONObject();
                 p.put("projectId", intent.getStringExtra("projectId"));
+                p.put("_origin", "owner");
                 p.put("style", intent.getStringExtra("style") == null ? "cinematic" : intent.getStringExtra("style"));
                 p.put("environment", intent.getStringExtra("environment") == null ? "ambient" : intent.getStringExtra("environment"));
                 p.put("intensity", intent.getDoubleExtra("intensity", .78));
@@ -183,6 +234,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         } else if (ACTION_LOCAL_PROMPT_VIDEO.equals(action)) {
             try {
                 JSONObject p = new JSONObject();
+                p.put("_origin", "owner");
                 p.put("prompt", intent.getStringExtra("prompt") == null ? "" : intent.getStringExtra("prompt"));
                 p.put("durationSeconds", Math.max(4, Math.min(120, intent.getIntExtra("durationSeconds", 18))));
                 p.put("aspect", intent.getStringExtra("aspect") == null ? "9:16" : intent.getStringExtra("aspect"));
@@ -202,6 +254,11 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             }
         } else if (ACTION_LOCAL_EXPORT.equals(action)) {
             try {
+                String sessionId=intent.getStringExtra("sessionId");
+                if(sessionId!=null && !sessionId.isEmpty()){
+                    startManualExport(sessionId);
+                    return START_STICKY;
+                }
                 JSONObject p = new JSONObject();
                 p.put("projectId", intent.getStringExtra("projectId"));
                 p.put("aspect", intent.getStringExtra("aspect") == null ? "9:16" : intent.getStringExtra("aspect"));
@@ -209,10 +266,11 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 p.put("fileName", intent.getStringExtra("fileName") == null
                         ? "VideoStudio_" + System.currentTimeMillis() + ".mp4"
                         : intent.getStringExtra("fileName"));
-                JSONObject queued = queueExport(p);
-                ActivityLog.add(this, "user", "Export queued",
-                        "Native job " + shortId(queued.optString("jobId")),
-                        "queued", 0, null, queued.optString("projectId", ""));
+                ExportSessionStore.Session session=exportSessions.create(resolveProject(p.optString("projectId")),p);
+                startManualExport(session.id);
+                ActivityLog.add(this, "user", "Export started",
+                        "Foreground export session " + shortId(session.id),
+                        "preparing", 0, null, session.projectId);
             } catch (Exception error) {
                 ActivityLog.add(this, "user", "Export failed",
                         error.getMessage() == null ? "Could not queue export" : error.getMessage(),
@@ -242,6 +300,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         markService(false, "Control service stopped");
         boolean paused = protocol != null && protocol.isControlPaused();
         if (activeRender != null) activeRender.cancel();
+        for(NativeRenderEngine.Handle handle:renderHandles.values())handle.cancel();
         if (jobs != null) jobs.shutdown();
         if (protocol != null) protocol.stop();
         commandCompletionWatchers.shutdownNow();
@@ -279,13 +338,44 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     @Override
     public void onCommand(JSONObject command) {
         String action = command.optString("action");
+        if(protocol!=null&&protocol.isControlPaused()){
+            JSONObject denied=new JSONObject();
+            try{denied.put("ok",false).put("error","ChatGPT control is paused by the owner");}catch(Exception ignored){}
+            protocol.complete(command,denied,"denied");return;
+        }
         JSONObject p = command.optJSONObject("parameters");
-        if (p == null) p = new JSONObject();
+        try{p=p==null?new JSONObject():new JSONObject(p.toString());}
+        catch(Exception invalid){throw new IllegalArgumentException("Invalid command parameters",invalid);}
+        // Recovery handles belong to the service, never to a remote caller.
+        java.util.ArrayList<String> internalKeys=new java.util.ArrayList<>();
+        java.util.Iterator<String> parameterKeys=p.keys();
+        while(parameterKeys.hasNext()){String key=parameterKeys.next();if(key.startsWith("_"))internalKeys.add(key);}
+        for(String key:internalKeys)p.remove(key);
+        if(p.optString("projectId","").isEmpty()&&!command.optString("_handoffProjectId","").isEmpty()){
+            try{p.put("projectId",command.getString("_handoffProjectId"));}catch(Exception invalid){throw new IllegalArgumentException(invalid);}
+        }
 
+        try { p.put("_origin", "autonomous"); } catch (Exception invalid) { throw new IllegalArgumentException(invalid); }
         String commandId = command.optString("id", "");
         String projectId = p.optString("projectId", "");
 
-        JSONObject terminal = commandJournal.terminal(commandId);
+        OwnerAccessPolicy commandAccess=new OwnerAccessPolicy(this,store);
+        try{
+            commandJournal.validateReplay(command);
+            if(java.util.Arrays.asList("apply_tool","apply_edit_plan","creator_preset","autonomous_edit","export_project","vault_replicate","vault_restore").contains(action)){
+                String bound=commandJournal.boundProject(commandId);
+                if(bound.isEmpty())bound=resolveProject(projectId).id;
+                else if(!projectId.isEmpty()&&!projectId.equals(bound))throw new IllegalArgumentException("Command ID belongs to another project");
+                commandJournal.bindProject(command,bound);p.put("projectId",bound);projectId=bound;
+            }
+        }
+        catch(Exception conflict){
+            JSONObject failed=new JSONObject();
+            try{failed.put("ok",false).put("errorCode","command_id_conflict").put("error",conflict.getMessage());}catch(Exception ignored){}
+            ActivityLog.add(this,"chatgpt",friendlyAction(action),failed.optString("error"),"failed",null,commandId,projectId);
+            protocol.complete(command,failed,"failed");return;
+        }
+        JSONObject terminal = isAllowed(action,p)&&!commandAccess.resultPredatesScope(command)?commandJournal.terminal(commandId):null;
         if (terminal != null) {
             JSONObject priorResult = terminal.optJSONObject("result");
             if (priorResult == null) priorResult = new JSONObject();
@@ -297,8 +387,10 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             return;
         }
 
-        JSONObject inflight = commandJournal.inflight(commandId);
-        if (inflight != null) {
+        JSONObject inflight = isAllowed(action,p)&&!commandAccess.resultPredatesScope(command)?commandJournal.inflight(commandId):null;
+        boolean receiptBackedEdit=java.util.Arrays.asList("apply_tool","apply_edit_plan","creator_preset","editor_operation","editor_batch","editor_history").contains(action);
+        if("autonomous_edit".equals(action)&&(inflight==null||inflight.optString("jobId","").isEmpty()))receiptBackedEdit=true;
+        if (inflight != null && !receiptBackedEdit&&!inflight.optString("jobId","").isEmpty()) {
             watchDeferredCommand(command, inflight.optJSONObject("queuedResult"));
             String inflightJobId = inflight.optString("jobId", "");
             JSONObject inflightState = inflightJobId.isEmpty() ? null : jobs.get(inflightJobId);
@@ -315,7 +407,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         }
 
         commandJournal.begin(command);
-        if (mayQueueBackgroundWork(action) && !commandId.isEmpty()) {
+        if (!commandId.isEmpty()) {
             try { p.put("_mcpCommandId", commandId); } catch (Exception ignored) {}
         }
         ActivityLog.add(this, "chatgpt", friendlyAction(action), commandDetail(action, p), "running", 0, commandId, projectId);
@@ -334,6 +426,26 @@ public final class ControlService extends Service implements AppProtocol.Callbac
 
         try {
             switch (action) {
+                case "storage_profiles": {
+                    String target=p.optString("projectId","");if(!target.isEmpty()&&store.get(target)==null)throw new IllegalArgumentException("Project not found");
+                    JSONArray profiles;try(StorageProfileStore storage=new StorageProfileStore(this)){profiles=storage.discover();}
+                    complete(command,ok().put("profiles",profiles).put("maximumProfiles",StorageProfileStore.MAX_PROFILES));return;
+                }
+                case "vault_create": complete(command,queueVault(p));return;
+                case "vault_replicate": complete(command,queueVaultReplication(p));return;
+                case "vault_restore": complete(command,queueVaultRestore(p));return;
+                case "create_proxy": complete(command,queueProxy(p));return;
+                case "vault_inspect": complete(command,new VaultManager(this,store).inspect(p.getString("projectId"),p.getString("assetId")));return;
+                case "editor_schema":
+                    complete(command, ok().put("schema", editorProtocol.describe()));
+                    return;
+                case "project_query":
+                case "editor_operation":
+                case "editor_batch":
+                case "editor_history":
+                    complete(command, editorProtocol.execute(action, p));
+                    syncProtocolState();
+                    return;
                 case "ping":
                 case "get_state":
                     complete(command, stateJson());
@@ -577,8 +689,10 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                     return;
                 case "cancel_job": {
                     String jobId = p.optString("jobId");
+                    if(jobs.isOwner(jobId))throw new IllegalArgumentException("Owner jobs must be cancelled by the owner");
                     boolean cancelled = jobs.cancel(jobId);
-                    if (cancelled && activeRender != null) activeRender.cancel();
+                    NativeRenderEngine.Handle handle=renderHandles.get(jobId);
+                    if (cancelled && handle != null) handle.cancel();
                     if (cancelled) recoveryPlans.cancelByJob(jobId);
                     JSONObject result = ok();
                     result.put("cancelled", cancelled);
@@ -587,7 +701,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 }
                 case "cancel_all_jobs":
                 case "stop_all": {
-                    int count = cancelAllNativeWork();
+                    int count = cancelAutonomousWork();
                     JSONObject result = ok();
                     result.put("cancelledJobs", count);
                     complete(command, result);
@@ -641,6 +755,13 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             try {
                 result.put("ok", false);
                 result.put("error", error.getMessage() == null ? "Command failed" : error.getMessage());
+                if (error instanceof ProjectStore.RevisionConflict) {
+                    ProjectStore.RevisionConflict conflict = (ProjectStore.RevisionConflict) error;
+                    result.put("errorCode", "revision_conflict");
+                    result.put("projectId", conflict.projectId);
+                    result.put("expectedRevision", conflict.expectedRevision);
+                    result.put("actualRevision", conflict.actualRevision);
+                }
             } catch (Exception ignored) {}
             ActivityLog.add(this, "chatgpt", friendlyAction(action), result.optString("error"), "failed", null, commandId, projectId);
             commandJournal.finish(command, result, "failed");
@@ -649,169 +770,51 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     }
 
     private JSONObject applyEditPlan(JSONObject p) throws Exception {
-        ProjectStore.Project project = resolveProject(p.optString("projectId", ""));
-        JSONArray clips = p.optJSONArray("clips");
-        if (clips == null || clips.length() == 0) throw new IllegalArgumentException("clips are required");
-        ArrayList<ProjectStore.Clip> next = new ArrayList<>();
-        for (int i = 0; i < clips.length() && i < 120; i++) {
-            JSONObject raw = clips.optJSONObject(i);
-            if (raw == null) continue;
-            ProjectStore.Asset asset = project.asset(raw.optString("assetId"));
-            if (asset == null) throw new IllegalArgumentException("Unknown asset on clip " + i);
-            ProjectStore.Clip clip = new ProjectStore.Clip();
-            clip.id = UUID.randomUUID().toString();
-            clip.assetId = asset.id;
-            clip.inMs = raw.has("inMs") ? raw.optLong("inMs") : (long) (raw.optDouble("start", 0) * 1000);
-            clip.outMs = raw.has("outMs") ? raw.optLong("outMs") : (long) (raw.optDouble("end", asset.durationMs / 1000d) * 1000);
-            clip.inMs = Math.max(0, clip.inMs);
-            clip.outMs = Math.max(clip.inMs + 100, Math.min(asset.durationMs > 0 ? asset.durationMs : clip.outMs, clip.outMs));
-            clip.speed = (float) Math.max(.25, Math.min(4, raw.optDouble("speed", 1)));
-            clip.volume = (float) Math.max(0, Math.min(2, raw.optDouble("volume", 1)));
-            clip.transition = raw.optString("transition", "none");
-            clip.title = raw.optString("title", "");
-            JSONObject effects = raw.optJSONObject("effects");
-            clip.effects = effects == null ? new JSONObject() : effects;
-            next.add(clip);
-        }
-        project.clips.clear();
-        project.clips.addAll(next);
-        store.save(project);
-        JSONObject result = ok();
-        result.put("projectId", project.id);
-        result.put("clipCount", next.size());
-        result.put("durationMs", project.outputDurationMs());
-        return result;
+        ProjectStore.Project project=resolveProject(p.optString("projectId",""));
+        ProjectStore.Project receipt=new LegacyEditorAdapter(store).applyPlan(project.id,p);
+        return legacyEditResult(receipt,p);
+    }
+
+    private JSONObject legacyEditResult(ProjectStore.Project project,JSONObject p)throws Exception{
+        return ok().put("projectId",project.id).put("revision",project.revision).put("clipCount",project.clips.size())
+                .put("durationMs",project.outputDurationMs()).put("commandId",p.optString("_mcpCommandId",p.optString("commandId","")));
     }
 
     private JSONObject applyTool(JSONObject p) throws Exception {
         ProjectStore.Project project = resolveProject(p.optString("projectId", ""));
-        int index = p.optInt("clipIndex", 0);
-        if (index < 0 || index >= project.clips.size()) throw new IllegalArgumentException("Clip not found");
-        ProjectStore.Clip clip = project.clips.get(index);
-        String tool = p.optString("tool", "effect");
-        JSONObject settings = p.optJSONObject("settings");
-        if (settings == null) settings = new JSONObject();
-
-        switch (tool) {
-            case "trim":
-                clip.inMs = Math.max(0, settings.optLong("inMs", clip.inMs));
-                clip.outMs = Math.max(clip.inMs + 100, settings.optLong("outMs", clip.outMs));
-                break;
-            case "speed":
-            case "slow_motion":
-                clip.speed = (float) Math.max(.25, Math.min(4, settings.optDouble("speed", .5)));
-                break;
-            case "volume":
-                clip.volume = (float) Math.max(0, Math.min(2, settings.optDouble("volume", 1)));
-                break;
-            case "transition":
-                clip.transition = settings.optString("name", "fade");
-                break;
-            case "green_screen":
-                clip.effects.put("chromaKey", true);
-                clip.effects.put("chromaColor", settings.optString("color", "#00FF00"));
-                clip.effects.put("chromaTolerance", settings.optDouble("tolerance", .18));
-                clip.effects.put("spillSuppression", settings.optDouble("spill", .35));
-                break;
-            case "motion":
-                clip.effects.put("motionPreset", settings.optString("preset", "push_in"));
-                clip.effects.put("ease", settings.optString("ease", "easeInOut"));
-                break;
-            case "effect":
-                clip.effects.put("effectPreset", settings.optString("preset", "cinematic"));
-                copyNumeric(settings, clip.effects, "blur", "brightness", "contrast", "saturation", "lightness");
-                break;
-            case "color":
-                clip.effects.put("colorPreset", settings.optString("preset", "cinematic"));
-                if (settings.has("brightness")) clip.effects.put("brightness", settings.optDouble("brightness"));
-                if (settings.has("contrast")) clip.effects.put("contrast", settings.optDouble("contrast"));
-                if (settings.has("saturation")) clip.effects.put("saturationAdjust", settings.optDouble("saturation"));
-                if (settings.has("lightness")) clip.effects.put("lightnessAdjust", settings.optDouble("lightness"));
-                break;
-            case "reframe":
-                clip.effects.put("reframe", settings.optString("preset", "9:16_subject_safe"));
-                break;
-            case "mask":
-                clip.effects.put("mask", settings.optString("shape", "rounded_rect"));
-                clip.effects.put("maskFeather", settings.optDouble("feather", .08));
-                break;
-            case "font":
-                clip.effects.put("fontFamily", settings.optString("family", "sans-serif-medium"));
-                break;
-            case "text_animation":
-                clip.effects.put("textAnimation", settings.optString("preset", "fade_up"));
-                break;
-            case "title":
-                clip.title = settings.optString("text", "");
-                if (settings.has("font")) clip.effects.put("fontFamily", settings.optString("font"));
-                if (settings.has("animation")) clip.effects.put("textAnimation", settings.optString("animation"));
-                break;
-            case "blur":
-                clip.effects.put("blur", Math.max(0, Math.min(18, settings.optDouble("sigma", 4))));
-                break;
-            case "transform":
-                if (settings.has("scale")) clip.effects.put("scale", settings.optDouble("scale", 1));
-                if (settings.has("rotate")) clip.effects.put("rotate", settings.optDouble("rotate", 0));
-                break;
-            case "audio_duck":
-                clip.effects.put("audioDucking", true);
-                clip.effects.put("duckLevel", settings.optDouble("level", .32));
-                break;
-            case "keyframes":
-                clip.effects.put("keyframes", settings.optJSONArray("keyframes") == null ? new JSONArray() : settings.optJSONArray("keyframes"));
-                break;
-            default:
-                clip.effects.put(tool, settings);
-        }
-        store.save(project);
-        JSONObject result = ok();
-        result.put("projectId", project.id);
-        result.put("clipIndex", index);
-        result.put("tool", tool);
-        return result;
+        ProjectStore.Project result = new LegacyEditorAdapter(store).applyTool(project.id, p);
+        return ok().put("projectId", result.id).put("revision", result.revision)
+                .put("clipIndex", p.optInt("clipIndex", 0)).put("tool", p.optString("tool", "effect"))
+                .put("commandId", p.optString("_mcpCommandId", p.optString("commandId", "")));
     }
 
     private JSONObject applyCreatorPreset(JSONObject p) throws Exception {
-        ProjectStore.Project project = resolveProject(p.optString("projectId", ""));
-        if (project.clips.isEmpty()) throw new IllegalArgumentException("No clips");
-        String preset = p.optString("preset", "cinematic");
-        String motion = p.optString("motion", "");
-        String transition = p.optString("transition", "");
-        String font = p.optString("font", "");
-        boolean all = p.optBoolean("allClips", true);
-        int selected = Math.max(0, p.optInt("clipIndex", 0));
-        int changed = 0;
-        for (int i = 0; i < project.clips.size(); i++) {
-            if (!all && i != selected) continue;
-            ProjectStore.Clip clip = project.clips.get(i);
-            clip.effects.put("effectPreset", preset);
-            if (!motion.isEmpty()) clip.effects.put("motionPreset", motion);
-            if (!transition.isEmpty()) clip.transition = transition;
-            if (!font.isEmpty()) clip.effects.put("fontFamily", font);
-            changed++;
-        }
-        store.save(project);
-        JSONObject result = ok();
-        result.put("projectId", project.id);
-        result.put("changedClips", changed);
-        result.put("preset", preset);
-        return result;
+        ProjectStore.Project project=resolveProject(p.optString("projectId",""));
+        ProjectStore.Project receipt=new LegacyEditorAdapter(store).applyPreset(project.id,p);
+        return legacyEditResult(receipt,p).put("preset",p.optString("preset","cinematic")).put("changedClips",LegacyEditorAdapter.changedClipCount(receipt,p));
     }
 
     private JSONObject autonomousEdit(JSONObject p) throws Exception {
-        JSONObject result = ok();
-        if (p.optJSONArray("clips") != null) result.put("plan", applyEditPlan(p));
-        if (p.has("preset")) result.put("preset", applyCreatorPreset(p));
-        ProjectStore.Project project = resolveProject(p.optString("projectId", ""));
-        result.put("projectId", project.id);
+        if(p.has("render")&&!(p.get("render") instanceof Boolean))throw new IllegalArgumentException("render must be a boolean");
+        ProjectStore.Project project=resolveProject(p.optString("projectId",""));
+        if(p.has("clips")||p.has("preset"))project=new LegacyEditorAdapter(store).applyAutonomousEdit(project.id,p);
+        else if(!p.optBoolean("render",false))throw new IllegalArgumentException("Supply a structured edit or render request");
+        else {
+            JSONObject prior=exportPlan(p,project.id);
+            project=exportSnapshot(prior,project);
+            LegacyEditorAdapter.validateRenderRevision(project,p);
+        }
+        JSONObject result=legacyEditResult(project,p);
+        if(p.has("clips"))result.put("plan",legacyEditResult(project,p));
+        if(p.has("preset"))result.put("preset",p.optString("preset"));
         if (p.optBoolean("render", false)) {
             JSONObject exportArgs = new JSONObject();
             exportArgs.put("projectId", project.id);
             exportArgs.put("aspect", p.optString("aspect", "9:16"));
             exportArgs.put("quality", p.optString("quality", "1080p"));
-            exportArgs.put("fileName", p.optString("fileName", "VideoStudio_AI_Edit_" + System.currentTimeMillis() + ".mp4"));
+            if(p.has("fileName"))exportArgs.put("fileName",p.getString("fileName"));
             if (p.has("_mcpCommandId")) exportArgs.put("_mcpCommandId", p.optString("_mcpCommandId", ""));
-            JSONObject export = queueExport(exportArgs);
+            JSONObject export = queueExport(exportArgs,project);
             result.put("export", export);
             if (ExecutionTruthPolicy.isDeferredResult(export)) {
                 result.put("queued", true);
@@ -1369,7 +1372,25 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         return completed;
     }
 
-    private JobManager.Job submitRecoverableLight(String action,
+    private static JobManager.Origin jobOrigin(JSONObject parameters){
+        return parameters!=null&&"owner".equals(parameters.optString("_origin"))?JobManager.Origin.OWNER:JobManager.Origin.AUTONOMOUS;
+    }
+
+    private void configureJobAccess(JobManager.Job state,String action,JSONObject parameters,String projectId){
+        java.util.Set<String> inputs=new java.util.HashSet<>();
+        if(parameters!=null&&!parameters.optString("assetId","").isEmpty())inputs.add(parameters.optString("assetId"));
+        else{
+            ProjectStore.Project project=store.get(projectId);
+            if(project!=null)for(ProjectStore.Asset asset:project.assets)inputs.add(asset.id);
+        }
+        state.bindInputs(projectId,inputs);
+        if(state.origin==JobManager.Origin.AUTONOMOUS){
+            state.setAuthorizationGuard(()->{if(!isAllowed(action,parameters==null?new JSONObject():parameters))throw new java.util.concurrent.CancellationException("Owner access changed; background work stopped");});
+        }
+        state.checkActive();
+    }
+
+    private synchronized JobManager.Job submitRecoverableLight(String action,
                                                   JSONObject parameters,
                                                   String projectId,
                                                   String jobName,
@@ -1378,16 +1399,25 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         String planId = requestedPlan;
         if (planId.isEmpty() || recoveryPlans.get(planId) == null) {
             planId = recoveryPlans.begin(action, parameters, projectId);
-        } else {
-            recoveryPlans.markResuming(planId);
         }
-
+        JSONObject plan=recoveryPlans.get(planId);
+        JobManager.Job live=jobs.liveJob(plan.optString("jobId",""));if(live!=null)return live;
+        String planState=plan.optString("state");
+        if(java.util.Arrays.asList("completed","failed","cancelled").contains(planState)){
+            JobManager.Job terminal=jobs.jobRecord(plan.optString("jobId",""));
+            if(terminal!=null)return terminal;
+            throw new IllegalStateException("Durable work is terminal; use a new command ID");
+        }
+        if(!plan.optString("jobId","").isEmpty())recoveryPlans.markResuming(planId);
         final String durablePlanId = planId;
-        JobManager.Job job = jobs.submit(jobName, JobManager.Kind.LIGHT, state -> {
-            recoveryPlans.attachJob(durablePlanId, state.id);
+        JobManager.Job job = jobs.submit(jobName, JobManager.Kind.LIGHT, jobOrigin(parameters), state->{state.bindProject(projectId);recoveryPlans.attachJob(durablePlanId,state.id);}, state -> {
+            configureJobAccess(state,action,parameters,projectId);
             try {
                 work.run(state);
+                state.completeDurably();
                 recoveryPlans.completeByJob(state.id);
+            }catch(java.util.concurrent.CancellationException cancelled){
+                recoveryPlans.cancelByJob(state.id);throw cancelled;
             } catch (InterruptedException interrupted) {
                 if ("cancelled".equals(state.state)) recoveryPlans.cancelByJob(state.id);
                 else recoveryPlans.failByJob(state.id, "Interrupted after checkpoint; safe to resume", true);
@@ -1401,10 +1431,11 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 throw error;
             }
         });
+        job.bindProject(projectId);
         return job;
     }
 
-    private JobManager.Job submitRecoverableHeavy(String action,
+    private synchronized JobManager.Job submitRecoverableHeavy(String action,
                                                   JSONObject parameters,
                                                   String projectId,
                                                   String jobName,
@@ -1413,16 +1444,25 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         String planId = requestedPlan;
         if (planId.isEmpty() || recoveryPlans.get(planId) == null) {
             planId = recoveryPlans.begin(action, parameters, projectId);
-        } else {
-            recoveryPlans.markResuming(planId);
         }
-
+        JSONObject plan=recoveryPlans.get(planId);
+        JobManager.Job live=jobs.liveJob(plan.optString("jobId",""));if(live!=null)return live;
+        String planState=plan.optString("state");
+        if(java.util.Arrays.asList("completed","failed","cancelled").contains(planState)){
+            JobManager.Job terminal=jobs.jobRecord(plan.optString("jobId",""));
+            if(terminal!=null)return terminal;
+            throw new IllegalStateException("Durable work is terminal; use a new command ID");
+        }
+        if(!plan.optString("jobId","").isEmpty())recoveryPlans.markResuming(planId);
         final String durablePlanId = planId;
-        JobManager.Job job = jobs.submit(jobName, JobManager.Kind.HEAVY, state -> {
-            recoveryPlans.attachJob(durablePlanId, state.id);
+        JobManager.Job job = jobs.submit(jobName, JobManager.Kind.HEAVY, jobOrigin(parameters), state->{state.bindProject(projectId);recoveryPlans.attachJob(durablePlanId,state.id);}, state -> {
+            configureJobAccess(state,action,parameters,projectId);
             try {
                 work.run(state);
+                state.completeDurably();
                 recoveryPlans.completeByJob(state.id);
+            }catch(java.util.concurrent.CancellationException cancelled){
+                recoveryPlans.cancelByJob(state.id);throw cancelled;
             } catch (InterruptedException interrupted) {
                 if ("cancelled".equals(state.state)) recoveryPlans.cancelByJob(state.id);
                 else recoveryPlans.failByJob(state.id, "Interrupted after checkpoint; safe to resume", true);
@@ -1436,26 +1476,45 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 throw error;
             }
         });
+        job.bindProject(projectId);
         return job;
     }
 
     private void recoverDurablePlans() {
-        if (recoveryPlans == null || protocol == null || protocol.isControlPaused()) return;
+        if (recoveryPlans == null || protocol == null) return;
         JSONArray pending = recoveryPlans.pendingForAutoResume();
         for (int i = 0; i < pending.length(); i++) {
+            if(Thread.currentThread().isInterrupted())break;
             JSONObject plan = pending.optJSONObject(i);
             if (plan == null) continue;
+            if (protocol.isControlPaused() && !"owner".equals(plan.optString("origin"))) continue;
             String planId = plan.optString("id", "");
             String action = plan.optString("action", "");
             String projectId = plan.optString("projectId", "");
+            JSONObject scopeParameters=plan.optJSONObject("parameters");
+            if(!"owner".equals(plan.optString("origin"))&&!isAllowed(action,scopeParameters==null?new JSONObject():scopeParameters))continue;
+            JSONObject oldJob=jobs.get(plan.optString("jobId","")).optJSONObject("job");
+            if(oldJob!=null&&JobManager.STATE_COMPLETED.equals(oldJob.optString("state"))){
+                recoveryPlans.completePlan(planId,"Recovered durable job completion");continue;
+            }
             String outputUri = plan.optString("outputUri", "");
 
-            if (!outputUri.isEmpty() && isReadableOutput(outputUri)) {
+            if(!outputUri.isEmpty()&&!isReadableOutput(outputUri)){
+                invalidateRecoveredOutput(plan,outputUri,"Published output is no longer readable; render a new file");
+            }else if (!outputUri.isEmpty()) {
                 if ("run_creative_graph".equals(action)) {
                     try {
-                        ProjectStore.Asset rendered = latestGeneratedVideo(projectId);
+                        JSONObject proof=PlayableMediaVerifier.verify(this,Uri.parse(outputUri),true);
+                        if(!PlayableMediaVerifier.matchesSavedProof(oldJob==null?null:oldJob.optJSONObject("result"),proof)
+                                ||!PlayableMediaVerifier.matchesSavedProof(plan.optJSONObject("outputVerification"),proof))
+                            throw new IllegalStateException("Creative render checksum changed");
+                        ProjectStore.Project recoveredProject=store.get(projectId);
+                        ProjectStore.Asset rendered=null;
+                        if(recoveredProject!=null)for(ProjectStore.Asset asset:recoveredProject.assets){
+                            if(outputUri.equals(asset.uri)&&asset.mime!=null&&asset.mime.startsWith("video/")){rendered=asset;break;}
+                        }
                         if (rendered != null) {
-                            JSONObject renderResult = new JSONObject();
+                            JSONObject renderResult = PlayableMediaVerifier.withFreshProof(null,proof);
                             renderResult.put("ok", true);
                             renderResult.put("assetId", rendered.id);
                             renderResult.put("uri", rendered.uri);
@@ -1467,28 +1526,42 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                                     rendered.name + " was already published; resuming downstream nodes only",
                                     "success", 98, null, projectId);
                         }
-                    } catch (Exception ignored) {
+                    }catch(InterruptedException interrupted){Thread.currentThread().interrupt();
+                    } catch (Exception invalid) {
+                        invalidateRecoveredOutput(plan,outputUri,"Creative render failed verification; rebuild its output");
                         // If graph metadata was not committed, the normal retry path will safely rebuild it.
                     }
-                } else {
-                    recoveryPlans.completePlan(planId, "Recovered published output; no duplicate render required");
-                    ActivityLog.add(this, "system", "Recovered completed render",
-                            plan.optString("outputName", "Generated video") + " was already published before restart",
-                            "success", 100, null, projectId);
+                }else if(finishRecoveredOutput(plan,oldJob,projectId,outputUri)){
+                    recoveryPlans.completePlan(planId,"Recovered verified output and durable job completion");
+                    ActivityLog.add(this,"system","Recovered completed render",plan.optString("outputName","Generated video")+" was verified after restart","success",100,null,projectId);
                     continue;
                 }
             }
 
+            if(Thread.currentThread().isInterrupted())break;
             JSONObject parameters = plan.optJSONObject("parameters");
             if (parameters == null) parameters = new JSONObject();
             try {
                 parameters = new JSONObject(parameters.toString());
                 parameters.put("_recoveryPlanId", planId);
+                parameters.put("_origin", plan.optString("origin", "autonomous"));
                 if (!projectId.isEmpty()) parameters.put("projectId", projectId);
                 recoveryPlans.markResuming(planId);
 
                 JSONObject queued;
                 switch (action) {
+                    case "create_proxy":
+                        queued=queueProxy(parameters);
+                        break;
+                    case "vault_create":
+                        queued=queueVault(parameters);
+                        break;
+                    case "vault_restore":
+                        queued=queueVaultRestore(parameters);
+                        break;
+                    case "vault_replicate":
+                        queued=queueVaultReplication(parameters);
+                        break;
                     case "animate_images":
                         queued = queueAnimatedImages(parameters);
                         break;
@@ -1554,6 +1627,44 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                         "info", plan.optInt("progress", 0), null, projectId);
             }
         }
+    }
+
+    private void invalidateRecoveredOutput(JSONObject plan,String outputUri,String detail){
+        if("run_creative_graph".equals(plan.optString("action"))){
+            // Clear graph caches first: a failed write must leave the rejected URI bound for the next retry.
+            try{creativeNodeStore.invalidate(plan.optString("projectId"),"render.final",true);
+            }catch(IllegalArgumentException missingNode){/* a fresh graph will create its render node */
+            }catch(Exception storageFailure){throw new IllegalStateException("Could not invalidate the recovered render graph",storageFailure);}
+        }
+        recoveryPlans.invalidateOutput(plan.optString("id"),outputUri,detail);
+    }
+
+    private boolean finishRecoveredOutput(JSONObject plan,JSONObject oldJob,String projectId,String outputUri){
+        if(oldJob==null||JobManager.isTerminal(oldJob.optString("state")))return false;
+        JSONObject saved=oldJob.optJSONObject("result"),proof;
+        try{
+            proof=PlayableMediaVerifier.verify(this,Uri.parse(outputUri),true);
+            if(!PlayableMediaVerifier.matchesSavedProof(saved,proof)
+                    ||!PlayableMediaVerifier.matchesSavedProof(plan.optJSONObject("outputVerification"),proof))
+                throw new IllegalStateException("Published output checksum changed");
+        }catch(InterruptedException interrupted){Thread.currentThread().interrupt();return false;
+        }catch(Exception invalid){
+            recoveryPlans.invalidateOutput(plan.optString("id"),outputUri,"Published output failed verification; render a new file");
+            return false;
+        }
+        try{
+            JSONObject recovered=PlayableMediaVerifier.withFreshProof(saved,proof);
+            JSONObject parameters=plan.optJSONObject("parameters");
+            if(!"owner".equals(plan.optString("origin"))&&!isAllowed(plan.optString("action"),parameters==null?new JSONObject():parameters))return false;
+            ProjectStore.Project project=store.get(projectId);if(project==null)return false;
+            final ProjectStore.Asset[] assets=new ProjectStore.Asset[1];
+            if(!jobs.commitRecovered(plan.optString("jobId",""),active->{
+                if(!"owner".equals(plan.optString("origin"))&&!isAllowed(plan.optString("action"),parameters==null?new JSONObject():parameters))throw new java.util.concurrent.CancellationException("Owner access changed during recovery");
+                assets[0]=store.registerGeneratedAsset(project,Uri.parse(outputUri),plan.optString("outputName","Recovered export.mp4"),"final_render",false);
+            }))return false;
+            ProjectStore.Asset asset=assets[0];recovered.put("ok",true).put("assetId",asset.id).put("uri",outputUri).put("projectId",projectId).put("fileName",asset.name).put("verification",proof);
+            return jobs.completeRecovered(plan.optString("jobId",""),recovered);
+        }catch(Exception invalid){return false;}
     }
 
     private boolean isReadableOutput(String rawUri) {
@@ -2037,6 +2148,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         durableParameters.put("pitch", pitch);
         durableParameters.put("offlineOnly", offlineOnly);
         durableParameters.put("fileName", fileName);
+        if(!durableParameters.has("_generationId"))durableParameters.put("_generationId",java.util.UUID.randomUUID().toString());
 
         JobManager.Job job = submitRecoverableLight(
                 "generate_voice",
@@ -2054,6 +2166,8 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                             pitch,
                             offlineOnly,
                             fileName,
+                            durableParameters.getString("_generationId"),
+                            state,
                             (progress, detail) -> checkpoint(
                                     state,
                                     "Local narration",
@@ -2066,19 +2180,18 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                     Uri uri = Uri.parse(generated.optString("uri", ""));
                     ProjectStore.Project fresh = store.get(project.id);
                     if (fresh == null) throw new IllegalStateException("Project disappeared during narration generation");
-                    ProjectStore.Asset asset = store.registerGeneratedAsset(
-                            fresh,
-                            uri,
-                            generated.optString("fileName", fileName),
-                            "generated_voice",
-                            false
-                    );
+                    final ProjectStore.Asset[] registered=new ProjectStore.Asset[1];
+                    state.commit(active->{
+                        registered[0]=store.registerGeneratedAsset(fresh,uri,generated.optString("fileName",fileName),"generated_voice",durableParameters.optBoolean("appendToTimeline",false));
+                        store.updateAssetMetadata(project.id,registered[0].id,generated,generated.optLong("bytes",registered[0].sizeBytes));
+                    });
+                    ProjectStore.Asset asset=registered[0];
                     generated.put("assetId", asset.id);
                     generated.put("mime", asset.mime);
                     generated.put("durationMs", asset.durationMs);
                     state.setResult(generated);
 
-                    checkpoint(state, "Local narration", "Narration available in project Media Bin", 100, project.id);
+                    checkpoint(state, "Local narration", durableParameters.optBoolean("appendToTimeline",false)?"Narration added to the audio timeline":"Narration available in project Media Bin", 100, project.id);
                     ActivityLog.add(this, "system", "Narration generated",
                             asset.name + " • Media Bin • asset " + shortId(asset.id),
                             "success", 100, null, project.id);
@@ -2119,7 +2232,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             asset.generationMetadata.put("provider", "builtin.videostudio.procedural-scene");
             asset.generationMetadata.put("prompt", parameters.optString("prompt", ""));
             asset.generationMetadata.put("sceneGraph", scene);
-            store.save(project);
+            store.updateAssetMetadata(project.id,asset.id,asset.generationMetadata,file.length());
             JSONObject generated = ok(); generated.put("assetId", asset.id); generated.put("uri", asset.uri);
             generated.put("provider", "builtin.videostudio.procedural-scene"); state.setResult(generated);
             syncProtocolState();
@@ -2177,15 +2290,43 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     }
 
     private JSONObject queueExport(JSONObject p) throws Exception {
-        ProjectStore.Project project = resolveProject(p.optString("projectId", ""));
+        return queueExport(p,resolveProject(p.optString("projectId","")));
+    }
+
+    private JSONObject exportPlan(JSONObject p,String projectId){
+        String requested=p.optString("_recoveryPlanId","");
+        JSONObject plan=requested.isEmpty()?recoveryPlans.findByCommand("export_project",p.optString("_mcpCommandId","")):recoveryPlans.get(requested);
+        if(!requested.isEmpty()&&plan==null)throw new IllegalArgumentException("Export recovery plan is missing");
+        if(plan!=null&&(!"export_project".equals(plan.optString("action"))||!projectId.equals(plan.optString("projectId"))))throw new IllegalArgumentException("Export recovery plan belongs to different work");
+        return plan;
+    }
+
+    private ProjectStore.Project exportSnapshot(JSONObject plan,ProjectStore.Project fallback)throws Exception{
+        JSONObject parameters=plan==null?null:plan.optJSONObject("parameters");
+        JSONObject saved=parameters==null?null:parameters.optJSONObject("projectSnapshot");
+        ProjectStore.Project snapshot=ProjectStore.Project.fromJson(new JSONObject((saved==null?fallback.toJson():saved).toString()));
+        if(!fallback.id.equals(snapshot.id))throw new IllegalStateException("Export snapshot belongs to another project");
+        return snapshot;
+    }
+
+    private JSONObject queueExport(JSONObject p,ProjectStore.Project source) throws Exception {
+        JSONObject prior=exportPlan(p,source.id);
+        ProjectStore.Project project=exportSnapshot(prior,source);
         if (project.clips.isEmpty()) throw new IllegalArgumentException("Timeline is empty");
         String aspect = p.optString("aspect", "9:16");
         String quality = p.optString("quality", "1080p");
-        String fileName = sanitizeFileName(p.optString("fileName", "VideoStudio_" + System.currentTimeMillis() + ".mp4"));
+        String commandId=p.optString("_mcpCommandId","");
+        String suffix=commandId.isEmpty()?Long.toString(System.currentTimeMillis()):commandId;
+        String fileName = sanitizeFileName(p.optString("fileName", "VideoStudio_" + suffix + ".mp4"));
+        if(prior!=null){
+            JSONObject saved=prior.getJSONObject("parameters");
+            if(!aspect.equals(saved.optString("aspect","9:16"))||!quality.equals(saved.optString("quality","1080p"))||!fileName.equals(saved.optString("fileName")))throw new IllegalArgumentException("Command ID conflicts with different export settings");
+        }
 
         JSONObject durableParameters = new JSONObject(p.toString());
         durableParameters.put("projectId", project.id);
         durableParameters.put("fileName", fileName);
+        durableParameters.put("projectSnapshot",project.toJson());
         JobManager.Job job = submitRecoverableHeavy(
                 "export_project",
                 durableParameters,
@@ -2205,7 +2346,131 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         return result;
     }
 
+    private JSONObject queueVault(JSONObject p)throws Exception{
+        String projectId=p.getString("projectId"),assetId=p.getString("assetId");
+        JSONObject saved=new JSONObject(p.toString());
+        JobManager.Job job=submitRecoverableHeavy("vault_create",saved,projectId,"Vault media copy",state->{state.setResult(new VaultManager(this,store).create(projectId,assetId,p.optBoolean("encrypted",true),state));syncProtocolState();});
+        return ok().put("queued",true).put("jobId",job.id).put("projectId",projectId).put("assetId",assetId).put("durableRecovery",true);
+    }
+
+    private JSONObject queueVaultRestore(JSONObject p)throws Exception{
+        String projectId=p.getString("projectId"),assetId=p.getString("assetId");VaultManager manager=new VaultManager(this,store);String current=manager.boundManifestId(projectId,assetId);
+        String manifest=p.optString("_recoveryPlanId","").isEmpty()?current:p.optString("vaultManifestId",current);if(!manifest.equals(current))throw new IllegalArgumentException("Asset's Vault source changed before recovery");
+        String source=p.optString("_recoveryPlanId","").isEmpty()?store.get(projectId).asset(assetId).uri:p.getString("vaultSourceUri");
+        JSONObject saved=new JSONObject(p.toString()).put("vaultManifestId",manifest).put("vaultSourceUri",source);
+        JobManager.Job job=submitRecoverableHeavy("vault_restore",saved,projectId,"Restore media from Vault",state->{state.setResult(manager.restore(projectId,assetId,manifest,source,state));syncProtocolState();});
+        return ok().put("queued",true).put("jobId",job.id).put("projectId",projectId).put("assetId",assetId).put("durableRecovery",true);
+    }
+
+    private JSONObject queueVaultReplication(JSONObject p)throws Exception{
+        String projectId=p.getString("projectId"),assetId=p.getString("assetId");
+        JSONArray selected=p.getJSONArray("profileIds");java.util.List<String> profiles=new java.util.ArrayList<>();
+        if(selected.length()<1||selected.length()>5)throw new IllegalArgumentException("Choose 1–5 connected profiles");
+        try(StorageProfileStore storage=new StorageProfileStore(this)){
+            for(int i=0;i<selected.length();i++){Object id=selected.get(i);if(!(id instanceof String)||storage.get((String)id)==null)throw new IllegalArgumentException("Storage profile is not connected");profiles.add((String)id);}
+        }
+        Object count=p.has("replicas")?p.get("replicas"):1;
+        if(!(count instanceof Number)||!Double.isFinite(((Number)count).doubleValue())||((Number)count).doubleValue()!=((Number)count).intValue())throw new IllegalArgumentException("Replica count must be an integer");
+        int copies=((Number)count).intValue();if(copies<1||copies>profiles.size()||new java.util.HashSet<>(profiles).size()!=profiles.size())throw new IllegalArgumentException("Choose distinct profiles and a valid replica count");
+        VaultManager manager=new VaultManager(this,store);String current=manager.manifestId(projectId,assetId);
+        String manifest=p.optString("_recoveryPlanId","").isEmpty()?current:p.optString("vaultManifestId",current);
+        if(!manifest.equals(current))throw new IllegalArgumentException("Asset's Vault copy changed before recovery");
+        JSONObject saved=new JSONObject(p.toString()).put("vaultManifestId",manifest).put("replicas",copies);
+        JobManager.Job job=submitRecoverableHeavy("vault_replicate",saved,projectId,"Replicate Vault media",state->{state.setResult(manager.replicate(projectId,assetId,manifest,profiles,copies,state));syncProtocolState();});
+        return ok().put("queued",true).put("jobId",job.id).put("durableRecovery",true).put("projectId",projectId).put("assetId",assetId);
+    }
+
+    private JSONObject queueProxy(JSONObject parameters)throws Exception{
+        String projectId=parameters.getString("projectId"),assetId=parameters.getString("assetId");String tier=ProxyManager.normaliseTier(parameters.optString("tier","540p"));
+        JSONObject saved=new JSONObject(parameters.toString()).put("tier",tier);
+        ProjectStore.Project project=store.get(projectId);ProjectStore.Asset source=project==null?null:project.asset(assetId);
+        if(source==null||!source.mime.startsWith("video/"))throw new IllegalArgumentException("Select an owned video for a preview proxy");
+        JobManager.Job job=submitRecoverableHeavy("create_proxy",saved,projectId,"Create "+tier+" preview proxy",state->{
+            ProjectStore.Project fresh=store.get(projectId);ProjectStore.Asset asset=fresh==null?null:fresh.asset(assetId);
+            if(asset==null)throw new IllegalStateException("Proxy source was removed");
+            state.setResult(new ProxyManager(this,store,jobs).generate(fresh,asset,tier,state));syncProtocolState();
+        });
+        return ok().put("queued",true).put("jobId",job.id).put("projectId",projectId).put("assetId",assetId).put("tier",tier).put("durableRecovery",true);
+    }
+    private void resumeImports(){
+        for(ProjectStore.Project p:store.list())for(ProjectStore.Asset a:p.assets)
+            if("importing".equals(a.importState))queueImportProbe(p.id,a.id);
+    }
+    private void queueImportProbe(String projectId,String assetId){
+        if(projectId==null||assetId==null||!probingImports.add(assetId))return;
+        jobs.submit("Read selected media metadata",JobManager.Kind.LIGHT,JobManager.Origin.OWNER,state->{
+            try{
+                state.checkpoint("import_metadata",0,"Reading metadata without copying the source");
+                ProjectStore.Asset asset=store.completeImport(projectId,assetId);
+                if(asset!=null){
+                    if(!"ready".equals(asset.importState))throw new IllegalStateException(asset.importError);
+                    state.checkpoint("import_ready",100,"Media available in the project");
+                    if(ProxyManager.shouldProxy(asset))queueProxy(new JSONObject().put("projectId",projectId).put("assetId",asset.id).put("tier","540p").put("_origin","owner"));
+                }
+                syncProtocolState();
+            }finally{probingImports.remove(assetId);}
+        });
+    }
+
+    private void resumeManualExports(){
+        JSONArray pending=exportSessions.resumable();
+        for(int i=0;i<pending.length();i++){
+            JSONObject session=pending.optJSONObject(i);if(session==null)continue;
+            try{startManualExport(session.optString("id"));}
+            catch(Exception error){exportSessions.fail(session.optString("id"),error.getMessage());}
+        }
+    }
+
+    private void startManualExport(String sessionId) throws Exception{
+        ExportSessionStore.Session session=exportSessions.get(sessionId);
+        if(session==null)throw new IllegalArgumentException("Export session not found");
+        if(session.terminal())return;
+        if(!session.jobId.isEmpty()){
+            JSONObject status=jobs.get(session.jobId).optJSONObject("job");
+            if(status!=null && ("running".equals(status.optString("state")) || "preparing".equals(status.optString("state")) || "queued".equals(status.optString("state"))))return;
+        }
+        ProjectStore.Project snapshot=exportSessions.project(sessionId);
+        snapshot.settings.put("fps",session.settings.optInt("fps",30));
+        snapshot.settings.put("exportBitrate",session.settings.optInt("bitrate",8_000_000));
+        String aspect=session.settings.optString("aspect","16:9");
+        String quality=session.settings.optString("quality","1080p");
+        String fileName=sanitizeFileName(session.settings.optString("fileName","VideoStudio_"+System.currentTimeMillis()+".mp4"));
+        JobManager.Job job=jobs.submit("Owner export · "+snapshot.name,JobManager.Kind.MANUAL_RENDER,state->{
+            manualExportJobs.put(state.id,sessionId);
+            try{
+                checkExportActive(state);
+                exportSessions.progress(sessionId,"preparing",0,"Preparing revision "+snapshot.revision);
+                runExportBlocking(snapshot,aspect,quality,fileName,state);
+                JSONObject output=state.result;
+                String uri=output==null?"":output.optString("uri");
+                exportSessions.finish(sessionId,uri,output!=null && output.optBoolean("playable"));
+            }catch(InterruptedException cancelled){
+                exportSessions.cancel(sessionId);throw cancelled;
+            }catch(Exception error){
+                exportSessions.fail(sessionId,error.getMessage()==null?"Export failed":error.getMessage());throw error;
+            }finally{manualExportJobs.remove(state.id);}
+        });
+        exportSessions.bindJob(sessionId,job.id);
+    }
+
     private void runExportBlocking(ProjectStore.Project project, String aspect, String quality, String fileName, JobManager.Job state) throws Exception {
+        checkExportActive(state);
+        String manualSession=manualExportJobs.get(state.id);
+        ExportSessionStore.Session previous=manualSession==null?null:exportSessions.get(manualSession);
+        if(previous!=null&&!previous.uri.isEmpty()){
+            JSONObject recovered=null;
+            try{
+                checkpoint(state,"Verifying recovered output","Checking session-owned destination",96,project.id);
+                recovered=PlayableMediaVerifier.verify(this,Uri.parse(previous.uri),true);
+                if(!previous.outputProof.optString("sha256").isEmpty()&&!previous.outputProof.optString("sha256").equals(recovered.optString("sha256")))
+                    throw new IllegalStateException("Recovered output checksum does not match the render");
+            }catch(InterruptedException cancelled){throw cancelled;}
+            catch(Exception incomplete){recovered=null;discardSessionDestination(previous);exportSessions.discardOutput(manualSession);}
+            if(recovered!=null){
+                checkExportActive(state);makeSessionOutputVisible(previous);
+                registerVerifiedExport(project,Uri.parse(previous.uri),fileName,quality,state,recovered);return;
+            }
+        }
         ensureProjectWorkspaceHydrated(project, state);
         jobs.awaitSafeCheckpoint(state, "native_export_prepare");
         File dir = new File(getCacheDir(), "native_exports");
@@ -2214,14 +2479,16 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         CountDownLatch latch = new CountDownLatch(1);
         AtomicReference<String> error = new AtomicReference<>();
         AtomicReference<File> completed = new AtomicReference<>();
-
-        activeRender = renderEngine.export(project, temp, aspect, quality, new NativeRenderEngine.Listener() {
+        AtomicReference<JSONObject> encodedMetadata=new AtomicReference<>();
+        NativeRenderEngine.Handle renderHandle=null;boolean renderCompleted=false;
+        try{
+        renderHandle = renderEngine.export(project, temp, aspect, quality, new NativeRenderEngine.Listener() {
             @Override public void onProgress(int progress, String detail) {
                 checkpoint(state, "Rendering video", detail, Math.max(20, Math.min(96, 20 + (int) (progress * .76))), project.id);
             }
 
             @Override public void onCompleted(File file, JSONObject result) {
-                completed.set(file);
+                encodedMetadata.set(result);completed.set(file);
                 latch.countDown();
             }
 
@@ -2230,24 +2497,39 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 latch.countDown();
             }
         });
-        if (activeRender == null) throw new IllegalStateException("Could not start native render");
+        if (renderHandle == null) throw new IllegalStateException("Could not start native render");
+        renderHandles.put(state.id,renderHandle);
+        if(state.kind!=JobManager.Kind.MANUAL_RENDER)activeRender=renderHandle;
 
         while (!latch.await(550, TimeUnit.MILLISECONDS)) {
-            if (Thread.currentThread().isInterrupted()) {
-                activeRender.cancel();
-                throw new InterruptedException();
-            }
+            checkExportActive(state);
         }
         if (error.get() != null) throw new IllegalStateException(error.get());
         File ready = completed.get();
         if (ready == null || !ready.exists() || ready.length() == 0) throw new IllegalStateException("Native export produced no file");
 
-        checkpoint(state, "Exporting video", "Publishing to Movies/VideoStudio", 97, project.id);
+        checkExportActive(state);
+        checkpoint(state,"Verifying output","Decoding exported media before publication",96,project.id);
+        JSONObject currentProof=PlayableMediaVerifier.verify(this,Uri.fromFile(ready),true);
+        GaplessAudioMuxer.bindVerifiedBytes(encodedMetadata.get(),currentProof);
+        JSONObject verification=PlayableMediaVerifier.withFreshProof(encodedMetadata.get(),currentProof);
+        verification.remove("path");
+
+        checkpoint(state, "Exporting video", "Writing selected export destination", 97, project.id);
         JSONObject committed = recoveryPlans.outputForJob(state.id);
-        final String reusableUri = committed != null
-                && isReadableOutput(committed.optString("uri", ""))
-                ? committed.optString("uri", "")
-                : "";
+        String verifiedReusableUri="";
+        if(committed!=null){
+            String candidate=committed.optString("uri","");
+            try{
+                JSONObject previousProof=PlayableMediaVerifier.verify(this,Uri.parse(candidate),true);
+                if(PlayableMediaVerifier.matchesSavedProof(verification,previousProof))verifiedReusableUri=candidate;
+                else recoveryPlans.invalidateOutputForJob(state.id,candidate,"Published checksum differs from the new render");
+            }catch(InterruptedException interrupted){Thread.currentThread().interrupt();throw interrupted;
+            }catch(Exception invalid){
+                recoveryPlans.invalidateOutputForJob(state.id,candidate,"Published output is invalid; publish the new render");
+            }
+        }
+        final String reusableUri=verifiedReusableUri;
         AtomicMediaPublisher.PublishResult publication = AtomicMediaPublisher.publish(
                 ready,
                 new AtomicMediaPublisher.PublishTarget() {
@@ -2256,7 +2538,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                     }
 
                     @Override public String publish(File source) throws Exception {
-                        return publishExport(source, fileName).toString();
+                        return publishExportDestination(source, fileName, state,verification).toString();
                     }
 
                     @Override public String displayName() {
@@ -2265,9 +2547,32 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 }
         );
         Uri publicUri = Uri.parse(publication.uri);
+        JSONObject publishedProof=PlayableMediaVerifier.withFreshProof(verification,PlayableMediaVerifier.verify(this,publicUri,true));
+        if(!verification.optString("sha256").equals(publishedProof.optString("sha256")))throw new IllegalStateException("Published output checksum differs from encoded media");
+        checkExportActive(state);
         if (!publication.reused) {
-            recoveryPlans.markOutputForJob(state.id, publicUri.toString(), fileName);
+            recoveryPlans.markOutputForJob(state.id, publicUri.toString(), fileName,publishedProof);
         }
+        registerVerifiedExport(project,publicUri,fileName,quality,state,publishedProof);renderCompleted=true;
+        syncProtocolState();
+        }finally{
+            if(renderHandle!=null&&!renderCompleted)renderHandle.cancel();
+            renderHandles.remove(state.id);if(activeRender==renderHandle)activeRender=null;
+            if(temp.exists()&&!temp.delete()){ /* cache cleanup best effort */ }
+        }
+    }
+
+    private void checkExportActive(JobManager.Job state)throws InterruptedException{
+        String id=manualExportJobs.get(state.id);ExportSessionStore.Session session=id==null?null:exportSessions.get(id);
+        if(Thread.currentThread().isInterrupted()||JobManager.STATE_CANCELLED.equals(state.state)||(session!=null&&session.terminal()))
+            throw new InterruptedException("Export cancelled");
+    }
+    private void registerVerifiedExport(ProjectStore.Project project,Uri publicUri,String fileName,String quality,
+                                        JobManager.Job state,JSONObject verification)throws Exception{
+        verification.put("uri",publicUri.toString());verification.put("projectId",project.id);
+        verification.put("projectRevision",project.revision);verification.put("fileName",fileName);
+        String sessionId=manualExportJobs.get(state.id);if(sessionId!=null)exportSessions.recordProof(sessionId,verification);
+        checkExportActive(state);state.setResult(verification);
         ProjectStore.Project fresh = store.get(project.id);
         if (fresh != null) {
             fresh.latestExportUri = publicUri.toString();
@@ -2307,8 +2612,6 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                     generated.name + " • Media Bin • asset " + shortId(generated.id),
                     "success", 100, null, fresh.id);
         }
-        if (!ready.delete()) { /* cache cleanup best effort */ }
-        activeRender = null;
         syncProtocolState();
     }
 
@@ -2793,7 +3096,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         return asset;
     }
 
-    private Uri publishExport(File file, String displayName) throws Exception {
+    private Uri publishExport(File file, String displayName,JobManager.Job job,JSONObject proof) throws Exception {
         ContentValues values = new ContentValues();
         values.put(MediaStore.Video.Media.DISPLAY_NAME, displayName);
         values.put(MediaStore.Video.Media.MIME_TYPE, "video/mp4");
@@ -2802,26 +3105,71 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         Uri uri = getContentResolver().insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values);
         if (uri == null) throw new IllegalStateException("Could not create exported video");
         boolean success = false;
+        try {
+        String sessionId=manualExportJobs.get(job.id);if(sessionId!=null)exportSessions.stageOutput(sessionId,uri.toString(),proof);
         try (InputStream in = new FileInputStream(file);
              OutputStream out = getContentResolver().openOutputStream(uri, "w")) {
             if (out == null) throw new IllegalStateException("Could not open export destination");
             byte[] buffer = new byte[256 * 1024];
             int n;
-            while ((n = in.read(buffer)) >= 0) out.write(buffer, 0, n);
-            success = true;
+            while ((n = in.read(buffer)) >= 0) {
+                checkExportActive(job);
+                out.write(buffer, 0, n);
+            }
+            out.flush();
+        }
+        checkExportActive(job);
+        ContentValues done = new ContentValues();done.put(MediaStore.Video.Media.IS_PENDING, 0);
+        getContentResolver().update(uri, done, null, null);success = true;
         } finally {
             if (!success) {
                 try { getContentResolver().delete(uri, null, null); } catch (Exception ignored) {}
             }
         }
-        ContentValues done = new ContentValues();
-        done.put(MediaStore.Video.Media.IS_PENDING, 0);
-        getContentResolver().update(uri, done, null, null);
         return uri;
+    }
+
+    private Uri publishExportDestination(File file,String name,JobManager.Job job,JSONObject proof) throws Exception{
+        String sessionId=manualExportJobs.get(job.id);
+        if(sessionId==null)return publishExport(file,name,job,proof);
+        ExportSessionStore.Session session=exportSessions.get(sessionId);
+        if(session==null || "cancelled".equals(session.state))throw new InterruptedException("Export cancelled");
+        String destination=session.settings.optString("destination","movies");
+        if("movies".equals(destination))return publishExport(file,name,job,proof);
+        Uri uri;
+        if("app".equals(destination)){
+            File dir=new File(getFilesDir(),"exports");if(!dir.isDirectory()&&!dir.mkdirs())throw new IllegalStateException("Could not create export folder");
+            uri=Uri.fromFile(new File(dir,sessionId+"_"+sanitizeFileName(name)));
+        }else{
+            String selected=session.settings.optString("destinationUri");
+            if(!selected.startsWith("content://"))throw new IllegalArgumentException("Pick an export file through Android first");uri=Uri.parse(selected);
+        }
+        exportSessions.stageOutput(sessionId,uri.toString(),proof);checkExportActive(job);
+        boolean complete=false;
+        try(InputStream in=new FileInputStream(file);OutputStream out=getContentResolver().openOutputStream(uri,"w")){
+            if(out==null)throw new IllegalStateException("Export destination is unavailable");byte[] buffer=new byte[1024*1024];int count;
+            while((count=in.read(buffer))!=-1){checkExportActive(job);out.write(buffer,0,count);}out.flush();checkExportActive(job);complete=true;
+        }finally{if(!complete && "app".equals(destination))new File(uri.getPath()).delete();}
+        return uri;
+    }
+
+    private void discardSessionDestination(ExportSessionStore.Session session){
+        String destination=session.settings.optString("destination","movies");
+        try{
+            Uri uri=Uri.parse(session.uri);
+            if("app".equals(destination)&&"file".equals(uri.getScheme()))new File(uri.getPath()).delete();
+            else if("movies".equals(destination)&&"media".equals(uri.getAuthority()))getContentResolver().delete(uri,null,null);
+        }catch(Exception ignored){}
+    }
+    private void makeSessionOutputVisible(ExportSessionStore.Session session){
+        if(!"movies".equals(session.settings.optString("destination","movies")))return;
+        ContentValues values=new ContentValues();values.put(MediaStore.Video.Media.IS_PENDING,0);
+        getContentResolver().update(Uri.parse(session.uri),values,null,null);
     }
 
     private ProjectStore.Project resolveProject(String id) {
         ProjectStore.Project project = id == null || id.isEmpty() ? store.active() : store.get(id);
+        if (project == null && id!=null&&!id.isEmpty())throw new IllegalArgumentException("Project not found: "+id);
         if (project == null) project = store.create("ChatGPT Project");
         store.setActive(project.id);
         return project;
@@ -2934,10 +3282,12 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             out.put("controlPaused", protocol.isControlPaused());
             out.put("galleryAccess", false);
             out.put("galleryBoundary", "MCP v3 cannot list, browse or enumerate Gallery media. Only user-picked files, VideoStudio-owned media and explicit ChatGPT attachments are usable.");
-            out.put("projects", store.summaries().optJSONArray("projects"));
+            OwnerAccessPolicy access=new OwnerAccessPolicy(this,store);
+            out.put("projects", access.summaries().optJSONArray("projects"));
             out.put("projectStorage", store.storageBackend());
-            ProjectStore.Project active = store.active();
+            ProjectStore.Project active = access.restricted()?store.get(access.projectId()):store.active();
             if (active != null) {
+                active=ProjectStore.Project.fromJson(access.redactProject(active));
                 out.put("activeProjectId", active.id);
                 out.put("activeProjectName", active.name);
                 out.put("clipCount", active.clips.size());
@@ -2946,7 +3296,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 out.put("sourcePrompt", active.sourcePrompt);
                 out.put("latestExportUri", active.latestExportUri);
                 out.put("latestExportName", active.latestExportName);
-                out.put("creativeWorkspace", creativeWorkspace.status(active.id));
+                if(!access.assetLimited())out.put("creativeWorkspace", creativeWorkspace.status(active.id));
                 JSONArray assets = new JSONArray();
                 for (ProjectStore.Asset a : active.assets) {
                     JSONObject ai = new JSONObject();
@@ -2961,25 +3311,38 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 }
                 out.put("activeAssets", assets);
             }
-            out.put("workload", jobs.state());
-            out.put("recoveryPlans", recoveryPlans.recent(12));
+            JSONObject workload=jobs.state();
+            if(access.restricted()){
+                JSONArray visibleJobs=new JSONArray(),allJobs=workload.optJSONArray("jobs");
+                if(allJobs!=null)for(int i=0;i<allJobs.length();i++){JSONObject job=allJobs.optJSONObject(i);if(access.allowsJob(job))visibleJobs.put(job);}
+                workload.put("jobs",visibleJobs);
+            }
+            out.put("workload",workload);
+            if(!access.restricted())out.put("recoveryPlans", recoveryPlans.recent(12));
             out.put("capabilityRegistry", capabilityRegistry.describe());
             out.put("computeProfile", computeProfile.snapshot());
             out.put("driveWorkspace", driveWorkspace.status());
             out.put("creatorCatalog", CreatorCatalog.describe());
-            out.put("recentActivity", ActivityLog.recent(this, 30));
-            out.put("commandJournal", commandJournal.recent(20));
+            if(!access.restricted()){out.put("recentActivity", ActivityLog.recent(this, 30));out.put("commandJournal", commandJournal.recent(20));}
         } catch (Exception ignored) {}
         return out;
     }
 
     private boolean isAllowed(String action, JSONObject parameters) {
+        if(protocol!=null&&protocol.isControlPaused())return false;
         String lower = action == null ? "" : action.toLowerCase(Locale.US);
 
         // This is an architectural privacy wall, not a user permission tier.
         // Even Full Autonomous cannot enumerate or browse the phone Gallery.
         if (lower.contains("gallery") || lower.contains("media_library") || lower.contains("photo_library")) return false;
 
+        OwnerAccessPolicy access=new OwnerAccessPolicy(this,store);
+        if(access.restricted()){
+            if("job_status".equals(action)||"cancel_job".equals(action)){
+                JSONObject job=jobs.get(parameters.optString("jobId")).optJSONObject("job");return access.allowsJob(job)&&!"owner".equals(job.optString("origin"));
+            }
+            return access.allows(action,parameters);
+        }
         String mode = permissionMode();
         if ("one_file".equals(mode)) {
             String allowed = prefs.getString(KEY_FILE, "");
@@ -3011,6 +3374,8 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     }
 
     private int cancelAllNativeWork() {
+        for(NativeRenderEngine.Handle handle:renderHandles.values())handle.cancel();
+        for(String session:manualExportJobs.values())exportSessions.cancel(session);
         if (activeRender != null) {
             activeRender.cancel();
             activeRender = null;
@@ -3018,6 +3383,11 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         int jobsCancelled = jobs.cancelAll();
         recoveryPlans.cancelActive();
         return jobsCancelled;
+    }
+
+    private int cancelAutonomousWork(){
+        for(java.util.Map.Entry<String,NativeRenderEngine.Handle> entry:renderHandles.entrySet())if(!jobs.isOwner(entry.getKey()))entry.getValue().cancel();
+        int cancelled=jobs.cancelAutonomous();recoveryPlans.cancelAutonomous();return cancelled;
     }
 
     private void complete(JSONObject command, JSONObject result) {
@@ -3049,6 +3419,10 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     private boolean mayQueueBackgroundWork(String action) {
         if (action == null) return false;
         switch (action) {
+            case "create_proxy":
+            case "vault_create":
+            case "vault_replicate":
+            case "vault_restore":
             case "prompt_video":
             case "animate_images":
             case "export_project":
@@ -3252,6 +3626,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                     ? null : store.get(projectId);
             if (project == null) {
                 out.put("ok", false);
+                out.put("completed",false);
                 out.put("error", "Native job completed but its project is missing");
                 return out;
             }
@@ -3268,12 +3643,27 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             }
             if (outputUri == null || outputUri.isEmpty() || !isReadableOutput(outputUri)) {
                 out.put("ok", false);
+                out.put("completed",false);
                 out.put("error", "Native job reached completed state without a readable published video");
                 out.put("verifiedPlayableOutput", false);
                 return out;
             }
 
+            JSONObject outputProof;
+            try{
+                outputProof=PlayableMediaVerifier.verify(this,Uri.parse(outputUri),true);
+                if(!PlayableMediaVerifier.matchesSavedProof(jobResult,outputProof)
+                        ||!PlayableMediaVerifier.matchesSavedProof(committed,outputProof))
+                    throw new IllegalStateException("Published video checksum differs from its saved proof");
+            }catch(InterruptedException interrupted){Thread.currentThread().interrupt();throw interrupted;
+            }catch(Exception invalid){
+                out.put("ok",false).put("completed",false).put("verifiedPlayableOutput",false);
+                out.put("error","Native job output failed media verification: "+(invalid.getMessage()==null?"invalid media":invalid.getMessage()));
+                return out;
+            }
+
             out.put("verifiedPlayableOutput", true);
+            out.put("verification",outputProof);
             out.put("outputUri", outputUri);
             out.put("outputName", outputName == null ? "" : outputName);
             out.put("projectId", project.id);
@@ -3303,6 +3693,8 @@ public final class ControlService extends Service implements AppProtocol.Callbac
 
     private void checkpoint(JobManager.Job state, String action, String detail, int progress, String projectId) {
         state.checkpoint(action, progress, detail);
+        String session=manualExportJobs.get(state.id);
+        if(session!=null)exportSessions.progress(session,progress>=96?"verifying":"running",progress,detail);
         recoveryPlans.checkpointForJob(state.id, action, progress, detail);
         ActivityLog.progress(this, state.id, action, detail, progress, projectId);
         try {
@@ -3313,6 +3705,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             live.put("detail", detail == null ? "" : detail);
             live.put("progress", Math.max(0, Math.min(100, progress)));
             live.put("state", state.state);
+            live.put("origin",state.origin==JobManager.Origin.OWNER?"owner":"agent");
             live.put("updatedAt", System.currentTimeMillis());
             prefs.edit().putString(ExecutionTruthPolicy.LIVE_JOB_PREF_KEY, live.toString()).apply();
         } catch (Exception ignored) {}
@@ -3473,7 +3866,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
 
     private String permissionMode() {
         String raw = prefs.getString(KEY_MODE, "everything");
-        if ("one_file".equals(raw)) return "one_file";
+        if (java.util.Arrays.asList("one_file","project","selected_assets").contains(raw)) return raw;
         if (!"everything".equals(raw)) {
             prefs.edit().putString(KEY_MODE, "everything").apply();
         }
@@ -3481,7 +3874,11 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     }
 
     private void syncProtocolState() {
-        protocol.setLocalState(permissionMode(), store.summaries());
+        String scope=prefs.getString("permission_mode","everything")+"|"+prefs.getString("allowed_project_id","")+"|"+prefs.getString("allowed_asset_ids","[]")+"|"+prefs.getString("allowed_asset_id","")+"|"+prefs.getLong("permission_scope_updated_at",0);
+        boolean changed;
+        synchronized(this){changed=lastOwnerScope!=null&&!lastOwnerScope.equals(scope);lastOwnerScope=scope;}
+        if(changed){jobs.cancelAutonomous();recoveryPlans.cancelAutonomous();}
+        protocol.setLocalState(permissionMode(), new OwnerAccessPolicy(this,store).summaries());
     }
 
     private void markService(boolean online, String detail) {

@@ -1,0 +1,139 @@
+name: Owner preview APK
+
+on:
+  pull_request:
+    branches: [main]
+    paths: ['docs/continuity/OWNER_PREVIEW_REQUEST.json', '.github/workflows/owner-preview.yml']
+
+permissions:
+  contents: write
+
+concurrency:
+  group: videostudio-owner-preview-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  verify-and-publish:
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'codex/studio-owner-editor'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      PREVIEW_SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify matching MCP and relay source
+        run: |
+          npm ci --no-audit --no-fund
+          npm test
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+      - name: Enable emulator acceleration
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Install compile SDK
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'platforms;android-36' 'build-tools;35.0.0' >/dev/null
+      - name: Prepare development signing directory
+        run: mkdir -p "$HOME/.android"
+      - uses: actions/cache@v4
+        with:
+          path: ~/.android/debug.keystore
+          key: videostudio-android-debug-signing-v1
+          save-always: true
+      - name: Require existing development signing key
+        run: |
+          test -f "$HOME/.android/debug.keystore"
+          keytool -list -v -keystore "$HOME/.android/debug.keystore" -storepass android -alias androiddebugkey | grep -E 'SHA256:|Valid from:'
+      - name: Build and test the preview source
+        working-directory: android
+        run: |
+          export VIDEOSTUDIO_DEBUG_KEYSTORE="$HOME/.android/debug.keystore"
+          gradle :app:testDebugUnitTest :app:assembleDebug :app:assembleDebugAndroidTest --stacktrace
+      - name: Exercise this signed APK on API 33
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 33
+          arch: x86_64
+          profile: pixel_2
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          script: bash scripts/run-device-evidence.sh
+      - name: Record public connection-service availability
+        run: |
+          python3 - <<'PY'
+          import json,pathlib,urllib.request,urllib.error
+          result={'liveChatGptSessionVerified':False}
+          try:
+              with urllib.request.urlopen('https://wispy-queen-f9b5.prakasharuntandon634.workers.dev/api/web/config',timeout=20) as response:
+                  data=json.load(response);result.update({'httpStatus':response.status,'publicServiceReachable':data.get('storageMode')=='user-owned-google-drive'})
+          except urllib.error.HTTPError as failure:result.update({'httpStatus':failure.code,'publicServiceReachable':False})
+          except Exception as failure:result.update({'publicServiceReachable':False,'failureType':type(failure).__name__})
+          path=pathlib.Path('artifacts/device-evidence/public-connection-service.json');path.parent.mkdir(parents=True,exist_ok=True);path.write_text(json.dumps(result,indent=2)+'\n')
+          print('PUBLIC_CONNECTION_SERVICE '+json.dumps(result))
+          PY
+      - name: Prepare verified preview delivery
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY'
+          import os,pathlib,json,re,hashlib,subprocess,xml.etree.ElementTree as ET
+          root=pathlib.Path('.')
+          request=json.loads((root/'docs/continuity/OWNER_PREVIEW_REQUEST.json').read_text())
+          version=request['version']
+          assert re.fullmatch(r'\d+\.\d+\.\d+',version)
+          build=(root/'android/app/build.gradle.kts').read_text()
+          assert re.search(r'versionName\s*=\s*"'+re.escape(version)+r'"',build)
+          reports=list((root/'android/app/build/test-results/testDebugUnitTest').glob('TEST-*.xml'))
+          unit={k:sum(int(ET.parse(p).getroot().get(k,0)) for p in reports) for k in ['tests','failures','errors','skipped']}
+          assert reports and unit['tests']>0 and not unit['failures'] and not unit['errors'] and not unit['skipped'],unit
+          device=(root/'artifacts/device-evidence/instrumentation.txt').read_text()
+          match=re.search(r'OK \((\d+) tests?\)',device)
+          assert match and int(match.group(1))>=10,device[-3000:]
+          apk=root/'android/app/build/outputs/apk/debug/app-debug.apk'
+          certificate=subprocess.check_output([os.environ['ANDROID_HOME']+'/build-tools/35.0.0/apksigner','verify','--print-certs',str(apk)],text=True)
+          cert=re.search(r'certificate SHA-256 digest: ([0-9a-f]{64})',certificate).group(1)
+          source=os.environ['PREVIEW_SOURCE_SHA'];assert subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip()==source
+          delivery=root/'artifacts/owner-preview';delivery.mkdir(parents=True,exist_ok=True)
+          name='VideoStudio-'+version+'-preview.apk';target=delivery/name;target.write_bytes(apk.read_bytes())
+          digest=hashlib.sha256(target.read_bytes()).hexdigest();(delivery/(name+'.sha256')).write_text(digest+'  '+name+'\n')
+          proofs={}
+          for label,file in [('autonomous','autonomous-service-proof.json'),('audio','segment-decoded-audio-proof.json'),('segments','segment-window-proof.json')]:
+              paths=list((root/'artifacts/device-evidence').rglob(file));assert len(paths)==1,paths;proofs[label]=json.loads(paths[0].read_text())
+          tag='videostudio-preview-'+version+'-'+source[:12]
+          connection=json.loads((root/'artifacts/device-evidence/public-connection-service.json').read_text())
+          manifest={'version':version,'versionCode':request['versionCode'],'source':source,'tree':subprocess.check_output(['git','rev-parse','HEAD^{tree}'],text=True).strip(),'unit':unit,'device':{'tests':int(match.group(1)),'api':33,'hardware':'x86_64 emulator','conclusion':'success'},'apk':{'name':name,'bytes':target.stat().st_size,'sha256':digest,'certificateSha256':cert},'proofs':proofs,'connectionService':connection,'runId':int(os.environ['GITHUB_RUN_ID']),'releaseTag':tag,'externalChatGptTransportVerified':False,'wholeBlueprintComplete':False}
+          (delivery/'verification.json').write_text(json.dumps(manifest,indent=2)+'\n')
+          notes=(root/'docs/continuity/OWNER_PREVIEW.md').read_text()+'\n\nSource: `'+source+'`. SHA-256: `'+digest+'`.\n\nMatching API33 emulator: '+match.group(0)+'. Android unit cases: '+str(unit['tests'])+'.\n'
+          (delivery/'release-notes.md').write_text(notes)
+          with open(os.environ['GITHUB_ENV'],'a') as env:env.write('PREVIEW_TAG='+tag+'\nPREVIEW_APK='+name+'\n')
+          print('OWNER_PREVIEW_VERIFICATION '+json.dumps(manifest,sort_keys=True))
+          PY
+      - name: Publish immutable owner preview
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$PREVIEW_TAG" "artifacts/owner-preview/$PREVIEW_APK" "artifacts/owner-preview/$PREVIEW_APK.sha256" artifacts/owner-preview/verification.json --repo "$GITHUB_REPOSITORY" --target "$PREVIEW_SOURCE_SHA" --prerelease --latest=false --title "VideoStudio 3.4.11 owner preview" --notes-file artifacts/owner-preview/release-notes.md
+          gh release view "$PREVIEW_TAG" --repo "$GITHUB_REPOSITORY" --json url,tagName,assets
+      - name: Upload checkpoint evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: VideoStudio-owner-preview-evidence
+          path: |
+            artifacts/owner-preview
+            artifacts/device-evidence
+            android/app/build/test-results/testDebugUnitTest
+            android/app/build/reports/tests/testDebugUnitTest
+            android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: warn

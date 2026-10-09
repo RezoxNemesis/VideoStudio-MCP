@@ -8,6 +8,8 @@ import android.view.ViewGroup;
 
 import androidx.media3.common.MediaItem;
 import androidx.media3.common.Player;
+import androidx.media3.common.PlaybackException;
+import androidx.media3.exoplayer.DefaultRenderersFactory;
 import androidx.media3.exoplayer.ExoPlayer;
 import androidx.media3.ui.PlayerView;
 
@@ -25,13 +27,20 @@ public final class LiveEditPlayer {
     private String clipId = "";
     private final Handler handler = new Handler(Looper.getMainLooper());
     private Runnable clipBoundaryWatcher;
+    private java.util.function.Consumer<String> errorListener;
 
     public LiveEditPlayer(Context context) {
         Context app = context.getApplicationContext();
-        player = new ExoPlayer.Builder(app).build();
+        player = new ExoPlayer.Builder(app)
+                .setRenderersFactory(new DefaultRenderersFactory(app).setEnableDecoderFallback(true)).build();
         view = new PlayerView(context);
         view.setUseController(true);
         view.setPlayer(player);
+        player.addListener(new Player.Listener() {
+            @Override public void onPlayerError(PlaybackException error) {
+                if (errorListener != null) errorListener.accept("Source preview: " + error.getMessage());
+            }
+        });
     }
 
     public void attach(ViewGroup host) {
@@ -51,6 +60,7 @@ public final class LiveEditPlayer {
 
     public void play(Uri uri, long positionMs, float speed, boolean playWhenReady) {
         if (uri == null) return;
+        cancelClipBoundaryWatcher();
         MediaItem item = MediaItem.fromUri(uri);
         player.setMediaItem(item, Math.max(0L, positionMs));
         player.setPlaybackSpeed(Math.max(.25f, Math.min(4f, speed)));
@@ -136,6 +146,9 @@ public final class LiveEditPlayer {
     public void pause() {
         player.pause();
     }
+
+    public void setPlaying(boolean value) { player.setPlayWhenReady(value); }
+    public void setErrorListener(java.util.function.Consumer<String> listener) { errorListener = listener; }
 
     public void stop() {
         cancelClipBoundaryWatcher();

@@ -1,0 +1,1864 @@
+{
+  "schemaVersion": 7,
+  "featureProtocolVersion": 4,
+  "transportProtocolVersion": 3,
+  "timeUnit": "milliseconds",
+  "projectRevisionRequired": true,
+  "commandIdRequired": true,
+  "operations": {
+    "rename_project": {
+      "type": "object",
+      "required": [
+        "name"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 240
+        }
+      },
+      "additionalProperties": false,
+      "description": "Rename the current project atomically."
+    },
+    "add_track": {
+      "type": "object",
+      "required": [
+        "type"
+      ],
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": [
+            "video",
+            "image",
+            "audio_music",
+            "audio_dialogue",
+            "audio_sfx",
+            "voice_over"
+          ]
+        },
+        "name": {
+          "type": "string",
+          "maxLength": 240
+        }
+      },
+      "additionalProperties": false,
+      "description": "Create a usable media or audio track."
+    },
+    "set_track": {
+      "type": "object",
+      "required": [
+        "trackId"
+      ],
+      "properties": {
+        "trackId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 240
+        },
+        "locked": {
+          "type": "boolean"
+        },
+        "muted": {
+          "type": "boolean"
+        },
+        "solo": {
+          "type": "boolean"
+        },
+        "visible": {
+          "type": "boolean"
+        },
+        "height": {
+          "type": "integer",
+          "minimum": 40,
+          "maximum": 240
+        }
+      },
+      "additionalProperties": false,
+      "description": "Change track controls; locks protect clip edits."
+    },
+    "remove_track": {
+      "type": "object",
+      "required": [
+        "trackId"
+      ],
+      "properties": {
+        "trackId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        }
+      },
+      "additionalProperties": false,
+      "description": "Remove an empty unlocked track."
+    },
+    "add_clip": {
+      "type": "object",
+      "required": [
+        "assetId"
+      ],
+      "properties": {
+        "assetId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "trackId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "startMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "inMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "outMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "speed": {
+          "type": "number",
+          "minimum": 0.25,
+          "maximum": 4
+        }
+      },
+      "additionalProperties": false,
+      "description": "Insert existing project-owned media only."
+    },
+    "move_clip": {
+      "type": "object",
+      "required": [
+        "clipId",
+        "startMs"
+      ],
+      "properties": {
+        "clipId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "startMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "trackId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        }
+      },
+      "additionalProperties": false,
+      "description": "Move a clip and its linked media with overlap checks."
+    },
+    "trim_clip": {
+      "type": "object",
+      "required": [
+        "clipId"
+      ],
+      "properties": {
+        "clipId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "inMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "outMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "startMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "ripple": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "description": "Trim source bounds while preserving animated curves."
+    },
+    "split_clip": {
+      "type": "object",
+      "required": [
+        "clipId",
+        "atMs"
+      ],
+      "properties": {
+        "clipId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "atMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "additionalProperties": false,
+      "description": "Split at a timeline playhead with source-speed mapping."
+    },
+    "remove_clip": {
+      "type": "object",
+      "required": [
+        "clipId"
+      ],
+      "properties": {
+        "clipId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "ripple": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "description": "Delete or duplicate a timeline clip through the shared editor."
+    },
+    "duplicate_clip": {
+      "type": "object",
+      "required": [
+        "clipId"
+      ],
+      "properties": {
+        "clipId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        }
+      },
+      "additionalProperties": false,
+      "description": "Delete or duplicate a timeline clip through the shared editor."
+    },
+    "slip_clip": {
+      "type": "object",
+      "required": [
+        "clipId",
+        "deltaMs"
+      ],
+      "properties": {
+        "clipId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "deltaMs": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        }
+      },
+      "additionalProperties": false,
+      "description": "Shift source in/out without changing clip placement."
+    },
+    "set_speed": {
+      "type": "object",
+      "required": [
+        "clipId",
+        "speed"
+      ],
+      "properties": {
+        "clipId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "speed": {
+          "type": "number",
+          "minimum": 0.25,
+          "maximum": 4
+        },
+        "ripple": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "description": "Set constant playback speed and optionally ripple later media."
+    },
+    "set_property": {
+      "type": "object",
+      "required": [
+        "clipId",
+        "property",
+        "value"
+      ],
+      "properties": {
+        "clipId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "property": {
+          "type": "string",
+          "enum": [
+            "x",
+            "y",
+            "scale",
+            "scaleX",
+            "scaleY",
+            "rotate",
+            "anchorX",
+            "anchorY",
+            "opacity",
+            "brightness",
+            "contrast",
+            "saturationAdjust",
+            "lightnessAdjust",
+            "volume",
+            "pan",
+            "blur",
+            "cropLeft",
+            "cropRight",
+            "cropTop",
+            "cropBottom"
+          ]
+        },
+        "value": {
+          "type": "number"
+        }
+      },
+      "additionalProperties": false,
+      "description": "Edit a rendered inspector property."
+    },
+    "set_properties": {
+      "type": "object",
+      "required": [
+        "clipId",
+        "values"
+      ],
+      "properties": {
+        "clipId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "values": {
+          "type": "object",
+          "minProperties": 1,
+          "properties": {
+            "x": {
+              "type": "number",
+              "minimum": -8,
+              "maximum": 8
+            },
+            "y": {
+              "type": "number",
+              "minimum": -8,
+              "maximum": 8
+            },
+            "scale": {
+              "type": "number",
+              "minimum": 0.01,
+              "maximum": 16
+            },
+            "scaleX": {
+              "type": "number",
+              "minimum": 0.01,
+              "maximum": 16
+            },
+            "scaleY": {
+              "type": "number",
+              "minimum": 0.01,
+              "maximum": 16
+            },
+            "rotate": {
+              "type": "number",
+              "minimum": -36000,
+              "maximum": 36000
+            },
+            "anchorX": {
+              "type": "number",
+              "minimum": -1,
+              "maximum": 1
+            },
+            "anchorY": {
+              "type": "number",
+              "minimum": -1,
+              "maximum": 1
+            },
+            "opacity": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "brightness": {
+              "type": "number",
+              "minimum": -1,
+              "maximum": 1
+            },
+            "contrast": {
+              "type": "number",
+              "minimum": -1,
+              "maximum": 1
+            },
+            "saturationAdjust": {
+              "type": "number",
+              "minimum": -100,
+              "maximum": 100
+            },
+            "lightnessAdjust": {
+              "type": "number",
+              "minimum": -100,
+              "maximum": 100
+            },
+            "volume": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 2
+            },
+            "pan": {
+              "type": "number",
+              "minimum": -1,
+              "maximum": 1
+            },
+            "blur": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 18
+            },
+            "cropLeft": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "cropRight": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "cropTop": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "cropBottom": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false,
+      "description": "Set multiple inspector values in one undo transaction."
+    },
+    "set_keyframe": {
+      "type": "object",
+      "required": [
+        "clipId",
+        "property",
+        "timeMs",
+        "value"
+      ],
+      "properties": {
+        "clipId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "property": {
+          "type": "string",
+          "enum": [
+            "x",
+            "y",
+            "scale",
+            "scaleX",
+            "scaleY",
+            "rotate",
+            "anchorX",
+            "anchorY",
+            "opacity",
+            "brightness",
+            "contrast",
+            "saturationAdjust",
+            "lightnessAdjust",
+            "volume",
+            "pan"
+          ]
+        },
+        "timeMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "value": {
+          "type": "number"
+        },
+        "easing": {
+          "type": "string",
+          "enum": [
+            "linear",
+            "hold",
+            "ease_in",
+            "ease_out",
+            "ease_in_out"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "description": "Set a local-time keyframe rendered in preview and export."
+    },
+    "remove_keyframe": {
+      "type": "object",
+      "required": [
+        "clipId",
+        "property",
+        "timeMs"
+      ],
+      "properties": {
+        "clipId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "property": {
+          "type": "string",
+          "enum": [
+            "x",
+            "y",
+            "scale",
+            "scaleX",
+            "scaleY",
+            "rotate",
+            "anchorX",
+            "anchorY",
+            "opacity",
+            "brightness",
+            "contrast",
+            "saturationAdjust",
+            "lightnessAdjust",
+            "volume",
+            "pan"
+          ]
+        },
+        "timeMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "additionalProperties": false,
+      "description": "Remove a keyframe at a local clip time."
+    },
+    "set_title": {
+      "type": "object",
+      "required": [
+        "clipId",
+        "text"
+      ],
+      "properties": {
+        "clipId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "text": {
+          "type": "string",
+          "maxLength": 5000
+        }
+      },
+      "additionalProperties": false,
+      "description": "Set the rendered title overlay."
+    },
+    "link_clips": {
+      "type": "object",
+      "required": [
+        "clipId",
+        "clipIds"
+      ],
+      "properties": {
+        "clipId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "clipIds": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "minItems": 2,
+          "maxItems": 100
+        }
+      },
+      "additionalProperties": false,
+      "description": "Link selected clips for shared movement."
+    },
+    "unlink_clip": {
+      "type": "object",
+      "required": [
+        "clipId"
+      ],
+      "properties": {
+        "clipId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        }
+      },
+      "additionalProperties": false,
+      "description": "Unlink this clip from its group."
+    },
+    "add_marker": {
+      "type": "object",
+      "required": [
+        "timeMs"
+      ],
+      "properties": {
+        "timeMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "name": {
+          "type": "string",
+          "maxLength": 240
+        },
+        "color": {
+          "type": "string",
+          "pattern": "^#[0-9A-Fa-f]{6}$"
+        }
+      },
+      "additionalProperties": false,
+      "description": "Add a timeline marker."
+    },
+    "remove_marker": {
+      "type": "object",
+      "required": [
+        "markerId"
+      ],
+      "properties": {
+        "markerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        }
+      },
+      "additionalProperties": false,
+      "description": "Remove a timeline marker."
+    },
+    "rename_asset": {
+      "type": "object",
+      "required": [
+        "assetId",
+        "name"
+      ],
+      "properties": {
+        "assetId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 240
+        }
+      },
+      "additionalProperties": false,
+      "description": "Rename project-owned media without changing source bytes."
+    },
+    "remove_asset": {
+      "type": "object",
+      "required": [
+        "assetId"
+      ],
+      "properties": {
+        "assetId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        }
+      },
+      "additionalProperties": false,
+      "description": "Remove unused media from the project bin without deleting source bytes."
+    },
+    "set_project_settings": {
+      "type": "object",
+      "required": [],
+      "properties": {
+        "aspect": {
+          "type": "string",
+          "enum": [
+            "16:9",
+            "9:16",
+            "1:1",
+            "4:5"
+          ]
+        },
+        "fps": {
+          "type": "integer",
+          "enum": [
+            24,
+            25,
+            30,
+            50,
+            60
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "description": "Change the shared program/render format."
+    },
+    "roll_clip": {
+      "type": "object",
+      "required": [
+        "clipId",
+        "deltaMs"
+      ],
+      "properties": {
+        "clipId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "deltaMs": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        }
+      },
+      "additionalProperties": false,
+      "description": "Roll a cut without changing the outer sequence duration."
+    },
+    "slide_clip": {
+      "type": "object",
+      "required": [
+        "clipId",
+        "deltaMs"
+      ],
+      "properties": {
+        "clipId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "deltaMs": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        }
+      },
+      "additionalProperties": false,
+      "description": "Slide the middle clip while trimming its adjacent neighbours."
+    },
+    "set_audio_effects": {
+      "type": "object",
+      "required": [
+        "clipId",
+        "settings"
+      ],
+      "properties": {
+        "clipId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "settings": {
+          "type": "object",
+          "properties": {
+            "lowDb": {
+              "type": "number",
+              "minimum": -24,
+              "maximum": 24
+            },
+            "midDb": {
+              "type": "number",
+              "minimum": -24,
+              "maximum": 24
+            },
+            "highDb": {
+              "type": "number",
+              "minimum": -24,
+              "maximum": 24
+            },
+            "highpassHz": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 2000
+            },
+            "lowpassHz": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 20000
+            },
+            "thresholdDb": {
+              "type": "number",
+              "minimum": -60,
+              "maximum": 0
+            },
+            "ratio": {
+              "type": "number",
+              "minimum": 1,
+              "maximum": 20
+            },
+            "attackMs": {
+              "type": "number",
+              "minimum": 1,
+              "maximum": 200
+            },
+            "releaseMs": {
+              "type": "number",
+              "minimum": 10,
+              "maximum": 2000
+            },
+            "makeupDb": {
+              "type": "number",
+              "minimum": -24,
+              "maximum": 24
+            },
+            "gateDb": {
+              "type": "number",
+              "minimum": -120,
+              "maximum": 0
+            },
+            "delayMs": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 2000
+            },
+            "delayWet": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "delayFeedback": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 0.95
+            },
+            "stereoWidth": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 2
+            },
+            "limiterDb": {
+              "type": "number",
+              "minimum": -24,
+              "maximum": 0
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false,
+      "nativeSchemaVersion": 2,
+      "description": "Apply real PCM EQ, filtering, compression, gate, delay, stereo width and limiter. Empty settings remove DSP."
+    },
+    "set_preview_policy": {
+      "type": "object",
+      "required": [
+        "mode"
+      ],
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "original",
+            "240p",
+            "360p",
+            "540p",
+            "720p"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "nativeSchemaVersion": 2,
+      "description": "Select source/program preview derivatives; final export always uses originals."
+    },
+    "set_composite_effects": {
+      "type": "object",
+      "required": [
+        "clipId",
+        "settings"
+      ],
+      "properties": {
+        "clipId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "settings": {
+          "type": "object",
+          "properties": {
+            "chromaKey": {
+              "type": "boolean"
+            },
+            "chromaColor": {
+              "type": "string",
+              "pattern": "^#[0-9A-Fa-f]{6}$",
+              "minLength": 7,
+              "maxLength": 7
+            },
+            "mask": {
+              "type": "string",
+              "enum": [
+                "none",
+                "rectangle",
+                "rounded_rect",
+                "ellipse"
+              ]
+            },
+            "maskInvert": {
+              "type": "boolean"
+            },
+            "chromaTolerance": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "chromaSoftness": {
+              "type": "number",
+              "minimum": 0.001,
+              "maximum": 0.5
+            },
+            "spillSuppression": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "maskCenterX": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "maskCenterY": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "maskWidth": {
+              "type": "number",
+              "minimum": 0.01,
+              "maximum": 1
+            },
+            "maskHeight": {
+              "type": "number",
+              "minimum": 0.01,
+              "maximum": 1
+            },
+            "maskFeather": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 0.5
+            },
+            "maskCornerRadius": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 0.5
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false,
+      "nativeSchemaVersion": 2,
+      "description": "Replace chroma key and rectangle/ellipse mask controls used by preview and export. Empty settings remove these effects."
+    },
+    "set_creator_style": {
+      "type": "object",
+      "required": [
+        "clipId",
+        "settings"
+      ],
+      "properties": {
+        "clipId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "settings": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": false,
+          "properties": {
+            "colorPreset": {
+              "type": "string",
+              "enum": [
+                "none",
+                "cinematic",
+                "teal_orange",
+                "warm_film",
+                "cool_night",
+                "noir",
+                "high_contrast",
+                "soft_portrait",
+                "matte",
+                "golden_hour",
+                "cyberpunk"
+              ]
+            },
+            "motionPreset": {
+              "type": "string",
+              "enum": [
+                "none",
+                "push_in",
+                "pull_out",
+                "pan_left",
+                "pan_right",
+                "pan_up",
+                "pan_down",
+                "drift",
+                "orbit",
+                "handheld",
+                "micro_shake",
+                "impact_shake",
+                "float",
+                "ken_burns",
+                "snap_zoom",
+                "zoom_punch",
+                "tilt",
+                "roll",
+                "hero_reveal"
+              ]
+            },
+            "fontFamily": {
+              "type": "string",
+              "enum": [
+                "sans-serif",
+                "sans-serif-medium",
+                "sans-serif-condensed",
+                "sans-serif-light",
+                "sans-serif-black",
+                "serif",
+                "serif-monospace",
+                "monospace",
+                "cursive",
+                "casual",
+                "elegant",
+                "poster",
+                "tech",
+                "editorial"
+              ]
+            },
+            "textAnimation": {
+              "type": "string",
+              "enum": [
+                "none",
+                "fade",
+                "fade_up",
+                "fade_down",
+                "slide_left",
+                "slide_right",
+                "scale_in",
+                "pop",
+                "bounce",
+                "typewriter",
+                "word_reveal",
+                "line_reveal",
+                "blur_in",
+                "tracking_in",
+                "tracking_out",
+                "glitch",
+                "neon_flicker",
+                "kinetic",
+                "mask_reveal",
+                "cinematic_title",
+                "caption_pop"
+              ]
+            }
+          }
+        }
+      },
+      "additionalProperties": false,
+      "nativeSchemaVersion": 3,
+      "description": "Apply validated frame-rendered motion, colour and title styles in one undoable editor revision."
+    },
+    "set_effect_preset": {
+      "type": "object",
+      "required": [
+        "clipId",
+        "preset"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "clipId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "preset": {
+          "type": "string",
+          "enum": [
+            "none",
+            "cinematic",
+            "teal_orange",
+            "warm_film",
+            "cool_night",
+            "noir",
+            "high_contrast",
+            "soft_portrait",
+            "matte",
+            "golden_hour",
+            "cyberpunk",
+            "gaussian_blur",
+            "soft_glow",
+            "dream"
+          ]
+        }
+      },
+      "nativeSchemaVersion": 4,
+      "description": "Select the executing colour or Gaussian blur preset. none clears preset effects; explicit numeric blur remains independent. soft_glow and dream use a mild Gaussian blur."
+    },
+    "replace_timeline": {
+      "type": "object",
+      "properties": {
+        "clips": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 80,
+          "items": {
+            "type": "object",
+            "properties": {
+              "assetId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 120
+              },
+              "trackId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 120
+              },
+              "inMs": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "outMs": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              "startMs": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "speed": {
+                "type": "number",
+                "minimum": 0.25,
+                "maximum": 4
+              },
+              "volume": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 2
+              },
+              "pan": {
+                "type": "number",
+                "minimum": -1,
+                "maximum": 1
+              },
+              "title": {
+                "type": "string",
+                "maxLength": 5000
+              },
+              "transition": {
+                "type": "string",
+                "enum": [
+                  "none",
+                  "cut"
+                ]
+              },
+              "effects": {
+                "type": "object",
+                "properties": {
+                  "x": {
+                    "type": "number",
+                    "minimum": -8,
+                    "maximum": 8
+                  },
+                  "y": {
+                    "type": "number",
+                    "minimum": -8,
+                    "maximum": 8
+                  },
+                  "scale": {
+                    "type": "number",
+                    "minimum": 0.01,
+                    "maximum": 16
+                  },
+                  "scaleX": {
+                    "type": "number",
+                    "minimum": 0.01,
+                    "maximum": 16
+                  },
+                  "scaleY": {
+                    "type": "number",
+                    "minimum": 0.01,
+                    "maximum": 16
+                  },
+                  "rotate": {
+                    "type": "number",
+                    "minimum": -36000,
+                    "maximum": 36000
+                  },
+                  "anchorX": {
+                    "type": "number",
+                    "minimum": -1,
+                    "maximum": 1
+                  },
+                  "anchorY": {
+                    "type": "number",
+                    "minimum": -1,
+                    "maximum": 1
+                  },
+                  "opacity": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "brightness": {
+                    "type": "number",
+                    "minimum": -1,
+                    "maximum": 1
+                  },
+                  "contrast": {
+                    "type": "number",
+                    "minimum": -1,
+                    "maximum": 1
+                  },
+                  "saturationAdjust": {
+                    "type": "number",
+                    "minimum": -100,
+                    "maximum": 100
+                  },
+                  "lightnessAdjust": {
+                    "type": "number",
+                    "minimum": -100,
+                    "maximum": 100
+                  },
+                  "volume": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 2
+                  },
+                  "pan": {
+                    "type": "number",
+                    "minimum": -1,
+                    "maximum": 1
+                  },
+                  "blur": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 18
+                  },
+                  "cropLeft": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "cropRight": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "cropTop": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "cropBottom": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "colorPreset": {
+                    "type": "string",
+                    "enum": [
+                      "none",
+                      "cinematic",
+                      "teal_orange",
+                      "warm_film",
+                      "cool_night",
+                      "noir",
+                      "high_contrast",
+                      "soft_portrait",
+                      "matte",
+                      "golden_hour",
+                      "cyberpunk"
+                    ]
+                  },
+                  "motionPreset": {
+                    "type": "string",
+                    "enum": [
+                      "none",
+                      "push_in",
+                      "pull_out",
+                      "pan_left",
+                      "pan_right",
+                      "pan_up",
+                      "pan_down",
+                      "drift",
+                      "orbit",
+                      "handheld",
+                      "micro_shake",
+                      "impact_shake",
+                      "float",
+                      "ken_burns",
+                      "snap_zoom",
+                      "zoom_punch",
+                      "tilt",
+                      "roll",
+                      "hero_reveal"
+                    ]
+                  },
+                  "fontFamily": {
+                    "type": "string",
+                    "enum": [
+                      "sans-serif",
+                      "sans-serif-medium",
+                      "sans-serif-condensed",
+                      "sans-serif-light",
+                      "sans-serif-black",
+                      "serif",
+                      "serif-monospace",
+                      "monospace",
+                      "cursive",
+                      "casual",
+                      "elegant",
+                      "poster",
+                      "tech",
+                      "editorial"
+                    ]
+                  },
+                  "textAnimation": {
+                    "type": "string",
+                    "enum": [
+                      "none",
+                      "fade",
+                      "fade_up",
+                      "fade_down",
+                      "slide_left",
+                      "slide_right",
+                      "scale_in",
+                      "pop",
+                      "bounce",
+                      "typewriter",
+                      "word_reveal",
+                      "line_reveal",
+                      "blur_in",
+                      "tracking_in",
+                      "tracking_out",
+                      "glitch",
+                      "neon_flicker",
+                      "kinetic",
+                      "mask_reveal",
+                      "cinematic_title",
+                      "caption_pop"
+                    ]
+                  },
+                  "effectPreset": {
+                    "type": "string",
+                    "enum": [
+                      "none",
+                      "cinematic",
+                      "teal_orange",
+                      "warm_film",
+                      "cool_night",
+                      "noir",
+                      "high_contrast",
+                      "soft_portrait",
+                      "matte",
+                      "golden_hour",
+                      "cyberpunk",
+                      "gaussian_blur",
+                      "soft_glow",
+                      "dream"
+                    ]
+                  },
+                  "chromaKey": {
+                    "type": "boolean"
+                  },
+                  "chromaColor": {
+                    "type": "string",
+                    "pattern": "^#[0-9A-Fa-f]{6}$",
+                    "minLength": 7,
+                    "maxLength": 7
+                  },
+                  "mask": {
+                    "type": "string",
+                    "enum": [
+                      "none",
+                      "rectangle",
+                      "rounded_rect",
+                      "ellipse"
+                    ]
+                  },
+                  "maskInvert": {
+                    "type": "boolean"
+                  },
+                  "chromaTolerance": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "chromaSoftness": {
+                    "type": "number",
+                    "minimum": 0.001,
+                    "maximum": 0.5
+                  },
+                  "spillSuppression": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "maskCenterX": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "maskCenterY": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "maskWidth": {
+                    "type": "number",
+                    "minimum": 0.01,
+                    "maximum": 1
+                  },
+                  "maskHeight": {
+                    "type": "number",
+                    "minimum": 0.01,
+                    "maximum": 1
+                  },
+                  "maskFeather": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 0.5
+                  },
+                  "maskCornerRadius": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 0.5
+                  },
+                  "audioDsp": {
+                    "type": "object",
+                    "properties": {
+                      "lowDb": {
+                        "type": "number",
+                        "minimum": -24,
+                        "maximum": 24
+                      },
+                      "midDb": {
+                        "type": "number",
+                        "minimum": -24,
+                        "maximum": 24
+                      },
+                      "highDb": {
+                        "type": "number",
+                        "minimum": -24,
+                        "maximum": 24
+                      },
+                      "highpassHz": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 2000
+                      },
+                      "lowpassHz": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 20000
+                      },
+                      "thresholdDb": {
+                        "type": "number",
+                        "minimum": -60,
+                        "maximum": 0
+                      },
+                      "ratio": {
+                        "type": "number",
+                        "minimum": 1,
+                        "maximum": 20
+                      },
+                      "attackMs": {
+                        "type": "number",
+                        "minimum": 1,
+                        "maximum": 200
+                      },
+                      "releaseMs": {
+                        "type": "number",
+                        "minimum": 10,
+                        "maximum": 2000
+                      },
+                      "makeupDb": {
+                        "type": "number",
+                        "minimum": -24,
+                        "maximum": 24
+                      },
+                      "gateDb": {
+                        "type": "number",
+                        "minimum": -120,
+                        "maximum": 0
+                      },
+                      "delayMs": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 2000
+                      },
+                      "delayWet": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 1
+                      },
+                      "delayFeedback": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 0.95
+                      },
+                      "stereoWidth": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 2
+                      },
+                      "limiterDb": {
+                        "type": "number",
+                        "minimum": -24,
+                        "maximum": 0
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                },
+                "required": [],
+                "additionalProperties": false
+              },
+              "keyframes": {
+                "type": "array",
+                "maxItems": 100,
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "property": {
+                      "type": "string",
+                      "enum": [
+                        "x",
+                        "y",
+                        "scale",
+                        "scaleX",
+                        "scaleY",
+                        "rotate",
+                        "anchorX",
+                        "anchorY",
+                        "opacity",
+                        "brightness",
+                        "contrast",
+                        "saturationAdjust",
+                        "lightnessAdjust",
+                        "volume",
+                        "pan"
+                      ]
+                    },
+                    "timeMs": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "value": {
+                      "type": "number"
+                    },
+                    "easing": {
+                      "type": "string",
+                      "enum": [
+                        "linear",
+                        "hold",
+                        "ease_in",
+                        "ease_out",
+                        "ease_in_out"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "property",
+                    "timeMs",
+                    "value"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": [
+              "assetId"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "clips"
+      ],
+      "additionalProperties": false,
+      "nativeSchemaVersion": 5,
+      "description": "Replace the timeline atomically with 1\u201380 owned-source clips. All existing and target track locks apply. Omitted positions append on each compatible track; originals, tracks and project settings are preserved. Undo restores the previous timeline."
+    },
+    "apply_creator_preset": {
+      "type": "object",
+      "properties": {
+        "clipIds": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 120,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          }
+        },
+        "preset": {
+          "type": "string",
+          "enum": [
+            "none",
+            "cinematic",
+            "teal_orange",
+            "warm_film",
+            "cool_night",
+            "noir",
+            "high_contrast",
+            "soft_portrait",
+            "matte",
+            "golden_hour",
+            "cyberpunk",
+            "gaussian_blur",
+            "soft_glow",
+            "dream"
+          ]
+        },
+        "motion": {
+          "type": "string",
+          "enum": [
+            "none",
+            "push_in",
+            "pull_out",
+            "pan_left",
+            "pan_right",
+            "pan_up",
+            "pan_down",
+            "drift",
+            "orbit",
+            "handheld",
+            "micro_shake",
+            "impact_shake",
+            "float",
+            "ken_burns",
+            "snap_zoom",
+            "zoom_punch",
+            "tilt",
+            "roll",
+            "hero_reveal"
+          ]
+        },
+        "font": {
+          "type": "string",
+          "enum": [
+            "sans-serif",
+            "sans-serif-medium",
+            "sans-serif-condensed",
+            "sans-serif-light",
+            "sans-serif-black",
+            "serif",
+            "serif-monospace",
+            "monospace",
+            "cursive",
+            "casual",
+            "elegant",
+            "poster",
+            "tech",
+            "editorial"
+          ]
+        },
+        "transition": {
+          "type": "string",
+          "enum": [
+            "none",
+            "cut"
+          ]
+        }
+      },
+      "required": [
+        "clipIds",
+        "preset"
+      ],
+      "additionalProperties": false,
+      "nativeSchemaVersion": 5,
+      "description": "Apply executing visual presets to explicit clips as one undoable edit. Any missing source, locked track or invalid provider rolls back the entire request. Only cut/none transitions currently have verified timeline support."
+    }
+  },
+  "properties": {
+    "x": {
+      "type": "number",
+      "minimum": -8,
+      "maximum": 8
+    },
+    "y": {
+      "type": "number",
+      "minimum": -8,
+      "maximum": 8
+    },
+    "scale": {
+      "type": "number",
+      "minimum": 0.01,
+      "maximum": 16
+    },
+    "scaleX": {
+      "type": "number",
+      "minimum": 0.01,
+      "maximum": 16
+    },
+    "scaleY": {
+      "type": "number",
+      "minimum": 0.01,
+      "maximum": 16
+    },
+    "rotate": {
+      "type": "number",
+      "minimum": -36000,
+      "maximum": 36000
+    },
+    "anchorX": {
+      "type": "number",
+      "minimum": -1,
+      "maximum": 1
+    },
+    "anchorY": {
+      "type": "number",
+      "minimum": -1,
+      "maximum": 1
+    },
+    "opacity": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "brightness": {
+      "type": "number",
+      "minimum": -1,
+      "maximum": 1
+    },
+    "contrast": {
+      "type": "number",
+      "minimum": -1,
+      "maximum": 1
+    },
+    "saturationAdjust": {
+      "type": "number",
+      "minimum": -100,
+      "maximum": 100
+    },
+    "lightnessAdjust": {
+      "type": "number",
+      "minimum": -100,
+      "maximum": 100
+    },
+    "volume": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 2
+    },
+    "pan": {
+      "type": "number",
+      "minimum": -1,
+      "maximum": 1
+    },
+    "blur": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 18
+    },
+    "cropLeft": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "cropRight": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "cropTop": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "cropBottom": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    }
+  },
+  "animatableProperties": [
+    "x",
+    "y",
+    "scale",
+    "scaleX",
+    "scaleY",
+    "rotate",
+    "anchorX",
+    "anchorY",
+    "opacity",
+    "brightness",
+    "contrast",
+    "saturationAdjust",
+    "lightnessAdjust",
+    "volume",
+    "pan"
+  ],
+  "usableTrackTypes": [
+    "video",
+    "image",
+    "audio_music",
+    "audio_dialogue",
+    "audio_sfx",
+    "voice_over"
+  ],
+  "deferredTrackTypes": [
+    "adjustment",
+    "text",
+    "animation2d",
+    "scene3d",
+    "vfx",
+    "automation"
+  ],
+  "capabilities": {
+    "programPreview": true,
+    "stillImageSourcePreview": true,
+    "revisionTransactions": true,
+    "durableUndoRedo": true,
+    "keyframes": true,
+    "verifiedManualExport": true,
+    "neuralVideoInference": false,
+    "opticalFlowRetime": false,
+    "audioDsp": true,
+    "verifiedPreviewProxies": true,
+    "shapeMasks": [
+      "rectangle",
+      "rounded_rect",
+      "ellipse"
+    ]
+  }
+}

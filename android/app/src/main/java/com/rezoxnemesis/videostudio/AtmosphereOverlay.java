@@ -21,10 +21,15 @@ public final class AtmosphereOverlay extends CanvasOverlay {
     private final String environment;
     private final float intensity;
     private final long durationUs;
+    private final long sequenceStartUs;
     private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
 
     public AtmosphereOverlay(String environment, double intensity, long durationUs) {
+        this(environment,intensity,durationUs,0);
+    }
+    public AtmosphereOverlay(String environment,double intensity,long durationUs,long sequenceStartUs){
         super(true);
+        this.sequenceStartUs=sequenceStartUs;
         this.environment = environment == null ? "ambient_drift" : environment.toLowerCase();
         this.intensity = (float) Math.max(.08, Math.min(1.0, intensity));
         this.durationUs = Math.max(1L, durationUs);
@@ -33,6 +38,7 @@ public final class AtmosphereOverlay extends CanvasOverlay {
 
     @Override
     public void onDraw(Canvas canvas, long presentationTimeUs) {
+        presentationTimeUs=Math.max(0,presentationTimeUs-sequenceStartUs);
         canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR);
         int w = canvas.getWidth();
         int h = canvas.getHeight();

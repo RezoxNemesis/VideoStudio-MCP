@@ -42,7 +42,7 @@ import javax.crypto.spec.GCMParameterSpec;
 public final class AppProtocol {
     public static final String BASE = "https://wispy-queen-f9b5.prakasharuntandon634.workers.dev";
     public static final int PROTOCOL_VERSION = 3;
-    public static final String APP_VERSION = "3.4.7";
+    public static final String APP_VERSION = "3.4.11";
     /** Stable compatibility URL. APK updates must not change this path. */
     public static final String MCP_PATH = McpConnectionCore.STABLE_MCP_PATH;
     /** Stable registration bootstrap. Runtime requests use the negotiated profile. */
@@ -69,6 +69,7 @@ public final class AppProtocol {
     private final Callback callback;
     private final McpConnectionCore connectionCore;
     private final CommandOutbox outbox;
+    private final OwnerAccessPolicy ownerAccess;
     private final Object outboxLock = new Object();
     private ConnectivityManager connectivity;
     private ConnectivityManager.NetworkCallback networkCallback;
@@ -87,6 +88,7 @@ public final class AppProtocol {
         prefs = this.context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
         connectionCore = new McpConnectionCore(this.context, APP_VERSION);
         outbox = new CommandOutbox(this.context);
+        ownerAccess = new OwnerAccessPolicy(this.context,new ProjectStore(this.context));
         String id = prefs.getString(KEY_DEVICE, "");
         if (id.isEmpty()) {
             id = UUID.randomUUID().toString();
@@ -306,7 +308,9 @@ public final class AppProtocol {
                         if (!"queued".equals(commandStatus) && !"claimed".equals(commandStatus)) continue;
                         if (callback != null) {
                             JSONObject dispatch = cmd;
-                            main.post(() -> callback.onCommand(dispatch));
+                            main.post(() -> {
+                                if(running&&!isControlPaused())callback.onCommand(dispatch);
+                            });
                         }
                     }
                 }
@@ -336,6 +340,8 @@ public final class AppProtocol {
         meta.put("platform", "android-native");
         meta.put("appVersion", APP_VERSION);
         meta.put("protocolVersion", connectionCore.selectedProtocol());
+        meta.put("featureProtocolMax", 4);
+        meta.put("editorSchemaVersion", EditorProtocol.SCHEMA_VERSION);
         meta.put("nativeAgent", "videostudio-v3");
         JSONObject connectionMeta = connectionCore.registrationMeta();
         JSONArray connectionNames = connectionMeta.names();
@@ -346,6 +352,8 @@ public final class AppProtocol {
             }
         }
         meta.put("permissionMode", permissionMode);
+        JSONObject ownerScope=ownerAccess.metadata();
+        java.util.Iterator<String> scopeKeys=ownerScope.keys();while(scopeKeys.hasNext()){String key=scopeKeys.next();meta.put(key,ownerScope.get(key));}
         meta.put("controlPaused", isControlPaused());
         meta.put("connectionSession", connectionSession);
         meta.put("galleryAccess", false);

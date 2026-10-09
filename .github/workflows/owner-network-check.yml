@@ -1,0 +1,45 @@
+name: Owner connection diagnostics
+
+on:
+  pull_request:
+    branches: [main]
+    paths: ['docs/continuity/OWNER_NETWORK_REQUEST.json', '.github/workflows/owner-network-check.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  public-read-only:
+    if: github.event_name == 'workflow_dispatch' || (github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'codex/studio-owner-editor')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compare public probes with actual app headers
+        run: |
+          python3 - <<'PY'
+          import concurrent.futures,json,pathlib,subprocess,urllib.request,urllib.error
+          base='https://wispy-queen-f9b5.prakasharuntandon634.workers.dev'
+          clients={'urllib':{},'android-app':{'User-Agent':'VideoStudio-Android/3.4.11 MCPCompat/3','Accept':'application/json','X-VideoStudio-Protocol':'3','X-VideoStudio-Connection-Core':'3','X-VideoStudio-App-Generation':'1'}}
+          paths=['/api/web/config','/api/v3/app/status']
+          def probe(item):
+              client,path=item;result={'client':client,'path':path,'authenticated':False}
+              try:
+                  request=urllib.request.Request(base+path,headers=clients[client])
+                  with urllib.request.urlopen(request,timeout=15) as response:
+                      result['httpStatus']=response.status;result['body']=response.read(800).decode('utf-8',errors='replace')
+              except urllib.error.HTTPError as failure:
+                  result.update({'httpStatus':failure.code,'body':failure.read(800).decode('utf-8',errors='replace'),'responseHeaders':{key:failure.headers.get(key) for key in ['Server','Content-Type','CF-Mitigated']}})
+              except Exception as failure:result['failureType']=type(failure).__name__
+              return result
+          with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:results=list(pool.map(probe,[(client,path) for client in clients for path in paths]))
+          report={'source':subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip(),'credentialUsed':False,'stateMutated':False,'liveChatGptSessionVerified':False,'results':results}
+          root=pathlib.Path('artifacts/connection-diagnostics');root.mkdir(parents=True,exist_ok=True);(root/'public-network.json').write_text(json.dumps(report,indent=2)+'\n')
+          print('PUBLIC_NETWORK_DIAGNOSTICS '+json.dumps(report,sort_keys=True))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VideoStudio-public-connection-diagnostics
+          path: artifacts/connection-diagnostics/public-network.json
+          if-no-files-found: error
