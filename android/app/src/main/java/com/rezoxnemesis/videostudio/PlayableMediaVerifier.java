@@ -14,6 +14,18 @@ import java.security.MessageDigest;
 /** Verifies a real container, media track and decoded video frame before publication. */
 public final class PlayableMediaVerifier {
     private PlayableMediaVerifier(){}
+    /** Android MP4 AAC reports raw mdhd duration; gapless delay/padding describe presentation trim. */
+    static long presentationDurationUs(MediaFormat format){
+        long duration=format.getLong(MediaFormat.KEY_DURATION);if(duration<=0)throw new IllegalArgumentException("Media track duration is invalid");
+        if(!"audio/mp4a-latm".equals(format.getString(MediaFormat.KEY_MIME)))return duration;
+        int delay=format.containsKey(MediaFormat.KEY_ENCODER_DELAY)?format.getInteger(MediaFormat.KEY_ENCODER_DELAY):0;
+        int padding=format.containsKey(MediaFormat.KEY_ENCODER_PADDING)?format.getInteger(MediaFormat.KEY_ENCODER_PADDING):0;
+        if(delay<0||padding<0)throw new IllegalArgumentException("AAC gapless metadata is invalid");
+        if(delay==0&&padding==0)return duration;
+        int rate=format.getInteger(MediaFormat.KEY_SAMPLE_RATE);if(rate<=0)throw new IllegalArgumentException("AAC sample rate is invalid");
+        long trimUs=Math.multiplyExact(Math.addExact((long)delay,padding),1_000_000)/rate;
+        if(trimUs>=duration)throw new IllegalArgumentException("AAC gapless trim exceeds media duration");return duration-trimUs;
+    }
     static JSONObject descriptorBytes(java.io.FileDescriptor descriptor,java.util.function.BooleanSupplier cancelled)throws Exception{
         // pread binds every chunk to this inode without closing or advancing the caller's descriptor.
         return bytesProof(new InputStream(){
@@ -70,7 +82,7 @@ public final class PlayableMediaVerifier {
                 check(cancelled);
                 MediaFormat format=extractor.getTrackFormat(i);String mime=format.getString(MediaFormat.KEY_MIME);
                 if(mime!=null){video|=mime.startsWith("video/");audio|=mime.startsWith("audio/");}
-                if(format.containsKey(MediaFormat.KEY_DURATION))durationUs=Math.max(durationUs,format.getLong(MediaFormat.KEY_DURATION));
+                if(format.containsKey(MediaFormat.KEY_DURATION))durationUs=Math.max(durationUs,presentationDurationUs(format));
             }
             if((requireVideo&&!video)||(!video&&!audio)||durationUs<=0)throw new IllegalArgumentException("Output has no valid playable media track");
             boolean decoded=false;

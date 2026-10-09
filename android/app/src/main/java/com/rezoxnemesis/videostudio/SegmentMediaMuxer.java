@@ -17,14 +17,23 @@ import org.json.JSONObject;
 
 /** Lossless join of independently verified video windows and one continuous AAC track. */
 final class SegmentMediaMuxer {
+    static final class IncompatibleConfigurationException extends IllegalArgumentException {IncompatibleConfigurationException(String message){super(message);}}
+    static final class UnsupportedMuxRouteException extends IllegalArgumentException {UnsupportedMuxRouteException(String message){super(message);}}
+    static void supportedAudioPlatform(int sdk,long firstSampleUs){if(sdk<30&&firstSampleUs<0)throw new UnsupportedMuxRouteException("This Android version requires an alternative lossless AAC mux route for encoder preroll; verified checkpoints are retained");}
+    static long audioTimestamp(long sampleUs,long endUs,long previousUs,MediaFormat format){if(endUs<=0||sampleUs < -audioPrerollUs(format)||sampleUs>=endUs||sampleUs<=previousUs)throw new IllegalArgumentException("AAC presentation timestamp is outside the program or not strictly increasing");return sampleUs;}
+    static boolean hasSample(long sampleSize){return sampleSize>=0;}
+    static MediaCodec.BufferInfo audioEndOfTrack(long plannedEndUs,long firstUs,long previousUs){try{long shift=firstUs<0?Math.negateExact(firstUs):0;if(previousUs<firstUs)throw new IllegalArgumentException("AAC final packet precedes its first packet");return endOfTrack(audioMuxEndUs(plannedEndUs,firstUs),Math.addExact(previousUs,shift));}catch(ArithmeticException overflow){throw new IllegalArgumentException("AAC final timestamp overflow",overflow);}}
+    /** Android's MPEG4Writer shifts negative packets internally, then restores time with an edit list. */
+    static long audioMuxEndUs(long plannedEndUs,long firstSampleUs){try{if(plannedEndUs<=0)throw new IllegalArgumentException("Invalid AAC program end");return Math.addExact(plannedEndUs,firstSampleUs<0?Math.negateExact(firstSampleUs):0);}catch(ArithmeticException overflow){throw new IllegalArgumentException("AAC end timestamp overflow",overflow);}}
+    private static long audioPrerollUs(MediaFormat format){double rate=number(format,MediaFormat.KEY_SAMPLE_RATE,44100);if(rate<=0||!Double.isFinite(rate))throw new IllegalArgumentException("Invalid AAC sample rate");int delay=format.containsKey(MediaFormat.KEY_ENCODER_DELAY)?format.getInteger(MediaFormat.KEY_ENCODER_DELAY):2048;if(delay<0||delay>rate)throw new IllegalArgumentException("Invalid AAC encoder delay");return (long)Math.ceil(Math.max(2048,delay)*1_000_000d/rate)+1000;}
     private static final int MAX_SAMPLE=32*1024*1024;
     static OutputWorkspace prepareOutput(ProjectStore.Project originals,File output)throws Exception{
         if(originals==null)throw new IllegalArgumentException("Original source graph is required for join output protection");NativeRenderEngine.protectOriginals(originals,output);return new OutputWorkspace(output);
     }
     static MediaCodec.BufferInfo endOfTrack(long plannedEndUs,long previousUs){if(plannedEndUs<=0||previousUs<0||plannedEndUs<=previousUs)throw new IllegalArgumentException("Invalid final sample duration");MediaCodec.BufferInfo eos=new MediaCodec.BufferInfo();eos.set(0,0,plannedEndUs,MediaCodec.BUFFER_FLAG_END_OF_STREAM);return eos;}
     static void trackDuration(long actualUs,long plannedUs){if(actualUs<=0||plannedUs<=0||Math.abs(actualUs-plannedUs)>1000)throw new IllegalArgumentException("Joined track duration does not match the planned program end");}
-    static void interval(MediaFormat format,long plannedUs){if(!format.containsKey(MediaFormat.KEY_DURATION)||plannedUs<=0||format.getLong(MediaFormat.KEY_DURATION)<=0||Math.abs(format.getLong(MediaFormat.KEY_DURATION)-plannedUs)>rounding(format))throw new IllegalArgumentException("Checkpoint media duration does not span its planned interval");}
-    static void initialTime(long sampleUs,MediaFormat format){if(sampleUs<0||sampleUs>rounding(format))throw new IllegalArgumentException("Checkpoint first sample has an unplanned leading gap: mime="+format.getString(MediaFormat.KEY_MIME)+", firstUs="+sampleUs+", allowedUs="+rounding(format));}
+    static void interval(MediaFormat format,long plannedUs){if(!format.containsKey(MediaFormat.KEY_DURATION)||plannedUs<=0||Math.abs(PlayableMediaVerifier.presentationDurationUs(format)-plannedUs)>rounding(format))throw new IllegalArgumentException("Checkpoint media duration does not span its planned interval");}
+    static void initialTime(long sampleUs,MediaFormat format){long minimum=format.getString(MediaFormat.KEY_MIME).startsWith("audio/")?-audioPrerollUs(format):0;if(sampleUs<minimum||sampleUs>rounding(format))throw new IllegalArgumentException("Checkpoint first sample has an unplanned leading gap: mime="+format.getString(MediaFormat.KEY_MIME)+", firstUs="+sampleUs+", allowedUs="+rounding(format));}
     private static long rounding(MediaFormat format){boolean video=format.getString(MediaFormat.KEY_MIME).startsWith("video/");double rate=number(format,video?MediaFormat.KEY_FRAME_RATE:MediaFormat.KEY_SAMPLE_RATE,video?30:44100);if(rate<=0||!Double.isFinite(rate))throw new IllegalArgumentException("Invalid checkpoint sample rate");return Math.min(100_000,(long)Math.ceil((video?1_000_000d:1_024_000_000d)/rate)+1000);}
     static void compatible(MediaFormat first,MediaFormat next){
         if(!"video/avc".equals(first.getString(MediaFormat.KEY_MIME))||!"video/avc".equals(next.getString(MediaFormat.KEY_MIME)))throw new IllegalArgumentException("Segment join requires matching AVC video tracks");
@@ -54,7 +63,7 @@ final class SegmentMediaMuxer {
     static JSONObject mux(Context context,ProjectStore.Project originals,List<RenderSessionStore.Checkpoint> video,RenderSessionStore.Checkpoint audio,File output,BooleanSupplier cancelled)throws Exception{
         check(cancelled);if(video==null||video.isEmpty())throw new IllegalArgumentException("No verified video windows to join");
         if(originals==null)throw new IllegalArgumentException("Original source graph is required");NativeRenderEngine.protectOriginals(originals,output);
-        File target=output.getCanonicalFile();long endUs=0;MediaFormat common=null,audioFormat=null;
+        File target=output.getCanonicalFile();long endUs=0,firstAudioUs=0;MediaFormat common=null,audioFormat=null;
         // Preflight every input before opening/truncating any destination; owner media are never accepted as outputs.
         for(RenderSessionStore.Checkpoint checkpoint:video){
             check(cancelled);if(checkpoint.startUs!=endUs||checkpoint.endUs<=checkpoint.startUs)throw new IllegalArgumentException("Video checkpoint plan has a gap or overlap");
@@ -65,7 +74,7 @@ final class SegmentMediaMuxer {
         if(audio!=null){
             if(audio.startUs!=0||audio.endUs!=endUs)throw new IllegalArgumentException("Audio checkpoint does not span the whole video program");
             if(target.equals(audio.file.getCanonicalFile()))throw new IllegalArgumentException("Join output refers to the audio input");verifyBound(context,audio,false,cancelled);
-            try(Input input=new Input(audio.file,false)){audioFormat=input.format;interval(audioFormat,endUs);initialTime(input.extractor.getSampleTime(),audioFormat);if(!"audio/mp4a-latm".equals(audioFormat.getString(MediaFormat.KEY_MIME)))throw new IllegalArgumentException("Continuous audio join requires AAC");}
+            try(Input input=new Input(audio.file,false)){audioFormat=input.format;interval(audioFormat,endUs);if(!hasSample(input.extractor.getSampleSize()))throw new IllegalArgumentException("Continuous audio has no AAC packets");firstAudioUs=input.extractor.getSampleTime();initialTime(firstAudioUs,audioFormat);supportedAudioPlatform(android.os.Build.VERSION.SDK_INT,firstAudioUs);if(!"audio/mp4a-latm".equals(audioFormat.getString(MediaFormat.KEY_MIME)))throw new IllegalArgumentException("Continuous audio join requires AAC");}
         }
         check(cancelled);try(OutputWorkspace workspace=prepareOutput(originals,output)){
         MediaMuxer muxer=null;boolean started=false,finished=false;Exception failure=null;long samples=0,audioSamples=0;
@@ -85,10 +94,10 @@ final class SegmentMediaMuxer {
             }
             ByteBuffer eos=ByteBuffer.allocateDirect(1);eos.limit(0);muxer.writeSampleData(videoTrack,eos,endOfTrack(endUs,previous));
             if(audio!=null)try(Input input=new Input(audio.file,false)){
-                long previousAudio=-1;while(input.extractor.getSampleTime()>=0){check(cancelled);long local=input.extractor.getSampleTime();
+                long previousAudio=Long.MIN_VALUE;while(hasSample(input.extractor.getSampleSize())){check(cancelled);long local=input.extractor.getSampleTime();
                     // AAC padding can extend the final sample; keep the sample starting within the program.
-                    if(local>=endUs)break;long global=timestamp(local,0,endUs,previousAudio);write(muxer,audioTrack,input.extractor,global,input.extractor.getSampleFlags(),buffer);previousAudio=global;audioSamples++;if(!input.extractor.advance())break;
-                }if(audioSamples==0)throw new IllegalArgumentException("Audio checkpoint has no AAC samples");eos.clear();eos.limit(0);muxer.writeSampleData(audioTrack,eos,endOfTrack(endUs,previousAudio));
+                    if(local>=endUs)break;long global=audioTimestamp(local,endUs,previousAudio,input.format);write(muxer,audioTrack,input.extractor,global,input.extractor.getSampleFlags(),buffer);previousAudio=global;audioSamples++;if(!input.extractor.advance())break;
+                }if(audioSamples==0)throw new IllegalArgumentException("Audio checkpoint has no AAC samples");eos.clear();eos.limit(0);muxer.writeSampleData(audioTrack,eos,audioEndOfTrack(endUs,firstAudioUs,previousAudio));
             }
             check(cancelled);muxer.stop();started=false;finished=true;
         }catch(Exception error){failure=error;throw error;}
@@ -100,9 +109,9 @@ final class SegmentMediaMuxer {
         try{
         workspace.ensureCurrent();android.system.Os.fsync(workspace.descriptor);check(cancelled);
         try(Input input=new Input(workspace.descriptor,true)){trackDuration(input.format.getLong(MediaFormat.KEY_DURATION),endUs);}
-        if(audio!=null)try(Input input=new Input(workspace.descriptor,false)){trackDuration(input.format.getLong(MediaFormat.KEY_DURATION),endUs);}
+        if(audio!=null)try(Input input=new Input(workspace.descriptor,false)){trackDuration(PlayableMediaVerifier.presentationDurationUs(input.format),endUs);}
         JSONObject proof=PlayableMediaVerifier.verifyDescriptor(workspace.descriptor,true,cancelled);check(cancelled);workspace.ensureCurrent();
-        return proof.put("videoWindows",video.size()).put("videoSamples",samples).put("audioSamples",audioSamples).put("continuousAudio",audio!=null).put("joinedWithoutReencoding",true).put("plannedDurationUs",endUs);
+        return proof.put("videoWindows",video.size()).put("videoSamples",samples).put("audioSamples",audioSamples).put("continuousAudio",audio!=null).put("audioPrerollUs",Math.max(0,-firstAudioUs)).put("joinedWithoutReencoding",true).put("plannedDurationUs",endUs);
         }catch(Exception error){try{workspace.discard();}catch(Exception cleanup){error.addSuppressed(cleanup);}throw error;}
         }
     }

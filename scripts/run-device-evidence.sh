@@ -2,8 +2,10 @@
 set -euo pipefail
 mkdir -p artifacts/device-evidence
 collect_evidence() {
+  adb logcat -d > artifacts/device-evidence/logcat.txt || true
+  adb logcat -d -s StudioSegmentTiming:I '*:S' || true
   # Mux workspaces are private0600 files. Collect as the app UID without broadening file access.
-  if adb exec-out run-as com.rezoxnemesis.videostudio tar -cf - -C /sdcard/Android/data/com.rezoxnemesis.videostudio/files evidence > artifacts/device-evidence/evidence.tar; then
+  if adb exec-out run-as com.rezoxnemesis.videostudio tar -cf - -C files evidence > artifacts/device-evidence/evidence.tar; then
     python3 - <<'PYARCHIVE'
 import pathlib,tarfile
 root=pathlib.Path('artifacts/device-evidence').resolve()
@@ -18,7 +20,6 @@ PYARCHIVE
   else
     adb pull /sdcard/Android/data/com.rezoxnemesis.videostudio/files/evidence artifacts/device-evidence || true
   fi
-  adb logcat -d > artifacts/device-evidence/logcat.txt || true
   python3 - <<'PYUI'
 import pathlib,json,xml.etree.ElementTree as ET
 for trace in pathlib.Path('artifacts/device-evidence').rglob('failure-*.xml'):
