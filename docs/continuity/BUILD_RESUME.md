@@ -1,8 +1,10 @@
 # Build and resume VideoStudio
 
-Continue the complete blueprint in `VideoStudio_Complete_Engineering_Continuity_Bundle_v1.md`. Sections 36–40 supersede the former missing-toolchain/publishing ceiling in section 35. The complete product is still unfinished.
+Continue the complete blueprint in `VideoStudio_Complete_Engineering_Continuity_Bundle_v1.md`. Sections 36–44 supersede the former missing-toolchain/publishing ceiling in section 35. The complete product is still unfinished.
 
 ## Current verified checkpoint
+
+Latest matching published preparation source f42d4022597c5fccd3a5eceec21579659855322f, local88ecb4d/tree d062652100f3a4a8e6daf5916bd289142deb66d8: Android37913566915 passes302 unit cases/APK99,073,555 bytes SHA2567ba1a47dcb877ab2dd98af0eea451ecc41af8d8e573f50a68bb0a3f2c2970a8d, certificate7e0187470356616be2a45bc7f41445894085185db110edfdc0cdfd232942a6dd. Worker37913566897 and API33device37913566923 succeed (8 existing cases/38files). Codec/Vault/owner baseline proof only: new original-clock window/source-pin helpers are not directly device exercised. Local private journal now passes322 cases; matching APK/device and continuous audio/mux/shared engine remain pending. Follow docs/superpowers/plans/2026-10-09-segmented-render.md. The older checkpoints below retain their measured evidence.
 
 GitHub review branch `codex/studio-owner-editor`, draft PR #35, published `806620a9f138ae2928dcafd2962570a7867734d0` matches local `ba07402` at tree `22ece642b2fbed421687f271e399943b32731830`.
 

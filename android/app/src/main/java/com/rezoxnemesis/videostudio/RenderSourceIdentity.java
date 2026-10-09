@@ -23,8 +23,9 @@ import org.json.JSONObject;
 final class RenderSourceIdentity {
     interface Opener {InputStream open(String uri)throws Exception;}
     static final class Snapshot {
-        final ProjectStore.Project boundProject;final JSONObject manifest;final String sessionId;
-        Snapshot(ProjectStore.Project boundProject,JSONObject manifest,String sessionId){this.boundProject=boundProject;this.manifest=manifest;this.sessionId=sessionId;}
+        final ProjectStore.Project boundProject;final JSONObject manifest;final String sessionId;final File inputRoot;
+        Snapshot(ProjectStore.Project boundProject,JSONObject manifest,String sessionId){this(boundProject,manifest,sessionId,null);}
+        Snapshot(ProjectStore.Project boundProject,JSONObject manifest,String sessionId,File inputRoot){this.boundProject=boundProject;this.manifest=manifest;this.sessionId=sessionId;this.inputRoot=inputRoot;}
     }
     private static final java.util.concurrent.locks.ReentrantLock PIN_LOCK=new java.util.concurrent.locks.ReentrantLock(true);
     private static final String RENDERER="segmented-v1/media3-1.11.1";
@@ -63,7 +64,7 @@ final class RenderSourceIdentity {
         JSONObject identity=new JSONObject().put("renderer",RENDERER).put("graphHash",graphHash).put("aspect",aspect).put("quality",quality).put("sources",sourceIdentity);
         String sessionId=hash(canonical(identity).getBytes(StandardCharsets.UTF_8));
         JSONObject manifest=new JSONObject(identity.toString()).put("sessionId",sessionId).put("projectId",graph.id).put("revision",graph.revision).put("sources",sources);
-        return new Snapshot(bound,manifest,sessionId);
+        return new Snapshot(bound,manifest,sessionId,inputs.getCanonicalFile());
     }
     private interface Setter{void set(String uri)throws Exception;}
     private static final class Binding{final String id,uri,mime;final Setter setter;Binding(String id,String uri,String mime,Setter setter){this.id=id;this.uri=uri;this.mime=mime;this.setter=setter;}}
@@ -108,6 +109,31 @@ final class RenderSourceIdentity {
     private static void check(BooleanSupplier cancelled)throws InterruptedIOException{if(Thread.currentThread().isInterrupted()||cancelled.getAsBoolean())throw new InterruptedIOException("Render source capture cancelled");}
     private static String hash(byte[] bytes)throws Exception{return hex(MessageDigest.getInstance("SHA-256").digest(bytes));}
     private static String hex(byte[] bytes){char[] out=new char[bytes.length*2];String digits="0123456789abcdef";for(int i=0;i<bytes.length;i++){out[i*2]=digits.charAt((bytes[i]&255)>>>4);out[i*2+1]=digits.charAt(bytes[i]&15);}return new String(out);}
+    /** Check mutable Java snapshot objects before allowing their identity into a durable journal. */
+    static void validate(Snapshot snapshot)throws Exception{
+        if(snapshot==null||snapshot.boundProject==null||snapshot.manifest==null||snapshot.inputRoot==null||snapshot.sessionId==null||!snapshot.sessionId.matches("[0-9a-f]{64}")||!snapshot.sessionId.equals(snapshot.manifest.optString("sessionId")))throw new IllegalArgumentException("Invalid captured render identity");
+        JSONObject manifest=snapshot.manifest;ProjectStore.Project original=ProjectStore.Project.fromJson(snapshot.boundProject.snapshotJson());
+        JSONArray sources=manifest.getJSONArray("sources"),identities=new JSONArray();HashMap<String,Proof> checked=new HashMap<>();
+        for(int i=0;i<sources.length();i++){
+            JSONObject source=sources.getJSONObject(i);String binding=source.getString("binding"),uri=source.getString("uri"),pinned=source.getString("snapshotUri"),mime=source.getString("mime"),sha=source.getString("sha256");long bytes=source.getLong("sizeBytes");
+            if(!sha.matches("[0-9a-f]{64}")||bytes<=0)throw new IllegalArgumentException("Invalid captured source proof");
+            Uri pinnedUri=Uri.parse(pinned);if(!"file".equals(pinnedUri.getScheme())||pinnedUri.getPath()==null)throw new IllegalArgumentException("Captured source is not a private pinned file");
+            File file=new File(pinnedUri.getPath()).getCanonicalFile();
+            if(!snapshot.inputRoot.getCanonicalFile().equals(file.getParentFile())||!file.getName().matches(sha+"\\.(png|mp4|wav|mp3|m4a)"))throw new IllegalArgumentException("Captured source was redirected outside its pinned object");
+            Proof actual=checked.get(file.getPath());if(actual==null){try(InputStream input=new FileInputStream(file)){actual=proof(input,()->false);}checked.put(file.getPath(),actual);}
+            if(actual.bytes!=bytes||!actual.sha.equals(sha))throw new IllegalArgumentException("Captured source bytes no longer match their proof");
+            if(binding.startsWith("asset:")){
+                ProjectStore.Asset asset=original.asset(binding.substring(6));if(asset==null||!pinned.equals(asset.uri)||!mime.equals(asset.mime))throw new IllegalArgumentException("Captured asset binding changed");asset.uri=uri;
+            }else if(binding.startsWith("layer:")){
+                int split=binding.lastIndexOf(':');ProjectStore.Clip clip=original.clip(binding.substring(6,split));String role=binding.substring(split+1);
+                if(clip==null||!java.util.Arrays.asList("head","torso","lower","foreground","background").contains(role)||!pinned.equals(clip.effects.optString(role+"Uri")))throw new IllegalArgumentException("Captured layer binding changed");clip.effects.put(role+"Uri",uri);
+            }else throw new IllegalArgumentException("Unknown captured source binding");
+            identities.put(new JSONObject().put("binding",binding).put("uri",uri).put("mime",mime).put("sha256",sha).put("sizeBytes",bytes));
+        }
+        if(!original.id.equals(manifest.getString("projectId"))||original.revision!=manifest.getLong("revision")||!hash(canonical(original.snapshotJson()).getBytes(StandardCharsets.UTF_8)).equals(manifest.getString("graphHash")))throw new IllegalArgumentException("Captured graph no longer matches its identity");
+        JSONObject identity=new JSONObject().put("renderer",manifest.getString("renderer")).put("graphHash",manifest.getString("graphHash")).put("aspect",manifest.getString("aspect")).put("quality",manifest.getString("quality")).put("sources",identities);
+        if(!hash(canonical(identity).getBytes(StandardCharsets.UTF_8)).equals(snapshot.sessionId))throw new IllegalArgumentException("Captured manifest no longer matches its identity");
+    }
     static String canonical(Object value)throws Exception{
         if(value==null||value==JSONObject.NULL)return "null";
         if(value instanceof JSONObject){JSONObject object=(JSONObject)value;ArrayList<String> keys=new ArrayList<>();object.keys().forEachRemaining(keys::add);java.util.Collections.sort(keys);StringBuilder out=new StringBuilder("{");for(String key:keys){if(out.length()>1)out.append(',');out.append(JSONObject.quote(key)).append(':').append(canonical(object.get(key)));}return out.append('}').toString();}

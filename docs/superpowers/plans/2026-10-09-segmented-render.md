@@ -43,9 +43,9 @@ Files: create RenderSessionStore.java/RenderSessionStoreTest.java and RenderSour
 
 Interfaces: RenderSourceIdentity.capture(Context,Project,String aspect,String quality,BooleanSupplier cancelled)->Snapshot with immutable boundProject/sessionId/internal manifest. Streaming source hashes bind canonical graph/settings/renderer identity; validated content-addressed local snapshots feed Media3. Store verified windows and audio proof with actual codec metadata and deterministic file paths.
 
-- [ ] Write RED tests for source edits after capture, identical-media dedup, corrupt snapshots, changes between hash/copy, cancellation, missing sources, canonical graph/settings mismatch, restart reuse, conflicting writers and death before/after atomic rename.
-- [ ] Implement SQLite transaction bindings and full proof revalidation; preserve originals and active-session files.
-- [ ] Run focused tests GREEN, independently inspect identity/fault cases and commit.
+- [x] Write RED tests for source edits after capture, identical-media dedup, corrupt snapshots, changes between hash/copy, cancellation, missing sources, canonical graph/settings mismatch, restart reuse, conflicting writers and death before/after atomic rename.
+- [x] Implement SQLite transaction bindings and full proof revalidation; preserve originals and active-session files.
+- [x] Run focused tests GREEN, independently inspect identity/fault cases and commit.
 
 ### Task3: Continuous audio and encoded mux
 
@@ -74,3 +74,5 @@ Self-review: each spec requirement maps to one of the four tasks. Audio pass may
 Task1 evidence: RED8/8; review timing/normalization RED4/13; solo RED2/15; final81 main/41 test classes GREEN286, Node282/20/22, core40/52/14/510 and Worker dry-run. Independent review closes corrections. Factory path only; shared export/checkpoint integration and actual window-device evidence remain pending.
 
 Task2 source component: RED10, bound/MIME RED3/14, review orphan/wait cancellation RED2/16; focused37/final302 native cases and Node282/20/22 pass with independent source-helper review closed. Content-addressed source snapshots are implemented; durable SQLite session/segment rows and caller integration remain pending.
+
+Task2 journal: RED12 precedes implementation; review stage-leak/mutable-identity RED3/18 and paired redirect/corrupt-pin RED2/20 precede fixes. Private frozen graph/manifest, canonical original-graph/session recomputation and full size/SHA validation of managed pinned files run before any lease mutation. Generation-specific stages prevent stale codec writes; durable encoded intent recovers before/after atomic rename. Missing/corrupt rows rerender individually, transient verification errors preserve valid checkpoints, duplicate completion is idempotent and retired writers cannot clear a newer lease. Focused51 and final83 main/43 test Java classes GREEN322; Node282/20/22 GREEN. Evidence is SQLite/filesystem/byte-stream unit fault injection, not new device process-death or shared engine integration. Cache references/eviction remain Task4.
