@@ -50,7 +50,7 @@ test("custom pose keyframes reject out-of-order, invalid counts and unsafe bound
   assert.equal(plan.preset,"custom");
   assert.equal(plan.count,1);
   const half=director.sample(plan,.5,2,1);
-  assert.ok(half.entries[0].dx>.039);
+  assert.ok(half.entries[0].dx>.037 && half.entries[0].dx<.042);
   assert.throws(()=>director.compile({poseTracks:[[[.5,0,0,0],[1,0,0,0]]]}),/begin at 0/);
   assert.throws(()=>director.compile({poseTracks:[[[0,0,0,0],[.5,1,0,0],[1,0,0,0]]]}),/safe timeline bounds/);
   assert.throws(()=>director.compile({poseTracks:Array.from({length:9},()=>good)}),/1–8 tracks/);
