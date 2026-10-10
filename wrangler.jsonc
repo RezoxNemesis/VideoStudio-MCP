@@ -1,24 +1,18 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "wispy-queen-f9b5",
-  "main": "src/index.js",
+  "main": "src/personal-entry.js",
   "compatibility_date": "2026-10-06",
   "compatibility_flags": ["nodejs_compat"],
-  "observability": {
-    "enabled": true
-  },
+  "observability": {"enabled": true},
   "durable_objects": {
-    "bindings": [
-      {
-        "name": "VIDEO_STATE",
-        "class_name": "VideoStudioState"
-      }
-    ]
+    "bindings": [{"name": "VIDEO_STATE", "class_name": "VideoStudioState"}]
   },
   "exports": {
-    "VideoStudioState": {
-      "type": "durable-object",
-      "storage": "sqlite"
-    }
+    "VideoStudioState": {"type": "durable-object", "storage": "sqlite"}
+  },
+  "build": {
+    "command": "node scripts/bake-personal-client.mjs",
+    "watch_dir": ["src/personal-client.js"]
   }
 }

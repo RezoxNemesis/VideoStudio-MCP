@@ -6,3 +6,8 @@ dist/
 *.log
 .env
 .dev.vars
+.work/
+.generated/
+.wrangler-personal-dist/
+__pycache__/
+VideoStudio-Personal-Source.zip

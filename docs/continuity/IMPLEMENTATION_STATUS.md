@@ -16,6 +16,10 @@ apply to the original checkout, not this implementation.
 
 Repository baseline: `d652066ce428e4f128514da4d1caee919974554e` on `main`.
 Implementation branch: `studio/complete-editor-blueprint-20261010`.
+Source checkpoints `bf4205f` and `5786eab` implement the editor/animation work.
+The branch also incorporates upstream `95e93d4`, preserving its separate personal
+cloud workspace and production browser entry wrapper. Existing and new future
+regression commands are both retained; none were executed for this integration.
 The stable native MCP endpoint and device-owned identity remain v3. App version
 metadata is still 3.4.7; a finished, verified release must choose its new version
 and preserve signing/identity continuity.
