@@ -308,6 +308,7 @@ const STUDIO_RUNTIME_JS = String.raw`
       importedAt: new Date().toISOString(),
       generation: {
         engine: options.engine || "studio-web-local",
+        commandId: String(options.commandId || "").slice(0,120),
         mode: options.mode || "prompt_scene",
         prompt: String(options.prompt || "").slice(0,1000),
         style: options.style || "cinematic",
@@ -621,6 +622,10 @@ const STUDIO_RUNTIME_JS = String.raw`
   async function generate(options) {
     if(runtimeState.busy) throw new Error("Another Studio Web generation is already running");
     const project=await getProject();
+    if(options.commandId){
+      const prior=project.assets.find(a=>a.generated&&a.generation&&a.generation.commandId===options.commandId);
+      if(prior) return {ok:true,asset:prior,engine:prior.generation.engine,mode:prior.generation.mode,realVideo:true,reused:true,note:"Previously completed browser-local generation was reused after command retry."};
+    }
     runtimeState.busy=true;
     const mode=String(options.mode||byId("vsGenMode")&&byId("vsGenMode").value||"prompt_scene");
     const prompt=String(options.prompt!=null?options.prompt:(byId("vsGenPrompt")&&byId("vsGenPrompt").value)||"").trim();
@@ -652,7 +657,7 @@ const STUDIO_RUNTIME_JS = String.raw`
         const blob=await recordCanvas({width,height,quality,duration,fps,onProgress:progress,draw});
         output={blob,engine:mode==="procedural_3d"?"studio-web-3d-projection-v1":"studio-web-procedural-v1"};
       }
-      const asset=await registerGeneratedVideo(project,output.blob,{mode,prompt,style,duration:options.duration||duration,seed,engine:output.engine,name:"VideoStudio-"+mode});
+      const asset=await registerGeneratedVideo(project,output.blob,{mode,prompt,style,duration:options.duration||duration,seed,engine:output.engine,name:"VideoStudio-"+mode,commandId:options.commandId});
       progress(100);
       if(byId("vsGenStatus"))byId("vsGenStatus").textContent="Generated "+asset.name+" • "+humanBytes(output.blob.size);
       addLog("Generation complete",asset.name+" • "+output.engine);
@@ -906,9 +911,9 @@ const STUDIO_RUNTIME_JS = String.raw`
   }
 
   async function handleRuntimeCommand(command){
-    const p=command.parameters||{};let result;
+    const p=command.parameters||{};let result,status="completed";
     try{
-      if(command.action==="generate_video")result=await generate({...p,remote:true});
+      if(command.action==="generate_video")result=await generate({...p,remote:true,commandId:command.id});
       else if(command.action==="render_portal_video"){
         const cinematic=await waitForProvider("VideoStudioCinematic");
         if(!cinematic||typeof cinematic.renderPortal!=="function") throw new Error("Cinematic Worlds runtime is not ready");
@@ -934,9 +939,16 @@ const STUDIO_RUNTIME_JS = String.raw`
       else if(command.action==="drive_restore")result=await restoreProject({interactive:false});
       else if(command.action==="drive_offload")result=await offloadProject({interactive:false});
       else throw new Error("Unsupported Studio Runtime action: "+command.action);
-      await completeRuntimeCommand(command,result,"completed");addLog("Studio Runtime: "+command.action,"Completed");
     }catch(error){
-      result={ok:false,error:error.message};await completeRuntimeCommand(command,result,"failed").catch(()=>{});addLog("Studio Runtime: "+command.action,error.message);
+      status="failed";result={ok:false,error:error.message};
+    }
+    try{
+      await completeRuntimeCommand(command,result,status);
+      addLog("Studio Runtime: "+command.action,status==="completed"?"Completed":result.error);
+      return true;
+    }catch(error){
+      addLog("Studio Runtime receipt pending","Will retry after connection recovers: "+error.message);
+      return false;
     }
   }
 
@@ -945,9 +957,9 @@ const STUDIO_RUNTIME_JS = String.raw`
       try{
         const data=await api("/api/runtime/commands?deviceId="+encodeURIComponent(deviceId())+"&after="+runtimeState.lastRuntimeSeq);
         for(const command of data.commands||[]){
+          if(command.status==="queued"&&!(await handleRuntimeCommand(command)))break;
           runtimeState.lastRuntimeSeq=Math.max(runtimeState.lastRuntimeSeq,Number(command.seq||0));
           localStorage.setItem("vs-runtime-last-seq",String(runtimeState.lastRuntimeSeq));
-          if(command.status==="queued")await handleRuntimeCommand(command);
         }
       }catch(error){console.warn("Studio Runtime command loop",error);}
       await sleep(document.hidden?3500:900);
