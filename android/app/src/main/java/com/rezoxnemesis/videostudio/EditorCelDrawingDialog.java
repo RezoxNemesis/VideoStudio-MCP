@@ -9,6 +9,7 @@ import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
+import android.graphics.Path;
 import android.graphics.RectF;
 import android.net.Uri;
 import android.os.Handler;
@@ -35,6 +36,7 @@ import org.json.JSONObject;
 
 import java.nio.charset.StandardCharsets;
 import java.util.UUID;
+import java.util.ArrayDeque;
 import java.util.LinkedHashMap;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
@@ -44,6 +46,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 /** Native frame drawing with the same vector commands that create the saved PNG. */
 @UnstableApi
 public final class EditorCelDrawingDialog {
+    private interface VectorRetention { void retain() throws Exception; }
     public interface SaveListener {
         /** Clear the retained draft only after the actual project transaction commits. */
         void onSave(JSONObject drawing, int frames, int fpsNumerator, int fpsDenominator,
@@ -201,6 +204,7 @@ public final class EditorCelDrawingDialog {
         final EditText frames, fps;
         final SharedPreferences drafts;
         final Runnable autosave;
+        final java.util.ArrayList<AlertDialog> toolsDialogs = new java.util.ArrayList<>(4);
         boolean closed, modified, savedRequestQueued, finalRetentionPending, draftReady;
         int retainedFrames, retainedFpsNumerator, retainedFpsDenominator;
 
@@ -220,17 +224,29 @@ public final class EditorCelDrawingDialog {
             layout.addView(status);
             view = new FrameView(activity, AnimationCelFactory.validateDrawing(drawing), () -> {
                 modified = true; scheduleDraft(); status.setText("Unsaved frame");
-            }, constructingView);
+            }, this::retainVectorEdit, message -> status.setText(message), constructingView);
             layout.addView(view, new LinearLayout.LayoutParams(-1, 0, 1));
             LinearLayout tools = new LinearLayout(activity);
-            tools.addView(button(activity, "Brush", () -> { view.erasing = false; status.setText("Brush selected"); }));
-            tools.addView(button(activity, "Eraser", () -> { view.erasing = true; status.setText("Eraser selected"); }));
+            tools.addView(button(activity, "Brush", () -> view.drawMode(false)));
+            tools.addView(button(activity, "Eraser", () -> view.drawMode(true)));
             tools.addView(button(activity, "Color", this::chooseColor));
             tools.addView(button(activity, "Width", this::chooseWidth));
-            tools.addView(button(activity, "Undo stroke", view::undo));
+            tools.addView(button(activity, "Undo edit", view::undo));
             tools.addView(button(activity, "Fit", view::fit));
             HorizontalScrollView scroll = new HorizontalScrollView(activity); scroll.setHorizontalScrollBarEnabled(false);
             scroll.addView(tools); layout.addView(scroll);
+            LinearLayout vectorTools = new LinearLayout(activity);
+            vectorTools.addView(button(activity, "Select stroke", this::chooseStroke));
+            vectorTools.addView(button(activity, "Stroke style", this::chooseStrokeStyle));
+            vectorTools.addView(button(activity, "Point", this::choosePoint));
+            vectorTools.addView(button(activity, "Move stroke", this::translateStroke));
+            vectorTools.addView(button(activity, "Delete stroke", () -> {
+                try { view.applySelected("delete_stroke", new JSONObject()); }
+                catch (Exception | OutOfMemoryError error) { toast("Stroke was not deleted: " + error.getMessage()); }
+            }));
+            vectorTools.addView(button(activity, "Refresh preview", view::refreshPreview));
+            HorizontalScrollView vectorScroll = new HorizontalScrollView(activity);
+            vectorScroll.setHorizontalScrollBarEnabled(false); vectorScroll.addView(vectorTools); layout.addView(vectorScroll);
             LinearLayout onion = new LinearLayout(activity);
             CheckBox prior = checkbox(activity, "Previous", previous != null);
             CheckBox after = checkbox(activity, "Next", next != null);
@@ -284,24 +300,183 @@ public final class EditorCelDrawingDialog {
             frames.setEnabled(!pending && draftReady); fps.setEnabled(!pending && draftReady);
             if (pending) handler.removeCallbacks(autosave);
         }
+        void retainVectorEdit() throws Exception {
+            if (closed || !draftReady) throw new IllegalStateException("The retained drawing is not open for editing");
+            // This retains the accepted vectors in the coalesced memory/write
+            // queue before any replacement bitmap is allocated.
+            submitDraft(draftRecord().toString());
+        }
+        boolean vectorEditingReady() {
+            if (closed || !draftReady || finalRetentionPending) { toast("Wait for the retained drawing to be ready"); return false; }
+            return true;
+        }
+        void showToolsDialog(AlertDialog.Builder builder) {
+            if (closed) return;
+            if (toolsDialogs.size() >= 8) throw new IllegalStateException("Close an existing drawing control first");
+            AlertDialog child = builder.create(); toolsDialogs.add(child);
+            child.setOnDismissListener(ignored -> toolsDialogs.remove(child));
+            try { child.show(); }
+            catch (RuntimeException | OutOfMemoryError error) { toolsDialogs.remove(child); child.dismiss(); throw error; }
+        }
+        void chooseStroke() {
+            if (!vectorEditingReady()) return;
+            try {
+                view.finishStroke(); view.cancelPointDrag();
+                JSONArray strokes = view.document.getJSONArray("strokes");
+                if (strokes.length() == 0) { toast("Draw a stroke before selecting one"); return; }
+                String[] names = new String[strokes.length()], ids = new String[strokes.length()]; int selected = -1;
+                for (int index = 0; index < strokes.length(); index++) {
+                    JSONObject stroke = strokes.getJSONObject(index); ids[index] = stroke.getString("id");
+                    names[index] = (index + 1) + " · " + stroke.getString("type") + " · " + stroke.getJSONArray("points").length() + " points";
+                    if (ids[index].equals(view.selectedStrokeId)) selected = index;
+                }
+                showToolsDialog(new AlertDialog.Builder(activity).setTitle("Select an existing stroke")
+                        .setSingleChoiceItems(names, selected, (picker, index) -> { view.selectStroke(ids[index]); picker.dismiss(); })
+                        .setNegativeButton("Cancel", null));
+            } catch (Exception | OutOfMemoryError error) { toast("Could not select a stroke: " + error.getMessage()); }
+        }
+        JSONObject selectedStroke() throws Exception {
+            if (!vectorEditingReady()) return null;
+            JSONObject stroke = view.selectedStroke();
+            if (stroke == null) toast("Select an existing stroke first");
+            return stroke;
+        }
+        void chooseStrokeStyle() {
+            try {
+                JSONObject stroke = selectedStroke(); if (stroke == null) return;
+                String strokeId = stroke.getString("id");
+                LinearLayout form = new LinearLayout(activity); form.setOrientation(LinearLayout.VERTICAL);
+                String initialColor = stroke.getString("color"), initialWidth = Double.toString(stroke.getDouble("width") * 100);
+                EditText colorInput = numberInput(activity, initialColor, false);
+                EditText widthInput = decimalInput(activity, initialWidth);
+                form.addView(label(activity, "Color #RRGGBB / #AARRGGBB")); form.addView(colorInput);
+                form.addView(label(activity, "Width · percent of the shorter frame edge (0.1–20)")); form.addView(widthInput);
+                showToolsDialog(new AlertDialog.Builder(activity).setTitle("Selected " + stroke.getString("type") + " stroke")
+                        .setMessage("Eraser strokes keep their eraser behavior; their width remains editable.")
+                        .setView(form).setNegativeButton("Cancel", null).setPositiveButton("Apply", (ignored, which) -> {
+                            try {
+                                String changedColor = colorInput.getText().toString().trim(), changedWidth = widthInput.getText().toString().trim();
+                                JSONObject settings = new JSONObject();
+                                if (!initialColor.equals(changedColor)) settings.put("color", changedColor);
+                                if (!initialWidth.equals(changedWidth)) settings.put("width", Double.parseDouble(changedWidth) / 100);
+                                // An unchanged width is omitted entirely: even
+                                // percentage conversion must not quantize it.
+                                if (settings.length() > 0) view.applyToStroke(strokeId, "set_stroke", settings);
+                            }
+                            catch (Exception | OutOfMemoryError error) { toast("Stroke style was not changed: " + error.getMessage()); }
+                        }));
+            } catch (Exception | OutOfMemoryError error) { toast("Could not edit the stroke: " + error.getMessage()); }
+        }
+        void choosePoint() {
+            try {
+                JSONObject stroke = selectedStroke(); if (stroke == null) return;
+                String strokeId = stroke.getString("id"); int count = stroke.getJSONArray("points").length();
+                EditText input = numberInput(activity, Integer.toString(Math.max(0, view.selectedPoint) + 1), true);
+                showToolsDialog(new AlertDialog.Builder(activity).setTitle("Choose stroke point · 1–" + count).setView(input)
+                        .setNegativeButton("Cancel", null).setPositiveButton("Choose", (ignored, which) -> {
+                            try {
+                                int index = Integer.parseInt(input.getText().toString().trim()) - 1;
+                                if (!view.selectPoint(strokeId, index)) throw new IllegalArgumentException("Point is outside the selected stroke");
+                                pointActions(strokeId, index);
+                            } catch (Exception | OutOfMemoryError error) { toast("Could not choose the point: " + error.getMessage()); }
+                        }));
+            } catch (Exception | OutOfMemoryError error) { toast("Could not open the point: " + error.getMessage()); }
+        }
+        void pointActions(String strokeId, int pointIndex) {
+            showToolsDialog(new AlertDialog.Builder(activity).setTitle("Point " + (pointIndex + 1))
+                    .setItems(new String[]{"Edit position / pressure", "Insert before", "Insert after", "Remove point"}, (ignored, which) -> {
+                        try {
+                            if (!vectorEditingReady()) return;
+                            if (which == 0) editPoint(strokeId, pointIndex);
+                            else if (which == 1 || which == 2) insertPoint(strokeId, pointIndex, which == 2);
+                            else view.applyToStroke(strokeId, "remove_point", new JSONObject().put("pointIndex", pointIndex));
+                        } catch (Exception | OutOfMemoryError error) { toast("Point action was not applied: " + error.getMessage()); }
+                    }).setNegativeButton("Cancel", null));
+        }
+        void insertPoint(String strokeId, int selectedIndex, boolean after) throws Exception {
+            JSONObject stroke = view.stroke(strokeId); if (stroke == null) return;
+            JSONArray points = stroke.getJSONArray("points"); JSONObject selected = points.getJSONObject(selectedIndex);
+            int neighborIndex = selectedIndex + (after ? 1 : -1), insertionIndex = selectedIndex + (after ? 1 : 0);
+            JSONObject neighbor = neighborIndex >= 0 && neighborIndex < points.length() ? points.getJSONObject(neighborIndex) : selected;
+            LinearLayout form = new LinearLayout(activity); form.setOrientation(LinearLayout.VERTICAL);
+            EditText x = decimalInput(activity, Double.toString((selected.getDouble("x") + neighbor.getDouble("x")) / 2));
+            EditText y = decimalInput(activity, Double.toString((selected.getDouble("y") + neighbor.getDouble("y")) / 2));
+            EditText pressure = decimalInput(activity, Double.toString((selected.getDouble("pressure") + neighbor.getDouble("pressure")) / 2));
+            form.addView(label(activity, "X · 0–1 across the frame")); form.addView(x);
+            form.addView(label(activity, "Y · 0–1 down the frame")); form.addView(y);
+            form.addView(label(activity, "Pressure · 0.1–1.5")); form.addView(pressure);
+            showToolsDialog(new AlertDialog.Builder(activity).setTitle("Insert " + (after ? "after" : "before") + " point " + (selectedIndex + 1))
+                    .setView(form).setNegativeButton("Cancel", null).setPositiveButton("Insert", (ignored, which) -> {
+                        try {
+                            boolean applied = view.applyToStroke(strokeId, "insert_point", new JSONObject().put("pointIndex", insertionIndex)
+                                    .put("x", Double.parseDouble(x.getText().toString().trim()))
+                                    .put("y", Double.parseDouble(y.getText().toString().trim()))
+                                    .put("pressure", Double.parseDouble(pressure.getText().toString().trim())));
+                            if (applied) {
+                                // Selection feedback failure cannot turn an
+                                // already installed edit into a false failure.
+                                try { view.selectPoint(strokeId, insertionIndex); }
+                                catch (RuntimeException | OutOfMemoryError ignoredSelection) { }
+                            }
+                        } catch (Exception | OutOfMemoryError error) { toast("Point was not inserted: " + error.getMessage()); }
+                    }));
+        }
+        void editPoint(String strokeId, int pointIndex) throws Exception {
+            JSONObject stroke = view.stroke(strokeId); if (stroke == null) return;
+            JSONObject point = stroke.getJSONArray("points").getJSONObject(pointIndex);
+            LinearLayout form = new LinearLayout(activity); form.setOrientation(LinearLayout.VERTICAL);
+            EditText x = decimalInput(activity, Double.toString(point.getDouble("x")));
+            EditText y = decimalInput(activity, Double.toString(point.getDouble("y")));
+            EditText pressure = decimalInput(activity, Double.toString(point.getDouble("pressure")));
+            form.addView(label(activity, "X · 0–1 across the frame")); form.addView(x);
+            form.addView(label(activity, "Y · 0–1 down the frame")); form.addView(y);
+            form.addView(label(activity, "Pressure · 0.1–1.5")); form.addView(pressure);
+            showToolsDialog(new AlertDialog.Builder(activity).setTitle("Point " + (pointIndex + 1)).setView(form)
+                    .setNegativeButton("Cancel", null).setPositiveButton("Apply", (ignored, which) -> {
+                        try { view.applyToStroke(strokeId, "move_point", new JSONObject().put("pointIndex", pointIndex)
+                                .put("x", Double.parseDouble(x.getText().toString().trim()))
+                                .put("y", Double.parseDouble(y.getText().toString().trim()))
+                                .put("pressure", Double.parseDouble(pressure.getText().toString().trim()))); }
+                        catch (Exception | OutOfMemoryError error) { toast("Point was not changed: " + error.getMessage()); }
+                    }));
+        }
+        void translateStroke() {
+            try {
+                JSONObject stroke = selectedStroke(); if (stroke == null) return;
+                String strokeId = stroke.getString("id");
+                LinearLayout form = new LinearLayout(activity); form.setOrientation(LinearLayout.VERTICAL);
+                EditText dx = decimalInput(activity, "0"), dy = decimalInput(activity, "0");
+                form.addView(label(activity, "Horizontal offset · percent of frame width")); form.addView(dx);
+                form.addView(label(activity, "Vertical offset · percent of frame height")); form.addView(dy);
+                showToolsDialog(new AlertDialog.Builder(activity).setTitle("Move selected stroke").setMessage("Every point must remain inside the frame.")
+                        .setView(form).setNegativeButton("Cancel", null).setPositiveButton("Move", (ignored, which) -> {
+                            try { view.applyToStroke(strokeId, "translate_stroke", new JSONObject()
+                                    .put("dx", Double.parseDouble(dx.getText().toString().trim()) / 100)
+                                    .put("dy", Double.parseDouble(dy.getText().toString().trim()) / 100)); }
+                            catch (Exception | OutOfMemoryError error) { toast("Stroke was not moved: " + error.getMessage()); }
+                        }));
+            } catch (Exception | OutOfMemoryError error) { toast("Could not move the stroke: " + error.getMessage()); }
+        }
         void chooseColor() {
+            if (closed || finalRetentionPending || !draftReady) return;
             EditText input = numberInput(activity, String.format(java.util.Locale.ROOT, "#%08X", view.color), false);
-            new AlertDialog.Builder(activity).setTitle("Brush color").setMessage("Use a color such as #FFFFFFFF or #FF3366FF.")
+            showToolsDialog(new AlertDialog.Builder(activity).setTitle("Brush color").setMessage("Use a color such as #FFFFFFFF or #FF3366FF.")
                     .setView(input).setNegativeButton("Cancel", null).setPositiveButton("Apply", (ignored, which) -> {
-                        try { view.color = Color.parseColor(input.getText().toString().trim()); view.erasing = false; }
+                        try { if (!closed && !finalRetentionPending) { view.color = Color.parseColor(input.getText().toString().trim()); view.erasing = false; } }
                         catch (Exception error) { toast("Invalid brush color"); }
-                    }).show();
+                    }));
         }
         void chooseWidth() {
+            if (closed || finalRetentionPending || !draftReady) return;
             EditText input = numberInput(activity, String.format(java.util.Locale.ROOT, "%.1f", view.brushWidth * 100), false);
-            new AlertDialog.Builder(activity).setTitle("Brush width").setMessage("Percent of the shorter frame edge, from 0.1 to 20.")
+            showToolsDialog(new AlertDialog.Builder(activity).setTitle("Brush width").setMessage("Percent of the shorter frame edge, from 0.1 to 20.")
                     .setView(input).setNegativeButton("Cancel", null).setPositiveButton("Apply", (ignored, which) -> {
                         try {
                             double value = Double.parseDouble(input.getText().toString().trim()) / 100;
                             if (!Double.isFinite(value) || value < .001 || value > .2) throw new IllegalArgumentException();
-                            view.brushWidth = value;
+                            if (!closed && !finalRetentionPending) view.brushWidth = value;
                         } catch (Exception error) { toast("Brush width must be from 0.1 to 20 percent"); }
-                    }).show();
+                    }));
         }
         int[] settings() {
             int count = Integer.parseInt(frames.getText().toString().trim());
@@ -323,7 +498,7 @@ public final class EditorCelDrawingDialog {
             if (!draftReady) { toast("Wait for the retained drawing to open before saving"); return; }
             if (finalRetentionPending) return;
             try {
-                view.finishStroke();
+                view.cancelPointDrag(); view.finishStroke();
                 JSONObject drawing = view.drawing(); int[] timing = settings();
                 JSONObject record = draftRecord(); String encoded = record.toString();
                 finalRetention(true);
@@ -343,7 +518,7 @@ public final class EditorCelDrawingDialog {
             if (!draftReady) { toast("Wait for the retained drawing to open before retaining it"); return; }
             if (finalRetentionPending) return;
             try {
-                view.finishStroke(); finalRetention(true);
+                view.cancelPointDrag(); view.finishStroke(); finalRetention(true);
                 submitDraft(draftRecord().toString(), () -> {
                     finalRetention(false);
                     if (!closed) { savedRequestQueued = true; dialog.dismiss(); }
@@ -407,7 +582,13 @@ public final class EditorCelDrawingDialog {
             try { if (modified && !savedRequestQueued) saveDraft(); }
             finally {
                 closed = true;
-                try { handler.removeCallbacks(autosave); view.dispose(); }
+                try {
+                    while (!toolsDialogs.isEmpty()) {
+                        AlertDialog child = toolsDialogs.remove(toolsDialogs.size() - 1);
+                        try { child.dismiss(); } catch (RuntimeException | OutOfMemoryError ignored) { }
+                    }
+                    handler.removeCallbacks(autosave); view.dispose();
+                }
                 finally { OPEN.set(false); }
             }
         }
@@ -415,22 +596,33 @@ public final class EditorCelDrawingDialog {
     }
 
     private static final class FrameView extends View {
+        static final int MAX_UNDO = 8, MAX_UNDO_CHARS = 512 * 1024;
         final Runnable changed;
+        final VectorRetention retainBeforeRaster;
+        final java.util.function.Consumer<String> information;
         final Handler main = new Handler(Looper.getMainLooper());
         final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
+        final Paint overlay = new Paint(Paint.ANTI_ALIAS_FLAG);
+        final Path selectedPath = new Path();
+        final ArrayDeque<String> undoHistory = new ArrayDeque<>(MAX_UNDO + 1);
         final ScaleGestureDetector pinch;
         JSONObject document, currentStroke;
+        String strokeBefore, selectedStrokeId;
         Bitmap foreground, previous, next;
         Canvas foregroundCanvas;
         double brushWidth = .012;
         int color = Color.WHITE;
-        boolean erasing, showPrevious, showNext, capacityNotice, strokeModified;
+        boolean erasing, showPrevious, showNext, capacityNotice, strokeModified, editingVectors, draggingPoint, pointDragMoved, gestureSuppressed, previewDirty;
         volatile boolean closed;
         float zoom = 1, panX, panY, previousCenterX, previousCenterY;
-        int totalPoints, documentBytes;
-        FrameView(Context context, JSONObject drawing, Runnable changed, FrameView[] constructingView) throws Exception {
+        float dragPressX, dragPressY, dragExtentX, dragExtentY;
+        int totalPoints, documentBytes, undoChars, selectedPoint = -1, dragPointer = -1;
+        double dragX, dragY, dragStartX, dragStartY;
+        FrameView(Context context, JSONObject drawing, Runnable changed, VectorRetention retainBeforeRaster,
+                  java.util.function.Consumer<String> information, FrameView[] constructingView) throws Exception {
             super(context); constructingView[0] = this;
-            this.changed = changed; setContentDescription("Animation frame drawing canvas");
+            this.changed = changed; this.retainBeforeRaster = retainBeforeRaster; this.information = information;
+            setContentDescription("Animation frame drawing canvas; select a stroke to edit its points");
             setFocusable(true); replace(drawing);
             pinch = new ScaleGestureDetector(context, new ScaleGestureDetector.SimpleOnScaleGestureListener() {
                 @Override public boolean onScale(ScaleGestureDetector detector) {
@@ -445,10 +637,21 @@ public final class EditorCelDrawingDialog {
         JSONObject drawing() throws Exception { return AnimationCelFactory.validateDrawing(document); }
         void replace(JSONObject drawing) throws Exception {
             JSONObject accepted = AnimationCelFactory.validateDrawing(drawing);
-            int width = accepted.getInt("width"), height = accepted.getInt("height");
-            int acceptedPoints = 0; JSONArray strokes = accepted.getJSONArray("strokes");
-            for (int index = 0; index < strokes.length(); index++) acceptedPoints += strokes.getJSONObject(index).getJSONArray("points").length();
+            int acceptedPoints = countPoints(accepted);
             int acceptedBytes = accepted.toString().getBytes(StandardCharsets.UTF_8).length;
+            renderAccepted(accepted);
+            document = accepted; totalPoints = acceptedPoints; documentBytes = acceptedBytes;
+            currentStroke = null; strokeBefore = null; cancelPointDrag();
+            undoHistory.clear(); undoChars = 0; selectedStrokeId = null; selectedPoint = -1; editingVectors = false;
+            invalidate();
+        }
+        int countPoints(JSONObject accepted) throws Exception {
+            int count = 0; JSONArray strokes = accepted.getJSONArray("strokes");
+            for (int index = 0; index < strokes.length(); index++) count += strokes.getJSONObject(index).getJSONArray("points").length();
+            return count;
+        }
+        void renderAccepted(JSONObject accepted) throws Exception {
+            int width = accepted.getInt("width"), height = accepted.getInt("height");
             long available = Runtime.getRuntime().maxMemory() - (Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory());
             if (width * (long) height * 4 + 3L * 1024 * 1024 > available - 32L * 1024 * 1024)
                 throw new IllegalStateException("Close another heavy view before drawing this frame");
@@ -457,19 +660,107 @@ public final class EditorCelDrawingDialog {
             Canvas replacementCanvas;
             try { replacementCanvas = new Canvas(replacement); }
             catch (RuntimeException | OutOfMemoryError error) { replacement.recycle(); throw error; }
-            Bitmap old = foreground; foreground = replacement; foregroundCanvas = replacementCanvas; document = accepted;
-            totalPoints = acceptedPoints; documentBytes = acceptedBytes;
+            Bitmap old = foreground; foreground = replacement; foregroundCanvas = replacementCanvas; previewDirty = false;
             if (old != null && old != replacement) old.recycle(); invalidate();
+        }
+        void pushUndo(String before) {
+            while (!undoHistory.isEmpty() && (undoHistory.size() >= MAX_UNDO || undoChars + before.length() > MAX_UNDO_CHARS))
+                undoChars -= undoHistory.removeFirst().length();
+            undoHistory.addLast(before); undoChars += before.length();
+        }
+        /** Retain valid vectors first. A failed raster never rolls back the edit. */
+        boolean commitVectors(JSONObject accepted, String before) throws Exception {
+            String encoded = accepted.toString();
+            if (before != null && before.equals(encoded)) return false;
+            int acceptedPoints = countPoints(accepted), acceptedBytes = encoded.getBytes(StandardCharsets.UTF_8).length;
+            if (before != null) pushUndo(before);
+            document = accepted; totalPoints = acceptedPoints; documentBytes = acceptedBytes;
+            previewDirty = true; boolean retained = false;
+            try {
+                repairSelection(); changed.run(); retainBeforeRaster.retain(); retained = true;
+                renderAccepted(accepted); selectionInformation();
+            }
+            catch (Exception | OutOfMemoryError error) {
+                // Once document is installed, even a callback/notice failure
+                // cannot escape as a false "not changed" result or lose undo.
+                previewDirty = true;
+                try { information.accept(retained ? "Edited vectors retained; use Refresh preview after freeing memory"
+                        : "Edit remains in this drawing; draft retention needs a retry"); }
+                catch (RuntimeException | OutOfMemoryError ignored) { }
+                try { notice(retained ? "Edited vectors retained; preview refresh is unavailable"
+                        : "Edit remains in this drawing; keep it open and retry draft retention"); }
+                catch (RuntimeException | OutOfMemoryError ignored) { }
+                try { invalidate(); } catch (RuntimeException | OutOfMemoryError ignored) { }
+            }
+            return true;
+        }
+        void refreshPreview() {
+            if (closed || !isEnabled()) return;
+            try { cancelPointDrag(); finishStroke(); retainBeforeRaster.retain(); renderAccepted(document); selectionInformation(); }
+            catch (Exception | OutOfMemoryError error) { notice("Preview could not be refreshed; vectors remain available: " + error.getMessage()); }
         }
         void undo() {
             if (closed || !isEnabled()) return;
             try {
-                finishStroke(); JSONObject candidate = new JSONObject(document.toString());
-                JSONArray strokes = candidate.getJSONArray("strokes"); if (strokes.length() == 0) return;
-                strokes.remove(strokes.length() - 1); replace(candidate); changed.run();
-            } catch (Exception | OutOfMemoryError error) { notice("Could not undo stroke: " + error.getMessage()); }
+                cancelPointDrag(); finishStroke();
+                if (undoHistory.isEmpty()) { notice("No earlier edit in this drawing session"); return; }
+                String encoded = undoHistory.peekLast(); JSONObject candidate = AnimationCelFactory.validateDrawing(new JSONObject(encoded));
+                // Keep the history entry until its valid vectors are installed;
+                // failed detached allocation must not consume an undo step.
+                commitVectors(candidate, null); undoHistory.removeLast(); undoChars -= encoded.length();
+            } catch (Exception | OutOfMemoryError error) { notice("Could not undo edit: " + error.getMessage()); }
         }
-        void fit() { zoom = 1; panX = panY = 0; invalidate(); }
+        JSONObject stroke(String id) {
+            if (document == null || id == null) return null;
+            JSONArray strokes = document.optJSONArray("strokes");
+            if (strokes == null) return null;
+            for (int index = 0; index < strokes.length(); index++) {
+                JSONObject stroke = strokes.optJSONObject(index);
+                if (stroke != null && id.equals(stroke.optString("id"))) return stroke;
+            }
+            return null;
+        }
+        JSONObject selectedStroke() { return stroke(selectedStrokeId); }
+        void repairSelection() {
+            JSONObject stroke = selectedStroke();
+            if (stroke == null) { selectedStrokeId = null; selectedPoint = -1; return; }
+            selectedPoint = Math.max(0, Math.min(selectedPoint, stroke.optJSONArray("points").length() - 1));
+        }
+        void selectionInformation() {
+            JSONObject stroke = selectedStroke();
+            if (!editingVectors || stroke == null) { information.accept(editingVectors ? "Select a stroke to edit its points" : "Draw with one finger. Pinch with two fingers to zoom."); return; }
+            information.accept(stroke.optString("type") + " stroke · point " + (selectedPoint + 1) + "/" + stroke.optJSONArray("points").length()
+                    + " · drag a point; pinch/pan cancels a point drag");
+        }
+        void selectStroke(String id) {
+            if (closed || !isEnabled()) return;
+            cancelPointDrag(); if (stroke(id) == null) return;
+            selectedStrokeId = id; selectedPoint = 0; editingVectors = true; selectionInformation(); invalidate();
+        }
+        boolean selectPoint(String id, int index) {
+            if (closed || !isEnabled()) return false;
+            JSONObject stroke = stroke(id);
+            if (stroke == null || index < 0 || index >= stroke.optJSONArray("points").length()) return false;
+            cancelPointDrag(); selectedStrokeId = id; selectedPoint = index; editingVectors = true; selectionInformation(); invalidate(); return true;
+        }
+        void drawMode(boolean erase) {
+            if (closed || !isEnabled()) return;
+            cancelPointDrag(); erasing = erase; editingVectors = false; selectedStrokeId = null; selectedPoint = -1;
+            information.accept(erase ? "Eraser selected" : "Brush selected"); invalidate();
+        }
+        void applySelected(String operation, JSONObject settings) throws Exception {
+            if (selectedStroke() == null) { notice("Select an existing stroke first"); return; }
+            applyToStroke(selectedStrokeId, operation, settings);
+        }
+        boolean applyToStroke(String id, String operation, JSONObject settings) throws Exception {
+            if (closed || !isEnabled()) return false;
+            cancelPointDrag(); finishStroke();
+            JSONObject action = new JSONObject(settings.toString()).put("op", operation).put("strokeId", id);
+            JSONObject candidate = AnimationCelVectorEdits.apply(document, new JSONArray().put(action));
+            return commitVectors(candidate, document.toString());
+        }
+        void cancelPointDrag() { draggingPoint = false; pointDragMoved = false; dragPointer = -1; invalidate(); }
+        void fit() { cancelPointDrag(); zoom = 1; panX = panY = 0; invalidate(); }
         RectF viewport() {
             float ratio = foreground.getWidth() / (float) foreground.getHeight();
             float width = Math.min(getWidth(), getHeight() * ratio) * zoom, height = width / ratio;
@@ -489,43 +780,150 @@ public final class EditorCelDrawingDialog {
             paint.setColor(Color.WHITE); paint.setAlpha(56);
             if (showPrevious && previous != null) canvas.drawBitmap(previous, null, area, paint);
             if (showNext && next != null) canvas.drawBitmap(next, null, area, paint);
-            paint.setAlpha(255); canvas.drawBitmap(foreground, null, area, paint); canvas.restore();
+            paint.setAlpha(255); canvas.drawBitmap(foreground, null, area, paint);
+            drawSelection(canvas, area); canvas.restore();
+        }
+        void drawSelection(Canvas canvas, RectF area) {
+            if (!editingVectors) return;
+            JSONObject stroke = selectedStroke(); if (stroke == null) return;
+            JSONArray points = stroke.optJSONArray("points"); selectedPath.reset();
+            for (int index = 0; index < points.length(); index++) {
+                JSONObject point = points.optJSONObject(index);
+                float x = area.left + area.width() * (float) (draggingPoint && index == selectedPoint ? dragX : point.optDouble("x"));
+                float y = area.top + area.height() * (float) (draggingPoint && index == selectedPoint ? dragY : point.optDouble("y"));
+                if (index == 0) selectedPath.moveTo(x, y); else selectedPath.lineTo(x, y);
+            }
+            overlay.setStyle(Paint.Style.STROKE); overlay.setStrokeWidth(dp(getContext(), 2)); overlay.setColor(0xffffd166);
+            canvas.drawPath(selectedPath, overlay);
+            // Bound the visible marker count while retaining exact selection of
+            // all points through nearest-point picking or the numeric picker.
+            int stride = Math.max(1, (points.length() + 127) / 128);
+            for (int index = 0; index < points.length(); index++) {
+                if (index != selectedPoint && index != points.length() - 1 && index % stride != 0) continue;
+                JSONObject point = points.optJSONObject(index);
+                float x = area.left + area.width() * (float) (draggingPoint && index == selectedPoint ? dragX : point.optDouble("x"));
+                float y = area.top + area.height() * (float) (draggingPoint && index == selectedPoint ? dragY : point.optDouble("y"));
+                overlay.setStyle(Paint.Style.FILL); overlay.setColor(index == selectedPoint ? (draggingPoint ? 0xff6ef0b1 : Color.WHITE) : 0xff62d2ff);
+                canvas.drawCircle(x, y, dp(getContext(), index == selectedPoint ? 6 : 3), overlay);
+                if (index == selectedPoint) { overlay.setStyle(Paint.Style.STROKE); overlay.setColor(Color.BLACK); canvas.drawCircle(x, y, dp(getContext(), 7), overlay); }
+            }
         }
         @Override public boolean onTouchEvent(MotionEvent event) {
             if (closed || foreground == null || !isEnabled()) return false;
             try {
                 pinch.onTouchEvent(event);
                 int action = event.getActionMasked();
+                if (action == MotionEvent.ACTION_DOWN) gestureSuppressed = false;
                 if (event.getPointerCount() > 1) {
-                    finishStroke(); float centerX = (event.getX(0) + event.getX(1)) / 2, centerY = (event.getY(0) + event.getY(1)) / 2;
+                    gestureSuppressed = true; cancelPointDrag(); finishStroke();
+                    float centerX = (event.getX(0) + event.getX(1)) / 2, centerY = (event.getY(0) + event.getY(1)) / 2;
                     if (action == MotionEvent.ACTION_MOVE && !pinch.isInProgress()) {
                         panX += centerX - previousCenterX; panY += centerY - previousCenterY; invalidate();
                     }
                     previousCenterX = centerX; previousCenterY = centerY; return true;
                 }
+                if (gestureSuppressed) {
+                    if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
+                        gestureSuppressed = false; releaseTouch();
+                    }
+                    return true;
+                }
+                if (editingVectors) return vectorTouch(event);
                 if (action == MotionEvent.ACTION_DOWN) {
                     if (!viewport().contains(event.getX(), event.getY())) return true;
+                    // A preceding stroke may still need its normalization/undo
+                    // install after an allocation failure. Never overwrite its
+                    // pending pre-stroke snapshot with a new gesture.
+                    finishStroke();
+                    if (previewDirty) {
+                        refreshPreview();
+                        if (previewDirty) { notice("Refresh the retained preview before painting another stroke"); return true; }
+                    }
                     if (document.getJSONArray("strokes").length() >= 512 || totalPoints >= 8192 || document.toString().length() > 120 * 1024) {
                         notice("This frame is full. Save it before adding another exposure."); return true;
                     }
+                    strokeBefore = document.toString();
                     currentStroke = new JSONObject().put("id", UUID.randomUUID().toString()).put("type", erasing ? "erase" : "paint")
                             .put("color", String.format(java.util.Locale.ROOT, "#%08X", color)).put("width", brushWidth).put("points", new JSONArray());
                     document.getJSONArray("strokes").put(currentStroke); capacityNotice = false; strokeModified = false;
                     documentBytes = document.toString().getBytes(StandardCharsets.UTF_8).length;
-                    append(event.getX(), event.getY(), event.getPressure()); getParent().requestDisallowInterceptTouchEvent(true); return true;
+                    append(event.getX(), event.getY(), event.getPressure());
+                    if (getParent() != null) getParent().requestDisallowInterceptTouchEvent(true); return true;
                 }
                 if (action == MotionEvent.ACTION_MOVE && currentStroke != null) {
                     for (int index = 0; index < event.getHistorySize(); index++)
                         append(event.getHistoricalX(index), event.getHistoricalY(index), event.getHistoricalPressure(index));
                     append(event.getX(), event.getY(), event.getPressure()); return true;
                 }
-                if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) { finishStroke(); performClick(); return true; }
+                if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) { finishStroke(); releaseTouch(); performClick(); return true; }
             } catch (Exception | OutOfMemoryError error) {
+                cancelPointDrag(); releaseTouch();
                 try { finishStroke(); }
-                catch (Exception | OutOfMemoryError ignored) { currentStroke = null; }
+                catch (Exception | OutOfMemoryError ignored) { currentStroke = null; /* Keep the pending undo snapshot for retry. */ }
                 notice("Stroke stopped: " + error.getMessage());
             }
             return true;
+        }
+        boolean vectorTouch(MotionEvent event) throws Exception {
+            int action = event.getActionMasked(); RectF area = viewport();
+            if (action == MotionEvent.ACTION_CANCEL) { cancelPointDrag(); releaseTouch(); selectionInformation(); return true; }
+            if (action == MotionEvent.ACTION_DOWN) {
+                cancelPointDrag(); JSONObject stroke = selectedStroke();
+                if (stroke == null) { notice("Select an existing stroke first"); return true; }
+                if (!area.contains(event.getX(), event.getY())) return true;
+                JSONArray points = stroke.getJSONArray("points"); double distance = dp(getContext(), 22); int nearest = -1;
+                // Hit-test every real point once on press. Motion only changes
+                // two scalar preview coordinates; no drawing copies or raster.
+                for (int index = 0; index < points.length(); index++) {
+                    JSONObject point = points.getJSONObject(index);
+                    double candidate = Math.hypot(area.left + area.width() * point.getDouble("x") - event.getX(),
+                            area.top + area.height() * point.getDouble("y") - event.getY());
+                    if (candidate < distance || (candidate == distance && index == selectedPoint)) { distance = candidate; nearest = index; }
+                }
+                if (nearest < 0) { information.accept("Tap a stroke point, or use Point to choose its exact number"); return true; }
+                selectedPoint = nearest; JSONObject point = points.getJSONObject(nearest);
+                dragX = dragStartX = point.getDouble("x"); dragY = dragStartY = point.getDouble("y");
+                dragPressX = event.getX(); dragPressY = event.getY(); dragExtentX = area.width(); dragExtentY = area.height();
+                draggingPoint = true; dragPointer = event.getPointerId(0);
+                if (getParent() != null) getParent().requestDisallowInterceptTouchEvent(true);
+                selectionInformation(); invalidate(); return true;
+            }
+            if (action == MotionEvent.ACTION_MOVE && draggingPoint) {
+                int pointer = event.findPointerIndex(dragPointer);
+                if (pointer < 0) { cancelPointDrag(); releaseTouch(); return true; }
+                previewPointAt(event.getX(pointer), event.getY(pointer)); invalidate(); return true;
+            }
+            if (action == MotionEvent.ACTION_UP) {
+                if (draggingPoint) {
+                    int pointer = event.findPointerIndex(dragPointer);
+                    if (pointer >= 0) previewPointAt(event.getX(pointer), event.getY(pointer));
+                    // A tap selects without quantizing or changing its point.
+                    boolean moved = dragX != dragStartX || dragY != dragStartY;
+                    String id = selectedStrokeId; int index = selectedPoint; double x = dragX, y = dragY;
+                    cancelPointDrag();
+                    if (moved) applyToStroke(id, "move_point", new JSONObject().put("pointIndex", index).put("x", x).put("y", y));
+                    else selectionInformation();
+                }
+                releaseTouch(); performClick(); return true;
+            }
+            return true;
+        }
+        void previewPointAt(float screenX, float screenY) {
+            double dx = screenX - dragPressX, dy = screenY - dragPressY;
+            if (!pointDragMoved && Math.hypot(dx, dy) < dp(getContext(), 4)) return;
+            pointDragMoved = true;
+            // Preserve the initial finger-to-point offset and exact unchanged
+            // axes, including high-precision positions authored through MCP.
+            dragX = dx == 0 ? dragStartX : boundedCoordinate(dragStartX + dx / dragExtentX);
+            dragY = dy == 0 ? dragStartY : boundedCoordinate(dragStartY + dy / dragExtentY);
+        }
+        double boundedCoordinate(double value) { return Math.round(Math.max(0, Math.min(1, value)) * 10000) / 10000.0; }
+        void releaseTouch() { if (getParent() != null) getParent().requestDisallowInterceptTouchEvent(false); }
+        @Override protected void onSizeChanged(int width, int height, int oldWidth, int oldHeight) {
+            cancelPointDrag(); super.onSizeChanged(width, height, oldWidth, oldHeight);
+        }
+        @Override protected void onDetachedFromWindow() {
+            cancelPointDrag(); releaseTouch(); super.onDetachedFromWindow();
         }
         @Override public boolean performClick() { super.performClick(); return true; }
         void append(float screenX, float screenY, float pressure) throws Exception {
@@ -553,24 +951,23 @@ public final class EditorCelDrawingDialog {
                     foreground.getWidth(), foreground.getHeight()); invalidate();
         }
         void finishStroke() throws Exception {
-            if (currentStroke == null) return;
-            currentStroke = null;
+            if (currentStroke == null && strokeBefore == null) return;
+            String before = strokeBefore;
             JSONObject accepted;
             try { accepted = AnimationCelFactory.validateDrawing(document); }
             catch (Exception invalidDrawing) {
                 JSONArray strokes = document.getJSONArray("strokes"); strokes.remove(strokes.length() - 1);
+                currentStroke = null; strokeBefore = null;
                 totalPoints = 0;
                 for (int index = 0; index < strokes.length(); index++) totalPoints += strokes.getJSONObject(index).getJSONArray("points").length();
                 documentBytes = document.toString().getBytes(StandardCharsets.UTF_8).length;
-                try { replace(document); } catch (Exception | OutOfMemoryError ignored) { }
+                try { renderAccepted(document); } catch (Exception | OutOfMemoryError ignored) { previewDirty = true; }
                 throw invalidDrawing;
             }
-            try { replace(accepted); }
-            catch (Exception | OutOfMemoryError rasterUnavailable) {
-                document = accepted;
-                notice("Drawing commands are retained; the frame preview will refresh when memory is available");
-            }
-            changed.run();
+            commitVectors(accepted, before);
+            // Pre-install validation/encoding failures keep this snapshot for
+            // the next finish/undo/save attempt; successful install consumes it.
+            currentStroke = null; strokeBefore = null;
         }
         void loadOnion(Uri uri, boolean prior) {
             if (uri == null) return;
@@ -592,7 +989,8 @@ public final class EditorCelDrawingDialog {
             } catch (Exception error) { notice("Onion skin reader is busy"); }
         }
         void dispose() {
-            closed = true; currentStroke = null; foregroundCanvas = null;
+            closed = true; currentStroke = null; strokeBefore = null; selectedStrokeId = null; cancelPointDrag();
+            undoHistory.clear(); undoChars = 0; selectedPath.reset(); foregroundCanvas = null;
             if (foreground != null) foreground.recycle(); if (previous != null) previous.recycle(); if (next != null) next.recycle();
             foreground = previous = next = null;
         }
@@ -613,6 +1011,11 @@ public final class EditorCelDrawingDialog {
     private static EditText numberInput(Context context, String text, boolean numeric) {
         EditText input = new EditText(context); input.setText(text); input.setTextColor(Color.WHITE); input.setSingleLine(true);
         input.setInputType(numeric ? InputType.TYPE_CLASS_NUMBER : InputType.TYPE_CLASS_TEXT); return input;
+    }
+    private static EditText decimalInput(Context context, String text) {
+        EditText input = numberInput(context, text, false);
+        input.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL | InputType.TYPE_NUMBER_FLAG_SIGNED);
+        return input;
     }
     private static int dp(Context context, int value) { return Math.round(value * context.getResources().getDisplayMetrics().density); }
 }

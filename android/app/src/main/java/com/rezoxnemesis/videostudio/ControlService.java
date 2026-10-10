@@ -527,7 +527,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 case "create_title":
                     complete(command, queueCreateTitle(p));
                     return;
-                case "cel_create": case "cel_update":
+                case "cel_create": case "cel_update": case "cel_edit_strokes":
                     complete(command, queueAnimationCel(action, p));
                     return;
                 case "cel_describe": {
@@ -548,6 +548,9 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                     complete(command, projectEditResult(edited));
                     return;
                 }
+                case "rig_curve":
+                    complete(command, rigCurve(p));
+                    return;
                 case "rig_describe": {
                     ProjectStore.Project project = resolveExistingProject(p.optString("projectId", ""));
                     String clipId = p.getString("clipId");
@@ -1261,6 +1264,64 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             if (!unsupported.isEmpty()) throw new IllegalArgumentException("Clip " + clip.id
                     + " uses unimplemented native effects: " + String.join(", ", unsupported));
         }
+    }
+
+    private JSONObject rigCurve(JSONObject parameters) throws Exception {
+        JSONArray names = parameters.names();
+        if (names != null) for (int index = 0; index < names.length(); index++) {
+            String name = names.getString(index);
+            if (!name.startsWith("_") && !"projectId".equals(name) && !"expectedRevision".equals(name)
+                    && !"clipId".equals(name) && !"kind".equals(name) && !"id".equals(name)
+                    && !"channel".equals(name) && !"startMs".equals(name) && !"endMs".equals(name)
+                    && !"samples".equals(name) && !"timeDomain".equals(name))
+                throw new IllegalArgumentException("Unknown rig curve field: " + name);
+        }
+        ProjectStore.Project project = resolveExistingProject(parameters.optString("projectId", ""));
+        if (parameters.has("expectedRevision") && titleInteger(parameters, "expectedRevision", project.revision, 0, 9007199254740991L) != project.revision)
+            throw new IllegalArgumentException("Project revision changed; restart curve inspection at the current revision " + project.revision);
+        Object rawClipId = parameters.opt("clipId");
+        if (!(rawClipId instanceof String) || ((String) rawClipId).isEmpty() || ((String) rawClipId).length() > 180)
+            throw new IllegalArgumentException("An explicit bounded clipId is required");
+        String clipId = (String) rawClipId;
+        ProjectStore.Clip clip = project.clip(clipId);
+        if (clip == null) throw new IllegalArgumentException("Selected clip no longer exists");
+        ProjectStore.Asset asset = project.asset(clip.assetId);
+        if (asset == null) throw new IllegalArgumentException("Rig source is missing");
+        String kind = AnimationRig2D.label(parameters, "kind", null);
+        String id = AnimationRig2D.identity(parameters, "id", null);
+        String channel = AnimationRig2D.label(parameters, "channel", null);
+        String domain = AnimationRig2D.label(parameters, "timeDomain", "output_local");
+        if (!"authored".equals(domain) && !"output_local".equals(domain))
+            throw new IllegalArgumentException("Rig curve timeDomain must be authored or output_local");
+        double[] declaredBounds = AnimationRig2D.channelBounds(kind, channel);
+        long startMs = AnimationRig2D.integer(parameters, "startMs", -1L, 0L, AnimationRig2D.MAX_TIME_MS);
+        long endMs = AnimationRig2D.integer(parameters, "endMs", -1L, 0L, AnimationRig2D.MAX_TIME_MS);
+        if (endMs <= startMs) throw new IllegalArgumentException("Rig curve endMs must be later than startMs");
+        int requestedSamples = (int) AnimationRig2D.integer(parameters, "samples", 128L, 2L, 256L);
+        int sampleCount = (int) Math.min(requestedSamples, endMs - startMs + 1L);
+        AnimationRig2D compiled = AnimationRig2D.compileForClip(clip, AnimationRigEdits.sourceAspect(asset));
+        JSONArray points = new JSONArray();
+        double sampledMinimum = Double.POSITIVE_INFINITY, sampledMaximum = Double.NEGATIVE_INFINITY;
+        for (int index = 0; index < sampleCount; index++) {
+            long timeMs = startMs + Math.round((endMs - startMs) * (index / (double) (sampleCount - 1)));
+            long authoredTimeMs = "output_local".equals(domain) ? compiled.clipAuthoredTimeMs(timeMs) : timeMs;
+            double value = "bone".equals(kind) ? compiled.authoredChannel(id, channel, authoredTimeMs)
+                    : compiled.authoredIkChannel(id, channel, authoredTimeMs);
+            if (!Double.isFinite(value)) throw new IllegalStateException("Compiled rig curve produced a nonfinite sample");
+            points.put(new JSONObject().put("timeMs", timeMs).put("authoredTimeMs", authoredTimeMs).put("value", value));
+            sampledMinimum = Math.min(sampledMinimum, value);
+            sampledMaximum = Math.max(sampledMaximum, value);
+        }
+        JSONObject bounds = new JSONObject().put("minimum", declaredBounds[0]).put("maximum", declaredBounds[1])
+                .put("sampledMinimum", sampledMinimum).put("sampledMaximum", sampledMaximum);
+        return ok().put("projectId", project.id).put("revision", project.revision).put("clipId", clipId)
+                .put("kind", kind).put("id", id).put("channel", channel).put("domain", domain)
+                .put("startMs", startMs).put("endMs", endMs).put("requestedSamples", requestedSamples)
+                .put("sampleCount", sampleCount).put("points", points).put("bounds", bounds).put("sampled", true)
+                .put("rigEnabled", compiled.isEnabled()).put("includesGeometry", false)
+                .put("evaluator", "bone".equals(kind) ? "AnimationRig2D.authoredChannel" : "AnimationRig2D.authoredIkChannel")
+                .put("clockEvaluator", "output_local".equals(domain) ? "AnimationRig2D.clipAuthoredTimeMs" : "authored_ms")
+                .put("sampling", "uniform_integer_ms_including_endpoints");
     }
 
     private JSONObject nativeAuthoringSettings(JSONObject parameters) throws Exception {
@@ -2085,6 +2146,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                         break;
                     case "cel_create":
                     case "cel_update":
+                    case "cel_edit_strokes":
                         queued = queueAnimationCel(action, parameters);
                         break;
                     case "generate_voice":
@@ -2681,7 +2743,8 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     }
 
     private JSONObject queueAnimationCel(String action, JSONObject request) throws Exception {
-        if (!"cel_create".equals(action) && !"cel_update".equals(action))
+        boolean vectorEdit = "cel_edit_strokes".equals(action);
+        if (!"cel_create".equals(action) && !"cel_update".equals(action) && !vectorEdit)
             throw new IllegalArgumentException("Unknown cel drawing operation");
         JSONObject durable = new JSONObject(request.toString());
         String recoveryId = durable.optString("_recoveryPlanId", "");
@@ -2692,27 +2755,45 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             durable = new JSONObject(accepted.getJSONObject("parameters").toString());
             durable.put("_recoveryPlanId", recoveryId);
         }
+        if (vectorEdit) {
+            JSONArray fields = durable.names();
+            if (fields != null) for (int index = 0; index < fields.length(); index++) {
+                String field = fields.getString(index);
+                if (!field.startsWith("_") && !"projectId".equals(field) && !"expectedRevision".equals(field)
+                        && !"clipId".equals(field) && !"actions".equals(field))
+                    throw new IllegalArgumentException("Unknown cel stroke edit field: " + field);
+            }
+            if (!durable.has("expectedRevision"))
+                throw new IllegalArgumentException("Cel stroke edits require the exact inspected expectedRevision");
+        }
         ProjectStore.Project project = resolveExistingProject(durable.optString("projectId", ""));
         long expectedRevision = titleInteger(durable, "expectedRevision", project.revision, 0L, 9007199254740991L);
-        JSONObject drawing = AnimationCelFactory.validateDrawing(durable.getJSONObject("drawing"));
+        JSONObject drawing = vectorEdit ? null : AnimationCelFactory.validateDrawing(durable.getJSONObject("drawing"));
+        // Schema-only admission never reads the live drawing or applies indices.
+        // The factory checks committed replay before source revision/document access.
+        JSONArray actions = vectorEdit ? AnimationCelVectorEdits.validateActions(durable.getJSONArray("actions")) : null;
         JSONObject exposure = durable.has("exposure") ? new JSONObject(durable.getJSONObject("exposure").toString())
                 : "cel_create".equals(action) ? new JSONObject() : null;
-        String clipId = "cel_update".equals(action) ? durable.getString("clipId") : "";
+        String clipId = "cel_create".equals(action) ? "" : durable.getString("clipId");
         String stableRequestKey = durable.optString("_mcpCommandId", "");
         if (stableRequestKey.isEmpty()) {
             stableRequestKey = "native-cel:" + UUID.randomUUID();
             durable.put("_mcpCommandId", stableRequestKey);
         }
-        durable.put("projectId", project.id).put("expectedRevision", expectedRevision).put("drawing", drawing);
+        durable.put("projectId", project.id).put("expectedRevision", expectedRevision);
+        if (vectorEdit) durable.put("actions", actions);
+        else durable.put("drawing", drawing);
         if ("cel_create".equals(action)) durable.put("exposure", exposure);
         final JSONObject parameters = durable;
         final String requestKey = stableRequestKey;
-        JobManager.Job job = submitRecoverableLight(action, parameters, project.id, "Create animation cel", state -> {
+        JobManager.Job job = submitRecoverableLight(action, parameters, project.id, vectorEdit ? "Edit cel vector strokes" : "Create animation cel", state -> {
             if (protocol.isControlPaused() || !isAllowed(action, parameters))
                 throw new IllegalStateException("Cel drawing is blocked by pause or the owner's permission scope");
             checkpoint(state, "Animation cel", "Rasterizing immutable owned paint strokes", 10, project.id);
             AnimationCelFactory factory = new AnimationCelFactory(this, store);
-            AnimationCelFactory.Result created = "cel_create".equals(action)
+            AnimationCelFactory.Result created = vectorEdit
+                    ? factory.editStrokes(project.id, expectedRevision, clipId, actions, requestKey)
+                    : "cel_create".equals(action)
                     ? factory.create(project.id, expectedRevision, drawing, exposure, requestKey)
                     : factory.update(project.id, expectedRevision, clipId, drawing, exposure, requestKey);
             ProjectStore.Clip committedClip = created.project.clip(created.clipId);
@@ -4688,6 +4769,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             case "create_title":
             case "cel_create":
             case "cel_update":
+            case "cel_edit_strokes":
             case "generate_voice":
             case "run_creative_graph":
             case "install_model_pack":
@@ -4936,7 +5018,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             out.put("validatedMedia", true);
         }
 
-        if ("cel_create".equals(action) || "cel_update".equals(action)) {
+        if ("cel_create".equals(action) || "cel_update".equals(action) || "cel_edit_strokes".equals(action)) {
             ProjectStore.Project celProject = store.get(projectId);
             String clipId = jobResult == null ? "" : jobResult.optString("clipId", "");
             String assetId = jobResult == null ? "" : jobResult.optString("assetId", "");
@@ -5304,6 +5386,8 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             case "create_title": return "Creating editable title";
             case "cel_create": return "Drawing animation cel";
             case "cel_update": return "Redrawing animation cel";
+            case "cel_edit_strokes": return "Editing cel vector strokes";
+            case "rig_curve": return "Reading rig animation curve";
             case "metadata_mirror_sync": return "Syncing project metadata";
             case "metadata_mirror_apply": return "Applying mirrored metadata";
             case "metadata_mirror_retry": return "Acknowledging native metadata";

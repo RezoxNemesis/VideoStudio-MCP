@@ -91,9 +91,10 @@ public final class AnimationRig2D {
     public Frame sampleClip(long outputLocalMs){
         return sample(clipAuthoredTimeMs(outputLocalMs));
     }
-    private long clipAuthoredTimeMs(long outputLocalMs){
-        return AnimationClock.authoredTimeUs(AnimationClock.microseconds(outputLocalMs),
-                AnimationClock.microseconds(clipOffsetMs),AnimationClock.microseconds(clipDurationMs))/1000L;
+    /** Exact held authored time used by all clip samplers, including the rig's bounded time domain. */
+    public long clipAuthoredTimeMs(long outputLocalMs){
+        return boundedTime(AnimationClock.authoredTimeUs(AnimationClock.microseconds(outputLocalMs),
+                AnimationClock.microseconds(clipOffsetMs),AnimationClock.microseconds(clipDurationMs))/1000L);
     }
 
     /** Authored FK channels before IK, for key defaults; this never bakes the solved pose. */
@@ -103,6 +104,47 @@ public final class AnimationRig2D {
         try{for(int index=0;index<bones.length;index++)result.put(bones[index].id,channels(values[index]));}
         catch(Exception error){throw invalid("Authored FK channels cannot be described",error);}
         return result;
+    }
+
+    /** Raw curve value and exact influence of one fixed-time key, before channel clamping. */
+    public static final class ChannelSample {
+        public final double rawValue,keyInfluence;
+        private ChannelSample(double rawValue,double keyInfluence){this.rawValue=rawValue;this.keyInfluence=keyInfluence;}
+    }
+
+    /** Cached curve sampling for graph controls, without geometry or JSON allocation. */
+    public double authoredChannel(String boneId,String channel,long authoredTimeMs){
+        return authoredBoneValue(bone(boneId),fkChannel(channel),boundedTime(authoredTimeMs));
+    }
+    public double authoredIkChannel(String ikId,String channel,long authoredTimeMs){
+        return authoredIkValue(ikTarget(ikId),ikChannel(channel),boundedTime(authoredTimeMs));
+    }
+    public double authoredChannelClip(String boneId,String channel,long outputLocalMs){return authoredChannel(boneId,channel,clipAuthoredTimeMs(outputLocalMs));}
+    public double authoredIkChannelClip(String ikId,String channel,long outputLocalMs){return authoredIkChannel(ikId,channel,clipAuthoredTimeMs(outputLocalMs));}
+    /** Detached [minimum, maximum] for one supported scalar graph channel. */
+    public static double[] channelBounds(String kind,String channel){
+        if("bone".equals(kind)){int index=fkChannel(channel);return new double[]{fkFloor(index),fkCeiling(index)};}
+        if("ik".equals(kind)){int index=ikChannel(channel);return new double[]{ikFloor(index),ikCeiling(index)};}
+        throw invalid("Unknown authored channel kind: "+kind,null);
+    }
+    /** Value-only drafts keep key time/easing fixed; clamp rawValue + keyInfluence * delta. */
+    public ChannelSample authoredChannelSample(String boneId,String channel,long authoredTimeMs,long keyAtMs){
+        return curves[bone(boneId)][fkChannel(channel)].sample(boundedTime(authoredTimeMs),keyAtMs);
+    }
+    public ChannelSample authoredIkChannelSample(String ikId,String channel,long authoredTimeMs,long keyAtMs){
+        return ikTarget(ikId).curves[ikChannel(channel)].sample(boundedTime(authoredTimeMs),keyAtMs);
+    }
+    private static int fkChannel(String channel){
+        for(int index=0;index<CHANNELS.length;index++)if(CHANNELS[index].equals(channel))return index;
+        throw invalid("Unknown authored FK channel: "+channel,null);
+    }
+    private static int ikChannel(String channel){
+        int index="targetX".equals(channel)?0:"targetY".equals(channel)?1:"mix".equals(channel)?2:-1;
+        if(index<0)throw invalid("Unknown authored IK channel: "+channel,null);return index;
+    }
+    private Ik ikTarget(String id){
+        for(Ik target:ik)if(target.id.equals(id))return target;
+        throw invalid("Unknown IK chain: "+id,null);
     }
 
     private AnimationRig2D(JSONObject source,float sourceAspect)throws Exception{
@@ -221,10 +263,10 @@ public final class AnimationRig2D {
     }
 
     public Frame sample(long authoredTimeMs){
-        long time=Math.max(0,Math.min(MAX_TIME_MS,authoredTimeMs));double[][] values=authoredValues(time);
+        long time=boundedTime(authoredTimeMs);double[][] values=authoredValues(time);
         Affine[] current=matrices(values);boolean[] clamped=new boolean[ik.length];float[] targets=new float[ik.length*2],mixes=new float[ik.length];String[] ikIds=new String[ik.length];
         for(int index=0;index<ik.length;index++){
-            Ik target=ik[index];ikIds[index]=target.id;double tx=clamp(target.curves[0].at(time),-2,3),ty=clamp(target.curves[1].at(time),-2,3),mix=clamp(target.curves[2].at(time),0,1);
+            Ik target=ik[index];ikIds[index]=target.id;double tx=authoredIkValue(target,0,time),ty=authoredIkValue(target,1,time),mix=authoredIkValue(target,2,time);
             targets[index*2]=(float)tx;targets[index*2+1]=(float)ty;mixes[index]=(float)mix;if(mix<=0)continue;
             Bone root=bones[target.root],child=bones[target.child];Affine parent=root.parent<0?Affine.identity():current[root.parent];Affine inverse=parent.inverse();
             double[] head=inverse.point(current[target.root].tx,current[target.root].ty),goal=inverse.point(tx*aspect,ty);
@@ -262,13 +304,21 @@ public final class AnimationRig2D {
     }
 
     private double[][] authoredValues(long authoredTimeMs){
-        long time=Math.max(0,Math.min(MAX_TIME_MS,authoredTimeMs));double[][] values=new double[bones.length][5];
+        long time=boundedTime(authoredTimeMs);double[][] values=new double[bones.length][5];
         for(int index=0;index<bones.length;index++)for(int channel=0;channel<5;channel++){
-            double value=curves[index][channel].at(time);
-            values[index][channel]=clamp(value,channel==0?-36000:channel>=3?.05:-2,channel==0?36000:channel>=3?20:2);
+            values[index][channel]=authoredBoneValue(index,channel,time);
         }
         return values;
     }
+    private static long boundedTime(long authoredTimeMs){return Math.max(0,Math.min(MAX_TIME_MS,authoredTimeMs));}
+    private double authoredBoneValue(int bone,int channel,long time){
+        return clamp(curves[bone][channel].at(time),fkFloor(channel),fkCeiling(channel));
+    }
+    private static double authoredIkValue(Ik target,int channel,long time){return clamp(target.curves[channel].at(time),ikFloor(channel),ikCeiling(channel));}
+    private static double fkFloor(int channel){return channel==0?-36000:channel>=3?.05:-2;}
+    private static double fkCeiling(int channel){return channel==0?36000:channel>=3?20:2;}
+    private static double ikFloor(int channel){return channel==2?0:-2;}
+    private static double ikCeiling(int channel){return channel==2?1:3;}
 
     public JSONObject describeClip(long outputLocalMs){return describe(sampleClip(outputLocalMs));}
     public JSONObject describe(long authoredTimeMs){return describe(sample(authoredTimeMs));}
@@ -328,9 +378,30 @@ public final class AnimationRig2D {
         final double base;final List<Key> keys=new ArrayList<>();Curve(double base){this.base=base;}void sort(){keys.sort(Comparator.comparingLong(key->key.at));}
         double at(long time){
             if(keys.isEmpty())return base;Key first=keys.get(0);if(time<first.at)return first.at==0?first.value:base+(first.value-base)*time/(double)first.at;
-            int low=0,high=keys.size();while(low<high){int mid=low+(high-low)/2;if(keys.get(mid).at<=time)low=mid+1;else high=mid;}
-            Key left=keys.get(low-1);if(low==keys.size())return left.value;Key right=keys.get(low);
+            int leftIndex=indexAtOrBefore(time);Key left=keys.get(leftIndex);if(leftIndex==keys.size()-1)return left.value;Key right=keys.get(leftIndex+1);
             double fraction=(time-left.at)/(double)(right.at-left.at);return left.value+(right.value-left.value)*left.ease.at(fraction);
+        }
+        private int indexAtOrBefore(long time){
+            int low=0,high=keys.size();while(low<high){int mid=low+(high-low)/2;if(keys.get(mid).at<=time)low=mid+1;else high=mid;}
+            return low-1;
+        }
+        ChannelSample sample(long time,long keyAtMs){
+            if(keyAtMs==-1)return new ChannelSample(at(time),0);
+            int selected=indexAtOrBefore(keyAtMs);
+            if(keyAtMs<0||selected<0||keys.get(selected).at!=keyAtMs)
+                throw invalid("The selected authored channel has no key at "+keyAtMs+" ms",null);
+            double influence=0;Key first=keys.get(0);
+            if(time<first.at)influence=selected==0?time/(double)first.at:0;
+            else{
+                int leftIndex=indexAtOrBefore(time);
+                if(leftIndex==keys.size()-1)influence=selected==leftIndex?1:0;
+                else{
+                    Key left=keys.get(leftIndex),right=keys.get(leftIndex+1);
+                    double eased=left.ease.at((time-left.at)/(double)(right.at-left.at));
+                    influence=selected==leftIndex?1-eased:selected==leftIndex+1?eased:0;
+                }
+            }
+            return new ChannelSample(at(time),influence);
         }
         double[] extent(double floor,double ceiling){
             double min=base,max=base;

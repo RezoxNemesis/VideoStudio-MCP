@@ -63,6 +63,51 @@ public class AnimationRig2DTest {
         project.clip("clip").effects.put("animationOffsetMs",-500);
         assertEquals(0,AnimationRig2D.compileForClip(project.clip("clip"),1).authoredPoseClip(0).getJSONObject("upper").getDouble("rotation"),0);
     }
+    @Test public void scalarGraphChannelsMatchAuthoredCurvesAndRawIkTargetsWithoutSilentUnknownFallback()throws Exception{
+        ProjectStore.Project project=project();key(project,"upper",0,0);key(project,"upper",1000,90);ik(project,2,.5);
+        AnimationRig2D compiled=AnimationRig2D.compile(rig(project));
+        for(long at:new long[]{-1,0,500,1000,AnimationRig2D.MAX_TIME_MS+1}){
+            JSONObject authored=compiled.authoredPose(at).getJSONObject("upper");
+            for(String channel:new String[]{"rotation","x","y","scaleX","scaleY"})assertEquals(authored.getDouble(channel),compiled.authoredChannel("upper",channel,at),0);
+            assertEquals(2,compiled.authoredIkChannel("hand","targetX",at),0);
+            assertEquals(.5,compiled.authoredIkChannel("hand","targetY",at),0);
+            assertEquals(1,compiled.authoredIkChannel("hand","mix",at),0);
+        }
+        assertThrows(IllegalArgumentException.class,()->compiled.authoredChannel("missing","rotation",0));
+        assertThrows(IllegalArgumentException.class,()->compiled.authoredChannel("upper","translateX",0));
+        assertThrows(IllegalArgumentException.class,()->compiled.authoredIkChannel("missing","mix",0));
+        assertThrows(IllegalArgumentException.class,()->compiled.authoredIkChannel("hand","rotation",0));
+        assertArrayEquals(new double[]{.05,20},AnimationRig2D.channelBounds("bone","scaleX"),0);
+        assertArrayEquals(new double[]{0,1},AnimationRig2D.channelBounds("ik","mix"),0);
+        assertThrows(IllegalArgumentException.class,()->AnimationRig2D.channelBounds("unknown","mix"));
+    }
+    @Test public void fixedKeyInfluenceMatchesActualCurveEditsBeforeClampingIncludingBezierOvershoot()throws Exception{
+        JSONObject source=rig(project());source.put("keyframes",new JSONArray()
+                .put(new JSONObject().put("boneId","upper").put("atMs",1000).put("scaleX",10).put("ease","cubic_bezier").put("bezier",new JSONArray().put(.5).put(4).put(.5).put(4)))
+                .put(new JSONObject().put("boneId","upper").put("atMs",2000).put("scaleX",20)));
+        AnimationRig2D original=AnimationRig2D.compile(source);JSONObject changed=new JSONObject(source.toString());
+        changed.getJSONArray("keyframes").getJSONObject(1).put("scaleX",10);AnimationRig2D edited=AnimationRig2D.compile(changed);
+        for(long at:new long[]{0,500,1000,1500,2000,3000}){
+            AnimationRig2D.ChannelSample sample=original.authoredChannelSample("upper","scaleX",at,2000);
+            assertEquals(edited.authoredChannel("upper","scaleX",at),Math.max(.05,Math.min(20,sample.rawValue+sample.keyInfluence*(10-20))),.00001);
+        }
+        AnimationRig2D.ChannelSample overshoot=original.authoredChannelSample("upper","scaleX",1500,2000);
+        assertTrue(overshoot.rawValue>20);assertTrue(overshoot.keyInfluence>1);
+        assertEquals(.5,original.authoredChannelSample("upper","scaleX",500,1000).keyInfluence,0);
+        assertEquals(0,original.authoredChannelSample("upper","scaleX",500,-1).keyInfluence,0);
+        assertThrows(IllegalArgumentException.class,()->original.authoredChannelSample("upper","rotation",500,1000));
+        assertThrows(IllegalArgumentException.class,()->original.authoredChannelSample("upper","scaleX",500,1500));
+        ProjectStore.Project project=project();ik(project,2,.5);JSONObject withIk=rig(project);
+        withIk.getJSONArray("ik").getJSONObject(0).put("keyframes",new JSONArray()
+                .put(new JSONObject().put("atMs",1000).put("targetX",1))
+                .put(new JSONObject().put("atMs",2000).put("targetX",2)));
+        AnimationRig2D ikOriginal=AnimationRig2D.compile(withIk);JSONObject ikChanged=new JSONObject(withIk.toString());
+        ikChanged.getJSONArray("ik").getJSONObject(0).getJSONArray("keyframes").getJSONObject(1).put("targetX",0);
+        AnimationRig2D ikEdited=AnimationRig2D.compile(ikChanged);
+        AnimationRig2D.ChannelSample ikSample=ikOriginal.authoredIkChannelSample("hand","targetX",1500,2000);
+        assertEquals(ikEdited.authoredIkChannel("hand","targetX",1500),Math.max(-2,Math.min(3,ikSample.rawValue+ikSample.keyInfluence*(0-2))),.00001);
+        assertThrows(IllegalArgumentException.class,()->ikOriginal.authoredIkChannelSample("hand","mix",1500,2000));
+    }
     @Test public void unreachableIkClampsReachAndReportsIt()throws Exception{
         ProjectStore.Project project=project();ik(project,2,.5);AnimationRig2D.Frame frame=AnimationRig2D.compile(rig(project)).sample(0);
         assertTrue(frame.ikClamped[0]);assertEquals(.8,frame.bonePositions[6],.00001);assertEquals(.5,frame.bonePositions[7],.00001);
@@ -74,6 +119,9 @@ public class AnimationRig2DTest {
         clip.effects.put("animationOffsetMs",-500);AnimationRig2D compiled=AnimationRig2D.compileForClip(clip,1);
         assertEquals(0,compiled.sampleClip(0).poseJson().getJSONObject("upper").getDouble("rotation"),0);
         assertEquals(22.5,compiled.sampleClip(750).poseJson().getJSONObject("upper").getDouble("rotation"),.00001);
+        assertEquals(0,compiled.clipAuthoredTimeMs(0));assertEquals(250,compiled.clipAuthoredTimeMs(750));
+        assertEquals(1000,compiled.clipAuthoredTimeMs(5000));
+        assertEquals(22.5,compiled.authoredChannelClip("upper","rotation",750),.00001);
     }
     @Test public void retimeCollisionMergesSparseChannelsRatherThanDroppingThem()throws Exception{
         ProjectStore.Project project=project();JSONObject rig=rig(project);rig.put("keyframes",new JSONArray()

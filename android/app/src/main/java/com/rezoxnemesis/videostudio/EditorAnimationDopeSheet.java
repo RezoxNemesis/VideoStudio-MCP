@@ -46,6 +46,8 @@ final class EditorAnimationDopeSheet extends LinearLayout {
         long selectedAtMs=-1;
         double pixelsPerMs,scrollX,scrollY;
         boolean authoredView;
+        boolean graphVisible=true;
+        final EditorRigValueGraph.Viewport graphViewport=new EditorRigValueGraph.Viewport();
         final Set<String> expanded=new HashSet<>();
     }
 
@@ -66,6 +68,9 @@ final class EditorAnimationDopeSheet extends LinearLayout {
     private final List<Row> rows=new ArrayList<>();
     private final Map<String,Group> groupLookup=new HashMap<>();
     private final LaneView lanes;
+    private final EditorRigValueGraph valueGraph;
+    private final LinearLayout graphSection;
+    private String graphSourceIdentity="";
     private final TextView selectionText,clockText;
     private final Button seekButton,moveButton,deleteButton,addButton,editButton;
     private long outputLocalMs;
@@ -112,12 +117,23 @@ final class EditorAnimationDopeSheet extends LinearLayout {
 
         clockText=text("");addView(clockText);
         lanes=new LaneView();
+        valueGraph=new EditorRigValueGraph(activity,state.graphViewport,new EditorRigValueGraph.Listener(){
+            @Override public void onSelect(long atMs){state.selectedAtMs=atMs;refreshDetails();lanes.invalidate();if(inClip(atMs))seekSelected();}
+            @Override public boolean onBeginDrag(long atMs){Group group=selectedGroup();Key key=group==null?null:group.key(atMs);if(locked||key==null||!key.json.has(state.channel))return false;outputLocalMs=listener.pauseAndGetOutputLocalMs();playing=false;refreshDetails();return true;}
+            @Override public boolean onCommit(long atMs,double value){return commitGraphValue(atMs,value);}
+            @Override public void onNotice(String message){notice(message);}
+        });
+        graphSection=new LinearLayout(activity);graphSection.setOrientation(VERTICAL);
         LinearLayout viewTools=new LinearLayout(activity);
         CheckBox authored=new CheckBox(activity);authored.setText("Whole authored clock");authored.setTextColor(Color.WHITE);authored.setTextSize(10);authored.setChecked(state.authoredView);
         authored.setOnCheckedChangeListener((button,checked)->{state.authoredView=checked;state.scrollX=0;lanes.fit();refreshDetails();});
         viewTools.addView(authored,new LayoutParams(0,-2,1));
         viewTools.addView(button("−",()->lanes.zoom(.75)));viewTools.addView(button("＋",()->lanes.zoom(1.33)));viewTools.addView(button("Fit",()->lanes.fit()));addView(viewTools);
+        Button graphToggle=button(state.graphVisible?"Value graph ●":"Value graph",()->{});graphToggle.setOnClickListener(view->{valueGraph.discardDraft();state.graphVisible=!state.graphVisible;graphToggle.setText(state.graphVisible?"Value graph ●":"Value graph");graphSection.setVisibility(state.graphVisible?VISIBLE:GONE);});addView(graphToggle);
         addView(lanes,new LayoutParams(-1,dp(226)));
+        HorizontalScrollView graphTools=new HorizontalScrollView(activity);graphTools.setHorizontalScrollBarEnabled(false);LinearLayout graphCommands=new LinearLayout(activity);
+        graphCommands.addView(button("Graph Fit",valueGraph::fit));graphCommands.addView(button("Time −",()->valueGraph.zoomTime(.75)));graphCommands.addView(button("Time ＋",()->valueGraph.zoomTime(1.33)));graphCommands.addView(button("Value −",()->valueGraph.zoomValue(.75)));graphCommands.addView(button("Value ＋",()->valueGraph.zoomValue(1.33)));graphTools.addView(graphCommands);graphSection.addView(graphTools);
+        graphSection.addView(valueGraph,new LayoutParams(-1,dp(224)));graphSection.addView(text("Authored values before IK. Drag an existing channel key vertically; release saves one edit. The graph is sampled up to 256 points, including visible key steps when space permits. Drafts change this graph only; time edits use Move whole key."));graphSection.setVisibility(state.graphVisible?VISIBLE:GONE);addView(graphSection);
         selectionText=text("");selectionText.setMinHeight(dp(35));addView(selectionText);
         HorizontalScrollView commands=new HorizontalScrollView(activity);commands.setHorizontalScrollBarEnabled(false);LinearLayout commandRow=new LinearLayout(activity);
         addButton=button("＋ Key at playhead",this::addKeyDialog);commandRow.addView(addButton);
@@ -175,6 +191,30 @@ final class EditorAnimationDopeSheet extends LinearLayout {
         if(moveButton!=null)moveButton.setEnabled(key!=null&&!locked);
         if(deleteButton!=null)deleteButton.setEnabled(key!=null&&!locked);
         if(editButton!=null)editButton.setEnabled(key!=null&&!locked);
+        refreshValueGraph();
+    }
+
+    private void refreshValueGraph(){
+        if(valueGraph==null)return;Group group=selectedGroup();String channel=state.channel;
+        if(group==null||channel.isEmpty()){graphSourceIdentity="";valueGraph.setSource(null);return;}
+        String identity=project.id+":"+clip.id+":"+project.revision+":"+group.identity()+":"+channel+":"+state.authoredView;
+        if(!identity.equals(graphSourceIdentity)){
+            graphSourceIdentity=identity;List<EditorRigValueGraph.Key> keys=new ArrayList<>();String previousEase="linear";
+            for(Key key:group.keys)if(key.json.has(channel)){keys.add(new EditorRigValueGraph.Key(key.atMs,key.json.optDouble(channel),"step".equals(previousEase)||"hold".equals(previousEase)));previousEase=key.json.optString("ease","linear");}
+            double[] bounds=channelBounds(group,channel);final Group sampledGroup=group;final String sampledChannel=channel;
+            String viewportIdentity=project.id+":"+clip.id+":"+group.identity()+":"+channel+":"+state.authoredView;
+            valueGraph.setSource(new EditorRigValueGraph.Source(identity,viewportIdentity,group.name+" · "+channel,clockDuration(),state.authoredView?0:offsetMs,authoredDurationMs,bounds[0],bounds[1],locked,keys,
+                    (atMs,keyAtMs)->"bone".equals(sampledGroup.kind)?compiled.authoredChannelSample(sampledGroup.id,sampledChannel,atMs,keyAtMs):compiled.authoredIkChannelSample(sampledGroup.id,sampledChannel,atMs,keyAtMs)));
+        }
+        valueGraph.setSelectedKey(state.selectedAtMs);valueGraph.setPlayhead(state.authoredView?Math.max(0,Math.min(authoredDurationMs,rawAuthored(outputLocalMs))):outputLocalMs,playing);
+    }
+
+    private boolean commitGraphValue(long atMs,double value){
+        Group group=selectedGroup();Key existing=group==null?null:group.key(atMs);String channel=state.channel;
+        if(locked||existing==null||channel.isEmpty()||!existing.json.has(channel))return false;
+        try{validateValue(group,channel,value);JSONObject key=new JSONObject(existing.json.toString());key.put(channel,value);JSONObject args=json("clipId",clip.id,"keyframe",key);if("ik".equals(group.kind))args.put("ikId",group.id);
+            return commit("bone".equals(group.kind)?"set_keyframe":"set_ik_keyframe",args);
+        }catch(Exception|OutOfMemoryError error){notice(error.getMessage()==null?"Animation graph memory is unavailable":error.getMessage());return false;}
     }
 
     private String sparseDescription(Group group,JSONObject key){StringBuilder text=new StringBuilder();for(String channel:group.channels)if(key.has(channel)){if(text.length()>0)text.append(" · ");text.append(channel).append(' ').append(String.format(Locale.US,"%.3f",key.optDouble(channel)));}text.append(" · ").append(key.optString("ease","linear"));return text.toString();}
@@ -247,7 +287,8 @@ final class EditorAnimationDopeSheet extends LinearLayout {
         AnimationRigEdits.apply(candidate,operation,args);return listener.onCommit(project.id,project.revision,operation,args);
     }catch(Exception|OutOfMemoryError error){notice(error.getMessage()==null?"Animation preview memory is unavailable":error.getMessage());return false;}}
 
-    private static void validateValue(Group group,String channel,double value){double min,max;if("bone".equals(group.kind)){min="rotation".equals(channel)?-36000:channel.startsWith("scale")?.05:-2;max="rotation".equals(channel)?36000:channel.startsWith("scale")?20:2;}else{min="mix".equals(channel)?0:-2;max="mix".equals(channel)?1:3;}if(!Double.isFinite(value)||value<min||value>max)throw new IllegalArgumentException(channel+" must be "+min+" to "+max);}
+    private static double[] channelBounds(Group group,String channel){return "bone".equals(group.kind)?new double[]{"rotation".equals(channel)?-36000:channel.startsWith("scale")?.05:-2,"rotation".equals(channel)?36000:channel.startsWith("scale")?20:2}:new double[]{"mix".equals(channel)?0:-2,"mix".equals(channel)?1:3};}
+    private static void validateValue(Group group,String channel,double value){double[] bounds=channelBounds(group,channel);if(!Double.isFinite(value)||value<bounds[0]||value>bounds[1])throw new IllegalArgumentException(channel+" must be "+bounds[0]+" to "+bounds[1]);}
 
     private final class LaneView extends View {
         private final Paint paint=new Paint(Paint.ANTI_ALIAS_FLAG);

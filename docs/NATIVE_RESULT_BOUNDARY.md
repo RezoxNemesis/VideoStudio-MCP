@@ -35,6 +35,12 @@ project inventories do not inflate the single device metadata storage value.
 `app_rig_describe` includes the validated complete rig definition by default
 (maximum 256 KiB), separately from sampled state. `includeDefinition:false` reads
 compact diagnostics. `app_cel_describe` returns the real bounded stroke document.
+`app_cel_edit_strokes` queues only its strict 32 KiB action batch and returns the
+same small verified generation receipt as cel redraw; it does not transport PNG
+bytes or duplicate the vector document inside its completion result.
+`app_rig_curve` returns at most 256 scalar samples, their authored/request clocks,
+and declared/sample bounds. It uses the compiled channel evaluator without
+returning mesh geometry or duplicating the complete rig definition.
 Rig sampled `authoredPose` contains local FK values before IK, while the sampled
 bone/IK diagnostics contain the solved pose. Key edits can set
 `replaceKeyframe:true` to remove omitted channels in one complete sparse-row

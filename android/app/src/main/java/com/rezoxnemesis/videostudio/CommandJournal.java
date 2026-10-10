@@ -189,7 +189,7 @@ public final class CommandJournal {
 
     private static boolean repeatableInspection(String action) {
         return "ping".equals(action) || "get_state".equals(action) || "project_state".equals(action)
-                || "rig_describe".equals(action) || "cel_describe".equals(action);
+                || "rig_describe".equals(action) || "rig_curve".equals(action) || "cel_describe".equals(action);
     }
 }
 

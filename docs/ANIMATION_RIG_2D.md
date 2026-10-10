@@ -96,6 +96,25 @@ before IK. Saving a key from these values preserves authored FK without baking
 the IK contribution a second time. Clip sampling uses the same signed held clock.
 `sample`, `describe` and `Frame.poseJson` retain solved geometry and pose values
 for rendering and intentional pose capture.
+Graph curves use `authoredChannel(boneId, channel, authoredMs)` and
+`authoredIkChannel(ikId, channel, authoredMs)` for direct compiled scalar sampling.
+They apply the same easing, time holds and channel clamps without mesh/JSON
+allocation; unknown IDs and channel names reject explicitly. IK graph targets
+remain authored target coordinates before reach clamping.
+`clipAuthoredTimeMs(outputLocalMs)` exposes that same signed held conversion;
+`authoredChannelClip` and `authoredIkChannelClip` combine it with scalar sampling
+for native/MCP output-local graph queries. The compiled rig is reused across all
+bounded query samples.
+`channelBounds(kind, channel)` returns a detached minimum/maximum pair from the
+same scalar renderer limits (`kind` is `bone` or `ik`).
+For a value-only key drag, `authoredChannelSample(..., authoredMs, keyAtMs)` and
+`authoredIkChannelSample` return immutable `ChannelSample.rawValue` and
+`keyInfluence` from the exact interpolation segment. Cache these samples and
+preview `clamp(rawValue + keyInfluence * valueDelta)` with the channel's declared
+bounds. Clamping occurs after the contribution, including cubic overshoot.
+`keyAtMs=-1` samples without a draft key; other times require a key on that exact
+channel. The key's time and easing stay fixed. Time moves use the shared whole-row
+transaction and rebuild the graph cache.
 Sampled `Frame.ikIds` identifies the corresponding target/mix/clamp array entries;
 constraints evaluate in hierarchy order, which can differ from JSON array order.
 `apply_pose` with `atMs` writes FK keys at that authored point and zeroes IK mix

@@ -95,6 +95,26 @@ public final class AnimationCelFactory {
         return update(projectId, expectedRevision, clipId, drawing, null, stableRequestKey);
     }
 
+    /**
+     * Edit the accepted cel's vector document and publish one immutable redraw.
+     * Replay is checked before reading the current document: a recovered request
+     * must not apply a relative stroke edit a second time to its own output.
+     */
+    public Result editStrokes(String projectId, long expectedRevision, String clipId,
+                              JSONArray actions, String stableRequestKey) throws Exception {
+        identity(projectId); identity(clipId); identity(stableRequestKey); exactRevision(expectedRevision);
+        synchronized (PUBLICATION_LOCK) {
+            ProjectStore.Project before = requireProject(projectId);
+            String assetId = stableId(projectId, "update", stableRequestKey, "asset");
+            Result reused = replay(before, assetId, clipId, stableRequestKey);
+            if (reused != null) return reused;
+            revision(before, expectedRevision);
+            JSONObject drawing = AnimationCelEdits.drawingForClip(before, clipId);
+            JSONObject edited = AnimationCelVectorEdits.apply(drawing, actions);
+            return update(projectId, expectedRevision, clipId, edited, stableRequestKey);
+        }
+    }
+
     /** Optional hold settings are committed with the redraw, never as a second owner revision. */
     public Result update(String projectId, long expectedRevision, String clipId, JSONObject drawing,
                          JSONObject exposureSettings, String stableRequestKey) throws Exception {
@@ -108,6 +128,7 @@ public final class AnimationCelFactory {
             ProjectStore.Clip selected = before.clip(clipId);
             if (selected == null) throw new IllegalArgumentException("Cel exposure no longer exists");
             ProjectStore.Asset previous = AnimationCelEdits.requireCelAsset(before, selected.assetId);
+            ProjectLinkedEdits.requireUnlocked(before, ProjectLinkedEdits.members(before, selected));
             String celId = previous.importMetadata.getJSONObject("animationCel").getString("celId");
             RenderedCel rendered = renderCel(projectId, celId, previous.id, drawing, "update:" + stableRequestKey);
             JSONObject options = exposureSettings == null ? null : new JSONObject(exposureSettings.toString());

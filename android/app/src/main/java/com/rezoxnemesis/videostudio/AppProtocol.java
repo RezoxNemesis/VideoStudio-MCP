@@ -406,12 +406,15 @@ public final class AppProtocol {
         meta.put("explicitProgramRangeExport", true);
         meta.put("durableMediaStorePublication", true);
         meta.put("native2dRigAuthoring", true);
+        meta.put("native2dRigCurveSampling", true);
+        meta.put("native2dRigCurveMaxSamples", 256);
         meta.put("nativeCubicMotionPaths", true);
         meta.put("native2dRigMaxBones", 24);
         meta.put("native2dRigMaxVertices", 512);
         meta.put("native2dRigMaxTriangles", 1024);
         meta.put("native2dRigMaxKeys", 2048);
         meta.put("nativeAnimationCels", true);
+        meta.put("nativeCelVectorEditing", true);
         meta.put("nativeCelDrawingMaxBytes", AnimationCelFactory.MAX_DRAWING_BYTES);
         meta.put("nativeCelDrawingMaxPoints", AnimationCelFactory.MAX_POINTS);
         meta.put("nativeCelDrawingMaxDimension", AnimationCelFactory.MAX_DIMENSION);

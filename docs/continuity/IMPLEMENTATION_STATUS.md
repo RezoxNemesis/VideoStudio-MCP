@@ -233,6 +233,16 @@ and preserve signing/identity continuity.
   with aspect-correct radius, signed influence changes, explicit falloff and four
   normalized influences per vertex. A separate bind canvas uses the real source
   artwork and rest mesh so posed monitor positions cannot misdirect the brush.
+- The selected dope-sheet channel has an actual value graph with bounded
+  fit/pan/zoom and vertical key-value editing. At most 256 cached samples use
+  the compiled FK-before-IK or target/mix evaluator, including raw Bezier
+  overshoot and exact fixed-key influence before channel clamping. Release
+  changes one value at its existing time in one captured-revision transaction;
+  unrelated sparse channels and easing remain intact. Drafts affect only the
+  graph; time moves remain numeric, and dense curves require zoom for detail.
+  `app_rig_curve` reads up to 256 distinct scalar samples from that same compiled
+  evaluator, with exact held clip/authored clocks, revision and declared bounds.
+  It is read-only project inspection; sampled extrema are not analytic extrema.
 - Spatial cubic paths have editable anchors and tangent handles, optional tangent
   orientation and additive/replacement positioning. Cubic Bezier easing solves X
   before sampling Y; visual, camera, audio, rig and IK curves use shared controls.
@@ -242,6 +252,14 @@ and preserve signing/identity continuity.
   immutable PNG generation and atomically registers/redraws an exposure. Owner
   and MCP use the same bounded vector schema, renderer and exact revision checks;
   older exposures, undo and snapshots retain their original image generations.
+- Shared cel-vector operations edit style, point position/pressure, whole-stroke
+  translation and deletion, or point insertion/removal. Strict sequential batches
+  preserve the input on failure and reject unknown IDs, out-of-frame translation
+  and unchanged documents. Native MCP publishes a new immutable redraw at the
+  exact revision; committed replay is checked before a relative edit reads its
+  source, so recovered point moves do not run twice. The owner canvas retains
+  edited vectors before replacement raster allocation and bounds its local undo
+  history; a failed preview leaves valid vectors available for retry.
 - Eight bounded private drawing drafts coalesce writes and durably acknowledge
   Save/Keep before closing. Loading and final retention freeze vector mutations;
   Undo stages a detached drawing before bitmap allocation, and failed previews
@@ -305,7 +323,7 @@ and preserve signing/identity continuity.
 | A — editor | Main editing paths, linked A/V, roll/slip/slide, markers/play ranges and explicit pinned range export, waveforms, per-binding meters and bounded GPU image/title preview rebuilt in source | General groups, compound/nested clips, retime curves, broad tablet/accessibility layout, full preview/export/device behavior review, robust codec recovery and segmented resumable exports |
 | B — storage | Five SAF slots, immutable workspace/Vault archives, explicit original-source chunk archives up to 64 GiB with durable upload/restore intent; validated 360p/540p/720p source proxies | Independent OAuth/cloud connector adapters, quota APIs, multi-location source registry, actual large-media/provider recovery evidence, automatic adaptive proxy policy and storage policy |
 | C — MCP/offline | Stable v3 retained; metadata-only mirror and native reconciliation integration | Protocol-v4 negotiation/scope migration, actual cloud executor and media authorization, offline heavy execution, render/model result delivery and comprehensive reconciliation |
-| D — 2D animation | Hierarchical textured mesh rigs, connected two-link IK, reusable poses, authored FK/IK curves, spatial paths, Bezier easing, native paint/eraser cels, onion skins, exposure edits and explicit integer export cadence with matching owner/MCP source paths | Richer vector point/region editing and fill, sprite-sheet/import tooling, robust occlusion, optical-flow refinement and interpolation, temporal/style/identity locks, actual phone render/performance evidence |
+| D — 2D animation | Hierarchical textured mesh rigs, connected two-link IK, reusable poses, sparse dope sheet and value graph, spatial paths, Bezier easing, editable paint/eraser vectors, onion skins, exposure edits and explicit integer export cadence with matching owner/MCP source paths | Fill/closed vector paths/regions, sprite-sheet/import tooling, cross-project rig libraries and artwork parts, additional constraints, robust occlusion, optical-flow refinement and interpolation, temporal/style/identity locks, actual phone render/performance evidence |
 | E — generative models | Existing pack installer/registry and compute-plan metadata | Real executable model adapters, local/remote inference backends, generative I2V/T2V, continuation/regeneration, real upscaling/interpolation |
 | F — 3D/VFX | Existing procedural drawing and new supported 2D pixel effects | Real 3D runtime, glTF/FBX/USD import, rigging, lighting/materials/physics, particles, render passes, tracking/roto and node compositor |
 | G — audio/recap | Existing Android TTS plus gain/EQ/pan/gate/de-esser/compression/limiter and bounded delay/algorithmic reverb | ASR, transcript/word timing, voice registry and sentence regeneration, dialogue cleanup/denoise, ducking/sidechain, measured room convolution, master buses/loudness, lip sync and full recap production |
@@ -364,5 +382,8 @@ Include pre-IK unchanged key editing, sparse-row replacement, bounded brush
 normalization/collision/undo, EXIF bind coordinates and window-detach bitmap/draft
 cleanup, outbox reservation/backpressure and exact result acknowledgement,
 project paging across revision changes, and optional-field/depth validation.
+Include scalar curve inspection and graph cancellation/commit against exact FK/IK
+sampling, vector batch failure/replay, point-drag offsets/precision, mixed drawing
+undo and low-memory pre/post-install draft/raster recovery.
 Device checks must include the blank-monitor flows shown in the owner's recording and thermal/decoder/memory
 constraints. Newly authored import/mirror tests have not been run.
