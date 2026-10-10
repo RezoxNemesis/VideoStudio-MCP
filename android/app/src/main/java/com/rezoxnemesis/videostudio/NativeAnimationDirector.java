@@ -123,13 +123,14 @@ public final class NativeAnimationDirector {
             throw new IllegalArgumentException("Invalid animation plan");
         ProjectStore.Project output=store.create("Animation Director - " + source.name);
         output.sourcePrompt="native-animation-director: ordered authored frames, quality-safe direct playback";
+        java.util.HashSet<String> registered = new java.util.HashSet<>();
         for(int i=0;i<plan.sourceIds.size();i++) {
             ProjectStore.Asset asset=source.asset(plan.sourceIds.get(i));
             if(asset==null||asset.mime==null||!asset.mime.startsWith("image/"))
                 throw new IllegalArgumentException("Image asset unavailable in source");
             // Metadata reference is safe: neither the original asset nor
             // its URI is edited, deleted, rewritten, or moved.
-            output.assets.add(asset);
+            if(registered.add(asset.id)) output.assets.add(asset);
             ProjectStore.Clip clip=new ProjectStore.Clip();
             clip.id=UUID.randomUUID().toString();
             clip.assetId=asset.id;
@@ -140,9 +141,9 @@ public final class NativeAnimationDirector {
             clip.transition="none";
             clip.title="";
             clip.effects=new JSONObject();
-            clip.effects.put("poseInbetween",true); // short image timing, NOT claiming AI-generated pose
-            clip.effects.put("poseFps",plan.fps);
+            // Separate short image duration from actual AI pose synthesis.
             clip.effects.put("directorSequenceFrame",true);
+            clip.effects.put("poseFps",plan.fps);
             output.clips.add(clip);
         }
         store.save(output);
