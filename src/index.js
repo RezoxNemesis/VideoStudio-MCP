@@ -14,6 +14,21 @@ import LOCAL_VIDEO_DOWNLOAD_HTML from "./local-download.js";
 
 const JH = {"content-type":"application/json; charset=UTF-8","cache-control":"no-store"};
 const now = () => new Date().toISOString();
+const redactCommand = command => {
+  if(!command) return command;
+  const redact = (input,depth=0) => {
+    if(!input || typeof input!=="object" || depth>4) return input;
+    if(Array.isArray(input)) return input.map(v=>redact(v,depth+1));
+    const copy={};
+    for(const [key,value] of Object.entries(input)){
+      if(["base64","sourceUrl","downloadUrl","download_url","ownerKey","privateOwnerKey","authToken","accessToken"].includes(key))
+        copy[key]="[private command payload redacted]";
+      else copy[key]=value&&typeof value==="object"?redact(value,depth+1):value;
+    }
+    return copy;
+  };
+  return {...command, parameters:redact(command.parameters)};
+};
 const clean = (v,n=5000) => String(v ?? "").trim().slice(0,n);
 const reply = (x,s=200) => new Response(JSON.stringify(x),{status:s,headers:JH});
 const sha256Hex = async value => {
@@ -672,7 +687,7 @@ export class VideoStudioState extends DurableObject {
       },
       pendingNativeCommands:pending,
       waitingNative:!nativeFresh&&pending>0,
-      lastCommand:list[list.length-1]||null,
+      lastCommand:redactCommand(list[list.length-1]||null),
       galleryAccess:false
     };
   }
@@ -828,7 +843,7 @@ export class VideoStudioState extends DurableObject {
       connected:true,
       device:((({ownerHash,...safe})=>safe)(d)),
       pendingCommands:list.filter(c=>c.status==="queued"||c.status==="claimed"||c.status==="waiting_native").length,
-      lastCommand:list[list.length-1]||null,
+      lastCommand:redactCommand(list[list.length-1]||null),
       projectCount:Array.isArray(d.projects)?d.projects.length:0
     };
   }
@@ -912,8 +927,13 @@ export class VideoStudioState extends DurableObject {
     const k="app-v3-cl:"+deviceId, list=(await this.ctx.storage.get(k))||[], i=list.findIndex(c=>c.id===id);
     if(i<0) return null;
     const completedParameters={...(list[i].parameters||{})};
-    if(list[i].action==="import_attachment"&&completedParameters.sourceUrl){
-      completedParameters.sourceUrl="[expired temporary file URL removed]";
+    if(completedParameters.base64) completedParameters.base64="[completed payload purged]";
+    if(completedParameters.sourceUrl) completedParameters.sourceUrl="[temporary URL purged]";
+    if(completedParameters.nativeParameters && typeof completedParameters.nativeParameters==="object"){
+      const inner={...completedParameters.nativeParameters};
+      if(inner.base64) inner.base64="[completed payload purged]";
+      if(inner.sourceUrl) inner.sourceUrl="[temporary URL purged]";
+      completedParameters.nativeParameters=inner;
     }
     list[i]={...list[i],parameters:completedParameters,status:clean(status,30)||"completed",completedAt:now(),leaseUntil:0,result};
     for(let j=0;j<list.length;j++){
@@ -1008,7 +1028,7 @@ export class VideoStudioState extends DurableObject {
       waitingNativeCommands:waitingNative,
       canAcceptAutonomousWork:true,
       queuedExecutionPolicy:fallbackConnected?"studio-web-when-compatible-otherwise-native-on-reconnect":"native-on-reconnect",
-      lastCommand:list[list.length-1]||null,
+      lastCommand:redactCommand(list[list.length-1]||null),
       projectCount:Array.isArray(d.projects)?d.projects.length:0,
       galleryAccess:false,
       directAttachmentIngest:true,
@@ -1495,24 +1515,24 @@ function serverFor(env,hybridKey=""){
       if(sheet&&sheet.base64){
         const safeResult={...c.result,contactSheet:{...sheet,base64:undefined}};
         return {content:[
-          {type:"text",text:JSON.stringify({...c,result:safeResult})},
+          {type:"text",text:JSON.stringify({...redactCommand(c),result:safeResult})},
           {type:"image",data:sheet.base64,mimeType:sheet.mimeType||"image/jpeg"}
         ]};
       }
-      return out(c);
+      return out(redactCommand(c));
     }
     const c=await st.command(deviceId,commandId);
     if(!c) return out({error:"Command not found"});
     const sheet=c.result&&c.result.contactSheet;
     if(sheet&&sheet.base64){
       const safeResult={...c.result,contactSheet:{...sheet,base64:undefined}};
-      const safeCommand={...c,result:safeResult};
+      const safeCommand={...redactCommand(c),result:safeResult};
       return {content:[
         {type:"text",text:JSON.stringify(safeCommand)},
         {type:"image",data:sheet.base64,mimeType:sheet.mimeType||"image/jpeg"}
       ]};
     }
-    return out(c);
+    return out(redactCommand(c));
   });
   s.registerTool("queue_video_edit_batch",{description:"Queue an ordered batch of VideoStudio edits. Native v3 compatibility routes the batch into the isolated MCP v3 queue.",inputSchema:{deviceId:z.string().min(8),projectId:z.string().min(8),edits:z.array(z.object({action:z.enum(["set_trim","set_speed","set_mute","set_aspect","set_title","set_quality","set_transition","remove_clip","move_clip","reorder_timeline","replace_timeline","set_clip_speed","set_clip_title","set_clip_effects","analyse_media","inspect_render","render","autonomous_request"]),parameters:z.record(z.string(),z.any()).optional()})).min(1).max(20)}},async({deviceId,projectId,edits})=>{
     const queued=[];
@@ -1601,11 +1621,11 @@ function serverFor(env,hybridKey=""){
         if(sheet&&sheet.base64){
           const safeResult={...command.result,contactSheet:{...sheet,base64:undefined}};
           return {content:[
-            {type:"text",text:JSON.stringify({...command,result:safeResult,hybrid:true})},
+            {type:"text",text:JSON.stringify({...redactCommand(command),result:safeResult,hybrid:true})},
             {type:"image",data:sheet.base64,mimeType:sheet.mimeType||"image/jpeg"}
           ]};
         }
-        return out({...command,hybrid:true});
+        return out({...redactCommand(command),hybrid:true});
       }catch(e){ return out({error:e.message,hybrid:true}); }
     });
 
@@ -1658,11 +1678,11 @@ function serverForApp(env,ownerKey,protocolVersion=1){
       if(sheet&&sheet.base64){
         const safeResult={...c.result,contactSheet:{...sheet,base64:undefined}};
         return {content:[
-          {type:"text",text:JSON.stringify({...c,result:safeResult})},
+          {type:"text",text:JSON.stringify({...redactCommand(c),result:safeResult})},
           {type:"image",data:sheet.base64,mimeType:sheet.mimeType||"image/jpeg"}
         ]};
       }
-      return out(c);
+      return out(redactCommand(c));
     }catch(e){ return out({error:e.message}); }
   };
 
