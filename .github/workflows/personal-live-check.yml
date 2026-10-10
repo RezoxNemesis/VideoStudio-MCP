@@ -1,0 +1,108 @@
+name: Personal Website Live Read-only Check
+on:
+  push:
+    branches: [feat/personal-cloud-studio]
+    paths: ['.github/workflows/personal-live-check.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+defaults:
+  run:
+    shell: bash
+jobs:
+  live:
+    runs-on: ubuntu-latest
+    timeout-minutes: 7
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 95e93d43ebd2b0ba0e446dd42ba07989248de37b
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Prepare exact expected published assets
+        run: |
+          mkdir -p .work/live
+          node scripts/bake-personal-client.mjs
+          node --input-type=module <<'JS'
+          import {writeFile} from 'node:fs/promises';
+          import {PAGE,STYLE} from './src/personal-ui.js';
+          import CLIENT from './.generated/personal-client.js';
+          await writeFile('.work/live/expected-page.html',PAGE);
+          await writeFile('.work/live/expected-style.css',STYLE);
+          await writeFile('.work/live/expected-client.js',CLIENT);
+          JS
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Read-only verification of deployed source and private API boundary
+        run: |
+          python <<'PY'
+          from urllib.request import Request,urlopen
+          from urllib.error import HTTPError
+          from pathlib import Path
+          import hashlib,json
+          from datetime import datetime,timezone
+          origin='https://wispy-queen-f9b5.prakasharuntandon634.workers.dev'
+          out=Path('.work/live')
+          checks=[]
+          for route,expected in [('/personal/','expected-page.html'),('/personal/style.css','expected-style.css'),('/personal/client.js','expected-client.js')]:
+              with urlopen(Request(origin+route,headers={'User-Agent':'VideoStudio-Personal-Release-Verification'}),timeout=30) as response:
+                  actual=response.read()
+                  assert response.status==200
+                  assert actual==out.joinpath(expected).read_bytes(), 'Deployed source differs: '+route
+                  checks.append({'route':route,'status':200,'matchesExpectedSource':True,'sha256':hashlib.sha256(actual).hexdigest()})
+          try:
+              urlopen(origin+'/api/personal/snapshot',timeout=30)
+              raise AssertionError('Private snapshot unexpectedly accessible without authentication')
+          except HTTPError as error:
+              assert error.code==401
+              assert 'no-store' in error.headers.get('Cache-Control','')
+              checks.append({'route':'/api/personal/snapshot','status':401,'privateDataProtected':True})
+          with urlopen(origin+'/',timeout=30) as response:
+              assert response.status==200 and b'VideoStudio' in response.read()
+              checks.append({'route':'/','status':200,'originalEditorRetained':True})
+          result={'verifiedAt':datetime.now(timezone.utc).isoformat(),'website':origin+'/personal/','verifiedSourceCommit':'95e93d43ebd2b0ba0e446dd42ba07989248de37b','checks':checks,'authenticationUsed':False,'writesPerformed':False}
+          out.joinpath('public-live-verification.json').write_text(json.dumps(result,indent=2))
+          print(json.dumps(result,indent=2))
+          PY
+      - name: Install browser runner
+        run: |
+          python -m pip install playwright==1.57.0
+          python -m playwright install --with-deps chromium
+      - name: Inspect the real deployed login page without credentials
+        run: |
+          python <<'PY'
+          from pathlib import Path
+          from playwright.sync_api import sync_playwright,expect
+          import json
+          out=Path('.work/live')
+          with sync_playwright() as p:
+              browser=p.chromium.launch(headless=True)
+              page=browser.new_page(viewport={'width':390,'height':844},reduced_motion='reduce')
+              errors=[]
+              page.on('pageerror',lambda e:errors.append(str(e)))
+              response=page.goto('https://wispy-queen-f9b5.prakasharuntandon634.workers.dev/personal/',wait_until='networkidle')
+              assert response.status==200
+              expect(page.locator('#login-view')).to_be_visible()
+              expect(page.locator('#workspace')).to_be_hidden()
+              expect(page.locator('#owner-key')).to_be_visible()
+              expect(page.locator('#owner-key')).to_have_value('')
+              assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
+              assert not errors,errors
+              page.screenshot(path=str(out/'live-login-mobile.png'),full_page=True,animations='disabled')
+              out.joinpath('live-browser-verification.json').write_text(json.dumps({'website':page.url,'title':page.title(),'mobileWidth':390,'loginVisible':True,'privateWorkspaceHidden':True,'credentialsEntered':False,'horizontalOverflow':False,'javascriptErrors':errors},indent=2))
+              browser.close()
+          print('PASS: real deployed login, mobile layout, privacy boundary, zero JavaScript exceptions')
+          PY
+      - name: Publish only verification evidence, not credentials or runtime data
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: VideoStudio-Personal-Live-Evidence
+          retention-days: 7
+          include-hidden-files: true
+          path: |
+            .work/live/public-live-verification.json
+            .work/live/live-browser-verification.json
+            .work/live/live-login-mobile.png
