@@ -82,12 +82,12 @@ const STUDIO_RUNTIME_JS = String.raw`
     return projectId + ":" + assetId;
   }
 
-  async function getProject() {
-    const pid = currentProjectId();
+  async function getProject(requestedProjectId) {
+    const pid = requestedProjectId || currentProjectId();
     if (!pid) throw new Error("Create or select a project first");
     const projects = await api("/api/projects?deviceId=" + encodeURIComponent(deviceId()));
     const project = (projects.projects || []).find((p) => p.id === pid);
-    if (!project) throw new Error("Selected project is unavailable");
+    if (!project) throw new Error("Requested Studio Web project is unavailable on this paired device: " + pid);
     project.assets = project.assets || [];
     project.timeline = project.timeline || [];
     project.settings = {
@@ -477,8 +477,10 @@ const STUDIO_RUNTIME_JS = String.raw`
   }
 
   async function generateImageMotion(project, options, progress) {
-    const asset = project.assets.find(a=>a.id===options.assetId&&a.kind==="image") || project.assets.find(a=>a.kind==="image");
-    if(!asset) throw new Error("Image-to-video needs at least one image asset");
+    const asset = options.assetId
+      ? project.assets.find(a=>a.id===options.assetId&&a.kind==="image")
+      : project.assets.find(a=>a.kind==="image");
+    if(!asset) throw new Error(options.assetId ? "The explicitly selected image is missing from the requested project; refusing to render another image." : "Image-to-video needs at least one image asset");
     const loaded=await loadImageAsset(project,asset);
     const [width,height]=dimensions(options.aspect||project.settings.aspect,options.quality||project.settings.quality);
     try {
@@ -621,7 +623,8 @@ const STUDIO_RUNTIME_JS = String.raw`
 
   async function generate(options) {
     if(runtimeState.busy) throw new Error("Another Studio Web generation is already running");
-    const project=await getProject();
+    if(options.remote && !options.projectId) throw new Error("Remote generation must specify its target project.");
+    const project=await getProject(options.projectId);
     if(options.commandId){
       const prior=project.assets.find(a=>a.generated&&a.generation&&a.generation.commandId===options.commandId);
       if(prior) return {ok:true,asset:prior,engine:prior.generation.engine,mode:prior.generation.mode,realVideo:true,reused:true,note:"Previously completed browser-local generation was reused after command retry."};
@@ -913,7 +916,7 @@ const STUDIO_RUNTIME_JS = String.raw`
   async function handleRuntimeCommand(command){
     const p=command.parameters||{};let result,status="completed";
     try{
-      if(command.action==="generate_video")result=await generate({...p,remote:true,commandId:command.id});
+      if(command.action==="generate_video")result=await generate({...p,remote:true,projectId:command.projectId,commandId:command.id});
       else if(command.action==="render_portal_video"){
         const cinematic=await waitForProvider("VideoStudioCinematic");
         if(!cinematic||typeof cinematic.renderPortal!=="function") throw new Error("Cinematic Worlds runtime is not ready");
@@ -940,6 +943,12 @@ const STUDIO_RUNTIME_JS = String.raw`
       else if(command.action==="drive_offload")result=await offloadProject({interactive:false});
       else throw new Error("Unsupported Studio Runtime action: "+command.action);
     }catch(error){
+      // Do not poison a render request if Android temporarily hides the browser.
+      // The command stays queued and runs automatically the next time Studio Web is foregrounded.
+      if(document.hidden && command.action==="generate_video"){
+        addLog("Studio Runtime paused","Browser was backgrounded; render will retry in the foreground.");
+        return false;
+      }
       status="failed";result={ok:false,error:error.message};
     }
     try{
@@ -957,6 +966,9 @@ const STUDIO_RUNTIME_JS = String.raw`
       try{
         const data=await api("/api/runtime/commands?deviceId="+encodeURIComponent(deviceId())+"&after="+runtimeState.lastRuntimeSeq);
         for(const command of data.commands||[]){
+          // Browser media generation cannot reliably run in the background.
+          // Leave the command unacknowledged so it resumes on foreground without human approval.
+          if(command.status==="queued"&&document.hidden)break;
           if(command.status==="queued"&&!(await handleRuntimeCommand(command)))break;
           runtimeState.lastRuntimeSeq=Math.max(runtimeState.lastRuntimeSeq,Number(command.seq||0));
           localStorage.setItem("vs-runtime-last-seq",String(runtimeState.lastRuntimeSeq));
