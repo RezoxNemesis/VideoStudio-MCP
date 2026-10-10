@@ -336,7 +336,10 @@ public final class NativeRenderEngine {
         MediaItem.Builder media = new MediaItem.Builder().setUri(Uri.parse(asset.uri));
 
         if (image) {
-            media.setImageDurationMs(Math.max(250, clip.outputDurationMs()));
+            // Pose-interpolated frames are already real video samples; the usual
+            // 250ms photo minimum would destroy 24fps action timing.
+            boolean poseFrame = clip.effects != null && clip.effects.optBoolean("poseInbetween", false);
+            media.setImageDurationMs(Math.max(poseFrame ? 34 : 250, clip.outputDurationMs()));
         } else {
             media.setClippingConfiguration(
                     new MediaItem.ClippingConfiguration.Builder()
