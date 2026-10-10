@@ -1915,7 +1915,18 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             throw new IllegalArgumentException("Pose dimensions must be even");
         int framesPerPair = Math.max(2, Math.min(16, p.optInt("framesPerPair", 6)));
         int fps = Math.max(12, Math.min(30, p.optInt("fps", 24)));
-        if ((inputs.length()-1)*framesPerPair+1 > 240)
+        int[] frameMap = new int[inputs.length() - 1];
+        JSONArray customTiming = p.optJSONArray("framesByPair");
+        if (customTiming != null && customTiming.length() != frameMap.length)
+            throw new IllegalArgumentException("Motion timing map must match adjacent anchor pairs");
+        int frameTotal = 1;
+        for (int i=0; i<frameMap.length; i++) {
+            frameMap[i] = customTiming == null ? framesPerPair : customTiming.optInt(i, 0);
+            if (frameMap[i] < 2 || frameMap[i] > 16)
+                throw new IllegalArgumentException("Each motion segment must contain 2-16 frames");
+            frameTotal += frameMap[i];
+        }
+        if (frameTotal > 240)
             throw new IllegalArgumentException("Sequence exceeds 240 bounded pose frames");
 
         String outputId = p.optString("outputProjectId", "");
@@ -1931,7 +1942,8 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         final ProjectStore.Project sourceProject = source;
         final ArrayList<String> orderedIds = anchors;
         final int targetWidth = width, targetHeight = height;
-        final int segmentFrames = framesPerPair, targetFps = fps;
+        final int[] segmentFrames = frameMap;
+        final int targetFps = fps, expectedFrames = frameTotal;
         boolean render = p.optBoolean("render", true);
         String quality = "1080p".equals(p.optString("quality", "720p")) ? "1080p" : "720p";
         String fileName = sanitizeFileName(p.optString("fileName", "VideoStudio_Pose_Motion_" + System.currentTimeMillis() + ".mp4"));
@@ -1946,7 +1958,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
 
         JobManager.Job job = submitRecoverableHeavy("animate_pose_sequence",
                 durable, output.id, "Pose Motion • " + source.name, state -> {
-                    int expected = (orderedIds.size()-1)*segmentFrames+1;
+                    int expected = expectedFrames;
                     checkpoint(state, "Native pose synthesis", "Building time-coherent frame correspondences", 4, outputProject.id);
                     jobs.awaitSafeCheckpoint(state, "pose_frame_build");
                     final double[] lastConfidence = {0};
@@ -1988,7 +2000,8 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         result.put("outputProjectId", output.id);
         result.put("jobId", job.id);
         result.put("render", render);
-        result.put("expectedFrames", (anchors.size()-1)*framesPerPair+1);
+        result.put("expectedFrames", frameTotal);
+        result.put("timingMode", customTiming == null ? "uniform" : "animator-directed");
         result.put("engine", "native-bidirectional-optical-flow-v1");
         return result;
     }
