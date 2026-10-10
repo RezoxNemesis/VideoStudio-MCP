@@ -69,6 +69,8 @@ jobs:
         run: node scripts/personal-runtime-test.mjs verify
       - name: Real browser core interactions
         run: python scripts/personal-browser-test.py 2>&1 | tee .work/browser-tests.log
+      - name: Stable screenshots and preserved editor smoke test
+        run: python scripts/personal-capture.py
       - name: Require completed browser evidence
         run: |
           test -s .work/browser-results.json
@@ -98,6 +100,7 @@ jobs:
             .work/backend-tests.log
             .work/browser-tests.log
             .work/browser-results.json
+            .work/editor-smoke-results.json
             .work/overview-desktop.png
             .work/overview-mobile.png
             .work/activity-mobile.png
