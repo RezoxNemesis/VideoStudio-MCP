@@ -132,7 +132,8 @@ public final class NativePoseSequenceComposer {
                                     int width,
                                     int height) throws Exception {
         BitmapFactory.Options options = new BitmapFactory.Options();
-        options.inPreferredConfig = Bitmap.Config.RGB_565;
+        // Preserve anchor colour precision; RGB_565 silently distorts reference frames.
+        options.inPreferredConfig = Bitmap.Config.ARGB_8888;
         try (InputStream input = context.getContentResolver()
                 .openInputStream(Uri.parse(asset.uri))) {
             if (input == null) throw new IllegalArgumentException("Missing VideoStudio-owned image");
