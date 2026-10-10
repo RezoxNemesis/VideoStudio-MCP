@@ -1431,6 +1431,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
             }
             frameCount++;
         }
+        final int eligibleFrames = frameCount;
         LinearLayout wrap=column();
         wrap.setPadding(dp(20),dp(8),dp(20),0);
         wrap.addView(body("Use all "+frameCount+" frames in their existing order. A new animation project is created; your originals stay unchanged."));
@@ -1462,7 +1463,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                         int fps=Integer.parseInt(frameRate.getText().toString().trim());
                         if(fps!=24 && fps!=30)
                             throw new IllegalArgumentException("Choose 24 or 30 fps");
-                        if(mode.getSelectedItemPosition()==1 && frameCount>40)
+                        if(mode.getSelectedItemPosition()==1 && eligibleFrames>40)
                             throw new IllegalArgumentException("Experimental flow supports at most 40 images");
                         Intent request=new Intent(this,ControlService.class)
                                 .setAction(ControlService.ACTION_LOCAL_ANIMATION_STUDIO)
