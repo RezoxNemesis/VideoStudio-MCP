@@ -36,13 +36,15 @@ public final class NativePoseSequenceComposer {
     public static ProjectStore.Project compose(Context context,
                                                ProjectStore store,
                                                ProjectStore.Project original,
+                                               ProjectStore.Project output,
                                                List<String> orderedAssetIds,
                                                int width,
                                                int height,
                                                int framesPerPair,
                                                int fps,
                                                Progress progress) throws Exception {
-        if (original == null || orderedAssetIds == null
+        if (original == null || output == null || original.id.equals(output.id)
+                || orderedAssetIds == null
                 || orderedAssetIds.size() < 2 || orderedAssetIds.size() > 40) {
             throw new IllegalArgumentException("Pose interpolation requires 2-40 ordered image anchors");
         }
@@ -66,7 +68,8 @@ public final class NativePoseSequenceComposer {
             }
             anchors.add(asset);
         }
-        ProjectStore.Project output = store.create("Pose Motion - " + original.name);
+        output.assets.clear();
+        output.clips.clear();
         output.sourcePrompt = "pose-sequence: ordered native image keyframes, optical-flow inbetweens";
         store.save(output);
         File images = new File(context.getFilesDir(),
@@ -75,6 +78,12 @@ public final class NativePoseSequenceComposer {
             throw new IllegalStateException("Cannot create private pose-frame workspace");
         }
 
+        // Delete only stale generated pose frames for this destination; leave
+        // user media and other projects untouched after a recoverable retry.
+        File[] stale = images.listFiles();
+        if (stale != null) for (File f : stale)
+            if (f.isFile() && f.getName().matches("pose_[0-9]{4}\\.png") && !f.delete())
+                throw new IllegalStateException("Cannot clear partial pose export");
         final long frameDurationMs = Math.max(34, Math.round(1000.0 / fps));
         int[] previous = readPixels(context, anchors.get(0), width, height);
         int generated = 0;
@@ -140,12 +149,12 @@ public final class NativePoseSequenceComposer {
                                   int frame,
                                   long durationMs,
                                   String frameRole) throws Exception {
-        String name = String.format(java.util.Locale.US, "pose_%04d.jpg", frame);
+        String name = String.format(java.util.Locale.US, "pose_%04d.png", frame);
         File output = new File(directory, name);
         Bitmap bitmap = Bitmap.createBitmap(pixels, width, height, Bitmap.Config.ARGB_8888);
         boolean success;
         try (FileOutputStream file = new FileOutputStream(output)) {
-            success = bitmap.compress(Bitmap.CompressFormat.JPEG, 90, file);
+            success = bitmap.compress(Bitmap.CompressFormat.PNG, 100, file);
             file.flush();
         } finally {
             bitmap.recycle();
@@ -159,7 +168,7 @@ public final class NativePoseSequenceComposer {
         asset.id = UUID.randomUUID().toString();
         asset.uri = Uri.fromFile(output).toString();
         asset.name = name;
-        asset.mime = "image/jpeg";
+        asset.mime = "image/png";
         asset.role = "pose_sequence_frame";
         asset.generated = true;
         asset.sizeBytes = output.length();
