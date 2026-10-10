@@ -166,7 +166,8 @@ public final class NativeRenderEngine {
                                 listener.onError("Could not verify encoded dimensions of exported video");
                                 return;
                             } finally {
-                                verifier.release();
+                                try { verifier.release(); }
+                                catch (java.io.IOException ignored) { /* closing the metadata probe is best effort */ }
                             }
                             listener.onProgress(100, "Export complete");
                             listener.onCompleted(outputFile, info);
