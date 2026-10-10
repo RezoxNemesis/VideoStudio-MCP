@@ -24,13 +24,20 @@ public final class NativeCombatRigRenderer {
     private static final int DARK=Color.rgb(16,17,23);
     private static final int SUN=Color.rgb(255,141,53);
 
-    public NativeCombatRigRenderer(int width,int height) {
+    public NativeCombatRigRenderer(int width,int height) { this(width,height,null); }
+
+    public NativeCombatRigRenderer(int width,int height,Bitmap staticBackground) {
         if(width<320||height<540||width>720||height>1280
                 ||width%2!=0||height%2!=0) throw new IllegalArgumentException("Unsupported native rig canvas size");
         this.width=width;this.height=height;
         world=Bitmap.createBitmap(width,height,Bitmap.Config.ARGB_8888);
         Canvas c=new Canvas(world);
-        drawWorld(c);
+        if(staticBackground==null) drawWorld(c);
+        else {
+            resetPaint();
+            c.drawBitmap(staticBackground,null,
+                    new android.graphics.Rect(0,0,width,height),brush);
+        }
     }
 
     public Bitmap render(CombatRigSolver.Frame frame,double seconds,double durationSeconds){
