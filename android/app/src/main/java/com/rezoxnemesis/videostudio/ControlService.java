@@ -167,6 +167,8 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                     args.put("sourceProjectId",
                             request.getStringExtra("sourceProjectId") == null
                                     ? "" : request.getStringExtra("sourceProjectId"));
+                    args.put("backgroundMode",request.getStringExtra("backgroundMode") == null
+                            ? "procedural" : request.getStringExtra("backgroundMode"));
                     args.put("durationSeconds",request.getDoubleExtra("durationSeconds",3.6));
                     args.put("fps",request.getIntExtra("fps",24));
                     args.put("width",request.getIntExtra("width",540));
@@ -2053,6 +2055,11 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     private JSONObject queueCombatRig(JSONObject p) throws Exception {
         String sourceId=p.optString("sourceProjectId","");
         ProjectStore.Project source=sourceId.isEmpty()?null:resolveProject(sourceId);
+        String backgroundMode=p.optString("backgroundMode","procedural");
+        if(!"procedural".equals(backgroundMode) && !"source_median".equals(backgroundMode))
+            throw new IllegalArgumentException("Background mode must be procedural or source_median");
+        if("source_median".equals(backgroundMode) && source==null)
+            throw new IllegalArgumentException("Estimated source background requires a selected image project");
         int fps=p.optInt("fps",24);
         int width=p.optInt("width",540),height=p.optInt("height",960);
         double duration=p.optDouble("durationSeconds",3.6);
@@ -2079,6 +2086,8 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 throw new IllegalArgumentException("Invalid combat recovery project");
         }
         final ProjectStore.Project target=output;
+        final ProjectStore.Project reference=source;
+        final String selectedBackground=backgroundMode;
         final int outWidth=width,outHeight=height,frames=fps;
         final double seconds=duration;
         JSONObject durable=new JSONObject(p.toString());
@@ -2086,6 +2095,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         durable.put("outputProjectId",target.id);
         durable.put("sourceProjectId",sourceId);
         durable.put("fps",fps);
+        durable.put("backgroundMode",backgroundMode);
         durable.put("width",width);
         durable.put("height",height);
         durable.put("durationSeconds",duration);
@@ -2097,16 +2107,29 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 durable,target.id,"True Combat Rig • "+target.name,state -> {
                     checkpoint(state,"Combat rig","Solving joints and sword timing in a locked world",3,target.id);
                     jobs.awaitSafeCheckpoint(state,"combat_rig_setup");
-                    NativeCombatRigComposer.compose(this,store,target,outWidth,outHeight,
-                            frames,seconds,(current,total,time,impact)->{
-                                if(current%6==0||current==total||current==1){
-                                    int progress=4+(int)(58.0*current/Math.max(1,total));
-                                    checkpoint(state,"Combat rig",
-                                            current+"/"+total+" independent articulated frames",
-                                            progress,target.id);
-                                    jobs.awaitSafeCheckpoint(state,"combat_frame_"+current);
-                                }
-                            });
+                    android.graphics.Bitmap plate=null;
+                    try {
+                        if("source_median".equals(selectedBackground)) {
+                            checkpoint(state,"Scene stabilizer",
+                                    "Reconstructing a fixed environment from imported frames",4,target.id);
+                            jobs.awaitSafeCheckpoint(state,"clean_plate_prepare");
+                            plate=NativeScenePlateBuilder.fromProject(
+                                    this,reference,outWidth,outHeight);
+                        }
+                        final android.graphics.Bitmap fixedBackdrop=plate;
+                        NativeCombatRigComposer.compose(this,store,target,outWidth,outHeight,
+                                frames,seconds,fixedBackdrop,(current,total,time,impact)->{
+                                    if(current%6==0||current==total||current==1){
+                                        int progress=5+(int)(57.0*current/Math.max(1,total));
+                                        checkpoint(state,"Combat rig",
+                                                current+"/"+total+" independent articulated frames",
+                                                progress,target.id);
+                                        jobs.awaitSafeCheckpoint(state,"combat_frame_"+current);
+                                    }
+                                });
+                    } finally {
+                        if(plate!=null&&!plate.isRecycled())plate.recycle();
+                    }
                     JSONObject details=new JSONObject();
                     details.put("engine","articulated-two-bone-IK-v1");
                     details.put("sourceImageRestyling",false);
@@ -2116,6 +2139,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                     details.put("impactRetiming",true);
                     details.put("neuralVideoGenerator",false);
                     details.put("generatedFrames",target.clips.size());
+                    details.put("backgroundMode",selectedBackground);
                     details.put("sourceProjectUnmodified",true);
                     state.setResult(details);
                     syncProtocolState();
@@ -2138,7 +2162,9 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         result.put("expectedFrames",(int)Math.round(duration*fps));
         result.put("render",render);
         result.put("engine","articulated-two-bone-IK-v1");
-        result.put("background","fixed-procedural-city");
+        result.put("background","source_median".equals(backgroundMode)
+                ?"fixed-estimated-source-scene":"fixed-procedural-city");
+        result.put("backgroundMode",backgroundMode);
         result.put("sourceImageRestyling",false);
         result.put("neuralVideoGenerator",false);
         return result;
@@ -3318,6 +3344,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             out.put("combatRigBenchmarkReady", true);
             out.put("combatRigBackend", "articulated-two-bone-IK-v1");
             out.put("combatRigBackgroundLocked", true);
+            out.put("nativeSourcePlateEstimate", true);
             out.put("animationDirectorModes", "native-direct,experimental-flow");
             out.put("flowSceneCutProtection", true);
             out.put("nativeAnimationMaxAuthoredFrames", NativeAnimationDirector.MAX_SOURCE_FRAMES);
