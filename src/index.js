@@ -1369,6 +1369,18 @@ function serverFor(env,hybridKey=""){
   s.registerTool("queue_video_edit",{description:"Send one edit action to VideoStudio. Native v3/v1 compatibility can use the private owner credential as deviceId and projectId='active-native'.",inputSchema:{deviceId:z.string().min(8),projectId:z.string().min(8),action:z.enum(["set_trim","set_speed","set_mute","set_aspect","set_title","set_quality","set_transition","remove_clip","move_clip","reorder_timeline","replace_timeline","set_clip_speed","set_clip_title","set_clip_effects","analyse_media","inspect_render","render","autonomous_request"]),parameters:z.record(z.string(),z.any()).optional()}},async({deviceId,projectId,action,parameters})=>{
     try{
       const p=parameters||{};
+      // Backwards compatible for installed MCP connectors that have not yet
+      // refreshed the dedicated deliver_studio_video_to_chat tool schema.
+      if(action==="autonomous_request"&&typeof p.deliverToChatAssetId==="string"&&!p.nativeAction){
+        if(await st.appResolve(deviceId))return out({queued:false,error:"Chat video export requires a Studio Web device ID"});
+        const assetId=p.deliverToChatAssetId;
+        const transfer=await st.createTemporaryVideoExport(deviceId,projectId,assetId);
+        const command=await st.enqueueRuntime(deviceId,projectId,"temporary_video_export",{assetId,uploadToken:transfer.uploadToken});
+        return out({queued:true,commandId:command.id,sequence:command.seq,
+          downloadPath:"/api/studio-transfer/download/"+transfer.downloadToken,
+          expiresAt:new Date(transfer.expiresAt).toISOString(),assetId,
+          note:"One explicit browser-local video is queued for an expiring private HTTPS transfer. Browser must be foreground; queued does not mean ready."});
+      }
       if(action==="autonomous_request"&&p.nativeAction==="converge_identity"){
         const primary=String(p.primaryOwnerKey||deviceId||"");
         const legacy=Array.isArray(p.legacyOwnerKeys)?p.legacyOwnerKeys:[];
