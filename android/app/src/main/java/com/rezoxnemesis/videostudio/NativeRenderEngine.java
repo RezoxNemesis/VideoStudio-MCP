@@ -374,7 +374,8 @@ public final class NativeRenderEngine {
         if (image) {
             // Pose-interpolated frames are already real video samples; the usual
             // 250ms photo minimum would destroy 24fps action timing.
-            boolean poseFrame = clip.effects != null && clip.effects.optBoolean("poseInbetween", false);
+            boolean poseFrame = clip.effects != null && (clip.effects.optBoolean("poseInbetween", false)
+                    || clip.effects.optBoolean("directorSequenceFrame", false));
             media.setImageDurationMs(Math.max(poseFrame ? 34 : 250, clip.outputDurationMs()));
         } else {
             media.setClippingConfiguration(
@@ -385,7 +386,8 @@ public final class NativeRenderEngine {
         }
 
         EditedMediaItem.Builder edited = new EditedMediaItem.Builder(media.build());
-        if (image) edited.setFrameRate(clip.effects != null && clip.effects.optBoolean("poseInbetween", false)
+        if (image) edited.setFrameRate(clip.effects != null && (clip.effects.optBoolean("poseInbetween", false)
+                    || clip.effects.optBoolean("directorSequenceFrame", false))
                 ? Math.max(12, Math.min(30, clip.effects.optInt("poseFps", 24))) : 30);
 
         if (!image && Math.abs(clip.speed - 1f) > .01f) {
