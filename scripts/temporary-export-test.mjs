@@ -88,12 +88,12 @@ test("temporary transfer expires and cleans itself on Durable Object alarm",asyn
 });
 
 test("transfers are separately authorized, bounded and not an implicit Drive/gallery sync",()=>{
-  assert.match(worker,/registerTool\("deliver_studio_video_to_chat"/);
-  assert.match(worker,/temporary_video_export/);
-  assert.match(worker,/studio-transfer\\/download/);
-  assert.match(runtime,/async function exportOneLocalVideo/);
-  assert.match(runtime,/find\(a=>a\.id===p\.assetId&&a\.kind==="video"\)/);
-  assert.match(runtime,/idbGet\("assets",assetKey\(project.id,asset.id\)\)/);
-  assert.match(runtime,/fetch\("\\/api\\/studio-transfer\\/upload\\/"\+p\.uploadToken/);
+  assert.ok(worker.includes('registerTool("deliver_studio_video_to_chat"'));
+  assert.ok(worker.includes("temporary_video_export"));
+  assert.ok(worker.includes("/api/studio-transfer/download/"));
+  assert.ok(runtime.includes("async function exportOneLocalVideo"));
+  assert.ok(runtime.includes('a.id===p.assetId&&a.kind==="video"'));
+  assert.ok(runtime.includes('idbGet("assets",assetKey(project.id,asset.id))'));
+  assert.ok(runtime.includes('fetch("/api/studio-transfer/upload/"+p.uploadToken'));
   assert.ok(!runtime.includes('window.open("/api/studio-transfer'));
 });
