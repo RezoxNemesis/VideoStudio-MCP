@@ -1449,6 +1449,16 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         fpsOptions.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
         fpsPicker.setAdapter(fpsOptions);
         wrap.addView(fpsPicker,new LinearLayout.LayoutParams(-1,dp(56)));
+        wrap.addView(body("Locked background"));
+        android.widget.Spinner backgroundPicker=new android.widget.Spinner(this);
+        android.widget.ArrayAdapter<String> backgrounds=new android.widget.ArrayAdapter<>(
+                this,android.R.layout.simple_spinner_item,
+                new String[]{"Procedural static ruined city (reliable)",
+                        "Estimate fixed scenery from imported image frames (experimental)"});
+        backgrounds.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        backgroundPicker.setAdapter(backgrounds);
+        backgroundPicker.setEnabled(activeProject!=null && activeProject.clips.size()>=5);
+        wrap.addView(backgroundPicker,new LinearLayout.LayoutParams(-1,dp(56)));
         new AlertDialog.Builder(this)
                 .setTitle("True Combat Rig Benchmark")
                 .setMessage("This tests procedural, physically connected sword combat. It does not yet reconstruct the characters from your imported images or run a neural video model.")
@@ -1461,6 +1471,8 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                         Intent request=new Intent(this,ControlService.class)
                                 .setAction(ControlService.ACTION_LOCAL_COMBAT_BENCHMARK)
                                 .putExtra("sourceProjectId",activeProject==null?"":activeProject.id)
+                                .putExtra("backgroundMode",backgroundPicker.getSelectedItemPosition()==1
+                                        ? "source_median" : "procedural")
                                 .putExtra("durationSeconds",seconds)
                                 .putExtra("fps",fpsPicker.getSelectedItemPosition()==0?24:30)
                                 .putExtra("width",540)
