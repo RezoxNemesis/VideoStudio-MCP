@@ -67,6 +67,8 @@ test('site wires render provider, typed MCP anchor lists and truthful capability
     readFile(new URL('../src/studio-runtime.js',import.meta.url),'utf8')
   ]);
   assert.match(worker,/registerTool\("animate_pose_sequence"/);
+  assert.match(worker,/poseSequenceAnchorIds/);
+  assert.match(worker,/mode:"pose_sequence",anchorAssetIds:ids,poseTimes/);
   assert.match(worker,/mode:z\.enum\(\["prompt_scene","image_motion","character_action","pose_sequence"/);
   assert.match(worker,/studio-pose-sequence\.js/);
   assert.match(studio,/VideoStudioPoseSequence/);

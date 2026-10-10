@@ -1405,6 +1405,33 @@ function serverFor(env,hybridKey=""){
       const p=parameters||{};
       // Backwards compatible for installed MCP connectors that have not yet
       // refreshed the dedicated deliver_studio_video_to_chat tool schema.
+      if(action==="autonomous_request"&&Array.isArray(p.poseSequenceAnchorIds)&&!p.nativeAction){
+        if(await st.appResolve(deviceId))return out({queued:false,error:"Pose sequence browser IDs required; native app supports separate animation tools"});
+        const ids=p.poseSequenceAnchorIds.map(String);
+        if(ids.length<2||ids.length>12||new Set(ids).size!==ids.length)
+          return out({queued:false,error:"Pose animation requires 2-12 distinct imported pose images"});
+        const project=await st.project(deviceId,projectId);
+        if(!project)return out({queued:false,error:"VideoStudio project not found"});
+        if(ids.some(id=>!(project.assets||[]).some(a=>a.id===id&&a.kind==="image")))
+          return out({queued:false,error:"Pose animation anchor missing from this project's images"});
+        const poseTimes=p.poseTimes;
+        if(poseTimes!==undefined){
+          if(!Array.isArray(poseTimes)||poseTimes.length!==ids.length||poseTimes[0]!==0||poseTimes[poseTimes.length-1]!==1||
+             poseTimes.some(v=>!Number.isFinite(Number(v))||Number(v)<0||Number(v)>1)||
+             poseTimes.some((v,i)=>i>0&&Number(v)-Number(poseTimes[i-1])<.025))
+            return out({queued:false,error:"Pose times must be ordered normalized values beginning at 0 and ending at 1"});
+        }
+        const command=await st.enqueueRuntime(deviceId,projectId,"generate_video",{
+          mode:"pose_sequence",anchorAssetIds:ids,poseTimes,
+          duration:Math.max(2,Math.min(60,Number(p.duration||6))),
+          fps:Math.max(12,Math.min(30,Number(p.fps||24))),
+          aspect:["9:16","16:9","1:1","4:5"].includes(p.aspect)?p.aspect:"9:16",
+          quality:p.quality==="1080p"?"1080p":"720p"
+        });
+        return out({queued:true,commandId:command.id,sequence:command.seq,
+          mode:"pose_sequence",poseCount:ids.length,
+          note:"Distinct drawn pose interpolation queued for the original foreground browser. No new image poses synthesized."});
+      }
       if(action==="autonomous_request"&&typeof p.deliverToChatAssetId==="string"&&!p.nativeAction){
         if(await st.appResolve(deviceId))return out({queued:false,error:"Chat video export requires a Studio Web device ID"});
         const assetId=p.deliverToChatAssetId;
