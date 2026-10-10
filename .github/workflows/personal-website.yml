@@ -5,7 +5,10 @@ on:
     branches: [main, feat/personal-cloud-studio]
     paths:
       - 'src/personal-*'
+      - 'src/studio-character.js'
+      - 'src/studio-runtime.js'
       - 'scripts/personal-*'
+      - 'scripts/still-character-*'
       - 'scripts/bake-personal-client.mjs'
       - 'wrangler.jsonc'
       - 'package.json'
@@ -14,7 +17,10 @@ on:
     branches: [main]
     paths:
       - 'src/personal-*'
+      - 'src/studio-character.js'
+      - 'src/studio-runtime.js'
       - 'scripts/personal-*'
+      - 'scripts/still-character-*'
       - 'scripts/bake-personal-client.mjs'
       - 'wrangler.jsonc'
       - 'package.json'
@@ -45,6 +51,7 @@ jobs:
         run: npm install --no-audit --no-fund
       - name: Existing and new backend regression tests
         run: |
+          set -o pipefail
           mkdir -p .work
           npm test 2>&1 | tee .work/backend-tests.log
       - name: Reproduce and verify browser bundling regression
@@ -68,12 +75,17 @@ jobs:
       - name: Real offline-native MCP integration
         run: node scripts/personal-runtime-test.mjs verify
       - name: Real browser core interactions
-        run: python scripts/personal-browser-test.py 2>&1 | tee .work/browser-tests.log
+        run: |
+          set -o pipefail
+          python scripts/personal-browser-test.py 2>&1 | tee .work/browser-tests.log
+      - name: Verify local character motion in a real browser WebGL context
+        run: python scripts/still-character-browser-test.py
       - name: Stable screenshots and preserved editor smoke test
         run: python scripts/personal-capture.py
       - name: Require completed browser evidence
         run: |
           test -s .work/browser-results.json
+          test -s .work/character-browser.json
           test -s .work/overview-desktop.png
           test -s .work/overview-mobile.png
           test -s .work/activity-mobile.png
@@ -100,6 +112,7 @@ jobs:
             .work/backend-tests.log
             .work/browser-tests.log
             .work/browser-results.json
+            .work/character-browser.json
             .work/editor-smoke-results.json
             .work/overview-desktop.png
             .work/overview-mobile.png
