@@ -120,7 +120,8 @@ export class VideoStudioState extends DurableObject {
   }
   async runtimeCommands(deviceId,after=0){
     const a=(await this.ctx.storage.get("rcl:"+deviceId))||[];
-    return a.filter(c=>c.seq>Number(after||0));
+    // Replay unfinished jobs even when an old browser advanced its sequence before acknowledging.
+    return a.filter(c=>c.status==="queued"||c.seq>Number(after||0));
   }
   async runtimeCommand(deviceId,id){
     const a=(await this.ctx.storage.get("rcl:"+deviceId))||[];
