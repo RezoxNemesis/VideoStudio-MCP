@@ -24,6 +24,7 @@ const poseSequenceFlow = fs.readFileSync(new URL("../android/app/src/main/java/c
 const combatSolver = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/CombatRigSolver.java", import.meta.url), "utf8");
 const combatRenderer = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/NativeCombatRigRenderer.java", import.meta.url), "utf8");
 const combatComposer = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/NativeCombatRigComposer.java", import.meta.url), "utf8");
+const cleanScenePlate = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/NativeScenePlateBuilder.java", import.meta.url), "utf8");
 const commandJournal = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/CommandJournal.java", import.meta.url), "utf8");
 const projectStore = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/ProjectStore.java", import.meta.url), "utf8");
 const portraitMotion = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/NativePortraitMotionAnalyzer.java", import.meta.url), "utf8");
@@ -199,6 +200,7 @@ const checks = [
   ["worker persists negotiated wire compatibility independently of app version", worker.includes("wireSchemaVersion") && worker.includes("featureLevel") && worker.includes("transportDecoupledFromApkVersion") && worker.includes('"stable-core-2"')],
   ["True combat action uses fully native articulated frame generation", controlService.includes('case "animate_combat_rig"') && controlService.includes("queueCombatRig") && controlService.includes("combatRigBenchmarkReady")],
   ["Combat IK and independent per-frame sword motion is compiled", combatSolver.includes("elbow(") && combatSolver.includes("swordTipSeparation") && combatSolver.includes("remap(") && combatSolver.includes("leadingFoot")],
+  ["Native combat rig can lock source city using only user-imported image clips", cleanScenePlate.includes("perChannelMedian") && cleanScenePlate.includes("source.clips") && combatRenderer.includes("staticBackground") && controlService.includes("backgroundMode")],
   ["Combat benchmark draws one locked background then moving fighters", combatRenderer.includes("drawWorld(c)") && combatRenderer.includes("drawWarrior") && combatRenderer.includes("drawImpact") && combatComposer.includes("NativeCombatRigRenderer")],
   ["Native Editor offers true-rig movement test, not just still interpolation", nativeMain.includes("combatRigBenchmarkDialog()") && nativeMain.includes("True Combat Rig Test")],
   ["Animation Director is exposed in native Editor, not only through MCP", nativeMain.includes("animationDirectorDialog()") && nativeMain.includes("Animation Director") && nativeMain.includes("ACTION_LOCAL_ANIMATION_STUDIO")],
