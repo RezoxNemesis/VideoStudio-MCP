@@ -80,6 +80,10 @@ test("site provides separate still-animation API and forbids confusing portal wi
   assert.match(runtimeSource,/vsStillActionRoute/);
   assert.match(runtimeSource,/character_action/);
   assert.match(runtimeSource,/keyframed:!!output\.keyframed/);
+  assert.match(runtimeSource,/document\.hidden\)break;/);
+  assert.match(worker,/lastExecutorHeartbeatAt/);
+  const app=await readFile(new URL("../src/app.html",import.meta.url),"utf8");
+  assert.match(app,/visibilityState: document\.visibilityState/);
   assert.match(cinematic,/segmentProgress=pos-idx;/);
   assert.match(cinematic,/drawWorld\(primary,1-mix,sceneIndex,segmentProgress\)/);
   assert.ok(!cinematic.includes("drawWorld(primary,1-mix,sceneIndex,local)"));
