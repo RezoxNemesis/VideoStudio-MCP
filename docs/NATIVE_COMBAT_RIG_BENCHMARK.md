@@ -36,6 +36,12 @@ Send through the existing paired v3 native command bridge:
 
 Use render=false to create an editable frame project without an MP4. The result must not claim success until the job completes and the video is verified readable.
 
+## Experimental locked backdrop from imported images
+
+The benchmark now optionally accepts `backgroundMode: "source_median"` when `sourceProjectId` identifies a VideoStudio image project with at least five frames. The engine reads only the explicitly imported project clip URIs, takes at most eleven source images, and computes a per-channel temporal median as one immutable scene plate reused at every render timestamp. This often suppresses moving black/white figures and stops the entire city from changing between source frames. **It is an estimate**, not neural inpainting: silhouettes that remain at the same location, unmatched buildings and camera changes can leave ghosts. The new animated warriors are still procedural rigs, not copies or pose-extractions of the illustrated fighters.
+
+Select this option in the True Combat Rig Test dialog; the reliable fallback is `backgroundMode: "procedural"`. The returned job metadata and generated frames label the chosen background mode. Source images remain read-only and never leave VideoStudio's private native execution path.
+
 ## Acceptance testing
 
 1. JUnit: exact blade intersection; planted feet through wind-up; continuity across high-frequency samples; true moving slow motion; anatomical IK segment lengths.
