@@ -100,7 +100,7 @@ public final class NativePoseSequenceComposer {
             // frame at transition boundaries.
             if (pairIndex == 0) {
                 saveFrame(output, images, previous, width, height, generated++,
-                        frameDurationMs, "anchor");
+                        frameDurationMs, fps, "anchor");
                 if (progress != null) progress.onProgress(generated, totalFrames, motion.confidence);
             }
             for (int step = 1; step <= framesPerPair; step++) {
@@ -109,7 +109,7 @@ public final class NativePoseSequenceComposer {
                 int[] pixels = PoseSequenceFlow.between(previous, next, width, height, motion, t);
                 String role = step == framesPerPair ? "anchor" : "intermediate";
                 saveFrame(output, images, pixels, width, height, generated++,
-                        frameDurationMs, role);
+                        frameDurationMs, fps, role);
                 if (progress != null) progress.onProgress(generated, totalFrames, motion.confidence);
             }
             previous = next;
@@ -148,6 +148,7 @@ public final class NativePoseSequenceComposer {
                                   int height,
                                   int frame,
                                   long durationMs,
+                                  int fps,
                                   String frameRole) throws Exception {
         String name = String.format(java.util.Locale.US, "pose_%04d.png", frame);
         File output = new File(directory, name);
@@ -188,6 +189,7 @@ public final class NativePoseSequenceComposer {
         clip.speed = 1;
         clip.transition = "none";
         clip.effects.put("poseInbetween", true);
+        clip.effects.put("poseFps", fps);
         destination.clips.add(clip);
     }
 }
