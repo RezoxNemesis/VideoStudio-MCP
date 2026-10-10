@@ -9,6 +9,7 @@ import STUDIO_NEURAL_JS from "./studio-neural.js";
 import STUDIO_TEMPORAL_JS from "./studio-temporal.js";
 import STUDIO_CHARACTER_JS from "./studio-character.js";
 import STUDIO_ACTION_TIMELINE_JS from "./studio-action-timeline.js";
+import STUDIO_POSE_SEQUENCE_JS from "./studio-pose-sequence.js";
 import LOCAL_VIDEO_DOWNLOAD_HTML from "./local-download.js";
 
 const JH = {"content-type":"application/json; charset=UTF-8","cache-control":"no-store"};
@@ -1136,6 +1137,7 @@ function serverFor(env,hybridKey=""){
       "real browser-local text-to-video procedural rendering",
       "image-to-video depth motion",
       "single-still WebGL localized character motion (not full generative new-pose synthesis)",
+      "multi-pose anchor frame synthesis: distinct drawings, sparse optical flow, proper inbetweens",
       "eased pose keyframes, independent articulated regions and secondary cape physics",
       "multi-image story video generation",
       "video-to-video restyling",
@@ -1181,7 +1183,7 @@ function serverFor(env,hybridKey=""){
     inputSchema:{
       deviceId:z.string().min(8),
       projectId:z.string().min(8),
-      mode:z.enum(["prompt_scene","image_motion","character_action","story_video","video_restyle","motion_graphics","procedural_3d","audio_visualizer","abstract_vfx"]),
+      mode:z.enum(["prompt_scene","image_motion","character_action","pose_sequence","story_video","video_restyle","motion_graphics","procedural_3d","audio_visualizer","abstract_vfx"]),
       prompt:z.string().max(2000).optional(),
       style:z.enum(["cinematic","dreamy","neon","film","mono"]).optional(),
       duration:z.number().min(1).max(60).optional(),
@@ -1189,6 +1191,8 @@ function serverFor(env,hybridKey=""){
       aspect:z.enum(["9:16","16:9","1:1","4:5"]).optional(),
       quality:z.enum(["720p","1080p"]).optional(),
       assetId:z.string().min(8).optional(),
+      anchorAssetIds:z.array(z.string().min(8)).min(2).max(12).optional(),
+      poseTimes:z.array(z.number().min(0).max(1)).min(2).max(12).optional(),
       motionPreset:z.enum(["duel","portrait","custom"]).optional(),
       intensity:z.number().min(.2).max(1.6).optional(),
       poseTracks:z.array(z.array(z.array(z.number()).min(4).max(5)).min(2).max(16)).min(1).max(8).optional(),
@@ -1251,6 +1255,35 @@ function serverFor(env,hybridKey=""){
         executionPolicy:"Browser-local GPU and IndexedDB. MCP queue persists in Worker; final render cannot run with browser closed.",
         actionRequired:ageMs!==null&&ageMs<60000&&status.device.browserVisibility==="visible"?"Browser visible; wait for verified command completion.":"Open the exact browser profile with the imported image and keep tab visible while rendering."});
     }catch(error){return out({error:error.message});}
+  });
+
+  s.registerTool("animate_pose_sequence",{
+    description:"Animate a real sequence of 2-12 distinct artist-provided pose drawings, interpolating with local sparse flow. This is not new-pose generation from one still. Requires the original browser containing all image assets to be visible.",
+    inputSchema:{
+      deviceId:z.string().min(8),projectId:z.string().min(8),
+      anchorAssetIds:z.array(z.string().min(8)).min(2).max(12),
+      poseTimes:z.array(z.number().min(0).max(1)).min(2).max(12).optional(),
+      duration:z.number().min(2).max(60).default(6),
+      fps:z.number().int().min(12).max(30).default(24),
+      quality:z.enum(["720p","1080p"]).default("720p"),
+      aspect:z.enum(["9:16","16:9","1:1","4:5"]).default("9:16")
+    }
+  },async({deviceId,projectId,anchorAssetIds,poseTimes,duration,fps,quality,aspect})=>{
+    try{
+      if(await st.appResolve(deviceId))return out({queued:false,error:"This is Studio Web browser-local pose animation."});
+      const p=await st.project(deviceId,projectId);
+      if(!p)return out({queued:false,error:"Project not found"});
+      if(new Set(anchorAssetIds).size!==anchorAssetIds.length)
+        return out({queued:false,error:"Repeated still images cannot provide different poses"});
+      if(anchorAssetIds.some(id=>!(p.assets||[]).some(a=>a.id===id&&a.kind==="image")))
+        return out({queued:false,error:"Pose anchor is missing from this project's registered images"});
+      const c=await st.enqueueRuntime(deviceId,projectId,"generate_video",{
+        mode:"pose_sequence",anchorAssetIds,poseTimes,duration,fps,quality,aspect
+      });
+      return out({queued:true,commandId:c.id,sequence:c.seq,executionSurface:"studio-web",
+        requiredOriginalPoseCount:anchorAssetIds.length,
+        note:"Browser must remain open. Each anchor must depict a genuinely different pose. The engine synthesizes inbetweens but does not generate missing artwork."});
+    }catch(e){return out({queued:false,error:e.message});}
   });
 
   s.registerTool("probe_studio_neural_gpu",{
@@ -2288,6 +2321,7 @@ export default {
       if(!html.includes("/studio-temporal.js")) html=html.replace("</body>",'<script defer src="/studio-temporal.js"></script></body>');
       if(!html.includes("/studio-character.js")) html=html.replace("</body>",'<script defer src="/studio-character.js"></script></body>');
       if(!html.includes("/studio-action-timeline.js")) html=html.replace("</body>",'<script defer src="/studio-action-timeline.js"></script></body>');
+      if(!html.includes("/studio-pose-sequence.js")) html=html.replace("</body>",'<script defer src="/studio-pose-sequence.js"></script></body>');
       return new Response(html,{headers:{"content-type":"text/html; charset=UTF-8","cache-control":"no-store"}});
     }
     if(u.pathname==="/studio-runtime.js"&&request.method==="GET") return new Response(STUDIO_RUNTIME_JS,{headers:{"content-type":"application/javascript; charset=UTF-8","cache-control":"no-cache"}});
@@ -2296,6 +2330,7 @@ export default {
     if(u.pathname==="/studio-temporal.js"&&request.method==="GET") return new Response(STUDIO_TEMPORAL_JS,{headers:{"content-type":"application/javascript; charset=UTF-8","cache-control":"no-cache"}});
     if(u.pathname==="/studio-character.js"&&request.method==="GET") return new Response(STUDIO_CHARACTER_JS,{headers:{"content-type":"application/javascript; charset=UTF-8","cache-control":"no-cache"}});
     if(u.pathname==="/studio-action-timeline.js"&&request.method==="GET") return new Response(STUDIO_ACTION_TIMELINE_JS,{headers:{"content-type":"application/javascript; charset=UTF-8","cache-control":"no-cache"}});
+    if(u.pathname==="/studio-pose-sequence.js"&&request.method==="GET") return new Response(STUDIO_POSE_SEQUENCE_JS,{headers:{"content-type":"application/javascript; charset=UTF-8","cache-control":"no-cache"}});
     if(u.pathname==="/api/web/config"&&request.method==="GET") return reply({googleDriveClientId:clean(env.GOOGLE_DRIVE_CLIENT_ID||"",300),driveScope:"https://www.googleapis.com/auth/drive.file",storageMode:"user-owned-google-drive"});
     if(u.pathname==="/manifest.webmanifest") return new Response(MANIFEST,{headers:{"content-type":"application/manifest+json"}});
     if(u.pathname==="/icon.svg") return new Response(ICON,{headers:{"content-type":"image/svg+xml"}});
