@@ -3177,6 +3177,10 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             out.put("inlineAttachmentIngest", true);
             out.put("chunkedFrameIngest", true);
             out.put("poseSequenceEngineReady", true);
+            out.put("animationDirectorReady", true);
+            out.put("animationDirectorModes", "native-direct,experimental-flow");
+            out.put("flowSceneCutProtection", true);
+            out.put("nativeAnimationMaxAuthoredFrames", NativeAnimationDirector.MAX_SOURCE_FRAMES);
             out.put("controlPaused", protocol.isControlPaused());
             out.put("backgroundService", true);
             out.put("result", "VideoStudio v3 native core healthy");
