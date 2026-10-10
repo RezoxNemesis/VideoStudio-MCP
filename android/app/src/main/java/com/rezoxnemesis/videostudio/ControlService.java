@@ -43,6 +43,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     public static final String ACTION_RECONNECT = "com.rezoxnemesis.videostudio.RECONNECT";
     public static final String ACTION_SYNC = "com.rezoxnemesis.videostudio.SYNC_STATE";
     public static final String ACTION_LOCAL_ANIMATE = "com.rezoxnemesis.videostudio.LOCAL_ANIMATE_IMAGES";
+    public static final String ACTION_LOCAL_ANIMATION_STUDIO = "com.rezoxnemesis.videostudio.LOCAL_ANIMATION_STUDIO";
     public static final String ACTION_LOCAL_PROMPT_VIDEO = "com.rezoxnemesis.videostudio.LOCAL_PROMPT_VIDEO";
     public static final String ACTION_LOCAL_EXPORT = "com.rezoxnemesis.videostudio.LOCAL_EXPORT_PROJECT";
     private static final String CHANNEL = "videostudio_private_control";
@@ -156,6 +157,42 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         } else if (ACTION_SYNC.equals(action)) {
             syncProtocolState();
             protocol.registerNow();
+         } else if (ACTION_LOCAL_ANIMATION_STUDIO.equals(action)) {
+            // Decode/thumbnail planning must not block Android's service
+            // main thread. Export itself uses the guarded heavy-work lane.
+            final Intent request = intent;
+            commandExecutor.submit(() -> {
+                try {
+                    JSONObject parameters = new JSONObject();
+                    parameters.put("projectId", request.getStringExtra("projectId"));
+                    parameters.put("method", request.getStringExtra("method") == null
+                            ? "direct" : request.getStringExtra("method"));
+                    parameters.put("fps", request.getIntExtra("fps", 30));
+                    parameters.put("quality", "720p");
+                    parameters.put("render", true);
+                    parameters.put("fileName", "VideoStudio_AnimationDirector_"
+                            + System.currentTimeMillis() + ".mp4");
+                    String impactText = request.getStringExtra("impactFrames");
+                    if(impactText!=null && !impactText.trim().isEmpty()) {
+                        JSONArray markers = new JSONArray();
+                        for(String token : impactText.split(",")) {
+                            if(!token.trim().isEmpty())
+                                markers.put(Integer.parseInt(token.trim())-1);
+                        }
+                        parameters.put("impactIndices", markers);
+                    }
+                    JSONObject queued = queueAnimateTimeline(parameters);
+                    ActivityLog.add(this, "user", "Animation Director queued",
+                            queued.optString("method", "direct") + " • "
+                                    + queued.optInt("sourceFrames", 0) + " frames",
+                            "queued", 0, null, queued.optString("projectId", ""));
+                    syncProtocolState();
+                } catch(Exception e) {
+                    ActivityLog.add(this, "user", "Animation Director failed",
+                            e.getMessage() == null ? "Animation setup failed" : e.getMessage(),
+                            "failed", null, null, request.getStringExtra("projectId"));
+                }
+            });
         } else if (ACTION_LOCAL_ANIMATE.equals(action)) {
             try {
                 JSONObject p = new JSONObject();
@@ -562,6 +599,9 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                     return;
                 case "restore_model_pack_from_drive":
                     complete(command, queueDriveModelPackRestore(p));
+                    return;
+                case "animate_timeline":
+                    complete(command, queueAnimateTimeline(p));
                     return;
                 case "animate_pose_sequence":
                     complete(command, queuePoseSequence(p));
@@ -1503,6 +1543,9 @@ public final class ControlService extends Service implements AppProtocol.Callbac
 
                 JSONObject queued;
                 switch (action) {
+                    case "animate_timeline":
+                        queued = queueAnimateTimeline(parameters);
+                        break;
                     case "animate_pose_sequence":
                         queued = queuePoseSequence(parameters);
                         break;
@@ -1894,6 +1937,76 @@ public final class ControlService extends Service implements AppProtocol.Callbac
      * The output is a separate native project containing real intermediate
      * frame samples (not independent Ken Burns motions on static images).
      */
+    /**
+     * One native action for EXISTING ordered image projects. No cloud frames,
+     * no Gallery enumeration, no mandatory manual 40-step edit plan.
+     *
+     * method=direct (recommended): uses original drawn poses, quality-safe
+     * impact pacing and Media3 native output. method=flow (experimental):
+     * creates genuine motion-warped intermediate pixel frames via the pose
+     * composer, with background/occlusion guards.
+     */
+    private JSONObject queueAnimateTimeline(JSONObject p) throws Exception {
+        ProjectStore.Project source=resolveProject(p.optString("projectId", ""));
+        String method=p.optString("method", "direct").toLowerCase(Locale.US);
+        if(!"direct".equals(method) && !"flow".equals(method))
+            throw new IllegalArgumentException("Animation method must be direct or flow");
+        int fps=p.optInt("fps",30);
+        JSONArray impactIndices=p.optJSONArray("impactIndices");
+        NativeAnimationDirector.Plan plan=NativeAnimationDirector.plan(
+                this, source, fps, impactIndices);
+        plan.method=method;
+        boolean render=p.optBoolean("render",true);
+        String quality="1080p".equals(p.optString("quality","720p"))?"1080p":"720p";
+        String fileName=sanitizeFileName(p.optString("fileName",
+                "VideoStudio_AnimationDirector_"+System.currentTimeMillis()+".mp4"));
+        JSONObject result;
+        if("flow".equals(method)) {
+            if(plan.sourceIds.size()>40)
+                throw new IllegalArgumentException(
+                        "Experimental flow supports up to 40 anchors; use direct animation for larger sequences");
+            JSONObject args=new JSONObject();
+            args.put("projectId",source.id);
+            args.put("sourceProjectId",source.id);
+            JSONArray ordered=new JSONArray();
+            for(String id:plan.sourceIds) ordered.put(id);
+            args.put("anchorAssetIds",ordered);
+            args.put("framesByPair",NativeAnimationDirector.recommendedFlowSteps(plan));
+            args.put("fps",fps);
+            args.put("width",p.optInt("width",432));
+            args.put("height",p.optInt("height",768));
+            args.put("quality",quality);
+            args.put("render",render);
+            args.put("fileName",fileName);
+            result=queuePoseSequence(args);
+        } else {
+            ProjectStore.Project output=
+                    NativeAnimationDirector.createDirectProject(store,source,plan);
+            if(render) {
+                JSONObject args=new JSONObject();
+                args.put("projectId",output.id);
+                args.put("aspect","9:16");
+                args.put("quality",quality);
+                args.put("fileName",fileName);
+                result=queueExport(args);
+            } else {
+                result=ok();
+                result.put("queued",false);
+                result.put("projectId",output.id);
+            }
+            result.put("durationMs",output.outputDurationMs());
+        }
+        result.put("method",method);
+        result.put("sourceProjectId",source.id);
+        result.put("sourceFrames",plan.sourceIds.size());
+        result.put("render",render);
+        result.put("animationPlan",plan.toJson());
+        result.put("cameraMovement",false);
+        result.put("neuralMotionModelInstalled",false);
+        result.put("experimentalFlow","flow".equals(method));
+        return result;
+    }
+
     private JSONObject queuePoseSequence(JSONObject p) throws Exception {
         String sourceId = p.optString("sourceProjectId", p.optString("projectId", ""));
         ProjectStore.Project source = resolveProject(sourceId);
@@ -3535,6 +3648,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             case "append_frame_chunk": return "Importing private animation frame chunk";
             case "finish_frame_transfer": return "Verifying complete private frame";
             case "frame_transfer_status": return "Checking private frame transfer";
+            case "animate_timeline": return "Directing cinematic image sequence";
             case "animate_images": return "Animating still images";
             case "job_status": return "Reading native job status";
             case "export_project": return "Exporting project";
