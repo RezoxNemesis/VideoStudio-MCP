@@ -7,7 +7,8 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
-    "test": "node scripts/smoke-test.mjs && node --test scripts/connection-test.mjs"
+    "test": "node scripts/smoke-test.mjs && node --test scripts/connection-test.mjs scripts/personal-test.mjs scripts/personal-http-test.mjs scripts/personal-drive-test.mjs",
+    "test:personal": "node --test scripts/personal-test.mjs scripts/personal-http-test.mjs scripts/personal-drive-test.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/server": "2.0.0",
