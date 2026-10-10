@@ -70,3 +70,22 @@ test('No hidden-gallery or external image upload is introduced by the render eng
   assert.ok(!CHARACTER.includes('FileReader'));
   assert.match(CHARACTER,/loadImageAsset\(project,asset\)/);
 });
+
+
+test('Explicitly requested animation asset is never silently replaced with another still',async()=>{
+  const runtime=characterRuntime();
+  const project={id:'p-01',assets:[{id:'other-still',kind:'image'}],settings:{aspect:'9:16',quality:'720p'}};
+  await assert.rejects(async()=>runtime.animateImage(project,
+    {assetId:'goku-saitama-source',motionPreset:'duel',duration:6,fps:24},
+    {}),/refusing to animate another asset/);
+});
+
+test('Remote commands bind to their own project and remain queued while the browser is hidden',async()=>{
+  const runtime=await readFile(new URL('../src/studio-runtime.js',import.meta.url),'utf8');
+  assert.match(runtime,/async function getProject\(requestedProjectId\)/);
+  assert.match(runtime,/const project=await getProject\(options\.projectId\)/);
+  assert.match(runtime,/projectId:command\.projectId,commandId:command\.id/);
+  assert.match(runtime,/if\(command\.status==="queued"&&document\.hidden\)break/);
+  assert.match(runtime,/if\(document\.hidden && command\.action==="generate_video"\)/);
+  assert.match(runtime,/refusing to render another image/);
+});
