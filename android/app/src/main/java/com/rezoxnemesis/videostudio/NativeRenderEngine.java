@@ -134,6 +134,41 @@ public final class NativeRenderEngine {
                                         ? (hasArticulatedAnimation(project) ? "articulated-subject-2.5d" : "subject-aware-2.5d")
                                         : "standard");
                             } catch (Exception ignored) {}
+                            
+                            // A successful encoder callback is not sufficient. Verify
+                            // the actual raster orientation before reporting a final video.
+                            android.media.MediaMetadataRetriever verifier =
+                                    new android.media.MediaMetadataRetriever();
+                            try {
+                                verifier.setDataSource(outputFile.getAbsolutePath());
+                                int actualWidth = Integer.parseInt(verifier.extractMetadata(
+                                        android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH));
+                                int actualHeight = Integer.parseInt(verifier.extractMetadata(
+                                        android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT));
+                                String rotation = verifier.extractMetadata(
+                                        android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION);
+                                if ("90".equals(rotation) || "270".equals(rotation)) {
+                                    int temp = actualWidth; actualWidth = actualHeight; actualHeight = temp;
+                                }
+                                boolean shouldBePortrait = "9:16".equals(aspect) || "4:5".equals(aspect);
+                                boolean shouldBeLandscape = "16:9".equals(aspect);
+                                if (actualWidth <= 0 || actualHeight <= 0 ||
+                                        shouldBePortrait && actualHeight <= actualWidth ||
+                                        shouldBeLandscape && actualWidth <= actualHeight) {
+                                    listener.onError("Export dimension mismatch: requested " + aspect
+                                            + " but encoded " + actualWidth + "x" + actualHeight);
+                                    return;
+                                }
+                                info.put("encodedWidth", actualWidth);
+                                info.put("encodedHeight", actualHeight);
+                                info.put("orientationVerified", true);
+                            } catch (Exception verificationFailed) {
+                                listener.onError("Could not verify encoded dimensions of exported video");
+                                return;
+                            } finally {
+                                try { verifier.release(); }
+                                catch (java.io.IOException ignored) { /* closing the metadata probe is best effort */ }
+                            }
                             listener.onProgress(100, "Export complete");
                             listener.onCompleted(outputFile, info);
                         }
@@ -264,11 +299,12 @@ public final class NativeRenderEngine {
         ArrayList<Effect> effects = new ArrayList<>();
         JSONObject fx = clip.effects == null ? new JSONObject() : clip.effects;
 
-        effects.add(Presentation.createForAspectRatio(aspectRatio(aspect), Presentation.LAYOUT_SCALE_TO_FIT_WITH_CROP));
         int height = "720p".equalsIgnoreCase(quality)
                 ? ("16:9".equals(aspect) ? 720 : 1280)
                 : ("16:9".equals(aspect) ? 1080 : 1920);
-        effects.add(Presentation.createForHeight(height));
+        int width = Math.round(height * aspectRatio(aspect));
+        effects.add(Presentation.createForWidthAndHeight(
+                width, height, Presentation.LAYOUT_SCALE_TO_FIT_WITH_CROP));
 
         // Keep a safety overscan so parallax never reveals the edge of a plate.
         float overscan = "background".equals(layerRole) ? 1.10f : 1.035f;
@@ -336,7 +372,10 @@ public final class NativeRenderEngine {
         MediaItem.Builder media = new MediaItem.Builder().setUri(Uri.parse(asset.uri));
 
         if (image) {
-            media.setImageDurationMs(Math.max(250, clip.outputDurationMs()));
+            // Pose-interpolated frames are already real video samples; the usual
+            // 250ms photo minimum would destroy 24fps action timing.
+            boolean poseFrame = clip.effects != null && clip.effects.optBoolean("poseInbetween", false);
+            media.setImageDurationMs(Math.max(poseFrame ? 34 : 250, clip.outputDurationMs()));
         } else {
             media.setClippingConfiguration(
                     new MediaItem.ClippingConfiguration.Builder()
@@ -346,7 +385,8 @@ public final class NativeRenderEngine {
         }
 
         EditedMediaItem.Builder edited = new EditedMediaItem.Builder(media.build());
-        if (image) edited.setFrameRate(30);
+        if (image) edited.setFrameRate(clip.effects != null && clip.effects.optBoolean("poseInbetween", false)
+                ? Math.max(12, Math.min(30, clip.effects.optInt("poseFps", 24))) : 30);
 
         if (!image && Math.abs(clip.speed - 1f) > .01f) {
             final float speed = Math.max(.25f, Math.min(4f, clip.speed));
@@ -367,10 +407,14 @@ public final class NativeRenderEngine {
         ArrayList<Effect> effects = new ArrayList<>();
         JSONObject fx = clip.effects == null ? new JSONObject() : clip.effects;
 
-        float targetAspect = aspectRatio(aspect);
-        effects.add(Presentation.createForAspectRatio(targetAspect, Presentation.LAYOUT_SCALE_TO_FIT_WITH_CROP));
-        int height = "720p".equalsIgnoreCase(quality) ? ("16:9".equals(aspect) ? 720 : 1280) : ("16:9".equals(aspect) ? 1080 : 1920);
-        effects.add(Presentation.createForHeight(height));
+        // Enforce correct raster geometry instead of a 9:16 scene letterboxed
+        // in a 16:9 output. The encoder still selects a supported size.
+        int height = "720p".equalsIgnoreCase(quality)
+                ? ("16:9".equals(aspect) ? 720 : 1280)
+                : ("16:9".equals(aspect) ? 1080 : 1920);
+        int width = Math.round(height * aspectRatio(aspect));
+        effects.add(Presentation.createForWidthAndHeight(
+                width, height, Presentation.LAYOUT_SCALE_TO_FIT_WITH_CROP));
 
         JSONObject proceduralGraph = fx.optJSONObject("proceduralScene");
         if (proceduralGraph != null) {

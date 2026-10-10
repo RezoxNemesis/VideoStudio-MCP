@@ -378,3 +378,27 @@ test('ChatGPT attachment URL is relayed through a private handoff instead of exp
  assert.equal(handoff.name,'chatgpt-source.mp4');
  assert.equal(handoff.mime,'video/mp4');
 });
+
+
+test('private image payload is delivered to Android but redacted from status and purged on ACK',async()=>{
+ const f=await fixture([{
+   ...command(1,'queued'),
+   action:'append_frame_chunk',
+   parameters:{projectId:'project12345',transferId:'transfer12345',
+     base64:'user-private-binary-frame',sourceUrl:'https://private.example/signed?secret=abc'}
+ }]);
+ const before=await f.relay.appStatusV3(f.key);
+ assert.equal(before.lastCommand.parameters.base64,'[private command payload redacted]');
+ assert.equal(before.lastCommand.parameters.sourceUrl,'[private command payload redacted]');
+ const delivered=await f.relay.appCommandsV3(f.deviceId,f.key,0,0);
+ assert.equal(delivered.length,1);
+ assert.equal(delivered[0].parameters.base64,'user-private-binary-frame');
+ await f.relay.appCompleteV3(f.deviceId,f.key,'cmd-1',{ok:true},'completed');
+ const rows=await f.storage.get('app-v3-cl:'+f.deviceId);
+ assert.equal(rows.length,1);
+ assert.equal(rows[0].status,'completed');
+ assert.equal(rows[0].parameters.base64,'[completed payload purged]');
+ assert.equal(rows[0].parameters.sourceUrl,'[temporary URL purged]');
+ assert.ok(!JSON.stringify(rows).includes('user-private-binary-frame'));
+ assert.ok(!JSON.stringify(rows).includes('secret=abc'));
+});

@@ -46,6 +46,31 @@ public final class CommandJournal {
         return null;
     }
 
+    /**
+     * Journal durable operations without duplicating owner-selected image
+     * bytes or expiring signed attachment URLs in SharedPreferences.
+     * Claim/execute still receives the full transport command in memory;
+     * the journal stores only a minimal command for diagnostics.
+     */
+    private static JSONObject safeStoredCommand(JSONObject original) {
+        JSONObject safe = new JSONObject();
+        try {
+            safe.put("id", original.optString("id", ""));
+            safe.put("seq", original.optLong("seq", 0));
+            safe.put("action", original.optString("action", ""));
+            JSONObject source = original.optJSONObject("parameters");
+            if (source != null) {
+                JSONObject p = new JSONObject(source.toString());
+                p.remove("base64");
+                p.remove("sourceUrl");
+                p.remove("ownerKey");
+                p.remove("privateOwnerKey");
+                safe.put("parameters", p);
+            }
+        } catch (Exception ignored) {}
+        return safe;
+    }
+
     public synchronized void begin(JSONObject command) {
         if (command == null || "get_state".equals(command.optString("action"))) return;
         String id = command.optString("id");
@@ -56,7 +81,7 @@ public final class CommandJournal {
             entry.put("seq", command.optLong("seq", 0));
             entry.put("action", command.optString("action", ""));
             entry.put("status", "running");
-            entry.put("command", new JSONObject(command.toString()));
+            entry.put("command", safeStoredCommand(command));
             entry.put("updatedAt", System.currentTimeMillis());
         } catch (Exception ignored) {}
         upsert(id, entry);
@@ -78,7 +103,7 @@ public final class CommandJournal {
             entry.put("status", "running");
             entry.put("jobId", jobId);
             entry.put("projectId", projectId == null ? "" : projectId);
-            entry.put("command", new JSONObject(command.toString()));
+            entry.put("command", safeStoredCommand(command));
             if (queuedResult != null) entry.put("queuedResult", new JSONObject(queuedResult.toString()));
             entry.put("updatedAt", System.currentTimeMillis());
         } catch (Exception ignored) {}

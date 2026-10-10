@@ -563,6 +563,9 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 case "restore_model_pack_from_drive":
                     complete(command, queueDriveModelPackRestore(p));
                     return;
+                case "animate_pose_sequence":
+                    complete(command, queuePoseSequence(p));
+                    return;
                 case "animate_images":
                     complete(command, queueAnimatedImages(p));
                     return;
@@ -612,6 +615,17 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                     return;
                 case "import_attachment":
                     complete(command, queueDirectAttachmentImport(p));
+                    return;
+                case "append_frame_chunk":
+                    complete(command, appendFrameChunk(p));
+                    return;
+                case "finish_frame_transfer":
+                    complete(command, finishFrameTransfer(p));
+                    syncProtocolState();
+                    return;
+                case "frame_transfer_status":
+                    complete(command, new NativeChunkedImport(getFilesDir())
+                            .status(p.optString("projectId", ""), p.optString("transferId", "")));
                     return;
                 case "import_inline_base64":
                     complete(command, importInlineBase64(p));
@@ -1489,6 +1503,9 @@ public final class ControlService extends Service implements AppProtocol.Callbac
 
                 JSONObject queued;
                 switch (action) {
+                    case "animate_pose_sequence":
+                        queued = queuePoseSequence(parameters);
+                        break;
                     case "animate_images":
                         queued = queueAnimatedImages(parameters);
                         break;
@@ -1866,6 +1883,156 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         result.put("projectId", project.id);
         result.put("assetId", assetId);
         result.put("durableRecovery", true);
+        return result;
+    }
+
+    
+    /**
+     * New v3 command: animate_pose_sequence
+     *
+     * Only explicitly imported VideoStudio project assets are accepted.
+     * The output is a separate native project containing real intermediate
+     * frame samples (not independent Ken Burns motions on static images).
+     */
+    private JSONObject queuePoseSequence(JSONObject p) throws Exception {
+        String sourceId = p.optString("sourceProjectId", p.optString("projectId", ""));
+        ProjectStore.Project source = resolveProject(sourceId);
+        JSONArray inputs = p.optJSONArray("anchorAssetIds");
+        if (inputs == null || inputs.length() < 2 || inputs.length() > 40)
+            throw new IllegalArgumentException("Pose sequence requires 2-40 ordered source image IDs");
+
+        ArrayList<String> anchors = new ArrayList<>();
+        for (int i=0; i<inputs.length(); i++) {
+            String id = inputs.optString(i, "");
+            ProjectStore.Asset asset = source.asset(id);
+            if (asset == null || asset.mime == null || !asset.mime.startsWith("image/"))
+                throw new IllegalArgumentException("Source frame " + i + " is not an imported image in this project");
+            anchors.add(id);
+        }
+        int width = Math.max(256, Math.min(1280, p.optInt("width", NativePoseSequenceComposer.DEFAULT_WIDTH)));
+        int height = Math.max(256, Math.min(1920, p.optInt("height", NativePoseSequenceComposer.DEFAULT_HEIGHT)));
+        if ((width & 1) != 0 || (height & 1) != 0)
+            throw new IllegalArgumentException("Pose dimensions must be even");
+        int framesPerPair = Math.max(2, Math.min(16, p.optInt("framesPerPair", 6)));
+        int fps = Math.max(12, Math.min(30, p.optInt("fps", 24)));
+        int[] frameMap = new int[inputs.length() - 1];
+        JSONArray customTiming = p.optJSONArray("framesByPair");
+        if (customTiming != null && customTiming.length() != frameMap.length)
+            throw new IllegalArgumentException("Motion timing map must match adjacent anchor pairs");
+        int frameTotal = 1;
+        for (int i=0; i<frameMap.length; i++) {
+            frameMap[i] = customTiming == null ? framesPerPair : customTiming.optInt(i, 0);
+            if (frameMap[i] < 2 || frameMap[i] > 16)
+                throw new IllegalArgumentException("Each motion segment must contain 2-16 frames");
+            frameTotal += frameMap[i];
+        }
+        if (frameTotal > 240)
+            throw new IllegalArgumentException("Sequence exceeds 240 bounded pose frames");
+
+        String outputId = p.optString("outputProjectId", "");
+        ProjectStore.Project output;
+        if (outputId.isEmpty()) {
+            output = store.create("Pose Motion - " + source.name);
+        } else {
+            output = store.get(outputId);
+            if (output == null || output.id.equals(source.id))
+                throw new IllegalArgumentException("Recovery destination project unavailable");
+        }
+        final ProjectStore.Project outputProject = output;
+        final ProjectStore.Project sourceProject = source;
+        final ArrayList<String> orderedIds = anchors;
+        final int targetWidth = width, targetHeight = height;
+        final int[] segmentFrames = frameMap;
+        final int targetFps = fps, expectedFrames = frameTotal;
+        boolean render = p.optBoolean("render", true);
+        String quality = "1080p".equals(p.optString("quality", "720p")) ? "1080p" : "720p";
+        String fileName = sanitizeFileName(p.optString("fileName", "VideoStudio_Pose_Motion_" + System.currentTimeMillis() + ".mp4"));
+        JSONObject durable = new JSONObject(p.toString());
+        durable.put("sourceProjectId", source.id);
+        durable.put("projectId", output.id);
+        durable.put("outputProjectId", output.id);
+        durable.put("fileName", fileName);
+        durable.put("render", render);
+        durable.put("aspect", "9:16");
+        durable.put("quality", quality);
+
+        JobManager.Job job = submitRecoverableHeavy("animate_pose_sequence",
+                durable, output.id, "Pose Motion • " + source.name, state -> {
+                    int expected = expectedFrames;
+                    checkpoint(state, "Native pose synthesis", "Building time-coherent frame correspondences", 4, outputProject.id);
+                    jobs.awaitSafeCheckpoint(state, "pose_frame_build");
+                    final double[] lastConfidence = {0};
+                    NativePoseSequenceComposer.compose(this, store, sourceProject,
+                            outputProject, orderedIds, targetWidth, targetHeight,
+                            segmentFrames, targetFps, (produced, total, confidence) -> {
+                                lastConfidence[0] = confidence;
+                                int pct = 5 + (int) Math.min(59, (produced * 59.0) / Math.max(1, total));
+                                if (produced == 1 || produced % 4 == 0 || produced == total) {
+                                    checkpoint(state, "Native pose synthesis",
+                                            produced + "/" + total + " distinct pose frames stored", pct, outputProject.id);
+                                    jobs.awaitSafeCheckpoint(state, "pose_frame_" + produced);
+                                }
+                            });
+                    JSONObject details = new JSONObject();
+                    details.put("engine", "bidirectional-block-flow");
+                    details.put("generatedFrames", expected);
+                    details.put("anchors", orderedIds.size());
+                    details.put("width", targetWidth);
+                    details.put("height", targetHeight);
+                    details.put("fpsRequested", targetFps);
+                    details.put("neuralPoseGeneration", false);
+                    details.put("limitation", "Motion estimation cannot invent unseen anatomy; inspect for ghosting");
+                    details.put("lastPairConfidence", lastConfidence[0]);
+                    state.setResult(details);
+                    syncProtocolState();
+                    checkpoint(state, "Native pose synthesis", "Motion sequence available as its own project", 65, outputProject.id);
+                    if (render) {
+                        jobs.awaitSafeCheckpoint(state, "pose_export");
+                        runExportBlocking(outputProject, "9:16", quality, fileName, state);
+                        checkpoint(state, "Native pose synthesis", "Pose-sequence MP4 rendered", 100, outputProject.id);
+                    } else checkpoint(state, "Native pose synthesis", "Editable pose frames prepared", 100, outputProject.id);
+                });
+        JSONObject result = ok();
+        result.put("queued", true);
+        result.put("durableRecovery", true);
+        result.put("projectId", output.id);
+        result.put("sourceProjectId", source.id);
+        result.put("outputProjectId", output.id);
+        result.put("jobId", job.id);
+        result.put("render", render);
+        result.put("expectedFrames", frameTotal);
+        result.put("timingMode", customTiming == null ? "uniform" : "animator-directed");
+        result.put("engine", "native-bidirectional-optical-flow-v1");
+        return result;
+    }
+
+    /** Fixed-size private chunks avoid sending large base64 payloads through MCP. */
+    private JSONObject appendFrameChunk(JSONObject p) throws Exception {
+        ProjectStore.Project project = resolveProject(p.optString("projectId", ""));
+        return new NativeChunkedImport(getFilesDir()).append(
+                project.id, p.optString("transferId", ""),
+                p.optString("name", ""), p.optString("mime", ""),
+                p.optLong("totalBytes", 0), p.optString("sha256", ""),
+                p.optLong("offset", -1), p.optString("base64", ""));
+    }
+
+    private JSONObject finishFrameTransfer(JSONObject p) throws Exception {
+        ProjectStore.Project project = resolveProject(p.optString("projectId", ""));
+        File output = new File(getFilesDir(), "imports");
+        NativeChunkedImport.Result frame = new NativeChunkedImport(getFilesDir())
+                .finalizeImage(project.id, p.optString("transferId", ""),
+                        p.optString("name", ""), p.optString("mime", ""),
+                        p.optLong("totalBytes", 0), p.optString("sha256", ""), output);
+        ProjectStore.Asset asset = addImportedAsset(project, frame.file, frame.name, frame.mime);
+        JSONObject result = ok();
+        result.put("projectId", project.id);
+        result.put("assetId", asset.id);
+        result.put("name", frame.name);
+        result.put("mime", frame.mime);
+        result.put("size", frame.bytes);
+        result.put("width", frame.width);
+        result.put("height", frame.height);
+        result.put("transport", "private-checksummed-chunked-mcp");
         return result;
     }
 
@@ -2895,6 +3062,8 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             out.put("galleryAccess", false);
             out.put("directAttachmentIngest", true);
             out.put("inlineAttachmentIngest", true);
+            out.put("chunkedFrameIngest", true);
+            out.put("poseSequenceEngineReady", true);
             out.put("controlPaused", protocol.isControlPaused());
             out.put("backgroundService", true);
             out.put("result", "VideoStudio v3 native core healthy");
@@ -2925,6 +3094,8 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             out.put("nativeAgent", "videostudio-v3");
             out.put("directAttachmentIngest", true);
             out.put("inlineAttachmentIngest", true);
+            out.put("chunkedFrameIngest", true);
+            out.put("poseSequenceEngine", "native-bidirectional-optical-flow-v1");
             out.put("localEngineOwnsProjects", true);
             out.put("portraitAnimationEngine", "v3.2-articulated-parallax");
             out.put("onDevicePortraitAi", true);
@@ -3024,7 +3195,9 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         boolean ok = result.optBoolean("ok", false);
         String action = command.optString("action", "");
         JSONObject p = command.optJSONObject("parameters");
-        String projectId = p == null ? "" : p.optString("projectId", result.optString("projectId", ""));
+        String projectId = "animate_pose_sequence".equals(action)
+                ? result.optString("projectId", p == null ? "" : p.optString("projectId", ""))
+                : (p == null ? "" : p.optString("projectId", result.optString("projectId", "")));
 
         if (ExecutionTruthPolicy.isDeferredResult(result)) {
             String jobId = result.optString("jobId", "");
@@ -3241,6 +3414,11 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 && !queuedResult.optBoolean("render", true)) {
             requirePlayableOutput = false;
         }
+        if ("animate_pose_sequence".equals(action)
+                && queuedResult != null
+                && !queuedResult.optBoolean("render", true)) {
+            requirePlayableOutput = false;
+        }
         if ("autonomous_edit".equals(action)
                 && queuedResult != null
                 && !queuedResult.optBoolean("render", false)) {
@@ -3353,6 +3531,10 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             case "restore_project_from_drive": return "Restoring project creative workspace";
             case "archive_model_pack_to_drive": return "Archiving model pack to cloud workspace";
             case "restore_model_pack_from_drive": return "Restoring model pack from cloud workspace";
+            case "animate_pose_sequence": return "Synthesizing native pose in-betweens";
+            case "append_frame_chunk": return "Importing private animation frame chunk";
+            case "finish_frame_transfer": return "Verifying complete private frame";
+            case "frame_transfer_status": return "Checking private frame transfer";
             case "animate_images": return "Animating still images";
             case "job_status": return "Reading native job status";
             case "export_project": return "Exporting project";
