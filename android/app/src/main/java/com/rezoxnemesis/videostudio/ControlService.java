@@ -86,6 +86,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     private SharedPreferences prefs;
     private CommandJournal commandJournal;
     private final ExecutorService commandCompletionWatchers = Executors.newFixedThreadPool(2);
+    private final ExecutorService directorSetupExecutor = Executors.newSingleThreadExecutor();
     private final Set<String> watchedCommands = ConcurrentHashMap.newKeySet();
     private volatile boolean serviceAlive;
 
@@ -161,7 +162,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             // Decode/thumbnail planning must not block Android's service
             // main thread. Export itself uses the guarded heavy-work lane.
             final Intent request = intent;
-            commandExecutor.submit(() -> {
+            directorSetupExecutor.submit(() -> {
                 try {
                     JSONObject parameters = new JSONObject();
                     parameters.put("projectId", request.getStringExtra("projectId"));
@@ -282,6 +283,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         if (jobs != null) jobs.shutdown();
         if (protocol != null) protocol.stop();
         commandCompletionWatchers.shutdownNow();
+        directorSetupExecutor.shutdownNow();
         if (NativeAgentWatchdog.shouldRearm(paused)) {
             NativeAgentWatchdog.scheduleRetry(this, "service_destroyed");
         } else {
