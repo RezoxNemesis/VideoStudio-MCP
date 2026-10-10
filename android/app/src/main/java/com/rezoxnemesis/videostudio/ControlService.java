@@ -3049,6 +3049,8 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             out.put("galleryAccess", false);
             out.put("directAttachmentIngest", true);
             out.put("inlineAttachmentIngest", true);
+            out.put("chunkedFrameIngest", true);
+            out.put("poseSequenceEngineReady", true);
             out.put("controlPaused", protocol.isControlPaused());
             out.put("backgroundService", true);
             out.put("result", "VideoStudio v3 native core healthy");
@@ -3395,6 +3397,11 @@ public final class ControlService extends Service implements AppProtocol.Callbac
 
         boolean requirePlayableOutput = ExecutionTruthPolicy.requiresValidatedMediaOutput(action);
         if ("animate_images".equals(action)
+                && queuedResult != null
+                && !queuedResult.optBoolean("render", true)) {
+            requirePlayableOutput = false;
+        }
+        if ("animate_pose_sequence".equals(action)
                 && queuedResult != null
                 && !queuedResult.optBoolean("render", true)) {
             requirePlayableOutput = false;
