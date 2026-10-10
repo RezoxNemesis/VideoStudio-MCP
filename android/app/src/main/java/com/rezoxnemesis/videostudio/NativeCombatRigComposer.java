@@ -24,6 +24,12 @@ public final class NativeCombatRigComposer {
     public static ProjectStore.Project compose(Context context,ProjectStore store,
               ProjectStore.Project output,int width,int height,int fps,
               double durationSeconds,Progress progress) throws Exception {
+        return compose(context,store,output,width,height,fps,durationSeconds,null,progress);
+    }
+
+    public static ProjectStore.Project compose(Context context,ProjectStore store,
+              ProjectStore.Project output,int width,int height,int fps,
+              double durationSeconds,Bitmap sourceBackdrop,Progress progress) throws Exception {
         if(context==null||store==null||output==null)
             throw new IllegalArgumentException("A native output project is required");
         if(fps!=24&&fps!=30)
@@ -51,7 +57,7 @@ public final class NativeCombatRigComposer {
         output.clips.clear();
         output.sourcePrompt="combat-rig: fully procedural articulated motion with static background";
         store.save(output);
-        NativeCombatRigRenderer renderer=new NativeCombatRigRenderer(width,height);
+        NativeCombatRigRenderer renderer=new NativeCombatRigRenderer(width,height,sourceBackdrop);
         long frameMs=Math.max(34,Math.round(1000.0/fps));
         try {
             for(int i=0;i<total;i++) {
@@ -84,6 +90,7 @@ public final class NativeCombatRigComposer {
                 asset.generationMetadata.put("engine","builtin.native-combat-rig-v1");
                 asset.generationMetadata.put("movingCharacterRig",true);
                 asset.generationMetadata.put("fixedEnvironment",true);
+                asset.generationMetadata.put("backgroundMode",sourceBackdrop==null?"procedural":"source_median");
                 asset.generationMetadata.put("referenceArtReconstruction",false);
                 asset.generationMetadata.put("frameIndex",i);
                 asset.generationMetadata.put("sceneTime",movement.sceneTime);
