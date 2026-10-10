@@ -924,6 +924,28 @@ const STUDIO_RUNTIME_JS = String.raw`
     return null;
   }
 
+
+  async function exportOneLocalVideo(command){
+    const p=command.parameters||{};
+    const project=await getProject(command.projectId);
+    const asset=(project.assets||[]).find(a=>a.id===p.assetId&&a.kind==="video");
+    if(!asset)throw new Error("Explicitly requested video was not found in the selected project");
+    if(!/^[a-f0-9]{64}$/.test(String(p.uploadToken||"")))throw new Error("Missing or invalid temporary transfer capability");
+    const stored=await idbGet("assets",assetKey(project.id,asset.id));
+    if(!stored||!stored.blob)throw new Error("This exact generated MP4 is not stored in the current browser profile");
+    const blob=stored.blob;
+    if(blob.size>12*1024*1024||blob.size<=0)throw new Error("One-time export requires a nonempty MP4 under 12 MiB");
+    const mime=String(asset.type||blob.type||"video/mp4").split(";")[0];
+    if(!["video/mp4","video/webm"].includes(mime))throw new Error("Only video files can be sent");
+    const response=await fetch("/api/studio-transfer/upload/"+p.uploadToken,{
+      method:"POST",headers:{"content-type":mime},body:blob,cache:"no-store"
+    });
+    const data=await response.json().catch(()=>({}));
+    if(!response.ok||!data.ok)throw new Error(data.error||"Video transfer failed");
+    return {ok:true,assetId:asset.id,name:asset.name,bytes:data.size,sha256:data.digest,
+      note:"Only the explicitly requested video was transferred by user-authorized temporary export."};
+  }
+
   async function handleRuntimeCommand(command){
     const p=command.parameters||{};let result,status="completed";
     try{
@@ -948,6 +970,7 @@ const STUDIO_RUNTIME_JS = String.raw`
         if(!neural||typeof neural.probe!=="function") throw new Error("Neural Keyframe runtime is not ready");
         result=await neural.probe();
       }
+      else if(command.action==="temporary_video_export")result=await exportOneLocalVideo(command);
       else if(command.action==="drive_status")result=await driveStatus();
       else if(command.action==="drive_sync")result=await syncProject({interactive:false});
       else if(command.action==="drive_restore")result=await restoreProject({interactive:false});

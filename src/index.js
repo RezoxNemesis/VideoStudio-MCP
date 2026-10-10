@@ -142,6 +142,67 @@ export class VideoStudioState extends DurableObject {
     return c;
   }
 
+
+  // Explicit, one-asset delivery to ChatGPT. Separate upload/download
+  // capabilities prevent a browser command reader from obtaining download access.
+  async createTemporaryVideoExport(deviceId,projectId,assetId){
+    const project=await this.project(deviceId,projectId);
+    if(!project) throw new Error("Project not found");
+    const asset=(project.assets||[]).find(a=>a.id===assetId&&a.kind==="video");
+    if(!asset)throw new Error("Requested video not registered in the selected project");
+    const knownSize=Number(asset.size||0);
+    if(!Number.isFinite(knownSize)||knownSize<=0||knownSize>12*1024*1024)throw new Error("One-time chat export supports videos up to 12 MiB");
+    const newToken=()=>Array.from(crypto.getRandomValues(new Uint8Array(32))).map(b=>b.toString(16).padStart(2,"0")).join("");
+    const uploadToken=newToken(),downloadToken=newToken();
+    const expiresAt=Date.now()+90*60*1000;
+    const safeName=clean(asset.name||"VideoStudio-animation.mp4",120).replace(/[^A-Za-z0-9_.-]/g,"_");
+    await this.ctx.storage.put("te:up:"+uploadToken,{
+      deviceId,projectId,assetId,safeName,downloadToken,expectedSize:knownSize,expiresAt,status:"pending",
+      size:0,parts:0
+    });
+    await this.ctx.storage.put("te:down:"+downloadToken,uploadToken);
+    const previous=await this.ctx.storage.getAlarm();
+    if(previous===null||previous>expiresAt) await this.ctx.storage.setAlarm(expiresAt);
+    return {uploadToken,downloadToken,expiresAt,safeName};
+  }
+  async storeTemporaryVideoExport(uploadToken,bytes,mime){
+    const key="te:up:"+uploadToken,rec=await this.ctx.storage.get(key);
+    if(!rec||Date.now()>rec.expiresAt)throw new Error("This export request expired");
+    if(rec.status==="ready")return {ok:true,size:rec.size,reused:true};
+    if(!(bytes instanceof Uint8Array))bytes=new Uint8Array(bytes);
+    if(!bytes.length||bytes.length>12*1024*1024||bytes.length>rec.expectedSize+8192)throw new Error("Invalid or oversized video payload");
+    if(!["video/mp4","video/webm"].includes(String(mime||"").split(";")[0].trim()))throw new Error("Unsupported video MIME type");
+    const partSize=192*1024,parts=Math.ceil(bytes.length/partSize);
+    const digest=Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",bytes))).map(n=>n.toString(16).padStart(2,"0")).join("");
+    for(let i=0;i<parts;i++)await this.ctx.storage.put("te:part:"+uploadToken+":"+i,bytes.slice(i*partSize,(i+1)*partSize));
+    await this.ctx.storage.put(key,{...rec,status:"ready",size:bytes.length,mime:String(mime).split(";")[0].trim(),parts,digest});
+    return {ok:true,size:bytes.length,digest};
+  }
+  async getTemporaryVideoExportInfo(downloadToken){
+    const uploadToken=await this.ctx.storage.get("te:down:"+downloadToken);
+    if(!uploadToken) return null;
+    const rec=await this.ctx.storage.get("te:up:"+uploadToken);
+    if(!rec||Date.now()>rec.expiresAt||rec.status!=="ready")return null;
+    return {uploadToken,expiresAt:rec.expiresAt,name:rec.safeName,size:rec.size,mime:rec.mime,parts:rec.parts,digest:rec.digest};
+  }
+  async getTemporaryVideoExportPart(uploadToken,index){
+    const rec=await this.ctx.storage.get("te:up:"+uploadToken);
+    if(!rec||rec.status!=="ready"||Date.now()>rec.expiresAt||!Number.isInteger(index)||index<0||index>=rec.parts)return null;
+    return (await this.ctx.storage.get("te:part:"+uploadToken+":"+index))||null;
+  }
+  async alarm(){
+    const current=Date.now();
+    const items=await this.ctx.storage.list({prefix:"te:up:"});
+    let next=null;
+    for(const [key,rec] of items){
+      if(rec.expiresAt>current){next=next===null?rec.expiresAt:Math.min(next,rec.expiresAt);continue;}
+      await this.ctx.storage.delete("te:down:"+rec.downloadToken);
+      for(let i=0;i<(rec.parts||0);i++)await this.ctx.storage.delete("te:part:"+key.slice(6)+":"+i);
+      await this.ctx.storage.delete(key);
+    }
+    if(next!==null)await this.ctx.storage.setAlarm(next);
+  }
+
   async status(deviceId){
     const d=await this.device(deviceId), ps=await this.projects(deviceId), a=(await this.ctx.storage.get("cl:"+deviceId))||[];
     const ra=(await this.ctx.storage.get("rcl:"+deviceId))||[]; return {connected:!!d,device:d,projectCount:ps.length,pendingCommands:a.filter(c=>c.status==="queued").length,pendingRuntimeCommands:ra.filter(c=>c.status==="queued").length,lastCommand:(ra[ra.length-1]||a[a.length-1]||null)};
@@ -1274,6 +1335,21 @@ function serverFor(env,hybridKey=""){
     }catch(e){return out({queued:false,error:e.message});}
   });
 
+
+  s.registerTool("deliver_studio_video_to_chat",{
+    description:"On explicit owner request, queue one private browser-local video asset for one-time HTTPS transfer to ChatGPT. Only the selected project's video is transferred, never Gallery media. Temporary export automatically expires after 90 minutes. This upload is user-authorized and is not normal background media sync.",
+    inputSchema:{deviceId:z.string().min(8),projectId:z.string().min(8),assetId:z.string().min(8)}
+  },async({deviceId,projectId,assetId})=>{
+    try{
+      if(await st.appResolve(deviceId))return out({queued:false,error:"Studio Web device ID required"});
+      const transfer=await st.createTemporaryVideoExport(deviceId,projectId,assetId);
+      const command=await st.enqueueRuntime(deviceId,projectId,"temporary_video_export",{assetId,uploadToken:transfer.uploadToken});
+      return out({queued:true,commandId:command.id,sequence:command.seq,
+        downloadPath:"/api/studio-transfer/download/"+transfer.downloadToken,
+        expiresAt:new Date(transfer.expiresAt).toISOString(),assetId,
+        note:"The exact selected MP4 will be available at downloadPath after the original browser uploads it. This is an explicit temporary export, not blanket Gallery access. Queued is not completed."});
+    }catch(e){return out({queued:false,error:e.message});}
+  });
   s.registerTool("studio_drive_status",{description:"Read Studio Web Google Drive storage status. The website uses user-owned Drive through the narrow drive.file OAuth scope; it does not store video files in Cloudflare.",inputSchema:{deviceId:z.string().min(8),projectId:z.string().min(8)}},async({deviceId,projectId})=>{
     try{const c=await st.enqueueRuntime(deviceId,projectId,"drive_status",{});return out({queued:true,commandId:c.id,sequence:c.seq,runtime:"studio-web"});}catch(e){return out({queued:false,error:e.message});}
   });
@@ -1293,6 +1369,18 @@ function serverFor(env,hybridKey=""){
   s.registerTool("queue_video_edit",{description:"Send one edit action to VideoStudio. Native v3/v1 compatibility can use the private owner credential as deviceId and projectId='active-native'.",inputSchema:{deviceId:z.string().min(8),projectId:z.string().min(8),action:z.enum(["set_trim","set_speed","set_mute","set_aspect","set_title","set_quality","set_transition","remove_clip","move_clip","reorder_timeline","replace_timeline","set_clip_speed","set_clip_title","set_clip_effects","analyse_media","inspect_render","render","autonomous_request"]),parameters:z.record(z.string(),z.any()).optional()}},async({deviceId,projectId,action,parameters})=>{
     try{
       const p=parameters||{};
+      // Backwards compatible for installed MCP connectors that have not yet
+      // refreshed the dedicated deliver_studio_video_to_chat tool schema.
+      if(action==="autonomous_request"&&typeof p.deliverToChatAssetId==="string"&&!p.nativeAction){
+        if(await st.appResolve(deviceId))return out({queued:false,error:"Chat video export requires a Studio Web device ID"});
+        const assetId=p.deliverToChatAssetId;
+        const transfer=await st.createTemporaryVideoExport(deviceId,projectId,assetId);
+        const command=await st.enqueueRuntime(deviceId,projectId,"temporary_video_export",{assetId,uploadToken:transfer.uploadToken});
+        return out({queued:true,commandId:command.id,sequence:command.seq,
+          downloadPath:"/api/studio-transfer/download/"+transfer.downloadToken,
+          expiresAt:new Date(transfer.expiresAt).toISOString(),assetId,
+          note:"One explicit browser-local video is queued for an expiring private HTTPS transfer. Browser must be foreground; queued does not mean ready."});
+      }
       if(action==="autonomous_request"&&p.nativeAction==="converge_identity"){
         const primary=String(p.primaryOwnerKey||deviceId||"");
         const legacy=Array.isArray(p.legacyOwnerKeys)?p.legacyOwnerKeys:[];
@@ -1882,6 +1970,40 @@ async function api(request,env){
   const u=new URL(request.url), st=state(env);
   if(request.method==="OPTIONS") return new Response(null,{status:204,headers:{"access-control-allow-origin":"*","access-control-allow-methods":"GET,POST,OPTIONS","access-control-allow-headers":"content-type, authorization"}});
   try{
+
+    const exportUpload=u.pathname.match(/^\/api\/studio-transfer\/upload\/([a-f0-9]{64})$/);
+    if(exportUpload){
+      if(request.method!=="POST")return reply({error:"Method not allowed"},405);
+      const claimed=Number(request.headers.get("content-length")||0);
+      if(claimed>12*1024*1024)return reply({error:"Video exceeds 12 MiB export limit"},413);
+      const bytes=new Uint8Array(await request.arrayBuffer());
+      if(bytes.length>12*1024*1024)return reply({error:"Video exceeds 12 MiB export limit"},413);
+      return reply(await st.storeTemporaryVideoExport(exportUpload[1],bytes,request.headers.get("content-type")||""));
+    }
+    const exportDownload=u.pathname.match(/^\/api\/studio-transfer\/download\/([a-f0-9]{64})$/);
+    if(exportDownload){
+      if(request.method!=="GET")return reply({error:"Method not allowed"},405);
+      const meta=await st.getTemporaryVideoExportInfo(exportDownload[1]);
+      if(!meta)return reply({error:"Video is not ready or the private download has expired"},404);
+      const parts=[];
+      for(let i=0;i<meta.parts;i++){
+        const chunk=await st.getTemporaryVideoExportPart(meta.uploadToken,i);
+        if(!chunk) return reply({error:"Missing transfer part; cannot serve incomplete MP4"},409);
+        parts.push(chunk);
+      }
+      const blob=new Blob(parts,{type:meta.mime});
+      if(blob.size!==meta.size)return reply({error:"Export size does not match"},409);
+      return new Response(blob,{
+        status:200,
+        headers:{
+          "content-type":meta.mime,"content-length":String(meta.size),
+          "content-disposition":'attachment; filename="'+meta.name+'"',
+          "cache-control":"private, no-store","referrer-policy":"no-referrer",
+          "x-content-type-options":"nosniff",
+          "x-videostudio-sha256":meta.digest
+        }
+      });
+    }
     if(u.pathname==="/api/v3/app/register"&&request.method==="POST"){
       const b=await request.json(), meta=b.meta||{};
       const min=Number(meta.protocolMin||meta.protocolVersion||0);
