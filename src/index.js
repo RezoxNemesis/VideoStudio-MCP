@@ -7,6 +7,7 @@ import STUDIO_RUNTIME_JS from "./studio-runtime.js";
 import STUDIO_CINEMATIC_JS from "./studio-cinematic.js";
 import STUDIO_NEURAL_JS from "./studio-neural.js";
 import STUDIO_TEMPORAL_JS from "./studio-temporal.js";
+import STUDIO_CHARACTER_JS from "./studio-character.js";
 
 const JH = {"content-type":"application/json; charset=UTF-8","cache-control":"no-store"};
 const now = () => new Date().toISOString();
@@ -119,7 +120,8 @@ export class VideoStudioState extends DurableObject {
   }
   async runtimeCommands(deviceId,after=0){
     const a=(await this.ctx.storage.get("rcl:"+deviceId))||[];
-    return a.filter(c=>c.seq>Number(after||0));
+    // Replay unfinished jobs even when an old browser advanced its sequence before acknowledging.
+    return a.filter(c=>c.status==="queued"||c.seq>Number(after||0));
   }
   async runtimeCommand(deviceId,id){
     const a=(await this.ctx.storage.get("rcl:"+deviceId))||[];
@@ -1066,6 +1068,7 @@ function serverFor(env,hybridKey=""){
       "Google Drive drive.file project storage",
       "real browser-local text-to-video procedural rendering",
       "image-to-video depth motion",
+      "single-still WebGL localized character motion (not full generative new-pose synthesis)",
       "multi-image story video generation",
       "video-to-video restyling",
       "2D motion graphics generation",
@@ -1110,7 +1113,7 @@ function serverFor(env,hybridKey=""){
     inputSchema:{
       deviceId:z.string().min(8),
       projectId:z.string().min(8),
-      mode:z.enum(["prompt_scene","image_motion","story_video","video_restyle","motion_graphics","procedural_3d","audio_visualizer","abstract_vfx"]),
+      mode:z.enum(["prompt_scene","image_motion","character_action","story_video","video_restyle","motion_graphics","procedural_3d","audio_visualizer","abstract_vfx"]),
       prompt:z.string().max(2000).optional(),
       style:z.enum(["cinematic","dreamy","neon","film","mono"]).optional(),
       duration:z.number().min(1).max(60).optional(),
@@ -1118,6 +1121,15 @@ function serverFor(env,hybridKey=""){
       aspect:z.enum(["9:16","16:9","1:1","4:5"]).optional(),
       quality:z.enum(["720p","1080p"]).optional(),
       assetId:z.string().min(8).optional(),
+      motionPreset:z.enum(["duel","portrait","custom"]).optional(),
+      intensity:z.number().min(.2).max(1.6).optional(),
+      regions:z.array(z.object({
+        x:z.number().min(0).max(1),y:z.number().min(0).max(1),
+        rx:z.number().min(.025).max(.5),ry:z.number().min(.025).max(.5),
+        dx:z.number().min(-.1).max(.1),dy:z.number().min(-.1).max(.1),
+        frequency:z.number().min(.5).max(10).optional(),
+        phase:z.number().min(-6.28).max(6.28).optional()
+      })).min(1).max(8).optional(),
       seed:z.number().int().optional()
     }
   },async({deviceId,projectId,...parameters})=>{
@@ -2092,12 +2104,14 @@ export default {
       if(!html.includes("/studio-cinematic.js")) html=html.replace("</body>",'<script defer src="/studio-cinematic.js"></script></body>');
       if(!html.includes("/studio-neural.js")) html=html.replace("</body>",'<script defer src="/studio-neural.js"></script></body>');
       if(!html.includes("/studio-temporal.js")) html=html.replace("</body>",'<script defer src="/studio-temporal.js"></script></body>');
+      if(!html.includes("/studio-character.js")) html=html.replace("</body>",'<script defer src="/studio-character.js"></script></body>');
       return new Response(html,{headers:{"content-type":"text/html; charset=UTF-8","cache-control":"no-store"}});
     }
     if(u.pathname==="/studio-runtime.js"&&request.method==="GET") return new Response(STUDIO_RUNTIME_JS,{headers:{"content-type":"application/javascript; charset=UTF-8","cache-control":"no-cache"}});
     if(u.pathname==="/studio-cinematic.js"&&request.method==="GET") return new Response(STUDIO_CINEMATIC_JS,{headers:{"content-type":"application/javascript; charset=UTF-8","cache-control":"no-cache"}});
     if(u.pathname==="/studio-neural.js"&&request.method==="GET") return new Response(STUDIO_NEURAL_JS,{headers:{"content-type":"application/javascript; charset=UTF-8","cache-control":"no-cache"}});
     if(u.pathname==="/studio-temporal.js"&&request.method==="GET") return new Response(STUDIO_TEMPORAL_JS,{headers:{"content-type":"application/javascript; charset=UTF-8","cache-control":"no-cache"}});
+    if(u.pathname==="/studio-character.js"&&request.method==="GET") return new Response(STUDIO_CHARACTER_JS,{headers:{"content-type":"application/javascript; charset=UTF-8","cache-control":"no-cache"}});
     if(u.pathname==="/api/web/config"&&request.method==="GET") return reply({googleDriveClientId:clean(env.GOOGLE_DRIVE_CLIENT_ID||"",300),driveScope:"https://www.googleapis.com/auth/drive.file",storageMode:"user-owned-google-drive"});
     if(u.pathname==="/manifest.webmanifest") return new Response(MANIFEST,{headers:{"content-type":"application/manifest+json"}});
     if(u.pathname==="/icon.svg") return new Response(ICON,{headers:{"content-type":"image/svg+xml"}});
