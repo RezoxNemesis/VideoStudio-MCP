@@ -68,6 +68,10 @@ export class VideoStudioState extends DurableObject {
       executionSurface:"studio-web",
       localMedia:true,
       galleryAccess:false,
+      // Only a real browser heartbeat confirms it is still available. Project updates must not refresh executor liveness.
+      browserVisibility:["visible","hidden"].includes(meta.visibilityState)?meta.visibilityState:(old.browserVisibility||"unknown"),
+      activeBrowserProjectId:clean(meta.activeProjectId||old.activeBrowserProjectId||"",80),
+      lastExecutorHeartbeatAt:["visible","hidden"].includes(meta.visibilityState)?now():(old.lastExecutorHeartbeatAt||null),
       createdAt:old.createdAt||now(),
       lastSeenAt:now()
     };
@@ -1176,13 +1180,14 @@ function serverFor(env,hybridKey=""){
   },async({deviceId})=>{
     try{
       const status=await st.status(deviceId);
-      const ageMs=status.device?.lastSeenAt?Math.max(0,Date.now()-Date.parse(status.device.lastSeenAt)):null;
+      const ageMs=status.device?.lastExecutorHeartbeatAt?Math.max(0,Date.now()-Date.parse(status.device.lastExecutorHeartbeatAt)):null;
       return out({deviceId,registered:!!status.device,heartbeatAgeMs:ageMs,
         recentlyConnected:ageMs!==null&&ageMs<60000,
-        browserForegroundConfirmed:false,
+        browserForegroundConfirmed:ageMs!==null&&ageMs<60000&&status.device.browserVisibility==="visible",
+        lastObservedBrowserVisibility:status.device?.browserVisibility||"unknown",
         pendingRuntimeCommands:status.pendingRuntimeCommands,
         executionPolicy:"Browser-local GPU and IndexedDB. MCP queue persists in Worker; final render cannot run with browser closed.",
-        actionRequired:ageMs!==null&&ageMs<60000?"Wait for browser result; foreground rendering not independently confirmed":"Open the exact browser profile with the imported image and keep tab visible while rendering."});
+        actionRequired:ageMs!==null&&ageMs<60000&&status.device.browserVisibility==="visible"?"Browser visible; wait for verified command completion.":"Open the exact browser profile with the imported image and keep tab visible while rendering."});
     }catch(error){return out({error:error.message});}
   });
 
