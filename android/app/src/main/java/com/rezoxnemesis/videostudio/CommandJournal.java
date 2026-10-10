@@ -22,8 +22,9 @@ public final class CommandJournal {
 
     public CommandJournal(Context context) {
         prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
-        // Legacy get_state snapshots contain the journal itself. Purge them on upgrade,
-        // preventing exponential diagnostic growth and associated memory pressure.
+        // Pure inspection pages can be read again at an explicit revision. Their
+        // exact unacknowledged response belongs in the bounded result outbox,
+        // rather than 160 full rig/drawing definitions in SharedPreferences.
         prefs.edit().putString(KEY, read().toString()).commit();
     }
 
@@ -47,7 +48,7 @@ public final class CommandJournal {
     }
 
     public synchronized void begin(JSONObject command) {
-        if (command == null || "get_state".equals(command.optString("action"))) return;
+        if (command == null || repeatableInspection(command.optString("action"))) return;
         String id = command.optString("id");
         if (id.isEmpty()) return;
         JSONObject entry = new JSONObject();
@@ -125,7 +126,7 @@ public final class CommandJournal {
     }
 
     public synchronized void finish(JSONObject command, JSONObject result, String status) {
-        if (command == null || "get_state".equals(command.optString("action"))) return;
+        if (command == null || repeatableInspection(command.optString("action"))) return;
         String id = command.optString("id");
         if (id.isEmpty()) return;
         JSONObject entry = new JSONObject();
@@ -179,11 +180,16 @@ public final class CommandJournal {
             JSONArray safe = new JSONArray();
             for (int i = 0; i < stored.length() && safe.length() < MAX; i++) {
                 JSONObject entry = stored.optJSONObject(i);
-                if (entry != null && !"get_state".equals(entry.optString("action"))) safe.put(entry);
+                if (entry != null && !repeatableInspection(entry.optString("action"))) safe.put(entry);
             }
             return safe;
         }
         catch (Exception ignored) { return new JSONArray(); }
+    }
+
+    private static boolean repeatableInspection(String action) {
+        return "ping".equals(action) || "get_state".equals(action) || "project_state".equals(action)
+                || "rig_describe".equals(action) || "cel_describe".equals(action);
     }
 }
 

@@ -59,7 +59,7 @@ const STUDIO_TEMPORAL_JS = String.raw`
       headers: {"content-type": "application/json", ...(options.headers || {})}
     });
     const data = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(data.error || "Request failed");
+    if (!r.ok) { const error = new Error(data.error || "Request failed"); error.status = r.status; throw error; }
     return data;
   }
 
@@ -127,12 +127,24 @@ const STUDIO_TEMPORAL_JS = String.raw`
     });
   }
 
-  async function getProject() {
-    const pid = projectId();
-    if (!pid) throw new Error("Select a project first");
-    const data = await api("/api/projects?deviceId=" + encodeURIComponent(deviceId()));
-    const project = (data.projects || []).find(x => x.id === pid);
+  function projectTarget(options = {}) {
+    // Owner calls use the current selection once; queued calls supply both IDs.
+    if (options.remote === true && (options.projectId === undefined || options.deviceId === undefined))
+      throw new Error("Queued rendering requires its captured project and device");
+    const pid = options.projectId === undefined ? projectId() : options.projectId;
+    const did = options.deviceId === undefined ? deviceId() : options.deviceId;
+    if (typeof pid !== "string" || !pid.trim()) throw new Error("Select a project first");
+    if (typeof did !== "string" || !did.trim()) throw new Error("Select a paired device first");
+    return {projectId: pid, deviceId: did};
+  }
+
+  async function getProject(options = {}) {
+    const target = projectTarget(options);
+    const data = await api("/api/projects?deviceId=" + encodeURIComponent(target.deviceId));
+    const project = (data.projects || []).find(x => x.id === target.projectId);
     if (!project) throw new Error("Project not found");
+    if (project.deviceId && project.deviceId !== target.deviceId) throw new Error("Project belongs to another device");
+    project.deviceId = target.deviceId;
     project.assets = project.assets || [];
     project.timeline = project.timeline || [];
     project.settings = project.settings || {};
@@ -143,16 +155,42 @@ const STUDIO_TEMPORAL_JS = String.raw`
   async function patchProject(project, patch) {
     return (await api("/api/projects/" + encodeURIComponent(project.id), {
       method: "POST",
-      body: JSON.stringify({deviceId: deviceId(), patch})
+      body: JSON.stringify({deviceId: project.deviceId, expectedRevision: project.revision ?? 0, patch})
     })).project;
+  }
+
+  function canonicalMetadata(value, depth = 0) {
+    if (depth > 32) throw new Error("Registration acknowledgement exceeds bounded metadata depth");
+    return Array.isArray(value) ? value.map(item => canonicalMetadata(item, depth + 1)) : value && typeof value === "object"
+      ? Object.fromEntries(Object.keys(value).sort().map(key => [key, canonicalMetadata(value[key], depth + 1)])) : value;
+  }
+  const sameMetadata = (left, right) => JSON.stringify(canonicalMetadata(left)) === JSON.stringify(canonicalMetadata(right));
+
+  async function appendGenerated(project, assets, timeline, generation) {
+    try {
+      const registered = await api("/api/projects/" + encodeURIComponent(project.id) + "/append-generated", {
+        method: "POST", body: JSON.stringify({deviceId: project.deviceId, assets, timeline, generation})
+      });
+      if (registered.ok !== true || registered.project?.id !== project.id || registered.project?.deviceId !== project.deviceId
+        || !Array.isArray(registered.project.assets) || !Array.isArray(registered.project.timeline)
+        || assets.some(asset => !registered.project.assets.some(saved => saved.id === asset.id && sameMetadata(saved, asset)))
+        || timeline.some(clip => !registered.project.timeline.some(saved => saved.id === clip.id && sameMetadata(saved, clip))))
+        throw new Error("Registration acknowledgement does not identify the generated media in the captured project");
+      return {ok: true};
+    } catch (error) {
+      const registrationState = error.status === 409 ? "conflict" : error.status >= 400 && error.status < 500 ? "rejected" : "unacknowledged";
+      return {ok: false, executionState: registrationState === "unacknowledged" ? "generated_registration_unconfirmed" : "generated_registration_rejected", registrationState, projectId: project.id, deviceId: project.deviceId,
+        assets, timeline, generation, localBytesPreserved: true, mayHaveSideEffects: true, rerun: false,
+        error: "Generated video bytes are retained locally; project registration " + registrationState + ": " + String(error.message || error).slice(0, 4096)};
+    }
   }
 
   async function getAssetBlob(project, asset) {
     const row = await idbGet("assets", assetKey(project.id, asset.id));
     if (row && row.blob) return row.blob;
     if (window.VideoStudioCloud && typeof window.VideoStudioCloud.restoreAssetBlob === "function") {
-      const blob = await window.VideoStudioCloud.restoreAssetBlob(project, asset).catch(() => null);
-      if (blob) return blob;
+      const restored = await window.VideoStudioCloud.restoreAssetBlob(project.id, asset.id, {deviceId: project.deviceId}).catch(() => null);
+      if (restored && restored.blob) return restored.blob;
     }
     throw new Error("Local bytes are missing for " + asset.name + ". Restore the project from Drive first.");
   }
@@ -455,31 +493,26 @@ const STUDIO_TEMPORAL_JS = String.raw`
       }
     };
     await idbPut("assets", {key: assetKey(project.id, id), blob, meta: asset});
-    project.assets.push(asset);
-    project.timeline.push({assetId: id, inPoint: 0, outPoint: duration, speed: 1, title: "Neural Temporal Motion"});
-    project.generation = {
-      ...(project.generation || {}),
+    const timeline = [{id: crypto.randomUUID(), assetId: id, inPoint: 0, outPoint: duration, speed: 1, title: "Neural Temporal Motion"}];
+    const generation = {
       lastAssetId: id,
       lastTemporalAssetId: id,
       lastMode: "neural_temporal_motion",
       lastTemporalEngine: asset.temporal.engine,
       generatedAt: new Date().toISOString()
     };
-    await patchProject(project, {
-      assets: project.assets,
-      timeline: project.timeline,
-      generation: project.generation
-    });
     if (window.VideoStudioCloud && localStorage.getItem("vs-drive-auto-upload") === "1") {
-      try { await window.VideoStudioCloud.uploadSingleAsset(project, asset); } catch {}
+      try { await window.VideoStudioCloud.uploadSingleAsset(project, asset); await idbPut("assets", {key: assetKey(project.id, id), blob, meta: asset}); } catch {}
     }
+    const registered = await appendGenerated(project, [asset], timeline, generation);
+    if (!registered.ok) return registered;
     if (window.VideoStudioCinematic && window.VideoStudioCinematic.refreshSelectors) {
       window.VideoStudioCinematic.refreshSelectors().catch(() => {});
     }
-    return asset;
+    return {ok: true, asset};
   }
 
-  async function maybeGenerateAnchors(options) {
+  async function maybeGenerateAnchors(project, options) {
     const prompts = Array.isArray(options.prompts)
       ? options.prompts.map(x => String(x || "").trim()).filter(Boolean)
       : String(options.prompts || "").split(/\n+/).map(x => x.trim()).filter(Boolean);
@@ -488,16 +521,20 @@ const STUDIO_TEMPORAL_JS = String.raw`
       throw new Error("Neural Keyframe runtime is not ready");
     }
     setStatus("Generating temporal anchor frames…", 1);
-    const result = await window.VideoStudioNeural.generateKeyframes({prompts: prompts.slice(0, 9)});
+    const result = await window.VideoStudioNeural.generateKeyframes({projectId: project.id, deviceId: project.deviceId, prompts: prompts.slice(0, 9)});
+    if (result && result.ok === false) {
+      const error = new Error(result.error || "Generated anchors could not be registered");
+      error.retainedGeneration = result; throw error;
+    }
     return result && result.assets ? result.assets.map(a => a.id) : null;
   }
 
   async function resolveAnchors(project, options) {
     let ids = Array.isArray(options.anchorAssetIds) ? options.anchorAssetIds.filter(Boolean) : [];
     if (ids.length < 2 && options.prompts) {
-      const generatedIds = await maybeGenerateAnchors(options);
+      const generatedIds = await maybeGenerateAnchors(project, options);
       if (generatedIds && generatedIds.length >= 2) {
-        project = await getProject();
+        project = await getProject({projectId: project.id, deviceId: project.deviceId});
         ids = generatedIds;
       }
     }
@@ -512,6 +549,8 @@ const STUDIO_TEMPORAL_JS = String.raw`
 
   async function renderTemporalMotion(options = {}) {
     if (state.busy) throw new Error("Neural temporal motion is already running");
+    // Anchor generation and later refetches retain this request's target.
+    const target = projectTarget(options);
     state.busy = true;
     let loaded = [];
     try {
@@ -521,7 +560,7 @@ const STUDIO_TEMPORAL_JS = String.raw`
         if (state.session && typeof state.session.release === "function") { try { state.session.release(); } catch {} }
         state.session = null;
       }
-      let project = await getProject();
+      let project = await getProject(target);
       const resolved = await resolveAnchors(project, options);
       project = resolved.project;
       const anchors = resolved.assets;
@@ -593,12 +632,17 @@ const STUDIO_TEMPORAL_JS = String.raw`
       stream.getTracks().forEach(t => t.stop());
       if (!chunks.length) throw new Error("Temporal recorder produced no video data");
       const blob = new Blob(chunks, {type: chunks[0].type || recorder.mimeType || "video/webm"});
-      const asset = await registerGenerated(project, blob, duration, anchors.map(a => a.id), {
+      const registered = await registerGenerated(project, blob, duration, anchors.map(a => a.id), {
         fps, aspect, quality, motionStrength: strength,
         neuralOpticalFlow: true,
         bidirectionalFlow: true,
         flowResolution: FLOW_W + "x" + FLOW_H
       });
+      if (!registered.ok) {
+        setStatus(registered.error, null); log("Temporal video retained", registered.error);
+        toast("Rendered video retained locally; project registration was not acknowledged"); return registered;
+      }
+      const asset = registered.asset;
       setStatus("Temporal video ready • " + state.backend.toUpperCase() + " RAFT motion", 100);
       log("Neural temporal video ready", asset.name + " • " + anchors.length + " anchors • " + state.backend);
       toast("Neural temporal motion added to Media Bin");
@@ -614,6 +658,12 @@ const STUDIO_TEMPORAL_JS = String.raw`
         hardware,
         note: "Dense bidirectional RAFT optical flow drives frame interpolation. This is a neural motion/interpolation engine, not full diffusion video."
       };
+    } catch (error) {
+      if (error.retainedGeneration) {
+        setStatus(error.message, null);
+        return {...error.retainedGeneration, temporal: false, failedStage: "anchor_registration"};
+      }
+      throw error;
     } finally {
       for (const item of loaded) if (item && item.url) URL.revokeObjectURL(item.url);
       state.busy = false;
@@ -691,7 +741,9 @@ const STUDIO_TEMPORAL_JS = String.raw`
         const project = await getProject();
         const anchorAssetIds = [...$("vsTemporalAnchors").selectedOptions].map(o => o.value);
         const prompts = $("vsTemporalPrompts").value.split(/\n+/).map(x => x.trim()).filter(Boolean);
-        await renderTemporalMotion({
+        const result = await renderTemporalMotion({
+          projectId: project.id,
+          deviceId: project.deviceId,
           anchorAssetIds,
           prompts,
           duration: Number($("vsTemporalDuration").value || 8),
@@ -700,7 +752,7 @@ const STUDIO_TEMPORAL_JS = String.raw`
           aspect: project.settings.aspect || "9:16",
           quality: project.settings.quality || "720p"
         });
-        setTimeout(() => location.reload(), 900);
+        if (result.ok !== false) setTimeout(() => location.reload(), 900);
       } catch (error) {
         setStatus(error.message, null);
         toast(error.message);

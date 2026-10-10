@@ -10,6 +10,7 @@ import android.speech.tts.Voice;
 import org.json.JSONObject;
 
 import java.io.File;
+import java.io.FileOutputStream;
 import java.util.Locale;
 import java.util.Set;
 import java.util.UUID;
@@ -61,7 +62,7 @@ public final class NativeSpeechEngine {
             initStatus.set(status);
             initLatch.countDown();
         });
-
+        File generationDirectory=null,outputFile=null;boolean completed=false;
         try {
             if (!initLatch.await(20, TimeUnit.SECONDS)) {
                 throw new IllegalStateException("Local speech engine initialisation timed out");
@@ -93,18 +94,20 @@ public final class NativeSpeechEngine {
             tts.setSpeechRate(rate);
             tts.setPitch(pitch);
 
-            File dir = new File(new File(workspace.projectRoot(project.id), "audio"), "voices");
-            if (!dir.exists() && !dir.mkdirs() && !dir.exists()) {
+            File parent = new File(new File(workspace.projectRoot(project.id), "audio"), "voices");
+            if (!parent.isDirectory() && !parent.mkdirs() && !parent.isDirectory()) {
                 throw new IllegalStateException("Could not create narration workspace");
             }
+            String generationId=UUID.randomUUID().toString();File dir=new File(parent,generationId);
+            if(!dir.mkdir())throw new IllegalStateException("Could not create an immutable narration generation");
+            generationDirectory=dir;
             String safeName = sanitize(fileName == null || fileName.trim().isEmpty()
                     ? "voice_" + System.currentTimeMillis() + ".wav"
                     : fileName);
             if (!safeName.toLowerCase(Locale.US).endsWith(".wav")) safeName += ".wav";
             File target = new File(dir, safeName);
-            if (target.exists() && !target.delete()) {
-                throw new IllegalStateException("Could not replace previous narration output");
-            }
+            if(!target.createNewFile())throw new IllegalStateException("Narration generation output already exists");
+            outputFile=target;
 
             CountDownLatch synthLatch = new CountDownLatch(1);
             AtomicReference<String> error = new AtomicReference<>();
@@ -159,6 +162,11 @@ public final class NativeSpeechEngine {
             if (!target.isFile() || target.length() <= 44) {
                 throw new IllegalStateException("Local speech engine produced no usable audio");
             }
+            // The installed engine has finished writing this generation. Make
+            // its bytes durable without truncating or replacing an older file.
+            try (FileOutputStream durable = new FileOutputStream(target, true)) {
+                durable.getFD().sync();
+            }
 
             callback.onProgress(96, "Registering generated narration");
             JSONObject out = new JSONObject();
@@ -175,11 +183,15 @@ public final class NativeSpeechEngine {
             out.put("path", target.getAbsolutePath());
             out.put("fileName", target.getName());
             out.put("bytes", target.length());
-            out.put("workspaceRelativePath", "audio/voices/" + target.getName());
+            out.put("generationId",generationId);
+            out.put("workspaceRelativePath", "audio/voices/"+generationId+"/" + target.getName());
+            completed=true;
             callback.onProgress(100, "Narration audio ready");
             return out;
         } finally {
+            try { tts.stop(); } catch (Exception ignored) {}
             try { tts.shutdown(); } catch (Exception ignored) {}
+            if(!completed&&generationDirectory!=null){if(outputFile!=null)outputFile.delete();generationDirectory.delete();}
         }
     }
 

@@ -1,6 +1,7 @@
 package com.rezoxnemesis.videostudio;
 
 import android.content.Context;
+import android.database.Cursor;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
@@ -10,7 +11,9 @@ import android.graphics.ColorMatrixColorFilter;
 import android.graphics.Paint;
 import android.graphics.Rect;
 import android.net.Uri;
+import android.provider.DocumentsContract;
 
+import com.google.android.gms.tasks.Task;
 import com.google.android.gms.tasks.Tasks;
 import com.google.mlkit.vision.common.InputImage;
 import com.google.mlkit.vision.facemesh.FaceMesh;
@@ -22,15 +25,22 @@ import com.google.mlkit.vision.segmentation.Segmenter;
 import com.google.mlkit.vision.segmentation.selfie.SelfieSegmenterOptions;
 
 import org.json.JSONObject;
+import org.json.JSONArray;
 
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
+import java.util.UUID;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Bundled on-device portrait analysis for VideoStudio v3.
@@ -66,6 +76,9 @@ public final class NativePortraitMotionAnalyzer {
     }
 
     private static final int MAX_ANALYSIS_EDGE = 1440;
+    private static final int SOURCE_PROOF_VERSION = 1;
+    private static final String[] LAYER_NAMES = {"subject.png", "head_hair.png", "torso.png", "lower_drape.png", "background.jpg"};
+    private static final String[] LAYER_URI_KEYS = {"foregroundUri", "headUri", "torsoUri", "lowerUri", "backgroundUri"};
 
     private final Context context;
 
@@ -78,45 +91,62 @@ public final class NativePortraitMotionAnalyzer {
         if (asset.mime == null || !asset.mime.startsWith("image/")) {
             throw new IllegalArgumentException("Portrait animation requires an image asset");
         }
-
-        Bitmap original = decode(asset.uri);
+        ProjectStore.Asset captured=ProjectStore.Asset.fromJson(new JSONObject(asset.toJson().toString()));
+        JSONObject sourceIdentity=liveSourceIdentity(captured);
+        Bitmap original = decode(captured.uri);
         if (original == null) throw new IllegalStateException("Could not decode image");
-
-        Bitmap working = scaleForAnalysis(original);
+        Bitmap working;
+        try { working = scaleForAnalysis(original); }
+        catch (RuntimeException | Error failedScale) { recycle(original); throw failedScale; }
         if (working != original) original.recycle();
-
-        Segmenter segmenter = Segmentation.getClient(
+        Bitmap foreground=null,background=null;SubjectParts parts=null;File dir=null;
+        Segmenter segmenter=null;FaceMeshDetector faceDetector=null;
+        Task<SegmentationMask> segmentationTask=null;Task<List<FaceMesh>> faceTask=null;
+        boolean completed=false;
+        try {
+        checkInterrupted();
+        JSONObject sourceProof=new JSONObject().put("version",SOURCE_PROOF_VERSION)
+                .put("sourceAssetId",captured.id).put("sourceUri",captured.uri)
+                .put("pixelProofScope","bounded subsampled analysis pixels and dimensions; original compressed bytes are not scanned")
+                .put("registrationHash",registrationHash(captured)).put("identity",sourceIdentity)
+                .put("identityHash",hashText(canonical(sourceIdentity))).put("pixelsSha256",hashPixels(working));
+        if(!sourceProof.getString("identityHash").equals(hashText(canonical(liveSourceIdentity(captured)))))
+            throw new IllegalStateException("Portrait source changed while it was being decoded");
+        segmenter = Segmentation.getClient(
                 new SelfieSegmenterOptions.Builder()
                         .setDetectorMode(SelfieSegmenterOptions.SINGLE_IMAGE_MODE)
                         .build()
         );
-        FaceMeshDetector faceDetector = FaceMeshDetection.getClient();
+        faceDetector = FaceMeshDetection.getClient();
 
         SegmentationMask mask;
         List<FaceMesh> faces;
-        try {
             InputImage image = InputImage.fromBitmap(working, 0);
-            mask = Tasks.await(segmenter.process(image), 25, TimeUnit.SECONDS);
+            segmentationTask=segmenter.process(image);
+            mask = Tasks.await(segmentationTask, 25, TimeUnit.SECONDS);
             try {
-                faces = Tasks.await(faceDetector.process(image), 20, TimeUnit.SECONDS);
+                faceTask=faceDetector.process(image);
+                faces = Tasks.await(faceTask, 20, TimeUnit.SECONDS);
+            } catch (InterruptedException interrupted) {
+                throw interrupted;
             } catch (Exception ignored) {
                 faces = java.util.Collections.emptyList();
             }
-        } finally {
-            try { segmenter.close(); } catch (Exception ignored) {}
-            try { faceDetector.close(); } catch (Exception ignored) {}
-        }
-
+        checkInterrupted();
         MaskStats stats = readMask(mask, working.getWidth(), working.getHeight());
         Rect face = faces.isEmpty() ? null : largestFace(faces);
-        Bitmap foreground = buildForeground(working, stats);
-        SubjectParts parts = buildSubjectParts(foreground, stats, face);
-        Bitmap background = buildReconstructedBackground(working, stats);
+        foreground = buildForeground(working, stats);
+        parts = buildSubjectParts(foreground, stats, face);
+        background = buildReconstructedBackground(working, stats);
 
         CreativeWorkspace workspace = new CreativeWorkspace(context);
         File projectRoot = workspace.projectRoot(projectId);
-        File dir = new File(new File(new File(projectRoot, "rigs"), "layers"), safe(asset.id));
-        if (!dir.exists() && !dir.mkdirs()) throw new IllegalStateException("Could not create animation layer directory");
+        String generationId=UUID.randomUUID().toString();
+        File parent = new File(new File(new File(projectRoot, "rigs"), "layers"), safe(captured.id));
+        if(!parent.isDirectory()&&!parent.mkdirs())throw new IllegalStateException("Could not create animation layer directory");
+        File generation=new File(parent,generationId);
+        if(!generation.mkdir())throw new IllegalStateException("Could not create an immutable portrait generation");
+        dir=generation;
 
         File fgFile = new File(dir, "subject.png");
         File headFile = new File(dir, "head_hair.png");
@@ -130,6 +160,10 @@ public final class NativePortraitMotionAnalyzer {
         write(background, bgFile, Bitmap.CompressFormat.JPEG, 95);
 
         JSONObject analysis = new JSONObject();
+        analysis.put("generationId",generationId);
+        analysis.put("sourceProof",sourceProof);
+        analysis.put("artifactVersion",1);
+        analysis.put("createdAt",System.currentTimeMillis());
         analysis.put("engine", "bundled-on-device-portrait-ai");
         analysis.put("backgroundReconstruction", "mask-aware-edge-fill-v1");
         analysis.put("articulatedLayering", "head-torso-lower-v1");
@@ -171,23 +205,25 @@ public final class NativePortraitMotionAnalyzer {
         analysis.put("torsoSplitY", parts.torsoSplitY);
         analysis.put("width", working.getWidth());
         analysis.put("height", working.getHeight());
-        analysis.put("workspaceRelativePath", "rigs/layers/" + safe(asset.id));
+        analysis.put("workspaceRelativePath", "rigs/layers/" + safe(captured.id)+"/"+generationId);
         analysis.put("coldTierPortable", true);
+        JSONObject artifacts=new JSONObject();
+        for(String name:LAYER_NAMES){checkInterrupted();File layer=new File(dir,name);
+            artifacts.put(name,new JSONObject().put("bytes",layer.length()).put("sha256",hashFile(layer)));}
+        analysis.put("artifacts",artifacts);
+        // Reopen the bounded source decode: provider metadata alone cannot prove
+        // an unchanged same-URI image when the provider omits modification time.
+        assertSourceFresh(captured,analysis);
 
         File rigMetadata = new File(dir, "rig.json");
+        if(!rigMetadata.createNewFile())throw new IllegalStateException("Portrait generation metadata already exists");
         try (FileOutputStream out = new FileOutputStream(rigMetadata)) {
             out.write(analysis.toString(2).getBytes(StandardCharsets.UTF_8));
             out.flush();
             out.getFD().sync();
         }
 
-        foreground.recycle();
-        parts.head.recycle();
-        parts.torso.recycle();
-        parts.lower.recycle();
-        background.recycle();
-        working.recycle();
-
+        completed=true;
         return new Result(
                 Uri.fromFile(fgFile),
                 Uri.fromFile(headFile),
@@ -195,9 +231,123 @@ public final class NativePortraitMotionAnalyzer {
                 Uri.fromFile(lowerFile),
                 Uri.fromFile(bgFile),
                 analysis,
-                mask.getWidth(),
-                mask.getHeight()
+                working.getWidth(),
+                working.getHeight()
         );
+        }finally{
+            if(segmenter!=null)try{segmenter.close();}catch(Exception ignored){}
+            if(faceDetector!=null)try{faceDetector.close();}catch(Exception ignored){}
+            recycle(foreground);recycle(background);
+            if(parts!=null){recycle(parts.head);recycle(parts.torso);recycle(parts.lower);}
+            recycleAfterInference(working,segmentationTask,faceTask);
+            if(!completed&&dir!=null)cleanupOwnGeneration(dir);
+        }
+    }
+
+    /** Cheap registration guard for a fresh project transaction after the worker
+     * has performed assertSourceFresh outside the project lock. */
+    public static void assertRegisteredSource(ProjectStore.Asset current,JSONObject analysis)throws Exception {
+        JSONObject proof=sourceProof(analysis);
+        if(current==null||!proof.getString("registrationHash").equals(registrationHash(current)))
+            throw new IllegalStateException("Portrait source registration changed; regenerate its layers");
+    }
+
+    /** Worker-only freshness check; never call on a playback/UI tick. */
+    public void assertSourceFresh(ProjectStore.Asset current,JSONObject analysis)throws Exception {
+        assertRegisteredSource(current,analysis);JSONObject proof=sourceProof(analysis);
+        String expected=proof.getString("identityHash");
+        if(!expected.equals(hashText(canonical(liveSourceIdentity(current)))))
+            throw new IllegalStateException("Portrait source changed; cached layers cannot be reused");
+        Bitmap decoded=null,working=null;
+        try{decoded=decode(current.uri);if(decoded==null)throw new IllegalStateException("Portrait source no longer decodes");
+            working=scaleForAnalysis(decoded);if(working!=decoded){decoded.recycle();decoded=null;}
+            if(!proof.getString("pixelsSha256").equals(hashPixels(working)))throw new IllegalStateException("Portrait source pixels changed; regenerate its layers");
+        }finally{recycle(working);if(decoded!=working)recycle(decoded);}
+        if(!expected.equals(hashText(canonical(liveSourceIdentity(current)))))
+            throw new IllegalStateException("Portrait source changed during freshness validation");
+    }
+
+    /** Worker-only integrity check of all files owned by one immutable generation. */
+    public void assertLayerFilesValid(JSONObject analysis)throws Exception {
+        sourceProof(analysis);
+        if(analysis.optInt("artifactVersion",0)!=1)throw new IllegalStateException("Portrait layers have no supported integrity manifest");
+        String generationId=analysis.getString("generationId");UUID.fromString(generationId);
+        JSONObject artifacts=analysis.getJSONObject("artifacts");File generation=null;
+        for(int i=0;i<LAYER_NAMES.length;i++){
+            Uri uri=Uri.parse(analysis.getString(LAYER_URI_KEYS[i]));
+            if(!"file".equals(uri.getScheme())||uri.getPath()==null)throw new IllegalStateException("Portrait layer is not a materialized local generation");
+            File file=new File(uri.getPath()).getCanonicalFile();File parent=file.getParentFile();
+            if(parent==null||!generationId.equals(parent.getName())||!LAYER_NAMES[i].equals(file.getName()))throw new IllegalStateException("Portrait layer escaped its immutable generation");
+            if(generation==null)generation=parent;else if(!generation.equals(parent))throw new IllegalStateException("Portrait layers refer to different generations");
+            JSONObject record=artifacts.getJSONObject(LAYER_NAMES[i]);
+            if(!file.isFile()||!file.canRead()||file.length()<=0||file.length()!=record.getLong("bytes")||!hashFile(file).equals(record.getString("sha256")))
+                throw new IllegalStateException("Portrait "+LAYER_NAMES[i]+" is missing or changed; regenerate its layers");
+        }
+        File metadata=new File(generation,"rig.json");
+        if(!metadata.isFile()||!metadata.canRead()||metadata.length()>1024*1024)throw new IllegalStateException("Portrait generation metadata is unavailable");
+        try(InputStream input=new FileInputStream(metadata)){
+            java.io.ByteArrayOutputStream bytes=new java.io.ByteArrayOutputStream();byte[] buffer=new byte[8192];int read;
+            while((read=input.read(buffer))!=-1){checkInterrupted();if(bytes.size()+read>1024*1024)throw new IllegalStateException("Portrait metadata exceeds its bounded size");bytes.write(buffer,0,read);}
+            JSONObject stored=new JSONObject(bytes.toString("UTF-8"));
+            if(!generationId.equals(stored.optString("generationId"))||!canonical(artifacts).equals(canonical(stored.getJSONObject("artifacts")))
+                    ||!canonical(sourceProof(analysis)).equals(canonical(sourceProof(stored))))throw new IllegalStateException("Portrait generation manifest does not match its published result");
+        }
+    }
+
+    private JSONObject liveSourceIdentity(ProjectStore.Asset asset)throws Exception {
+        if(asset==null||asset.uri==null||asset.uri.isEmpty())throw new IllegalStateException("Portrait source is unavailable");
+        checkInterrupted();Uri uri=Uri.parse(asset.uri);AssetProbe.Result probe=AssetProbe.probe(context.getContentResolver(),uri);
+        if(!probe.readable)throw new IllegalStateException("Portrait source is no longer readable");
+        JSONObject identity=new JSONObject().put("registrationHash",registrationHash(asset)).put("sizeBytes",probe.sizeBytes).put("providerAuthority",probe.providerAuthority);
+        long modified=-1;
+        if("file".equals(uri.getScheme())&&uri.getPath()!=null){File file=new File(uri.getPath());modified=file.lastModified();identity.put("localBytes",file.length());}
+        else if("content".equals(uri.getScheme()))try(Cursor cursor=context.getContentResolver().query(uri,new String[]{DocumentsContract.Document.COLUMN_LAST_MODIFIED},null,null,null)){
+            if(cursor!=null&&cursor.moveToFirst()){int column=cursor.getColumnIndex(DocumentsContract.Document.COLUMN_LAST_MODIFIED);if(column>=0&&!cursor.isNull(column))modified=cursor.getLong(column);}
+        }catch(Exception ignored){}
+        return identity.put("modifiedMs",modified);
+    }
+    private static JSONObject sourceProof(JSONObject analysis)throws Exception {
+        JSONObject proof=analysis==null?null:analysis.optJSONObject("sourceProof");
+        if(proof==null||proof.optInt("version",0)!=SOURCE_PROOF_VERSION||proof.optString("registrationHash","").length()!=64
+                ||proof.optString("identityHash","").length()!=64||proof.optString("pixelsSha256","").length()!=64)
+            throw new IllegalStateException("Portrait result has no current source proof; regenerate its layers");
+        return proof;
+    }
+    private static String registrationHash(ProjectStore.Asset asset)throws Exception {
+        JSONObject identity=new JSONObject().put("assetId",asset.id).put("uri",asset.uri).put("mime",asset.mime).put("sizeBytes",asset.sizeBytes)
+                .put("width",asset.width).put("height",asset.height).put("rotation",asset.rotation).put("generated",asset.generated).put("role",asset.role)
+                .put("importMetadata",asset.importMetadata==null?new JSONObject():asset.importMetadata)
+                .put("generationMetadata",asset.generationMetadata==null?new JSONObject():asset.generationMetadata);
+        return hashText(canonical(identity));
+    }
+    private static String hashPixels(Bitmap bitmap)throws Exception {
+        MessageDigest digest=MessageDigest.getInstance("SHA-256");int width=bitmap.getWidth(),height=bitmap.getHeight();
+        digest.update(ByteBuffer.allocate(8).putInt(width).putInt(height).array());int[] pixels=new int[width];ByteBuffer row=ByteBuffer.allocate(width*4);
+        for(int y=0;y<height;y++){checkInterrupted();bitmap.getPixels(pixels,0,width,0,y,width,1);row.clear();for(int pixel:pixels)row.putInt(pixel);digest.update(row.array());}
+        return hex(digest.digest());
+    }
+    private static String hashFile(File file)throws Exception {
+        MessageDigest digest=MessageDigest.getInstance("SHA-256");byte[] buffer=new byte[65536];
+        try(InputStream input=new FileInputStream(file)){int read;while((read=input.read(buffer))!=-1){checkInterrupted();digest.update(buffer,0,read);}}
+        return hex(digest.digest());
+    }
+    private static String hashText(String text)throws Exception {return hex(MessageDigest.getInstance("SHA-256").digest(text.getBytes(StandardCharsets.UTF_8)));}
+    private static String hex(byte[] bytes){StringBuilder result=new StringBuilder();for(byte value:bytes)result.append(String.format(java.util.Locale.US,"%02x",value&255));return result.toString();}
+    private static String canonical(Object value)throws Exception {
+        if(value instanceof JSONObject){JSONObject object=(JSONObject)value;ArrayList<String> keys=new ArrayList<>();java.util.Iterator<String> iterator=object.keys();while(iterator.hasNext())keys.add(iterator.next());Collections.sort(keys);
+            StringBuilder result=new StringBuilder("{");for(int i=0;i<keys.size();i++){if(i>0)result.append(',');String key=keys.get(i);result.append(JSONObject.quote(key)).append(':').append(canonical(object.get(key)));}return result.append('}').toString();}
+        if(value instanceof JSONArray){JSONArray array=(JSONArray)value;StringBuilder result=new StringBuilder("[");for(int i=0;i<array.length();i++){if(i>0)result.append(',');result.append(canonical(array.get(i)));}return result.append(']').toString();}
+        return value instanceof String?JSONObject.quote((String)value):String.valueOf(value);
+    }
+    private static void checkInterrupted()throws InterruptedException {if(Thread.currentThread().isInterrupted())throw new InterruptedException("Portrait generation cancelled");}
+    private static void recycle(Bitmap bitmap){if(bitmap!=null&&!bitmap.isRecycled())bitmap.recycle();}
+    private static void recycleAfterInference(Bitmap bitmap,Task<?> segmentation,Task<?> face){
+        AtomicBoolean released=new AtomicBoolean();Runnable release=()->{if((segmentation==null||segmentation.isComplete())&&(face==null||face.isComplete())&&released.compareAndSet(false,true))recycle(bitmap);};
+        if(segmentation!=null&&!segmentation.isComplete())segmentation.addOnCompleteListener(Runnable::run,ignored->release.run());
+        if(face!=null&&!face.isComplete())face.addOnCompleteListener(Runnable::run,ignored->release.run());release.run();
+    }
+    private static void cleanupOwnGeneration(File directory){
+        for(String name:LAYER_NAMES)new File(directory,name).delete();new File(directory,"rig.json").delete();directory.delete();
     }
 
     private Bitmap decode(String uriString) throws Exception {
@@ -215,10 +365,13 @@ public final class NativePortraitMotionAnalyzer {
             options.inSampleSize *= 2;
         options.inPreferredConfig = Bitmap.Config.ARGB_8888;
         // Subsample at decode time: never allocate the full camera image merely to shrink it.
+        Bitmap decoded = null;
         try (InputStream in = context.getContentResolver().openInputStream(uri)) {
             if (in == null) throw new IllegalStateException("Could not reopen portrait source");
-            return BitmapFactory.decodeStream(in, null, options);
-        }
+            decoded = BitmapFactory.decodeStream(in, null, options);
+            checkInterrupted();
+            return decoded;
+        } catch (Exception | Error failedDecode) { recycle(decoded); throw failedDecode; }
     }
 
     private Bitmap scaleForAnalysis(Bitmap source) {
@@ -565,9 +718,12 @@ public final class NativePortraitMotionAnalyzer {
     }
 
     private void write(Bitmap bitmap, File file, Bitmap.CompressFormat format, int quality) throws Exception {
+        checkInterrupted();
+        if(!file.createNewFile())throw new IllegalStateException("Immutable portrait layer already exists");
         try (FileOutputStream out = new FileOutputStream(file)) {
             if (!bitmap.compress(format, quality, out)) throw new IllegalStateException("Could not write animation layer");
             out.flush();
+            out.getFD().sync();
         }
     }
 

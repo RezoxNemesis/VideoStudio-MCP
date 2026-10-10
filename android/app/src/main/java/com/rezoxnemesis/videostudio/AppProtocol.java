@@ -106,6 +106,10 @@ public final class AppProtocol {
         JSONObject status = connectionCore.status();
         try {
             status.put("pendingResultDeliveries", outbox.count());
+            status.put("acceptedResultReservations", outbox.acceptedCount());
+            status.put("maximumResultBytes", NativeCommandResults.MAX_RESULT_BYTES);
+            status.put("maximumUnacknowledgedCommands", CommandOutbox.MAX_UNACKNOWLEDGED);
+            status.put("resultOutbox", outbox.storageStatus());
             status.put("durableResultDelivery", true);
             status.put("identityRecoveryRequired", identityRecoveryRequired);
         } catch (Exception ignored) {}
@@ -156,6 +160,20 @@ public final class AppProtocol {
             throw new IllegalStateException("Hybrid binding challenge was rejected");
         }
         return result;
+    }
+
+    public JSONObject metadataMirror(String operation, JSONObject parameters) throws Exception {
+        if (identityRecoveryRequired || ownerKey.isEmpty())
+            throw new IllegalStateException("Private owner identity must be recovered before metadata synchronization");
+        if (connectionCore.selectedProtocol() != 3)
+            throw new IllegalStateException("Metadata mirroring requires the stable v3 compatibility lane");
+        JSONObject body = new JSONObject();
+        body.put("deviceId", deviceId);
+        body.put("appGeneration", connectionCore.appGeneration());
+        body.put("operation", operation);
+        body.put("parameters", parameters == null ? new JSONObject() : parameters);
+        return request("POST", connectionCore.apiPrefix() + "/metadata-mirror", body, true,
+                connectionCore.requestTimeoutMs());
     }
 
     public void setLocalState(String permissionMode, JSONObject projectSummary) {
@@ -215,11 +233,13 @@ public final class AppProtocol {
         io.execute(() -> { register(); flushOutbox(); });
     }
 
-    /**
-     * Legacy-relay fallback only. v3's primary attachment path is direct
-     * app ingestion from the temporary source URL supplied to the MCP tool.
-     */
+    /** Owner-authenticated attachment relay. The host URL stays on the Worker. */
     public HttpURLConnection openPrivateHandoff(String handoffId) throws Exception {
+        return openPrivateHandoff(handoffId, 0L, "", "");
+    }
+
+    public HttpURLConnection openPrivateHandoff(String handoffId, long offset,
+                                                String etag, String lastModified) throws Exception {
         if (handoffId == null || handoffId.trim().isEmpty()) throw new IllegalArgumentException("Missing handoff ID");
         String path = BASE + connectionCore.apiPrefix() + "/handoffs/" + enc(handoffId)
                 + "/content?deviceId=" + enc(deviceId)
@@ -230,20 +250,31 @@ public final class AppProtocol {
         c.setReadTimeout(60000);
         c.setInstanceFollowRedirects(false);
         c.setRequestProperty("Accept", "*/*");
+        c.setRequestProperty("Accept-Encoding", "identity");
         c.setRequestProperty("Authorization", "Bearer " + ownerKey);
         c.setRequestProperty("User-Agent", "VideoStudio-Android/" + APP_VERSION + " MCPv3");
+        if (offset > 0L) {
+            c.setRequestProperty("Range", "bytes=" + offset + "-");
+            String validator = etag == null || etag.isEmpty() ? lastModified : etag;
+            if (validator != null && !validator.isEmpty()) c.setRequestProperty("If-Range", validator);
+        }
         return c;
     }
 
     public void complete(JSONObject command, JSONObject result, String status) {
         if (command == null) return;
         try {
-            if (!outbox.contains(command.optString("id"))) outbox.put(command, result, status);
+            outbox.put(command, result, status);
         } catch (Exception error) {
             notifyConnection(false, "Result persistence failed; command will be retried from its journal");
             return;
         }
         if (!io.isShutdown()) io.execute(this::flushOutbox);
+    }
+
+    public boolean admitCommand(JSONObject command) {
+        try { return command != null && outbox.reserve(command); }
+        catch (Exception error) { notifyConnection(false, "Native result admission requires recovery; retained receipts are preserved"); return false; }
     }
 
     private void flushOutbox() {
@@ -264,7 +295,11 @@ public final class AppProtocol {
                             body, true, connectionCore.requestTimeoutMs());
                     // A 2xx response alone is insufficient: require an actual matching command receipt.
                     JSONObject acknowledged = receipt.optJSONObject("command");
-                    if (acknowledged == null || !id.equals(acknowledged.optString("id"))) return;
+                    JSONObject acknowledgedResult = acknowledged == null ? null : acknowledged.optJSONObject("result");
+                    if (acknowledged == null || !id.equals(acknowledged.optString("id"))
+                            || !entry.getString("status").equals(acknowledged.optString("status"))
+                            || acknowledgedResult == null
+                            || !NativeCommandResults.canonical(entry.getJSONObject("result")).equals(NativeCommandResults.canonical(acknowledgedResult))) return;
                     advanceSequence(entry.optLong("seq"));
                     outbox.acknowledge(id);
                 }
@@ -304,6 +339,8 @@ public final class AppProtocol {
                         if (!connectionCore.acceptsCommand(cmd)) continue;
                         String commandStatus = cmd.optString("status");
                         if (!"queued".equals(commandStatus) && !"claimed".equals(commandStatus)) continue;
+                        if (outbox.contains(cmd.optString("id", ""))) { flushOutbox(); continue; }
+                        if (!admitCommand(cmd)) { flushOutbox(); break; }
                         if (callback != null) {
                             JSONObject dispatch = cmd;
                             main.post(() -> callback.onCommand(dispatch));
@@ -360,7 +397,48 @@ public final class AppProtocol {
         meta.put("modelPacks", true);
         meta.put("computePlanner", true);
         meta.put("folderScopedCloudWorkspace", true);
-        meta.put("projects", projectSummary.optJSONArray("projects") == null ? new JSONArray() : projectSummary.optJSONArray("projects"));
+        meta.put("originalSourceArchives", true);
+        meta.put("originalSourceArchiveChunkBytes", SourceMediaVault.CHUNK_BYTES);
+        meta.put("originalSourceArchiveMaxBytes", SourceMediaVault.MAX_SOURCE_BYTES);
+        meta.put("originalSourceArchiveScope", "one-registered-source-in-owner-selected-folder");
+        meta.put("originalSourcesDeleted", false);
+        meta.put("immutableExportSnapshots", true);
+        meta.put("explicitProgramRangeExport", true);
+        meta.put("durableMediaStorePublication", true);
+        meta.put("native2dRigAuthoring", true);
+        meta.put("nativeCubicMotionPaths", true);
+        meta.put("native2dRigMaxBones", 24);
+        meta.put("native2dRigMaxVertices", 512);
+        meta.put("native2dRigMaxTriangles", 1024);
+        meta.put("native2dRigMaxKeys", 2048);
+        meta.put("nativeAnimationCels", true);
+        meta.put("nativeCelDrawingMaxBytes", AnimationCelFactory.MAX_DRAWING_BYTES);
+        meta.put("nativeCelDrawingMaxPoints", AnimationCelFactory.MAX_POINTS);
+        meta.put("nativeCelDrawingMaxDimension", AnimationCelFactory.MAX_DIMENSION);
+        meta.put("maximumResultBytes", NativeCommandResults.MAX_RESULT_BYTES);
+        meta.put("maximumUnacknowledgedCommands", CommandOutbox.MAX_UNACKNOWLEDGED);
+        meta.put("animationFrameRates", new JSONArray().put(12).put(24).put(30).put(60));
+        // Heartbeat metadata lives in one Durable Object value. Full prompts
+        // and large project inventories are inspected through native pages.
+        JSONArray projects = projectSummary.optJSONArray("projects"), registered = new JSONArray(); int summaryBytes = 0;
+        if (projects != null) for (int index = 0; index < projects.length() && registered.length() < 100; index++) {
+            JSONObject source = projects.optJSONObject(index); if (source == null) continue;
+            JSONObject summary = new JSONObject();
+            for (String key : new String[]{"id", "name", "assetCount", "clipCount", "trackCount", "revision", "durationMs", "updatedAt", "latestExportAt"}) {
+                Object value = source.opt(key);
+                if (value instanceof Number || value instanceof Boolean) summary.put(key, value);
+                else if (value instanceof String) {
+                    String text = (String) value;
+                    summary.put(key, text.length() > 180 ? text.substring(0, 180) : text);
+                    if (text.length() > 180) summary.put("textTruncated", true);
+                }
+            }
+            int bytes = summary.toString().getBytes(StandardCharsets.UTF_8).length;
+            if (summaryBytes + bytes > 32 * 1024) break;
+            registered.put(summary); summaryBytes += bytes;
+        }
+        meta.put("projects", registered).put("projectCount", projects == null ? 0 : projects.length())
+                .put("projectsTruncated", projects != null && registered.length() < projects.length()).put("projectInspectionAction", "project_state");
         return meta;
     }
 
@@ -457,7 +535,12 @@ public final class AppProtocol {
         int code = c.getResponseCode();
         InputStream stream = code >= 200 && code < 300 ? c.getInputStream() : c.getErrorStream();
         String text = read(stream);
-        if (code < 200 || code >= 300) throw new IllegalStateException("HTTP " + code);
+        if (code < 200 || code >= 300) {
+            String detail = "";
+            try { detail = new JSONObject(text).optString("error", ""); } catch (Exception ignored) {}
+            if (detail.length() > 500) detail = detail.substring(0, 500);
+            throw new IllegalStateException("HTTP " + code + (detail.isEmpty() ? "" : ": " + detail));
+        }
         return text.isEmpty() ? new JSONObject() : new JSONObject(text);
         } finally { c.disconnect(); }
     }

@@ -19,7 +19,7 @@ import static org.junit.Assert.*;
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk=33, manifest=Config.NONE)
 public class InlineVideoIngestTest {
-    @Test public void privateInlineFallbackAcceptsSmallMp4AndOwnsItInsideProject() throws Exception {
+    @Test public void privateInlineFallbackRejectsAnFtypHeaderWithoutPlayableMedia() throws Exception {
         ProjectStore store = new ProjectStore(RuntimeEnvironment.getApplication());
         ProjectStore.Project project = store.create("Inline MP4 regression");
 
@@ -53,28 +53,16 @@ public class InlineVideoIngestTest {
         Method method = ControlService.class.getDeclaredMethod("importInlineBase64", JSONObject.class);
         method.setAccessible(true);
 
-        JSONObject result;
         try {
-            result = (JSONObject) method.invoke(service, params);
+            method.invoke(service, params);
+            fail("A container signature without real audio/video streams must not be imported");
         } catch (InvocationTargetException error) {
             Throwable cause = error.getCause();
-            fail("video/mp4 inline import must be accepted, but failed: "
-                    + (cause == null ? error.getMessage() : cause.getMessage()));
-            return;
+            assertNotNull(cause);
         }
-
-        assertTrue(result.optBoolean("ok", false));
-        assertEquals(project.id, result.optString("projectId"));
-        assertEquals("video/mp4", result.optString("mime"));
-
-        String assetId = result.optString("assetId");
-        assertFalse(assetId.isEmpty());
-
         ProjectStore.Project reloaded = store.get(project.id);
         assertNotNull(reloaded);
-        ProjectStore.Asset asset = reloaded.asset(assetId);
-        assertNotNull(asset);
-        assertEquals("video/mp4", asset.mime);
-        assertEquals(assetId, reloaded.clips.get(0).assetId);
+        assertTrue(reloaded.assets.isEmpty());
+        assertTrue(reloaded.clips.isEmpty());
     }
 }

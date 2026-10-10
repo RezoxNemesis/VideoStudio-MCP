@@ -16,6 +16,12 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.Semaphore;
+import java.util.concurrent.FutureTask;
+import java.util.concurrent.PriorityBlockingQueue;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 
 public final class JobManager {
     public enum Kind { LIGHT, HEAVY }
@@ -47,7 +53,9 @@ public final class JobManager {
         public volatile int retryCount = 0;
         public volatile long lastCheckpointAt;
         public volatile JSONObject result;
-        Future<?> future;
+        public boolean ownerInitiated;
+        volatile boolean restartSuspended;
+        volatile Future<?> future;
         private JobManager owner;
 
         Job(String name, Kind kind) {
@@ -93,6 +101,8 @@ public final class JobManager {
                 o.put("id", id);
                 o.put("name", name);
                 o.put("kind", kind.name().toLowerCase());
+                o.put("ownerInitiated", ownerInitiated);
+                o.put("restartSuspended", restartSuspended);
                 o.put("state", state);
                 o.put("progress", progress);
                 o.put("detail", detail);
@@ -117,56 +127,130 @@ public final class JobManager {
     private final Context context;
     private final SharedPreferences prefs;
     private static final Semaphore PROCESS_HEAVY_LANE = new Semaphore(1, true);
-    private final ExecutorService pool = Executors.newFixedThreadPool(3);
+    private final ExecutorService pool = Executors.newFixedThreadPool(2);
+    private volatile boolean accepting = true;
+    // One process-wide dispatcher protects codecs across Activity/service managers.
+    // Waiting jobs do not occupy light workers or acquire the render gate in FIFO
+    // order. The owner goes ahead of queued agent work, never interrupts an active
+    // export, and still waits for the same thermal/memory safeguards.
+    private static final AtomicLong HEAVY_ORDER = new AtomicLong();
+    private static final ThreadPoolExecutor HEAVY_POOL = new ThreadPoolExecutor(
+            1, 1, 0L, TimeUnit.MILLISECONDS, new PriorityBlockingQueue<Runnable>());
+    private static final class HeavyTask extends FutureTask<Void> implements Comparable<HeavyTask> {
+        final int priority;
+        final long order = HEAVY_ORDER.getAndIncrement();
+        HeavyTask(Runnable work, boolean owner) {
+            super(work, null);
+            priority = owner ? 0 : 1;
+        }
+        @Override public int compareTo(HeavyTask other) {
+            int ranked = Integer.compare(priority, other.priority);
+            return ranked != 0 ? ranked : Long.compare(order, other.order);
+        }
+    }
+    private static final class YieldToOwner extends InterruptedException {}
     private final Semaphore heavyLane = PROCESS_HEAVY_LANE;
-    private final Map<String, Job> jobs = new ConcurrentHashMap<>();
+    private static final Map<String, Job> PROCESS_JOBS = new ConcurrentHashMap<>();
+    private static final Object RECOVERY_LOCK = new Object();
+    private static boolean processRecoveryLoaded;
+    private final Map<String, Job> jobs = PROCESS_JOBS;
 
     public JobManager(Context context) {
         this.context = context.getApplicationContext();
         prefs = this.context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
-        restoreRecoveryState();
+        synchronized (RECOVERY_LOCK) {
+            if (!processRecoveryLoaded) {
+                restoreRecoveryState();
+                processRecoveryLoaded = true;
+            }
+        }
     }
 
     public Job submit(String name, Kind kind, Work work) {
+        return submit(name, kind, work, false);
+    }
+
+    public Job submitOwnerPriority(String name, Kind kind, Work work) {
+        return submit(name, kind, work, true);
+    }
+
+    private synchronized Job submit(String name, Kind kind, Work work, boolean ownerPriority) {
+        if (!accepting) throw new IllegalStateException("This job dispatcher has stopped; restart the controller before admitting work");
+        if (work == null) throw new IllegalArgumentException("Job work is required");
         Job job = new Job(name, kind);
+        job.ownerInitiated = ownerPriority;
+        job.detail = ownerPriority && kind == Kind.HEAVY
+                ? "Owner export admitted; takes the next safe render lane"
+                : "Waiting to start";
         job.owner = this;
         jobs.put(job.id, job);
         persist();
-        job.future = pool.submit(() -> {
+        AtomicReference<Runnable> runner = new AtomicReference<>();
+        Runnable run = () -> {
             boolean locked = false;
             try {
+                if (STATE_CANCELLED.equals(job.state) || job.restartSuspended) return;
                 setState(job, STATE_PREPARING,
                         kind == Kind.HEAVY ? "Waiting for safe render lane" : "Preparing");
                 if (kind == Kind.HEAVY) {
                     heavyLane.acquire();
                     locked = true;
-                    waitForSafeDevice(job);
+                    waitForSafeDevice(job, true);
                 }
-                if (Thread.currentThread().isInterrupted()) throw new InterruptedException();
+                if (Thread.currentThread().isInterrupted() || STATE_CANCELLED.equals(job.state) || job.restartSuspended) throw new InterruptedException();
                 setState(job, STATE_RUNNING, job.detail);
                 work.run(job);
                 if (!isTerminal(job.state)) {
                     job.progress = 100;
                     setState(job, STATE_COMPLETED, job.detail.isEmpty() ? "Completed" : job.detail);
                 }
+            } catch (YieldToOwner yield) {
+                setState(job, STATE_CHECKPOINTED, "Owner work takes the next safe render lane; autonomous work remains queued");
+                enqueueHeavy(job, runner.get());
             } catch (InterruptedException interrupted) {
-                setState(job, STATE_CANCELLED, "Cancelled");
+                if (job.restartSuspended) setState(job, STATE_CHECKPOINTED, "Controller stopped; durable work can resume after restart");
+                else setState(job, STATE_CANCELLED, "Cancelled");
                 Thread.currentThread().interrupt();
             } catch (Exception error) {
-                setState(job, STATE_FAILED, error.getMessage() == null ? "Job failed" : error.getMessage());
+                if (job.restartSuspended) setState(job, STATE_CHECKPOINTED, "Controller stopped; durable work can resume after restart");
+                else setState(job, STATE_FAILED, error.getMessage() == null ? "Job failed" : error.getMessage());
             } finally {
                 if (locked) heavyLane.release();
                 persist();
             }
-        });
+        };
+        runner.set(run);
+        if (kind == Kind.HEAVY) {
+            enqueueHeavy(job, run);
+        } else {
+            try { job.future = pool.submit(run); }
+            catch (java.util.concurrent.RejectedExecutionException stopped) {
+                setState(job, STATE_FAILED, "Job dispatcher could not admit work");
+                throw new IllegalStateException("Job dispatcher could not admit work", stopped);
+            }
+            if (STATE_CANCELLED.equals(job.state)) job.future.cancel(true);
+        }
         return job;
+    }
+
+    private static void enqueueHeavy(Job job, Runnable work) {
+        synchronized (job) {
+            if (isTerminal(job.state) || job.restartSuspended) return;
+            HeavyTask task = new HeavyTask(work, job.ownerInitiated);
+            job.future = task;
+            HEAVY_POOL.execute(task);
+        }
     }
 
     public boolean cancel(String id) {
         Job job = jobs.get(id);
-        if (job == null || isTerminal(job.state)) return false;
-        setState(job, STATE_CANCELLED, "Cancelled");
-        if (job.future != null) job.future.cancel(true);
+        if (job == null) return false;
+        synchronized (job) {
+            if (isTerminal(job.state)) return false;
+            job.restartSuspended = false;
+            setState(job, STATE_CANCELLED, "Cancelled");
+            if (job.future != null) job.future.cancel(true);
+        }
         return true;
     }
 
@@ -174,6 +258,15 @@ public final class JobManager {
         int count = 0;
         for (Job job : jobs.values()) {
             if (!isTerminal(job.state) && cancel(job.id)) count++;
+        }
+        return count;
+    }
+
+    /** Pausing ChatGPT must not cancel an export started by the owner. */
+    public int cancelAutonomous() {
+        int count = 0;
+        for (Job job : jobs.values()) {
+            if (!job.ownerInitiated && !isTerminal(job.state) && cancel(job.id)) count++;
         }
         return count;
     }
@@ -213,18 +306,44 @@ public final class JobManager {
     }
 
     public void shutdown() {
-        cancelAll();
+        shutdown(false);
+    }
+
+    public synchronized void shutdown(boolean preserveOwnerJobs) {
+        accepting = false;
+        for (Job job : jobs.values()) {
+            if (job.owner == this && !isTerminal(job.state) && !(preserveOwnerJobs && job.ownerInitiated)) cancel(job.id);
+        }
+        if (preserveOwnerJobs) pool.shutdown();
+        else pool.shutdownNow();
+        persist();
+    }
+    /** Lifecycle interruption is distinct from an owner cancellation. Recovery
+     * plans retain the original request; queued/running futures release resources
+     * without converting durable export intent into a cancelled terminal state. */
+    public synchronized void suspendForRestart() {
+        accepting = false;
+        for (Job job : jobs.values()) synchronized (job) {
+            if (job.owner != this || isTerminal(job.state)) continue;
+            job.restartSuspended = true;
+            job.recoverable = true;
+            String state = STATE_QUEUED.equals(job.state) ? STATE_WAITING_NATIVE : STATE_CHECKPOINTED;
+            setState(job, state, "Controller stopped; durable work can resume after restart");
+            if (job.future != null) job.future.cancel(true);
+        }
         pool.shutdownNow();
         persist();
     }
 
     private void setState(Job job, String state, String detail) {
-        String current = canonicalState(job.state);
-        String next = canonicalState(state);
-        if (!canTransition(current, next)) return;
-        job.state = next;
-        job.detail = detail == null ? "" : detail;
-        job.updatedAt = System.currentTimeMillis();
+        synchronized (job) {
+            String current = canonicalState(job.state);
+            String next = canonicalState(state);
+            if (!canTransition(current, next)) return;
+            job.state = next;
+            job.detail = detail == null ? "" : detail;
+            job.updatedAt = System.currentTimeMillis();
+        }
         persist();
     }
 
@@ -285,9 +404,14 @@ public final class JobManager {
         return value;
     }
 
-    private void waitForSafeDevice(Job job) throws InterruptedException {
+    private void waitForSafeDevice(Job job) throws InterruptedException { waitForSafeDevice(job, false); }
+
+    private void waitForSafeDevice(Job job, boolean beforeWork) throws InterruptedException {
         while (true) {
             if (Thread.currentThread().isInterrupted()) throw new InterruptedException();
+            if (beforeWork && !job.ownerInitiated && HEAVY_POOL.getQueue().stream().anyMatch(task ->
+                    task instanceof HeavyTask && ((HeavyTask) task).priority == 0 && !((HeavyTask) task).isCancelled()))
+                throw new YieldToOwner();
             ActivityManager.MemoryInfo info = new ActivityManager.MemoryInfo();
             ActivityManager am = (ActivityManager) context.getSystemService(Context.ACTIVITY_SERVICE);
             if (am != null) am.getMemoryInfo(info);
@@ -346,13 +470,19 @@ public final class JobManager {
         }
     }
 
-    private synchronized void persist() {
-        JSONArray arr = new JSONArray();
-        jobs.values().stream()
-                .sorted((a, b) -> Long.compare(b.updatedAt, a.updatedAt))
-                .limit(40)
-                .forEach(j -> arr.put(j.json()));
-        prefs.edit().putString(KEY_JOBS, arr.toString()).apply();
+    private void persist() {
+        synchronized (RECOVERY_LOCK) {
+            java.util.List<Job> terminal = new java.util.ArrayList<>();
+            for (Job job : jobs.values()) if (isTerminal(job.state)) terminal.add(job);
+            terminal.sort((a, b) -> Long.compare(b.updatedAt, a.updatedAt));
+            for (int i = 80; i < terminal.size(); i++) jobs.remove(terminal.get(i).id, terminal.get(i));
+            JSONArray arr = new JSONArray();
+            jobs.values().stream().filter(j -> !isTerminal(j.state))
+                    .sorted((a, b) -> Long.compare(b.updatedAt, a.updatedAt)).forEach(j -> arr.put(j.json()));
+            jobs.values().stream().filter(j -> isTerminal(j.state))
+                    .sorted((a, b) -> Long.compare(b.updatedAt, a.updatedAt)).limit(40).forEach(j -> arr.put(j.json()));
+            prefs.edit().putString(KEY_JOBS, arr.toString()).apply();
+        }
     }
 
     private void restoreRecoveryState() {
@@ -368,6 +498,7 @@ public final class JobManager {
                 Kind kind = "heavy".equals(o.optString("kind")) ? Kind.HEAVY : Kind.LIGHT;
                 Job job = new Job(o.optString("id", UUID.randomUUID().toString()), o.optString("name", "Recovered job"), kind, o.optLong("createdAt", updated));
                 job.owner = this;
+                job.ownerInitiated = o.optBoolean("ownerInitiated", false);
                 job.progress = o.optInt("progress", 0);
                 job.updatedAt = updated;
                 job.stage = o.optString("stage", "recovered");

@@ -36,6 +36,7 @@ public final class PromptVideoEngine {
     }
 
     public BuildResult build(ProjectStore store, ProjectStore.Project project, JSONObject parameters) throws Exception {
+        parameters=new JSONObject(parameters.toString());
         String prompt = parameters.optString("prompt", "").trim();
         if (prompt.isEmpty()) throw new IllegalArgumentException("Prompt is required");
 
@@ -48,14 +49,20 @@ public final class PromptVideoEngine {
         if (plan == null || plan.length() == 0) plan = fallbackPlan(prompt, totalSeconds);
 
         int maxScenes = Math.min(20, plan.length());
-        File dir = new File(new CreativeWorkspace(context).projectRoot(project.id), "generated/procedural_video");
-        if (!dir.exists() && !dir.mkdirs()) throw new IllegalStateException("Could not create prompt-video directory");
+        String generationId=UUID.randomUUID().toString();
+        File parent = new File(new CreativeWorkspace(context).projectRoot(project.id), "generated/procedural_video");
+        if(!parent.isDirectory()&&!parent.mkdirs())throw new IllegalStateException("Could not create prompt-video directory");
+        File dir=new File(parent,generationId);
+        if(!dir.mkdir())throw new IllegalStateException("Could not create an immutable prompt-video generation");
 
         ArrayList<ProjectStore.Asset> generatedAssets = new ArrayList<>();
         ArrayList<ProjectStore.Clip> generatedClips = new ArrayList<>();
         long defaultDuration = Math.max(1800, (totalSeconds * 1000L) / Math.max(1, maxScenes));
 
+        boolean filesCompleted=false;
+        try {
         for (int i = 0; i < maxScenes; i++) {
+            if(Thread.currentThread().isInterrupted())throw new InterruptedException("Prompt-video generation cancelled");
             JSONObject scene = plan.optJSONObject(i);
             if (scene == null) scene = new JSONObject();
             String title = scene.optString("title", shortTitle(scene.optString("text", prompt), i));
@@ -80,11 +87,18 @@ public final class PromptVideoEngine {
             asset.uri = Uri.fromFile(png).toString();
             asset.name = "Procedural Scene " + (i + 1);
             asset.mime = "image/png";
+            asset.width = width;
+            asset.height = height;
+            asset.sizeBytes = png.length();
+            asset.seekable = true;
+            asset.hasAudio = false;
             asset.generated = true;
             asset.role = "generated_image";
             asset.generationMetadata.put("provider", "builtin.videostudio.procedural-scene");
             asset.generationMetadata.put("prompt", prompt);
             asset.generationMetadata.put("sceneGraph", graph);
+            asset.generationMetadata.put("generationId",generationId);
+            asset.generationMetadata.put("workspaceRelativePath","generated/procedural_video/"+generationId+"/"+png.getName());
             asset.durationMs = durationMs;
             ProjectStore.Asset existing = null;
             for (ProjectStore.Asset candidate : project.assets) if (asset.uri.equals(candidate.uri)) { existing = candidate; break; }
@@ -109,25 +123,36 @@ public final class PromptVideoEngine {
             clip.effects.put("effectPreset", scene.optString("effect", styleToEffect(sceneStyle)));
             clip.effects.put("generatedFromPrompt", true);
             clip.effects.put("promptSceneIndex", i);
+            java.util.List<String> unsupported=NativeVideoEffects.unsupported(clip);
+            if(!unsupported.isEmpty())throw new IllegalArgumentException("Unsupported procedural scene effects: "+String.join(", ",unsupported));
             generatedClips.add(clip);
         }
-
+        filesCompleted=true;
         project.assets.addAll(generatedAssets);
         project.clips.clear();
         project.clips.addAll(generatedClips);
         store.save(project);
         return new BuildResult(project, aspect, quality, generatedClips.size());
+        }finally{
+            // Completed generations can have reached a project commit or recovery
+            // record; only this attempt's incomplete files are disposable.
+            if(!filesCompleted){for(int i=0;i<maxScenes;i++)new File(dir,String.format(Locale.US,"scene_%02d.png",i+1)).delete();dir.delete();}
+        }
     }
 
     public static void renderProceduralImage(File file, int width, int height, JSONObject graph) throws Exception {
         ProceduralScene scene = new ProceduralScene(graph);
-        Bitmap bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
+        Bitmap bitmap=null;boolean created=false,completed=false;
         try {
+            if(!file.createNewFile())throw new IllegalStateException("Generated image already exists; use a new immutable generation instead of overwriting it");
+            created=true;bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
             scene.draw(new Canvas(bitmap), 0, 1);
             try (FileOutputStream out = new FileOutputStream(file)) {
                 if (!bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)) throw new IllegalStateException("Could not save generated image");
+                out.flush();out.getFD().sync();
             }
-        } finally { bitmap.recycle(); }
+            completed=true;
+        } finally { if(bitmap!=null)bitmap.recycle();if(created&&!completed)file.delete(); }
     }
 
     private JSONArray fallbackPlan(String prompt, int totalSeconds) {
@@ -163,12 +188,12 @@ public final class PromptVideoEngine {
     }
 
     private String defaultTransition(int i) {
-        String[] values = {"fade","zoom_in","slide_left","flash","whip_right","dip_black"};
+        String[] values = {"fade","zoom_in","slide_left","dip_white","whip_right","dip_black"};
         return values[i % values.length];
     }
 
     private String defaultTextAnimation(int i) {
-        String[] values = {"cinematic_title","fade_up","word_reveal","scale_in","tracking_in","mask_reveal"};
+        String[] values = {"cinematic_title","fade_up","word_reveal","scale_in","slide_left","line_reveal"};
         return values[i % values.length];
     }
 

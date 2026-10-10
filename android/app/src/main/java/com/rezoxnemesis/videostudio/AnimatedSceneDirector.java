@@ -28,7 +28,10 @@ public final class AnimatedSceneDirector {
         clip.inMs = 0;
         clip.outMs = Math.max(1800, durationMs);
         clip.speed = 1f;
+        clip.programDurationMs = -1L;
         clip.transition = transitionFor(index, total, style);
+        clip.effects.put("animationDurationMs", clip.outputDurationMs());
+        clip.effects.put("animationOffsetMs", 0L);
         clip.effects.put("animatedScene", true);
         clip.effects.put("animationEngine", "videostudio-native-articulated-parallax-v2");
         clip.effects.put("animationAnalysis", analysis);
@@ -39,7 +42,9 @@ public final class AnimatedSceneDirector {
         clip.effects.put("lowerUri", layers.lowerUri.toString());
         clip.effects.put("backgroundUri", layers.backgroundUri.toString());
         clip.effects.put("motionPreset", spec.optString("cameraPreset", "push_in"));
-        clip.effects.put("motionBlur", spec.optDouble("motionBlur", 0.18));
+        // motionBlur remains a disclosed planning hint in animationSpec. There
+        // is no optical-flow renderer, so never publish it as an active effect.
+        clip.effects.remove("motionBlur");
         clip.effects.put("effectPreset", effectPreset(style));
         return spec;
     }
@@ -172,7 +177,7 @@ public final class AnimatedSceneDirector {
         if ("dramatic".equals(style) || "epic".equals(style)) {
             return index % 4 == 0 ? "whip_right" : (index % 3 == 0 ? "zoom_in" : "fade");
         }
-        if ("dreamy".equals(style)) return index % 3 == 0 ? "blur" : "fade";
+        if ("dreamy".equals(style)) return index % 3 == 0 ? "dip_white" : "fade";
         return index % 4 == 0 ? "push_left" : "fade";
     }
 

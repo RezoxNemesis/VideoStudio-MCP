@@ -3,14 +3,19 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import {webcrypto} from 'node:crypto';
+import {ProjectMetadataMirror} from '../src/project-metadata-mirror.js';
+import * as commandQueueStore from '../src/command-queue-store.js';
+if(!globalThis.crypto)globalThis.crypto=webcrypto;
 // Run the real relay class with an in-memory Durable Object store; SDK/network are not needed.
 const source=fs.readFileSync(new URL('../src/index.js',import.meta.url),'utf8');
 const end=source.indexOf('\n}\n',source.indexOf('export class VideoStudioState'))+3;
-const context={crypto:webcrypto,TextEncoder,Response,Request,Headers,URL,setTimeout,DurableObject:class{constructor(ctx){this.ctx=ctx;}},Date};
+const context={crypto:webcrypto,TextEncoder,Response,Request,Headers,URL,setTimeout,DurableObject:class{constructor(ctx){this.ctx=ctx;}},Date,ProjectMetadataMirror,...commandQueueStore};
 vm.createContext(context);
 vm.runInContext(source.slice(source.indexOf('const JH'),end).replace('export class VideoStudioState','globalThis.VideoStudioState = class VideoStudioState'),context);
 async function fixture(commands=[]) {
  const store=new Map(); const storage={get:async k=>structuredClone(store.get(k)),put:async(k,v)=>store.set(k,structuredClone(v)),delete:async k=>store.delete(k)};
+ storage.list=async({prefix,limit})=>new Map([...store].filter(([key])=>key.startsWith(prefix)).slice(0,limit));
+ storage.transaction=async callback=>callback(storage);
  const relay=new context.VideoStudioState({storage},{});
  const key='x'.repeat(43),deviceId='test-device-001';
  await relay.appRegister(deviceId,key,{protocolVersion:3,appGeneration:1,permissionMode:'everything'});
@@ -39,8 +44,9 @@ test('new commands preserve old unfinished work when terminal history is trimmed
  const f=await fixture([command(1,'queued'),...Array.from({length:159},(_,i)=>command(i+2,'completed'))]);
  await f.storage.put('app-v3-seq:'+f.deviceId,160);
  await f.relay.appEnqueueV3(f.key,'ping',{});
- const rows=await f.storage.get('app-v3-cl:'+f.deviceId);
- assert.equal(rows.length,160);assert.ok(rows.some(c=>c.id==='cmd-1'));assert.ok(rows.some(c=>c.seq===161));
+ const rows=await commandQueueStore.readCommandQueue(f.storage,'app-v3-cl:'+f.deviceId);
+ assert.equal(rows.length,64);assert.ok(rows.some(c=>c.id==='cmd-1'));assert.ok(rows.some(c=>c.seq===161));
+ assert.equal(await f.storage.get('app-v3-cl:'+f.deviceId),undefined);
 });
 test('saturated queue refuses new work rather than discarding existing commands',async()=>{
  const f=await fixture(Array.from({length:160},(_,i)=>command(i+1,'queued')));
@@ -53,20 +59,106 @@ test('wrong owner credential cannot read or complete commands',async()=>{
  await assert.rejects(f.relay.appCompleteV3(f.deviceId,'y'.repeat(43),'cmd-1',{}),/authorization failed/);
 });
 
+test('title creation keeps authoring revision and cannot forge owner priority or durable command identity',async()=>{
+ const f=await fixture();
+ const queued=await f.relay.appEnqueueV3(f.key,'create_title',{
+  projectId:'project-title-1',expectedRevision:4,text:'Editable title',startMs:250,durationMs:3000,
+  style:{fontFamily:'sans-serif-medium',textSize:.06,textY:.8},
+  _ownerInitiated:true,_mcpCommandId:'forged-command',_recoveryPlanId:'forged-plan'
+ });
+ assert.equal(queued.action,'create_title');assert.equal(queued.parameters.expectedRevision,4);
+ assert.equal(queued.parameters.text,'Editable title');assert.equal(queued.parameters.startMs,250);
+ assert.equal(Object.keys(queued.parameters).some(key=>key.startsWith('_')),false);
+ for(const patch of [{controlPaused:true},{permissionMode:'one_file'}]){
+  const locked=await fixture();const device=await locked.storage.get('app-device:'+locked.deviceId);
+  await locked.storage.put('app-device:'+locked.deviceId,{...device,...patch});
+  await assert.rejects(locked.relay.appEnqueueV3(locked.key,'create_title',{text:'Blocked'}),/paused|permission/);
+  assert.equal((await locked.storage.get('app-v3-cl:'+locked.deviceId)).length,0);
+ }
+});
+
+test('real bounded cel documents cross the old aggregate value limit and retain exact stroke parameters',async()=>{
+ const f=await fixture();
+ const drawing={version:1,width:512,height:512,background:'#00000000',strokes:[{id:'paint-a',type:'paint',color:'#FF112233',width:.012,
+  points:Array.from({length:3000},()=>({x:.5,y:.5,pressure:1}))}]};
+ assert.ok(new TextEncoder().encode(JSON.stringify(drawing)).byteLength<128*1024);
+ const first=await f.relay.appEnqueueV3(f.key,'cel_create',{projectId:'project-cel-1',expectedRevision:3,drawing,exposure:{startFrame:0,frameCount:2,fpsNumerator:24,fpsDenominator:1},_ownerInitiated:true});
+ const second=await f.relay.appEnqueueV3(f.key,'cel_update',{projectId:'project-cel-1',expectedRevision:4,clipId:'cel-clip-1',drawing,exposure:{frameCount:3,fpsNumerator:24,fpsDenominator:1}});
+ const rows=await commandQueueStore.readCommandQueue(f.storage,'app-v3-cl:'+f.deviceId);
+ assert.ok(new TextEncoder().encode(JSON.stringify(rows)).byteLength>128*1024);
+ const claimed=await f.relay.appCommandsV3(f.deviceId,f.key,second.seq,0);
+ assert.equal(claimed.length,2);assert.equal(claimed[0].id,first.id);assert.equal(claimed[1].id,second.id);
+ assert.deepEqual(claimed[1].parameters.drawing,drawing);
+ assert.equal(claimed[1].parameters.exposure.frameCount,3);
+ assert.equal(Object.hasOwn(claimed[0].parameters,'_ownerInitiated'),false);
+});
+
+test('terminal command receipts cannot be reopened or changed by a delayed acknowledgement',async()=>{
+ const f=await fixture([command(1,'claimed')]);
+ const result={ok:true,assetId:'actual-cel-asset',pngSha256:'a'.repeat(64)};
+ await f.relay.appCompleteV3(f.deviceId,f.key,'cmd-1',result,'completed');
+ await assert.rejects(f.relay.appCompleteV3(f.deviceId,f.key,'cmd-1',{ok:false},'completed'),/Conflicting terminal/);
+ await assert.rejects(f.relay.appCompleteV3(f.deviceId,f.key,'cmd-1',result,'queued'),/terminal status/);
+ assert.deepEqual((await f.relay.appCommandV3(f.key,'cmd-1')).result,result);
+ assert.equal((await f.relay.appCommandsV3(f.deviceId,f.key,0,0)).length,0);
+});
+
+test('paused owner state rejects private handoff metadata before creating an import bridge',async()=>{
+ const f=await fixture();const device=await f.storage.get('app-device:'+f.deviceId);
+ await f.storage.put('app-device:'+f.deviceId,{...device,controlPaused:true});
+ await assert.rejects(f.relay.appCreateHandoff(f.key,'https://files.example.com/image.png',{}),/paused/);
+ await assert.rejects(f.relay.appCreateCachedHandoff(f.key,'https://worker.example.com/__private/upload',{}),/paused/);
+ const worker=loadWorkerForRouteTests();
+ const result=await worker.fetch(new Request('https://worker.example.com/api/v3/app/private/upload?deviceId='+f.deviceId,{
+  method:'POST',headers:{authorization:'Bearer '+f.key},body:'private bytes'}),{VIDEO_STATE:{getByName:()=>f.relay}},{});
+ assert.equal(result.status,403);assert.match((await result.json()).error,/paused/);
+});
+
+const metadataSync=()=>({projectId:'project-mirror-1',sourceRevision:1,expectedMirrorRevision:0,enabled:true,
+ projectGraph:{id:'project-mirror-1',revision:1,name:'Private graph',
+  assets:[{id:'asset-mirror-1',mime:'video/mp4',durationMs:5000}],
+  tracks:[{id:'track-mirror-1',type:'video',order:0}],
+  clips:[{id:'clip-mirror-1',assetId:'asset-mirror-1',trackId:'track-mirror-1',startMs:0,inMs:0,outMs:5000}]}});
+
+test('metadata mirror owner scopes guard every graph effect before storage changes',async()=>{
+ for(const patch of [{controlPaused:true},{permissionMode:'one_file'}]){
+  const f=await fixture();
+  const device=await f.storage.get('app-device:'+f.deviceId);
+  await f.storage.put('app-device:'+f.deviceId,{...device,...patch});
+  for(const operation of ['sync','edit','reconcile','revoke'])
+   await assert.rejects(f.relay.appMetadataMirror(f.key,operation,metadataSync()),/pause or One File Lock/);
+  const read=await f.relay.appMetadataMirror(f.key,'get',{projectId:'project-mirror-1'});
+  assert.equal(read.enabled,false);assert.equal(read.ownerScope.mutationAllowed,false);
+  assert.equal(await f.storage.get('app-metadata-mirror:'+f.deviceId+':project-mirror-1'),undefined);
+ }
+});
+
+test('metadata mirror rejects wrong owner and rechecks owner binding inside transaction',async()=>{
+ const f=await fixture();
+ await assert.rejects(f.relay.appMetadataMirror('y'.repeat(43),'sync',metadataSync()),/owner|native/i);
+ const device=await f.storage.get('app-device:'+f.deviceId);
+ f.storage.transaction=async callback=>{
+  await f.storage.delete('app-owner:'+device.ownerHash);
+  return callback(f.storage);
+ };
+ await assert.rejects(f.relay.appMetadataMirror(f.key,'sync',metadataSync()),/owner identity/);
+ assert.equal(await f.storage.get('app-metadata-mirror:'+f.deviceId+':project-mirror-1'),undefined);
+});
+
 test('filling the last free queue slot retains every pending command',async()=>{
- const pending=Array.from({length:159},(_,i)=>command(i+1,'queued'));
- const f=await fixture([...pending,command(160,'completed')]);
- await f.storage.put('app-v3-seq:'+f.deviceId,160);
+ const pending=Array.from({length:63},(_,i)=>command(i+1,'queued'));
+ const f=await fixture([...pending,command(64,'completed')]);
+ await f.storage.put('app-v3-seq:'+f.deviceId,64);
  await f.relay.appEnqueueV3(f.key,'ping',{});
- const rows=await f.storage.get('app-v3-cl:'+f.deviceId);
- assert.equal(rows.length,160);assert.ok(rows.some(c=>c.id==='cmd-1'));
- assert.equal(rows.filter(c=>c.status==='queued').length,160);
+ const rows=await commandQueueStore.readCommandQueue(f.storage,'app-v3-cl:'+f.deviceId);
+ assert.equal(rows.length,64);assert.ok(rows.some(c=>c.id==='cmd-1'));
+ assert.equal(rows.filter(c=>c.status==='queued').length,64);
 });
 
 
 function loadWorkerForRouteTests() {
  const workerContext={
-  crypto:webcrypto,TextEncoder,TextDecoder,Response,Request,Headers,URL,setTimeout,clearTimeout,Date,
+  crypto:webcrypto,TextEncoder,TextDecoder,Response,Request,Headers,URL,setTimeout,clearTimeout,Date,ProjectMetadataMirror,...commandQueueStore,
   DurableObject:class{constructor(ctx){this.ctx=ctx;}},
   McpServer:class{},
   createMcpHandler:()=>()=>new Response(null,{status:204}),
@@ -101,6 +193,37 @@ test('stable Studio Web MCP requires the configured bearer while the editor page
 
  const root=await worker.fetch(new Request("https://example.test/",{method:"GET"}),env,{});
  assert.equal(root.status,200);
+});
+
+test('native metadata REST uses private owner/device/generation authentication and actual stored graph',async()=>{
+ const f=await fixture();const worker=loadWorkerForRouteTests();
+ const env={VIDEO_STATE:{getByName:()=>f.relay}};
+ const request=(body,key=f.key)=>new Request('https://example.test/api/v3/app/metadata-mirror',{
+  method:'POST',headers:{authorization:'Bearer '+key,'content-type':'application/json'},body:JSON.stringify(body)});
+ const body={deviceId:f.deviceId,appGeneration:1,operation:'sync',parameters:metadataSync()};
+ assert.equal((await worker.fetch(request(body,'y'.repeat(43)),env,{})).status,401);
+ assert.equal((await worker.fetch(request({...body,deviceId:'another-device'}),env,{})).status,401);
+ assert.equal((await worker.fetch(request({...body,appGeneration:0}),env,{})).status,409);
+ const synced=await worker.fetch(request(body),env,{});
+ assert.equal(synced.status,200);
+ const result=await synced.json();
+ assert.equal(result.graph.clips[0].id,'clip-mirror-1');
+ assert.equal(result.mediaUploaded,false);assert.equal(result.executorAvailable,false);
+ const read=await worker.fetch(request({...body,operation:'get',parameters:{projectId:'project-mirror-1'}}),env,{});
+ assert.equal((await read.json()).mirrorRevision,1);
+});
+
+test('native metadata REST bounds chunked actual bytes before any graph effect',async()=>{
+ const f=await fixture();const worker=loadWorkerForRouteTests();
+ const env={VIDEO_STATE:{getByName:()=>f.relay}};
+ const stream=new ReadableStream({start(controller){
+  controller.enqueue(new TextEncoder().encode('x'.repeat(128*1024+1)));controller.close();
+ }});
+ const request=new Request('https://example.test/api/v3/app/metadata-mirror',{
+  method:'POST',headers:{authorization:'Bearer '+f.key},body:stream,duplex:'half'});
+ const result=await worker.fetch(request,env,{});
+ assert.equal(result.status,400);assert.match((await result.json()).error,/128 KB/);
+ assert.equal(await f.storage.get('app-metadata-mirror:'+f.deviceId+':project-mirror-1'),undefined);
 });
 
 
@@ -291,6 +414,8 @@ test('offline native MCP still queues native-only work when Web fallback cannot 
 test('canonical identity convergence aliases legacy owner keys to the current device',async()=>{
  const store=new Map();
  const storage={get:async k=>structuredClone(store.get(k)),put:async(k,v)=>store.set(k,structuredClone(v)),delete:async k=>store.delete(k)};
+ storage.list=async({prefix,limit})=>new Map([...store].filter(([key])=>key.startsWith(prefix)).slice(0,limit));
+ storage.transaction=async callback=>callback(storage);
  const relay=new context.VideoStudioState({storage},{});
  const primaryKey='p'.repeat(43), primaryDevice='current-device-343';
  const legacyKey='l'.repeat(43), legacyDevice='legacy-device-341';
@@ -312,7 +437,7 @@ test('canonical identity convergence aliases legacy owner keys to the current de
  assert.equal(legacy.deviceId,primaryDevice);
  assert.equal(legacy.appVersion,'3.4.3');
 
- const rows=await storage.get('app-v3-cl:'+primaryDevice);
+ const rows=await commandQueueStore.readCommandQueue(storage,'app-v3-cl:'+primaryDevice);
  assert.ok(rows.some(x=>x.id==='legacy-pending'));
  assert.ok(rows.some(x=>x.id==='legacy-done'&&x.result.marker==='legacy'));
 
@@ -324,6 +449,8 @@ test('canonical identity convergence aliases legacy owner keys to the current de
 test('superseded native device cannot steal a converged legacy endpoint back',async()=>{
  const store=new Map();
  const storage={get:async k=>structuredClone(store.get(k)),put:async(k,v)=>store.set(k,structuredClone(v)),delete:async k=>store.delete(k)};
+ storage.list=async({prefix,limit})=>new Map([...store].filter(([key])=>key.startsWith(prefix)).slice(0,limit));
+ storage.transaction=async callback=>callback(storage);
  const relay=new context.VideoStudioState({storage},{});
  const primaryKey='q'.repeat(43), primaryDevice='current-device-lock';
  const legacyKey='r'.repeat(43), legacyDevice='legacy-device-lock';
@@ -357,7 +484,7 @@ test('convergence can repair a missing primary owner index from the canonical de
 
 test('ChatGPT attachment URL is relayed through a private handoff instead of exposed to Android',async()=>{
  const f=await fixture();
- const sourceUrl='https://files.example.test/private/video.mp4?sig=short-lived';
+ const sourceUrl='https://files.example.com/private/video.mp4?sig=short-lived';
  const queued=await f.relay.appQueueAttachmentHandoff(f.key,{
   download_url:sourceUrl,
   file_id:'file-chatgpt-video',

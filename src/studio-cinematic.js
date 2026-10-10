@@ -30,7 +30,7 @@ const STUDIO_CINEMATIC_JS = String.raw`
       headers:{"content-type":"application/json",...(options.headers||{})}
     });
     const data = await response.json().catch(()=>({}));
-    if(!response.ok) throw new Error(data.error||"Request failed");
+    if(!response.ok){const error=new Error(data.error||"Request failed");error.status=response.status;throw error;}
     return data;
   }
 
@@ -80,19 +80,58 @@ const STUDIO_CINEMATIC_JS = String.raw`
 
   const assetKey=(pid,aid)=>pid+":"+aid;
 
-  async function getProject(){
-    const pid=projectId();if(!pid)throw new Error("Select a project first");
-    const data=await api("/api/projects?deviceId="+encodeURIComponent(deviceId()));
-    const p=(data.projects||[]).find(x=>x.id===pid);
+  function projectTarget(options={}){
+    // Owner calls use the current selection once; queued calls supply both IDs.
+    if(options.remote===true&&(options.projectId===undefined||options.deviceId===undefined))
+      throw new Error("Queued rendering requires its captured project and device");
+    const pid=options.projectId===undefined?projectId():options.projectId;
+    const did=options.deviceId===undefined?deviceId():options.deviceId;
+    if(typeof pid!=="string"||!pid.trim())throw new Error("Select a project first");
+    if(typeof did!=="string"||!did.trim())throw new Error("Select a paired device first");
+    return{projectId:pid,deviceId:did};
+  }
+
+  async function getProject(options={}){
+    const target=projectTarget(options);
+    const data=await api("/api/projects?deviceId="+encodeURIComponent(target.deviceId));
+    const p=(data.projects||[]).find(x=>x.id===target.projectId);
     if(!p)throw new Error("Project not found");
+    if(p.deviceId&&p.deviceId!==target.deviceId)throw new Error("Project belongs to another device");
+    p.deviceId=target.deviceId;
     p.assets=p.assets||[];p.timeline=p.timeline||[];p.settings=p.settings||{};
     return p;
   }
 
   async function patchProject(project,patch){
     return (await api("/api/projects/"+encodeURIComponent(project.id),{
-      method:"POST",body:JSON.stringify({deviceId:deviceId(),patch})
+      method:"POST",body:JSON.stringify({deviceId:project.deviceId,expectedRevision:project.revision??0,patch})
     })).project;
+  }
+
+  function canonicalMetadata(value,depth=0){
+    if(depth>32)throw new Error("Registration acknowledgement exceeds bounded metadata depth");
+    return Array.isArray(value)?value.map(item=>canonicalMetadata(item,depth+1)):value&&typeof value==="object"
+      ?Object.fromEntries(Object.keys(value).sort().map(key=>[key,canonicalMetadata(value[key],depth+1)])):value;
+  }
+  const sameMetadata=(left,right)=>JSON.stringify(canonicalMetadata(left))===JSON.stringify(canonicalMetadata(right));
+
+  async function appendGenerated(project,assets,timeline,generation){
+    try{
+      const registered=await api("/api/projects/"+encodeURIComponent(project.id)+"/append-generated",{
+        method:"POST",body:JSON.stringify({deviceId:project.deviceId,assets,timeline,generation})
+      });
+      if(registered.ok!==true||registered.project?.id!==project.id||registered.project?.deviceId!==project.deviceId
+        ||!Array.isArray(registered.project.assets)||!Array.isArray(registered.project.timeline)
+        ||assets.some(asset=>!registered.project.assets.some(saved=>saved.id===asset.id&&sameMetadata(saved,asset)))
+        ||timeline.some(clip=>!registered.project.timeline.some(saved=>saved.id===clip.id&&sameMetadata(saved,clip))))
+        throw new Error("Registration acknowledgement does not identify the generated media in the captured project");
+      return{ok:true};
+    }catch(error){
+      const registrationState=error.status===409?"conflict":error.status>=400&&error.status<500?"rejected":"unacknowledged";
+      return{ok:false,executionState:registrationState==="unacknowledged"?"generated_registration_unconfirmed":"generated_registration_rejected",registrationState,projectId:project.id,deviceId:project.deviceId,
+        assets,timeline,generation,localBytesPreserved:true,mayHaveSideEffects:true,rerun:false,
+        error:"Generated video bytes are retained locally; project registration "+registrationState+": "+String(error.message||error).slice(0,4096)};
+    }
   }
 
   function dimensions(aspect,quality){
@@ -118,7 +157,7 @@ const STUDIO_CINEMATIC_JS = String.raw`
     let record=await idbGet("assets",assetKey(project.id,asset.id));
     if(record&&record.blob)return record.blob;
     if(window.VideoStudioCloud&&typeof window.VideoStudioCloud.restoreAssetBlob==="function"){
-      record=await window.VideoStudioCloud.restoreAssetBlob(project.id,asset.id);
+      record=await window.VideoStudioCloud.restoreAssetBlob(project.id,asset.id,{deviceId:project.deviceId});
       if(record&&record.blob)return record.blob;
     }
     throw new Error("Media not available locally: "+asset.name+". Restore it from Drive first.");
@@ -326,25 +365,28 @@ const STUDIO_CINEMATIC_JS = String.raw`
     const id=crypto.randomUUID(),ext=blob.type.includes("mp4")?".mp4":".webm";
     const asset={id,name:(name||"Cinematic-Portal")+ext,type:blob.type||"video/webm",size:blob.size,duration,kind:"video",generated:true,importedAt:new Date().toISOString(),cinematic:metadata};
     await idbPut("assets",{key:assetKey(project.id,id),blob,meta:asset});
-    project.assets.push(asset);project.timeline.push({assetId:id,inPoint:0,outPoint:duration,speed:1,title:"Cinematic Portal"});
-    project.generation={...(project.generation||{}),lastAssetId:id,lastMode:"cinematic_portal",generatedAt:new Date().toISOString()};
-    await patchProject(project,{assets:project.assets,timeline:project.timeline,generation:project.generation});
-    return asset;
+    const timeline=[{id:crypto.randomUUID(),assetId:id,inPoint:0,outPoint:duration,speed:1,title:"Cinematic Portal"}];
+    if(localStorage.getItem("vs-drive-auto-upload")==="1"&&window.VideoStudioCloud){try{await window.VideoStudioCloud.uploadSingleAsset(project,asset);await idbPut("assets",{key:assetKey(project.id,id),blob,meta:asset});}catch{}}
+    const registered=await appendGenerated(project,[asset],timeline,{lastAssetId:id,lastMode:"cinematic_portal",generatedAt:new Date().toISOString()});
+    return registered.ok?{ok:true,asset}:registered;
   }
 
   async function renderPortal(options={}){
     if(state.busy)throw new Error("Cinematic renderer is already running");
+    // Keep asynchronous media/Drive work bound to this request's target.
+    const target=projectTarget(options);
     state.busy=true;state.lastFrame=null;state.trackOffset=[0,0];state.personMaskFrame=0;state.personMaskReady=false;
-    if(Array.isArray(options.startQuad)&&options.startQuad.length===4) state.startQuad=options.startQuad.map(p=>[clamp(p[0],0,1),clamp(p[1],0,1)]);
-    if(Array.isArray(options.endQuad)&&options.endQuad.length===4) state.endQuad=options.endQuad.map(p=>[clamp(p[0],0,1),clamp(p[1],0,1)]);
-    const project=await getProject();
-    const base=project.assets.find(a=>a.id===(options.baseAssetId||state.baseAssetId)&&a.kind==="video")||project.assets.find(a=>a.kind==="video"&&!a.generated);
-    if(!base)throw new Error("Import a live-action base video first");
-    const worldIds=(options.worldAssetIds&&options.worldAssetIds.length?options.worldAssetIds:state.worldAssetIds);
-    const worldAssets=worldIds.map(id=>project.assets.find(a=>a.id===id)).filter(Boolean).filter(a=>a.kind==="video"||a.kind==="image");
-    const baseLoaded=await loadVideo(project,base,true);
+    let baseLoaded=null;
     const worldLoaded=[];
     try{
+      if(Array.isArray(options.startQuad)&&options.startQuad.length===4) state.startQuad=options.startQuad.map(p=>[clamp(p[0],0,1),clamp(p[1],0,1)]);
+      if(Array.isArray(options.endQuad)&&options.endQuad.length===4) state.endQuad=options.endQuad.map(p=>[clamp(p[0],0,1),clamp(p[1],0,1)]);
+      const project=await getProject(target);
+      const base=project.assets.find(a=>a.id===(options.baseAssetId||state.baseAssetId)&&a.kind==="video")||project.assets.find(a=>a.kind==="video"&&!a.generated);
+      if(!base)throw new Error("Import a live-action base video first");
+      const worldIds=(options.worldAssetIds&&options.worldAssetIds.length?options.worldAssetIds:state.worldAssetIds);
+      const worldAssets=worldIds.map(id=>project.assets.find(a=>a.id===id)).filter(Boolean).filter(a=>a.kind==="video"||a.kind==="image");
+      baseLoaded=await loadVideo(project,base,true);
       for(const a of worldAssets){
         if(a.kind==="video")worldLoaded.push({...await loadVideo(project,a,false),kind:"video"});
         else worldLoaded.push({...await loadImage(project,a),kind:"image"});
@@ -446,15 +488,16 @@ const STUDIO_CINEMATIC_JS = String.raw`
       if(recorder.state!=="inactive")recorder.stop();await stopped;stream.getTracks().forEach(t=>t.stop());
       try{audioSource&&audioSource.disconnect();}catch{};try{audioCtx&&await audioCtx.close();}catch{}
       const blob=new Blob(chunks,{type:recorder.mimeType||"video/webm"});
-      const asset=await registerGenerated(project,blob,duration,"VideoStudio-Cinematic-Portal",{
+      const registered=await registerGenerated(project,blob,duration,"VideoStudio-Cinematic-Portal",{
         engine:"studio-web-portal-compositor-v1",baseAssetId:base.id,worldAssetIds:worldAssets.map(a=>a.id),prompt:String(options.prompt||"").slice(0,1000),tracking,startQuad:state.startQuad,endQuad:state.endQuad,reflection:options.reflection==null?.11:options.reflection,lightSpill:options.lightSpill==null?.07:options.lightSpill,travelMotion:options.travelMotion==null?.22:options.travelMotion,sceneLabels:Array.isArray(options.sceneLabels)?options.sceneLabels.slice(0,24):[],personOcclusion:personOcclusion&&!!state.personSegmenter
       });
+      if(!registered.ok){if(status)status.textContent=registered.error;log("Cinematic video retained",registered.error);toast("Rendered video retained locally; project registration was not acknowledged");return registered;}
+      const asset=registered.asset;
       if(status)status.textContent="Complete • "+asset.name+" • "+Math.round(blob.size/1048576)+" MB";
       if(bar)bar.style.width="100%";log("Cinematic portal complete",asset.name);toast("Cinematic world video added to project");
-      if(localStorage.getItem("vs-drive-auto-upload")==="1"&&window.VideoStudioCloud){try{await window.VideoStudioCloud.uploadSingleAsset(project,asset);}catch{}}
       return{ok:true,realVideo:true,asset,engine:"studio-web-portal-compositor-v1",duration,worldCount:worldAssets.length||"procedural",tracking,note:"Base live-action video is preserved while generated/imported worlds are composited through a tracked perspective portal."};
     } finally {
-      state.busy=false;URL.revokeObjectURL(baseLoaded.url);worldLoaded.forEach(x=>URL.revokeObjectURL(x.url));
+      state.busy=false;if(baseLoaded)URL.revokeObjectURL(baseLoaded.url);worldLoaded.forEach(x=>URL.revokeObjectURL(x.url));
     }
   }
 
@@ -524,8 +567,8 @@ const STUDIO_CINEMATIC_JS = String.raw`
       try{
         state.baseAssetId=$("vsPortalBase").value;state.worldAssetIds=[...$("vsPortalWorld").selectedOptions].map(o=>o.value);
         const p=await getProject();
-        await renderPortal({baseAssetId:state.baseAssetId,worldAssetIds:state.worldAssetIds,prompt:$("vsPortalPrompt").value,sceneLabels:$("vsPortalLabels").value.split(",").map(x=>x.trim()).filter(Boolean),duration:Number($("vsPortalDuration").value||30),tracking:$("vsPortalTracking").value,personOcclusion:$("vsPortalOcclusion").value,reflection:Number($("vsPortalReflection").value),lightSpill:Number($("vsPortalLightSpill").value),travelMotion:Number($("vsPortalTravel").value),aspect:p.settings.aspect||"9:16",quality:p.settings.quality||"720p"});
-        setTimeout(()=>location.reload(),900);
+        const result=await renderPortal({projectId:p.id,deviceId:p.deviceId,baseAssetId:state.baseAssetId,worldAssetIds:state.worldAssetIds,prompt:$("vsPortalPrompt").value,sceneLabels:$("vsPortalLabels").value.split(",").map(x=>x.trim()).filter(Boolean),duration:Number($("vsPortalDuration").value||30),tracking:$("vsPortalTracking").value,personOcclusion:$("vsPortalOcclusion").value,reflection:Number($("vsPortalReflection").value),lightSpill:Number($("vsPortalLightSpill").value),travelMotion:Number($("vsPortalTravel").value),aspect:p.settings.aspect||"9:16",quality:p.settings.quality||"720p"});
+        if(result.ok!==false)setTimeout(()=>location.reload(),900);
       }catch(e){toast(e.message);$("vsPortalStatus").textContent=e.message;}
     };
     refreshSelectors().then(()=>{if(state.baseAssetId)calibrate().catch(()=>{});});

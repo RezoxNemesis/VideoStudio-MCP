@@ -42,7 +42,7 @@ const STUDIO_NEURAL_JS = String.raw`
   async function api(path,options={}){
     const r=await fetch(path,{...options,headers:{"content-type":"application/json",...(options.headers||{})}});
     const data=await r.json().catch(()=>({}));
-    if(!r.ok)throw new Error(data.error||"Request failed");
+    if(!r.ok){const error=new Error(data.error||"Request failed");error.status=r.status;throw error;}
     return data;
   }
 
@@ -81,17 +81,55 @@ const STUDIO_NEURAL_JS = String.raw`
 
   const assetKey=(pid,aid)=>pid+":"+aid;
 
-  async function getProject(){
-    const pid=projectId();if(!pid)throw new Error("Select a project first");
-    const data=await api("/api/projects?deviceId="+encodeURIComponent(deviceId()));
-    const p=(data.projects||[]).find(x=>x.id===pid);
+  function projectTarget(options={}){
+    // Owner calls use the current selection once; queued calls supply both IDs.
+    if(options.remote===true&&(options.projectId===undefined||options.deviceId===undefined))
+      throw new Error("Queued generation requires its captured project and device");
+    const pid=options.projectId===undefined?projectId():options.projectId;
+    const did=options.deviceId===undefined?deviceId():options.deviceId;
+    if(typeof pid!=="string"||!pid.trim())throw new Error("Select a project first");
+    if(typeof did!=="string"||!did.trim())throw new Error("Select a paired device first");
+    return{projectId:pid,deviceId:did};
+  }
+
+  async function getProject(options={}){
+    const target=projectTarget(options);
+    const data=await api("/api/projects?deviceId="+encodeURIComponent(target.deviceId));
+    const p=(data.projects||[]).find(x=>x.id===target.projectId);
     if(!p)throw new Error("Project not found");
+    if(p.deviceId&&p.deviceId!==target.deviceId)throw new Error("Project belongs to another device");
+    p.deviceId=target.deviceId;
     p.assets=p.assets||[];p.timeline=p.timeline||[];p.generation=p.generation||{};
     return p;
   }
 
   async function patchProject(project,patch){
-    return (await api("/api/projects/"+encodeURIComponent(project.id),{method:"POST",body:JSON.stringify({deviceId:deviceId(),patch})})).project;
+    return (await api("/api/projects/"+encodeURIComponent(project.id),{method:"POST",body:JSON.stringify({deviceId:project.deviceId,expectedRevision:project.revision??0,patch})})).project;
+  }
+
+  function canonicalMetadata(value,depth=0){
+    if(depth>32)throw new Error("Registration acknowledgement exceeds bounded metadata depth");
+    return Array.isArray(value)?value.map(item=>canonicalMetadata(item,depth+1)):value&&typeof value==="object"
+      ?Object.fromEntries(Object.keys(value).sort().map(key=>[key,canonicalMetadata(value[key],depth+1)])):value;
+  }
+  const sameMetadata=(left,right)=>JSON.stringify(canonicalMetadata(left))===JSON.stringify(canonicalMetadata(right));
+
+  async function appendGenerated(project,assets,generation){
+    try{
+      const registered=await api("/api/projects/"+encodeURIComponent(project.id)+"/append-generated",{
+        method:"POST",body:JSON.stringify({deviceId:project.deviceId,assets,timeline:[],generation})
+      });
+      if(registered.ok!==true||registered.project?.id!==project.id||registered.project?.deviceId!==project.deviceId
+        ||!Array.isArray(registered.project.assets)
+        ||assets.some(asset=>!registered.project.assets.some(saved=>saved.id===asset.id&&sameMetadata(saved,asset))))
+        throw new Error("Registration acknowledgement does not identify the generated media in the captured project");
+      return{ok:true};
+    }catch(error){
+      const registrationState=error.status===409?"conflict":error.status>=400&&error.status<500?"rejected":"unacknowledged";
+      return{ok:false,executionState:registrationState==="unacknowledged"?"generated_registration_unconfirmed":"generated_registration_rejected",registrationState,projectId:project.id,deviceId:project.deviceId,
+        assets,timeline:[],generation,localBytesPreserved:true,mayHaveSideEffects:true,rerun:false,
+        error:"Generated image bytes are retained locally; project registration "+registrationState+": "+String(error.message||error).slice(0,4096)};
+    }
   }
 
   function setStatus(text,percent){
@@ -271,11 +309,15 @@ const STUDIO_NEURAL_JS = String.raw`
     const asset={id,name,type:"image/png",size:blob.size,duration:4,kind:"image",generated:true,role:"neural_world_keyframe",importedAt:new Date().toISOString(),generation:{engine:"sd-turbo-webgpu-onnx",prompt,modelBase:state.modelBase,resolution:"512x512",neural:true}};
     await idbPut("assets",{key:assetKey(project.id,id),blob,meta:asset});
     try{const url=URL.createObjectURL(blob),img=new Image();await new Promise((r,j)=>{img.onload=r;img.onerror=j;img.src=url;});const c=document.createElement("canvas");c.width=320;c.height=180;const x=c.getContext("2d");const fit=Math.max(320/img.naturalWidth,180/img.naturalHeight);x.drawImage(img,(320-img.naturalWidth*fit)/2,(180-img.naturalHeight*fit)/2,img.naturalWidth*fit,img.naturalHeight*fit);await idbPut("thumbs",{key:assetKey(project.id,id),dataUrl:c.toDataURL("image/jpeg",.78),updatedAt:Date.now()});URL.revokeObjectURL(url);}catch{}
-    project.assets.push(asset);return asset;
+    return asset;
   }
 
   async function generateKeyframes(options={}){
     if(state.busy)throw new Error("Neural generation is already running");
+    // Capture before the GPU probe/model awaits can outlive an owner selection.
+    const target=projectTarget(options);
+    let project=null,requestedFrames=0,registrationAcknowledged=false;
+    const assets=[];
     state.busy=true;
     try{
       const hardware=await probe();
@@ -284,19 +326,30 @@ const STUDIO_NEURAL_JS = String.raw`
       const raw=Array.isArray(options.prompts)?options.prompts.join("\n"):String(options.prompts||options.prompt||"");
       const prompts=raw.split(/\n+/).map(x=>x.trim()).filter(Boolean).slice(0,9);
       if(!prompts.length)throw new Error("Enter at least one world prompt");
-      const project=await getProject(),assets=[];
+      requestedFrames=prompts.length;
+      project=await getProject(target);
       for(let i=0;i<prompts.length;i++){
         const generated=await generateOne(prompts[i],i,prompts.length);
         const asset=await saveImageAsset(project,generated.blob,prompts[i],i);assets.push(asset);
-        if(window.VideoStudioCloud&&localStorage.getItem("vs-drive-auto-upload")==="1"){try{await window.VideoStudioCloud.uploadSingleAsset(project,asset);}catch{}}
+        if(window.VideoStudioCloud&&localStorage.getItem("vs-drive-auto-upload")==="1"){try{await window.VideoStudioCloud.uploadSingleAsset(project,asset);await idbPut("assets",{key:assetKey(project.id,asset.id),blob:generated.blob,meta:asset});}catch{}}
       }
-      project.generation={...(project.generation||{}),lastNeuralWorldIds:assets.map(a=>a.id),lastNeuralEngine:"sd-turbo-webgpu-onnx",generatedAt:new Date().toISOString()};
-      await patchProject(project,{assets:project.assets,generation:project.generation});
+      const registered=await appendGenerated(project,assets,{lastNeuralWorldIds:assets.map(a=>a.id),lastNeuralEngine:"sd-turbo-webgpu-onnx",generatedAt:new Date().toISOString()});
+      if(!registered.ok){setStatus(registered.error,null);log("Neural keyframes retained",registered.error);toast("Generated keyframes retained locally; project registration was not acknowledged");return registered;}
+      registrationAcknowledged=true;
       setStatus("Generated "+assets.length+" neural world keyframe"+(assets.length===1?"":"s")+" • ready for Cinematic Worlds",100);
       if(window.VideoStudioCinematic&&window.VideoStudioCinematic.refreshSelectors)window.VideoStudioCinematic.refreshSelectors();
       log("Neural worlds generated",assets.length+" SD-Turbo WebGPU keyframe(s)");
       toast("Neural world keyframes added to Media Bin");
       return{ok:true,neural:true,runtimeVersion:NEURAL_RUNTIME_VERSION,engine:"sd-turbo-webgpu-onnx",assets,hardware,modelBase:state.modelBase,note:"Real client-side SD-Turbo inference through ONNX Runtime WebGPU."};
+    } catch(error) {
+      if(!project||!assets.length||registrationAcknowledged)throw error;
+      const failure={ok:false,executionState:"generated_partial_unregistered",registrationState:"not_attempted",failedStage:"generate_or_store",
+        projectId:project.id,deviceId:project.deviceId,assets,timeline:[],requestedFrames,
+        generation:{lastPartialNeuralWorldIds:assets.map(asset=>asset.id),lastNeuralEngine:"sd-turbo-webgpu-onnx",generatedAt:new Date().toISOString()},
+        localBytesPreserved:true,mayHaveSideEffects:true,rerun:false,
+        error:"Partial generated image bytes are retained locally; remaining generation or storage failed: "+String(error.message||error).slice(0,4096)};
+      setStatus(failure.error,null);log("Partial neural keyframes retained",failure.error);toast("Partial keyframes retained locally; generation stopped");
+      return failure;
     } finally {state.busy=false;}
   }
 

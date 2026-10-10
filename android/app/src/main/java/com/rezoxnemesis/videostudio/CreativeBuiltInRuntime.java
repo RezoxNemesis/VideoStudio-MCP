@@ -80,7 +80,7 @@ public final class CreativeBuiltInRuntime {
     }
 
     private JSONObject executeFace(ProjectStore.Project project, JSONObject node) throws Exception {
-        JSONObject bundle = findPortraitBundle(project.id, assetId(node));
+        JSONObject bundle = findPortraitBundle(project, assetId(node));
         JSONObject analysis = bundle.optJSONObject("analysis");
         if (analysis == null) throw new IllegalStateException("Portrait analysis bundle is missing face data");
 
@@ -97,7 +97,7 @@ public final class CreativeBuiltInRuntime {
     }
 
     private JSONObject executeLayeredDepth(ProjectStore.Project project, JSONObject node) throws Exception {
-        JSONObject bundle = findPortraitBundle(project.id, assetId(node));
+        JSONObject bundle = findPortraitBundle(project, assetId(node));
         JSONObject analysis = bundle.optJSONObject("analysis");
         if (analysis == null) analysis = new JSONObject();
 
@@ -123,7 +123,7 @@ public final class CreativeBuiltInRuntime {
     }
 
     private JSONObject executePortraitRig(ProjectStore.Project project, JSONObject node) throws Exception {
-        JSONObject bundle = findPortraitBundle(project.id, assetId(node));
+        JSONObject bundle = findPortraitBundle(project, assetId(node));
         JSONObject input = node.optJSONObject("input");
         JSONObject subject = input == null ? null : input.optJSONObject("subject");
         if (subject == null) subject = new JSONObject();
@@ -141,12 +141,14 @@ public final class CreativeBuiltInRuntime {
         out.put("lowerUri", bundle.optString("lowerUri", ""));
         out.put("foregroundUri", bundle.optString("foregroundUri", ""));
         out.put("backgroundUri", bundle.optString("backgroundUri", ""));
+        if (bundle.optJSONObject("analysis") != null)
+            out.put("analysis", new JSONObject(bundle.getJSONObject("analysis").toString()));
         out.put("sourceBundleNode", bundle.optString("_nodeId", ""));
         return out;
     }
 
-    private JSONObject findPortraitBundle(String projectId, String assetId) throws Exception {
-        JSONObject state = nodeStore.status(projectId);
+    private JSONObject findPortraitBundle(ProjectStore.Project project, String assetId) throws Exception {
+        JSONObject state = nodeStore.status(project.id);
         JSONArray nodes = state.optJSONArray("nodes");
         if (nodes != null) {
             for (int i = 0; i < nodes.length(); i++) {
@@ -155,6 +157,14 @@ public final class CreativeBuiltInRuntime {
                 JSONObject result = candidate.optJSONObject("result");
                 if (result == null || !result.optBoolean("portraitBundle", false)) continue;
                 if (!assetId.isEmpty() && !assetId.equals(result.optString("assetId", ""))) continue;
+                ProjectStore.Asset source = project.asset(result.optString("assetId", ""));
+                if (source == null) continue;
+                JSONObject analysis = result.optJSONObject("analysis");
+                // Provider documents can change behind a stable URI. A stored
+                // node identity is insufficient without checking captured pixels
+                // and immutable layer files before this dependency is reused.
+                portraitAnalyzer.assertSourceFresh(source, analysis);
+                portraitAnalyzer.assertLayerFilesValid(analysis);
                 JSONObject copy = new JSONObject(result.toString());
                 copy.put("_nodeId", candidate.optString("id", ""));
                 return copy;

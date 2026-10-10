@@ -120,7 +120,7 @@ public class ResumableTransferTest {
         try(RandomAccessFile out=new RandomAccessFile(partial,"rw")){out.write(new byte[]{1,2,3});}
         journal.save(new TransferJournal.Entry(
                 "resume-job","https://example.test/media",partial.getAbsolutePath(),
-                6L,3L,"etag-1","","","paused"
+                6L,3L,"\"etag-1\"","","","paused"
         ));
         ResumableTransferManager manager=new ResumableTransferManager(journal);
         java.util.ArrayList<Long> offsets=new java.util.ArrayList<>();
@@ -130,7 +130,7 @@ public class ResumableTransferTest {
                     offsets.add(offset);
                     return new FakeConnection(206,new byte[]{4,5,6})
                             .header("Content-Range","bytes 3-5/6")
-                            .header("ETag","etag-1")
+                            .header("ETag","\"etag-1\"")
                             .header("Content-Type","video/mp4");
                 },
                 null
@@ -156,7 +156,7 @@ public class ResumableTransferTest {
         try(RandomAccessFile out=new RandomAccessFile(partial,"rw")){out.write(new byte[]{9,9,9});}
         journal.save(new TransferJournal.Entry(
                 "range-job","https://example.test/media",partial.getAbsolutePath(),
-                4L,3L,"","","","paused"
+                4L,3L,"\"etag-1\"","","","paused"
         ));
         ResumableTransferManager manager=new ResumableTransferManager(journal);
         java.util.ArrayList<Long> offsets=new java.util.ArrayList<>();

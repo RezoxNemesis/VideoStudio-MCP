@@ -7,10 +7,140 @@ import STUDIO_RUNTIME_JS from "./studio-runtime.js";
 import STUDIO_CINEMATIC_JS from "./studio-cinematic.js";
 import STUDIO_NEURAL_JS from "./studio-neural.js";
 import STUDIO_TEMPORAL_JS from "./studio-temporal.js";
+import { ProjectMetadataMirror } from "./project-metadata-mirror.js";
+import { readCommandQueue, mutateCommandQueue, readCommandQueueInTransaction, writeCommandQueueInTransaction, requireCommandQueueAdmission, commandIsPending, terminalCommandUpdate, canonicalCommandResultSha256, readCommandReceipt, readCommandReceiptsInTransaction, mergeCommandReceiptsInTransaction, acknowledgePrunedCommand } from "./command-queue-store.js";
 
 const JH = {"content-type":"application/json; charset=UTF-8","cache-control":"no-store"};
 const now = () => new Date().toISOString();
 const clean = (v,n=5000) => String(v ?? "").trim().slice(0,n);
+const definedFields=value=>Object.fromEntries(Object.entries(value).filter(([,item])=>item!==undefined));
+const STUDIO_PROJECT_BYTES=112*1024,STUDIO_APPEND_BYTES=64*1024;
+const requireStudioJsonDepth=value=>{const stack=[[value,0]];while(stack.length){const [item,depth]=stack.pop();if(depth>64)throw studioError("Project metadata exceeds the 64-level JSON nesting budget","invalid_project_request");if(item&&typeof item==="object")for(const child of Object.values(item))stack.push([child,depth+1]);}};
+const canonicalJson=(value,depth=0)=>{if(depth>64)throw studioError("Project metadata exceeds the 64-level JSON nesting budget","invalid_project_request");return Array.isArray(value)?value.map(item=>canonicalJson(item,depth+1)):value&&typeof value==="object"?Object.fromEntries(Object.keys(value).sort().map(key=>[key,canonicalJson(value[key],depth+1)])):value;};
+const sameJson=(left,right)=>JSON.stringify(canonicalJson(left))===JSON.stringify(canonicalJson(right));
+const studioCommandHint=command=>{
+  const hint={id:command.id,action:command.action,status:command.status,createdAt:command.createdAt,completedAt:command.completedAt};
+  if(command.runtime)hint.runtime=command.runtime;
+  if(command.result!==undefined){
+    if(new TextEncoder().encode(JSON.stringify(command.result)).byteLength<=2048)hint.result=command.result;
+    else{hint.resultOmitted=true;hint.resultLookupCommandId=command.id;if(command.resultSha256)hint.resultSha256=command.resultSha256;}
+  }
+  return hint;
+};
+const studioError=(message,code,status=400,details={})=>Object.assign(new Error(message),{code,status,...details});
+const requireStudioBudget=(value,maximum)=>{requireStudioJsonDepth(value);if(new TextEncoder().encode(JSON.stringify(value)).byteLength>maximum)throw studioError("Studio project metadata exceeds its bounded storage budget; existing edits and generated media are retained","project_metadata_budget",413);};
+async function readBoundedStudioJson(request,maximum){
+  if(!request.body)throw studioError("Project request JSON is required","invalid_project_request");
+  const reader=request.body.getReader(),chunks=[];let bytes=0;
+  try{while(true){const part=await reader.read();if(part.done)break;bytes+=part.value.byteLength;if(bytes>maximum)throw studioError("Project request exceeds its bounded metadata budget","project_metadata_budget",413);chunks.push(part.value);}}
+  catch(error){await reader.cancel().catch(()=>{});throw error;}finally{reader.releaseLock();}
+  const combined=new Uint8Array(bytes);let offset=0;for(const chunk of chunks){combined.set(chunk,offset);offset+=chunk.byteLength;}
+  try{const body=JSON.parse(new TextDecoder("utf-8",{fatal:true}).decode(combined));if(!body||typeof body!=="object"||Array.isArray(body))throw new Error();requireStudioJsonDepth(body);return body;}
+  catch{throw studioError("Project request must be valid JSON metadata","invalid_project_request");}
+}
+const PRIVATE_UPLOAD_LIMIT = 250*1024*1024;
+const ATTACHMENT_TTL_MS = 20*60*1000;
+// Host file parameters are references, not authority to browse a media library.
+// file_id alone is deliberately not resolved: only the host's temporary URL or
+// an explicit owner-authenticated byte upload gives this Worker access to bytes.
+const attachmentFile = (file={}) => {
+  if(!file||typeof file!=="object"||Array.isArray(file)) throw new Error("A user-shared attachment file reference is required");
+  const download_url=String(file.download_url||file.downloadUrl||file.url||"").trim();
+  if(!download_url) throw new Error("The host did not supply an attachment download_url. A file_id or sandbox path alone cannot be downloaded; use a host-supplied temporary HTTPS file URL or the private authenticated upload endpoint.");
+  const size=Number(file.size??file.file_size??file.size_bytes??0);
+  if(!Number.isSafeInteger(size)||size<0) throw new Error("Invalid attachment byte size");
+  const sha256=String(file.sha256||"").trim().toLowerCase();
+  if(sha256&&!/^[a-f0-9]{64}$/.test(sha256)) throw new Error("Invalid attachment SHA-256");
+  return {download_url:publicAttachmentUrl(download_url),file_id:clean(file.file_id||file.id||"",180),file_name:clean(file.file_name||file.name||"ChatGPT attachment",180),mime_type:clean(file.mime_type||file.mime||"",120),size,sha256};
+};
+const publicAttachmentUrl = raw => {
+  let u; try{ u=new URL(String(raw||"")); }catch{ throw new Error("Invalid attachment HTTPS URL"); }
+  if(u.protocol!=="https:"||u.username||u.password||(u.port&&u.port!=="443")) throw new Error("Attachment sources require HTTPS on port 443 without URL credentials");
+  const host=u.hostname.toLowerCase().replace(/^\[|\]$/g,"");
+  const octets=host.split(".").map(Number);
+  const ipv4=octets.length===4&&octets.every(n=>Number.isInteger(n)&&n>=0&&n<=255);
+  const blocked4=ipv4&&(octets[0]===0||octets[0]===10||octets[0]===127||octets[0]>=224||
+    (octets[0]===169&&octets[1]===254)||(octets[0]===172&&octets[1]>=16&&octets[1]<=31)||
+    (octets[0]===192&&octets[1]===168)||(octets[0]===100&&octets[1]>=64&&octets[1]<=127)||
+    (octets[0]===198&&(octets[1]===18||octets[1]===19)));
+  if(!host||!host.includes(".")||host==="localhost"||/\.(localhost|local|internal|lan|home|test|invalid)$/.test(host)||blocked4||host.includes(":")) throw new Error("Private-network attachment sources are not allowed");
+  return u.href;
+};
+const queueAttachment = async(st,ownerKey,file,projectId="",isV3=true) => {
+  const reference=attachmentFile(file);
+  // Keep pre-existing Durable Object RPC methods for rolling Worker deploys.
+  const handoff=await st.appCreateHandoff(ownerKey,reference.download_url,{name:reference.file_name,mime:reference.mime_type,size:reference.size});
+  const parameters={handoffId:handoff.id,name:handoff.name,mime:handoff.mime,size:reference.size,sha256:reference.sha256,fileId:reference.file_id,projectId:clean(projectId,120)};
+  const command=isV3?await st.appEnqueueV3(ownerKey,"import_chat_file",parameters):await st.appEnqueue(ownerKey,"import_chat_file",parameters);
+  return {...command,attachmentExpiresAt:handoff.expiresAt};
+};
+const privateHandoffContent = async(request,handoff) => {
+  const range=request.headers.get("range")||"";
+  if(range&&!/^bytes=\d+-\d*$/.test(range)) return reply({error:"Only one forward byte range is supported"},416);
+  let upstream;
+  if(handoff.cacheUrl){
+    const headers=new Headers();
+    if(range) headers.set("range",range);
+    if(request.headers.get("if-range")) headers.set("if-range",request.headers.get("if-range"));
+    upstream=await caches.default.match(new Request(handoff.cacheUrl,{headers}));
+    if(!upstream||!upstream.body) return reply({error:"Private upload expired or unavailable"},404);
+  }else{
+    let current=publicAttachmentUrl(handoff.sourceUrl);
+    for(let redirects=0;redirects<=5;redirects++){
+      const headers=new Headers({"accept":"*/*","accept-encoding":"identity","user-agent":"VideoStudio-Private-Handoff/3.0"});
+      if(range) headers.set("range",range);
+      if(request.headers.get("if-range")) headers.set("if-range",request.headers.get("if-range"));
+      upstream=await fetch(current,{headers,redirect:"manual"});
+      if([301,302,303,307,308].includes(upstream.status)){
+        const location=upstream.headers.get("location");
+        if(upstream.body) await upstream.body.cancel();
+        if(!location||redirects===5) return reply({error:"Attachment redirect could not be followed safely"},502);
+        current=publicAttachmentUrl(new URL(location,current).href);
+        continue;
+      }
+      break;
+    }
+    if(upstream.status===416) return reply({error:"Attachment byte range is no longer available"},416);
+    if(![200,206].includes(upstream.status)||!upstream.body) return reply({error:"Attachment source unavailable",status:upstream.status},502);
+  }
+  const headers=new Headers({"cache-control":"no-store","x-content-type-options":"nosniff"});
+  headers.set("content-type",handoff.mime||upstream.headers.get("content-type")||"application/octet-stream");
+  // Preserve resume validators and the upstream status. Relaying a 206 as 200
+  // corrupts resumptions; a real 200 tells Android to safely restart its partial.
+  for(const name of ["content-length","content-range","accept-ranges","etag","last-modified"]){
+    const value=upstream.headers.get(name); if(value) headers.set(name,value);
+  }
+  headers.set("content-disposition",'attachment; filename="'+handoff.name.replace(/[\r\n"]/g,"_")+'"');
+  return new Response(upstream.body,{status:upstream.status,headers});
+};
+const queueInlineAttachment = async(st,ownerKey,parameters,origin) => {
+  const mime=String(parameters.mime||"").toLowerCase();
+  if(!["image/png","image/jpeg","image/webp","video/mp4"].includes(mime)) throw new Error("Inline attachment MIME is unsupported");
+  let encoded=String(parameters.base64||"").trim();
+  if(encoded.startsWith("data:")) encoded=encoded.slice(encoded.indexOf(",")+1);
+  if(!encoded||encoded.length>17*1024*1024||encoded.length%4!==0||!/^[A-Za-z0-9+/]*={0,2}$/.test(encoded)) throw new Error("Invalid bounded base64 attachment");
+  const size=encoded.length/4*3-(encoded.endsWith("==")?2:encoded.endsWith("=")?1:0);
+  if(size<=0||size>12*1024*1024) throw new Error("Inline attachment exceeds the 12 MB decoded limit");
+  const status=await st.appStatusV3(ownerKey);
+  if(!status.registered||status.device.permissionMode==="one_file"||status.device.controlPaused) throw new Error("Inline attachment import is blocked by owner control state");
+  const uploadId=crypto.randomUUID(), cacheUrl=origin+"/__videostudio_private_upload/"+uploadId;
+  let offset=0;
+  const body=new ReadableStream({pull(controller){
+    if(offset>=encoded.length){ controller.close(); return; }
+    const end=Math.min(encoded.length,offset+64*1024);
+    const decoded=atob(encoded.slice(offset,end));
+    offset=end;
+    const bytes=new Uint8Array(decoded.length);
+    for(let i=0;i<decoded.length;i++) bytes[i]=decoded.charCodeAt(i);
+    controller.enqueue(bytes);
+  }});
+  const headers=new Headers({"content-type":mime,"content-length":String(size),"cache-control":"public, max-age=1200","etag":'"'+uploadId+'"'});
+  try{
+    await caches.default.put(new Request(cacheUrl),new Response(body,{headers}));
+    const handoff=await st.appCreateCachedHandoff(ownerKey,cacheUrl,{name:clean(parameters.name||"ChatGPT media",180),mime,size});
+    return await st.appEnqueueV3(ownerKey,"import_chat_file",{handoffId:handoff.id,name:handoff.name,mime,size,sha256:parameters.sha256||"",projectId:parameters.projectId||""});
+  }catch(error){ await caches.default.delete(new Request(cacheUrl)); throw error; }
+};
 const reply = (x,s=200) => new Response(JSON.stringify(x),{status:s,headers:JH});
 const sha256Hex = async value => {
   const bytes = new TextEncoder().encode(String(value || ""));
@@ -20,6 +150,26 @@ const sha256Hex = async value => {
 const bearer = request => {
   const h=request.headers.get("authorization")||"";
   return h.toLowerCase().startsWith("bearer ") ? h.slice(7).trim() : "";
+};
+const boundedMetadataJson = async request => {
+  const maximum=128*1024;
+  if(Number(request.headers.get("content-length")||0)>maximum)throw new Error("Metadata request exceeds 128 KB");
+  if(!request.body)throw new Error("Metadata request body is required");
+  const reader=request.body.getReader(),chunks=[];
+  let size=0;
+  try{
+    for(;;){
+      const {value,done}=await reader.read();if(done)break;
+      size+=value.byteLength;
+      if(size>maximum){await reader.cancel();throw new Error("Metadata request exceeds 128 KB");}
+      chunks.push(value);
+    }
+  }finally{reader.releaseLock();}
+  const bytes=new Uint8Array(size);let offset=0;
+  for(const chunk of chunks){bytes.set(chunk,offset);offset+=chunk.byteLength;}
+  const body=JSON.parse(new TextDecoder("utf-8",{fatal:true}).decode(bytes));
+  if(!body||typeof body!=="object"||Array.isArray(body))throw new Error("Metadata request must be an object");
+  return body;
 };
 const studioMcpAuthorized = async (request,env) => {
   const expected=clean(env&&env.VIDEOSTUDIO_STUDIO_MCP_BEARER||"",500);
@@ -55,6 +205,25 @@ const appActionAllowed = (mode,action) => {
 
 export class VideoStudioState extends DurableObject {
   constructor(ctx,env){ super(ctx,env); }
+  async appMetadataMirror(ownerKey,operation,parameters={}){
+    const d=await this.appV3Device(ownerKey);
+    const ownerHash=await sha256Hex(ownerKey);
+    if(!["get","sync","edit","reconcile","revoke"].includes(operation))throw new Error("Unsupported metadata mirror operation");
+    return this.ctx.storage.transaction(async storage=>{
+      const current=await storage.get("app-device:"+d.deviceId);
+      if(!current||await storage.get("app-owner:"+ownerHash)!==d.deviceId)
+        throw new Error("Private native owner identity is no longer registered");
+      if(operation!=="get"&&(current.controlPaused||current.permissionMode==="one_file"))
+        throw new Error("Metadata graph effects are blocked by the owner's pause or One File Lock");
+      if(operation!=="get"&&!appActionAllowed(current.permissionMode,"metadata_mirror_"+operation))
+        throw new Error("Metadata mirror operation is outside the owner's scope");
+      const mirror=new ProjectMetadataMirror(storage,d.deviceId);
+      const result=await(operation==="get"?mirror.get(parameters.projectId):mirror[operation](parameters));
+      return{...result,ownerScope:{controlPaused:!!current.controlPaused,permissionMode:current.permissionMode,
+        mutationAllowed:!current.controlPaused&&current.permissionMode!=="one_file"
+          &&appActionAllowed(current.permissionMode,"metadata_mirror_edit")}};
+    });
+  }
   async register(deviceId,meta={}){
     const k="d:"+deviceId, old=(await this.ctx.storage.get(k))||{};
     const d={
@@ -74,7 +243,7 @@ export class VideoStudioState extends DurableObject {
   async device(deviceId){ return (await this.ctx.storage.get("d:"+deviceId))||null; }
   async createProject(deviceId,name,instruction=""){
     await this.register(deviceId);
-    const id=crypto.randomUUID(), p={id,deviceId,name:clean(name||"Untitled Project",120),instruction:clean(instruction),createdAt:now(),updatedAt:now(),assets:[],timeline:[],settings:{aspect:"9:16",speed:1,mute:false,title:"",quality:"720p",transition:"fade"},drive:{},generation:{},latestRender:null,latestCommand:null};
+    const id=crypto.randomUUID(), p={id,deviceId,revision:0,name:clean(name||"Untitled Project",120),instruction:clean(instruction),createdAt:now(),updatedAt:now(),assets:[],timeline:[],settings:{aspect:"9:16",speed:1,mute:false,title:"",quality:"720p",transition:"fade"},drive:{},generation:{},latestRender:null,latestCommand:null};
     await this.ctx.storage.put("p:"+deviceId+":"+id,p);
     const k="pl:"+deviceId, ids=(await this.ctx.storage.get(k))||[]; ids.unshift(id); await this.ctx.storage.put(k,ids.slice(0,100)); return p;
   }
@@ -84,60 +253,110 @@ export class VideoStudioState extends DurableObject {
     return out;
   }
   async project(deviceId,id){ return (await this.ctx.storage.get("p:"+deviceId+":"+id))||null; }
-  async update(deviceId,id,patch={}){
-    const p=await this.project(deviceId,id); if(!p) return null;
-    for(const k of ["name","instruction","assets","timeline","settings","drive","generation","latestRender","latestCommand"]) if(patch[k]!==undefined) p[k]=patch[k];
-    p.updatedAt=now(); await this.ctx.storage.put("p:"+deviceId+":"+id,p); await this.register(deviceId); return p;
+  async update(deviceId,id,patch={},expectedRevision){
+    if(!patch||typeof patch!=="object"||Array.isArray(patch))throw studioError("Project patch must be an object","invalid_project_request");
+    requireStudioBudget(patch,STUDIO_PROJECT_BYTES);
+    const p=await this.ctx.storage.transaction(async transaction=>{
+      const key="p:"+deviceId+":"+id,current=await transaction.get(key);if(!current)return null;
+      if(current.deviceId!==deviceId)throw studioError("Project device capability does not match","project_owner_conflict",409);
+      const revision=current.revision??0;
+      if(!Number.isSafeInteger(revision)||revision<0)throw studioError("Stored project revision requires recovery","invalid_project_revision");
+      if(expectedRevision!==undefined&&(!Number.isSafeInteger(expectedRevision)||expectedRevision<0))throw studioError("expectedRevision must be a nonnegative safe integer","invalid_project_revision");
+      if(expectedRevision!==undefined&&expectedRevision!==revision)throw studioError("Project changed since the accepted edit","revision_conflict",409,{expectedRevision,actualRevision:revision,projectId:id});
+      const next=JSON.parse(JSON.stringify(current));let content=false;
+      for(const k of ["name","instruction","assets","timeline","settings","drive","generation","latestRender","latestCommand"])if(patch[k]!==undefined){next[k]=JSON.parse(JSON.stringify(patch[k]));if(k!=="latestCommand")content=true;}
+      next.revision=revision+(content?1:0);if(!Number.isSafeInteger(next.revision))throw studioError("Project revision exhausted its safe integer bound","invalid_project_revision");
+      next.updatedAt=now();requireStudioBudget(next,STUDIO_PROJECT_BYTES);await transaction.put(key,next);return next;
+    });
+    if(p)await this.register(deviceId);return p;
+  }
+  async appendGenerated(deviceId,id,input){
+    if(!input||typeof input!=="object"||Array.isArray(input))throw studioError("Generated metadata is required","invalid_generated_metadata");
+    requireStudioBudget(input,STUDIO_APPEND_BYTES);
+    const additions=input.assets??[],clips=input.timeline??[],generation=input.generation??{};
+    if(!Array.isArray(additions)||additions.length>64||!Array.isArray(clips)||clips.length>128||(!additions.length&&!clips.length)
+      ||!generation||typeof generation!=="object"||Array.isArray(generation))throw studioError("Provide bounded generated assets and timeline additions","invalid_generated_metadata");
+    const stable=value=>typeof value==="string"&&/^[A-Za-z0-9][A-Za-z0-9._:-]{0,179}$/.test(value);
+    const assetIds=new Set(),clipIds=new Set();
+    for(const asset of additions){if(!asset||!stable(asset.id)||assetIds.has(asset.id)||asset.generated!==true)throw studioError("Generated assets need distinct stable IDs and generated:true","invalid_generated_metadata");assetIds.add(asset.id);}
+    for(const clip of clips){if(!clip||!stable(clip.id)||clipIds.has(clip.id)||!stable(clip.assetId))throw studioError("Generated clips need distinct stable IDs and an explicit assetId","invalid_generated_metadata");clipIds.add(clip.id);}
+    const result=await this.ctx.storage.transaction(async transaction=>{
+      const key="p:"+deviceId+":"+id,current=await transaction.get(key);if(!current)return null;
+      if(current.deviceId!==deviceId)throw studioError("Project device capability does not match","project_owner_conflict",409);
+      if(!Array.isArray(current.assets)||!Array.isArray(current.timeline))throw studioError("Stored project graph requires recovery","invalid_project_graph");
+      const next=JSON.parse(JSON.stringify(current)),ownedAssets=new Map(next.assets.map(asset=>[asset.id,asset])),ownedClips=new Map(next.timeline.filter(clip=>clip.id).map(clip=>[clip.id,clip]));let addedAssets=0,addedClips=0;
+      for(const asset of additions){const existing=ownedAssets.get(asset.id);if(existing&&!sameJson(existing,asset))throw studioError("Generated asset ID belongs to different metadata","generated_id_conflict",409,{assetId:asset.id});if(!existing){const copy=JSON.parse(JSON.stringify(asset));next.assets.push(copy);ownedAssets.set(copy.id,copy);addedAssets++;}}
+      for(const clip of clips){if(!ownedAssets.has(clip.assetId))throw studioError("Generated clip references media outside this project","invalid_generated_metadata");const existing=ownedClips.get(clip.id);if(existing&&!sameJson(existing,clip))throw studioError("Generated clip ID belongs to a different edit","generated_id_conflict",409,{clipId:clip.id});if(!existing){const copy=JSON.parse(JSON.stringify(clip));next.timeline.push(copy);ownedClips.set(copy.id,copy);addedClips++;}}
+      if(!addedAssets&&!addedClips)return {project:current,reused:true,addedAssets:0,addedClips:0};
+      const revision=current.revision??0;if(!Number.isSafeInteger(revision)||revision<0||!Number.isSafeInteger(revision+1))throw studioError("Stored project revision requires recovery","invalid_project_revision");
+      next.generation={...(next.generation||{}),...JSON.parse(JSON.stringify(generation))};next.revision=revision+1;next.updatedAt=now();requireStudioBudget(next,STUDIO_PROJECT_BYTES);
+      await transaction.put(key,next);return {project:next,reused:false,addedAssets,addedClips};
+    });
+    if(result)await this.register(deviceId);return result;
   }
   async enqueue(deviceId,projectId,action,parameters={}){
+    parameters=definedFields(parameters);
     if(!(await this.project(deviceId,projectId))) throw new Error("Project not found");
-    const sk="seq:"+deviceId, seq=((await this.ctx.storage.get(sk))||0)+1; await this.ctx.storage.put(sk,seq);
-    const c={id:crypto.randomUUID(),seq,deviceId,projectId,action,parameters,status:"queued",createdAt:now(),completedAt:null,result:null};
-    const k="cl:"+deviceId, a=(await this.ctx.storage.get(k))||[]; a.push(c); await this.ctx.storage.put(k,a.slice(-60));
-    await this.update(deviceId,projectId,{latestCommand:{id:c.id,action,status:c.status,createdAt:c.createdAt}}); return c;
+    const c=await this.enqueueStoredCommand("cl:"+deviceId,"seq:"+deviceId,{id:crypto.randomUUID(),deviceId,projectId,action,parameters,status:"queued",createdAt:now(),completedAt:null,result:null});
+    const hint=await this.updateCommandHint(deviceId,projectId,c); return {...c,projectMetadataHintUpdated:hint};
   }
-  async commands(deviceId,after=0){ const a=(await this.ctx.storage.get("cl:"+deviceId))||[]; return a.filter(c=>c.seq>Number(after||0)); }
-  async command(deviceId,id){ const a=(await this.ctx.storage.get("cl:"+deviceId))||[]; return a.find(c=>c.id===id)||null; }
+  async commands(deviceId,after=0){ const a=await readCommandQueue(this.ctx.storage,"cl:"+deviceId); return a.filter(c=>commandIsPending(c)||c.seq>Number(after||0)); }
+  async command(deviceId,id){ const key="cl:"+deviceId,a=await readCommandQueue(this.ctx.storage,key); return a.find(c=>c.id===id)||await readCommandReceipt(this.ctx.storage,key,id); }
   async complete(deviceId,id,result={},status="completed"){
-    const k="cl:"+deviceId, a=(await this.ctx.storage.get(k))||[], i=a.findIndex(c=>c.id===id); if(i<0) return null;
-    a[i]={...a[i],status:clean(status,40)||"completed",completedAt:now(),result};
-    for(let j=0;j<a.length;j++){
-      if(j!==i&&a[j]&&a[j].result&&a[j].result.contactSheet&&a[j].result.contactSheet.base64){
-        a[j]={...a[j],result:{...a[j].result,contactSheet:{...a[j].result.contactSheet,base64:undefined,expired:true}}};
-      }
-    }
-    await this.ctx.storage.put(k,a.slice(-60));
-    const c=a[i]; await this.update(deviceId,c.projectId,{latestCommand:{id:c.id,action:c.action,status:c.status,createdAt:c.createdAt,completedAt:c.completedAt,result:c.result}}); return c;
+    const c=await mutateCommandQueue(this.ctx.storage,"cl:"+deviceId,async(a,transaction)=>{const i=a.findIndex(c=>c.id===id); if(i<0) return {rows:a,changed:false,result:await acknowledgePrunedCommand(transaction,"cl:"+deviceId,id,result,clean(status,40)||"completed")};
+    const replay=!commandIsPending(a[i]);
+    a[i]=await terminalCommandUpdate(a[i],result,clean(status,40)||"completed");
+    return {rows:a,result:{...a[i],result,resultVerified:true,...(replay?{resultReplayed:true}:{})}};});
+    if(!c)return null;
+    const hint=await this.updateCommandHint(deviceId,c.projectId,c); return {...c,projectMetadataHintUpdated:hint};
   }
   async enqueueRuntime(deviceId,projectId,action,parameters={}){
+    parameters=definedFields(parameters);
     if(!(await this.project(deviceId,projectId))) throw new Error("Project not found");
-    const sk="rseq:"+deviceId, seq=((await this.ctx.storage.get(sk))||0)+1; await this.ctx.storage.put(sk,seq);
-    const c={id:crypto.randomUUID(),seq,deviceId,projectId,action,parameters,status:"queued",createdAt:now(),completedAt:null,result:null,runtime:"studio-web"};
-    const k="rcl:"+deviceId, a=(await this.ctx.storage.get(k))||[]; a.push(c); await this.ctx.storage.put(k,a.slice(-80));
-    await this.update(deviceId,projectId,{latestCommand:{id:c.id,action,status:c.status,createdAt:c.createdAt,runtime:"studio-web"}});
-    return c;
+    const c=await this.enqueueStoredCommand("rcl:"+deviceId,"rseq:"+deviceId,{id:crypto.randomUUID(),deviceId,projectId,action,parameters,status:"queued",createdAt:now(),completedAt:null,result:null,runtime:"studio-web"});
+    const hint=await this.updateCommandHint(deviceId,projectId,c);
+    return {...c,projectMetadataHintUpdated:hint};
   }
   async runtimeCommands(deviceId,after=0){
-    const a=(await this.ctx.storage.get("rcl:"+deviceId))||[];
-    return a.filter(c=>c.seq>Number(after||0));
+    const a=await readCommandQueue(this.ctx.storage,"rcl:"+deviceId);
+    return a.filter(c=>commandIsPending(c)||c.seq>Number(after||0));
   }
   async runtimeCommand(deviceId,id){
-    const a=(await this.ctx.storage.get("rcl:"+deviceId))||[];
-    return a.find(c=>c.id===id)||null;
+    const a=await readCommandQueue(this.ctx.storage,"rcl:"+deviceId);
+    return a.find(c=>c.id===id)||await readCommandReceipt(this.ctx.storage,"rcl:"+deviceId,id);
   }
   async completeRuntime(deviceId,id,result={},status="completed"){
-    const k="rcl:"+deviceId, a=(await this.ctx.storage.get(k))||[], i=a.findIndex(c=>c.id===id);
-    if(i<0) return null;
-    a[i]={...a[i],status:clean(status,40)||"completed",completedAt:now(),result};
-    await this.ctx.storage.put(k,a.slice(-80));
-    const c=a[i];
-    await this.update(deviceId,c.projectId,{latestCommand:{id:c.id,action:c.action,status:c.status,createdAt:c.createdAt,completedAt:c.completedAt,result:c.result,runtime:"studio-web"}});
-    return c;
+    const c=await mutateCommandQueue(this.ctx.storage,"rcl:"+deviceId,async(a,transaction)=>{const i=a.findIndex(c=>c.id===id);
+    if(i<0) return {rows:a,changed:false,result:await acknowledgePrunedCommand(transaction,"rcl:"+deviceId,id,result,clean(status,40)||"completed")};
+    const replay=!commandIsPending(a[i]);
+    a[i]=await terminalCommandUpdate(a[i],result,clean(status,40)||"completed");
+    return {rows:a,result:{...a[i],result,resultVerified:true,...(replay?{resultReplayed:true}:{})}};});
+    if(!c)return null;
+    const hint=await this.updateCommandHint(deviceId,c.projectId,c);
+    return {...c,projectMetadataHintUpdated:hint};
+  }
+
+  async updateCommandHint(deviceId,projectId,command){
+    // Queue acceptance/receipt is already durable. A full or deleted project
+    // must not turn its acknowledgement into an apparent command failure.
+    try{return Boolean(await this.update(deviceId,projectId,{latestCommand:studioCommandHint(command)}));}
+    catch{return false;}
   }
 
   async status(deviceId){
-    const d=await this.device(deviceId), ps=await this.projects(deviceId), a=(await this.ctx.storage.get("cl:"+deviceId))||[];
-    const ra=(await this.ctx.storage.get("rcl:"+deviceId))||[]; return {connected:!!d,device:d,projectCount:ps.length,pendingCommands:a.filter(c=>c.status==="queued").length,pendingRuntimeCommands:ra.filter(c=>c.status==="queued").length,lastCommand:(ra[ra.length-1]||a[a.length-1]||null)};
+    const d=await this.device(deviceId), ps=await this.projects(deviceId), a=await readCommandQueue(this.ctx.storage,"cl:"+deviceId);
+    const ra=await readCommandQueue(this.ctx.storage,"rcl:"+deviceId); return {connected:!!d,device:d,projectCount:ps.length,pendingCommands:a.filter(c=>c.status==="queued").length,pendingRuntimeCommands:ra.filter(c=>c.status==="queued").length,lastCommand:(ra[ra.length-1]||a[a.length-1]||null)};
+  }
+
+  async enqueueStoredCommand(key,sequenceKey,command){
+    return mutateCommandQueue(this.ctx.storage,key,async(rows,transaction)=>{
+      const seq=Math.max(Number((await transaction.get(sequenceKey))||0),...rows.map(row=>row.seq),0)+1;
+      if(!Number.isSafeInteger(seq))throw new Error("Command sequence exceeds its safe integer bound");
+      const accepted={...command,seq};
+      requireCommandQueueAdmission(rows,accepted);
+      rows.push(accepted);await transaction.put(sequenceKey,seq);
+      return {rows,result:accepted};
+    });
   }
 
   async appRegister(deviceId,ownerKey,meta={}){
@@ -257,16 +476,38 @@ export class VideoStudioState extends DurableObject {
       const legacy=await this.ctx.storage.get("app-device:"+id);
       if(!legacy) throw new Error("Legacy native device record is missing");
 
-      const currentRows=(await this.ctx.storage.get("app-v3-cl:"+canonicalId))||[];
-      const legacyRows=(await this.ctx.storage.get("app-v3-cl:"+id))||[];
+      await this.ctx.storage.transaction(async transaction=>{
+      const currentRows=await readCommandQueueInTransaction(transaction,"app-v3-cl:"+canonicalId);
+      const legacyRows=await readCommandQueueInTransaction(transaction,"app-v3-cl:"+id);
+      const receiptMerge=await mergeCommandReceiptsInTransaction(transaction,"app-v3-cl:"+canonicalId,"app-v3-cl:"+id);
       const byId=new Map(currentRows.filter(Boolean).map(row=>[row.id,row]));
+      const completedProofs=new Map((await readCommandReceiptsInTransaction(transaction,"app-v3-cl:"+canonicalId)).map(row=>[row.id,row]));
       let seq=Math.max(
-        Number((await this.ctx.storage.get("app-v3-seq:"+canonicalId))||0),
+        Number((await transaction.get("app-v3-seq:"+canonicalId))||0),
+        receiptMerge.highestSeq,
         ...currentRows.map(row=>Number(row&&row.seq||0)),
         0
       );
       for(const row of legacyRows){
-        if(!row||!row.id||byId.has(row.id)) continue;
+        if(!row||!row.id) continue;
+        const existing=byId.get(row.id);
+        if(existing){
+          if(commandIsPending(existing)&&!commandIsPending(row))
+            throw new Error("Legacy completion conflicts with an active canonical command; alias queues are preserved for recovery");
+          if(!commandIsPending(existing)&&!commandIsPending(row)
+              &&(existing.status!==row.status||await canonicalCommandResultSha256(existing.result)!==await canonicalCommandResultSha256(row.result)))
+            throw new Error("Conflicting terminal alias command receipts are preserved for recovery");
+          if(commandIsPending(existing)&&commandIsPending(row)
+              &&(existing.action!==row.action||!sameJson(existing.parameters,row.parameters)))
+            throw new Error("Conflicting active alias command identity is preserved for recovery");
+          continue;
+        }
+        const proof=completedProofs.get(row.id);
+        if(proof){
+          if(!commandIsPending(row)&&(proof.status!==row.status||proof.resultSha256!==await canonicalCommandResultSha256(row.result)))
+            throw new Error("Legacy terminal command conflicts with retained canonical proof; alias queues are preserved for recovery");
+          continue;
+        }
         seq++;
         byId.set(row.id,{
           ...row,
@@ -276,9 +517,10 @@ export class VideoStudioState extends DurableObject {
           migratedAt:now()
         });
       }
-      const merged=[...byId.values()].sort((a,b)=>Number(a.seq||0)-Number(b.seq||0)).slice(-160);
-      await this.ctx.storage.put("app-v3-cl:"+canonicalId,merged);
-      await this.ctx.storage.put("app-v3-seq:"+canonicalId,seq);
+      const merged=[...byId.values()].sort((a,b)=>Number(a.seq||0)-Number(b.seq||0));
+      await writeCommandQueueInTransaction(transaction,"app-v3-cl:"+canonicalId,merged,new Set(merged.filter(row=>!commandIsPending(row)).map(row=>row.id)));
+      await transaction.put("app-v3-seq:"+canonicalId,seq);
+      });
 
       legacy.supersededByDeviceId=canonicalId;
       legacy.supersededAt=now();
@@ -297,7 +539,7 @@ export class VideoStudioState extends DurableObject {
       canonicalDeviceId:canonicalId,
       appVersion:canonical.appVersion||"",
       aliasCount:canonical.ownerAliases.length,
-      retainedCommandCount:((await this.ctx.storage.get("app-v3-cl:"+canonicalId))||[]).length,
+      retainedCommandCount:(await readCommandQueue(this.ctx.storage,"app-v3-cl:"+canonicalId)).length,
       galleryAccess:false
     };
   }
@@ -384,7 +626,7 @@ export class VideoStudioState extends DurableObject {
     }else if(action==="export_project"){
       command=await this.enqueue(webDeviceId,projectId,"render",{});
     }else if(action==="autonomous_edit"){
-      command=await this.enqueue(webDeviceId,projectId,"autonomous_request",{
+      command=await this.enqueue(webDeviceId,projectId,"autonomous_request",definedFields({
         instruction:p.instruction||"",
         clips:Array.isArray(p.clips)?p.clips:undefined,
         aspect:p.aspect,
@@ -394,7 +636,7 @@ export class VideoStudioState extends DurableObject {
         mute:p.mute,
         render:p.render!==false,
         inspectAfterRender:!!p.inspectAfterRender
-      });
+      }));
     }else if(action==="apply_edit_plan"&&Array.isArray(p.clips)){
       command=await this.enqueue(webDeviceId,projectId,"replace_timeline",{clips:p.clips});
     }else if(action==="analyse_media"){
@@ -537,15 +779,11 @@ export class VideoStudioState extends DurableObject {
     if(!(min<=3&&max>=3)) throw new Error("Hybrid native device does not support MCP v3");
     if(d.controlPaused) throw new Error("ChatGPT control is paused on the phone");
     if(!appActionAllowed(d.permissionMode,action)) throw new Error("Action blocked by device permission mode or Gallery privacy boundary: "+d.permissionMode);
-    const queueKey="app-v3-cl:"+d.deviceId, existing=(await this.ctx.storage.get(queueKey))||[];
-    if(existing.filter(c=>c.status==="queued"||c.status==="claimed"||c.status==="waiting_native").length>=160) throw new Error("Native command queue is full; reconnect the app before adding work");
+    parameters={...parameters};for(const key of Object.keys(parameters))if(key.startsWith("_")||parameters[key]===undefined)delete parameters[key];
     const lastSeenMs=Date.parse(String(d.lastSeenAt||""))||0;
     const fresh=lastSeenMs>0&&(Date.now()-lastSeenMs)<=45000;
-    const sk="app-v3-seq:"+d.deviceId, seq=((await this.ctx.storage.get(sk))||0)+1;
-    await this.ctx.storage.put(sk,seq);
-    const command={
+    const command=await this.enqueueStoredCommand("app-v3-cl:"+d.deviceId,"app-v3-seq:"+d.deviceId,{
       id:crypto.randomUUID(),
-      seq,
       protocolVersion:3,
       deviceId:d.deviceId,
       action,
@@ -555,26 +793,20 @@ export class VideoStudioState extends DurableObject {
       createdAt:now(),
       completedAt:null,
       result:null
-    };
-    const list=[...existing,command];
-    const pending=list.filter(c=>c.status==="queued"||c.status==="claimed"||c.status==="waiting_native");
-    const terminal=list.filter(c=>c.status!=="queued"&&c.status!=="claimed"&&c.status!=="waiting_native");
-    const terminalSlots=Math.max(0,160-pending.length);
-    const retained=[...(terminalSlots?terminal.slice(-terminalSlots):[]),...pending].sort((a,b)=>a.seq-b.seq);
-    await this.ctx.storage.put(queueKey,retained.slice(-160));
+    });
     return command;
   }
   async appCommandHybrid(hybridKey,id){
     const resolved=await this.appResolveHybrid(hybridKey);
     if(!resolved) throw new Error("Private hybrid binding rejected");
-    const list=(await this.ctx.storage.get("app-v3-cl:"+resolved.native.deviceId))||[];
-    return list.find(c=>c.id===id)||null;
+    const list=await readCommandQueue(this.ctx.storage,"app-v3-cl:"+resolved.native.deviceId);
+    return list.find(c=>c.id===id)||await readCommandReceipt(this.ctx.storage,"app-v3-cl:"+resolved.native.deviceId,id);
   }
   async appStatusHybrid(hybridKey){
     const resolved=await this.appResolveHybrid(hybridKey);
     if(!resolved) return {connected:false,hybrid:true,error:"Private hybrid binding rejected"};
     const d=resolved.native, binding=resolved.binding;
-    const list=(await this.ctx.storage.get("app-v3-cl:"+d.deviceId))||[];
+    const list=await readCommandQueue(this.ctx.storage,"app-v3-cl:"+d.deviceId);
     const nativeLast=Date.parse(String(d.lastSeenAt||""))||0;
     const nativeAge=nativeLast>0?Math.max(0,Date.now()-nativeLast):Number.MAX_SAFE_INTEGER;
     const nativeFresh=nativeAge<=45000;
@@ -696,20 +928,15 @@ export class VideoStudioState extends DurableObject {
     if(!d) throw new Error("Private App MCP credential rejected");
     if(d.controlPaused) throw new Error("ChatGPT control is paused on the phone");
     if(!appActionAllowed(d.permissionMode,action)) throw new Error("Action blocked by device permission mode or Gallery privacy boundary: "+d.permissionMode);
-    const sk="app-seq:"+d.deviceId, seq=((await this.ctx.storage.get(sk))||0)+1;
-    await this.ctx.storage.put(sk,seq);
-    const c={id:crypto.randomUUID(),seq,deviceId:d.deviceId,action,parameters,status:"queued",createdAt:now(),completedAt:null,result:null};
-    const k="app-cl:"+d.deviceId, list=(await this.ctx.storage.get(k))||[];
-    list.push(c);
-    await this.ctx.storage.put(k,list.slice(-100));
+    parameters={...parameters};for(const key of Object.keys(parameters))if(key.startsWith("_")||parameters[key]===undefined)delete parameters[key];
+    const c=await this.enqueueStoredCommand("app-cl:"+d.deviceId,"app-seq:"+d.deviceId,{id:crypto.randomUUID(),deviceId:d.deviceId,action,parameters,status:"queued",createdAt:now(),completedAt:null,result:null});
     return c;
   }
   async appCommands(deviceId,ownerKey,after=0,waitMs=0){
     if(!(await this.appAuth(deviceId,ownerKey))) throw new Error("Native app authorization failed");
     const until=Date.now()+Math.max(0,Math.min(20000,Number(waitMs||0))), key="app-cl:"+deviceId;
     while(true){
-      const list=(await this.ctx.storage.get(key))||[], nowMs=Date.now();
-      const found=[];
+      const found=await mutateCommandQueue(this.ctx.storage,key,list=>{const nowMs=Date.now(),found=[];
       let changed=false;
       for(let i=0;i<list.length;i++){
         const c=list[i];
@@ -723,43 +950,40 @@ export class VideoStudioState extends DurableObject {
           if(found.length>=4) break;
         }
       }
-      if(changed) await this.ctx.storage.put(key,list.slice(-100));
+      return {rows:list,result:found,changed};});
       if(found.length||Date.now()>=until) return found;
       await new Promise(resolve=>setTimeout(resolve,650));
     }
   }
   async appComplete(deviceId,ownerKey,id,result={},status="completed"){
     if(!(await this.appAuth(deviceId,ownerKey))) throw new Error("Native app authorization failed");
-    const k="app-cl:"+deviceId, list=(await this.ctx.storage.get(k))||[], i=list.findIndex(c=>c.id===id);
-    if(i<0) return null;
-    list[i]={...list[i],status:clean(status,30)||"completed",completedAt:now(),result};
-    for(let j=0;j<list.length;j++){
-      if(j!==i&&list[j]&&list[j].result&&list[j].result.contactSheet&&list[j].result.contactSheet.base64){
-        list[j]={...list[j],result:{...list[j].result,contactSheet:{...list[j].result.contactSheet,base64:undefined,expired:true}}};
-      }
-    }
-    await this.ctx.storage.put(k,list.slice(-100));
+    const completed=await mutateCommandQueue(this.ctx.storage,"app-cl:"+deviceId,async(list,transaction)=>{const i=list.findIndex(c=>c.id===id);
+    if(i<0) return {rows:list,changed:false,result:await acknowledgePrunedCommand(transaction,"app-cl:"+deviceId,id,result,clean(status,30)||"completed")};
+    const replay=!commandIsPending(list[i]);
+    list[i]=await terminalCommandUpdate(list[i],result,clean(status,30)||"completed");
+    return {rows:list,result:{...list[i],result,resultVerified:true,...(replay?{resultReplayed:true}:{})}};});
     const d=(await this.ctx.storage.get("app-device:"+deviceId))||{};
     d.lastSeenAt=now();
     await this.ctx.storage.put("app-device:"+deviceId,d);
-    return list[i];
+    return completed;
   }
   async appCommand(ownerKey,id){
     const d=await this.appResolve(ownerKey);
     if(!d) throw new Error("Private App MCP credential rejected");
-    const list=(await this.ctx.storage.get("app-cl:"+d.deviceId))||[];
-    return list.find(c=>c.id===id)||null;
+    const list=await readCommandQueue(this.ctx.storage,"app-cl:"+d.deviceId);
+    return list.find(c=>c.id===id)||await readCommandReceipt(this.ctx.storage,"app-cl:"+d.deviceId,id);
   }
   async appStatus(ownerKey){
     const d=await this.appResolve(ownerKey);
     if(!d) return {connected:false,error:"Private App MCP credential rejected"};
-    const list=(await this.ctx.storage.get("app-cl:"+d.deviceId))||[];
+    const list=await readCommandQueue(this.ctx.storage,"app-cl:"+d.deviceId);
     return {
       connected:true,
       device:((({ownerHash,...safe})=>safe)(d)),
       pendingCommands:list.filter(c=>c.status==="queued"||c.status==="claimed"||c.status==="waiting_native").length,
       lastCommand:list[list.length-1]||null,
-      projectCount:Array.isArray(d.projects)?d.projects.length:0
+      projectCount:Number.isSafeInteger(d.projectCount)?d.projectCount:Array.isArray(d.projects)?d.projects.length:0,
+      projectsTruncated:!!d.projectsTruncated
     };
   }
   async appV3Device(ownerKey){
@@ -771,22 +995,23 @@ export class VideoStudioState extends DurableObject {
     return d;
   }
   async appEnqueueV3(ownerKey,action,parameters={}){
+    parameters={...parameters};
+    for(const key of Object.keys(parameters)) if(key.startsWith("_")||parameters[key]===undefined) delete parameters[key];
+    if(action==="import_attachment"||(action==="import_chat_file"&&!parameters.handoffId)){
+      return queueAttachment(this,ownerKey,parameters.file||{download_url:parameters.sourceUrl||parameters.url,file_name:parameters.name,mime_type:parameters.mime,size:parameters.size||0,sha256:parameters.sha256},parameters.projectId||"",true);
+    }
+    if(action==="import_inline_base64") throw new Error("Inline bytes must be staged by app_import_inline_base64 or app_execute before entering the durable queue");
     const d=await this.appV3Device(ownerKey);
     if(d.controlPaused) throw new Error("ChatGPT control is paused on the phone");
     if(!appActionAllowed(d.permissionMode,action)) throw new Error("Action blocked by device permission mode or Gallery privacy boundary: "+d.permissionMode);
-    const queueKey="app-v3-cl:"+d.deviceId, existing=(await this.ctx.storage.get(queueKey))||[];
-    if(existing.filter(c=>c.status==="queued"||c.status==="claimed"||c.status==="waiting_native").length>=160) throw new Error("Native command queue is full; reconnect the app before adding work");
     const lastSeenMs=Date.parse(String(d.lastSeenAt||""))||0;
     const fresh=lastSeenMs>0&&(Date.now()-lastSeenMs)<=45000;
     if(!fresh){
       const webCommand=await this.appTryStudioWebFallback(ownerKey,action,parameters);
       if(webCommand) return webCommand;
     }
-    const sk="app-v3-seq:"+d.deviceId, seq=((await this.ctx.storage.get(sk))||0)+1;
-    await this.ctx.storage.put(sk,seq);
-    const c={
+    const c=await this.enqueueStoredCommand("app-v3-cl:"+d.deviceId,"app-v3-seq:"+d.deviceId,{
       id:crypto.randomUUID(),
-      seq,
       protocolVersion:3,
       deviceId:d.deviceId,
       action,
@@ -796,14 +1021,7 @@ export class VideoStudioState extends DurableObject {
       createdAt:now(),
       completedAt:null,
       result:null
-    };
-    const k="app-v3-cl:"+d.deviceId, list=(await this.ctx.storage.get(k))||[];
-    list.push(c);
-    const pending=list.filter(c=>c.status==="queued"||c.status==="claimed"||c.status==="waiting_native");
-    const terminal=list.filter(c=>c.status!=="queued"&&c.status!=="claimed"&&c.status!=="waiting_native");
-    const terminalSlots=Math.max(0,160-pending.length);
-    const retained=[...(terminalSlots?terminal.slice(-terminalSlots):[]),...pending].sort((a,b)=>a.seq-b.seq);
-    await this.ctx.storage.put(k,retained.slice(-160));
+    });
     return c;
   }
   async appCommandsV3(deviceId,ownerKey,after=0,waitMs=0){
@@ -814,8 +1032,7 @@ export class VideoStudioState extends DurableObject {
     const until=Date.now()+Math.max(0,Math.min(20000,Number(waitMs||0)));
     const key="app-v3-cl:"+deviceId;
     while(true){
-      const list=(await this.ctx.storage.get(key))||[], nowMs=Date.now();
-      const found=[];
+      const found=await mutateCommandQueue(this.ctx.storage,key,list=>{const nowMs=Date.now(),found=[];
       let changed=false;
       for(let i=0;i<list.length;i++){
         const c=list[i];
@@ -829,7 +1046,7 @@ export class VideoStudioState extends DurableObject {
           if(found.length>=4) break;
         }
       }
-      if(changed) await this.ctx.storage.put(key,list.slice(-160));
+      return {rows:list,result:found,changed};});
       if(found.length||Date.now()>=until) return found;
       await new Promise(resolve=>setTimeout(resolve,500));
     }
@@ -839,28 +1056,27 @@ export class VideoStudioState extends DurableObject {
     if(!d) throw new Error("VideoStudio v3 native authorization failed");
     const min=Number(d.protocolMin||d.protocolVersion||0), max=Number(d.protocolMax||d.protocolVersion||0);
     if(!(min<=3&&max>=3)) throw new Error("VideoStudio stable MCP compatibility lane v3 is not registered");
-    const k="app-v3-cl:"+deviceId, list=(await this.ctx.storage.get(k))||[], i=list.findIndex(c=>c.id===id);
-    if(i<0) return null;
+    const completed=await mutateCommandQueue(this.ctx.storage,"app-v3-cl:"+deviceId,async(list,transaction)=>{const i=list.findIndex(c=>c.id===id);
+    if(i<0) return {rows:list,changed:false,result:await acknowledgePrunedCommand(transaction,"app-v3-cl:"+deviceId,id,result,clean(status,30)||"completed")};
     const completedParameters={...(list[i].parameters||{})};
     if(list[i].action==="import_attachment"&&completedParameters.sourceUrl){
       completedParameters.sourceUrl="[expired temporary file URL removed]";
     }
-    list[i]={...list[i],parameters:completedParameters,status:clean(status,30)||"completed",completedAt:now(),leaseUntil:0,result};
-    for(let j=0;j<list.length;j++){
-      if(j!==i&&list[j]&&list[j].result&&list[j].result.contactSheet&&list[j].result.contactSheet.base64){
-        list[j]={...list[j],result:{...list[j].result,contactSheet:{...list[j].result.contactSheet,base64:undefined,expired:true}}};
-      }
-    }
-    await this.ctx.storage.put(k,list.slice(-160));
+    const replay=!commandIsPending(list[i]);
+    list[i]=await terminalCommandUpdate(list[i],result,clean(status,30)||"completed",completedParameters);
+    return {rows:list,result:{...list[i],result,resultVerified:true,...(replay?{resultReplayed:true}:{})}};});
+    if(!completed)return null;
+    if(completed.action==="import_chat_file"&&status==="completed"&&completed.parameters?.handoffId)
+      await this.appDeleteHandoff(deviceId,ownerKey,completed.parameters.handoffId);
     const stored=(await this.ctx.storage.get("app-device:"+deviceId))||d;
     stored.lastSeenAt=now();
     await this.ctx.storage.put("app-device:"+deviceId,stored);
-    return list[i];
+    return completed;
   }
   async appCommandV3(ownerKey,id){
     const d=await this.appV3Device(ownerKey);
-    const list=(await this.ctx.storage.get("app-v3-cl:"+d.deviceId))||[];
-    const native=list.find(c=>c.id===id);
+    const list=await readCommandQueue(this.ctx.storage,"app-v3-cl:"+d.deviceId);
+    const native=list.find(c=>c.id===id)||await readCommandReceipt(this.ctx.storage,"app-v3-cl:"+d.deviceId,id);
     if(native) return native;
     const fallback=await this.appResolveStudioWebFallback(ownerKey);
     if(!fallback) return null;
@@ -890,7 +1106,7 @@ export class VideoStudioState extends DurableObject {
         error:"Installed VideoStudio does not expose the stable MCP compatibility lane v3"
       };
     }
-    const list=(await this.ctx.storage.get("app-v3-cl:"+d.deviceId))||[];
+    const list=await readCommandQueue(this.ctx.storage,"app-v3-cl:"+d.deviceId);
     const {ownerHash,...safe}=d;
     const lastSeenMs=Date.parse(String(d.lastSeenAt||""))||0;
     const ageMs=lastSeenMs>0?Math.max(0,Date.now()-lastSeenMs):Number.MAX_SAFE_INTEGER;
@@ -939,7 +1155,8 @@ export class VideoStudioState extends DurableObject {
       canAcceptAutonomousWork:true,
       queuedExecutionPolicy:fallbackConnected?"studio-web-when-compatible-otherwise-native-on-reconnect":"native-on-reconnect",
       lastCommand:list[list.length-1]||null,
-      projectCount:Array.isArray(d.projects)?d.projects.length:0,
+      projectCount:Number.isSafeInteger(d.projectCount)?d.projectCount:Array.isArray(d.projects)?d.projects.length:0,
+      projectsTruncated:!!d.projectsTruncated,
       galleryAccess:false,
       directAttachmentIngest:true,
       portraitAnimationEngine:d.portraitAnimationEngine||"",
@@ -951,44 +1168,31 @@ export class VideoStudioState extends DurableObject {
   async appCreateHandoff(ownerKey,sourceUrl,meta={}){
     const d=await this.appResolve(ownerKey);
     if(!d) throw new Error("Private App MCP credential rejected");
+    if(d.controlPaused) throw new Error("ChatGPT control is paused on the phone");
     if(d.permissionMode==="one_file") throw new Error("Chat-file import is unavailable while One File Lock is active");
-    let parsed;
-    try{ parsed=new URL(String(sourceUrl||"")); }catch{ throw new Error("Invalid chat attachment URL"); }
-    if(parsed.protocol!=="https:") throw new Error("Chat attachment handoff requires HTTPS");
-    const host=parsed.hostname.toLowerCase();
-    if(["localhost","127.0.0.1","0.0.0.0","::1"].includes(host)||host.endsWith(".internal")) throw new Error("Private-network source URLs are not allowed");
+    const validatedSource=publicAttachmentUrl(sourceUrl);
     const id=crypto.randomUUID();
     const record={
       id,
       deviceId:d.deviceId,
-      sourceUrl:String(sourceUrl),
+      sourceUrl:validatedSource,
       name:clean(meta.name||"ChatGPT import",180),
       mime:clean(meta.mime||"",120),
       size:Number(meta.size||0)||0,
       createdAt:now(),
-      expiresAt:Date.now()+20*60*1000
+      expiresAt:Date.now()+ATTACHMENT_TTL_MS
     };
     await this.ctx.storage.put("app-handoff:"+d.deviceId+":"+id,record);
     return {id,name:record.name,mime:record.mime,size:record.size,expiresAt:record.expiresAt};
   }
   async appQueueAttachmentHandoff(ownerKey,file={},projectId=""){
-    const sourceUrl=String(file.download_url||"");
-    const name=clean(file.file_name||"ChatGPT attachment",180);
-    const mime=clean(file.mime_type||"",120);
-    const handoff=await this.appCreateHandoff(ownerKey,sourceUrl,{name,mime,size:0});
-    const command=await this.appEnqueueV3(ownerKey,"import_chat_file",{
-      handoffId:handoff.id,
-      name:handoff.name,
-      mime:handoff.mime,
-      size:handoff.size,
-      projectId:clean(projectId||"",120)
-    });
-    return command;
+    return queueAttachment(this,ownerKey,file,projectId,true);
   }
 
   async appCreateCachedHandoff(ownerKey,cacheUrl,meta={}){
     const d=await this.appResolve(ownerKey);
     if(!d) throw new Error("Private App MCP credential rejected");
+    if(d.controlPaused) throw new Error("ChatGPT control is paused on the phone");
     if(d.permissionMode==="one_file") throw new Error("Chat-file import is unavailable while One File Lock is active");
     if(!cacheUrl||!String(cacheUrl).startsWith("https://")) throw new Error("Invalid private upload cache URL");
     const id=crypto.randomUUID();
@@ -1001,7 +1205,7 @@ export class VideoStudioState extends DurableObject {
       mime:clean(meta.mime||"",120),
       size:Number(meta.size||0)||0,
       createdAt:now(),
-      expiresAt:Date.now()+20*60*1000
+      expiresAt:Date.now()+ATTACHMENT_TTL_MS
     };
     await this.ctx.storage.put("app-handoff:"+d.deviceId+":"+id,record);
     return {id,name:record.name,mime:record.mime,size:record.size,expiresAt:record.expiresAt};
@@ -1025,9 +1229,12 @@ export class VideoStudioState extends DurableObject {
 const state = env => env.VIDEO_STATE.getByName("primary");
 const out = x => ({content:[{type:"text",text:JSON.stringify(x)}]});
 const isNativeV3 = d => !!d && Number(d.protocolVersion||0)===3;
-const enqueueNative = (st,d,ownerKey,action,parameters={}) => isNativeV3(d)
-  ? st.appEnqueueV3(ownerKey,action,parameters)
-  : st.appEnqueue(ownerKey,action,parameters);
+const enqueueNative = (st,d,ownerKey,action,parameters={}) => {
+  if(action==="import_attachment"||(action==="import_chat_file"&&!parameters.handoffId)){
+    return queueAttachment(st,ownerKey,parameters.file||{download_url:parameters.sourceUrl||parameters.url,file_name:parameters.name,mime_type:parameters.mime,size:parameters.size||0,sha256:parameters.sha256},parameters.projectId||"",isNativeV3(d));
+  }
+  return isNativeV3(d)?st.appEnqueueV3(ownerKey,action,parameters):st.appEnqueue(ownerKey,action,parameters);
+};
 const commandNative = (st,d,ownerKey,id) => isNativeV3(d)
   ? st.appCommandV3(ownerKey,id)
   : st.appCommand(ownerKey,id);
@@ -1354,13 +1561,8 @@ function serverFor(env,hybridKey=""){
     try{
       const native=await st.appResolve(deviceId);
       if(!native) throw new Error("Native VideoStudio app not connected");
-      if(isNativeV3(native)){
-        const c=await st.appEnqueueV3(deviceId,"import_attachment",{sourceUrl,name,mime:mime||"",size:Number(size||0),projectId:projectId||""});
-        return out({queued:true,commandId:c.id,sequence:c.seq,nativeApp:true,protocolVersion:3,transport:"direct-app-ingest"});
-      }
-      const handoff=await st.appCreateHandoff(deviceId,sourceUrl,{name,mime,size});
-      const c=await st.appEnqueue(deviceId,"import_chat_file",{handoffId:handoff.id,name:handoff.name,mime:handoff.mime,size:handoff.size,projectId:projectId||""});
-      return out({queued:true,commandId:c.id,sequence:c.seq,nativeApp:true,protocolVersion:1,handoffId:handoff.id,expiresAt:handoff.expiresAt});
+      const c=await queueAttachment(st,deviceId,{download_url:sourceUrl,file_name:name,mime_type:mime,size:size||0},projectId||"",isNativeV3(native));
+      return out({queued:true,commandId:c.id,sequence:c.seq,nativeApp:true,protocolVersion:isNativeV3(native)?3:1,transport:"private-worker-handoff",expiresAt:c.attachmentExpiresAt});
     }catch(e){ return out({queued:false,error:e.message}); }
   });
   if(hybridKey){
@@ -1408,15 +1610,23 @@ function serverFor(env,hybridKey=""){
   return s;
 }
 
-function serverForApp(env,ownerKey,protocolVersion=1){
+function serverForApp(env,ownerKey,protocolVersion=1,requestOrigin="https://wispy-queen-f9b5.prakasharuntandon634.workers.dev"){
   const isV3=Number(protocolVersion)===3;
   const s=new McpServer({
     name:isV3?"VideoStudio-App-MCP-v3":"VideoStudio-App-MCP",
     version:isV3?"3.4.7":"1.1.2"
   }), st=state(env);
-  const enqueueCommand=(action,parameters={})=>isV3
-    ? st.appEnqueueV3(ownerKey,action,parameters)
-    : st.appEnqueue(ownerKey,action,parameters);
+  const enqueueCommand=async(action,parameters={})=>{
+    if(isV3&&action==="import_inline_base64") return queueInlineAttachment(st,ownerKey,parameters,requestOrigin);
+    if(action==="import_attachment"||(action==="import_chat_file"&&!parameters.handoffId)){
+      return queueAttachment(st,ownerKey,parameters.file||{
+        download_url:parameters.sourceUrl||parameters.url,
+        file_name:parameters.name,mime_type:parameters.mime,
+        size:parameters.size,sha256:parameters.sha256
+      },parameters.projectId||"",isV3);
+    }
+    return isV3?st.appEnqueueV3(ownerKey,action,parameters):st.appEnqueue(ownerKey,action,parameters);
+  };
   const readCommand=commandId=>isV3
     ? st.appCommandV3(ownerKey,commandId)
     : st.appCommand(ownerKey,commandId);
@@ -1430,7 +1640,7 @@ function serverForApp(env,ownerKey,protocolVersion=1){
         queued:true,
         commandId:c.id,
         sequence:c.seq,
-        action,
+        action:c.action,
         nativeApp:c.hybridRoute!=="studio_web",
         protocolVersion:isV3?3:1,
         route:c.hybridRoute||"native",
@@ -1456,6 +1666,56 @@ function serverForApp(env,ownerKey,protocolVersion=1){
   };
 
   s.registerTool("app_status",{description:isV3?"Check the VideoStudio v3 Native Agent connection, protocol version, permission mode, projects and pending native work. Gallery access is always false.":"Check the private native VideoStudio Android connection, permission mode, projects, control-pause state and pending work. Gallery access is always false.",inputSchema:{}},async()=>out(await readStatus()));
+  if(isV3){
+    const mirrorCall=async(operation,args)=>{
+      try{return out(await st.appMetadataMirror(ownerKey,operation,args));}
+      catch(error){return out({ok:false,error:error.message,executorAvailable:false,nativeAutoReconciliation:false});}
+    };
+    s.registerTool("app_metadata_mirror_sync",{
+      description:"Explicitly opt one project into an owner-private metadata mirror. Supply the native project graph and its actual revision. Assets are metadata only: this does not upload source media, render, generate, or automatically update Android. Existing mirrors require expectedMirrorRevision; conflicts retain snapshots and current graph.",
+      inputSchema:{projectId:z.string().min(8).max(180),projectGraph:z.record(z.string(),z.any()),sourceRevision:z.number().int().positive(),expectedMirrorRevision:z.number().int().nonnegative().optional(),enabled:z.literal(true)}
+    },async args=>mirrorCall("sync",args));
+    s.registerTool("app_metadata_mirror_get",{
+      description:"Retrieve the actual mirrored project graph, source and mirror revisions, pending reconciliation flag, bounded audit and conflict snapshots. This is owner-authenticated metadata retrieval; no cloud executor or uploaded source media is claimed.",
+      inputSchema:{projectId:z.string().min(8).max(180)}
+    },async args=>mirrorCall("get",args));
+    s.registerTool("app_metadata_mirror_edit",{
+      description:"Edit an explicitly synced metadata graph while Android is offline. Only patch/insert/delete clips referencing synced assets and track flags are implemented. Requires expectedMirrorRevision and records an audit. Changed graph/revision is returned for deliberate Android reconciliation; no media execution occurs.",
+      inputSchema:{projectId:z.string().min(8).max(180),expectedMirrorRevision:z.number().int().positive(),operation:z.enum(["patch_clip","insert_clip","delete_clip","track_flags"]),parameters:z.record(z.string(),z.any())}
+    },async args=>mirrorCall("edit",args));
+    s.registerTool("app_metadata_mirror_reconcile",{
+      description:"Explicitly reconcile a native project readback with its metadata mirror. Supply the actual native revision, the mirror's prior source revision and current mirror revision. keep_native retains any displaced offline graph as a conflict snapshot and can keep an unchanged native revision while resolving a dirty mirror; acknowledge_mirror requires matching native graph readback. Android automatic apply/pull is not implemented.",
+      inputSchema:{projectId:z.string().min(8).max(180),expectedMirrorRevision:z.number().int().positive(),baseSourceRevision:z.number().int().positive(),sourceRevision:z.number().int().positive(),projectGraph:z.record(z.string(),z.any()),resolution:z.enum(["keep_native","acknowledge_mirror"])}
+    },async args=>mirrorCall("reconcile",args));
+    s.registerTool("app_metadata_mirror_revoke",{
+      description:"Disable future edits to one opted-in metadata mirror while retaining its graph and bounded audit for owner review. Native projects and media are unaffected.",
+      inputSchema:{projectId:z.string().min(8).max(180),expectedMirrorRevision:z.number().int().positive()}
+    },async args=>mirrorCall("revoke",args));
+    s.registerTool("app_metadata_mirror_sync_native",{
+      description:"Explicitly opt one Android project into the private metadata mirror using its actual current native graph and revision. Android must be connected. This transfers metadata only; source bytes and render/generation are not provided. Existing mirrors require expectedMirrorRevision.",
+      inputSchema:{projectId:z.string().min(8).max(180),enabled:z.literal(true),expectedMirrorRevision:z.number().int().nonnegative().optional()}
+    },async args=>queue("metadata_mirror_sync",args));
+    s.registerTool("app_metadata_mirror_apply_native",{
+      description:"Apply an offline mirrored metadata edit to the connected Android project through its revision-checked transaction. Requires exact mirror and native revisions, existing synced assets and supported edits. Native media remains local. A pending cloud acknowledgement is durably retained if reconciliation fails; this is not an atomic cloud commit.",
+      inputSchema:{projectId:z.string().min(8).max(180),expectedMirrorRevision:z.number().int().positive(),expectedNativeRevision:z.number().int().positive()}
+    },async args=>queue("metadata_mirror_apply",args));
+    s.registerTool("app_metadata_mirror_retry_native",{
+      description:"Explicitly retry the exact readback acknowledgement of a previously applied mirrored edit. Android retains pending revision/fingerprint evidence across restarts. Changed native or mirror state fails and preserves the conflict; this never reapplies a committed edit or discards a conflict.",
+      inputSchema:{projectId:z.string().min(8).max(180)}
+    },async args=>queue("metadata_mirror_retry",args));
+    s.registerTool("app_metadata_mirror_status_native",{
+      description:"Read Android's local metadata mirror reconciliation marker and current native revision, including an interrupted or pending acknowledgement. Source bytes remain local and no background reconciliation is implied.",
+      inputSchema:{projectId:z.string().min(8).max(180)}
+    },async args=>queue("metadata_mirror_status",args));
+    s.registerTool("app_metadata_mirror_revoke_native",{
+      description:"Explicitly disable one Android project's metadata mirror at its expected mirror revision. Pending native acknowledgements must be resolved first; project media and history are preserved.",
+      inputSchema:{projectId:z.string().min(8).max(180),expectedMirrorRevision:z.number().int().positive()}
+    },async args=>queue("metadata_mirror_revoke",args));
+    s.registerTool("app_metadata_mirror_keep_native",{
+      description:"Explicitly resolve Android's pending metadata conflict by keeping the actual native project. Requires current native/mirror revisions and the exact pendingMarker identity from status_native. The displaced offline graph and local resolution evidence are retained before clearing the marker. A failed cloud reconciliation or changed native graph preserves recovery evidence; this does not discard a conflict silently.",
+      inputSchema:{projectId:z.string().min(8).max(180),expectedNativeRevision:z.number().int().positive().max(Number.MAX_SAFE_INTEGER),expectedMirrorRevision:z.number().int().positive().max(Number.MAX_SAFE_INTEGER),expectedPendingMirrorRevision:z.number().int().positive().max(Number.MAX_SAFE_INTEGER),expectedPendingFingerprint:z.string().regex(/^[a-f0-9]{64}$/),expectedPendingId:z.string().min(1).max(180)}
+    },async args=>queue("metadata_mirror_keep_native",args));
+  }
 
   s.registerTool("app_capabilities",{description:isV3?"Read VideoStudio v3 Native Agent capabilities and architecture guarantees.":"Read the native v1.1 editing, AI, render and privacy capabilities available to ChatGPT.",inputSchema:{}},async()=>out({
     version:isV3?"3.4.2":"1.1.2",
@@ -1471,12 +1731,12 @@ function serverForApp(env,ownerKey,protocolVersion=1){
       ?["always-available stable MCP v3 control plane across APK updates","Android Keystore owner key","device binding","optional Studio Web fallback binding","persistent app-generation fencing","adaptive connection profile negotiation","isolated v3 command queue","waiting_native durable work","leased commands","durable command idempotency journal","persistent foreground Native Agent","self-rearm watchdog","secure reconnect backoff","live ChatGPT activity feed","STOP CHATGPT CONTROL"]
       :["Android Keystore owner key","device binding","persistent foreground control service","leased commands","crash-safe completion checkpoints","secure reconnect backoff","notification pause/cancel controls","live ChatGPT activity feed","STOP CHATGPT CONTROL"],
     media:isV3
-      ?["direct ChatGPT attachment ingest to app-private storage","owner-authenticated inline still-frame fallback","VideoStudio-owned media","explicit HTTPS import","manual Android picker","no Gallery enumeration","legacy short-lived relay fallback"]
+      ?["ChatGPT attachment ingest when the host supplies a temporary HTTPS locator","owner-authenticated inline still-frame fallback","VideoStudio-owned media","explicit HTTPS import","manual Android picker","one registered original-source archive/restore with pinned folder grant and streamed chunks","no Gallery enumeration","legacy short-lived relay fallback"]
       :["VideoStudio-owned media","explicit HTTPS import","manual Android picker","private handoff"],
-    editing:["trim","split","0.25x-4x speed","slow motion","volume","titles","fonts","text animations","scale","rotate","blur","colour/HSL","motion presets","transition presets","reframe model","mask model","green-screen model","audio-duck model"],
+    editing:["trim","split","0.1x-16x native speed","slow motion","volume and supported native audio DSP","titles","fonts","text animations","scale","rotate","blur","colour/HSL","supported motion and transition presets","geometric masks","native chroma key","unsupported effects return diagnostics"],
     ai:["native visual analysis","scene-change sampling","bundled person segmentation","bundled face mesh","subject-aware image animation","2.5D parallax","autonomous edit plans","creator presets","prompt-to-video","multi-variant planning","short-form recut planning","render/export orchestration"],
     animation:isV3?["AI subject/background layer extraction","feathered head/hair torso and lower-drape layers","face-aware camera anchoring","multi-keyframe easing","head drift/nod","torso breathing","lower-drape sway","independent depth motion","story-shot reordering","procedural atmosphere","layered Media3 composition"]:[],
-    export:["Media3 native MP4","H.264","AAC","720p","1080p","9:16","16:9","1:1","4:5","Movies/VideoStudio"],
+    export:["Media3 native MP4","H.264","AAC","720p","1080p","9:16","16:9","1:1","4:5","accepted graph/revision pinned through recovery","durable exact MediaStore row and full SHA-256 readback","Movies/VideoStudio"],
     stability:isV3
       ?["MCP control plane remains reachable while Android sleeps","browser-capable work can route to bound Studio Web","native-only work waits durably for reconnect","Native Agent task/process self-rearm watchdog","local projects survive signalling outages","bounded light/heavy lanes","one process-wide heavy export at a time","RAM guard","thermal guard","persistent job checkpoints","duplicate-command prevention","cancel single/all jobs"]
       :["persistent background MCP controller","bounded light/heavy job lanes","one process-wide heavy export at a time","RAM guard","thermal guard","persistent job checkpoints","cancel single/all jobs"]
@@ -1491,11 +1751,16 @@ function serverForApp(env,ownerKey,protocolVersion=1){
     aiTools:["auto_cut","scene_detect","silence_trim","highlight_extract","smart_reframe","caption_plan","hook_builder","beat_sync","b_roll_plan","pace_rewrite","shorts_recut","story_recut","colour_match","audio_ducking","title_writer","thumbnail_frame_pick","render_critique","prompt_video","animate_images","portrait_parallax","motion_script_compile","motion_script_run","creative_graph_plan","creative_graph_execute","creative_graph_targeted_regeneration","creative_workspace","generated_media_bin","capability_registry","model_pack_install","cloud_workspace_archive","stable_connection_health","stable_connection_reconnect","multi_variant_edit","platform_adapt","continuity_check"]
   }));
 
-  s.registerTool("app_state",{description:"Request full current native app/project state including active asset metadata, jobs, creator capabilities and recent on-device ChatGPT activity.",inputSchema:{}},async()=>queue("get_state",{}));
+  s.registerTool("app_state",{description:"Read bounded native app diagnostics, project/asset summary pages, jobs and recent activity. Job/recovery/journal entries are compact summaries; use app_project_state for complete owned asset/clip/track/marker pages and rig/cel describe tools for their actual definitions.",inputSchema:{projectOffset:z.number().int().nonnegative().max(2147483647).optional(),projectLimit:z.number().int().min(1).max(100).optional(),assetOffset:z.number().int().nonnegative().max(2147483647).optional(),assetLimit:z.number().int().min(1).max(100).optional()}},async args=>queue("get_state",args));
+  if(isV3)s.registerTool("app_project_state",{description:"Read complete registered native project entries as bounded pages: assets, clips (including actual effects), tracks or markers. Pages include project revision, exact duration, cadence and rehearsal-range status. Reuse expectedRevision across pages to reject concurrent edits. Owned media URIs are project references; Gallery enumeration is unavailable.",inputSchema:{projectId:z.string().min(8).max(180).optional(),expectedRevision:z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),section:z.enum(["assets","clips","tracks","markers"]).optional(),offset:z.number().int().nonnegative().max(2147483647).optional(),limit:z.number().int().min(1).max(50).optional()}},async args=>queue("project_state",args));
   if(isV3) s.registerTool("app_generate_image",{description:"Generate an original local procedural image from a sceneGraph or supported scene prompt. Not photorealistic diffusion. Registers output in the app Media Bin.",inputSchema:{prompt:z.string().max(10000).optional(),sceneGraph:z.record(z.string(),z.any()).optional(),projectId:z.string().min(8).optional(),width:z.number().int().min(128).max(1920).optional(),height:z.number().int().min(128).max(1920).optional(),appendToTimeline:z.boolean().optional()}},async args=>queue("generate_image",args));
   if(isV3) s.registerTool("app_self_test",{description:"Run VideoStudio v3's on-device native self-test before autonomous work. Verifies protocol v3, app-private storage, local project state, job/render/analysis engines, direct attachment ingest and the no-Gallery boundary.",inputSchema:{}},async()=>queue("self_test",{}));
   s.registerTool("app_activity_note",{description:"Post a live progress message into VideoStudio's ChatGPT Activity screen. Use this to mirror autonomous-work updates such as planning, analysing, applying edits, rendering or retrying.",inputSchema:{title:z.string().min(1).max(120),message:z.string().min(1).max(500),status:z.enum(["info","queued","running","success","failed"]).optional(),progress:z.number().int().min(0).max(100).optional(),projectId:z.string().min(8).optional()}},async args=>queue("activity_note",args));
   s.registerTool("app_create_project",{description:"Create a native VideoStudio project.",inputSchema:{name:z.string().min(1).max(120)}},async({name})=>queue("create_project",{name}));
+  if(isV3) s.registerTool("app_create_title",{
+    description:"Create a real editable title on an owned transparent canvas using the same native text renderer and project transaction as the human editor. The existing active project is used when projectId is omitted; expectedRevision rejects stale edits. Duration is 100 to 3600000 ms. Style settings use supported native fonts, animations, transforms, keyframes and effects, bounded to 32 KB. Replaying the same native command recovers its committed title. Metadata mirrors separately limit clip titles to 1000 characters.",
+    inputSchema:{projectId:z.string().min(8).max(180).optional(),expectedRevision:z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),text:z.string().min(1).max(2000),startMs:z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),durationMs:z.number().int().min(100).max(3600000).optional(),style:z.object({fontFamily:z.string().max(80).optional(),textAnimation:z.string().max(80).optional(),textColor:z.string().max(40).optional(),textSize:z.number().min(.02).max(.15).optional(),textY:z.number().min(.05).max(.95).optional()}).passthrough().optional()}
+  },async args=>queue("create_title",args));
   s.registerTool("app_select_project",{description:"Select an existing native VideoStudio project by ID.",inputSchema:{projectId:z.string().min(8)}},async({projectId})=>queue("select_project",{projectId}));
   s.registerTool("app_delete_project",{description:"Delete a VideoStudio-owned project. Available in Full Autonomous mode; Gallery enumeration remains blocked.",inputSchema:{projectId:z.string().min(8)}},async({projectId})=>queue("delete_project",{projectId}));
 
@@ -1674,6 +1939,22 @@ function serverForApp(env,ownerKey,protocolVersion=1){
     inputSchema:{id:z.string().min(3).max(120)}
   },async({id})=>queue("restore_model_pack_from_drive",{id}));
 
+  if(isV3){
+    const sourceScope={projectId:z.string().min(8).max(180),assetId:z.string().min(1).max(180),expectedRevision:z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),storageTreeUri:z.string().max(12000).optional()};
+    s.registerTool("app_archive_source_media",{
+      description:"Archive one explicitly registered original video, image or audio source into the owner's selected Android document-tree folder. Native transfers stream 256 MiB chunks with hashes, readback verification and durable resume journals; the accepted source snapshot remains pinned through recovery. Source originals stay intact. Provider quota is unknown; no Gallery scan, source deletion or cloud rendering is implied. Read the command result for the committed archive receipt.",
+      inputSchema:sourceScope
+    },async args=>queue("archive_source_media",args));
+    s.registerTool("app_restore_source_media",{
+      description:"Restore one exact committed original-source archive generation to a verified immutable app-private copy. Native revision and protection checks govern relinking the registered source. If relink is blocked, the real restored copy is retained in the owned Media Bin and the receipt reports the conflict. The original source is preserved; no broad storage or Gallery enumeration occurs.",
+      inputSchema:{...sourceScope,generationId:z.string().uuid()}
+    },async args=>queue("restore_source_media",args));
+    s.registerTool("app_source_media_status",{
+      description:"Read the local archive catalog and upload journals for one registered source asset. This performs no remote folder scan; available provider quota remains unknown. Saved receipts contain exact generation IDs and pinned folder capabilities for explicit restoration.",
+      inputSchema:{projectId:sourceScope.projectId,assetId:sourceScope.assetId}
+    },async args=>queue("source_media_status",args));
+  }
+
   if(isV3) s.registerTool("app_animate_images",{
     description:"Turn imported still images into a real native animated video. VideoStudio runs bundled on-device person segmentation and face-aware analysis, builds foreground/background layers, directs varied cinematic keyframes and 2.5D parallax, optionally reorders shots for story rhythm, then renders a local MP4 through Media3.",
     inputSchema:{
@@ -1695,40 +1976,127 @@ function serverForApp(env,ownerKey,protocolVersion=1){
     inputSchema:{jobId:z.string().min(8)}
   },async({jobId})=>queue("job_status",{jobId}));
 
-  s.registerTool("app_export_project",{description:"Render the active timeline to a native MP4 and publish it to Movies/VideoStudio.",inputSchema:{aspect:z.enum(["9:16","16:9","1:1","4:5"]).optional(),quality:z.enum(["720p","1080p"]).optional(),fileName:z.string().max(180).optional()}},async({aspect,quality,fileName})=>queue("export_project",{aspect:aspect||"9:16",quality:quality||"1080p",fileName:fileName||("VideoStudio_"+Date.now()+".mp4")}));
+  s.registerTool("app_export_project",{description:"Capture the accepted native project graph and revision, render that immutable graph to MP4, and publish it to Movies/VideoStudio. Recovery keeps the accepted graph even after later editor changes. Optional frameRate must match the project's actual12/24/30/60fps cadence; encoded sample timestamps are checked by the native renderer. Source media must remain readable. Editor rehearsal ranges do not limit this full-program export.",inputSchema:{projectId:z.string().min(8).max(180).optional(),expectedRevision:z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),frameRate:z.union([z.literal(12),z.literal(24),z.literal(30),z.literal(60)]).optional(),aspect:z.enum(["9:16","16:9","1:1","4:5"]).optional(),quality:z.enum(["720p","1080p"]).optional(),fileName:z.string().max(180).optional()}},async({projectId,expectedRevision,frameRate,aspect,quality,fileName})=>queue("export_project",{projectId,expectedRevision,frameRate,aspect:aspect||"9:16",quality:quality||"1080p",fileName:fileName||("VideoStudio_"+Date.now()+".mp4")}));
+  if(isV3)s.registerTool("app_export_range",{
+    description:"Export one explicit accepted program In/Out range as native MP4. The original graph/revision is pinned durably, selected clips preserve their authored animation clock, and output duration includes trailing gaps. In/Out are never inferred from editor rehearsal selection. All-gap ranges are unavailable; stateful audio DSP starts at the cut without earlier PCM pre-roll. Recovery and publication proof retain the exact range and output profile.",
+    inputSchema:{projectId:z.string().min(8).max(180),expectedRevision:z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),inMs:z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),outMs:z.number().int().positive().max(Number.MAX_SAFE_INTEGER),frameRate:z.union([z.literal(12),z.literal(24),z.literal(30),z.literal(60)]).optional(),aspect:z.enum(["9:16","16:9","1:1","4:5"]).optional(),quality:z.enum(["720p","1080p"]).optional(),fileName:z.string().max(180).optional()}
+  },async args=>queue("export_range",{...args,exportMode:"range",aspect:args.aspect||"9:16",quality:args.quality||"1080p",fileName:args.fileName||("VideoStudio_Range_"+Date.now()+".mp4")}));
 
   s.registerTool("app_preview_project",{description:"Preview the active timeline locally on the Android device.",inputSchema:{}},async()=>queue("preview_project",{}));
+
+  if(isV3) s.registerTool("app_timeline_edit",{
+    description:"Edit the same persistent timeline the owner edits: split, trim, move, duplicate, delete, ripple delete, insert or relink owned assets, extract audio, link/unlink clips, add track, track flags, effects and clip properties. Linked A/V edits use shared atomic peer timing, locks, validation and undo history. Supply expectedRevision from project state to reject a stale edit.",
+    inputSchema:{projectId:z.string().min(8).optional(),expectedRevision:z.number().int().nonnegative().optional(),operation:z.enum(["split","trim","move","roll","slip","slide","duplicate","delete","ripple_delete","insert_asset","relink_asset","extract_audio","link","unlink","add_track","track_flags","effects","properties"]),settings:z.record(z.string(),z.any())}
+  },async args=>queue("timeline_edit",args));
+  if(isV3){
+    const animationScope={projectId:z.string().min(8).max(180).optional(),expectedRevision:z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),clipId:z.string().min(1).max(180)};
+    const stableId=z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/);
+    const rigId=z.string().min(1).max(64).regex(/^[A-Za-z0-9_.:-]+$/);
+    const object=z.record(z.string(),z.any());
+    const atMs=z.number().int().nonnegative().max(604800000);
+    const rigTools=[
+      ["describe",{atMs:atMs.optional(),includeDefinition:z.boolean().optional()},"Read the validated full native 2D rig definition, including every bone, weight, keyframe and saved pose, separately from sampled state. atMs is output-local time. authoredPose contains sampled local FK values before IK; rig.bones/ik contain solved state. includeDefinition defaults true; false requests compact diagnostics. Definition is bounded to 256 KiB; no inference or source upload occurs."],
+      ["create",{bones:z.array(object).min(1).max(24).optional(),replace:z.boolean().optional()},"Create a real native textured 2D bone/mesh rig on an owned still-image clip through the owner's shared transaction. Optional bones use the native schema; omitted bones use the explicit default body rig. Existing rigs require replace:true. Limits: 24 bones, 512 mesh vertices, 1024 triangles, 2048 keys and 256 KiB rig JSON. No inferred anatomy or 3D rig is claimed."],
+      ["apply",{rig:object},"Apply a validated complete version-1 native 2D rig with normalized bind coordinates, bones, pose/keyframes, weighted mesh and optional analytic two-link IK. Rig JSON contains no source URI. Native limits, clip ownership and track locks are enforced."],
+      ["clear",{},"Remove the selected clip's authored native 2D rig through shared undo history. Owned media is preserved."],
+      ["set_enabled",{enabled:z.boolean()},"Enable or disable the existing native 2D rig while preserving its mesh, weights, poses and animation keys."],
+      ["set_bone",{bone:object,autoWeights:z.boolean().optional(),preserveConnections:z.boolean().optional()},"Add or update one stable native bone using id/parentId and normalized bind x/y/endX/endY coordinates in 0..1. Native hierarchy, geometry and actual mesh constraints are validated. autoWeights defaults true. Explicit preserveConnections moves already connected neighboring joints atomically while retaining authored mesh weights when autoWeights:false."],
+      ["remove_bone",{boneId:rigId},"Remove one bone through shared native rig validation; protected references must be resolved explicitly."],
+      ["auto_weights",{},"Compute actual bounded native mesh skin weights for the current explicit 2D bones. This is geometric weighting, with no anatomy inference or external executor."],
+      ["set_weights",{vertexIndex:z.number().int().min(0).max(511).optional(),vertexIndices:z.array(z.number().int().min(0).max(511)).min(1).max(512).optional(),influences:z.array(z.object({boneId:rigId,weight:z.number().min(0).max(1)})).min(1).max(4)},"Set real native skin-weight influences for one existing vertexIndex or an explicit bounded vertexIndices batch. Distinct bone IDs and 1..4 influences are required; native painting drops zero weights and normalizes the positive sum."],
+      ["paint_weights",{boneId:rigId,radius:z.number().min(.001).max(2),strength:z.number().min(-1).max(1),falloff:z.enum(["linear","smooth","hard"]).optional(),u:z.number().min(0).max(1).optional(),v:z.number().min(0).max(1).optional(),points:z.array(z.object({u:z.number().min(0).max(1),v:z.number().min(0).max(1)}).strict()).min(1).max(256).optional()},"Paint or erase real weights for one existing bone in a single atomic stroke. Supply normalized u/v or points (never both); radius is measured in source-image height units, signed strength adds/erases, and falloff defaults smooth. The receipt reports actual changed vertex indices. A no-change stroke is rejected; vertices remain bound."],
+      ["set_keyframe",{keyframe:object,replaceKeyframe:z.boolean().optional()},"Set one native bone keyframe {boneId,atMs,rotation?,x?,y?,scaleX?,scaleY?,ease?} in the clip's authored output clock. replaceKeyframe:true replaces the entire sparse row, removing omitted channels; default merges. Actual sampling uses the same keys in preview and export."],
+      ["remove_keyframe",{boneId:rigId,atMs},"Delete one exact authored bone key at its stable bone ID and output clock."],
+      ["move_keyframe",{boneId:rigId,fromAtMs:atMs,toAtMs:atMs},"Move one existing sparse bone key row between exact authored times in one native transaction. The complete channels and easing/Bézier controls are preserved; any occupied destination row is rejected."],
+      ["set_pose",{pose:object},"Set the current explicit native bone pose map {boneId:{rotation?,x?,y?,scaleX?,scaleY?}} through the revision-checked transaction."],
+      ["capture_pose",{poseId:rigId,name:z.string().min(1).max(128).optional(),atMs},"Capture the actually sampled native 2D bone pose at one authored-clock time as a named reusable pose."],
+      ["apply_pose",{poseId:rigId,atMs:atMs.optional(),ease:z.string().max(40).optional(),bezier:z.tuple([z.number().min(0).max(1),z.number().min(-4).max(4),z.number().min(0).max(1),z.number().min(-4).max(4)]).optional()},"Apply one saved native pose. Optional atMs writes sampled FK keys and disables IK mix at that authored time; omitted atMs applies the baseline pose and base IK mix zero. Cubic easing requires exact four-number controls."],
+      ["remove_pose",{poseId:rigId},"Remove one saved native pose; owned source media and other animation keys remain."],
+      ["set_ik",{ik:object},"Set a real analytic two-link IK constraint {id,rootBoneId,childBoneId,targetX,targetY,bend,mix,keyframes?}. Native validation requires a connected unit-scale two-link chain and bounded normalized targets; arbitrary skeletal IK is unavailable."],
+      ["remove_ik",{ikId:rigId},"Remove one stable native analytic two-link IK constraint."],
+      ["set_ik_keyframe",{ikId:rigId,keyframe:object,replaceKeyframe:z.boolean().optional()},"Set one actual analytic two-link IK target/mix key at {atMs,targetX?,targetY?,bend?,mix?,ease?}. replaceKeyframe:true replaces the complete sparse row so omitted channels are removed; default merges. Native key and chain limits are enforced."],
+      ["remove_ik_keyframe",{ikId:rigId,atMs},"Delete one exact native IK target key without inventing a procedural motion result."],
+      ["move_ik_keyframe",{ikId:rigId,fromAtMs:atMs,toAtMs:atMs},"Move one existing sparse analytic two-link IK target key row between exact authored times atomically. Original target/mix channels and easing controls are preserved, and any occupied destination row rejects the edit."]
+    ];
+    for(const [operation,fields,description] of rigTools)s.registerTool("app_rig_"+operation,{description,inputSchema:{...animationScope,...fields}},async args=>queue("rig_"+operation,args));
+    const coordinate=z.number().min(-10).max(10);
+    const path=z.object({version:z.literal(1),mode:z.enum(["add","replace"]),orientToPath:z.boolean(),rotationOffsetDeg:z.number().min(-3600).max(3600).optional(),points:z.array(z.object({id:stableId,t:z.number().min(0).max(1),x:coordinate,y:coordinate,inX:coordinate.optional(),inY:coordinate.optional(),outX:coordinate.optional(),outY:coordinate.optional()}).strict()).min(2).max(128)}).strict();
+    s.registerTool("app_set_motion_path",{description:"Author a real cubic spatial path on an owned visual clip. Points have unique stable IDs and strictly increasing normalized t; absolute in/out handles are paired X/Y. GL coordinates use X=2 for one canvas width and positive Y upwards. Mode add composes with existing transforms; replace substitutes position. Optional orientation follows the analytic tangent. Native preview and export use the same bounded path sampler.",inputSchema:{...animationScope,path}},async args=>queue("set_motion_path",args));
+    s.registerTool("app_clear_motion_path",{description:"Clear the selected clip's authored spatial motion path through the owner's shared revision-checked transaction; native source media and other effects remain.",inputSchema:animationScope},async args=>queue("clear_motion_path",args));
+    s.registerTool("app_set_animation_easing",{description:"Set actual native visual, audio or camera easing through the same owner edit helper. cubic_bezier requires [x1,y1,x2,y2], solves X before sampling Y, and preserves the current camera specification. Named easing removes custom controls. Individual keyframes can carry their own native curves.",inputSchema:{...animationScope,scope:z.enum(["visual","audio","camera"]),easing:z.enum(["linear","smooth","ease_in","ease_out","easeIn","easeOut","ease_in_out","easeInOut","cinematic","hold","step","cubic_bezier"]),bezier:z.tuple([z.number().min(0).max(1),z.number().min(-4).max(4),z.number().min(0).max(1),z.number().min(-4).max(4)]).optional()}},async args=>queue("set_animation_easing",args));
+  }
+  if(isV3){
+    const scope={projectId:z.string().min(8).max(180).optional(),expectedRevision:z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional()};
+    const clipId=z.string().min(1).max(256),frame=z.number().int().min(0).max(10000000),frames=z.number().int().min(1).max(10000000);
+    const color=z.string().regex(/^#[A-Fa-f0-9]{6}([A-Fa-f0-9]{2})?$/);
+    const stroke=z.object({id:z.string().min(1).max(256).regex(/^\S+$/),type:z.enum(["paint","erase"]),color:color.optional(),width:z.number().min(.001).max(.2).optional(),points:z.array(z.object({x:z.number().min(0).max(1),y:z.number().min(0).max(1),pressure:z.number().min(.1).max(1.5).optional()}).strict()).min(1).max(8192)}).strict();
+    const drawing=z.object({version:z.literal(1),width:z.number().int().min(16).max(2048).optional(),height:z.number().int().min(16).max(2048).optional(),background:color.optional(),strokes:z.array(stroke).max(512).optional()}).strict().refine(value=>(value.strokes||[]).reduce((sum,item)=>sum+item.points.length,0)<=8192,{message:"Drawing exceeds8192totalpoints"});
+    const exposure=z.object({trackId:z.string().min(1).max(180).optional(),startFrame:frame.optional(),frameCount:frames.optional(),fpsNumerator:z.union([z.literal(12),z.literal(24),z.literal(30),z.literal(60)]).optional(),fpsDenominator:z.literal(1).optional(),originMs:z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),ripple:z.boolean().optional(),name:z.string().min(1).max(120).optional()}).strict();
+    s.registerTool("app_cel_create",{description:"Draw a real immutable native PNG cel from explicit normalized paint/eraser strokes, then atomically register its owned asset and exposure at the accepted revision. Uses the same factory as the owner's drawing canvas. Limits:128KiB drawing JSON,512strokes,8192points,16..2048pixel dimensions. Pressure scales brush width; erase clears foreground while preserving the chosen background. Output cadence supports integer12/24/30/60fps only; fractional rates and inferred drawings are unavailable. The full bounded document is durably queued in checksummed chunks, never as a source URI.",inputSchema:{...scope,drawing,exposure:exposure.optional()}},async args=>queue("cel_create",args));
+    s.registerTool("app_cel_update",{description:"Redraw one existing native animation cel exposure as a new immutable PNG generation at expectedRevision. Optional exposure settings change frameCount in the same exact-revision transaction as the owner's canvas save; cadence must match the current exposure. Other exposures and undo snapshots keep the prior image. Replaying this command recovers its actual PNG; it never recreates a deleted or subsequently redrawn exposure.",inputSchema:{...scope,clipId,drawing,exposure:z.object({frameCount:frames.optional(),fpsNumerator:z.union([z.literal(12),z.literal(24),z.literal(30),z.literal(60)]).optional(),fpsDenominator:z.literal(1).optional(),ripple:z.boolean().optional()}).strict().optional()}},async args=>queue("cel_update",args));
+    s.registerTool("app_cel_describe",{description:"Read the owned cel's actual editable vector-stroke document and native exposure/cadence metadata. No Gallery, external source locator or inferred drawing is returned.",inputSchema:{projectId:scope.projectId,clipId}},async args=>queue("cel_describe",args));
+    s.registerTool("app_cel_exposure_add",{description:"Place an existing owned animation-cel asset at explicit cumulative frame boundaries through shared native revision checks and undo. Supported integer cadence12/24/30/60must match the chosen project cadence; fpsDenominator must be1.",inputSchema:{...scope,assetId:z.string().min(1).max(256),...exposure.shape}},async args=>queue("cel_exposure_add",args));
+    s.registerTool("app_cel_exposure_hold",{description:"Set one frame-aligned cel exposure's hold length to an explicit frameCount through the shared native transaction. Generic timing changes that leave it off the frame grid require explicit rebasing before this operation.",inputSchema:{...scope,clipId,frameCount:frames,ripple:z.boolean().optional()}},async args=>queue("cel_exposure_hold",args));
+    s.registerTool("app_cel_exposure_extend",{description:"Extend one frame-aligned native cel exposure by actual addFrames, respecting locks and optional ripple placement.",inputSchema:{...scope,clipId,addFrames:frames,ripple:z.boolean().optional()}},async args=>queue("cel_exposure_extend",args));
+    s.registerTool("app_cel_exposure_duplicate",{description:"Duplicate one real frame-aligned cel exposure using the same immutable PNG. Optional startFrame/trackId places it explicitly; the shared helper preserves exact cumulative frame timing.",inputSchema:{...scope,clipId,startFrame:frame.optional(),trackId:z.string().min(1).max(180).optional(),ripple:z.boolean().optional()}},async args=>queue("cel_exposure_duplicate",args));
+    s.registerTool("app_cel_exposure_delete",{description:"Delete one native cel exposure through shared undo history, with optional ripple. Its owned immutable source image is retained for other exposures/history.",inputSchema:{...scope,clipId,ripple:z.boolean().optional()}},async args=>queue("cel_exposure_delete",args));
+    s.registerTool("app_animation_frame_rate",{description:"Choose the project's actual integer animation export cadence at the expected native revision. Supports12/24/30/60fps; fractional cadence is refused. This changes future export sampling, not authored cel hold counts.",inputSchema:{...scope,frameRate:z.union([z.literal(12),z.literal(24),z.literal(30),z.literal(60)])}},async args=>queue("animation_frame_rate",args));
+  }
+  for(const operation of ["roll","slip","slide"])if(isV3)s.registerTool("app_"+operation+"_clip",{
+    description:operation==="roll"?"Move a touching edit boundary by signed program milliseconds while preserving total program duration. Shared native validation enforces neighbor handles, locks and linked A/V timing. Positive delta moves the boundary later.":operation==="slip"?"Change the sampled source range by signed program milliseconds while keeping this clip's program placement and duration. Positive delta samples later footage at each linked peer's speed. Requires known timed source media.":"Move a clip by signed program milliseconds while trimming its touching neighbors and preserving whole-program duration. Positive delta moves it later. Shared native validation enforces source handles, tracks and linked A/V peers.",
+    inputSchema:{projectId:z.string().min(8).max(180).optional(),expectedRevision:z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),clipId:z.string().min(1).max(180),deltaMs:z.number().int().min(-Number.MAX_SAFE_INTEGER).max(Number.MAX_SAFE_INTEGER),...(operation==="roll"?{edge:z.enum(["start","end"]).optional()}:{})}
+  },async({projectId,expectedRevision,clipId,deltaMs,edge})=>queue("timeline_edit",{projectId,expectedRevision,operation,settings:{clipId,deltaMs,...(edge?{edge}:{})}}));
+  if(isV3){
+    const projectScope={projectId:z.string().min(8).max(180).optional(),expectedRevision:z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional()};
+    const markerFields={atMs:z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),endMs:z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).nullable().optional(),name:z.string().min(1).max(120).optional(),color:z.string().regex(/^#[a-fA-F0-9]{6}$/).optional(),note:z.string().max(2048).optional()};
+    s.registerTool("app_marker_add",{description:"Add a durable program marker or marker range using the owner's shared project transaction. Positions must lie inside the current program; marker ranges do not limit export.",inputSchema:{...projectScope,markerId:z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/).optional(),...markerFields}},async args=>queue("marker_add",args));
+    s.registerTool("app_marker_update",{description:"Update a durable marker at expectedRevision. Set endMs to null to clear its range.",inputSchema:{...projectScope,markerId:z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/),...markerFields,atMs:markerFields.atMs.optional()}},async args=>queue("marker_update",args));
+    s.registerTool("app_marker_delete",{description:"Delete one durable program marker through the shared native editor transaction.",inputSchema:{...projectScope,markerId:z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/)}},async args=>queue("marker_delete",args));
+    s.registerTool("app_marker_list",{description:"Read saved markers with their derived validity against the current native program.",inputSchema:{projectId:projectScope.projectId}},async args=>queue("marker_list",args));
+    s.registerTool("app_editor_range_set",{description:"Set the owner's durable rehearsal range inside the current program. This controls editor rehearsal only; native export still renders the entire accepted program.",inputSchema:{...projectScope,inMs:z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),outMs:z.number().int().positive().max(Number.MAX_SAFE_INTEGER),enabled:z.boolean().optional()}},async args=>queue("editor_range_set",args));
+    s.registerTool("app_editor_range_clear",{description:"Clear the durable editor rehearsal range using the shared project transaction.",inputSchema:projectScope},async args=>queue("editor_range_clear",args));
+    s.registerTool("app_editor_range_status",{description:"Read the native editor rehearsal range and whether it remains valid for the current program. No range rendering is implied.",inputSchema:{projectId:projectScope.projectId}},async args=>queue("editor_range_status",args));
+  }
+  if(isV3) s.registerTool("app_extract_audio",{
+    description:"Extract a video's real embedded audio into an audio-track peer sharing the owned source and exact timing. The original embedded audio is disabled and the pair is linked for shared timeline edits. Requires a source with an audio stream; no source upload or invented audio occurs.",
+    inputSchema:{projectId:z.string().min(8).optional(),expectedRevision:z.number().int().nonnegative().optional(),clipId:z.string().min(8),trackId:z.string().min(8).optional()}
+  },async({projectId,expectedRevision,clipId,trackId})=>queue("timeline_edit",{projectId,expectedRevision,operation:"extract_audio",settings:{clipId,trackId}}));
+  if(isV3) s.registerTool("app_link_clips",{
+    description:"Link existing native clips that have identical program start/end so future move, trim, split and delete operations edit their peers atomically. Uses the owner's shared project model and undo history.",
+    inputSchema:{projectId:z.string().min(8).optional(),expectedRevision:z.number().int().nonnegative().optional(),clipIds:z.array(z.string().min(8)).min(2).max(120)}
+  },async({projectId,expectedRevision,clipIds})=>queue("timeline_edit",{projectId,expectedRevision,operation:"link",settings:{clipIds}}));
+  if(isV3) s.registerTool("app_unlink_clips",{
+    description:"Explicitly unlink an existing native clip group through the shared revision-checked project transaction; owned media and detached-audio state are retained.",
+    inputSchema:{projectId:z.string().min(8).optional(),expectedRevision:z.number().int().nonnegative().optional(),clipId:z.string().min(8)}
+  },async({projectId,expectedRevision,clipId})=>queue("timeline_edit",{projectId,expectedRevision,operation:"unlink",settings:{clipId}}));
+  if(isV3) s.registerTool("app_relink_asset",{
+    description:"Relink one original source asset to replacement media already imported into the same owned native project. Shared validation checks source type, referenced clip ranges and track locks at expectedRevision. Generated assets, raw Gallery enumeration and arbitrary locator overwrites are rejected.",
+    inputSchema:{projectId:z.string().min(8).optional(),expectedRevision:z.number().int().nonnegative().optional(),assetId:z.string().min(8),replacementAssetId:z.string().min(8),preserveName:z.boolean().optional()}
+  },async({projectId,expectedRevision,assetId,replacementAssetId,preserveName})=>queue("timeline_edit",{projectId,expectedRevision,operation:"relink_asset",settings:{assetId,replacementAssetId,preserveName}}));
+  if(isV3) for(const action of ["undo","redo"]) s.registerTool("app_"+action,{
+    description:action+" the latest shared project edit, including owner and ChatGPT mutations.",
+    inputSchema:{projectId:z.string().min(8).optional(),expectedRevision:z.number().int().nonnegative().optional()}
+  },async args=>queue(action,args));
 
   s.registerTool("app_import_from_url",{description:"Import an explicit HTTPS media URL into VideoStudio without browsing Gallery. Available in Full Autonomous mode; Gallery enumeration remains blocked.",inputSchema:{url:z.string().url(),name:z.string().max(160).optional(),projectId:z.string().min(8).optional()}},async({url,name,projectId})=>queue("import_url",{url,name:name||"ChatGPT import",projectId:projectId||""}));
 
   if(isV3) s.registerTool("app_import_attachment",{
-    description:"Primary VideoStudio v3 ChatGPT attachment path. Pass a file explicitly attached/shared by the user. The Worker holds only short-lived handoff metadata and privately streams the temporary source to the authorised Android app; Gallery enumeration is never used.",
+    description:"Import a user-shared video, image or audio attachment when the host supplies its temporary HTTPS download_url. The authorised Android app receives an authenticated private relay, persists validated asset metadata, and inserts media into the shared project. A file_id or sandbox path alone is not downloadable. Read app_get_command_result for actual completion.",
     inputSchema:{
       file:z.object({
-        download_url:z.string().url(),
-        file_id:z.string().min(1),
+        download_url:z.string().max(12000).optional(),
+        file_id:z.string().max(180).optional(),
         mime_type:z.string().max(120).optional(),
-        file_name:z.string().max(180).optional()
-      }).strict(),
+        file_name:z.string().max(180).optional(),
+        size:z.number().int().nonnegative().optional(),
+        sha256:z.string().regex(/^[a-fA-F0-9]{64}$/).optional()
+      }).passthrough(),
       projectId:z.string().min(8).optional()
     },
     _meta:{"openai/fileParams":["file"]}
   },async({file,projectId})=>{
     try{
-      // Use RPC methods that already existed before the private-relay rollout.
-      // This keeps active Durable Object instances compatible during a rolling deploy.
-      const handoff=await st.appCreateHandoff(ownerKey,file.download_url,{
-        name:file.file_name||"ChatGPT attachment",
-        mime:file.mime_type||"",
-        size:0
-      });
-      const c=await st.appEnqueueV3(ownerKey,"import_chat_file",{
-        handoffId:handoff.id,
-        name:handoff.name,
-        mime:handoff.mime,
-        size:handoff.size,
-        projectId:projectId||""
-      });
+      const c=await queueAttachment(st,ownerKey,file,projectId||"",true);
       return out({
         queued:true,
         commandId:c.id,
@@ -1737,13 +2105,16 @@ function serverForApp(env,ownerKey,protocolVersion=1){
         nativeApp:true,
         protocolVersion:3,
         route:"private-worker-handoff",
-        waitingNative:c.status==="waiting_native"
+        waitingNative:c.status==="waiting_native",
+        attachmentExpiresAt:c.attachmentExpiresAt,
+        completion:"Read app_get_command_result; queued is not an imported asset",
+        hostFileReferenceAccepted:true
       });
     }catch(e){ return out({queued:false,error:e.message}); }
   });
 
   if(isV3) s.registerTool("app_import_inline_base64",{
-    description:"Private compatibility fallback for small ChatGPT media when temporary HTTPS handoff is unavailable. Bytes stay inside the owner-authenticated MCP command and are written directly to VideoStudio app-private storage. PNG, JPEG, WebP and MP4 are accepted up to 12 MB decoded.",
+    description:"Private compatibility fallback when the caller can supply actual small-media bytes and the host cannot supply a temporary HTTPS URL. Up to 12 MB of PNG, JPEG, WebP or MP4 bytes are streamed into a short-lived private cache, then the authorised app downloads a resumable handoff. No media bytes enter the durable command queue. A file_id alone cannot supply bytes.",
     inputSchema:{
       name:z.string().min(1).max(180),
       mime:z.enum(["image/png","image/jpeg","image/webp","video/mp4"]),
@@ -1786,8 +2157,9 @@ function serverForApp(env,ownerKey,protocolVersion=1){
     inputSchema:{}
   },async()=>queue("reconnect_mcp",{}));
 
-  if(isV3) s.registerTool("app_execute",{description:"Stable future-compatible VideoStudio v3 action bridge. Use this for native actions introduced by future app versions without requiring the ChatGPT connector to be recreated. Gallery/media-library enumeration remains permanently blocked by the server regardless of the requested action.",inputSchema:{action:z.string().min(1).max(80),parameters:z.record(z.string(),z.any()).optional()}},async({action,parameters})=>{
-    const p=parameters||{};
+  if(isV3) s.registerTool("app_execute",{description:"Stable VideoStudio action bridge. For import_attachment, pass the user-shared host file parameter or parameters containing an explicit HTTPS sourceUrl; both use the authenticated private relay. A file_id or sandbox path alone is not downloadable. Editing actions share the owner's transactional project model; expectedRevision can reject a stale edit. Gallery enumeration is always blocked.",inputSchema:{action:z.string().min(1).max(80),parameters:z.record(z.string(),z.any()).optional(),file:z.object({download_url:z.string().max(12000).optional(),file_id:z.string().max(180).optional(),file_name:z.string().max(180).optional(),mime_type:z.string().max(120).optional(),size:z.number().int().nonnegative().optional(),sha256:z.string().regex(/^[a-fA-F0-9]{64}$/).optional()}).passthrough().optional()},_meta:{"openai/fileParams":["file"]}},async({action,parameters,file})=>{
+    if(file&&action!=="import_attachment"&&action!=="import_chat_file") return out({queued:false,error:"The file parameter is only valid for attachment import actions"});
+    const p={...(parameters||{}),...(file?{file}:{})};
     if(action==="converge_identity_to"){
       try{
         const primaryOwnerKey=String(p.primaryOwnerKey||"");
@@ -1810,8 +2182,8 @@ function serverForApp(env,ownerKey,protocolVersion=1){
     }catch(e){ return out({queued:false,error:e.message,commands:queued}); }
   });
 
-  s.registerTool("app_cancel_job",{description:"Cancel one native VideoStudio background job.",inputSchema:{jobId:z.string().min(8)}},async({jobId})=>queue("cancel_job",{jobId}));
-  s.registerTool("app_cancel_all_jobs",{description:"Cancel every active VideoStudio job and current export.",inputSchema:{}},async()=>queue("cancel_all_jobs",{}));
+  s.registerTool("app_cancel_job",{description:"Cancel one ChatGPT-initiated native VideoStudio job. Owner-started exports and other manual work remain under the owner's local controls.",inputSchema:{jobId:z.string().min(8)}},async({jobId})=>queue("cancel_job",{jobId}));
+  s.registerTool("app_cancel_all_jobs",{description:"Cancel active ChatGPT-initiated VideoStudio jobs and autonomous render. Owner-started jobs remain under the owner's local controls.",inputSchema:{}},async()=>queue("cancel_all_jobs",{}));
   s.registerTool("app_get_command_result",{description:"Read completion status/result for a native command. Analysis results render their contact sheet directly for ChatGPT to inspect.",inputSchema:{commandId:z.string().min(8)}},async({commandId})=>commandResult(commandId));
   return s;
 }
@@ -1912,6 +2284,16 @@ async function api(request,env){
       const status=await st.appStatusV3(bearer(request));
       return reply(status,status.connected?200:409);
     }
+    if(u.pathname==="/api/v3/app/metadata-mirror"&&request.method==="POST"){
+      const token=bearer(request),owner=await st.appResolve(token);
+      if(!owner||!owner.nativeApp)return reply({ok:false,error:"Private native owner authorization failed"},401);
+      const body=await boundedMetadataJson(request);
+      if(!(await st.appAuth(body.deviceId,token)))return reply({ok:false,error:"Private native owner authorization failed"},401);
+      const expected=Math.max(0,Number(owner.appGeneration||0));
+      if(expected>0&&Number(body.appGeneration||0)!==expected)
+        return reply({ok:false,error:"Stale Native Agent generation",expectedGeneration:expected},409);
+      return reply(await st.appMetadataMirror(token,body.operation,body.parameters||{}));
+    }
     if(u.pathname==="/api/v3/app/commands"&&request.method==="GET"){
       const deviceId=u.searchParams.get("deviceId")||"";
       const after=Number(u.searchParams.get("after")||0);
@@ -1944,22 +2326,7 @@ async function api(request,env){
       },409);
       const handoff=await st.appHandoff(deviceId,token,v3hm[1]);
       if(!handoff) return reply({error:"Handoff missing or expired"},404);
-      let upstream;
-      if(handoff.cacheUrl){
-        upstream=await caches.default.match(new Request(handoff.cacheUrl));
-        if(!upstream||!upstream.body) return reply({error:"Private upload expired or unavailable"},404);
-      }else{
-        upstream=await fetch(handoff.sourceUrl,{headers:{"accept":"*/*","user-agent":"VideoStudio-MCPv3-Fallback/3.0"}});
-        if(!upstream.ok||!upstream.body) return reply({error:"Attachment source unavailable",status:upstream.status},502);
-      }
-      const headers=new Headers();
-      headers.set("content-type",handoff.mime||upstream.headers.get("content-type")||"application/octet-stream");
-      const length=upstream.headers.get("content-length");
-      if(length) headers.set("content-length",length);
-      headers.set("cache-control","no-store");
-      headers.set("x-content-type-options","nosniff");
-      headers.set("content-disposition",'attachment; filename="'+handoff.name.replace(/[\r\n"]/g,"_")+'"');
-      return new Response(upstream.body,{status:200,headers});
+      return privateHandoffContent(request,handoff);
     }
     const v3cm=u.pathname.match(/^\/api\/v3\/app\/commands\/([^/]+)\/complete$/);
     if(v3cm&&request.method==="POST"){
@@ -1995,14 +2362,16 @@ async function api(request,env){
       const command=await st.appCommand(token,pcm[1]);
       return command?reply({command}):reply({error:"Command not found"},404);
     }
-    if(u.pathname==="/api/app/private/upload"&&request.method==="POST"){
+    if(["/api/app/private/upload","/api/v3/app/private/upload"].includes(u.pathname)&&request.method==="POST"){
       const token=bearer(request), deviceId=u.searchParams.get("deviceId")||"";
       if(!(await st.appAuth(deviceId,token))) return reply({error:"Native app authorization failed"},401);
       const status=await st.appStatus(token);
       if(!status.connected||status.device.permissionMode==="one_file") return reply({error:"Full Autonomous mode is required while One File Lock is active"},403);
+      if(status.device.controlPaused) return reply({error:"ChatGPT control is paused on the phone"},403);
 
       const declared=Number(request.headers.get("content-length")||0);
-      const max=250*1024*1024;
+      const max=PRIVATE_UPLOAD_LIMIT;
+      if(!request.body||!Number.isSafeInteger(declared)||declared<0) return reply({error:"Invalid private upload body or length"},400);
       if(declared>max) return reply({error:"Upload exceeds 250 MB private relay limit"},413);
       const name=clean(u.searchParams.get("name")||"ChatGPT import",180);
       const mime=clean(u.searchParams.get("mime")||request.headers.get("content-type")||"application/octet-stream",120);
@@ -2014,11 +2383,26 @@ async function api(request,env){
       if(declared>0) cacheHeaders.set("content-length",String(declared));
       cacheHeaders.set("cache-control","public, max-age=1200");
       cacheHeaders.set("x-content-type-options","nosniff");
-      await caches.default.put(new Request(cacheUrl),new Response(request.body,{status:200,headers:cacheHeaders}));
-
-      const handoff=await st.appCreateCachedHandoff(token,cacheUrl,{name,mime,size:declared});
-      const c=await st.appEnqueue(token,"import_chat_file",{handoffId:handoff.id,name:handoff.name,mime:handoff.mime,size:handoff.size,projectId});
-      return reply({ok:true,queued:true,commandId:c.id,sequence:c.seq,handoffId:handoff.id,expiresAt:handoff.expiresAt,name,mime,size:declared,projectId});
+      cacheHeaders.set("etag",'"'+uploadId+'"');
+      let received=0;
+      const bounded=request.body.pipeThrough(new TransformStream({transform(chunk,controller){
+        received+=chunk.byteLength;
+        if(received>max) throw new Error("Upload exceeds 250 MB private relay limit");
+        controller.enqueue(chunk);
+      }}));
+      try{
+        await caches.default.put(new Request(cacheUrl),new Response(bounded,{status:200,headers:cacheHeaders}));
+        if(received===0||(declared>0&&received!==declared)) throw new Error("Private upload length mismatch");
+        const handoff=await st.appCreateCachedHandoff(token,cacheUrl,{name,mime,size:received});
+        const parameters={handoffId:handoff.id,name:handoff.name,mime:handoff.mime,size:received,projectId};
+        const d=status.device;
+        const isV3=Number(d.protocolMin||d.protocolVersion||0)<=3&&Number(d.protocolMax||d.protocolVersion||0)>=3;
+        const c=isV3?await st.appEnqueueV3(token,"import_chat_file",parameters):await st.appEnqueue(token,"import_chat_file",parameters);
+        return reply({ok:true,queued:true,commandId:c.id,sequence:c.seq,protocolVersion:isV3?3:1,handoffId:handoff.id,expiresAt:handoff.expiresAt,name,mime,size:received,projectId,waitingNative:c.status==="waiting_native"});
+      }catch(error){
+        await caches.default.delete(new Request(cacheUrl));
+        return reply({error:error.message||"Private upload could not be queued"},received>max?413:400);
+      }
     }
     if(u.pathname==="/api/app/commands"&&request.method==="GET"){
       const deviceId=u.searchParams.get("deviceId")||"", after=Number(u.searchParams.get("after")||0), wait=Number(u.searchParams.get("wait")||0);
@@ -2030,22 +2414,7 @@ async function api(request,env){
       const deviceId=u.searchParams.get("deviceId")||"", token=bearer(request);
       const handoff=await st.appHandoff(deviceId,token,hm[1]);
       if(!handoff) return reply({error:"Handoff missing or expired"},404);
-      let upstream;
-      if(handoff.cacheUrl){
-        upstream=await caches.default.match(new Request(handoff.cacheUrl));
-        if(!upstream||!upstream.body) return reply({error:"Private upload expired or unavailable"},404);
-      }else{
-        upstream=await fetch(handoff.sourceUrl,{headers:{"accept":"*/*","user-agent":"VideoStudio-Private-Handoff/1.0"}});
-        if(!upstream.ok||!upstream.body) return reply({error:"Attachment source unavailable",status:upstream.status},502);
-      }
-      const headers=new Headers();
-      headers.set("content-type",handoff.mime||upstream.headers.get("content-type")||"application/octet-stream");
-      const length=upstream.headers.get("content-length");
-      if(length) headers.set("content-length",length);
-      headers.set("cache-control","no-store");
-      headers.set("x-content-type-options","nosniff");
-      headers.set("content-disposition",'attachment; filename="'+handoff.name.replace(/[\r\n"]/g,"_")+'"');
-      return new Response(upstream.body,{status:200,headers});
+      return privateHandoffContent(request,handoff);
     }
     const acm=u.pathname.match(/^\/api\/app\/commands\/([^/]+)\/complete$/);
     if(acm&&request.method==="POST"){
@@ -2057,9 +2426,17 @@ async function api(request,env){
     if(u.pathname==="/api/device/status"&&request.method==="GET") return reply(await st.status(u.searchParams.get("deviceId")||""));
     if(u.pathname==="/api/projects"&&request.method==="GET") return reply({projects:await st.projects(u.searchParams.get("deviceId")||"")});
     if(u.pathname==="/api/projects"&&request.method==="POST"){ const b=await request.json(); return reply({project:await st.createProject(b.deviceId,b.name,b.instruction||"")}); }
+    const append=u.pathname.match(/^\/api\/projects\/([^/]+)\/append-generated$/);
+    if(append&&request.method==="POST"){
+      try{const b=await readBoundedStudioJson(request,STUDIO_APPEND_BYTES),result=await st.appendGenerated(b.deviceId,append[1],b);return result?reply({ok:true,...result}):reply({error:"Project not found"},404);}
+      catch(error){return reply({error:error.message,code:error.code||"invalid_generated_metadata",...(error.assetId?{assetId:error.assetId}:{}),...(error.clipId?{clipId:error.clipId}:{})},error.status||400);}
+    }
     const pm=u.pathname.match(/^\/api\/projects\/([^/]+)$/);
     if(pm&&request.method==="GET"){ const p=await st.project(u.searchParams.get("deviceId")||"",pm[1]); return p?reply({project:p}):reply({error:"Project not found"},404); }
-    if(pm&&request.method==="POST"){ const b=await request.json(),p=await st.update(b.deviceId,pm[1],b.patch||{}); return p?reply({project:p}):reply({error:"Project not found"},404); }
+    if(pm&&request.method==="POST"){
+      try{const b=await readBoundedStudioJson(request,STUDIO_PROJECT_BYTES),p=await st.update(b.deviceId,pm[1],b.patch||{},b.expectedRevision);return p?reply({project:p}):reply({error:"Project not found"},404);}
+      catch(error){return reply({error:error.message,code:error.code||"invalid_project_request",...(error.actualRevision!==undefined?{actualRevision:error.actualRevision,expectedRevision:error.expectedRevision}:{}),projectId:pm[1]},error.status||400);}
+    }
     if(u.pathname==="/api/runtime/commands"&&request.method==="GET") return reply({commands:await st.runtimeCommands(u.searchParams.get("deviceId")||"",Number(u.searchParams.get("after")||0))});
     const rcm=u.pathname.match(/^\/api\/runtime\/commands\/([^/]+)\/complete$/);
     if(rcm&&request.method==="POST"){ const b=await request.json(),c=await st.completeRuntime(b.deviceId,rcm[1],b.result||{},b.status||"completed"); return c?reply({command:c}):reply({error:"Runtime command not found"},404); }
@@ -2108,12 +2485,12 @@ export default {
     const appMcpV3=u.pathname.match(/^\/app-mcp-v3\/([A-Za-z0-9_-]{32,})$/);
     if(appMcpV3){
       const ownerKey=appMcpV3[1];
-      return createMcpHandler(()=>serverForApp(env,ownerKey,3),{route:u.pathname,responseMode:"auto"})(request,env,ctx);
+      return createMcpHandler(()=>serverForApp(env,ownerKey,3,u.origin),{route:u.pathname,responseMode:"auto"})(request,env,ctx);
     }
     const appMcp=u.pathname.match(/^\/app-mcp\/([A-Za-z0-9_-]{32,})$/);
     if(appMcp){
       const ownerKey=appMcp[1];
-      return createMcpHandler(()=>serverForApp(env,ownerKey),{route:u.pathname,responseMode:"auto"})(request,env,ctx);
+      return createMcpHandler(()=>serverForApp(env,ownerKey,1,u.origin),{route:u.pathname,responseMode:"auto"})(request,env,ctx);
     }
     if(u.pathname==="/mcp"||u.pathname.startsWith("/mcp/")) return createMcpHandler(()=>serverFor(env),{route:"/mcp",responseMode:"auto"})(request,env,ctx);
     const hybridMcp=u.pathname.match(/^\/mcp-v06\/([A-Za-z0-9_-]{32,})(?:\/.*)?$/);

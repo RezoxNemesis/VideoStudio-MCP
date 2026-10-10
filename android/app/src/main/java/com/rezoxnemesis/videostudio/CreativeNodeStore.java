@@ -21,9 +21,14 @@ import java.util.Map;
 public final class CreativeNodeStore {
     private static final int STORE_VERSION = 1;
     private final CreativeWorkspace workspace;
+    private final ProjectStore projects;
 
     public CreativeNodeStore(CreativeWorkspace workspace) {
+        this(workspace, null);
+    }
+    public CreativeNodeStore(CreativeWorkspace workspace, ProjectStore projects) {
         this.workspace = workspace;
+        this.projects = projects;
     }
 
     public synchronized JSONObject prepare(String projectId, JSONObject graph) throws Exception {
@@ -57,6 +62,8 @@ public final class CreativeNodeStore {
                         ? new JSONArray() : planned.optJSONArray("dependencies"));
                 state.put("input", planned.optJSONObject("input") == null
                         ? new JSONObject() : new JSONObject(planned.optJSONObject("input").toString()));
+                String sourceIdentity = sourceIdentity(projectId, state);
+                state.put("sourceIdentity", sourceIdentity);
                 state.put("quality", planned.optString("quality", "balanced"));
                 state.put("providerResolved", planned.optBoolean("providerResolved", false));
                 if (planned.optJSONObject("provider") != null) {
@@ -66,7 +73,9 @@ public final class CreativeNodeStore {
                     state.put("resourcePlan", planned.optJSONObject("resourcePlan"));
                 }
 
-                boolean sameCache = old != null && cacheKey.equals(old.optString("cacheKey", ""));
+                boolean sameCache = old != null && cacheKey.equals(old.optString("cacheKey", ""))
+                        && (projects == null || old.has("sourceIdentity"))
+                        && sourceIdentity.equals(old.optString("sourceIdentity", ""));
                 boolean completed = sameCache && "completed".equals(old.optString("state", ""));
                 if (completed) {
                     copyRuntime(old, state);
@@ -124,6 +133,9 @@ public final class CreativeNodeStore {
     public synchronized JSONObject startNode(String projectId, String nodeId) throws Exception {
         JSONObject root = read(projectId);
         JSONObject node = requireNode(root, nodeId);
+        node.put("sourceIdentity", sourceIdentity(projectId, node));
+        node.put("evaluationId", java.util.UUID.randomUUID().toString());
+        node.remove("sourceInvalidated");
         node.put("state", "running");
         node.put("progress", Math.max(0, node.optInt("progress", 0)));
         node.put("attempts", node.optInt("attempts", 0) + 1);
@@ -138,8 +150,13 @@ public final class CreativeNodeStore {
                                       String nodeId,
                                       int progress,
                                       String detail) throws Exception {
+        progress(projectId, nodeId, progress, detail, null);
+    }
+    public synchronized void progress(String projectId, String nodeId, int progress, String detail, String evaluationId) throws Exception {
         JSONObject root = read(projectId);
         JSONObject node = requireNode(root, nodeId);
+        if (projects != null && (evaluationId == null || !evaluationId.equals(node.optString("evaluationId", ""))))
+            throw new IllegalStateException("Progress belongs to an older creative evaluation");
         node.put("state", "running");
         node.put("progress", Math.max(0, Math.min(99, progress)));
         node.put("detail", detail == null ? "" : detail);
@@ -152,6 +169,14 @@ public final class CreativeNodeStore {
                                             JSONObject result) throws Exception {
         JSONObject root = read(projectId);
         JSONObject node = requireNode(root, nodeId);
+        String expectedSource = node.optString("sourceIdentity", "");
+        if (!expectedSource.isEmpty() && !expectedSource.equals(sourceIdentity(projectId, node)))
+            throw new IllegalStateException("Source media changed while this creative node was executing; regenerate the node from the current asset");
+        if (projects != null && (node.optBoolean("sourceInvalidated", false) || result == null
+                || !expectedSource.equals(result.optString("evaluatedSourceIdentity", ""))
+                || node.optString("evaluationId", "").isEmpty()
+                || !node.getString("evaluationId").equals(result.optString("evaluationId", ""))))
+            throw new IllegalStateException("Creative completion does not match the current source evaluation; regenerate the node instead of reusing stale work");
         node.put("state", "completed");
         node.put("progress", 100);
         node.put("detail", "Completed");
@@ -167,8 +192,15 @@ public final class CreativeNodeStore {
                                         String nodeId,
                                         String error,
                                         boolean recoverable) throws Exception {
+        return fail(projectId, nodeId, error, recoverable, null);
+    }
+    public synchronized JSONObject fail(String projectId, String nodeId, String error, boolean recoverable, String evaluationId) throws Exception {
         JSONObject root = read(projectId);
         JSONObject node = requireNode(root, nodeId);
+        if (projects != null && (evaluationId == null || !evaluationId.equals(node.optString("evaluationId", "")))) {
+            JSONObject current = new JSONObject(node.toString());
+            current.put("staleFailureIgnored", true); return current;
+        }
         node.put("state", recoverable ? "waiting_retry" : "failed");
         node.put("detail", error == null ? "Execution failed" : error);
         node.put("recoverable", recoverable);
@@ -216,6 +248,7 @@ public final class CreativeNodeStore {
             node.remove("result");
             node.remove("completedAt");
             node.remove("startedAt");
+            node.remove("evaluationId");
             node.put("state", "planned");
             node.put("progress", 0);
             node.put("detail", "Invalidated for targeted re-execution");
@@ -248,6 +281,7 @@ public final class CreativeNodeStore {
                     || "waiting_thermal".equals(state)
                     || "waiting_memory".equals(state)));
             if (!retryable || !node.optBoolean("recoverable", true)) continue;
+            node.remove("evaluationId");
             node.put("state", "planned");
             node.put("progress", 0);
             node.put("detail", includeRunning
@@ -318,7 +352,9 @@ public final class CreativeNodeStore {
             }
             if (offset != data.length) throw new IllegalStateException("Creative node state read was incomplete");
         }
-        return new JSONObject(new String(data, StandardCharsets.UTF_8));
+        JSONObject result = new JSONObject(new String(data, StandardCharsets.UTF_8));
+        if (refreshSourceState(projectId, result)) write(projectId, result);
+        return result;
     }
 
     private void write(String projectId, JSONObject value) throws Exception {
@@ -327,18 +363,85 @@ public final class CreativeNodeStore {
         if (!parent.exists() && !parent.mkdirs() && !parent.exists()) {
             throw new IllegalStateException("Could not create creative checkpoint directory");
         }
-        File temp = new File(parent, file.getName() + ".tmp");
-        try (FileOutputStream out = new FileOutputStream(temp)) {
-            out.write(value.toString(2).getBytes(StandardCharsets.UTF_8));
-            out.flush();
-            out.getFD().sync();
+        File temp = new File(parent, file.getName() + "." + java.util.UUID.randomUUID() + ".tmp");
+        try {
+            byte[] bytes = value.toString(2).getBytes(StandardCharsets.UTF_8);
+            if (bytes.length > 8L * 1024L * 1024L) throw new IllegalStateException("Creative node state exceeded safe metadata size");
+            try (FileOutputStream out = new FileOutputStream(temp)) {
+                out.write(bytes); out.flush(); out.getFD().sync();
+            }
+            StorageVault.commit(temp, file);
+        } finally { if (temp.exists()) temp.delete(); }
+    }
+    private String sourceIdentity(String projectId, JSONObject node) throws Exception {
+        if (projects == null) return "";
+        ProjectStore.Project project = projects.get(projectId);
+        if (project == null) throw new IllegalStateException("Creative source project no longer exists");
+        JSONObject input = node.optJSONObject("input");
+        String assetId = input == null ? "" : input.optString("assetId", "");
+        if (assetId.isEmpty() && input != null && input.optJSONObject("subject") != null)
+            assetId = input.getJSONObject("subject").optString("assetId", "");
+        java.util.ArrayList<String> sources = new java.util.ArrayList<>();
+        for (ProjectStore.Asset asset : project.assets) {
+            if (!assetId.isEmpty() ? !assetId.equals(asset.id) : asset.generated || !"source".equals(asset.role)) continue;
+            long epoch = asset.importMetadata == null ? 0 : asset.importMetadata.optLong("relinkedAt", 0);
+            String fileIdentity = "";
+            android.net.Uri uri = android.net.Uri.parse(asset.uri == null ? "" : asset.uri);
+            if ("file".equals(uri.getScheme()) && uri.getPath() != null) {
+                File file = new File(uri.getPath()); fileIdentity = file.length() + ":" + file.lastModified();
+            }
+            sources.add(asset.id + "\n" + asset.uri + "\n" + asset.sizeBytes + "\n" + epoch
+                    + "\n" + asset.mime + ":" + asset.durationMs + ":" + asset.width + ":" + asset.height
+                    + ":" + asset.rotation + ":" + asset.hasAudio + "\n" + fileIdentity
+                    + "\n" + (asset.importMetadata == null ? "" : asset.importMetadata.toString()));
         }
-        if (file.exists() && !file.delete()) {
-            throw new IllegalStateException("Could not replace creative node state");
+        if (!assetId.isEmpty() && sources.isEmpty()) throw new IllegalStateException("Creative source asset is no longer registered");
+        java.util.Collections.sort(sources);
+        byte[] digest = java.security.MessageDigest.getInstance("SHA-256").digest(String.join("\n", sources).getBytes(StandardCharsets.UTF_8));
+        StringBuilder hex = new StringBuilder(); for (byte value : digest) hex.append(String.format(java.util.Locale.US, "%02x", value & 255));
+        return hex.toString();
+    }
+    private boolean refreshSourceState(String projectId, JSONObject root) throws Exception {
+        if (projects == null) return false;
+        ProjectStore.Project project = projects.get(projectId);
+        if (project == null) throw new IllegalStateException("Creative source project no longer exists");
+        JSONArray nodes = root.optJSONArray("nodes"); if (nodes == null) return false;
+        java.util.LinkedHashSet<String> stale = new java.util.LinkedHashSet<>();
+        for (int index = 0; index < nodes.length(); index++) {
+            JSONObject node = nodes.optJSONObject(index); if (node == null) continue;
+            String expected = node.optString("sourceIdentity", "");
+            boolean changed;
+            try { changed = !expected.isEmpty() && !expected.equals(sourceIdentity(projectId, node)); }
+            catch (IllegalStateException unavailable) { changed = !"source-unavailable".equals(expected); }
+            // A legacy result without provenance cannot establish which source
+            // produced it. Never stamp today's identity onto completed output.
+            if (expected.isEmpty()) changed = true;
+            if (changed) stale.add(node.optString("id", ""));
         }
-        if (!temp.renameTo(file)) {
-            throw new IllegalStateException("Could not commit creative node state");
+        boolean expanded;
+        do {
+            expanded = false;
+            for (int index = 0; index < nodes.length(); index++) {
+                JSONObject node = nodes.optJSONObject(index); if (node == null || stale.contains(node.optString("id"))) continue;
+                JSONArray dependencies = node.optJSONArray("dependencies"); if (dependencies == null) continue;
+                for (int d = 0; d < dependencies.length(); d++) if (stale.contains(dependencies.optString(d))) {
+                    stale.add(node.optString("id")); expanded = true; break;
+                }
+            }
+        } while (expanded);
+        if (stale.isEmpty()) return false;
+        for (int index = 0; index < nodes.length(); index++) {
+            JSONObject node = nodes.optJSONObject(index); if (node == null || !stale.contains(node.optString("id"))) continue;
+            node.remove("result"); node.remove("completedAt"); node.remove("startedAt");
+            node.remove("evaluationId"); node.put("sourceInvalidated", true);
+            try { node.put("sourceIdentity", sourceIdentity(projectId, node)); }
+            catch (IllegalStateException unavailable) { node.put("sourceIdentity", "source-unavailable"); node.put("providerResolved", false); }
+            node.put("state", "planned"); node.put("progress", 0);
+            node.put("detail", "Source media changed; cached work invalidated");
+            node.put("updatedAt", System.currentTimeMillis());
         }
+        root.put("updatedAt", System.currentTimeMillis());
+        return true;
     }
 
     private File stateFile(String projectId) {
