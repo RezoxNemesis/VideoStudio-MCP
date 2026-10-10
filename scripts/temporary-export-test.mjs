@@ -65,9 +65,12 @@ test("binary transfer stores exact MP4 bytes, SHA-256 and 192KiB chunks",async()
   assert.equal(data.mime,"video/mp4");
   assert.equal(data.size,bytes.length);
   assert.equal(data.parts,3);
-  const joined=[];
-  for(let i=0;i<data.parts;i++)joined.push(...await f.relay.getTemporaryVideoExportPart(data.uploadToken,i));
-  assert.deepEqual(joined,Array.from(bytes));
+  const joined=new Uint8Array(bytes.length);let offset=0;
+  for(let i=0;i<data.parts;i++){
+    const part=await f.relay.getTemporaryVideoExportPart(data.uploadToken,i);
+    joined.set(part,offset);offset+=part.length;
+  }
+  assert.deepEqual(Buffer.from(joined),Buffer.from(bytes));
   assert.equal((await f.relay.storeTemporaryVideoExport(t.uploadToken,bytes,"video/mp4")).reused,true);
   const digest=Buffer.from(await webcrypto.subtle.digest("SHA-256",bytes)).toString("hex");
   assert.equal(uploaded.digest,digest);
