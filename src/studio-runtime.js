@@ -980,6 +980,8 @@ const STUDIO_RUNTIME_JS = String.raw`
           // Browser media generation cannot reliably run in the background.
           // Leave the command unacknowledged so it resumes on foreground without human approval.
           if(command.status==="queued"&&document.hidden)break;
+          // A hidden browser cannot reliably run WebGL/MediaRecorder. Keep remote jobs queued until foreground.
+          if(command.status==="queued"&&document.hidden)break;
           if(command.status==="queued"&&!(await handleRuntimeCommand(command)))break;
           runtimeState.lastRuntimeSeq=Math.max(runtimeState.lastRuntimeSeq,Number(command.seq||0));
           localStorage.setItem("vs-runtime-last-seq",String(runtimeState.lastRuntimeSeq));
