@@ -69,8 +69,8 @@ const STUDIO_ACTION_TIMELINE_JS = String.raw`(() => {
       const spring=cloth ? .006*Math.sin(seconds*9.7)*(1-p*.25) : .0016*Math.sin(seconds*2.6+i*.7);
       const wind=cloth ? .012*Math.sin(seconds*3.8-.9) : 0;
       return {dx:clamp((dx+wind+spring)*strength,-.16,.16),
-        dy:clamp((dy+(cloth?.006*Math.cos(seconds*5.8):0))*strength,-.16,.16),
-        rotation:clamp((rotation+(cloth?.065*Math.sin(seconds*7):0))*strength,-.5,.5),
+        dy:clamp((dy+(cloth ? .006*Math.cos(seconds*5.8) : 0))*strength,-.16,.16),
+        rotation:clamp((rotation+(cloth ? .065*Math.sin(seconds*7) : 0))*strength,-.5,.5),
         bend:clamp(bend*strength,-.5,.5)};
     });
     const pulse=(center,width)=>Math.exp(-Math.pow((p-center)/width,2));
