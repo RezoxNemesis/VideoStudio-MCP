@@ -40,7 +40,7 @@ public final class NativePoseSequenceComposer {
                                                List<String> orderedAssetIds,
                                                int width,
                                                int height,
-                                               int framesPerPair,
+                                               int[] framesByPair,
                                                int fps,
                                                Progress progress) throws Exception {
         if (original == null || output == null || original.id.equals(output.id)
@@ -52,10 +52,16 @@ public final class NativePoseSequenceComposer {
                 || width % 2 != 0 || height % 2 != 0) {
             throw new IllegalArgumentException("Pose frames require even, bounded dimensions");
         }
-        if (framesPerPair < 2 || framesPerPair > 16 || fps < 12 || fps > 30) {
-            throw new IllegalArgumentException("framesPerPair must be 2-16, FPS 12-30");
+        if (framesByPair == null || framesByPair.length != orderedAssetIds.size()-1
+                || fps < 12 || fps > 30) {
+            throw new IllegalArgumentException("Need an exact per-pair timing map at 12-30 FPS");
         }
-        final int totalFrames = (orderedAssetIds.size() - 1) * framesPerPair + 1;
+        int total=1;
+        for (int count : framesByPair) {
+            if (count < 2 || count > 16) throw new IllegalArgumentException("Each pose segment needs 2-16 frames");
+            total+=count;
+        }
+        final int totalFrames = total;
         if (totalFrames > MAX_FRAMES) {
             throw new IllegalArgumentException("Requested pose sequence exceeds 240 frames");
         }
@@ -103,11 +109,11 @@ public final class NativePoseSequenceComposer {
                         frameDurationMs, fps, "anchor");
                 if (progress != null) progress.onProgress(generated, totalFrames, motion.confidence);
             }
-            for (int step = 1; step <= framesPerPair; step++) {
+            for (int step = 1; step <= framesByPair[pairIndex]; step++) {
                 if (Thread.currentThread().isInterrupted()) throw new InterruptedException();
-                double t = step / (double) framesPerPair;
+                double t = step / (double) framesByPair[pairIndex];
                 int[] pixels = PoseSequenceFlow.between(previous, next, width, height, motion, t);
-                String role = step == framesPerPair ? "anchor" : "intermediate";
+                String role = step == framesByPair[pairIndex] ? "anchor" : "intermediate";
                 saveFrame(output, images, pixels, width, height, generated++,
                         frameDurationMs, fps, role);
                 if (progress != null) progress.onProgress(generated, totalFrames, motion.confidence);
