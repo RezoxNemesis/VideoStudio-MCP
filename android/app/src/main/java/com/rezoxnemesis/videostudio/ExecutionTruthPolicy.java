@@ -137,6 +137,7 @@ public final class ExecutionTruthPolicy {
                 || "animate_images".equals(value)
                 || "animate_pose_sequence".equals(value)
                 || "animate_timeline".equals(value)
+                || "animate_combat_rig".equals(value)
                 || "export_project".equals(value)
                 || "autonomous_edit".equals(value);
     }
