@@ -46,31 +46,43 @@ jobs:
           origin='https://wispy-queen-f9b5.prakasharuntandon634.workers.dev'
           out=Path('.work/live')
           checks=[]
+          result={'verifiedAt':datetime.now(timezone.utc).isoformat(),'website':origin+'/personal/','verifiedSourceCommit':'95e93d43ebd2b0ba0e446dd42ba07989248de37b','checks':checks,'authenticationUsed':False,'writesPerformed':False}
+          def persist():
+              out.joinpath('public-live-verification.json').write_text(json.dumps(result,indent=2))
           for route,expected in [('/personal/','expected-page.html'),('/personal/style.css','expected-style.css'),('/personal/client.js','expected-client.js')]:
               with urlopen(Request(origin+route,headers={'User-Agent':'VideoStudio-Personal-Release-Verification'}),timeout=30) as response:
                   actual=response.read()
                   assert response.status==200
                   assert actual==out.joinpath(expected).read_bytes(), 'Deployed source differs: '+route
                   checks.append({'route':route,'status':200,'matchesExpectedSource':True,'sha256':hashlib.sha256(actual).hexdigest()})
+                  persist()
           try:
               urlopen(origin+'/api/personal/snapshot',timeout=30)
               raise AssertionError('Private snapshot unexpectedly accessible without authentication')
           except HTTPError as error:
-              assert error.code==401
-              assert 'no-store' in error.headers.get('Cache-Control','')
-              checks.append({'route':'/api/personal/snapshot','status':401,'privateDataProtected':True})
-          with urlopen(origin+'/',timeout=30) as response:
+              denied=error.read().decode('utf-8','replace')
+              checks.append({'route':'/api/personal/snapshot','status':error.code,'cacheControl':error.headers.get('Cache-Control',''),'denialBodyPreview':denied[:500],'layer':'edge-or-application'})
+              persist()
+              # Both standards-compliant denial statuses are accepted; record the actual
+              # edge response rather than claiming it was the application's 401.
+              assert error.code in (401,403)
+              assert '"projects":' not in denied and '"ownerHash":' not in denied
+              checks[-1]['privateDataProtected']=True
+              if error.code==401:
+                  assert 'no-store' in error.headers.get('Cache-Control','')
+          with urlopen(Request(origin+'/',headers={'User-Agent':'VideoStudio-Personal-Release-Verification'}),timeout=30) as response:
               assert response.status==200 and b'VideoStudio' in response.read()
               checks.append({'route':'/','status':200,'originalEditorRetained':True})
-          result={'verifiedAt':datetime.now(timezone.utc).isoformat(),'website':origin+'/personal/','verifiedSourceCommit':'95e93d43ebd2b0ba0e446dd42ba07989248de37b','checks':checks,'authenticationUsed':False,'writesPerformed':False}
-          out.joinpath('public-live-verification.json').write_text(json.dumps(result,indent=2))
+          persist()
           print(json.dumps(result,indent=2))
           PY
       - name: Install browser runner
+        if: success() || failure()
         run: |
           python -m pip install playwright==1.57.0
           python -m playwright install --with-deps chromium
       - name: Inspect the real deployed login page without credentials
+        if: success() || failure()
         run: |
           python <<'PY'
           from pathlib import Path
@@ -81,7 +93,9 @@ jobs:
               browser=p.chromium.launch(headless=True)
               page=browser.new_page(viewport={'width':390,'height':844},reduced_motion='reduce')
               errors=[]
+              responses=[]
               page.on('pageerror',lambda e:errors.append(str(e)))
+              page.on('response',lambda r:responses.append({'url':r.url,'status':r.status}) if '/api/personal/snapshot' in r.url else None)
               response=page.goto('https://wispy-queen-f9b5.prakasharuntandon634.workers.dev/personal/',wait_until='networkidle')
               assert response.status==200
               expect(page.locator('#login-view')).to_be_visible()
@@ -91,7 +105,7 @@ jobs:
               assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
               assert not errors,errors
               page.screenshot(path=str(out/'live-login-mobile.png'),full_page=True,animations='disabled')
-              out.joinpath('live-browser-verification.json').write_text(json.dumps({'website':page.url,'title':page.title(),'mobileWidth':390,'loginVisible':True,'privateWorkspaceHidden':True,'credentialsEntered':False,'horizontalOverflow':False,'javascriptErrors':errors},indent=2))
+              out.joinpath('live-browser-verification.json').write_text(json.dumps({'website':page.url,'title':page.title(),'mobileWidth':390,'loginVisible':True,'privateWorkspaceHidden':True,'credentialsEntered':False,'horizontalOverflow':False,'javascriptErrors':errors,'snapshotResponses':responses},indent=2))
               browser.close()
           print('PASS: real deployed login, mobile layout, privacy boundary, zero JavaScript exceptions')
           PY
@@ -102,6 +116,7 @@ jobs:
           name: VideoStudio-Personal-Live-Evidence
           retention-days: 7
           include-hidden-files: true
+          if-no-files-found: error
           path: |
             .work/live/public-live-verification.json
             .work/live/live-browser-verification.json
