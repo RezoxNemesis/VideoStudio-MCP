@@ -431,6 +431,9 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         Button directAnimation = neonButton("Animation Director • Make a Real Sequence", C_CYAN);
         directAnimation.setOnClickListener(v -> animationDirectorDialog());
         box.addView(directAnimation,margins(-1,dp(47),0,0,0,dp(12)));
+        Button benchmark=compactButton("True Combat Rig Test");
+        benchmark.setOnClickListener(v -> combatRigBenchmarkDialog());
+        box.addView(benchmark,margins(-1,dp(44),0,0,0,dp(10)));
 
         FrameLayout viewer = new FrameLayout(this);
         viewer.setBackground(rounded(Color.BLACK, Color.rgb(37, 51, 83), dp(18)));
@@ -789,6 +792,14 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         directorButton.setOnClickListener(v -> animationDirectorDialog());
         directorCard.addView(directorButton,margins(-1,dp(52),dp(12),0,0,0));
         box.addView(directorCard,margins(-1,-2,dp(10),0,0,0));
+
+        LinearLayout physicsCard=card(true);
+        physicsCard.addView(title("True Combat Rig • Movement Benchmark",22));
+        physicsCard.addView(body("Independent 2D joint animation, IK arms and legs, planted feet, fixed destroyed-city background, collision/recoil, continuous sword movement and genuine slow-motion retiming. Generates a separate native MP4 — not a neural restyling of your existing pictures."));
+        Button rigButton=neonButton("Run Real-Motion Sword Fight",C_CYAN);
+        rigButton.setOnClickListener(v -> combatRigBenchmarkDialog());
+        physicsCard.addView(rigButton,margins(-1,dp(52),dp(12),0,0,0));
+        box.addView(physicsCard,margins(-1,-2,dp(10),0,0,0));
 
         String[][] groups = {
                 {"◎ Animate Stills", "AI subject layers, face-aware parallax and organic micro-motion"},
@@ -1417,6 +1428,66 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
      * The Animator owns the complete workflow: no external ffmpeg, manual MCP
      * timeline assembly, camera-only fake animation or public media uploads.
      */
+
+    /**
+     * Focused benchmark for the new articulated engine. This is intentionally
+     * distinct from image-frame animation; it generates real new motion under
+     * a locked procedural camera while preserving every existing project.
+     */
+    private void combatRigBenchmarkDialog() {
+        LinearLayout wrap=column();
+        wrap.setPadding(dp(20),dp(8),dp(20),0);
+        wrap.addView(body("The native engine creates a new two-warrior sword fight with independent IK body motion, planted feet, collision timing and a completely stable ruined-city backdrop. Your existing 40-frame project is preserved."));
+        wrap.addView(body("Duration in seconds (2 to 5)"));
+        EditText duration=numberInput(3.6f);
+        wrap.addView(duration,new LinearLayout.LayoutParams(-1,dp(52)));
+        wrap.addView(body("Render rate"));
+        android.widget.Spinner fpsPicker=new android.widget.Spinner(this);
+        android.widget.ArrayAdapter<String> fpsOptions=new android.widget.ArrayAdapter<>(
+                this,android.R.layout.simple_spinner_item,
+                new String[]{"24 fps • cinematic", "30 fps • smoother"});
+        fpsOptions.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        fpsPicker.setAdapter(fpsOptions);
+        wrap.addView(fpsPicker,new LinearLayout.LayoutParams(-1,dp(56)));
+        wrap.addView(body("Locked background"));
+        android.widget.Spinner backgroundPicker=new android.widget.Spinner(this);
+        android.widget.ArrayAdapter<String> backgrounds=new android.widget.ArrayAdapter<>(
+                this,android.R.layout.simple_spinner_item,
+                new String[]{"Procedural static ruined city (reliable)",
+                        "Estimate fixed scenery from imported image frames (experimental)"});
+        backgrounds.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        backgroundPicker.setAdapter(backgrounds);
+        backgroundPicker.setEnabled(activeProject!=null && activeProject.clips.size()>=5);
+        wrap.addView(backgroundPicker,new LinearLayout.LayoutParams(-1,dp(56)));
+        new AlertDialog.Builder(this)
+                .setTitle("True Combat Rig Benchmark")
+                .setMessage("This tests procedural, physically connected sword combat. It does not yet reconstruct the characters from your imported images or run a neural video model.")
+                .setView(wrap)
+                .setPositiveButton("Generate + Render",(dialog,which)->{
+                    try {
+                        double seconds=Double.parseDouble(duration.getText().toString());
+                        if(seconds<2||seconds>5)
+                            throw new IllegalArgumentException("Duration must be between 2 and 5 seconds");
+                        Intent request=new Intent(this,ControlService.class)
+                                .setAction(ControlService.ACTION_LOCAL_COMBAT_BENCHMARK)
+                                .putExtra("sourceProjectId",activeProject==null?"":activeProject.id)
+                                .putExtra("backgroundMode",backgroundPicker.getSelectedItemPosition()==1
+                                        ? "source_median" : "procedural")
+                                .putExtra("durationSeconds",seconds)
+                                .putExtra("fps",fpsPicker.getSelectedItemPosition()==0?24:30)
+                                .putExtra("width",540)
+                                .putExtra("height",960);
+                        startForegroundService(request);
+                        Toast.makeText(this,"Rig fight queued on Android • progress in Activity",Toast.LENGTH_LONG).show();
+                        showActivity();
+                    }catch(Exception error){
+                        Toast.makeText(this,error.getMessage()==null?"Unable to start":error.getMessage(),Toast.LENGTH_LONG).show();
+                    }
+                })
+                .setNegativeButton("Cancel",null)
+                .show();
+    }
+
     private void animationDirectorDialog() {
         if(activeProject==null || activeProject.clips.size()<2) {
             Toast.makeText(this,"Open a project with at least two image frames",Toast.LENGTH_LONG).show();
