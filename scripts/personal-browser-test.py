@@ -21,6 +21,21 @@ with sync_playwright() as p:
     page = context.new_page()
     errors = []
     page.on('pageerror', lambda e: errors.append(str(e)))
+    # Exercise distinct failures without using a real account or logging a key.
+    diag_context = browser.new_context(viewport={'width': 390, 'height': 844})
+    diag_page = diag_context.new_page()
+    diag_page.goto(BASE, wait_until='networkidle')
+    diag_page.locator('#owner-key').fill('not_registered_'.ljust(48, 'x'))
+    diag_page.get_by_role('button', name='Open my studio').click()
+    expect(diag_page.locator('#login-error')).to_contain_text('Connection key not recognised')
+    diag_page.route('**/api/personal/snapshot', lambda route: route.fulfill(status=401, content_type='application/json', body='{"error":"Sign in to your personal VideoStudio workspace."}'))
+    diag_page.locator('#owner-key').fill(KEY)
+    diag_page.get_by_role('button', name='Open my studio').click()
+    expect(diag_page.locator('#login-error')).to_contain_text('secure session could not be restored')
+    assert diag_page.locator('#owner-key').input_value() == KEY
+    diag_context.close()
+    record('login distinguishes unrecognised key from rejected follow-up session')
+
     page.goto(BASE, wait_until='networkidle')
     expect(page.locator('#login-view')).to_be_visible()
     page.locator('#owner-key').fill(KEY)
