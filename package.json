@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
-    "test": "node scripts/smoke-test.mjs && node --test scripts/connection-test.mjs scripts/personal-test.mjs scripts/personal-http-test.mjs scripts/personal-drive-test.mjs scripts/personal-client-build-test.mjs && node --test scripts/still-character-test.mjs && node --test scripts/still-action-timeline-test.mjs && node --test scripts/temporary-export-test.mjs",
+    "test": "node scripts/smoke-test.mjs && node --test scripts/connection-test.mjs scripts/personal-test.mjs scripts/personal-http-test.mjs scripts/personal-drive-test.mjs scripts/personal-client-build-test.mjs && node --test scripts/still-character-test.mjs && node --test scripts/still-action-timeline-test.mjs && node --test scripts/temporary-export-test.mjs && node --test scripts/pose-sequence-test.mjs",
     "test:personal": "node --test scripts/personal-test.mjs scripts/personal-http-test.mjs scripts/personal-drive-test.mjs scripts/personal-client-build-test.mjs",
     "pretest": "node scripts/bake-personal-client.mjs",
     "pretest:personal": "node scripts/bake-personal-client.mjs"
