@@ -1,5 +1,5 @@
 import {PAGE,STYLE} from './personal-ui.js';
-import CLIENT from './personal-client.js';
+import CLIENT from '../.generated/personal-client.js';
 import {fail} from './personal-state.js';
 import {driveStatus,driveConnect,driveCallback,driveBackup} from './personal-drive.js';
 const cookieName='__Host-vs-personal';

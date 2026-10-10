@@ -6,6 +6,7 @@ on:
     paths:
       - 'src/personal-*'
       - 'scripts/personal-*'
+      - 'scripts/bake-personal-client.mjs'
       - 'wrangler.jsonc'
       - 'package.json'
       - '.github/workflows/personal-website.yml'
@@ -14,10 +15,15 @@ on:
     paths:
       - 'src/personal-*'
       - 'scripts/personal-*'
+      - 'scripts/bake-personal-client.mjs'
       - 'wrangler.jsonc'
       - 'package.json'
       - '.github/workflows/personal-website.yml'
   workflow_dispatch:
+
+defaults:
+  run:
+    shell: bash
 
 permissions:
   contents: read
@@ -41,6 +47,8 @@ jobs:
         run: |
           mkdir -p .work
           npm test 2>&1 | tee .work/backend-tests.log
+      - name: Reproduce and verify browser bundling regression
+        run: node scripts/personal-client-build-test.mjs --bundled
       - name: Production Worker dry-run
         run: npx wrangler deploy --dry-run --outdir .wrangler-personal-dist
       - name: Start actual local Cloudflare runtime and seed isolated test identities
@@ -61,6 +69,12 @@ jobs:
         run: node scripts/personal-runtime-test.mjs verify
       - name: Real browser core interactions
         run: python scripts/personal-browser-test.py 2>&1 | tee .work/browser-tests.log
+      - name: Require completed browser evidence
+        run: |
+          test -s .work/browser-results.json
+          test -s .work/overview-desktop.png
+          test -s .work/overview-mobile.png
+          test -s .work/activity-mobile.png
       - name: Stop local Worker
         if: always()
         run: if [ -f .work/worker.pid ]; then kill "$(cat .work/worker.pid)" 2>/dev/null || true; fi
