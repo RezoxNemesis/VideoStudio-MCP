@@ -22,6 +22,7 @@ with sync_playwright() as p:
     page.goto(BASE + '?generation=character_action', wait_until='domcontentloaded')
     page.wait_for_function('window.VideoStudioCharacter && window.VideoStudioActionTimeline && document.getElementById("vsGenMode")')
     assert page.locator('#vsGenMode').input_value() == 'character_action'
+    page.wait_for_selector('#vsCinematicWorlds', state='attached')
     assert page.locator('#vsCinematicWorlds').evaluate("e => getComputedStyle(e).display") == 'none'
     result = page.evaluate("""async () => {
       const w=320,h=568, source=document.createElement('canvas');
