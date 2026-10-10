@@ -20,8 +20,10 @@ with sync_playwright() as p:
     failures = []
     page.on('pageerror', lambda error: failures.append(str(error)))
     page.goto(BASE + '?generation=character_action', wait_until='domcontentloaded')
-    page.wait_for_function('window.VideoStudioCharacter && document.getElementById("vsGenMode")')
+    page.wait_for_function('window.VideoStudioCharacter && window.VideoStudioActionTimeline && document.getElementById("vsGenMode")')
     assert page.locator('#vsGenMode').input_value() == 'character_action'
+    page.wait_for_selector('#vsCinematicWorlds', state='attached')
+    assert page.locator('#vsCinematicWorlds').evaluate("e => getComputedStyle(e).display") == 'none'
     result = page.evaluate("""async () => {
       const w=320,h=568, source=document.createElement('canvas');
       source.width=w; source.height=h;
@@ -69,10 +71,15 @@ with sync_playwright() as p:
       const render=await window.VideoStudioCharacter.animateImage(project,
         {assetId:'fixture-image',prompt:'Anime duel fight',motionPreset:'duel',duration:2,fps:24,intensity:1},
         services);
+      const plan=window.VideoStudioActionTimeline.compile({motionPreset:'duel'});
+      const strike=window.VideoStudioActionTimeline.sample(plan,.52,3.12,1);
       return {difference,samples,span,engine:render.engine,regions:render.regionCount,
-        preset:render.motionPreset,bytes:render.blob.size};
+        preset:render.motionPreset,bytes:render.blob.size,keyframed:render.keyframed,
+        phases:render.motionPhases,poseFistDx:strike.entries[1].dx,impact:strike.impact};
     }""")
-    assert result['engine'] == 'studio-web-character-region-deformation-v1', result
+    assert result['engine'] == 'studio-web-puppet-keyframe-action-v2', result
+    assert result['keyframed'] and len(result['phases']) == 6, result
+    assert result['poseFistDx'] > .07 and result['impact'] > .95, result
     assert result['preset'] == 'duel' and result['regions'] == 8, result
     assert result['bytes'] > 0 and result['span'] > 10000, result
     assert result['difference']/result['samples'] > 12, (

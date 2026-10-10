@@ -8,6 +8,7 @@ import STUDIO_CINEMATIC_JS from "./studio-cinematic.js";
 import STUDIO_NEURAL_JS from "./studio-neural.js";
 import STUDIO_TEMPORAL_JS from "./studio-temporal.js";
 import STUDIO_CHARACTER_JS from "./studio-character.js";
+import STUDIO_ACTION_TIMELINE_JS from "./studio-action-timeline.js";
 
 const JH = {"content-type":"application/json; charset=UTF-8","cache-control":"no-store"};
 const now = () => new Date().toISOString();
@@ -67,6 +68,10 @@ export class VideoStudioState extends DurableObject {
       executionSurface:"studio-web",
       localMedia:true,
       galleryAccess:false,
+      // Only a real browser heartbeat confirms it is still available. Project updates must not refresh executor liveness.
+      browserVisibility:["visible","hidden"].includes(meta.visibilityState)?meta.visibilityState:(old.browserVisibility||"unknown"),
+      activeBrowserProjectId:clean(meta.activeProjectId||old.activeBrowserProjectId||"",80),
+      lastExecutorHeartbeatAt:["visible","hidden"].includes(meta.visibilityState)?now():(old.lastExecutorHeartbeatAt||null),
       createdAt:old.createdAt||now(),
       lastSeenAt:now()
     };
@@ -1069,6 +1074,7 @@ function serverFor(env,hybridKey=""){
       "real browser-local text-to-video procedural rendering",
       "image-to-video depth motion",
       "single-still WebGL localized character motion (not full generative new-pose synthesis)",
+      "eased pose keyframes, independent articulated regions and secondary cape physics",
       "multi-image story video generation",
       "video-to-video restyling",
       "2D motion graphics generation",
@@ -1123,6 +1129,7 @@ function serverFor(env,hybridKey=""){
       assetId:z.string().min(8).optional(),
       motionPreset:z.enum(["duel","portrait","custom"]).optional(),
       intensity:z.number().min(.2).max(1.6).optional(),
+      poseTracks:z.array(z.array(z.array(z.number()).min(4).max(5)).min(2).max(16)).min(1).max(8).optional(),
       regions:z.array(z.object({
         x:z.number().min(0).max(1),y:z.number().min(0).max(1),
         rx:z.number().min(.025).max(.5),ry:z.number().min(.025).max(.5),
@@ -1139,6 +1146,49 @@ function serverFor(env,hybridKey=""){
       const c=await st.enqueueRuntime(deviceId,projectId,"generate_video",parameters);
       return out({queued:true,commandId:c.id,sequence:c.seq,runtime:"studio-web",note:"Keep Studio Web visible while browser-local generation records the video."});
     }catch(e){return out({queued:false,error:e.message});}
+  });
+
+  s.registerTool("animate_still_character",{
+    description:"Render independently keyframed 2D puppet motion from a specific still image in Studio Web. This is not generative reconstruction of unseen poses. The browser storing the image must be foregrounded.",
+    inputSchema:{
+      deviceId:z.string().min(8),projectId:z.string().min(8),assetId:z.string().min(8),
+      prompt:z.string().max(2000).optional(),
+      motionPreset:z.enum(["duel","portrait"]).default("duel"),
+      duration:z.number().min(2).max(30).default(6),
+      fps:z.number().int().min(12).max(30).default(24),
+      aspect:z.enum(["9:16","16:9","1:1","4:5"]).default("9:16"),
+      quality:z.enum(["720p","1080p"]).default("720p"),
+      intensity:z.number().min(.2).max(1.6).default(1),
+      poseTracks:z.array(z.array(z.array(z.number()).min(4).max(5)).min(2).max(16)).min(1).max(8).optional()
+    }
+  },async({deviceId,projectId,...options})=>{
+    try{
+      const native=await st.appResolve(deviceId);
+      if(native)return out({queued:false,error:"Studio Web's explicit still-asset renderer requires a Studio Web device ID."});
+      const project=await st.project(deviceId,projectId);
+      if(!project)return out({queued:false,error:"Project not found"});
+      if(!(project.assets||[]).some(a=>a.id===options.assetId&&a.kind==="image"))
+        return out({queued:false,error:"Requested image asset not registered in the specified project; refusing another image."});
+      const c=await st.enqueueRuntime(deviceId,projectId,"generate_video",{...options,mode:"character_action"});
+      return out({queued:true,commandId:c.id,sequence:c.seq,runtime:"studio-web",requestedAssetId:options.assetId,note:"Render executes only while the exact browser with this local image is open. Queued does not mean finished."});
+    }catch(error){return out({queued:false,error:error.message});}
+  });
+
+  s.registerTool("studio_executor_status",{
+    description:"Check whether Studio Web browser has a recent heartbeat and can receive queued render commands. Reports cloud queue vs real foreground executor honestly.",
+    inputSchema:{deviceId:z.string().min(8)}
+  },async({deviceId})=>{
+    try{
+      const status=await st.status(deviceId);
+      const ageMs=status.device?.lastExecutorHeartbeatAt?Math.max(0,Date.now()-Date.parse(status.device.lastExecutorHeartbeatAt)):null;
+      return out({deviceId,registered:!!status.device,heartbeatAgeMs:ageMs,
+        recentlyConnected:ageMs!==null&&ageMs<60000,
+        browserForegroundConfirmed:ageMs!==null&&ageMs<60000&&status.device.browserVisibility==="visible",
+        lastObservedBrowserVisibility:status.device?.browserVisibility||"unknown",
+        pendingRuntimeCommands:status.pendingRuntimeCommands,
+        executionPolicy:"Browser-local GPU and IndexedDB. MCP queue persists in Worker; final render cannot run with browser closed.",
+        actionRequired:ageMs!==null&&ageMs<60000&&status.device.browserVisibility==="visible"?"Browser visible; wait for verified command completion.":"Open the exact browser profile with the imported image and keep tab visible while rendering."});
+    }catch(error){return out({error:error.message});}
   });
 
   s.registerTool("probe_studio_neural_gpu",{
@@ -2105,6 +2155,7 @@ export default {
       if(!html.includes("/studio-neural.js")) html=html.replace("</body>",'<script defer src="/studio-neural.js"></script></body>');
       if(!html.includes("/studio-temporal.js")) html=html.replace("</body>",'<script defer src="/studio-temporal.js"></script></body>');
       if(!html.includes("/studio-character.js")) html=html.replace("</body>",'<script defer src="/studio-character.js"></script></body>');
+      if(!html.includes("/studio-action-timeline.js")) html=html.replace("</body>",'<script defer src="/studio-action-timeline.js"></script></body>');
       return new Response(html,{headers:{"content-type":"text/html; charset=UTF-8","cache-control":"no-store"}});
     }
     if(u.pathname==="/studio-runtime.js"&&request.method==="GET") return new Response(STUDIO_RUNTIME_JS,{headers:{"content-type":"application/javascript; charset=UTF-8","cache-control":"no-cache"}});
@@ -2112,6 +2163,7 @@ export default {
     if(u.pathname==="/studio-neural.js"&&request.method==="GET") return new Response(STUDIO_NEURAL_JS,{headers:{"content-type":"application/javascript; charset=UTF-8","cache-control":"no-cache"}});
     if(u.pathname==="/studio-temporal.js"&&request.method==="GET") return new Response(STUDIO_TEMPORAL_JS,{headers:{"content-type":"application/javascript; charset=UTF-8","cache-control":"no-cache"}});
     if(u.pathname==="/studio-character.js"&&request.method==="GET") return new Response(STUDIO_CHARACTER_JS,{headers:{"content-type":"application/javascript; charset=UTF-8","cache-control":"no-cache"}});
+    if(u.pathname==="/studio-action-timeline.js"&&request.method==="GET") return new Response(STUDIO_ACTION_TIMELINE_JS,{headers:{"content-type":"application/javascript; charset=UTF-8","cache-control":"no-cache"}});
     if(u.pathname==="/api/web/config"&&request.method==="GET") return reply({googleDriveClientId:clean(env.GOOGLE_DRIVE_CLIENT_ID||"",300),driveScope:"https://www.googleapis.com/auth/drive.file",storageMode:"user-owned-google-drive"});
     if(u.pathname==="/manifest.webmanifest") return new Response(MANIFEST,{headers:{"content-type":"application/manifest+json"}});
     if(u.pathname==="/icon.svg") return new Response(ICON,{headers:{"content-type":"image/svg+xml"}});

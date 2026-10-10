@@ -382,11 +382,12 @@ const STUDIO_CINEMATIC_JS = String.raw`
             if(tracking==="translation")trackTranslation(sampleGray(ctx,w,h));
             const q=quadAt(t).map(p=>[p[0]*w,p[1]*h]);
 
-            let primary=null,secondary=null,mix=0;
+            let primary=null,secondary=null,mix=0,segmentProgress=.5;
             if(worldLoaded.length){
-              const pos=(elapsed/duration)*worldLoaded.length,idx=Math.min(worldLoaded.length-1,Math.floor(pos)),local=pos-idx;
+              const pos=(elapsed/duration)*worldLoaded.length,idx=Math.min(worldLoaded.length-1,Math.floor(pos));
+              segmentProgress=pos-idx;
               primary=worldLoaded[idx];secondary=worldLoaded[Math.min(worldLoaded.length-1,idx+1)];
-              mix=local>.78?(local-.78)/.22:0;
+              mix=segmentProgress>.78?(segmentProgress-.78)/.22:0;
             }
             const drawWorld=(world,alpha,index,sceneProgress)=>{
               ctx.save();pathQuad(ctx,q);ctx.clip();ctx.globalAlpha=alpha;
@@ -412,7 +413,7 @@ const STUDIO_CINEMATIC_JS = String.raw`
               ctx.restore();
             };
             const sceneIndex=Math.floor((elapsed/duration)*Math.max(1,worldLoaded.length||9));
-            drawWorld(primary,1-mix,sceneIndex,local);if(secondary&&secondary!==primary&&mix>0)drawWorld(secondary,mix,sceneIndex+1,Math.max(0,local-.78)/.22);
+            drawWorld(primary,1-mix,sceneIndex,segmentProgress);if(secondary&&secondary!==primary&&mix>0)drawWorld(secondary,mix,sceneIndex+1,Math.max(0,segmentProgress-.78)/.22);
 
             ctx.save();pathQuad(ctx,q);ctx.clip();ctx.globalCompositeOperation="screen";ctx.globalAlpha=clamp(options.reflection==null?.11:options.reflection,0,.35);ctx.filter="brightness(1.08) contrast(.92)";drawCover(ctx,baseLoaded.video,w,h,1);ctx.restore();
             ctx.globalCompositeOperation="source-over";ctx.globalAlpha=1;ctx.filter="none";

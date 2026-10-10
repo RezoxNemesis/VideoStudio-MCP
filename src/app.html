@@ -594,6 +594,8 @@
             name: /Android/i.test(navigator.userAgent) ? "Android device" : "Web device",
             platform: navigator.platform || "web",
             appVersion: "1.0.0",
+            visibilityState: document.visibilityState,
+            activeProjectId: app.project?.id || localStorage.getItem("vs-project-id") || "",
             capabilities: ["visual-media-bin","thumbnail-timeline","local-render","autonomous-command-relay","persistent-browser-storage"],
           },
         }),
