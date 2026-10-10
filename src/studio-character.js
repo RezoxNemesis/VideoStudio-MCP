@@ -59,7 +59,10 @@ const STUDIO_CHARACTER_JS = String.raw`(() => {
     const custom = Array.isArray(options.regions) && options.regions.length > 0;
     if (custom && options.regions.length > MAX_REGIONS) throw new Error("At most eight motion regions are supported");
     const regions = (custom ? options.regions : PRESETS[preset]).map(validateRegion);
-    return {preset: custom ? "custom" : preset, regions};
+    const planner=window.VideoStudioActionTimeline;
+    const plan=planner&&typeof planner.compile==="function"
+      ? planner.compile({motionPreset:preset,poseTracks:options.poseTracks}) : null;
+    return {preset: custom ? "custom" : preset, regions, plan};
   }
 
   function compile(gl, type, source) {
@@ -98,6 +101,7 @@ const STUDIO_CHARACTER_JS = String.raw`(() => {
       "uniform sampler2D uImage;",
       "uniform vec4 uRegions[8];",
       "uniform vec4 uMove[8];",
+      "uniform vec4 uPose[8];",
       "uniform float uSeconds;",
       "uniform float uBeat;",
       "uniform float uIntensity;",
@@ -121,6 +125,12 @@ const STUDIO_CHARACTER_JS = String.raw`(() => {
       "      if(i==5)motion+=.40*flutter+.28*sin(uSeconds*7.0);",
       "      motion+=uBeat*.09;",
       "      shift+=w*uMove[i].xy*motion*uIntensity;",
+      "      vec2 v=p-center;",
+      "      float angle=uPose[i].z;",
+      "      float ca=cos(angle),sa=sin(angle);",
+      "      vec2 bent=vec2(ca*v.x-sa*v.y,sa*v.x+ca*v.y);",
+      "      vec2 inverseRotation=(v-bent);",
+      "      shift+=w*(uPose[i].xy+inverseRotation+vec2(v.y*uPose[i].w*.16,0.0));",
       "    }",
       "  }",
       "  vec2 samplePoint=clamp(p-shift,vec2(.001),vec2(.999));",
@@ -185,13 +195,20 @@ const STUDIO_CHARACTER_JS = String.raw`(() => {
       seconds:gl.getUniformLocation(program,"uSeconds"),
       beat:gl.getUniformLocation(program,"uBeat"),
       intensity:gl.getUniformLocation(program,"uIntensity"),
-      strike:gl.getUniformLocation(program,"uStrike")
+      strike:gl.getUniformLocation(program,"uStrike"),
+      pose:gl.getUniformLocation(program,"uPose[0]")
     };
     gl.viewport(0,0,width,height);
 
     return {
       canvas,
-      frame(seconds,beat,intensity,strike) {
+      frame(seconds,beat,intensity,strike,poseEntries) {
+        const poseValues=new Float32Array(MAX_REGIONS*4);
+        if(Array.isArray(poseEntries))for(let i=0;i<Math.min(MAX_REGIONS,poseEntries.length);i++){
+          const p=poseEntries[i]||{};
+          poseValues.set([p.dx||0,p.dy||0,p.rotation||0,p.bend||0],i*4);
+        }
+        gl.uniform4fv(uniforms.pose,poseValues);
         gl.uniform1f(uniforms.seconds,seconds);
         gl.uniform1f(uniforms.beat,beat);
         gl.uniform1f(uniforms.intensity,intensity);
@@ -218,7 +235,7 @@ const STUDIO_CHARACTER_JS = String.raw`(() => {
   function drawParticles(ctx,w,h,elapsed,t,rig,intensity) {
     if(rig.preset !== "duel") return;
     const charge=clamp(t/.36,0,1);
-    const clash=burstAt(t,.49,.058);
+    const clash=burstAt(t,.52,.058);
     ctx.save();
     ctx.globalCompositeOperation="screen";
     for(let i=0;i<44;i++){
@@ -257,10 +274,12 @@ const STUDIO_CHARACTER_JS = String.raw`(() => {
   }
 
   function drawFrame(ctx,w,h,t,elapsed,deformer,rig,intensity) {
-    const strike=burstAt(t,.47,.078);
-    const recoil=burstAt(t,.63,.065);
+    const timeline=window.VideoStudioActionTimeline;
+    const pose=rig.plan&&timeline?timeline.sample(rig.plan,t,elapsed,intensity):null;
+    const strike=pose?pose.impact:burstAt(t,.52,.078);
+    const recoil=pose?pose.recoil:burstAt(t,.68,.065);
     const beat=.55*strike+.18*recoil;
-    deformer.frame(elapsed,beat,intensity,strike);
+    deformer.frame(elapsed,beat,intensity,strike,pose&&pose.entries);
     ctx.fillStyle="#000";
     ctx.fillRect(0,0,w,h);
     ctx.save();
@@ -302,9 +321,11 @@ const STUDIO_CHARACTER_JS = String.raw`(() => {
       options.duration=Number(options.duration||8);
       return {
         blob,
-        engine:"studio-web-character-region-deformation-v1",
+        engine:rig.plan?"studio-web-puppet-keyframe-action-v2":"studio-web-character-region-deformation-v1",
         motionPreset:rig.preset,
         regionCount:rig.regions.length,
+        keyframed:!!rig.plan,
+        motionPhases:rig.plan?rig.plan.phases.map(x=>x.label):[],
         neural:false
       };
     } finally {
@@ -316,7 +337,7 @@ const STUDIO_CHARACTER_JS = String.raw`(() => {
   window.VideoStudioCharacter = Object.freeze({
     animateImage,
     selectRig,
-    version:"1.0.0",
+    version:"2.0.0",
     feature:"bounded independent character-region deformation",
     neural:false
   });
