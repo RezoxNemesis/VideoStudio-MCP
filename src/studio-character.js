@@ -282,9 +282,10 @@ const STUDIO_CHARACTER_JS = String.raw`(() => {
   }
 
   async function animateImage(project,options,services) {
-    const asset = project.assets.find(a=>a.id===options.assetId&&a.kind==="image")
-      || project.assets.find(a=>a.kind==="image");
-    if(!asset)throw new Error("Character animation needs a still image imported into the selected project.");
+    const asset = options.assetId
+      ? project.assets.find(a=>a.id===options.assetId&&a.kind==="image")
+      : project.assets.find(a=>a.kind==="image");
+    if(!asset)throw new Error(options.assetId ? "The requested still image is not present in this project; refusing to animate another asset." : "Character animation needs a still image imported into the selected project.");
     const rig=selectRig(options);
     const intensity=clamp(options.intensity === undefined ? 1 : options.intensity,.2,1.6);
     const loaded=await services.loadImageAsset(project,asset);
