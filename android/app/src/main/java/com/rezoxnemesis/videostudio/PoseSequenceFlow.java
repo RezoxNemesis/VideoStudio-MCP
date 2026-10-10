@@ -11,11 +11,11 @@ package com.rezoxnemesis.videostudio;
  * Pure Java: usable in unit tests without Android or external native libraries.
  */
 public final class PoseSequenceFlow {
-    private static final int ANALYSIS_W = 96;
-    private static final int ANALYSIS_H = 160;
-    private static final int GRID_X = 12;
-    private static final int GRID_Y = 20;
-    private static final int SEARCH = 10;
+    private static final int ANALYSIS_W = 128;
+    private static final int ANALYSIS_H = 224;
+    private static final int GRID_X = 16;
+    private static final int GRID_Y = 28;
+    private static final int SEARCH = 9;
     private static final int PATCH = 2;
 
     public static final class Motion {
@@ -33,10 +33,26 @@ public final class PoseSequenceFlow {
         public final Motion forward;
         public final Motion backward;
         public final double confidence;
-        private Pair(Motion a, Motion b) {
+        public final double sceneDifference;
+        public final double changedFraction;
+        public final boolean sceneCutRisk;
+        public final double averageConsistency;
+        private Pair(Motion a, Motion b, double sceneDifference, double changedFraction) {
             forward = a;
             backward = b;
-            confidence = (a.meanConfidence() + b.meanConfidence()) * .5;
+            this.sceneDifference = sceneDifference;
+            this.changedFraction = changedFraction;
+            this.sceneCutRisk = sceneDifference > .29 && changedFraction > .70;
+            double consistent = 0;
+            for(int i=0; i<a.dx.length; i++) {
+                // Opposite-direction matching in the same neighborhood. A
+                // local mismatch indicates occlusion, fast articulation, or
+                // inability of the coarse matcher to follow the limb.
+                double error=Math.hypot(a.dx[i]+b.dx[i],a.dy[i]+b.dy[i]);
+                consistent+=1.0/(1.0 + error*.22);
+            }
+            averageConsistency=consistent/a.dx.length;
+            confidence=(a.meanConfidence()+b.meanConfidence())*.5*averageConsistency;
         }
     }
 
@@ -46,8 +62,18 @@ public final class PoseSequenceFlow {
         check(a, b, width, height);
         byte[] luminanceA = luminance(a, width, height);
         byte[] luminanceB = luminance(b, width, height);
+        int changed=0,total=0;
+        long changeSum=0;
+        for(int i=0;i<luminanceA.length;i+=3) {
+            int diff=Math.abs((luminanceA[i]&255)-(luminanceB[i]&255));
+            changeSum+=diff;
+            if(diff>30) changed++;
+            total++;
+        }
         return new Pair(estimate(luminanceA, luminanceB),
-                estimate(luminanceB, luminanceA));
+                estimate(luminanceB, luminanceA),
+                changeSum/(255.0*Math.max(1,total)),
+                changed/(double)Math.max(1,total));
     }
 
     /** Produce a new pose frame at a normalized position [0, 1]. */
@@ -60,8 +86,14 @@ public final class PoseSequenceFlow {
         }
         if (time == 0) return a.clone();
         if (time == 1) return b.clone();
+        if (flow.sceneCutRisk) {
+            // Never stretch two unrelated scenes into a warped ghost.
+            return (time < .5 ? a : b).clone();
+        }
 
-        final float t = (float) (time * time * (3 - 2 * time));
+        // Linear timing preserves real velocity of authored poses.
+        // Previous smoothstep made every transition freeze at endpoints.
+        final float t = (float) time;
         final float oneMinus = 1 - t;
         final float scaleX = width / (float) ANALYSIS_W;
         final float scaleY = height / (float) ANALYSIS_H;
@@ -89,6 +121,18 @@ public final class PoseSequenceFlow {
                 float dxb = bilerp(flow.backward.dx, i00, i10, i01, i11, fx, fy);
                 float dyb = bilerp(flow.backward.dy, i00, i10, i01, i11, fx, fy);
 
+                int originalIndex = y*width+x;
+                int pxA = a[originalIndex], pxB = b[originalIndex];
+                int localDifference = Math.abs((pxA>>>16&255)-(pxB>>>16&255))
+                    + Math.abs((pxA>>>8&255)-(pxB>>>8&255))
+                    + Math.abs((pxA&255)-(pxB&255));
+                if(localDifference < 18) {
+                    // Lock matching static-city pixels exactly; background
+                    // ghosting should never arise from flow over texture.
+                    out[originalIndex] = pxA;
+                    continue;
+                }
+
                 // Forward displacements are measured on source A.
                 // Backward displacements are measured on target B.
                 float xa = x - t * dxa * scaleX;
@@ -98,6 +142,14 @@ public final class PoseSequenceFlow {
 
                 int ca = pixel(a, width, height, xa, ya);
                 int cb = pixel(b, width, height, xb, yb);
+                float mismatch = Math.abs(dxa+dxb)+Math.abs(dya+dyb);
+                if(mismatch>6f && localDifference>165) {
+                    // Local forward/backward motion is inconsistent:
+                    // a direct-sided sample is more honest than two
+                    // semi-transparent overlapping hands or swords.
+                    out[originalIndex] = t < .5f ? ca : cb;
+                    continue;
+                }
                 int r = Math.round(((ca >>> 16) & 255) * oneMinus
                         + ((cb >>> 16) & 255) * t);
                 int g = Math.round(((ca >>> 8) & 255) * oneMinus

@@ -428,6 +428,9 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         });
         top.addView(exportButton);
         box.addView(top, margins(-1, -2, 0, dp(10), 0, 0));
+        Button directAnimation = neonButton("Animation Director • Make a Real Sequence", C_CYAN);
+        directAnimation.setOnClickListener(v -> animationDirectorDialog());
+        box.addView(directAnimation,margins(-1,dp(47),0,0,0,dp(12)));
 
         FrameLayout viewer = new FrameLayout(this);
         viewer.setBackground(rounded(Color.BLACK, Color.rgb(37, 51, 83), dp(18)));
@@ -778,6 +781,14 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         animateButton.setOnClickListener(v -> animateImagesDialog());
         animateCard.addView(animateButton, margins(-1, dp(52), dp(12), 0, 0, 0));
         box.addView(animateCard, margins(-1, -2, dp(10), 0, 0, 0));
+
+        LinearLayout directorCard=card(true);
+        directorCard.addView(title("Animation Director • Real Frame Motion",22));
+        directorCard.addView(body("Turn your imported image sequence into an authentic frame-by-frame animation. Automatic action timing, controlled impact slow motion, original frame fidelity. Optional experimental optical flow — no Ken Burns or collage tricks."));
+        Button directorButton=neonButton("Animate Image Timeline",C_CYAN);
+        directorButton.setOnClickListener(v -> animationDirectorDialog());
+        directorCard.addView(directorButton,margins(-1,dp(52),dp(12),0,0,0));
+        box.addView(directorCard,margins(-1,-2,dp(10),0,0,0));
 
         String[][] groups = {
                 {"◎ Animate Stills", "AI subject layers, face-aware parallax and organic micro-motion"},
@@ -1398,6 +1409,77 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                     showEditor();
                 })
                 .setNegativeButton("Cancel", null)
+                .show();
+    }
+
+
+    /**
+     * The Animator owns the complete workflow: no external ffmpeg, manual MCP
+     * timeline assembly, camera-only fake animation or public media uploads.
+     */
+    private void animationDirectorDialog() {
+        if(activeProject==null || activeProject.clips.size()<2) {
+            Toast.makeText(this,"Open a project with at least two image frames",Toast.LENGTH_LONG).show();
+            return;
+        }
+        int frameCount=0;
+        for(ProjectStore.Clip clip:activeProject.clips) {
+            ProjectStore.Asset asset=activeProject.asset(clip.assetId);
+            if(asset==null || asset.mime==null || !asset.mime.startsWith("image/")) {
+                Toast.makeText(this,"Animation Director requires an image-only timeline",Toast.LENGTH_LONG).show();
+                return;
+            }
+            frameCount++;
+        }
+        final int eligibleFrames = frameCount;
+        LinearLayout wrap=column();
+        wrap.setPadding(dp(20),dp(8),dp(20),0);
+        wrap.addView(body("Use all "+frameCount+" frames in their existing order. A new animation project is created; your originals stay unchanged."));
+        wrap.addView(body("Animation method"));
+        android.widget.Spinner mode=new android.widget.Spinner(this);
+        String[] choices={"Cinematic frame sequence (recommended)",
+                "Experimental optical-flow in-betweens (may ghost fast movement)"};
+        android.widget.ArrayAdapter<String> modeAdapter=new android.widget.ArrayAdapter<>(
+                this,android.R.layout.simple_spinner_item,choices);
+        modeAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        mode.setAdapter(modeAdapter);
+        wrap.addView(mode,new LinearLayout.LayoutParams(-1,dp(56)));
+        wrap.addView(body("Playback frame rate (24 or 30)"));
+        EditText frameRate=numberInput(30);
+        wrap.addView(frameRate,new LinearLayout.LayoutParams(-1,dp(50)));
+        wrap.addView(body("Impact frame numbers, e.g. 21,23,24 (optional; otherwise automatically detected)"));
+        EditText impact=new EditText(this);
+        impact.setHint("Auto detect impact");
+        impact.setSingleLine(true);
+        impact.setTextColor(C_TEXT);
+        impact.setHintTextColor(C_MUTED);
+        wrap.addView(impact,new LinearLayout.LayoutParams(-1,dp(52)));
+        new AlertDialog.Builder(this)
+                .setTitle("VideoStudio Animation Director")
+                .setMessage("Genuine authored-frame playback is the default. Interpolation is experimental and cannot invent unseen body poses. No Gallery browsing.")
+                .setView(wrap)
+                .setPositiveButton("Animate + Render",(dialog,button)->{
+                    try {
+                        int fps=Integer.parseInt(frameRate.getText().toString().trim());
+                        if(fps!=24 && fps!=30)
+                            throw new IllegalArgumentException("Choose 24 or 30 fps");
+                        if(mode.getSelectedItemPosition()==1 && eligibleFrames>40)
+                            throw new IllegalArgumentException("Experimental flow supports at most 40 images");
+                        Intent request=new Intent(this,ControlService.class)
+                                .setAction(ControlService.ACTION_LOCAL_ANIMATION_STUDIO)
+                                .putExtra("projectId",activeProject.id)
+                                .putExtra("method",mode.getSelectedItemPosition()==1?"flow":"direct")
+                                .putExtra("fps",fps)
+                                .putExtra("impactFrames",impact.getText().toString().trim());
+                        startForegroundService(request);
+                        Toast.makeText(this,"Animation Director started • follow Activity",Toast.LENGTH_LONG).show();
+                        showActivity();
+                    } catch(Exception error) {
+                        Toast.makeText(this,error.getMessage()==null?"Unable to start animation":error.getMessage(),
+                                Toast.LENGTH_LONG).show();
+                    }
+                })
+                .setNegativeButton("Cancel",null)
                 .show();
     }
 

@@ -57,6 +57,35 @@ public class PoseSequenceFlowTest {
         PoseSequenceFlow.between(a, b, W, H, PoseSequenceFlow.analyse(a, b, W, H), 1.25);
     }
 
+    @Test public void movingSubjectNeverShiftsIdenticalStaticCityPixels() {
+        int[] a=image(25),b=image(34);
+        PoseSequenceFlow.Pair motion=PoseSequenceFlow.analyse(a,b,W,H);
+        int[] between=PoseSequenceFlow.between(a,b,W,H,motion,.5);
+        // The far sky and ruins remain pixel-identical despite high motion
+        // on the foreground subject.
+        for(int y=0;y<30;y++)
+            for(int x=0;x<W;x++)
+                assertEquals("static pixel changed",a[y*W+x],between[y*W+x]);
+    }
+
+    @Test public void largeUnrelatedSceneChangeAvoidsSemiTransparentGhosts() {
+        int[] a=new int[W*H],b=new int[W*H];
+        Arrays.fill(a,0xff112233);
+        Arrays.fill(b,0xffddddef);
+        PoseSequenceFlow.Pair pair=PoseSequenceFlow.analyse(a,b,W,H);
+        assertTrue(pair.sceneCutRisk);
+        assertArrayEquals(a,PoseSequenceFlow.between(a,b,W,H,pair,.2));
+        assertArrayEquals(b,PoseSequenceFlow.between(a,b,W,H,pair,.8));
+    }
+
+    @Test public void exposesMotionConfidenceAndCutRiskDiagnostics() {
+        PoseSequenceFlow.Pair pair=PoseSequenceFlow.analyse(image(22),image(29),W,H);
+        assertTrue(pair.confidence>=0&&pair.confidence<=1);
+        assertTrue(pair.averageConsistency>=0&&pair.averageConsistency<=1);
+        assertTrue(pair.sceneDifference>=0&&pair.sceneDifference<=1);
+        assertFalse(pair.sceneCutRisk);
+    }
+
     private static double center(int[] img) {
         double sum = 0, n = 0;
         for (int y = 0; y < H; y++)

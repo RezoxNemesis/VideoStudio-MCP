@@ -136,6 +136,7 @@ public final class ExecutionTruthPolicy {
         return "prompt_video".equals(value)
                 || "animate_images".equals(value)
                 || "animate_pose_sequence".equals(value)
+                || "animate_timeline".equals(value)
                 || "export_project".equals(value)
                 || "autonomous_edit".equals(value);
     }
