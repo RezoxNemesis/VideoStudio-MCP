@@ -9,6 +9,7 @@ import STUDIO_NEURAL_JS from "./studio-neural.js";
 import STUDIO_TEMPORAL_JS from "./studio-temporal.js";
 import STUDIO_CHARACTER_JS from "./studio-character.js";
 import STUDIO_ACTION_TIMELINE_JS from "./studio-action-timeline.js";
+import LOCAL_VIDEO_DOWNLOAD_HTML from "./local-download.js";
 
 const JH = {"content-type":"application/json; charset=UTF-8","cache-control":"no-store"};
 const now = () => new Date().toISOString();
@@ -2271,6 +2272,15 @@ const SW='const C="videostudio-studio-web-v3";self.addEventListener("install",e=
 export default {
   async fetch(request,env,ctx){
     const u=new URL(request.url);
+    if((u.pathname==="/download-local"||u.pathname==="/download-local/")&&request.method==="GET"){
+      return new Response(LOCAL_VIDEO_DOWNLOAD_HTML,{status:200,headers:{
+        "content-type":"text/html; charset=UTF-8",
+        "cache-control":"private, no-store",
+        "referrer-policy":"no-referrer",
+        "x-content-type-options":"nosniff",
+        "content-security-policy":"default-src 'none'; base-uri 'none'; form-action 'none'; object-src 'none'; frame-ancestors 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'"
+      }});
+    }
     if(u.pathname==="/"&&request.method==="GET"){
       let html=APP_HTML.includes("/studio-runtime.js")?APP_HTML:APP_HTML.replace("</body>",'<script defer src="/studio-runtime.js"></script></body>');
       if(!html.includes("/studio-cinematic.js")) html=html.replace("</body>",'<script defer src="/studio-cinematic.js"></script></body>');

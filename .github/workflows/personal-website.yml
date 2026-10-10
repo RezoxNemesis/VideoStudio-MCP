@@ -80,6 +80,8 @@ jobs:
           python scripts/personal-browser-test.py 2>&1 | tee .work/browser-tests.log
       - name: Verify local character motion in a real browser WebGL context
         run: python scripts/still-character-browser-test.py
+      - name: Verify one-tap exact VideoStudio local MP4 delivery
+        run: python scripts/local-download-browser-test.py
       - name: Stable screenshots and preserved editor smoke test
         run: python scripts/personal-capture.py
       - name: Require completed browser evidence
