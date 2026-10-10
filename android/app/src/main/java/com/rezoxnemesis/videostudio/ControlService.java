@@ -44,6 +44,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     public static final String ACTION_SYNC = "com.rezoxnemesis.videostudio.SYNC_STATE";
     public static final String ACTION_LOCAL_ANIMATE = "com.rezoxnemesis.videostudio.LOCAL_ANIMATE_IMAGES";
     public static final String ACTION_LOCAL_ANIMATION_STUDIO = "com.rezoxnemesis.videostudio.LOCAL_ANIMATION_STUDIO";
+    public static final String ACTION_LOCAL_COMBAT_BENCHMARK = "com.rezoxnemesis.videostudio.LOCAL_COMBAT_BENCHMARK";
     public static final String ACTION_LOCAL_PROMPT_VIDEO = "com.rezoxnemesis.videostudio.LOCAL_PROMPT_VIDEO";
     public static final String ACTION_LOCAL_EXPORT = "com.rezoxnemesis.videostudio.LOCAL_EXPORT_PROJECT";
     private static final String CHANNEL = "videostudio_private_control";
@@ -158,7 +159,34 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         } else if (ACTION_SYNC.equals(action)) {
             syncProtocolState();
             protocol.registerNow();
-         } else if (ACTION_LOCAL_ANIMATION_STUDIO.equals(action)) {
+          } else if (ACTION_LOCAL_COMBAT_BENCHMARK.equals(action)) {
+            final Intent request=intent;
+            directorSetupExecutor.submit(() -> {
+                try {
+                    JSONObject args=new JSONObject();
+                    args.put("sourceProjectId",
+                            request.getStringExtra("sourceProjectId") == null
+                                    ? "" : request.getStringExtra("sourceProjectId"));
+                    args.put("durationSeconds",request.getDoubleExtra("durationSeconds",3.6));
+                    args.put("fps",request.getIntExtra("fps",24));
+                    args.put("width",request.getIntExtra("width",540));
+                    args.put("height",request.getIntExtra("height",960));
+                    args.put("render",true);
+                    args.put("quality","720p");
+                    args.put("fileName","VideoStudio_True_Combat_Rig_"+
+                            System.currentTimeMillis()+".mp4");
+                    JSONObject queued=queueCombatRig(args);
+                    ActivityLog.add(this,"user","True combat rig benchmark queued",
+                            "Native articulated movement • "+queued.optInt("expectedFrames",0)+" frames",
+                            "queued",0,null,queued.optString("projectId",""));
+                    syncProtocolState();
+                }catch(Exception error){
+                    ActivityLog.add(this,"user","True combat rig benchmark failed",
+                            error.getMessage()==null?"Failed to prepare combat simulation":error.getMessage(),
+                            "failed",null,null,request.getStringExtra("sourceProjectId"));
+                }
+            });
+        } else if (ACTION_LOCAL_ANIMATION_STUDIO.equals(action)) {
             // Decode/thumbnail planning must not block Android's service
             // main thread. Export itself uses the guarded heavy-work lane.
             final Intent request = intent;
@@ -601,6 +629,9 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                     return;
                 case "restore_model_pack_from_drive":
                     complete(command, queueDriveModelPackRestore(p));
+                    return;
+                case "animate_combat_rig":
+                    complete(command,queueCombatRig(p));
                     return;
                 case "animate_timeline":
                     complete(command, queueAnimateTimeline(p));
@@ -1545,6 +1576,9 @@ public final class ControlService extends Service implements AppProtocol.Callbac
 
                 JSONObject queued;
                 switch (action) {
+                    case "animate_combat_rig":
+                        queued = queueCombatRig(parameters);
+                        break;
                     case "animate_timeline":
                         queued = queueAnimateTimeline(parameters);
                         break;
@@ -2006,6 +2040,107 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         result.put("cameraMovement",false);
         result.put("neuralMotionModelInstalled",false);
         result.put("experimentalFlow","flow".equals(method));
+        return result;
+    }
+
+    /**
+     * True geometric animation benchmark: separate skeletons, analytical
+     * IK, planted contact feet, continuous sword arcs and a fixed background.
+     * This deliberately does NOT claim to reconstruct the uploaded artwork or
+     * to run a neural video-generation model. The original project, if named,
+     * is used only to identify the intended benchmark, not as a background.
+     */
+    private JSONObject queueCombatRig(JSONObject p) throws Exception {
+        String sourceId=p.optString("sourceProjectId","");
+        ProjectStore.Project source=sourceId.isEmpty()?null:resolveProject(sourceId);
+        int fps=p.optInt("fps",24);
+        int width=p.optInt("width",540),height=p.optInt("height",960);
+        double duration=p.optDouble("durationSeconds",3.6);
+        if(fps!=24 && fps!=30)throw new IllegalArgumentException("FPS must be 24 or 30");
+        if(width<320||height<540||width>720||height>1280||width%2!=0||height%2!=0)
+            throw new IllegalArgumentException("Choose an even portrait size up to 720x1280");
+        if(!Double.isFinite(duration)||duration<2||duration>5)
+            throw new IllegalArgumentException("Combat duration must be 2 to 5 seconds");
+        String quality="1080p".equals(p.optString("quality","720p"))?"1080p":"720p";
+        String fileName=sanitizeFileName(p.optString("fileName",
+                "VideoStudio_True_Combat_"+System.currentTimeMillis()+".mp4"));
+        boolean render=p.optBoolean("render",true);
+        String outputId=p.optString("outputProjectId","");
+        ProjectStore.Project output;
+        if(outputId.isEmpty()){
+            output=store.create("True Combat Rig • "+
+                    (source==null?"Movement Benchmark":source.name));
+            output.sourcePrompt="combat-rig: true articulated stickman animation with fixed procedural world";
+            store.save(output);
+        } else {
+            output=store.get(outputId);
+            if(output==null||output.sourcePrompt==null||
+                    !output.sourcePrompt.startsWith("combat-rig:"))
+                throw new IllegalArgumentException("Invalid combat recovery project");
+        }
+        final ProjectStore.Project target=output;
+        final int outWidth=width,outHeight=height,frames=fps;
+        final double seconds=duration;
+        JSONObject durable=new JSONObject(p.toString());
+        durable.put("projectId",target.id);
+        durable.put("outputProjectId",target.id);
+        durable.put("sourceProjectId",sourceId);
+        durable.put("fps",fps);
+        durable.put("width",width);
+        durable.put("height",height);
+        durable.put("durationSeconds",duration);
+        durable.put("render",render);
+        durable.put("fileName",fileName);
+        durable.put("quality",quality);
+        durable.put("aspect","9:16");
+        JobManager.Job job=submitRecoverableHeavy("animate_combat_rig",
+                durable,target.id,"True Combat Rig • "+target.name,state -> {
+                    checkpoint(state,"Combat rig","Solving joints and sword timing in a locked world",3,target.id);
+                    jobs.awaitSafeCheckpoint(state,"combat_rig_setup");
+                    NativeCombatRigComposer.compose(this,store,target,outWidth,outHeight,
+                            frames,seconds,(current,total,time,impact)->{
+                                if(current%6==0||current==total||current==1){
+                                    int progress=4+(int)(58.0*current/Math.max(1,total));
+                                    checkpoint(state,"Combat rig",
+                                            current+"/"+total+" independent articulated frames",
+                                            progress,target.id);
+                                    jobs.awaitSafeCheckpoint(state,"combat_frame_"+current);
+                                }
+                            });
+                    JSONObject details=new JSONObject();
+                    details.put("engine","articulated-two-bone-IK-v1");
+                    details.put("sourceImageRestyling",false);
+                    details.put("cameraLocked",true);
+                    details.put("footPlanting",true);
+                    details.put("swordContact",true);
+                    details.put("impactRetiming",true);
+                    details.put("neuralVideoGenerator",false);
+                    details.put("generatedFrames",target.clips.size());
+                    details.put("sourceProjectUnmodified",true);
+                    state.setResult(details);
+                    syncProtocolState();
+                    checkpoint(state,"Combat rig","Native motion frames ready for Media3",64,target.id);
+                    if(render){
+                        jobs.awaitSafeCheckpoint(state,"combat_native_render");
+                        runExportBlocking(target,"9:16",quality,fileName,state);
+                        checkpoint(state,"Combat rig","Verified native MP4 exported",100,target.id);
+                    }else{
+                        checkpoint(state,"Combat rig","Editable articulated frames ready",100,target.id);
+                    }
+                });
+        JSONObject result=ok();
+        result.put("queued",true);
+        result.put("durableRecovery",true);
+        result.put("jobId",job.id);
+        result.put("projectId",target.id);
+        result.put("outputProjectId",target.id);
+        result.put("sourceProjectId",sourceId);
+        result.put("expectedFrames",(int)Math.round(duration*fps));
+        result.put("render",render);
+        result.put("engine","articulated-two-bone-IK-v1");
+        result.put("background","fixed-procedural-city");
+        result.put("sourceImageRestyling",false);
+        result.put("neuralVideoGenerator",false);
         return result;
     }
 
@@ -3180,6 +3315,9 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             out.put("chunkedFrameIngest", true);
             out.put("poseSequenceEngineReady", true);
             out.put("animationDirectorReady", true);
+            out.put("combatRigBenchmarkReady", true);
+            out.put("combatRigBackend", "articulated-two-bone-IK-v1");
+            out.put("combatRigBackgroundLocked", true);
             out.put("animationDirectorModes", "native-direct,experimental-flow");
             out.put("flowSceneCutProtection", true);
             out.put("nativeAnimationMaxAuthoredFrames", NativeAnimationDirector.MAX_SOURCE_FRAMES);
@@ -3533,6 +3671,11 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 && !queuedResult.optBoolean("render", true)) {
             requirePlayableOutput = false;
         }
+        if ("animate_combat_rig".equals(action)
+                && queuedResult != null
+                && !queuedResult.optBoolean("render", true)) {
+            requirePlayableOutput = false;
+        }
         if ("animate_pose_sequence".equals(action)
                 && queuedResult != null
                 && !queuedResult.optBoolean("render", true)) {
@@ -3654,6 +3797,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             case "append_frame_chunk": return "Importing private animation frame chunk";
             case "finish_frame_transfer": return "Verifying complete private frame";
             case "frame_transfer_status": return "Checking private frame transfer";
+            case "animate_combat_rig": return "Generating articulated stickman sword combat";
             case "animate_timeline": return "Directing cinematic image sequence";
             case "animate_images": return "Animating still images";
             case "job_status": return "Reading native job status";
