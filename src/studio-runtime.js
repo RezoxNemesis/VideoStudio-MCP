@@ -507,6 +507,15 @@ const STUDIO_RUNTIME_JS = String.raw`
     } finally { URL.revokeObjectURL(loaded.url); }
   }
 
+
+  async function generateCharacterAction(project, options, progress) {
+    const provider=window.VideoStudioCharacter;
+    if(!provider||typeof provider.animateImage!=="function"){
+      throw new Error("Character animation renderer is not loaded. Refresh the editor and retry.");
+    }
+    return provider.animateImage(project,options,{loadImageAsset,drawCover,dimensions,recordCanvas,progress});
+  }
+
   async function generateStory(project, options, progress) {
     const assets=project.assets.filter(a=>a.kind==="image").slice(0,24);
     if(!assets.length) throw new Error("Story video needs image assets");
@@ -611,8 +620,8 @@ const STUDIO_RUNTIME_JS = String.raw`
 
   async function generate(options) {
     if(runtimeState.busy) throw new Error("Another Studio Web generation is already running");
-    runtimeState.busy=true;
     const project=await getProject();
+    runtimeState.busy=true;
     const mode=String(options.mode||byId("vsGenMode")&&byId("vsGenMode").value||"prompt_scene");
     const prompt=String(options.prompt!=null?options.prompt:(byId("vsGenPrompt")&&byId("vsGenPrompt").value)||"").trim();
     const style=String(options.style||byId("vsGenStyle")&&byId("vsGenStyle").value||"cinematic");
@@ -625,7 +634,9 @@ const STUDIO_RUNTIME_JS = String.raw`
     try{
       progress(1);
       let output;
-      if(mode==="image_motion") output=await generateImageMotion(project,{...options,prompt,style,duration,fps,quality,aspect,seed},progress);
+      const actionIntent=mode==="character_action"||(mode==="image_motion"&&/anime action|anime battle|duel|fight|combat|clash|punch|character motion|character animation/i.test(prompt));
+      if(actionIntent) output=await generateCharacterAction(project,{...options,prompt,style,duration,fps,quality,aspect,seed},progress);
+      else if(mode==="image_motion") output=await generateImageMotion(project,{...options,prompt,style,duration,fps,quality,aspect,seed},progress);
       else if(mode==="story_video") output=await generateStory(project,{...options,prompt,style,duration,fps,quality,aspect,seed},progress);
       else if(mode==="video_restyle") output=await generateVideoRestyle(project,{...options,prompt,style,duration,fps,quality,aspect,seed},progress);
       else if(mode==="audio_visualizer") output=await generateAudioVisualizer(project,{...options,prompt,style,duration,fps,quality,aspect,seed},progress);
@@ -649,7 +660,7 @@ const STUDIO_RUNTIME_JS = String.raw`
       if(localStorage.getItem("vs-drive-auto-upload")==="1"&&runtimeState.driveToken){
         try{await uploadSingleAsset(project,asset);}catch(error){console.warn("Auto Drive upload",error);}
       }
-      return {ok:true,asset,engine:output.engine,mode,prompt,duration:asset.duration,realVideo:true,neural:false,note:"Rendered as a real browser-local video. This engine does not claim neural photoreal synthesis."};
+      return {ok:true,asset,engine:output.engine,mode,prompt,duration:asset.duration,realVideo:true,neural:false,motionPreset:output.motionPreset||undefined,regionCount:output.regionCount||undefined,note:output.motionPreset?"Localized WebGL character deformation and effects. This is not neural new-pose synthesis.":"Rendered as a real browser-local video. This engine does not claim neural photoreal synthesis."};
     } finally {runtimeState.busy=false;}
   }
 
@@ -857,9 +868,11 @@ const STUDIO_RUNTIME_JS = String.raw`
     section.innerHTML=
       '<div class="vsRuntimeGrid">'+
       '<div class="vsRuntimeCard"><h4>Generation Studio <span class="vsBadge">REAL LOCAL RENDER</span></h4><div class="vsMuted">Creates actual MP4/WebM video in your browser. No fake progress cards, no paid generation API.</div>'+
-      '<div class="vsField"><label>GENERATION TYPE</label><select id="vsGenMode"><option value="prompt_scene">Text → Video · procedural cinematic</option><option value="image_motion">Image → Video · depth motion</option><option value="story_video">Images → Story Video</option><option value="video_restyle">Video → Video · restyle</option><option value="motion_graphics">2D Motion Graphics</option><option value="procedural_3d">3D Procedural Scene</option><option value="audio_visualizer">Audio → Visualizer Video</option><option value="abstract_vfx">Abstract / VFX Generator</option></select></div>'+
+      '<div class="vsField"><label>GENERATION TYPE</label><select id="vsGenMode"><option value="prompt_scene">Text → Video · procedural cinematic</option><option value="image_motion">Image → Video · depth motion</option><option value="character_action">Still → Character animation · WebGL rig</option><option value="story_video">Images → Story Video</option><option value="video_restyle">Video → Video · restyle</option><option value="motion_graphics">2D Motion Graphics</option><option value="procedural_3d">3D Procedural Scene</option><option value="audio_visualizer">Audio → Visualizer Video</option><option value="abstract_vfx">Abstract / VFX Generator</option></select></div>'+
       '<div class="vsField"><label>PROMPT / DIRECTION</label><textarea id="vsGenPrompt" placeholder="A neon monsoon city at night, slow cinematic movement, atmospheric reflections"></textarea></div>'+
       '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:7px"><div class="vsField"><label>DURATION</label><input id="vsGenDuration" type="number" min="1" max="60" value="8"></div><div class="vsField"><label>STYLE</label><select id="vsGenStyle"><option value="cinematic">Cinematic</option><option value="dreamy">Dreamy</option><option value="neon">Neon</option><option value="film">Film</option><option value="mono">Monochrome</option></select></div><div class="vsField"><label>FPS</label><select id="vsGenFps"><option>30</option><option>24</option><option>60</option></select></div></div>'+
+      '<div class="vsField"><label>STILL CHARACTER ANIMATION</label><select id="vsCharPreset"><option value="auto">Auto-detect · portrait or duel</option><option value="duel">Anime duel · two actors and cloth</option><option value="portrait">Portrait · face, arms, hair and fabric</option></select></div>'+ 
+      '<div class="vsField"><label>MOTION INTENSITY (0.2–1.6)</label><input id="vsCharIntensity" type="range" min="0.2" max="1.6" step="0.1" value="1"><div class="vsMuted">Local deformation moves image regions independently. It cannot synthesize entirely new character poses.</div></div>'+ 
       '<div class="vsRow"><button id="vsGenerateBtn" class="vsRuntimeBtn primary">Generate real video</button><button id="vsGenUseSelected" class="vsRuntimeBtn">Use selected media</button></div><div class="vsProgress"><i id="vsGenProgress"></i></div><div id="vsGenStatus" class="vsStatus">Ready. Neural photoreal synthesis is not falsely claimed; these are executable browser renderers.</div></div>'+
       '<div class="vsRuntimeCard"><h4>Google Drive Storage <span class="vsBadge">USER OWNED</span></h4><div class="vsMuted">Uses Google Drive <b>drive.file</b> permission. VideoStudio can access only files/folders it creates or the user opens with it, not the whole Drive.</div>'+
       '<div class="vsField"><label>GOOGLE OAUTH WEB CLIENT ID</label><input id="vsDriveClientId" placeholder="Configured by server, or paste once here"></div>'+
@@ -872,7 +885,9 @@ const STUDIO_RUNTIME_JS = String.raw`
     byId("vsDriveSync").onclick=async()=>{try{await syncProject({interactive:true});}catch(error){toast(error.message);}};
     byId("vsDriveRestore").onclick=async()=>{try{await restoreProject({interactive:true});}catch(error){toast(error.message);}};
     byId("vsDriveOffload").onclick=async()=>{try{if(confirm("Sync all project media to your Drive, verify the upload, then remove local browser copies?"))await offloadProject({interactive:true});}catch(error){toast(error.message);}};
-    byId("vsGenerateBtn").onclick=async()=>{try{const project=await getProject();const selected=localStorage.getItem("vs-runtime-selected-asset")||"";await generate({mode:byId("vsGenMode").value,prompt:byId("vsGenPrompt").value,duration:Number(byId("vsGenDuration").value||8),style:byId("vsGenStyle").value,fps:Number(byId("vsGenFps").value||30),quality:project.settings.quality,aspect:project.settings.aspect,assetId:selected});setTimeout(()=>location.reload(),850);}catch(error){toast(error.message);if(byId("vsGenStatus"))byId("vsGenStatus").textContent=error.message;}};
+    byId("vsGenerateBtn").onclick=async()=>{try{const project=await getProject();const selected=localStorage.getItem("vs-runtime-selected-asset")||"";await generate({mode:byId("vsGenMode").value,prompt:byId("vsGenPrompt").value,duration:Number(byId("vsGenDuration").value||8),style:byId("vsGenStyle").value,fps:Number(byId("vsGenFps").value||30),motionPreset:byId("vsCharPreset").value==="auto"?undefined:byId("vsCharPreset").value,intensity:Number(byId("vsCharIntensity").value||1),quality:project.settings.quality,aspect:project.settings.aspect,assetId:selected});setTimeout(()=>location.reload(),850);}catch(error){toast(error.message);if(byId("vsGenStatus"))byId("vsGenStatus").textContent=error.message;}};
+    const requestedMode=new URLSearchParams(location.search).get("generation");
+    if(requestedMode==="character_action"||requestedMode==="image_motion")byId("vsGenMode").value=requestedMode;
     byId("vsGenUseSelected").onclick=()=>{const cards=[...document.querySelectorAll(".mediaCard.active,.clip.active")];if(!cards.length){toast("Select media in the Media Bin or timeline first");return;}const projectId=currentProjectId();getProject().then(project=>{const activeIndex=[...document.querySelectorAll(".mediaCard")].findIndex(x=>x.classList.contains("active"));const asset=activeIndex>=0?project.assets[activeIndex]:null;if(asset){localStorage.setItem("vs-runtime-selected-asset",asset.id);toast("Selected "+asset.name+" for generation");}});};
     resolveDriveClientId().then(id=>{if(client&&!client.value)client.value=id;}).catch(()=>{});
   }
