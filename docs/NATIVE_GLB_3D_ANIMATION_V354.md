@@ -1,7 +1,7 @@
 # VideoStudio 3.5.4 — Genuine 3D skinned GLB model viewer
 
 ## What this actually implements
-**Real Android GPU 3D rendering** through open-source Google Filament 1.76.0 (Filament Android + gltfio Android + Android utilities). User-owned monolithic glTF 2.0 GLB assets have true depth, textured materials/PBR, lighting, a perspective camera, skeletal skinning, embedded glTF animation clips and actual interpolated bone matrices. Unlike rotating/stretches of 2D screenshots, this runtime has genuine renderable 3D geometry.
+**Real Android GPU 3D rendering** through open-source Google Filament 1.74.0 (Filament Android + gltfio Android + Android utilities). User-owned monolithic glTF 2.0 GLB assets have true depth, textured materials/PBR, lighting, a perspective camera, skeletal skinning, embedded glTF animation clips and actual interpolated bone matrices. Unlike rotating/stretches of 2D screenshots, this runtime has genuine renderable 3D geometry.
 
 ## How to use (Android only, no laptop)
 1. Open any VideoStudio project, then Editor → **Real 3D GLB Model • Skinned Motion Preview** or AI Tools → **Open Real 3D Animation Studio**.
