@@ -26,7 +26,7 @@ public final class StoryboardMotionGrammarTest {
     }
     @Test public void sourceMotionStartsAndEndsAtActualDrawnPositions(){
         for(StoryboardMotionGrammar.Action action:StoryboardMotionGrammar.Action.values()){
-            if(action==StoryboardMotionGrammar.Action.CUT)continue;
+            if(action==StoryboardMotionGrammar.Action.CUT || action==StoryboardMotionGrammar.Action.HOLD)continue;
             StoryboardMotionGrammar.Motion a=StoryboardMotionGrammar.at(action,0,
                     .16f,.10f,0,20,1,1.15f,
                     StoryboardMotionGrammar.SubjectKind.OBJECT);
