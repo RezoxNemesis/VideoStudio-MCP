@@ -1682,6 +1682,26 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                                                   String projectId,
                                                   String jobName,
                                                   JobManager.Work work) {
+        return submitRecoverableGuarded(action, parameters, projectId,
+                jobName, JobManager.Kind.HEAVY, work);
+    }
+
+    /** Disk/Drive project transfers are serialized but need no GPU. */
+    private JobManager.Job submitRecoverableTransfer(String action,
+                                                     JSONObject parameters,
+                                                     String projectId,
+                                                     String jobName,
+                                                     JobManager.Work work) {
+        return submitRecoverableGuarded(action, parameters, projectId,
+                jobName, JobManager.Kind.TRANSFER, work);
+    }
+
+    private JobManager.Job submitRecoverableGuarded(String action,
+                                                   JSONObject parameters,
+                                                   String projectId,
+                                                   String jobName,
+                                                   JobManager.Kind kind,
+                                                   JobManager.Work work) {
         String requestedPlan = parameters == null ? "" : parameters.optString("_recoveryPlanId", "");
         String planId = requestedPlan;
         if (planId.isEmpty() || recoveryPlans.get(planId) == null) {
@@ -1689,23 +1709,21 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         } else {
             recoveryPlans.markResuming(planId);
         }
-
         final String durablePlanId = planId;
-        JobManager.Job job = jobs.submit(jobName, JobManager.Kind.HEAVY, state -> {
+        JobManager.Job job = jobs.submit(jobName, kind, state -> {
             recoveryPlans.attachJob(durablePlanId, state.id);
             try {
                 work.run(state);
                 recoveryPlans.completeByJob(state.id);
             } catch (InterruptedException interrupted) {
                 if ("cancelled".equals(state.state)) recoveryPlans.cancelByJob(state.id);
-                else recoveryPlans.failByJob(state.id, "Interrupted after checkpoint; safe to resume", true);
+                else recoveryPlans.failByJob(state.id,
+                        "Interrupted after checkpoint; safe to resume", true);
                 throw interrupted;
             } catch (Exception error) {
-                recoveryPlans.failByJob(
-                        state.id,
-                        error.getMessage() == null ? "Recoverable heavy job failure" : error.getMessage(),
-                        true
-                );
+                recoveryPlans.failByJob(state.id,
+                        error.getMessage() == null ? "Recoverable background job failure" : error.getMessage(),
+                        true);
                 throw error;
             }
         });
@@ -1862,7 +1880,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         JSONObject durableParameters = new JSONObject(p.toString());
         durableParameters.put("projectId", project.id);
 
-        JobManager.Job job = submitRecoverableHeavy(
+        JobManager.Job job = submitRecoverableTransfer(
                 "offload_project_to_drive",
                 durableParameters,
                 project.id,
@@ -1918,7 +1936,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         JSONObject durableParameters = new JSONObject(p.toString());
         durableParameters.put("projectId", project.id);
 
-        JobManager.Job job = submitRecoverableHeavy(
+        JobManager.Job job = submitRecoverableTransfer(
                 "restore_project_from_drive",
                 durableParameters,
                 project.id,
@@ -1968,7 +1986,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         JSONObject durableParameters = new JSONObject(p.toString());
         durableParameters.put("id", packId);
 
-        JobManager.Job job = submitRecoverableHeavy(
+        JobManager.Job job = submitRecoverableTransfer(
                 "archive_model_pack_to_drive",
                 durableParameters,
                 "",
@@ -2073,7 +2091,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         JSONObject durableParameters = new JSONObject(p.toString());
         durableParameters.put("projectId", project.id);
 
-        JobManager.Job job = submitRecoverableHeavy(
+        JobManager.Job job = submitRecoverableTransfer(
                 "sync_project_to_drive",
                 durableParameters,
                 project.id,
