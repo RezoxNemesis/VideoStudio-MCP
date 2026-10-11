@@ -240,7 +240,9 @@ const checks = [
     multigenreRenderer.includes("StoryboardCameraDirector.at") &&
     multigenreCamera.includes("float coverage=1+2.3f") &&
     multigenreRenderer.includes("StoryboardInteractionSolver.resolve") &&
-    multigenreSoftMesh.includes("drawBitmapMesh") &&
+    multigenreSoftMesh.includes("deformBitmap") &&
+    multigenreRenderer.includes("blendSourceSprites") &&
+    multigenreRenderer.includes("canvas.drawBitmap(blended") &&
     multigenreComposer.includes("StoryboardLayerRenderer")],
   ["VideoStudio can use actual ML Kit person segmentation and diagram / landscape renderers",
     multigenreML.includes("Segmentation.getClient") &&
