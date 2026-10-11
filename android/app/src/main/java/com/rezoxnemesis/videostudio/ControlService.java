@@ -38,6 +38,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 public final class ControlService extends Service implements AppProtocol.Callback {
     public static final String ACTION_CANCEL_ALL = "com.rezoxnemesis.videostudio.CANCEL_ALL";
+    public static final String ACTION_CANCEL_JOB = "com.rezoxnemesis.videostudio.CANCEL_ONE_NATIVE_JOB";
     public static final String ACTION_PAUSE = "com.rezoxnemesis.videostudio.PAUSE_CONTROL";
     public static final String ACTION_RESUME = "com.rezoxnemesis.videostudio.RESUME_CONTROL";
     public static final String ACTION_RECONNECT = "com.rezoxnemesis.videostudio.RECONNECT";
@@ -139,7 +140,21 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         String action = intent == null ? "" : intent.getAction();
-        if (ACTION_CANCEL_ALL.equals(action)) {
+        if (ACTION_CANCEL_JOB.equals(action)) {
+            String jobId=intent==null?"":intent.getStringExtra("jobId");
+            boolean cancelled=jobId!=null&&!jobId.isEmpty()&&jobs.cancel(jobId);
+            if(cancelled){
+                recoveryPlans.cancelByJob(jobId);
+                ActivityLog.add(this,"user","Cancelled selected render",
+                        "Native job "+jobId.substring(0,Math.min(8,jobId.length()))+
+                                " cancelled; other jobs were preserved",
+                        "success",null,null,null);
+            }else{
+                ActivityLog.add(this,"user","Selected native job not cancelled",
+                        "Job already finished or no longer exists","info",null,null,null);
+            }
+            syncProtocolState();
+        } else if (ACTION_CANCEL_ALL.equals(action)) {
             int cancelled = cancelAllNativeWork();
             ActivityLog.add(this, "user", "Cancel all jobs", cancelled + " active job(s) cancelled", "success", null, null, null);
         } else if (ACTION_PAUSE.equals(action)) {
