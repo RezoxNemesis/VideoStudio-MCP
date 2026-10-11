@@ -2851,7 +2851,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                                     requestServiceSync();
                                     new AlertDialog.Builder(this)
                                             .setTitle("Recovery report")
-                                            .setMessage(outcome.toString(2))
+                                            .setMessage(outcome.toString())
                                             .setPositiveButton("OK",(dia,which)->showHome())
                                             .show();
                                 });
