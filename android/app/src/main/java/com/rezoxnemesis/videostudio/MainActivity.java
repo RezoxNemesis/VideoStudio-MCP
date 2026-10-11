@@ -1709,7 +1709,110 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         showActivity();
     }
 
-    private void showTools() {
+    /** Organized AI and advanced tools, not a wall of oversized cards. */
+    private void showTools(){
+        ScrollView scroll=baseScroll();
+        LinearLayout box=column();
+        box.setPadding(dp(14),dp(14),dp(14),dp(26));
+        scroll.addView(box);
+        box.addView(title("AI Magic & Pro Tools",25));
+        box.addView(body("Choose what you're creating. Every button opens a real VideoStudio action; "+
+                "experimental presets are clearly marked."),
+                margins(-1,-2,dp(3),dp(7),0,0));
+        LinearLayout prompt=card(true);
+        prompt.addView(title("Prompt → Finished Video",18));
+        prompt.addView(body("Describe the scenes, movement, pacing and style."));
+        Button generate=neonButton("✦ Generate from Prompt",C_MAGENTA);
+        generate.setOnClickListener(v->promptVideoDialog());
+        prompt.addView(generate,margins(-1,dp(50),dp(8),0,0,0));
+        box.addView(prompt);
+
+        String[] tabs={"Create","Animate","Enhance","Text & Audio","Manage"};
+        HorizontalScrollView nav=new HorizontalScrollView(this);
+        nav.setHorizontalScrollBarEnabled(false);
+        LinearLayout choices=new LinearLayout(this);
+        for(int i=0;i<tabs.length;i++){
+            final int n=i;
+            Button button=studioButton(tabs[i],()->{
+                studioToolsHubTab=n;showTools();
+            });
+            button.setBackground(rounded(studioToolsHubTab==i?0xff213e77:C_CARD_2,
+                    studioToolsHubTab==i?C_CYAN:0xff303d5c,dp(12)));
+            choices.addView(button,margins(dp(119),dp(46),0,0,0,dp(6)));
+        }
+        nav.addView(choices);
+        box.addView(nav,margins(-1,dp(52),dp(10),0,0,0));
+
+        ArrayList<String[]> sections=new ArrayList<>();
+        switch(studioToolsHubTab){
+            case 0:
+                sections.add(new String[]{"Open Human Editor","Editor"});
+                sections.add(new String[]{"New Project","New"});
+                sections.add(new String[]{"Import Media","Import"});
+                sections.add(new String[]{"Watch All Renders","Renders"});
+                sections.add(new String[]{"AI Storyboard Director","Animation Director"});
+                break;
+            case 1:
+                sections.add(new String[]{"Animate Imported Stills","Animate Stills"});
+                sections.add(new String[]{"Animation Director","Animation Director"});
+                sections.add(new String[]{"Rig Original Characters","Rig Builder"});
+                sections.add(new String[]{"Render Rigged 2D","Render Rigged 2D"});
+                sections.add(new String[]{"Preview 3D GLB","3D Model Viewer"});
+                sections.add(new String[]{"Render 3D Combat","Render 3D Fight"});
+                sections.add(new String[]{"Combat Motion Test","Combat Benchmark"});
+                break;
+            case 2:
+                for(StudioToolCatalog.Tool t:StudioToolCatalog.group(2))
+                    sections.add(new String[]{t.label+(t.experimental?" *":""),t.label});
+                for(StudioToolCatalog.Tool t:StudioToolCatalog.group(1))
+                    sections.add(new String[]{t.label+(t.experimental?" *":""),t.label});
+                break;
+            case 3:
+                for(StudioToolCatalog.Tool t:StudioToolCatalog.group(3))
+                    sections.add(new String[]{t.label+(t.experimental?" *":""),t.label});
+                break;
+            case 4:
+                sections.add(new String[]{"Connect ChatGPT","Connect"});
+                sections.add(new String[]{"Native Jobs & Thermal","Jobs"});
+                sections.add(new String[]{"My Projects","Projects"});
+                sections.add(new String[]{"Archive to Google Drive","Archive"});
+                sections.add(new String[]{"All Generated MP4s","Renders"});
+                break;
+        }
+        for(int i=0;i<sections.size();i+=2){
+            LinearLayout row=new LinearLayout(this);
+            for(int j=i;j<Math.min(i+2,sections.size());j++){
+                String label=sections.get(j)[0];
+                String action=sections.get(j)[1];
+                Button button=studioButton(label,()->{
+                    switch(action){
+                        case "Editor":showEditor();return;
+                        case "New":createProjectDialog();return;
+                        case "Import":pickMedia();return;
+                        case "Renders":showStudioRenderLibrary();return;
+                        case "Animate Stills":animateImagesDialog();return;
+                        case "Connect":showStudioConnectionHub();return;
+                        case "Jobs":showStudioJobDetails();return;
+                        case "Projects":showStudioProjectLibrary();return;
+                        case "Archive":archiveActiveProjectToCloud();return;
+                        default:performStudioTool(action);return;
+                    }
+                });
+                row.addView(button,new LinearLayout.LayoutParams(0,dp(60),1));
+            }
+            if(sections.size()-i==1)row.addView(new View(this),
+                    new LinearLayout.LayoutParams(0,dp(60),1));
+            box.addView(row,margins(-1,dp(60),dp(6),0,0,0));
+        }
+        box.addView(studioButton("⌕ Search All Studio Tools",this::findStudioTool),
+                margins(-1,dp(47),dp(12),0,0,0));
+        box.addView(body("* Experimental effects need rendered-MP4 QA. "+
+                "ChatGPT autonomous control is optional; the same editing tools work manually."),
+                margins(-1,-2,dp(8),0,0,0));
+        setScreen(scroll,"tools");
+    }
+
+    private void showLegacyTools() {
         ScrollView scroll = baseScroll();
         LinearLayout box = column();
         box.setPadding(dp(16), dp(18), dp(16), dp(28));
