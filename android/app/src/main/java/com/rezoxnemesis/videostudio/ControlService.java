@@ -756,6 +756,9 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 case "animate_storyboard_artwork":
                     complete(command,queueStoryboardArtwork(p));
                     return;
+                case "storyboard_artwork_preflight":
+                    complete(command,storyboardArtworkPreflight(p));
+                    return;
                 case "save_source_rig_profile":
                     complete(command, saveSourceRigProfile(p));
                     syncProtocolState();
@@ -2647,6 +2650,61 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         result.put("count", profiles.length());
         result.put("galleryAccess", false);
         return result;
+    }
+
+    /**
+     * Cheap, owner-scoped inventory for the next animation shot.
+     * Reports exact four-rig pairs; NEVER silently reroutes to optical-flow
+     * or a generic 3D skeleton when the user's actual artwork is not marked.
+     */
+    private JSONObject storyboardArtworkPreflight(JSONObject p) throws Exception {
+        String projectId=p.optString("projectId","");
+        if(projectId.isEmpty())throw new IllegalArgumentException("Source project required");
+        ProjectStore.Project original=store.get(projectId);
+        if(original==null)throw new IllegalArgumentException("Source project is not installed");
+        java.util.Map<String,Rig2DProfile[]> annotated=new java.util.HashMap<>();
+        for(Rig2DProfile rig:new Rig2DProjectStore(this,store).list(projectId)){
+            if(rig.swordTip==null||rig.outline.length<3)continue;
+            Rig2DProfile[] pair=annotated.get(rig.sourceAssetId);
+            if(pair==null){pair=new Rig2DProfile[2];annotated.put(rig.sourceAssetId,pair);}
+            pair[rig.black?0:1]=rig;
+        }
+        JSONArray ready=new JSONArray(),missing=new JSONArray();
+        for(int i=0;i<original.clips.size();i++){
+            ProjectStore.Asset asset=original.asset(original.clips.get(i).assetId);
+            if(asset==null||asset.mime==null||!asset.mime.startsWith("image/"))continue;
+            Rig2DProfile[] pair=annotated.get(asset.id);
+            if(pair==null||pair[0]==null||pair[1]==null){
+                missing.put(new JSONObject()
+                        .put("clipIndex",i)
+                        .put("assetId",asset.id)
+                        .put("name",asset.name)
+                        .put("required","black and white source-traced 2D masks and sword endpoints"));
+            }
+            if(i+1>=original.clips.size()||pair==null||pair[0]==null||pair[1]==null)
+                continue;
+            ProjectStore.Asset next=original.asset(original.clips.get(i+1).assetId);
+            if(next==null||next.mime==null||!next.mime.startsWith("image/")||
+                    next.id.equals(asset.id))continue;
+            Rig2DProfile[] second=annotated.get(next.id);
+            if(second==null||second[0]==null||second[1]==null)continue;
+            JSONObject sample=new JSONObject()
+                    .put("fromClipIndex",i).put("toClipIndex",i+1)
+                    .put("fromAssetId",asset.id).put("toAssetId",next.id)
+                    .put("blackFromRigId",pair[0].id)
+                    .put("whiteFromRigId",pair[1].id)
+                    .put("blackToRigId",second[0].id)
+                    .put("whiteToRigId",second[1].id);
+            ready.put(sample);
+        }
+        return ok()
+                .put("projectId",projectId)
+                .put("sourceClipCount",original.clips.size())
+                .put("readyShotPairs",ready)
+                .put("missingTracedFrames",missing)
+                .put("currentNativeEngine","source-artwork-2d-mesh-v1")
+                .put("realNeuralPoseGeneratorInstalled",false)
+                .put("galleryAccess",false);
     }
 
     private static float[] requiredStoryboardTip(JSONObject p,String name,
@@ -4620,6 +4678,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             case "list_source_rig_profiles": return "Reading original source-character rigs";
             case "render_rigged_2d": return "Animating original masked fighters through native 2D mesh skinning";
             case "animate_storyboard_artwork": return "Animating original storyboard keyframes with source-textured character motion";
+            case "storyboard_artwork_preflight": return "Checking whether real imported storyboard actors are ready to animate";
             case "render_gltf_combat": return "Rendering two real glTF skinned 3D characters into Media3 video";
             case "animate_timeline": return "Directing cinematic image sequence";
             case "animate_images": return "Animating still images";
