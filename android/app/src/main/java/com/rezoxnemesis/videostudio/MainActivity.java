@@ -1178,6 +1178,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
             case "Move Left": moveStudioClip(-1); return;
             case "Move Right": moveStudioClip(1); return;
             case "Animation Director": animationDirectorDialog();return;
+            case "Storyboard Artwork": storyboardArtworkDialog();return;
             case "Rig Builder": open2DRigEditor();return;
             case "Render Rigged 2D": queueUserRiggedDuel();return;
             case "3D Model Viewer": open3DModelViewer();return;
@@ -1877,6 +1878,9 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         });
         top.addView(exportButton);
         box.addView(top, margins(-1, -2, 0, dp(10), 0, 0));
+        Button artwork=neonButton("Storyboard Art → Moving Fighters (2D Beta)",C_MAGENTA);
+        artwork.setOnClickListener(v->storyboardArtworkDialog());
+        box.addView(artwork,margins(-1,dp(49),0,0,0,dp(8)));
         Button directAnimation = neonButton("Animation Director • Make a Real Sequence", C_CYAN);
         directAnimation.setOnClickListener(v -> animationDirectorDialog());
         box.addView(directAnimation,margins(-1,dp(47),0,0,0,dp(12)));
@@ -1886,7 +1890,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         Button render3D=neonButton("Export Real 3D Sword Fight • GLB",C_MAGENTA);
         render3D.setOnClickListener(v -> choose3DCombatActors());
         box.addView(render3D,margins(-1,dp(48),0,0,0,dp(10)));
-        Button rigEditor=neonButton("Character Rig Builder • Tap Bones + Trace Body",C_CYAN);
+        Button rigEditor=neonButton("Trace Original 2D Fighters + Sword",C_CYAN);
         rigEditor.setOnClickListener(v -> open2DRigEditor());
         box.addView(rigEditor,margins(-1,dp(48),0,0,0,dp(10)));
         Button benchmark=compactButton("True Combat Rig Test");
@@ -2310,6 +2314,109 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         startActivity(editor);
     }
 
+    /**
+     * First source-accurate animation milestone. The owner marks BOTH
+     * illustrated fighters (not visible 3D skeletons) in each of TWO
+     * adjacent storyboard images using the touch-first Rig Builder.
+     *
+     * Only already-imported project assets are eligible. Missing outlines,
+     * frame ordering and sword tips block the job rather than producing
+     * another incorrect stickman or background zoom.
+     */
+    private void storyboardArtworkDialog() {
+        if(activeProject==null || activeProject.clips.size()<2) {
+            Toast.makeText(this,"Import at least two storyboard images",Toast.LENGTH_LONG).show();
+            return;
+        }
+        Rig2DProjectStore rigStore=new Rig2DProjectStore(this,store);
+        java.util.Map<String,Rig2DProfile[]> byFrame=new java.util.HashMap<>();
+        for(Rig2DProfile rig:rigStore.list(activeProject.id)){
+            if(rig.swordTip==null||rig.outline.length<3)continue;
+            Rig2DProfile[] profiles=byFrame.get(rig.sourceAssetId);
+            if(profiles==null){profiles=new Rig2DProfile[2];byFrame.put(rig.sourceAssetId,profiles);}
+            profiles[rig.black?0:1]=rig;
+        }
+        ArrayList<Integer> starts=new ArrayList<>();
+        ArrayList<String> labels=new ArrayList<>();
+        for(int i=0;i+1<activeProject.clips.size();i++){
+            ProjectStore.Asset first=activeProject.asset(activeProject.clips.get(i).assetId);
+            ProjectStore.Asset second=activeProject.asset(activeProject.clips.get(i+1).assetId);
+            if(first==null||second==null||
+                    first.mime==null||second.mime==null||
+                    !first.mime.startsWith("image/")||
+                    !second.mime.startsWith("image/")||
+                    first.id.equals(second.id))continue;
+            Rig2DProfile[] a=byFrame.get(first.id),b=byFrame.get(second.id);
+            if(a==null||b==null||a[0]==null||a[1]==null||
+                    b[0]==null||b[1]==null)continue;
+            starts.add(i);
+            labels.add((i+1)+" → "+(i+2)+" · "+first.name+" → "+second.name);
+            if(labels.size()>=40)break;
+        }
+        if(starts.isEmpty()) {
+            new AlertDialog.Builder(this)
+                    .setTitle("Prepare two authentic storyboard frames")
+                    .setMessage("VideoStudio needs a black and white body outline, "+
+                            "sixteen hidden 2D landmarks, and the end of each "+
+                            "real sword in BOTH adjacent source images. "+
+                            "Trace them with the 2D Rig Builder. The video "+
+                            "will display original fighter textures, NOT "+
+                            "the markup used to guide deformation.")
+                    .setPositiveButton("Open 2D Rig Builder",(d,w)->open2DRigEditor())
+                    .setNegativeButton("Cancel",null).show();
+            return;
+        }
+        String[] options=labels.toArray(new String[0]);
+        new AlertDialog.Builder(this)
+                .setTitle("Choose two continuous storyboard keyframes")
+                .setItems(options,(dialog,selected)->{
+                    int index=starts.get(selected);
+                    ProjectStore.Asset first=activeProject.asset(
+                            activeProject.clips.get(index).assetId);
+                    ProjectStore.Asset last=activeProject.asset(
+                            activeProject.clips.get(index+1).assetId);
+                    Rig2DProfile[] before=byFrame.get(first.id);
+                    Rig2DProfile[] after=byFrame.get(last.id);
+                    android.widget.Spinner beat=new android.widget.Spinner(this);
+                    String[] beats={"ADVANCE","STRIKE","PARRY","LEAP","IMPACT","KNOCKBACK"};
+                    android.widget.ArrayAdapter<String> adapter=new android.widget.ArrayAdapter<>(
+                            this,android.R.layout.simple_spinner_item,beats);
+                    adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+                    beat.setAdapter(adapter);
+                    if(index<2)beat.setSelection(0);else beat.setSelection(1);
+                    LinearLayout panel=column();
+                    panel.setPadding(dp(18),dp(12),dp(18),dp(12));
+                    panel.addView(body("Original textures · fixed ruined city · "+
+                            "natural pose deformation · swords stay attached."),margins(-1,-2,dp(12),0,0,0));
+                    panel.addView(body("Fight action"),margins(-1,-2,dp(6),0,0,0));
+                    panel.addView(beat,new LinearLayout.LayoutParams(-1,dp(54)));
+                    panel.addView(body("2.6 seconds · 24 FPS · 432 × 768 portrait. "+
+                            "Scene/camera changes too large for 2D reconstruction "+
+                            "will stop with a clear warning."));
+                    new AlertDialog.Builder(this)
+                            .setTitle("Animate original artwork")
+                            .setView(panel)
+                            .setPositiveButton("Animate + Export",(dlg,which)->{
+                                Intent task=new Intent(this,ControlService.class)
+                                        .setAction(ControlService.ACTION_LOCAL_STORYBOARD_ARTWORK)
+                                        .putExtra("projectId",activeProject.id)
+                                        .putExtra("blackFromRigId",before[0].id)
+                                        .putExtra("whiteFromRigId",before[1].id)
+                                        .putExtra("blackToRigId",after[0].id)
+                                        .putExtra("whiteToRigId",after[1].id)
+                                        .putExtra("beat",beats[beat.getSelectedItemPosition()])
+                                        .putExtra("durationSeconds",2.6);
+                                startForegroundService(task);
+                                Toast.makeText(this,"Storyboard artwork animation requested. "+
+                                        "Check Activity for frame samples and MP4.",
+                                        Toast.LENGTH_LONG).show();
+                                showActivity();
+                            })
+                            .setNegativeButton("Cancel",null).show();
+                })
+                .setNegativeButton("Cancel",null).show();
+    }
+
     private void queueUserRiggedDuel(){
         if(activeProject==null)return;
         Rig2DProjectStore rigs=new Rig2DProjectStore(this,store);
@@ -2388,7 +2495,8 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
             case 1:
                 sections.add(new String[]{"Animate Imported Stills","Animate Stills"});
                 sections.add(new String[]{"Animation Director","Animation Director"});
-                sections.add(new String[]{"Rig Original Characters","Rig Builder"});
+                sections.add(new String[]{"Storyboard → Moving Artwork","Storyboard Artwork"});
+                sections.add(new String[]{"Trace Original Characters","Rig Builder"});
                 sections.add(new String[]{"Render Rigged 2D","Render Rigged 2D"});
                 sections.add(new String[]{"Preview 3D GLB","3D Model Viewer"});
                 sections.add(new String[]{"Render 3D Combat","Render 3D Fight"});
