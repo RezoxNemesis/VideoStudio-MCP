@@ -431,6 +431,9 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         Button directAnimation = neonButton("Animation Director • Make a Real Sequence", C_CYAN);
         directAnimation.setOnClickListener(v -> animationDirectorDialog());
         box.addView(directAnimation,margins(-1,dp(47),0,0,0,dp(12)));
+        Button model3D=neonButton("Real 3D GLB Model • Skinned Motion Preview",C_CYAN);
+        model3D.setOnClickListener(v -> open3DModelViewer());
+        box.addView(model3D,margins(-1,dp(48),0,0,0,dp(10)));
         Button rigEditor=neonButton("Character Rig Builder • Tap Bones + Trace Body",C_CYAN);
         rigEditor.setOnClickListener(v -> open2DRigEditor());
         box.addView(rigEditor,margins(-1,dp(48),0,0,0,dp(10)));
@@ -756,6 +759,16 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         ui.postDelayed(activityRefresh, 1500);
     }
 
+    private void open3DModelViewer(){
+        if(activeProject==null){
+            Toast.makeText(this,"Open a VideoStudio project first",Toast.LENGTH_SHORT).show();
+            return;
+        }
+        Intent viewer=new Intent(this,FilamentGlbActivity.class);
+        viewer.putExtra("projectId",activeProject.id);
+        startActivity(viewer);
+    }
+
     private void open2DRigEditor() {
         if(activeProject==null){
             Toast.makeText(this,"Open an imported image project first",Toast.LENGTH_LONG).show();
@@ -854,6 +867,13 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         directorCard.addView(directorButton,margins(-1,dp(52),dp(12),0,0,0));
         box.addView(directorCard,margins(-1,-2,dp(10),0,0,0));
 
+        LinearLayout modelCard=card(true);
+        modelCard.addView(title("Real 3D Animation • GLB Skeletal Models",22));
+        modelCard.addView(body("Load a user-selected glTF 2.0 GLB model with actual mesh geometry, material texture, bones, authored motion clips, directional light, perspective and camera orbit. Purely local GPU rendering; unlike a flat image, the model must already include true 3D surfaces and animation."));
+        Button modelButton=neonButton("Open Real 3D Animation Studio",C_CYAN);
+        modelButton.setOnClickListener(v -> open3DModelViewer());
+        modelCard.addView(modelButton,margins(-1,dp(52),dp(12),0,0,0));
+        box.addView(modelCard,margins(-1,-2,dp(10),0,0,0));
         LinearLayout sourcedRigCard=card(true);
         sourcedRigCard.addView(title("Real 2D Character Rigging • Original Artwork",22));
         sourcedRigCard.addView(body("Draw a source character outline and mark joints ONCE, then animate that same textured character with native IK and attached swords. Mark black and white actors separately; these are re-usable project-private rigs, not image morphing. 3D hidden anatomy is not generated."));
