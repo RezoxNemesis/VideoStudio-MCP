@@ -2901,34 +2901,71 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
     }
 
     private void trimDialog() {
-        LinearLayout wrap = column();
-        wrap.setPadding(dp(22), 0, dp(22), 0);
-        EditText start = numberInput(selectedClip.inMs / 1000f);
-        EditText end = numberInput(selectedClip.outMs / 1000f);
-        wrap.addView(body("Start seconds"));
+        if(activeProject==null||selectedClip==null)return;
+        ProjectStore.Asset asset=activeProject.asset(selectedClip.assetId);
+        final long maximum=StudioTrimMath.sourceLength(
+                asset==null?0:asset.durationMs,selectedClip);
+        LinearLayout wrap=column();
+        wrap.setPadding(dp(20),dp(5),dp(20),dp(7));
+        wrap.addView(body("Drag the trim handles, or type exact seconds."));
+        wrap.addView(body("Start / In-point"));
+        EditText start=numberInput(selectedClip.inMs/1000f);
         wrap.addView(start);
-        wrap.addView(body("End seconds"));
+        SeekBar inSeek=new SeekBar(this);
+        inSeek.setMax(1000);
+        inSeek.setProgress(StudioTrimMath.toSeek(selectedClip.inMs,maximum));
+        inSeek.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener(){
+            @Override public void onProgressChanged(SeekBar bar,int position,boolean user){
+                if(user)start.setText(String.format(Locale.US,"%.2f",
+                        StudioTrimMath.fromSeek(position,maximum)/1000.0));
+            }
+            @Override public void onStartTrackingTouch(SeekBar bar){}
+            @Override public void onStopTrackingTouch(SeekBar bar){}
+        });
+        wrap.addView(inSeek,margins(-1,dp(45),0,0,0,0));
+        wrap.addView(body("End / Out-point"));
+        EditText end=numberInput(selectedClip.outMs/1000f);
         wrap.addView(end);
-        new AlertDialog.Builder(this)
-                .setTitle("Trim clip")
+        SeekBar outSeek=new SeekBar(this);
+        outSeek.setMax(1000);
+        outSeek.setProgress(StudioTrimMath.toSeek(selectedClip.outMs,maximum));
+        outSeek.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener(){
+            @Override public void onProgressChanged(SeekBar bar,int position,boolean user){
+                if(user)end.setText(String.format(Locale.US,"%.2f",
+                        StudioTrimMath.fromSeek(position,maximum)/1000.0));
+            }
+            @Override public void onStartTrackingTouch(SeekBar bar){}
+            @Override public void onStopTrackingTouch(SeekBar bar){}
+        });
+        wrap.addView(outSeek,margins(-1,dp(45),0,0,0,0));
+        Button playheadIn=studioButton("Use Playhead as In",()->{
+            StudioTimelineClock.Position p=StudioTimelineClock.locate(
+                    activeProject.clips,studioPlayheadMs);
+            if(p.clipIndex>=0&&activeProject.clips.get(p.clipIndex).id.equals(selectedClip.id)){
+                long seek=Math.max(0,Math.min(maximum,p.assetTimeMs));
+                start.setText(String.format(Locale.US,"%.2f",seek/1000.0));
+                inSeek.setProgress(StudioTrimMath.toSeek(seek,maximum));
+            }
+        });
+        wrap.addView(playheadIn,margins(-1,dp(42),dp(6),0,0,0));
+        new AlertDialog.Builder(this).setTitle("Trim selected clip")
                 .setView(wrap)
-                .setPositiveButton("Apply", (d, w) -> {
-                    try {
-                        long a = (long) (Float.parseFloat(start.getText().toString()) * 1000);
-                        long b = (long) (Float.parseFloat(end.getText().toString()) * 1000);
-                        if (b <= a) throw new IllegalArgumentException();
+                .setPositiveButton("Apply",(d,w)->{
+                    try{
+                        long a=Math.round(Double.parseDouble(start.getText().toString())*1000);
+                        long b=Math.round(Double.parseDouble(end.getText().toString())*1000);
+                        if(!StudioTrimMath.valid(a,b,maximum))
+                            throw new IllegalArgumentException("Trim must fit source and be at least 0.1 seconds");
                         editHistory.checkpoint(activeProject);
-                        selectedClip.inMs = Math.max(0, a);
-                        selectedClip.outMs = b;
-                        store.save(activeProject);
-                        syncProtocolState();
+                        selectedClip.inMs=a;
+                        selectedClip.outMs=b;
+                        store.save(activeProject);syncProtocolState();
                         showEditor();
-                    } catch (Exception error) {
-                        Toast.makeText(this, "Invalid trim range", Toast.LENGTH_SHORT).show();
+                    }catch(Exception error){
+                        Toast.makeText(this,error.getMessage()==null?
+                                "Invalid trim range":error.getMessage(),Toast.LENGTH_LONG).show();
                     }
-                })
-                .setNegativeButton("Cancel", null)
-                .show();
+                }).setNegativeButton("Cancel",null).show();
     }
 
     private void textDialog() {
