@@ -728,6 +728,8 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
             box.addView(paging);
         }
 
+        renderHumanTrackLanes(box);
+
         LinearLayout mediaHead=new LinearLayout(this);
         mediaHead.setGravity(Gravity.CENTER_VERTICAL);
         TextView mediaTitle=title("Media Bin · "+activeProject.assets.size(),16);
@@ -781,6 +783,219 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         scheduleEditorRefresh(activeProject.id,activeProject.updatedAt);
     }
 
+
+    /** Real audio placement lanes beneath the original editable video strip. */
+    private void renderHumanTrackLanes(LinearLayout parent){
+        StudioTrackLayout layout;
+        try{layout=StudioTrackEditor.get(activeProject);}
+        catch(Exception error){
+            parent.addView(body("Track layout needs repair: "+error.getMessage()));
+            return;
+        }
+        LinearLayout header=new LinearLayout(this);
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        header.addView(title("Layers & Sound",17),
+                new LinearLayout.LayoutParams(0,-2,1));
+        header.addView(studioButton("+ Audio Lane",()->{
+            try{
+                editHistory.checkpoint(activeProject);
+                StudioTrackLayout changed=StudioTrackEditor.get(activeProject);
+                StudioTrackEditor.additionalAudioLane(changed);
+                activeProject=StudioTrackEditor.commit(store,activeProject,changed);
+                syncProtocolState();
+                showEditor();
+            }catch(Exception e){
+                Toast.makeText(this,e.getMessage(),Toast.LENGTH_LONG).show();
+            }
+        }),new LinearLayout.LayoutParams(dp(116),dp(42)));
+        parent.addView(header,margins(-1,-2,dp(8),0,0,0));
+        parent.addView(body("Audio lanes mix into exported MP4. "+
+                "Overlapping sounds belong on separate lanes."),
+                margins(-1,-2,dp(3),0,0,0));
+        for(StudioTrackLayout.Track track:layout.tracks()){
+            if(track.kind==StudioTrackLayout.Kind.VIDEO)continue;
+            LinearLayout row=column();
+            row.setPadding(dp(9),dp(6),dp(9),dp(6));
+            row.setBackground(rounded(C_CARD_2,0xff2b3a5b,dp(11)));
+            LinearLayout info=new LinearLayout(this);
+            info.setGravity(Gravity.CENTER_VERTICAL);
+            String name=track.kind==StudioTrackLayout.Kind.AUDIO?
+                    "♫  "+track.id:"◆  "+track.kind.name();
+            info.addView(title(name,13),new LinearLayout.LayoutParams(0,-2,1));
+            if(track.kind==StudioTrackLayout.Kind.AUDIO){
+                final String id=track.id;
+                Button add=studioButton("+ Sound",()->chooseStudioTrackAudio(id));
+                info.addView(add,new LinearLayout.LayoutParams(dp(104),dp(39)));
+            }else{
+                info.addView(accent("AUTHORING ONLY",C_MUTED));
+            }
+            row.addView(info);
+            if(track.kind==StudioTrackLayout.Kind.AUDIO){
+                if(track.items().isEmpty())row.addView(body(
+                        "Drop a sound here by tapping + Sound. Choose its position on the timeline."));
+                else{
+                    HorizontalScrollView scroller=new HorizontalScrollView(this);
+                    scroller.setHorizontalScrollBarEnabled(false);
+                    LinearLayout thumbnails=new LinearLayout(this);
+                    for(StudioTrackLayout.Item item:track.items()){
+                        ProjectStore.Asset asset=activeProject.asset(item.assetId);
+                        String label=(asset==null?"Missing sound":asset.name);
+                        String timeCode=time(item.startMs)+" · "+time(item.durationMs);
+                        Button clip=studioButton("♫ "+label+"\n"+timeCode,()->
+                                showStudioTrackClip(track.id,item.clipId));
+                        clip.setBackground(rounded(0xff143455,0xff2a82bb,dp(10)));
+                        clip.setMaxLines(2);
+                        thumbnails.addView(clip,margins(dp(167),dp(55),0,0,dp(5),0));
+                    }
+                    scroller.addView(thumbnails);
+                    row.addView(scroller,margins(-1,dp(61),dp(5),0,0,0));
+                }
+            }else{
+                row.addView(body(track.kind==StudioTrackLayout.Kind.TEXT?
+                        "Text-keyframe timeline planned; use the current clip Text tool.":
+                        track.kind==StudioTrackLayout.Kind.OVERLAY?
+                        "Layered video-overlays are not enabled for export yet.":
+                        "Per-layer effects will be added after renderer QA."));
+            }
+            parent.addView(row,margins(-1,-2,dp(4),0,0,0));
+        }
+    }
+
+    /** Explicit project-media picker, not a scan of the phone Gallery. */
+    private void chooseStudioTrackAudio(String trackId){
+        if(activeProject==null)return;
+        ArrayList<ProjectStore.Asset> eligible=new ArrayList<>();
+        for(ProjectStore.Asset asset:activeProject.assets){
+            if(asset.mime!=null&&(asset.mime.startsWith("audio/")||
+                    asset.mime.startsWith("video/")))
+                eligible.add(asset);
+        }
+        if(eligible.isEmpty()){
+            new AlertDialog.Builder(this).setTitle("No audio imported")
+                    .setMessage("Use + Import to choose an audio or video file. "+
+                            "VideoStudio only uses files explicitly imported into this project.")
+                    .setPositiveButton("Import", (d,w)->pickMedia())
+                    .setNegativeButton("Cancel",null).show();
+            return;
+        }
+        String[] names=new String[eligible.size()];
+        for(int i=0;i<eligible.size();i++){
+            ProjectStore.Asset a=eligible.get(i);
+            names[i]=a.name+" · "+time(a.durationMs);
+        }
+        new AlertDialog.Builder(this).setTitle("Select audio for "+trackId)
+                .setItems(names,(dialog,index)->{
+                    ProjectStore.Asset chosen=eligible.get(index);
+                    long available=chosen.durationMs;
+                    if(available<=0){
+                        Toast.makeText(this,"Could not read this audio duration. Try another file.",
+                                Toast.LENGTH_LONG).show();return;
+                    }
+                    long start=Math.max(0,studioPlayheadMs);
+                    long projectLength=activeProject.outputDurationMs();
+                    long duration=Math.min(available,Math.max(1,projectLength-start));
+                    if(projectLength<=0||start>=projectLength){
+                        Toast.makeText(this,"Add video to the main timeline first.",
+                                Toast.LENGTH_LONG).show();return;
+                    }
+                    try{
+                        editHistory.checkpoint(activeProject);
+                        StudioTrackLayout layout=StudioTrackEditor.get(activeProject);
+                        StudioTrackEditor.addMedia(layout,activeProject,trackId,
+                                chosen.id,start,duration);
+                        activeProject=StudioTrackEditor.commit(store,activeProject,layout);
+                        syncProtocolState();showEditor();
+                        Toast.makeText(this,"Audio added. Export to hear this mix.",
+                                Toast.LENGTH_SHORT).show();
+                    }catch(Exception error){
+                        Toast.makeText(this,error.getMessage(),Toast.LENGTH_LONG).show();
+                    }
+                }).setNegativeButton("Cancel",null).show();
+    }
+
+    private void showStudioTrackClip(String trackId,String clipId){
+        if(activeProject==null)return;
+        try{
+            StudioTrackLayout layout=StudioTrackEditor.get(activeProject);
+            StudioTrackLayout.Track track=layout.track(trackId);
+            StudioTrackLayout.Item item=track==null?null:track.find(clipId);
+            if(item==null)return;
+            ProjectStore.Asset asset=activeProject.asset(item.assetId);
+            final String sourceName=asset==null?"Sound":asset.name;
+            String[] commands={"Move to playhead","Set start time","Set duration","Remove from lane"};
+            new AlertDialog.Builder(this).setTitle(sourceName)
+                    .setMessage("Position: "+time(item.startMs)+"  •  Length: "+
+                            time(item.durationMs)+"\nAudio is mixed during Media3 export.")
+                    .setItems(commands,(dialog,index)->{
+                        if(index==3){
+                            new AlertDialog.Builder(this).setTitle("Remove sound?")
+                                    .setMessage("Original imported file is preserved.")
+                                    .setPositiveButton("Remove",(d,w)->editStudioTrackClip(
+                                            trackId,clipId,null,null,true))
+                                    .setNegativeButton("Cancel",null).show();
+                        }else if(index==0){
+                            editStudioTrackClip(trackId,clipId,studioPlayheadMs,null,false);
+                        }else studioTrackValueDialog(trackId,clipId,index==1,
+                                index==1?item.startMs:item.durationMs);
+                    }).setNegativeButton("Cancel",null).show();
+        }catch(Exception error){
+            Toast.makeText(this,error.getMessage(),Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void studioTrackValueDialog(String trackId,String clipId,
+                                        boolean changeStart,long currentMs){
+        EditText input=numberInput((int)Math.min(Integer.MAX_VALUE,currentMs));
+        input.setSelectAllOnFocus(true);
+        input.setHint("Milliseconds");
+        LinearLayout wrap=column();
+        wrap.setPadding(dp(16),dp(10),dp(16),dp(8));
+        wrap.addView(body("Enter "+(changeStart?"start position":"sound duration")+
+                " in milliseconds. 1000 = one second."));
+        wrap.addView(input);
+        new AlertDialog.Builder(this).setTitle(changeStart?"Move audio":"Trim audio")
+                .setView(wrap)
+                .setPositiveButton("Apply",(d,w)->{
+                    try{
+                        long ms=Long.parseLong(input.getText().toString().trim());
+                        editStudioTrackClip(trackId,clipId,
+                                changeStart?ms:null,changeStart?null:ms,false);
+                    }catch(Exception error){
+                        Toast.makeText(this,"Invalid duration",Toast.LENGTH_LONG).show();
+                    }
+                }).setNegativeButton("Cancel",null).show();
+    }
+
+    private void editStudioTrackClip(String trackId,String clipId,
+                                     Long newStart,Long newDuration,boolean remove){
+        try{
+            StudioTrackLayout layout=StudioTrackEditor.get(activeProject);
+            StudioTrackLayout.Track track=layout.track(trackId);
+            if(track==null||track.kind!=StudioTrackLayout.Kind.AUDIO)
+                throw new IllegalArgumentException("Audio track not found");
+            StudioTrackLayout.Item original=track.find(clipId);
+            if(original==null)throw new IllegalArgumentException("Sound not found");
+            editHistory.checkpoint(activeProject);
+            if(remove)track.remove(clipId);
+            else{
+                long start=newStart==null?original.startMs:newStart;
+                long duration=newDuration==null?original.durationMs:newDuration;
+                ProjectStore.Asset asset=activeProject.asset(original.assetId);
+                long upper=asset==null?0:asset.durationMs-original.sourceInMs;
+                long projectLength=activeProject.outputDurationMs();
+                if(start<0||start>=projectLength||duration<=0||duration>upper)
+                    throw new IllegalArgumentException("Audio must fit its source and video timeline");
+                duration=Math.min(duration,projectLength-start);
+                track.replace(clipId,new StudioTrackLayout.Item(
+                        clipId,original.assetId,start,original.sourceInMs,
+                        duration,original.gain));
+            }
+            activeProject=StudioTrackEditor.commit(store,activeProject,layout);
+            syncProtocolState();showEditor();
+        }catch(Exception error){
+            Toast.makeText(this,error.getMessage(),Toast.LENGTH_LONG).show();
+        }
+    }
 
     private Button studioButton(String label,Runnable action){
         Button button=new Button(this);
