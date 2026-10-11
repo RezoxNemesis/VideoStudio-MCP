@@ -38,7 +38,8 @@ public final class RigEditorActivity extends Activity {
     private Bitmap picture;
     private RigCanvasView drawing;
     private TextView instructions,sourceName;
-    private boolean black=true,outlineMode=false,transparent=false;
+    private boolean black=true,outlineMode=false,swordTipMode=false,transparent=false;
+    private float[] swordTip;
     private final List<float[]> joints=new ArrayList<>();
     private final List<float[]> outline=new ArrayList<>();
 
@@ -83,7 +84,7 @@ public final class RigEditorActivity extends Activity {
         root.setOrientation(LinearLayout.VERTICAL);root.setBackgroundColor(BACKGROUND);
         TextView title=label("2D Character Rig Builder",21);
         root.addView(title,new LinearLayout.LayoutParams(-1,-2));
-        TextView help=label("Tap all 16 joints on ONE actor, then trace its body outline. Do not include the sword in the outline. Save and repeat for the other fighter.",12);
+        TextView help=label("On each storyboard image mark both fighters: tap 16 hidden 2D joints, trace the visible body, and mark its sword tip. No visible skeletons appear in the video.",12);
         help.setTextColor(0xffadbacf);root.addView(help);
         sourceName=label("",13);
         sourceName.setTextColor(ACCENT);root.addView(sourceName);
@@ -100,14 +101,20 @@ public final class RigEditorActivity extends Activity {
 
         LinearLayout row1=new LinearLayout(this);
         row1.addView(button("Tap joints",()->{
-            outlineMode=false;updateInstruction();drawing.invalidate();
+            outlineMode=false;swordTipMode=false;updateInstruction();drawing.invalidate();
         }),new LinearLayout.LayoutParams(0,50,1));
-        row1.addView(button("Trace outline",()->{
-            outlineMode=true;updateInstruction();drawing.invalidate();
+        row1.addView(button("Trace body",()->{
+            outlineMode=true;swordTipMode=false;updateInstruction();drawing.invalidate();
+        }),new LinearLayout.LayoutParams(0,50,1));
+        row1.addView(button("Sword tip",()->{
+            outlineMode=false;swordTipMode=true;updateInstruction();drawing.invalidate();
         }),new LinearLayout.LayoutParams(0,50,1));
         row1.addView(button("Undo",()->{
-            List<float[]> list=outlineMode?outline:joints;
-            if(!list.isEmpty())list.remove(list.size()-1);
+            if(swordTipMode)swordTip=null;
+            else{
+                List<float[]> list=outlineMode?outline:joints;
+                if(!list.isEmpty())list.remove(list.size()-1);
+            }
             updateInstruction();drawing.invalidate();
         }),new LinearLayout.LayoutParams(0,50,1));
         root.addView(row1);
@@ -162,7 +169,8 @@ public final class RigEditorActivity extends Activity {
             if(b==null)throw new IllegalStateException("Could not decode source image");
             if(picture!=null&&!picture.isRecycled())picture.recycle();
             picture=b;selected=a;
-            joints.clear();outline.clear();outlineMode=false;transparent=false;
+            joints.clear();outline.clear();swordTip=null;
+            outlineMode=false;swordTipMode=false;transparent=false;
             sourceName.setText("Source: "+a.name);
             drawing.invalidate();updateInstruction();
         }catch(Exception error){
@@ -171,14 +179,17 @@ public final class RigEditorActivity extends Activity {
         }
     }
     private void resetActor(boolean isBlack) {
-        black=isBlack;joints.clear();outline.clear();
-        outlineMode=false;transparent=false;
+        black=isBlack;joints.clear();outline.clear();swordTip=null;
+        outlineMode=false;swordTipMode=false;transparent=false;
         updateInstruction();drawing.invalidate();
     }
     private void updateInstruction(){
         String actor=black?"BLACK":"WHITE";
         String instruction;
-        if(outlineMode){
+        if(swordTipMode) {
+            instruction=actor+" • Tap the END of the real sword: "
+                    +(swordTip==null?"not marked":"marked");
+        }else if(outlineMode){
             instruction="Mask: tap around "+actor+"'s body ("
                     +outline.size()+" points). Leave out the sword.";
         }else if(joints.size()<Rig2DProfile.JOINTS.length){
@@ -201,9 +212,10 @@ public final class RigEditorActivity extends Activity {
             float[][] bonePoints=joints.toArray(new float[0][2]);
             float[][] polygon=outline.toArray(new float[0][2]);
             Rig2DProfile profile=Rig2DProfile.create(
-                    project.id,selected.id,black,transparent,bonePoints,polygon);
+                    project.id,selected.id,black,transparent,bonePoints,polygon,swordTip);
             rigStore.save(profile);
-            Toast.makeText(this,(black?"Black":"White")+" rig saved! You can reuse it.",
+            Toast.makeText(this,(black?"Black":"White")+" rig saved. "
+                    +(swordTip==null?"Add sword tip to animate this storyboard.":"Sword anchored to original image."),
                     Toast.LENGTH_LONG).show();
             new AlertDialog.Builder(this).setTitle("Reusable actor saved")
                 .setMessage("This character rig is stored inside the VideoStudio project "+
