@@ -16,6 +16,7 @@ const storyboardPose = fs.readFileSync(new URL("../android/app/src/main/java/com
 const multigenrePlanner = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/StoryboardBatchPlanner.java", import.meta.url), "utf8");
 const multigenreSegmenter = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/StoryboardLayerIsolation.java", import.meta.url), "utf8");
 const multigenreRenderer = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/StoryboardLayerRenderer.java", import.meta.url), "utf8");
+const multigenreCamera = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/StoryboardCameraDirector.java", import.meta.url), "utf8");
 const multigenreSoftMesh = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/StoryboardDeformableSprite.java", import.meta.url), "utf8");
 const multigenreStudio = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/StoryboardSeriesOrchestrator.java", import.meta.url), "utf8");
 const multigenreComposer = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/StoryboardSegmentComposer.java", import.meta.url), "utf8");
@@ -236,6 +237,8 @@ const checks = [
     multigenreSegmenter.includes("fromMasks") &&
     multigenreSegmenter.includes("match(a,b,w,h)") &&
     multigenreRenderer.includes("StoryboardDeformableSprite") &&
+    multigenreRenderer.includes("StoryboardCameraDirector.at") &&
+    multigenreCamera.includes("float coverage=1+2.3f") &&
     multigenreRenderer.includes("StoryboardInteractionSolver.resolve") &&
     multigenreSoftMesh.includes("drawBitmapMesh") &&
     multigenreComposer.includes("StoryboardLayerRenderer")],
