@@ -30,6 +30,7 @@ import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.ScrollView;
+import android.widget.SeekBar;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -89,6 +90,15 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
     private Runnable activityRefresh;
     private Runnable serviceWatchdog;
     private boolean timelinePreviewRunning;
+    private Runnable stillTimelineNext;
+    private StudioThumbnailLoader studioThumbs;
+    private final StudioEditHistory editHistory=new StudioEditHistory();
+    private ImageView studioStillPreview;
+    private FrameLayout studioPreviewFrame;
+    private TextView studioTimeLabel;
+    private int studioToolCategory=0;
+    private int studioTimelinePage=0;
+    private boolean studioShowMedia=false;
     private String currentScreen = "home";
 
     @Override
@@ -102,7 +112,9 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
         migrateAutonomyDefaultOnce();
         store = new ProjectStore(this);
-        jobs = new JobManager(this);
+        // UI/local proxy work must never rewrite the native MCP job journal.
+        jobs = new JobManager(this,"videostudio_editor_local_jobs_v2");
+        studioThumbs = new StudioThumbnailLoader(this);
         renderEngine = new NativeRenderEngine(this);
         promptVideoEngine = new PromptVideoEngine(this);
         mediaAnalyzer = new NativeMediaAnalyzer(this);
@@ -151,6 +163,8 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
     @Override
     protected void onDestroy() {
         timelinePreviewRunning = false;
+        if(stillTimelineNext!=null)ui.removeCallbacks(stillTimelineNext);
+        if(studioThumbs!=null)studioThumbs.shutdown();
         if (activityRefresh != null) ui.removeCallbacks(activityRefresh);
         if (serviceWatchdog != null) ui.removeCallbacks(serviceWatchdog);
         if (livePlayer != null) livePlayer.release();
