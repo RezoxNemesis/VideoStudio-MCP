@@ -67,6 +67,29 @@ public final class StoryboardNativeFilmTest {
             source.clips.add(clip);
         }
         store.save(source);
+        // Emit source-mask telemetry so a failed renderer cannot hide
+        // "no visible actor" behind a passing full-image pixel score.
+        Bitmap frameA=BitmapFactory.decodeFile(Uri.parse(source.assets.get(0).uri).getPath());
+        Bitmap frameB=BitmapFactory.decodeFile(Uri.parse(source.assets.get(1).uri).getPath());
+        int[] firstImage=new int[W*H],lastImage=new int[W*H];
+        frameA.getPixels(firstImage,0,W,0,0,W,H);
+        frameB.getPixels(lastImage,0,W,0,0,W,H);
+        frameA.recycle();frameB.recycle();
+        StoryboardLayerIsolation.Result tracked=StoryboardLayerIsolation.analyse(
+                firstImage,lastImage,W,H);
+        System.out.println("NATIVE_STORYBOARD_MASKS status="+tracked.status+
+                " tracks="+tracked.tracks.size()+" reason="+tracked.reason);
+        for(int i=0;i<tracked.tracks.size();i++){
+            StoryboardLayerIsolation.Track t=tracked.tracks.get(i);
+            System.out.println("NATIVE_STORYBOARD_TRACK "+i+
+                    " from=("+t.from.cx+","+t.from.cy+")"+
+                    " RGB="+t.from.meanR+","+t.from.meanG+","+t.from.meanB+
+                    " pixels="+t.from.pixels+
+                    " to=("+t.to.cx+","+t.to.cy+")"+
+                    " RGB="+t.to.meanR+","+t.to.meanG+","+t.to.meanB+
+                    " pixels="+t.to.pixels+
+                    " confidence="+t.confidence);
+        }
         JSONObject params=new JSONObject().put("backend","AUTO_LAYERS")
                 .put("genre","action").put("fps",24)
                 .put("framesPerPair",6).put("foley",true);
