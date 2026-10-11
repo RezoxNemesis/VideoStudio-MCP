@@ -38,7 +38,7 @@ public class StudioMultitrackTest {
         assertTrue(cuts.get(2).activeTitles.isEmpty());
     }
 
-    @Test public void layersPersistAndRemainUndoableAsProjectData() {
+    @Test public void layersPersistAndRemainUndoableAsProjectData() throws Exception {
         ProjectStore.Project project=new ProjectStore.Project();
         project.id=UUID.randomUUID().toString();
         project.name="Human timeline";
