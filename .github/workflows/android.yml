@@ -67,6 +67,17 @@ jobs:
       # Actual JNI/Canvas native artwork frames are rendered by Robolectric.
       # The QA sheet is intentionally synthetic test art, never the user's
       # private storyboard. Inspect before claiming visual animation quality.
+      - name: Preserve Android JUnit diagnostics on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: VideoStudio-native-junit-diagnostics
+          path: |
+            android/app/build/test-results/testDebugUnitTest/
+            android/app/build/reports/tests/testDebugUnitTest/
+          if-no-files-found: warn
+          retention-days: 7
+
       - name: Publish native storyboard visual QA samples
         if: always()
         uses: actions/upload-artifact@v4
