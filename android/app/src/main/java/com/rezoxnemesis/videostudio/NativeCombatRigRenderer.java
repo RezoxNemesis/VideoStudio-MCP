@@ -169,7 +169,7 @@ public final class NativeCombatRigRenderer {
                              CombatRigSolver.Frame f,double sec,double duration) {
         int main=w.black?0xff070b0f:0xfff3efe6;
         int rim=w.black?0xffbb572e:0xfff9b783;
-        float thickness=width*(w.black?.0175f:.0165f);
+        float thickness=width*(w.black?.025f:.023f);
         // Ground shadow changes only beneath the moving warrior.
         resetPaint();brush.setColor(0x690c0b11);
         c.drawOval(X(w.pelvis.x-.091),Y(.844),X(w.pelvis.x+.091),Y(.858),brush);
@@ -182,24 +182,56 @@ public final class NativeCombatRigRenderer {
                 w.leadingFoot.y,main,thickness*.64f);
         line(c,w.trailingFoot.x-.018,w.trailingFoot.y,w.trailingFoot.x+.018,
                 w.trailingFoot.y,main,thickness*.64f);
-        jointLine(c,w.pelvis,w.chest,main,rim,thickness*1.55f);
-        jointLine(c,w.chest,w.neck,main,rim,thickness*1.3f);
+        jointLine(c,w.pelvis,w.chest,main,rim,thickness*1.75f);
+        jointLine(c,w.chest,w.neck,main,rim,thickness*1.35f);
         jointLine(c,w.freeShoulder,w.freeElbow,main,rim,thickness);
         jointLine(c,w.freeElbow,w.freeHand,main,rim,thickness);
         jointLine(c,w.swordShoulder,w.swordElbow,main,rim,thickness*1.15f);
         jointLine(c,w.swordElbow,w.swordHand,main,rim,thickness);
         circle(c,w.freeHand.x,w.freeHand.y,.011,main);
         circle(c,w.swordHand.x,w.swordHand.y,.011,main);
-        // Individual head, rim glow, and real pose-derived tilt.
-        circle(c,w.head.x+.002,w.head.y,.029,rim);
-        circle(c,w.head.x,w.head.y,.028,main);
+        // Connected volumetric joints and shaded sphere are drawn from the same
+        // IK landmarks; no independent screen-space stick-figure shortcuts.
+        drawHead(c,w);
         drawSword(c,w,f,sec,duration);
+    }
+
+    private void drawHead(Canvas c,CombatRigSolver.Warrior w){
+        float cx=X(w.head.x),cy=Y(w.head.y);
+        float radius=width*.029f;
+        resetPaint();
+        // A radial material gradient conveys an actual round head rather than
+        // a flat icon or glowy cartoon eye. Keep both fighters eyeless.
+        int[] tones=w.black
+                ?new int[]{0xff53504b,0xff17191c,0xff030409}
+                :new int[]{0xffffffff,0xffeee9dd,0xff8f796b};
+        brush.setShader(new RadialGradient(cx-radius*.35f,cy-radius*.40f,
+                radius*1.72f,tones,new float[]{0f,.50f,1f},Shader.TileMode.CLAMP));
+        c.drawCircle(cx,cy,radius,brush);
+        brush.setShader(null);
+        brush.setColor(w.black?0xffb15932:0xfff9c68e);
+        brush.setStyle(Paint.Style.STROKE);
+        brush.setStrokeWidth(Math.max(1f,width*.0026f));
+        c.drawArc(cx-radius,cy-radius,cx+radius,cy+radius,-120,118,false,brush);
+        brush.setStyle(Paint.Style.FILL);
     }
 
     private void jointLine(Canvas c,CombatRigSolver.Vec a,CombatRigSolver.Vec b,
                            int core,int edge,float thickness){
-        line(c,a.x+.003,a.y,b.x+.003,b.y,edge,thickness*1.12f);
-        line(c,a.x,a.y,b.x,b.y,core,thickness);
+        // One cylindrical limb with directional lighting; unlike dual lines
+        // this doesn't make arms/legs look like detached wire segments.
+        float ax=X(a.x),ay=Y(a.y),bx=X(b.x),by=Y(b.y);
+        float vx=bx-ax,vy=by-ay,inv=1f/Math.max(1f,(float)Math.hypot(vx,vy));
+        float nx=-vy*inv*thickness*.55f,ny=vx*inv*thickness*.55f;
+        resetPaint();
+        brush.setStrokeCap(Paint.Cap.ROUND);
+        brush.setStrokeWidth(thickness*1.13f);
+        int shade=(core==0xff070b0f)?0xff030407:0xff897f76;
+        brush.setShader(new LinearGradient(ax-nx,ay-ny,ax+nx,ay+ny,
+                new int[]{edge,core,shade},new float[]{0f,.42f,1f},
+                Shader.TileMode.CLAMP));
+        c.drawLine(ax,ay,bx,by,brush);
+        brush.setShader(null);
     }
     private void drawSword(Canvas c,CombatRigSolver.Warrior w,
                            CombatRigSolver.Frame f,double seconds,double duration){
@@ -214,14 +246,30 @@ public final class NativeCombatRigRenderer {
             line(c,old.swordHand.x,old.swordHand.y,old.swordTip.x,old.swordTip.y,
                     w.black?0x338b9eb1:0x33fff2d2,width*.007f);
         }
-        line(c,w.swordHand.x,w.swordHand.y,w.swordTip.x,w.swordTip.y,edge,width*.010f);
-        line(c,w.swordHand.x,w.swordHand.y,w.swordTip.x,w.swordTip.y,metal,width*.0045f);
         double dx=w.swordTip.x-w.swordHand.x,dy=w.swordTip.y-w.swordHand.y;
         double norm=Math.max(.001,Math.hypot(dx,dy));
-        double px=-dy/norm,py=dx/norm;
-        line(c,w.swordHand.x-px*.022,w.swordHand.y-py*.022,
-                w.swordHand.x+px*.022,w.swordHand.y+py*.022,
-                w.black?0xff81512f:0xffc3a77d,width*.010f);
+        double ux=dx/norm,uy=dy/norm,px=-uy,py=ux;
+        double sx=w.swordHand.x+ux*.015,sy=w.swordHand.y+uy*.015;
+        // A single continuous tapered metal blade (with point), not a wooden
+        // stick. The crossguard and grip stay rigidly attached to the IK hand.
+        path.reset();
+        path.moveTo(X(sx+px*.007),Y(sy+py*.007));
+        path.lineTo(X(w.swordTip.x),Y(w.swordTip.y));
+        path.lineTo(X(sx-px*.007),Y(sy-py*.007));
+        path.close();
+        resetPaint();
+        brush.setShader(new LinearGradient(X(sx+px*.009),Y(sy+py*.009),
+                X(sx-px*.009),Y(sy-py*.009),
+                new int[]{edge,metal,0xff606a71},null,Shader.TileMode.CLAMP));
+        c.drawPath(path,brush);
+        brush.setShader(null);
+        line(c,w.swordHand.x-ux*.025,w.swordHand.y-uy*.025,
+                sx,sy,w.black?0xff332323:0xff78695a,width*.012f);
+        line(c,w.swordHand.x-px*.021,w.swordHand.y-py*.021,
+                w.swordHand.x+px*.021,w.swordHand.y+py*.021,
+                w.black?0xff966d4d:0xffb99b75,width*.012f);
+        circle(c,w.swordHand.x-ux*.028,w.swordHand.y-uy*.028,.007,
+                w.black?0xff946843:0xffc9b89a);
     }
     private void drawImpact(Canvas c,CombatRigSolver.Frame f){
         double amount=f.impactIntensity;
