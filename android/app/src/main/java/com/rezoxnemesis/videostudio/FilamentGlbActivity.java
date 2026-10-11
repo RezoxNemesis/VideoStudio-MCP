@@ -218,12 +218,13 @@ public final class FilamentGlbActivity extends Activity
         }
         return asset;
     }
-    private static void verifyGlb(File file) throws Exception{
+    static void verifyGlb(File file) throws Exception{
         try(FileInputStream in=new FileInputStream(file)){
             byte[] header=new byte[12];
             int received=0,n;
             while(received<12&&(n=in.read(header,received,12-received))>0)received+=n;
-            if(received!=12)throw new IllegalArgumentException("Truncated GLB header");
+            if(received!=12||file.length()<20)
+                throw new IllegalArgumentException("Truncated GLB header");
             ByteBuffer b=ByteBuffer.wrap(header).order(ByteOrder.LITTLE_ENDIAN);
             if(b.getInt()!=0x46546c67||b.getInt()!=2||
                     Integer.toUnsignedLong(b.getInt())!=file.length())
