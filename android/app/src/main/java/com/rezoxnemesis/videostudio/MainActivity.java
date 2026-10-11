@@ -1211,7 +1211,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                 studioAudioWaveforms.request(sample,audio,(key,peaks)->{
                     StudioTracksView view=visible.get();
                     if(view!=null&&view.isAttachedToWindow())
-                        view.setWaveform(id,peaks);
+                        view.setWaveform(id,peaks,(float)Math.min(1.0,30000.0/Math.max(1,audio.durationMs)));
                 });
             }
         }
