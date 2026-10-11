@@ -21,7 +21,25 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
+    // GitHub Actions explicitly points to the *restored* persistent owner
+    // development keystore. AGP's automatic debug signing otherwise generates
+    // a different certificate in each pull-request runner, breaking updates.
+    signingConfigs {
+        getByName("debug") {
+            val stableKey = System.getenv("VIDEOSTUDIO_SIGNING_KEYSTORE")
+            if (!stableKey.isNullOrBlank()) {
+                storeFile = file(stableKey)
+                storePassword = "android"
+                keyAlias = "androiddebugkey"
+                keyPassword = "android"
+            }
+        }
+    }
+
     buildTypes {
+        getByName("debug") {
+            signingConfig = signingConfigs.getByName("debug")
+        }
         release {
             isMinifyEnabled = false
         }
