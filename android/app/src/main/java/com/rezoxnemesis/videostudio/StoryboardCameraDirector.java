@@ -79,10 +79,12 @@ public final class StoryboardCameraDirector {
                 break;
             default:break;
         }
-        // 1.000..1.025x image coverage throughout. Exact anchor endpoints.
-        scale=Math.max(1f,Math.min(1.035f,scale));
-        dx=Math.max(-.018f,Math.min(.018f,dx));
-        dy=Math.max(-.014f,Math.min(.014f,dy));
+        // Cover the full portrait despite the bounded lateral movement.
+        // No black/transparent borders, no new unseen camera surface.
+        dx=Math.max(-.012f,Math.min(.012f,dx));
+        dy=Math.max(-.012f,Math.min(.012f,dy));
+        float coverage=1+2.3f*Math.max(Math.abs(dx),Math.abs(dy));
+        scale=Math.max(coverage,Math.max(1f,Math.min(1.035f,scale)));
         return new State(dx,dy,scale,rotation,shake,
                 Math.max(.2f,Math.min(.8f,focusX)),
                 Math.max(.2f,Math.min(.8f,focusY)));
