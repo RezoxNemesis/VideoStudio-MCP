@@ -92,6 +92,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
     private boolean timelinePreviewRunning;
     private Runnable stillTimelineNext;
     private StudioThumbnailLoader studioThumbs;
+    private StudioAudioWaveforms studioAudioWaveforms;
     private final StudioEditHistory editHistory=new StudioEditHistory();
     private ImageView studioStillPreview;
     private TextView studioCaptionPreview;
@@ -120,6 +121,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         // UI/local proxy work must never rewrite the native MCP job journal.
         jobs = new JobManager(this,"videostudio_editor_local_jobs_v2");
         studioThumbs = new StudioThumbnailLoader(this);
+        studioAudioWaveforms=new StudioAudioWaveforms(this);
         renderEngine = new NativeRenderEngine(this);
         promptVideoEngine = new PromptVideoEngine(this);
         mediaAnalyzer = new NativeMediaAnalyzer(this);
@@ -171,6 +173,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         if(stillTimelineNext!=null)ui.removeCallbacks(stillTimelineNext);
         if(studioCaptionClock!=null)ui.removeCallbacks(studioCaptionClock);
         if(studioThumbs!=null)studioThumbs.shutdown();
+        if(studioAudioWaveforms!=null)studioAudioWaveforms.shutdown();
         if (activityRefresh != null) ui.removeCallbacks(activityRefresh);
         if (serviceWatchdog != null) ui.removeCallbacks(serviceWatchdog);
         if (livePlayer != null) livePlayer.release();
@@ -1196,7 +1199,22 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                         }
                     }
                 });
-        box.addView(bands,margins(-1,dp(112),dp(4),dp(6),0,0));
+        box.addView(bands,margins(-1,dp(139),dp(4),dp(6),0,0));
+        if(studioAudioWaveforms!=null){
+            for(StudioLayer audio:activeProject.studioLayers){
+                if(!StudioLayer.AUDIO.equals(audio.type))continue;
+                ProjectStore.Asset sample=activeProject.asset(audio.assetId);
+                if(sample==null)continue;
+                final String id=audio.id;
+                final java.lang.ref.WeakReference<StudioTracksView> visible=
+                        new java.lang.ref.WeakReference<>(bands);
+                studioAudioWaveforms.request(sample,audio,(key,peaks)->{
+                    StudioTracksView view=visible.get();
+                    if(view!=null&&view.isAttachedToWindow())
+                        view.setWaveform(id,peaks);
+                });
+            }
+        }
 
         ArrayList<StudioLayer> order=new ArrayList<>(activeProject.studioLayers);
         order.sort((a,b)->Long.compare(a.startMs,b.startMs));
