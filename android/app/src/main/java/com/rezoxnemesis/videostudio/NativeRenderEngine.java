@@ -84,6 +84,11 @@ public final class NativeRenderEngine {
                 return null;
             }
             final boolean layeredAnimation = hasLayeredAnimation(project);
+            final List<EditedMediaItemSequence> audioTracks=buildProjectAudioTracks(project);
+            if(layeredAnimation&&!audioTracks.isEmpty()){
+                listener.onError("Export layered animation first, then add audio to the flat MP4 project.");
+                return null;
+            }
             Composition composition;
             if (layeredAnimation) {
                 composition = buildLayeredAnimationComposition(project, aspect, quality);
@@ -106,7 +111,14 @@ public final class NativeRenderEngine {
                 EditedMediaItemSequence sequence = allVideoWithAudio
                         ? EditedMediaItemSequence.withAudioAndVideoFrom(edited)
                         : EditedMediaItemSequence.withVideoFrom(edited);
-                composition = new Composition.Builder(sequence).build();
+                if(audioTracks.isEmpty()){
+                    composition = new Composition.Builder(sequence).build();
+                }else{
+                    List<EditedMediaItemSequence> multi=new ArrayList<>();
+                    multi.add(sequence);
+                    multi.addAll(audioTracks);
+                    composition = new Composition.Builder(multi).build();
+                }
             }
 
             Transformer transformer = new Transformer.Builder(context)
@@ -130,6 +142,8 @@ public final class NativeRenderEngine {
                                                 : "VideoStudio v3.1 Media3 layered parallax")
                                         : "Media3 Transformer 1.11.1");
                                 info.put("layeredAnimation", layeredAnimation);
+                                info.put("mixedAudioLanes", audioTracks.size());
+                                info.put("multitrackAudioMixed",!audioTracks.isEmpty());
                                 info.put("animationMode", layeredAnimation
                                         ? (hasArticulatedAnimation(project) ? "articulated-subject-2.5d" : "subject-aware-2.5d")
                                         : "standard");
@@ -195,6 +209,67 @@ public final class NativeRenderEngine {
             listener.onError(error.getMessage() == null ? "Could not prepare native export" : error.getMessage());
             return null;
         }
+    }
+
+    /**
+     * Real Media3 audio layers, with silence gaps from the user's explicit
+     * timeline placement. Different audio tracks can overlap and mix; clips
+     * inside one lane remain non-overlapping and are ordered by the editor.
+     *
+     * No fake audio waveform effect. This is an actual Media3 Composition,
+     * and will report a failure rather than silently dropping audio.
+     */
+    private List<EditedMediaItemSequence> buildProjectAudioTracks(
+            ProjectStore.Project project) throws Exception {
+        List<EditedMediaItemSequence> result=new ArrayList<>();
+        if(project.trackLayout==null||project.trackLayout.length()==0)return result;
+        StudioTrackLayout layout=StudioTrackLayout.fromJson(project.trackLayout);
+        long videoUs=Math.max(1,project.outputDurationMs())*1000L;
+        for(StudioTrackLayout.Track track:layout.tracks()){
+            if(track.kind!=StudioTrackLayout.Kind.AUDIO||track.items().isEmpty())
+                continue;
+            EditedMediaItemSequence.Builder builder=new EditedMediaItemSequence.Builder(
+                    java.util.Collections.singleton(C.TRACK_TYPE_AUDIO));
+            long cursorUs=0;
+            boolean used=false;
+            for(StudioTrackLayout.Item item:track.items()){
+                ProjectStore.Asset asset=project.asset(item.assetId);
+                if(asset==null||asset.mime==null||
+                        !(asset.mime.startsWith("audio/")||asset.mime.startsWith("video/")))
+                    throw new IllegalArgumentException("Missing imported audio asset: "+item.assetId);
+                if(Math.abs(item.gain-1f)>.001f)
+                    throw new IllegalArgumentException("Per-clip gain needs an audio-gain processor");
+                if(item.startMs*1000L>=videoUs)continue;
+                long availableMs=asset.durationMs>0?
+                        Math.max(0,asset.durationMs-item.sourceInMs):0;
+                if(availableMs<1)
+                    throw new IllegalArgumentException("Audio source has no usable duration: "+asset.name);
+                long endSourceMs=item.sourceInMs+Math.min(item.durationMs,availableMs);
+                long realDurationMs=Math.min(endSourceMs-item.sourceInMs,
+                        (videoUs-item.startMs*1000L)/1000L);
+                if(realDurationMs<1)continue;
+                long targetStartUs=item.startMs*1000L;
+                if(targetStartUs<cursorUs)
+                    throw new IllegalArgumentException("Audio lane has overlapping clips");
+                if(targetStartUs>cursorUs)builder.addGap(targetStartUs-cursorUs);
+                MediaItem source=new MediaItem.Builder()
+                        .setUri(Uri.parse(asset.uri))
+                        .setClippingConfiguration(
+                            new MediaItem.ClippingConfiguration.Builder()
+                                .setStartPositionMs(item.sourceInMs)
+                                .setEndPositionMs(item.sourceInMs+realDurationMs)
+                                .build())
+                        .build();
+                builder.addItem(new EditedMediaItem.Builder(source)
+                        .setRemoveVideo(true).build());
+                cursorUs=targetStartUs+realDurationMs*1000L;
+                used=true;
+            }
+            if(!used)continue;
+            if(cursorUs<videoUs)builder.addGap(videoUs-cursorUs);
+            result.add(builder.build());
+        }
+        return result;
     }
 
     private boolean hasLayeredAnimation(ProjectStore.Project project) {
