@@ -30,8 +30,8 @@ public final class StudioLayer {
             throw new IllegalArgumentException("Only real audio and caption lanes are supported");
         if(startMs<0||durationMs<100||durationMs>86_400_000L||sourceInMs<0)
             throw new IllegalArgumentException("Invalid layer time or duration");
-        if(!Float.isFinite(gain)||gain<0||gain>2)
-            throw new IllegalArgumentException("Audio level must be 0..200%");
+        if(!Float.isFinite(gain)||gain<0||gain>1)
+            throw new IllegalArgumentException("Audio level must be 0..100%");
         if(position<0||position>2)
             throw new IllegalArgumentException("Invalid text position");
         if(TITLE.equals(type)&& (text==null||text.trim().isEmpty()||text.length()>160))
