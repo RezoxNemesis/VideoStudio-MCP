@@ -168,24 +168,29 @@ public final class DriveWorkspaceProvider {
      * Restoring the file to the workspace does not automatically republish
      * its old MediaStore URI; callers must explicitly reopen the MP4.
      */
-    private long archivePublishedExport(Uri tree,Uri projectDir,
-                                        ProjectStore.Project project) throws Exception {
+    /** The archive may read ONLY the single verified project-generated export. */
+    static boolean isProjectPublishedMp4(ProjectStore.Project project){
+        if(project==null)return false;
         String source=project.latestExportUri;
         String name=project.latestExportName;
         if(source==null||source.isEmpty()||name==null||name.isEmpty()
-                ||!name.toLowerCase(java.util.Locale.US).endsWith(".mp4"))return 0;
+                ||!name.toLowerCase(java.util.Locale.US).endsWith(".mp4"))return false;
         Uri uri=Uri.parse(source);
-        if(!"content".equals(uri.getScheme())||!"media".equals(uri.getAuthority()))return 0;
-        boolean isOwnFinalRender=false;
+        if(!"content".equals(uri.getScheme())||!"media".equals(uri.getAuthority()))
+            return false;
         for(ProjectStore.Asset asset:project.assets){
             if(asset.generated && "final_render".equals(asset.role)
-                    && source.equals(asset.uri)){
-                isOwnFinalRender=true;break;
-            }
+                    && source.equals(asset.uri))return true;
         }
-        if(!isOwnFinalRender)return 0;
+        return false;
+    }
+
+    private long archivePublishedExport(Uri tree,Uri projectDir,
+                                        ProjectStore.Project project) throws Exception {
+        if(!isProjectPublishedMp4(project))return 0;
+        Uri uri=Uri.parse(project.latestExportUri);
         Uri exports=ensureDirectory(tree,projectDir,"Exports");
-        Uri destination=ensureFile(tree,exports,safeName(name),"video/mp4");
+        Uri destination=ensureFile(tree,exports,safeName(project.latestExportName),"video/mp4");
         long bytes=0;
         try(InputStream in=new BufferedInputStream(resolver.openInputStream(uri),BUFFER);
             OutputStream out=new BufferedOutputStream(requireOutput(destination),BUFFER)){
