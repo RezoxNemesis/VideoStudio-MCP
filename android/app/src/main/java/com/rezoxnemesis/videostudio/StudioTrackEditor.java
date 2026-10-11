@@ -61,6 +61,7 @@ public final class StudioTrackEditor {
         JSONObject json=layout.toJson();
         ProjectStore.Project existing=store.get(project.id);
         if(existing==null)throw new IllegalArgumentException("Project was deleted");
+        validate(existing,layout);
         // Always merge into the freshest native project so that an export or
         // ChatGPT animation generated meanwhile is NOT overwritten by UI edits.
         existing.trackLayout=json;
