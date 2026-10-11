@@ -38,6 +38,8 @@ public final class StudioToolCatalog {
         add(1,"Transitions","Change between-clip transition",true,true);
 
         add(2,"Colour","Switch color-grading preset",true,false);
+        add(2,"Adjust","Direct brightness, contrast, saturation and lightness",true,false);
+        add(2,"Transform","Direct zoom and rotation sliders",true,false);
         add(2,"Blur","Apply blur",true,false);
         add(2,"Glow","Add highlights",true,true);
         add(2,"Crop","Fill frame",true,false);
