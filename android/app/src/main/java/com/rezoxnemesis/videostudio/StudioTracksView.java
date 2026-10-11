@@ -9,6 +9,8 @@ import android.view.MotionEvent;
 import android.view.View;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.HashMap;
+import java.util.Map;
 
 /**
  * A touch-operable two-lane timeline. Touch the empty ruler to seek; drag a
@@ -23,6 +25,7 @@ public final class StudioTracksView extends View {
     }
     private final Paint brush=new Paint(Paint.ANTI_ALIAS_FLAG);
     private final ArrayList<StudioLayer> layers=new ArrayList<>();
+    private final Map<String,float[]> waveforms=new HashMap<>();
     private long durationMs=1,playheadMs=0;
     private SeekListener callback;
     private ChangeListener change;
@@ -46,6 +49,10 @@ public final class StudioTracksView extends View {
         this.change=change;
         draggingId="";resize=false;
         invalidate();
+    }
+    public void setWaveform(String laneId,float[] amplitudes){
+        if(laneId==null||amplitudes==null||amplitudes.length==0)return;
+        waveforms.put(laneId,amplitudes.clone());invalidate();
     }
     private int dp(int value){return Math.round(getResources().getDisplayMetrics().density*value);}
     private float begin(){return dp(56);}
@@ -90,6 +97,20 @@ public final class StudioTracksView extends View {
             canvas.clipRect(x,top,x2,top+barHeight);
             canvas.drawText(label,x+dp(5),top+dp(21),brush);
             canvas.restore();
+            if(audio){
+                float[] peaks=waveforms.get(lane.id);
+                if(peaks!=null&&peaks.length>0){
+                    brush.setColor(0xbbd6eeff);
+                    brush.setStrokeWidth(Math.max(1,dp(1)));
+                    float mid=top+barHeight*.60f;
+                    for(int sample=0;sample<peaks.length;sample++){
+                        float bx=x+dp(2)+(x2-x-dp(4))*(sample+.5f)/peaks.length;
+                        float size=Math.min(barHeight*.26f,
+                                Math.max(0f,peaks[sample])*barHeight*.26f);
+                        canvas.drawLine(bx,mid-size,bx,mid+size,brush);
+                    }
+                }
+            }
             brush.setColor(0x99ffffff);
             canvas.drawRect(x2-dp(5),top+dp(6),x2-dp(3),top+barHeight-dp(6),brush);
             if(lane.id.equals(draggingId)){
