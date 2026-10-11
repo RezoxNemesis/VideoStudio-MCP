@@ -722,6 +722,9 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 case "render_rigged_2d":
                     complete(command,queueRigged2D(p));
                     return;
+                case "animate_storyboard_artwork":
+                    complete(command,queueStoryboardArtwork(p));
+                    return;
                 case "save_source_rig_profile":
                     complete(command, saveSourceRigProfile(p));
                     syncProtocolState();
@@ -1789,6 +1792,9 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                     case "render_rigged_2d":
                         queued = queueRigged2D(parameters);
                         break;
+                    case "animate_storyboard_artwork":
+                        queued = queueStoryboardArtwork(parameters);
+                        break;
                     case "render_gltf_combat":
                         queued = queueNativeGltf3D(parameters);
                         break;
@@ -2609,6 +2615,145 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         result.put("rigs", profiles);
         result.put("count", profiles.length());
         result.put("galleryAccess", false);
+        return result;
+    }
+
+    private static float[] requiredStoryboardTip(JSONObject p,String name) throws Exception {
+        JSONArray values=p.optJSONArray(name);
+        if(values==null||values.length()!=2)
+            throw new IllegalArgumentException(
+                    "Trace the exact source sword tip with a normalized [x,y] pair: "+name);
+        float x=(float)values.getDouble(0),y=(float)values.getDouble(1);
+        if(!Float.isFinite(x)||!Float.isFinite(y)||x<0||x>1||y<0||y>1)
+            throw new IllegalArgumentException("Sword tip is outside its illustrated frame");
+        return new float[]{x,y};
+    }
+
+    /**
+     * Storyboard-keyframe-conditioned actual 2D illustration animator.
+     * A deliberate alternative to generic 3D/2D skeleton fighters and full
+     * image optical-flow morphs. The source pixels and project are immutable.
+     *
+     * Four traced Rig2DProfiles must describe black/white character texture
+     * on the starting and ending images, including each source's sword tip.
+     * The original art is raster-skinned; a clean source-world is reconstructed
+     * from unobscured pixels and never replaced with a procedural city.
+     */
+    private JSONObject queueStoryboardArtwork(JSONObject p) throws Exception {
+        String sourceId=p.optString("sourceProjectId",p.optString("projectId",""));
+        ProjectStore.Project source=resolveProject(sourceId);
+        Rig2DProjectStore profiles=new Rig2DProjectStore(this,store);
+        String b0=p.optString("blackFromRigId","");
+        String w0=p.optString("whiteFromRigId","");
+        String b1=p.optString("blackToRigId","");
+        String w1=p.optString("whiteToRigId","");
+        Rig2DProfile blackFrom=profiles.load(source.id,b0);
+        Rig2DProfile whiteFrom=profiles.load(source.id,w0);
+        Rig2DProfile blackTo=profiles.load(source.id,b1);
+        Rig2DProfile whiteTo=profiles.load(source.id,w1);
+        float[] blackTipFrom=requiredStoryboardTip(p,"blackTipFrom");
+        float[] whiteTipFrom=requiredStoryboardTip(p,"whiteTipFrom");
+        float[] blackTipTo=requiredStoryboardTip(p,"blackTipTo");
+        float[] whiteTipTo=requiredStoryboardTip(p,"whiteTipTo");
+        int w=p.optInt("width",432),h=p.optInt("height",768);
+        int fps=p.optInt("fps",24);
+        double seconds=p.optDouble("durationSeconds",3.0);
+        String beat=p.optString("beat","ADVANCE");
+        String backgroundId=p.optString("backgroundAssetId","");
+        boolean render=p.optBoolean("render",true);
+        String quality="1080p".equals(p.optString("quality","720p"))?
+                "1080p":"720p";
+        String fileName=sanitizeFileName(p.optString("fileName",
+                "VideoStudio_Storyboard_Artwork_"+System.currentTimeMillis()+".mp4"));
+        String outputId=p.optString("outputProjectId","");
+        ProjectStore.Project output;
+        if(outputId.isEmpty()) {
+            output=store.create("Storyboard Artwork • "+source.name);
+            output.sourcePrompt="storyboard-artwork-v1: source-conditioned 2D mesh shot";
+            store.save(output);
+        }else{
+            output=store.get(outputId);
+            if(output==null||output.id.equals(source.id)||
+                    output.sourcePrompt==null||
+                    !output.sourcePrompt.startsWith("storyboard-artwork-v1"))
+                throw new IllegalArgumentException("Recovery destination must be the saved storyboard artwork project");
+        }
+        final ProjectStore.Project original=source,target=output;
+        final Rig2DProfile firstBlack=blackFrom,firstWhite=whiteFrom,
+                lastBlack=blackTo,lastWhite=whiteTo;
+        final float[] fromBlackSword=blackTipFrom,fromWhiteSword=whiteTipFrom,
+                toBlackSword=blackTipTo,toWhiteSword=whiteTipTo;
+        final int width=w,height=h,frameRate=fps;
+        final double duration=seconds;
+        final String action=beat,cleanAssetId=backgroundId;
+        final int expectedFrames=(int)Math.ceil(fps*seconds);
+        JSONObject recovery=new JSONObject(p.toString());
+        recovery.put("projectId",target.id);
+        recovery.put("sourceProjectId",original.id);
+        recovery.put("outputProjectId",target.id);
+        recovery.put("fileName",fileName);
+        recovery.put("aspect","9:16");
+        recovery.put("quality",quality);
+        recovery.put("render",render);
+
+        JobManager.Job job=submitRecoverableHeavy("animate_storyboard_artwork",
+                recovery,target.id,
+                "Storyboard-to-Animation • "+original.name,state->{
+            checkpoint(state,"Source artwork","Validating two real character keyframes",3,target.id);
+            jobs.awaitSafeCheckpoint(state,"storyboard_source_preflight");
+            NativeStoryboardArtworkComposer.Result created=
+                    NativeStoryboardArtworkComposer.compose(
+                    this,store,original,target,
+                    firstBlack,firstWhite,lastBlack,lastWhite,
+                    fromBlackSword,fromWhiteSword,toBlackSword,toWhiteSword,
+                    action,width,height,frameRate,duration,cleanAssetId,
+                    (current,total,worldDifference)->{
+                        if(current==1||current%4==0||current==total){
+                            int pct=6+(int)(60d*current/Math.max(1,total));
+                            checkpoint(state,"Source artwork",
+                                    current+"/"+total+" original-textured pose samples",pct,target.id);
+                            jobs.awaitSafeCheckpoint(state,"storyboard_frame_"+current);
+                        }
+                    });
+            JSONObject details=new JSONObject()
+                    .put("engine","videostudio.storyboard-artwork-mesh-v1")
+                    .put("sourceProjectId",original.id)
+                    .put("outputProjectId",target.id)
+                    .put("sourceTexturesPreserved",true)
+                    .put("separateActorMasks",true)
+                    .put("worldSceneStatic",true)
+                    .put("generatedFrames",created.generatedFrames)
+                    .put("backgroundDifference",created.backgroundDifference)
+                    .put("backgroundInpaintFraction",created.filledFraction)
+                    .put("full3DModel",false)
+                    .put("neuralMotionGenerationInstalled",false)
+                    .put("unseenPoseSynthesis",false)
+                    .put("originalProjectUnmodified",true)
+                    .put("galleryAccess",false);
+            state.setResult(details);
+            syncProtocolState();
+            if(render) {
+                jobs.awaitSafeCheckpoint(state,"storyboard_media3");
+                runExportBlocking(target,"9:16",quality,fileName,state);
+                checkpoint(state,"Storyboard artwork",
+                        "Original-character Media3 MP4 rendered",100,target.id);
+            }else{
+                checkpoint(state,"Storyboard artwork",
+                        "Inspectable source-conditioned pose samples saved",100,target.id);
+            }
+        });
+        JSONObject result=ok();
+        result.put("queued",true);
+        result.put("durableRecovery",true);
+        result.put("jobId",job.id);
+        result.put("sourceProjectId",source.id);
+        result.put("outputProjectId",output.id);
+        result.put("expectedFrames",expectedFrames);
+        result.put("engine","videostudio.storyboard-artwork-mesh-v1");
+        result.put("usesOriginalActors",true);
+        result.put("render",render);
+        result.put("requiresTracedMasksAndPoseKeyframes",true);
+        result.put("neuralVideoGeneration",false);
         return result;
     }
 
@@ -4435,6 +4580,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             case "save_source_rig_profile": return "Saving original source-character rig";
             case "list_source_rig_profiles": return "Reading original source-character rigs";
             case "render_rigged_2d": return "Animating original masked fighters through native 2D mesh skinning";
+            case "animate_storyboard_artwork": return "Animating original storyboard keyframes with source-textured character motion";
             case "render_gltf_combat": return "Rendering two real glTF skinned 3D characters into Media3 video";
             case "animate_timeline": return "Directing cinematic image sequence";
             case "animate_images": return "Animating still images";
