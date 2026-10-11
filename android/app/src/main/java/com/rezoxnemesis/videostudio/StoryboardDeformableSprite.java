@@ -79,25 +79,33 @@ public final class StoryboardDeformableSprite {
             throw new IllegalArgumentException("Deformable source object exceeds mobile budget");
         int[] original=new int[width*height],warped=new int[original.length];
         source.getPixels(original,0,width,0,0,width,height);
-        float arc=(float)Math.sin(Math.PI*t)*amount;
+        // A/B silhouettes converge onto the same intermediate contour.
+        // A sine envelope returned every texture to its original pose at
+        // the handoff, making the fighter visually freeze then snap.
+        // Instead, the start texture progresses toward B and the target
+        // texture progresses back toward A, at the exact shot time.
+        float secondary=4f*t*(1f-t)*amount;
         for(int y=0;y<height;y++){
             float v=(y+.5f)/height;
             int row=Math.min(MESH_Y,Math.round(v*MESH_Y));
-            float originalLeft=endTexture?targetLeft[row]:startLeft[row];
-            float originalRight=endTexture?targetRight[row]:startRight[row];
-            float intendedLeft=startLeft[row]+(targetLeft[row]-startLeft[row])*t;
-            float intendedRight=startRight[row]+(targetRight[row]-startRight[row])*t;
-            float spanFrom=Math.max(.08f,originalRight-originalLeft);
-            float spanTo=Math.max(.08f,intendedRight-intendedLeft);
-            float stretch=Math.max(.82f,Math.min(1.18f,
-                    1+(spanTo/spanFrom-1)*arc));
-            float displacement=(intendedLeft-originalLeft)*width*arc;
-            displacement+=(float)Math.sin(v*5+t*5)*arc*width*.006f;
-            float vertical=(float)Math.sin(v*4+t*6)*arc*height*.004f;
+            float sourceLeft=endTexture?targetLeft[row]:startLeft[row];
+            float sourceRight=endTexture?targetRight[row]:startRight[row];
+            float left=startLeft[row]+(targetLeft[row]-startLeft[row])*t;
+            float right=startRight[row]+(targetRight[row]-startRight[row])*t;
+            float fromSpan=Math.max(.06f,sourceRight-sourceLeft);
+            float toSpan=Math.max(.06f,right-left);
+            float ratio=Math.max(.68f,Math.min(1.45f,toSpan/fromSpan));
+            float stretch=1f+(ratio-1f)*amount;
+            float oldCenter=(sourceLeft+sourceRight)*.5f;
+            float newCenter=(left+right)*.5f;
+            float offset=(newCenter-oldCenter*stretch)*width*amount;
+            // Very restrained secondary movement; these are still the
+            // original painted pixels, NOT inferred body joints.
+            float sway=(float)Math.sin(v*4.2+t*3.1)*secondary*width*.0025f;
+            float vertical=(float)Math.sin(v*3.5+t*4.4)*secondary*height*.002f;
             int sourceY=Math.max(0,Math.min(height-1,Math.round(y-vertical)));
             for(int x=0;x<width;x++){
-                float mapped=(x-displacement)/stretch;
-                int sx=Math.round(mapped);
+                int sx=Math.round((x-offset-sway)/stretch);
                 if(sx<0||sx>=width)continue;
                 warped[y*width+x]=original[sourceY*width+sx];
             }

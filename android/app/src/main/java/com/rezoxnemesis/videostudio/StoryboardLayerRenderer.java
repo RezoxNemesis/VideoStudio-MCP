@@ -163,7 +163,11 @@ public final class StoryboardLayerRenderer implements AutoCloseable {
                     ?StoryboardMotionGrammar.SubjectKind.TEXT
                     :scene==StoryboardMotionGrammar.SceneKind.LANDSCAPE
                         ?StoryboardMotionGrammar.SubjectKind.ENVIRONMENT
-                        :scene==StoryboardMotionGrammar.SceneKind.PORTRAIT
+                        :(scene==StoryboardMotionGrammar.SceneKind.PORTRAIT
+                        ||((scene==StoryboardMotionGrammar.SceneKind.ACTION
+                             ||scene==StoryboardMotionGrammar.SceneKind.COMIC)
+                            &&from.height()>.85f*from.width()
+                            &&to.height()>.85f*to.width()))
                             ?StoryboardMotionGrammar.SubjectKind.CHARACTER
                             :StoryboardMotionGrammar.SubjectKind.OBJECT;
         float dx=(to.cx-from.cx)/width,dy=(to.cy-from.cy)/height;
@@ -175,17 +179,25 @@ public final class StoryboardLayerRenderer implements AutoCloseable {
         float targetW=from.width()+(to.width()-from.width())*phase;
         float targetH=from.height()+(to.height()-from.height())*phase;
 
-        if(t<.46f) {
-            drawSourceSprite(canvas,pair,pair.start,x,y,targetW,targetH,m,t,false);
-        }else if(t>.54f){
-            drawSourceSprite(canvas,pair,pair.end,x,y,targetW,targetH,m,t,true);
-        }else {
-            // Blend RGB inside a SINGLE isolated original object, not two
-            // half-transparent figures over the city. The opaque source
-            // ink remains opaque at the collision midpoint.
-            float mix=(t-.46f)/.08f;
+        // Frame-by-frame body contours move from source pose to destination
+        // pose across the complete shot. The old 46%-54% texture switch
+        // held a nearly unchanged fighter until the cut.
+        // Faster blade-contact beats use a narrower material handoff so
+        // translucent swords are not smeared over the impact.
+        float halfSpan=(action==StoryboardMotionGrammar.Action.IMPACT
+                ||action==StoryboardMotionGrammar.Action.STRIKE)? .16f:.23f;
+        float lo=.5f-halfSpan,hi=.5f+halfSpan;
+        if(phase<=lo){
+            drawSourceSprite(canvas,pair,pair.start,x,y,targetW,targetH,m,
+                    phase,false);
+        }else if(phase>=hi){
+            drawSourceSprite(canvas,pair,pair.end,x,y,targetW,targetH,m,
+                    phase,true);
+        }else{
+            float mix=(phase-lo)/(hi-lo);
             mix=mix*mix*(3-2*mix);
-            blendSourceSprites(canvas,pair,x,y,targetW,targetH,m,t,mix);
+            // Actor-local blend only, never a whole-scene dissolve.
+            blendSourceSprites(canvas,pair,x,y,targetW,targetH,m,phase,mix);
         }
     }
 
@@ -212,13 +224,16 @@ public final class StoryboardLayerRenderer implements AutoCloseable {
         int w=Math.max(1,Math.round(targetW*movement.scale));
         int h=Math.max(1,Math.round(targetH*movement.scale));
         Bitmap bitmap=sizedSource(pair,sprite,t,endTexture,w,h);
+        canvas.save();
         try {
             float left=x*width-(sprite.pivotX/sprite.bitmap.getWidth())*w;
             float top=y*height-(sprite.pivotY/sprite.bitmap.getHeight())*h;
+            canvas.rotate(movement.rotation,x*width,y*height);
             paint.setAlpha(Math.max(0,Math.min(255,
                     Math.round(255*movement.opacity))));
             canvas.drawBitmap(bitmap,left,top,paint);
         }finally{
+            canvas.restore();
             paint.setAlpha(255);
             if(bitmap!=sprite.bitmap)bitmap.recycle();
         }
@@ -264,8 +279,12 @@ public final class StoryboardLayerRenderer implements AutoCloseable {
                     (pair.end.pivotY/pair.end.bitmap.getHeight())*mix;
             paint.setAlpha(Math.max(0,Math.min(255,
                     Math.round(255*movement.opacity))));
-            canvas.drawBitmap(blended,x*width-pivotX*w,
-                    y*height-pivotY*h,paint);
+            canvas.save();
+            try {
+                canvas.rotate(movement.rotation,x*width,y*height);
+                canvas.drawBitmap(blended,x*width-pivotX*w,
+                        y*height-pivotY*h,paint);
+            }finally{canvas.restore();}
         }finally{
             paint.setAlpha(255);
             if(blended!=null)blended.recycle();

@@ -64,6 +64,71 @@ public final class StoryboardTemporalCritic {
         return new Report(true,"Actual source-conditioned intermediate image pixels differ from both anchors",
                 a,b,staticDelta,overall);
     }
+    public static final class TrajectoryReport {
+        public final boolean acceptable;
+        public final String reason;
+        public final double minAdjacentMotion,maxAdjacentMotion;
+        TrajectoryReport(boolean ok,String reason,double low,double high){
+            acceptable=ok;this.reason=reason;
+            minAdjacentMotion=low;maxAdjacentMotion=high;
+        }
+    }
+
+    /**
+     * A midpoint alone cannot detect animation which holds the opening
+     * keyframe, jumps once, and holds the ending keyframe. Four temporal
+     * intervals must carry measurable source-owned movement. This is a
+     * pixel-continuity QA gate, not a claim of anatomical plausibility.
+     */
+    public static TrajectoryReport inspectTrajectory(int[] start,int[] end,
+            int[] quarter,int[] middle,int[] threeQuarter,
+            int width,int height,boolean cameraOnly) {
+        if(start==null||end==null||quarter==null||middle==null
+                ||threeQuarter==null||width<32||height<32
+                ||(long)width*height>720L*1280L
+                ||start.length!=width*height||end.length!=start.length
+                ||quarter.length!=start.length||middle.length!=start.length
+                ||threeQuarter.length!=start.length)
+            throw new IllegalArgumentException("Five equal-sized observed motion samples required");
+        Report midpoint=inspect(start,end,middle,width,height,cameraOnly);
+        if(!midpoint.acceptable)return new TrajectoryReport(false,
+                midpoint.reason,0,0);
+        if(cameraOnly)return new TrajectoryReport(true,
+                "Camera/graphic scene: character motion not required",0,0);
+        double source=meanDifference(start,end);
+        double[] stages={
+            meanDifference(start,quarter),
+            meanDifference(quarter,middle),
+            meanDifference(middle,threeQuarter),
+            meanDifference(threeQuarter,end)
+        };
+        double smallest=Double.POSITIVE_INFINITY,biggest=0;
+        for(double step:stages){
+            smallest=Math.min(smallest,step);
+            biggest=Math.max(biggest,step);
+        }
+        double minimum=Math.max(.0015,Math.min(.008,source*.075));
+        if(smallest<minimum)
+            return new TrajectoryReport(false,
+                    "Character/object motion stalls between storyboard keyframes",
+                    smallest,biggest);
+        if(biggest>Math.max(.17,source*2.4))
+            return new TrajectoryReport(false,
+                    "Abrupt frame-to-frame jump instead of continuous action",
+                    smallest,biggest);
+        return new TrajectoryReport(true,
+                "Four intervals contain measurable source-artwork movement",
+                smallest,biggest);
+    }
+
+    private static double meanDifference(int[] a,int[] b) {
+        double sum=0;int count=0;
+        for(int i=0;i<a.length;i+=2){
+            sum+=colorDifference(a[i],b[i]);count++;
+        }
+        return sum/Math.max(1,count);
+    }
+
     private static double colorDifference(int a,int b){
         return (Math.abs((a>>>16&255)-(b>>>16&255))
                 +Math.abs((a>>>8&255)-(b>>>8&255))

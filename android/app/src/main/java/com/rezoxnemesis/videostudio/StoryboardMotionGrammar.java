@@ -36,33 +36,65 @@ public final class StoryboardMotionGrammar {
     }
     private StoryboardMotionGrammar() {}
 
-    public static Action parseAction(String input, Action fallback) {
+    /**
+     * Match complete screenplay words/phrases, never substrings inside actor
+     * names ("white" contains "hit", "spotlight" contains "light").
+     * Compound storyboard filenames are explicit action annotations.
+     */
+    public static Action parseAction(String input,Action fallback) {
         if(input==null||input.trim().isEmpty())return fallback;
-        String s=input.toLowerCase(Locale.US).replaceAll("[^a-z0-9 ]"," ");
-        if(any(s,"parry","clash","collision","strike","swing","slash","punch","hit"))
-            return any(s,"clash","impact","collision","hit")?Action.IMPACT:Action.STRIKE;
-        if(any(s,"run","rush","chase","charge","sprint"))return Action.RUN;
-        if(any(s,"walk","advance","approach","step","follow"))return Action.WALK;
-        if(any(s,"jump","leap","vault","airborne","takeoff"))return Action.LEAP;
-        if(any(s,"fall","collapse","drop","descend"))return Action.FALL;
-        if(any(s,"knockback","recoil","stagger"))return Action.RECOIL;
-        if(any(s,"dodge","evade","duck","slide"))return Action.DODGE;
-        if(any(s,"orbit","circle","spiral"))return Action.ORBIT;
-        if(any(s,"float","levitate","hover"))return Action.FLOAT;
-        if(any(s,"bounce","spring"))return Action.BOUNCE;
-        if(any(s,"sway","wind","wave","breath"))return Action.SWAY;
-        if(any(s,"turn","rotate","spin"))return Action.ROTATE;
-        if(any(s,"reveal","uncover","appear","write"))return Action.REVEAL;
-        if(any(s,"explode","burst","shatter"))return Action.EXPLODE;
-        if(any(s,"splash","pour","ripple"))return Action.SPLASH;
-        if(any(s,"pulse","beat","glow"))return Action.PULSE;
-        if(any(s,"pan","establishing","landscape"))return Action.PAN;
-        if(any(s,"push","zoom in"))return Action.PUSH;
-        if(any(s,"pull","zoom out"))return Action.PULL;
-        if(any(s,"drift","cloud","fog","smoke"))return Action.DRIFT;
-        if(any(s,"cut","switch scene"))return Action.CUT;
-        if(any(s,"hold","still","pause"))return Action.HOLD;
+        String words=" "+input.replaceAll("([a-z])([A-Z])","$1 $2")
+                .toLowerCase(Locale.US).replaceAll("[^a-z0-9]+"," ").trim()+" ";
+        // Specific beats before generic movement. A knockback is NOT a hit
+        // just because the actor is named "White".
+        if(hasAction(words,"knockback","knock back","recoil","stagger",
+                "rebound","aftermath","recover","recovery","regain"))
+            return Action.RECOIL;
+        if(hasAction(words,"preimpact","pre impact","windup","wind up",
+                "followthrough","follow through","backswing","back swing",
+                "draw sword","prepare strike"))
+            return Action.STRIKE;
+        if(hasAction(words,"clash","collision","impact","hit","contact",
+                "blade lock","blades lock","sword lock","swords lock","smash"))
+            return Action.IMPACT;
+        if(hasAction(words,"parry","block","guard","dodge","evade",
+                "duck","sidestep","side step","slide"))
+            return Action.DODGE;
+        if(hasAction(words,"strike","swing","slash","punch","thrust",
+                "sword attack","attack"))
+            return Action.STRIKE;
+        if(hasAction(words,"run","running","rush","chase","charge","sprint"))
+            return Action.RUN;
+        if(hasAction(words,"walk","walking","advance","approach",
+                "step","follow","footstep"))
+            return Action.WALK;
+        if(hasAction(words,"jump","leap","vault","airborne","takeoff",
+                "take off"))return Action.LEAP;
+        if(hasAction(words,"landing","land","fall","falling","collapse",
+                "drop","descend"))return Action.FALL;
+        if(hasAction(words,"orbit","circle","spiral"))return Action.ORBIT;
+        if(hasAction(words,"float","levitate","hover"))return Action.FLOAT;
+        if(hasAction(words,"bounce","spring"))return Action.BOUNCE;
+        if(hasAction(words,"sway","wind","wave","breath","breathe"))
+            return Action.SWAY;
+        if(hasAction(words,"turn","rotate","spin"))return Action.ROTATE;
+        if(hasAction(words,"reveal","uncover","appear","write"))
+            return Action.REVEAL;
+        if(hasAction(words,"explode","burst","shatter"))return Action.EXPLODE;
+        if(hasAction(words,"splash","pour","ripple"))return Action.SPLASH;
+        if(hasAction(words,"pulse","beat","glow"))return Action.PULSE;
+        if(hasAction(words,"pan","establishing","landscape"))return Action.PAN;
+        if(hasAction(words,"push","zoom in"))return Action.PUSH;
+        if(hasAction(words,"pull","zoom out"))return Action.PULL;
+        if(hasAction(words,"drift","cloud","fog","smoke"))return Action.DRIFT;
+        if(hasAction(words,"cut","switch scene","hard cut"))return Action.CUT;
+        if(hasAction(words,"hold","still","pause","standoff"))return Action.HOLD;
         return fallback;
+    }
+
+    private static boolean hasAction(String words,String... phrases) {
+        for(String phrase:phrases)if(words.contains(" "+phrase+" "))return true;
+        return false;
     }
     public static SceneKind scene(String input) {
         String s=input==null?"":input.toLowerCase(Locale.US);

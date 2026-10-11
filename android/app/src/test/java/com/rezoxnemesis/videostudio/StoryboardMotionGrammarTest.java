@@ -24,6 +24,33 @@ public final class StoryboardMotionGrammarTest {
         assertEquals(StoryboardMotionGrammar.SceneKind.LANDSCAPE,
                 StoryboardMotionGrammar.scene("Mountain forest nature"));
     }
+    @Test public void filenamesCarryCorrectDuelActionsWithoutSubstringCollisions(){
+        String[] names={
+            "01_Black_Step.webp","02_White_Advance.webp",
+            "03_Black_Charge.webp","04_Dual_Charge.webp",
+            "05_Preimpact.webp","06_Original_Clash.webp",
+            "07_Blades_Lock.webp","08_Heavy_Followthrough.webp",
+            "09_White_Knockback.webp","10_Black_Landing.webp",
+            "11_Original_Aftermath_480.jpg","12_Recover.webp"
+        };
+        StoryboardMotionGrammar.Action[] beats={
+            StoryboardMotionGrammar.Action.WALK,StoryboardMotionGrammar.Action.WALK,
+            StoryboardMotionGrammar.Action.RUN,StoryboardMotionGrammar.Action.RUN,
+            StoryboardMotionGrammar.Action.STRIKE,StoryboardMotionGrammar.Action.IMPACT,
+            StoryboardMotionGrammar.Action.IMPACT,StoryboardMotionGrammar.Action.STRIKE,
+            StoryboardMotionGrammar.Action.RECOIL,StoryboardMotionGrammar.Action.FALL,
+            StoryboardMotionGrammar.Action.RECOIL,StoryboardMotionGrammar.Action.RECOIL
+        };
+        for(int i=0;i<names.length;i++)
+            assertEquals("Wrong cinematic beat: "+names[i],beats[i],
+                    StoryboardMotionGrammar.parseAction(names[i],
+                            StoryboardMotionGrammar.Action.TRACK));
+        assertEquals(StoryboardMotionGrammar.Action.TRACK,
+                StoryboardMotionGrammar.parseAction("White_Silhouette",
+                        StoryboardMotionGrammar.Action.TRACK));
+        assertEquals(StoryboardMotionGrammar.Action.DODGE,
+                StoryboardMotionGrammar.parseAction("hero parry",null));
+    }
     @Test public void sourceMotionStartsAndEndsAtActualDrawnPositions(){
         for(StoryboardMotionGrammar.Action action:StoryboardMotionGrammar.Action.values()){
             if(action==StoryboardMotionGrammar.Action.CUT || action==StoryboardMotionGrammar.Action.HOLD)continue;

@@ -30,6 +30,30 @@ public final class StoryboardTemporalCriticTest {
         assertFalse(StoryboardTemporalCritic.inspect(
                 first,last,first.clone(),W,H,false).acceptable);
     }
+    @Test public void trajectoryRejectsHoldJumpHoldEvenWithMovingMidpoint(){
+        int[] a=canvas(0xffa15c3e),b=canvas(0xffa15c3e),
+                middle=canvas(0xffa15c3e);
+        square(a,5,45,0xff0b0a0a);
+        square(b,38,45,0xff0b0a0a);
+        square(middle,21,45,0xff0b0a0a);
+        assertTrue(StoryboardTemporalCritic.inspect(a,b,middle,W,H,false).acceptable);
+        assertFalse(StoryboardTemporalCritic.inspectTrajectory(a,b,a,middle,b,
+                W,H,false).acceptable);
+    }
+    @Test public void movingIntermediatePositionsHaveFourMotionIntervals(){
+        int[] a=canvas(0xffa15c3e),q=canvas(0xffa15c3e),
+                m=canvas(0xffa15c3e),r=canvas(0xffa15c3e),
+                b=canvas(0xffa15c3e);
+        square(a,5,45,0xff0b0a0a);
+        square(q,13,45,0xff0b0a0a);
+        square(m,21,45,0xff0b0a0a);
+        square(r,29,45,0xff0b0a0a);
+        square(b,38,45,0xff0b0a0a);
+        StoryboardTemporalCritic.TrajectoryReport qa=
+                StoryboardTemporalCritic.inspectTrajectory(a,b,q,m,r,W,H,false);
+        assertTrue(qa.reason,qa.acceptable);
+        assertTrue(qa.minAdjacentMotion>0);
+    }
     @Test public void dramaticWorldColorShiftFailsConservativeSceneLock(){
         int[] first=canvas(0xff222222),last=canvas(0xff272727),
               intermediate=canvas(0xffffffff);

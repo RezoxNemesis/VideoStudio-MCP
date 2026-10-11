@@ -122,17 +122,24 @@ public final class StoryboardSegmentComposer {
             int[] to=read(context,end,width,height);
             try(Painter painter=painter(context,original,rigs,plan.backend,
                     start,end,from,to,width,height,shot,settings)){
-                int[] middle=null;
+                int[] quarter=null,middle=null,threeQuarter=null;
+                int quarterIndex=Math.max(1,Math.round(shot.frames*.25f));
                 int middleIndex=Math.round(shot.frames*.5f);
+                int threeQuarterIndex=Math.min(shot.frames-1,
+                        Math.round(shot.frames*.75f));
                 int initial=(shotCount==0&&!append)?0:1;
                 for(int step=initial;step<=shot.frames;step++){
                     if(Thread.currentThread().isInterrupted())throw new InterruptedException();
                     float t=step/(float)shot.frames;
                     Bitmap rendered=painter.frame(t,step);
                     try {
-                        if(step==middleIndex){
-                            middle=new int[width*height];
-                            rendered.getPixels(middle,0,width,0,0,width,height);
+                        if(step==quarterIndex||step==middleIndex
+                                ||step==threeQuarterIndex){
+                            int[] snapshot=new int[width*height];
+                            rendered.getPixels(snapshot,0,width,0,0,width,height);
+                            if(step==quarterIndex)quarter=snapshot;
+                            if(step==middleIndex)middle=snapshot;
+                            if(step==threeQuarterIndex)threeQuarter=snapshot;
                         }
                         add(target,outputDir,rendered,priorFrames+complete,durationMs,plan.fps,
                                 start.id,end.id,shot.action,painter.backend(),
@@ -146,21 +153,41 @@ public final class StoryboardSegmentComposer {
                 boolean graphicOrCameraOnly=painter.backend().contains("graphic")
                         ||painter.backend().contains("environment")
                         ||painter.backend().contains("abstract");
-                if(middle==null)throw new IllegalStateException("No genuine midpoint sample");
+                if(quarter==null||middle==null||threeQuarter==null)
+                    throw new IllegalStateException(
+                            "Missing early, middle or late source-motion sample");
                 StoryboardTemporalCritic.Report inspected=
                         StoryboardTemporalCritic.inspect(from,to,middle,width,height,
                                 graphicOrCameraOnly);
                 if(!inspected.acceptable)
                     throw new IllegalStateException("Source-artwork animation QA failed: "
                             +inspected.reason+" (source "+start.name+" → "+end.name+")");
-                StoryboardLayerIsolation.Result sources=painter.trackedSourceObjects();
-                StoryboardSubjectRetentionGate.Report retained=sources==null?null:
-                        StoryboardSubjectRetentionGate.inspect(sources,from,to,middle,
-                                width,height);
-                if(retained!=null&&!retained.accepted)
+                StoryboardTemporalCritic.TrajectoryReport trajectory=
+                        StoryboardTemporalCritic.inspectTrajectory(from,to,
+                                quarter,middle,threeQuarter,width,height,
+                                graphicOrCameraOnly||shot.action==StoryboardMotionGrammar.Action.HOLD
+                                  ||shot.action==StoryboardMotionGrammar.Action.CUT);
+                if(!trajectory.acceptable)
                     throw new IllegalStateException(
-                            "Original subject continuity failed: "+retained.reason+
+                            "Source-artwork motion stalled: "+trajectory.reason+
                             " (source "+start.name+" → "+end.name+")");
+                StoryboardLayerIsolation.Result sources=painter.trackedSourceObjects();
+                StoryboardSubjectRetentionGate.Report retained=null;
+                double smallestCoverage=1;
+                if(sources!=null){
+                    for(int[] sample:new int[][]{quarter,middle,threeQuarter}){
+                        StoryboardSubjectRetentionGate.Report current=
+                                StoryboardSubjectRetentionGate.inspect(
+                                        sources,from,to,sample,width,height);
+                        if(!current.accepted)
+                            throw new IllegalStateException(
+                                    "Original subject continuity failed: "+current.reason+
+                                    " (source "+start.name+" → "+end.name+")");
+                        smallestCoverage=Math.min(smallestCoverage,
+                                current.minimumCoverage);
+                        retained=current;
+                    }
+                }
                 minConfidence=Math.min(minConfidence,painter.confidence());
                 report.put(new JSONObject()
                         .put("fromAssetId",start.id)
@@ -173,12 +200,17 @@ public final class StoryboardSegmentComposer {
                         .put("actualMidpointSourceDifference",inspected.middleSourceDifference)
                         .put("actualMidpointTargetDifference",inspected.middleTargetDifference)
                         .put("stationaryWorldChange",inspected.unchangedWorldError)
-                        .put("qualityGatePassed",inspected.acceptable)
+                        .put("qualityGatePassed",inspected.acceptable&&trajectory.acceptable)
+                        .put("fourIntervalMotionChecked",true)
+                        .put("minimumAdjacentMotion",trajectory.minAdjacentMotion)
+                        .put("maximumAdjacentMotion",trajectory.maxAdjacentMotion)
                         .put("objectRetentionChecked",retained!=null)
+                        .put("retentionSamplesChecked",retained==null?0:3)
                         .put("retainedOriginalSubjects",retained==null?0:
                                 retained.verifiedObjects)
                         .put("minimumSubjectRetention",retained==null?-1:
-                                retained.minimumCoverage));
+                                smallestCoverage)
+                        .put("articulatedRigVerified",painter.backend().contains("source-rig")));
                 shotCount++;
                 // Checkpoint a complete shot (not just the next frame); the
                 // DB never refers to files that haven't been written yet.
