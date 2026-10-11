@@ -1095,6 +1095,8 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         switch(name){
             case "Add Music Track":chooseStudioAudio();return;
             case "Add Caption Track":editStudioTitle(null);return;
+            case "Adjust":studioAdvancedAdjustDialog(false);return;
+            case "Transform":studioAdvancedAdjustDialog(true);return;
             case "Slow Motion": studioSpeedDialog();return;
             case "Volume": studioVolumeDialog();return;
             case "Blur": studioBlurDialog();return;
@@ -1342,6 +1344,60 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                 .setPositiveButton("Remove",(d,w)->{
                     editHistory.checkpoint(activeProject);
                     activeProject.studioLayers.removeIf(x->x.id.equals(lane.id));
+                    store.save(activeProject);syncProtocolState();showEditor();
+                })
+                .setNegativeButton("Cancel",null).show();
+    }
+
+    private void studioAdvancedAdjustDialog(boolean transform){
+        if(activeProject==null||selectedClip==null){
+            Toast.makeText(this,"Choose a clip in the timeline",Toast.LENGTH_SHORT).show();
+            return;
+        }
+        String[] keys=transform?StudioClipAdjustments.TRANSFORM_KEYS:
+                StudioClipAdjustments.COLOR_KEYS;
+        String[] labels=transform?StudioClipAdjustments.TRANSFORM_NAMES:
+                StudioClipAdjustments.COLOR_NAMES;
+        LinearLayout content=column();
+        content.setPadding(dp(16),dp(9),dp(16),dp(9));
+        final SeekBar[] controls=new SeekBar[keys.length];
+        for(int i=0;i<keys.length;i++){
+            final int index=i;
+            int current=StudioClipAdjustments.sliderFor(selectedClip.effects,keys[i]);
+            TextView value=body(labels[i]+"  "+StudioClipAdjustments.labelFor(keys[i],current));
+            content.addView(value,margins(-1,-2,dp(3),0,0,0));
+            SeekBar seek=new SeekBar(this);
+            int low="scale".equals(keys[i])?50:0;
+            int high="scale".equals(keys[i])?250:
+                    ("rotate".equals(keys[i])?90:200);
+            seek.setMax(high-low);
+            seek.setProgress(current-low);
+            seek.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener(){
+                @Override public void onProgressChanged(SeekBar bar,int pos,boolean user){
+                    value.setText(labels[index]+"  "+
+                            StudioClipAdjustments.labelFor(keys[index],pos+low));
+                }
+                @Override public void onStartTrackingTouch(SeekBar bar){}
+                @Override public void onStopTrackingTouch(SeekBar bar){}
+            });
+            controls[i]=seek;
+            content.addView(seek,margins(-1,dp(43),0,0,0,0));
+        }
+        new AlertDialog.Builder(this)
+                .setTitle(transform?"Position & Transform":"Adjust Color")
+                .setView(content)
+                .setPositiveButton("Apply",(d,w)->{
+                    editHistory.checkpoint(activeProject);
+                    for(int i=0;i<keys.length;i++){
+                        int low="scale".equals(keys[i])?50:0;
+                        StudioClipAdjustments.apply(selectedClip.effects,keys[i],
+                                controls[i].getProgress()+low);
+                    }
+                    store.save(activeProject);syncProtocolState();showEditor();
+                })
+                .setNeutralButton("Reset",(d,w)->{
+                    editHistory.checkpoint(activeProject);
+                    StudioClipAdjustments.reset(selectedClip.effects,transform);
                     store.save(activeProject);syncProtocolState();showEditor();
                 })
                 .setNegativeButton("Cancel",null).show();
