@@ -119,9 +119,24 @@ public final class StoryboardLayerRenderer implements AutoCloseable {
                 ? (float)Math.sin(Math.PI*t)*width*.008f:0;
         canvas.translate(worldPan,0);
         canvas.drawBitmap(plate,0,0,paint);
+        // Independently measured source-object trajectories first; then
+        // apply small contact constraints only to appropriate action beats.
+        ArrayList<StoryboardInteractionSolver.Body> positions=new ArrayList<>();
+        for(SpritePair pair:sprites){
+            StoryboardLayerIsolation.Region from=pair.start.region,
+                    to=pair.end.region;
+            StoryboardMotionGrammar.Motion movement=StoryboardMotionGrammar.at(
+                    action,t,(to.cx-from.cx)/width,(to.cy-from.cy)/height,
+                    0,0,1,1,StoryboardMotionGrammar.SubjectKind.OBJECT);
+            positions.add(new StoryboardInteractionSolver.Body(
+                    from.cx/width+movement.x,from.cy/height+movement.y,
+                    Math.max(.003f,Math.min(.50f,(from.width()+to.width())*.25f/width)),
+                    Math.max(.003f,Math.min(.50f,(from.height()+to.height())*.25f/height))));
+        }
+        StoryboardInteractionSolver.resolve(positions,t,action);
         for(int i=0;i<sprites.size();i++){
             SpritePair pair=sprites.get(i);
-            drawTracked(canvas,pair,t,i);
+            drawTracked(canvas,pair,t,i,positions.get(i));
         }
         if(action==StoryboardMotionGrammar.Action.IMPACT||
            action==StoryboardMotionGrammar.Action.EXPLODE||
@@ -132,7 +147,8 @@ public final class StoryboardLayerRenderer implements AutoCloseable {
         return bitmap;
     }
 
-    private void drawTracked(Canvas canvas,SpritePair pair,float t,int slot) {
+    private void drawTracked(Canvas canvas,SpritePair pair,float t,int slot,
+                             StoryboardInteractionSolver.Body body) {
         StoryboardLayerIsolation.Region a=pair.start.region,b=pair.end.region;
         StoryboardMotionGrammar.SubjectKind subject=
                 scene==StoryboardMotionGrammar.SceneKind.TYPOGRAPHY
@@ -145,7 +161,7 @@ public final class StoryboardLayerRenderer implements AutoCloseable {
         float dx=(b.cx-a.cx)/width,dy=(b.cy-a.cy)/height;
         StoryboardMotionGrammar.Motion m=StoryboardMotionGrammar.at(
                 action,t,dx,dy,0,0,1,1,subject);
-        float x=a.cx/width+m.x,y=a.cy/height+m.y;
+        float x=body.x,y=body.y;
         float targetW=a.width()+(b.width()-a.width())*
                 StoryboardMotionGrammar.phase(action,t);
         float targetH=a.height()+(b.height()-a.height())*
