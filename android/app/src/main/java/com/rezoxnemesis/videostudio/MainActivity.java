@@ -1987,6 +1987,8 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         scroll.addView(box);
 
         box.addView(title("Autonomous Control", 27));
+        box.addView(studioButton("Connect / Repair ChatGPT ↗",this::showStudioConnectionHub),
+                margins(-1,dp(49),dp(5),dp(8),0,0));
         box.addView(body("Full Autonomous is the default. The MCP path is signalling/control only; projects, media and editing state live in the app. Gallery enumeration remains a hard technical boundary, not a permission toggle."));
         box.addView(section("Autonomy Mode"));
         box.addView(permissionCard("everything", "Full Autonomous  •  Recommended", "ChatGPT can use every VideoStudio-native operation: explicit file imports, project management, analysis, AI animation, editing, rendering, inspection, retries and cleanup without repeated permission prompts. Gallery listing/browsing remains technically blocked."));
@@ -1995,13 +1997,18 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         box.addView(section("Workload Safety"));
         LinearLayout safety = card(false);
         safety.addView(title("Heavy-work governor", 17));
-        JSONObject state = jobs.state();
-        JSONObject mem = state.optJSONObject("memory");
-        JSONObject thermal = state.optJSONObject("thermal");
-        String detail = "Available memory: " + (mem == null ? "?" : mem.optLong("availableMb")) + " MB"
-                + "\nThermal safe: " + (thermal == null || thermal.optBoolean("safeForHeavyWork", true) ? "yes" : "cooling required")
-                + "\nParallel lanes: 2 light + 1 protected heavy lane";
+        JSONObject state=jobs.state();
+        JSONObject mem=state.optJSONObject("memory");
+        JSONObject nativeWork=NativeWorkMonitor.snapshot(this);
+        String detail="Available RAM: "+(mem==null?"?":mem.optLong("availableMb"))+" MB"
+                +"\nReported by Android: "+nativeWork.optString("thermalLabel","unknown")
+                +"\nNative MCP renders: "+nativeWork.optInt("active",0)+" active / "
+                +nativeWork.optInt("waiting",0)+" waiting"
+                +"\n1 protected heavy renderer + lightweight editing lanes"
+                +"\nThe hardware, not the phone's outside temperature, determines safety.";
         safety.addView(body(detail));
+        Button inspect=studioButton("Inspect native render queue",this::showStudioJobDetails);
+        safety.addView(inspect,margins(-1,dp(43),dp(9),0,0,0));
         box.addView(safety);
 
         box.addView(section("Cloud Workspace"));
