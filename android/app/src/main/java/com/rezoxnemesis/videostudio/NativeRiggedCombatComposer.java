@@ -27,6 +27,18 @@ public final class NativeRiggedCombatComposer {
             Rig2DProfile blackProfile,Rig2DProfile whiteProfile,
             int width,int height,int fps,double durationSeconds,
             boolean storyboardMotion,Bitmap cleanPlate,Progress progress) throws Exception {
+        return compose(context,store,source,output,blackProfile,whiteProfile,
+                width,height,fps,durationSeconds,storyboardMotion,cleanPlate,
+                new CombatActionPlan(),progress);
+    }
+
+    public static ProjectStore.Project compose(Context context,ProjectStore store,
+            ProjectStore.Project source,ProjectStore.Project output,
+            Rig2DProfile blackProfile,Rig2DProfile whiteProfile,
+            int width,int height,int fps,double durationSeconds,
+            boolean storyboardMotion,Bitmap cleanPlate,
+            CombatActionPlan director,Progress progress) throws Exception {
+        if(director==null)throw new IllegalArgumentException("Combat director required");
         if(context==null||store==null||source==null||output==null||
                 blackProfile==null||whiteProfile==null||source.id.equals(output.id))
             throw new IllegalArgumentException("Two source rigs and a separate output project are required");
@@ -78,9 +90,10 @@ public final class NativeRiggedCombatComposer {
             for(int i=0;i<frames;i++){
                 if(Thread.currentThread().isInterrupted())throw new InterruptedException();
                 double seconds=i*durationSeconds/Math.max(1,frames-1);
+                CombatActionPlan.Frame direction=director.at(seconds,durationSeconds);
                 CombatRigSolver.Frame motion=CombatRigSolver.at(
-                        seconds,durationSeconds,storyboardMotion);
-                Bitmap image=renderer.render(motion,i);
+                        direction.solverSeconds,durationSeconds,storyboardMotion);
+                Bitmap image=renderer.render(motion,i,direction);
                 File frame=new File(framesDir,String.format(Locale.US,"skin_%04d.jpg",i));
                 boolean encoded=false;
                 try(FileOutputStream stream=new FileOutputStream(frame)){
@@ -107,6 +120,8 @@ public final class NativeRiggedCombatComposer {
                 asset.generationMetadata.put("frame",i);
                 asset.generationMetadata.put("poseTimeSeconds",seconds);
                 asset.generationMetadata.put("impact",motion.impactIntensity);
+                asset.generationMetadata.put("choreographyBeat",direction.beat.name());
+                asset.generationMetadata.put("choreographyCue",director.cueAt(seconds,durationSeconds));
                 asset.generationMetadata.put("sourceActorTexturesPreserved",true);
                 asset.generationMetadata.put("neuralReconstruction",false);
                 asset.generationMetadata.put("full3DMesh",false);
