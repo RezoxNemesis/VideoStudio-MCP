@@ -87,6 +87,24 @@ public final class StoryboardNativeFilmTest {
         assertEquals(2,unchanged.clips.size());
         assertEquals(2,unchanged.assets.size());
         assertEquals(7,store.get(generated.id).clips.size());
+        // Visual regression from the actual encoded 2D compositing frame:
+        // a passing mean-pixel motion score is NOT enough if the black
+        // fighter disappears while the white one is still visible.
+        ProjectStore.Asset halfway=generated.asset(
+                generated.clips.get(3).assetId);
+        Bitmap middle=BitmapFactory.decodeFile(
+                Uri.parse(halfway.uri).getPath());
+        assertNotNull("Native Canvas produced the mid-action frame",middle);
+        int black=0,white=0;
+        for(int y=164;y<282;y++)for(int x=0;x<W;x++){
+            int color=middle.getPixel(x,y);
+            int red=(color>>>16)&255,green=(color>>>8)&255,blue=color&255;
+            if(red<65&&green<65&&blue<65)black++;
+            if(red>210&&green>210&&blue>210)white++;
+        }
+        middle.recycle();
+        assertTrue("Black original fighter must remain visible throughout motion",black>350);
+        assertTrue("White original fighter must remain visible throughout motion",white>350);
         writeVisualQaSheet(ctx,source,generated,finished);
     }
 
