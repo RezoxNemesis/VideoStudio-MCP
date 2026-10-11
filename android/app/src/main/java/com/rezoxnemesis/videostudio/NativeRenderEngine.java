@@ -108,14 +108,7 @@ public final class NativeRenderEngine {
                         new ArrayList<>(animated.sequences);
                 sequences.addAll(buildStudioAudioSequences(project));
                 Composition.Builder assembled=new Composition.Builder(sequences);
-                List<TextureOverlay> captions=new ArrayList<>();
-                for(StudioLayer layer:project.studioLayers){
-                    if(StudioLayer.TITLE.equals(layer.type))
-                        captions.add(new StudioTimedTitleOverlay(layer));
-                }
-                if(!captions.isEmpty())
-                    assembled.setEffects(new Effects(Collections.emptyList(),
-                            Collections.singletonList(new OverlayEffect(captions))));
+                attachTimedTitles(assembled,project);
                 composition=assembled.build();
             } else if (layeredAnimation) {
                 composition = buildLayeredAnimationComposition(project, aspect, quality);
@@ -234,53 +227,46 @@ public final class NativeRenderEngine {
     }
 
     /**
-     * Real native parallel music mixing + independently timed title tracks.
-     * Titles split only the exported EditedMediaItem segments: source clips,
-     * SQLite project media, and their trim/speed settings stay unchanged.
+     * Continuous video timeline with synchronized captions and real audio
+     * tracks. Video clips are NOT cut at caption boundaries; the caption
+     * overlay renders only at its actual requested presentation timestamp.
      */
     private Composition buildStudioTrackComposition(ProjectStore.Project project,
                                                      String aspect,String quality) {
-        ArrayList<EditedMediaItem> base=new ArrayList<>();
-        // Caption snippets are cut only in this standard linear branch.
-        // Articulated/2.5D compositions use timed composition overlays instead.
+        ArrayList<EditedMediaItem> clips=new ArrayList<>();
         boolean allVideoWithAudio=true;
-        long globalStart=0;
-        for(ProjectStore.Clip original:project.clips){
-            ProjectStore.Asset asset=project.asset(original.assetId);
+        for(ProjectStore.Clip clip:project.clips){
+            ProjectStore.Asset asset=project.asset(clip.assetId);
             if(asset==null||asset.mime==null)continue;
             boolean image=asset.mime.startsWith("image/");
             boolean video=asset.mime.startsWith("video/");
             if(!image&&!video)continue;
             if(!video)allVideoWithAudio=false;
-            long duration=original.outputDurationMs();
-            if(duration<=0)continue;
-            for(StudioTrackLayout.Segment segment:
-                    StudioTrackLayout.titleSegments(globalStart,duration,project.studioLayers)){
-                ProjectStore.Clip part=ProjectStore.Clip.fromJson(original.toJson());
-                if(image){
-                    part.inMs=0;
-                    part.outMs=segment.durationMs;
-                    part.speed=1f;
-                }else{
-                    long inputStart=original.inMs+
-                            Math.round(segment.startMs*Math.max(.1f,original.speed));
-                    long inputEnd=original.inMs+
-                            Math.round((segment.startMs+segment.durationMs)*
-                                    Math.max(.1f,original.speed));
-                    part.inMs=Math.min(inputStart,original.outMs-1);
-                    part.outMs=Math.max(part.inMs+1,Math.min(inputEnd,original.outMs));
-                }
-                base.add(buildItem(asset,part,aspect,quality,image,segment.activeTitles));
-            }
-            globalStart+=duration;
+            if(clip.outputDurationMs()<=0)continue;
+            clips.add(buildItem(asset,clip,aspect,quality,image));
         }
-        if(base.isEmpty())throw new IllegalArgumentException("No playable base video clips");
+        if(clips.isEmpty())throw new IllegalArgumentException("No playable base video clips");
         ArrayList<EditedMediaItemSequence> sequences=new ArrayList<>();
         sequences.add(allVideoWithAudio
-                ?EditedMediaItemSequence.withAudioAndVideoFrom(base)
-                :EditedMediaItemSequence.withVideoFrom(base));
+                ?EditedMediaItemSequence.withAudioAndVideoFrom(clips)
+                :EditedMediaItemSequence.withVideoFrom(clips));
         sequences.addAll(buildStudioAudioSequences(project));
-        return new Composition.Builder(sequences).build();
+        Composition.Builder assembled=new Composition.Builder(sequences);
+        attachTimedTitles(assembled,project);
+        return assembled.build();
+    }
+
+    private static void attachTimedTitles(Composition.Builder assembled,
+                                          ProjectStore.Project project){
+        List<TextureOverlay> captions=new ArrayList<>();
+        for(StudioLayer layer:project.studioLayers){
+            if(StudioLayer.TITLE.equals(layer.type))
+                captions.add(new StudioTimedTitleOverlay(layer));
+        }
+        if(!captions.isEmpty()){
+            assembled.setEffects(new Effects(Collections.emptyList(),
+                    Collections.singletonList(new OverlayEffect(captions))));
+        }
     }
 
     /** Each imported audio lane is an independent, actually mixed Media3 sequence. */
