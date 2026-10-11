@@ -56,6 +56,7 @@ import java.util.concurrent.atomic.AtomicReference;
 public class MainActivity extends Activity implements AppProtocol.Callback {
     private static final int PICK_MEDIA = 1201;
     private static final int PICK_CLOUD_WORKSPACE = 1202;
+    private static final int PICK_UPDATE_APK = 1203;
     private static final int C_BG = Color.rgb(5, 8, 18);
     private static final int C_CARD = Color.rgb(13, 20, 37);
     private static final int C_CARD_2 = Color.rgb(17, 27, 48);
@@ -2636,6 +2637,24 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         }
         box.addView(cloud);
 
+        box.addView(section("Safe Updates & Legacy Migration"));
+        LinearLayout updates=card(false);
+        updates.addView(title("VideoStudio Next · no deletion of old app",17));
+        updates.addView(body("This new package installs alongside your existing VideoStudio. "
+                +"It uses a pinned signing certificate so subsequent Next APK updates can "
+                +"replace the Next app in place. Different certificates cannot update "
+                +"the old package; Android enforces this independently of VideoStudio."));
+        updates.addView(studioButton("Check and install newer Next APK",this::chooseUpdateApk),
+                margins(-1,dp(46),dp(7),0,0,0));
+        updates.addView(studioButton("Recover projects from legacy cloud archive",
+                this::confirmLegacyProjectRecovery),
+                margins(-1,dp(46),dp(7),0,0,0));
+        updates.addView(body("Choose the SAME folder your old app archived to: "
+                +"VideoStudio-MCP-Temp-Frames. Imported source files and generated "
+                +"frames are restored privately when the archive is complete; "
+                +"missing files are reported without modifying the old app."));
+        box.addView(updates);
+
         box.addView(section("Private Connection"));
         LinearLayout privateCard = card(false);
         privateCard.addView(title("Device-owned stable MCP endpoint", 17));
@@ -2752,6 +2771,98 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         showEditor();
     }
 
+    /** Android Files selects one exact APK; never enumerate local installed apps. */
+    private void chooseUpdateApk() {
+        Intent intent=new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("*/*");
+        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        startActivityForResult(intent,PICK_UPDATE_APK);
+    }
+
+    private void inspectAndOfferUpdate(Uri selected) {
+        Toast.makeText(this,"Checking APK certificate and version…",Toast.LENGTH_SHORT).show();
+        new Thread(()->{
+            try {
+                NativeApkUpdater.Inspection report=
+                        NativeApkUpdater.stageAndVerify(getApplicationContext(),selected);
+                runOnUiThread(()->{
+                    AlertDialog.Builder result=new AlertDialog.Builder(this)
+                            .setTitle(report.canUpdate()?"Compatible VideoStudio update":
+                                    "Update blocked — original projects protected")
+                            .setMessage(report.report())
+                            .setNegativeButton("Close",null);
+                    if(report.canUpdate())result.setPositiveButton(
+                            "Open Android installer",(dialog,button)->{
+                                try {
+                                    NativeApkUpdater.openSystemInstaller(this,report);
+                                }catch(Exception error){
+                                    Toast.makeText(this,
+                                            "Installer unavailable: "+error.getMessage(),
+                                            Toast.LENGTH_LONG).show();
+                                }
+                            });
+                    result.show();
+                });
+            }catch(Exception error){
+                runOnUiThread(()->new AlertDialog.Builder(this)
+                        .setTitle("APK verification was unsuccessful")
+                        .setMessage(error.getMessage()==null?"Cannot inspect this APK":
+                                error.getMessage())
+                        .setPositiveButton("OK",null).show());
+            }
+        },"VideoStudio-APK-Compatibility").start();
+    }
+
+    private void confirmLegacyProjectRecovery() {
+        if(!driveWorkspace.isLinked()){
+            new AlertDialog.Builder(this)
+                    .setTitle("Link your old Studio folder")
+                    .setMessage("Select the VideoStudio-MCP-Temp-Frames folder "
+                            +"used by your existing VideoStudio app. The old app "
+                            +"and its projects are not altered.")
+                    .setPositiveButton("Choose folder",(d,w)->pickCloudWorkspace())
+                    .setNegativeButton("Cancel",null).show();
+            return;
+        }
+        new AlertDialog.Builder(this)
+                .setTitle("Recover your archived projects?")
+                .setMessage("Read project manifests and explicitly staged media "
+                        +"from the linked VideoStudio folder. Only projects with "
+                        +"all required source files are committed. Existing Next "
+                        +"projects and your old app stay untouched.")
+                .setPositiveButton("Start recovery",(d,w)->{
+                    JobManager.Job job=jobs.submit("Recover legacy VideoStudio projects",
+                            JobManager.Kind.TRANSFER,state->{
+                                state.checkpoint("Cloud migration",1,
+                                        "Checking legacy archive and source media");
+                                JSONObject outcome=new LegacyCloudRecovery(this,store)
+                                        .restoreAll((percent,detail)->
+                                                state.checkpoint("Cloud migration",percent,detail));
+                                state.setResult(outcome);
+                                ActivityLog.add(this,"system","Legacy project recovery",
+                                        outcome.optInt("imported",0)+" project(s) imported; "+
+                                        outcome.optInt("skipped",0)+" require source media",
+                                        outcome.optInt("skipped",0)>0?"info":"success",
+                                        100,null,null);
+                                runOnUiThread(()->{
+                                    activeProject=store.active();
+                                    syncProtocolState();
+                                    requestServiceSync();
+                                    new AlertDialog.Builder(this)
+                                            .setTitle("Recovery report")
+                                            .setMessage(outcome.toString(2))
+                                            .setPositiveButton("OK",(dia,which)->showHome())
+                                            .show();
+                                });
+                            });
+                    Toast.makeText(this,"Project recovery queued • "+
+                            job.id.substring(0,8),Toast.LENGTH_LONG).show();
+                })
+                .setNegativeButton("Cancel",null)
+                .show();
+    }
+
     private void pickCloudWorkspace() {
         Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
         intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION
@@ -2854,6 +2965,11 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
 
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        if (requestCode == PICK_UPDATE_APK) {
+            if (resultCode == RESULT_OK && data != null && data.getData() != null)
+                inspectAndOfferUpdate(data.getData());
+            return;
+        }
         if (requestCode == PICK_CLOUD_WORKSPACE && resultCode == RESULT_OK && data != null && data.getData() != null) {
             Uri tree = data.getData();
             int takeFlags = data.getFlags() & (Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
