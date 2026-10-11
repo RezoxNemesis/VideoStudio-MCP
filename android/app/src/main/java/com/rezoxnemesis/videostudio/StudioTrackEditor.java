@@ -25,17 +25,18 @@ public final class StudioTrackEditor {
         return StudioTrackLayout.fromJson(saved);
     }
 
-    public static void commit(ProjectStore store,ProjectStore.Project project,
+    public static ProjectStore.Project commit(ProjectStore store,ProjectStore.Project project,
                               StudioTrackLayout layout) throws Exception {
         if(store==null||project==null||layout==null)
             throw new IllegalArgumentException("Active project and track layout required");
         JSONObject json=layout.toJson();
         ProjectStore.Project existing=store.get(project.id);
         if(existing==null)throw new IllegalArgumentException("Project was deleted");
-        // Non-destructive: preserve the fresh project's other fields and assets.
-        // Caller is responsible for merging edits against other concurrent work.
-        project.trackLayout=json;
-        store.save(project);
+        // Always merge into the freshest native project so that an export or
+        // ChatGPT animation generated meanwhile is NOT overwritten by UI edits.
+        existing.trackLayout=json;
+        store.save(existing);
+        return existing;
     }
 
     public static StudioTrackLayout.Item addMedia(StudioTrackLayout layout,
@@ -61,8 +62,9 @@ public final class StudioTrackEditor {
             throw new IllegalArgumentException("Invalid clip timing");
         long duration=Math.min(durationMs,Math.max(1,asset.durationMs));
         if(image)duration=durationMs;
-        if(startMs+duration>Math.max(project.outputDurationMs(),durationMs+startMs)+60000)
-            throw new IllegalArgumentException("Track duration out of bounds");
+        if(project.outputDurationMs()>0 &&
+                startMs>=project.outputDurationMs())
+            throw new IllegalArgumentException("Choose a position inside the video timeline");
         StudioTrackLayout.Item item=new StudioTrackLayout.Item(
                 UUID.randomUUID().toString(),asset.id,startMs,0,duration,1f);
         track.add(item);
