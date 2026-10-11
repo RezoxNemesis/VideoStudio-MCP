@@ -12,6 +12,19 @@ const nativeMain = fs.readFileSync(new URL("../android/app/src/main/java/com/rez
 const nativeProtocol = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/AppProtocol.java", import.meta.url), "utf8");
 const mcpConnectionCore = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/McpConnectionCore.java", import.meta.url), "utf8");
 const nativeJobs = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/JobManager.java", import.meta.url), "utf8");
+const storyboardPose = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/StoryboardPoseMotion.java", import.meta.url), "utf8");
+const storyboardPlate = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/StoryboardCleanPlate.java", import.meta.url), "utf8");
+const storyboardQuality = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/StoryboardMotionQualityGate.java", import.meta.url), "utf8");
+const storyboardComposer = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/NativeStoryboardArtworkComposer.java", import.meta.url), "utf8");
+const storyboardRenderer = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/NativeStoryboardArtworkRenderer.java", import.meta.url), "utf8");
+const skinnedSprite = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/NativeSkinnedSprite2D.java", import.meta.url), "utf8");
+const originalRigProfile = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/Rig2DProfile.java", import.meta.url), "utf8");
+const storyboardRigEditor = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/RigEditorActivity.java", import.meta.url), "utf8");
+const nextUpgradePolicy = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/UpdateCompatibility.java", import.meta.url), "utf8");
+const nativeApkUpdater = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/NativeApkUpdater.java", import.meta.url), "utf8");
+const legacyRecovery = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/LegacyCloudRecovery.java", import.meta.url), "utf8");
+const cloudProvider = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/DriveWorkspaceProvider.java", import.meta.url), "utf8");
+const thermalQueuePolicy = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/ThermalQueuePolicy.java", import.meta.url), "utf8");
 const nativeRender = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/NativeRenderEngine.java", import.meta.url), "utf8");
 const promptVideo = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/PromptVideoEngine.java", import.meta.url), "utf8");
 const nativeAnalyzer = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/NativeMediaAnalyzer.java", import.meta.url), "utf8");
@@ -200,6 +213,26 @@ const checks = [
   ["worker persists negotiated wire compatibility independently of app version", worker.includes("wireSchemaVersion") && worker.includes("featureLevel") && worker.includes("transportDecoupledFromApkVersion") && worker.includes('"stable-core-2"')],
   ["True combat action uses fully native articulated frame generation", controlService.includes('case "animate_combat_rig"') && controlService.includes("queueCombatRig") && controlService.includes("combatRigBenchmarkReady")],
   ["Combat IK and independent per-frame sword motion is compiled", combatSolver.includes("elbow(") && combatSolver.includes("swordTipSeparation") && combatSolver.includes("remap(") && combatSolver.includes("leadingFoot")],
+  ["Storyboard source-to-animation uses only 2D original actor textures and frames",
+     storyboardRenderer.includes("NativeSkinnedSprite2D")
+     && storyboardRenderer.includes("StoryboardPoseMotion.between")
+     && storyboardComposer.includes("StoryboardCleanPlate.restore")
+     && storyboardComposer.includes("storyboard_artwork")
+     && storyboardComposer.includes("notNeuralVideo")
+     && !storyboardRenderer.includes("CombatRigSolver")],
+  ["Storyboard maintains actors, real traced sword tips and fixed cinematic city",
+     storyboardPose.includes("Sword tip must stay attached")
+     && originalRigProfile.includes("swordTip")
+     && storyboardRigEditor.includes('button("Sword tip"')
+     && storyboardPlate.includes("Large camera/scene cuts are REJECTED")
+     && skinnedSprite.includes("targetPose")],
+  ["Storyboard animation rejects fake no-motion input and uses Media3 export",
+     storyboardQuality.includes("no measurable fighter or sword motion")
+     && controlService.includes('case "animate_storyboard_artwork"')
+     && controlService.includes('case "storyboard_artwork_preflight"')
+     && controlService.includes('runExportBlocking(target,"9:16"')
+     && nativeMain.includes("Storyboard Art → Moving Fighters (2D Beta)")],
+  ["private MCP can author source-textured actors from native project images", controlService.includes('case "save_source_rig_profile"') && controlService.includes('case "list_source_rig_profiles"') && controlService.includes("NativeRigAuthoring.parse") && controlService.includes("sourceProjectUpdatedAt") && controlService.includes("Rig2DProjectStore(this, store)")],
   ["Native combat rig can lock source city using only user-imported image clips", cleanScenePlate.includes("perChannelMedian") && cleanScenePlate.includes("source.clips") && combatRenderer.includes("staticBackground") && controlService.includes("backgroundMode")],
   ["Combat benchmark draws one locked background then moving fighters", combatRenderer.includes("drawWorld(c)") && combatRenderer.includes("drawWarrior") && combatRenderer.includes("drawImpact") && combatComposer.includes("NativeCombatRigRenderer")],
   ["Native Editor offers true-rig movement test, not just still interpolation", nativeMain.includes("combatRigBenchmarkDialog()") && nativeMain.includes("True Combat Rig Test")],
@@ -207,7 +240,11 @@ const checks = [
   ["Native animation engine preserves source order and disables decorative motion", animationDirector.includes("createDirectProject") && animationDirector.includes("plan.sourceIds") && animationDirector.includes("directorSequenceFrame") && animationDirector.includes('clip.transition="none"')],
   ["Animation Director supports real native MCP action and self-test", controlService.includes('case "animate_timeline"') && controlService.includes("queueAnimateTimeline") && controlService.includes("animationDirectorReady")],
   ["Upgraded flow guards stable backgrounds and major scene cuts", poseSequenceFlow.includes("sceneCutRisk") && poseSequenceFlow.includes("originalIndex") && poseSequenceFlow.includes("localDifference < 18")],
-  ["native app identifies as VideoStudio 3.5.0 while retaining stable MCP v3", nativeProtocol.includes('APP_VERSION = "3.5.0"') && nativeProtocol.includes("PROTOCOL_VERSION = 3") && androidBuild.includes('versionName = "3.5.0"') && androidBuild.includes("versionCode = 350")],
+  ["Next is a safely coinstallable distinct Android package", androidBuild.includes('applicationId = "com.rezoxnemesis.videostudio.next"') && androidManifest.includes('android:label="VideoStudio Next"') && Number((androidBuild.match(/versionCode\s*=\s*(\d+)/)||[])[1] || 0)>=363],
+  ["in-app updater verifies real installed and selected APK certificate and version before installer", nativeApkUpdater.includes("GET_SIGNING_CERTIFICATES") && nativeApkUpdater.includes("getPackageArchiveInfo") && nativeApkUpdater.includes("FileProvider.getUriForFile") && nextUpgradePolicy.includes("Different Android signing certificate") && nativeMain.includes("chooseUpdateApk")],
+  ["cloud migration imports only complete source-owned archives without uninstall", legacyRecovery.includes("originalLegacyAppUnchanged") && legacyRecovery.includes("missing_source_media") && legacyRecovery.includes("ProjectStore.Project.fromJson") && legacyRecovery.includes("source_assets/") && nativeMain.includes("confirmLegacyProjectRecovery")],
+  ["cloud archives future explicitly imported media including originals", cloudProvider.includes('ensureDirectory(tree,projectDir,"Originals")') && cloudProvider.includes("allOriginalsArchived") && cloudProvider.includes("unavailableOriginalAssets")],
+  ["native app version matches Gradle while retaining stable MCP v3", (() => { const app = nativeProtocol.match(/APP_VERSION\s*=\s*"([^"]+)"/), build = androidBuild.match(/versionName\s*=\s*"([^"]+)"/), code = androidBuild.match(/versionCode\s*=\s*(\d+)/); return !!app && !!build && !!code && app[1] === build[1] && Number(code[1]) >= 361 && nativeProtocol.includes("PROTOCOL_VERSION = 3"); })()],
   ["pairing message advertises stable upgrade-surviving endpoint", nativeProtocol.includes("Stable MCP endpoint:") && nativeProtocol.includes("survives compatible VideoStudio APK upgrades")],
   ["MCP Connection Core preserves stable endpoint across APK upgrades", mcpConnectionCore.includes('STABLE_MCP_PATH = "/app-mcp-v3/"') && mcpConnectionCore.includes("appGeneration") && mcpConnectionCore.includes("upgradeKeepsOwnerCredential") && mcpConnectionCore.includes("upgradeKeepsDeviceIdentity")],
   ["MCP Connection Core negotiates only an allow-listed same-origin API profile", mcpConnectionCore.includes("applyRegistrationResponse") && mcpConnectionCore.includes("safeApiPrefix") && mcpConnectionCore.includes("heartbeatMs") && mcpConnectionCore.includes("commandWaitMs")],
@@ -226,7 +263,9 @@ const checks = [
   ["Native Agent UI only goes online after actual MCP handshake", controlService.includes('markService(false, "VideoStudio stable MCP Native Agent starting")') && controlService.includes("onConnection(boolean connected")],
   ["device reboot restores stable MCP control without Gallery permission", androidManifest.includes("android.permission.RECEIVE_BOOT_COMPLETED") && androidManifest.includes("android.intent.action.BOOT_COMPLETED") && nativeRecoveryReceiver.includes("ACTION_BOOT_COMPLETED") && !nativeRecoveryReceiver.includes("gallery")],
   ["native v3 command cursor advances only after completion", nativeProtocol.includes('KEY_SEQ = "native_v3_last_seq"') && nativeProtocol.includes("advanceSequence")],
-  ["native app has bounded heavy-work scheduler", nativeJobs.includes("Semaphore") && nativeJobs.includes("THERMAL_STATUS_SEVERE")],
+  ["native app has bounded heavy-work scheduler", nativeJobs.includes("Semaphore") && thermalQueuePolicy.includes("THERMAL_STATUS_SEVERE") && thermalQueuePolicy.includes("THERMAL_STATUS_CRITICAL")],
+  ["adaptive thermal mode separates render and transfer queues", nativeJobs.includes("Kind { LIGHT, HEAVY, TRANSFER }") && nativeJobs.includes("transferPool") && nativeJobs.includes("releaseLane(job)") && nativeJobs.includes("acquireSafeLane(job)") && controlService.includes("submitRecoverableTransfer") && controlService.includes("jobs.awaitSafeCheckpoint(state, state.stage)")],
+  ["critical safety remains while project backups work through severe thermal state", thermalQueuePolicy.includes("JobManager.Kind.HEAVY") && thermalQueuePolicy.includes("JobManager.Kind.TRANSFER") && nativeJobs.includes("safeForBackgroundTransfer") && computeProfile.includes("thermalSafeForBackgroundTransfers")],
   ["worker exposes canonical stable VideoStudio App MCP lane", worker.includes('"VideoStudio-App-MCP-v3"') && worker.includes("appMcpV3") && worker.includes("serverForApp(env,ownerKey,3)") && worker.includes("Permanent compatibility endpoint")],
   ["worker has dedicated v3 API namespace", worker.includes('"/api/v3/app/register"') && worker.includes('"/api/v3/app/commands"') && worker.includes("appCompleteV3")],
   ["worker uses an isolated v3 command queue", worker.includes('"app-v3-seq:"') && worker.includes('"app-v3-cl:"') && worker.includes("protocolVersion:3")],
