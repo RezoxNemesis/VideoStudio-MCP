@@ -118,7 +118,10 @@ public final class JobManager {
     private final Context context;
     private final SharedPreferences prefs;
     private static final Semaphore PROCESS_HEAVY_LANE = new Semaphore(1, true);
-    private final ExecutorService pool = Executors.newFixedThreadPool(3);
+    // Hot or lengthy render tasks MUST NOT occupy the two light-work workers.
+    // The single heavy queue is serial, separate from interactive operations.
+    private final ExecutorService heavyPool = Executors.newSingleThreadExecutor();
+    private final ExecutorService lightPool = Executors.newFixedThreadPool(2);
     private final Semaphore heavyLane = PROCESS_HEAVY_LANE;
     private final Map<String, Job> jobs = new ConcurrentHashMap<>();
 
@@ -145,14 +148,19 @@ public final class JobManager {
         job.owner = this;
         jobs.put(job.id, job);
         persist();
-        job.future = pool.submit(() -> {
+        job.future = (kind == Kind.HEAVY ? heavyPool : lightPool).submit(() -> {
             boolean locked = false;
             try {
                 setState(job, STATE_PREPARING,
                         kind == Kind.HEAVY ? "Waiting for safe render lane" : "Preparing");
                 if (kind == Kind.HEAVY) {
+                    // Don't monopolize the global render lane while Android
+                    // reports severe heat or memory pressure.
+                    waitForSafeDevice(job);
                     heavyLane.acquire();
                     locked = true;
+                    // Recheck immediately after acquiring: temperature and RAM
+                    // may have changed while another service was rendering.
                     waitForSafeDevice(job);
                 }
                 if (Thread.currentThread().isInterrupted()) throw new InterruptedException();
@@ -227,7 +235,8 @@ public final class JobManager {
 
     public void shutdown() {
         cancelAll();
-        pool.shutdownNow();
+        heavyPool.shutdownNow();
+        lightPool.shutdownNow();
         persist();
     }
 
