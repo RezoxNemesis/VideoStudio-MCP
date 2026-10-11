@@ -157,7 +157,7 @@ public final class StoryboardLayerRenderer implements AutoCloseable {
 
     private void drawTracked(Canvas canvas,SpritePair pair,float t,int slot,
                              StoryboardInteractionSolver.Body body) {
-        StoryboardLayerIsolation.Region a=pair.start.region,b=pair.end.region;
+        StoryboardLayerIsolation.Region from=pair.start.region,to=pair.end.region;
         StoryboardMotionGrammar.SubjectKind subject=
                 scene==StoryboardMotionGrammar.SceneKind.TYPOGRAPHY
                     ?StoryboardMotionGrammar.SubjectKind.TEXT
@@ -166,45 +166,112 @@ public final class StoryboardLayerRenderer implements AutoCloseable {
                         :scene==StoryboardMotionGrammar.SceneKind.PORTRAIT
                             ?StoryboardMotionGrammar.SubjectKind.CHARACTER
                             :StoryboardMotionGrammar.SubjectKind.OBJECT;
-        float dx=(b.cx-a.cx)/width,dy=(b.cy-a.cy)/height;
+        float dx=(to.cx-from.cx)/width,dy=(to.cy-from.cy)/height;
         StoryboardMotionGrammar.Motion m=StoryboardMotionGrammar.at(
                 action,t,dx,dy,0,0,1,1,subject);
-        float x=body.x,y=body.y;
-        float targetW=a.width()+(b.width()-a.width())*
-                StoryboardMotionGrammar.phase(action,t);
-        float targetH=a.height()+(b.height()-a.height())*
-                StoryboardMotionGrammar.phase(action,t);
-        x=Math.max(-.15f,Math.min(1.15f,x));
-        y=Math.max(-.15f,Math.min(1.15f,y));
-        if(t<.46f)drawSprite(canvas,pair,pair.start,x,y,targetW,targetH,m,t,false,255);
-        else if(t>.54f)drawSprite(canvas,pair,pair.end,x,y,targetW,targetH,m,t,true,255);
-        else{
-            // Narrow, isolated texture handoff: only this ONE moving
-            // object transitions between original painted appearances.
-            float mix=(t-.46f)/.08f;mix=mix*mix*(3-2*mix);
-            drawSprite(canvas,pair,pair.start,x,y,targetW,targetH,m,t,false,
-                    Math.round(255*(1-mix)));
-            drawSprite(canvas,pair,pair.end,x,y,targetW,targetH,m,t,true,
-                    Math.round(255*mix));
+        float x=Math.max(-.15f,Math.min(1.15f,body.x));
+        float y=Math.max(-.15f,Math.min(1.15f,body.y));
+        float phase=StoryboardMotionGrammar.phase(action,t);
+        float targetW=from.width()+(to.width()-from.width())*phase;
+        float targetH=from.height()+(to.height()-from.height())*phase;
+
+        if(t<.46f) {
+            drawSourceSprite(canvas,pair,pair.start,x,y,targetW,targetH,m,t,false);
+        }else if(t>.54f){
+            drawSourceSprite(canvas,pair,pair.end,x,y,targetW,targetH,m,t,true);
+        }else {
+            // Blend RGB inside a SINGLE isolated original object, not two
+            // half-transparent figures over the city. The opaque source
+            // ink remains opaque at the collision midpoint.
+            float mix=(t-.46f)/.08f;
+            mix=mix*mix*(3-2*mix);
+            blendSourceSprites(canvas,pair,x,y,targetW,targetH,m,t,mix);
         }
     }
 
-    private void drawSprite(Canvas canvas,SpritePair pair,Sprite sprite,
-                            float x,float y,float targetW,float targetH,
-                            StoryboardMotionGrammar.Motion m,float t,
-                            boolean endTexture,int alpha){
-        if(alpha<=0)return;
-        float widthScale=(targetW/sprite.region.width())*m.scale;
-        float heightScale=(targetH/sprite.region.height())*m.scale;
-        canvas.save();
-        canvas.translate(x*width,y*height);
-        canvas.rotate(m.rotation);
-        canvas.scale(widthScale,heightScale);
-        paint.setAlpha(Math.max(0,Math.min(255,Math.round(alpha*m.opacity))));
-        pair.deformation.render(canvas,sprite.bitmap,sprite.pivotX,sprite.pivotY,
-                t,1f,endTexture,paint);
-        paint.setAlpha(255);
-        canvas.restore();
+    /**
+     * GPU and software Canvas disagree on nested bitmap clipping/translation
+     * in some Android devices and Robolectric. Deform the REAL actor pixels
+     * first, then draw one complete bitmap using explicit SOURCE-COORDINATE
+     * absolute screen position. No procedural fighter is ever introduced.
+     */
+    private Bitmap sizedSource(SpritePair pair,Sprite sprite,float t,
+                               boolean endTexture,int targetW,int targetH){
+        Bitmap deformed=pair.deformation.deformBitmap(
+                sprite.bitmap,t,endTexture,1f);
+        Bitmap resized=Bitmap.createScaledBitmap(deformed,targetW,targetH,true);
+        if(deformed!=resized&&deformed!=sprite.bitmap)
+            deformed.recycle();
+        return resized;
+    }
+
+    private void drawSourceSprite(Canvas canvas,SpritePair pair,Sprite sprite,
+                                  float x,float y,float targetW,float targetH,
+                                  StoryboardMotionGrammar.Motion movement,
+                                  float t,boolean endTexture){
+        int w=Math.max(1,Math.round(targetW*movement.scale));
+        int h=Math.max(1,Math.round(targetH*movement.scale));
+        Bitmap bitmap=sizedSource(pair,sprite,t,endTexture,w,h);
+        try {
+            float left=x*width-(sprite.pivotX/sprite.bitmap.getWidth())*w;
+            float top=y*height-(sprite.pivotY/sprite.bitmap.getHeight())*h;
+            paint.setAlpha(Math.max(0,Math.min(255,
+                    Math.round(255*movement.opacity))));
+            canvas.drawBitmap(bitmap,left,top,paint);
+        }finally{
+            paint.setAlpha(255);
+            if(bitmap!=sprite.bitmap)bitmap.recycle();
+        }
+    }
+
+    private void blendSourceSprites(Canvas canvas,SpritePair pair,float x,float y,
+                                    float targetW,float targetH,
+                                    StoryboardMotionGrammar.Motion movement,
+                                    float t,float mix) {
+        int w=Math.max(1,Math.round(targetW*movement.scale));
+        int h=Math.max(1,Math.round(targetH*movement.scale));
+        Bitmap a=sizedSource(pair,pair.start,t,false,w,h);
+        Bitmap b=sizedSource(pair,pair.end,t,true,w,h);
+        Bitmap blended=null;
+        try{
+            int[] firstPixels=new int[w*h],lastPixels=new int[w*h],
+                    output=new int[w*h];
+            a.getPixels(firstPixels,0,w,0,0,w,h);
+            b.getPixels(lastPixels,0,w,0,0,w,h);
+            float one=1-mix;
+            for(int i=0;i<output.length;i++){
+                int ca=firstPixels[i],cb=lastPixels[i];
+                float aa=(ca>>>24&255)*one,bb=(cb>>>24&255)*mix;
+                float coverage=aa+bb;
+                if(coverage<=.01f)continue;
+                float weightA=aa/coverage,weightB=bb/coverage;
+                int r=Math.round((ca>>>16&255)*weightA+
+                        (cb>>>16&255)*weightB);
+                int g=Math.round((ca>>>8&255)*weightA+
+                        (cb>>>8&255)*weightB);
+                int blue=Math.round((ca&255)*weightA+
+                        (cb&255)*weightB);
+                output[i]=(Math.min(255,Math.round(coverage))<<24)
+                        |(Math.min(255,r)<<16)|(Math.min(255,g)<<8)
+                        |Math.min(255,blue);
+            }
+            blended=Bitmap.createBitmap(output,w,h,Bitmap.Config.ARGB_8888);
+            float pivotX=(pair.start.pivotX/
+                    pair.start.bitmap.getWidth())*one+
+                    (pair.end.pivotX/pair.end.bitmap.getWidth())*mix;
+            float pivotY=(pair.start.pivotY/
+                    pair.start.bitmap.getHeight())*one+
+                    (pair.end.pivotY/pair.end.bitmap.getHeight())*mix;
+            paint.setAlpha(Math.max(0,Math.min(255,
+                    Math.round(255*movement.opacity))));
+            canvas.drawBitmap(blended,x*width-pivotX*w,
+                    y*height-pivotY*h,paint);
+        }finally{
+            paint.setAlpha(255);
+            if(blended!=null)blended.recycle();
+            if(a!=pair.start.bitmap)a.recycle();
+            if(b!=pair.end.bitmap&&b!=a)b.recycle();
+        }
     }
 
     private void drawActionParticles(Canvas canvas,float t,int frameIndex){
