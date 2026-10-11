@@ -219,7 +219,7 @@ public final class NativeRenderEngine {
      * No fake audio waveform effect. This is an actual Media3 Composition,
      * and will report a failure rather than silently dropping audio.
      */
-    private List<EditedMediaItemSequence> buildProjectAudioTracks(
+    List<EditedMediaItemSequence> buildProjectAudioTracks(
             ProjectStore.Project project) throws Exception {
         List<EditedMediaItemSequence> result=new ArrayList<>();
         if(project.trackLayout==null||project.trackLayout.length()==0)return result;
