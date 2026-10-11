@@ -728,6 +728,8 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
             box.addView(paging);
         }
 
+        renderStudioTrackLanes(box);
+
         LinearLayout mediaHead=new LinearLayout(this);
         mediaHead.setGravity(Gravity.CENTER_VERTICAL);
         TextView mediaTitle=title("Media Bin · "+activeProject.assets.size(),16);
@@ -1110,6 +1112,234 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
             case "Combat Benchmark": combatRigBenchmarkDialog();return;
             default: applyTool(name);return;
         }
+    }
+
+    /**
+     * Music and caption lanes live independently of sequential video clips.
+     * These are editable, source-backed tracks, not decorative timeline labels.
+     */
+    private void renderStudioTrackLanes(LinearLayout box){
+        LinearLayout header=new LinearLayout(this);
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        header.addView(title("Audio & Titles",17),
+                new LinearLayout.LayoutParams(0,-2,1));
+        header.addView(studioButton("+ Music",this::chooseStudioAudio),
+                new LinearLayout.LayoutParams(dp(93),dp(44)));
+        header.addView(studioButton("+ Caption",()->editStudioTitle(null)),
+                new LinearLayout.LayoutParams(dp(109),dp(44)));
+        box.addView(header,margins(-1,-2,dp(10),dp(4),0,0));
+
+        StudioTracksView bands=new StudioTracksView(this);
+        bands.setTimeline(activeProject.outputDurationMs(),studioPlayheadMs,
+                activeProject.studioLayers,this::scrubStudioTo);
+        box.addView(bands,margins(-1,dp(112),dp(4),dp(6),0,0));
+
+        ArrayList<StudioLayer> order=new ArrayList<>(activeProject.studioLayers);
+        order.sort((a,b)->Long.compare(a.startMs,b.startMs));
+        for(StudioLayer lane:order){
+            LinearLayout row=new LinearLayout(this);
+            row.setGravity(Gravity.CENTER_VERTICAL);
+            row.setBackground(rounded(C_CARD_2,0xff334661,dp(11)));
+            row.setPadding(dp(9),dp(4),dp(9),dp(4));
+            ProjectStore.Asset asset=StudioLayer.AUDIO.equals(lane.type)?
+                    activeProject.asset(lane.assetId):null;
+            String desc=StudioLayer.AUDIO.equals(lane.type)?
+                    (asset==null?"Missing audio file":asset.name):lane.text;
+            TextView info=body((StudioLayer.AUDIO.equals(lane.type)?"♫  ":"T  ")+desc+
+                    "\n"+time(lane.startMs)+" – "+
+                    time(lane.startMs+lane.durationMs)+
+                    (StudioLayer.AUDIO.equals(lane.type)?
+                    "  ·  "+Math.round(lane.gain*100)+"%":""));
+            info.setMaxLines(2);info.setEllipsize(android.text.TextUtils.TruncateAt.END);
+            row.addView(info,new LinearLayout.LayoutParams(0,-2,1));
+            row.addView(studioButton("Edit",()->{
+                if(StudioLayer.AUDIO.equals(lane.type))editStudioAudio(lane,lane.assetId);
+                else editStudioTitle(lane);
+            }),new LinearLayout.LayoutParams(dp(65),dp(38)));
+            row.addView(studioButton("×",()->removeStudioLayer(lane)),
+                    new LinearLayout.LayoutParams(dp(42),dp(38)));
+            box.addView(row,margins(-1,-2,dp(3),dp(3),0,0));
+        }
+        box.addView(body("Audio mixes into MP4; titles are burned into the video "+
+                "at their chosen times. Preview the exported result to hear "+
+                "all tracks together."),margins(-1,-2,dp(2),0,0,0));
+    }
+
+    private void chooseStudioAudio(){
+        if(activeProject==null||activeProject.clips.isEmpty()){
+            Toast.makeText(this,"Create the video timeline before adding music",
+                    Toast.LENGTH_LONG).show();
+            return;
+        }
+        ArrayList<ProjectStore.Asset> audio=new ArrayList<>();
+        for(ProjectStore.Asset a:activeProject.assets)
+            if(a.mime!=null&&a.mime.startsWith("audio/"))audio.add(a);
+        if(audio.isEmpty()){
+            new AlertDialog.Builder(this).setTitle("Add music or narration")
+                .setMessage("Import an audio file through the Android Files picker. "+
+                        "It will appear here as an independent timeline lane "+
+                        "without changing the video or your original media.")
+                .setPositiveButton("Import Audio",(d,w)->pickMedia())
+                .setNegativeButton("Cancel",null).show();
+            return;
+        }
+        String[] labels=new String[audio.size()];
+        for(int i=0;i<audio.size();i++)
+            labels[i]=audio.get(i).name;
+        new AlertDialog.Builder(this).setTitle("Choose an imported audio file")
+                .setItems(labels,(d,index)->editStudioAudio(null,audio.get(index).id))
+                .setNegativeButton("Import another",(d,w)->pickMedia())
+                .show();
+    }
+
+    private void editStudioAudio(StudioLayer existing,String assetId){
+        ProjectStore.Asset asset=activeProject==null?null:activeProject.asset(assetId);
+        if(asset==null||asset.mime==null||!asset.mime.startsWith("audio/")){
+            Toast.makeText(this,"Audio asset is missing. Import it again.",
+                    Toast.LENGTH_LONG).show();return;
+        }
+        StudioLayer original=existing==null?new StudioLayer():existing.copy();
+        original.type=StudioLayer.AUDIO;
+        original.assetId=asset.id;
+        if(existing==null){
+            original.startMs=Math.min(studioPlayheadMs,
+                    Math.max(0,activeProject.outputDurationMs()-1000));
+            long remaining=activeProject.outputDurationMs()-original.startMs;
+            original.durationMs=Math.max(100,Math.min(remaining,
+                    asset.durationMs>0?asset.durationMs:remaining));
+        }
+        LinearLayout wrap=column();
+        wrap.setPadding(dp(20),dp(4),dp(20),0);
+        wrap.addView(body("Start on timeline (seconds)"));
+        EditText start=numberInput(original.startMs/1000f);
+        wrap.addView(start);
+        wrap.addView(body("Duration (seconds)"));
+        EditText length=numberInput(original.durationMs/1000f);
+        wrap.addView(length);
+        wrap.addView(body("Source in-point (seconds)"));
+        EditText source=numberInput(original.sourceInMs/1000f);
+        wrap.addView(source);
+        TextView gainText=body("Music volume "+Math.round(original.gain*100)+"%");
+        wrap.addView(gainText);
+        SeekBar gain=new SeekBar(this);
+        gain.setMax(100);gain.setProgress(Math.round(original.gain*100));
+        gain.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener(){
+            @Override public void onProgressChanged(SeekBar bar,int progress,boolean user){
+                gainText.setText("Music volume "+progress+"%");
+            }
+            @Override public void onStartTrackingTouch(SeekBar bar){}
+            @Override public void onStopTrackingTouch(SeekBar bar){}
+        });
+        wrap.addView(gain);
+        new AlertDialog.Builder(this).setTitle("♫ Audio Track · "+asset.name)
+                .setView(wrap)
+                .setPositiveButton("Apply",(d,w)->{
+                    try{
+                        StudioLayer edited=original.copy();
+                        edited.startMs=Math.round(Double.parseDouble(start.getText().toString())*1000);
+                        edited.durationMs=Math.round(Double.parseDouble(length.getText().toString())*1000);
+                        edited.sourceInMs=Math.round(Double.parseDouble(source.getText().toString())*1000);
+                        edited.gain=gain.getProgress()/100f;
+                        edited.validate();
+                        validateStudioLayerTiming(edited);
+                        editHistory.checkpoint(activeProject);
+                        if(existing==null)activeProject.studioLayers.add(edited);
+                        else replaceStudioLayer(existing.id,edited);
+                        store.save(activeProject);syncProtocolState();showEditor();
+                    }catch(Exception error){
+                        Toast.makeText(this,error.getMessage()==null?"Invalid audio timing":error.getMessage(),
+                                Toast.LENGTH_LONG).show();
+                    }
+                }).setNegativeButton("Cancel",null).show();
+    }
+
+    private void editStudioTitle(StudioLayer existing){
+        if(activeProject==null||activeProject.clips.isEmpty()){
+            Toast.makeText(this,"Add video or image clips first",Toast.LENGTH_LONG).show();return;
+        }
+        StudioLayer original=existing==null?new StudioLayer():existing.copy();
+        original.type=StudioLayer.TITLE;
+        if(existing==null){
+            original.startMs=Math.min(studioPlayheadMs,
+                    Math.max(0,activeProject.outputDurationMs()-1000));
+            original.durationMs=Math.min(2500,
+                    Math.max(100,activeProject.outputDurationMs()-original.startMs));
+        }
+        LinearLayout wrap=column();
+        wrap.setPadding(dp(20),dp(6),dp(20),0);
+        EditText caption=new EditText(this);
+        caption.setSingleLine(false);caption.setMaxLines(3);
+        caption.setTextColor(C_TEXT);
+        caption.setHint("Enter subtitle or cinematic title");
+        caption.setText(original.text);
+        wrap.addView(caption);
+        wrap.addView(body("Start (seconds)"));
+        EditText start=numberInput(original.startMs/1000f);
+        wrap.addView(start);
+        wrap.addView(body("Duration (seconds)"));
+        EditText duration=numberInput(original.durationMs/1000f);
+        wrap.addView(duration);
+        String[] positions={"Top","Center","Bottom"};
+        android.widget.Spinner position=new android.widget.Spinner(this);
+        android.widget.ArrayAdapter<String> adapter=new android.widget.ArrayAdapter<>(
+                this,android.R.layout.simple_spinner_item,positions);
+        adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        position.setAdapter(adapter);
+        position.setSelection(original.position);
+        wrap.addView(body("On-screen position"));
+        wrap.addView(position,new LinearLayout.LayoutParams(-1,dp(49)));
+        new AlertDialog.Builder(this).setTitle("T  Timed Caption")
+                .setView(wrap)
+                .setPositiveButton("Apply",(d,w)->{
+                    try{
+                        StudioLayer edited=original.copy();
+                        edited.text=caption.getText().toString().trim();
+                        edited.startMs=Math.round(Double.parseDouble(start.getText().toString())*1000);
+                        edited.durationMs=Math.round(Double.parseDouble(duration.getText().toString())*1000);
+                        edited.position=position.getSelectedItemPosition();
+                        edited.validate();validateStudioLayerTiming(edited);
+                        editHistory.checkpoint(activeProject);
+                        if(existing==null)activeProject.studioLayers.add(edited);
+                        else replaceStudioLayer(existing.id,edited);
+                        store.save(activeProject);syncProtocolState();showEditor();
+                    }catch(Exception error){
+                        Toast.makeText(this,error.getMessage()==null?"Invalid caption":error.getMessage(),
+                                Toast.LENGTH_LONG).show();
+                    }
+                }).setNegativeButton("Cancel",null).show();
+    }
+
+    private void validateStudioLayerTiming(StudioLayer lane){
+        if(lane.startMs+lane.durationMs>activeProject.outputDurationMs())
+            throw new IllegalArgumentException("Layer must end inside the video timeline");
+        if(activeProject.studioLayers.size()>=32&&
+                activeProject.studioLayers.stream().noneMatch(x->x.id.equals(lane.id)))
+            throw new IllegalArgumentException("Limit is 32 timed audio/caption layers");
+        if(StudioLayer.AUDIO.equals(lane.type)){
+            ProjectStore.Asset asset=activeProject.asset(lane.assetId);
+            if(asset==null||!asset.mime.startsWith("audio/"))
+                throw new IllegalArgumentException("Audio source is not imported");
+            if(asset.durationMs>0&&lane.sourceInMs+lane.durationMs>asset.durationMs+20)
+                throw new IllegalArgumentException("Audio is shorter than the selected trim");
+        }
+    }
+    private void replaceStudioLayer(String id,StudioLayer replacement){
+        for(int i=0;i<activeProject.studioLayers.size();i++)
+            if(id.equals(activeProject.studioLayers.get(i).id)){
+                activeProject.studioLayers.set(i,replacement);return;
+            }
+        throw new IllegalArgumentException("Timed layer no longer exists");
+    }
+    private void removeStudioLayer(StudioLayer lane){
+        new AlertDialog.Builder(this).setTitle("Remove track?")
+                .setMessage("Remove this audio/title layer from the edit? "+
+                        "The original imported file is preserved.")
+                .setPositiveButton("Remove",(d,w)->{
+                    editHistory.checkpoint(activeProject);
+                    activeProject.studioLayers.removeIf(x->x.id.equals(lane.id));
+                    store.save(activeProject);syncProtocolState();showEditor();
+                })
+                .setNegativeButton("Cancel",null).show();
     }
 
     private void studioSpeedDialog(){
