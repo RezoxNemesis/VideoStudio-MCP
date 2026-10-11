@@ -2568,7 +2568,14 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
             }
             store.save(activeProject);
             syncProtocolState();
-            Toast.makeText(this, tool + " applied", Toast.LENGTH_SHORT).show();
+            boolean experimental=false;
+            for(StudioToolCatalog.Tool item:StudioToolCatalog.find(tool)){
+                if(tool.equals(item.label)){experimental=item.experimental;break;}
+            }
+            Toast.makeText(this,experimental?
+                            tool+" saved · verify in exported MP4":
+                            tool+" applied to selected clip",
+                    Toast.LENGTH_SHORT).show();
             showEditor();
         } catch (Exception error) {
             Toast.makeText(this, "Could not apply " + tool, Toast.LENGTH_SHORT).show();
@@ -2576,7 +2583,15 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
     }
 
     private void splitClip() {
-        long at = livePlayer != null ? livePlayer.currentPositionMs() : selectedClip.inMs + (selectedClip.outMs - selectedClip.inMs) / 2;
+        if(selectedClip==null||activeProject==null)return;
+        StudioTimelineClock.Position where=
+                StudioTimelineClock.locate(activeProject.clips,studioPlayheadMs);
+        long at=selectedClip.inMs+(selectedClip.outMs-selectedClip.inMs)/2;
+        if(where.clipIndex>=0&&where.clipIndex<activeProject.clips.size()&&
+                activeProject.clips.get(where.clipIndex).id.equals(selectedClip.id)&&
+                where.offsetInClipMs>150){
+            at=where.assetTimeMs;
+        }
         if (at <= selectedClip.inMs + 250 || at >= selectedClip.outMs - 250) {
             Toast.makeText(this, "Move playback inside the clip before splitting", Toast.LENGTH_SHORT).show();
             return;
