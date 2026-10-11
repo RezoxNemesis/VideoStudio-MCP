@@ -25,7 +25,12 @@ public final class NativeWorkMonitor {
         JSONObject summary=summarize(saved);
         long last=prefs.getLong("control_service_heartbeat",0);
         boolean fresh=last>0&&Math.abs(System.currentTimeMillis()-last)<65000;
-        boolean online=fresh&&prefs.getBoolean("control_service_online",false);
+        boolean identityCurrent=AppProtocol.APP_VERSION.equals(
+                prefs.getString("control_service_app_version",""))
+                && prefs.getInt("control_service_connection_core_version",0)
+                        ==McpConnectionCore.CORE_VERSION;
+        boolean online=fresh&&identityCurrent&&
+                prefs.getBoolean("control_service_online",false);
         int thermal=PowerManager.THERMAL_STATUS_NONE;
         try{
             PowerManager pm=(PowerManager)context.getSystemService(Context.POWER_SERVICE);
@@ -33,6 +38,7 @@ public final class NativeWorkMonitor {
         }catch(Exception ignored){}
         try{
             summary.put("nativeServiceOnline",online);
+            summary.put("nativeVersionCurrent",identityCurrent);
             summary.put("heartbeatAgeSeconds",last>0?
                     Math.max(0,(System.currentTimeMillis()-last)/1000): -1);
             summary.put("thermalStatus",thermal);
