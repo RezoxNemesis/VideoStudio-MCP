@@ -849,7 +849,10 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         result.put("projectId",project.id);
         result.put("updatedAt",project.updatedAt);
         result.put("audioTracks",StudioTrackLayout.audioLayers(project).size());
-        result.put("titleTracks",StudioTrackLayout.titleLayers(project).size());
+        int captions=0;
+        for(StudioLayer layer:project.studioLayers)
+            if(StudioLayer.TITLE.equals(layer.type))captions++;
+        result.put("titleTracks",captions);
         result.put("studioLayers",StudioLayerContract.toJson(project.studioLayers));
         return result;
     }
