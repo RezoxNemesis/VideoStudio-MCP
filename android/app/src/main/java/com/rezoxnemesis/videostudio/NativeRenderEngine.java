@@ -2,6 +2,11 @@ package com.rezoxnemesis.videostudio;
 
 import android.content.Context;
 import android.net.Uri;
+import android.text.SpannableString;
+import android.text.style.ForegroundColorSpan;
+import android.text.style.StyleSpan;
+import android.text.style.AbsoluteSizeSpan;
+import android.graphics.Typeface;
 import android.os.Handler;
 import android.os.Looper;
 
@@ -10,6 +15,8 @@ import androidx.media3.common.Effect;
 import androidx.media3.common.MediaItem;
 import androidx.media3.common.MimeTypes;
 import androidx.media3.common.audio.AudioProcessor;
+import androidx.media3.common.audio.GainProcessor;
+import androidx.media3.common.audio.DefaultGainProvider;
 import androidx.media3.common.audio.SpeedProvider;
 import androidx.media3.common.util.UnstableApi;
 import androidx.media3.effect.Brightness;
@@ -17,6 +24,9 @@ import androidx.media3.effect.Contrast;
 import androidx.media3.effect.GaussianBlur;
 import androidx.media3.effect.HslAdjustment;
 import androidx.media3.effect.OverlayEffect;
+import androidx.media3.effect.StaticOverlaySettings;
+import androidx.media3.effect.TextOverlay;
+import androidx.media3.effect.TextureOverlay;
 import androidx.media3.effect.Presentation;
 import androidx.media3.effect.ScaleAndRotateTransformation;
 import androidx.media3.transformer.Composition;
@@ -33,6 +43,7 @@ import org.json.JSONObject;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Set;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -84,9 +95,16 @@ public final class NativeRenderEngine {
                 return null;
             }
             final boolean layeredAnimation = hasLayeredAnimation(project);
+            final boolean hasStudioTracks = !project.studioLayers.isEmpty();
+            if(layeredAnimation && hasStudioTracks) {
+                listener.onError("Multi-track titles/audio are not yet supported on layered portrait scenes");
+                return null;
+            }
             Composition composition;
             if (layeredAnimation) {
                 composition = buildLayeredAnimationComposition(project, aspect, quality);
+            } else if(hasStudioTracks) {
+                composition = buildStudioTrackComposition(project,aspect,quality);
             } else {
                 List<EditedMediaItem> edited = new ArrayList<>();
                 boolean allVideoWithAudio = true;
@@ -130,6 +148,8 @@ public final class NativeRenderEngine {
                                                 : "VideoStudio v3.1 Media3 layered parallax")
                                         : "Media3 Transformer 1.11.1");
                                 info.put("layeredAnimation", layeredAnimation);
+                                info.put("nativeStudioTracks", hasStudioTracks);
+                                info.put("studioTrackCount", project.studioLayers.size());
                                 info.put("animationMode", layeredAnimation
                                         ? (hasArticulatedAnimation(project) ? "articulated-subject-2.5d" : "subject-aware-2.5d")
                                         : "standard");
@@ -195,6 +215,103 @@ public final class NativeRenderEngine {
             listener.onError(error.getMessage() == null ? "Could not prepare native export" : error.getMessage());
             return null;
         }
+    }
+
+    /**
+     * Real native parallel music mixing + independently timed title tracks.
+     * Titles split only the exported EditedMediaItem segments: source clips,
+     * SQLite project media, and their trim/speed settings stay unchanged.
+     */
+    private Composition buildStudioTrackComposition(ProjectStore.Project project,
+                                                     String aspect,String quality) {
+        ArrayList<EditedMediaItem> base=new ArrayList<>();
+        List<StudioLayer> music=StudioTrackLayout.audioLayers(project);
+        boolean allVideoWithAudio=music.isEmpty();
+        long globalStart=0;
+        for(ProjectStore.Clip original:project.clips){
+            ProjectStore.Asset asset=project.asset(original.assetId);
+            if(asset==null||asset.mime==null)continue;
+            boolean image=asset.mime.startsWith("image/");
+            boolean video=asset.mime.startsWith("video/");
+            if(!image&&!video)continue;
+            if(!video)allVideoWithAudio=false;
+            long duration=original.outputDurationMs();
+            if(duration<=0)continue;
+            for(StudioTrackLayout.Segment segment:
+                    StudioTrackLayout.titleSegments(globalStart,duration,project.studioLayers)){
+                ProjectStore.Clip part=ProjectStore.Clip.fromJson(original.toJson());
+                if(image){
+                    part.inMs=0;
+                    part.outMs=segment.durationMs;
+                    part.speed=1f;
+                }else{
+                    long inputStart=original.inMs+
+                            Math.round(segment.startMs*Math.max(.1f,original.speed));
+                    long inputEnd=original.inMs+
+                            Math.round((segment.startMs+segment.durationMs)*
+                                    Math.max(.1f,original.speed));
+                    part.inMs=Math.min(inputStart,original.outMs-1);
+                    part.outMs=Math.max(part.inMs+1,Math.min(inputEnd,original.outMs));
+                }
+                base.add(buildItem(asset,part,aspect,quality,image,segment.activeTitles));
+            }
+            globalStart+=duration;
+        }
+        if(base.isEmpty())throw new IllegalArgumentException("No playable base video clips");
+        ArrayList<EditedMediaItemSequence> sequences=new ArrayList<>();
+        sequences.add(allVideoWithAudio
+                ?EditedMediaItemSequence.withAudioAndVideoFrom(base)
+                :EditedMediaItemSequence.withVideoFrom(base));
+        long baseDuration=project.outputDurationMs();
+        for(StudioLayer lane:music){
+            ProjectStore.Asset asset=project.asset(lane.assetId);
+            long end=Math.min(asset.durationMs>0?asset.durationMs:
+                    lane.sourceInMs+lane.durationMs,lane.sourceInMs+lane.durationMs);
+            MediaItem media=new MediaItem.Builder()
+                    .setUri(Uri.parse(asset.uri))
+                    .setClippingConfiguration(new MediaItem.ClippingConfiguration.Builder()
+                            .setStartPositionMs(lane.sourceInMs)
+                            .setEndPositionMs(end)
+                            .build())
+                    .build();
+            EditedMediaItem.Builder track=new EditedMediaItem.Builder(media)
+                    .setRemoveVideo(true)
+                    .setDurationUs(lane.durationMs*1000L);
+            if(lane.gain<.999f){
+                List<AudioProcessor> processors=Collections.singletonList(
+                        new GainProcessor(new DefaultGainProvider.Builder(lane.gain).build()));
+                track.setEffects(new Effects(processors,Collections.emptyList()));
+            }
+            EditedMediaItemSequence.Builder audio=new EditedMediaItemSequence.Builder(
+                    Collections.singleton(C.TRACK_TYPE_AUDIO));
+            if(lane.startMs>0)audio.addGap(lane.startMs*1000L);
+            audio.addItem(track.build());
+            long tail=baseDuration-lane.startMs-lane.durationMs;
+            if(tail>0)audio.addGap(tail*1000L);
+            sequences.add(audio.build());
+        }
+        return new Composition.Builder(sequences).build();
+    }
+
+    private static List<Effect> titleEffects(List<StudioLayer> titles){
+        if(titles==null||titles.isEmpty())return Collections.emptyList();
+        ArrayList<TextureOverlay> overlays=new ArrayList<>();
+        int count=0;
+        for(StudioLayer title:titles){
+            if(count++>=5)break;
+            SpannableString line=new SpannableString(title.text);
+            line.setSpan(new ForegroundColorSpan(title.color),0,line.length(),0);
+            line.setSpan(new StyleSpan(Typeface.BOLD),0,line.length(),0);
+            line.setSpan(new AbsoluteSizeSpan(32,true),0,line.length(),0);
+            float y=title.position==0?.72f:(title.position==2?-.71f:0f);
+            StaticOverlaySettings settings=new StaticOverlaySettings.Builder()
+                    .setBackgroundFrameAnchor(0f,y)
+                    .setOverlayFrameAnchor(0f,0f)
+                    .setAlphaScale(1f)
+                    .build();
+            overlays.add(TextOverlay.createStaticTextOverlay(line,settings));
+        }
+        return Collections.singletonList(new OverlayEffect(overlays));
     }
 
     private boolean hasLayeredAnimation(ProjectStore.Project project) {
@@ -367,7 +484,14 @@ public final class NativeRenderEngine {
         }
     }
 
-    private EditedMediaItem buildItem(ProjectStore.Asset asset, ProjectStore.Clip clip, String aspect, String quality, boolean image) {
+    private EditedMediaItem buildItem(ProjectStore.Asset asset, ProjectStore.Clip clip,
+                                      String aspect,String quality,boolean image) {
+        return buildItem(asset,clip,aspect,quality,image,Collections.emptyList());
+    }
+
+    private EditedMediaItem buildItem(ProjectStore.Asset asset, ProjectStore.Clip clip,
+                                      String aspect,String quality,boolean image,
+                                      List<StudioLayer> titles) {
         long inputDurationMs = Math.max(100, clip.outMs - clip.inMs);
         MediaItem.Builder media = new MediaItem.Builder().setUri(Uri.parse(asset.uri));
 
@@ -400,6 +524,7 @@ public final class NativeRenderEngine {
 
         List<AudioProcessor> audio = Collections.emptyList();
         List<Effect> video = buildEffects(clip, aspect, quality, inputDurationMs);
+        video.addAll(titleEffects(titles));
         edited.setEffects(new Effects(audio, video));
         if (asset.mime == null || !asset.mime.startsWith("video/")) edited.setRemoveAudio(true);
         return edited.build();
