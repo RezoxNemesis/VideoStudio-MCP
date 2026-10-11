@@ -64,6 +64,18 @@ jobs:
           test -r "$VIDEOSTUDIO_SIGNING_KEYSTORE"
           gradle :app:testDebugUnitTest :app:assembleDebug --stacktrace
 
+      # Actual JNI/Canvas native artwork frames are rendered by Robolectric.
+      # The QA sheet is intentionally synthetic test art, never the user's
+      # private storyboard. Inspect before claiming visual animation quality.
+      - name: Publish native storyboard visual QA samples
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: VideoStudio-storyboard-visual-qa
+          path: android/app/build/storyboard-qa/
+          if-no-files-found: warn
+          retention-days: 7
+
       - name: Verify APK signing continuity
         run: |
           set -euo pipefail
