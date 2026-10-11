@@ -90,7 +90,8 @@ public final class StoryboardBatchPlanner {
                         .put("endIndex",b.end)
                         .put("firstAssetId",assets.get(b.start))
                         .put("lastAssetId",assets.get(b.end))
-                        .put("inputFrames",b.end-b.start+1)
+                        .put("inputFramesIncludingOverlap",b.end-b.start+1)
+                        .put("newOriginalFrames",b.end-b.start+(b.index==0?1:0))
                         .put("plannedOutputFrames",b.expectedFrames)
                         .put("sharesFirstAnchorWithPrevious",b.index>0);
                 JSONArray shots=new JSONArray();
@@ -180,7 +181,11 @@ public final class StoryboardBatchPlanner {
         while(start<images.size()-1){
             ArrayList<Shot> shots=new ArrayList<>();
             int end=start,produced=1;
-            while(end+1<images.size() && end-start+1<maxPerBatch) {
+            // Batch zero contributes up to 20 originals. Every later batch
+            // contributes another 20 NEW originals plus the preceding
+            // batch's last reference keyframe (21 inputs internally).
+            while(end+1<images.size() &&
+                    end-start<(start==0?maxPerBatch-1:maxPerBatch)) {
                 int samples=framesPerPair;
                 if(produced+samples>maxGenerated)break;
                 ProjectStore.Asset to=images.get(end+1);
