@@ -96,12 +96,28 @@ public final class NativeRenderEngine {
             }
             final boolean layeredAnimation = hasLayeredAnimation(project);
             final boolean hasStudioTracks = !project.studioLayers.isEmpty();
-            if(layeredAnimation && hasStudioTracks) {
-                listener.onError("Multi-track titles/audio are not yet supported on layered portrait scenes");
-                return null;
-            }
+            if(hasStudioTracks) StudioLayerContract.fromJson(
+                    project,StudioLayerContract.toJson(project.studioLayers));
             Composition composition;
-            if (layeredAnimation) {
+            if(layeredAnimation && hasStudioTracks) {
+                // Preserve the articulated foreground/background compositor,
+                // then mix audio on independent audio-only sequences and
+                // apply captions to the final composition at authored times.
+                Composition animated=buildLayeredAnimationComposition(project,aspect,quality);
+                ArrayList<EditedMediaItemSequence> sequences=
+                        new ArrayList<>(animated.sequences);
+                sequences.addAll(buildStudioAudioSequences(project));
+                Composition.Builder assembled=new Composition.Builder(sequences);
+                List<TextureOverlay> captions=new ArrayList<>();
+                for(StudioLayer layer:project.studioLayers){
+                    if(StudioLayer.TITLE.equals(layer.type))
+                        captions.add(new StudioTimedTitleOverlay(layer));
+                }
+                if(!captions.isEmpty())
+                    assembled.setEffects(new Effects(Collections.emptyList(),
+                            Collections.singletonList(new OverlayEffect(captions))));
+                composition=assembled.build();
+            } else if (layeredAnimation) {
                 composition = buildLayeredAnimationComposition(project, aspect, quality);
             } else if(hasStudioTracks) {
                 composition = buildStudioTrackComposition(project,aspect,quality);
@@ -225,7 +241,8 @@ public final class NativeRenderEngine {
     private Composition buildStudioTrackComposition(ProjectStore.Project project,
                                                      String aspect,String quality) {
         ArrayList<EditedMediaItem> base=new ArrayList<>();
-        List<StudioLayer> music=StudioTrackLayout.audioLayers(project);
+        // Caption snippets are cut only in this standard linear branch.
+        // Articulated/2.5D compositions use timed composition overlays instead.
         boolean allVideoWithAudio=true;
         long globalStart=0;
         for(ProjectStore.Clip original:project.clips){
@@ -262,6 +279,15 @@ public final class NativeRenderEngine {
         sequences.add(allVideoWithAudio
                 ?EditedMediaItemSequence.withAudioAndVideoFrom(base)
                 :EditedMediaItemSequence.withVideoFrom(base));
+        sequences.addAll(buildStudioAudioSequences(project));
+        return new Composition.Builder(sequences).build();
+    }
+
+    /** Each imported audio lane is an independent, actually mixed Media3 sequence. */
+    private List<EditedMediaItemSequence> buildStudioAudioSequences(
+            ProjectStore.Project project) {
+        ArrayList<EditedMediaItemSequence> sequences=new ArrayList<>();
+        List<StudioLayer> music=StudioTrackLayout.audioLayers(project);
         long baseDuration=project.outputDurationMs();
         for(StudioLayer lane:music){
             ProjectStore.Asset asset=project.asset(lane.assetId);
@@ -290,7 +316,7 @@ public final class NativeRenderEngine {
             if(tail>0)audio.addGap(tail*1000L);
             sequences.add(audio.build());
         }
-        return new Composition.Builder(sequences).build();
+        return sequences;
     }
 
     private static List<Effect> titleEffects(List<StudioLayer> titles){
