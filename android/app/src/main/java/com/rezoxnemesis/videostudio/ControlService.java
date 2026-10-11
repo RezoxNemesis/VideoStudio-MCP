@@ -4373,6 +4373,8 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             case "finish_frame_transfer": return "Verifying complete private frame";
             case "frame_transfer_status": return "Checking private frame transfer";
             case "animate_combat_rig": return "Generating articulated stickman sword combat";
+            case "save_source_rig_profile": return "Saving original source-character rig";
+            case "list_source_rig_profiles": return "Reading original source-character rigs";
             case "render_rigged_2d": return "Animating original masked fighters through native 2D mesh skinning";
             case "render_gltf_combat": return "Rendering two real glTF skinned 3D characters into Media3 video";
             case "animate_timeline": return "Directing cinematic image sequence";
