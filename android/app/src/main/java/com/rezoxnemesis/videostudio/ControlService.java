@@ -1891,13 +1891,12 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                     JSONObject archived = driveWorkspace.syncProject(
                             project,
                             workspace,
-                            (progress, detail) -> checkpoint(
-                                    state,
-                                    "Cloud offload",
-                                    detail,
-                                    Math.max(2, Math.min(86, (int) (2 + progress * .84))),
-                                    project.id
-                            )
+                            (progress, detail) -> {
+                                checkpoint(state, "Cloud offload", detail, Math.max(2, Math.min(86, (int) (2 + progress * .84))), project.id);
+                                // File boundary: check memory and critical thermal
+                                // before copying the next archived media item.
+                                jobs.awaitSafeCheckpoint(state, state.stage);
+                            }
                     );
                     if (!archived.optBoolean("ok", false)) {
                         throw new IllegalStateException("Cloud archive verification did not complete");
@@ -1947,13 +1946,12 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                     JSONObject restored = driveWorkspace.restoreProjectWorkspace(
                             project.id,
                             workspace,
-                            (progress, detail) -> checkpoint(
-                                    state,
-                                    "Cloud restore",
-                                    detail,
-                                    Math.max(2, Math.min(100, progress)),
-                                    project.id
-                            )
+                            (progress, detail) -> {
+                                checkpoint(state, "Cloud restore", detail, Math.max(2, Math.min(100, progress)), project.id);
+                                // File boundary: check memory and critical thermal
+                                // before copying the next archived media item.
+                                jobs.awaitSafeCheckpoint(state, state.stage);
+                            }
                     );
                     checkpoint(state, "Cloud restore",
                             "Creative workspace restored • " + restored.optLong("bytesRestored", 0) + " bytes",
@@ -1996,13 +1994,12 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                     JSONObject archived = driveWorkspace.syncModelPack(
                             packId,
                             pack,
-                            (progress, detail) -> checkpoint(
-                                    state,
-                                    "Cloud model archive",
-                                    detail,
-                                    Math.max(2, Math.min(100, progress)),
-                                    ""
-                            )
+                            (progress, detail) -> {
+                                checkpoint(state, "Cloud model archive", detail, Math.max(2, Math.min(100, progress)), "");
+                                // File boundary: check memory and critical thermal
+                                // before copying the next archived media item.
+                                jobs.awaitSafeCheckpoint(state, state.stage);
+                            }
                     );
                     checkpoint(state, "Cloud model archive",
                             "Model pack archived • " + archived.optLong("bytesWritten", 0) + " bytes",
@@ -2102,13 +2099,12 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                     JSONObject archived = driveWorkspace.syncProject(
                             project,
                             workspace,
-                            (progress, detail) -> checkpoint(
-                                    state,
-                                    "Cloud archive",
-                                    detail,
-                                    Math.max(2, Math.min(100, progress)),
-                                    project.id
-                            )
+                            (progress, detail) -> {
+                                checkpoint(state, "Cloud archive", detail, Math.max(2, Math.min(100, progress)), project.id);
+                                // File boundary: check memory and critical thermal
+                                // before copying the next archived media item.
+                                jobs.awaitSafeCheckpoint(state, state.stage);
+                            }
                     );
                     checkpoint(state, "Cloud archive",
                             "Project workspace archived • " + archived.optLong("bytesWritten", 0) + " bytes",
