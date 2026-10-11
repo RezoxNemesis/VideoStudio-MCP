@@ -2475,6 +2475,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
             if(!"Split".equals(tool)&&!"Trim".equals(tool)&&!"Text".equals(tool))
                 editHistory.checkpoint(activeProject);
             switch (tool) {
+                case "Split":
                     splitClip();
                     return;
                 case "Trim":
