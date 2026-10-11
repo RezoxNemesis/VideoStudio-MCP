@@ -151,8 +151,12 @@ public final class StoryboardLayerIsolation {
             return new Result(Status.NEEDS_SOURCE_MASKS,plate,tracks,
                     drift,hidden,fraction,
                     "Subject tracking is uncertain. Trace objects once or install an appropriate model pack.");
-        return new Result(Status.READY,plate,tracks,drift,hidden,fraction,
-                "Independent original-artwork objects isolated and tracked");
+        Result coarse=new Result(Status.READY,plate,tracks,drift,hidden,fraction,
+                "Motion-difference candidates classified, awaiting full source-object masks");
+        // Moving foreground need not move every pixel: stationary arms and
+        // overlapping white/black bodies must be included in their source
+        // matte before any 2D deformation/clean-city reconstruction.
+        return StoryboardColorMatteRefiner.refine(coarse,before,after,w,h);
     }
 
     /**
