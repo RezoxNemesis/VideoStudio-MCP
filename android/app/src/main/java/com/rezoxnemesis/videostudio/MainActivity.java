@@ -93,6 +93,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
     private Runnable stillTimelineNext;
     private StudioThumbnailLoader studioThumbs;
     private StudioAudioWaveforms studioAudioWaveforms;
+    private StudioAudioPreviewEngine studioAudioPreview;
     private final StudioEditHistory editHistory=new StudioEditHistory();
     private ImageView studioStillPreview;
     private TextView studioCaptionPreview;
@@ -122,6 +123,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         jobs = new JobManager(this,"videostudio_editor_local_jobs_v2");
         studioThumbs = new StudioThumbnailLoader(this);
         studioAudioWaveforms=new StudioAudioWaveforms(this);
+        studioAudioPreview=new StudioAudioPreviewEngine(this);
         renderEngine = new NativeRenderEngine(this);
         promptVideoEngine = new PromptVideoEngine(this);
         mediaAnalyzer = new NativeMediaAnalyzer(this);
@@ -174,6 +176,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         if(studioCaptionClock!=null)ui.removeCallbacks(studioCaptionClock);
         if(studioThumbs!=null)studioThumbs.shutdown();
         if(studioAudioWaveforms!=null)studioAudioWaveforms.shutdown();
+        if(studioAudioPreview!=null)studioAudioPreview.release();
         if (activityRefresh != null) ui.removeCallbacks(activityRefresh);
         if (serviceWatchdog != null) ui.removeCallbacks(serviceWatchdog);
         if (livePlayer != null) livePlayer.release();
@@ -536,6 +539,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         if(studioCaptionClock!=null){
             ui.removeCallbacks(studioCaptionClock);studioCaptionClock=null;
         }
+        if(studioAudioPreview!=null)studioAudioPreview.stop();
         if(activeProject==null){
             activeProject=store.active();
             if(activeProject==null)activeProject=store.create("Untitled Project");
@@ -924,6 +928,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         if(studioStillPreview!=null)studioStillPreview.setVisibility(View.GONE);
         try{
             livePlayer.setContextIds("final:"+activeProject.latestExportAt,"");
+            livePlayer.setVolume(1f);
             livePlayer.play(Uri.parse(activeProject.latestExportUri),0L);
         }catch(Exception error){
             Toast.makeText(this,"Latest MP4 could not open. Try All Renders.",
@@ -1039,6 +1044,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         if(asset.mime!=null&&asset.mime.startsWith("video/")){
             if(studioStillPreview!=null)studioStillPreview.setVisibility(View.GONE);
             livePlayer.setContextIds("",clip.id);
+            livePlayer.setVolume(clip.volume);
             livePlayer.playClip(Uri.parse(ProxyManager.previewUri(activeProject,asset)),
                     clip.inMs,clip.outMs,clip.speed,()->{
                         if(timelinePreviewRunning)playStudioFrom(index+1);
@@ -1067,6 +1073,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
             ui.removeCallbacks(studioCaptionClock);
             studioCaptionClock=null;
         }
+        if(studioAudioPreview!=null)studioAudioPreview.stop();
     }
 
     private void renderStudioMediaBin(LinearLayout box){
@@ -1558,6 +1565,8 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                 elapsed=Math.max(0,Math.min(clipLength,elapsed));
                 long clock=globalStartMs+elapsed;
                 updateStudioCaptionAt(clock);
+                if(studioAudioPreview!=null)
+                    studioAudioPreview.sync(activeProject,clock,true);
                 if(studioTimeLabel!=null)
                     studioTimeLabel.setText(time(clock)+" / "+
                             time(activeProject.outputDurationMs()));
