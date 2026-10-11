@@ -518,6 +518,9 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 case "analyse_media":
                     queueAnalysis(command, p);
                     return;
+                case "analyse_storyboard_motion":
+                    queueStoryboardMotionAnalysis(command, p);
+                    return;
                 case "prompt_video":
                     complete(command, queuePromptVideo(p));
                     return;
@@ -910,6 +913,63 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             }
         }
         return result;
+    }
+
+    /**
+     * Read only explicitly imported project images. Heavy frame synthesis is
+     * never performed here; we report where pixel interpolation is unsafe.
+     */
+    private void queueStoryboardMotionAnalysis(JSONObject command,JSONObject p) {
+        try {
+            ProjectStore.Project project=resolveProject(p.optString("projectId",""));
+            JSONArray provided=p.optJSONArray("anchorAssetIds");
+            JSONArray ordered=new JSONArray();
+            if(provided!=null) {
+                for(int i=0;i<provided.length();i++)ordered.put(provided.getString(i));
+            }else{
+                for(ProjectStore.Clip clip:project.clips){
+                    ProjectStore.Asset asset=project.asset(clip.assetId);
+                    if(asset!=null&&asset.mime!=null&&asset.mime.startsWith("image/"))
+                        ordered.put(asset.id);
+                }
+            }
+            if(ordered.length()<2||ordered.length()>40)
+                throw new IllegalArgumentException("Storyboard needs 2-40 ordered imported images");
+            final JSONArray sourceIds=ordered;
+            jobs.submit("Storyboard motion preflight • "+project.name,
+                    JobManager.Kind.LIGHT,state -> {
+                try {
+                    checkpoint(state,"Storyboard analysis",
+                            "Checking scene changes and motion correspondence",10,project.id);
+                    JSONObject result=StoryboardMotionPreflight.inspect(
+                            this,project,sourceIds);
+                    checkpoint(state,"Storyboard analysis",
+                            "Rig and reconstruction risks classified",100,project.id);
+                    ActivityLog.add(this,"chatgpt","Storyboard motion preflight",
+                            result.optInt("needsArticulatedRig",0)+" pair(s) need character rigging; "
+                            +result.optInt("needsSceneReconstruction",0)+" need scene reconstruction",
+                            "success",100,command.optString("id",""),project.id);
+                    commandJournal.finish(command,result,"completed");
+                    protocol.complete(command,result,"completed");
+                }catch(Exception error){
+                    JSONObject failed=new JSONObject();
+                    failed.put("ok",false);
+                    failed.put("error",error.getMessage()==null
+                            ?"Motion assessment failed":error.getMessage());
+                    commandJournal.finish(command,failed,"failed");
+                    protocol.complete(command,failed,"failed");
+                    throw error;
+                }
+            });
+        }catch(Exception error){
+            JSONObject failed=new JSONObject();
+            try {
+                failed.put("ok",false);
+                failed.put("error",error.getMessage());
+            }catch(Exception ignored){}
+            commandJournal.finish(command,failed,"failed");
+            protocol.complete(command,failed,"failed");
+        }
     }
 
     private void queueAnalysis(JSONObject command, JSONObject p) {
@@ -3346,6 +3406,12 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             out.put("inlineAttachmentIngest", true);
             out.put("chunkedFrameIngest", true);
             out.put("poseSequenceEngineReady", true);
+            out.put("storyboardMotionPreflightReady", true);
+            out.put("rigKinematicsMathReady", true);
+            // Critical distinction: usable constraints are not the same as
+            // character reconstruction or a textured 3D rigged renderer.
+            out.put("sourceFaithfulRiggedRendererInstalled", false);
+            out.put("full3DSkeletalRendererInstalled", false);
             out.put("animationDirectorReady", true);
             out.put("combatRigBenchmarkReady", true);
             out.put("combatRigBackend", "articulated-two-bone-IK-v1");
