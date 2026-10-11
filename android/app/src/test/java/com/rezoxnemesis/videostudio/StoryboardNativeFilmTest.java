@@ -2,6 +2,9 @@ package com.rezoxnemesis.videostudio;
 
 import android.content.Context;
 import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.graphics.Canvas;
+import android.graphics.Paint;
 import android.net.Uri;
 import org.json.JSONObject;
 import org.junit.Test;
@@ -84,5 +87,73 @@ public final class StoryboardNativeFilmTest {
         assertEquals(2,unchanged.clips.size());
         assertEquals(2,unchanged.assets.size());
         assertEquals(7,store.get(generated.id).clips.size());
+        writeVisualQaSheet(ctx,source,generated,finished);
+    }
+
+    /**
+     * Saves real decoded output snapshots from the storyboard native
+     * renderer, plus a structured QA report and native synthesized Foley.
+     * GitHub Actions uploads these as a compact, inspectable test artifact.
+     * This is visual proof from synthetic sample art, NOT proof that all
+     * human/anime storyboard scenes meet cinematic quality.
+     */
+    private static void writeVisualQaSheet(Context context,
+                                            ProjectStore.Project source,
+                                            ProjectStore.Project result,
+                                            StoryboardSeriesOrchestrator.Result quality)
+            throws Exception {
+        File directory=new File("build/storyboard-qa");
+        if(!directory.isDirectory()&&!directory.mkdirs())
+            throw new IllegalStateException("Cannot prepare storyboard visual review");
+        final int[] samples={0,1,3,5,6};
+        Bitmap sheet=Bitmap.createBitmap(W*samples.length,H+42,
+                Bitmap.Config.ARGB_8888);
+        Canvas canvas=new Canvas(sheet);
+        canvas.drawColor(0xff101522);
+        Paint ink=new Paint(Paint.ANTI_ALIAS_FLAG);
+        ink.setColor(0xfff2ead8);ink.setTextSize(19);
+        String[] labels={"Source A","In-between 1","Midpoint","In-between 2","Source B"};
+        try{
+            for(int i=0;i<samples.length;i++){
+                ProjectStore.Asset image=result.asset(
+                        result.clips.get(samples[i]).assetId);
+                Bitmap frame=BitmapFactory.decodeFile(
+                        Uri.parse(image.uri).getPath());
+                if(frame==null)throw new IllegalStateException(
+                        "The exported storyboard test frame is unreadable");
+                if(frame.getWidth()!=W||frame.getHeight()!=H)
+                    throw new IllegalStateException("Unexpected frame size");
+                canvas.drawBitmap(frame,i*W,42,null);
+                canvas.drawText(labels[i],i*W+7,27,ink);
+                frame.recycle();
+            }
+            File visual=new File(directory,"original_artwork_motion_qa.png");
+            try(FileOutputStream saved=new FileOutputStream(visual)){
+                if(!sheet.compress(Bitmap.CompressFormat.PNG,100,saved))
+                    throw new IllegalStateException("QA image output failed");
+                saved.flush();
+            }
+            assertTrue("Actual native storyboard frames available for review",
+                    visual.isFile()&&visual.length()>4000);
+            JSONObject metadata=quality.toJson()
+                    .put("sourceProjectId",source.id)
+                    .put("generatedProjectId",result.id)
+                    .put("motionImage","original_artwork_motion_qa.png")
+                    .put("qaSource","programmatic synthetic source drawing")
+                    .put("manualSourceArtVisualApproval",false)
+                    .put("sourceProjectUnmodified",true)
+                    .put("renderedNativeFramesSampled",samples.length);
+            File report=new File(directory,"motion_metrics.json");
+            try(FileOutputStream saved=new FileOutputStream(report)){
+                saved.write(metadata.toString(2).getBytes(
+                        java.nio.charset.StandardCharsets.UTF_8));
+            }
+            File soundtrack=new File(Uri.parse(result.asset(
+                    result.studioLayers.get(0).assetId).uri).getPath());
+            assertTrue("Foley soundtrack generated",soundtrack.exists());
+            java.nio.file.Files.copy(soundtrack.toPath(),
+                    new File(directory,"native_action_audio.wav").toPath(),
+                    java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+        }finally{sheet.recycle();}
     }
 }
