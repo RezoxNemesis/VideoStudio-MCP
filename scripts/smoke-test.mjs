@@ -12,6 +12,7 @@ const nativeMain = fs.readFileSync(new URL("../android/app/src/main/java/com/rez
 const nativeProtocol = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/AppProtocol.java", import.meta.url), "utf8");
 const mcpConnectionCore = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/McpConnectionCore.java", import.meta.url), "utf8");
 const nativeJobs = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/JobManager.java", import.meta.url), "utf8");
+const thermalQueuePolicy = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/ThermalQueuePolicy.java", import.meta.url), "utf8");
 const nativeRender = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/NativeRenderEngine.java", import.meta.url), "utf8");
 const promptVideo = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/PromptVideoEngine.java", import.meta.url), "utf8");
 const nativeAnalyzer = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/NativeMediaAnalyzer.java", import.meta.url), "utf8");
@@ -227,7 +228,9 @@ const checks = [
   ["Native Agent UI only goes online after actual MCP handshake", controlService.includes('markService(false, "VideoStudio stable MCP Native Agent starting")') && controlService.includes("onConnection(boolean connected")],
   ["device reboot restores stable MCP control without Gallery permission", androidManifest.includes("android.permission.RECEIVE_BOOT_COMPLETED") && androidManifest.includes("android.intent.action.BOOT_COMPLETED") && nativeRecoveryReceiver.includes("ACTION_BOOT_COMPLETED") && !nativeRecoveryReceiver.includes("gallery")],
   ["native v3 command cursor advances only after completion", nativeProtocol.includes('KEY_SEQ = "native_v3_last_seq"') && nativeProtocol.includes("advanceSequence")],
-  ["native app has bounded heavy-work scheduler", nativeJobs.includes("Semaphore") && nativeJobs.includes("THERMAL_STATUS_SEVERE")],
+  ["native app has bounded heavy-work scheduler", nativeJobs.includes("Semaphore") && thermalQueuePolicy.includes("THERMAL_STATUS_SEVERE") && thermalQueuePolicy.includes("THERMAL_STATUS_CRITICAL")],
+  ["adaptive thermal mode separates render and transfer queues", nativeJobs.includes("Kind { LIGHT, HEAVY, TRANSFER }") && nativeJobs.includes("transferPool") && nativeJobs.includes("releaseLane(job)") && nativeJobs.includes("acquireSafeLane(job)") && controlService.includes("submitRecoverableTransfer") && controlService.includes("jobs.awaitSafeCheckpoint(state, state.stage)")],
+  ["critical safety remains while project backups work through severe thermal state", thermalQueuePolicy.includes("JobManager.Kind.HEAVY") && thermalQueuePolicy.includes("JobManager.Kind.TRANSFER") && nativeJobs.includes("safeForBackgroundTransfer") && computeProfile.includes("thermalSafeForBackgroundTransfers")],
   ["worker exposes canonical stable VideoStudio App MCP lane", worker.includes('"VideoStudio-App-MCP-v3"') && worker.includes("appMcpV3") && worker.includes("serverForApp(env,ownerKey,3)") && worker.includes("Permanent compatibility endpoint")],
   ["worker has dedicated v3 API namespace", worker.includes('"/api/v3/app/register"') && worker.includes('"/api/v3/app/commands"') && worker.includes("appCompleteV3")],
   ["worker uses an isolated v3 command queue", worker.includes('"app-v3-seq:"') && worker.includes('"app-v3-cl:"') && worker.includes("protocolVersion:3")],
