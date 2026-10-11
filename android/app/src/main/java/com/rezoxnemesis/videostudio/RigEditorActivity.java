@@ -262,6 +262,20 @@ public final class RigEditorActivity extends Activity {
                 overlay.setTextSize(12);
                 c.drawText(String.valueOf(i+1),x+8,y-7,overlay);
             }
+            if(swordTip!=null){
+                overlay.setStyle(Paint.Style.STROKE);
+                overlay.setColor(0xffffe5a5);
+                overlay.setStrokeWidth(3f);
+                float sx=left+swordTip[0]*w,sy=top+swordTip[1]*h;
+                c.drawCircle(sx,sy,9f,overlay);
+                if(joints.size()>Rig2DProfile.SWORD_HAND) {
+                    float[] hand=joints.get(Rig2DProfile.SWORD_HAND);
+                    c.drawLine(left+hand[0]*w,top+hand[1]*h,sx,sy,overlay);
+                }
+                overlay.setStyle(Paint.Style.FILL);
+                overlay.setTextSize(15);
+                c.drawText("TIP",sx+11,sy,overlay);
+            }
             if(!outline.isEmpty()){
                 Path shape=new Path();
                 for(int i=0;i<outline.size();i++){
@@ -284,7 +298,9 @@ public final class RigEditorActivity extends Activity {
             if(picture==null||!dest.contains(event.getX(),event.getY()))return true;
             float x=Math.max(0,Math.min(1,(event.getX()-dest.left)/dest.width()));
             float y=Math.max(0,Math.min(1,(event.getY()-dest.top)/dest.height()));
-            if(outlineMode){
+            if(swordTipMode){
+                swordTip=new float[]{x,y};
+            }else if(outlineMode){
                 if(outline.size()<64)outline.add(new float[]{x,y});
             }else if(joints.size()<Rig2DProfile.JOINTS.length){
                 joints.add(new float[]{x,y});
