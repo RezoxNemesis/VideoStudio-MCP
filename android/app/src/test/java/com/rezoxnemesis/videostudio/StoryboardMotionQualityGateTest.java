@@ -32,8 +32,8 @@ public final class StoryboardMotionQualityGateTest {
     @Test public void rejectsUnrealisticallyHugeCameraJump(){
         StoryboardMotionQualityGate.Verdict motion=
                 StoryboardMotionQualityGate.inspect(
-                profile(true,-.10f,"b0-11111"),profile(false,-.10f,"w0-11111"),
-                profile(true,.3f,"b1-11111"),profile(false,.3f,"w1-11111"),
+                profile(true,-.12f,"b0-11111"),profile(false,-.12f,"w0-11111"),
+                profile(true,.28f,"b1-11111"),profile(false,.28f,"w1-11111"),
                 432,768);
         assertFalse(motion.approved || motion.actorMotionPixels<170);
     }
