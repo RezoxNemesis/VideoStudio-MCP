@@ -2759,6 +2759,8 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                     .put("generatedFrames",created.generatedFrames)
                     .put("backgroundDifference",created.backgroundDifference)
                     .put("backgroundInpaintFraction",created.filledFraction)
+                    .put("verifiedActorMotionPixels",created.actorMotionPixels)
+                    .put("staticSlideshowOrCameraOnly",false)
                     .put("full3DModel",false)
                     .put("neuralMotionGenerationInstalled",false)
                     .put("unseenPoseSynthesis",false)
