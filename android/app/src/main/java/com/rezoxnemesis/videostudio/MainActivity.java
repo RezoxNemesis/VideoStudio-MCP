@@ -94,6 +94,8 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
     private StudioThumbnailLoader studioThumbs;
     private final StudioEditHistory editHistory=new StudioEditHistory();
     private ImageView studioStillPreview;
+    private TextView studioCaptionPreview;
+    private Runnable studioCaptionClock;
     private FrameLayout studioPreviewFrame;
     private TextView studioTimeLabel;
     private int studioToolCategory=0;
@@ -167,6 +169,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
     protected void onDestroy() {
         timelinePreviewRunning = false;
         if(stillTimelineNext!=null)ui.removeCallbacks(stillTimelineNext);
+        if(studioCaptionClock!=null)ui.removeCallbacks(studioCaptionClock);
         if(studioThumbs!=null)studioThumbs.shutdown();
         if (activityRefresh != null) ui.removeCallbacks(activityRefresh);
         if (serviceWatchdog != null) ui.removeCallbacks(serviceWatchdog);
@@ -527,6 +530,9 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
      * searchable categories instead of an unstructured 24-button wall.
      */
     private void showEditor() {
+        if(studioCaptionClock!=null){
+            ui.removeCallbacks(studioCaptionClock);studioCaptionClock=null;
+        }
         if(activeProject==null){
             activeProject=store.active();
             if(activeProject==null)activeProject=store.create("Untitled Project");
@@ -578,6 +584,16 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         studioStillPreview.setScaleType(ImageView.ScaleType.FIT_CENTER);
         studioPreviewFrame.addView(studioStillPreview,
                 new FrameLayout.LayoutParams(-1,-1));
+        studioCaptionPreview=new TextView(this);
+        studioCaptionPreview.setGravity(Gravity.CENTER);
+        studioCaptionPreview.setTextSize(17);
+        studioCaptionPreview.setTypeface(Typeface.DEFAULT,Typeface.BOLD);
+        studioCaptionPreview.setTextColor(Color.WHITE);
+        studioCaptionPreview.setShadowLayer(dp(3),0,dp(2),Color.BLACK);
+        studioCaptionPreview.setPadding(dp(8),dp(5),dp(8),dp(5));
+        studioCaptionPreview.setVisibility(View.GONE);
+        studioPreviewFrame.addView(studioCaptionPreview,
+                new FrameLayout.LayoutParams(-1,-2,Gravity.BOTTOM|Gravity.CENTER_HORIZONTAL));
         previewCard.addView(studioPreviewFrame,margins(-1,dp(254),dp(7),0,0,0));
 
         studioTimeLabel=body("0:00 / "+time(activeProject.outputDurationMs()));
@@ -780,6 +796,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
 
         setScreen(scroll,"editor");
         previewSelectedStudioClip(false);
+        updateStudioCaptionAt(studioPlayheadMs);
         scheduleEditorRefresh(activeProject.id,activeProject.updatedAt);
     }
 
@@ -992,6 +1009,8 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         for(int i=0;i<index;i++)studioPlayheadMs+=activeProject.clips.get(i).outputDurationMs();
         if(studioTimeLabel!=null)studioTimeLabel.setText(
                 time(studioPlayheadMs)+" / "+time(activeProject.outputDurationMs()));
+        updateStudioCaptionAt(studioPlayheadMs);
+        startStudioCaptionClock(clip,studioPlayheadMs);
         ProjectStore.Asset asset=activeProject.asset(clip.assetId);
         if(asset==null){playStudioFrom(index+1);return;}
         if(asset.mime!=null&&asset.mime.startsWith("video/")){
@@ -1020,6 +1039,10 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         if(stillTimelineNext!=null){
             ui.removeCallbacks(stillTimelineNext);
             stillTimelineNext=null;
+        }
+        if(studioCaptionClock!=null){
+            ui.removeCallbacks(studioCaptionClock);
+            studioCaptionClock=null;
         }
     }
 
@@ -1401,6 +1424,64 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                     store.save(activeProject);syncProtocolState();showEditor();
                 })
                 .setNegativeButton("Cancel",null).show();
+    }
+
+    private void updateStudioCaptionAt(long globalTimeMs){
+        if(studioCaptionPreview==null||activeProject==null)return;
+        List<StudioLayer> active=StudioTrackLayout.activeAt(
+                activeProject.studioLayers,StudioLayer.TITLE,globalTimeMs);
+        if(active.isEmpty()){
+            studioCaptionPreview.setText("");
+            studioCaptionPreview.setVisibility(View.GONE);
+            return;
+        }
+        StringBuilder copy=new StringBuilder();
+        for(int i=0;i<Math.min(3,active.size());i++){
+            if(i>0)copy.append("\n");
+            copy.append(active.get(i).text);
+        }
+        StudioLayer first=active.get(0);
+        studioCaptionPreview.setText(copy.toString());
+        studioCaptionPreview.setTextColor(first.color);
+        studioCaptionPreview.setBackground(rounded(0x99050a12,0,dp(8)));
+        int vertical=first.position==0?Gravity.TOP:
+                (first.position==2?Gravity.BOTTOM:Gravity.CENTER_VERTICAL);
+        FrameLayout.LayoutParams place=new FrameLayout.LayoutParams(
+                -1,-2,Gravity.CENTER_HORIZONTAL|vertical);
+        place.leftMargin=dp(18);place.rightMargin=dp(18);
+        place.topMargin=dp(14);place.bottomMargin=dp(20);
+        studioCaptionPreview.setLayoutParams(place);
+        studioCaptionPreview.setVisibility(View.VISIBLE);
+        studioCaptionPreview.bringToFront();
+    }
+
+    private void startStudioCaptionClock(ProjectStore.Clip clip,long globalStartMs){
+        if(studioCaptionClock!=null)
+            ui.removeCallbacks(studioCaptionClock);
+        if(clip==null||activeProject==null)return;
+        final String clipId=clip.id;
+        final long clipLength=clip.outputDurationMs();
+        final long systemStart=android.os.SystemClock.elapsedRealtime();
+        studioCaptionClock=new Runnable(){
+            @Override public void run(){
+                if(!timelinePreviewRunning||activeProject==null||selectedClip==null||
+                        !clipId.equals(selectedClip.id))return;
+                ProjectStore.Asset source=activeProject.asset(clip.assetId);
+                long elapsed;
+                if(source!=null&&source.mime!=null&&source.mime.startsWith("video/")){
+                    elapsed=(long)((livePlayer.currentPositionMs()-clip.inMs)/
+                            Math.max(.1f,clip.speed));
+                }else elapsed=android.os.SystemClock.elapsedRealtime()-systemStart;
+                elapsed=Math.max(0,Math.min(clipLength,elapsed));
+                long clock=globalStartMs+elapsed;
+                updateStudioCaptionAt(clock);
+                if(studioTimeLabel!=null)
+                    studioTimeLabel.setText(time(clock)+" / "+
+                            time(activeProject.outputDurationMs()));
+                ui.postDelayed(this,120L);
+            }
+        };
+        ui.post(studioCaptionClock);
     }
 
     private void studioSpeedDialog(){
