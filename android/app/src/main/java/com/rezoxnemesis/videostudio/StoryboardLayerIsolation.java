@@ -90,6 +90,11 @@ public final class StoryboardLayerIsolation {
         // Find real stable-pixel references. Both source frames have the
         // exact same reference view at locations not marked as changed.
         int[] nearest=nearestUnchanged(changed,w,h);
+        // A subject can overlap its earlier pose. Identical pixels in the
+        // overlap are "unchanged" but are NOT the ruined-city background.
+        // Estimate each row's robust surrounding scene color so a nearby
+        // stationary piece of the SAME actor cannot reverse the mask.
+        int[] rowScene=rowBackgroundMedian(before,changed,w,h);
         int[] plate=before.clone();
         boolean[] from=new boolean[n],to=new boolean[n];
         long stableDelta=0;
@@ -103,6 +108,9 @@ public final class StoryboardLayerIsolation {
             int ref=nearest[i];
             if(ref<0){unseen++;continue;}
             int background=before[ref];
+            int sceneColor=rowScene[i/w];
+            if(difference(background,sceneColor)>110)
+                background=sceneColor;
             int a=difference(before[i],background);
             int b=difference(after[i],background);
             // The more unusual side of a changed pixel is its most likely
@@ -253,6 +261,44 @@ public final class StoryboardLayerIsolation {
         return new Region(alpha,left,top,right,bottom,count,
                 xSum/(float)count,ySum/(float)count,
                 r/(float)count,g/(float)count,b/(float)count,.97f);
+    }
+
+    private static int[] rowBackgroundMedian(int[] first,
+                                              boolean[] changed,int w,int h) {
+        int[] reference=new int[h];
+        int[] r=new int[256],g=new int[256],b=new int[256];
+        for(int y=0;y<h;y++){
+            Arrays.fill(r,0);Arrays.fill(g,0);Arrays.fill(b,0);
+            int stable=0;
+            for(int x=0;x<w;x++){
+                int at=y*w+x;
+                if(changed[at])continue;
+                int c=first[at];
+                r[c>>>16&255]++;g[c>>>8&255]++;b[c&255]++;
+                stable++;
+            }
+            if(stable<w/8) {
+                // In a mostly changed row (fast camera movement), use
+                // source palette as a conservative but explicit fallback.
+                for(int x=0;x<w;x++){
+                    int c=first[y*w+x];
+                    r[c>>>16&255]++;g[c>>>8&255]++;b[c&255]++;
+                }
+                stable=w;
+            }
+            int medianR=histMedian(r,stable),medianG=histMedian(g,stable),
+                    medianB=histMedian(b,stable);
+            reference[y]=0xff000000|(medianR<<16)|(medianG<<8)|medianB;
+        }
+        return reference;
+    }
+    private static int histMedian(int[] hist,int count) {
+        int target=Math.max(0,(count-1)/2),n=0;
+        for(int i=0;i<256;i++){
+            n+=hist[i];
+            if(n>target)return i;
+        }
+        return 127;
     }
 
     private static Result fail(Status type,int n,float changed,String why) {
