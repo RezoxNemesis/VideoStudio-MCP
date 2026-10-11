@@ -57,6 +57,65 @@ public final class StoryboardFoleySynth {
         return events;
     }
 
+    /** Entire film sound cues share the same animation time base. */
+    public static List<Cue> cues(StoryboardBatchPlanner.Plan plan) {
+        if(plan==null)throw new IllegalArgumentException("Storyboard plan required");
+        ArrayList<Cue> result=new ArrayList<>();
+        int frameClock=1; // first actual still source frame, never duplicated
+        for(StoryboardBatchPlanner.Batch batch:plan.batches){
+            for(StoryboardBatchPlanner.Shot shot:batch.shots){
+                float center=(frameClock+shot.frames*.62f)/plan.fps;
+                float energy=(shot.action==StoryboardMotionGrammar.Action.IMPACT
+                        ||shot.action==StoryboardMotionGrammar.Action.EXPLODE)?1f:.65f;
+                result.add(new Cue(shot.action,shot.scene,center,energy));
+                frameClock+=shot.frames;
+            }
+        }
+        return result;
+    }
+
+    /**
+     * One source-owned soundtrack for any number of contiguous 20-frame
+     * storyboard batches; uses the existing native Media3 audio lane.
+     */
+    public static Result attach(ProjectStore.Project project,File destination,
+                                List<Cue> cues,float gain) throws Exception {
+        if(project==null||destination==null||!Float.isFinite(gain)
+                ||gain<=0||gain>1)
+            throw new IllegalArgumentException("Provide a safe project and soundtrack gain");
+        if(!project.studioLayers.isEmpty())
+            throw new IllegalArgumentException("Project already has audio lanes");
+        long length=project.outputDurationMs();
+        Result audio=render(destination,length,cues);
+        ProjectStore.Asset asset=new ProjectStore.Asset();
+        asset.id=java.util.UUID.randomUUID().toString();
+        asset.uri=android.net.Uri.fromFile(destination).toString();
+        asset.mime="audio/wav";
+        asset.name=destination.getName();
+        asset.role="storyboard_generated_foley";
+        asset.generated=true;
+        asset.seekable=true;
+        asset.persistedReadAccess=true;
+        asset.durationMs=audio.durationMs;
+        asset.sizeBytes=destination.length();
+        asset.generationMetadata=new org.json.JSONObject()
+                .put("provider","videostudio.local-foley-v1")
+                .put("events",audio.cues)
+                .put("isOrchestralScore",false)
+                .put("noExternalService",true);
+        project.assets.add(asset);
+        StudioLayer lane=new StudioLayer();
+        lane.type=StudioLayer.AUDIO;
+        lane.assetId=asset.id;
+        lane.startMs=0;
+        lane.durationMs=length;
+        lane.sourceInMs=0;
+        lane.gain=gain;
+        StudioLayerContract.validate(project,lane);
+        project.studioLayers.add(lane);
+        return audio;
+    }
+
     public static Result render(File destination,long durationMs,List<Cue> cues)
             throws Exception {
         if(destination==null||durationMs<100||durationMs>MAX_SECONDS*1000L||
