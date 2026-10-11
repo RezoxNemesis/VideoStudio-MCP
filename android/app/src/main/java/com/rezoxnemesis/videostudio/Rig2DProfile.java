@@ -40,10 +40,18 @@ public final class Rig2DProfile {
     public final boolean black,transparentSource;
     public final float[][] joints;
     public final float[][] outline;
+    /** Optional exact source-frame sword endpoint, not a procedural weapon pose. */
+    public final float[] swordTip;
     public final int version;
 
     public Rig2DProfile(String id,String projectId,String assetId,boolean black,
                         boolean transparentSource,float[][] joints,float[][] outline) {
+        this(id,projectId,assetId,black,transparentSource,joints,outline,null);
+    }
+
+    public Rig2DProfile(String id,String projectId,String assetId,boolean black,
+                        boolean transparentSource,float[][] joints,float[][] outline,
+                        float[] swordTip) {
         this.version=1;
         this.id=checkedId(id,"profile");
         this.projectId=checkedId(projectId,"project");
@@ -56,6 +64,13 @@ public final class Rig2DProfile {
             throw new IllegalArgumentException("Mark the actor outline or use a transparent sprite");
         if(count>64)throw new IllegalArgumentException("Actor outline exceeds 64 points");
         this.outline=count==0?new float[0][2]:copyPoints(outline,3,64,"outline");
+        if(swordTip!=null) {
+            if(swordTip.length!=2||!Float.isFinite(swordTip[0])||
+                    !Float.isFinite(swordTip[1])||swordTip[0]<0||
+                    swordTip[0]>1||swordTip[1]<0||swordTip[1]>1)
+                throw new IllegalArgumentException("Sword tip must be a source-image point in 0..1");
+            this.swordTip=swordTip.clone();
+        }else this.swordTip=null;
         // Reject zero-length limbs that would make skinning undefined.
         for(int[] bone:BONES) {
             float[] a=this.joints[bone[0]], b=this.joints[bone[1]];
@@ -72,6 +87,13 @@ public final class Rig2DProfile {
                                        float[][] joints,float[][] outline) {
         return new Rig2DProfile(UUID.randomUUID().toString(),projectId,
                 sourceAssetId,black,transparent,joints,outline);
+    }
+
+    public static Rig2DProfile create(String projectId,String sourceAssetId,
+                                       boolean black,boolean transparent,
+                                       float[][] joints,float[][] outline,float[] swordTip) {
+        return new Rig2DProfile(UUID.randomUUID().toString(),projectId,
+                sourceAssetId,black,transparent,joints,outline,swordTip);
     }
 
     private static float[][] copyPoints(float[][] value,int min,int max,String label) {
@@ -116,6 +138,8 @@ public final class Rig2DProfile {
         j.put("transparentSource",transparentSource);
         j.put("joints",toPairs(joints));
         j.put("outline",toPairs(outline));
+        if(swordTip!=null)j.put("swordTip",
+                new JSONArray().put(swordTip[0]).put(swordTip[1]));
         j.put("swordAttachment","swordHand");
         j.put("renderer","skinned-2d-mesh-v1");
         return j;
@@ -135,7 +159,14 @@ public final class Rig2DProfile {
                 j.getString("sourceAssetId"),j.getBoolean("black"),
                 j.optBoolean("transparentSource",false),
                 fromPairs(j.getJSONArray("joints")),
-                fromPairs(j.optJSONArray("outline")));
+                fromPairs(j.optJSONArray("outline")),
+                optionalSwordTip(j.optJSONArray("swordTip")));
+    }
+
+    private static float[] optionalSwordTip(JSONArray point) throws Exception {
+        if(point==null)return null;
+        if(point.length()!=2)throw new IllegalArgumentException("Sword tip requires [x,y]");
+        return new float[]{(float)point.getDouble(0),(float)point.getDouble(1)};
     }
 
     private static float[][] fromPairs(JSONArray src) throws Exception {
