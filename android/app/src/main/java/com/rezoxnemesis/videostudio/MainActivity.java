@@ -98,6 +98,8 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
     private TextView studioTimeLabel;
     private int studioToolCategory=0;
     private int studioTimelinePage=0;
+    private int studioMediaPage=0;
+    private long studioPlayheadMs=0;
     private boolean studioShowMedia=false;
     private String currentScreen = "home";
 
@@ -470,12 +472,20 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         SeekBar seek=new SeekBar(this);
         seek.setMax(1000);
         long projectLength=Math.max(1,activeProject.outputDurationMs());
-        long offset=0;
-        for(ProjectStore.Clip c:activeProject.clips){
-            if(selectedClip!=null&&c.id.equals(selectedClip.id))break;
-            offset+=c.outputDurationMs();
+        studioPlayheadMs=Math.max(0,Math.min(projectLength,studioPlayheadMs));
+        if(selectedClip!=null){
+            StudioTimelineClock.Position position=StudioTimelineClock.locate(
+                    activeProject.clips,studioPlayheadMs);
+            if(position.clipIndex<0||
+                    !selectedClip.id.equals(activeProject.clips.get(position.clipIndex).id)){
+                studioPlayheadMs=0;
+                for(ProjectStore.Clip clip:activeProject.clips){
+                    if(clip.id.equals(selectedClip.id))break;
+                    studioPlayheadMs+=clip.outputDurationMs();
+                }
+            }
         }
-        seek.setProgress((int)(1000*Math.min(projectLength,offset)/(double)projectLength));
+        seek.setProgress((int)(1000*Math.min(projectLength,studioPlayheadMs)/(double)projectLength));
         seek.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener(){
             @Override public void onStartTrackingTouch(SeekBar b){stopStillSequenceOnly();}
             @Override public void onProgressChanged(SeekBar b,int value,boolean fromUser){
@@ -573,6 +583,9 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
             chip.addView(filename,margins(-1,-2,dp(4),0,0,0));
             chip.setOnClickListener(v->{
                 stopStillSequenceOnly();
+                long start=0;
+                for(int j=0;j<at;j++)start+=activeProject.clips.get(j).outputDurationMs();
+                studioPlayheadMs=start;
                 selectedClip=activeProject.clips.get(at);
                 showEditor();
                 if(selectedClip!=null)previewSelectedStudioClip(true);
