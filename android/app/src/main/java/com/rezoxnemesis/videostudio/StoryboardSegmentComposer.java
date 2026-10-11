@@ -55,6 +55,19 @@ public final class StoryboardSegmentComposer {
             ProjectStore.Project original,ProjectStore.Project target,
             StoryboardBatchPlanner.Plan plan,int batchIndex,int width,int height,
             JSONObject settings,Progress progress) throws Exception {
+        return compose(context,store,original,target,plan,batchIndex,
+                width,height,settings,false,progress);
+    }
+
+    /**
+     * Append adjacent batch N to an existing output N-1. The first anchor
+     * of N equals the last frame of N-1 and is intentionally not encoded
+     * twice; timestamps, clips and original media remain contiguous.
+     */
+    public static Summary compose(Context context,ProjectStore store,
+            ProjectStore.Project original,ProjectStore.Project target,
+            StoryboardBatchPlanner.Plan plan,int batchIndex,int width,int height,
+            JSONObject settings,boolean append,Progress progress) throws Exception {
         if(context==null||store==null||original==null||target==null||
                 original.id.equals(target.id)||plan==null||
                 !original.id.equals(plan.projectId))
@@ -66,7 +79,10 @@ public final class StoryboardSegmentComposer {
             throw new IllegalArgumentException("Use bounded even portrait dimensions");
         if(settings==null)settings=new JSONObject();
         StoryboardBatchPlanner.Batch batch=plan.batches.get(batchIndex);
-        int expected=batch.expectedFrames;
+        int expected=batch.expectedFrames-(append?1:0);
+        if(append&&(batchIndex==0||target.clips.isEmpty()
+                ||!target.studioLayers.isEmpty()))
+            throw new IllegalArgumentException("Append requires a completed preceding storyboard batch");
         if(expected>480||expected<2)
             throw new IllegalArgumentException("Bound source motion batch to 480 frames");
         if(!target.assets.isEmpty()&&(target.sourcePrompt==null||
@@ -80,15 +96,17 @@ public final class StoryboardSegmentComposer {
             throw new IllegalStateException("Cannot prepare private multi-shot workspace");
         // Restart only replaces this ONE generated frame pattern in the
         // separate output project; never delete user media or source files.
-        File[] previous=outputDir.listFiles();
-        if(previous!=null)for(File f:previous)
-            if(f.isFile()&&f.getName().matches("story_[0-9]{5}\\.jpg")
-                    &&!f.delete())
-                throw new IllegalStateException("Could not restart incomplete storyboard batch");
-        target.assets.clear();target.clips.clear();target.studioLayers.clear();
-        target.sourcePrompt="storyboard-multigenre-v1: source-owned layered motion batch "
-                +(batch.index+1);
-        store.save(target);
+        if(!append){
+            File[] previous=outputDir.listFiles();
+            if(previous!=null)for(File f:previous)
+                if(f.isFile()&&f.getName().matches("story_[0-9]{5}\\.jpg")
+                        &&!f.delete())
+                    throw new IllegalStateException("Could not restart incomplete storyboard batch");
+            target.assets.clear();target.clips.clear();target.studioLayers.clear();
+            target.sourcePrompt="storyboard-multigenre-v1: source-owned layered motion series";
+            store.save(target);
+        }
+        final int priorFrames=target.clips.size();
 
         Rig2DProjectStore rigs=new Rig2DProjectStore(context,store);
         int complete=0,shotCount=0;
@@ -103,13 +121,13 @@ public final class StoryboardSegmentComposer {
             int[] to=read(context,end,width,height);
             try(Painter painter=painter(context,original,rigs,plan.backend,
                     start,end,from,to,width,height,shot,settings)){
-                int initial=shotCount==0?0:1;
+                int initial=(shotCount==0&&!append)?0:1;
                 for(int step=initial;step<=shot.frames;step++){
                     if(Thread.currentThread().isInterrupted())throw new InterruptedException();
                     float t=step/(float)shot.frames;
                     Bitmap rendered=painter.frame(t,step);
                     try {
-                        add(target,outputDir,rendered,complete,durationMs,plan.fps,
+                        add(target,outputDir,rendered,priorFrames+complete,durationMs,plan.fps,
                                 start.id,end.id,shot.action,painter.backend(),
                                 painter.confidence(),shot.scene);
                     } finally {rendered.recycle();}
@@ -135,7 +153,7 @@ public final class StoryboardSegmentComposer {
         }
         if(complete!=expected)
             throw new IllegalStateException("Storyboard render ended with incorrect frame count");
-        if(settings.optBoolean("foley",true)){
+        if(!append&&settings.optBoolean("foley",true)){
             long clipDuration=complete*durationMs;
             File audioFile=new File(outputDir,"shot_foley.wav");
             StoryboardFoleySynth.Result audio=StoryboardFoleySynth.render(
