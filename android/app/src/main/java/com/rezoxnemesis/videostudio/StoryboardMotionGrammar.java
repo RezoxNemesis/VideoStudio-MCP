@@ -68,11 +68,11 @@ public final class StoryboardMotionGrammar {
         if(hasAction(words,"walk","walking","advance","approach",
                 "step","follow","footstep"))
             return Action.WALK;
-        if(hasAction(words,"jump","leap","vault","airborne","takeoff",
+        if(hasAction(words,"jump","jumping","leap","leaping","vault","airborne","takeoff",
                 "take off"))return Action.LEAP;
         if(hasAction(words,"landing","land","fall","falling","collapse",
                 "drop","descend"))return Action.FALL;
-        if(hasAction(words,"orbit","circle","spiral"))return Action.ORBIT;
+        if(hasAction(words,"orbit","orbits","circle","circling","spiral"))return Action.ORBIT;
         if(hasAction(words,"float","levitate","hover"))return Action.FLOAT;
         if(hasAction(words,"bounce","spring"))return Action.BOUNCE;
         if(hasAction(words,"sway","wind","wave","breath","breathe"))

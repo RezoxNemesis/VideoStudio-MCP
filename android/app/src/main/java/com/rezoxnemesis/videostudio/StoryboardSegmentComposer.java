@@ -175,10 +175,15 @@ public final class StoryboardSegmentComposer {
                 StoryboardSubjectRetentionGate.Report retained=null;
                 double smallestCoverage=1;
                 if(sources!=null){
+                    int sampleNumber=0;
                     for(int[] sample:new int[][]{quarter,middle,threeQuarter}){
+                        int step=sampleNumber++==0?quarterIndex:
+                                sampleNumber==2?middleIndex:threeQuarterIndex;
+                        float phase=StoryboardMotionGrammar.phase(
+                                shot.action,step/(float)shot.frames);
                         StoryboardSubjectRetentionGate.Report current=
                                 StoryboardSubjectRetentionGate.inspect(
-                                        sources,from,to,sample,width,height);
+                                        sources,from,to,sample,width,height,phase);
                         if(!current.accepted)
                             throw new IllegalStateException(
                                     "Original subject continuity failed: "+current.reason+

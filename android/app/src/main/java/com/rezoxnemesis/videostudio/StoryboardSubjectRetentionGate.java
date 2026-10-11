@@ -30,6 +30,19 @@ public final class StoryboardSubjectRetentionGate {
     public static Report inspect(StoryboardLayerIsolation.Result tracked,
                                  int[] first,int[] last,int[] middle,
                                  int width,int height) {
+        return inspect(tracked,first,last,middle,width,height,.5f);
+    }
+
+    /**
+     * Predicted position must match the ACTUAL generated sample timestamp.
+     * Checking all samples against the midpoint incorrectly rejects an
+     * actor that is still taking its first legitimate step.
+     */
+    public static Report inspect(StoryboardLayerIsolation.Result tracked,
+                                 int[] first,int[] last,int[] middle,
+                                 int width,int height,float phase) {
+        if(!Float.isFinite(phase)||phase<0||phase>1)
+            throw new IllegalArgumentException("Sample phase must be in 0..1");
         if(tracked==null||!tracked.autoRenderable()||
                 first==null||last==null||middle==null||
                 width<32||height<32||
@@ -44,13 +57,15 @@ public final class StoryboardSubjectRetentionGate {
         double minimum=1;
         for(StoryboardLayerIsolation.Track t:tracked.tracks){
             StoryboardLayerIsolation.Region a=t.from,b=t.to;
-            int left=Math.max(0,(int)((a.cx+b.cx)*.5-
+            float predictedX=a.cx+(b.cx-a.cx)*phase;
+            float predictedY=a.cy+(b.cy-a.cy)*phase;
+            int left=Math.max(0,(int)(predictedX-
                     (a.width()+b.width())*.33f));
-            int right=Math.min(width-1,(int)((a.cx+b.cx)*.5+
+            int right=Math.min(width-1,(int)(predictedX+
                     (a.width()+b.width())*.33f));
-            int top=Math.max(0,(int)((a.cy+b.cy)*.5-
+            int top=Math.max(0,(int)(predictedY-
                     (a.height()+b.height())*.32f));
-            int bottom=Math.min(height-1,(int)((a.cy+b.cy)*.5+
+            int bottom=Math.min(height-1,(int)(predictedY+
                     (a.height()+b.height())*.32f));
             int reference=Math.max(1,Math.min(a.pixels,b.pixels));
             float avgR=(a.meanR+b.meanR)*.5f,
