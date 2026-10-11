@@ -3751,6 +3751,10 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             out.put("sourceTextured2DMeshSkinningReady", true);
             out.put("glbSkeletalPreviewReady", true);
             out.put("nativeHeadlessGltfExportReady", true);
+            out.put("sharedCinematicActionDirectorReady", true);
+            out.put("namedGltfActionClipRetimingReady", true);
+            out.put("exact3DBladeMeshCollisionReady", false);
+            out.put("encodedSoundtrackGeneratedAutomatically", false);
             out.put("sourceImageTo3DReconstructionInstalled", false);
             // Critical distinction: usable constraints are not the same as
             // character reconstruction or a textured 3D rigged renderer.
