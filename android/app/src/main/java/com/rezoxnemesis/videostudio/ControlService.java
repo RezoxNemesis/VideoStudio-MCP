@@ -47,6 +47,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     public static final String ACTION_LOCAL_ANIMATION_STUDIO = "com.rezoxnemesis.videostudio.LOCAL_ANIMATION_STUDIO";
     public static final String ACTION_LOCAL_COMBAT_BENCHMARK = "com.rezoxnemesis.videostudio.LOCAL_COMBAT_BENCHMARK";
     public static final String ACTION_LOCAL_RIGGED_2D = "com.rezoxnemesis.videostudio.LOCAL_RIGGED_COMBAT_2D";
+    public static final String ACTION_LOCAL_STORYBOARD_ARTWORK = "com.rezoxnemesis.videostudio.LOCAL_STORYBOARD_ARTWORK";
     public static final String ACTION_LOCAL_GLTF_COMBAT = "com.rezoxnemesis.videostudio.LOCAL_GLTF_COMBAT_EXPORT";
     public static final String ACTION_LOCAL_PROMPT_VIDEO = "com.rezoxnemesis.videostudio.LOCAL_PROMPT_VIDEO";
     public static final String ACTION_LOCAL_EXPORT = "com.rezoxnemesis.videostudio.LOCAL_EXPORT_PROJECT";
@@ -201,6 +202,36 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                     ActivityLog.add(this,"user","3D combat export failed",
                             error.getMessage()==null?"Cannot export GLB":error.getMessage(),
                             "failed",null,null,req.getStringExtra("projectId"));
+                }
+            });
+        } else if (ACTION_LOCAL_STORYBOARD_ARTWORK.equals(action)) {
+            final Intent request=intent;
+            directorSetupExecutor.submit(()->{
+                try {
+                    JSONObject params=new JSONObject()
+                            .put("sourceProjectId",request.getStringExtra("projectId"))
+                            .put("blackFromRigId",request.getStringExtra("blackFromRigId"))
+                            .put("whiteFromRigId",request.getStringExtra("whiteFromRigId"))
+                            .put("blackToRigId",request.getStringExtra("blackToRigId"))
+                            .put("whiteToRigId",request.getStringExtra("whiteToRigId"))
+                            .put("beat",request.getStringExtra("beat"))
+                            .put("durationSeconds",request.getDoubleExtra("durationSeconds",3.0))
+                            .put("width",432).put("height",768)
+                            .put("fps",24).put("render",true)
+                            .put("quality","720p")
+                            .put("fileName","VideoStudio_Actual_Artwork_Action_"+
+                                    System.currentTimeMillis()+".mp4");
+                    JSONObject queued=queueStoryboardArtwork(params);
+                    ActivityLog.add(this,"user","Source storyboard animation queued",
+                            "Actual masked fighter textures; " +
+                              queued.optInt("expectedFrames",0)+" independent motion samples",
+                            "queued",0,null,queued.optString("outputProjectId",""));
+                    syncProtocolState();
+                }catch(Exception error){
+                    ActivityLog.add(this,"user","Source storyboard animation not started",
+                            error.getMessage()==null?"Missing source masks or unsupported scene":
+                                    error.getMessage(),
+                            "failed",null,null,request.getStringExtra("projectId"));
                 }
             });
         } else if (ACTION_LOCAL_RIGGED_2D.equals(action)) {
