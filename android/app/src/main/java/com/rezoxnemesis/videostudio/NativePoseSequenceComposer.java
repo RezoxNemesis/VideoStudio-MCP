@@ -79,7 +79,7 @@ public final class NativePoseSequenceComposer {
         output.sourcePrompt = "pose-sequence: ordered native image keyframes, optical-flow inbetweens";
         store.save(output);
         File images = new File(context.getFilesDir(),
-                "creative_workspace/" + output.id + "/generated/pose_sequence");
+                "creative_workspace/projects/" + output.id + "/generated/pose_sequence");
         if (!images.exists() && !images.mkdirs()) {
             throw new IllegalStateException("Cannot create private pose-frame workspace");
         }
