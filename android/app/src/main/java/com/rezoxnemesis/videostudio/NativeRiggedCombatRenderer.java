@@ -46,8 +46,20 @@ public final class NativeRiggedCombatRenderer implements AutoCloseable {
     private float py(double y){return (float)(y*height);}
 
     public Bitmap render(CombatRigSolver.Frame f,int frameIndex) {
+        return render(f,frameIndex,null);
+    }
+
+    public Bitmap render(CombatRigSolver.Frame f,int frameIndex,
+                         CombatActionPlan.Frame director) {
         Bitmap out=Bitmap.createBitmap(width,height,Bitmap.Config.ARGB_8888);
         Canvas c=new Canvas(out);
+        c.save();
+        // A tiny impact-only world-camera impulse. All scene layers move
+        // together; never create another copy of a fighter or shift its mask.
+        if(director!=null) {
+            float shake=(float)(director.cameraShake*width*.33);
+            c.translate(shake,-Math.abs(shake)*.45f);
+        }
         paint.reset();
         paint.setAntiAlias(true);paint.setFilterBitmap(true);
         c.drawBitmap(world,0,0,paint);
@@ -65,6 +77,7 @@ public final class NativeRiggedCombatRenderer implements AutoCloseable {
         drawBlade(c,f.white,false);
         drawDust(c,f,frameIndex);
         drawImpact(c,f);
+        c.restore();
         return out;
     }
 
