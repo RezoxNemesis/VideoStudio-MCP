@@ -719,6 +719,13 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 case "render_rigged_2d":
                     complete(command,queueRigged2D(p));
                     return;
+                case "save_source_rig_profile":
+                    complete(command, saveSourceRigProfile(p));
+                    syncProtocolState();
+                    return;
+                case "list_source_rig_profiles":
+                    complete(command, listSourceRigProfiles(p));
+                    return;
                 case "render_gltf_combat":
                     complete(command,queueNativeGltf3D(p));
                     return;
@@ -2489,6 +2496,64 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         result.put("engine","Filament gltfio GPU skinned 3D");
         result.put("render",render);
         result.put("requiresRigged3DAssets",true);
+        return result;
+    }
+
+    /**
+     * ChatGPT can now author genuine source-textured 2D actor rigs through the
+     * private native command channel. The API accepts only bounded joint and
+     * outline coordinates for an already-imported project image; no Gallery
+     * lookup, filesystem path, external URI, or remote model is accepted.
+     *
+     * The project's revision is mandatory: two collaborators cannot silently
+     * attach a rig to a stale or replaced source clip.
+     */
+    private JSONObject saveSourceRigProfile(JSONObject p) throws Exception {
+        String projectId = p.optString("projectId", "");
+        if (projectId.isEmpty()) throw new IllegalArgumentException("Project ID is required");
+        ProjectStore.Project project = store.get(projectId);
+        if (project == null) throw new IllegalArgumentException("Source project was not found");
+        if (!p.has("sourceProjectUpdatedAt")
+                || p.getLong("sourceProjectUpdatedAt") != project.updatedAt) {
+            throw new IllegalArgumentException("Source project revision changed; refresh get_state before rig authoring");
+        }
+        String sourceAssetId = p.optString("sourceAssetId", "");
+        ProjectStore.Asset sourceAsset = project.asset(sourceAssetId);
+        if (sourceAsset == null || sourceAsset.mime == null
+                || !sourceAsset.mime.startsWith("image/")
+                || sourceAsset.uri == null || sourceAsset.uri.isEmpty()) {
+            throw new IllegalArgumentException("Choose an existing imported VideoStudio image asset");
+        }
+        Rig2DProfile rig = NativeRigAuthoring.parse(project.id, sourceAsset.id, p);
+        File file = new Rig2DProjectStore(this, store).save(rig);
+        JSONObject result = ok();
+        result.put("projectId", project.id);
+        result.put("sourceAssetId", sourceAsset.id);
+        result.put("sourceProjectUpdatedAt", project.updatedAt);
+        result.put("rigId", rig.id);
+        result.put("black", rig.black);
+        result.put("jointCount", rig.joints.length);
+        result.put("outlineCount", rig.outline.length);
+        result.put("storedInPrivateProjectWorkspace", file.isFile());
+        result.put("galleryAccess", false);
+        return result;
+    }
+
+    /** Read back only masks belonging to one explicitly selected native project. */
+    private JSONObject listSourceRigProfiles(JSONObject p) throws Exception {
+        String projectId = p.optString("projectId", "");
+        if (projectId.isEmpty() || store.get(projectId) == null) {
+            throw new IllegalArgumentException("Known project ID is required");
+        }
+        JSONArray profiles = new JSONArray();
+        for (Rig2DProfile rig : new Rig2DProjectStore(this, store).list(projectId)) {
+            profiles.put(rig.toJson());
+        }
+        JSONObject result = ok();
+        result.put("projectId", projectId);
+        result.put("rigs", profiles);
+        result.put("count", profiles.length());
+        result.put("galleryAccess", false);
         return result;
     }
 
