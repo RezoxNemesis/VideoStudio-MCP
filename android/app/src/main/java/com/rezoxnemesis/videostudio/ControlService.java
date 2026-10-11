@@ -577,6 +577,10 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                     complete(command, applyEditPlan(p));
                     syncProtocolState();
                     return;
+                case "set_track_layout":
+                    complete(command, setNativeTrackLayout(p));
+                    syncProtocolState();
+                    return;
                 case "apply_tool":
                     complete(command, applyTool(p));
                     syncProtocolState();
@@ -818,6 +822,34 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             commandJournal.finish(command, result, "failed");
             protocol.complete(command, result, "failed");
         }
+    }
+
+    /**
+     * The same multi-track controls are available to the native ChatGPT agent
+     * and the human editor. Only explicitly imported project assets can be
+     * referenced; out-of-date project versions are rejected on request.
+     */
+    private JSONObject setNativeTrackLayout(JSONObject p) throws Exception {
+        ProjectStore.Project project=resolveProject(p.optString("projectId",""));
+        long expected=p.optLong("expectedProjectUpdatedAt",-1);
+        if(expected>=0&&expected!=project.updatedAt)
+            throw new IllegalArgumentException(
+                    "Project changed since this edit was prepared; refresh before retry");
+        JSONObject provided=p.optJSONObject("trackLayout");
+        if(provided==null)
+            throw new IllegalArgumentException("Validated trackLayout is required");
+        StudioTrackLayout next=StudioTrackLayout.fromJson(provided);
+        StudioTrackEditor.validate(project,next);
+        project.trackLayout=next.toJson();
+        store.save(project);
+        JSONObject result=ok();
+        result.put("projectId",project.id);
+        result.put("updatedAt",project.updatedAt);
+        result.put("trackCount",next.tracks().size());
+        result.put("audioClipCount",StudioTrackEditor.audioClipCount(next));
+        result.put("audioExportSupported",true);
+        result.put("videoOverlayExportSupported",false);
+        return result;
     }
 
     private JSONObject applyEditPlan(JSONObject p) throws Exception {
@@ -3850,6 +3882,8 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                     assets.put(ai);
                 }
                 out.put("activeAssets", assets);
+                out.put("trackLayout", active.trackLayout == null
+                        ? new JSONObject() : active.trackLayout);
             }
             out.put("workload", jobs.state());
             out.put("recoveryPlans", recoveryPlans.recent(12));
@@ -4234,6 +4268,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             case "select_project": return "Opening project";
             case "delete_project": return "Deleting project";
             case "apply_edit_plan": return "Building timeline";
+            case "set_track_layout": return "Editing native multitrack layout";
             case "apply_tool": return "Applying edit tool";
             case "creator_preset": return "Applying creator style";
             case "autonomous_edit": return "Autonomous edit";
