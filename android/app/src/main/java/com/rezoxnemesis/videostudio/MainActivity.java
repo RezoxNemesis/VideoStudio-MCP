@@ -1048,9 +1048,12 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
             name.setMaxLines(1);
             name.setEllipsize(android.text.TextUtils.TruncateAt.END);
             tile.addView(name,margins(-1,-2,dp(3),0,0,0));
-            Button use=studioButton("Preview",()->{
+            Button use=studioButton(asset.mime!=null&&asset.mime.startsWith("audio/")?
+                    "+ Music Track":"Preview",()->{
                 stopStillSequenceOnly();
-                if(asset.mime!=null&&asset.mime.startsWith("video/")){
+                if(asset.mime!=null&&asset.mime.startsWith("audio/")){
+                    editStudioAudio(null,asset.id);
+                }else if(asset.mime!=null&&asset.mime.startsWith("video/")){
                     studioStillPreview.setVisibility(View.GONE);
                     livePlayer.setContextIds("asset:"+asset.id,"");
                     livePlayer.play(Uri.parse(ProxyManager.previewUri(activeProject,asset)),0L);
@@ -1090,6 +1093,8 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
 
     private void performStudioTool(String name){
         switch(name){
+            case "Add Music Track":chooseStudioAudio();return;
+            case "Add Caption Track":editStudioTitle(null);return;
             case "Slow Motion": studioSpeedDialog();return;
             case "Volume": studioVolumeDialog();return;
             case "Blur": studioBlurDialog();return;
