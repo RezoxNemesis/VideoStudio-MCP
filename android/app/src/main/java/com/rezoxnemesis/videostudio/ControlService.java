@@ -3889,6 +3889,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             out.put("appGeneration", protocol.appGeneration());
             out.put("connectionCore", protocol.connectionStatus());
             out.put("nativeAgent", "videostudio-v3");
+            out.put("legacyInstallation",NativeApkUpdater.legacyInstallationStatus(this));
             out.put("privateStorageWritable", dirReady && probe.exists() && probe.length() > 0);
             out.put("projectStoreReady", store.summaries() != null);
             out.put("projectStorage", store.storageBackend());
@@ -3968,6 +3969,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             out.put("appGeneration", protocol.appGeneration());
             out.put("connectionCore", protocol.connectionStatus());
             out.put("nativeAgent", "videostudio-v3");
+            out.put("legacyInstallation",NativeApkUpdater.legacyInstallationStatus(this));
             out.put("directAttachmentIngest", true);
             out.put("inlineAttachmentIngest", true);
             out.put("chunkedFrameIngest", true);
