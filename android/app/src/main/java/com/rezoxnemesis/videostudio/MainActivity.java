@@ -1022,10 +1022,13 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         StudioTimelineClock.Position start=
                 StudioTimelineClock.locate(activeProject.clips,studioPlayheadMs);
         timelinePreviewRunning=true;
-        playStudioFrom(Math.max(0,start.clipIndex));
+        playStudioFrom(Math.max(0,start.clipIndex),start.offsetInClipMs);
     }
 
     private void playStudioFrom(int index){
+        playStudioFrom(index,0);
+    }
+    private void playStudioFrom(int index,long offsetInClipMs){
         if(!timelinePreviewRunning||activeProject==null||
                 index>=activeProject.clips.size()){
             timelinePreviewRunning=false;
@@ -1035,10 +1038,13 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         selectedClip=clip;
         studioPlayheadMs=0;
         for(int i=0;i<index;i++)studioPlayheadMs+=activeProject.clips.get(i).outputDurationMs();
+        long actualOffset=Math.max(0,Math.min(
+                Math.max(0,clip.outputDurationMs()-1),offsetInClipMs));
+        studioPlayheadMs+=actualOffset;
         if(studioTimeLabel!=null)studioTimeLabel.setText(
                 time(studioPlayheadMs)+" / "+time(activeProject.outputDurationMs()));
         updateStudioCaptionAt(studioPlayheadMs);
-        startStudioCaptionClock(clip,studioPlayheadMs);
+        startStudioCaptionClock(clip,studioPlayheadMs-actualOffset,actualOffset);
         ProjectStore.Asset asset=activeProject.asset(clip.assetId);
         if(asset==null){playStudioFrom(index+1);return;}
         if(asset.mime!=null&&asset.mime.startsWith("video/")){
@@ -1046,7 +1052,9 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
             livePlayer.setContextIds("",clip.id);
             livePlayer.setVolume(clip.volume);
             livePlayer.playClip(Uri.parse(ProxyManager.previewUri(activeProject,asset)),
-                    clip.inMs,clip.outMs,clip.speed,()->{
+                    Math.min(Math.max(clip.inMs,clip.outMs-1),
+                            clip.inMs+Math.round(actualOffset*clip.speed)),
+                    clip.outMs,clip.speed,()->{
                         if(timelinePreviewRunning)playStudioFrom(index+1);
                     });
         }else if(asset.mime!=null&&asset.mime.startsWith("image/")){
@@ -1059,7 +1067,8 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                 stillTimelineNext=null;
                 if(timelinePreviewRunning)playStudioFrom(index+1);
             };
-            ui.postDelayed(stillTimelineNext,Math.max(50,clip.outputDurationMs()));
+            ui.postDelayed(stillTimelineNext,
+                    Math.max(50,clip.outputDurationMs()-actualOffset));
         }else playStudioFrom(index+1);
     }
 
@@ -1545,7 +1554,8 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         studioCaptionPreview.bringToFront();
     }
 
-    private void startStudioCaptionClock(ProjectStore.Clip clip,long globalStartMs){
+    private void startStudioCaptionClock(ProjectStore.Clip clip,long globalStartMs,
+                                         long initialOffsetMs){
         if(studioCaptionClock!=null)
             ui.removeCallbacks(studioCaptionClock);
         if(clip==null||activeProject==null)return;
@@ -1561,7 +1571,8 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                 if(source!=null&&source.mime!=null&&source.mime.startsWith("video/")){
                     elapsed=(long)((livePlayer.currentPositionMs()-clip.inMs)/
                             Math.max(.1f,clip.speed));
-                }else elapsed=android.os.SystemClock.elapsedRealtime()-systemStart;
+                }else elapsed=initialOffsetMs+
+                        android.os.SystemClock.elapsedRealtime()-systemStart;
                 elapsed=Math.max(0,Math.min(clipLength,elapsed));
                 long clock=globalStartMs+elapsed;
                 updateStudioCaptionAt(clock);
