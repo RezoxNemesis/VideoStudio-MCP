@@ -980,6 +980,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
             studioThumbs.bindPreview(studioStillPreview,asset);
         }else if(asset.mime!=null&&asset.mime.startsWith("video/")){
             studioStillPreview.setVisibility(View.GONE);
+            livePlayer.setVolume(selectedClip.volume);
             Uri uri=Uri.parse(ProxyManager.previewUri(activeProject,asset));
             LivePlaybackState currently=livePlayer.snapshotState();
             if(!selectedClip.id.equals(currently.clipId)||
