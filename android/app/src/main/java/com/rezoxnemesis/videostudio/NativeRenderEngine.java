@@ -548,7 +548,13 @@ public final class NativeRenderEngine {
             });
         }
 
-        List<AudioProcessor> audio = Collections.emptyList();
+        List<AudioProcessor> audio=Collections.emptyList();
+        if(asset.mime!=null&&asset.mime.startsWith("video/")&&
+                Math.abs(clip.volume-1f)>.001f){
+            float gain=Math.max(0f,Math.min(2f,clip.volume));
+            audio=Collections.singletonList(new GainProcessor(
+                    new DefaultGainProvider.Builder(gain).build()));
+        }
         List<Effect> video = buildEffects(clip, aspect, quality, inputDurationMs);
         video.addAll(titleEffects(titles));
         edited.setEffects(new Effects(audio, video));
