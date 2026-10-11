@@ -2618,8 +2618,11 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         return result;
     }
 
-    private static float[] requiredStoryboardTip(JSONObject p,String name) throws Exception {
+    private static float[] requiredStoryboardTip(JSONObject p,String name,
+                                                  Rig2DProfile source) throws Exception {
         JSONArray values=p.optJSONArray(name);
+        if(values==null && source!=null && source.swordTip!=null)
+            return source.swordTip.clone();
         if(values==null||values.length()!=2)
             throw new IllegalArgumentException(
                     "Trace the exact source sword tip with a normalized [x,y] pair: "+name);
@@ -2651,10 +2654,10 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         Rig2DProfile whiteFrom=profiles.load(source.id,w0);
         Rig2DProfile blackTo=profiles.load(source.id,b1);
         Rig2DProfile whiteTo=profiles.load(source.id,w1);
-        float[] blackTipFrom=requiredStoryboardTip(p,"blackTipFrom");
-        float[] whiteTipFrom=requiredStoryboardTip(p,"whiteTipFrom");
-        float[] blackTipTo=requiredStoryboardTip(p,"blackTipTo");
-        float[] whiteTipTo=requiredStoryboardTip(p,"whiteTipTo");
+        float[] blackTipFrom=requiredStoryboardTip(p,"blackTipFrom",blackFrom);
+        float[] whiteTipFrom=requiredStoryboardTip(p,"whiteTipFrom",whiteFrom);
+        float[] blackTipTo=requiredStoryboardTip(p,"blackTipTo",blackTo);
+        float[] whiteTipTo=requiredStoryboardTip(p,"whiteTipTo",whiteTo);
         int w=p.optInt("width",432),h=p.optInt("height",768);
         int fps=p.optInt("fps",24);
         double seconds=p.optDouble("durationSeconds",3.0);
@@ -4119,6 +4122,9 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             out.put("inlineAttachmentIngest", true);
             out.put("chunkedFrameIngest", true);
             out.put("poseSequenceEngine", "native-bidirectional-optical-flow-v1");
+            out.put("storyboardArtworkEngine", "two-authored-poses-masked-texture-mesh-v1");
+            out.put("storyboardArtworkRequiresFourTracedActorRigs", true);
+            out.put("neuralStoryboardModelAvailable", false);
             out.put("localEngineOwnsProjects", true);
             out.put("portraitAnimationEngine", "v3.2-articulated-parallax");
             out.put("onDevicePortraitAi", true);
