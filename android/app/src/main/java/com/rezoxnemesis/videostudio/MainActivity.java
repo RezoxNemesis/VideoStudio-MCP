@@ -668,6 +668,433 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         scheduleEditorRefresh(activeProject.id,activeProject.updatedAt);
     }
 
+
+    private Button studioButton(String label,Runnable action){
+        Button button=new Button(this);
+        button.setText(label);
+        button.setTextColor(C_TEXT);
+        button.setAllCaps(false);
+        button.setTextSize(12);
+        button.setPadding(dp(7),0,dp(7),0);
+        button.setBackground(rounded(C_CARD_2,0xff344469,dp(11)));
+        button.setOnClickListener(v->action.run());
+        return button;
+    }
+
+    private void showStudioProjectLibrary() {
+        List<ProjectStore.Project> all=store.list();
+        if(all.isEmpty()){createProjectDialog();return;}
+        String[] labels=new String[all.size()];
+        for(int i=0;i<all.size();i++){
+            ProjectStore.Project p=all.get(i);
+            labels[i]=(activeProject!=null&&p.id.equals(activeProject.id)?"✓ ":"")
+                    +p.name+"  ·  "+p.clips.size()+" clips"
+                    +(p.latestExportUri!=null&&!p.latestExportUri.isEmpty()?"  ·  MP4 ✓":"");
+        }
+        new AlertDialog.Builder(this).setTitle("My VideoStudio Projects")
+                .setItems(labels,(dialog,index)->{
+                    ProjectStore.Project chosen=store.get(all.get(index).id);
+                    if(chosen==null)return;
+                    stopStillSequenceOnly();
+                    activeProject=chosen;store.setActive(chosen.id);
+                    selectedClip=chosen.clips.isEmpty()?null:chosen.clips.get(0);
+                    studioTimelinePage=0;studioMediaPage=0;studioPlayheadMs=0;
+                    editHistory.reset(chosen.id);
+                    syncProtocolState();
+                    showEditor();
+                })
+                .setPositiveButton("+ New", (d,w)->createProjectDialog())
+                .setNegativeButton("Close",null).show();
+    }
+
+    /** Explicit user-visible list of real completed renders across ALL projects. */
+    private void showStudioRenderLibrary() {
+        ArrayList<String> descriptions=new ArrayList<>();
+        ArrayList<String> uris=new ArrayList<>();
+        ArrayList<String> projectIds=new ArrayList<>();
+        java.util.HashSet<String> seen=new java.util.HashSet<>();
+        for(ProjectStore.Project p:store.list()){
+            if(p.latestExportUri!=null&&!p.latestExportUri.isEmpty()&&
+                    seen.add(p.latestExportUri)){
+                uris.add(p.latestExportUri);
+                descriptions.add("▶ "+(p.latestExportName.isEmpty()?"Latest export":p.latestExportName)
+                        +"  •  "+p.name);
+                projectIds.add(p.id);
+            }
+            for(ProjectStore.Asset asset:p.assets){
+                if(!asset.generated||asset.uri==null||asset.uri.isEmpty()||
+                        asset.mime==null||!asset.mime.startsWith("video/")||
+                        !seen.add(asset.uri))continue;
+                descriptions.add("▶ "+asset.name+"  •  "+p.name);
+                uris.add(asset.uri);projectIds.add(p.id);
+                if(uris.size()>=80)break;
+            }
+            if(uris.size()>=80)break;
+        }
+        if(uris.isEmpty()){
+            new AlertDialog.Builder(this).setTitle("No rendered videos yet")
+                    .setMessage("Your imported images and editing timeline are intact. "
+                            +"Use Export or Animation Director to create the first MP4, "
+                            +"then it will be listed here across projects.")
+                    .setPositiveButton("OK",null).show();
+            return;
+        }
+        new AlertDialog.Builder(this).setTitle("Finished Videos • "+uris.size())
+                .setItems(descriptions.toArray(new String[0]),(dialog,index)->{
+                    stopStillSequenceOnly();
+                    ProjectStore.Project p=store.get(projectIds.get(index));
+                    if(p!=null){
+                        activeProject=p;store.setActive(p.id);
+                        selectedClip=p.clips.isEmpty()?null:p.clips.get(0);
+                        studioTimelinePage=0;studioPlayheadMs=0;
+                        editHistory.reset(p.id);
+                        syncProtocolState();
+                        showEditor();
+                    }
+                    if(studioStillPreview!=null)
+                        studioStillPreview.setVisibility(View.GONE);
+                    livePlayer.setContextIds("final:"+System.currentTimeMillis(),"");
+                    livePlayer.play(Uri.parse(uris.get(index)),0L);
+                })
+                .setNegativeButton("Close",null).show();
+    }
+
+    private void playStudioLatest(){
+        stopStillSequenceOnly();
+        if(activeProject==null||activeProject.latestExportUri==null||
+                activeProject.latestExportUri.isEmpty()){
+            showStudioRenderLibrary();
+            return;
+        }
+        if(studioStillPreview!=null)studioStillPreview.setVisibility(View.GONE);
+        try{
+            livePlayer.setContextIds("final:"+activeProject.latestExportAt,"");
+            livePlayer.play(Uri.parse(activeProject.latestExportUri),0L);
+        }catch(Exception error){
+            Toast.makeText(this,"Latest MP4 could not open. Try All Renders.",
+                    Toast.LENGTH_LONG).show();
+            showStudioRenderLibrary();
+        }
+    }
+
+    private void queueStudioExport(){
+        if(activeProject==null||activeProject.clips.isEmpty()){
+            Toast.makeText(this,"Add clips to the timeline before exporting",
+                    Toast.LENGTH_LONG).show();
+            return;
+        }
+        String[] quality={"720p · faster mobile export","1080p · higher detail"};
+        new AlertDialog.Builder(this).setTitle("Export this timeline")
+                .setMessage("VideoStudio's native Media3 renderer applies supported effects. "+
+                        "The finished MP4 will appear in All Renders; the source project stays intact.")
+                .setItems(quality,(d,index)->{
+                    try{
+                        Intent request=new Intent(this,ControlService.class)
+                                .setAction(ControlService.ACTION_LOCAL_EXPORT)
+                                .putExtra("projectId",activeProject.id)
+                                .putExtra("aspect","9:16")
+                                .putExtra("quality",index==0?"720p":"1080p")
+                                .putExtra("fileName","VideoStudio_"+
+                                        System.currentTimeMillis()+".mp4");
+                        startForegroundService(request);
+                        Toast.makeText(this,"Export queued. Open Jobs to track the actual result.",
+                                Toast.LENGTH_LONG).show();
+                        showStudioJobDetails();
+                    }catch(Exception e){
+                        Toast.makeText(this,"Could not queue native export: "+e.getMessage(),
+                                Toast.LENGTH_LONG).show();
+                    }
+                }).setNegativeButton("Cancel",null).show();
+    }
+
+    private void previewSelectedStudioClip(boolean startPlayback){
+        if(selectedClip==null||activeProject==null||studioStillPreview==null){
+            if(studioStillPreview!=null)studioStillPreview.setVisibility(View.VISIBLE);
+            return;
+        }
+        ProjectStore.Asset asset=activeProject.asset(selectedClip.assetId);
+        if(asset==null)return;
+        if(asset.mime!=null&&asset.mime.startsWith("image/")){
+            livePlayer.pause();
+            studioStillPreview.setVisibility(View.VISIBLE);
+            studioThumbs.bindPreview(studioStillPreview,asset);
+        }else if(asset.mime!=null&&asset.mime.startsWith("video/")){
+            studioStillPreview.setVisibility(View.GONE);
+            Uri uri=Uri.parse(ProxyManager.previewUri(activeProject,asset));
+            LivePlaybackState currently=livePlayer.snapshotState();
+            if(!selectedClip.id.equals(currently.clipId)||
+                    !uri.toString().equals(currently.mediaUri)){
+                livePlayer.setContextIds("",selectedClip.id);
+                livePlayer.play(uri,selectedClip.inMs,selectedClip.speed,startPlayback);
+            }else if(startPlayback){
+                livePlayer.playClip(uri,selectedClip.inMs,selectedClip.outMs,
+                        selectedClip.speed,null);
+            }
+        }else{
+            livePlayer.pause();
+            studioStillPreview.setVisibility(View.VISIBLE);
+            studioStillPreview.setImageDrawable(null);
+        }
+    }
+
+    private void scrubStudioTo(long timestamp){
+        if(activeProject==null||activeProject.clips.isEmpty())return;
+        stopStillSequenceOnly();
+        StudioTimelineClock.Position position=
+                StudioTimelineClock.locate(activeProject.clips,timestamp);
+        if(position.clipIndex<0)return;
+        studioPlayheadMs=position.globalTimeMs;
+        selectedClip=activeProject.clips.get(position.clipIndex);
+        studioTimelinePage=position.clipIndex/20;
+        showEditor();
+        ProjectStore.Asset asset=activeProject.asset(selectedClip.assetId);
+        if(asset!=null&&asset.mime!=null&&asset.mime.startsWith("video/")){
+            livePlayer.seekTo(position.assetTimeMs);
+        }
+    }
+
+    /** Honest timeline preview: original clips and stills, not fake interpolation. */
+    private void playStudioTimeline(){
+        if(activeProject==null||activeProject.clips.isEmpty()){
+            Toast.makeText(this,"Timeline is empty",Toast.LENGTH_SHORT).show();return;
+        }
+        stopStillSequenceOnly();
+        StudioTimelineClock.Position start=
+                StudioTimelineClock.locate(activeProject.clips,studioPlayheadMs);
+        timelinePreviewRunning=true;
+        playStudioFrom(Math.max(0,start.clipIndex));
+    }
+
+    private void playStudioFrom(int index){
+        if(!timelinePreviewRunning||activeProject==null||
+                index>=activeProject.clips.size()){
+            timelinePreviewRunning=false;
+            return;
+        }
+        ProjectStore.Clip clip=activeProject.clips.get(index);
+        selectedClip=clip;
+        studioPlayheadMs=0;
+        for(int i=0;i<index;i++)studioPlayheadMs+=activeProject.clips.get(i).outputDurationMs();
+        if(studioTimeLabel!=null)studioTimeLabel.setText(
+                time(studioPlayheadMs)+" / "+time(activeProject.outputDurationMs()));
+        ProjectStore.Asset asset=activeProject.asset(clip.assetId);
+        if(asset==null){playStudioFrom(index+1);return;}
+        if(asset.mime!=null&&asset.mime.startsWith("video/")){
+            if(studioStillPreview!=null)studioStillPreview.setVisibility(View.GONE);
+            livePlayer.setContextIds("",clip.id);
+            livePlayer.playClip(Uri.parse(ProxyManager.previewUri(activeProject,asset)),
+                    clip.inMs,clip.outMs,clip.speed,()->{
+                        if(timelinePreviewRunning)playStudioFrom(index+1);
+                    });
+        }else if(asset.mime!=null&&asset.mime.startsWith("image/")){
+            livePlayer.pause();
+            if(studioStillPreview!=null){
+                studioStillPreview.setVisibility(View.VISIBLE);
+                studioThumbs.bindPreview(studioStillPreview,asset);
+            }
+            stillTimelineNext=()->{
+                stillTimelineNext=null;
+                if(timelinePreviewRunning)playStudioFrom(index+1);
+            };
+            ui.postDelayed(stillTimelineNext,Math.max(50,clip.outputDurationMs()));
+        }else playStudioFrom(index+1);
+    }
+
+    private void stopStillSequenceOnly(){
+        timelinePreviewRunning=false;
+        if(stillTimelineNext!=null){
+            ui.removeCallbacks(stillTimelineNext);
+            stillTimelineNext=null;
+        }
+    }
+
+    private void renderStudioMediaBin(LinearLayout box){
+        ArrayList<ProjectStore.Asset> assets=new ArrayList<>(activeProject.assets);
+        assets.sort((a,b)->{
+            if(a.generated!=b.generated)return a.generated?-1:1;
+            return Long.compare(b.createdAt,a.createdAt);
+        });
+        int size=15;
+        int pages=Math.max(1,(assets.size()+size-1)/size);
+        studioMediaPage=Math.max(0,Math.min(studioMediaPage,pages-1));
+        HorizontalScrollView scroll=new HorizontalScrollView(this);
+        scroll.setHorizontalScrollBarEnabled(false);
+        LinearLayout tiles=new LinearLayout(this);
+        for(int i=studioMediaPage*size;i<Math.min(assets.size(),(studioMediaPage+1)*size);i++){
+            ProjectStore.Asset asset=assets.get(i);
+            LinearLayout tile=card(false);
+            tile.setPadding(dp(7),dp(8),dp(7),dp(6));
+            TextView tag=accent(asset.generated?"RENDER / GENERATED":"SOURCE",asset.generated?C_CYAN:C_MUTED);
+            tile.addView(tag);
+            ImageView thumbnail=new ImageView(this);
+            if(studioThumbs!=null)studioThumbs.bind(thumbnail,asset);
+            tile.addView(thumbnail,margins(-1,dp(78),dp(4),0,0,0));
+            TextView name=body(asset.name);
+            name.setMaxLines(1);
+            name.setEllipsize(android.text.TextUtils.TruncateAt.END);
+            tile.addView(name,margins(-1,-2,dp(3),0,0,0));
+            Button use=studioButton("Preview",()->{
+                stopStillSequenceOnly();
+                if(asset.mime!=null&&asset.mime.startsWith("video/")){
+                    studioStillPreview.setVisibility(View.GONE);
+                    livePlayer.setContextIds("asset:"+asset.id,"");
+                    livePlayer.play(Uri.parse(ProxyManager.previewUri(activeProject,asset)),0L);
+                }else if(asset.mime!=null&&asset.mime.startsWith("image/")){
+                    livePlayer.pause();
+                    studioStillPreview.setVisibility(View.VISIBLE);
+                    studioThumbs.bindPreview(studioStillPreview,asset);
+                }
+            });
+            tile.addView(use,margins(-1,dp(36),dp(3),0,0,0));
+            if(asset.mime!=null&&(asset.mime.startsWith("video/")||
+                    asset.mime.startsWith("image/"))){
+                Button add=studioButton("+ Timeline",()->{
+                    if(store.appendAssetToTimeline(activeProject,asset.id)){
+                        editHistory.reset(activeProject.id);
+                        selectedClip=activeProject.clips.get(activeProject.clips.size()-1);
+                        studioTimelinePage=(activeProject.clips.size()-1)/20;
+                        studioPlayheadMs=activeProject.outputDurationMs()-selectedClip.outputDurationMs();
+                        syncProtocolState();showEditor();
+                    }
+                });
+                tile.addView(add,margins(-1,dp(36),dp(3),0,0,0));
+            }
+            tiles.addView(tile,margins(dp(162),-2,dp(3),dp(3),0,dp(7)));
+        }
+        if(assets.isEmpty())tiles.addView(body("Import media or ask ChatGPT to create a new project."));
+        scroll.addView(tiles);
+        box.addView(scroll);
+        if(pages>1){
+            Button more=studioButton("Media page "+(studioMediaPage+1)+"/"+pages+
+                    "  ·  Next ›",()->{
+                        studioMediaPage=(studioMediaPage+1)%pages;showEditor();
+                    });
+            box.addView(more,margins(-1,dp(42),dp(2),0,0,0));
+        }
+    }
+
+    private void performStudioTool(String name){
+        switch(name){
+            case "Delete Clip": deleteStudioClip(); return;
+            case "Move Left": moveStudioClip(-1); return;
+            case "Move Right": moveStudioClip(1); return;
+            case "Animation Director": animationDirectorDialog();return;
+            case "Rig Builder": open2DRigEditor();return;
+            case "Render Rigged 2D": queueUserRiggedDuel();return;
+            case "3D Model Viewer": open3DModelViewer();return;
+            case "Render 3D Fight": choose3DCombatActors();return;
+            case "Combat Benchmark": combatRigBenchmarkDialog();return;
+            default: applyTool(name);return;
+        }
+    }
+
+    private void deleteStudioClip(){
+        if(activeProject==null||selectedClip==null)return;
+        final String clipId=selectedClip.id;
+        new AlertDialog.Builder(this).setTitle("Remove timeline clip?")
+                .setMessage("This removes the selected clip from the edit, "+
+                        "but keeps the original imported media safely in VideoStudio.")
+                .setPositiveButton("Remove",(d,w)->{
+                    editHistory.checkpoint(activeProject);
+                    activeProject.clips.removeIf(c->clipId.equals(c.id));
+                    selectedClip=activeProject.clips.isEmpty()?null:
+                            activeProject.clips.get(Math.min(activeProject.clips.size()-1,
+                                    Math.max(0,studioTimelinePage*20)));
+                    studioPlayheadMs=0;
+                    store.save(activeProject);syncProtocolState();showEditor();
+                }).setNegativeButton("Cancel",null).show();
+    }
+    private void moveStudioClip(int distance){
+        if(activeProject==null||selectedClip==null)return;
+        int at=-1;
+        for(int i=0;i<activeProject.clips.size();i++)
+            if(selectedClip.id.equals(activeProject.clips.get(i).id)){at=i;break;}
+        if(at<0||at+distance<0||at+distance>=activeProject.clips.size())return;
+        editHistory.checkpoint(activeProject);
+        java.util.Collections.swap(activeProject.clips,at,at+distance);
+        studioTimelinePage=(at+distance)/20;
+        studioPlayheadMs=0;
+        for(int i=0;i<at+distance;i++)
+            studioPlayheadMs+=activeProject.clips.get(i).outputDurationMs();
+        store.save(activeProject);syncProtocolState();showEditor();
+    }
+
+    private void restoreStudioHistory(boolean redo){
+        if(activeProject==null)return;
+        ProjectStore.Project latest=store.get(activeProject.id);
+        if(latest==null||latest.updatedAt!=activeProject.updatedAt){
+            Toast.makeText(this,"Project changed in background. Reload before Undo.",
+                    Toast.LENGTH_LONG).show();
+            if(latest!=null)activeProject=latest;
+            editHistory.reset(null);
+            showEditor();return;
+        }
+        String previous=selectedClip==null?"":selectedClip.id;
+        ProjectStore.Project restored=redo
+                ?editHistory.redo(activeProject):editHistory.undo(activeProject);
+        if(restored==null)return;
+        activeProject=restored;
+        selectedClip=null;
+        for(ProjectStore.Clip c:restored.clips)
+            if(previous.equals(c.id)){selectedClip=c;break;}
+        if(selectedClip==null&&!restored.clips.isEmpty())
+            selectedClip=restored.clips.get(0);
+        store.save(activeProject);syncProtocolState();showEditor();
+    }
+
+    private void findStudioTool(){
+        EditText input=new EditText(this);
+        input.setHint("Search trim, speed, masks, audio, animation...");
+        input.setSingleLine(true);
+        input.setTextColor(C_TEXT);
+        LinearLayout holder=column();
+        holder.setPadding(dp(18),dp(5),dp(18),0);
+        holder.addView(input);
+        new AlertDialog.Builder(this).setTitle("Find VideoStudio Tool")
+                .setView(holder).setPositiveButton("Search",(dialog,which)->{
+                    List<StudioToolCatalog.Tool> results=StudioToolCatalog.find(
+                            input.getText().toString());
+                    String[] labels=new String[results.size()];
+                    for(int i=0;i<results.size();i++){
+                        StudioToolCatalog.Tool t=results.get(i);
+                        labels[i]=t.label+"  ·  "+t.group;
+                    }
+                    new AlertDialog.Builder(this).setTitle(
+                            results.isEmpty()?"No matching tools":"Select a tool")
+                            .setItems(labels,(d,index)->performStudioTool(
+                                    results.get(index).label))
+                            .setPositiveButton("Close",null).show();
+                }).setNegativeButton("Cancel",null).show();
+    }
+
+    private void showStudioJobDetails(){
+        JSONObject work=NativeWorkMonitor.snapshot(this);
+        StringBuilder text=new StringBuilder();
+        text.append(work.optString("nativeServiceOnline","false").equals("true")?
+                "Native Agent connected\n":"Native Agent reconnecting\n");
+        text.append(work.optString("thermalLabel","Unknown thermal reading"));
+        text.append("\nThermal source: Android system estimate, not touch temperature.");
+        if(work.optBoolean("thermalSafetyHold",false))
+            text.append("\nHeavy GPU/encoding work must cool before it resumes.");
+        text.append("\nActive: ").append(work.optInt("active",0));
+        text.append("  ·  Waiting: ").append(work.optInt("waiting",0));
+        text.append("\n\n");
+        JSONArray tasks=work.optJSONArray("jobs");
+        if(tasks!=null)for(int i=0;i<Math.min(tasks.length(),12);i++){
+            JSONObject j=tasks.optJSONObject(i);
+            if(j==null)continue;
+            text.append(j.optString("name","Job")).append("\n  ")
+                    .append(j.optString("state","unknown").replace('_',' '))
+                    .append(" • ").append(j.optInt("progress",0)).append("%")
+                    .append("\n  ").append(j.optString("detail","")).append("\n\n");
+        }
+        new AlertDialog.Builder(this).setTitle("Native VideoStudio Work")
+                .setMessage(text.toString())
+                .setPositiveButton("Refresh",(d,w)->showStudioJobDetails())
+                .setNeutralButton("All Activity",(d,w)->showActivity())
+                .setNegativeButton("Close",null).show();
+    }
+
     private void showLegacyEditor() {
         if (activeProject == null) {
             createProject("Untitled Project");
