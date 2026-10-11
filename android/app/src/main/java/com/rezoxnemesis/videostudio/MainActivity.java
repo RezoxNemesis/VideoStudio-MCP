@@ -1180,6 +1180,47 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                 }).setNegativeButton("Cancel",null).show();
     }
 
+    private void chooseNativeJobToCancel(){
+        JSONObject work=NativeWorkMonitor.snapshot(this);
+        JSONArray all=work.optJSONArray("jobs");
+        ArrayList<String> labels=new ArrayList<>();
+        ArrayList<String> ids=new ArrayList<>();
+        if(all!=null)for(int i=0;i<all.length();i++){
+            JSONObject job=all.optJSONObject(i);
+            if(job==null||JobManager.isTerminal(job.optString("state","")))continue;
+            String id=job.optString("id","");
+            if(id.isEmpty())continue;
+            ids.add(id);
+            labels.add(job.optString("name","Native job")+"  ·  "+
+                    job.optString("state","").replace('_',' ')+"  "+
+                    job.optInt("progress",0)+"%");
+        }
+        if(labels.isEmpty()){
+            Toast.makeText(this,"No active native job needs cancellation",
+                    Toast.LENGTH_SHORT).show();return;
+        }
+        new AlertDialog.Builder(this).setTitle("Cancel one native job")
+                .setItems(labels.toArray(new String[0]),(d,which)->{
+                    String selected=ids.get(which);
+                    new AlertDialog.Builder(this)
+                            .setTitle("Stop only this job?")
+                            .setMessage(labels.get(which)+"\nOther VideoStudio jobs and project files will be preserved.")
+                            .setPositiveButton("Stop Job",(confirm,index)->{
+                                try{
+                                    Intent command=new Intent(this,ControlService.class)
+                                            .setAction(ControlService.ACTION_CANCEL_JOB)
+                                            .putExtra("jobId",selected);
+                                    startForegroundService(command);
+                                    Toast.makeText(this,"Stopping selected native job",
+                                            Toast.LENGTH_SHORT).show();
+                                }catch(Exception error){
+                                    Toast.makeText(this,"Could not request cancellation",
+                                            Toast.LENGTH_LONG).show();
+                                }
+                            }).setNegativeButton("Keep Running",null).show();
+                }).setNegativeButton("Back",null).show();
+    }
+
     private void showStudioJobDetails(){
         JSONObject work=NativeWorkMonitor.snapshot(this);
         StringBuilder text=new StringBuilder();
@@ -1204,7 +1245,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         new AlertDialog.Builder(this).setTitle("Native VideoStudio Work")
                 .setMessage(text.toString())
                 .setPositiveButton("Refresh",(d,w)->showStudioJobDetails())
-                .setNeutralButton("All Activity",(d,w)->showActivity())
+                .setNeutralButton("Stop One Job",(d,w)->chooseNativeJobToCancel())
                 .setNegativeButton("Close",null).show();
     }
 
