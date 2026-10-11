@@ -204,7 +204,80 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         content.addView(view, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
     }
 
+    /** A creator dashboard first, with autonomous control always accessible. */
     private void showHome() {
+        if(activeProject==null)activeProject=store.active();
+        ScrollView scroll=baseScroll();
+        LinearLayout box=column();
+        box.setPadding(dp(15),dp(17),dp(15),dp(28));
+        scroll.addView(box);
+        box.addView(brandHeader());
+
+        LinearLayout hero=card(true);
+        hero.addView(title("Your Studio",26));
+        hero.addView(body(activeProject==null?
+                "Create, import, edit and play videos right here on your phone.":
+                "Continue  ·  "+activeProject.name));
+        Button resume=neonButton(activeProject==null?"Create First Project":
+                "Open Editor  →",C_MAGENTA);
+        resume.setOnClickListener(v->{
+            if(activeProject==null)createProjectDialog();else showEditor();
+        });
+        hero.addView(resume,margins(-1,dp(54),dp(10),dp(4),0,0));
+        LinearLayout actions=new LinearLayout(this);
+        actions.addView(studioButton("+ New Project",this::createProjectDialog),
+                new LinearLayout.LayoutParams(0,dp(45),1));
+        actions.addView(studioButton("+ Import",this::pickMedia),
+                new LinearLayout.LayoutParams(0,dp(45),1));
+        actions.addView(studioButton("All Renders ▶",this::showStudioRenderLibrary),
+                new LinearLayout.LayoutParams(0,dp(45),1));
+        hero.addView(actions,margins(-1,dp(48),dp(6),0,0,0));
+        box.addView(hero,margins(-1,-2,0,dp(9),0,0));
+
+        JSONObject nativeWork=NativeWorkMonitor.snapshot(this);
+        LinearLayout nativeStrip=card(false);
+        nativeStrip.setPadding(dp(13),dp(12),dp(13),dp(12));
+        LinearLayout connectionRow=new LinearLayout(this);
+        connectionRow.setGravity(Gravity.CENTER_VERTICAL);
+        TextView label=title(nativeWork.optBoolean("nativeServiceOnline",false)?
+                "●  ChatGPT native agent connected":"◌  Connect ChatGPT",15);
+        label.setTextColor(nativeWork.optBoolean("nativeServiceOnline",false)?C_CYAN:C_TEXT);
+        connectionRow.addView(label,new LinearLayout.LayoutParams(0,-2,1));
+        connectionRow.addView(studioButton("Manage ›",this::showStudioConnectionHub),
+                new LinearLayout.LayoutParams(dp(100),dp(41)));
+        nativeStrip.addView(connectionRow);
+        String jobName=nativeWork.optString("jobName","");
+        if(nativeWork.optInt("active",0)>0){
+            nativeStrip.addView(body(nativeWork.optInt("active",0)+" active • "+
+                    jobName+"  "+nativeWork.optInt("jobProgress",0)+"%"));
+        }else nativeStrip.addView(body("Native rendering and manual editing stay separate."));
+        box.addView(nativeStrip,margins(-1,-2,dp(4),0,0,0));
+
+        LinearLayout projectsTop=new LinearLayout(this);
+        projectsTop.setGravity(Gravity.CENTER_VERTICAL);
+        projectsTop.addView(title("Projects",20),new LinearLayout.LayoutParams(0,-2,1));
+        projectsTop.addView(studioButton("View All ›",this::showStudioProjectLibrary),
+                new LinearLayout.LayoutParams(dp(107),dp(44)));
+        box.addView(projectsTop,margins(-1,-2,dp(16),dp(6),0,0));
+        List<ProjectStore.Project> projects=store.list();
+        if(projects.isEmpty())box.addView(body("No projects yet. Create one and import your clips."));
+        else for(int i=0;i<Math.min(8,projects.size());i++)
+            box.addView(projectRow(projects.get(i)),margins(-1,-2,0,dp(6),0,0));
+
+        LinearLayout creative=card(false);
+        creative.addView(title("AI Animation & Advanced Tools",18));
+        creative.addView(body("Create from a prompt, trace 2D character rigs, preview animated GLB models, or direct real combat motion."));
+        LinearLayout links=new LinearLayout(this);
+        links.addView(studioButton("AI Tools",this::showTools),
+                new LinearLayout.LayoutParams(0,dp(46),1));
+        links.addView(studioButton("Animation Director",this::animationDirectorDialog),
+                new LinearLayout.LayoutParams(0,dp(46),1));
+        creative.addView(links,margins(-1,dp(46),dp(7),0,0,0));
+        box.addView(creative,margins(-1,-2,dp(16),0,0,0));
+        setScreen(scroll,"home");
+    }
+
+    private void showLegacyHome() {
         ScrollView scroll = baseScroll();
         LinearLayout box = column();
         box.setPadding(dp(18), dp(20), dp(18), dp(28));
