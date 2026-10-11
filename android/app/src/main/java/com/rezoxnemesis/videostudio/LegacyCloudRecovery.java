@@ -287,12 +287,12 @@ public final class LegacyCloudRecovery {
                         Entry archivedOriginal=entries.get("Originals/"
                                 +safeName(a.id+"_"+a.name));
                         if(archivedOriginal!=null) {
-                            rel="source_assets/"+a.id;
+                            rel="source_assets/"+a.id+"_"+safeName(a.name);
                             media=archivedOriginal;
                         }
                     }
                     if(media==null && LegacyMigrationRules.isOldImportsFile(a.uri)) {
-                        rel="source_assets/"+a.id;
+                        rel="source_assets/"+a.id+"_"+safeName(a.name);
                         media=staged.get(LegacyMigrationRules.sourceStem(a.name));
                     }
                     if(media==null) {
