@@ -48,6 +48,8 @@ public final class StudioToolCatalog {
         add(2,"Overlay","Overlay editing metadata",true,true);
 
         add(3,"Text","Edit clip title",true,false);
+        add(3,"Add Music Track","Insert synchronized mixed audio",true,false);
+        add(3,"Add Caption Track","Insert timed text burned into MP4",true,false);
         add(3,"Fonts","Change title font",true,true);
         add(3,"Captions","Caption styling",true,true);
         add(3,"Volume","Toggle gain/mute",true,false);
