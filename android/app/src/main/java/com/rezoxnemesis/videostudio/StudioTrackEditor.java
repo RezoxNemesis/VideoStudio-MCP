@@ -25,10 +25,39 @@ public final class StudioTrackEditor {
         return StudioTrackLayout.fromJson(saved);
     }
 
+    /** Validate an autonomous edit against explicitly registered project assets. */
+    public static void validate(ProjectStore.Project project,
+                                StudioTrackLayout layout) {
+        if(project==null||layout==null)
+            throw new IllegalArgumentException("Project and track layout required");
+        for(StudioTrackLayout.Track track:layout.tracks()){
+            for(StudioTrackLayout.Item item:track.items()){
+                ProjectStore.Asset asset=project.asset(item.assetId);
+                if(asset==null||asset.mime==null)
+                    throw new IllegalArgumentException("Track references missing imported asset");
+                boolean audio=asset.mime.startsWith("audio/");
+                boolean video=asset.mime.startsWith("video/");
+                boolean image=asset.mime.startsWith("image/");
+                if(track.kind==StudioTrackLayout.Kind.AUDIO&&!audio&&!video)
+                    throw new IllegalArgumentException("Audio lane requires audio or video source");
+                if(track.kind==StudioTrackLayout.Kind.OVERLAY&&!image&&!video)
+                    throw new IllegalArgumentException("Overlay lane requires image or video");
+                if(track.kind==StudioTrackLayout.Kind.AUDIO &&
+                        (asset.durationMs<=0||item.sourceInMs>=asset.durationMs||
+                        item.sourceInMs+item.durationMs>asset.durationMs))
+                    throw new IllegalArgumentException("Audio clip exceeds source media duration");
+                if(track.kind==StudioTrackLayout.Kind.AUDIO&&
+                        item.startMs>=project.outputDurationMs())
+                    throw new IllegalArgumentException("Audio starts after the video ends");
+            }
+        }
+    }
+
     public static ProjectStore.Project commit(ProjectStore store,ProjectStore.Project project,
                               StudioTrackLayout layout) throws Exception {
         if(store==null||project==null||layout==null)
             throw new IllegalArgumentException("Active project and track layout required");
+        validate(project,layout);
         JSONObject json=layout.toJson();
         ProjectStore.Project existing=store.get(project.id);
         if(existing==null)throw new IllegalArgumentException("Project was deleted");
