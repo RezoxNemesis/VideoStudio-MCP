@@ -3,8 +3,6 @@ package com.rezoxnemesis.videostudio;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Paint;
-import android.graphics.Rect;
-import android.graphics.RectF;
 
 /**
  * Source-textured soft-body 2D deformation that respects observed contour
@@ -103,17 +101,20 @@ public final class StoryboardDeformableSprite {
                     *.009f*w*intensity;
             float bob=(float)Math.sin(v*5+t*6)*envelope
                     *.011f*h*intensity;
-            sourceStrip.set(0,y0,w,y1);
-            targetStrip.set(targetLeftPixel-pivotX+bend,
-                    y0-pivotY+bob,
-                    targetLeftPixel-pivotX+bend+w*scaleX,
-                    y1-pivotY+bob+.55f);
-            // Portable Android Canvas source-strip deformation; unlike
-            // drawBitmapMesh this is implemented consistently on software
-            // Canvas, Android's GPU renderer and Robolectric test Canvas.
-            // Draws only masked original source pixels, never a rectangle
-            // background or generic replacement actor.
-            canvas.drawBitmap(pixels,sourceStrip,targetStrip,paint);
+            // Canvas.drawBitmap(Bitmap, Rect, RectF, Paint) can be a no-op
+            // in some Android software rendering backends used for native
+            // unit tests. Render each real source-texture strip with the
+            // consistently supported bitmap(x,y) operation instead.
+            // The local clip is applied AFTER the transform, so only this
+            // strip is visible and no duplicate full figure is drawn.
+            float stripHeight=y1-y0;
+            canvas.save();
+            canvas.translate(targetLeftPixel-pivotX+bend,
+                    y0-pivotY+bob);
+            canvas.scale(scaleX,1.0f+.55f/stripHeight);
+            canvas.clipRect(0,0,w,stripHeight);
+            canvas.drawBitmap(pixels,0,-y0,paint);
+            canvas.restore();
         }
     }
 }
