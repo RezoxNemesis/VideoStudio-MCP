@@ -670,7 +670,9 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         if(nativeState.optBoolean("thermalSafetyHold",false)||
                 "waiting_thermal".equals(jobState)){
             TextView message=accent(nativeState.optString("thermalLabel","Android thermal hold")+
-                    " · OS throttling, not measured case temperature",0xffffb66c);
+                    (nativeState.optBoolean("thermalTransferAllowed",false)
+                        ? " · GPU render pauses; Drive transfer still available"
+                        : " · OS heat protection, not case temperature"),0xffffb66c);
             jobStrip.addView(message);
         }else if(!detail.isEmpty()&&nativeState.optInt("active",0)>0)
             jobStrip.addView(body(detail));
@@ -1818,7 +1820,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         text.append(work.optString("thermalLabel","Unknown thermal reading"));
         text.append("\nThermal source: Android system estimate, not touch temperature.");
         if(work.optBoolean("thermalSafetyHold",false))
-            text.append("\nHeavy GPU/encoding work must cool before it resumes.");
+            text.append("\nGPU/encoding is protected until Android cools; Drive transfer can continue at severe heat but pauses at critical.");
         text.append("\nActive: ").append(work.optInt("active",0));
         text.append("  ·  Waiting: ").append(work.optInt("waiting",0));
         text.append("\n\n");
