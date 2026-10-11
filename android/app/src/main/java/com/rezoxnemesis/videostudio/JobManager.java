@@ -18,7 +18,7 @@ import java.util.concurrent.Future;
 import java.util.concurrent.Semaphore;
 
 public final class JobManager {
-    public enum Kind { LIGHT, HEAVY }
+    public enum Kind { LIGHT, HEAVY, TRANSFER }
 
     public static final String STATE_QUEUED = "queued";
     public static final String STATE_PREPARING = "preparing";
@@ -48,6 +48,8 @@ public final class JobManager {
         public volatile long lastCheckpointAt;
         public volatile JSONObject result;
         Future<?> future;
+        // Owned exclusively by this job's worker thread.
+        private boolean laneHeld;
         private JobManager owner;
 
         Job(String name, Kind kind) {
@@ -118,9 +120,10 @@ public final class JobManager {
     private final Context context;
     private final SharedPreferences prefs;
     private static final Semaphore PROCESS_HEAVY_LANE = new Semaphore(1, true);
-    // Hot or lengthy render tasks MUST NOT occupy the two light-work workers.
-    // The single heavy queue is serial, separate from interactive operations.
+    // Separate GPU and disk/network queues; both share one exclusive project
+    // media lane. A thermally parked render yields the lane to transfers.
     private final ExecutorService heavyPool = Executors.newSingleThreadExecutor();
+    private final ExecutorService transferPool = Executors.newSingleThreadExecutor();
     private final ExecutorService lightPool = Executors.newFixedThreadPool(2);
     private final Semaphore heavyLane = PROCESS_HEAVY_LANE;
     private final Map<String, Job> jobs = new ConcurrentHashMap<>();
@@ -148,21 +151,15 @@ public final class JobManager {
         job.owner = this;
         jobs.put(job.id, job);
         persist();
-        job.future = (kind == Kind.HEAVY ? heavyPool : lightPool).submit(() -> {
-            boolean locked = false;
+        ExecutorService executor = kind == Kind.HEAVY ? heavyPool
+                : kind == Kind.TRANSFER ? transferPool : lightPool;
+        job.future = executor.submit(() -> {
             try {
                 setState(job, STATE_PREPARING,
-                        kind == Kind.HEAVY ? "Waiting for safe render lane" : "Preparing");
-                if (kind == Kind.HEAVY) {
-                    // Don't monopolize the global render lane while Android
-                    // reports severe heat or memory pressure.
-                    waitForSafeDevice(job);
-                    heavyLane.acquire();
-                    locked = true;
-                    // Recheck immediately after acquiring: temperature and RAM
-                    // may have changed while another service was rendering.
-                    waitForSafeDevice(job);
-                }
+                        kind == Kind.HEAVY ? "Preparing GPU / encoding"
+                        : kind == Kind.TRANSFER ? "Preparing protected file transfer"
+                        : "Preparing interactive task");
+                if (kind != Kind.LIGHT) acquireSafeLane(job);
                 if (Thread.currentThread().isInterrupted()) throw new InterruptedException();
                 setState(job, STATE_RUNNING, job.detail);
                 work.run(job);
@@ -176,7 +173,7 @@ public final class JobManager {
             } catch (Exception error) {
                 setState(job, STATE_FAILED, error.getMessage() == null ? "Job failed" : error.getMessage());
             } finally {
-                if (locked) heavyLane.release();
+                releaseLane(job);
                 persist();
             }
         });
@@ -229,6 +226,8 @@ public final class JobManager {
             root.put("thermal", thermalState());
             root.put("heavyLaneBusy", heavyLane.availablePermits() == 0);
             root.put("parallelLightCapacity", 2);
+            root.put("parallelBackgroundTransferCapacity", 1);
+            root.put("thermalQueuePolicy", "adaptive-safety-v1");
         } catch (Exception ignored) {}
         return root;
     }
@@ -236,6 +235,7 @@ public final class JobManager {
     public void shutdown() {
         cancelAll();
         heavyPool.shutdownNow();
+        transferPool.shutdownNow();
         lightPool.shutdownNow();
         persist();
     }
@@ -307,6 +307,12 @@ public final class JobManager {
         return value;
     }
 
+    /**
+     * Keep the Android SEVERE guard for GPU/encoding. Project-only file
+     * transfers, which do not perform GPU rendering, may run at SEVERE but
+     * pause at CRITICAL. Every guarded job yields the exclusive lane while
+     * thermally or memory paused; Android retains final thermal control.
+     */
     private void waitForSafeDevice(Job job) throws InterruptedException {
         while (true) {
             if (Thread.currentThread().isInterrupted()) throw new InterruptedException();
@@ -315,23 +321,49 @@ public final class JobManager {
             if (am != null) am.getMemoryInfo(info);
             boolean lowMemory = info.lowMemory || info.availMem < 520L * 1024L * 1024L;
             int thermal = thermalStatus();
-            boolean hot = thermal >= PowerManager.THERMAL_STATUS_SEVERE;
-            if (!lowMemory && !hot) return;
+            boolean thermalHold = ThermalQueuePolicy.shouldPause(job.kind, thermal);
+            if (!lowMemory && !thermalHold) return;
+            releaseLane(job);
+            String waitingState = thermalHold ? STATE_WAITING_THERMAL : STATE_WAITING_MEMORY;
+            String detail = thermalHold
+                    ? ThermalQueuePolicy.waitingMessage(job.kind, thermal)
+                    : "Android low-memory guard paused this task; checkpoint preserved";
+            if (!waitingState.equals(job.state) || !detail.equals(job.detail)) {
+                setState(job, waitingState, detail);
+                job.checkpoint(job.stage, job.progress, detail);
+            }
+            Thread.sleep(thermalHold ? 1600L : 1100L);
+        }
+    }
 
-            String waitingState = hot ? STATE_WAITING_THERMAL : STATE_WAITING_MEMORY;
-            String detail = hot
-                    ? "Thermal governor paused heavy work; checkpoint preserved until the phone cools"
-                    : "Memory governor paused heavy work; checkpoint preserved until memory pressure drops";
-            setState(job, waitingState, detail);
-            job.checkpoint(job.stage, job.progress, detail);
-            Thread.sleep(hot ? 2500L : 1200L);
+    private void releaseLane(Job job) {
+        if (job != null && job.laneHeld) {
+            job.laneHeld = false;
+            heavyLane.release();
+        }
+    }
+
+    private void acquireSafeLane(Job job) throws InterruptedException {
+        while (true) {
+            waitForSafeDevice(job);
+            if (!job.laneHeld) {
+                setState(job, STATE_PREPARING,
+                        job.kind == Kind.TRANSFER
+                                ? "Waiting for exclusive project transfer lane"
+                                : "Waiting for exclusive native render lane");
+                heavyLane.acquire();
+                job.laneHeld = true;
+            }
+            // Thermal state can change while a different job owns the lane.
+            waitForSafeDevice(job);
+            if (job.laneHeld) return;
         }
     }
 
     public void awaitSafeCheckpoint(Job job, String stage) throws InterruptedException {
-        if (job == null || job.kind != Kind.HEAVY) return;
+        if (job == null || job.kind == Kind.LIGHT) return;
         if (stage != null && !stage.trim().isEmpty()) job.stage = stage.trim();
-        waitForSafeDevice(job);
+        acquireSafeLane(job);
         if (!STATE_CANCELLED.equals(job.state)) setState(job, STATE_RUNNING, job.detail);
     }
 
@@ -354,7 +386,10 @@ public final class JobManager {
         try {
             int value = thermalStatus();
             o.put("status", value);
-            o.put("safeForHeavyWork", value < PowerManager.THERMAL_STATUS_SEVERE);
+            o.put("safeForHeavyWork", ThermalQueuePolicy.canRunRender(value));
+            o.put("safeForBackgroundTransfer", ThermalQueuePolicy.canRunTransfer(value));
+            o.put("queueMode", ThermalQueuePolicy.schedulingMode(value));
+            o.put("systemControlsThermal", true);
         } catch (Exception ignored) {}
         return o;
     }
@@ -387,7 +422,10 @@ public final class JobManager {
                 if (o == null) continue;
                 long updated = o.optLong("updatedAt", 0);
                 if (updated < cutoff) continue;
-                Kind kind = "heavy".equals(o.optString("kind")) ? Kind.HEAVY : Kind.LIGHT;
+                String persistedKind = o.optString("kind");
+                Kind kind = "heavy".equals(persistedKind) ? Kind.HEAVY
+                        : "transfer".equals(persistedKind) ? Kind.TRANSFER
+                        : Kind.LIGHT;
                 Job job = new Job(o.optString("id", UUID.randomUUID().toString()), o.optString("name", "Recovered job"), kind, o.optLong("createdAt", updated));
                 job.owner = this;
                 job.progress = o.optInt("progress", 0);
