@@ -64,7 +64,39 @@ public final class StudioThumbnailLoader {
         });
     }
 
+    /**
+     * Bounded larger preview of a source still, not a full-resolution import
+     * on the Android UI thread. Prevents blurry 160px timeline thumbnails.
+     */
+    public void bindPreview(ImageView image,ProjectStore.Asset asset){
+        if(image==null||asset==null)return;
+        final String key="preview:"+asset.id;
+        image.setTag(key);
+        image.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        image.setBackgroundColor(0xff070b13);
+        image.setImageDrawable(null);
+        WeakReference<ImageView> target=new WeakReference<>(image);
+        decoder.execute(()->{
+            Bitmap b=null;
+            try{
+                if(asset.mime!=null&&asset.mime.startsWith("image/"))
+                    b=decodeImage(Uri.parse(asset.uri),900);
+                else if(asset.mime!=null&&asset.mime.startsWith("video/"))
+                    b=decodeVideo(Uri.parse(asset.uri));
+            }catch(Exception ignored){}
+            Bitmap bitmap=b;
+            if(bitmap==null)return;
+            main.post(()->{
+                ImageView v=target.get();
+                if(v!=null&&key.equals(v.getTag()))v.setImageBitmap(bitmap);
+            });
+        });
+    }
+
     private Bitmap decodeImage(Uri uri) throws Exception{
+        return decodeImage(uri,TARGET_SIDE);
+    }
+    private Bitmap decodeImage(Uri uri,int targetSide) throws Exception{
         BitmapFactory.Options bounds=new BitmapFactory.Options();
         bounds.inJustDecodeBounds=true;
         try(InputStream in=context.getContentResolver().openInputStream(uri)){
@@ -75,12 +107,12 @@ public final class StudioThumbnailLoader {
                 bounds.outWidth>8192||bounds.outHeight>8192)return null;
         BitmapFactory.Options sample=new BitmapFactory.Options();
         sample.inPreferredConfig=Bitmap.Config.RGB_565;
-        sample.inSampleSize=sampleSize(bounds.outWidth,bounds.outHeight,TARGET_SIDE);
+        sample.inSampleSize=sampleSize(bounds.outWidth,bounds.outHeight,targetSide);
         try(InputStream in=context.getContentResolver().openInputStream(uri)){
             if(in==null)return null;
             Bitmap original=BitmapFactory.decodeStream(in,null,sample);
             if(original==null)return null;
-            return scaled(original);
+            return scaled(original,targetSide);
         }
     }
 
@@ -94,9 +126,10 @@ public final class StudioThumbnailLoader {
             try{retriever.release();}catch(Exception ignored){}
         }
     }
-    private static Bitmap scaled(Bitmap source){
+    private static Bitmap scaled(Bitmap source){return scaled(source,TARGET_SIDE);}
+    private static Bitmap scaled(Bitmap source,int maxSide){
         int w=source.getWidth(),h=source.getHeight();
-        double s=Math.min(1.0,TARGET_SIDE/(double)Math.max(w,h));
+        double s=Math.min(1.0,maxSide/(double)Math.max(w,h));
         int outW=Math.max(1,(int)(w*s)),outH=Math.max(1,(int)(h*s));
         if(w==outW&&h==outH)return source;
         Bitmap result=Bitmap.createScaledBitmap(source,outW,outH,true);
