@@ -43,7 +43,7 @@ public final class NativeCombatRigComposer {
         if(total>150)throw new IllegalArgumentException("Combat benchmark exceeds 150 frames");
         if(!output.assets.isEmpty() && !output.sourcePrompt.startsWith("combat-rig:"))
             throw new IllegalArgumentException("Existing non-combat project cannot be overwritten");
-        String base="combat_rig/"+output.id+"/frames";
+        String base="creative_workspace/projects/"+output.id+"/generated/combat_rig";
         File frames=new File(context.getFilesDir(),base);
         if(!frames.exists()&&!frames.mkdirs())
             throw new IllegalStateException("Cannot prepare combat rig frame storage");
