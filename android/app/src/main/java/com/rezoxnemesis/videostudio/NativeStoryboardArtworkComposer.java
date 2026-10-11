@@ -31,11 +31,14 @@ public final class NativeStoryboardArtworkComposer {
         public final ProjectStore.Project project;
         public final double backgroundDifference,filledFraction;
         public final int generatedFrames;
-        Result(ProjectStore.Project project,double difference,double fraction,int frames){
+        public final double actorMotionPixels;
+        Result(ProjectStore.Project project,double difference,double fraction,int frames,
+               double actorMotionPixels){
             this.project=project;
             backgroundDifference=difference;
             filledFraction=fraction;
             generatedFrames=frames;
+            this.actorMotionPixels=actorMotionPixels;
         }
     }
 
@@ -62,6 +65,10 @@ public final class NativeStoryboardArtworkComposer {
         validate(source,blackFrom,whiteFrom,blackTo,whiteTo,
                 blackTipFrom,whiteTipFrom,blackTipTo,whiteTipTo);
         StoryboardPoseMotion.Action beat=StoryboardPoseMotion.action(action);
+        StoryboardMotionQualityGate.Verdict quality=
+                StoryboardMotionQualityGate.inspect(
+                        blackFrom,whiteFrom,blackTo,whiteTo,width,height);
+        if(!quality.approved)throw new IllegalArgumentException(quality.reason);
         if(StoryboardPoseMotion.maxActorTravel(blackFrom.joints,blackTo.joints)>.46
                 ||StoryboardPoseMotion.maxActorTravel(whiteFrom.joints,whiteTo.joints)>.46)
             throw new IllegalArgumentException(
@@ -125,7 +132,8 @@ public final class NativeStoryboardArtworkComposer {
                 if(progress!=null)progress.onFrame(i+1,frames,sceneDrift);
             }
             store.save(output);
-            return new Result(output,sceneDrift,fillFraction,frames);
+            return new Result(output,sceneDrift,fillFraction,frames,
+                    quality.actorMotionPixels);
         }finally{
             if(renderer!=null)renderer.close();
             else{
