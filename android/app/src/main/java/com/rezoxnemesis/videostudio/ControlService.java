@@ -48,6 +48,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     public static final String ACTION_LOCAL_COMBAT_BENCHMARK = "com.rezoxnemesis.videostudio.LOCAL_COMBAT_BENCHMARK";
     public static final String ACTION_LOCAL_RIGGED_2D = "com.rezoxnemesis.videostudio.LOCAL_RIGGED_COMBAT_2D";
     public static final String ACTION_LOCAL_STORYBOARD_ARTWORK = "com.rezoxnemesis.videostudio.LOCAL_STORYBOARD_ARTWORK";
+    public static final String ACTION_LOCAL_STORYBOARD_SERIES = "com.rezoxnemesis.videostudio.LOCAL_STORYBOARD_SERIES";
     public static final String ACTION_LOCAL_GLTF_COMBAT = "com.rezoxnemesis.videostudio.LOCAL_GLTF_COMBAT_EXPORT";
     public static final String ACTION_LOCAL_PROMPT_VIDEO = "com.rezoxnemesis.videostudio.LOCAL_PROMPT_VIDEO";
     public static final String ACTION_LOCAL_EXPORT = "com.rezoxnemesis.videostudio.LOCAL_EXPORT_PROJECT";
@@ -202,6 +203,41 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                     ActivityLog.add(this,"user","3D combat export failed",
                             error.getMessage()==null?"Cannot export GLB":error.getMessage(),
                             "failed",null,null,req.getStringExtra("projectId"));
+                }
+            });
+        } else if (ACTION_LOCAL_STORYBOARD_SERIES.equals(action)) {
+            final Intent userRequest=intent;
+            directorSetupExecutor.submit(()->{
+                try {
+                    JSONObject settings=new JSONObject()
+                            .put("sourceProjectId",userRequest.getStringExtra("projectId"))
+                            .put("genre",userRequest.getStringExtra("genre"))
+                            .put("direction",userRequest.getStringExtra("direction"))
+                            .put("backend",userRequest.getStringExtra("backend"))
+                            .put("batchIndex",userRequest.getIntExtra("batchIndex",0))
+                            .put("framesPerPair",userRequest.getIntExtra("framesPerPair",8))
+                            .put("maxFramesPerBatch",20)
+                            .put("fps",24)
+                            .put("width",432).put("height",768)
+                            .put("quality","720p")
+                            .put("deduplicateSourceVariants",true)
+                            .put("foley",userRequest.getBooleanExtra("foley",true))
+                            .put("render",true);
+                    boolean analysis=userRequest.getBooleanExtra("analysisOnly",false);
+                    JSONObject work=analysis?queueStoryboardSeriesAudit(settings)
+                            :queueStoryboardSeries(settings);
+                    ActivityLog.add(this,"user",
+                            analysis?"Storyboard analysis started":"Real source-artwork animation queued",
+                            work.optString("jobId","")+" · "+
+                                    (analysis?"Checking trackable drawings":
+                                            "Native animated layers + scene motion + Foley"),
+                            "queued",0,null,work.optString("outputProjectId",
+                                    settings.optString("sourceProjectId","")));
+                    syncProtocolState();
+                }catch(Exception error){
+                    ActivityLog.add(this,"user","Storyboard director needs attention",
+                            error.getMessage()==null?"Unable to start":error.getMessage(),
+                            "failed",null,null,userRequest.getStringExtra("projectId"));
                 }
             });
         } else if (ACTION_LOCAL_STORYBOARD_ARTWORK.equals(action)) {
