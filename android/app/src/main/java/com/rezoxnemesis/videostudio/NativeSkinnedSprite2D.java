@@ -214,7 +214,22 @@ public final class NativeSkinnedSprite2D implements AutoCloseable {
      * drawn over a still character.
      */
     public void render(Canvas canvas,CombatRigSolver.Warrior target) {
-        float[][] to=targetPoints(target);
+        render(canvas,targetPoints(target),255);
+    }
+
+    /**
+     * Source-keyframe-driven 2D mesh skinning. The end pose comes from
+     * a traced ORIGINAL storyboard image, never the generic combat solver.
+     * The source actor texture remains unchanged and masked. No bones or
+     * stick figures are drawn on top of the illustration.
+     */
+    public void render(Canvas canvas,float[][] targetPose,int opacity) {
+        if(canvas==null||targetPose==null||targetPose.length!=Rig2DProfile.JOINTS.length)
+            throw new IllegalArgumentException("Sixteen authentic 2D target landmarks required");
+        for(float[] p:targetPose)
+            if(p==null||p.length!=2||!Float.isFinite(p[0])||!Float.isFinite(p[1]))
+                throw new IllegalArgumentException("Nonfinite source pose landmark");
+        float[][] to=targetPose;
         float[][][] transforms=new float[Rig2DProfile.BONES.length][2][2];
         float[] cos=new float[transforms.length],sin=new float[transforms.length],
                 scale=new float[transforms.length];
@@ -244,7 +259,9 @@ public final class NativeSkinnedSprite2D implements AutoCloseable {
             }
             mesh[2*i]=x*w;mesh[2*i+1]=y*h;
         }
+        paint.setAlpha(Math.max(0,Math.min(255,opacity)));
         canvas.drawBitmapMesh(texture,MESH_W,MESH_H,mesh,0,null,0,paint);
+        paint.setAlpha(255);
     }
 
     public Bitmap getCutoutForTesting() {return texture.copy(Bitmap.Config.ARGB_8888,false);}
