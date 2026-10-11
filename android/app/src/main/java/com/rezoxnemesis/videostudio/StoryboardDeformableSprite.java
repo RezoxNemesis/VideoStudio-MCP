@@ -60,6 +60,52 @@ public final class StoryboardDeformableSprite {
     }
 
     /**
+     * Portable CPU deformation that returns actual source-textured ARGB
+     * pixels. Unlike Canvas.drawBitmap with nested clipping/transforms,
+     * this works identically in Android hardware, Android software and
+     * Robolectric's screenshot renderer.
+     *
+     * Each horizontal row bends in response to the two REAL outlined
+     * source bodies. No procedural replacement geometry is introduced.
+     */
+    public Bitmap deformBitmap(Bitmap source,float t,boolean endTexture,
+                               float amount) {
+        if(source==null||!Float.isFinite(t)||t<0||t>1||
+                !Float.isFinite(amount)||amount<0||amount>1)
+            throw new IllegalArgumentException("Invalid source-texture deformation");
+        if(!deformable||amount==0||t<=0||t>=1)return source;
+        int width=source.getWidth(),height=source.getHeight();
+        if(width<1||height<1||(long)width*height>720L*1280L)
+            throw new IllegalArgumentException("Deformable source object exceeds mobile budget");
+        int[] original=new int[width*height],warped=new int[original.length];
+        source.getPixels(original,0,width,0,0,width,height);
+        float arc=(float)Math.sin(Math.PI*t)*amount;
+        for(int y=0;y<height;y++){
+            float v=(y+.5f)/height;
+            int row=Math.min(MESH_Y,Math.round(v*MESH_Y));
+            float originalLeft=endTexture?targetLeft[row]:startLeft[row];
+            float originalRight=endTexture?targetRight[row]:startRight[row];
+            float intendedLeft=startLeft[row]+(targetLeft[row]-startLeft[row])*t;
+            float intendedRight=startRight[row]+(targetRight[row]-startRight[row])*t;
+            float spanFrom=Math.max(.08f,originalRight-originalLeft);
+            float spanTo=Math.max(.08f,intendedRight-intendedLeft);
+            float stretch=Math.max(.82f,Math.min(1.18f,
+                    1+(spanTo/spanFrom-1)*arc));
+            float displacement=(intendedLeft-originalLeft)*width*arc;
+            displacement+=(float)Math.sin(v*5+t*5)*arc*width*.006f;
+            float vertical=(float)Math.sin(v*4+t*6)*arc*height*.004f;
+            int sourceY=Math.max(0,Math.min(height-1,Math.round(y-vertical)));
+            for(int x=0;x<width;x++){
+                float mapped=(x-displacement)/stretch;
+                int sx=Math.round(mapped);
+                if(sx<0||sx>=width)continue;
+                warped[y*width+x]=original[sourceY*width+sx];
+            }
+        }
+        return Bitmap.createBitmap(warped,width,height,Bitmap.Config.ARGB_8888);
+    }
+
+    /**
      * Render fully-masked source artwork with optional per-row spring/wind
      * deformation, never a new procedural character.
      */
