@@ -7,11 +7,11 @@ android {
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.rezoxnemesis.videostudio"
+        applicationId = "com.rezoxnemesis.videostudio.next"
         minSdk = 29
         targetSdk = 35
-        versionCode = 362
-        versionName = "3.6.2"
+        versionCode = 363
+        versionName = "3.6.3"
     }
 
     testOptions { unitTests.isIncludeAndroidResources = true }
@@ -47,6 +47,7 @@ android {
 }
 
 dependencies {
+    implementation("androidx.core:core:1.17.0")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.robolectric:robolectric:4.14.1")
     // Free, actual GPU skinned glTF 2.0 model runtime; NOT 2D image to 3D inference.
