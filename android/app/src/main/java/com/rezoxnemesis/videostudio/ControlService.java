@@ -707,6 +707,9 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 case "restore_project_from_drive":
                     complete(command, queueDriveProjectRestore(p));
                     return;
+                case "migrate_legacy_cloud_projects":
+                    complete(command, queueLegacyProjectImport(p));
+                    return;
                 case "archive_model_pack_to_drive":
                     complete(command, queueDriveModelPackArchive(p));
                     return;
@@ -1822,6 +1825,9 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                     case "restore_project_from_drive":
                         queued = queueDriveProjectRestore(parameters);
                         break;
+                    case "migrate_legacy_cloud_projects":
+                        queued = queueLegacyProjectImport(parameters);
+                        break;
                     case "archive_model_pack_to_drive":
                         queued = queueDriveModelPackArchive(parameters);
                         break;
@@ -1970,6 +1976,41 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         result.put("durableRecovery", true);
         result.put("scope", "single-user-selected-document-tree");
         result.put("galleryAccess", false);
+        return result;
+    }
+
+    /**
+     * Recover exact, fully backed up legacy projects from the one folder
+     * selected in Android's document-tree picker. The previous VideoStudio
+     * installation and its local user data are never accessed or modified.
+     */
+    private JSONObject queueLegacyProjectImport(JSONObject p) throws Exception {
+        if (!driveWorkspace.isLinked())
+            throw new IllegalStateException("Link your old VideoStudio cloud folder first.");
+        JSONObject durable=new JSONObject(p.toString());
+        JobManager.Job job=submitRecoverableTransfer(
+                "migrate_legacy_cloud_projects",durable,"",
+                "Recover older VideoStudio projects",state->{
+                    checkpoint(state,"Cloud migration","Discovering user-approved archives",2,"");
+                    JSONObject report=new LegacyCloudRecovery(this,store).restoreAll(
+                            (percent,detail)->{
+                                checkpoint(state,"Cloud migration",detail,
+                                        Math.max(2,Math.min(100,percent)),"");
+                                jobs.awaitSafeCheckpoint(state,"migration_file_checkpoint");
+                            });
+                    state.setResult(report);
+                    ActivityLog.add(this,"system","Legacy archive migration checked",
+                            report.optInt("imported",0)+" project(s) restored, "+
+                            report.optInt("skipped",0)+" still missing sources",
+                            report.optInt("skipped",0)>0?"info":"success",100,null,null);
+                    syncProtocolState();
+                });
+        JSONObject result=ok();
+        result.put("queued",true);
+        result.put("durableRecovery",true);
+        result.put("jobId",job.id);
+        result.put("archiveScoped",true);
+        result.put("oldAppUnchanged",true);
         return result;
     }
 
@@ -4073,6 +4114,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             case "sync_project_to_drive":
             case "offload_project_to_drive":
             case "restore_project_from_drive":
+            case "migrate_legacy_cloud_projects":
             case "archive_model_pack_to_drive":
             case "restore_model_pack_from_drive":
                 return true;
@@ -4380,6 +4422,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             case "sync_project_to_drive": return "Archiving project to cloud workspace";
             case "offload_project_to_drive": return "Offloading project workspace to cloud";
             case "restore_project_from_drive": return "Restoring project creative workspace";
+            case "migrate_legacy_cloud_projects": return "Recovering old project archives into VideoStudio Next";
             case "archive_model_pack_to_drive": return "Archiving model pack to cloud workspace";
             case "restore_model_pack_from_drive": return "Restoring model pack from cloud workspace";
             case "animate_pose_sequence": return "Synthesizing native pose in-betweens";
