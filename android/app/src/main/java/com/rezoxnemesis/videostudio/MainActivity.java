@@ -719,6 +719,26 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                 showEditor();
                 if(selectedClip!=null)previewSelectedStudioClip(true);
             });
+            // Press-and-hold to reorder the actual timeline. No changes to
+            // imported source media, generated renders or other project tracks.
+            chip.setOnLongClickListener(v->{
+                android.content.ClipData dragData=android.content.ClipData.newPlainText(
+                        "videostudio.timeline.clip",clip.id);
+                return v.startDragAndDrop(dragData,new View.DragShadowBuilder(chip),
+                        clip.id,0);
+            });
+            chip.setOnDragListener((v,event)->{
+                switch(event.getAction()){
+                    case android.view.DragEvent.ACTION_DRAG_STARTED:
+                        return event.getLocalState() instanceof String;
+                    case android.view.DragEvent.ACTION_DROP:
+                        Object origin=event.getLocalState();
+                        if(!(origin instanceof String))return false;
+                        moveStudioClipTo((String)origin,at);
+                        return true;
+                    default:return true;
+                }
+            });
             clips.addView(chip,margins(dp(115),dp(144),0,0,0,dp(7)));
         }
         if(activeProject.clips.isEmpty()){
@@ -1578,6 +1598,30 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                     store.save(activeProject);syncProtocolState();showEditor();
                 }).setNegativeButton("Cancel",null).show();
     }
+    private void moveStudioClipTo(String clipId,int targetIndex){
+        if(activeProject==null||clipId==null)return;
+        ProjectStore.Project fresh=store.get(activeProject.id);
+        if(fresh==null)return;
+        if(fresh.updatedAt!=activeProject.updatedAt){
+            activeProject=fresh;editHistory.reset(null);showEditor();
+            Toast.makeText(this,"Project changed in background; retry the move",
+                    Toast.LENGTH_LONG).show();
+            return;
+        }
+        int current=-1;
+        for(int i=0;i<activeProject.clips.size();i++){
+            if(clipId.equals(activeProject.clips.get(i).id)){current=i;break;}
+        }
+        if(current<0||targetIndex<0||targetIndex>=activeProject.clips.size()||
+                current==targetIndex)return;
+        editHistory.checkpoint(activeProject);
+        if(!StudioTimelineEditOps.move(activeProject.clips,clipId,targetIndex))return;
+        selectedClip=activeProject.clips.get(targetIndex);
+        studioPlayheadMs=StudioTimelineEditOps.startOf(activeProject.clips,clipId);
+        studioTimelinePage=targetIndex/20;
+        store.save(activeProject);syncProtocolState();showEditor();
+    }
+
     private void moveStudioClip(int distance){
         if(activeProject==null||selectedClip==null)return;
         int at=-1;
