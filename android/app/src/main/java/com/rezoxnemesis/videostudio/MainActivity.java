@@ -2640,6 +2640,13 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         box.addView(section("Safe Updates & Legacy Migration"));
         LinearLayout updates=card(false);
         updates.addView(title("VideoStudio Next · no deletion of old app",17));
+        JSONObject legacyInstall=NativeApkUpdater.legacyInstallationStatus(this);
+        updates.addView(body(legacyInstall.optBoolean("installed",false)
+                ? "Existing old VideoStudio detected (versionCode "
+                  +legacyInstall.optLong("versionCode",0)
+                  +"). Its installed signing certificate: "
+                  +legacyInstall.optString("certificateSha256","unavailable")
+                : "Old VideoStudio signing identity is not visible on this device."));
         updates.addView(body("This new package installs alongside your existing VideoStudio. "
                 +"It uses a pinned signing certificate so subsequent Next APK updates can "
                 +"replace the Next app in place. Different certificates cannot update "
