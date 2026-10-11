@@ -112,12 +112,20 @@ public final class StoryboardLayerRenderer implements AutoCloseable {
         Canvas canvas=new Canvas(bitmap);
         paint.reset();paint.setAntiAlias(true);paint.setFilterBitmap(true);
         canvas.save();
-        // A scene transform is available for static/establishing frames.
-        // Actor movement is independent, never synthesized by zooming the
-        // entire frame. Keep camera modest to preserve 9:16 framing.
-        float worldPan=scene==StoryboardMotionGrammar.SceneKind.LANDSCAPE
-                ? (float)Math.sin(Math.PI*t)*width*.008f:0;
-        canvas.translate(worldPan,0);
+        // Cinematic perspective is secondary to actual image-object motion.
+        // A tracked source world and every subject share one restrained
+        // camera matrix; source-keyframe endpoints remain exact.
+        float centerX=.5f,centerY=.5f,observedDx=0,observedDy=0;
+        if(!tracking.tracks.isEmpty()){
+            StoryboardLayerIsolation.Track focus=tracking.tracks.get(0);
+            centerX=focus.from.cx/width;
+            centerY=focus.from.cy/height;
+            observedDx=(focus.to.cx-focus.from.cx)/width;
+            observedDy=(focus.to.cy-focus.from.cy)/height;
+        }
+        StoryboardCameraDirector.State camera=StoryboardCameraDirector.at(
+                scene,action,t,centerX,centerY,observedDx,observedDy,frameIndex);
+        camera.apply(canvas,width,height);
         canvas.drawBitmap(plate,0,0,paint);
         // Independently measured source-object trajectories first; then
         // apply small contact constraints only to appropriate action beats.
