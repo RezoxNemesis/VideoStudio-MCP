@@ -703,6 +703,26 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                 showEditor();
                 if(selectedClip!=null)previewSelectedStudioClip(true);
             });
+            // Real Android long-press clip drag, not a decorative animation.
+            chip.setOnLongClickListener(v->{
+                android.content.ClipData dragData=android.content.ClipData.newPlainText(
+                        "videostudio.timeline",clip.id);
+                return v.startDragAndDrop(dragData,new View.DragShadowBuilder(chip),
+                        clip.id,0);
+            });
+            chip.setOnDragListener((v,event)->{
+                switch(event.getAction()){
+                    case android.view.DragEvent.ACTION_DRAG_STARTED:
+                        return event.getLocalState() instanceof String;
+                    case android.view.DragEvent.ACTION_DROP:
+                        if(!(event.getLocalState() instanceof String))return false;
+                        moveStudioClipTo((String)event.getLocalState(),at);
+                        return true;
+                    case android.view.DragEvent.ACTION_DRAG_ENDED:
+                        return true;
+                    default: return true;
+                }
+            });
             clips.addView(chip,margins(dp(115),dp(144),0,0,0,dp(7)));
         }
         if(activeProject.clips.isEmpty()){
@@ -1303,6 +1323,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
 
     private void performStudioTool(String name){
         switch(name){
+            case "Trim": studioTrimHandles();return;
             case "Slow Motion": studioSpeedDialog();return;
             case "Volume": studioVolumeDialog();return;
             case "Blur": studioBlurDialog();return;
@@ -1421,6 +1442,79 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                     store.save(activeProject);syncProtocolState();showEditor();
                 }).setNegativeButton("Cancel",null).show();
     }
+    private void moveStudioClipTo(String movingId,int targetIndex){
+        if(activeProject==null||movingId==null)return;
+        int from=-1;
+        for(int i=0;i<activeProject.clips.size();i++){
+            if(movingId.equals(activeProject.clips.get(i).id)){from=i;break;}
+        }
+        if(from<0||targetIndex<0||targetIndex>=activeProject.clips.size()||
+                from==targetIndex)return;
+        editHistory.checkpoint(activeProject);
+        ProjectStore.Clip moved=activeProject.clips.remove(from);
+        activeProject.clips.add(targetIndex,moved);
+        selectedClip=moved;
+        studioTimelinePage=targetIndex/20;
+        studioPlayheadMs=0;
+        for(int i=0;i<targetIndex;i++)
+            studioPlayheadMs+=activeProject.clips.get(i).outputDurationMs();
+        store.save(activeProject);syncProtocolState();showEditor();
+    }
+
+    private void studioTrimHandles(){
+        if(selectedClip==null||activeProject==null){
+            Toast.makeText(this,"Select a clip first",Toast.LENGTH_SHORT).show();
+            return;
+        }
+        ProjectStore.Asset asset=activeProject.asset(selectedClip.assetId);
+        long sourceDuration=asset!=null&&asset.durationMs>0?
+                Math.max(asset.durationMs,selectedClip.outMs):
+                Math.max(3000,selectedClip.outMs);
+        // Keep controls bounded for multi-hour source video, but allow precise
+        // millisecond entry via the existing advanced Trim dialog.
+        final long step=Math.max(10,(long)Math.ceil(sourceDuration/1800.0));
+        final int max=(int)Math.min(1800,(sourceDuration+step-1)/step);
+        LinearLayout editor=column();
+        editor.setPadding(dp(19),dp(8),dp(19),dp(5));
+        TextView label=title("In "+time(selectedClip.inMs)+
+                "  ·  Out "+time(selectedClip.outMs),16);
+        editor.addView(label);
+        SeekBar start=new SeekBar(this),end=new SeekBar(this);
+        start.setMax(max);end.setMax(max);
+        start.setProgress((int)(selectedClip.inMs/step));
+        end.setProgress(Math.min(max,(int)(selectedClip.outMs/step)));
+        editor.addView(body("Drag IN handle"));
+        editor.addView(start);
+        editor.addView(body("Drag OUT handle"));
+        editor.addView(end);
+        SeekBar.OnSeekBarChangeListener listener=new SeekBar.OnSeekBarChangeListener(){
+            @Override public void onProgressChanged(SeekBar b,int value,boolean user){
+                label.setText("In "+time(start.getProgress()*step)+
+                        " · Out "+time(end.getProgress()*step));
+            }
+            @Override public void onStartTrackingTouch(SeekBar b){}
+            @Override public void onStopTrackingTouch(SeekBar b){}
+        };
+        start.setOnSeekBarChangeListener(listener);
+        end.setOnSeekBarChangeListener(listener);
+        new AlertDialog.Builder(this).setTitle("Trim Handles")
+                .setMessage("Drag the in/out handles. The original file is preserved.")
+                .setView(editor)
+                .setPositiveButton("Apply",(d,w)->{
+                    long in=start.getProgress()*step;
+                    long out=Math.min(sourceDuration,end.getProgress()*step);
+                    if(out-in<100){
+                        Toast.makeText(this,"Clip must be at least 0.1 seconds",
+                                Toast.LENGTH_LONG).show();return;
+                    }
+                    editHistory.checkpoint(activeProject);
+                    selectedClip.inMs=in;selectedClip.outMs=out;
+                    store.save(activeProject);syncProtocolState();showEditor();
+                })
+                .setNeutralButton("Exact Seconds",(d,w)->trimDialog())
+                .setNegativeButton("Cancel",null).show();
+    }
+
     private void moveStudioClip(int distance){
         if(activeProject==null||selectedClip==null)return;
         int at=-1;
