@@ -1,9 +1,14 @@
 package com.rezoxnemesis.videostudio;
 
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.robolectric.RobolectricTestRunner;
+import org.robolectric.annotation.Config;
 import java.util.Arrays;
 import static org.junit.Assert.*;
 
+@RunWith(RobolectricTestRunner.class)
+@Config(sdk=33,manifest=Config.NONE)
 public class StudioHumanEditorStateTest {
     @Test public void timelineScrubRespectsSpeedAndTrimWithoutSkippingFrames(){
         ProjectStore.Clip first=new ProjectStore.Clip();
