@@ -97,6 +97,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
     private FrameLayout studioPreviewFrame;
     private TextView studioTimeLabel;
     private int studioToolCategory=0;
+    private int studioToolsHubTab=0;
     private int studioTimelinePage=0;
     private int studioMediaPage=0;
     private long studioPlayheadMs=0;
@@ -275,6 +276,45 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         creative.addView(links,margins(-1,dp(46),dp(7),0,0,0));
         box.addView(creative,margins(-1,-2,dp(16),0,0,0));
         setScreen(scroll,"home");
+    }
+
+    /**
+     * Pairing belongs to the native Android identity. The web *front-end* is
+     * optional; its underlying authenticated relay/Worker must remain online
+     * for off-device commands. No new public token is ever generated here.
+     */
+    private void showStudioConnectionHub(){
+        JSONObject state=NativeWorkMonitor.snapshot(this);
+        boolean online=state.optBoolean("nativeServiceOnline",false);
+        LinearLayout body=column();
+        body.setPadding(dp(18),dp(3),dp(18),dp(5));
+        body.addView(title(online?"● Native Agent connected":"◌ Native Agent reconnecting",19));
+        body.addView(body(serviceConnectionText()),margins(-1,-2,dp(9),0,0,0));
+        body.addView(body("VideoStudio keeps its device identity and connection credentials inside Android. "+
+                "Removing the public website UI does not remove this installed app's saved projects. "+
+                "However, off-device ChatGPT control still needs the authenticated MCP relay to stay online."),
+                margins(-1,-2,dp(9),0,0,0));
+        body.addView(body("Android can suspend background execution during Doze or after force-stop. "+
+                "Pending commands resume when the native executor reconnects; no system can guarantee "+
+                "uninterrupted work after Android has force-stopped the app."),
+                margins(-1,-2,dp(9),0,0,0));
+        Button connect=studioButton("Connect / Share with ChatGPT",this::sharePairing);
+        body.addView(connect,margins(-1,dp(49),dp(12),0,0,0));
+        Button reconnect=studioButton("Repair native connection",()->{
+            try{
+                Intent intent=new Intent(this,ControlService.class)
+                        .setAction(ControlService.ACTION_RECONNECT);
+                startForegroundService(intent);
+                requestServiceSync();
+                Toast.makeText(this,"Refreshing the existing private MCP connection",
+                        Toast.LENGTH_LONG).show();
+            }catch(Exception e){
+                Toast.makeText(this,"Reconnect failed: "+e.getMessage(),Toast.LENGTH_LONG).show();
+            }
+        });
+        body.addView(reconnect,margins(-1,dp(49),dp(6),0,0,0));
+        new AlertDialog.Builder(this).setTitle("VideoStudio ↔ ChatGPT")
+                .setView(body).setPositiveButton("Done",null).show();
     }
 
     private void showLegacyHome() {
