@@ -3,6 +3,8 @@ package com.rezoxnemesis.videostudio;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Paint;
+import android.graphics.Rect;
+import android.graphics.RectF;
 
 /**
  * Source-textured soft-body 2D deformation that respects observed contour
@@ -14,12 +16,11 @@ import android.graphics.Paint;
  * For precise bodies the authored 2D rig path supersedes this generic mesh.
  */
 public final class StoryboardDeformableSprite {
-    private static final int MESH_X=12,MESH_Y=22;
+    private static final int MESH_Y=40;
     private final float[] startLeft=new float[MESH_Y+1],
                           startRight=new float[MESH_Y+1],
                           targetLeft=new float[MESH_Y+1],
                           targetRight=new float[MESH_Y+1];
-    private final float[] vertices=new float[(MESH_X+1)*(MESH_Y+1)*2];
     private final boolean deformable;
     public StoryboardDeformableSprite(StoryboardLayerIsolation.Region start,
                                     StoryboardLayerIsolation.Region end,
@@ -75,34 +76,44 @@ public final class StoryboardDeformableSprite {
             return;
         }
         int w=pixels.getWidth(),h=pixels.getHeight();
-        int index=0;
         float envelope=(float)Math.sin(Math.PI*t);
-        for(int row=0;row<=MESH_Y;row++){
-            float yy=row*h/(float)MESH_Y;
-            float v=row/(float)MESH_Y;
-            float bob=(float)Math.sin(t*Math.PI*2+v*4.5)*envelope*.018f
-                    *Math.min(w,h)*intensity;
-            float srcL=usingEndTexture?targetLeft[row]:startLeft[row],
-                  srcR=usingEndTexture?targetRight[row]:startRight[row];
-            float desiredL=startLeft[row]+(targetLeft[row]-startLeft[row])*t;
-            float desiredR=startRight[row]+(targetRight[row]-startRight[row])*t;
-            float lowShift=Math.max(-.13f,Math.min(.13f,desiredL-srcL));
-            float highShift=Math.max(-.13f,Math.min(.13f,desiredR-srcR));
-            float rowSpread=(float)Math.sin(Math.PI*v)*envelope*.035f
-                    *Math.min(w,h)*intensity;
-            for(int col=0;col<=MESH_X;col++){
-                float u=col/(float)MESH_X;
-                float anchoredX=u*w-pivotX;
-                float anchoredY=yy-pivotY;
-                float edgeBias=(u-.5f)*2;
-                vertices[index++]=anchoredX+
-                        ((1-u)*lowShift+u*highShift)*w
-                        +(float)Math.sin(v*5+t*5)*envelope*.004f*w*intensity
-                        +edgeBias*rowSpread;
-                vertices[index++]=anchoredY+
-                        bob*Math.max(.15f,1-v);
-            }
+        Rect sourceStrip=new Rect();
+        RectF targetStrip=new RectF();
+        for(int row=0;row<MESH_Y;row++){
+            int y0=(int)(row*h/(float)MESH_Y);
+            int y1=(int)((row+1)*h/(float)MESH_Y);
+            if(row==MESH_Y-1)y1=h;
+            if(y1<=y0)continue;
+            float v=(row+.5f)/MESH_Y;
+            float lA=usingEndTexture?targetLeft[row]:startLeft[row],
+                  rA=usingEndTexture?targetRight[row]:startRight[row];
+            float lWanted=startLeft[row]+
+                    (targetLeft[row]-startLeft[row])*t;
+            float rWanted=startRight[row]+
+                    (targetRight[row]-startRight[row])*t;
+            float observedSpan=Math.max(.03f,rA-lA);
+            float desiredSpan=Math.max(.03f,rWanted-lWanted);
+            // Preserve the source texture while allowing modest
+            // illustrated-body contour changes. Extreme remeshing must
+            // use traced multi-joint art or a real neural motion model.
+            float scaleX=Math.max(.75f,Math.min(1.30f,
+                    1+(desiredSpan/observedSpan-1)*intensity));
+            float targetLeftPixel=lWanted*w-lA*w*scaleX;
+            float bend=(float)Math.sin(v*4.5+t*5)*envelope
+                    *.009f*w*intensity;
+            float bob=(float)Math.sin(v*5+t*6)*envelope
+                    *.011f*h*intensity;
+            sourceStrip.set(0,y0,w,y1);
+            targetStrip.set(targetLeftPixel-pivotX+bend,
+                    y0-pivotY+bob,
+                    targetLeftPixel-pivotX+bend+w*scaleX,
+                    y1-pivotY+bob+.55f);
+            // Portable Android Canvas source-strip deformation; unlike
+            // drawBitmapMesh this is implemented consistently on software
+            // Canvas, Android's GPU renderer and Robolectric test Canvas.
+            // Draws only masked original source pixels, never a rectangle
+            // background or generic replacement actor.
+            canvas.drawBitmap(pixels,sourceStrip,targetStrip,paint);
         }
-        canvas.drawBitmapMesh(pixels,MESH_X,MESH_Y,vertices,0,null,0,paint);
     }
 }
