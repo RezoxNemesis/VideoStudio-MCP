@@ -47,6 +47,7 @@ public final class StoryboardSegmentComposer {
         Bitmap frame(float time,int index);
         String backend();
         float confidence();
+        default StoryboardLayerIsolation.Result trackedSourceObjects(){return null;}
         @Override void close();
     }
     private StoryboardSegmentComposer(){}
@@ -152,6 +153,14 @@ public final class StoryboardSegmentComposer {
                 if(!inspected.acceptable)
                     throw new IllegalStateException("Source-artwork animation QA failed: "
                             +inspected.reason+" (source "+start.name+" → "+end.name+")");
+                StoryboardLayerIsolation.Result sources=painter.trackedSourceObjects();
+                StoryboardSubjectRetentionGate.Report retained=sources==null?null:
+                        StoryboardSubjectRetentionGate.inspect(sources,from,to,middle,
+                                width,height);
+                if(retained!=null&&!retained.accepted)
+                    throw new IllegalStateException(
+                            "Original subject continuity failed: "+retained.reason+
+                            " (source "+start.name+" → "+end.name+")");
                 minConfidence=Math.min(minConfidence,painter.confidence());
                 report.put(new JSONObject()
                         .put("fromAssetId",start.id)
@@ -164,7 +173,12 @@ public final class StoryboardSegmentComposer {
                         .put("actualMidpointSourceDifference",inspected.middleSourceDifference)
                         .put("actualMidpointTargetDifference",inspected.middleTargetDifference)
                         .put("stationaryWorldChange",inspected.unchangedWorldError)
-                        .put("qualityGatePassed",inspected.acceptable));
+                        .put("qualityGatePassed",inspected.acceptable)
+                        .put("objectRetentionChecked",retained!=null)
+                        .put("retainedOriginalSubjects",retained==null?0:
+                                retained.verifiedObjects)
+                        .put("minimumSubjectRetention",retained==null?-1:
+                                retained.minimumCoverage));
                 shotCount++;
                 // Checkpoint a complete shot (not just the next frame); the
                 // DB never refers to files that haven't been written yet.
@@ -328,10 +342,14 @@ public final class StoryboardSegmentComposer {
                 pixelsA,pixelsB,width,height,layers,shot.scene,shot.action);
         final float quality=averageConfidence(layers);
         final String provider=provenance;
+        final StoryboardLayerIsolation.Result trackedLayers=layers;
         return new Painter(){
             public Bitmap frame(float t,int i){return renderer.render(t,i);}
             public String backend(){return provider;}
             public float confidence(){return quality;}
+            @Override public StoryboardLayerIsolation.Result trackedSourceObjects(){
+                return trackedLayers;
+            }
             public void close(){renderer.close();}
         };
     }
