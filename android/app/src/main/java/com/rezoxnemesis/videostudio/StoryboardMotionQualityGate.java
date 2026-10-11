@@ -42,7 +42,11 @@ public final class StoryboardMotionQualityGate {
         if(typical<3.0 && sword<4.0)return new Verdict(typical,sword,false,
                 "Adjacent drawings contain no measurable fighter or sword motion. "
                +"Mark a real action pair; zooming the city is not character animation.");
-        if(typical>Math.max(width,height)*.52)return new Verdict(typical,sword,false,
+        if(Math.abs(blackB.joints[0][0]-blackA.joints[0][0])>.34
+                || Math.abs(whiteB.joints[0][0]-whiteA.joints[0][0])>.34
+                || Math.abs(blackB.joints[0][1]-blackA.joints[0][1])>.38
+                || Math.abs(whiteB.joints[0][1]-whiteA.joints[0][1])>.38
+                ||typical>Math.max(width,height)*.52)return new Verdict(typical,sword,false,
                 "Displacement suggests a camera cut or unrelated shot. "
                +"Split the storyboard into separate keyed actions.");
         return new Verdict(typical,sword,true,
