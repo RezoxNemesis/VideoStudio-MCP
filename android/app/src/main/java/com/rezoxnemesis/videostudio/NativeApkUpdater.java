@@ -9,6 +9,8 @@ import android.net.Uri;
 
 import androidx.core.content.FileProvider;
 
+import org.json.JSONObject;
+
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.InputStream;
@@ -109,6 +111,29 @@ public final class NativeApkUpdater {
                 target.packageName,candidateCert,after);
         return new Inspection(candidate,installed.packageName,target.packageName,
                 installedCert,candidateCert,before,after,hex(hash.digest()),error);
+    }
+
+    /** Read only the explicitly named legacy app package, never enumerate installed apps. */
+    public static JSONObject legacyInstallationStatus(Context context) {
+        JSONObject status=new JSONObject();
+        try {
+            PackageInfo legacy=context.getPackageManager().getPackageInfo(
+                    "com.rezoxnemesis.videostudio",PackageManager.GET_SIGNING_CERTIFICATES);
+            status.put("installed",true);
+            status.put("packageId",legacy.packageName);
+            status.put("versionCode",legacy.getLongVersionCode());
+            status.put("certificateSha256",fingerprint(legacy));
+            status.put("oldAppDataAccessible",false);
+            status.put("migrationRequiresExplicitArchive",true);
+        } catch(PackageManager.NameNotFoundException missing) {
+            try {status.put("installed",false);}catch(Exception ignored){}
+        } catch(Exception other) {
+            try {
+                status.put("installed",false);
+                status.put("detail","Legacy signing information not available");
+            }catch(Exception ignored){}
+        }
+        return status;
     }
 
     private static String fingerprint(PackageInfo info) throws Exception {
