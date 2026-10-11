@@ -43,7 +43,10 @@ public final class NativeWorkMonitor {
                     Math.max(0,(System.currentTimeMillis()-last)/1000): -1);
             summary.put("thermalStatus",thermal);
             summary.put("thermalLabel",thermalLabel(thermal));
-            summary.put("thermalSafetyHold",thermal>=PowerManager.THERMAL_STATUS_SEVERE);
+            summary.put("thermalSafetyHold",!ThermalQueuePolicy.canRunRender(thermal));
+            summary.put("thermalRenderHold",!ThermalQueuePolicy.canRunRender(thermal));
+            summary.put("thermalTransferAllowed",ThermalQueuePolicy.canRunTransfer(thermal));
+            summary.put("thermalQueueMode",ThermalQueuePolicy.schedulingMode(thermal));
             summary.put("thermalSource","Android PowerManager, not external case temperature");
             summary.put("connectionDetail",prefs.getString("control_service_detail",""));
         }catch(Exception ignored){}
