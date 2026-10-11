@@ -2,8 +2,13 @@ package com.rezoxnemesis.videostudio;
 
 import org.json.JSONObject;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.robolectric.RobolectricTestRunner;
+import org.robolectric.annotation.Config;
 import static org.junit.Assert.*;
 
+@RunWith(RobolectricTestRunner.class)
+@Config(sdk=33,manifest=Config.NONE)
 public final class StoryboardRigSwordTipTest {
     @Test public void originalSwordEndpointSurvivesPrivateRigSerialization() throws Exception {
         float[] sourceTip={.72f,.55f};
