@@ -134,17 +134,72 @@ public final class DriveWorkspaceProvider {
             progress.onProgress(p, "Archived " + copiedFiles + " item(s) • " + humanBytes(copiedBytes));
         }
 
+        // The Media3 final export is published in MediaStore and therefore
+        // does not live in the creative_workspace directory. Archive the one
+        // known, VideoStudio-generated output URI explicitly; never query or
+        // enumerate the user's Gallery/media library.
+        progress.onProgress(97, "Archiving verified VideoStudio export, if present");
+        long exportedBytes=archivePublishedExport(tree,projectDir,project);
+        if(exportedBytes>0){
+            copiedBytes+=exportedBytes;
+            copiedFiles++;
+        }
+
         JSONObject result = new JSONObject();
         result.put("ok", true);
         result.put("projectId", project.id);
         result.put("filesWritten", copiedFiles);
         result.put("bytesWritten", copiedBytes);
+        result.put("finalMp4Archived", exportedBytes>0);
+        result.put("finalMp4Bytes", exportedBytes);
         result.put("scope", "single-user-selected-document-tree");
         result.put("providerAuthority", String.valueOf(tree.getAuthority()));
         result.put("broadDrivePermission", false);
         result.put("galleryAccess", false);
         progress.onProgress(100, "Project workspace archived to linked cloud folder");
         return result;
+    }
+
+    /**
+     * Save only the final MP4 that VideoStudio itself published for this
+     * project. An arbitrary content URI, including picked Gallery media,
+     * must never be treated as a generated render for cloud archiving.
+     *
+     * Restoring the file to the workspace does not automatically republish
+     * its old MediaStore URI; callers must explicitly reopen the MP4.
+     */
+    private long archivePublishedExport(Uri tree,Uri projectDir,
+                                        ProjectStore.Project project) throws Exception {
+        String source=project.latestExportUri;
+        String name=project.latestExportName;
+        if(source==null||source.isEmpty()||name==null||name.isEmpty()
+                ||!name.toLowerCase(java.util.Locale.US).endsWith(".mp4"))return 0;
+        Uri uri=Uri.parse(source);
+        if(!"content".equals(uri.getScheme())||!"media".equals(uri.getAuthority()))return 0;
+        boolean isOwnFinalRender=false;
+        for(ProjectStore.Asset asset:project.assets){
+            if(asset.generated && "final_render".equals(asset.role)
+                    && source.equals(asset.uri)){
+                isOwnFinalRender=true;break;
+            }
+        }
+        if(!isOwnFinalRender)return 0;
+        Uri exports=ensureDirectory(tree,projectDir,"Exports");
+        Uri destination=ensureFile(tree,exports,safeName(name),"video/mp4");
+        long bytes=0;
+        try(InputStream in=new BufferedInputStream(resolver.openInputStream(uri),BUFFER);
+            OutputStream out=new BufferedOutputStream(requireOutput(destination),BUFFER)){
+            byte[] buffer=new byte[BUFFER];
+            int count;
+            while((count=in.read(buffer))!=-1){
+                if(Thread.currentThread().isInterrupted())throw new InterruptedException();
+                out.write(buffer,0,count);
+                bytes+=count;
+            }
+            out.flush();
+        }
+        if(bytes<=0)throw new IllegalStateException("Published VideoStudio MP4 was empty");
+        return bytes;
     }
 
     public JSONObject inventory() throws Exception {
