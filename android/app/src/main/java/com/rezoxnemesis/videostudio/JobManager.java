@@ -323,7 +323,11 @@ public final class JobManager {
             int thermal = thermalStatus();
             boolean thermalHold = ThermalQueuePolicy.shouldPause(job.kind, thermal);
             if (!lowMemory && !thermalHold) return;
-            releaseLane(job);
+            // GPU animation frames checkpoint independently, so yield the
+            // lane while thermally paused. Partially restored cloud projects
+            // retain their exclusive transfer lane until the file boundary
+            // finishes, preventing concurrent edits of half-copied assets.
+            if (job.kind == Kind.HEAVY) releaseLane(job);
             String waitingState = thermalHold ? STATE_WAITING_THERMAL : STATE_WAITING_MEMORY;
             String detail = thermalHold
                     ? ThermalQueuePolicy.waitingMessage(job.kind, thermal)
