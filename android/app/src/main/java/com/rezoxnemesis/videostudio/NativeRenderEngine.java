@@ -226,7 +226,7 @@ public final class NativeRenderEngine {
                                                      String aspect,String quality) {
         ArrayList<EditedMediaItem> base=new ArrayList<>();
         List<StudioLayer> music=StudioTrackLayout.audioLayers(project);
-        boolean allVideoWithAudio=music.isEmpty();
+        boolean allVideoWithAudio=true;
         long globalStart=0;
         for(ProjectStore.Clip original:project.clips){
             ProjectStore.Asset asset=project.asset(original.assetId);
