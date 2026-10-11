@@ -13,6 +13,18 @@ const nativeProtocol = fs.readFileSync(new URL("../android/app/src/main/java/com
 const mcpConnectionCore = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/McpConnectionCore.java", import.meta.url), "utf8");
 const nativeJobs = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/JobManager.java", import.meta.url), "utf8");
 const storyboardPose = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/StoryboardPoseMotion.java", import.meta.url), "utf8");
+const multigenrePlanner = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/StoryboardBatchPlanner.java", import.meta.url), "utf8");
+const multigenreSegmenter = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/StoryboardLayerIsolation.java", import.meta.url), "utf8");
+const multigenreRenderer = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/StoryboardLayerRenderer.java", import.meta.url), "utf8");
+const multigenreSoftMesh = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/StoryboardDeformableSprite.java", import.meta.url), "utf8");
+const multigenreStudio = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/StoryboardSeriesOrchestrator.java", import.meta.url), "utf8");
+const multigenreComposer = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/StoryboardSegmentComposer.java", import.meta.url), "utf8");
+const multigenrePhysics = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/StoryboardInteractionSolver.java", import.meta.url), "utf8");
+const multigenreAudio = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/StoryboardFoleySynth.java", import.meta.url), "utf8");
+const multigenreML = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/StoryboardPersonMaskProvider.java", import.meta.url), "utf8");
+const multigenreAudit = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/StoryboardSequenceAuditor.java", import.meta.url), "utf8");
+const multigenreQA = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/StoryboardTemporalCritic.java", import.meta.url), "utf8");
+const multigenreGraphics = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/StoryboardGraphicSceneRenderer.java", import.meta.url), "utf8");
 const storyboardPlate = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/StoryboardCleanPlate.java", import.meta.url), "utf8");
 const storyboardQuality = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/StoryboardMotionQualityGate.java", import.meta.url), "utf8");
 const storyboardComposer = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/NativeStoryboardArtworkComposer.java", import.meta.url), "utf8");
@@ -213,6 +225,39 @@ const checks = [
   ["worker persists negotiated wire compatibility independently of app version", worker.includes("wireSchemaVersion") && worker.includes("featureLevel") && worker.includes("transportDecoupledFromApkVersion") && worker.includes('"stable-core-2"')],
   ["True combat action uses fully native articulated frame generation", controlService.includes('case "animate_combat_rig"') && controlService.includes("queueCombatRig") && controlService.includes("combatRigBenchmarkReady")],
   ["Combat IK and independent per-frame sword motion is compiled", combatSolver.includes("elbow(") && combatSolver.includes("swordTipSeparation") && combatSolver.includes("remap(") && combatSolver.includes("leadingFoot")],
+  ["VideoStudio 3.7 generalizes image animation to 100-frame five-batch continuous motion",
+    nativeProtocol.includes('APP_VERSION = "3.7.0"')
+    && androidBuild.includes('versionCode = 370')
+    && multigenrePlanner.includes('MAX_SOURCE_FRAMES=160')
+    && multigenrePlanner.includes('maxFramesPerBatch-1:maxPerBatch')
+    && multigenreStudio.includes('StoryboardSegmentComposer.compose')
+    && multigenreStudio.includes('index>start')],
+  ["Multi-genre source object tracking and real deformable artwork are connected",
+    multigenreSegmenter.includes("fromMasks") &&
+    multigenreSegmenter.includes("match(a,b,w,h)") &&
+    multigenreRenderer.includes("StoryboardDeformableSprite") &&
+    multigenreRenderer.includes("StoryboardInteractionSolver.resolve") &&
+    multigenreSoftMesh.includes("drawBitmapMesh") &&
+    multigenreComposer.includes("StoryboardLayerRenderer")],
+  ["VideoStudio can use actual ML Kit person segmentation and diagram / landscape renderers",
+    multigenreML.includes("Segmentation.getClient") &&
+    multigenreML.includes("Tasks.await") &&
+    multigenreComposer.includes("StoryboardGraphicSceneRenderer") &&
+    multigenreGraphics.includes("Mode.DRAW_REVEAL") &&
+    multigenreGraphics.includes("Mode.ENVIRONMENT")],
+  ["VideoStudio synchronizes real native Foley and rejects slideshow-like output",
+    multigenreAudio.includes('fourcc(out,"RIFF")') &&
+    multigenreAudio.includes("StoryBoard") === false &&
+    multigenreStudio.includes("StoryboardFoleySynth.attach") &&
+    multigenreQA.includes("middle of the shot") &&
+    multigenreComposer.includes("StoryboardTemporalCritic.inspect")],
+  ["Owner-owned full-series MCP and phone UI actions are actually wired",
+    controlService.includes('case "storyboard_series_plan"') &&
+    controlService.includes('case "storyboard_series_audit"') &&
+    controlService.includes('case "animate_storyboard_series"') &&
+    controlService.includes("StoryboardSeriesOrchestrator.run") &&
+    nativeMain.includes("Storyboard → Cinematic Animation (Multi-Genre)") &&
+    nativeMain.includes("storyboardStudioDialog")],
   ["Storyboard source-to-animation uses only 2D original actor textures and frames",
      storyboardRenderer.includes("NativeSkinnedSprite2D")
      && storyboardRenderer.includes("StoryboardPoseMotion.between")
