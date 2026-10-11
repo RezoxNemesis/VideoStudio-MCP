@@ -759,6 +759,15 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 case "storyboard_artwork_preflight":
                     complete(command,storyboardArtworkPreflight(p));
                     return;
+                case "storyboard_series_plan":
+                    complete(command,planStoryboardSeries(p));
+                    return;
+                case "storyboard_series_audit":
+                    complete(command,queueStoryboardSeriesAudit(p));
+                    return;
+                case "animate_storyboard_series":
+                    complete(command,queueStoryboardSeries(p));
+                    return;
                 case "save_source_rig_profile":
                     complete(command, saveSourceRigProfile(p));
                     syncProtocolState();
@@ -1829,6 +1838,9 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                     case "animate_storyboard_artwork":
                         queued = queueStoryboardArtwork(parameters);
                         break;
+                    case "animate_storyboard_series":
+                        queued = queueStoryboardSeries(parameters);
+                        break;
                     case "render_gltf_combat":
                         queued = queueNativeGltf3D(parameters);
                         break;
@@ -2731,6 +2743,134 @@ public final class ControlService extends Service implements AppProtocol.Callbac
      * The original art is raster-skinned; a clean source-world is reconstructed
      * from unobscured pixels and never replaced with a procedural city.
      */
+    private JSONObject planStoryboardSeries(JSONObject p) throws Exception {
+        ProjectStore.Project original=resolveProject(
+                p.optString("sourceProjectId",p.optString("projectId","")));
+        return StoryboardBatchPlanner.plan(original,p).toJson();
+    }
+
+    private JSONObject queueStoryboardSeriesAudit(JSONObject p) throws Exception {
+        ProjectStore.Project original=resolveProject(
+                p.optString("sourceProjectId",p.optString("projectId","")));
+        StoryboardBatchPlanner.Plan plan=StoryboardBatchPlanner.plan(original,p);
+        int batch=p.optInt("batchIndex",0);
+        if(batch<-1||batch>=plan.batches.size())
+            throw new IllegalArgumentException("Requested storyboard batch missing");
+        JobManager.Job job=jobs.submit("Storyboard source/scene audit",
+                JobManager.Kind.HEAVY,state->{
+                    checkpoint(state,"Storyboarding","Inspecting imported images",3,original.id);
+                    jobs.awaitSafeCheckpoint(state,"storyboard_audit_prepare");
+                    JSONObject report=StoryboardSequenceAuditor.inspect(
+                            this,original,plan,batch,(n,total)->{
+                                if(n==1||n%2==0||n==total){
+                                    checkpoint(state,"Storyboard audit",
+                                            n+"/"+total+" image pairs checked",
+                                            5+(int)(93d*n/Math.max(1,total)),
+                                            original.id);
+                                    jobs.awaitSafeCheckpoint(state,
+                                            "storyboard_audit_pair_"+n);
+                                }
+                            });
+                    state.setResult(report);
+                    checkpoint(state,"Storyboard audit","Scene risks classified",100,original.id);
+                });
+        return ok().put("queued",true).put("jobId",job.id)
+                .put("sourceProjectId",original.id)
+                .put("batchIndex",batch)
+                .put("sourceProjectUnmodified",true)
+                .put("neuralSynthesized",false);
+    }
+
+    private JSONObject queueStoryboardSeries(JSONObject p) throws Exception {
+        ProjectStore.Project source=resolveProject(
+                p.optString("sourceProjectId",p.optString("projectId","")));
+        StoryboardBatchPlanner.Plan plan=StoryboardBatchPlanner.plan(source,p);
+        int selected=p.optInt("batchIndex",0);
+        int count=StoryboardSeriesOrchestrator.predictedFrames(plan,selected);
+        int width=p.optInt("width",432),height=p.optInt("height",768);
+        if(width<256||width>720||height<432||height>1280||
+                (width&1)!=0||(height&1)!=0)
+            throw new IllegalArgumentException("Choose even portrait dimensions for native animation");
+        boolean render=p.optBoolean("render",true);
+        String quality="1080p".equalsIgnoreCase(p.optString("quality","720p"))
+                ?"1080p":"720p";
+        String fileName=sanitizeFileName(p.optString("fileName",
+                "VideoStudio_Storyboard_Motion_"+System.currentTimeMillis()+".mp4"));
+        String requested=p.optString("outputProjectId","");
+        ProjectStore.Project output;
+        if(requested.isEmpty()){
+            output=store.create("Storyboard Film • "+source.name);
+            output.sourcePrompt="storyboard-multigenre-v1: original 2D moving art";
+            store.save(output);
+        }else{
+            output=store.get(requested);
+            if(output==null||output.id.equals(source.id)||
+                    output.sourcePrompt==null||
+                    !output.sourcePrompt.startsWith("storyboard-multigenre-v1"))
+                throw new IllegalArgumentException("Storyboard output must be a separate existing project");
+        }
+        JSONObject durable=new JSONObject(p.toString())
+                .put("projectId",output.id)
+                .put("sourceProjectId",source.id)
+                .put("outputProjectId",output.id)
+                .put("batchIndex",selected)
+                .put("render",render)
+                .put("quality",quality)
+                .put("fileName",fileName);
+        final ProjectStore.Project in=source,out=output;
+        final int expected=count,batchIndex=selected,w=width,h=height;
+        final boolean export=render;
+        final JSONObject parameters=new JSONObject(p.toString());
+        JobManager.Job job=submitRecoverableHeavy("animate_storyboard_series",
+                durable,out.id,"Source-image animation film • "+source.name,state->{
+                    checkpoint(state,"Storyboard animation","Preparing original art layers",2,out.id);
+                    jobs.awaitSafeCheckpoint(state,"multigenre_storyboard_prepare");
+                    StoryboardSeriesOrchestrator.Result result=
+                            StoryboardSeriesOrchestrator.run(this,store,in,out,
+                                    plan,batchIndex,w,h,parameters,
+                                    (produced,total,batch,pair,provider,confidence)->{
+                                        if(produced==1||produced%4==0||produced==total){
+                                            int pct=4+(int)(64d*produced/Math.max(1,total));
+                                            checkpoint(state,"Storyboard animation",
+                                                    produced+"/"+total+" motion frames · "+
+                                                    "batch "+(batch+1)+" · "+provider,
+                                                    pct,out.id);
+                                            jobs.awaitSafeCheckpoint(state,
+                                                    "storyboard_frame_"+produced);
+                                        }
+                                    });
+                    JSONObject data=result.toJson()
+                            .put("sourceProjectId",in.id)
+                            .put("outputProjectId",out.id)
+                            .put("sourceClipCount",in.clips.size())
+                            .put("renderRequested",export)
+                            .put("durationMs",out.outputDurationMs());
+                    state.setResult(data);
+                    syncProtocolState();
+                    if(export){
+                        jobs.awaitSafeCheckpoint(state,"storyboard_media3_export");
+                        checkpoint(state,"Native Media3","Encoding animated illustrated film",75,out.id);
+                        runExportBlocking(out,"9:16",quality,fileName,state);
+                        checkpoint(state,"Storyboard film","MP4 exported, original images untouched",100,out.id);
+                    }else{
+                        checkpoint(state,"Storyboard frames",
+                                "Editable original-artwork animation generated",100,out.id);
+                    }
+                });
+        return ok().put("queued",true).put("durableRecovery",true)
+                .put("jobId",job.id)
+                .put("sourceProjectId",source.id)
+                .put("outputProjectId",output.id)
+                .put("sourceFrameCount",plan.assets.size())
+                .put("batchCount",selected<0?plan.batches.size():1)
+                .put("expectedAnimatedFrames",count)
+                .put("render",render)
+                .put("backend",plan.backend.name())
+                .put("sourceProjectUnchanged",true)
+                .put("noGalleryBrowsing",true)
+                .put("unseenPoseNeuralModelInstalled",false);
+    }
+
     private JSONObject queueStoryboardArtwork(JSONObject p) throws Exception {
         String sourceId=p.optString("sourceProjectId",p.optString("projectId",""));
         ProjectStore.Project source=resolveProject(sourceId);
@@ -4214,6 +4354,13 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             out.put("chunkedFrameIngest", true);
             out.put("poseSequenceEngine", "native-bidirectional-optical-flow-v1");
             out.put("storyboardArtworkEngine", "two-authored-poses-masked-texture-mesh-v1");
+            out.put("storyboardMultigenreEngine", "source-multi-object-multi-shot-v1");
+            out.put("storyboardMaxSourceFrames", 160);
+            out.put("storyboardMaxFramesPerBatch", 20);
+            out.put("storyboardAutoSegmentation", "source-difference-plus-bundled-person-ML");
+            out.put("storyboardOriginalIllustrationStyle", true);
+            out.put("storyboardOfflineFoleySynthesis", true);
+            out.put("storyboardNeuralDiffusionInstalled", false);
             out.put("storyboardArtworkRequiresFourTracedActorRigs", true);
             out.put("neuralStoryboardModelAvailable", false);
             out.put("localEngineOwnsProjects", true);
@@ -4678,6 +4825,9 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             case "list_source_rig_profiles": return "Reading original source-character rigs";
             case "render_rigged_2d": return "Animating original masked fighters through native 2D mesh skinning";
             case "animate_storyboard_artwork": return "Animating original storyboard keyframes with source-textured character motion";
+            case "storyboard_series_plan": return "Planning original illustrated multi-genre storyboard shots";
+            case "storyboard_series_audit": return "Inspecting actual artwork movement and source masks";
+            case "animate_storyboard_series": return "Producing original-artwork multi-shot video and synchronized sound";
             case "storyboard_artwork_preflight": return "Checking whether real imported storyboard actors are ready to animate";
             case "render_gltf_combat": return "Rendering two real glTF skinned 3D characters into Media3 video";
             case "animate_timeline": return "Directing cinematic image sequence";
