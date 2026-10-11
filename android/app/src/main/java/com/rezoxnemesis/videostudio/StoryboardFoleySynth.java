@@ -17,7 +17,7 @@ import java.util.Random;
  */
 public final class StoryboardFoleySynth {
     public static final int SAMPLE_RATE=44100;
-    private static final int MAX_SECONDS=45;
+    private static final int MAX_SECONDS=120;
     public static final class Cue {
         public final StoryboardMotionGrammar.Action action;
         public final StoryboardMotionGrammar.SceneKind scene;
