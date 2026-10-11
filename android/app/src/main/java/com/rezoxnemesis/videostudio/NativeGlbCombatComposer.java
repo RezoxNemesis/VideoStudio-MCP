@@ -42,6 +42,7 @@ public final class NativeGlbCombatComposer {
         final float[] center;
         final float bottom;
         final boolean black;
+        final String[] animationNames;
         Model(FilamentAsset asset,Engine engine,boolean black) throws Exception {
             this.asset=asset;
             this.black=black;
@@ -52,6 +53,9 @@ public final class NativeGlbCombatComposer {
                 throw new IllegalArgumentException("GLB needs actual weighted skeletal skinning");
             if(animator==null||animator.getAnimationCount()<1)
                 throw new IllegalArgumentException("GLB model needs at least one real skeletal animation clip");
+            animationNames=new String[animator.getAnimationCount()];
+            for(int i=0;i<animationNames.length;i++)
+                animationNames[i]=animator.getAnimationName(i);
             Box bbox=asset.getBoundingBox();
             center=bbox.getCenter();
             float[] half=bbox.getHalfExtent();
@@ -61,15 +65,33 @@ public final class NativeGlbCombatComposer {
             rootInstance=engine.getTransformManager().getInstance(asset.getRoot());
             if(rootInstance==0)throw new IllegalArgumentException("GLB model has no transformable root");
         }
-        void sample(Engine engine,double seconds,double duration,boolean story){
-            int action=animator.getAnimationCount()==1 ?0:
-                    (seconds/duration>.58?1:0);
-            action=Math.min(animator.getAnimationCount()-1,action);
-            float clipLength=Math.max(.001f,animator.getAnimationDuration(action));
-            float t=(float)(seconds%clipLength);
-            animator.applyAnimation(action,t);
+        void sample(Engine engine,CombatActionPlan.Frame direction,
+                    CombatActionPlan plan,double duration,boolean story){
+            // Different GLBs may name clips differently. Use explicitly named
+            // motion types when possible; never silently claim that clip #1
+            // from an unrelated model contains sword fighting.
+            CombatActionClipResolver.Choice next=
+                    CombatActionClipResolver.resolve(animationNames,direction.beat,black);
+            int index=next.index;
+            float length=Math.max(.001f,animator.getAnimationDuration(index));
+            float time=(float)(direction.seconds-direction.beatStartSeconds);
+            animator.applyAnimation(index,time%length);
+            if(direction.beatIndex>0 && time<.16f){
+                CombatActionPlan.Beat previous=CombatActionPlan.Beat.values()[direction.beatIndex-1];
+                CombatActionClipResolver.Choice prev=
+                        CombatActionClipResolver.resolve(animationNames,previous,black);
+                if(prev.index!=index){
+                    double[] knots=plan.boundaries();
+                    float previousDuration=(float)((knots[direction.beatIndex]-
+                            knots[direction.beatIndex-1])*duration);
+                    float clipDuration=Math.max(.001f,animator.getAnimationDuration(prev.index));
+                    float alpha=Math.max(0,Math.min(1,time/.16f));
+                    animator.applyCrossFade(prev.index,previousDuration%clipDuration,alpha);
+                }
+            }
             animator.updateBoneMatrices();
-            CombatRigSolver.Frame frame=CombatRigSolver.at(seconds,duration,story);
+            CombatRigSolver.Frame frame=CombatRigSolver.at(
+                    direction.solverSeconds,duration,story);
             CombatRigSolver.Warrior fighter=black?frame.black:frame.white;
             double screenX=fighter.pelvis.x,screenY=fighter.pelvis.y;
             float x=(float)((screenX-.5)*3.25);
@@ -96,6 +118,17 @@ public final class NativeGlbCombatComposer {
             ProjectStore.Asset blackAsset,ProjectStore.Asset whiteAsset,
             int width,int height,int fps,double durationSeconds,
             boolean storyboardMotion,Progress progress) throws Exception {
+        return compose(context,store,source,output,blackAsset,whiteAsset,
+                width,height,fps,durationSeconds,storyboardMotion,new CombatActionPlan(),progress);
+    }
+
+    public static ProjectStore.Project compose(Context context,ProjectStore store,
+            ProjectStore.Project source,ProjectStore.Project output,
+            ProjectStore.Asset blackAsset,ProjectStore.Asset whiteAsset,
+            int width,int height,int fps,double durationSeconds,
+            boolean storyboardMotion,CombatActionPlan director,
+            Progress progress) throws Exception {
+        if(director==null)throw new IllegalArgumentException("Shared combat action director is required");
         if(context==null||store==null||source==null||output==null||
                 source.id.equals(output.id)||blackAsset==null||whiteAsset==null)
             throw new IllegalArgumentException("Two registered GLB assets and separate render project are required");
@@ -184,8 +217,15 @@ public final class NativeGlbCombatComposer {
             for(int index=0;index<count;index++){
                 if(Thread.currentThread().isInterrupted())throw new InterruptedException();
                 double seconds=index*durationSeconds/Math.max(1,count-1);
-                black.sample(engine,seconds,durationSeconds,storyboardMotion);
-                white.sample(engine,seconds,durationSeconds,storyboardMotion);
+                CombatActionPlan.Frame action=director.at(seconds,durationSeconds);
+                black.sample(engine,action,director,durationSeconds,storyboardMotion);
+                white.sample(engine,action,director,durationSeconds,storyboardMotion);
+                double cameraDistance=action.cameraDistance;
+                double cameraYaw=action.cameraOrbitRadians;
+                camera.lookAt(Math.sin(cameraYaw)*cameraDistance,
+                        1.15+action.cameraShake*.6,
+                        Math.cos(cameraYaw)*cameraDistance,
+                        0,.88,0,0,1,0);
                 ByteBuffer rgba=ByteBuffer.allocateDirect(width*height*4).order(ByteOrder.nativeOrder());
                 CountDownLatch readback=new CountDownLatch(1);
                 long frameClockNs=1_000_000_000L+
@@ -234,6 +274,12 @@ public final class NativeGlbCombatComposer {
                 asset.generationMetadata.put("real3DGeometry",true);
                 asset.generationMetadata.put("authoredGltfAnimations",true);
                 asset.generationMetadata.put("frameIndex",index);
+                asset.generationMetadata.put("actionBeat",action.beat.name());
+                asset.generationMetadata.put("actionCue",director.cueAt(seconds,durationSeconds));
+                asset.generationMetadata.put("blackMatchedClip",
+                        CombatActionClipResolver.resolve(black.animationNames,action.beat,true).semanticMatch);
+                asset.generationMetadata.put("whiteMatchedClip",
+                        CombatActionClipResolver.resolve(white.animationNames,action.beat,false).semanticMatch);
                 output.assets.add(asset);
                 ProjectStore.Clip clip=new ProjectStore.Clip();
                 clip.id=UUID.randomUUID().toString();
