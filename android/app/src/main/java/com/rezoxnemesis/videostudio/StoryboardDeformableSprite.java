@@ -75,8 +75,6 @@ public final class StoryboardDeformableSprite {
         }
         int w=pixels.getWidth(),h=pixels.getHeight();
         float envelope=(float)Math.sin(Math.PI*t);
-        Rect sourceStrip=new Rect();
-        RectF targetStrip=new RectF();
         for(int row=0;row<MESH_Y;row++){
             int y0=(int)(row*h/(float)MESH_Y);
             int y1=(int)((row+1)*h/(float)MESH_Y);
