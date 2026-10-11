@@ -78,8 +78,10 @@ public class StudioMultitrackTest {
         method.setAccessible(true);
         Composition result=(Composition)method.invoke(renderer,p,"9:16","720p");
         assertEquals("Base video and independently mixed music",2,result.sequences.size());
-        assertEquals("Caption creates three Media3 video segments",3,
+        assertEquals("Timed caption must not cut or interrupt original sword-fight footage",1,
                 result.sequences.get(0).editedMediaItems.size());
+        assertFalse("Native caption must be a composition-time visual overlay",
+                result.effects.videoEffects.isEmpty());
         assertEquals("Audio gap + actual music + trailing silence",3,
                 result.sequences.get(1).editedMediaItems.size());
     }
