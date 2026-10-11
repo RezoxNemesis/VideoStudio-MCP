@@ -4105,6 +4105,11 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 && !queuedResult.optBoolean("render", true)) {
             requirePlayableOutput = false;
         }
+        if (("render_rigged_2d".equals(action) || "render_gltf_combat".equals(action))
+                && queuedResult != null
+                && !queuedResult.optBoolean("render", true)) {
+            requirePlayableOutput = false;
+        }
         if ("autonomous_edit".equals(action)
                 && queuedResult != null
                 && !queuedResult.optBoolean("render", false)) {
