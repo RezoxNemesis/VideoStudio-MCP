@@ -23,29 +23,40 @@ public final class StoryboardDeformableSprite {
     private final boolean deformable;
     public StoryboardDeformableSprite(StoryboardLayerIsolation.Region start,
                                     StoryboardLayerIsolation.Region end,
+                                    int sourceWidth,int sourceHeight,
                                     boolean deformable) {
-        if(start==null||end==null)
-            throw new IllegalArgumentException("Two source-object silhouettes are required");
+        if(start==null||end==null||sourceWidth<32||sourceHeight<32
+                ||start.alpha.length!=sourceWidth*sourceHeight
+                ||end.alpha.length!=sourceWidth*sourceHeight)
+            throw new IllegalArgumentException("Two source masks and true frame size required");
         this.deformable=deformable;
-        profile(start,startLeft,startRight);
-        profile(end,targetLeft,targetRight);
+        profile(start,sourceWidth,sourceHeight,startLeft,startRight);
+        profile(end,sourceWidth,sourceHeight,targetLeft,targetRight);
     }
     private static void profile(StoryboardLayerIsolation.Region region,
+                                int frameWidth,int frameHeight,
                                 float[] left,float[] right) {
-        int width=region.right-region.left+1;
-        int height=region.bottom-region.top+1;
+        int regionWidth=region.right-region.left+1;
+        int regionHeight=region.bottom-region.top+1;
         for(int row=0;row<=MESH_Y;row++){
-            int y=region.top+Math.min(height-1,
-                    Math.round(row*(height-1f)/MESH_Y));
-            int x0=region.right+1,x1=region.left-1;
-            // The mask is a real user-painted silhouette or estimated
-            // foreground source pixels; never include the whole city.
-            int stride=region.alpha.length; // checked by segmentation source
-            int sourceWidth=Math.max(region.right+1,Math.round(region.cx*2));
-            // Source full-frame dimensions aren't encoded on Region. Locate
-            // them from alpha length and supplied frame index via wrapper.
-            // Kept as placeholder until setFrameWidth is called below.
-            left[row]=0;right[row]=1;
+            int y=region.top+Math.min(regionHeight-1,
+                    Math.round(row*(regionHeight-1f)/MESH_Y));
+            int min=region.right+1,max=region.left-1;
+            for(int search=0;search<=Math.max(2,regionHeight/11);search++){
+                int[] candidates=search==0?new int[]{y}:new int[]{y-search,y+search};
+                for(int yy:candidates){
+                    if(yy<region.top||yy>region.bottom)continue;
+                    for(int x=region.left;x<=region.right;x++){
+                        if(region.alpha[yy*frameWidth+x]!=0){
+                            min=Math.min(min,x);max=Math.max(max,x);
+                        }
+                    }
+                }
+                if(max>=min)break;
+            }
+            if(max<min){left[row]=0;right[row]=1;continue;}
+            left[row]=Math.max(0,(min-region.left)/(float)regionWidth);
+            right[row]=Math.min(1,(max-region.left+1)/(float)regionWidth);
         }
     }
 
@@ -54,7 +65,8 @@ public final class StoryboardDeformableSprite {
      * deformation, never a new procedural character.
      */
     public void render(Canvas canvas,Bitmap pixels,float pivotX,float pivotY,
-                       float t,float intensity,Paint paint){
+                       float t,float intensity,boolean usingEndTexture,
+                       Paint paint){
         if(canvas==null||pixels==null||paint==null||
                 t<0||t>1||!Float.isFinite(t))
             throw new IllegalArgumentException("Untrusted deformable storyboard frame");
@@ -70,7 +82,13 @@ public final class StoryboardDeformableSprite {
             float v=row/(float)MESH_Y;
             float bob=(float)Math.sin(t*Math.PI*2+v*4.5)*envelope*.018f
                     *Math.min(w,h)*intensity;
-            float rowSpread=(float)Math.sin(Math.PI*v)*envelope*.045f
+            float srcL=usingEndTexture?targetLeft[row]:startLeft[row],
+                  srcR=usingEndTexture?targetRight[row]:startRight[row];
+            float desiredL=startLeft[row]+(targetLeft[row]-startLeft[row])*t;
+            float desiredR=startRight[row]+(targetRight[row]-startRight[row])*t;
+            float lowShift=Math.max(-.13f,Math.min(.13f,desiredL-srcL));
+            float highShift=Math.max(-.13f,Math.min(.13f,desiredR-srcR));
+            float rowSpread=(float)Math.sin(Math.PI*v)*envelope*.035f
                     *Math.min(w,h)*intensity;
             for(int col=0;col<=MESH_X;col++){
                 float u=col/(float)MESH_X;
@@ -78,7 +96,8 @@ public final class StoryboardDeformableSprite {
                 float anchoredY=yy-pivotY;
                 float edgeBias=(u-.5f)*2;
                 vertices[index++]=anchoredX+
-                        (float)Math.sin(v*5+t*5)*envelope*.006f*w*intensity
+                        ((1-u)*lowShift+u*highShift)*w
+                        +(float)Math.sin(v*5+t*5)*envelope*.004f*w*intensity
                         +edgeBias*rowSpread;
                 vertices[index++]=anchoredY+
                         bob*Math.max(.15f,1-v);
