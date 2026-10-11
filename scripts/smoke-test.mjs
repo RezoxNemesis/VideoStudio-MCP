@@ -229,7 +229,7 @@ const checks = [
     nativeProtocol.includes('APP_VERSION = "3.7.0"')
     && androidBuild.includes('versionCode = 370')
     && multigenrePlanner.includes('MAX_SOURCE_FRAMES=160')
-    && multigenrePlanner.includes('maxFramesPerBatch-1:maxPerBatch')
+    && multigenrePlanner.includes('maxPerBatch-1:maxPerBatch')
     && multigenreStudio.includes('StoryboardSegmentComposer.compose')
     && multigenreStudio.includes('index>start')],
   ["Multi-genre source object tracking and real deformable artwork are connected",
