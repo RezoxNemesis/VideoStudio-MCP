@@ -46,6 +46,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     public static final String ACTION_LOCAL_ANIMATION_STUDIO = "com.rezoxnemesis.videostudio.LOCAL_ANIMATION_STUDIO";
     public static final String ACTION_LOCAL_COMBAT_BENCHMARK = "com.rezoxnemesis.videostudio.LOCAL_COMBAT_BENCHMARK";
     public static final String ACTION_LOCAL_RIGGED_2D = "com.rezoxnemesis.videostudio.LOCAL_RIGGED_COMBAT_2D";
+    public static final String ACTION_LOCAL_GLTF_COMBAT = "com.rezoxnemesis.videostudio.LOCAL_GLTF_COMBAT_EXPORT";
     public static final String ACTION_LOCAL_PROMPT_VIDEO = "com.rezoxnemesis.videostudio.LOCAL_PROMPT_VIDEO";
     public static final String ACTION_LOCAL_EXPORT = "com.rezoxnemesis.videostudio.LOCAL_EXPORT_PROJECT";
     private static final String CHANNEL = "videostudio_private_control";
@@ -160,7 +161,34 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         } else if (ACTION_SYNC.equals(action)) {
             syncProtocolState();
             protocol.registerNow();
-          } else if (ACTION_LOCAL_RIGGED_2D.equals(action)) {
+          } else if (ACTION_LOCAL_GLTF_COMBAT.equals(action)) {
+            final Intent req=intent;
+            directorSetupExecutor.submit(()->{
+                try{
+                    JSONObject args=new JSONObject();
+                    args.put("sourceProjectId",req.getStringExtra("projectId"));
+                    args.put("blackAssetId",req.getStringExtra("blackAssetId"));
+                    args.put("whiteAssetId",req.getStringExtra("whiteAssetId"));
+                    args.put("durationSeconds",req.getDoubleExtra("durationSeconds",3.2));
+                    args.put("fps",req.getIntExtra("fps",24));
+                    args.put("width",req.getIntExtra("width",320));
+                    args.put("height",req.getIntExtra("height",576));
+                    args.put("storyboardMotion",true);
+                    args.put("quality","720p");
+                    args.put("render",true);
+                    args.put("fileName","VideoStudio_RealGLB_3D_"+
+                            System.currentTimeMillis()+".mp4");
+                    JSONObject work=queueNativeGltf3D(args);
+                    ActivityLog.add(this,"user","Genuine 3D combat export queued",
+                            "GPU animated GLB models • "+work.optInt("expectedFrames",0)+" frames",
+                            "queued",0,null,work.optString("projectId",""));
+                }catch(Exception error){
+                    ActivityLog.add(this,"user","3D combat export failed",
+                            error.getMessage()==null?"Cannot export GLB":error.getMessage(),
+                            "failed",null,null,req.getStringExtra("projectId"));
+                }
+            });
+        } else if (ACTION_LOCAL_RIGGED_2D.equals(action)) {
             final Intent request=intent;
             directorSetupExecutor.submit(()->{
                 try{
@@ -671,6 +699,9 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                     return;
                 case "render_rigged_2d":
                     complete(command,queueRigged2D(p));
+                    return;
+                case "render_gltf_combat":
+                    complete(command,queueNativeGltf3D(p));
                     return;
                 case "animate_timeline":
                     complete(command, queueAnimateTimeline(p));
@@ -1678,6 +1709,9 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                     case "render_rigged_2d":
                         queued = queueRigged2D(parameters);
                         break;
+                    case "render_gltf_combat":
+                        queued = queueNativeGltf3D(parameters);
+                        break;
                     case "animate_timeline":
                         queued = queueAnimateTimeline(parameters);
                         break;
@@ -2281,6 +2315,113 @@ public final class ControlService extends Service implements AppProtocol.Callbac
      * This cannot guess masks, joints, backsides or 3D body meshes from raw
      * screenshots. The Android rig editor is the one-time authoring step.
      */
+
+    /** Fully native GPU / glTFio headless 3D render, not a still-image morph. */
+    private JSONObject queueNativeGltf3D(JSONObject p) throws Exception {
+        ProjectStore.Project source=resolveProject(p.optString(
+                "sourceProjectId",p.optString("projectId","")));
+        String blackId=p.optString("blackAssetId","");
+        String whiteId=p.optString("whiteAssetId","");
+        ProjectStore.Asset black=source.asset(blackId);
+        ProjectStore.Asset white=source.asset(whiteId);
+        if(black==null||white==null)
+            throw new IllegalArgumentException("Select both VideoStudio GLB actors");
+        if(blackId.equals(whiteId))
+            throw new IllegalArgumentException("Choose two distinct 3D model assets");
+        if(!"model/gltf-binary".equals(black.mime)||
+                !"model/gltf-binary".equals(white.mime))
+            throw new IllegalArgumentException("Both fighters must be pre-rigged GLB files");
+        // Validate without touching unrelated device media.
+        NativeGlbCombatComposer.glbFile(black);
+        NativeGlbCombatComposer.glbFile(white);
+        int fps=p.optInt("fps",24);
+        int width=p.optInt("width",320),height=p.optInt("height",576);
+        double seconds=p.optDouble("durationSeconds",3.2);
+        if(fps!=24&&fps!=30||!Double.isFinite(seconds)||seconds<2||seconds>4
+                ||width<256||width>540||height<448||height>960||
+                (width&1)!=0||(height&1)!=0)
+            throw new IllegalArgumentException("Use a bounded 2-4-second 24/30 FPS portrait export");
+        boolean storyboard=p.optBoolean("storyboardMotion",true);
+        boolean render=p.optBoolean("render",true);
+        String quality="1080p".equals(p.optString("quality","720p"))
+                ?"1080p":"720p";
+        String filename=sanitizeFileName(p.optString("fileName",
+                "VideoStudio_GLB_3D_"+System.currentTimeMillis()+".mp4"));
+        String outputId=p.optString("outputProjectId","");
+        ProjectStore.Project output;
+        if(outputId.isEmpty()){
+            output=store.create("Real GLB 3D • "+source.name);
+            output.sourcePrompt="gltf3d: independent skinned mesh animation";
+            store.save(output);
+        }else{
+            output=store.get(outputId);
+            if(output==null||!output.sourcePrompt.startsWith("gltf3d:"))
+                throw new IllegalArgumentException("Invalid GPU export recovery project");
+        }
+        final ProjectStore.Project original=source,target=output;
+        final ProjectStore.Asset b=black,w=white;
+        JSONObject durable=new JSONObject(p.toString());
+        durable.put("projectId",output.id);
+        durable.put("outputProjectId",output.id);
+        durable.put("sourceProjectId",source.id);
+        durable.put("blackAssetId",blackId);
+        durable.put("whiteAssetId",whiteId);
+        durable.put("fps",fps);
+        durable.put("width",width);durable.put("height",height);
+        durable.put("durationSeconds",seconds);
+        durable.put("render",render);
+        durable.put("storyboardMotion",storyboard);
+        durable.put("aspect","9:16");
+        durable.put("quality",quality);durable.put("fileName",filename);
+        JobManager.Job job=submitRecoverableHeavy("render_gltf_combat",durable,
+                output.id,"3D skinned fight • "+source.name,state->{
+            checkpoint(state,"3D GLB combat","Preparing private GLB skeleton assets",
+                    2,target.id);
+            jobs.awaitSafeCheckpoint(state,"gpu_glb_prepare");
+            NativeGlbCombatComposer.compose(this,store,original,target,b,w,
+                    width,height,fps,seconds,storyboard,
+                    (done,total,time,impact)->{
+                        if(done==1||done%3==0||done==total){
+                            int pct=4+(int)(60d*done/Math.max(1,total));
+                            checkpoint(state,"3D GLB combat",
+                                    done+"/"+total+" headless GPU skinned frames",
+                                    pct,target.id);
+                            jobs.awaitSafeCheckpoint(state,"gpu_glb_frame_"+done);
+                        }
+                    });
+            JSONObject details=new JSONObject();
+            details.put("engine","Filament gltfio headless + Media3 native");
+            details.put("real3DGeometry",true);
+            details.put("modelCharactersImported",2);
+            details.put("preauthoredGltfAnimationsRequired",true);
+            details.put("rootMotionDirectedByCombatSolver",true);
+            details.put("exactBladeMeshCollisionSolved",false);
+            details.put("automaticImageTo3D",false);
+            details.put("frames",target.clips.size());
+            state.setResult(details);
+            syncProtocolState();
+            if(render){
+                jobs.awaitSafeCheckpoint(state,"gpu_glb_media3");
+                runExportBlocking(target,"9:16",quality,filename,state);
+                checkpoint(state,"3D GLB combat","Verified genuine 3D MP4 exported",
+                        100,target.id);
+            }else{
+                checkpoint(state,"3D GLB combat","Editable GPU frames ready",100,target.id);
+            }
+        });
+        JSONObject result=ok();
+        result.put("queued",true);result.put("durableRecovery",true);
+        result.put("jobId",job.id);
+        result.put("projectId",output.id);
+        result.put("sourceProjectId",source.id);
+        result.put("outputProjectId",output.id);
+        result.put("expectedFrames",(int)Math.round(seconds*fps));
+        result.put("engine","Filament gltfio GPU skinned 3D");
+        result.put("render",render);
+        result.put("requiresRigged3DAssets",true);
+        return result;
+    }
+
     private JSONObject queueRigged2D(JSONObject p) throws Exception {
         String sourceId=p.optString("sourceProjectId",p.optString("projectId",""));
         ProjectStore.Project source=resolveProject(sourceId);
@@ -3587,10 +3728,13 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             out.put("rigKinematicsMathReady", true);
             out.put("manualCharacterRigEditorReady", true);
             out.put("sourceTextured2DMeshSkinningReady", true);
+            out.put("glbSkeletalPreviewReady", true);
+            out.put("nativeHeadlessGltfExportReady", true);
+            out.put("sourceImageTo3DReconstructionInstalled", false);
             // Critical distinction: usable constraints are not the same as
             // character reconstruction or a textured 3D rigged renderer.
             out.put("sourceFaithfulRiggedRendererInstalled", false);
-            out.put("full3DSkeletalRendererInstalled", false);
+            out.put("full3DSkeletalRendererInstalled", true);
             out.put("animationDirectorReady", true);
             out.put("combatRigBenchmarkReady", true);
             out.put("combatRigBackend", "articulated-two-bone-IK-v1");
@@ -3760,6 +3904,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             case "prompt_video":
             case "animate_images":
             case "render_rigged_2d":
+            case "render_gltf_combat":
             case "export_project":
             case "autonomous_edit":
             case "generate_image":
@@ -4078,6 +4223,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             case "frame_transfer_status": return "Checking private frame transfer";
             case "animate_combat_rig": return "Generating articulated stickman sword combat";
             case "render_rigged_2d": return "Animating original masked fighters through native 2D mesh skinning";
+            case "render_gltf_combat": return "Rendering two real glTF skinned 3D characters into Media3 video";
             case "animate_timeline": return "Directing cinematic image sequence";
             case "animate_images": return "Animating still images";
             case "job_status": return "Reading native job status";
