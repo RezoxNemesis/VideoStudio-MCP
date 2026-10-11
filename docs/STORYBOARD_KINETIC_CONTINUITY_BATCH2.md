@@ -49,3 +49,11 @@ fail and request source-character rigs. Proper cinematic acceptance requires:
 - If original rig annotations or a verified anime motion-model pack are
   missing, **report this blocker** instead of calling a 2D mesh
   interpolation a finished professional animation.
+
+## Update packaging
+
+The fix build uses the existing VideoStudio Next application ID, updates
+versionCode from 370 to 371 and versionName to 3.7.1, and preserves the same
+cached, pinned development signing identity. Installing the resulting APK
+must perform an **in-place upgrade** over compatible 3.7.0 (never uninstall).
+Full user-device rendering must be repeated after the update.
