@@ -170,8 +170,12 @@ public final class StoryboardBatchPlanner {
                 StoryboardMotionGrammar.scene(parameters.optString("genre",
                         project.sourcePrompt+" "+project.name));
         String description=parameters.optString("direction","").trim();
-        StoryboardMotionGrammar.Action override=description.isEmpty()?null:
-                StoryboardMotionGrammar.parseAction(description,null);
+        // Story-wide natural-language direction is editorial context, not
+        // permission to replace EVERY distinct source action with one beat.
+        StoryboardMotionGrammar.Action override=
+                parameters.optBoolean("applyDirectionToAll",false)
+                &&!description.isEmpty()
+                ?StoryboardMotionGrammar.parseAction(description,null):null;
         List<String> ids=new ArrayList<>();
         for(ProjectStore.Asset a:images)ids.add(a.id);
         ArrayList<Batch> batches=new ArrayList<>();
