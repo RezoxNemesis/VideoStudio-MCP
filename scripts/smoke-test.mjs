@@ -12,6 +12,14 @@ const nativeMain = fs.readFileSync(new URL("../android/app/src/main/java/com/rez
 const nativeProtocol = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/AppProtocol.java", import.meta.url), "utf8");
 const mcpConnectionCore = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/McpConnectionCore.java", import.meta.url), "utf8");
 const nativeJobs = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/JobManager.java", import.meta.url), "utf8");
+const storyboardPose = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/StoryboardPoseMotion.java", import.meta.url), "utf8");
+const storyboardPlate = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/StoryboardCleanPlate.java", import.meta.url), "utf8");
+const storyboardQuality = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/StoryboardMotionQualityGate.java", import.meta.url), "utf8");
+const storyboardComposer = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/NativeStoryboardArtworkComposer.java", import.meta.url), "utf8");
+const storyboardRenderer = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/NativeStoryboardArtworkRenderer.java", import.meta.url), "utf8");
+const skinnedSprite = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/NativeSkinnedSprite2D.java", import.meta.url), "utf8");
+const originalRigProfile = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/Rig2DProfile.java", import.meta.url), "utf8");
+const storyboardRigEditor = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/RigEditorActivity.java", import.meta.url), "utf8");
 const nextUpgradePolicy = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/UpdateCompatibility.java", import.meta.url), "utf8");
 const nativeApkUpdater = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/NativeApkUpdater.java", import.meta.url), "utf8");
 const legacyRecovery = fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/LegacyCloudRecovery.java", import.meta.url), "utf8");
@@ -205,6 +213,25 @@ const checks = [
   ["worker persists negotiated wire compatibility independently of app version", worker.includes("wireSchemaVersion") && worker.includes("featureLevel") && worker.includes("transportDecoupledFromApkVersion") && worker.includes('"stable-core-2"')],
   ["True combat action uses fully native articulated frame generation", controlService.includes('case "animate_combat_rig"') && controlService.includes("queueCombatRig") && controlService.includes("combatRigBenchmarkReady")],
   ["Combat IK and independent per-frame sword motion is compiled", combatSolver.includes("elbow(") && combatSolver.includes("swordTipSeparation") && combatSolver.includes("remap(") && combatSolver.includes("leadingFoot")],
+  ["Storyboard source-to-animation uses only 2D original actor textures and frames",
+     storyboardRenderer.includes("NativeSkinnedSprite2D")
+     && storyboardRenderer.includes("StoryboardPoseMotion.between")
+     && storyboardComposer.includes("StoryboardCleanPlate.restore")
+     && storyboardComposer.includes("storyboard_artwork")
+     && storyboardComposer.includes("notNeuralVideo")
+     && !storyboardRenderer.includes("CombatRigSolver")],
+  ["Storyboard maintains actors, real traced sword tips and fixed cinematic city",
+     storyboardPose.includes("Sword tip must stay attached")
+     && originalRigProfile.includes("swordTip")
+     && storyboardRigEditor.includes('button("Sword tip"')
+     && storyboardPlate.includes("Large camera/scene cuts are REJECTED")
+     && skinnedSprite.includes("targetPose")],
+  ["Storyboard animation rejects fake no-motion input and uses Media3 export",
+     storyboardQuality.includes("no measurable fighter or sword motion")
+     && controlService.includes('case "animate_storyboard_artwork"')
+     && controlService.includes('case "storyboard_artwork_preflight"')
+     && controlService.includes('runExportBlocking(target,"9:16"')
+     && nativeMain.includes("Storyboard Art → Moving Fighters (2D Beta)")],
   ["private MCP can author source-textured actors from native project images", controlService.includes('case "save_source_rig_profile"') && controlService.includes('case "list_source_rig_profiles"') && controlService.includes("NativeRigAuthoring.parse") && controlService.includes("sourceProjectUpdatedAt") && controlService.includes("Rig2DProjectStore(this, store)")],
   ["Native combat rig can lock source city using only user-imported image clips", cleanScenePlate.includes("perChannelMedian") && cleanScenePlate.includes("source.clips") && combatRenderer.includes("staticBackground") && controlService.includes("backgroundMode")],
   ["Combat benchmark draws one locked background then moving fighters", combatRenderer.includes("drawWorld(c)") && combatRenderer.includes("drawWarrior") && combatRenderer.includes("drawImpact") && combatComposer.includes("NativeCombatRigRenderer")],
