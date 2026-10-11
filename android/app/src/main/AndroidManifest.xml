@@ -32,6 +32,10 @@
                 android:value="VideoStudio v3 Native Agent: user-enabled private MCP control for local editing, analysis and rendering" />
         </service>
         <activity
+            android:name=".FilamentGlbActivity"
+            android:exported="false"
+            android:screenOrientation="unspecified" />
+        <activity
             android:name=".RigEditorActivity"
             android:exported="false"
             android:screenOrientation="unspecified" />
