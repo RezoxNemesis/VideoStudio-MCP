@@ -153,6 +153,8 @@ public final class ProjectStore {
         public String latestExportUri = "";
         public String latestExportName = "";
         public long latestExportAt = 0;
+        /** Backward-compatible optional human multi-track authoring state. */
+        public JSONObject trackLayout = new JSONObject();
         public final ArrayList<Asset> assets = new ArrayList<>();
         public final ArrayList<Clip> clips = new ArrayList<>();
 
@@ -176,6 +178,7 @@ public final class ProjectStore {
                 o.put("latestExportUri", latestExportUri);
                 o.put("latestExportName", latestExportName);
                 o.put("latestExportAt", latestExportAt);
+                o.put("trackLayout", trackLayout == null ? new JSONObject() : trackLayout);
                 o.put("assets", aa);
                 o.put("clips", cc);
             } catch (Exception ignored) {}
@@ -191,6 +194,8 @@ public final class ProjectStore {
             p.latestExportUri = o.optString("latestExportUri", "");
             p.latestExportName = o.optString("latestExportName", "");
             p.latestExportAt = o.optLong("latestExportAt", 0);
+            JSONObject tracks = o.optJSONObject("trackLayout");
+            p.trackLayout = tracks == null ? new JSONObject() : tracks;
             JSONArray aa = o.optJSONArray("assets");
             if (aa != null) for (int i = 0; i < aa.length(); i++) {
                 JSONObject item = aa.optJSONObject(i);
