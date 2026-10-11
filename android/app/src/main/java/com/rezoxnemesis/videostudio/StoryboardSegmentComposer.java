@@ -121,12 +121,18 @@ public final class StoryboardSegmentComposer {
             int[] to=read(context,end,width,height);
             try(Painter painter=painter(context,original,rigs,plan.backend,
                     start,end,from,to,width,height,shot,settings)){
+                int[] middle=null;
+                int middleIndex=Math.round(shot.frames*.5f);
                 int initial=(shotCount==0&&!append)?0:1;
                 for(int step=initial;step<=shot.frames;step++){
                     if(Thread.currentThread().isInterrupted())throw new InterruptedException();
                     float t=step/(float)shot.frames;
                     Bitmap rendered=painter.frame(t,step);
                     try {
+                        if(step==middleIndex){
+                            middle=new int[width*height];
+                            rendered.getPixels(middle,0,width,0,0,width,height);
+                        }
                         add(target,outputDir,rendered,priorFrames+complete,durationMs,plan.fps,
                                 start.id,end.id,shot.action,painter.backend(),
                                 painter.confidence(),shot.scene);
@@ -136,6 +142,16 @@ public final class StoryboardSegmentComposer {
                         progress.onFrame(complete,expected,shot.fromIndex,
                                 painter.backend(),painter.confidence());
                 }
+                boolean graphicOrCameraOnly=painter.backend().contains("graphic")
+                        ||painter.backend().contains("environment")
+                        ||painter.backend().contains("abstract");
+                if(middle==null)throw new IllegalStateException("No genuine midpoint sample");
+                StoryboardTemporalCritic.Report inspected=
+                        StoryboardTemporalCritic.inspect(from,to,middle,width,height,
+                                graphicOrCameraOnly);
+                if(!inspected.acceptable)
+                    throw new IllegalStateException("Source-artwork animation QA failed: "
+                            +inspected.reason+" (source "+start.name+" → "+end.name+")");
                 minConfidence=Math.min(minConfidence,painter.confidence());
                 report.put(new JSONObject()
                         .put("fromAssetId",start.id)
@@ -144,7 +160,11 @@ public final class StoryboardSegmentComposer {
                         .put("scene",shot.scene.name())
                         .put("backend",painter.backend())
                         .put("confidence",painter.confidence())
-                        .put("motionFrames",shot.frames));
+                        .put("motionFrames",shot.frames)
+                        .put("actualMidpointSourceDifference",inspected.middleSourceDifference)
+                        .put("actualMidpointTargetDifference",inspected.middleTargetDifference)
+                        .put("stationaryWorldChange",inspected.unchangedWorldError)
+                        .put("qualityGatePassed",inspected.acceptable));
                 shotCount++;
                 // Checkpoint a complete shot (not just the next frame); the
                 // DB never refers to files that haven't been written yet.
