@@ -2332,8 +2332,8 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 !"model/gltf-binary".equals(white.mime))
             throw new IllegalArgumentException("Both fighters must be pre-rigged GLB files");
         // Validate without touching unrelated device media.
-        NativeGlbCombatComposer.glbFile(black);
-        NativeGlbCombatComposer.glbFile(white);
+        NativeGlbCombatComposer.glbFile(this,source,black);
+        NativeGlbCombatComposer.glbFile(this,source,white);
         int fps=p.optInt("fps",24);
         int width=p.optInt("width",320),height=p.optInt("height",576);
         double seconds=p.optDouble("durationSeconds",3.2);
