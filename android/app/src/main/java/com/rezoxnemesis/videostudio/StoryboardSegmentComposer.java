@@ -231,7 +231,14 @@ public final class StoryboardSegmentComposer {
                   +"Install a compatible motion-synthesis model pack first.");
         if(backend==StoryboardBatchPlanner.Backend.SOURCE_RIG)
             throw new IllegalArgumentException("Source-rig annotations incomplete");
-        StoryboardLayerIsolation.Result layers;
+        if(backend==StoryboardBatchPlanner.Backend.CAMERA_PARALLAX
+                && shot.scene!=StoryboardMotionGrammar.SceneKind.ACTION
+                && shot.scene!=StoryboardMotionGrammar.SceneKind.PORTRAIT)
+            return graphics(pixelsA,pixelsB,width,height,shot,
+                    StoryboardGraphicSceneRenderer.Mode.ENVIRONMENT);
+
+        StoryboardLayerIsolation.Result layers=null;
+        String provenance="auto-motion-foreground-2d";
         if(backend==StoryboardBatchPlanner.Backend.MANUAL_MASKS) {
             JSONObject overrides=options.optJSONObject("sourceMasks");
             String key=shot.fromId+"__"+shot.toId;
@@ -239,25 +246,68 @@ public final class StoryboardSegmentComposer {
             if(entry==null)throw new IllegalArgumentException(
                     "Supply explicit per-object polygons for this pair: "+key);
             layers=manual(pixelsA,pixelsB,width,height,entry);
-        }else{
-            layers=StoryboardLayerIsolation.analyse(pixelsA,pixelsB,width,height);
+            provenance="authored-multilayer-2d";
+        }else if(backend==StoryboardBatchPlanner.Backend.PERSON_SEGMENTATION||
+                  (backend==StoryboardBatchPlanner.Backend.AUTO_LAYERS&&
+                   shot.scene==StoryboardMotionGrammar.SceneKind.PORTRAIT)) {
+            try {
+                StoryboardPersonMaskProvider.Result person=
+                        StoryboardPersonMaskProvider.isolate(
+                                pixelsA,pixelsB,width,height);
+                layers=person.layers;
+                provenance=person.provider;
+            }catch(Exception cannotSeePerson) {
+                if(backend==StoryboardBatchPlanner.Backend.PERSON_SEGMENTATION)
+                    throw cannotSeePerson;
+            }
         }
-        if(!layers.autoRenderable())
+        if(layers==null)
+            layers=StoryboardLayerIsolation.analyse(pixelsA,pixelsB,width,height);
+
+        if(!layers.autoRenderable()){
+            // A progressive diagram/title is not a jumping fighter: a
+            // controlled source-stroke reveal is the CORRECT animation,
+            // while a still landscape can be animated atmospherically.
+            if(shot.scene==StoryboardMotionGrammar.SceneKind.EXPLAINER||
+                    shot.scene==StoryboardMotionGrammar.SceneKind.TYPOGRAPHY||
+                    shot.action==StoryboardMotionGrammar.Action.REVEAL)
+                return graphics(pixelsA,pixelsB,width,height,shot,
+                        StoryboardGraphicSceneRenderer.Mode.DRAW_REVEAL);
+            if(shot.scene==StoryboardMotionGrammar.SceneKind.LANDSCAPE
+                    ||shot.scene==StoryboardMotionGrammar.SceneKind.ABSTRACT)
+                return graphics(pixelsA,pixelsB,width,height,shot,
+                        shot.scene==StoryboardMotionGrammar.SceneKind.ABSTRACT
+                             ?StoryboardGraphicSceneRenderer.Mode.ABSTRACT_FLOW
+                             :StoryboardGraphicSceneRenderer.Mode.ENVIRONMENT);
             throw new IllegalArgumentException(
                     "Cannot animate this source shot faithfully: "+layers.reason+
                     " (scene="+shot.scene+", source="+fromAsset.name+
                     ", destination="+toAsset.name+"). "
-                    +"Use traced masks, a correct genre adapter, or split the camera shot.");
+                    +"Use traced masks, a suitable segmentation model, "+
+                     "or split the camera shot. Never substitute a slideshow.");
+        }
         final StoryboardLayerRenderer renderer=new StoryboardLayerRenderer(
                 pixelsA,pixelsB,width,height,layers,shot.scene,shot.action);
         final float quality=averageConfidence(layers);
-        final String provider=backend==StoryboardBatchPlanner.Backend.MANUAL_MASKS
-                ?"authored-multilayer-2d":"auto-motion-foreground-2d";
+        final String provider=provenance;
         return new Painter(){
             public Bitmap frame(float t,int i){return renderer.render(t,i);}
             public String backend(){return provider;}
             public float confidence(){return quality;}
             public void close(){renderer.close();}
+        };
+    }
+
+    private static Painter graphics(int[] first,int[] last,int width,int height,
+                                    StoryboardBatchPlanner.Shot shot,
+                                    StoryboardGraphicSceneRenderer.Mode mode){
+        final StoryboardGraphicSceneRenderer engine=
+                new StoryboardGraphicSceneRenderer(first,last,width,height,mode);
+        return new Painter(){
+            public Bitmap frame(float t,int index){return engine.render(t);}
+            public String backend(){return engine.backend();}
+            public float confidence(){return .80f;}
+            public void close(){engine.close();}
         };
     }
 
