@@ -114,6 +114,7 @@ public final class JobManager {
 
     private static final String PREFS = "videostudio_native_v1";
     private static final String KEY_JOBS = ExecutionTruthPolicy.JOB_RECOVERY_PREF_KEY;
+    private final String persistenceKey;
     private final Context context;
     private final SharedPreferences prefs;
     private static final Semaphore PROCESS_HEAVY_LANE = new Semaphore(1, true);
@@ -122,7 +123,19 @@ public final class JobManager {
     private final Map<String, Job> jobs = new ConcurrentHashMap<>();
 
     public JobManager(Context context) {
+        this(context, KEY_JOBS);
+    }
+
+    /**
+     * The native agent owns the original recovery key. The editor uses a
+     * separate namespace for local preview/proxy jobs, so opening the app
+     * cannot overwrite the service's render state or checkpoint queue.
+     */
+    public JobManager(Context context,String persistenceKey) {
         this.context = context.getApplicationContext();
+        if(persistenceKey==null||!persistenceKey.matches("[a-zA-Z0-9_]{5,64}"))
+            throw new IllegalArgumentException("Invalid job persistence key");
+        this.persistenceKey=persistenceKey;
         prefs = this.context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
         restoreRecoveryState();
     }
@@ -352,11 +365,11 @@ public final class JobManager {
                 .sorted((a, b) -> Long.compare(b.updatedAt, a.updatedAt))
                 .limit(40)
                 .forEach(j -> arr.put(j.json()));
-        prefs.edit().putString(KEY_JOBS, arr.toString()).apply();
+        prefs.edit().putString(persistenceKey, arr.toString()).apply();
     }
 
     private void restoreRecoveryState() {
-        String raw = prefs.getString(KEY_JOBS, "[]");
+        String raw = prefs.getString(persistenceKey, "[]");
         try {
             JSONArray arr = new JSONArray(raw);
             long cutoff = System.currentTimeMillis() - 48L * 60L * 60L * 1000L;
