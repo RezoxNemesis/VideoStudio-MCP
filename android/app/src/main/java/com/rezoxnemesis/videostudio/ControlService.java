@@ -2317,6 +2317,20 @@ public final class ControlService extends Service implements AppProtocol.Callbac
      */
 
     /** Fully native GPU / glTFio headless 3D render, not a still-image morph. */
+    /**
+     * Shared, editable choreography timing. An authored beat map changes
+     * action timing without uploading a single new image.
+     */
+    private static CombatActionPlan combatDirector(JSONObject p) throws Exception {
+        JSONArray raw=p.optJSONArray("actionBeatTimes");
+        if(raw==null)return new CombatActionPlan();
+        if(raw.length()!=CombatActionPlan.BEAT_COUNT+1)
+            throw new IllegalArgumentException("Need nine directed combat beat timestamps");
+        double[] points=new double[raw.length()];
+        for(int i=0;i<points.length;i++)points[i]=raw.getDouble(i);
+        return new CombatActionPlan(points);
+    }
+
     private JSONObject queueNativeGltf3D(JSONObject p) throws Exception {
         ProjectStore.Project source=resolveProject(p.optString(
                 "sourceProjectId",p.optString("projectId","")));
@@ -2360,6 +2374,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         }
         final ProjectStore.Project original=source,target=output;
         final ProjectStore.Asset b=black,w=white;
+        final CombatActionPlan director=combatDirector(p);
         JSONObject durable=new JSONObject(p.toString());
         durable.put("projectId",output.id);
         durable.put("outputProjectId",output.id);
@@ -2379,7 +2394,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                     2,target.id);
             jobs.awaitSafeCheckpoint(state,"gpu_glb_prepare");
             NativeGlbCombatComposer.compose(this,store,original,target,b,w,
-                    width,height,fps,seconds,storyboard,
+                    width,height,fps,seconds,storyboard,director,
                     (done,total,time,impact)->{
                         if(done==1||done%3==0||done==total){
                             int pct=4+(int)(60d*done/Math.max(1,total));
@@ -2395,6 +2410,9 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             details.put("modelCharactersImported",2);
             details.put("preauthoredGltfAnimationsRequired",true);
             details.put("rootMotionDirectedByCombatSolver",true);
+            details.put("actionDirector","shared-eight-beat-timeline-v1");
+            details.put("semanticClipFallbackPossible",true);
+            details.put("actualSoundtrackAttached",false);
             details.put("exactBladeMeshCollisionSolved",false);
             details.put("automaticImageTo3D",false);
             details.put("frames",target.clips.size());
@@ -2477,6 +2495,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         }
         final ProjectStore.Project output=target, original=source;
         final Rig2DProfile b=blackProfile,w=whiteProfile;
+        final CombatActionPlan director=combatDirector(p);
         final String sceneMode=backgroundMode, sceneAssetId=backdropId;
         final int videoWidth=width,videoHeight=height,videoFps=fps;
         final double seconds=duration;
@@ -2508,7 +2527,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 }
                 NativeRiggedCombatComposer.compose(this,store,original,output,
                         b,w,videoWidth,videoHeight,videoFps,seconds,storyboard,
-                        clean,(current,total,time,impact)->{
+                        clean,director,(current,total,time,impact)->{
                             if(current==1||current%4==0||current==total){
                                 int pct=6+(int)(58d*current/Math.max(1,total));
                                 checkpoint(state,"2D source rig",
@@ -2527,6 +2546,8 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             details.put("genuine3DMesh",false);
             details.put("newUnseenAnatomySynthesis",false);
             details.put("storyboardMotion",storyboard);
+            details.put("actionDirector","shared-eight-beat-timeline-v1");
+            details.put("actualSoundtrackAttached",false);
             details.put("frames",output.clips.size());
             details.put("backgroundMode",sceneMode);
             state.setResult(details);
