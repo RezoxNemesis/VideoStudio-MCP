@@ -577,6 +577,10 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                     complete(command, applyEditPlan(p));
                     syncProtocolState();
                     return;
+                case "set_studio_layers":
+                    complete(command, setStudioLayers(p));
+                    syncProtocolState();
+                    return;
                 case "apply_tool":
                     complete(command, applyTool(p));
                     syncProtocolState();
@@ -818,6 +822,36 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             commandJournal.finish(command, result, "failed");
             protocol.complete(command, result, "failed");
         }
+    }
+
+    /**
+     * Edit precisely the SAME independent Music/Caption layers available in
+     * VideoStudio's human Editor. An expected revision prevents overwriting
+     * an in-progress manual edit with a stale ChatGPT action.
+     */
+    private JSONObject setStudioLayers(JSONObject parameters) throws Exception {
+        String projectId=parameters.optString("projectId","");
+        if(projectId.isEmpty())throw new IllegalArgumentException("Project ID required");
+        ProjectStore.Project project=store.get(projectId);
+        if(project==null)throw new IllegalArgumentException("Project not found");
+        if(!parameters.has("expectedUpdatedAt"))
+            throw new IllegalArgumentException("expectedUpdatedAt required for safe collaboration");
+        long expected=parameters.getLong("expectedUpdatedAt");
+        if(expected!=project.updatedAt)
+            throw new IllegalArgumentException("Project changed since last read; request fresh state");
+        JSONArray raw=parameters.optJSONArray("studioLayers");
+        if(raw==null)throw new IllegalArgumentException("studioLayers array required");
+        java.util.List<StudioLayer> validated=StudioLayerContract.fromJson(project,raw);
+        project.studioLayers.clear();
+        project.studioLayers.addAll(validated);
+        store.save(project);
+        JSONObject result=ok();
+        result.put("projectId",project.id);
+        result.put("updatedAt",project.updatedAt);
+        result.put("audioTracks",StudioTrackLayout.audioLayers(project).size());
+        result.put("titleTracks",StudioTrackLayout.titleLayers(project).size());
+        result.put("studioLayers",StudioLayerContract.toJson(project.studioLayers));
+        return result;
     }
 
     private JSONObject applyEditPlan(JSONObject p) throws Exception {
@@ -3850,6 +3884,9 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                     assets.put(ai);
                 }
                 out.put("activeAssets", assets);
+                out.put("activeProjectUpdatedAt", active.updatedAt);
+                out.put("studioLayers",StudioLayerContract.toJson(active.studioLayers));
+                out.put("studioLayerEditingSupported",true);
             }
             out.put("workload", jobs.state());
             out.put("recoveryPlans", recoveryPlans.recent(12));
@@ -4234,6 +4271,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             case "select_project": return "Opening project";
             case "delete_project": return "Deleting project";
             case "apply_edit_plan": return "Building timeline";
+            case "set_studio_layers": return "Editing project music and captions";
             case "apply_tool": return "Applying edit tool";
             case "creator_preset": return "Applying creator style";
             case "autonomous_edit": return "Autonomous edit";
