@@ -281,8 +281,12 @@ public final class LegacyCloudRecovery {
                         media=entries.get(rel);
                     }
                     if(media==null && LegacyMigrationRules.isOldImportsFile(a.uri)) {
+                        // Newer VideoStudio cloud archives store every
+                        // explicitly imported source under Originals/asset-id.
+                        Entry archivedOriginal=entries.get("Originals/"+a.id+"_"+a.name);
                         rel="source_assets/"+a.id;
-                        media=staged.get(LegacyMigrationRules.sourceStem(a.name));
+                        media=archivedOriginal!=null?archivedOriginal
+                                :staged.get(LegacyMigrationRules.sourceStem(a.name));
                     }
                     if(media==null) {
                         missing.put(a.name);continue;
