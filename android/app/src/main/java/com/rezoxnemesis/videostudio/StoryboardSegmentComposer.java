@@ -85,7 +85,7 @@ public final class StoryboardSegmentComposer {
             if(f.isFile()&&f.getName().matches("story_[0-9]{5}\\.jpg")
                     &&!f.delete())
                 throw new IllegalStateException("Could not restart incomplete storyboard batch");
-        target.assets.clear();target.clips.clear();
+        target.assets.clear();target.clips.clear();target.studioLayers.clear();
         target.sourcePrompt="storyboard-multigenre-v1: source-owned layered motion batch "
                 +(batch.index+1);
         store.save(target);
@@ -135,6 +135,40 @@ public final class StoryboardSegmentComposer {
         }
         if(complete!=expected)
             throw new IllegalStateException("Storyboard render ended with incorrect frame count");
+        if(settings.optBoolean("foley",true)){
+            long clipDuration=complete*durationMs;
+            File audioFile=new File(outputDir,"shot_foley.wav");
+            StoryboardFoleySynth.Result audio=StoryboardFoleySynth.render(
+                    audioFile,clipDuration,
+                    StoryboardFoleySynth.cues(batch,plan.fps));
+            ProjectStore.Asset sound=new ProjectStore.Asset();
+            sound.id=UUID.randomUUID().toString();
+            sound.uri=Uri.fromFile(audioFile).toString();
+            sound.name=audioFile.getName();
+            sound.mime="audio/wav";
+            sound.role="storyboard_generated_foley";
+            sound.durationMs=audio.durationMs;
+            sound.sizeBytes=audioFile.length();
+            sound.generated=true;
+            sound.seekable=true;
+            sound.persistedReadAccess=true;
+            sound.generationMetadata=new JSONObject()
+                    .put("provider","videostudio.local-foley-v1")
+                    .put("eventCount",audio.cues)
+                    .put("noPaidApi",true)
+                    .put("neuralMusicGeneration",false);
+            target.assets.add(sound);
+            StudioLayer audioLane=new StudioLayer();
+            audioLane.type=StudioLayer.AUDIO;
+            audioLane.assetId=sound.id;
+            audioLane.startMs=0;
+            audioLane.durationMs=clipDuration;
+            audioLane.sourceInMs=0;
+            audioLane.gain=Math.min(1f,Math.max(.01f,
+                    (float)settings.optDouble("foleyGain",.65)));
+            StudioLayerContract.validate(target,audioLane);
+            target.studioLayers.add(audioLane);
+        }
         store.save(target);
         return new Summary(target,complete,shotCount,minConfidence,report);
     }
