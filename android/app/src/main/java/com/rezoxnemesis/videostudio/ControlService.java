@@ -45,6 +45,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     public static final String ACTION_LOCAL_ANIMATE = "com.rezoxnemesis.videostudio.LOCAL_ANIMATE_IMAGES";
     public static final String ACTION_LOCAL_ANIMATION_STUDIO = "com.rezoxnemesis.videostudio.LOCAL_ANIMATION_STUDIO";
     public static final String ACTION_LOCAL_COMBAT_BENCHMARK = "com.rezoxnemesis.videostudio.LOCAL_COMBAT_BENCHMARK";
+    public static final String ACTION_LOCAL_RIGGED_2D = "com.rezoxnemesis.videostudio.LOCAL_RIGGED_COMBAT_2D";
     public static final String ACTION_LOCAL_PROMPT_VIDEO = "com.rezoxnemesis.videostudio.LOCAL_PROMPT_VIDEO";
     public static final String ACTION_LOCAL_EXPORT = "com.rezoxnemesis.videostudio.LOCAL_EXPORT_PROJECT";
     private static final String CHANNEL = "videostudio_private_control";
@@ -159,7 +160,37 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         } else if (ACTION_SYNC.equals(action)) {
             syncProtocolState();
             protocol.registerNow();
-          } else if (ACTION_LOCAL_COMBAT_BENCHMARK.equals(action)) {
+          } else if (ACTION_LOCAL_RIGGED_2D.equals(action)) {
+            final Intent request=intent;
+            directorSetupExecutor.submit(()->{
+                try{
+                    JSONObject params=new JSONObject();
+                    params.put("sourceProjectId",request.getStringExtra("projectId"));
+                    params.put("blackRigId",request.getStringExtra("blackRigId"));
+                    params.put("whiteRigId",request.getStringExtra("whiteRigId"));
+                    params.put("backgroundMode",request.getStringExtra("backgroundMode")==null
+                            ?"procedural":request.getStringExtra("backgroundMode"));
+                    params.put("durationSeconds",request.getDoubleExtra("durationSeconds",4.6));
+                    params.put("fps",request.getIntExtra("fps",24));
+                    params.put("width",request.getIntExtra("width",432));
+                    params.put("height",request.getIntExtra("height",768));
+                    params.put("render",true);
+                    params.put("storyboardMotion",true);
+                    params.put("quality","720p");
+                    params.put("fileName","VideoStudio_Source_Rigged_2D_"+
+                            System.currentTimeMillis()+".mp4");
+                    JSONObject queued=queueRigged2D(params);
+                    ActivityLog.add(this,"user","Source-textured 2D animation queued",
+                            "Articulated source rigs • "+queued.optInt("expectedFrames",0)+" frames",
+                            "queued",0,null,queued.optString("projectId",""));
+                    syncProtocolState();
+                }catch(Exception error){
+                    ActivityLog.add(this,"user","Source-textured rig failed",
+                            error.getMessage()==null?"Rig animation unavailable":error.getMessage(),
+                            "failed",null,null,request.getStringExtra("projectId"));
+                }
+            });
+        } else if (ACTION_LOCAL_COMBAT_BENCHMARK.equals(action)) {
             final Intent request=intent;
             directorSetupExecutor.submit(() -> {
                 try {
@@ -637,6 +668,9 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                     return;
                 case "animate_combat_rig":
                     complete(command,queueCombatRig(p));
+                    return;
+                case "render_rigged_2d":
+                    complete(command,queueRigged2D(p));
                     return;
                 case "animate_timeline":
                     complete(command, queueAnimateTimeline(p));
@@ -1641,6 +1675,9 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                     case "animate_combat_rig":
                         queued = queueCombatRig(parameters);
                         break;
+                    case "render_rigged_2d":
+                        queued = queueRigged2D(parameters);
+                        break;
                     case "animate_timeline":
                         queued = queueAnimateTimeline(parameters);
                         break;
@@ -2233,6 +2270,146 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         result.put("backgroundMode",backgroundMode);
         result.put("sourceImageRestyling",false);
         result.put("neuralVideoGenerator",false);
+        return result;
+    }
+
+
+    /**
+     * New VIDEO STUDIO NATIVE vertical slice: from two user-authored source-art
+     * cutout rigs to an independently articulated 2D mesh video.
+     *
+     * This cannot guess masks, joints, backsides or 3D body meshes from raw
+     * screenshots. The Android rig editor is the one-time authoring step.
+     */
+    private JSONObject queueRigged2D(JSONObject p) throws Exception {
+        String sourceId=p.optString("sourceProjectId",p.optString("projectId",""));
+        ProjectStore.Project source=resolveProject(sourceId);
+        Rig2DProjectStore rigs=new Rig2DProjectStore(this,store);
+        String blackId=p.optString("blackRigId","");
+        String whiteId=p.optString("whiteRigId","");
+        Rig2DProfile blackProfile=rigs.load(source.id,blackId);
+        Rig2DProfile whiteProfile=rigs.load(source.id,whiteId);
+        if(!blackProfile.black||whiteProfile.black)
+            throw new IllegalArgumentException("Pick distinct black and white source actor rigs");
+
+        String backgroundMode=p.optString("backgroundMode","procedural");
+        if(!"procedural".equals(backgroundMode)&&
+                !"source_median".equals(backgroundMode)&&
+                !"clean_asset".equals(backgroundMode))
+            throw new IllegalArgumentException("Choose procedural, source_median or clean_asset");
+        String backdropId=p.optString("backgroundAssetId","");
+        if("clean_asset".equals(backgroundMode)){
+            ProjectStore.Asset background=source.asset(backdropId);
+            if(background==null||background.mime==null||
+                    !background.mime.startsWith("image/")||
+                    backdropId.equals(blackProfile.sourceAssetId)||
+                    backdropId.equals(whiteProfile.sourceAssetId))
+                throw new IllegalArgumentException("Use a separate user-selected clean background image");
+        }
+        boolean storyboard=p.optBoolean("storyboardMotion",true);
+        int fps=p.optInt("fps",24),width=p.optInt("width",432),
+                height=p.optInt("height",768);
+        double duration=p.optDouble("durationSeconds",4.6);
+        if(fps!=24&&fps!=30)
+            throw new IllegalArgumentException("Source-rig animation supports 24 or 30 FPS");
+        if(!Double.isFinite(duration)||duration<2||duration>6)
+            throw new IllegalArgumentException("Source-rig animation must be 2-6 seconds");
+        if(width<320||height<540||width>720||height>1280||
+                (width&1)!=0||(height&1)!=0)
+            throw new IllegalArgumentException("Source-rig preview must be even and bounded");
+
+        boolean render=p.optBoolean("render",true);
+        String quality="1080p".equals(p.optString("quality","720p"))
+                ?"1080p":"720p";
+        String fileName=sanitizeFileName(p.optString("fileName",
+                "VideoStudio_Rigged2D_"+System.currentTimeMillis()+".mp4"));
+        String outputId=p.optString("outputProjectId","");
+        ProjectStore.Project target;
+        if(outputId.isEmpty()){
+            target=store.create("Rigged 2D • "+source.name);
+            target.sourcePrompt="rigged2d: source-character mesh animation";
+            store.save(target);
+        }else{
+            target=store.get(outputId);
+            if(target==null||!target.sourcePrompt.startsWith("rigged2d:"))
+                throw new IllegalArgumentException("Invalid native rig recovery destination");
+        }
+        final ProjectStore.Project output=target, original=source;
+        final Rig2DProfile b=blackProfile,w=whiteProfile;
+        final String sceneMode=backgroundMode, sceneAssetId=backdropId;
+        final int videoWidth=width,videoHeight=height,videoFps=fps;
+        final double seconds=duration;
+        JSONObject durable=new JSONObject(p.toString());
+        durable.put("projectId",output.id);
+        durable.put("sourceProjectId",source.id);
+        durable.put("outputProjectId",output.id);
+        durable.put("blackRigId",blackId);durable.put("whiteRigId",whiteId);
+        durable.put("backgroundMode",sceneMode);durable.put("storyboardMotion",storyboard);
+        durable.put("fps",fps);durable.put("width",width);durable.put("height",height);
+        durable.put("durationSeconds",seconds);durable.put("render",render);
+        durable.put("quality",quality);durable.put("aspect","9:16");
+        durable.put("fileName",fileName);
+        JobManager.Job job=submitRecoverableHeavy("render_rigged_2d",durable,
+                output.id,"Source-rigged 2D • "+source.name,state -> {
+            checkpoint(state,"2D source rig","Preparing character masks and joint weights",
+                    3,output.id);
+            jobs.awaitSafeCheckpoint(state,"rig2d_prepare");
+            android.graphics.Bitmap clean=null;
+            try{
+                if("source_median".equals(sceneMode)){
+                    checkpoint(state,"2D scene","Estimating a fixed clean scene from approved shots",
+                            5,output.id);
+                    clean=NativeScenePlateBuilder.fromProject(
+                            this,original,videoWidth,videoHeight);
+                }else if("clean_asset".equals(sceneMode)){
+                    clean=NativeRiggedCombatComposer.cleanPlate(this,
+                            original.asset(sceneAssetId),videoWidth,videoHeight);
+                }
+                NativeRiggedCombatComposer.compose(this,store,original,output,
+                        b,w,videoWidth,videoHeight,videoFps,seconds,storyboard,
+                        clean,(current,total,time,impact)->{
+                            if(current==1||current%4==0||current==total){
+                                int pct=6+(int)(58d*current/Math.max(1,total));
+                                checkpoint(state,"2D source rig",
+                                        current+"/"+total+" mesh-skinned character frames",
+                                        pct,output.id);
+                                jobs.awaitSafeCheckpoint(state,"rig2d_frame_"+current);
+                            }
+                        });
+            }finally{if(clean!=null&&!clean.isRecycled())clean.recycle();}
+            JSONObject details=new JSONObject();
+            details.put("engine","builtin.mesh-skinned-2d-v1");
+            details.put("sourceProjectId",original.id);
+            details.put("sourceTexturesPreserved",true);
+            details.put("riggedCharacterPixels",true);
+            details.put("manuallyAuthoredCharacterMasks",true);
+            details.put("genuine3DMesh",false);
+            details.put("newUnseenAnatomySynthesis",false);
+            details.put("storyboardMotion",storyboard);
+            details.put("frames",output.clips.size());
+            details.put("backgroundMode",sceneMode);
+            state.setResult(details);
+            syncProtocolState();
+            if(render){
+                jobs.awaitSafeCheckpoint(state,"rig2d_export");
+                runExportBlocking(output,"9:16",quality,fileName,state);
+                checkpoint(state,"2D source rig",
+                        "Verified rigged-character MP4 exported",100,output.id);
+            }else{
+                checkpoint(state,"2D source rig",
+                        "Editable skinned-pose samples ready",100,output.id);
+            }
+        });
+        JSONObject result=ok();
+        result.put("queued",true);result.put("durableRecovery",true);
+        result.put("jobId",job.id);
+        result.put("projectId",output.id);
+        result.put("sourceProjectId",source.id);
+        result.put("outputProjectId",output.id);
+        result.put("expectedFrames",(int)Math.round(fps*seconds));
+        result.put("render",render);result.put("backgroundMode",backgroundMode);
+        result.put("engine","builtin.mesh-skinned-2d-v1");
+        result.put("full3D",false);
         return result;
     }
 
@@ -3408,6 +3585,8 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             out.put("poseSequenceEngineReady", true);
             out.put("storyboardMotionPreflightReady", true);
             out.put("rigKinematicsMathReady", true);
+            out.put("manualCharacterRigEditorReady", true);
+            out.put("sourceTextured2DMeshSkinningReady", true);
             // Critical distinction: usable constraints are not the same as
             // character reconstruction or a textured 3D rigged renderer.
             out.put("sourceFaithfulRiggedRendererInstalled", false);
@@ -3580,6 +3759,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         switch (action) {
             case "prompt_video":
             case "animate_images":
+            case "render_rigged_2d":
             case "export_project":
             case "autonomous_edit":
             case "generate_image":
@@ -3897,6 +4077,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             case "finish_frame_transfer": return "Verifying complete private frame";
             case "frame_transfer_status": return "Checking private frame transfer";
             case "animate_combat_rig": return "Generating articulated stickman sword combat";
+            case "render_rigged_2d": return "Animating original masked fighters through native 2D mesh skinning";
             case "animate_timeline": return "Directing cinematic image sequence";
             case "animate_images": return "Animating still images";
             case "job_status": return "Reading native job status";
