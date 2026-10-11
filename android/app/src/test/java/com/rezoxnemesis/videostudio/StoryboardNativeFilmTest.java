@@ -72,9 +72,19 @@ public final class StoryboardNativeFilmTest {
                 .put("framesPerPair",6).put("foley",true);
         StoryboardBatchPlanner.Plan plan=StoryboardBatchPlanner.plan(source,params);
         ProjectStore.Project generated=store.create("2D source movement test");
-        StoryboardSeriesOrchestrator.Result finished=
-                StoryboardSeriesOrchestrator.run(ctx,store,source,generated,
-                        plan,0,W,H,params,null);
+        StoryboardSeriesOrchestrator.Result finished;
+        try {
+            finished=StoryboardSeriesOrchestrator.run(ctx,store,source,generated,
+                    plan,0,W,H,params,null);
+        }catch(Exception failure){
+            // The composer has already written this shot's images before
+            // enforcing the real per-object quality gate. Keep the actual
+            // rejected midpoint for engineer review instead of hiding it
+            // behind a green smoke test or synthetic mockup.
+            if(generated.clips.size()>=7)
+                writeVisualQaSheet(ctx,source,generated,null);
+            throw failure;
+        }
         assertEquals(7,finished.frames);
         assertEquals(7,generated.clips.size());
         assertTrue(generated.assets.size()>=8);
@@ -153,7 +163,10 @@ public final class StoryboardNativeFilmTest {
             }
             assertTrue("Actual native storyboard frames available for review",
                     visual.isFile()&&visual.length()>4000);
-            JSONObject metadata=quality.toJson()
+            JSONObject metadata=(quality==null
+                    ?new JSONObject().put("ok",false)
+                        .put("status","VISUAL_QA_REJECTED")
+                    :quality.toJson())
                     .put("sourceProjectId",source.id)
                     .put("generatedProjectId",result.id)
                     .put("motionImage","original_artwork_motion_qa.png")
@@ -166,12 +179,14 @@ public final class StoryboardNativeFilmTest {
                 saved.write(metadata.toString(2).getBytes(
                         java.nio.charset.StandardCharsets.UTF_8));
             }
-            File soundtrack=new File(Uri.parse(result.asset(
-                    result.studioLayers.get(0).assetId).uri).getPath());
-            assertTrue("Foley soundtrack generated",soundtrack.exists());
-            java.nio.file.Files.copy(soundtrack.toPath(),
-                    new File(directory,"native_action_audio.wav").toPath(),
-                    java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            if(!result.studioLayers.isEmpty()){
+                File soundtrack=new File(Uri.parse(result.asset(
+                        result.studioLayers.get(0).assetId).uri).getPath());
+                assertTrue("Foley soundtrack generated",soundtrack.exists());
+                java.nio.file.Files.copy(soundtrack.toPath(),
+                        new File(directory,"native_action_audio.wav").toPath(),
+                        java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            }
         }finally{sheet.recycle();}
     }
 }
