@@ -155,6 +155,77 @@ public final class StoryboardLayerIsolation {
                 "Independent original-artwork objects isolated and tracked");
     }
 
+    /**
+     * Explicit per-object polygons from the source storyboard or a verified
+     * segmentation model may replace the imperfect pixel-difference detector.
+     * Supports any number of moving illustrated objects from 1 to 8,
+     * without imposing person/skeleton semantics on animals, vehicles or text.
+     */
+    public static Result annotated(int[] first,int[] last,int width,int height,
+                                   List<float[][]> fromPolygons,
+                                   List<float[][]> toPolygons) {
+        if(first==null||last==null||width<32||height<32
+                ||(long)width*height>MAX_PIXELS||
+                first.length!=width*height||last.length!=first.length
+                ||fromPolygons==null||toPolygons==null
+                ||fromPolygons.size()!=toPolygons.size()
+                ||fromPolygons.isEmpty()||fromPolygons.size()>MAX_TRACKS)
+            throw new IllegalArgumentException("Supply 1..8 matching original object masks");
+        int n=width*height;
+        boolean[] occupiedA=new boolean[n],occupiedB=new boolean[n];
+        ArrayList<Track> tracks=new ArrayList<>();
+        for(int index=0;index<fromPolygons.size();index++){
+            boolean[] a=StoryboardCleanPlate.mask(width,height,fromPolygons.get(index));
+            boolean[] b=StoryboardCleanPlate.mask(width,height,toPolygons.get(index));
+            Region ra=manualRegion(a,first,width,height);
+            Region rb=manualRegion(b,last,width,height);
+            if(ra==null||rb==null)throw new IllegalArgumentException(
+                    "An illustrated object's mask is empty: "+index);
+            for(int p=0;p<n;p++){occupiedA[p]|=a[p];occupiedB[p]|=b[p];}
+            tracks.add(new Track(ra,rb,.97f)); // explicitly source-authored masks
+        }
+        boolean[] hidden=new boolean[n];int[] plate=first.clone();
+        int count=0,stable=0;long delta=0;
+        for(int p=0;p<n;p++){
+            if(!occupiedA[p]&&!occupiedB[p]){
+                stable++;delta+=difference(first[p],last[p]);
+            }else if(occupiedA[p]&&!occupiedB[p])plate[p]=last[p];
+            else if(occupiedA[p]&&occupiedB[p]){
+                hidden[p]=true;count++;
+            }
+        }
+        float drift=stable==0?1f:(float)(delta/(stable*765d));
+        if(stable<n*.22||drift>.18f)return new Result(Status.CAMERA_CUT,
+                plate,tracks,drift,count/(float)n,0,
+                "Camera/lighting differs; provide separate shots or a clean plate");
+        if(count>n*.24f)return new Result(Status.NEEDS_SOURCE_MASKS,
+                plate,tracks,drift,count/(float)n,0,
+                "Too much of the scene is obscured behind the objects");
+        int[] nearest=nearestUnchanged(hidden,width,height);
+        for(int i=0;i<n;i++)if(hidden[i]&&nearest[i]>=0)
+            plate[i]=plate[nearest[i]];
+        return new Result(Status.READY,plate,tracks,drift,
+                count/(float)n,0,"Traced source masks supply stable object tracks");
+    }
+
+    private static Region manualRegion(boolean[] mask,int[] image,int w,int h){
+        int count=0,left=w-1,right=0,top=h-1,bottom=0;
+        long xSum=0,ySum=0,r=0,g=0,b=0;
+        byte[] alpha=new byte[w*h];
+        for(int i=0;i<mask.length;i++){
+            if(!mask[i])continue;
+            int x=i%w,y=i/w;
+            alpha[i]=(byte)255;count++;left=Math.min(left,x);right=Math.max(right,x);
+            top=Math.min(top,y);bottom=Math.max(bottom,y);
+            xSum+=x;ySum+=y;
+            r+=image[i]>>>16&255;g+=image[i]>>>8&255;b+=image[i]&255;
+        }
+        if(count<4)return null;
+        return new Region(alpha,left,top,right,bottom,count,
+                xSum/(float)count,ySum/(float)count,
+                r/(float)count,g/(float)count,b/(float)count,.97f);
+    }
+
     private static Result fail(Status type,int n,float changed,String why) {
         return new Result(type,new int[0],new ArrayList<>(),1f,1f,changed,why);
     }
