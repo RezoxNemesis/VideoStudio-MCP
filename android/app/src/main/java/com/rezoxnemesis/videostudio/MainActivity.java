@@ -1181,7 +1181,21 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
 
         StudioTracksView bands=new StudioTracksView(this);
         bands.setTimeline(activeProject.outputDurationMs(),studioPlayheadMs,
-                activeProject.studioLayers,this::scrubStudioTo);
+                activeProject.studioLayers,this::scrubStudioTo,
+                new StudioTracksView.ChangeListener(){
+                    @Override public void onChange(String id,long start,long duration){
+                        moveStudioLayerOnTimeline(id,start,duration);
+                    }
+                    @Override public void onSelect(String id){
+                        for(StudioLayer layer:activeProject.studioLayers){
+                            if(!layer.id.equals(id))continue;
+                            if(StudioLayer.AUDIO.equals(layer.type))
+                                editStudioAudio(layer,layer.assetId);
+                            else editStudioTitle(layer);
+                            return;
+                        }
+                    }
+                });
         box.addView(bands,margins(-1,dp(112),dp(4),dp(6),0,0));
 
         ArrayList<StudioLayer> order=new ArrayList<>(activeProject.studioLayers);
@@ -1213,6 +1227,37 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         box.addView(body("Audio mixes into MP4; titles are burned into the video "+
                 "at their chosen times. Preview the exported result to hear "+
                 "all tracks together."),margins(-1,-2,dp(2),0,0,0));
+    }
+
+    private void moveStudioLayerOnTimeline(String id,long start,long duration){
+        if(activeProject==null||id==null)return;
+        ProjectStore.Project latest=store.get(activeProject.id);
+        if(latest==null)return;
+        if(latest.updatedAt!=activeProject.updatedAt){
+            activeProject=latest;editHistory.reset(null);showEditor();
+            Toast.makeText(this,"A background edit changed the project. Try again.",
+                    Toast.LENGTH_LONG).show();
+            return;
+        }
+        StudioLayer existing=null;
+        for(StudioLayer layer:activeProject.studioLayers)
+            if(layer.id.equals(id)){existing=layer;break;}
+        if(existing==null||existing.startMs==start&&existing.durationMs==duration)return;
+        try{
+            StudioLayer changed=existing.copy();
+            changed.startMs=start;
+            changed.durationMs=duration;
+            changed.validate();
+            validateStudioLayerTiming(changed);
+            editHistory.checkpoint(activeProject);
+            replaceStudioLayer(id,changed);
+            studioPlayheadMs=start;
+            store.save(activeProject);syncProtocolState();showEditor();
+        }catch(Exception error){
+            Toast.makeText(this,"Could not move track: "+error.getMessage(),
+                    Toast.LENGTH_LONG).show();
+            showEditor();
+        }
     }
 
     private void chooseStudioAudio(){
