@@ -1088,6 +1088,17 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
 
     private void performStudioTool(String name){
         switch(name){
+            case "Slow Motion": studioSpeedDialog();return;
+            case "Volume": studioVolumeDialog();return;
+            case "Blur": studioBlurDialog();return;
+            case "Colour": studioPresetDialog("Color grade","colorPreset",
+                    new String[]{"none","cinematic","teal_orange","warm_film",
+                            "cool_night","noir","golden_hour","matte",
+                            "high_contrast","soft_portrait"});return;
+            case "Transitions": studioPresetDialog("Clip transition","transition",
+                    CreatorCatalog.TRANSITIONS.toArray(new String[0]));return;
+            case "Motion": studioPresetDialog("Camera motion","motionPreset",
+                    CreatorCatalog.MOTIONS.toArray(new String[0]));return;
             case "Delete Clip": deleteStudioClip(); return;
             case "Move Left": moveStudioClip(-1); return;
             case "Move Right": moveStudioClip(1); return;
@@ -1099,6 +1110,84 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
             case "Combat Benchmark": combatRigBenchmarkDialog();return;
             default: applyTool(name);return;
         }
+    }
+
+    private void studioSpeedDialog(){
+        if(selectedClip==null){Toast.makeText(this,"Select a clip first",
+                Toast.LENGTH_SHORT).show();return;}
+        int speed=(int)Math.round(selectedClip.speed*100);
+        studioSliderDialog("Playback Speed",25,300,Math.max(25,Math.min(300,speed)),
+                "% speed",value->{
+                    editHistory.checkpoint(activeProject);
+                    selectedClip.speed=value/100f;
+                    store.save(activeProject);syncProtocolState();showEditor();
+                });
+    }
+    private void studioVolumeDialog(){
+        if(selectedClip==null){Toast.makeText(this,"Select a clip first",
+                Toast.LENGTH_SHORT).show();return;}
+        int volume=(int)Math.round(selectedClip.volume*100);
+        studioSliderDialog("Clip Volume",0,200,Math.max(0,Math.min(200,volume)),
+                "% gain",value->{
+                    editHistory.checkpoint(activeProject);
+                    selectedClip.volume=value/100f;
+                    store.save(activeProject);syncProtocolState();showEditor();
+                });
+    }
+    private void studioBlurDialog(){
+        if(selectedClip==null){Toast.makeText(this,"Select a clip first",
+                Toast.LENGTH_SHORT).show();return;}
+        int amount=(int)Math.round(selectedClip.effects.optDouble("blur",0)*10);
+        studioSliderDialog("Gaussian Blur",0,200,Math.max(0,Math.min(200,amount)),
+                "tenths",value->{
+                    editHistory.checkpoint(activeProject);
+                    try{selectedClip.effects.put("blur",value/10.0);}catch(Exception ignored){}
+                    store.save(activeProject);syncProtocolState();showEditor();
+                });
+    }
+
+    private void studioSliderDialog(String title,int min,int max,int start,
+                                    String units,java.util.function.IntConsumer onApply){
+        LinearLayout wrap=column();
+        wrap.setPadding(dp(19),dp(8),dp(19),dp(9));
+        TextView amount=title(start+" "+units,19);
+        wrap.addView(amount);
+        SeekBar slider=new SeekBar(this);
+        slider.setMax(max-min);
+        slider.setProgress(start-min);
+        slider.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener(){
+            @Override public void onProgressChanged(SeekBar s,int value,boolean user){
+                amount.setText((value+min)+" "+units);
+            }
+            @Override public void onStartTrackingTouch(SeekBar s){}
+            @Override public void onStopTrackingTouch(SeekBar s){}
+        });
+        wrap.addView(slider);
+        new AlertDialog.Builder(this).setTitle(title)
+                .setMessage("Edit this clip precisely. Preview the exported MP4 to verify renderer effects.")
+                .setView(wrap)
+                .setPositiveButton("Apply",(d,w)->onApply.accept(slider.getProgress()+min))
+                .setNegativeButton("Cancel",null).show();
+    }
+
+    private void studioPresetDialog(String title,String key,String[] presets){
+        if(selectedClip==null){Toast.makeText(this,"Select a clip first",
+                Toast.LENGTH_SHORT).show();return;}
+        String current="transition".equals(key)?selectedClip.transition:
+                selectedClip.effects.optString(key,"none");
+        int selected=java.util.Arrays.asList(presets).indexOf(current);
+        new AlertDialog.Builder(this).setTitle(title)
+                .setSingleChoiceItems(presets,Math.max(0,selected),(dialog,index)->{
+                    editHistory.checkpoint(activeProject);
+                    if("transition".equals(key))selectedClip.transition=presets[index];
+                    else try{selectedClip.effects.put(key,presets[index]);}
+                        catch(Exception ignored){}
+                    store.save(activeProject);
+                    syncProtocolState();
+                    dialog.dismiss();
+                    showEditor();
+                })
+                .setNegativeButton("Cancel",null).show();
     }
 
     private void deleteStudioClip(){
