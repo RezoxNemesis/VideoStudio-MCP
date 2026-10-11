@@ -1179,6 +1179,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
             case "Move Right": moveStudioClip(1); return;
             case "Animation Director": animationDirectorDialog();return;
             case "Storyboard Artwork": storyboardArtworkDialog();return;
+            case "Storyboard Studio": storyboardStudioDialog();return;
             case "Rig Builder": open2DRigEditor();return;
             case "Render Rigged 2D": queueUserRiggedDuel();return;
             case "3D Model Viewer": open3DModelViewer();return;
@@ -1878,6 +1879,9 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         });
         top.addView(exportButton);
         box.addView(top, margins(-1, -2, 0, dp(10), 0, 0));
+        Button storyboard=neonButton("Storyboard → Cinematic Animation (Multi-Genre)",C_MAGENTA);
+        storyboard.setOnClickListener(v->storyboardStudioDialog());
+        box.addView(storyboard,margins(-1,dp(51),0,0,0,dp(8)));
         Button artwork=neonButton("Storyboard Art → Moving Fighters (2D Beta)",C_MAGENTA);
         artwork.setOnClickListener(v->storyboardArtworkDialog());
         box.addView(artwork,margins(-1,dp(49),0,0,0,dp(8)));
@@ -2323,6 +2327,139 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
      * frame ordering and sword tips block the job rather than producing
      * another incorrect stickman or background zoom.
      */
+    /**
+     * Multi-genre creative storyboarding is an actual native rendering
+     * workflow, not an inert design button or generic procedural fighter.
+     * Project files are already VideoStudio-owned. The selected original
+     * remains read-only while frames/MP4 go to an independent project.
+     */
+    private void storyboardStudioDialog(){
+        if(activeProject==null||activeProject.clips.size()<2){
+            Toast.makeText(this,"Open a VideoStudio project with two or more imported images",
+                    Toast.LENGTH_LONG).show();
+            return;
+        }
+        LinearLayout panel=column();
+        panel.setPadding(dp(18),dp(8),dp(18),dp(8));
+        panel.addView(body("Animate actual source artwork. Supports comics, "+
+                "illustrated characters, product objects, scenes, titles, "+
+                "education and abstract drawings. Motion is object-by-object, "+
+                "not a slideshow or replacement skeleton."));
+        panel.addView(section("Story genre"));
+        android.widget.Spinner genre=new android.widget.Spinner(this);
+        String[] genres={"Auto / Mixed","Action","Comic / Manga","Portrait",
+                "Product","Landscape","Explainer","Typography","Abstract"};
+        String[] values={"mixed","action","comic","portrait","product",
+                "landscape","explainer","typography","abstract"};
+        android.widget.ArrayAdapter<String> genreAdapter=new android.widget.ArrayAdapter<>(
+                this,android.R.layout.simple_spinner_item,genres);
+        genreAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        genre.setAdapter(genreAdapter);
+        panel.addView(genre,new LinearLayout.LayoutParams(-1,dp(49)));
+        panel.addView(section("Character / object extraction"));
+        android.widget.Spinner backend=new android.widget.Spinner(this);
+        String[] choices={"Automatic moving objects (local)",
+                "Human portraits (bundled ML Kit)",
+                "Hand-traced original artwork (high control)",
+                "Environmental / camera motion"};
+        String[] backends={"AUTO_LAYERS","PERSON_SEGMENTATION",
+                "SOURCE_RIG","CAMERA_PARALLAX"};
+        android.widget.ArrayAdapter<String> engines=new android.widget.ArrayAdapter<>(
+                this,android.R.layout.simple_spinner_item,choices);
+        engines.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        backend.setAdapter(engines);
+        panel.addView(backend,new LinearLayout.LayoutParams(-1,dp(50)));
+        panel.addView(body("For difficult illustrated fights, automatic object "+
+                "separation may be uncertain. The engine will warn rather than "+
+                "render artificial fighters or distorted scenery."));
+        panel.addView(section("Scene idea / optional direction"));
+        EditText prompt=new EditText(this);
+        prompt.setHint("e.g. chase, dramatic leap, wind, reveal");
+        prompt.setSingleLine(false);
+        prompt.setMinLines(1);prompt.setMaxLines(2);
+        prompt.setTextColor(C_TEXT);prompt.setHintTextColor(C_MUTED);
+        panel.addView(prompt,new LinearLayout.LayoutParams(-1,dp(65)));
+        panel.addView(section("Action detail"));
+        android.widget.Spinner samples=new android.widget.Spinner(this);
+        String[] quality={"6 motion samples / pair (fast test)",
+                "8 motion samples / pair (balanced)",
+                "12 motion samples / pair (smoother)",
+                "16 motion samples / pair (slower render)"};
+        final int[] stepCounts={6,8,12,16};
+        android.widget.ArrayAdapter<String> sampleList=new android.widget.ArrayAdapter<>(
+                this,android.R.layout.simple_spinner_item,quality);
+        sampleList.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        samples.setAdapter(sampleList);
+        samples.setSelection(1);
+        panel.addView(samples,new LinearLayout.LayoutParams(-1,dp(50)));
+        android.widget.CheckBox full=new android.widget.CheckBox(this);
+        full.setText("Animate entire multi-batch story (otherwise first batch)");
+        full.setTextColor(C_TEXT);
+        panel.addView(full);
+        android.widget.CheckBox audio=new android.widget.CheckBox(this);
+        audio.setText("Add synchronized native action sounds (offline)");
+        audio.setTextColor(C_TEXT);audio.setChecked(true);
+        panel.addView(audio);
+        panel.addView(body("Native output: portrait 9:16, 24 FPS, up to "+
+                "20 contiguous original keyframes per batch. Original project "+
+                "is never overwritten. Full sequence needs trackable scenes "+
+                "or complete source object masks."));
+        new AlertDialog.Builder(this)
+                .setTitle("VideoStudio Storyboard Motion Studio")
+                .setView(panel)
+                .setNeutralButton("Analyze Source",(dlg,which)->
+                        submitStoryboardStudio(genre,values,backend,backends,
+                                prompt,samples,stepCounts,full,audio,true))
+                .setPositiveButton("Animate + Render",(dlg,which)->
+                        submitStoryboardStudio(genre,values,backend,backends,
+                                prompt,samples,stepCounts,full,audio,false))
+                .setNegativeButton("Cancel",null).show();
+    }
+
+    private void submitStoryboardStudio(android.widget.Spinner genre,
+            String[] values,android.widget.Spinner backend,String[] modes,
+            EditText direction,android.widget.Spinner samples,int[] steps,
+            android.widget.CheckBox full,android.widget.CheckBox foley,
+            boolean auditOnly){
+        try{
+            if(activeProject==null)throw new IllegalStateException("Original project closed");
+            JSONObject options=new JSONObject()
+                    .put("genre",values[genre.getSelectedItemPosition()])
+                    .put("backend",modes[backend.getSelectedItemPosition()])
+                    .put("direction",direction.getText().toString().trim())
+                    .put("framesPerPair",steps[samples.getSelectedItemPosition()])
+                    .put("fps",24)
+                    .put("maxFramesPerBatch",20);
+            StoryboardBatchPlanner.Plan plan=
+                    StoryboardBatchPlanner.plan(activeProject,options);
+            int batch=full.isChecked()?-1:0;
+            int count=StoryboardSeriesOrchestrator.predictedFrames(plan,batch);
+            Intent action=new Intent(this,ControlService.class)
+                    .setAction(ControlService.ACTION_LOCAL_STORYBOARD_SERIES)
+                    .putExtra("projectId",activeProject.id)
+                    .putExtra("genre",values[genre.getSelectedItemPosition()])
+                    .putExtra("backend",modes[backend.getSelectedItemPosition()])
+                    .putExtra("direction",direction.getText().toString().trim())
+                    .putExtra("framesPerPair",steps[samples.getSelectedItemPosition()])
+                    .putExtra("batchIndex",batch)
+                    .putExtra("foley",foley.isChecked())
+                    .putExtra("analysisOnly",auditOnly);
+            startForegroundService(action);
+            Toast.makeText(this,
+                    (auditOnly?"Checking original images and masks":"Animating source-owned film")+
+                    " · "+plan.assets.size()+" distinct frames · "+
+                    count+" output motion frames",
+                    Toast.LENGTH_LONG).show();
+            showActivity();
+        }catch(Exception issue){
+            new AlertDialog.Builder(this)
+                    .setTitle("Storyboard engine needs another shot plan")
+                    .setMessage(issue.getMessage()==null?"Source frames unavailable":
+                            issue.getMessage())
+                    .setPositiveButton("OK",null).show();
+        }
+    }
+
     private void storyboardArtworkDialog() {
         if(activeProject==null || activeProject.clips.size()<2) {
             Toast.makeText(this,"Import at least two storyboard images",Toast.LENGTH_LONG).show();
@@ -2495,7 +2632,8 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
             case 1:
                 sections.add(new String[]{"Animate Imported Stills","Animate Stills"});
                 sections.add(new String[]{"Animation Director","Animation Director"});
-                sections.add(new String[]{"Storyboard → Moving Artwork","Storyboard Artwork"});
+                sections.add(new String[]{"Storyboard → Cinematic Animation","Storyboard Studio"});
+                sections.add(new String[]{"Source-keyed fighter artwork (advanced)","Storyboard Artwork"});
                 sections.add(new String[]{"Trace Original Characters","Rig Builder"});
                 sections.add(new String[]{"Render Rigged 2D","Render Rigged 2D"});
                 sections.add(new String[]{"Preview 3D GLB","3D Model Viewer"});
