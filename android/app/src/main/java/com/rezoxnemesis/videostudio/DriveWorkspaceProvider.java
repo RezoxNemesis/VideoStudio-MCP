@@ -134,6 +134,67 @@ public final class DriveWorkspaceProvider {
             progress.onProgress(p, "Archived " + copiedFiles + " item(s) • " + humanBytes(copiedBytes));
         }
 
+        // Archive project-owned, explicitly imported sources as well as
+        // generated output. Old releases only saved project.json and generated
+        // workspace files: their imported image URIs pointed into app-private
+        // /files/imports, which become unreadable after changing package ID.
+        // This prevents that irreversible gap in all future cloud backups.
+        JSONArray unreadableOriginals=new JSONArray();
+        int originalFiles=0;
+        long originalBytes=0;
+        Uri originalFolder=null;
+        File appRoot=context.getFilesDir().getCanonicalFile();
+        String importRoot=new File(appRoot,"imports").getCanonicalPath()+File.separator;
+        String workspaceRoot=projectWorkspace==null?""
+                :projectWorkspace.getCanonicalPath()+File.separator;
+        for(ProjectStore.Asset asset:project.assets) {
+            if(asset.generated || asset.uri==null || asset.uri.trim().isEmpty())continue;
+            String scheme=Uri.parse(asset.uri).getScheme();
+            if(scheme==null)continue;
+            if("file".equals(scheme)) {
+                String absolute;
+                try { absolute=new File(Uri.parse(asset.uri).getPath()).getCanonicalPath(); }
+                catch(Exception e) { unreadableOriginals.put(asset.name);continue; }
+                if(!workspaceRoot.isEmpty() && absolute.startsWith(workspaceRoot)) {
+                    // Already included in the project's generated/media folder.
+                    continue;
+                }
+                if(!absolute.startsWith(importRoot)) {
+                    unreadableOriginals.put(asset.name);continue;
+                }
+            } else if("content".equals(scheme)) {
+                if(!asset.persistedReadAccess){
+                    unreadableOriginals.put(asset.name);continue;
+                }
+            } else {
+                unreadableOriginals.put(asset.name);continue;
+            }
+            try {
+                if(originalFolder==null)originalFolder=ensureDirectory(tree,projectDir,"Originals");
+                String archivedName=safeName(asset.id+"_"+asset.name);
+                Uri destination=ensureFile(tree,originalFolder,archivedName,asset.mime);
+                long count=0;
+                try(InputStream input=new BufferedInputStream(
+                        resolver.openInputStream(Uri.parse(asset.uri)),BUFFER);
+                    OutputStream output=new BufferedOutputStream(requireOutput(destination),BUFFER)) {
+                    byte[] b=new byte[BUFFER];int read;
+                    while((read=input.read(b))!=-1) {
+                        if(Thread.currentThread().isInterrupted())throw new InterruptedException();
+                        output.write(b,0,read);count+=read;
+                    }
+                    output.flush();
+                }
+                if(count<=0 || (asset.sizeBytes>0 && count!=asset.sizeBytes)) {
+                    unreadableOriginals.put(asset.name);continue;
+                }
+                originalBytes+=count;originalFiles++;
+                copiedBytes+=count;copiedFiles++;
+                progress.onProgress(94,"Archived "+originalFiles+
+                        " explicit source file(s) • "+humanBytes(originalBytes));
+            } catch(InterruptedException stop) {throw stop;}
+              catch(Exception unavailable) {unreadableOriginals.put(asset.name);}
+        }
+
         // The Media3 final export is published in MediaStore and therefore
         // does not live in the creative_workspace directory. Archive the one
         // known, VideoStudio-generated output URI explicitly; never query or
@@ -150,6 +211,10 @@ public final class DriveWorkspaceProvider {
         result.put("projectId", project.id);
         result.put("filesWritten", copiedFiles);
         result.put("bytesWritten", copiedBytes);
+        result.put("originalAssetsArchived", originalFiles);
+        result.put("originalAssetBytes", originalBytes);
+        result.put("unavailableOriginalAssets", unreadableOriginals);
+        result.put("allOriginalsArchived", unreadableOriginals.length()==0);
         result.put("finalMp4Archived", exportedBytes>0);
         result.put("finalMp4Bytes", exportedBytes);
         result.put("scope", "single-user-selected-document-tree");
