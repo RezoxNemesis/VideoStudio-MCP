@@ -12,7 +12,7 @@ import static org.junit.Assert.*;
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk=33,manifest=Config.NONE)
 public class NativeRigAuthoringTest {
-    private static JSONArray coords(float[][] coordinates) {
+    private static JSONArray coords(float[][] coordinates) throws Exception {
         JSONArray result = new JSONArray();
         for (float[] point : coordinates) result.put(new JSONArray().put(point[0]).put(point[1]));
         return result;
