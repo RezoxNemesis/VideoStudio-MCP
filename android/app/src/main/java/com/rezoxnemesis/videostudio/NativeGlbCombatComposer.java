@@ -48,6 +48,8 @@ public final class NativeGlbCombatComposer {
             FilamentInstance instance=asset.getInstance();
             if(instance==null)throw new IllegalArgumentException("GLB has no renderable instance");
             animator=instance.getAnimator();
+            if(instance.getSkinCount()<1)
+                throw new IllegalArgumentException("GLB needs actual weighted skeletal skinning");
             if(animator==null||animator.getAnimationCount()<1)
                 throw new IllegalArgumentException("GLB model needs at least one real skeletal animation clip");
             Box bbox=asset.getBoundingBox();
@@ -123,7 +125,8 @@ public final class NativeGlbCombatComposer {
         output.sourcePrompt="gltf3d: real skinned mesh combat with authored GLB animations";
         store.save(output);
 
-        File blackFile=glbFile(blackAsset),whiteFile=glbFile(whiteAsset);
+        File blackFile=glbFile(context,source,blackAsset);
+        File whiteFile=glbFile(context,source,whiteAsset);
         Filament.init();
         Engine engine=null;
         Renderer renderer=null;
@@ -271,17 +274,30 @@ public final class NativeGlbCombatComposer {
         }
     }
 
-    static File glbFile(ProjectStore.Asset asset) throws Exception {
-        if(asset==null||!"model/gltf-binary".equals(asset.mime)||asset.uri==null)
-            throw new IllegalArgumentException("Only VideoStudio-owned GLBs can be rendered");
+    /**
+     * Bind ONLY a registered project asset backed by that project's private
+     * models directory. A forged "file://" URI, path traversal, symlink or
+     * the user's Gallery are never allowed as a hidden model input.
+     */
+    static File glbFile(Context context,ProjectStore.Project project,
+                        ProjectStore.Asset asset) throws Exception {
+        if(context==null||project==null||asset==null||
+                !"model/gltf-binary".equals(asset.mime)||asset.uri==null||
+                project.asset(asset.id)==null)
+            throw new IllegalArgumentException("Only registered VideoStudio GLBs can be rendered");
         Uri uri=Uri.parse(asset.uri);
-        if(!"file".equals(uri.getScheme()))
-            throw new IllegalArgumentException("Import the GLB into private VideoStudio storage first");
-        File f=new File(uri.getPath());
-        if(!f.isFile()||f.length()<20||f.length()>MAX_GLB_BYTES)
+        if(!"file".equals(uri.getScheme())||uri.getPath()==null)
+            throw new IllegalArgumentException("Import GLB to the private VideoStudio project first");
+        File expectedFolder=new File(context.getFilesDir(),
+                "creative_workspace/projects/"+project.id+"/models").getCanonicalFile();
+        File file=new File(uri.getPath()).getCanonicalFile();
+        String canonicalParent=file.getParent();
+        if(canonicalParent==null||!canonicalParent.equals(expectedFolder.getPath()))
+            throw new IllegalArgumentException("3D models must belong to the selected private project");
+        if(!file.isFile()||file.length()<20||file.length()>MAX_GLB_BYTES)
             throw new IllegalArgumentException("GLB asset missing or exceeds the 64 MB limit");
-        FilamentGlbActivity.verifyGlb(f);
-        return f;
+        FilamentGlbActivity.verifyGlb(file);
+        return file;
     }
 
     private static ByteBuffer modelBytes(File f) throws Exception {
