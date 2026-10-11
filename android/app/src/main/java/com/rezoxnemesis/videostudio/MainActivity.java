@@ -949,8 +949,8 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
             if(asset.mime!=null&&(asset.mime.startsWith("video/")||
                     asset.mime.startsWith("image/"))){
                 Button add=studioButton("+ Timeline",()->{
+                    editHistory.checkpoint(activeProject);
                     if(store.appendAssetToTimeline(activeProject,asset.id)){
-                        editHistory.reset(activeProject.id);
                         selectedClip=activeProject.clips.get(activeProject.clips.size()-1);
                         studioTimelinePage=(activeProject.clips.size()-1)/20;
                         studioPlayheadMs=activeProject.outputDurationMs()-selectedClip.outputDurationMs();
@@ -2119,8 +2119,9 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
             return;
         }
         try {
+            if(!"Split".equals(tool)&&!"Trim".equals(tool)&&!"Text".equals(tool))
+                editHistory.checkpoint(activeProject);
             switch (tool) {
-                case "Split":
                     splitClip();
                     return;
                 case "Trim":
@@ -2227,6 +2228,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
             Toast.makeText(this, "Move playback inside the clip before splitting", Toast.LENGTH_SHORT).show();
             return;
         }
+        editHistory.checkpoint(activeProject);
         int index = activeProject.clips.indexOf(selectedClip);
         ProjectStore.Clip second = ProjectStore.Clip.fromJson(selectedClip.toJson());
         second.id = UUID.randomUUID().toString();
@@ -2255,6 +2257,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                         long a = (long) (Float.parseFloat(start.getText().toString()) * 1000);
                         long b = (long) (Float.parseFloat(end.getText().toString()) * 1000);
                         if (b <= a) throw new IllegalArgumentException();
+                        editHistory.checkpoint(activeProject);
                         selectedClip.inMs = Math.max(0, a);
                         selectedClip.outMs = b;
                         store.save(activeProject);
@@ -2278,6 +2281,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                 .setTitle("Clip title")
                 .setView(input)
                 .setPositiveButton("Apply", (d, w) -> {
+                    editHistory.checkpoint(activeProject);
                     selectedClip.title = input.getText().toString().trim();
                     store.save(activeProject);
                     syncProtocolState();
