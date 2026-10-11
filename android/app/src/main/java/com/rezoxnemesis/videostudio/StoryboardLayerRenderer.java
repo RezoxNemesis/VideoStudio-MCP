@@ -43,7 +43,10 @@ public final class StoryboardLayerRenderer implements AutoCloseable {
     private static final class SpritePair {
         final Sprite start,end;
         final float confidence;
-        SpritePair(Sprite a,Sprite b,float c){start=a;end=b;confidence=c;}
+        final StoryboardDeformableSprite deformation;
+        SpritePair(Sprite a,Sprite b,float c,StoryboardDeformableSprite mesh){
+            start=a;end=b;confidence=c;deformation=mesh;
+        }
     }
 
     public StoryboardLayerRenderer(int[] pixelsA,int[] pixelsB,
@@ -64,9 +67,16 @@ public final class StoryboardLayerRenderer implements AutoCloseable {
         last=Bitmap.createBitmap(pixelsB,width,height,Bitmap.Config.ARGB_8888);
         plate=Bitmap.createBitmap(analysis.cleanPlate,width,height,Bitmap.Config.ARGB_8888);
         tracking=analysis;
+        boolean softBodies=this.scene==StoryboardMotionGrammar.SceneKind.ACTION
+                ||this.scene==StoryboardMotionGrammar.SceneKind.COMIC
+                ||this.scene==StoryboardMotionGrammar.SceneKind.PORTRAIT
+                ||this.scene==StoryboardMotionGrammar.SceneKind.ABSTRACT
+                ||action==StoryboardMotionGrammar.Action.SWAY
+                ||action==StoryboardMotionGrammar.Action.FLOAT;
         for(StoryboardLayerIsolation.Track t:analysis.tracks)
             sprites.add(new SpritePair(cutout(pixelsA,t.from),
-                    cutout(pixelsB,t.to),t.confidence));
+                    cutout(pixelsB,t.to),t.confidence,
+                    new StoryboardDeformableSprite(t.from,t.to,width,height,softBodies)));
     }
 
     private Sprite cutout(int[] original,StoryboardLayerIsolation.Region region){
@@ -142,22 +152,23 @@ public final class StoryboardLayerRenderer implements AutoCloseable {
                 StoryboardMotionGrammar.phase(action,t);
         x=Math.max(-.15f,Math.min(1.15f,x));
         y=Math.max(-.15f,Math.min(1.15f,y));
-        if(t<.46f)drawSprite(canvas,pair.start,x,y,targetW,targetH,m,255);
-        else if(t>.54f)drawSprite(canvas,pair.end,x,y,targetW,targetH,m,255);
+        if(t<.46f)drawSprite(canvas,pair,pair.start,x,y,targetW,targetH,m,t,false,255);
+        else if(t>.54f)drawSprite(canvas,pair,pair.end,x,y,targetW,targetH,m,t,true,255);
         else{
             // Narrow, isolated texture handoff: only this ONE moving
             // object transitions between original painted appearances.
             float mix=(t-.46f)/.08f;mix=mix*mix*(3-2*mix);
-            drawSprite(canvas,pair.start,x,y,targetW,targetH,m,
+            drawSprite(canvas,pair,pair.start,x,y,targetW,targetH,m,t,false,
                     Math.round(255*(1-mix)));
-            drawSprite(canvas,pair.end,x,y,targetW,targetH,m,
+            drawSprite(canvas,pair,pair.end,x,y,targetW,targetH,m,t,true,
                     Math.round(255*mix));
         }
     }
 
-    private void drawSprite(Canvas canvas,Sprite sprite,float x,float y,
-                            float targetW,float targetH,
-                            StoryboardMotionGrammar.Motion m,int alpha){
+    private void drawSprite(Canvas canvas,SpritePair pair,Sprite sprite,
+                            float x,float y,float targetW,float targetH,
+                            StoryboardMotionGrammar.Motion m,float t,
+                            boolean endTexture,int alpha){
         if(alpha<=0)return;
         float widthScale=(targetW/sprite.region.width())*m.scale;
         float heightScale=(targetH/sprite.region.height())*m.scale;
@@ -166,7 +177,8 @@ public final class StoryboardLayerRenderer implements AutoCloseable {
         canvas.rotate(m.rotation);
         canvas.scale(widthScale,heightScale);
         paint.setAlpha(Math.max(0,Math.min(255,Math.round(alpha*m.opacity))));
-        canvas.drawBitmap(sprite.bitmap,-sprite.pivotX,-sprite.pivotY,paint);
+        pair.deformation.render(canvas,sprite.bitmap,sprite.pivotX,sprite.pivotY,
+                t,1f,endTexture,paint);
         paint.setAlpha(255);
         canvas.restore();
     }
