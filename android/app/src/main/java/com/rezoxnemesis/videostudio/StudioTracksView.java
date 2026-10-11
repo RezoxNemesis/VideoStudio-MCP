@@ -26,6 +26,7 @@ public final class StudioTracksView extends View {
     private final Paint brush=new Paint(Paint.ANTI_ALIAS_FLAG);
     private final ArrayList<StudioLayer> layers=new ArrayList<>();
     private final Map<String,float[]> waveforms=new HashMap<>();
+    private final Map<String,Float> waveformCoverage=new HashMap<>();
     private long durationMs=1,playheadMs=0;
     private SeekListener callback;
     private ChangeListener change;
@@ -50,9 +51,11 @@ public final class StudioTracksView extends View {
         draggingId="";resize=false;
         invalidate();
     }
-    public void setWaveform(String laneId,float[] amplitudes){
+    public void setWaveform(String laneId,float[] amplitudes,float coverage){
         if(laneId==null||amplitudes==null||amplitudes.length==0)return;
-        waveforms.put(laneId,amplitudes.clone());invalidate();
+        waveforms.put(laneId,amplitudes.clone());
+        waveformCoverage.put(laneId,Math.max(0f,Math.min(1f,coverage)));
+        invalidate();
     }
     private int dp(int value){return Math.round(getResources().getDisplayMetrics().density*value);}
     private float begin(){return dp(56);}
@@ -104,7 +107,10 @@ public final class StudioTracksView extends View {
                     brush.setStrokeWidth(Math.max(1,dp(1)));
                     float mid=top+barHeight*.60f;
                     for(int sample=0;sample<peaks.length;sample++){
-                        float bx=x+dp(2)+(x2-x-dp(4))*(sample+.5f)/peaks.length;
+                        float coverage=waveformCoverage.containsKey(lane.id)
+                                ?waveformCoverage.get(lane.id):1f;
+                        float bx=x+dp(2)+(x2-x-dp(4))*coverage*
+                                (sample+.5f)/peaks.length;
                         float size=Math.min(barHeight*.26f,
                                 Math.max(0f,peaks[sample])*barHeight*.26f);
                         canvas.drawLine(bx,mid-size,bx,mid+size,brush);
