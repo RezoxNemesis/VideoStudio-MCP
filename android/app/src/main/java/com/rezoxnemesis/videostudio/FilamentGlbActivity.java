@@ -53,6 +53,7 @@ public final class FilamentGlbActivity extends Activity
     private final Handler main=new Handler(Looper.getMainLooper());
     private boolean loopActive=false,orbit=false,paused=false;
     private long lastRenderedAt=0;
+    private long animationStartedAt=0;
     private int animationIndex=0;
     private double cameraAngle=0;
 
@@ -249,8 +250,8 @@ public final class FilamentGlbActivity extends Activity
             if(viewer.getAsset()==null)
                 throw new IllegalArgumentException("Filament could not create the model asset");
             viewer.resetToDefaultState();
-            viewer.setAutoPlayAnimations(true);
             paused=false;animationIndex=0;cameraAngle=0;
+            animationStartedAt=0;
             Animator animations=viewer.getAnimator();
             int count=animations==null?0:animations.getAnimationCount();
             status.setText(asset.name+" • real glTF skeletal/PBR model • "+count+
@@ -263,16 +264,15 @@ public final class FilamentGlbActivity extends Activity
     }
     private void togglePlayback(){
         paused=!paused;
-        if(viewer!=null)viewer.setAutoPlayAnimations(!paused);
+        if(!paused)animationStartedAt=0;
     }
     private void nextAnimation(){
         if(viewer==null||viewer.getAnimator()==null)return;
         int count=viewer.getAnimator().getAnimationCount();
         if(count<1)return;
         animationIndex=(animationIndex+1)%count;
-        viewer.setActiveAnimationIndex(animationIndex);
-        viewer.setAutoPlayAnimations(true);
         paused=false;
+        animationStartedAt=0;
         status.setText("Playing actual glTF animation "+(animationIndex+1)+"/"+count+
                 ": "+viewer.getAnimator().getAnimationName(animationIndex));
     }
@@ -295,6 +295,14 @@ public final class FilamentGlbActivity extends Activity
                 double cx=3.5*Math.sin(cameraAngle);
                 double cz=-4+3.5*Math.cos(cameraAngle);
                 viewer.getCamera().lookAt(cx,1.2,cz,0,0,-4,0,1,0);
+            }
+            Animator animator=viewer.getAnimator();
+            if(!paused&&animator!=null&&animator.getAnimationCount()>0){
+                if(animationStartedAt==0)animationStartedAt=frameTimeNanos;
+                float elapsed=(frameTimeNanos-animationStartedAt)/1_000_000_000f;
+                float duration=Math.max(.001f,animator.getAnimationDuration(animationIndex));
+                animator.applyAnimation(animationIndex,elapsed%duration);
+                animator.updateBoneMatrices();
             }
             viewer.render(frameTimeNanos);
         }
