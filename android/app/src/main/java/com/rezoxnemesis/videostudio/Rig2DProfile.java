@@ -121,7 +121,7 @@ public final class Rig2DProfile {
         return j;
     }
 
-    private static JSONArray toPairs(float[][] points) {
+    private static JSONArray toPairs(float[][] points) throws Exception {
         JSONArray a=new JSONArray();
         for(float[] v:points)a.put(new JSONArray().put(v[0]).put(v[1]));
         return a;
