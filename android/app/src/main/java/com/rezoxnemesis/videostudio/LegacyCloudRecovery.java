@@ -280,13 +280,20 @@ public final class LegacyCloudRecovery {
                         rel="Exports/"+a.name;
                         media=entries.get(rel);
                     }
+                    if(media==null) {
+                        // Every future backup includes its explicitly selected
+                        // sources regardless of whether the old URI was a
+                        // file or user-picked content provider URI.
+                        Entry archivedOriginal=entries.get("Originals/"
+                                +safeName(a.id+"_"+a.name));
+                        if(archivedOriginal!=null) {
+                            rel="source_assets/"+a.id;
+                            media=archivedOriginal;
+                        }
+                    }
                     if(media==null && LegacyMigrationRules.isOldImportsFile(a.uri)) {
-                        // Newer VideoStudio cloud archives store every
-                        // explicitly imported source under Originals/asset-id.
-                        Entry archivedOriginal=entries.get("Originals/"+a.id+"_"+a.name);
                         rel="source_assets/"+a.id;
-                        media=archivedOriginal!=null?archivedOriginal
-                                :staged.get(LegacyMigrationRules.sourceStem(a.name));
+                        media=staged.get(LegacyMigrationRules.sourceStem(a.name));
                     }
                     if(media==null) {
                         missing.put(a.name);continue;
@@ -330,6 +337,8 @@ public final class LegacyCloudRecovery {
                     File restored=childFile(staging,rel);
                     if(!restored.isFile()||restored.length()<1)
                         throw new IllegalStateException("Recovered source is incomplete: "+asset.name);
+                    if(asset.sizeBytes>0 && restored.length()!=asset.sizeBytes)
+                        throw new IllegalStateException("Recovered source has the wrong byte length: "+asset.name);
                     asset.uri=Uri.fromFile(childFile(output,rel)).toString();
                     asset.sizeBytes=restored.length();
                     asset.persistedReadAccess=true;
