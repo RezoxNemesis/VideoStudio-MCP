@@ -164,27 +164,50 @@ public final class StoryboardLayerIsolation {
     public static Result annotated(int[] first,int[] last,int width,int height,
                                    List<float[][]> fromPolygons,
                                    List<float[][]> toPolygons) {
+        if(fromPolygons==null||toPolygons==null||
+                fromPolygons.size()!=toPolygons.size()||
+                fromPolygons.size()<1||fromPolygons.size()>MAX_TRACKS)
+            throw new IllegalArgumentException("Supply one to eight paired source masks");
+        ArrayList<boolean[]> from=new ArrayList<>(),to=new ArrayList<>();
+        for(int i=0;i<fromPolygons.size();i++) {
+            from.add(StoryboardCleanPlate.mask(width,height,fromPolygons.get(i)));
+            to.add(StoryboardCleanPlate.mask(width,height,toPolygons.get(i)));
+        }
+        return fromMasks(first,last,width,height,from,to,.97f);
+    }
+
+    /**
+     * Bounded segmentation adapter accepting true per-pixel masks supplied
+     * by manual tracing OR the already-bundled local ML Kit person model.
+     * Never pretend selfie's model can segment arbitrary drawn creatures.
+     */
+    public static Result fromMasks(int[] first,int[] last,int width,int height,
+                                   List<boolean[]> masksA,
+                                   List<boolean[]> masksB,float trust) {
         if(first==null||last==null||width<32||height<32
                 ||(long)width*height>MAX_PIXELS||
                 first.length!=width*height||last.length!=first.length
-                ||fromPolygons==null||toPolygons==null
-                ||fromPolygons.size()!=toPolygons.size()
-                ||fromPolygons.isEmpty()||fromPolygons.size()>MAX_TRACKS)
-            throw new IllegalArgumentException("Supply 1..8 matching original object masks");
+                ||masksA==null||masksB==null
+                ||masksA.size()!=masksB.size()
+                ||masksA.isEmpty()||masksA.size()>MAX_TRACKS
+                ||!Float.isFinite(trust)||trust<0||trust>1)
+            throw new IllegalArgumentException("Supply 1..8 matching source object masks");
         int n=width*height;
         boolean[] occupiedA=new boolean[n],occupiedB=new boolean[n];
         ArrayList<Track> tracks=new ArrayList<>();
-        for(int index=0;index<fromPolygons.size();index++){
-            boolean[] a=StoryboardCleanPlate.mask(width,height,fromPolygons.get(index));
-            boolean[] b=StoryboardCleanPlate.mask(width,height,toPolygons.get(index));
+        for(int index=0;index<masksA.size();index++){
+            boolean[] a=masksA.get(index),b=masksB.get(index);
+            if(a==null||b==null||a.length!=n||b.length!=n)
+                throw new IllegalArgumentException("Mask dimensions differ from the imported artwork");
             Region ra=manualRegion(a,first,width,height);
             Region rb=manualRegion(b,last,width,height);
             if(ra==null||rb==null)throw new IllegalArgumentException(
                     "An illustrated object's mask is empty: "+index);
             for(int p=0;p<n;p++){occupiedA[p]|=a[p];occupiedB[p]|=b[p];}
-            tracks.add(new Track(ra,rb,.97f)); // explicitly source-authored masks
+            tracks.add(new Track(ra,rb,trust));
         }
-        boolean[] hidden=new boolean[n];int[] plate=first.clone();
+        boolean[] hidden=new boolean[n];
+        int[] plate=first.clone();
         int count=0,stable=0;long delta=0;
         for(int p=0;p<n;p++){
             if(!occupiedA[p]&&!occupiedB[p]){
@@ -204,8 +227,10 @@ public final class StoryboardLayerIsolation {
         int[] nearest=nearestUnchanged(hidden,width,height);
         for(int i=0;i<n;i++)if(hidden[i]&&nearest[i]>=0)
             plate[i]=plate[nearest[i]];
-        return new Result(Status.READY,plate,tracks,drift,
-                count/(float)n,0,"Traced source masks supply stable object tracks");
+        return new Result(trust>=.42f?Status.READY:Status.NEEDS_SOURCE_MASKS,
+                plate,tracks,drift,count/(float)n,0,
+                trust>=.42f?"Verified provider supplied source-object alpha masks"
+                    :"Segmentation confidence too low for faithful animation");
     }
 
     private static Region manualRegion(boolean[] mask,int[] image,int w,int h){
