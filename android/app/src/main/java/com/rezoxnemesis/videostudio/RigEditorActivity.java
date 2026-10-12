@@ -2,15 +2,13 @@ package com.rezoxnemesis.videostudio;
 
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.content.Intent;
 import android.graphics.Bitmap;
-import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
 import android.graphics.Color;
-import android.graphics.Matrix;
 import android.graphics.Paint;
 import android.graphics.Path;
 import android.graphics.RectF;
-import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -27,7 +25,6 @@ import android.widget.TextView;
 import android.widget.Toast;
 import org.json.JSONArray;
 import org.json.JSONObject;
-import java.io.InputStream;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -54,8 +51,9 @@ public final class RigEditorActivity extends Activity {
     private int selectedJoint,selectedVertex=-1;
     private String rigId="",expectedRigSha256="";
     private String displayedSourceSha256="",annotationSourceSha256="";
+    private JSONObject readinessSelection;
     private int sourceWidth,sourceHeight,loadGeneration;
-    private boolean imageLoading,saving;
+    private boolean imageLoading,saving,reconcilePendingSave;
     private volatile boolean destroyed;
     private final ExecutorService ownerWorker=Executors.newSingleThreadExecutor();
     private final Handler main=new Handler(Looper.getMainLooper());
@@ -67,6 +65,7 @@ public final class RigEditorActivity extends Activity {
         super.onCreate(state);getWindow().setStatusBarColor(BACKGROUND);getWindow().setNavigationBarColor(BACKGROUND);
         projectStore=new ProjectStore(this);rigStore=new Rig2DProjectStore(this,projectStore);
         project=projectStore.get(getIntent().getStringExtra("projectId"));if(project==null){finish();return;}
+        if(state!=null&&state.containsKey("readinessSelection"))try{readinessSelection=new JSONObject(state.getString("readinessSelection"));}catch(Exception ignored){}
         String assetId=state==null?getIntent().getStringExtra("assetId"):state.getString("assetId");
         selected=project.asset(assetId==null?"":assetId);
         if(!isImage(selected))for(ProjectStore.Asset asset:project.assets)if(isImage(asset)){selected=asset;break;}
@@ -75,6 +74,7 @@ public final class RigEditorActivity extends Activity {
             if(state!=null&&state.containsKey("draft")){
                 applyDraft(state.getString("draft"));expectedSourceUpdatedAt=state.getLong("sourceRevision");expectedRigSha256=state.getString("rigSha","");
                 dirty=state.getBoolean("dirty");restoreHistory(state.getString("undo","[]"),undo);restoreHistory(state.getString("redo","[]"),redo);
+                reconcilePendingSave=state.getBoolean("savePending");
             }else{
                 String requested=getIntent().getStringExtra("rigId");if(requested!=null&&!requested.isEmpty())loadProfile(requested);else chooseUniqueProfile();
             }
@@ -97,6 +97,8 @@ public final class RigEditorActivity extends Activity {
         for(Mode choice:Mode.values())modes.addView(button(choice==Mode.BODY?"Body mask":choice==Mode.BLADE?"Sword mask":choice.name().toLowerCase(),()->{drawing.cancelGesture();mode=choice;selectedVertex=-1;insertVertex=false;updateUi();}),new LinearLayout.LayoutParams(-2,dp(36)));
         modes.addView(button("Fit",()->drawing.fit()),new LinearLayout.LayoutParams(-2,dp(36)));tools.addView(modes);root.addView(tools);
         modes.addView(button("Review legacy source",this::reviewLegacySource),new LinearLayout.LayoutParams(-2,dp(36)));
+        modes.addView(button("Pose diagnostic",this::poseDiagnostic),new LinearLayout.LayoutParams(-2,dp(36)));
+        modes.addView(button("Sequence readiness",this::sequenceReadiness),new LinearLayout.LayoutParams(-2,dp(36)));
         instructions=label("",11);instructions.setMaxLines(2);instructions.setTextColor(ACCENT);root.addView(instructions);
         pointPicker=new Spinner(this);pointPicker.setOnItemSelectedListener(new android.widget.AdapterView.OnItemSelectedListener(){
             @Override public void onItemSelected(android.widget.AdapterView<?> parent,View view,int index,long id){if(pickerUpdating)return;if(mode==Mode.JOINTS)selectedJoint=index;else selectedVertex=index;updateInstruction();drawing.invalidate();}
@@ -120,22 +122,23 @@ public final class RigEditorActivity extends Activity {
     });}
     private void selectImage(ProjectStore.Asset asset,Runnable after){
         if(saving){notice("Wait for the accepted annotation save");return;}final int generation=++loadGeneration;imageLoading=true;drawing.cancelGesture();sourceName.setText("Reading verified original · "+asset.name);
-        final ProjectStore.Project accepted=project;
-        ownerWorker.execute(()->{Bitmap loaded=null;Bitmap[] owned=new Bitmap[1];JSONObject entry=null;String failure=null;try{
-            final JSONObject[] record=new JSONObject[1];loaded=StoryboardSourceManifest.withOwnedSourceSnapshot(getApplicationContext(),accepted,asset.id,(file,source)->{
-                record[0]=source;BitmapFactory.Options options=new BitmapFactory.Options();options.inPreferredConfig=Bitmap.Config.ARGB_8888;options.inSampleSize=1;
-                while(source.getInt("orientedWidth")/options.inSampleSize>960||source.getInt("orientedHeight")/options.inSampleSize>1720)options.inSampleSize*=2;
-                Bitmap bitmap=BitmapFactory.decodeFile(file.getAbsolutePath(),options);if(bitmap==null)throw new IllegalArgumentException("Could not decode original source bytes");owned[0]=bitmap;
-                try{Matrix transform=NativeStoryboardSourceImage.orientationMatrix(source.getInt("exifOrientation"));if(!transform.isIdentity()){Bitmap oriented=Bitmap.createBitmap(bitmap,0,0,bitmap.getWidth(),bitmap.getHeight(),transform,true);if(oriented!=bitmap){bitmap.recycle();bitmap=oriented;owned[0]=oriented;}}return bitmap;}catch(Exception|OutOfMemoryError error){if(!bitmap.isRecycled())bitmap.recycle();throw error;}
-            });entry=record[0];
-        }catch(Exception|OutOfMemoryError error){if(owned[0]!=null&&!owned[0].isRecycled())owned[0].recycle();loaded=null;failure=error.getMessage()==null?"insufficient preview memory":error.getMessage();}
+        final String acceptedProjectId=project.id;
+        ownerWorker.execute(()->{Bitmap loaded=null;JSONObject entry=null;ProjectStore.Project current=null;String failure=null;try{
+            entry=NativeSourceArtworkInspector.inspect(getApplicationContext(),projectStore,new JSONObject().put("projectId",acceptedProjectId).put("assetId",asset.id).put("maxDimension",1024));
+            JSONObject mapping=entry.getJSONObject("previewToOriginalUv");
+            if(mapping.getDouble("scaleX")!=1||mapping.getDouble("scaleY")!=1||mapping.getDouble("offsetX")!=0||mapping.getDouble("offsetY")!=0)throw new IllegalArgumentException("Full-frame original U/V mapping is required for source authoring");
+            loaded=RigWorkbenchImages.decode(entry.getJSONObject("sourceArtworkImage"),1024);
+            current=projectStore.get(acceptedProjectId);
+            if(current==null||current.updatedAt!=entry.getLong("sourceProjectUpdatedAt"))throw new IllegalStateException("Source project changed while reading; reopen the original");
+        }catch(Exception|OutOfMemoryError error){if(loaded!=null&&!loaded.isRecycled())loaded.recycle();loaded=null;failure=error.getMessage()==null?"insufficient preview memory":error.getMessage();}
             final Bitmap ready=loaded;final JSONObject source=entry;final String problem=failure;
+            final ProjectStore.Project accepted=current;
             boolean posted=main.post(()->{if(destroyed||generation!=loadGeneration){if(ready!=null&&!ready.isRecycled())ready.recycle();return;}imageLoading=false;if(problem!=null){notice("Image unavailable: "+problem);updateUi();return;}
-                if(picture!=null&&!picture.isRecycled())picture.recycle();picture=ready;selected=asset;displayedSourceSha256=source.optString("sourceSha256");sourceWidth=source.optInt("orientedWidth");sourceHeight=source.optInt("orientedHeight");newDraft();drawing.fit();after.run();updateUi();
+                if(picture!=null&&!picture.isRecycled())picture.recycle();picture=ready;project=accepted;selected=accepted.asset(asset.id);displayedSourceSha256=source.optString("sourceSha256");sourceWidth=source.optInt("orientedWidth");sourceHeight=source.optInt("orientedHeight");newDraft();drawing.fit();after.run();updateUi();
             });if(!posted&&ready!=null&&!ready.isRecycled())ready.recycle();
         });
     }
-    private void newDraft(){rigId=UUID.randomUUID().toString();expectedRigSha256="";expectedSourceUpdatedAt=project.updatedAt;annotationSourceSha256=displayedSourceSha256;joints.clear();outline.clear();swordOutline.clear();swordHilt=swordTip=null;transparent=false;dirty=false;undo.clear();redo.clear();selectedJoint=0;selectedVertex=-1;mode=Mode.JOINTS;}
+    private void newDraft(){rigId=UUID.randomUUID().toString();expectedRigSha256="";reconcilePendingSave=false;expectedSourceUpdatedAt=project.updatedAt;annotationSourceSha256=displayedSourceSha256;joints.clear();outline.clear();swordOutline.clear();swordHilt=swordTip=null;transparent=false;dirty=false;undo.clear();redo.clear();selectedJoint=0;selectedVertex=-1;mode=Mode.JOINTS;}
     private List<Rig2DProfile> matchingProfiles(){ArrayList<Rig2DProfile> result=new ArrayList<>();for(Rig2DProfile rig:rigStore.list(project.id))if(selected.id.equals(rig.sourceAssetId)&&rig.black==black)result.add(rig);result.sort(Comparator.comparing(rig->rig.id));return result;}
     private void chooseUniqueProfile(){List<Rig2DProfile> profiles=matchingProfiles();try{if(profiles.size()==1)loadProfile(profiles.get(0).id);else if(profiles.size()>1)profileChoices(profiles);}catch(Exception error){notice(error.getMessage());}updateUi();}
     private void switchActor(boolean actor){if(black==actor)return;confirmDiscard(()->{drawing.cancelGesture();black=actor;newDraft();chooseUniqueProfile();});}
@@ -145,7 +148,7 @@ public final class RigEditorActivity extends Activity {
     private void loadProfile(String id)throws Exception{
         JSONObject binding=rigStore.captureBinding(project.id,id);Rig2DProfile rig=rigStore.loadVerified(project.id,id,binding.getString("sha256"));
         if(!selected.id.equals(rig.sourceAssetId))throw new IllegalArgumentException("This profile belongs to another source frame");
-        drawing.cancelGesture();applyDraft(rig.toJson().put("rigId",rig.id).toString());black=rig.black;expectedRigSha256=binding.getString("sha256");expectedSourceUpdatedAt=project.updatedAt;dirty=false;undo.clear();redo.clear();selectedJoint=0;mode=Mode.JOINTS;updateUi();
+        drawing.cancelGesture();applyDraft(rig.toJson().put("rigId",rig.id).toString());black=rig.black;expectedRigSha256=binding.getString("sha256");reconcilePendingSave=false;expectedSourceUpdatedAt=project.updatedAt;dirty=false;undo.clear();redo.clear();selectedJoint=0;mode=Mode.JOINTS;updateUi();
     }
     private void confirmDiscard(Runnable action){if(imageLoading||saving){notice("Wait for the accepted source operation");return;}if(!dirty){action.run();return;}new AlertDialog.Builder(this).setTitle("Leave this unsaved annotation draft?").setMessage("Saved profiles and original images remain unchanged. Save first to retain these edits.").setPositiveButton("Leave draft",(dialog,which)->action.run()).setNegativeButton("Keep editing",null).show();}
 
@@ -185,10 +188,14 @@ public final class RigEditorActivity extends Activity {
     private void saveRig(){
         if(imageLoading||saving)return;drawing.cancelGesture();if(picture==null){notice("The original image must be readable before saving source marks");return;}if(markedJoints()!=16||(!transparent&&outline.size()<3)){notice("Mark all sixteen named source joints and a body outline first");return;}
         if(!annotationSourceSha256.isEmpty()&&!annotationSourceSha256.equals(displayedSourceSha256)){notice("Saved marks bind different source bytes. Create a new profile and mark this original image again.");return;}
-        try{JSONObject request=new JSONObject(draft());if(swordOutline.isEmpty())request.remove("swordOutline");final Rig2DProfile profile=NativeRigAuthoring.parse(project.id,selected.id,request);final long revision=expectedSourceUpdatedAt;final String expected=expectedRigSha256;saving=true;sourceName.setText("Saving exact actor annotation · "+rigId);
-            ownerWorker.execute(()->{JSONObject receipt=null;String problem=null;try{receipt=rigStore.saveWithBinding(profile,revision,expected);}catch(Exception|OutOfMemoryError error){problem=error.getMessage()==null?"insufficient memory":error.getMessage();}
+        try{JSONObject request=new JSONObject(draft());if(swordOutline.isEmpty())request.remove("swordOutline");final Rig2DProfile profile=NativeRigAuthoring.parse(project.id,selected.id,request);final long revision=expectedSourceUpdatedAt;final String expected=expectedRigSha256;final boolean reconcile=reconcilePendingSave;saving=true;sourceName.setText("Saving exact actor annotation · "+rigId);
+            ownerWorker.execute(()->{JSONObject receipt=null;String problem=null;try{
+                String acceptedExpected=expected;
+                if(reconcile)try{JSONObject binding=rigStore.captureBinding(profile.projectId,profile.id);Rig2DProfile published=rigStore.loadVerified(profile.projectId,profile.id,binding.getString("sha256"));if(Rig2DProjectStore.sha256(profile).equals(Rig2DProjectStore.sha256(published)))acceptedExpected=binding.getString("sha256");}catch(Exception unavailable){/* A missing or different publication retains the original CAS expectation. */}
+                receipt=rigStore.saveWithBinding(profile,revision,acceptedExpected);
+            }catch(Exception|OutOfMemoryError error){problem=error.getMessage()==null?"insufficient memory":error.getMessage();}
                 final JSONObject saved=receipt;final String failure=problem;main.post(()->{if(destroyed)return;saving=false;if(failure!=null){notice("Annotation not saved: "+failure+". Your draft is retained.");updateUi();return;}
-                    expectedRigSha256=saved.optString("sha256");dirty=false;undo.clear();redo.clear();notice("Actor annotation saved to "+profile.id+". Contact and cinematic evidence still require admission.");try{updateUi();}catch(RuntimeException|OutOfMemoryError refresh){sourceName.setText("Saved actor annotation · reopen to refresh");drawing.setEnabled(false);}
+                    expectedRigSha256=saved.optString("sha256");reconcilePendingSave=false;dirty=false;undo.clear();redo.clear();notice("Actor annotation saved to "+profile.id+". Contact and cinematic evidence still require admission.");try{updateUi();}catch(RuntimeException|OutOfMemoryError refresh){sourceName.setText("Saved actor annotation · reopen to refresh");drawing.setEnabled(false);}
                 });
             });
         }catch(Exception error){notice("Annotation not saved: "+error.getMessage()+". Your draft is retained.");}
@@ -196,8 +203,27 @@ public final class RigEditorActivity extends Activity {
     private void reviewLegacySource(){if(imageLoading||saving)return;if(!annotationSourceSha256.isEmpty()){notice(annotationSourceSha256.equals(displayedSourceSha256)?"This draft already binds the displayed source bytes":"Existing marks bind different bytes; start a new source profile");return;}
         new AlertDialog.Builder(this).setTitle("Review existing source marks").setMessage("Inspect all sixteen named joints, the actor boundary, sword ownership, hilt, tip and original sword polygon against this displayed original. Hidden anatomy must be left unmarked. This records your explicit source review; it does not approve motion quality.").setPositiveButton("I reviewed these marks",(dialog,which)->changeDraft(()->annotationSourceSha256=displayedSourceSha256)).setNegativeButton("Keep unbound",null).show();}
     private void contactDialog(){if(imageLoading||saving)return;drawing.cancelGesture();StoryboardContactEditorDialog.show(this,projectStore,rigStore,project.id,selected.id);}
+    private void poseDiagnostic(){
+        drawing.cancelGesture();if(dirty){notice("Save or undo source-rest edits before testing this exact saved profile");return;}
+        if(expectedRigSha256.isEmpty()){notice("Save source actor annotations before opening a pose diagnostic");return;}
+        startActivity(new Intent(this,RigPoseDiagnosticActivity.class).putExtra("projectId",project.id).putExtra("rigId",rigId).putExtra("expectedRigSha256",expectedRigSha256));
+    }
+    private void sequenceReadiness(){
+        drawing.cancelGesture();try{
+            JSONObject selection=readinessSelection==null?new JSONObject():new JSONObject(readinessSelection.toString());String programId=getIntent().getStringExtra("programId");
+            if(readinessSelection!=null){RigSequenceReadinessDialog.show(this,projectStore,project.id,selection,this::openMissingActor);return;}
+            if(programId!=null&&!programId.isEmpty()){selection.put("programId",programId);String sha=getIntent().getStringExtra("expectedProgramSha256");if(sha!=null&&!sha.isEmpty())selection.put("expectedProgramSha256",sha);}
+            else{String raw=getIntent().getStringExtra("assetIds");if(raw==null)raw=getIntent().getStringExtra("sourceAssetIds");if(raw!=null)selection.put("assetIds",new JSONArray(raw));}
+            RigSequenceReadinessDialog.show(this,projectStore,project.id,selection,this::openMissingActor);
+        }catch(Exception error){notice("Source sequence unavailable: "+error.getMessage());}
+    }
+    private void openMissingActor(String assetId,boolean actorBlack,JSONObject order){readinessSelection=order==null?new JSONObject():order;confirmDiscard(()->{
+        ProjectStore.Project fresh=projectStore.get(project.id);ProjectStore.Asset asset=fresh==null?null:fresh.asset(assetId);
+        if(!isImage(asset)){notice("This exact ordered source is unavailable; originals and drafts are retained");return;}
+        project=fresh;selectImage(asset,()->{black=actorBlack;chooseUniqueProfile();});
+    });}
     private void notice(String message){Toast.makeText(this,message==null?"Annotation operation unavailable":message,Toast.LENGTH_LONG).show();}
-    @Override protected void onSaveInstanceState(Bundle state){super.onSaveInstanceState(state);try{drawing.cancelGesture();state.putString("draft",draft());state.putString("assetId",selected.id);state.putLong("sourceRevision",expectedSourceUpdatedAt);state.putString("rigSha",expectedRigSha256);state.putBoolean("dirty",dirty);state.putString("undo",new JSONArray(undo).toString());state.putString("redo",new JSONArray(redo).toString());}catch(Exception error){notice("Draft state could not be retained");}}
+    @Override protected void onSaveInstanceState(Bundle state){super.onSaveInstanceState(state);try{if(selected!=null)state.putString("assetId",selected.id);if(readinessSelection!=null)state.putString("readinessSelection",readinessSelection.toString());if(drawing==null||picture==null||rigId.isEmpty()||displayedSourceSha256.isEmpty())return;drawing.cancelGesture();state.putString("draft",draft());state.putLong("sourceRevision",expectedSourceUpdatedAt);state.putString("rigSha",expectedRigSha256);state.putBoolean("dirty",dirty);state.putBoolean("savePending",saving||reconcilePendingSave);state.putString("undo",new JSONArray(undo).toString());state.putString("redo",new JSONArray(redo).toString());}catch(Exception error){notice("Draft state could not be retained");}}
     private static void restoreHistory(String text,ArrayDeque<String> target)throws Exception{JSONArray values=new JSONArray(text);target.clear();for(int index=Math.max(0,values.length()-32);index<values.length();index++)target.addLast(values.getString(index));}
     @Override protected void onDestroy(){destroyed=true;loadGeneration++;if(drawing!=null)drawing.cancelGesture();if(picture!=null&&!picture.isRecycled())picture.recycle();ownerWorker.shutdown();super.onDestroy();}
 

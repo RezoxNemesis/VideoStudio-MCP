@@ -40,6 +40,15 @@ public final class Rig2DProjectStore {
     }
     /** Exact publication receipt; another writer cannot be acknowledged as this draft. Worker-only. */
     public JSONObject saveWithBinding(Rig2DProfile rig,long expectedSourceUpdatedAt,String expectedRigSha256) throws Exception {
+        return publishWithBinding(rig,expectedSourceUpdatedAt,expectedRigSha256,false,false);
+    }
+    /** Only the persisted batch plan may authorize identical accepted-profile replay. */
+    JSONObject saveBatchWithBinding(Rig2DProfile rig,long expectedSourceUpdatedAt,String expectedRigSha256,
+                                   boolean replayAllowed,boolean requireAccepted) throws Exception {
+        return publishWithBinding(rig,expectedSourceUpdatedAt,expectedRigSha256,replayAllowed,requireAccepted);
+    }
+    private JSONObject publishWithBinding(Rig2DProfile rig,long expectedSourceUpdatedAt,String expectedRigSha256,
+                                         boolean replayAllowed,boolean requireAccepted) throws Exception {
         if(rig==null)throw new IllegalArgumentException("Rig required");
         Rig2DProfile frozen=Rig2DProfile.fromJson(rig.toJson());
         String expected=digestArgument(expectedRigSha256);byte[] data=bytes(frozen.toJson());
@@ -61,15 +70,87 @@ public final class Rig2DProjectStore {
                 File dir=directory(frozen.projectId,"rigs",true),target=new File(dir,frozen.id+".json");requirePlainChild(target);
                 if(target.exists()) {
                     Rig2DProfile old=readRig(current,target,frozen.id);
+                    if(replayAllowed&&sha256(old).equals(sha256(frozen)))return binding(old).put("replayed",true);
+                    if(requireAccepted)throw new IllegalStateException("SOURCE_RIG_CHANGED: accepted batch profile changed");
                     requireExpected(expected,sha256(old),"SOURCE_RIG_CHANGED");
                     if(!old.sourceAssetId.equals(frozen.sourceAssetId)||old.black!=frozen.black)
                         throw new IllegalArgumentException("Existing rig source and actor ownership cannot change");
                 } else {
+                    if(requireAccepted)throw new IllegalStateException("SOURCE_RIG_CHANGED: accepted batch profile no longer exists");
                     if(!expected.isEmpty())throw new IllegalStateException("SOURCE_RIG_CHANGED: profile no longer exists");
                     if(profileCount(dir)>=MAX_PROFILES)throw new IllegalArgumentException("Project rig limit is 100");
                 }
                 JSONObject receipt=binding(frozen);
-                writeAtomic(target,data);return receipt;
+                writeAtomic(target,data);return replayAllowed?receipt.put("replayed",false):receipt;
+            }
+        });
+    }
+    /** Validate every batch source and profile before its journal or any profile is published. */
+    void prevalidateBatch(Rig2DProfile[] drafts,String[] expected,boolean[] replayAllowed,
+                          boolean[] requireAccepted,long revision,String batchId) throws Exception {
+        checkedId(batchId);
+        if(drafts==null||drafts.length<1||drafts.length>8||expected.length!=drafts.length
+                ||replayAllowed.length!=drafts.length||requireAccepted.length!=drafts.length)
+            throw new IllegalArgumentException("A bounded complete batch is required");
+        ProjectStore.Project snapshot=project(drafts[0].projectId);
+        if(snapshot.updatedAt!=revision)throw new IllegalStateException("SOURCE_PROJECT_CHANGED: reopen the source before saving annotations");
+        java.util.Map<String,String> metadata=new java.util.HashMap<>(),sources=new java.util.HashMap<>();
+        java.util.Set<String> ids=new java.util.HashSet<>(),actors=new java.util.HashSet<>();
+        for(int index=0;index<drafts.length;index++) {
+            Rig2DProfile rig=drafts[index];requireSource(snapshot,rig);bytes(rig.toJson());digestArgument(expected[index]);
+            if(rig.sourceSha256==null)throw new IllegalArgumentException("Batch sourceSha256 is required");
+            if(!ids.add(rig.id)||!actors.add(rig.sourceAssetId+":"+rig.black))throw new IllegalArgumentException("Duplicate rig or source actor in batch");
+            ProjectStore.Asset asset=snapshot.asset(rig.sourceAssetId);
+            if(!sources.containsKey(asset.id)) {
+                metadata.put(asset.id,canonicalJson(asset.toJson()));
+                sources.put(asset.id,StoryboardSourceManifest.captureSource(context,asset).getString("sourceSha256"));
+            }
+            if(!rig.sourceSha256.equals(sources.get(asset.id)))throw new IllegalStateException("SOURCE_IMAGE_CHANGED: annotations belong to different image bytes");
+        }
+        projects.guardedProject(snapshot.id,revision,current->{
+            for(Rig2DProfile rig:drafts) {
+                requireSource(current,rig);
+                if(!metadata.get(rig.sourceAssetId).equals(canonicalJson(current.asset(rig.sourceAssetId).toJson())))
+                    throw new IllegalStateException("SOURCE_IMAGE_CHANGED: registered source metadata changed before batch validation");
+            }
+            synchronized(PROFILE_LOCK) {
+                File dir=directory(current.id,"rigs",false);int count=dir.exists()?profileCount(dir):0;
+                for(int index=0;index<drafts.length;index++) {
+                    Rig2DProfile rig=drafts[index];File target=new File(dir,rig.id+".json");requirePlainChild(target);
+                    if(target.exists()) {
+                        Rig2DProfile old=readRig(current,target,rig.id);String actual=sha256(old);
+                        if(replayAllowed[index]&&actual.equals(sha256(rig)))continue;
+                        if(requireAccepted[index])throw new IllegalStateException("SOURCE_RIG_CHANGED: accepted batch profile changed");
+                        requireExpected(expected[index],actual,"SOURCE_RIG_CHANGED");
+                        if(!old.sourceAssetId.equals(rig.sourceAssetId)||old.black!=rig.black)
+                            throw new IllegalArgumentException("Existing rig source and actor ownership cannot change");
+                    } else {
+                        if(requireAccepted[index]||!expected[index].isEmpty())throw new IllegalStateException("SOURCE_RIG_CHANGED: profile no longer exists");
+                        count++;
+                    }
+                }
+                if(count>MAX_PROFILES)throw new IllegalArgumentException("Project rig limit is 100");
+                File batches=directory(current.id,"rig_batches",false),record=new File(batches,batchId+".json");requirePlainChild(record);
+                if(!record.exists()&&batches.exists()&&profileCount(batches)>=256)throw new IllegalArgumentException("Project rig batch limit is 256");
+                return null;
+            }
+        });
+    }
+    /** Private durable batch checkpoints use the same source-writer -> file-lock ordering. */
+    JSONObject readBatchRecord(String projectId,String batchId) throws Exception {
+        checkedId(batchId);project(projectId);
+        synchronized(PROFILE_LOCK) {
+            File target=new File(directory(projectId,"rig_batches",false),batchId+".json");requirePlainChild(target);
+            return target.exists()?readObject(target):null;
+        }
+    }
+    void writeBatchRecord(String projectId,long revision,String batchId,JSONObject record) throws Exception {
+        checkedId(batchId);byte[] data=bytes(record);
+        projects.guardedProject(projectId,revision,current->{
+            synchronized(PROFILE_LOCK) {
+                File dir=directory(current.id,"rig_batches",true),target=new File(dir,batchId+".json");requirePlainChild(target);
+                if(!target.exists()&&profileCount(dir)>=256)throw new IllegalArgumentException("Project rig batch limit is 256");
+                writeAtomic(target,data);return null;
             }
         });
     }

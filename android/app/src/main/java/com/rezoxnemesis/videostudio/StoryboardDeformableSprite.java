@@ -100,122 +100,158 @@ public final class StoryboardDeformableSprite {
         }
     }
 
+    /** A raster in original crop coordinates; padding never changes the source scale. */
+    public static final class MaterialFrame {
+        public final Bitmap bitmap;
+        public final int originX,originY,originalWidth,originalHeight;
+        private MaterialFrame(Bitmap bitmap,int x,int y,int width,int height){
+            this.bitmap=bitmap;originX=x;originY=y;
+            originalWidth=width;originalHeight=height;
+        }
+    }
+
+    /** Compatibility bitmap view; renderers must use deformMaterial for its origin. */
+    public Bitmap deformBitmap(Bitmap source,float t,boolean endTexture,float amount){
+        return deformMaterial(source,t,endTexture,amount).bitmap;
+    }
+
     /**
-     * Portable CPU deformation that returns actual source-textured ARGB
-     * pixels. Unlike Canvas.drawBitmap with nested clipping/transforms,
-     * this works identically in Android hardware, Android software and
-     * Robolectric's screenshot renderer.
-     *
-     * Each horizontal row bends in response to the two REAL outlined
-     * source bodies. No procedural replacement geometry is introduced.
+     * Rasterize a continuous mesh of the actual source crop into its measured
+     * destination bounds. Inverse sampling inside the old crop discarded edge
+     * paint whenever the field moved outward. Every source triangle is now
+     * represented, with no invented pixels beyond its original alpha mask.
+     * This is a noncinematic source-deformation preview, not anatomical rigging.
      */
-    public Bitmap deformBitmap(Bitmap source,float t,boolean endTexture,
-                               float amount) {
-        if(source==null||!Float.isFinite(t)||t<0||t>1||
+    public MaterialFrame deformMaterial(Bitmap source,float t,boolean endTexture,
+                                        float amount){
+        if(source==null||source.isRecycled()||!Float.isFinite(t)||t<0||t>1||
                 !Float.isFinite(amount)||amount<0||amount>1)
             throw new IllegalArgumentException("Invalid source-texture deformation");
-        if(!deformable||amount==0||t<=0||t>=1)return source;
         int width=source.getWidth(),height=source.getHeight();
         if(width<1||height<1||(long)width*height>720L*1280L)
             throw new IllegalArgumentException("Deformable source object exceeds mobile budget");
-        int[] original=new int[width*height],warped=new int[original.length];
+        if(!deformable||amount==0||t<=0||t>=1)
+            return new MaterialFrame(source,0,0,width,height);
+        float[] vertices=new float[(MESH_X+1)*(MESH_Y+1)*2];
+        float strength=amount;
+        boolean safe=false;
+        // Sparse silhouette rows can ask neighboring mesh cells to cross.
+        // Reduce the bounded field while retaining nonzero deformation;
+        // never clamp source sampling or replace the source with a still.
+        for(int attempt=0;attempt<9;attempt++){
+            positionMesh(vertices,width,height,t,endTexture,strength);
+            if(positiveCells(vertices,width,height)){safe=true;break;}
+            strength*=.5f;
+        }
+        if(!safe)throw new IllegalStateException(
+                "Source deformation folds its material mesh; provide authored source masks/rigs");
+        float minX=Float.POSITIVE_INFINITY,minY=Float.POSITIVE_INFINITY;
+        float maxX=Float.NEGATIVE_INFINITY,maxY=Float.NEGATIVE_INFINITY;
+        for(int i=0;i<vertices.length;i+=2){
+            minX=Math.min(minX,vertices[i]);maxX=Math.max(maxX,vertices[i]);
+            minY=Math.min(minY,vertices[i+1]);maxY=Math.max(maxY,vertices[i+1]);
+        }
+        int left=(int)Math.floor(minX)-1,top=(int)Math.floor(minY)-1;
+        int right=(int)Math.ceil(maxX)+1,bottom=(int)Math.ceil(maxY)+1;
+        int outWidth=right-left,outHeight=bottom-top;
+        if(outWidth<1||outHeight<1||outWidth>width*3+4||outHeight>height*3+4||
+                (long)outWidth*outHeight>4L*720*1280)
+            throw new IllegalStateException("Source deformation exceeds bounded raster budget");
+        int[] original=new int[width*height],warped=new int[outWidth*outHeight];
         source.getPixels(original,0,width,0,0,width,height);
-        // A/B silhouettes converge onto the same intermediate contour.
-        // A sine envelope returned every texture to its original pose at
-        // the handoff, making the fighter visually freeze then snap.
-        // Instead, the start texture progresses toward B and the target
-        // texture progresses back toward A, at the exact shot time.
+        for(int i=0;i<vertices.length;i+=2){vertices[i]-=left;vertices[i+1]-=top;}
+        for(int row=0;row<MESH_Y;row++)for(int col=0;col<MESH_X;col++){
+            int a=(row*(MESH_X+1)+col)*2,b=a+2;
+            int d=a+(MESH_X+1)*2,c=d+2;
+            float x0=col*width/(float)MESH_X,x1=(col+1)*width/(float)MESH_X;
+            float y0=row*height/(float)MESH_Y,y1=(row+1)*height/(float)MESH_Y;
+            rasterTriangle(vertices,a,b,c,x0,y0,x1,y0,x1,y1,
+                    original,width,height,warped,outWidth,outHeight);
+            rasterTriangle(vertices,a,c,d,x0,y0,x1,y1,x0,y1,
+                    original,width,height,warped,outWidth,outHeight);
+        }
+        return new MaterialFrame(Bitmap.createBitmap(warped,outWidth,outHeight,
+                Bitmap.Config.ARGB_8888),left,top,width,height);
+    }
+
+    private void positionMesh(float[] vertices,int width,int height,float t,
+                              boolean endTexture,float amount){
         float secondary=4f*t*(1f-t)*amount;
         float[] limb=new float[2];
-        for(int y=0;y<height;y++){
-            float v=(y+.5f)/height;
-            int row=Math.min(MESH_Y,Math.round(v*MESH_Y));
+        for(int row=0;row<=MESH_Y;row++){
+            float v=row/(float)MESH_Y,y=v*height;
             float srcL=endTexture?targetLeft[row]:startLeft[row];
             float srcR=endTexture?targetRight[row]:startRight[row];
             float wantedL=startLeft[row]+(targetLeft[row]-startLeft[row])*t;
             float wantedR=startRight[row]+(targetRight[row]-startRight[row])*t;
             float scaleX=1f+(Math.max(.68f,Math.min(1.45f,
-                    Math.max(.06f,wantedR-wantedL)/
-                    Math.max(.06f,srcR-srcL)))-1f)*amount;
+                    Math.max(.06f,wantedR-wantedL)/Math.max(.06f,srcR-srcL)))-1f)*amount;
             float offsetX=((wantedL+wantedR)*.5f-
                     (srcL+srcR)*.5f*scaleX)*width*amount;
             float sway=(float)Math.sin(v*4.2+t*3.1)*secondary*width*.0025f;
-            for(int x=0;x<width;x++){
-                float u=(x+.5f)/width;
-                int col=Math.min(MESH_X,Math.round(u*MESH_X));
+            for(int col=0;col<=MESH_X;col++){
+                float u=col/(float)MESH_X,x=u*width;
                 float srcT=endTexture?targetTop[col]:startTop[col];
                 float srcB=endTexture?targetBottom[col]:startBottom[col];
                 float wantedT=startTop[col]+(targetTop[col]-startTop[col])*t;
                 float wantedB=startBottom[col]+(targetBottom[col]-startBottom[col])*t;
                 float scaleY=1f+(Math.max(.73f,Math.min(1.32f,
-                        Math.max(.07f,wantedB-wantedT)/
-                        Math.max(.07f,srcB-srcT)))-1f)*amount;
+                        Math.max(.07f,wantedB-wantedT)/Math.max(.07f,srcB-srcT)))-1f)*amount;
                 float offsetY=((wantedT+wantedB)*.5f-
                         (srcT+srcB)*.5f*scaleY)*height*amount;
                 sourceArticulation.shift(u,v,t,endTexture,action,limb);
-                int sx=Math.round((x-offsetX-sway)/scaleX-limb[0]*width*amount);
-                int sy=Math.round((y-offsetY)/scaleY-limb[1]*height*amount);
-                if(sx<0||sx>=width||sy<0||sy>=height)continue;
-                warped[y*width+x]=original[sy*width+sx];
+                int at=(row*(MESH_X+1)+col)*2;
+                vertices[at]=x*scaleX+offsetX+sway+limb[0]*width*amount;
+                vertices[at+1]=y*scaleY+offsetY+limb[1]*height*amount;
             }
         }
-        return Bitmap.createBitmap(warped,width,height,Bitmap.Config.ARGB_8888);
     }
 
-    /**
-     * Render fully-masked source artwork with optional per-row spring/wind
-     * deformation, never a new procedural character.
-     */
+    private static boolean positiveCells(float[] vertices,int width,int height){
+        for(float coordinate:vertices)if(!Float.isFinite(coordinate))return false;
+        float minimum=width*(float)height/(MESH_X*MESH_Y)*.02f;
+        for(int row=0;row<MESH_Y;row++)for(int col=0;col<MESH_X;col++){
+            int a=(row*(MESH_X+1)+col)*2,b=a+2;
+            int d=a+(MESH_X+1)*2,c=d+2;
+            if(area(vertices,a,b,c)<minimum||area(vertices,a,c,d)<minimum)return false;
+        }
+        return true;
+    }
+    private static float area(float[] v,int a,int b,int c){
+        return (v[b]-v[a])*(v[c+1]-v[a+1])-(v[b+1]-v[a+1])*(v[c]-v[a]);
+    }
+
+    private static void rasterTriangle(float[] v,int a,int b,int c,
+            float ax,float ay,float bx,float by,float cx,float cy,
+            int[] source,int width,int height,int[] output,int outWidth,int outHeight){
+        float xa=v[a],ya=v[a+1],xb=v[b],yb=v[b+1],xc=v[c],yc=v[c+1];
+        float denominator=area(v,a,b,c);
+        int left=Math.max(0,(int)Math.floor(Math.min(xa,Math.min(xb,xc))));
+        int right=Math.min(outWidth-1,(int)Math.ceil(Math.max(xa,Math.max(xb,xc))));
+        int top=Math.max(0,(int)Math.floor(Math.min(ya,Math.min(yb,yc))));
+        int bottom=Math.min(outHeight-1,(int)Math.ceil(Math.max(ya,Math.max(yb,yc))));
+        for(int y=top;y<=bottom;y++)for(int x=left;x<=right;x++){
+            float px=x+.5f,py=y+.5f;
+            float wa=((xb-px)*(yc-py)-(yb-py)*(xc-px))/denominator;
+            float wb=((xc-px)*(ya-py)-(yc-py)*(xa-px))/denominator;
+            float wc=1-wa-wb;
+            if(wa<-.00001f||wb<-.00001f||wc<-.00001f)continue;
+            int sx=(int)Math.floor(wa*ax+wb*bx+wc*cx);
+            int sy=(int)Math.floor(wa*ay+wb*by+wc*cy);
+            if(sx<0||sx>=width||sy<0||sy>=height)continue;
+            output[y*outWidth+x]=source[sy*width+sx];
+        }
+    }
+
+    /** Render the complete bounded source material at its original crop pivot. */
     public void render(Canvas canvas,Bitmap pixels,float pivotX,float pivotY,
-                       float t,float intensity,boolean usingEndTexture,
-                       Paint paint){
-        if(canvas==null||pixels==null||paint==null||
-                t<0||t>1||!Float.isFinite(t))
+                       float t,float intensity,boolean usingEndTexture,Paint paint){
+        if(canvas==null||paint==null||!Float.isFinite(pivotX)||!Float.isFinite(pivotY)||
+                !Float.isFinite(intensity))
             throw new IllegalArgumentException("Untrusted deformable storyboard frame");
-        if(!deformable||intensity<=.001f){
-            canvas.drawBitmap(pixels,-pivotX,-pivotY,paint);
-            return;
-        }
-        int w=pixels.getWidth(),h=pixels.getHeight();
-        float envelope=(float)Math.sin(Math.PI*t);
-        for(int row=0;row<MESH_Y;row++){
-            int y0=(int)(row*h/(float)MESH_Y);
-            int y1=(int)((row+1)*h/(float)MESH_Y);
-            if(row==MESH_Y-1)y1=h;
-            if(y1<=y0)continue;
-            float v=(row+.5f)/MESH_Y;
-            float lA=usingEndTexture?targetLeft[row]:startLeft[row],
-                  rA=usingEndTexture?targetRight[row]:startRight[row];
-            float lWanted=startLeft[row]+
-                    (targetLeft[row]-startLeft[row])*t;
-            float rWanted=startRight[row]+
-                    (targetRight[row]-startRight[row])*t;
-            float observedSpan=Math.max(.03f,rA-lA);
-            float desiredSpan=Math.max(.03f,rWanted-lWanted);
-            // Preserve the source texture while allowing modest
-            // illustrated-body contour changes. Extreme remeshing must
-            // use traced multi-joint art or a real neural motion model.
-            float scaleX=Math.max(.75f,Math.min(1.30f,
-                    1+(desiredSpan/observedSpan-1)*intensity));
-            float targetLeftPixel=lWanted*w-lA*w*scaleX;
-            float bend=(float)Math.sin(v*4.5+t*5)*envelope
-                    *.009f*w*intensity;
-            float bob=(float)Math.sin(v*5+t*6)*envelope
-                    *.011f*h*intensity;
-            // Canvas.drawBitmap(Bitmap, Rect, RectF, Paint) can be a no-op
-            // in some Android software rendering backends used for native
-            // unit tests. Render each real source-texture strip with the
-            // consistently supported bitmap(x,y) operation instead.
-            // The local clip is applied AFTER the transform, so only this
-            // strip is visible and no duplicate full figure is drawn.
-            float stripHeight=y1-y0;
-            canvas.save();
-            canvas.translate(targetLeftPixel-pivotX+bend,
-                    y0-pivotY+bob);
-            canvas.scale(scaleX,1.0f+.55f/stripHeight);
-            canvas.clipRect(0,0,w,stripHeight);
-            canvas.drawBitmap(pixels,0,-y0,paint);
-            canvas.restore();
-        }
+        MaterialFrame frame=deformMaterial(pixels,t,usingEndTexture,
+                Math.max(0,Math.min(1,intensity)));
+        try{canvas.drawBitmap(frame.bitmap,frame.originX-pivotX,frame.originY-pivotY,paint);}
+        finally{if(frame.bitmap!=pixels)frame.bitmap.recycle();}
     }
 }

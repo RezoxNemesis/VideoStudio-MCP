@@ -173,3 +173,49 @@ test('hybrid revocation between resolution and enqueue rejects before native com
   assert.deepEqual(await queueBindings.readCommandQueue(f.storage,'app-v3-cl:'+f.deviceId),[]);
   assert.equal(await f.storage.get('app-v3-seq:'+f.deviceId),undefined);assert.equal(await f.relay.appResolveHybrid(binding.hybridKey),null);
 });
+
+const sourceInspection={projectId:'source-project-123',assetId:'source-image-123',maxDimension:512,
+  expectedSourceSha256:'a'.repeat(64),crop:{left:.1,top:.2,right:.7,bottom:.8}};
+const imageData='iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aUWQAAAAASUVORK5CYII=';
+test('native original inspection rejects 3.7.2 before any command or sequence write',async()=>{
+  const f=await fixture('3.7.2'),before=f.writes(),result=await f.call('app_inspect_source_artwork',sourceInspection);
+  assert.equal(result.queued,false);assert.match(result.error,/3\.7\.3/);assert.equal(f.writes(),before);
+});
+test('native original inspection queues exact crop and original byte binding on 3.7.3',async()=>{
+  const f=await fixture('3.7.3'),result=await f.call('app_inspect_source_artwork',sourceInspection);
+  assert.equal(result.queued,true);const row=(await queueBindings.readCommandQueue(f.storage,'app-v3-cl:'+f.deviceId))[0];
+  assert.equal(row.action,'inspect_source_artwork');assert.deepEqual(row.parameters,sourceInspection);
+});
+test('original inspection cannot enqueue arbitrary URI or malformed crop through generic routes',async()=>{
+  const f=await fixture('3.7.3'),before=f.writes();
+  await assert.rejects(f.relay.appEnqueueV3(f.owner,'inspect_source_artwork',{...sourceInspection,uri:'https://unowned.example/original.jpg'}),/field|URI/);
+  await assert.rejects(f.relay.appEnqueueV3(f.owner,'inspect_source_artwork',{...sourceInspection,crop:{left:.8,top:0,right:.2,bottom:1}}),/crop/);
+  assert.equal(f.writes(),before);
+});
+test('native original image is delivered as actual MCP image with mapping and no JSON base64 or credentials',async()=>{
+  const f=await fixture('3.7.3'),command=await f.relay.appEnqueueV3(f.owner,'inspect_source_artwork',sourceInspection);
+  const result={ok:true,sourceSha256:'a'.repeat(64),coordinateMapping:{coordinateSpace:'normalized-preview-uv',uOffset:.1,uScale:.6},
+    sourceArtworkImage:{base64:imageData,mimeType:'image/png',width:1,height:1,role:'original_source_inspection'},accessToken:'PRIVATE_TOKEN'};
+  await f.relay.appCompleteV3(f.deviceId,f.owner,command.id,result,'completed');
+  const response=await f.server.tools.get('app_get_command_result').handler({commandId:command.id});
+  assert.equal(response.content[1].type,'image');assert.equal(response.content[1].data,imageData);
+  const text=response.content[0].text;assert.doesNotMatch(text,/PRIVATE_TOKEN|iVBOR/);
+  assert.equal(JSON.parse(text).result.sourceSha256,result.sourceSha256);
+  assert.deepEqual(JSON.parse(text).result.coordinateMapping,result.coordinateMapping);
+});
+test('native source rig diagnostic image retains diagnostic scope and exact rig proof',async()=>{
+  const f=await fixture('3.7.3'),command=await f.relay.appEnqueueV3(f.owner,'preview_source_rig',{projectId:'source-project-123',rigId:'actor-rig-123'});
+  await f.relay.appCompleteV3(f.deviceId,f.owner,command.id,{ok:true,diagnosticOnly:true,cinematicAcceptance:false,rigSha256:'b'.repeat(64),
+    rigPreviewImage:{base64:imageData,mimeType:'image/png',width:1,height:1,role:'source_rig_pose_diagnostic'}},'completed');
+  const response=await f.server.tools.get('app_get_command_result').handler({commandId:command.id});
+  assert.equal(response.content[1].type,'image');assert.equal(response.content[1].data,imageData);
+  const result=JSON.parse(response.content[0].text).result;assert.equal(result.diagnosticOnly,true);assert.equal(result.cinematicAcceptance,false);assert.equal(result.rigSha256,'b'.repeat(64));
+});
+test('typed batch rig saves preserve per-profile byte proofs and do not accept nine profiles',async()=>{
+  const f=await fixture('3.7.3'),profile={sourceAssetId:'source-image-123',black:true,sourceSha256:'a'.repeat(64),
+    joints:Array.from({length:16},(_,i)=>[.2+i*.02,.3+i*.02]),outline:[[.1,.1],[.9,.1],[.9,.9]],swordHilt:[.5,.5],swordTip:[.8,.5],swordOutline:[[.5,.48],[.8,.48],[.8,.52]]};
+  const args={projectId:'source-project-123',sourceProjectUpdatedAt:1,batchId:'rig-batch-123',profiles:[profile]};
+  assert.equal((await f.call('app_save_source_rig_profiles',args)).queued,true);
+  const row=(await queueBindings.readCommandQueue(f.storage,'app-v3-cl:'+f.deviceId))[0];assert.equal(row.action,'save_source_rig_profiles');assert.equal(row.parameters.profiles[0].sourceSha256,profile.sourceSha256);
+  const before=f.writes();await assert.rejects(f.call('app_save_source_rig_profiles',{...args,profiles:Array(9).fill(profile)}));assert.equal(f.writes(),before);
+});

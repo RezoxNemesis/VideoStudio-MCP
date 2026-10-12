@@ -2,22 +2,18 @@ package com.rezoxnemesis.videostudio;
 
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
-import android.graphics.Color;
 import android.graphics.Paint;
-import android.graphics.Rect;
 import java.util.ArrayList;
-import java.util.List;
 import java.util.Random;
 
 /**
- * Renders multiple separately-tracked pieces of ORIGINAL 2D artwork.
- * Not a still-image slideshow, Ken Burns trick, generic skeleton or
- * a full-frame crossfade. The source shapes are isolated, moved and
- * locally reposed in a clean source scene at each timestamp.
+ * Noncinematic preview of separately tracked pieces of ORIGINAL 2D artwork.
+ * The source shapes are isolated, moved and deformed in a source scene.
+ * Color masks and silhouette extrema do not establish anatomical action.
  *
  * For illustrated deforming bodies, the existing hand-correctable
  * NativeSkinnedSprite2D pose engine remains the higher-fidelity option.
- * Auto segmented objects use bounded rigid/affine 2D motion only;
+ * Automatic masks use bounded generic source-material deformation;
  * hidden sides and genuinely new anatomy require a neural model.
  */
 public final class StoryboardLayerRenderer implements AutoCloseable {
@@ -109,9 +105,19 @@ public final class StoryboardLayerRenderer implements AutoCloseable {
         if(t==0)return first.copy(Bitmap.Config.ARGB_8888,false);
         if(t==1)return last.copy(Bitmap.Config.ARGB_8888,false);
         Bitmap bitmap=Bitmap.createBitmap(width,height,Bitmap.Config.ARGB_8888);
-        Canvas canvas=new Canvas(bitmap);
-        paint.reset();paint.setAntiAlias(true);paint.setFilterBitmap(true);
-        canvas.save();
+        boolean completed=false;
+        try {
+            Canvas canvas=new Canvas(bitmap);
+            paint.reset();paint.setAntiAlias(true);paint.setFilterBitmap(true);
+            int checkpoint=canvas.save();
+            try{drawFrame(canvas,t,frameIndex);}
+            finally{canvas.restoreToCount(checkpoint);}
+            completed=true;
+            return bitmap;
+        }finally{if(!completed)bitmap.recycle();}
+    }
+
+    private void drawFrame(Canvas canvas,float t,int frameIndex){
         // Cinematic perspective is secondary to actual image-object motion.
         // A tracked source world and every subject share one restrained
         // camera matrix; source-keyframe endpoints remain exact.
@@ -151,8 +157,6 @@ public final class StoryboardLayerRenderer implements AutoCloseable {
            action==StoryboardMotionGrammar.Action.SPLASH||
            action==StoryboardMotionGrammar.Action.STRIKE)
             drawActionParticles(canvas,t,frameIndex);
-        canvas.restore();
-        return bitmap;
     }
 
     private void drawTracked(Canvas canvas,SpritePair pair,float t,int slot,
@@ -207,14 +211,35 @@ public final class StoryboardLayerRenderer implements AutoCloseable {
      * first, then draw one complete bitmap using explicit SOURCE-COORDINATE
      * absolute screen position. No procedural fighter is ever introduced.
      */
-    private Bitmap sizedSource(SpritePair pair,Sprite sprite,float t,
-                               boolean endTexture,int targetW,int targetH){
-        Bitmap deformed=pair.deformation.deformBitmap(
+    private static final class SizedSource {
+        final Bitmap bitmap;
+        final float left,top;
+        SizedSource(Bitmap bitmap,float left,float top){
+            this.bitmap=bitmap;this.left=left;this.top=top;
+        }
+    }
+
+    private SizedSource sizedSource(SpritePair pair,Sprite sprite,float t,
+                                    boolean endTexture,int targetW,int targetH){
+        StoryboardDeformableSprite.MaterialFrame material=pair.deformation.deformMaterial(
                 sprite.bitmap,t,endTexture,1f);
-        Bitmap resized=Bitmap.createScaledBitmap(deformed,targetW,targetH,true);
-        if(deformed!=resized&&deformed!=sprite.bitmap)
-            deformed.recycle();
-        return resized;
+        float sx=targetW/(float)material.originalWidth;
+        float sy=targetH/(float)material.originalHeight;
+        int rasterW=Math.max(1,Math.round(material.bitmap.getWidth()*sx));
+        int rasterH=Math.max(1,Math.round(material.bitmap.getHeight()*sy));
+        if((long)rasterW*rasterH>4L*720*1280){
+            if(material.bitmap!=sprite.bitmap)material.bitmap.recycle();
+            throw new IllegalStateException("Source preview raster exceeds mobile budget");
+        }
+        Bitmap resized=null;
+        try{
+            resized=Bitmap.createScaledBitmap(material.bitmap,rasterW,rasterH,true);
+            return new SizedSource(resized,(material.originX-sprite.pivotX)*sx,
+                    (material.originY-sprite.pivotY)*sy);
+        }finally{
+            if(material.bitmap!=resized&&material.bitmap!=sprite.bitmap)
+                material.bitmap.recycle();
+        }
     }
 
     private void drawSourceSprite(Canvas canvas,SpritePair pair,Sprite sprite,
@@ -223,19 +248,17 @@ public final class StoryboardLayerRenderer implements AutoCloseable {
                                   float t,boolean endTexture){
         int w=Math.max(1,Math.round(targetW*movement.scale));
         int h=Math.max(1,Math.round(targetH*movement.scale));
-        Bitmap bitmap=sizedSource(pair,sprite,t,endTexture,w,h);
+        SizedSource source=sizedSource(pair,sprite,t,endTexture,w,h);
         canvas.save();
         try {
-            float left=x*width-(sprite.pivotX/sprite.bitmap.getWidth())*w;
-            float top=y*height-(sprite.pivotY/sprite.bitmap.getHeight())*h;
             canvas.rotate(movement.rotation,x*width,y*height);
             paint.setAlpha(Math.max(0,Math.min(255,
                     Math.round(255*movement.opacity))));
-            canvas.drawBitmap(bitmap,left,top,paint);
+            canvas.drawBitmap(source.bitmap,x*width+source.left,y*height+source.top,paint);
         }finally{
             canvas.restore();
             paint.setAlpha(255);
-            if(bitmap!=sprite.bitmap)bitmap.recycle();
+            if(source.bitmap!=sprite.bitmap)source.bitmap.recycle();
         }
     }
 
@@ -245,17 +268,35 @@ public final class StoryboardLayerRenderer implements AutoCloseable {
                                     float t,float mix) {
         int w=Math.max(1,Math.round(targetW*movement.scale));
         int h=Math.max(1,Math.round(targetH*movement.scale));
-        Bitmap a=sizedSource(pair,pair.start,t,false,w,h);
-        Bitmap b=sizedSource(pair,pair.end,t,true,w,h);
+        SizedSource a=sizedSource(pair,pair.start,t,false,w,h);
+        SizedSource b=null;
         Bitmap blended=null;
         try{
-            int[] firstPixels=new int[w*h],lastPixels=new int[w*h],
-                    output=new int[w*h];
-            a.getPixels(firstPixels,0,w,0,0,w,h);
-            b.getPixels(lastPixels,0,w,0,0,w,h);
+            b=sizedSource(pair,pair.end,t,true,w,h);
+            int aw=a.bitmap.getWidth(),ah=a.bitmap.getHeight();
+            int bw=b.bitmap.getWidth(),bh=b.bitmap.getHeight();
+            // Align each expanded source around its own original pivot.
+            // Resizing padding to w/h or averaging pivots discards material
+            // and shifts the figure when the endpoint crops differ.
+            int left=(int)Math.floor(Math.min(a.left,b.left));
+            int top=(int)Math.floor(Math.min(a.top,b.top));
+            int right=(int)Math.ceil(Math.max(a.left+aw,b.left+bw));
+            int bottom=(int)Math.ceil(Math.max(a.top+ah,b.top+bh));
+            int rasterW=right-left,rasterH=bottom-top;
+            if(rasterW<1||rasterH<1||(long)rasterW*rasterH>4L*720*1280)
+                throw new IllegalStateException("Source appearance handoff exceeds mobile budget");
+            int[] firstPixels=new int[aw*ah],lastPixels=new int[bw*bh],
+                    output=new int[rasterW*rasterH];
+            a.bitmap.getPixels(firstPixels,0,aw,0,0,aw,ah);
+            b.bitmap.getPixels(lastPixels,0,bw,0,0,bw,bh);
             float one=1-mix;
-            for(int i=0;i<output.length;i++){
-                int ca=firstPixels[i],cb=lastPixels[i];
+            for(int yy=0;yy<rasterH;yy++)for(int xx=0;xx<rasterW;xx++){
+                int ax=(int)Math.floor(xx+left+.5f-a.left);
+                int ay=(int)Math.floor(yy+top+.5f-a.top);
+                int bx=(int)Math.floor(xx+left+.5f-b.left);
+                int by=(int)Math.floor(yy+top+.5f-b.top);
+                int ca=ax>=0&&ax<aw&&ay>=0&&ay<ah?firstPixels[ay*aw+ax]:0;
+                int cb=bx>=0&&bx<bw&&by>=0&&by<bh?lastPixels[by*bw+bx]:0;
                 float aa=(ca>>>24&255)*one,bb=(cb>>>24&255)*mix;
                 float coverage=aa+bb;
                 if(coverage<=.01f)continue;
@@ -266,30 +307,23 @@ public final class StoryboardLayerRenderer implements AutoCloseable {
                         (cb>>>8&255)*weightB);
                 int blue=Math.round((ca&255)*weightA+
                         (cb&255)*weightB);
-                output[i]=(Math.min(255,Math.round(coverage))<<24)
+                output[yy*rasterW+xx]=(Math.min(255,Math.round(coverage))<<24)
                         |(Math.min(255,r)<<16)|(Math.min(255,g)<<8)
                         |Math.min(255,blue);
             }
-            blended=Bitmap.createBitmap(output,w,h,Bitmap.Config.ARGB_8888);
-            float pivotX=(pair.start.pivotX/
-                    pair.start.bitmap.getWidth())*one+
-                    (pair.end.pivotX/pair.end.bitmap.getWidth())*mix;
-            float pivotY=(pair.start.pivotY/
-                    pair.start.bitmap.getHeight())*one+
-                    (pair.end.pivotY/pair.end.bitmap.getHeight())*mix;
+            blended=Bitmap.createBitmap(output,rasterW,rasterH,Bitmap.Config.ARGB_8888);
             paint.setAlpha(Math.max(0,Math.min(255,
                     Math.round(255*movement.opacity))));
             canvas.save();
             try {
                 canvas.rotate(movement.rotation,x*width,y*height);
-                canvas.drawBitmap(blended,x*width-pivotX*w,
-                        y*height-pivotY*h,paint);
+                canvas.drawBitmap(blended,x*width+left,y*height+top,paint);
             }finally{canvas.restore();}
         }finally{
             paint.setAlpha(255);
             if(blended!=null)blended.recycle();
-            if(a!=pair.start.bitmap)a.recycle();
-            if(b!=pair.end.bitmap&&b!=a)b.recycle();
+            if(a.bitmap!=pair.start.bitmap)a.bitmap.recycle();
+            if(b!=null&&b.bitmap!=pair.end.bitmap&&b.bitmap!=a.bitmap)b.bitmap.recycle();
         }
     }
 

@@ -13,8 +13,8 @@ android {
         applicationId = "com.rezoxnemesis.videostudio.next"
         minSdk = 29
         targetSdk = 35
-        versionCode = 372
-        versionName = "3.7.2"
+        versionCode = 373
+        versionName = "3.7.3"
     }
 
     testOptions { unitTests.isIncludeAndroidResources = true }

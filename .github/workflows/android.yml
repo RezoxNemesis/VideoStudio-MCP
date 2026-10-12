@@ -83,7 +83,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: VideoStudio-storyboard-visual-qa
-          path: android/app/build/storyboard-qa/
+          path: |
+            android/app/build/storyboard-qa/
+            android/app/build/source-rig-workbench/
           if-no-files-found: warn
           retention-days: 7
 

@@ -1,16 +1,16 @@
 package com.rezoxnemesis.videostudio;
 
 /**
- * Subject-level visual acceptance for real generated in-between artwork.
+ * Source-mask material continuity diagnostic for generated preview artwork.
  *
  * The earlier video test incorrectly passed when only a WHITE actor stayed
  * visible and its BLACK opponent disappeared from all interior frames.
  * Mean full-frame pixel change cannot catch that. This gate separately
- * samples each verified moving source object and checks that its actual
+ * samples each tracked source mask and checks that its actual
  * colors/foreground contrast remain present at its predicted location.
  *
- * Does not pretend that a color histogram verifies emotions, physical
- * choreography or unseen anatomy; those need specialized QA/models.
+ * Mask-relative coverage cannot establish complete actor anatomy, physical
+ * contacts or choreography. An incomplete mask remains incomplete evidence.
  */
 public final class StoryboardSubjectRetentionGate {
     public static final class Report {
@@ -18,6 +18,8 @@ public final class StoryboardSubjectRetentionGate {
         public final int verifiedObjects,failedIndex;
         public final double minimumCoverage;
         public final String reason;
+        public final String diagnosticScope="SOURCE_MASK_MATERIAL_ONLY";
+        public final boolean anatomicalCoverageCertified=false;
         Report(boolean accepted,int verifiedObjects,int failedIndex,
                double coverage,String reason){
             this.accepted=accepted;this.verifiedObjects=verifiedObjects;
@@ -87,22 +89,22 @@ public final class StoryboardSubjectRetentionGate {
             }
             // Original illustrated regions can contain many colors. If
             // their starting matte has a uniform paint palette, demand
-            // retention of THAT identity as well as general scene contrast.
+            // retention of that palette as well as general scene contrast.
             boolean simpleColor=uniform(first,a,width)>.72f &&
                     uniform(last,b,width)>.72f;
             int evidence=simpleColor?similar:contrasting;
-            float threshold=simpleColor?.26f:.17f;
+            float threshold=.65f;
             double coverage=Math.min(1,evidence/(double)reference);
             minimum=Math.min(minimum,coverage);
             if(coverage<threshold)
                 return new Report(false,confirmed,at,coverage,
-                        "Moving original illustrated subject #"+(at+1)+
-                        " vanished or changed identity in the interpolated frame");
+                        "Tracked source-mask material #"+(at+1)+
+                        " vanished or lost substantial source material in the preview frame");
             confirmed++;
             at++;
         }
         return new Report(true,confirmed,-1,minimum,
-                "Every tracked original painted subject is visible at the actual midpoint");
+                "Tracked source-mask material retained at the sampled phase; actor anatomy unverified");
     }
 
     private static float uniform(int[] pixels,StoryboardLayerIsolation.Region r,int width){

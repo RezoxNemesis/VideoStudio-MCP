@@ -138,17 +138,30 @@ public final class StoryboardLayerIsolation {
                     "Large foreground overlap hides the real world; request a clean plate");
         from=close(from,w,h);
         to=close(to,w,h);
-        List<Region> a=components(from,before,w,h);
-        List<Region> b=components(to,after,w,h);
+        Candidates sourceCandidates=components(from,before,w,h);
+        Candidates targetCandidates=components(to,after,w,h);
+        List<Region> a=sourceCandidates.regions,b=targetCandidates.regions;
+        if(sourceCandidates.unresolved>0||targetCandidates.unresolved>0)
+            return new Result(Status.NEEDS_SOURCE_MASKS,plate,new ArrayList<>(),
+                    drift,hidden,fraction,
+                    "Foreground proposals exceed automatic material-mask limits; provide authored source masks");
         if(a.isEmpty()||b.isEmpty())
             return new Result(Status.NEEDS_SOURCE_MASKS,plate,new ArrayList<>(),
                     drift,hidden,fraction,
                     "Subjects could not be isolated reliably from these two frames");
+        if(a.size()>MAX_TRACKS||b.size()>MAX_TRACKS)
+            return new Result(Status.TOO_COMPLEX,plate,new ArrayList<>(),
+                    drift,hidden,fraction,
+                    "Too many foreground proposals; provide authored source masks");
         List<Track> tracks=match(a,b,w,h);
         if(tracks.isEmpty())
             return new Result(Status.NEEDS_SOURCE_MASKS,plate,tracks,
                     drift,hidden,fraction,
                     "No visual subject could be followed across both source frames");
+        if(tracks.size()!=a.size()||tracks.size()!=b.size())
+            return new Result(Status.NEEDS_SOURCE_MASKS,plate,tracks,
+                    drift,hidden,fraction,
+                    "Unmatched foreground proposals cannot be omitted from a preview; provide authored source masks");
         if(tracks.size()>MAX_TRACKS)
             return new Result(Status.TOO_COMPLEX,plate,tracks,
                     drift,hidden,fraction,
@@ -341,13 +354,32 @@ public final class StoryboardLayerIsolation {
                 for(int ox=-1;ox<=1;ox++)if(!dilated[i+oy*w+ox]){all=false;break;}
             result[i]=all;
         }
+        // The bounded neighborhood above cannot close the outer two
+        // rows/columns. Preserve their real foreground evidence instead
+        // of erasing it before unresolved-candidate diagnostics run.
+        for(int y=0;y<h;y++)for(int edge=0;edge<2;edge++){
+            int left=y*w+edge,right=y*w+w-1-edge;
+            result[left]=src[left];result[right]=src[right];
+        }
+        for(int x=0;x<w;x++)for(int edge=0;edge<2;edge++){
+            int top=edge*w+x,bottom=(h-1-edge)*w+x;
+            result[top]=src[top];result[bottom]=src[bottom];
+        }
         return result;
     }
-    private static List<Region> components(boolean[] mask,int[] image,int w,int h){
+    private static final class Candidates {
+        final List<Region> regions;
+        final int unresolved;
+        Candidates(List<Region> regions,int unresolved){
+            this.regions=regions;this.unresolved=unresolved;
+        }
+    }
+    private static Candidates components(boolean[] mask,int[] image,int w,int h){
         int n=w*h,min=Math.max(18,n/1800);
         boolean[] visited=new boolean[n];
         int[] queue=new int[n];
         ArrayList<Region> found=new ArrayList<>();
+        int unresolved=0;
         for(int index=0;index<n;index++){
             if(!mask[index]||visited[index])continue;
             visited[index]=true;queue[0]=index;
@@ -366,7 +398,11 @@ public final class StoryboardLayerIsolation {
                 if(y>0&&mask[p-w]&&!visited[p-w]){visited[p-w]=true;queue[tail++]=p-w;}
                 if(y<h-1&&mask[p+w]&&!visited[p+w]){visited[p+w]=true;queue[tail++]=p+w;}
             }
-            if(tail<min||tail>n*.26f||r-l+1<3||b-t+1<3)continue;
+            if(tail<min)continue;
+            if(tail>n*.26f||r-l+1<3||b-t+1<3){
+                unresolved++;
+                continue;
+            }
             byte[] alpha=new byte[n];
             for(int j=0;j<tail;j++)alpha[queue[j]]=(byte)255;
             float coverage=tail/(float)Math.max(1,(r-l+1)*(b-t+1));
@@ -376,10 +412,13 @@ public final class StoryboardLayerIsolation {
                     sumX/(float)tail,sumY/(float)tail,
                     red/(float)tail,green/(float)tail,
                     blue/(float)tail,confidence));
+            // More than the supported count is already TOO_COMPLEX.
+            // Avoid allocating a full-frame alpha array for every remaining
+            // component merely to discard them after segmentation.
+            if(found.size()>MAX_TRACKS)return new Candidates(found,unresolved);
         }
         found.sort(Comparator.comparingInt((Region c)->c.pixels).reversed());
-        if(found.size()>MAX_TRACKS*3)return found.subList(0,MAX_TRACKS*3);
-        return found;
+        return new Candidates(found,unresolved);
     }
     private static List<Track> match(List<Region> before,List<Region> after,int w,int h) {
         ArrayList<Track> tracks=new ArrayList<>();

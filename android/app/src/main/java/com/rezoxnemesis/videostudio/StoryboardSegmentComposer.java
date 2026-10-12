@@ -250,6 +250,8 @@ public final class StoryboardSegmentComposer {
                         .put("minimumAdjacentMotion",trajectory.minAdjacentMotion)
                         .put("maximumAdjacentMotion",trajectory.maxAdjacentMotion)
                         .put("objectRetentionChecked",retained!=null)
+                        .put("retentionDiagnosticScope",retained==null?JSONObject.NULL:retained.diagnosticScope)
+                        .put("anatomicalCoverageCertified",false)
                         .put("retentionSamplesChecked",retained==null?0:3)
                         .put("retainedOriginalSubjects",retained==null?0:
                                 retained.verifiedObjects)

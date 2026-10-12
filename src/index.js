@@ -37,7 +37,22 @@ const redactCommand = command => {
 };
 const redactedImageResult = command => {
   const result=redactCommand(command).result;
-  return {...result,contactSheet:{...result.contactSheet,base64:undefined}};
+  return result;
+};
+const nativeImageBlocks = command => {
+  const result=command&&command.result;
+  if(!result||typeof result!=='object')return [];
+  const seen=new Set();
+  return ['contactSheet','sourceArtworkImage','rigPreviewImage'].flatMap(key=>{
+    const value=result[key];
+    if(!value||typeof value.base64!=='string'||!value.base64||value.base64.length>1500*1024)return [];
+    const mime=value.mimeType||'image/jpeg';
+    if(!['image/jpeg','image/png','image/webp'].includes(mime))return [];
+    const identity=mime+':'+value.base64;
+    if(seen.has(identity))return [];
+    seen.add(identity);
+    return [{type:"image",data:value.base64,mimeType:mime}];
+  });
 };
 const clean = (v,n=5000) => String(v ?? "").trim().slice(0,n);
 const reply = (x,s=200) => new Response(JSON.stringify(x),{status:s,headers:JH});
@@ -1516,25 +1531,25 @@ function serverFor(env,hybridKey=""){
     if(native){
       const c=await commandNative(st,native,deviceId,commandId);
       if(!c) return out({error:"Command not found"});
-      const sheet=c.result&&c.result.contactSheet;
-      if(sheet&&sheet.base64){
+      const images=nativeImageBlocks(c);
+      if(images.length){
         const safeResult=redactedImageResult(c);
         return {content:[
           {type:"text",text:JSON.stringify({...redactCommand(c),result:safeResult})},
-          {type:"image",data:sheet.base64,mimeType:sheet.mimeType||"image/jpeg"}
+          ...images
         ]};
       }
       return out(redactCommand(c));
     }
     const c=await st.command(deviceId,commandId);
     if(!c) return out({error:"Command not found"});
-    const sheet=c.result&&c.result.contactSheet;
-    if(sheet&&sheet.base64){
+    const images=nativeImageBlocks(c);
+    if(images.length){
       const safeResult=redactedImageResult(c);
       const safeCommand={...redactCommand(c),result:safeResult};
       return {content:[
         {type:"text",text:JSON.stringify(safeCommand)},
-        {type:"image",data:sheet.base64,mimeType:sheet.mimeType||"image/jpeg"}
+        ...images
       ]};
     }
     return out(redactCommand(c));
@@ -1625,14 +1640,14 @@ function serverFor(env,hybridKey=""){
         const view=redactCommand(command);
         if(command.result&&new TextEncoder().encode(JSON.stringify(view.result)).byteLength>48*1024){
           const page=await nativeResultPage(command,view.result,0);page.retrievalTool="hybrid_get_command_result_page";
-          return out({...page,hybrid:true});
+          return {content:[{type:"text",text:JSON.stringify({...page,hybrid:true})},...nativeImageBlocks(command)]};
         }
-        const sheet=command.result&&command.result.contactSheet;
-        if(sheet&&sheet.base64){
+        const images=nativeImageBlocks(command);
+        if(images.length){
           const safeResult=redactedImageResult(command);
           return {content:[
             {type:"text",text:JSON.stringify({...redactCommand(command),result:safeResult,hybrid:true})},
-            {type:"image",data:sheet.base64,mimeType:sheet.mimeType||"image/jpeg"}
+            ...images
           ]};
         }
         return out({...redactCommand(command),hybrid:true});
@@ -1693,15 +1708,15 @@ function serverForApp(env,ownerKey,protocolVersion=1){
       const view=redactCommand(c);
       if(c.resultExpired&&!c.result)return out({command:nativeCommandSummary(c),resultExpired:true,resultRetained:false});
       if(c.result&&new TextEncoder().encode(JSON.stringify(view.result)).byteLength>48*1024){
-        const page=await nativeResultPage(c,view.result,0),sheet=c.result.contactSheet;
-        return {content:[{type:"text",text:JSON.stringify(page)},...(sheet?.base64?[{type:"image",data:sheet.base64,mimeType:sheet.mimeType||"image/jpeg"}]:[])]};
+        const page=await nativeResultPage(c,view.result,0);
+        return {content:[{type:"text",text:JSON.stringify(page)},...nativeImageBlocks(c)]};
       }
-      const sheet=c.result&&c.result.contactSheet;
-      if(sheet&&sheet.base64){
+      const images=nativeImageBlocks(c);
+      if(images.length){
         const safeResult=redactedImageResult(c);
         return {content:[
           {type:"text",text:JSON.stringify({...redactCommand(c),result:safeResult})},
-          {type:"image",data:sheet.base64,mimeType:sheet.mimeType||"image/jpeg"}
+          ...images
         ]};
       }
       return out(redactCommand(c));
@@ -1714,6 +1729,7 @@ function serverForApp(env,ownerKey,protocolVersion=1){
     version:isV3?"3.4.2":"1.1.2",
     protocolVersion:isV3?3:1,
     storyboard:{minimumNativeAppVersion:"3.7.2",defaultMotionIntent:"cinematic_action",frozenSourceHashes:true,explicitOriginalRigAndPropAnnotations:true,explicitContactPlans:true,typedChoreography:CINEMATIC_BEATS,cinematicAcceptance:"requires decoded physical QA; eligibility/pixel checks do not certify",neuralMotionProviderInstalled:false},
+    sourceRigWorkbench:isV3?{minimumNativeAppVersion:"3.7.3",originalImageInspection:true,diagnosticPosePreview:true,batchProfileLimit:8,orderedPreparationStatus:true,anatomicalInferenceAvailable:false,cinematicAcceptance:false}:undefined,
     stableEndpoint:isV3,
     stableEndpointPath:isV3?"/app-mcp-v3/":"",
     primary:"Android native app",
@@ -1749,6 +1765,15 @@ function serverForApp(env,ownerKey,protocolVersion=1){
   if(isV3) {
     const stableId=z.string().regex(/^[A-Za-z0-9_-]{8,128}$/), hash=z.string().regex(/^[a-f0-9]{64}$/);
     const xy=z.tuple([z.number().min(0).max(1),z.number().min(0).max(1)]);
+    const crop=z.object({left:z.number().min(0).max(1),top:z.number().min(0).max(1),right:z.number().min(0).max(1),bottom:z.number().min(0).max(1)}).strict().refine(value=>value.left<value.right&&value.top<value.bottom,{message:"Invalid original-oriented crop"});
+    const batchProfile=z.object({sourceAssetId:stableId,rigId:stableId.optional(),black:z.boolean(),transparentSource:z.boolean().optional(),
+      joints:z.array(xy).length(16),outline:z.array(xy).min(3).max(64),swordTip:xy.optional(),swordHilt:xy.optional(),swordOutline:z.array(xy).min(3).max(64).optional(),
+      sourceSha256:hash,expectedRigSha256:hash.optional()}).strict();
+    const authoringNote=" Requires native VideoStudio 3.7.3+. Authoring and pose diagnostics do not certify anatomy, motion synthesis or cinematic acceptance.";
+    s.registerTool("app_inspect_source_artwork",{description:"Inspect one exact owned original image, optionally cropped in EXIF-oriented normalized coordinates. The native result returns an MCP image, original byte SHA, dimensions and a reversible preview coordinate mapping. Use that image to author joints and body/weapon polygons; no arbitrary URI or Gallery access."+authoringNote,inputSchema:{projectId:stableId,assetId:stableId,expectedSourceSha256:hash.optional(),crop:crop.optional(),maxDimension:z.number().int().min(128).max(1024).optional(),rigIds:z.array(stableId).max(8).optional()},annotations:{readOnlyHint:true}},async args=>queue("inspect_source_artwork",args));
+    s.registerTool("app_preview_source_rig",{description:"Render a saved source-bound actor and original sword on a diagnostic stage. Optional targetJoints16 changes only this preview; targetJoints is a compatibility alias. Inspect actual source material deformation before saving animation. Rest/profile/source bytes remain unchanged."+authoringNote,inputSchema:{projectId:stableId,rigId:stableId,expectedRigSha256:hash.optional(),expectedSourceSha256:hash.optional(),targetJoints16:z.array(xy).length(16).optional(),targetJoints:z.array(xy).length(16).optional(),swordTip:xy.optional(),maxDimension:z.number().int().min(128).max(720).optional()},annotations:{readOnlyHint:true}},async args=>queue("preview_source_rig",args));
+    s.registerTool("app_save_source_rig_profiles",{description:"Save 1..8 original-byte-bound actor definitions with source revision and stable batch identity. Prevalidates the complete request; individual profiles publish atomically. Explicit partial receipts are retained after interruption; retry the same batch unchanged or inspect status. This is not an all-or-nothing transaction."+authoringNote,inputSchema:{projectId:stableId,sourceProjectUpdatedAt:z.number().int().nonnegative(),batchId:stableId,profiles:z.array(batchProfile).min(1).max(8)},annotations:{idempotentHint:true}},async args=>queue("save_source_rig_profiles",args));
+    s.registerTool("app_source_rig_status",{description:"Read preparation status for exact ordered asset occurrences, a saved program, or project import order. Reports missing/ambiguous black and white actor profiles without implying verified anatomy or render readiness. Structural status does not rehash source bytes."+authoringNote,inputSchema:{projectId:stableId,assetIds:z.array(stableId).min(1).max(160).optional(),programId:stableId.optional(),expectedProgramSha256:hash.optional()},annotations:{readOnlyHint:true}},async args=>queue("source_rig_status",args));
     const contact=z.object({foot:z.enum(["leadingFoot","trailingFoot"]),start:z.number().min(0).max(1),end:z.number().min(0).max(1),anchor:xy}).strict();
     const contacts=z.object({black:z.array(contact).max(32),white:z.array(contact).max(32)}).strict();
     const binding=z.object({assetId:stableId,blackRigId:stableId,whiteRigId:stableId,blackRigSha256:hash.optional(),whiteRigSha256:hash.optional()}).strict();

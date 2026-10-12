@@ -5,7 +5,7 @@ import java.util.Arrays;
 import java.util.List;
 
 /**
- * Recover the ENTIRE visible painted subject from a motion-difference seed.
+ * Propose visible source-material masks from a motion-difference seed.
  *
  * Two adjacent illustrations can show a fighter in overlapping positions:
  * unchanged portions of their bodies do not appear in the raw difference
@@ -13,7 +13,8 @@ import java.util.List;
  * while the actual moving sprite contains only thin changed strips.
  *
  * Uses real source color and scene-adjacent contrast, bounded flood fill,
- * and re-computes the clean plate from recovered masks. It is neither
+ * and re-computes the clean plate from bounded masks. Ambiguous proposals
+ * require authored masks; color agreement does not certify anatomy. It is neither
  * segmentation-model inference nor synthesizing unseen body geometry.
  */
 public final class StoryboardColorMatteRefiner {
@@ -33,16 +34,19 @@ public final class StoryboardColorMatteRefiner {
         for(StoryboardLayerIsolation.Track t:coarse.tracks){
             float contrastA=boundaryContrast(first,t.from,width,height);
             float contrastB=boundaryContrast(last,t.to,width,height);
-            // Reject changed BACKGROUND PATCHES near high contrast
-            // objects. They have low source-vs-surrounding separation
-            // even though simple optical flow may match them.
-            if(Math.min(contrastA,contrastB)<52f)continue;
+            // Low separation cannot distinguish a whole object from a
+            // changed scene patch. Accepted neighbors cannot resolve it.
+            if(Math.min(contrastA,contrastB)<52f)
+                return unresolved(coarse,"Source proposal has insufficient scene separation");
             boolean[] a=completeSilhouette(first,t.from,width,height);
             boolean[] b=completeSilhouette(last,t.to,width,height);
+            if(a==null||b==null)
+                return unresolved(coarse,"Ambiguous source-color expansion cannot establish a complete material mask");
             int expandedA=count(a),expandedB=count(b);
             float sizeRatio=Math.min(expandedA,expandedB)/
                     (float)Math.max(1,Math.max(expandedA,expandedB));
-            if(sizeRatio<.25f)continue;
+            if(sizeRatio<.25f)
+                return unresolved(coarse,"Paired source-material proposals differ too much to isolate reliably");
             trust=Math.min(trust,t.confidence);
             masksA.add(a);masksB.add(b);
         }
@@ -65,10 +69,20 @@ public final class StoryboardColorMatteRefiner {
                 refined.cleanPlate,refined.tracks,
                 refined.worldDifference,refined.unseenFraction,
                 coarse.changedFraction,
-                "Original silhouettes completed from tracked source colors; "+
-                refined.tracks.size()+" independently retained object(s)");
+                "Bounded source-color material proposals for noncinematic deformation preview; "+
+                refined.tracks.size()+" paired mask(s), anatomy unverified");
     }
 
+    private static StoryboardLayerIsolation.Result unresolved(
+            StoryboardLayerIsolation.Result coarse,String reason){
+        return new StoryboardLayerIsolation.Result(
+                StoryboardLayerIsolation.Status.NEEDS_SOURCE_MASKS,
+                coarse.cleanPlate,coarse.tracks,coarse.worldDifference,
+                coarse.unseenFraction,coarse.changedFraction,
+                reason+"; provide authored source masks");
+    }
+
+    /** Returns null when bounded color expansion cannot establish a material mask. */
     static boolean[] completeSilhouette(int[] source,
             StoryboardLayerIsolation.Region region,int w,int h){
         if(source==null||region==null||source.length!=w*h||
@@ -82,7 +96,7 @@ public final class StoryboardColorMatteRefiner {
             found[i]=true;queued[i]=true;queue[tail++]=i;
         }
         int starting=tail;
-        if(starting<6)return found;
+        if(starting<6)return null;
         int padX=Math.min(w/8,Math.max(7,Math.round(region.width()*.84f)));
         int padY=Math.min(h/8,Math.max(5,Math.round(region.height()*.19f)));
         int left=Math.max(0,region.left-padX),
@@ -101,6 +115,7 @@ public final class StoryboardColorMatteRefiner {
         float maxDistance=Math.max(55,Math.min(145,38+variability*2.3f));
         int maxPixels=Math.min((right-left+1)*(bottom-top+1),
                 Math.min(n/4,starting*3+Math.max(36,starting/3)));
+        if(starting>maxPixels)return null;
         while(head<tail){
             int at=queue[head++],x=at%w,y=at/w;
             int[] neighbors={at-1,at+1,at-w,at+w};
@@ -116,13 +131,25 @@ public final class StoryboardColorMatteRefiner {
                 found[next]=true;
                 queue[tail++]=next;
                 if(tail>maxPixels){
-                    // Ambiguous matte bled into the scene; retaining the
-                    // coarse mask is safer than inventing extra anatomy.
-                    boolean[] coarse=new boolean[n];
-                    for(int i=0;i<n;i++)coarse[i]=region.alpha[i]!=0;
-                    return coarse;
+                    // A difference strip is not a completed object mask.
+                    // Never promote it after expansion leaks into scenery.
+                    return null;
                 }
             }
+        }
+        // Reaching the bounded search edge while matching color continues
+        // outside it is also uncertain, even before the area budget is hit.
+        for(int y=top;y<=bottom;y++){
+            if(left>0&&found[y*w+left]&&rgbDistance(source[y*w+left-1],
+                    region.meanR,region.meanG,region.meanB)<=maxDistance)return null;
+            if(right<w-1&&found[y*w+right]&&rgbDistance(source[y*w+right+1],
+                    region.meanR,region.meanG,region.meanB)<=maxDistance)return null;
+        }
+        for(int x=left;x<=right;x++){
+            if(top>0&&found[top*w+x]&&rgbDistance(source[(top-1)*w+x],
+                    region.meanR,region.meanG,region.meanB)<=maxDistance)return null;
+            if(bottom<h-1&&found[bottom*w+x]&&rgbDistance(source[(bottom+1)*w+x],
+                    region.meanR,region.meanG,region.meanB)<=maxDistance)return null;
         }
         return found;
     }

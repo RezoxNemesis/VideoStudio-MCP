@@ -828,6 +828,26 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                     complete(command, saveSourceRigProfile(p));
                     syncProtocolState();
                     return;
+                case "inspect_source_artwork":
+                    complete(command, NativeSourceArtworkInspector.inspect(this, store, p));
+                    return;
+                case "preview_source_rig":
+                    complete(command, NativeSourceRigPreview.render(this, store, p));
+                    return;
+                case "save_source_rig_profiles": {
+                    final int requestedProfiles = p.getJSONArray("profiles").length();
+                    final String rigProjectId = p.getString("projectId");
+                    complete(command, NativeRigBatchAuthoring.save(this, store, p, (index, receipt) ->
+                            ActivityLog.add(this, "chatgpt", "Saving original source-character rigs",
+                                    "Published rig " + (index + 1) + " of " + requestedProfiles,
+                                    "running", Math.min(99, (index + 1) * 100 / requestedProfiles),
+                                    commandId, rigProjectId)));
+                    syncProtocolState();
+                    return;
+                }
+                case "source_rig_status":
+                    complete(command, NativeRigBatchAuthoring.status(this, store, p));
+                    return;
                 case "list_source_rig_profiles":
                     complete(command, listSourceRigProfiles(p));
                     return;
@@ -4336,6 +4356,13 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             out.put("storyboardMotionPreflightReady", true);
             out.put("rigKinematicsMathReady", true);
             out.put("manualCharacterRigEditorReady", true);
+            out.put("sourceArtworkInspectionReady", true);
+            out.put("sourceRigPoseDiagnosticReady", true);
+            out.put("sourceRigBatchAuthoringReady", true);
+            out.put("sourceRigBatchProfileLimit", 8);
+            out.put("sourceRigPreparationStatusReady", true);
+            out.put("sourceRigWorkbenchMinimumVersion", "3.7.3");
+            out.put("sourceRigAnatomicalInferenceAvailable", false);
             out.put("sourceTextured2DMeshSkinningReady", true);
             out.put("glbSkeletalPreviewReady", true);
             out.put("nativeHeadlessGltfExportReady", true);
@@ -4861,6 +4888,10 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             case "frame_transfer_status": return "Checking private frame transfer";
             case "animate_combat_rig": return "Generating articulated stickman sword combat";
             case "save_source_rig_profile": return "Saving original source-character rig";
+            case "inspect_source_artwork": return "Inspecting original source artwork";
+            case "preview_source_rig": return "Previewing a source-rig diagnostic pose";
+            case "save_source_rig_profiles": return "Saving original source-character rig batch";
+            case "source_rig_status": return "Reading ordered source-rig preparation";
             case "list_source_rig_profiles": return "Reading original source-character rigs";
             case "render_rigged_2d": return "Animating original masked fighters through native 2D mesh skinning";
             case "animate_storyboard_artwork": return "Animating original storyboard keyframes with source-textured character motion";
