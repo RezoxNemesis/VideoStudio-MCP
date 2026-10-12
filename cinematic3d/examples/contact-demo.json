@@ -1,0 +1,24 @@
+{
+  "schema": "videostudio.cinematic3d.timeline.v1",
+  "name": "Grounded katana contact",
+  "fps": 30,
+  "motionProvider": "procedural_mannequin",
+  "shots": [
+    {
+      "id": "demo_clash",
+      "action": "CLASH",
+      "durationFrames": 48,
+      "hitStopFrames": 4,
+      "camera": {
+        "mode": "wide",
+        "fovDegrees": 48,
+        "shakeIntensity": 0.45
+      },
+      "vfx": {
+        "sparkBurst": true,
+        "slashTrail": true,
+        "rubble": true
+      }
+    }
+  ]
+}

@@ -45,7 +45,7 @@ public final class CapabilityRegistry {
                 "builtin.mlkit.person-segmentation",
                 "vision",
                 "android-mlkit",
-                new String[]{"person.segmentation"},
+                new String[]{"person.segmentation","storyboard.person.segmentation"},
                 220,
                 "balanced"
         ));
@@ -63,6 +63,34 @@ public final class CapabilityRegistry {
                 "android-gpu-media3",
                 new String[]{"portrait.rig","motion.2_5d","environment.procedural","depth.estimate"},
                 420,
+                "balanced"
+        ));
+        providers.put(builtin(
+                "builtin.videostudio.storyboard-multigenre",
+                "animation",
+                "android-canvas-media3-source-art",
+                new String[]{"storyboard.plan","storyboard.audit",
+                        "storyboard.object.isolate","storyboard.motion.track",
+                        "storyboard.animate.2d","storyboard.animate.series",
+                        "storyboard.manual.masks","storyboard.softmesh.deform",
+                        "storyboard.graphic.reveal","storyboard.environment.motion"},
+                512,
+                "balanced"
+        ));
+        providers.put(builtin(
+                "builtin.videostudio.storyboard-foley",
+                "audio",
+                "native-pcm-media3",
+                new String[]{"storyboard.sound.effects","storyboard.sound.sync"},
+                96,
+                "balanced"
+        ));
+        providers.put(builtin(
+                "builtin.videostudio.original-character-rigs",
+                "animation",
+                "native-source-mesh",
+                new String[]{"storyboard.actor.manual2d","storyboard.actor.attach_sword"},
+                360,
                 "balanced"
         ));
         providers.put(builtin(

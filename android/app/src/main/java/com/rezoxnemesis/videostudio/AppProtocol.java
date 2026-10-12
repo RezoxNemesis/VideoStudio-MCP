@@ -42,7 +42,7 @@ import javax.crypto.spec.GCMParameterSpec;
 public final class AppProtocol {
     public static final String BASE = "https://wispy-queen-f9b5.prakasharuntandon634.workers.dev";
     public static final int PROTOCOL_VERSION = 3;
-    public static final String APP_VERSION = "3.5.0";
+    public static final String APP_VERSION = "3.8.1";
     /** Stable compatibility URL. APK updates must not change this path. */
     public static final String MCP_PATH = McpConnectionCore.STABLE_MCP_PATH;
     /** Stable registration bootstrap. Runtime requests use the negotiated profile. */
@@ -69,7 +69,9 @@ public final class AppProtocol {
     private final Callback callback;
     private final McpConnectionCore connectionCore;
     private final CommandOutbox outbox;
+    private final NativeCommandDispatchGate dispatchGate = new NativeCommandDispatchGate();
     private final Object outboxLock = new Object();
+    private volatile String lastResultDeliveryError = "";
     private ConnectivityManager connectivity;
     private ConnectivityManager.NetworkCallback networkCallback;
     private volatile boolean running;
@@ -107,6 +109,7 @@ public final class AppProtocol {
         try {
             status.put("pendingResultDeliveries", outbox.count());
             status.put("durableResultDelivery", true);
+            status.put("lastResultDeliveryError", lastResultDeliveryError);
             status.put("identityRecoveryRequired", identityRecoveryRequired);
         } catch (Exception ignored) {}
         return status;
@@ -249,27 +252,48 @@ public final class AppProtocol {
     private void flushOutbox() {
         synchronized (outboxLock) {
             if (!running) return;
-            try {
-                JSONArray pending = outbox.pending();
-                for (int i = 0; i < pending.length() && running; i++) {
-                    JSONObject entry = pending.getJSONObject(i);
-                    String id = entry.getString("id");
+            JSONArray pending;
+            try { pending = outbox.pending(); }
+            catch (Exception error) {
+                lastResultDeliveryError = "Cannot read durable result queue";
+                return;
+            }
+            int failures = 0;
+            for (int i = 0; i < pending.length() && running; i++) {
+                JSONObject entry = pending.optJSONObject(i);
+                if (entry == null) continue;
+                String id = entry.optString("id", "");
+                if (id.isEmpty()) continue;
+                try {
                     JSONObject body = new JSONObject();
                     body.put("deviceId", deviceId);
                     body.put("protocolVersion", connectionCore.selectedProtocol());
                     body.put("appGeneration", connectionCore.appGeneration());
                     body.put("status", entry.getString("status"));
                     body.put("result", entry.getJSONObject("result"));
-                    JSONObject receipt = request("POST", connectionCore.apiPrefix() + "/commands/" + enc(id) + "/complete",
+                    JSONObject receipt = request("POST", connectionCore.apiPrefix()
+                            + "/commands/" + enc(id) + "/complete",
                             body, true, connectionCore.requestTimeoutMs());
-                    // A 2xx response alone is insufficient: require an actual matching command receipt.
-                    JSONObject acknowledged = receipt.optJSONObject("command");
-                    if (acknowledged == null || !id.equals(acknowledged.optString("id"))) return;
+                    JSONObject accepted = receipt.optJSONObject("command");
+                    if (accepted == null || !id.equals(accepted.optString("id")))
+                        throw new IllegalStateException("Relay completion receipt mismatch");
                     advanceSequence(entry.optLong("seq"));
                     outbox.acknowledge(id);
+                    dispatchGate.acknowledged(id);
+                    lastResultDeliveryError = "";
+                } catch (Exception error) {
+                    // Crucial: one rejected/oversized result must not block
+                    // every later self-test, rig status or animation ACK.
+                    String message = error.getMessage();
+                    if (message != null && message.matches("HTTP [0-9]{3}"))
+                        lastResultDeliveryError = message;
+                    else lastResultDeliveryError = "Native ACK upload/reply failed";
+                    // A rejected older result must not permanently block all
+                    // newer native commands. Keep the exact result for later retry.
+                    try { outbox.defer(id); }
+                    catch(Exception ignored) { lastResultDeliveryError="ACK retry state unavailable"; }
+                    if (++failures >= 3) break; // bounded batch, fair across heartbeats
                 }
-            } catch (Exception ignored) {
-                // Retry durable results on the next heartbeat, including after process death.
             }
         }
     }
@@ -297,19 +321,29 @@ public final class AppProtocol {
                         + "&appGeneration=" + connectionCore.appGeneration();
                 JSONObject data = request("GET", path, null, true, connectionCore.requestTimeoutMs());
                 JSONArray commands = data.optJSONArray("commands");
+                int eligible = 0;
                 if (commands != null) {
-                    for (int i = 0; i < commands.length(); i++) {
+                    for (int i = 0; i < Math.min(24, commands.length()); i++) {
                         JSONObject cmd = commands.optJSONObject(i);
-                        if (cmd == null) continue;
-                        if (!connectionCore.acceptsCommand(cmd)) continue;
+                        if (cmd == null || !connectionCore.acceptsCommand(cmd)) continue;
                         String commandStatus = cmd.optString("status");
-                        if (!"queued".equals(commandStatus) && !"claimed".equals(commandStatus)) continue;
+                        if (!"queued".equals(commandStatus)
+                                && !"claimed".equals(commandStatus)) continue;
+                        eligible++;
+                        String id = cmd.optString("id", "");
+                        if (!dispatchGate.shouldDispatch(id,
+                                android.os.SystemClock.elapsedRealtime())) continue;
                         if (callback != null) {
                             JSONObject dispatch = cmd;
-                            main.post(() -> callback.onCommand(dispatch));
-                        }
+                            if (!main.post(() -> callback.onCommand(dispatch)))
+                                dispatchGate.undelivered(id);
+                        } else dispatchGate.undelivered(id);
                     }
                 }
+                // Claimed commands can return immediately from the relay.
+                // Without a backoff and local dedupe, the main looper is
+                // flooded by thousands of copies of the same command.
+                if (eligible > 0) sleep(650);
                 consecutiveFailures = 0;
                 notifyConnection(true, "VideoStudio MCP online • app " + APP_VERSION
                         + " • compat v" + connectionCore.selectedProtocol());

@@ -1,3 +1,6 @@
+import {nativeCommandSummary,nativeResultPage} from "../src/native-result-pages.js";
+import {queueBindings,memoryStorage} from "./native-queue-fixture.mjs";
+import * as storyboardContract from "../src/storyboard-contract.js";
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -6,18 +9,18 @@ import {webcrypto} from 'node:crypto';
 // Run the real relay class with an in-memory Durable Object store; SDK/network are not needed.
 const source=fs.readFileSync(new URL('../src/index.js',import.meta.url),'utf8');
 const end=source.indexOf('\n}\n',source.indexOf('export class VideoStudioState'))+3;
-const context={crypto:webcrypto,TextEncoder,Response,Request,Headers,URL,setTimeout,DurableObject:class{constructor(ctx){this.ctx=ctx;}},Date};
+const context={...storyboardContract,...queueBindings,nativeCommandSummary,nativeResultPage,crypto:webcrypto,TextEncoder,Response,Request,Headers,URL,setTimeout,DurableObject:class{constructor(ctx){this.ctx=ctx;}},Date};
 vm.createContext(context);
 vm.runInContext(source.slice(source.indexOf('const JH'),end).replace('export class VideoStudioState','globalThis.VideoStudioState = class VideoStudioState'),context);
 async function fixture(commands=[]) {
- const store=new Map(); const storage={get:async k=>structuredClone(store.get(k)),put:async(k,v)=>store.set(k,structuredClone(v)),delete:async k=>store.delete(k)};
+ const store=new Map(); const storage=memoryStorage(store);
  const relay=new context.VideoStudioState({storage},{});
  const key='x'.repeat(43),deviceId='test-device-001';
  await relay.appRegister(deviceId,key,{protocolVersion:3,appGeneration:1,permissionMode:'everything'});
  await storage.put('app-v3-cl:'+deviceId,commands);
  return {relay,key,deviceId,storage};
 }
-const command=(seq,status,leaseUntil=0)=>({id:'cmd-'+seq,seq,protocolVersion:3,action:'ping',parameters:{},status,leaseUntil});
+const command=(seq,status,leaseUntil=0)=>({id:'cmd-'+seq,seq,protocolVersion:3,action:'ping',parameters:{},status,leaseUntil,...(status==='completed'?{result:{ok:true},completedAt:new Date().toISOString()}:{})});
 test('out-of-order acknowledgement cannot hide an older expired lease',async()=>{
  const f=await fixture([command(1,'claimed',Date.now()-1),command(2,'completed')]);
  const found=await f.relay.appCommandsV3(f.deviceId,f.key,2,0);
@@ -39,13 +42,13 @@ test('new commands preserve old unfinished work when terminal history is trimmed
  const f=await fixture([command(1,'queued'),...Array.from({length:159},(_,i)=>command(i+2,'completed'))]);
  await f.storage.put('app-v3-seq:'+f.deviceId,160);
  await f.relay.appEnqueueV3(f.key,'ping',{});
- const rows=await f.storage.get('app-v3-cl:'+f.deviceId);
+ const rows=await queueBindings.readCommandQueue(f.storage,'app-v3-cl:'+f.deviceId);
  assert.equal(rows.length,160);assert.ok(rows.some(c=>c.id==='cmd-1'));assert.ok(rows.some(c=>c.seq===161));
 });
 test('saturated queue refuses new work rather than discarding existing commands',async()=>{
  const f=await fixture(Array.from({length:160},(_,i)=>command(i+1,'queued')));
  await assert.rejects(f.relay.appEnqueueV3(f.key,'ping',{}),/queue is full/);
- assert.equal((await f.storage.get('app-v3-cl:'+f.deviceId)).length,160);
+ assert.equal((await queueBindings.readCommandQueue(f.storage,'app-v3-cl:'+f.deviceId)).length,160);
 });
 test('wrong owner credential cannot read or complete commands',async()=>{
  const f=await fixture([command(1,'queued')]);
@@ -58,14 +61,14 @@ test('filling the last free queue slot retains every pending command',async()=>{
  const f=await fixture([...pending,command(160,'completed')]);
  await f.storage.put('app-v3-seq:'+f.deviceId,160);
  await f.relay.appEnqueueV3(f.key,'ping',{});
- const rows=await f.storage.get('app-v3-cl:'+f.deviceId);
+ const rows=await queueBindings.readCommandQueue(f.storage,'app-v3-cl:'+f.deviceId);
  assert.equal(rows.length,160);assert.ok(rows.some(c=>c.id==='cmd-1'));
  assert.equal(rows.filter(c=>c.status==='queued').length,160);
 });
 
 
 function loadWorkerForRouteTests() {
- const workerContext={
+ const workerContext={...storyboardContract,...queueBindings,nativeCommandSummary,nativeResultPage,
   crypto:webcrypto,TextEncoder,TextDecoder,Response,Request,Headers,URL,setTimeout,clearTimeout,Date,
   DurableObject:class{constructor(ctx){this.ctx=ctx;}},
   McpServer:class{},
@@ -160,9 +163,9 @@ async function hybridFixture(){
 
 test('hybrid command waits for native when Android is stale and becomes claimable on reconnect',async()=>{
  const f=await hybridFixture();
- const native=await f.storage.get('app-device:'+f.deviceId);
+ const native=await queueBindings.readNativeDevice(f.storage,'app-device:'+f.deviceId);
  native.lastSeenAt=new Date(Date.now()-120000).toISOString();
- await f.storage.put('app-device:'+f.deviceId,native);
+ await queueBindings.writeNativeDevice(f.storage,'app-device:'+f.deviceId,native);
 
  const queued=await f.relay.appEnqueueHybrid(f.hybridKey,'ping',{source:'hybrid'});
  assert.equal(queued.status,'waiting_native');
@@ -195,15 +198,15 @@ test('public Web device ID cannot route native commands and revoked hybrid bindi
   f.relay.appEnqueueHybrid(f.hybridKey,'ping',{}),
   /hybrid.*rejected|binding/i
  );
- assert.ok(await f.storage.get('app-device:'+f.deviceId));
+ assert.ok(await queueBindings.readNativeDevice(f.storage,'app-device:'+f.deviceId));
 });
 
 
 test('stable native MCP control plane remains available while Android sleeps',async()=>{
  const f=await fixture();
- const native=await f.storage.get('app-device:'+f.deviceId);
+ const native=await queueBindings.readNativeDevice(f.storage,'app-device:'+f.deviceId);
  native.lastSeenAt=new Date(Date.now()-120000).toISOString();
- await f.storage.put('app-device:'+f.deviceId,native);
+ await queueBindings.writeNativeDevice(f.storage,'app-device:'+f.deviceId,native);
 
  const status=await f.relay.appStatusV3(f.key);
  assert.equal(status.connected,true);
@@ -216,9 +219,9 @@ test('stable native MCP control plane remains available while Android sleeps',as
 
 test('direct native commands become durable waiting_native work while Android sleeps',async()=>{
  const f=await fixture();
- const native=await f.storage.get('app-device:'+f.deviceId);
+ const native=await queueBindings.readNativeDevice(f.storage,'app-device:'+f.deviceId);
  native.lastSeenAt=new Date(Date.now()-120000).toISOString();
- await f.storage.put('app-device:'+f.deviceId,native);
+ await queueBindings.writeNativeDevice(f.storage,'app-device:'+f.deviceId,native);
 
  const queued=await f.relay.appEnqueueV3(f.key,'apply_tool',{clipIndex:0,tool:'transition'});
  assert.equal(queued.status,'waiting_native');
@@ -244,9 +247,9 @@ test('same private native MCP routes prompt generation to bound Studio Web while
  assert.equal(binding.bound,true);
  assert.equal(binding.fallbackWebProjectId,project.id);
 
- const native=await f.storage.get('app-device:'+f.deviceId);
+ const native=await queueBindings.readNativeDevice(f.storage,'app-device:'+f.deviceId);
  native.lastSeenAt=new Date(Date.now()-120000).toISOString();
- await f.storage.put('app-device:'+f.deviceId,native);
+ await queueBindings.writeNativeDevice(f.storage,'app-device:'+f.deviceId,native);
 
  const queued=await f.relay.appEnqueueV3(f.key,'prompt_video',{
   prompt:'cinematic test world',
@@ -277,9 +280,9 @@ test('offline native MCP still queues native-only work when Web fallback cannot 
  await f.relay.register(webDeviceId,{name:'Studio Web fallback'});
  await f.relay.createProject(webDeviceId,'Fallback Project','');
  await f.relay.appBindStudioWebFallback(f.key,webDeviceId);
- const native=await f.storage.get('app-device:'+f.deviceId);
+ const native=await queueBindings.readNativeDevice(f.storage,'app-device:'+f.deviceId);
  native.lastSeenAt=new Date(Date.now()-120000).toISOString();
- await f.storage.put('app-device:'+f.deviceId,native);
+ await queueBindings.writeNativeDevice(f.storage,'app-device:'+f.deviceId,native);
 
  const queued=await f.relay.appEnqueueV3(f.key,'install_model_pack',{assetId:'asset-12345678'});
  assert.equal(queued.status,'waiting_native');
@@ -290,7 +293,7 @@ test('offline native MCP still queues native-only work when Web fallback cannot 
 
 test('canonical identity convergence aliases legacy owner keys to the current device',async()=>{
  const store=new Map();
- const storage={get:async k=>structuredClone(store.get(k)),put:async(k,v)=>store.set(k,structuredClone(v)),delete:async k=>store.delete(k)};
+ const storage=memoryStorage(store);
  const relay=new context.VideoStudioState({storage},{});
  const primaryKey='p'.repeat(43), primaryDevice='current-device-343';
  const legacyKey='l'.repeat(43), legacyDevice='legacy-device-341';
@@ -312,18 +315,18 @@ test('canonical identity convergence aliases legacy owner keys to the current de
  assert.equal(legacy.deviceId,primaryDevice);
  assert.equal(legacy.appVersion,'3.4.3');
 
- const rows=await storage.get('app-v3-cl:'+primaryDevice);
+ const rows=await queueBindings.readCommandQueue(storage,'app-v3-cl:'+primaryDevice);
  assert.ok(rows.some(x=>x.id==='legacy-pending'));
  assert.ok(rows.some(x=>x.id==='legacy-done'&&x.result.marker==='legacy'));
 
- const oldRecord=await storage.get('app-device:'+legacyDevice);
+ const oldRecord=await queueBindings.readNativeDevice(storage,'app-device:'+legacyDevice);
  assert.equal(oldRecord.supersededByDeviceId,primaryDevice);
  assert.equal(oldRecord.canonicalIdentity,false);
 });
 
 test('superseded native device cannot steal a converged legacy endpoint back',async()=>{
  const store=new Map();
- const storage={get:async k=>structuredClone(store.get(k)),put:async(k,v)=>store.set(k,structuredClone(v)),delete:async k=>store.delete(k)};
+ const storage=memoryStorage(store);
  const relay=new context.VideoStudioState({storage},{});
  const primaryKey='q'.repeat(43), primaryDevice='current-device-lock';
  const legacyKey='r'.repeat(43), legacyDevice='legacy-device-lock';
@@ -394,7 +397,7 @@ test('private image payload is delivered to Android but redacted from status and
  assert.equal(delivered.length,1);
  assert.equal(delivered[0].parameters.base64,'user-private-binary-frame');
  await f.relay.appCompleteV3(f.deviceId,f.key,'cmd-1',{ok:true},'completed');
- const rows=await f.storage.get('app-v3-cl:'+f.deviceId);
+ const rows=await queueBindings.readCommandQueue(f.storage,'app-v3-cl:'+f.deviceId);
  assert.equal(rows.length,1);
  assert.equal(rows[0].status,'completed');
  assert.equal(rows[0].parameters.base64,'[completed payload purged]');

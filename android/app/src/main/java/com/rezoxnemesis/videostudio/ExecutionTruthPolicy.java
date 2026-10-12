@@ -138,6 +138,9 @@ public final class ExecutionTruthPolicy {
                 || "animate_pose_sequence".equals(value)
                 || "animate_timeline".equals(value)
                 || "animate_combat_rig".equals(value)
+                || "render_rigged_2d".equals(value)
+                || "render_gltf_combat".equals(value)
+                || "cinematic_3d_render".equals(value)
                 || "export_project".equals(value)
                 || "autonomous_edit".equals(value);
     }
