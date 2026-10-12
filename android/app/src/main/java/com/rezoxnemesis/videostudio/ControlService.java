@@ -93,6 +93,9 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     private CommandJournal commandJournal;
     private final ExecutorService commandCompletionWatchers = Executors.newFixedThreadPool(2);
     private final ExecutorService directorSetupExecutor = Executors.newSingleThreadExecutor();
+    // Image decoding, project-file verification and rig geometry operations
+    // must never block the main Looper that processes ping/get_state and user UI.
+    private final ExecutorService nativeSourceExecutor = Executors.newFixedThreadPool(2);
     private final Set<String> watchedCommands = ConcurrentHashMap.newKeySet();
     private volatile boolean serviceAlive;
 
@@ -458,6 +461,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         if (protocol != null) protocol.stop();
         commandCompletionWatchers.shutdownNow();
         directorSetupExecutor.shutdownNow();
+        nativeSourceExecutor.shutdownNow();
         if (NativeAgentWatchdog.shouldRearm(paused)) {
             NativeAgentWatchdog.scheduleRetry(this, "service_destroyed");
         } else {
@@ -491,7 +495,25 @@ public final class ControlService extends Service implements AppProtocol.Callbac
 
     @Override
     public void onCommand(JSONObject command) {
-        String action = command.optString("action");
+        if(command == null)return;
+        String incomingAction = command.optString("action", "");
+        if(android.os.Looper.myLooper() == android.os.Looper.getMainLooper()
+                && NativeCommandExecutionPolicy.requiresBackgroundThread(incomingAction)) {
+            try {
+                // The remote relay may deliver the same lease again. AppProtocol's
+                // bounded per-ID dispatch guard suppresses duplicate main-thread posts.
+                // The durable journal remains the authority for replay/exactly-once work.
+                nativeSourceExecutor.execute(() -> onCommand(command));
+            } catch(java.util.concurrent.RejectedExecutionException rejected) {
+                JSONObject failed = new JSONObject();
+                try { failed.put("ok",false).put("error",
+                        "Native inspection worker unavailable; reconnect and retry"); }
+                catch(Exception ignored){}
+                complete(command,failed);
+            }
+            return;
+        }
+        String action = incomingAction;
         JSONObject p = command.optJSONObject("parameters");
         if (p == null) p = new JSONObject();
         // Host payloads cannot supply frozen proofs, recovery identities or
