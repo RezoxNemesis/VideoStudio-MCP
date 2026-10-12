@@ -537,7 +537,7 @@ def blade_mesh_raycast(source, target):
     start, end = blade_segment(source)
     other = target["sword"].evaluated_get(graph)
     miss = {"hit": False, "point": None, "normal": None, "polygonIndex": None,
-            "errorMeters": None, "target": other.name, "method": "evaluated_mesh_Object.ray_cast"}
+            "errorMeters": None, "target": other.name, "method": "evaluated_mesh_Object.ray_cast", "coordinateSystem": "Y_up_metres"}
     world_length = (end - start).length
     determinant = other.matrix_world.to_3x3().determinant()
     if (other.type != "MESH" or not all(math.isfinite(c) for p in (start, end) for c in p)
@@ -569,9 +569,9 @@ def blade_mesh_raycast(source, target):
             or world_normal.length <= EPS):
         return dict(miss, reason="nonfinite_mesh_hit")
     world_normal.normalize()
-    return {"hit": True, "point": list(world_point), "normal": list(world_normal),
+    return {"hit": True, "point": list(BASIS.transposed() @ world_point), "normal": list(BASIS.transposed() @ world_normal),
             "polygonIndex": int(polygon), "errorMeters": error, "target": other.name,
-            "rayDistanceMeters": world_length, "method": "evaluated_mesh_Object.ray_cast"}
+            "rayDistanceMeters": world_length, "method": "evaluated_mesh_Object.ray_cast", "coordinateSystem": "Y_up_metres"}
 
 
 def key_transform(obj, frame):
