@@ -12,7 +12,7 @@ const delay=ms=>new Promise(r=>setTimeout(r,ms));
 async function request(path,body,headers={}) {const response=await fetch(origin+path,{method:body===undefined?'GET':'POST',headers:{...(body===undefined?{}:{origin,'content-type':'application/json'}),...(cookie?{cookie}:{}),...headers},...(body===undefined?{}:{body:JSON.stringify(body)}),signal:AbortSignal.timeout(20000)});return response;}
 async function json(path,body,headers={}){const r=await request(path,body,headers);const data=await r.json();assert.equal(r.status,200,path+': '+JSON.stringify(data));return data;}
 async function register(owner=key,id=device,permissionMode='everything') {return json('/api/v3/app/register',{deviceId:id,ownerKey:owner,meta:{name:'Synthetic CI phone',appVersion:'3.4.11',protocolVersion:3,protocolMin:3,protocolMax:3,appGeneration:1,permissionMode,controlPaused:false,projects:[]}});}
-async function login(owner=key){const r=await request('/api/personal/session',{ownerKey:owner});assert.equal(r.status,200);const set=r.headers.get('set-cookie');assert.match(set,/HttpOnly/);assert.match(set,/Secure/);cookie=set.split(';')[0];return cookie;}
+async function login(owner=key){const r=await request('/api/personal/session',{ownerKey:owner}),body=await r.json();assert.equal(r.status,200,'Personal login: '+JSON.stringify(body));assert.equal(body.ok,true);assert.ok(!JSON.stringify(body).includes(owner));assert.ok(!JSON.stringify(body).includes('ownerHash'));const set=r.headers.get('set-cookie');assert.match(set,/HttpOnly/);assert.match(set,/Secure/);cookie=set.split(';')[0];return cookie;}
 async function mcp(method,params={}) {
   const r=await fetch(origin+'/app-mcp-v3/'+key,{method:'POST',headers:{'content-type':'application/json',accept:'application/json, text/event-stream','mcp-protocol-version':protocol,...(sessionHeader?{'mcp-session-id':sessionHeader}:{})},body:JSON.stringify({jsonrpc:'2.0',id:++seq,method,params}),signal:AbortSignal.timeout(20000)});
   if(r.headers.get('mcp-session-id'))sessionHeader=r.headers.get('mcp-session-id');
@@ -54,6 +54,7 @@ if(process.argv[2]==='seed') {
   ok('Real MCP create/result and website read succeed with no native executor or browser');
   const native=await tool('app_execute',{action:'get_state',parameters:{}});const nativeHolder=find(native,v=>typeof v.commandId==='string');assert.ok(nativeHolder);
   const nativeRead=await tool('app_get_command_result',{commandId:nativeHolder.commandId});const nativeCommand=find(nativeRead,v=>v.id===nativeHolder.commandId);assert.ok(nativeCommand);assert.equal(nativeCommand.status,'waiting_native');
+  const personalNative=await json('/api/personal/snapshot');assert.ok(personalNative.native.jobs.some(job=>job.id===nativeHolder.commandId&&job.status==='waiting_native'),'Personal activity must retrieve the same accepted native command from the chunked queue.');
   ok('Legacy native queue remains distinct and truthfully waits for the phone');
   await writeFile('.work/runtime-mcp-results.json',JSON.stringify(results,null,2));
 }

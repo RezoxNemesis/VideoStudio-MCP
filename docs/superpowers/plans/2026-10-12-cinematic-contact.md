@@ -82,9 +82,9 @@
 
 **Files:** `android/app/build.gradle.kts`, `.github/workflows/android.yml`, verification scripts and continuity/evidence status.
 
-- [ ] Focused regressions, full local Android (359) and Worker (306 smoke + 119 executable) suites PASS; protected APK build remains.
+- [x] Focused regressions, full local Android (359) and Worker (306 smoke + 125 executable) suites PASS; protected APK build and downloaded-artifact identity checks PASS.
 - [x] Build fails closed without the original persistent key; never generate fallback signing material.
-- [ ] Version 372 / 3.7.2 configured; verify actual protected APK identity/hash/certificate, installed comparison blocked.
+- [x] Actual APK version 372 / 3.7.2, package, SHA-256 and original certificate verified; installed comparison remains blocked.
 - [x] Preserve R01–R12, T01–T21, U01–U04 and M1–M6 status matrix with actual evidence or exact blockers.
 - [x] Real Test 1 reproduction/install/render/Drive/thermal acceptance stays blocked until native source/device access exists; do not resume the older broad roadmap before this priority is resolved or explicitly blocked.
 

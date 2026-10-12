@@ -20,7 +20,7 @@ The new nine-frame library is available for source inspection. It does not provi
 - The Gradle signing guard was executed without an original key and correctly failed: `Original VideoStudio signing key unavailable; refusing a replacement or unsigned APK`. Unit tests do not need an APK key. No replacement signing material was created.
 - Final review regressions executed 41 tests with zero failures, including actual-frame cancellation retention, source-raster publication guards, body/weapon admission limits, explicit empty-contact rejection, 3-second/24-FPS planning, and stale/missing-registration draft repair.
 - The complete local Android suite executed **359 tests in 87 suites, with zero failures, errors or skips**. JUnit XML and the exact summary are retained in `android-full-final/`; synthetic native Canvas PNG/JSON and generated PCM remain separately labelled. The native film fixture proves source-deformation behavior and zero-event ambience, not original cinematic acting.
-- Final targeted Worker storage/route/privacy/race checks executed **51 tests with zero failures**. The complete final Worker suite also passed **306 smoke checks and 119 executable tests**; Wrangler dry-run bundling passed. One protected original-signer CI APK build remains pending below.
+- Final targeted Worker storage/route/privacy/race checks executed **51 tests with zero failures**. The complete final Worker suite also passed **306 smoke checks and 125 executable tests**; Wrangler dry-run bundling passed. The original-signer APK build succeeded on source `f68acb7` in [Android CI run 38213139946](https://github.com/RezoxNemesis/VideoStudio-MCP/actions/runs/38213139946). The downloaded artifact was independently checked with local aapt, apksigner and SHA-256. Subsequent changes repair only Worker personal-workspace compatibility; Android source is unchanged.
 - Read-only review findings were repaired: arbitrary aspect cropping, empty cinematic contacts, environmental phone intent, obsolete beat/duration routing, stale-draft dead ends, destructive legacy render rejection, missing recovery command binding, renderer limits after allocation, intentional standoff handling, unredacted/oversized result pages, and stale device admission during alias convergence.
 
 ## R01–R12
@@ -74,9 +74,9 @@ Pinned public signer SHA-256: `7e0187470356616be2a45bc7f41445894085185db110edfdc
 
 | Test | Status |
 | --- | --- |
-| U01 package/version vs installed manifest | Source configuration retained/incremented; CI APK metadata pending, installed comparison blocked |
-| U02 apksigner / original installed certificate | Fail-closed negative guard verified; protected CI APK certificate check pending; installed comparison blocked |
-| U03 unit checks / restored key / assembled artifact integrity | Local Android/Worker checks PASS; protected build pending, no successful APK claimed yet |
+| U01 package/version vs installed manifest | Actual APK package/version verified (Next / 372 / 3.7.2); installed comparison blocked |
+| U02 apksigner / original installed certificate | Original key restored in CI; actual APK certificate matches pin and local apksigner verification; installed comparison blocked |
+| U03 unit checks / restored key / assembled artifact integrity | Local suites and actual protected APK build PASS; downloaded artifact SHA-256 verified |
 | U04 durable secure backup of original key | BLOCKED: no accessible authorized backup location/key-management permission; repository secret-name API returned 403. Signing cache restoration is not disaster recovery. |
 
 No uninstall, clear-data, downgrade, endpoint rotation or unverified main release is performed. The in-place device matrix (projects, 23 original assets, prior MP4s, owner identity, cached endpoint and interrupted jobs) remains blocked on native access.
@@ -90,3 +90,11 @@ The older complete engineering blueprint is preserved and remains queued behind 
 ## Later nine-frame reference packet
 
 The nine input drawings show approach/readiness, acceleration, launch, contact at frame 05, follow-through/recoil, landing, recovery and reset. The decoded sixteen-sample reference strip was inspected independently; it shows changing limb/body poses and weapon action, rather than only camera motion. These observations guide future source authoring and comparison but are not measurements of a new VideoStudio export. The packet's required final PASS still depends on all-nine-frame native output, dense real limb/weapon/foot trajectories, decoded audio timing and independent full-speed/slow-playback review. The packet is not substituted for the earlier 23/13 Test 1 dataset.
+
+## APK and actual local runtime evidence
+
+Verified APK: package `com.rezoxnemesis.videostudio.next`, versionCode 372 / versionName 3.7.2, 127,108,639 bytes. SHA-256 `6a43ac191bac28caf9f716e676295cd232f068aa1f390b81c075f419b5879c0e`; public signer matches the pinned original certificate above. The CI proof records source head `f68acb7cc6014a4eddd463de019c4919cad57882` separately from the GitHub PR merge commit. No install/uninstall or native acceptance is claimed.
+
+The first personal-website CI run found a real compatibility defect: its login and activity code still read legacy raw KV keys after device/queue migration to chunks. The personal store now uses shared transactional readers and retains ownership/session checks. Six new integration regressions passed alongside the existing personal suite (51 focused cases); the full Worker suite passed 125 executable cases plus 306 smoke checks. Actual local workerd/SQLite HTTP login, cloud persistence, isolation, conflicts, CSRF and native permission checks passed, followed by real MCP create/result retrieval and offline native queue visibility. This is loopback runtime evidence with isolated synthetic identities, not live ChatGPT/phone evidence.
+
+The Cloudflare external build check fails without diagnostic details available through the GitHub check API; local and GitHub Worker validation/dry-run pass. A live Worker deployment is not claimed. Further CI results are linked from PR #67 rather than substituted for original cinematic acceptance.
