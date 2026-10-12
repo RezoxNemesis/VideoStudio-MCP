@@ -1,0 +1,48 @@
+name: Cinematic 3D CPU artifacts
+on:
+  pull_request:
+    branches: [main]
+    paths: ['cinematic3d/**', 'tests/cinematic3d/**', '.github/workflows/cinematic3d.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: cinematic3d-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  portable-scene:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install pinned CPU Blender and camera solver
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 2 https://download.blender.org/release/Blender4.3/blender-4.3.2-linux-x64.tar.xz -o /tmp/blender-4.3.2-linux-x64.tar.xz
+          curl --fail --location --retry 2 https://download.blender.org/release/Blender4.3/blender-4.3.2.sha256 -o /tmp/blender.sha256
+          cd /tmp
+          sha256sum --check --ignore-missing blender.sha256
+          tar -xf blender-4.3.2-linux-x64.tar.xz
+          echo '/tmp/blender-4.3.2-linux-x64' >> "$GITHUB_PATH"
+          python -m pip install numpy==2.3.5 opencv-python-headless==4.11.0.86
+          sudo apt-get update -qq
+          sudo apt-get install -y ffmpeg libegl1 libxkbcommon0 libsm6
+      - name: Verify actual rigs, clips, contacts and optional-provider boundaries
+        run: |
+          set -euo pipefail
+          python -m unittest discover -s tests/cinematic3d -v
+      - name: Build demonstrator using CPU Blender
+        run: python -m cinematic3d build cinematic3d/examples/contact-demo.json --output build/cinematic3d --render-frames 48
+      - name: Upload verified cloud demonstrator and diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: VideoStudio-cinematic3d-cloud-demo
+          path: |
+            build/cinematic3d/
+            build/cinematic3d.failed.log
+          if-no-files-found: warn
+          retention-days: 7

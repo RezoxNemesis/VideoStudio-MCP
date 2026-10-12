@@ -1,4 +1,5 @@
-/** Additive private workspace. Existing native state and command queues are untouched. */
+import {readNativeDeviceInTransaction,readCommandQueue} from './native-command-store.js';
+/** Additive private workspace. Native registration/queues use their shared storage adapters. */
 const enc = new TextEncoder();
 export const PERSONAL_VERSION = '1.0.0';
 export const fail = (status, message) => Object.assign(new Error(message), {status});
@@ -46,24 +47,35 @@ function validate(input, device, previous) {
 export function withPersonalStudio(Base) {
   return class PersonalStudioState extends Base {
     async personalAuth(auth, storage=this.ctx.storage) {
+      if(storage===this.ctx.storage)
+        return storage.transaction(tx=>this.personalAuth(auth,tx));
       let device;
-      if(auth?.ownerKey) device=await this.appResolve(auth.ownerKey);
+      if(typeof auth?.ownerKey==='string'&&auth.ownerKey) {
+        const id=await storage.get('app-owner:'+await hash(auth.ownerKey));
+        if(id)device=await readNativeDeviceInTransaction(storage,'app-device:'+id);
+        // A proven owner index may still point at a retained legacy identity.
+        // Session cookies stay bound to their original registration instead.
+        if(device?.supersededByDeviceId)
+          device=await readNativeDeviceInTransaction(storage,'app-device:'+device.supersededByDeviceId);
+      }
       else if(auth?.session && /^[a-f0-9]{64}$/.test(auth.session)) {
         const row=await storage.get('personal:session:'+await hash(auth.session));
         if(row && row.expiresAt>Date.now()) {
-          const current=await storage.get('app-device:'+row.ownerId);
+          const current=await readNativeDeviceInTransaction(storage,'app-device:'+row.ownerId);
           if(current && current.ownerHash===row.ownerHash && !current.supersededByDeviceId) device=current;
         }
       }
       if(!device) throw fail(401,'Sign in to your personal VideoStudio workspace.');
-      const fresh=await storage.get('app-device:'+device.deviceId);
-      if(!fresh || fresh.supersededByDeviceId) throw fail(401,'This session is no longer active. Sign in again.');
-      return fresh;
+      if(device.supersededByDeviceId||typeof device.ownerHash!=='string'||!/^[a-f0-9]{64}$/.test(device.ownerHash))
+        throw fail(401,'This session is no longer active. Sign in again.');
+      return device;
     }
     async personalCreateSession(ownerKey) {
       if(typeof ownerKey!=='string'||ownerKey.length<32||ownerKey.length>512) throw fail(401,'The private connection key is not valid.');
       const d=await this.personalAuth({ownerKey}), raw=token(), digest=await hash(raw), expiresAt=Date.now()+7*86400000;
       await this.ctx.storage.transaction(async tx=>{
+        const current=await this.personalAuth({ownerKey},tx);
+        if(current.deviceId!==d.deviceId||current.ownerHash!==d.ownerHash)throw fail(409,'Native ownership changed. Sign in again.');
         const k=ownKey(d.deviceId,'sessions'), list=(await tx.get(k))||[];
         list.push(digest);
         while(list.length>8) await tx.delete('personal:session:'+list.shift());
@@ -89,6 +101,7 @@ export function withPersonalStudio(Base) {
       if(operation==='put'&&(!object(value)||enc.encode(JSON.stringify(value)).byteLength>25000)) throw fail(400,'Invalid private storage record.');
       return this.ctx.storage.transaction(async tx=>{
         const current=await this.personalAuth(auth,tx);
+        if(current.deviceId!==d.deviceId||current.ownerHash!==d.ownerHash)throw fail(409,'Native ownership changed. Retry after signing in again.');
         if(current.controlPaused||restricted(current)) throw fail(423,'Cloud writes are paused by the native control setting.');
         if(operation==='take') {const result=await tx.get(k);await tx.delete(k);return result||null;}
         if(key.startsWith('oauth:')) {
@@ -116,7 +129,7 @@ export function withPersonalStudio(Base) {
       }
       projects.sort((a,b)=>b.updatedAt.localeCompare(a.updatedAt));
       const jobs=scopeRestricted?[]:(await storage.get(ownKey(d.deviceId,'jobs')))||[];
-      const nativeCommands=scopeRestricted?[]:(await storage.get('app-v3-cl:'+d.deviceId))||[];
+      const nativeCommands=scopeRestricted?[]:await readCommandQueue(storage,'app-v3-cl:'+d.deviceId);
       const age=Date.now()-(Date.parse(d.lastSeenAt)||0);
       const drive=await storage.get(ownKey(d.deviceId,'vault:drive')); 
       const prefs=(await storage.get(ownKey(d.deviceId,'preferences')))||{theme:'dark'};
@@ -137,6 +150,7 @@ export function withPersonalStudio(Base) {
       if(enc.encode(JSON.stringify(data)).byteLength>90000) throw fail(413,'Request is too large.');
       return this.ctx.storage.transaction(async tx=>{
         const current=await this.personalAuth(auth,tx);
+        if(current.deviceId!==d.deviceId||current.ownerHash!==d.ownerHash)throw fail(409,'Native ownership changed. Retry after signing in again.');
         if(current.controlPaused||restricted(current)) throw fail(423,'Cloud writes are paused by STOP CHATGPT CONTROL or One File Lock.');
         const requestKey=ownKey(d.deviceId,'request:'+requestHash), existing=await tx.get(requestKey);
         if(existing) {

@@ -1,0 +1,184 @@
+{
+  "schema": "videostudio.cinematic3d.timeline.v1",
+  "name": "Cinematic 3D action library",
+  "fps": 30,
+  "motionProvider": "procedural_mannequin",
+  "shots": [
+    {
+      "id": "demo_standoff",
+      "action": "STANDOFF",
+      "durationFrames": 48,
+      "hitStopFrames": 0,
+      "camera": {
+        "mode": "wide",
+        "fovDegrees": 48,
+        "shakeIntensity": 0.45
+      },
+      "vfx": {
+        "sparkBurst": true,
+        "slashTrail": true,
+        "rubble": true
+      }
+    },
+    {
+      "id": "demo_charge",
+      "action": "CHARGE",
+      "durationFrames": 48,
+      "hitStopFrames": 0,
+      "camera": {
+        "mode": "wide",
+        "fovDegrees": 48,
+        "shakeIntensity": 0.45
+      },
+      "vfx": {
+        "sparkBurst": true,
+        "slashTrail": true,
+        "rubble": true
+      }
+    },
+    {
+      "id": "demo_clash",
+      "action": "CLASH",
+      "durationFrames": 48,
+      "hitStopFrames": 3,
+      "camera": {
+        "mode": "wide",
+        "fovDegrees": 48,
+        "shakeIntensity": 0.45
+      },
+      "vfx": {
+        "sparkBurst": true,
+        "slashTrail": true,
+        "rubble": true
+      }
+    },
+    {
+      "id": "demo_blade_lock",
+      "action": "BLADE_LOCK",
+      "durationFrames": 48,
+      "hitStopFrames": 3,
+      "camera": {
+        "mode": "wide",
+        "fovDegrees": 48,
+        "shakeIntensity": 0.45
+      },
+      "vfx": {
+        "sparkBurst": true,
+        "slashTrail": true,
+        "rubble": true
+      }
+    },
+    {
+      "id": "demo_follow_through",
+      "action": "FOLLOW_THROUGH",
+      "durationFrames": 48,
+      "hitStopFrames": 0,
+      "camera": {
+        "mode": "wide",
+        "fovDegrees": 48,
+        "shakeIntensity": 0.45
+      },
+      "vfx": {
+        "sparkBurst": true,
+        "slashTrail": true,
+        "rubble": true
+      }
+    },
+    {
+      "id": "demo_knockback",
+      "action": "KNOCKBACK",
+      "durationFrames": 48,
+      "hitStopFrames": 0,
+      "camera": {
+        "mode": "wide",
+        "fovDegrees": 48,
+        "shakeIntensity": 0.45
+      },
+      "vfx": {
+        "sparkBurst": true,
+        "slashTrail": true,
+        "rubble": true
+      }
+    },
+    {
+      "id": "demo_landing",
+      "action": "LANDING",
+      "durationFrames": 48,
+      "hitStopFrames": 0,
+      "camera": {
+        "mode": "wide",
+        "fovDegrees": 48,
+        "shakeIntensity": 0.45
+      },
+      "vfx": {
+        "sparkBurst": true,
+        "slashTrail": true,
+        "rubble": true
+      }
+    },
+    {
+      "id": "demo_recovery",
+      "action": "RECOVERY",
+      "durationFrames": 48,
+      "hitStopFrames": 0,
+      "camera": {
+        "mode": "wide",
+        "fovDegrees": 48,
+        "shakeIntensity": 0.45
+      },
+      "vfx": {
+        "sparkBurst": true,
+        "slashTrail": true,
+        "rubble": true
+      }
+    },
+    {
+      "id": "demo_aerial_flip",
+      "action": "AERIAL_FLIP",
+      "durationFrames": 48,
+      "hitStopFrames": 0,
+      "camera": {
+        "mode": "wide",
+        "fovDegrees": 48,
+        "shakeIntensity": 0.45
+      },
+      "vfx": {
+        "sparkBurst": true,
+        "slashTrail": true,
+        "rubble": true
+      }
+    },
+    {
+      "id": "demo_tumble",
+      "action": "TUMBLE",
+      "durationFrames": 48,
+      "hitStopFrames": 0,
+      "camera": {
+        "mode": "wide",
+        "fovDegrees": 48,
+        "shakeIntensity": 0.45
+      },
+      "vfx": {
+        "sparkBurst": true,
+        "slashTrail": true,
+        "rubble": true
+      }
+    },
+    {
+      "id": "demo_macro_clash",
+      "action": "MACRO_CLASH",
+      "durationFrames": 48,
+      "hitStopFrames": 3,
+      "camera": {
+        "mode": "macro",
+        "fovDegrees": 48,
+        "shakeIntensity": 0.45
+      },
+      "vfx": {
+        "sparkBurst": true,
+        "slashTrail": true,
+        "rubble": true
+      }
+    }
+  ]
+}

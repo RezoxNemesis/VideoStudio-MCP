@@ -155,6 +155,7 @@ public final class ProjectStore {
         public long latestExportAt = 0;
         public final ArrayList<Asset> assets = new ArrayList<>();
         public final ArrayList<Clip> clips = new ArrayList<>();
+        public final ArrayList<StudioLayer> studioLayers = new ArrayList<>();
 
         public long outputDurationMs() {
             long total = 0;
@@ -166,6 +167,8 @@ public final class ProjectStore {
             JSONObject o = new JSONObject();
             JSONArray aa = new JSONArray();
             JSONArray cc = new JSONArray();
+            JSONArray ll = new JSONArray();
+            for (StudioLayer lane:studioLayers) ll.put(lane.toJson());
             for (Asset a : assets) aa.put(a.toJson());
             for (Clip c : clips) cc.put(c.toJson());
             try {
@@ -178,6 +181,7 @@ public final class ProjectStore {
                 o.put("latestExportAt", latestExportAt);
                 o.put("assets", aa);
                 o.put("clips", cc);
+                o.put("studioLayers", ll);
             } catch (Exception ignored) {}
             return o;
         }
@@ -200,6 +204,12 @@ public final class ProjectStore {
             if (cc != null) for (int i = 0; i < cc.length(); i++) {
                 JSONObject item = cc.optJSONObject(i);
                 if (item != null) p.clips.add(Clip.fromJson(item));
+            }
+            JSONArray ll = o.optJSONArray("studioLayers");
+            if(ll!=null)for(int i=0;i<Math.min(64,ll.length());i++){
+                JSONObject item=ll.optJSONObject(i);
+                if(item!=null)try{p.studioLayers.add(StudioLayer.fromJson(item));}
+                    catch(IllegalArgumentException ignored){} // malformed edits cannot crash startup
             }
             return p;
         }
@@ -279,6 +289,34 @@ public final class ProjectStore {
         return null;
     }
 
+    @FunctionalInterface
+    public interface GuardedProjectWork<T> {
+        T run(Project current) throws Exception;
+    }
+
+    /**
+     * Protect source-bound annotation writes with the SQLite writer lock shared
+     * by all ProjectStore instances. The callback acquires any profile-file lock
+     * only after this lock, and must not publish unrelated project changes.
+     */
+    public synchronized <T> T guardedProject(String projectId, long expectedUpdatedAt,
+                                             GuardedProjectWork<T> work) throws Exception {
+        if (expectedUpdatedAt < 0 || work == null)
+            throw new IllegalArgumentException("An exact source revision and callback are required");
+        db.beginTransaction();
+        try {
+            Project current = get(projectId);
+            if (current == null) throw new IllegalArgumentException("Unknown source project");
+            if (current.updatedAt != expectedUpdatedAt)
+                throw new IllegalStateException("SOURCE_PROJECT_CHANGED: reopen the source before saving annotations");
+            T result = work.run(current);
+            db.setTransactionSuccessful();
+            return result;
+        } finally {
+            db.endTransaction();
+        }
+    }
+
     public synchronized Project active() {
         String id = getMeta(META_ACTIVE);
         Project p = id.isEmpty() ? null : get(id);
@@ -305,12 +343,25 @@ public final class ProjectStore {
 
     public synchronized void save(Project project) {
         if (project == null) return;
-        project.updatedAt = System.currentTimeMillis();
-        ContentValues values = new ContentValues();
-        values.put("id", project.id);
-        values.put("json", project.toJson().toString());
-        values.put("updated_at", project.updatedAt);
-        db.insertWithOnConflict("projects", null, values, SQLiteDatabase.CONFLICT_REPLACE);
+        db.beginTransaction();
+        long before = project.updatedAt;
+        try {
+            Project persisted = get(project.id);
+            long next = persisted == null ? 0 : Math.addExact(persisted.updatedAt, 1L);
+            project.updatedAt = Math.max(System.currentTimeMillis(), next);
+            ContentValues values = new ContentValues();
+            values.put("id", project.id);
+            values.put("json", project.toJson().toString());
+            values.put("updated_at", project.updatedAt);
+            if (db.insertWithOnConflict("projects", null, values, SQLiteDatabase.CONFLICT_REPLACE) < 0)
+                throw new IllegalStateException("Project persistence failed");
+            db.setTransactionSuccessful();
+        } catch (RuntimeException failure) {
+            project.updatedAt = before;
+            throw failure;
+        } finally {
+            db.endTransaction();
+        }
     }
 
     public synchronized void delete(String id) {

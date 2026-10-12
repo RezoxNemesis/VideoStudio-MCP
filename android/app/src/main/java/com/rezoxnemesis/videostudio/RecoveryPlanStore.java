@@ -47,8 +47,35 @@ public final class RecoveryPlanStore {
             plan.put("createdAt", System.currentTimeMillis());
             plan.put("updatedAt", System.currentTimeMillis());
         } catch (Exception ignored) {}
-        upsert(plan);
+        upsert(plan, true);
         return id;
+    }
+
+    /** Persist the exact accepted output revision before a recovery can reuse it. */
+    public synchronized void checkpointStoryboardOutputForJob(String jobId, String targetId, long updatedAt) {
+        JSONObject plan = findByJobId(jobId);
+        if (plan == null || !"animate_storyboard_series".equals(plan.optString("action")) ||
+                targetId == null || !targetId.equals(plan.optString("projectId")) || updatedAt < 0)
+            throw new IllegalStateException("Storyboard recovery output identity is not the accepted target");
+        try {
+            JSONObject parameters = plan.getJSONObject("parameters");
+            if (!targetId.equals(parameters.optString("outputProjectId")))
+                throw new IllegalStateException("Storyboard recovery target differs from its parameters");
+            parameters.put("_storyboardOutputUpdatedAt", updatedAt);
+            plan.put("updatedAt", System.currentTimeMillis());
+        } catch (org.json.JSONException malformed) {
+            throw new IllegalStateException("Storyboard recovery parameters unavailable", malformed);
+        }
+        upsert(plan, true);
+    }
+
+    public synchronized void checkpointCinematicOutputForJob(String jobId,String targetId,long updatedAt) {
+        JSONObject plan=findByJobId(jobId);
+        if(plan==null||!"cinematic_3d_render".equals(plan.optString("action"))||targetId==null||!targetId.equals(plan.optString("projectId"))||updatedAt<0)
+            throw new IllegalStateException("Cinematic recovery output identity differs");
+        try{JSONObject parameters=plan.getJSONObject("parameters");if(!targetId.equals(parameters.getString("outputProjectId")))throw new IllegalStateException("Cinematic recovery target differs");parameters.put("_cinematicOutputUpdatedAt",updatedAt);plan.put("updatedAt",System.currentTimeMillis());}
+        catch(org.json.JSONException malformed){throw new IllegalStateException("Cinematic recovery parameters unavailable",malformed);}
+        upsert(plan,true);
     }
 
     public synchronized JSONObject get(String id) {
@@ -185,7 +212,7 @@ public final class RecoveryPlanStore {
             String state = plan.optString("state");
             if ("queued".equals(state) || "running".equals(state) || "waiting_retry".equals(state)
                     || "interrupted".equals(state) || "waiting_thermal".equals(state)
-                    || "waiting_memory".equals(state)) {
+                    || "waiting_memory".equals(state) || "retrying".equals(state)) {
                 try {
                     plan.put("state", "cancelled");
                     plan.put("detail", "Cancelled");
@@ -210,7 +237,7 @@ public final class RecoveryPlanStore {
             String state = plan.optString("state");
             if ("queued".equals(state) || "running".equals(state) || "waiting_retry".equals(state)
                     || "interrupted".equals(state) || "waiting_thermal".equals(state)
-                    || "waiting_memory".equals(state)) {
+                    || "waiting_memory".equals(state) || "retrying".equals(state)) {
                 try { out.put(new JSONObject(plan.toString())); }
                 catch (Exception ignored) {}
             }
@@ -243,6 +270,10 @@ public final class RecoveryPlanStore {
     }
 
     private void upsert(JSONObject plan) {
+        upsert(plan, false);
+    }
+
+    private void upsert(JSONObject plan, boolean durable) {
         if (plan == null) return;
         JSONArray old = read();
         JSONArray next = new JSONArray();
@@ -253,7 +284,10 @@ public final class RecoveryPlanStore {
             if (item == null || id.equals(item.optString("id"))) continue;
             next.put(item);
         }
-        write(next);
+        if (durable) {
+            if (!prefs.edit().putString(KEY, next.toString()).commit())
+                throw new IllegalStateException("Durable recovery checkpoint could not be persisted");
+        } else write(next);
     }
 
     private JSONArray read() {
@@ -272,7 +306,12 @@ public final class RecoveryPlanStore {
         if (names == null) return out;
         for (int i = 0; i < names.length(); i++) {
             String key = names.optString(i);
-            if (key.startsWith("_")) continue;
+            // These values are constructed by ControlService after admission,
+            // never accepted as caller-provided proof. Recovery must preserve
+            // the exact accepted sources and rig identities across restarts.
+            if (key.startsWith("_") && !key.equals("_mcpCommandId") &&
+                    !key.equals("_storyboardSourceManifest") && !key.equals("_storyboardAdmission") &&
+                    !key.equals("_storyboardOutputUpdatedAt") && !key.equals("_cinematicOutputUpdatedAt")) continue;
             try { out.put(key, input.opt(key)); }
             catch (Exception ignored) {}
         }
