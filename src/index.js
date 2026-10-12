@@ -1,6 +1,7 @@
 import { nativeCommandSummary, nativeResultPage } from "./native-result-pages.js";
 import { readCommandQueue, mutateCommandQueue, requireCommandQueueAdmission, terminalCommandUpdate, commandIsPending, readCommandReceipt, acknowledgePrunedCommand, readCommandQueueInTransaction, writeCommandQueueInTransaction, mergeCommandReceiptsInTransaction, readCommandReceiptsInTransaction, canonicalCommandResultSha256, readNativeDevice, readNativeDeviceInTransaction, writeNativeDevice, writeNativeDeviceInTransaction } from "./native-command-store.js";
 import { STORYBOARD_NATIVE_ACTIONS, CINEMATIC_BEATS, requireStoryboardNativeVersion, nativeStoryboardParameters, cinematic3dToolSchemas } from "./storyboard-contract.js";
+import { studioToolSchemas } from './studio-workbench-contract.js';
 import { DurableObject } from "cloudflare:workers";
 import { McpServer } from "@modelcontextprotocol/server";
 import { createMcpHandler } from "agents/mcp/server";
@@ -25,7 +26,7 @@ const redactCommand = command => {
     if(Array.isArray(input)) return input.map(v=>redact(v,depth+1,omitPrivate));
     const copy=Object.create(null);
     for(const [key,value] of Object.entries(input)){
-      if(["base64","sourceurl","downloadurl","signedurl","ownerkey","privateownerkey","authtoken","accesstoken","refreshtoken","authorization","apikey","clientsecret","password","token"].includes(key.toLowerCase().replace(/[_-]/g,""))){
+      if(["base64","sourceurl","downloadurl","signedurl","ownerkey","privateownerkey","authtoken","accesstoken","refreshtoken","authorization","apikey","clientsecret","password","token","bearer"].includes(key.toLowerCase().replace(/[_-]/g,""))){
         if(!omitPrivate)copy[key]="[private command payload redacted]";
       }else copy[key]=value&&typeof value==="object"?redact(value,depth+1,omitPrivate):value;
     }
@@ -43,7 +44,7 @@ const nativeImageBlocks = command => {
   const result=command&&command.result;
   if(!result||typeof result!=='object')return [];
   const seen=new Set();
-  return ['contactSheet','sourceArtworkImage','rigPreviewImage'].flatMap(key=>{
+  return ['contactSheet','sourceArtworkImage','rigPreviewImage','sketchPreviewImage'].flatMap(key=>{
     const value=result[key];
     if(!value||typeof value.base64!=='string'||!value.base64||value.base64.length>1500*1024)return [];
     const mime=value.mimeType||'image/jpeg';
@@ -656,7 +657,7 @@ export class VideoStudioState extends DurableObject {
     if(!resolved) throw new Error("Private hybrid binding rejected");
     parameters=nativeStoryboardParameters(action,parameters);
     const d=resolved.native;
-    requireStoryboardNativeVersion(d,action);
+    requireStoryboardNativeVersion(d,action,parameters);
     const min=Number(d.protocolMin||d.protocolVersion||0), max=Number(d.protocolMax||d.protocolVersion||0);
     if(!(min<=3&&max>=3)) throw new Error("Hybrid native device does not support MCP v3");
     if(d.controlPaused) throw new Error("ChatGPT control is paused on the phone");
@@ -680,7 +681,7 @@ export class VideoStudioState extends DurableObject {
         throw new Error("Native identity changed before command admission; retry the current binding");
       const min=Number(live.protocolMin||live.protocolVersion||0),max=Number(live.protocolMax||live.protocolVersion||0);
       if(!(min<=3&&max>=3))throw new Error("VideoStudio stable MCP compatibility lane v3 is not registered");
-      requireStoryboardNativeVersion(live,action);
+      requireStoryboardNativeVersion(live,action,parameters);
       if(live.controlPaused)throw new Error("ChatGPT control is paused on the phone");
       if(!appActionAllowed(live.permissionMode,action))throw new Error("Action blocked by device permission mode or Gallery privacy boundary: "+live.permissionMode);
       const rows=await readCommandQueueInTransaction(transaction,key);
@@ -825,7 +826,7 @@ export class VideoStudioState extends DurableObject {
     parameters=nativeStoryboardParameters(action,parameters);
     const d=await this.appResolve(ownerKey);
     if(!d) throw new Error("Private App MCP credential rejected");
-    requireStoryboardNativeVersion(d,action);
+    requireStoryboardNativeVersion(d,action,parameters);
     if(d.controlPaused) throw new Error("ChatGPT control is paused on the phone");
     if(!appActionAllowed(d.permissionMode,action)) throw new Error("Action blocked by device permission mode or Gallery privacy boundary: "+d.permissionMode);
     const sk="app-seq:"+d.deviceId, seq=((await this.ctx.storage.get(sk))||0)+1;
@@ -905,7 +906,7 @@ export class VideoStudioState extends DurableObject {
   async appEnqueueV3(ownerKey,action,parameters={}){
     parameters=nativeStoryboardParameters(action,parameters);
     const d=await this.appV3Device(ownerKey);
-    requireStoryboardNativeVersion(d,action);
+    requireStoryboardNativeVersion(d,action,parameters);
     if(d.controlPaused) throw new Error("ChatGPT control is paused on the phone");
     if(!appActionAllowed(d.permissionMode,action)) throw new Error("Action blocked by device permission mode or Gallery privacy boundary: "+d.permissionMode);
     const lastSeenMs=Date.parse(String(d.lastSeenAt||""))||0,fresh=lastSeenMs>0&&Date.now()-lastSeenMs<=45000;
@@ -952,6 +953,7 @@ export class VideoStudioState extends DurableObject {
       const old=list[index],parameters={...(old.parameters||{})};
       if(parameters.base64)parameters.base64="[completed payload purged]";
       if(parameters.sourceUrl)parameters.sourceUrl="[temporary URL purged]";
+      if(parameters.bearer)parameters.bearer="[private runner credential purged]";
       if(parameters.nativeParameters&&typeof parameters.nativeParameters==="object"){
         parameters.nativeParameters={...parameters.nativeParameters};
         if(parameters.nativeParameters.base64)parameters.nativeParameters.base64="[completed payload purged]";
@@ -1726,11 +1728,12 @@ function serverForApp(env,ownerKey,protocolVersion=1){
   s.registerTool("app_status",{description:isV3?"Check the VideoStudio v3 Native Agent connection, protocol version, permission mode, projects and pending native work. Gallery access is always false.":"Check the private native VideoStudio Android connection, permission mode, projects, control-pause state and pending work. Gallery access is always false.",inputSchema:{}},async()=>out(await readStatus()));
 
   s.registerTool("app_capabilities",{description:isV3?"Read VideoStudio v3 Native Agent capabilities and architecture guarantees.":"Read the native v1.1 editing, AI, render and privacy capabilities available to ChatGPT.",inputSchema:{}},async()=>out({
-    version:isV3?"3.4.2":"1.1.2",
+    version:isV3?"3.9.0":"1.1.2",
     protocolVersion:isV3?3:1,
     storyboard:{minimumNativeAppVersion:"3.7.2",defaultMotionIntent:"cinematic_action",frozenSourceHashes:true,explicitOriginalRigAndPropAnnotations:true,explicitContactPlans:true,typedChoreography:CINEMATIC_BEATS,cinematicAcceptance:"requires decoded physical QA; eligibility/pixel checks do not certify",neuralMotionProviderInstalled:false},
     sourceRigWorkbench:isV3?{minimumNativeAppVersion:"3.7.3",originalImageInspection:true,diagnosticPosePreview:true,batchProfileLimit:8,orderedPreparationStatus:true,anatomicalInferenceAvailable:false,cinematicAcceptance:false}:undefined,
     cinematic3d:isV3?{minimumNativeAppVersion:"3.8.0",engine:"Blender/Rigify full-scene GLB",offlineActionLibrary:true,exactOutputFrameClock:true,neuralProviderInstalled:false,cinematicAcceptance:false,nativeExecutionVerified:false}:undefined,
+    studioWorkbench:isV3?{minimumNativeAppVersion:"3.9.0",sharedHumanAndMCP:true,sketchGeometryPaging:true,sketchDiagnosticImages:true,preciseClipKeyframes:true,editedPreviewAndExportShared:true,timedImageOverlays:true,openSourceRunner:true,commercialGenerationAPIs:false,driveArchiveReadbackRequired:true,phoneGpuVerified:false}:undefined,
     stableEndpoint:isV3,
     stableEndpointPath:isV3?"/app-mcp-v3/":"",
     primary:"Android native app",
@@ -1744,7 +1747,7 @@ function serverForApp(env,ownerKey,protocolVersion=1){
     media:isV3
       ?["direct ChatGPT attachment ingest to app-private storage","owner-authenticated inline still-frame fallback","VideoStudio-owned media","explicit HTTPS import","manual Android picker","no Gallery enumeration","legacy short-lived relay fallback"]
       :["VideoStudio-owned media","explicit HTTPS import","manual Android picker","private handoff"],
-    editing:["trim","split","0.25x-4x speed","slow motion","volume","titles","fonts","text animations","scale","rotate","blur","colour/HSL","motion presets","transition presets","reframe model","mask model","green-screen model","audio-duck model"],
+    editing:["trim","split","0.25x-4x speed","slow motion","volume","static titles","scale","rotate","blur","colour/HSL","motion presets","precise transform/opacity keyframes","chroma key","feathered masks","glow","timed owned image overlays"],
     ai:["native visual analysis","scene-change sampling","bundled person segmentation","bundled face mesh","subject-aware image animation","2.5D parallax","autonomous edit plans","creator presets","prompt-to-video","multi-variant planning","short-form recut planning","render/export orchestration"],
     animation:isV3?["AI subject/background layer extraction","feathered head/hair torso and lower-drape layers","face-aware camera anchoring","multi-keyframe easing","head drift/nod","torso breathing","lower-drape sway","independent depth motion","story-shot reordering","procedural atmosphere","layered Media3 composition"]:[],
     export:["Media3 native MP4","H.264","AAC","720p","1080p","9:16","16:9","1:1","4:5","Movies/VideoStudio"],
@@ -1764,6 +1767,15 @@ function serverForApp(env,ownerKey,protocolVersion=1){
 
   s.registerTool("app_state",{description:"Request full current native app/project state including active asset metadata, jobs, creator capabilities and recent on-device ChatGPT activity.",inputSchema:{}},async()=>queue("get_state",{}));
   if(isV3) {
+    for(const [action,inputSchema] of Object.entries(studioToolSchemas)){
+      const readOnly=['sketch_list','sketch_get','sketch_preview','open_pipeline_capabilities','open_pipeline_list','open_pipeline_status'].includes(action);
+      const detail=action==='sketch_get'?' Geometry is paged by layer/object IDs; pointLimit<=512. Keep returned revision for atomic edits.'
+        :action==='sketch_preview'?' Returns the actual shared Canvas frame as an MCP image; use it to verify exact drawing/mapping controls.'
+        :action.startsWith('open_pipeline_')?' Uses your own configured open-source runner or a hash-verified Drive artifact exchange. Submission is separate from inference completion. No commercial generation API.'
+        :action==='precision_edit'?' Atomic stable-clip edits require the exact project revision. Flat keys, opacity, mask/chroma/glow share actual native preview/export.'
+        :' Touch controls use the same native stored operations, revision checks and renderer.';
+      s.registerTool('app_'+action,{description:'VideoStudio authoring: '+action.replaceAll('_',' ')+'. New features require native3.9.0+.'+detail,inputSchema,annotations:{readOnlyHint:readOnly}},async args=>queue(action,args));
+    }
     for(const [action,inputSchema] of Object.entries(cinematic3dToolSchemas)) {
       const readOnly=["cinematic_3d_capabilities","cinematic_3d_get_program","cinematic_3d_list_programs","cinematic_3d_plan","cinematic_3d_export_request"].includes(action);
       s.registerTool("app_"+action,{description:"Cinematic 3D: "+action.replace("cinematic_3d_","").replaceAll("_"," ")+". Requires native 3.8.0+. Uses owned full-scene GLB data, original source hashes and exact 24/30/60 FPS output timing. Procedural mannequins are explicitly identified; installed neural providers and native render acceptance require separate evidence.",inputSchema,annotations:{readOnlyHint:readOnly}},async args=>queue(action,args));
@@ -1824,7 +1836,7 @@ function serverForApp(env,ownerKey,protocolVersion=1){
 
   s.registerTool("app_apply_edit_plan",{description:"Replace the active project's timeline with a structured multi-cut plan referencing already imported local asset IDs.",inputSchema:{clips:z.array(z.record(z.string(),z.any())).min(1).max(80)}},async({clips})=>queue("apply_edit_plan",{clips}));
 
-  s.registerTool("app_apply_tool",{description:"Apply a precise native edit primitive to one clip. Tool names include trim, speed, slow_motion, green_screen, transition, motion, effect, color, reframe, mask, font, text_animation, blur, transform, audio_duck, title and volume.",inputSchema:{clipIndex:z.number().int().min(0),tool:z.string().min(1).max(80),settings:z.record(z.string(),z.any()).optional()}},async({clipIndex,tool,settings})=>queue("apply_tool",{clipIndex,tool,settings:settings||{}}));
+  s.registerTool("app_apply_tool",{description:"Apply a native rendered edit to a named stable clip: trim, speed, slow_motion, motion, effect, color, blur, transform, keyframes, green_screen, mask, glow, title or volume. Prefer projectId, clipId and expectedUpdatedAt for collaboration; app_precision_edit applies strict atomic batches. Metadata-only unsupported effects fail clearly.",inputSchema:{projectId:z.string().min(1).max(96).optional(),clipId:z.string().min(1).max(128).optional(),expectedUpdatedAt:z.number().int().nonnegative().optional(),clipIndex:z.number().int().min(0).optional(),tool:z.string().min(1).max(80),settings:z.record(z.string(),z.any()).optional()}},async args=>queue("apply_tool",{...args,settings:args.settings||{}}));
 
   s.registerTool("app_creator_preset",{description:"Apply a creator look plus optional motion, transition and font to one clip or the full active timeline.",inputSchema:{preset:z.string().min(1).max(80),motion:z.string().max(80).optional(),transition:z.string().max(80).optional(),font:z.string().max(80).optional(),allClips:z.boolean().optional(),clipIndex:z.number().int().min(0).optional()}},async args=>queue("creator_preset",args));
 

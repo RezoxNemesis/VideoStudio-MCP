@@ -56,6 +56,18 @@ public class Cinematic3DTimelineTest {
         JSONObject accepted=(JSONObject)call("validate",new Class<?>[]{JSONObject.class},t);
         assertEquals(refs.toString(),accepted.getJSONArray("shots").getJSONObject(0).getJSONArray("sourceAnchors").toString());
     }
+    @Test public void expandedActionsModelsAndStylesAreBoundedAndPreserveLegacyAbsence()throws Exception {
+        JSONObject legacy=Cinematic3DTimeline.validate(timeline());assertFalse(legacy.has("actors"));
+        for(String action:new String[]{"IDLE","WALK","RUN","JUMP","DODGE","DUCK","PUNCH","KICK","DANCE","WAVE"}) {
+            JSONObject t=timeline();t.getJSONArray("shots").getJSONObject(0).put("action",action).put("hitStopFrames",0)
+                .put("motionStyle",new JSONObject().put("preset","anime").put("intensity",.8));
+            JSONObject black=new JSONObject().put("preset","chibi").put("headScale",1.1),white=new JSONObject().put("preset","robot");
+            t.put("actors",new JSONObject().put("black",black).put("white",white));
+            JSONObject accepted=Cinematic3DTimeline.validate(t);assertEquals("chibi",accepted.getJSONObject("actors").getJSONObject("black").getString("preset"));
+            assertEquals("anime",accepted.getJSONArray("shots").getJSONObject(0).getJSONObject("motionStyle").getString("preset"));
+            black.put("heightScale",10);reject(t);black.remove("heightScale");black.put("command","blender");reject(t);
+        }
+    }
     @Test public void allPythonGoldenPhasesAndCameraSamplesMatchAt24_30_60Fps()throws Exception {
         java.nio.file.Path fixture=null;for(java.nio.file.Path root=Paths.get("").toAbsolutePath();root!=null;root=root.getParent()){java.nio.file.Path candidate=root.resolve("tests/cinematic3d/fixtures/timeline_clock_golden.json");if(Files.isRegularFile(candidate)){fixture=candidate;break;}}
         assertNotNull("The shared Python clock golden fixture must be present",fixture);

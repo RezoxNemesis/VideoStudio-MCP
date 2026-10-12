@@ -4,19 +4,23 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 
 /** Human-facing organization; every entry maps to a real existing editor action. */
 public final class StudioToolCatalog {
+    private static final Set<String> UNAVAILABLE=Set.of("Freeze","Reverse","Speed Ramp","Motion Blur",
+            "Transitions","Reframe","Fonts","Captions","Audio Duck","Crop");
     public static final String[] GROUPS={
         "Cut & Arrange","Motion","Color & Effects","Text & Audio","Animation & 3D"
     };
     public static final class Tool {
         public final String label,group,description;
-        public final boolean previewRequiresExport,experimental;
+        public final boolean previewRequiresExport,experimental,supported;
         Tool(String group,String label,String description,
              boolean previewRequiresExport,boolean experimental) {
             this.group=group;this.label=label;this.description=description;
-            this.previewRequiresExport=previewRequiresExport;this.experimental=experimental;
+            this.supported=isSupported(label);
+            this.previewRequiresExport=previewRequiresExport&&!supported;this.experimental=experimental;
         }
     }
     private static final ArrayList<Tool> ITEMS=new ArrayList<>();
@@ -33,6 +37,7 @@ public final class StudioToolCatalog {
         add(1,"Slow Motion","Change playback speed",true,false);
         add(1,"Speed Ramp","Speed curve preset",true,true);
         add(1,"Motion","Pan or tracking motion",true,true);
+        add(1,"Keyframes","Exact transform times and interpolation",false,false);
         add(1,"Motion Blur","Add directional blur",true,true);
         add(1,"Shake","Impact camera movement",true,true);
         add(1,"Transitions","Change between-clip transition",true,true);
@@ -40,14 +45,16 @@ public final class StudioToolCatalog {
         add(2,"Colour","Switch color-grading preset",true,false);
         add(2,"Adjust","Direct brightness, contrast, saturation and lightness",true,false);
         add(2,"Transform","Direct zoom and rotation sliders",true,false);
+        add(2,"Exact Transform","Numeric position, axis scale, rotation and anchor",false,false);
         add(2,"Blur","Apply blur",true,false);
-        add(2,"Glow","Add highlights",true,true);
+        add(2,"Opacity","Exact static or keyframed alpha",false,false);
+        add(2,"Glow","Native thresholded nine-tap bloom",false,false);
         add(2,"Crop","Fill frame",true,false);
         add(2,"Reframe","Safe portrait crop preset",true,true);
-        add(2,"Green Screen","Chroma key settings",true,true);
-        add(2,"Mask","Mask preset",true,true);
+        add(2,"Green Screen","Native chroma key with tolerance and feather",false,false);
+        add(2,"Mask","Native feathered rectangle or ellipse",false,false);
         add(2,"Effects","Creative effect preset",true,true);
-        add(2,"Overlay","Overlay editing metadata",true,true);
+        add(2,"Overlay","Place a project-owned image on the timeline",false,false);
 
         add(3,"Text","Edit clip title",true,false);
         add(3,"Add Music Track","Insert synchronized mixed audio",true,false);
@@ -63,8 +70,13 @@ public final class StudioToolCatalog {
         add(4,"3D Model Viewer","Preview imported GLB",false,false);
         add(4,"Render 3D Fight","Export two rigged GLBs",false,false);
         add(4,"Combat Benchmark","Procedural motion test",false,false);
+        add(4,"Sketch Studio","Layered drawings and cel animation",false,false);
+        add(4,"Open Pipeline","Self-hosted generation and verified Drive exchange",false,false);
     }
     private StudioToolCatalog(){}
+    public static boolean isSupported(String label){
+        return !UNAVAILABLE.contains(label);
+    }
     private static void add(int i,String title,String description,boolean export,boolean experimental){
         ITEMS.add(new Tool(GROUPS[i],title,description,export,experimental));
     }

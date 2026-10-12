@@ -12,8 +12,11 @@ import tempfile
 from fractions import Fraction
 import zipfile
 from .timeline import validate_timeline
+from .characters import select_library_actions
+from .conditioning import verify_conditioning
 
 MAX_JSON = 512 * 1024
+MAX_GLB_JSON = 1024 * 1024
 MAX_EXPANDED = 256 * 1024 * 1024
 MAX_ARCHIVE = 64 * 1024 * 1024
 MAX_GLB = 16 * 1024 * 1024
@@ -66,7 +69,7 @@ def verify_glb(path: Path) -> None:
     magic,version,length=struct.unpack_from('<III',data)
     if (magic,version,length)!=(0x46546c67,2,len(data)):raise ValueError('Invalid GLB header')
     size,kind=struct.unpack_from('<II',data,12)
-    if kind!=0x4e4f534a or size%4 or size>MAX_JSON or 20+size>len(data):raise ValueError('Invalid GLB JSON chunk')
+    if kind!=0x4e4f534a or size%4 or size>MAX_GLB_JSON or 20+size>len(data):raise ValueError('Invalid GLB JSON chunk')
     try:document=json.loads(data[20:20+size].decode('utf-8'))
     except (ValueError,UnicodeError,RecursionError) as error:raise ValueError('Invalid GLB JSON') from error
     if document.get('asset',{}).get('version')!='2.0':raise ValueError('GLB must use glTF 2.0')
@@ -194,8 +197,15 @@ def encode_video(frames: Path,target: Path,*,fps: int,frame_count: int,width: in
         if temporary is not None:temporary.unlink(missing_ok=True)
 
 
-def build(timeline_path: Path,output: Path,*,blender: str='blender',library_only: bool=False,render_frames: int=0,source_request_bytes: bytes|None=None) -> dict:
+def build(timeline_path: Path,output: Path,*,blender: str='blender',library_only: bool=False,render_frames: int=0,
+          conditioning_frames: int=0,selected_actions=None,source_request_bytes: bytes|None=None) -> dict:
     timeline=validate_timeline(read_json(Path(timeline_path)))
+    if type(render_frames) is not int or not 0<=render_frames<=12000:raise ValueError('Render frame count must be0..12000')
+    if type(conditioning_frames) is not int or not 0<=conditioning_frames<=1200:raise ValueError('Conditioning frame count must be0..1200')
+    if selected_actions is not None:
+        selected_actions=select_library_actions(selected_actions)
+        if not library_only:raise ValueError('Selected actions require a library pack')
+        if set(selected_actions)!={s['action'] for s in timeline['shots']}:raise ValueError('Selected actions must match declared timeline shots')
     output=Path(output)
     if output.exists():raise FileExistsError('Accepted generation already exists; choose a new output directory')
     output.parent.mkdir(parents=True,exist_ok=True)
@@ -207,8 +217,15 @@ def build(timeline_path: Path,output: Path,*,blender: str='blender',library_only
                  '--python',str(Path(__file__).with_name('blender_scene.py')),'--','--timeline',str(request),'--output',str(generation)]
         if library_only:command.append('--library-only')
         if render_frames:command.extend(['--render-frames',str(render_frames)])
+        if conditioning_frames:command.extend(['--conditioning-frames',str(conditioning_frames)])
+        if selected_actions is not None:command.extend(['--actions',','.join(selected_actions)])
         with (stage/'blender.log').open('wb') as log:subprocess.run(command,stdout=log,stderr=subprocess.STDOUT,timeout=1800,check=True)
         manifest,_=verify_generation(generation)
+        conditioning=None
+        if conditioning_frames:
+            conditioning=verify_conditioning(generation/'conditioning')
+            if conditioning['frameCount']!=min(conditioning_frames,sum(s['durationFrames'] for s in timeline['shots'])):
+                raise ValueError('Conditioning output clock differs from its request')
         if source_request_bytes is not None:
             if not isinstance(source_request_bytes,bytes) or not 0<len(source_request_bytes)<=MAX_JSON:raise ValueError('Bounded source request bytes required')
             source_request=generation/'source-request.json';source_request.write_bytes(source_request_bytes)
@@ -230,6 +247,9 @@ def build(timeline_path: Path,output: Path,*,blender: str='blender',library_only
         os.rename(generation,output)
         result={'ok':True,'output':str(output),'bundleSha256':digest(output/'cinematic.vscinematic'),
                 'execution':'cloud_blender','nativeRendered':False,'cinematicAcceptance':False,'video':video}
+        if conditioning is not None:
+            conditioning['path']=str((output/'conditioning'/'manifest.json').absolute())
+            result['conditioning']=conditioning
         if source_request_bytes is not None:result["sourceRequestSha256"]=hashlib.sha256(source_request_bytes).hexdigest()
         if video:result['video']['path']=str(output/'master.mp4')
         (output/'execution-receipt.json').write_text(json.dumps(result,indent=2)+'\n')

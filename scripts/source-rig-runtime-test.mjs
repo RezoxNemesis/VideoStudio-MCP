@@ -311,6 +311,44 @@ try {
   assert.equal((await poll()).length,0);
   passed('Actual SDK queues exact sixty-FPS cinematic data and non-executable draft reads without inventing native render evidence');
 
+  for(const name of ['app_precision_edit','app_set_studio_layers','app_sketch_create','app_sketch_edit','app_sketch_get','app_sketch_preview','app_sketch_render','app_open_pipeline_export_request','app_open_pipeline_submit','app_open_pipeline_import_result'])assert.ok(toolByName.has(name),name);
+  assert.equal(toolByName.get('app_sketch_preview').annotations.readOnlyHint,true);
+  const oldSketch=parseText(await call(app,'app_sketch_get',{sketchId:'sketch-123'}));
+  assert.equal(oldSketch.queued,false);assert.match(oldSketch.error,/3\.9\.0/);
+  const oldPack=parseText(await call(app,'app_cinematic_3d_install_builtin',{projectId,sourceProjectUpdatedAt:1,pack:'extended'}));
+  assert.equal(oldPack.queued,false);assert.match(oldPack.error,/3\.9\.0/);assert.equal((await poll()).length,0);
+  await register('3.9.0');
+  await rejected(app,'app_sketch_get',{sketchId:'sketch-123',pointLimit:513});
+  await rejected(app,'app_precision_edit',{projectId,expectedUpdatedAt:1,operations:[{clipId:'clip-123',set:{scale:20}}]});
+  assert.equal((await poll()).length,0);
+  passed('Actual SDK discovers the shared workbench and refuses old versions and unsafe controls before enqueue');
+
+  const exact={projectId,expectedUpdatedAt:1,operations:[{clipId:'clip-123',set:{opacity:.5,maskShape:'ellipse',maskFeather:.1},keyframes:[{timeMs:0,x:0},{timeMs:1000,x:.2,easing:'ease_in_out'}]}]};
+  const exactQueued=parseText(await call(app,'app_precision_edit',exact));
+  const exactClaim=await poll();assert.equal(exactClaim.length,1);assert.equal(exactClaim[0].action,'precision_edit');assert.deepEqual(exactClaim[0].parameters,exact);
+  await acknowledge(exactQueued.commandId,{ok:true,projectId,updatedAt:2,changedClipIds:['clip-123'],clipCount:1,outputDurationMs:1000});
+  const draw={sketchId:'sketch-123',operationId:'stroke-op-123',expectedRevision:1,operations:[{type:'add_object',layerId:'layer-123',object:{id:'stroke-123',kind:'stroke',points:[[.1,.2,.8],[.4,.3,1]]}}]};
+  const drawQueued=parseText(await call(app,'app_sketch_edit',draw));const drawClaim=await poll();assert.deepEqual(drawClaim[0].parameters,draw);
+  await acknowledge(drawQueued.commandId,{ok:true,sketchId:draw.sketchId,revision:2,sha256:'e'.repeat(64)});
+  const sketchQueued=parseText(await call(app,'app_sketch_preview',{sketchId:'sketch-123',expectedRevision:2,frameIndex:0,maxDimension:256}));
+  assert.equal((await poll())[0].action,'sketch_preview');
+  await acknowledge(sketchQueued.commandId,{ok:true,sketchId:'sketch-123',revision:2,frameIndex:0,cinematicAcceptance:false,sketchPreviewImage:{base64:png,mimeType:'image/png',width:1,height:1,sha256:sha(Buffer.from(png,'base64'))}});
+  assertImage(await call(app,'app_get_command_result',{commandId:sketchQueued.commandId}));
+  passed('Exact clip keys and pressure strokes survive the native relay, and sketch images use the actual MCP image channel');
+
+  const neural={projectId,sourceProjectUpdatedAt:2,requestId:'neural-request-123',backend:'cogvideox',controls:{mode:'video_to_video',strength:.5,prompt:'Preserve the two source actors',width:64,height:64,numFrames:9,fps:8,seed:17,numInferenceSteps:2,guidanceScale:6},assetIds:['owned-video-123']};
+  await rejected(app,'app_open_pipeline_export_request',{...neural,controls:{...neural.controls,numFrames:13}});assert.equal((await poll()).length,0);
+  const neuralQueued=parseText(await call(app,'app_open_pipeline_export_request',neural));assert.deepEqual((await poll())[0].parameters,neural);
+  await acknowledge(neuralQueued.commandId,{ok:true,requestId:neural.requestId,archiveSha256:'f'.repeat(64),nativeRendered:false,cinematicAcceptance:false});
+  const bearer='synthetic-private-runner-secret-123456';secretMarkers.push(bearer);
+  const configured=parseText(await call(app,'app_open_pipeline_configure',{endpoint:'https://runner.example/owner',bearer}));
+  assertPrivateProjection({content:[{type:'text',text:JSON.stringify(configured)}]});
+  const configureClaim=(await poll())[0];assert.equal(configureClaim.parameters.bearer,bearer);
+  const configureAck=await acknowledge(configured.commandId,{ok:true,configured:true,endpoint:'https://runner.example/owner',credentialConfigured:true});
+  const configurationRead=await call(app,'app_get_command_result',{commandId:configured.commandId});assertPrivateProjection(configurationRead);
+  assert.doesNotMatch(JSON.stringify(configureAck),new RegExp(bearer));
+  passed('Owned video conditioning and private runner configuration survive delivery without exposing credentials or inventing generation completion');
+
   await register('3.7.3', {credential: foreignOwner, id: foreignDevice});
   const foreign = await connect('/app-mcp-v3/' + foreignOwner, 'foreign-owner');
   const foreignRead = await call(foreign, 'app_get_command_result', {commandId: queued.commandId});
@@ -322,7 +360,7 @@ try {
   assert.ok(rpcCalls.every(exchange => exchange.protocolVersion === '2025-11-25' && exchange.status === 200));
   passed('Foreign owners cannot retrieve source images; actual SDK calls retain the negotiated HTTP revision');
 
-  const files = ['src/index.js', 'src/storyboard-contract.js', 'src/cinematic3d-contract.js', 'src/personal-entry.js'];
+  const files = ['src/index.js', 'src/storyboard-contract.js', 'src/cinematic3d-contract.js', 'src/studio-workbench-contract.js', 'src/personal-entry.js'];
   const sourceFileSha256 = Object.fromEntries(await Promise.all(files.map(async path => [path, sha(await readFile(path))])));
   const sdk = JSON.parse(await readFile(new URL('../node_modules/@modelcontextprotocol/client/package.json', import.meta.url), 'utf8'));
   await mkdir('.work', {recursive: true});

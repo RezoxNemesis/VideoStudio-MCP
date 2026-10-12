@@ -14,7 +14,7 @@ export function nativeCommandSummary(command){
     scalar(summary,key,command[key],key==='id'?256:128);
   if(command.parameters&&typeof command.parameters==='object'){
     const parameters={};const visible=new Set(['projectId','sourceProjectId','assetId','transferId','handoffId','programId','name','mime','fileName']);
-    const privateKeys=new Set(['base64','sourceUrl','downloadUrl','download_url','ownerKey','privateOwnerKey','authToken','accessToken']);
+    const privateKeys=new Set(['base64','sourceUrl','downloadUrl','download_url','ownerKey','privateOwnerKey','authToken','accessToken','bearer']);
     let partial=false;for(const [key,value] of Object.entries(command.parameters)){
       if(privateKeys.has(key))parameters[key]='[private command payload redacted]';
       else if(visible.has(key)&&['string','boolean','number'].includes(typeof value)&&String(value).length<=256&&encoder.encode(String(value)).byteLength<=256)parameters[key]=value;

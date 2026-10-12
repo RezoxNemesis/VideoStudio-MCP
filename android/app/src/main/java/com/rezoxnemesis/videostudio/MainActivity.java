@@ -284,6 +284,12 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         links.addView(studioButton("Animation Director",this::animationDirectorDialog),
                 new LinearLayout.LayoutParams(0,dp(46),1));
         creative.addView(links,margins(-1,dp(46),dp(7),0,0,0));
+        LinearLayout authoring=new LinearLayout(this);
+        authoring.addView(studioButton("Sketch Studio",()->startActivity(new Intent(this,SketchStudioActivity.class))),
+                new LinearLayout.LayoutParams(0,dp(46),1));
+        authoring.addView(studioButton("Open Pipeline",this::openPipelineStudio),
+                new LinearLayout.LayoutParams(0,dp(46),1));
+        creative.addView(authoring,margins(-1,dp(46),dp(7),0,0,0));
         box.addView(creative,margins(-1,-2,dp(16),0,0,0));
         setScreen(scroll,"home");
     }
@@ -810,7 +816,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
             LinearLayout row=new LinearLayout(this);
             for(int j=i;j<Math.min(actions.size(),i+2);j++){
                 StudioToolCatalog.Tool tool=actions.get(j);
-                Button button=studioButton(tool.label+(tool.experimental?" *":""),
+                Button button=studioButton(tool.label+(tool.supported?"":" (unavailable)"),
                         ()->performStudioTool(tool.label));
                 row.addView(button,new LinearLayout.LayoutParams(0,dp(49),1));
             }
@@ -820,8 +826,8 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         }
         Button find=studioButton("⌕ Find any tool",this::findStudioTool);
         box.addView(find,margins(-1,dp(46),dp(10),0,0,0));
-        box.addView(body("* Advanced effects may require native MP4 export. "+
-                "A source preview is not proof that an effect was rendered."),
+        box.addView(body("Preview and MP4 export share the native effect pipeline. "+
+                "Unavailable tools explain which rendering support is missing."),
                 margins(-1,-2,dp(5),0,0,0));
 
         setScreen(scroll,"editor");
@@ -971,34 +977,38 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
     }
 
     private void previewSelectedStudioClip(boolean startPlayback){
-        if(selectedClip==null||activeProject==null||studioStillPreview==null){
-            if(studioStillPreview!=null)studioStillPreview.setVisibility(View.VISIBLE);
-            return;
+        if(selectedClip==null||activeProject==null||activeProject.clips.isEmpty())return;
+        beginStudioEditPreview(startPlayback||timelinePreviewRunning);
+    }
+
+    private void beginStudioEditPreview(boolean play){
+        try{
+            if(studioStillPreview!=null)studioStillPreview.setVisibility(View.GONE);
+            if(studioCaptionPreview!=null)studioCaptionPreview.setVisibility(View.GONE);
+            livePlayer.setContextIds("",selectedClip==null?"":selectedClip.id);
+            livePlayer.playEdit(activeProject,renderEngine,"9:16","720p",studioPlayheadMs,play,
+                    ()->{timelinePreviewRunning=false;studioPlayheadMs=activeProject.outputDurationMs();},
+                    error->{timelinePreviewRunning=false;
+                        Toast.makeText(this,error,Toast.LENGTH_LONG).show();});
+            timelinePreviewRunning=play;
+            if(play)startStudioEditedClock();
+        }catch(Exception error){
+            timelinePreviewRunning=false;
+            Toast.makeText(this,"Edited preview unavailable: "+error.getMessage(),Toast.LENGTH_LONG).show();
         }
-        ProjectStore.Asset asset=activeProject.asset(selectedClip.assetId);
-        if(asset==null)return;
-        if(asset.mime!=null&&asset.mime.startsWith("image/")){
-            livePlayer.pause();
-            studioStillPreview.setVisibility(View.VISIBLE);
-            studioThumbs.bindPreview(studioStillPreview,asset);
-        }else if(asset.mime!=null&&asset.mime.startsWith("video/")){
-            studioStillPreview.setVisibility(View.GONE);
-            livePlayer.setVolume(selectedClip.volume);
-            Uri uri=Uri.parse(ProxyManager.previewUri(activeProject,asset));
-            LivePlaybackState currently=livePlayer.snapshotState();
-            if(!selectedClip.id.equals(currently.clipId)||
-                    !uri.toString().equals(currently.mediaUri)){
-                livePlayer.setContextIds("",selectedClip.id);
-                livePlayer.play(uri,selectedClip.inMs,selectedClip.speed,startPlayback);
-            }else if(startPlayback){
-                livePlayer.playClip(uri,selectedClip.inMs,selectedClip.outMs,
-                        selectedClip.speed,null);
+    }
+
+    private void startStudioEditedClock(){
+        if(studioCaptionClock!=null)ui.removeCallbacks(studioCaptionClock);
+        studioCaptionClock=new Runnable(){
+            @Override public void run(){
+                if(!timelinePreviewRunning||activeProject==null||!livePlayer.isEditedPreview())return;
+                studioPlayheadMs=Math.min(activeProject.outputDurationMs(),livePlayer.currentPositionMs());
+                if(studioTimeLabel!=null)studioTimeLabel.setText(time(studioPlayheadMs)+" / "+time(activeProject.outputDurationMs()));
+                ui.postDelayed(this,100);
             }
-        }else{
-            livePlayer.pause();
-            studioStillPreview.setVisibility(View.VISIBLE);
-            studioStillPreview.setImageDrawable(null);
-        }
+        };
+        ui.post(studioCaptionClock);
     }
 
     private void scrubStudioTo(long timestamp){
@@ -1013,20 +1023,17 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         showEditor();
         ProjectStore.Asset asset=activeProject.asset(selectedClip.assetId);
         if(asset!=null&&asset.mime!=null&&asset.mime.startsWith("video/")){
-            livePlayer.seekTo(position.assetTimeMs);
+            livePlayer.seekTo(livePlayer.isEditedPreview()?position.globalTimeMs:position.assetTimeMs);
         }
     }
 
-    /** Honest timeline preview: original clips and stills, not fake interpolation. */
+    /** GPU edited composition, including stills, timed text and independently mixed audio. */
     private void playStudioTimeline(){
         if(activeProject==null||activeProject.clips.isEmpty()){
             Toast.makeText(this,"Timeline is empty",Toast.LENGTH_SHORT).show();return;
         }
         stopStillSequenceOnly();
-        StudioTimelineClock.Position start=
-                StudioTimelineClock.locate(activeProject.clips,studioPlayheadMs);
-        timelinePreviewRunning=true;
-        playStudioFrom(Math.max(0,start.clipIndex),start.offsetInClipMs);
+        beginStudioEditPreview(true);
     }
 
     private void playStudioFrom(int index){
@@ -1078,6 +1085,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
 
     private void stopStillSequenceOnly(){
         timelinePreviewRunning=false;
+        if(livePlayer!=null&&livePlayer.isEditedPreview())livePlayer.pause();
         if(stillTimelineNext!=null){
             ui.removeCallbacks(stillTimelineNext);
             stillTimelineNext=null;
@@ -1133,13 +1141,8 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
             if(asset.mime!=null&&(asset.mime.startsWith("video/")||
                     asset.mime.startsWith("image/"))){
                 Button add=studioButton("+ Timeline",()->{
-                    editHistory.checkpoint(activeProject);
-                    if(store.appendAssetToTimeline(activeProject,asset.id)){
-                        selectedClip=activeProject.clips.get(activeProject.clips.size()-1);
-                        studioTimelinePage=(activeProject.clips.size()-1)/20;
-                        studioPlayheadMs=activeProject.outputDurationMs()-selectedClip.outputDurationMs();
-                        syncProtocolState();showEditor();
-                    }
+                    try{applyStudioTimeline(new JSONObject().put("action","append").put("assetId",asset.id),activeProject.updatedAt);}
+                    catch(Exception error){Toast.makeText(this,error.getMessage(),Toast.LENGTH_LONG).show();}
                 });
                 tile.addView(add,margins(-1,dp(36),dp(3),0,0,0));
             }
@@ -1158,14 +1161,33 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
     }
 
     private void performStudioTool(String name){
+        if(!StudioToolCatalog.isSupported(name)){
+            new AlertDialog.Builder(this).setTitle(name+" is unavailable")
+                    .setMessage("This tool has no complete native rendering implementation yet. Your project has not been changed.")
+                    .setPositiveButton("OK",null).show();return;
+        }
         switch(name){
             case "Add Music Track":chooseStudioAudio();return;
             case "Add Caption Track":editStudioTitle(null);return;
             case "Adjust":studioAdvancedAdjustDialog(false);return;
             case "Transform":studioAdvancedAdjustDialog(true);return;
+            case "Exact Transform":studioNumericDialog(true,false);return;
+            case "Keyframes":studioNumericDialog(true,true);return;
+            case "Opacity":studioPixelDialog("Opacity");return;
+            case "Green Screen":studioPixelDialog("Green Screen");return;
+            case "Mask":studioPixelDialog("Mask");return;
+            case "Glow":studioPixelDialog("Glow");return;
+            case "Overlay":chooseStudioImage();return;
+            case "Sketch Studio":startActivity(new Intent(this,SketchStudioActivity.class));return;
+            case "Open Pipeline":openPipelineStudio();return;
             case "Slow Motion": studioSpeedDialog();return;
             case "Volume": studioVolumeDialog();return;
             case "Blur": studioBlurDialog();return;
+            case "Effects":studioPresetDialog("Native effect","effectPreset",new String[]{"none","gaussian_blur","dream"});return;
+            case "Shake":
+                try{applyStudioPrecision(new JSONObject().put("clipId",selectedClip.id)
+                        .put("set",new JSONObject().put("motionPreset","impact_shake")),activeProject.updatedAt);}
+                catch(Exception error){Toast.makeText(this,"Select a clip first",Toast.LENGTH_SHORT).show();}return;
             case "Colour": studioPresetDialog("Color grade","colorPreset",
                     new String[]{"none","cinematic","teal_orange","warm_film",
                             "cool_night","noir","golden_hour","matte",
@@ -1173,7 +1195,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
             case "Transitions": studioPresetDialog("Clip transition","transition",
                     CreatorCatalog.TRANSITIONS.toArray(new String[0]));return;
             case "Motion": studioPresetDialog("Camera motion","motionPreset",
-                    CreatorCatalog.MOTIONS.toArray(new String[0]));return;
+                    CreatorCatalog.MOTIONS.stream().filter(StudioPrecisionEdits.MOTIONS::contains).toArray(String[]::new));return;
             case "Delete Clip": deleteStudioClip(); return;
             case "Move Left": moveStudioClip(-1); return;
             case "Move Right": moveStudioClip(1); return;
@@ -1203,6 +1225,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         header.addView(studioButton("+ Caption",()->editStudioTitle(null)),
                 new LinearLayout.LayoutParams(dp(109),dp(44)));
         box.addView(header,margins(-1,-2,dp(10),dp(4),0,0));
+        box.addView(studioButton("+ Image Overlay",this::chooseStudioImage),margins(-1,dp(43),0,dp(4),0,0));
 
         StudioTracksView bands=new StudioTracksView(this);
         bands.setTimeline(activeProject.outputDurationMs(),studioPlayheadMs,
@@ -1216,6 +1239,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                             if(!layer.id.equals(id))continue;
                             if(StudioLayer.AUDIO.equals(layer.type))
                                 editStudioAudio(layer,layer.assetId);
+                            else if(StudioLayer.IMAGE.equals(layer.type))editStudioImage(layer,layer.assetId);
                             else editStudioTitle(layer);
                             return;
                         }
@@ -1245,11 +1269,11 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
             row.setGravity(Gravity.CENTER_VERTICAL);
             row.setBackground(rounded(C_CARD_2,0xff334661,dp(11)));
             row.setPadding(dp(9),dp(4),dp(9),dp(4));
-            ProjectStore.Asset asset=StudioLayer.AUDIO.equals(lane.type)?
+            ProjectStore.Asset asset=!StudioLayer.TITLE.equals(lane.type)?
                     activeProject.asset(lane.assetId):null;
-            String desc=StudioLayer.AUDIO.equals(lane.type)?
+            String desc=!StudioLayer.TITLE.equals(lane.type)?
                     (asset==null?"Missing audio file":asset.name):lane.text;
-            TextView info=body((StudioLayer.AUDIO.equals(lane.type)?"♫  ":"T  ")+desc+
+            TextView info=body((StudioLayer.AUDIO.equals(lane.type)?"♫  ":StudioLayer.IMAGE.equals(lane.type)?"▧  ":"T  ")+desc+
                     "\n"+time(lane.startMs)+" – "+
                     time(lane.startMs+lane.durationMs)+
                     (StudioLayer.AUDIO.equals(lane.type)?
@@ -1258,15 +1282,14 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
             row.addView(info,new LinearLayout.LayoutParams(0,-2,1));
             row.addView(studioButton("Edit",()->{
                 if(StudioLayer.AUDIO.equals(lane.type))editStudioAudio(lane,lane.assetId);
+                else if(StudioLayer.IMAGE.equals(lane.type))editStudioImage(lane,lane.assetId);
                 else editStudioTitle(lane);
             }),new LinearLayout.LayoutParams(dp(65),dp(38)));
             row.addView(studioButton("×",()->removeStudioLayer(lane)),
                     new LinearLayout.LayoutParams(dp(42),dp(38)));
             box.addView(row,margins(-1,-2,dp(3),dp(3),0,0));
         }
-        box.addView(body("Audio mixes into MP4; titles are burned into the video "+
-                "at their chosen times. Preview the exported result to hear "+
-                "all tracks together."),margins(-1,-2,dp(2),0,0,0));
+        box.addView(body("Audio, captions and image overlays share their authored times in edited preview and MP4 export."),margins(-1,-2,dp(2),0,0,0));
     }
 
     private void moveStudioLayerOnTimeline(String id,long start,long duration){
@@ -1289,10 +1312,8 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
             changed.durationMs=duration;
             changed.validate();
             validateStudioLayerTiming(changed);
-            editHistory.checkpoint(activeProject);
-            replaceStudioLayer(id,changed);
             studioPlayheadMs=start;
-            store.save(activeProject);syncProtocolState();showEditor();
+            saveStudioLayer(changed,activeProject.updatedAt);
         }catch(Exception error){
             Toast.makeText(this,"Could not move track: "+error.getMessage(),
                     Toast.LENGTH_LONG).show();
@@ -1333,6 +1354,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
             Toast.makeText(this,"Audio asset is missing. Import it again.",
                     Toast.LENGTH_LONG).show();return;
         }
+        final long revision=activeProject.updatedAt;
         StudioLayer original=existing==null?new StudioLayer():existing.copy();
         original.type=StudioLayer.AUDIO;
         original.assetId=asset.id;
@@ -1371,16 +1393,13 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                 .setPositiveButton("Apply",(d,w)->{
                     try{
                         StudioLayer edited=original.copy();
-                        edited.startMs=Math.round(Double.parseDouble(start.getText().toString())*1000);
-                        edited.durationMs=Math.round(Double.parseDouble(length.getText().toString())*1000);
-                        edited.sourceInMs=Math.round(Double.parseDouble(source.getText().toString())*1000);
+                        edited.startMs=secondsToMs(start);
+                        edited.durationMs=secondsToMs(length);
+                        edited.sourceInMs=secondsToMs(source);
                         edited.gain=gain.getProgress()/100f;
                         edited.validate();
                         validateStudioLayerTiming(edited);
-                        editHistory.checkpoint(activeProject);
-                        if(existing==null)activeProject.studioLayers.add(edited);
-                        else replaceStudioLayer(existing.id,edited);
-                        store.save(activeProject);syncProtocolState();showEditor();
+                        saveStudioLayer(edited,revision);
                     }catch(Exception error){
                         Toast.makeText(this,error.getMessage()==null?"Invalid audio timing":error.getMessage(),
                                 Toast.LENGTH_LONG).show();
@@ -1392,6 +1411,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         if(activeProject==null||activeProject.clips.isEmpty()){
             Toast.makeText(this,"Add video or image clips first",Toast.LENGTH_LONG).show();return;
         }
+        final long revision=activeProject.updatedAt;
         StudioLayer original=existing==null?new StudioLayer():existing.copy();
         original.type=StudioLayer.TITLE;
         if(existing==null){
@@ -1427,16 +1447,14 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                 .setView(wrap)
                 .setPositiveButton("Apply",(d,w)->{
                     try{
-                        StudioLayer edited=original.copy();
+                        StudioLayer edited=existing==null?new StudioLayer():original.copy();
+                        edited.id=original.id;
                         edited.text=caption.getText().toString().trim();
-                        edited.startMs=Math.round(Double.parseDouble(start.getText().toString())*1000);
-                        edited.durationMs=Math.round(Double.parseDouble(duration.getText().toString())*1000);
+                        edited.startMs=secondsToMs(start);
+                        edited.durationMs=secondsToMs(duration);
                         edited.position=position.getSelectedItemPosition();
                         edited.validate();validateStudioLayerTiming(edited);
-                        editHistory.checkpoint(activeProject);
-                        if(existing==null)activeProject.studioLayers.add(edited);
-                        else replaceStudioLayer(existing.id,edited);
-                        store.save(activeProject);syncProtocolState();showEditor();
+                        saveStudioLayer(edited,revision);
                     }catch(Exception error){
                         Toast.makeText(this,error.getMessage()==null?"Invalid caption":error.getMessage(),
                                 Toast.LENGTH_LONG).show();
@@ -1445,11 +1463,12 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
     }
 
     private void validateStudioLayerTiming(StudioLayer lane){
+        StudioLayerContract.validate(activeProject,lane);
         if(lane.startMs+lane.durationMs>activeProject.outputDurationMs())
             throw new IllegalArgumentException("Layer must end inside the video timeline");
         if(activeProject.studioLayers.size()>=32&&
                 activeProject.studioLayers.stream().noneMatch(x->x.id.equals(lane.id)))
-            throw new IllegalArgumentException("Limit is 32 timed audio/caption layers");
+            throw new IllegalArgumentException("Limit is 32 timed layers");
         if(StudioLayer.AUDIO.equals(lane.type)){
             ProjectStore.Asset asset=activeProject.asset(lane.assetId);
             if(asset==null||!asset.mime.startsWith("audio/"))
@@ -1466,13 +1485,13 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         throw new IllegalArgumentException("Timed layer no longer exists");
     }
     private void removeStudioLayer(StudioLayer lane){
+        final long revision=activeProject.updatedAt;
         new AlertDialog.Builder(this).setTitle("Remove track?")
-                .setMessage("Remove this audio/title layer from the edit? "+
+                .setMessage("Remove this timed layer from the edit? "+
                         "The original imported file is preserved.")
                 .setPositiveButton("Remove",(d,w)->{
-                    editHistory.checkpoint(activeProject);
-                    activeProject.studioLayers.removeIf(x->x.id.equals(lane.id));
-                    store.save(activeProject);syncProtocolState();showEditor();
+                    ArrayList<StudioLayer> retained=new ArrayList<>(activeProject.studioLayers);
+                    retained.removeIf(x->x.id.equals(lane.id));applyStudioLayerList(retained,revision);
                 })
                 .setNegativeButton("Cancel",null).show();
     }
@@ -1484,11 +1503,21 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         }
         String[] keys=transform?StudioClipAdjustments.TRANSFORM_KEYS:
                 StudioClipAdjustments.COLOR_KEYS;
+        final long expectedRevision=activeProject.updatedAt;
+        final String clipId=selectedClip.id;
         String[] labels=transform?StudioClipAdjustments.TRANSFORM_NAMES:
                 StudioClipAdjustments.COLOR_NAMES;
         LinearLayout content=column();
         content.setPadding(dp(16),dp(9),dp(16),dp(9));
         final SeekBar[] controls=new SeekBar[keys.length];
+        content.addView(studioButton("Exact numeric values",()->studioNumericDialog(transform,false)));
+        if(transform){
+            content.addView(studioButton("Transform keyframes",()->studioNumericDialog(true,true)));
+            content.addView(studioButton("Clear transform keyframes",()->{
+                try{applyStudioPrecision(new JSONObject().put("clipId",clipId).put("clearKeyframes",true),expectedRevision);}
+                catch(Exception error){Toast.makeText(this,error.getMessage(),Toast.LENGTH_LONG).show();}
+            }));
+        }
         for(int i=0;i<keys.length;i++){
             final int index=i;
             int current=StudioClipAdjustments.sliderFor(selectedClip.effects,keys[i]);
@@ -1515,24 +1544,228 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                 .setTitle(transform?"Position & Transform":"Adjust Color")
                 .setView(content)
                 .setPositiveButton("Apply",(d,w)->{
-                    editHistory.checkpoint(activeProject);
-                    for(int i=0;i<keys.length;i++){
-                        int low="scale".equals(keys[i])?50:0;
-                        StudioClipAdjustments.apply(selectedClip.effects,keys[i],
-                                controls[i].getProgress()+low);
-                    }
-                    store.save(activeProject);syncProtocolState();showEditor();
+                    try{
+                        JSONObject settings=new JSONObject();
+                        for(int i=0;i<keys.length;i++){
+                            int low="scale".equals(keys[i])?50:0;
+                            StudioClipAdjustments.apply(settings,keys[i],controls[i].getProgress()+low);
+                        }
+                        applyStudioPrecision(new JSONObject().put("clipId",clipId).put("set",settings),expectedRevision);
+                    }catch(Exception error){Toast.makeText(this,error.getMessage(),Toast.LENGTH_LONG).show();}
                 })
                 .setNeutralButton("Reset",(d,w)->{
-                    editHistory.checkpoint(activeProject);
-                    StudioClipAdjustments.reset(selectedClip.effects,transform);
-                    store.save(activeProject);syncProtocolState();showEditor();
+                    try{applyStudioPrecision(new JSONObject().put("clipId",clipId)
+                            .put(transform?"resetTransform":"resetColor",true),expectedRevision);}
+                    catch(Exception error){Toast.makeText(this,error.getMessage(),Toast.LENGTH_LONG).show();}
                 })
                 .setNegativeButton("Cancel",null).show();
     }
 
+    private boolean applyStudioPrecision(JSONObject operation,long expectedRevision){
+        if(activeProject==null)return false;
+        try{
+            ProjectStore.Project before=ProjectStore.Project.fromJson(activeProject.toJson());
+            JSONObject request=new JSONObject().put("projectId",activeProject.id).put("expectedUpdatedAt",expectedRevision)
+                    .put("operations",new JSONArray().put(operation));
+            JSONObject result=StudioPrecisionEdits.apply(this,store,request);
+            ProjectStore.Project saved=store.get(result.getString("projectId"));
+            if(saved==null)throw new IllegalStateException("Saved project is unavailable");
+            if(saved.updatedAt==result.getLong("updatedAt"))editHistory.checkpoint(before);
+            else editHistory.reset(null);
+            String clipId=operation.getString("clipId");
+            activeProject=saved;selectedClip=null;
+            for(ProjectStore.Clip clip:activeProject.clips)if(clipId.equals(clip.id)){selectedClip=clip;break;}
+            syncProtocolState();showEditor();return true;
+        }catch(Exception error){
+            Toast.makeText(this,"Edit not applied: "+error.getMessage(),Toast.LENGTH_LONG).show();return false;
+        }
+    }
+
+    private void studioNumericDialog(boolean transform,boolean keyframe){
+        if(activeProject==null||selectedClip==null){Toast.makeText(this,"Select a clip first",Toast.LENGTH_SHORT).show();return;}
+        final String clipId=selectedClip.id;final long revision=activeProject.updatedAt;
+        final long duration=selectedClip.outputDurationMs();
+        final long local=Math.max(0,Math.min(duration,studioPlayheadMs-StudioTimelineEditOps.startOf(activeProject.clips,clipId)));
+        try{
+            JSONObject effects=new JSONObject(selectedClip.effects.toString());
+            StudioClipKeyframes.Values values=StudioClipKeyframes.fromEffects(effects,duration).at(keyframe?local:0);
+            String[] keys=transform?new String[]{"x","y","scaleX","scaleY","rotate","anchorX","anchorY","opacity"}:StudioClipAdjustments.COLOR_KEYS;
+            double[] initial=transform?new double[]{values.x,values.y,values.scaleX,values.scaleY,values.rotate,values.anchorX,values.anchorY,values.opacity}:
+                    new double[]{effects.optDouble("brightness",0),effects.optDouble("contrast",0),effects.optDouble("saturationAdjust",0),effects.optDouble("lightnessAdjust",0)};
+            LinearLayout content=column();content.setPadding(dp(18),dp(8),dp(18),dp(8));
+            content.addView(body(transform?"X/Y: fraction of output frame, positive right/down. Scale: 0.1..8. Rotation: degrees. Anchor: 0..1.":
+                    "Brightness/contrast: -1..1. Saturation/lightness: -100..100."));
+            EditText timeField=numberInput(0);timeField.setText(Long.toString(local));
+            android.widget.Spinner easing=new android.widget.Spinner(this);
+            String[] easingNames={"linear","ease_in","ease_out","ease_in_out","hold"};
+            easing.setAdapter(new android.widget.ArrayAdapter<>(this,android.R.layout.simple_spinner_dropdown_item,easingNames));
+            if(keyframe){content.addView(body("Clip-local edited time (ms), 0.."+duration));content.addView(timeField);content.addView(body("Interpolation from this key to the next"));content.addView(easing);}
+            EditText[] fields=new EditText[keys.length];
+            for(int i=0;i<keys.length;i++){content.addView(body(keys[i]));fields[i]=numberInput((float)initial[i]);content.addView(fields[i]);}
+            JSONArray existing=effects.optJSONArray("keyframes");
+            final JSONArray original=existing==null?new JSONArray():new JSONArray(existing.toString());
+            if(keyframe){
+                for(int i=0;i<original.length();i++)if(original.getJSONObject(i).getLong("timeMs")==local){
+                    int index=java.util.Arrays.asList(easingNames).indexOf(original.getJSONObject(i).optString("easing","linear"));
+                    easing.setSelection(Math.max(0,index));break;
+                }
+                content.addView(studioButton("Remove key at entered time",()->{
+                    try{long at=Long.parseLong(timeField.getText().toString());JSONArray retained=new JSONArray();
+                        for(int i=0;i<original.length();i++)if(original.getJSONObject(i).getLong("timeMs")!=at)retained.put(original.getJSONObject(i));
+                        applyStudioPrecision(new JSONObject().put("clipId",clipId).put("keyframes",retained),revision);
+                    }catch(Exception error){Toast.makeText(this,error.getMessage(),Toast.LENGTH_LONG).show();}
+                }));
+            }
+            ScrollView scroll=new ScrollView(this);scroll.addView(content);
+            AlertDialog dialog=new AlertDialog.Builder(this).setTitle(keyframe?"Exact transform keyframe":transform?"Exact transform":"Exact color")
+                    .setView(scroll).setPositiveButton(keyframe?"Set key":"Apply",null)
+                    .setNeutralButton(keyframe?"Clear keys":"Reset",null).setNegativeButton("Cancel",null).create();
+            dialog.setOnShowListener(d->{
+                dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{
+                    try{
+                        JSONObject settings=new JSONObject();for(int i=0;i<keys.length;i++)settings.put(keys[i],Double.parseDouble(fields[i].getText().toString()));
+                        JSONObject operation=new JSONObject().put("clipId",clipId);
+                        if(keyframe){
+                            long timeMs=Long.parseLong(timeField.getText().toString());settings.put("timeMs",timeMs).put("easing",easing.getSelectedItem().toString());
+                            ArrayList<JSONObject> ordered=new ArrayList<>();
+                            for(int i=0;i<original.length();i++)if(original.getJSONObject(i).getLong("timeMs")!=timeMs)ordered.add(original.getJSONObject(i));
+                            ordered.add(settings);ordered.sort(java.util.Comparator.comparingLong(o->o.optLong("timeMs")));
+                            operation.put("keyframes",new JSONArray(ordered));
+                        }else operation.put("set",settings);
+                        if(applyStudioPrecision(operation,revision))dialog.dismiss();
+                    }catch(Exception error){Toast.makeText(this,"Invalid values: "+error.getMessage(),Toast.LENGTH_LONG).show();}
+                });
+                dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener(v->{try{
+                    if(applyStudioPrecision(new JSONObject().put("clipId",clipId).put(keyframe?"clearKeyframes":transform?"resetTransform":"resetColor",true),revision))dialog.dismiss();
+                }catch(Exception error){Toast.makeText(this,error.getMessage(),Toast.LENGTH_LONG).show();}});
+            });dialog.show();
+        }catch(Exception error){Toast.makeText(this,"Cannot edit transform: "+error.getMessage(),Toast.LENGTH_LONG).show();}
+    }
+
+    private void openPipelineStudio(){
+        Intent intent=new Intent(this,OpenPipelineActivity.class);
+        if(activeProject!=null)intent.putExtra("projectId",activeProject.id);startActivity(intent);
+    }
+
+    private void studioPixelDialog(String tool){
+        if(activeProject==null||selectedClip==null){Toast.makeText(this,"Select a clip first",Toast.LENGTH_SHORT).show();return;}
+        final String clipId=selectedClip.id;final long revision=activeProject.updatedAt;
+        final JSONObject effects=selectedClip.effects;
+        LinearLayout content=column();content.setPadding(dp(18),dp(8),dp(18),dp(8));
+        String[] keys;double[] defaults;
+        android.widget.CheckBox enabled=new android.widget.CheckBox(this);enabled.setTextColor(C_TEXT);
+        EditText color=new EditText(this);color.setSingleLine(true);color.setText(effects.optString("chromaColor","#00FF00"));
+        android.widget.Spinner shape=new android.widget.Spinner(this);
+        String[] shapes={"none","rectangle","ellipse"};
+        shape.setAdapter(new android.widget.ArrayAdapter<>(this,android.R.layout.simple_spinner_dropdown_item,shapes));
+        if("Green Screen".equals(tool)){
+            enabled.setText("Enable chroma key");enabled.setChecked(effects.optBoolean("chromaKey",true));content.addView(enabled);
+            content.addView(body("Key color #RRGGBB"));content.addView(color);
+            content.addView(body("Tolerance/feather: 0..1 in linear RGB. Removed pixels become transparent; MP4 has an opaque output background."));
+            keys=new String[]{"chromaTolerance","chromaFeather"};defaults=new double[]{.12,.05};
+        }else if("Mask".equals(tool)){
+            shape.setSelection(Math.max(0,java.util.Arrays.asList(shapes).indexOf(effects.optString("maskShape","rectangle"))));
+            content.addView(body("Mask shape"));content.addView(shape);
+            content.addView(body("Bounds use output coordinates 0..1 from top-left. Feather: 0..0.5 of the output frame."));
+            keys=new String[]{"maskLeft","maskTop","maskRight","maskBottom","maskFeather"};defaults=new double[]{0,0,1,1,.02};
+        }else if("Glow".equals(tool)){
+            content.addView(body("Thresholded nine-tap bloom. Strength: 0..2; radius: 0..24 output pixels; threshold: 0..1."));
+            keys=new String[]{"glowStrength","glowRadiusPx","glowThreshold"};defaults=new double[]{.5,6,.7};
+        }else{
+            content.addView(body("Opacity: 0..1. Opacity keyframes override this static value; edit or clear them in Keyframes."));
+            keys=new String[]{"opacity"};defaults=new double[]{1};
+        }
+        EditText[] fields=new EditText[keys.length];
+        for(int i=0;i<keys.length;i++){content.addView(body(keys[i]));fields[i]=numberInput((float)effects.optDouble(keys[i],defaults[i]));content.addView(fields[i]);}
+        ScrollView scroll=new ScrollView(this);scroll.addView(content);
+        AlertDialog dialog=new AlertDialog.Builder(this).setTitle(tool).setView(scroll)
+                .setPositiveButton("Apply",null).setNeutralButton("Opacity".equals(tool)?"Reset static":"Disable",null).setNegativeButton("Cancel",null).create();
+        dialog.setOnShowListener(d->{
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{try{
+                JSONObject settings=new JSONObject();for(int i=0;i<keys.length;i++)settings.put(keys[i],Double.parseDouble(fields[i].getText().toString()));
+                if("Green Screen".equals(tool))settings.put("chromaKey",enabled.isChecked()).put("chromaColor",color.getText().toString().trim());
+                if("Mask".equals(tool))settings.put("maskShape",shape.getSelectedItem().toString());
+                if(applyStudioPrecision(new JSONObject().put("clipId",clipId).put("set",settings),revision))dialog.dismiss();
+            }catch(Exception error){Toast.makeText(this,"Invalid pixel controls: "+error.getMessage(),Toast.LENGTH_LONG).show();}});
+            dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener(v->{try{
+                JSONObject settings=new JSONObject();
+                if("Green Screen".equals(tool))settings.put("chromaKey",false);
+                else if("Mask".equals(tool))settings.put("maskShape","none");
+                else if("Glow".equals(tool))settings.put("glowStrength",0);
+                else settings.put("opacity",1);
+                if(applyStudioPrecision(new JSONObject().put("clipId",clipId).put("set",settings),revision))dialog.dismiss();
+            }catch(Exception error){Toast.makeText(this,error.getMessage(),Toast.LENGTH_LONG).show();}});
+        });dialog.show();
+    }
+
+    private void chooseStudioImage(){
+        if(activeProject==null||activeProject.clips.isEmpty()){Toast.makeText(this,"Add timeline clips first",Toast.LENGTH_LONG).show();return;}
+        ArrayList<ProjectStore.Asset> images=new ArrayList<>();
+        for(ProjectStore.Asset asset:activeProject.assets)if(asset.mime!=null&&asset.mime.startsWith("image/"))images.add(asset);
+        if(images.isEmpty()){Toast.makeText(this,"Import an image into this project first",Toast.LENGTH_LONG).show();return;}
+        String[] labels=images.stream().map(a->a.name).toArray(String[]::new);
+        new AlertDialog.Builder(this).setTitle("Choose an imported overlay image").setItems(labels,(d,index)->editStudioImage(null,images.get(index).id))
+                .setNegativeButton("Cancel",null).show();
+    }
+
+    private void editStudioImage(StudioLayer existing,String assetId){
+        if(activeProject==null)return;
+        ProjectStore.Asset asset=activeProject.asset(assetId);
+        if(asset==null||asset.mime==null||!asset.mime.startsWith("image/")){Toast.makeText(this,"Imported image is unavailable",Toast.LENGTH_LONG).show();return;}
+        final long revision=activeProject.updatedAt;
+        StudioLayer original=existing==null?new StudioLayer():existing.copy();original.type=StudioLayer.IMAGE;original.assetId=assetId;
+        if(existing==null){original.startMs=Math.min(studioPlayheadMs,Math.max(0,activeProject.outputDurationMs()-100));
+            original.durationMs=Math.min(2500,activeProject.outputDurationMs()-original.startMs);}
+        LinearLayout content=column();content.setPadding(dp(18),dp(8),dp(18),dp(8));
+        content.addView(body("Center X/Y: output coordinates 0..1. Width/height: fraction of output frame (0.01..2). Rotation: degrees. Opacity: 0..1."));
+        content.addView(body("Start on timeline (ms)"));EditText start=numberInput(0);start.setText(Long.toString(original.startMs));content.addView(start);
+        content.addView(body("Duration (ms)"));EditText duration=numberInput(0);duration.setText(Long.toString(original.durationMs));content.addView(duration);
+        String[] names={"x","y","width","height","rotation","opacity"};
+        double[] values={original.x,original.y,original.width,original.height,original.rotation,original.opacity};
+        EditText[] fields=new EditText[names.length];
+        for(int i=0;i<names.length;i++){content.addView(body(names[i]));fields[i]=numberInput((float)values[i]);content.addView(fields[i]);}
+        ScrollView scroll=new ScrollView(this);scroll.addView(content);
+        AlertDialog dialog=new AlertDialog.Builder(this).setTitle("Image Overlay · "+asset.name).setView(scroll)
+                .setPositiveButton("Apply",null).setNegativeButton("Cancel",null).create();
+        dialog.setOnShowListener(d->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{try{
+            JSONObject record=original.toJson().put("startMs",Long.parseLong(start.getText().toString()))
+                    .put("durationMs",Long.parseLong(duration.getText().toString()));
+            for(int i=0;i<names.length;i++)record.put(names[i],Double.parseDouble(fields[i].getText().toString()));
+            if(saveStudioLayer(StudioLayer.fromJson(record),revision))dialog.dismiss();
+        }catch(Exception error){Toast.makeText(this,"Image overlay not applied: "+error.getMessage(),Toast.LENGTH_LONG).show();}}));dialog.show();
+    }
+
+    private long secondsToMs(EditText field){
+        double seconds=Double.parseDouble(field.getText().toString());
+        if(!Double.isFinite(seconds)||seconds<0||seconds>86400)throw new IllegalArgumentException("Use a finite time in 0..86400 seconds");
+        return Math.round(seconds*1000);
+    }
+
+    private boolean saveStudioLayer(StudioLayer replacement,long expectedRevision){
+        ArrayList<StudioLayer> layers=new ArrayList<>(activeProject.studioLayers);boolean found=false;
+        for(int i=0;i<layers.size();i++)if(layers.get(i).id.equals(replacement.id)){layers.set(i,replacement);found=true;break;}
+        if(!found)layers.add(replacement);
+        return applyStudioLayerList(layers,expectedRevision);
+    }
+
+    private boolean applyStudioLayerList(List<StudioLayer> layers,long expectedRevision){
+        try{
+            ProjectStore.Project before=ProjectStore.Project.fromJson(activeProject.toJson());
+            JSONObject result=StudioLayerContract.apply(store,new JSONObject().put("projectId",activeProject.id)
+                    .put("expectedUpdatedAt",expectedRevision).put("layers",StudioLayerContract.toJson(layers)));
+            ProjectStore.Project saved=store.get(result.getString("projectId"));if(saved==null)throw new IllegalStateException("Saved project is unavailable");
+            if(saved.updatedAt==result.getLong("updatedAt"))editHistory.checkpoint(before);else editHistory.reset(null);
+            String selectedId=selectedClip==null?"":selectedClip.id;activeProject=saved;selectedClip=null;
+            for(ProjectStore.Clip clip:saved.clips)if(selectedId.equals(clip.id)){selectedClip=clip;break;}
+            syncProtocolState();showEditor();return true;
+        }catch(Exception error){Toast.makeText(this,"Layer not applied: "+error.getMessage(),Toast.LENGTH_LONG).show();return false;}
+    }
+
     private void updateStudioCaptionAt(long globalTimeMs){
         if(studioCaptionPreview==null||activeProject==null)return;
+        if(livePlayer.isEditedPreview()){
+            studioCaptionPreview.setText("");studioCaptionPreview.setVisibility(View.GONE);return;
+        }
         List<StudioLayer> active=StudioTrackLayout.activeAt(
                 activeProject.studioLayers,StudioLayer.TITLE,globalTimeMs);
         if(active.isEmpty()){
@@ -1596,34 +1829,37 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
     private void studioSpeedDialog(){
         if(selectedClip==null){Toast.makeText(this,"Select a clip first",
                 Toast.LENGTH_SHORT).show();return;}
+        final String clipId=selectedClip.id;final long revision=activeProject.updatedAt;
         int speed=(int)Math.round(selectedClip.speed*100);
         studioSliderDialog("Playback Speed",25,300,Math.max(25,Math.min(300,speed)),
                 "% speed",value->{
-                    editHistory.checkpoint(activeProject);
-                    selectedClip.speed=value/100f;
-                    store.save(activeProject);syncProtocolState();showEditor();
+                    try{applyStudioPrecision(new JSONObject().put("clipId",clipId)
+                            .put("set",new JSONObject().put("speed",value/100.0)),revision);}
+                    catch(Exception error){Toast.makeText(this,error.getMessage(),Toast.LENGTH_LONG).show();}
                 });
     }
     private void studioVolumeDialog(){
         if(selectedClip==null){Toast.makeText(this,"Select a clip first",
                 Toast.LENGTH_SHORT).show();return;}
+        final String clipId=selectedClip.id;final long revision=activeProject.updatedAt;
         int volume=(int)Math.round(selectedClip.volume*100);
         studioSliderDialog("Clip Volume",0,200,Math.max(0,Math.min(200,volume)),
                 "% gain",value->{
-                    editHistory.checkpoint(activeProject);
-                    selectedClip.volume=value/100f;
-                    store.save(activeProject);syncProtocolState();showEditor();
+                    try{applyStudioPrecision(new JSONObject().put("clipId",clipId)
+                            .put("set",new JSONObject().put("volume",value/100.0)),revision);}
+                    catch(Exception error){Toast.makeText(this,error.getMessage(),Toast.LENGTH_LONG).show();}
                 });
     }
     private void studioBlurDialog(){
         if(selectedClip==null){Toast.makeText(this,"Select a clip first",
                 Toast.LENGTH_SHORT).show();return;}
+        final String clipId=selectedClip.id;final long revision=activeProject.updatedAt;
         int amount=(int)Math.round(selectedClip.effects.optDouble("blur",0)*10);
-        studioSliderDialog("Gaussian Blur",0,200,Math.max(0,Math.min(200,amount)),
+        studioSliderDialog("Gaussian Blur",0,180,Math.max(0,Math.min(180,amount)),
                 "tenths",value->{
-                    editHistory.checkpoint(activeProject);
-                    try{selectedClip.effects.put("blur",value/10.0);}catch(Exception ignored){}
-                    store.save(activeProject);syncProtocolState();showEditor();
+                    try{applyStudioPrecision(new JSONObject().put("clipId",clipId)
+                            .put("set",new JSONObject().put("blur",value/10.0)),revision);}
+                    catch(Exception error){Toast.makeText(this,error.getMessage(),Toast.LENGTH_LONG).show();}
                 });
     }
 
@@ -1645,7 +1881,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         });
         wrap.addView(slider);
         new AlertDialog.Builder(this).setTitle(title)
-                .setMessage("Edit this clip precisely. Preview the exported MP4 to verify renderer effects.")
+                .setMessage("Changes use the same native composition in edited preview and MP4 export.")
                 .setView(wrap)
                 .setPositiveButton("Apply",(d,w)->onApply.accept(slider.getProgress()+min))
                 .setNegativeButton("Cancel",null).show();
@@ -1654,99 +1890,76 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
     private void studioPresetDialog(String title,String key,String[] presets){
         if(selectedClip==null){Toast.makeText(this,"Select a clip first",
                 Toast.LENGTH_SHORT).show();return;}
+        final String clipId=selectedClip.id;final long revision=activeProject.updatedAt;
         String current="transition".equals(key)?selectedClip.transition:
                 selectedClip.effects.optString(key,"none");
         int selected=java.util.Arrays.asList(presets).indexOf(current);
         new AlertDialog.Builder(this).setTitle(title)
                 .setSingleChoiceItems(presets,Math.max(0,selected),(dialog,index)->{
-                    editHistory.checkpoint(activeProject);
-                    if("transition".equals(key))selectedClip.transition=presets[index];
-                    else try{selectedClip.effects.put(key,presets[index]);}
-                        catch(Exception ignored){}
-                    store.save(activeProject);
-                    syncProtocolState();
-                    dialog.dismiss();
-                    showEditor();
+                    try{if(applyStudioPrecision(new JSONObject().put("clipId",clipId)
+                            .put("set",new JSONObject().put(key,presets[index])),revision))dialog.dismiss();}
+                    catch(Exception error){Toast.makeText(this,error.getMessage(),Toast.LENGTH_LONG).show();}
                 })
                 .setNegativeButton("Cancel",null).show();
     }
 
     private void deleteStudioClip(){
         if(activeProject==null||selectedClip==null)return;
-        final String clipId=selectedClip.id;
+        final String clipId=selectedClip.id;final long revision=activeProject.updatedAt;
         new AlertDialog.Builder(this).setTitle("Remove timeline clip?")
-                .setMessage("This removes the selected clip from the edit, "+
-                        "but keeps the original imported media safely in VideoStudio.")
-                .setPositiveButton("Remove",(d,w)->{
-                    editHistory.checkpoint(activeProject);
-                    activeProject.clips.removeIf(c->clipId.equals(c.id));
-                    selectedClip=activeProject.clips.isEmpty()?null:
-                            activeProject.clips.get(Math.min(activeProject.clips.size()-1,
-                                    Math.max(0,studioTimelinePage*20)));
-                    studioPlayheadMs=0;
-                    store.save(activeProject);syncProtocolState();showEditor();
-                }).setNegativeButton("Cancel",null).show();
+                .setMessage("This removes the selected clip from the edit, but keeps its imported media in VideoStudio.")
+                .setPositiveButton("Remove",(d,w)->{try{
+                    applyStudioTimeline(new JSONObject().put("action","delete").put("clipId",clipId),revision);
+                }catch(Exception error){Toast.makeText(this,error.getMessage(),Toast.LENGTH_LONG).show();}})
+                .setNegativeButton("Cancel",null).show();
     }
     private void moveStudioClipTo(String clipId,int targetIndex){
-        if(activeProject==null||clipId==null)return;
-        ProjectStore.Project fresh=store.get(activeProject.id);
-        if(fresh==null)return;
-        if(fresh.updatedAt!=activeProject.updatedAt){
-            activeProject=fresh;editHistory.reset(null);showEditor();
-            Toast.makeText(this,"Project changed in background; retry the move",
-                    Toast.LENGTH_LONG).show();
-            return;
-        }
-        int current=-1;
-        for(int i=0;i<activeProject.clips.size();i++){
-            if(clipId.equals(activeProject.clips.get(i).id)){current=i;break;}
-        }
-        if(current<0||targetIndex<0||targetIndex>=activeProject.clips.size()||
-                current==targetIndex)return;
-        editHistory.checkpoint(activeProject);
-        if(!StudioTimelineEditOps.move(activeProject.clips,clipId,targetIndex))return;
-        selectedClip=activeProject.clips.get(targetIndex);
-        studioPlayheadMs=StudioTimelineEditOps.startOf(activeProject.clips,clipId);
-        studioTimelinePage=targetIndex/20;
-        store.save(activeProject);syncProtocolState();showEditor();
+        if(activeProject==null||clipId==null||targetIndex<0||targetIndex>=activeProject.clips.size())return;
+        try{applyStudioTimeline(new JSONObject().put("action","move").put("clipId",clipId).put("targetIndex",targetIndex),activeProject.updatedAt);}
+        catch(Exception error){Toast.makeText(this,error.getMessage(),Toast.LENGTH_LONG).show();}
     }
-
     private void moveStudioClip(int distance){
         if(activeProject==null||selectedClip==null)return;
-        int at=-1;
-        for(int i=0;i<activeProject.clips.size();i++)
-            if(selectedClip.id.equals(activeProject.clips.get(i).id)){at=i;break;}
+        int at=activeProject.clips.indexOf(selectedClip);
         if(at<0||at+distance<0||at+distance>=activeProject.clips.size())return;
-        editHistory.checkpoint(activeProject);
-        java.util.Collections.swap(activeProject.clips,at,at+distance);
-        studioTimelinePage=(at+distance)/20;
-        studioPlayheadMs=0;
-        for(int i=0;i<at+distance;i++)
-            studioPlayheadMs+=activeProject.clips.get(i).outputDurationMs();
-        store.save(activeProject);syncProtocolState();showEditor();
+        moveStudioClipTo(selectedClip.id,at+distance);
+    }
+
+    private boolean applyStudioTimeline(JSONObject operation,long expectedRevision){
+        if(activeProject==null)return false;
+        try{
+            ProjectStore.Project before=ProjectStore.Project.fromJson(activeProject.toJson());
+            operation.put("projectId",activeProject.id).put("expectedUpdatedAt",expectedRevision);
+            JSONObject result=StudioPrecisionEdits.applyTimeline(store,operation);
+            ProjectStore.Project saved=store.get(result.getString("projectId"));if(saved==null)throw new IllegalStateException("Saved project is unavailable");
+            if(saved.updatedAt==result.getLong("updatedAt"))editHistory.checkpoint(before);else editHistory.reset(null);
+            activeProject=saved;selectedClip=null;String id=result.getString("selectedClipId");
+            for(ProjectStore.Clip clip:saved.clips)if(id.equals(clip.id)){selectedClip=clip;break;}
+            studioPlayheadMs=selectedClip==null?0:StudioTimelineEditOps.startOf(saved.clips,selectedClip.id);
+            studioTimelinePage=selectedClip==null?0:saved.clips.indexOf(selectedClip)/20;
+            syncProtocolState();showEditor();return true;
+        }catch(Exception error){Toast.makeText(this,"Timeline edit not applied: "+error.getMessage(),Toast.LENGTH_LONG).show();return false;}
     }
 
     private void restoreStudioHistory(boolean redo){
         if(activeProject==null)return;
-        ProjectStore.Project latest=store.get(activeProject.id);
-        if(latest==null||latest.updatedAt!=activeProject.updatedAt){
-            Toast.makeText(this,"Project changed in background. Reload before Undo.",
-                    Toast.LENGTH_LONG).show();
-            if(latest!=null)activeProject=latest;
-            editHistory.reset(null);
-            showEditor();return;
+        final String projectId=activeProject.id;final long revision=activeProject.updatedAt;
+        final String previous=selectedClip==null?"":selectedClip.id;
+        try{
+            ProjectStore.Project restored=store.guardedProject(projectId,revision,current->{
+                ProjectStore.Project next=redo?editHistory.redo(current):editHistory.undo(current);
+                if(next!=null)store.save(next);return next;
+            });
+            if(restored==null)return;
+            activeProject=restored;selectedClip=null;
+            for(ProjectStore.Clip clip:restored.clips)if(previous.equals(clip.id)){selectedClip=clip;break;}
+            if(selectedClip==null&&!restored.clips.isEmpty())selectedClip=restored.clips.get(0);
+            syncProtocolState();showEditor();
+        }catch(Exception error){
+            Toast.makeText(this,"History not restored: "+error.getMessage(),Toast.LENGTH_LONG).show();
+            ProjectStore.Project latest=store.get(projectId);if(latest!=null)activeProject=latest;
+            editHistory.reset(null);showEditor();
         }
-        String previous=selectedClip==null?"":selectedClip.id;
-        ProjectStore.Project restored=redo
-                ?editHistory.redo(activeProject):editHistory.undo(activeProject);
-        if(restored==null)return;
-        activeProject=restored;
-        selectedClip=null;
-        for(ProjectStore.Clip c:restored.clips)
-            if(previous.equals(c.id)){selectedClip=c;break;}
-        if(selectedClip==null&&!restored.clips.isEmpty())
-            selectedClip=restored.clips.get(0);
-        store.save(activeProject);syncProtocolState();showEditor();
     }
 
     private void findStudioTool(){
@@ -2545,13 +2758,13 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                 break;
             case 2:
                 for(StudioToolCatalog.Tool t:StudioToolCatalog.group(2))
-                    sections.add(new String[]{t.label+(t.experimental?" *":""),t.label});
+                    sections.add(new String[]{t.label+(t.supported?"":" (unavailable)"),t.label});
                 for(StudioToolCatalog.Tool t:StudioToolCatalog.group(1))
-                    sections.add(new String[]{t.label+(t.experimental?" *":""),t.label});
+                    sections.add(new String[]{t.label+(t.supported?"":" (unavailable)"),t.label});
                 break;
             case 3:
                 for(StudioToolCatalog.Tool t:StudioToolCatalog.group(3))
-                    sections.add(new String[]{t.label+(t.experimental?" *":""),t.label});
+                    sections.add(new String[]{t.label+(t.supported?"":" (unavailable)"),t.label});
                 break;
             case 4:
                 sections.add(new String[]{"Connect ChatGPT","Connect"});
@@ -2588,8 +2801,8 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         }
         box.addView(studioButton("⌕ Search All Studio Tools",this::findStudioTool),
                 margins(-1,dp(47),dp(12),0,0,0));
-        box.addView(body("* Experimental effects need rendered-MP4 QA. "+
-                "ChatGPT autonomous control is optional; the same editing tools work manually."),
+        box.addView(body("Unavailable tools explain their current limits. "+
+                "Touch and ChatGPT precision edits use the same validated operations."),
                 margins(-1,-2,dp(8),0,0,0));
         setScreen(scroll,"tools");
     }
@@ -3081,7 +3294,16 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                 ActivityLog.progress(this, state.id, "Cloud offload", detail, mapped, project.id);
             });
             if (!archived.optBoolean("ok", false)) throw new IllegalStateException("Cloud archive did not complete");
-            JSONObject evicted = new CreativeWorkspace(this).evictCloudBackedProject(project.id);
+            state.checkpoint("Cloud offload", 90, "Verifying exact archive before local eviction");
+            JSONObject evicted;
+            synchronized(driveWorkspace){
+                evicted=store.guardedProject(project.id,project.updatedAt,current->{
+                    JSONObject verification=driveWorkspace.verifyArchiveForEviction(current,workspace,archived);
+                    if(!verification.optBoolean("verified",false)||!verification.optBoolean("evictionEligible",false))
+                        throw new IllegalStateException("Cloud archive could not be verified for local eviction; local media retained");
+                    return new CreativeWorkspace(this).evictCloudBackedProject(current.id);
+                });
+            }
             state.checkpoint("Cloud offload", 100, "Cloud archive verified and local intermediates evicted");
             ActivityLog.add(this, "system", "Project workspace offloaded",
                     project.name + " • " + evicted.optLong("removedBytes", 0) + " bytes freed locally",
@@ -3108,6 +3330,8 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                 state.checkpoint("Cloud restore", progress, detail);
                 ActivityLog.progress(this, state.id, "Cloud restore", detail, progress, project.id);
             });
+            if(!result.optBoolean("verified",false))throw new IllegalStateException("Cloud restore was not verified");
+            new CreativeWorkspace(this).markCloudHydrated(project.id);
             state.checkpoint("Cloud restore", 100, "Restore complete");
             ActivityLog.add(this, "system", "Project workspace restored",
                     project.name + " • " + result.optLong("bytesRestored", 0) + " bytes",
@@ -3248,120 +3472,37 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
     }
 
     private void applyTool(String tool) {
-        if (activeProject == null || selectedClip == null) {
-            Toast.makeText(this, "Select a clip first", Toast.LENGTH_SHORT).show();
-            return;
+        if(!StudioToolCatalog.isSupported(tool)){
+            Toast.makeText(this,tool+" is unavailable: no implemented native effect. Project unchanged.",Toast.LENGTH_LONG).show();return;
         }
-        try {
-            if(!"Split".equals(tool)&&!"Trim".equals(tool)&&!"Text".equals(tool))
-                editHistory.checkpoint(activeProject);
-            switch (tool) {
-                case "Split":
-                    splitClip();
-                    return;
-                case "Trim":
-                    trimDialog();
-                    return;
-                case "Slow Motion":
-                    selectedClip.speed = selectedClip.speed <= .55f ? .75f : selectedClip.speed <= .8f ? 1f : .5f;
-                    break;
-                case "Speed Ramp":
-                    selectedClip.effects.put("speedRamp", "smooth");
-                    break;
-                case "Green Screen":
-                    selectedClip.effects.put("chromaKey", true);
-                    selectedClip.effects.put("chromaColor", "#00FF00");
-                    selectedClip.effects.put("chromaTolerance", .18);
-                    selectedClip.effects.put("spillSuppression", .35);
-                    break;
-                case "Transitions":
-                    selectedClip.transition = CreatorCatalog.next(CreatorCatalog.TRANSITIONS, selectedClip.transition);
-                    break;
-                case "Motion":
-                    selectedClip.effects.put("motionPreset", CreatorCatalog.next(CreatorCatalog.MOTIONS, selectedClip.effects.optString("motionPreset", "none")));
-                    selectedClip.effects.put("ease", "easeInOut");
-                    break;
-                case "Effects":
-                    selectedClip.effects.put("effectPreset", CreatorCatalog.next(CreatorCatalog.EFFECTS, selectedClip.effects.optString("effectPreset", "none")));
-                    break;
-                case "Colour":
-                    String look = selectedClip.effects.optString("colorPreset", "none");
-                    String[] looks = {"cinematic","teal_orange","warm_film","cool_night","noir","golden_hour","matte","high_contrast","soft_portrait"};
-                    int li = java.util.Arrays.asList(looks).indexOf(look);
-                    selectedClip.effects.put("colorPreset", looks[(li + 1 + looks.length) % looks.length]);
-                    break;
-                case "Text":
-                    textDialog();
-                    return;
-                case "Fonts":
-                    selectedClip.effects.put("fontFamily", CreatorCatalog.next(CreatorCatalog.FONTS, selectedClip.effects.optString("fontFamily", "sans-serif-medium")));
-                    break;
-                case "Volume":
-                    selectedClip.volume = selectedClip.volume > .8f ? .6f : selectedClip.volume > .3f ? 0f : 1f;
-                    break;
-                case "Reframe":
-                    selectedClip.effects.put("reframe", "9:16_subject_safe");
-                    break;
-                case "Mask":
-                    selectedClip.effects.put("mask", "rounded_rect");
-                    selectedClip.effects.put("maskFeather", .08);
-                    break;
-                case "Overlay":
-                    selectedClip.effects.put("overlaySlot", "ready");
-                    break;
-                case "Motion Blur":
-                    selectedClip.effects.put("motionBlur", .35);
-                    break;
-                case "Freeze":
-                    selectedClip.effects.put("freezeAtMs", Math.max(selectedClip.inMs, livePlayer == null ? selectedClip.inMs : livePlayer.currentPositionMs()));
-                    break;
-                case "Duplicate": {
-                    int index = activeProject.clips.indexOf(selectedClip);
-                    ProjectStore.Clip copy = ProjectStore.Clip.fromJson(selectedClip.toJson());
-                    copy.id = UUID.randomUUID().toString();
-                    activeProject.clips.add(index + 1, copy);
-                    selectedClip = copy;
-                    break;
-                }
-                case "Reverse":
-                    selectedClip.effects.put("reverse", !selectedClip.effects.optBoolean("reverse", false));
-                    break;
-                case "Shake":
-                    selectedClip.effects.put("motionPreset", "impact_shake");
-                    break;
-                case "Blur":
-                    selectedClip.effects.put("blur", selectedClip.effects.optDouble("blur", 0) > .1 ? 0 : 5.0);
-                    break;
-                case "Glow":
-                    selectedClip.effects.put("effectPreset", "soft_glow");
-                    selectedClip.effects.put("blur", 1.6);
-                    break;
-                case "Captions":
-                    selectedClip.effects.put("captionStyle", "creator_pop");
-                    selectedClip.effects.put("textAnimation", "caption_pop");
-                    break;
-                case "Audio Duck":
-                    selectedClip.effects.put("audioDucking", true);
-                    selectedClip.effects.put("duckLevel", .32);
-                    break;
-                case "Crop":
-                    selectedClip.effects.put("crop", "center_cover");
-                    break;
-            }
-            store.save(activeProject);
-            syncProtocolState();
-            boolean experimental=false;
-            for(StudioToolCatalog.Tool item:StudioToolCatalog.find(tool)){
-                if(tool.equals(item.label)){experimental=item.experimental;break;}
-            }
-            Toast.makeText(this,experimental?
-                            tool+" saved · verify in exported MP4":
-                            tool+" applied to selected clip",
-                    Toast.LENGTH_SHORT).show();
-            showEditor();
-        } catch (Exception error) {
-            Toast.makeText(this, "Could not apply " + tool, Toast.LENGTH_SHORT).show();
+        if(java.util.Set.of("Green Screen","Mask","Glow","Overlay","Opacity").contains(tool)){
+            performStudioTool(tool);return;
         }
+        if(activeProject==null||selectedClip==null){Toast.makeText(this,"Select a clip first",Toast.LENGTH_SHORT).show();return;}
+        final String clipId=selectedClip.id;final long revision=activeProject.updatedAt;
+        try{
+            JSONObject settings=new JSONObject();
+            switch(tool){
+                case "Split":splitClip();return;
+                case "Trim":trimDialog();return;
+                case "Text":textDialog();return;
+                case "Duplicate":applyStudioTimeline(new JSONObject().put("action","duplicate").put("clipId",clipId),revision);return;
+                case "Delete Clip":deleteStudioClip();return;
+                case "Move Left":moveStudioClip(-1);return;
+                case "Move Right":moveStudioClip(1);return;
+                case "Slow Motion":settings.put("speed",selectedClip.speed<=.55f?.75:selectedClip.speed<=.8f?1:.5);break;
+                case "Volume":settings.put("volume",selectedClip.volume>.8f?.6:selectedClip.volume>.3f?0:1);break;
+                case "Blur":settings.put("blur",selectedClip.effects.optDouble("blur",0)>.1?0:5);break;
+                case "Shake":settings.put("motionPreset","impact_shake");break;
+                case "Effects":settings.put("effectPreset",CreatorCatalog.next(java.util.List.of("none","gaussian_blur","dream"),selectedClip.effects.optString("effectPreset","none")));break;
+                case "Motion":settings.put("motionPreset",CreatorCatalog.next(CreatorCatalog.MOTIONS.stream()
+                        .filter(StudioPrecisionEdits.MOTIONS::contains).collect(java.util.stream.Collectors.toList()),selectedClip.effects.optString("motionPreset","none")));break;
+                case "Colour":settings.put("colorPreset",CreatorCatalog.next(java.util.List.of("none","cinematic","teal_orange","warm_film","cool_night","noir","golden_hour","matte","high_contrast","soft_portrait","cyberpunk"),selectedClip.effects.optString("colorPreset","none")));break;
+                default:throw new IllegalArgumentException("This tool has no one-tap clip operation");
+            }
+            if(applyStudioPrecision(new JSONObject().put("clipId",clipId).put("set",settings),revision))
+                Toast.makeText(this,tool+" applied to selected clip",Toast.LENGTH_SHORT).show();
+        }catch(Exception error){Toast.makeText(this,"Edit not applied: "+error.getMessage(),Toast.LENGTH_LONG).show();}
     }
 
     private void splitClip() {
@@ -3378,20 +3519,14 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
             Toast.makeText(this, "Move playback inside the clip before splitting", Toast.LENGTH_SHORT).show();
             return;
         }
-        editHistory.checkpoint(activeProject);
-        int index = activeProject.clips.indexOf(selectedClip);
-        ProjectStore.Clip second = ProjectStore.Clip.fromJson(selectedClip.toJson());
-        second.id = UUID.randomUUID().toString();
-        second.inMs = at;
-        selectedClip.outMs = at;
-        activeProject.clips.add(index + 1, second);
-        store.save(activeProject);
-        syncProtocolState();
-        showEditor();
+        try{applyStudioTimeline(new JSONObject().put("action","split").put("clipId",selectedClip.id)
+                .put("sourceTimeMs",at),activeProject.updatedAt);}
+        catch(Exception error){Toast.makeText(this,"Split not applied: "+error.getMessage(),Toast.LENGTH_LONG).show();}
     }
 
     private void trimDialog() {
         if(activeProject==null||selectedClip==null)return;
+        final String clipId=selectedClip.id;final long revision=activeProject.updatedAt;
         ProjectStore.Asset asset=activeProject.asset(selectedClip.assetId);
         final long maximum=StudioTrimMath.sourceLength(
                 asset==null?0:asset.durationMs,selectedClip);
@@ -3442,15 +3577,12 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                 .setView(wrap)
                 .setPositiveButton("Apply",(d,w)->{
                     try{
-                        long a=Math.round(Double.parseDouble(start.getText().toString())*1000);
-                        long b=Math.round(Double.parseDouble(end.getText().toString())*1000);
+                        long a=secondsToMs(start);
+                        long b=secondsToMs(end);
                         if(!StudioTrimMath.valid(a,b,maximum))
                             throw new IllegalArgumentException("Trim must fit source and be at least 0.1 seconds");
-                        editHistory.checkpoint(activeProject);
-                        selectedClip.inMs=a;
-                        selectedClip.outMs=b;
-                        store.save(activeProject);syncProtocolState();
-                        showEditor();
+                        applyStudioPrecision(new JSONObject().put("clipId",clipId)
+                                .put("set",new JSONObject().put("inMs",a).put("outMs",b)),revision);
                     }catch(Exception error){
                         Toast.makeText(this,error.getMessage()==null?
                                 "Invalid trim range":error.getMessage(),Toast.LENGTH_LONG).show();
@@ -3459,6 +3591,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
     }
 
     private void textDialog() {
+        final String clipId=selectedClip.id;final long revision=activeProject.updatedAt;
         EditText input = new EditText(this);
         input.setText(selectedClip.title);
         input.setHint("Title text");
@@ -3468,11 +3601,9 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                 .setTitle("Clip title")
                 .setView(input)
                 .setPositiveButton("Apply", (d, w) -> {
-                    editHistory.checkpoint(activeProject);
-                    selectedClip.title = input.getText().toString().trim();
-                    store.save(activeProject);
-                    syncProtocolState();
-                    showEditor();
+                    try{applyStudioPrecision(new JSONObject().put("clipId",clipId)
+                            .put("set",new JSONObject().put("title",input.getText().toString().trim())),revision);}
+                    catch(Exception error){Toast.makeText(this,error.getMessage(),Toast.LENGTH_LONG).show();}
                 })
                 .setNegativeButton("Cancel", null)
                 .show();

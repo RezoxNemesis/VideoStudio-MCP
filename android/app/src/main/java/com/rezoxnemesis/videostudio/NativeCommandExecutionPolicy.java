@@ -7,6 +7,13 @@ public final class NativeCommandExecutionPolicy {
     public static boolean requiresBackgroundThread(String action) {
         if(action==null)return false;
         switch(action){
+            case "precision_edit":
+            case "apply_tool": case "set_studio_layers":
+            case "sketch_create": case "sketch_list": case "sketch_get": case "sketch_edit":
+            case "sketch_undo": case "sketch_redo": case "sketch_import_reference": case "sketch_preview": case "sketch_render":
+            case "open_pipeline_configure": case "open_pipeline_capabilities": case "open_pipeline_list":
+            case "open_pipeline_export_request": case "open_pipeline_submit": case "open_pipeline_status": case "open_pipeline_cancel":
+            case "open_pipeline_download_result": case "open_pipeline_import_result": case "open_pipeline_archive_artifact": case "open_pipeline_restore_artifact":
             case "cinematic_3d_install_builtin":
             case "cinematic_3d_import_bundle":
             case "cinematic_3d_save_program":

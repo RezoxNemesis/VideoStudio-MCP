@@ -2,7 +2,7 @@ name: Cinematic 3D CPU artifacts
 on:
   pull_request:
     branches: [main]
-    paths: ['cinematic3d/**', 'tests/cinematic3d/**', '.github/workflows/cinematic3d.yml']
+    paths: ['cinematic3d/**', 'tests/cinematic3d/**', 'openpipeline/**', 'tests/openpipeline/**', '.github/workflows/cinematic3d.yml']
   workflow_dispatch:
 permissions:
   contents: read
@@ -33,7 +33,8 @@ jobs:
       - name: Verify actual rigs, clips, contacts and optional-provider boundaries
         run: |
           set -euo pipefail
-          python -m unittest discover -s tests/cinematic3d -v
+          C3D_WORKBENCH_BLENDER_TEST=1 C3D_CONDITIONING_BLENDER_TEST=1 python -m unittest discover -s tests/cinematic3d -v
+          python -m unittest discover -s tests/openpipeline -v
       - name: Build demonstrator using CPU Blender
         run: python -m cinematic3d build cinematic3d/examples/contact-demo.json --output build/cinematic3d --render-frames 48
       - name: Upload verified cloud demonstrator and diagnostics

@@ -91,10 +91,14 @@ public final class Cinematic3DProgramStore {
     private static JSONArray bindScenes(JSONObject bundle,JSONObject timeline)throws Exception {
         JSONArray declared=bundle.getJSONObject("manifest").getJSONArray("scenes"),base=bundle.getJSONObject("timeline").getJSONArray("shots"),shots=timeline.getJSONArray("shots"),bound=new JSONArray();boolean library=bundle.getJSONObject("manifest").getJSONObject("generator").optBoolean("actionLibrary",false);
         if(!timeline.getString("motionProvider").equals(bundle.getJSONObject("timeline").getString("motionProvider")))throw new IllegalArgumentException("BAKED_POSE_REBUILD_REQUIRED: motion provider differs from bundle");
+        Object actors=timeline.has("actors")?timeline.get("actors"):new JSONObject(),bakedActors=bundle.getJSONObject("timeline").has("actors")?bundle.getJSONObject("timeline").get("actors"):new JSONObject();
+        if(!canonical(actors).equals(canonical(bakedActors)))throw new IllegalArgumentException("BAKED_POSE_REBUILD_REQUIRED: actor morphology/material changes need a rebuilt bundle");
         for(int i=0;i<shots.length();i++){JSONObject shot=shots.getJSONObject(i),scene=null,original=null;String id=shot.getString("id"),action=shot.getString("action");for(int j=0;j<declared.length();j++){JSONObject candidate=declared.getJSONObject(j);if(id.equals(candidate.getString("shotId"))&&action.equals(candidate.getString("action"))){scene=candidate;break;}}
             if(scene==null&&library)for(int j=0;j<declared.length();j++){JSONObject candidate=declared.getJSONObject(j);if(action.equals(candidate.getString("action"))){scene=candidate;break;}}
             if(scene==null)throw new IllegalArgumentException("BAKED_POSE_REBUILD_REQUIRED: no exact declared scene/action");for(int j=0;j<base.length();j++)if(scene.getString("shotId").equals(base.getJSONObject(j).getString("id")))original=base.getJSONObject(j);
             if(original==null)throw new IllegalArgumentException("Bundle baked shot missing");for(String key:new String[]{"sourceAnchors","poseKeyframes","footContacts"}){Object actual=shot.has(key)?shot.get(key):new JSONArray(),expected=original.has(key)?original.get(key):new JSONArray();if(!canonical(actual).equals(canonical(expected)))throw new IllegalArgumentException("BAKED_POSE_REBUILD_REQUIRED: source/pose/contact edits need a rebuilt bundle");}
+            Object style=shot.has("motionStyle")?shot.get("motionStyle"):new JSONObject(),bakedStyle=original.has("motionStyle")?original.get("motionStyle"):new JSONObject();
+            if(!canonical(style).equals(canonical(bakedStyle)))throw new IllegalArgumentException("BAKED_POSE_REBUILD_REQUIRED: motion-style changes need a rebuilt bundle");
             bound.put(copy(scene).put("shotId",id));
         }return bound;
     }

@@ -13,7 +13,7 @@ import subprocess
 import sys
 import tempfile
 
-from . import camera_solve, pipeline, polish, providers, timeline
+from . import camera_solve, pipeline, polish, providers, timeline, characters, motion
 
 CONFIG_SCHEMA = "videostudio.cinematic3d.local-config.v1"
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
@@ -249,6 +249,10 @@ def _capabilities(config, parent, blender):
     return {"ok": True, "schema": "videostudio.cinematic3d.capabilities.v1", "blender": engine,
             "providers": optional, "timelineSchema": timeline.SCHEMA, "bundleSchema": "videostudio.cinematic3d.bundle.v1",
             "fps": [24, 30, 60], "maxShots": 80, "maxFrames": 12000, "nativeMinimumVersion": "3.8.0",
+            "actions": list(motion.ALL_ACTIONS), "defaultLibraryActions": list(motion.LEGACY_ACTIONS),
+            "motionStyles": list(characters.MOTION_STYLES), "actorPresets": list(characters.PRESETS),
+            "conditioning": {"schema": "videostudio.cinematic3d.conditioning.v1", "maxFrames": 1200,
+                "passes": ["pose", "beauty", "depth", "normals", "actors", "props"], "nativeRendered": False},
             "nativeRendered": False, "cinematicAcceptance": False}
 
 
@@ -273,6 +277,9 @@ def _execute(args):
     if args.command == "build":
         if not 0 <= args.render_frames <= 12000:
             raise ValueError("--render-frames must be 0..12000")
+        if not 0 <= args.conditioning_frames <= 1200:
+            raise ValueError("--conditioning-frames must be 0..1200")
+        selected = characters.select_library_actions(args.actions.split(",")) if args.actions is not None else None
         _new_output(args.output)
         accepted, proof, wrapper = _input_timeline(_timeline_path(args))
         with tempfile.TemporaryDirectory(prefix="c3d-cli-timeline-") as temporary:
@@ -280,13 +287,16 @@ def _execute(args):
             normalized.write_text(json.dumps(accepted, ensure_ascii=False, allow_nan=False), encoding="utf-8")
             provenance = {"source_request_bytes": wrapper} if wrapper is not None else {}
             result = pipeline.build(normalized, args.output, blender=_blender(args, config, parent),
-                                    library_only=args.library_only, render_frames=args.render_frames, **provenance)
+                                    library_only=args.library_only, render_frames=args.render_frames,
+                                    conditioning_frames=args.conditioning_frames, selected_actions=selected, **provenance)
         return dict(result, **proof)
     if args.command == "bundle":
         _new_output(args.output)
         return pipeline.build_bundle(args.generation, args.output)
     if args.command == "pose":
         result = providers.estimate_pose(_runner_config(config, parent, "pose"), args.source, _hash(args.source_sha256))
+    elif args.command == "guide":
+        result = motion.map_reference_guide(providers.read_json(args.request, limit=512*1024))
     elif args.command == "camera":
         request = _request(args.request, ("points3d", "points2d", "intrinsics"),
                            ("maxReprojectionErrorPx", "imageWidth", "imageHeight", "phase"))
@@ -336,6 +346,8 @@ def _parser():
             command.add_argument("--config", type=Path)
             command.add_argument("--library-only", action="store_true")
             command.add_argument("--render-frames", type=int, default=0)
+            command.add_argument("--conditioning-frames", type=int, default=0)
+            command.add_argument("--actions", help="Comma-separated selected library actions")
     bundle = commands.add_parser("bundle")
     bundle.add_argument("--generation", type=Path, required=True)
     bundle.add_argument("--output", type=Path, required=True)
@@ -353,6 +365,9 @@ def _parser():
     camera = commands.add_parser("camera")
     camera.add_argument("--request", type=Path, required=True)
     camera.add_argument("--output", type=Path)
+    guide = commands.add_parser("guide")
+    guide.add_argument("--request", type=Path, required=True)
+    guide.add_argument("--output", type=Path, required=True)
     interpolation = commands.add_parser("interpolate")
     interpolation.add_argument("--request", type=Path, required=True)
     interpolation.add_argument("--output", type=Path, required=True)
@@ -364,7 +379,7 @@ def _parser():
 def main(argv=None):
     args = _parser().parse_args(argv)
     receipt = getattr(args, "receipt", None)
-    if args.command in ("pose", "camera"):
+    if args.command in ("pose", "camera", "guide"):
         receipt = args.output
     try:
         _new_output(receipt)

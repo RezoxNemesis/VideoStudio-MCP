@@ -4,6 +4,14 @@ The procedural library is explicit estimated mannequin choreography. It makes no
 source-image reconstruction claim and is independent of Blender or neural models.
 """
 import math
+import re
+
+from .characters import validate_motion_style
+
+LEGACY_ACTIONS = ("STANDOFF", "CHARGE", "CLASH", "BLADE_LOCK", "FOLLOW_THROUGH", "KNOCKBACK",
+                  "LANDING", "RECOVERY", "AERIAL_FLIP", "TUMBLE", "MACRO_CLASH")
+NEW_ACTIONS = ("IDLE", "WALK", "RUN", "JUMP", "DODGE", "DUCK", "PUNCH", "KICK", "DANCE", "WAVE")
+ALL_ACTIONS = LEGACY_ACTIONS + NEW_ACTIONS
 
 PRIMARY_JOINTS = ("pelvis", "chest", "neck", "head", "swordShoulder", "swordElbow", "swordHand",
                   "freeShoulder", "freeElbow", "freeHand", "leadingHip", "leadingKnee", "leadingFoot",
@@ -98,13 +106,109 @@ def _axis(axis, radians):
     return result
 
 
-def procedural_pose(action, phase):
+def _new_pose(action, phase):
+    """Authored humanoid movement curves, independent of weapons or inference."""
+    wave = math.sin(4 * math.pi * phase)
+    pulse = math.sin(math.pi * phase)
+    result = {}
+    for name, side in (("black", -1), ("white", 1)):
+        root = [side * 1.15, 0.0, 0.0]
+        q = [[1., 0., 0., 0.] for _ in PRIMARY_JOINTS]
+        q[1] = _axis(0, math.radians(2) * math.sin(2 * math.pi * phase))
+        q[4], q[7] = _axis(0, -.25), _axis(0, -.25)
+        if action in ("WALK", "RUN"):
+            running = action == "RUN"
+            stride, knee, arm = (42, 75, 48) if running else (24, 38, 22)
+            root[0] = side * (1.65 - (1.0 if running else .6) * phase)
+            root[1] = (.07 if running else .025) * abs(wave)
+            q[1] = _axis(0, math.radians(16 if running else 4))
+            q[10], q[13] = _axis(0, math.radians(stride) * wave), _axis(0, -math.radians(stride) * wave)
+            q[11], q[14] = _axis(0, math.radians(knee) * max(0, -wave)), _axis(0, math.radians(knee) * max(0, wave))
+            q[4], q[7] = _axis(0, -math.radians(arm) * wave), _axis(0, math.radians(arm) * wave)
+            q[5], q[8] = _axis(0, math.radians(-75 if running else -18)), _axis(0, math.radians(-75 if running else -18))
+        elif action == "JUMP":
+            root[1] = .9 * pulse
+            q[4], q[7] = _axis(0, -1.3 * pulse), _axis(0, -1.3 * pulse)
+            q[10] = q[13] = _axis(0, -.6 * pulse)
+            q[11] = q[14] = _axis(0, 1.4 * pulse)
+        elif action == "DODGE":
+            root[2] = .6 * pulse
+            root[1] = -.14 * pulse
+            q[1] = _axis(2, side * .4 * pulse)
+            q[10], q[13] = _axis(2, .3 * pulse), _axis(2, -.3 * pulse)
+            q[11] = q[14] = _axis(0, .5 * pulse)
+        elif action == "DUCK":
+            root[1] = -.32 * pulse
+            q[1] = _axis(0, .35 * pulse)
+            q[10] = q[13] = _axis(0, -.65 * pulse)
+            q[11] = q[14] = _axis(0, 1.1 * pulse)
+        elif action == "PUNCH":
+            strike = math.sin(math.pi * min(1., phase * 1.2)) ** 2
+            q[1] = _axis(1, side * .35 * strike)
+            q[4] = _axis(0, -1.35 * strike)
+            q[5] = _axis(0, -1.4 * (1 - strike))
+            q[7], q[8] = _axis(0, -.6), _axis(0, -1.3)
+            root[0] += -side * .15 * strike
+        elif action == "KICK":
+            q[10], q[11], q[12] = _axis(0, -1.35 * pulse), _axis(0, .8 * (1-pulse)), _axis(0, -.3 * pulse)
+            q[1] = _axis(0, -.22 * pulse)
+            q[4], q[7] = _axis(0, -.65 * pulse), _axis(0, .5 * pulse)
+        elif action == "DANCE":
+            root[2] = .2 * math.sin(2 * math.pi * phase)
+            root[1] = .055 * abs(wave)
+            q[0] = _axis(1, .25 * wave)
+            q[1] = _axis(2, .2 * wave)
+            q[4], q[7] = _axis(0, -1.2 + .5 * wave), _axis(0, -1.2 - .5 * wave)
+            q[5], q[8] = _axis(0, -.5 - .4 * wave), _axis(0, -.5 + .4 * wave)
+            q[10], q[13] = _axis(0, .15 * wave), _axis(0, -.15 * wave)
+        elif action == "WAVE":
+            q[4] = _axis(2, -1.7)
+            q[5] = _axis(0, -1.0)
+            q[6] = _axis(2, .5 * math.sin(6 * math.pi * phase))
+            q[3] = _axis(1, .1 * math.sin(2 * math.pi * phase))
+        result[name] = {"root": root, "rotations": q}
+    return result
+
+
+def _styled_pose(result, style, phase):
+    """Styles modify real rotations, timing curves and body translation."""
+    if style is None:
+        return result
+    accepted = validate_motion_style(style)
+    preset, intensity = accepted["preset"], accepted.get("intensity", .65)
+    amplitude = {"grounded": .85, "anime": 1.2, "martial": .95, "cartoony": 1.35}[preset]
+    gain = 1 + (amplitude - 1) * intensity
+    for actor in result.values():
+        for index in range(1, 16):
+            q = actor["rotations"][index]
+            # Angular amplification extrapolates on the authored axis, not SLERP past bounds.
+            sign = -1 if q[0] < 0 else 1
+            axis = [sign*v for v in q[1:]]
+            angle = 2 * math.atan2(math.hypot(*axis), sign*q[0])
+            norm = math.hypot(*q[1:])
+            if norm > 1e-12:
+                actor["rotations"][index] = [sign*math.cos(angle*gain/2),
+                    *(sign*v/norm*math.sin(angle*gain/2) for v in axis)]
+        if preset == "grounded":
+            actor["root"][1] *= 1 - .2 * intensity
+        elif preset == "anime":
+            actor["rotations"][1] = _multiply(actor["rotations"][1], _axis(1, .14*intensity*math.sin(math.pi*phase)))
+        elif preset == "martial":
+            actor["rotations"][7] = _multiply(actor["rotations"][7], _axis(0, -.3*intensity))
+            actor["rotations"][8] = _multiply(actor["rotations"][8], _axis(0, -.4*intensity))
+        elif preset == "cartoony":
+            actor["root"][1] += .09*intensity*abs(math.sin(4*math.pi*phase))
+            actor["rotations"][3] = _multiply(actor["rotations"][3], _axis(2, .22*intensity*math.sin(2*math.pi*phase)))
+    return result
+
+
+def procedural_pose(action, phase, style=None):
     """Return both mannequin roots and 16 local wxyz rotations for an action."""
     _phase(phase)
-    actions = {"STANDOFF", "CHARGE", "CLASH", "BLADE_LOCK", "FOLLOW_THROUGH", "KNOCKBACK",
-               "LANDING", "RECOVERY", "AERIAL_FLIP", "TUMBLE", "MACRO_CLASH"}
-    if not isinstance(action, str) or action not in actions:
+    if not isinstance(action, str) or action not in ALL_ACTIONS:
         raise ValueError("Unknown procedural mannequin action")
+    if action in NEW_ACTIONS:
+        return _styled_pose(_new_pose(action, phase), style, phase)
     result = {}
     wave = math.sin(2 * math.pi * phase)
     for name, side in (("black", -1), ("white", 1)):
@@ -159,7 +263,7 @@ def procedural_pose(action, phase):
             rotations[1] = _axis(0, math.radians(15) * (1 - phase))
             rotations[4] = _axis(0, math.radians(40 - 75 * phase))
         result[name] = {"root": root, "rotations": rotations}
-    return result
+    return _styled_pose(result, style, phase)
 
 
 def sample_pose(shot, phase):
@@ -167,7 +271,7 @@ def sample_pose(shot, phase):
     _phase(phase)
     keys = shot.get("poseKeyframes")
     if keys is None:
-        return procedural_pose(shot["action"], phase)
+        return procedural_pose(shot["action"], phase, shot.get("motionStyle"))
     if not keys:
         raise ValueError("Authored pose keys must not be empty")
     for index, key in enumerate(keys):
@@ -192,7 +296,7 @@ def sample_pose(shot, phase):
             raise ValueError("Actor poses must contain all 16 rotations")
         result[name] = {"root": [(1 - alpha) * x + alpha * y for x, y in zip(a_root, b_root)],
                         "rotations": [slerp(x, y, alpha) for x, y in zip(a["rotations"], b["rotations"])]}
-    return result
+    return _styled_pose(result, shot.get("motionStyle"), phase)
 
 
 def sample_foot_contacts(shot, phase):
@@ -203,6 +307,98 @@ def sample_foot_contacts(shot, phase):
         if contact["startPhase"] <= phase < contact["endPhase"]:
             result[contact["actor"]][contact["foot"]] = _vector(contact["anchor"], 3, "foot anchor")
     return result
+
+
+def support_root_drop(chains, margin=.005):
+    """Plan a downward Y-up root adjustment from actual two-bone reach.
+
+    Generated floor anchors stay fixed and segment lengths stay fixed. Raising
+    a fully extended hip or moving it sideways otherwise projects the requested
+    ankle onto the reachable annulus. Authored roots/contacts are not adjusted
+    by the Blender caller. Impossible horizontal spans fail explicitly.
+    """
+    if not isinstance(chains, (list, tuple)) or len(chains) > 16:
+        raise ValueError("A bounded list of support chains is required")
+    margin = _finite(margin, "support reach margin")
+    if not 0 <= margin <= .05:
+        raise ValueError("Support reach margin must be 0..0.05 metres")
+    minimum, maximum = 0., math.inf
+    for chain in chains:
+        if not isinstance(chain, dict) or set(chain) != {"hip", "target", "upperLength", "lowerLength"}:
+            raise ValueError("Support chains require actual hip, target and segment lengths")
+        hip, target = _vector(chain["hip"], 3, "support hip"), _vector(chain["target"], 3, "support target")
+        upper, lower = _finite(chain["upperLength"], "upper length"), _finite(chain["lowerLength"], "lower length")
+        if upper <= 0 or lower <= 0:
+            raise ValueError("Support bone lengths must remain positive")
+        reach = _finite(upper + lower - margin, "support reach")
+        if reach <= 0:
+            raise ValueError("Support margin exceeds the actual leg reach")
+        delta = [_finite(a-b, "support displacement") for a,b in zip(hip, target)]
+        horizontal = _finite(math.hypot(delta[0], delta[2]), "horizontal support displacement")
+        if horizontal >= reach:
+            raise ValueError("Procedural foot anchor exceeds horizontal leg reach; author a shorter step")
+        vertical = reach * math.sqrt(max(0., 1-(horizontal/reach)**2))
+        minimum = max(minimum, delta[1]-vertical)
+        maximum = min(maximum, delta[1]+vertical)
+    if minimum > maximum:
+        raise ValueError("Support chains have no common downward root position")
+    return minimum
+
+
+def map_reference_guide(request):
+    """Lift marked joints with explicit scale/depth; no hidden anatomy is inferred.
+
+    Hashes bind the declared marks. Original encoded source/profile bytes are not
+    observed by this numerical helper, and the receipt keeps that scope explicit.
+    """
+    required = {"schema", "sourceSha256", "profileSha256", "joints", "imageWidth", "imageHeight",
+                "heightMeters", "depthMeters", "uncertaintyMeters"}
+    if not isinstance(request, dict) or set(request) != required:
+        raise ValueError("Reference guide requires exact hashes, marks, scale, depth and uncertainty")
+    if request["schema"] != "videostudio.cinematic3d.reference-guide-request.v1":
+        raise ValueError("Unknown reference guide request schema")
+    for key in ("sourceSha256", "profileSha256"):
+        if not isinstance(request[key], str) or not re.fullmatch(r"[a-f0-9]{64}", request[key]):
+            raise ValueError("Exact source/profile SHA-256 required")
+    for key in ("imageWidth", "imageHeight"):
+        if type(request[key]) is not int or not 16 <= request[key] <= 8192:
+            raise ValueError("Reference image dimensions must be 16..8192")
+    height = _finite(request["heightMeters"], "heightMeters")
+    if not .3 <= height <= 3:
+        raise ValueError("Guide height must be .3..3 metres")
+    if not isinstance(request["joints"], list) or len(request["joints"]) != 16:
+        raise ValueError("Exactly sixteen source-image joints required")
+    points = [_vector(point, 2, "source joint") for point in request["joints"]]
+    if any(not 0 <= coordinate <= 1 for point in points for coordinate in point):
+        raise ValueError("Source joints use normalized image coordinates")
+    for a, b in ((0,1),(1,2),(2,3),(1,4),(4,5),(5,6),(1,7),(7,8),(8,9),
+                 (0,10),(10,11),(11,12),(0,13),(13,14),(14,15)):
+        if points[a] == points[b]:
+            raise ValueError("Source guide has a zero-length marked bone")
+    depths = _vector(request["depthMeters"], 16, "declared depths")
+    uncertainty = _vector(request["uncertaintyMeters"], 16, "declared uncertainty")
+    if any(abs(value) > 10 for value in depths) or any(not 0 <= value <= 10 for value in uncertainty):
+        raise ValueError("Guide depths/uncertainty exceed ten metres")
+    span = max(point[1] for point in points) - min(point[1] for point in points)
+    if span < .01:
+        raise ValueError("Source marks do not establish usable projected body height")
+    scale, floor = height/span, max(points[12][1], points[15][1])
+    aspect = request["imageWidth"]/request["imageHeight"]
+    world = [[(point[0]-points[0][0])*aspect*scale, (floor-point[1])*scale, depth]
+             for point, depth in zip(points, depths)]
+    return {"schema": "videostudio.cinematic3d.reference-guide.v1", "status": "completed",
+            "sourceSha256": request["sourceSha256"], "profileSha256": request["profileSha256"],
+            "jointNames": list(PRIMARY_JOINTS), "sourceJoints": points, "joints3d": world,
+            "imageWidth": request["imageWidth"], "imageHeight": request["imageHeight"],
+            "uncertaintyMeters": uncertainty,
+            "uncertaintyScope": "declared authoring bounds; not a measured model confidence",
+            "assumptions": {"projection": "scaled_orthographic", "coordinates": "right_handed_y_up_metres",
+                "sourceCoordinates": "oriented_image_normalized_xy_top_left", "heightMeters": height,
+                "depthProvider": "explicit_user_authored_depth", "depthMeters": depths,
+                "origin": "pelvis_x_at_ground_reference", "floor": "lower_marked_foot"},
+            "evidence": {"motionProvider": "estimated_reference_guide", "originalImageReconstruction": False,
+                "sourceBytesVerified": False, "profileBytesVerified": False, "nativeRendered": False,
+                "identityReconstruction": False}}
 
 
 def two_bone_ik(root, target, upper_length, lower_length, pole):

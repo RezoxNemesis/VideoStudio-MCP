@@ -7,11 +7,11 @@ import json
 import math
 import re
 
-from .motion import normalize_quaternion
+from .motion import normalize_quaternion, ALL_ACTIONS
+from .characters import validate_actors, validate_motion_style
 
 SCHEMA = "videostudio.cinematic3d.timeline.v1"
-ACTIONS = frozenset({"STANDOFF", "CHARGE", "CLASH", "BLADE_LOCK", "FOLLOW_THROUGH",
-                     "KNOCKBACK", "LANDING", "RECOVERY", "AERIAL_FLIP", "TUMBLE", "MACRO_CLASH"})
+ACTIONS = frozenset(ALL_ACTIONS)
 IMPACT_ACTIONS = frozenset({"CLASH", "BLADE_LOCK", "MACRO_CLASH"})
 MAX_METADATA_BYTES = 512 * 1024
 MAX_JSON_DEPTH = 16
@@ -219,7 +219,7 @@ def _foot_contacts(value):
 
 
 def _shot(value, compiled=False):
-    optional = {"sourceAnchors", "poseKeyframes", "footContacts"}
+    optional = {"sourceAnchors", "poseKeyframes", "footContacts", "motionStyle"}
     if compiled:
         optional.update({"startFrame", "endFrame"})
     _fields(value, ("id", "action", "durationFrames", "hitStopFrames", "camera", "vfx"), optional, "shot")
@@ -258,13 +258,15 @@ def _shot(value, compiled=False):
         result["poseKeyframes"] = _pose_keys(value["poseKeyframes"])
     if "footContacts" in value:
         result["footContacts"] = _foot_contacts(value["footContacts"])
+    if "motionStyle" in value:
+        result["motionStyle"] = validate_motion_style(value["motionStyle"])
     return result
 
 
 def validate_timeline(value):
     """Return independent normalized JSON or raise ValueError for any bad field."""
     _bounded_json(value)
-    _fields(value, ("schema", "name", "fps", "motionProvider", "shots"), label="timeline")
+    _fields(value, ("schema", "name", "fps", "motionProvider", "shots"), ("actors",), label="timeline")
     if value["schema"] != SCHEMA:
         raise ValueError("Unsupported timeline schema")
     name = value["name"]
@@ -281,7 +283,10 @@ def validate_timeline(value):
         raise ValueError("Shot identifiers must be unique")
     if sum(shot["durationFrames"] for shot in shots) > 12000:
         raise ValueError("Timeline exceeds 12000 output frames")
-    return {"schema": SCHEMA, "name": name.strip(), "fps": fps, "motionProvider": provider, "shots": shots}
+    result = {"schema": SCHEMA, "name": name.strip(), "fps": fps, "motionProvider": provider, "shots": shots}
+    if "actors" in value:
+        result["actors"] = validate_actors(value["actors"])
+    return result
 
 
 def compile_timeline(value):

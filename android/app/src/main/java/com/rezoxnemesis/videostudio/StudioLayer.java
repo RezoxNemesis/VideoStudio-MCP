@@ -11,7 +11,7 @@ import java.util.UUID;
  * EditedMediaItemSequences, with time offsets.
  */
 public final class StudioLayer {
-    public static final String AUDIO="audio", TITLE="title";
+    public static final String AUDIO="audio", TITLE="title", IMAGE="image";
     public String id=UUID.randomUUID().toString();
     public String type=TITLE;
     public String assetId="";
@@ -22,12 +22,14 @@ public final class StudioLayer {
     public float gain=1f;
     public int color=0xffffffff;
     public int position=1; // 0 = upper, 1 = center, 2 = lower
+    public float x=.5f,y=.5f,width=.35f,height=.35f,rotation=0f,opacity=1f;
 
     public StudioLayer copy() {return fromJson(toJson());}
 
     public void validate(){
-        if(!AUDIO.equals(type)&&!TITLE.equals(type))
-            throw new IllegalArgumentException("Only real audio and caption lanes are supported");
+        if(id==null||id.isEmpty()||id.length()>128)throw new IllegalArgumentException("Layer ID must contain 1..128 characters");
+        if(!AUDIO.equals(type)&&!TITLE.equals(type)&&!IMAGE.equals(type))
+            throw new IllegalArgumentException("Only real audio, caption and image lanes are supported");
         if(startMs<0||durationMs<100||durationMs>86_400_000L||sourceInMs<0)
             throw new IllegalArgumentException("Invalid layer time or duration");
         if(!Float.isFinite(gain)||gain<0||gain>1)
@@ -38,6 +40,13 @@ public final class StudioLayer {
             throw new IllegalArgumentException("Title must contain 1–160 characters");
         if(AUDIO.equals(type)&& (assetId==null||assetId.trim().isEmpty()))
             throw new IllegalArgumentException("Audio lane needs an imported audio asset");
+        if(IMAGE.equals(type)){
+            if(assetId==null||assetId.trim().isEmpty())throw new IllegalArgumentException("Image lane needs an imported image asset");
+            if(!Float.isFinite(x)||!Float.isFinite(y)||x<0||x>1||y<0||y>1
+                    ||!Float.isFinite(width)||!Float.isFinite(height)||width<.01f||width>2||height<.01f||height>2
+                    ||!Float.isFinite(rotation)||rotation<-360||rotation>360||!Float.isFinite(opacity)||opacity<0||opacity>1)
+                throw new IllegalArgumentException("Invalid image layer position, size, rotation or opacity");
+        }
     }
 
     public JSONObject toJson(){
@@ -47,23 +56,30 @@ public final class StudioLayer {
             obj.put("text",text);obj.put("startMs",startMs);
             obj.put("durationMs",durationMs);obj.put("sourceInMs",sourceInMs);
             obj.put("gain",gain);obj.put("color",color);obj.put("position",position);
+            if(IMAGE.equals(type)){obj.put("x",x);obj.put("y",y);obj.put("width",width);obj.put("height",height);
+                obj.put("rotation",rotation);obj.put("opacity",opacity);}
         }catch(Exception ignored){}
         return obj;
     }
 
     public static StudioLayer fromJson(JSONObject o){
         if(o==null)throw new IllegalArgumentException("Layer data required");
+        for(String field:new String[]{"id","type","assetId","text"})if(o.has(field)&&!(o.opt(field) instanceof String))
+            throw new IllegalArgumentException(field+" must be a string");
         StudioLayer l=new StudioLayer();
         l.id=o.optString("id",UUID.randomUUID().toString());
         l.type=o.optString("type",TITLE);
         l.assetId=o.optString("assetId","");
         l.text=o.optString("text","");
-        l.startMs=o.optLong("startMs",0);
-        l.durationMs=o.optLong("durationMs",2500);
-        l.sourceInMs=o.optLong("sourceInMs",0);
-        l.gain=(float)o.optDouble("gain",1f);
+        l.startMs=o.has("startMs")?StudioClipKeyframes.integer(o,"startMs",0,86_400_000):0;
+        l.durationMs=o.has("durationMs")?StudioClipKeyframes.integer(o,"durationMs",100,86_400_000):2500;
+        l.sourceInMs=o.has("sourceInMs")?StudioClipKeyframes.integer(o,"sourceInMs",0,86_400_000):0;
+        l.gain=(float)StudioClipKeyframes.number(o,"gain",1,0,1);
         l.color=o.optInt("color",0xffffffff);
-        l.position=o.optInt("position",1);
+        l.position=o.has("position")?(int)StudioClipKeyframes.integer(o,"position",0,2):1;
+        l.x=(float)StudioClipKeyframes.number(o,"x",.5,0,1);l.y=(float)StudioClipKeyframes.number(o,"y",.5,0,1);
+        l.width=(float)StudioClipKeyframes.number(o,"width",.35,.01,2);l.height=(float)StudioClipKeyframes.number(o,"height",.35,.01,2);
+        l.rotation=(float)StudioClipKeyframes.number(o,"rotation",0,-360,360);l.opacity=(float)StudioClipKeyframes.number(o,"opacity",1,0,1);
         l.validate();
         return l;
     }

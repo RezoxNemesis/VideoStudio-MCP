@@ -96,45 +96,7 @@ public final class NativeRenderEngine {
             }
             final boolean layeredAnimation = hasLayeredAnimation(project);
             final boolean hasStudioTracks = !project.studioLayers.isEmpty();
-            if(hasStudioTracks) StudioLayerContract.fromJson(
-                    project,StudioLayerContract.toJson(project.studioLayers));
-            Composition composition;
-            if(layeredAnimation && hasStudioTracks) {
-                // Preserve the articulated foreground/background compositor,
-                // then mix audio on independent audio-only sequences and
-                // apply captions to the final composition at authored times.
-                Composition animated=buildLayeredAnimationComposition(project,aspect,quality);
-                ArrayList<EditedMediaItemSequence> sequences=
-                        new ArrayList<>(animated.sequences);
-                sequences.addAll(buildStudioAudioSequences(project));
-                Composition.Builder assembled=new Composition.Builder(sequences);
-                attachTimedTitles(assembled,project);
-                composition=assembled.build();
-            } else if (layeredAnimation) {
-                composition = buildLayeredAnimationComposition(project, aspect, quality);
-            } else if(hasStudioTracks) {
-                composition = buildStudioTrackComposition(project,aspect,quality);
-            } else {
-                List<EditedMediaItem> edited = new ArrayList<>();
-                boolean allVideoWithAudio = true;
-                for (ProjectStore.Clip clip : project.clips) {
-                    ProjectStore.Asset asset = project.asset(clip.assetId);
-                    if (asset == null) continue;
-                    boolean isImage = asset.mime != null && asset.mime.startsWith("image/");
-                    boolean isVideo = asset.mime != null && asset.mime.startsWith("video/");
-                    if (!isVideo) allVideoWithAudio = false;
-                    edited.add(buildItem(asset, clip, aspect, quality, isImage));
-                }
-                if (edited.isEmpty()) {
-                    listener.onError("No renderable clips");
-                    return null;
-                }
-
-                EditedMediaItemSequence sequence = allVideoWithAudio
-                        ? EditedMediaItemSequence.withAudioAndVideoFrom(edited)
-                        : EditedMediaItemSequence.withVideoFrom(edited);
-                composition = new Composition.Builder(sequence).build();
-            }
+            Composition composition = buildPreviewComposition(project, aspect, quality);
 
             Transformer transformer = new Transformer.Builder(context)
                     .setVideoMimeType(MimeTypes.VIDEO_H264)
@@ -232,6 +194,58 @@ public final class NativeRenderEngine {
         }
     }
 
+    /** Builds the identical edited composition for interactive preview and native export. */
+    public Composition buildPreviewComposition(ProjectStore.Project project, String aspect, String quality) throws Exception {
+        if (project == null || project.clips.isEmpty()) throw new IllegalArgumentException("Timeline is empty");
+        project = ProjectStore.Project.fromJson(project.toJson());
+        final boolean layeredAnimation = hasLayeredAnimation(project);
+        final boolean hasStudioTracks = !project.studioLayers.isEmpty();
+        if(hasStudioTracks) StudioLayerContract.fromJson(
+                project,StudioLayerContract.toJson(project.studioLayers));
+        Composition composition;
+        if(layeredAnimation && hasStudioTracks) {
+            // Preserve the articulated foreground/background compositor,
+            // then mix audio on independent audio-only sequences and
+            // apply captions to the final composition at authored times.
+            Composition animated=buildLayeredAnimationComposition(project,aspect,quality);
+            ArrayList<EditedMediaItemSequence> sequences=
+                    new ArrayList<>(animated.sequences);
+            sequences.addAll(buildStudioAudioSequences(project));
+            Composition.Builder assembled=new Composition.Builder(sequences);
+            attachTimedTitles(assembled,project);
+            composition=assembled.build();
+        } else if (layeredAnimation) {
+            composition = buildLayeredAnimationComposition(project, aspect, quality);
+        } else if(hasStudioTracks) {
+            composition = buildStudioTrackComposition(project,aspect,quality);
+        } else {
+            List<EditedMediaItem> edited = new ArrayList<>();
+            boolean hasSourceAudio = false;
+            for (ProjectStore.Clip clip : project.clips) {
+                ProjectStore.Asset asset = project.asset(clip.assetId);
+                if (asset == null) continue;
+                boolean isImage = asset.mime != null && asset.mime.startsWith("image/");
+                boolean isVideo = asset.mime != null && asset.mime.startsWith("video/");
+                if (isVideo) hasSourceAudio = true;
+                edited.add(buildItem(asset, clip, aspect, quality, isImage));
+            }
+            if (edited.isEmpty()) {
+                throw new IllegalArgumentException("No renderable clips");
+            }
+
+            EditedMediaItemSequence sequence = hasSourceAudio
+                    ? EditedMediaItemSequence.withAudioAndVideoFrom(edited)
+                    : EditedMediaItemSequence.withVideoFrom(edited);
+            composition = new Composition.Builder(sequence).build();
+        }
+        return composition;
+    }
+
+    /** Shared actual GPU effect list; CompositionPlayer also reuses buildItem's trim and clock. */
+    public List<Effect> buildPreviewEffects(ProjectStore.Clip clip, String aspect, String quality) {
+        return buildEffects(clip, aspect, quality, Math.max(1, clip.outMs - clip.inMs));
+    }
+
     /**
      * Continuous video timeline with synchronized captions and real audio
      * tracks. Video clips are NOT cut at caption boundaries; the caption
@@ -240,20 +254,20 @@ public final class NativeRenderEngine {
     private Composition buildStudioTrackComposition(ProjectStore.Project project,
                                                      String aspect,String quality) {
         ArrayList<EditedMediaItem> clips=new ArrayList<>();
-        boolean allVideoWithAudio=true;
+        boolean hasSourceAudio=false;
         for(ProjectStore.Clip clip:project.clips){
             ProjectStore.Asset asset=project.asset(clip.assetId);
             if(asset==null||asset.mime==null)continue;
             boolean image=asset.mime.startsWith("image/");
             boolean video=asset.mime.startsWith("video/");
             if(!image&&!video)continue;
-            if(!video)allVideoWithAudio=false;
+            if(video)hasSourceAudio=true;
             if(clip.outputDurationMs()<=0)continue;
             clips.add(buildItem(asset,clip,aspect,quality,image));
         }
         if(clips.isEmpty())throw new IllegalArgumentException("No playable base video clips");
         ArrayList<EditedMediaItemSequence> sequences=new ArrayList<>();
-        sequences.add(allVideoWithAudio
+        sequences.add(hasSourceAudio
                 ?EditedMediaItemSequence.withAudioAndVideoFrom(clips)
                 :EditedMediaItemSequence.withVideoFrom(clips));
         sequences.addAll(buildStudioAudioSequences(project));
@@ -262,12 +276,14 @@ public final class NativeRenderEngine {
         return assembled.build();
     }
 
-    private static void attachTimedTitles(Composition.Builder assembled,
+    private void attachTimedTitles(Composition.Builder assembled,
                                           ProjectStore.Project project){
         List<TextureOverlay> captions=new ArrayList<>();
         for(StudioLayer layer:project.studioLayers){
             if(StudioLayer.TITLE.equals(layer.type))
                 captions.add(new StudioTimedTitleOverlay(layer));
+            else if(StudioLayer.IMAGE.equals(layer.type))
+                captions.add(new StudioTimedImageOverlay(context,project.asset(layer.assetId),layer));
         }
         if(!captions.isEmpty()){
             assembled.setEffects(new Effects(Collections.emptyList(),
@@ -469,6 +485,8 @@ public final class NativeRenderEngine {
                     new AtmosphereOverlay(environment, atmosphere, durationUs)
             )));
         }
+        StudioPixelEffect pixels=new StudioPixelEffect(fx,Math.max(1,clip.outputDurationMs()));
+        if(pixels.hasPixelChanges())effects.add(pixels);
         return effects;
     }
 
@@ -477,8 +495,8 @@ public final class NativeRenderEngine {
         double contrast = fx.optDouble("contrast", 0);
         double saturation = fx.optDouble("saturationAdjust", fx.optDouble("saturation", 0));
         double lightness = fx.optDouble("lightnessAdjust", 0);
-        String preset = fx.optString("effectPreset", fx.optString("colorPreset", ""));
-        if (!preset.isEmpty() && !"none".equals(preset)) {
+        String preset = fx.has("colorPreset")?fx.optString("colorPreset",""):fx.optString("effectPreset","");
+        if (StudioPrecisionEdits.COLORS.contains(preset) && !"none".equals(preset)) {
             JSONObject p = CreatorCatalog.effectPreset(preset);
             if (!fx.has("brightness")) brightness = p.optDouble("brightness", brightness);
             if (!fx.has("contrast")) contrast = p.optDouble("contrast", contrast);
@@ -566,7 +584,8 @@ public final class NativeRenderEngine {
                                               ProjectStore.Asset asset,ProjectStore.Clip clip) {
         if(!asset.generated || clip.effects==null || asset.generationMetadata==null ||
                 !("multigenre_storyboard_motion".equals(asset.role) || "storyboard_artwork_frame".equals(asset.role)
-                        || "generated_skinned_2d".equals(asset.role) || "generated_cinematic_3d".equals(asset.role)) ||
+                        || "generated_skinned_2d".equals(asset.role) || "generated_cinematic_3d".equals(asset.role)
+                        || "generated_sketch_frame".equals(asset.role)) ||
                 !"rational-authored-v1".equals(clip.effects.optString("frameClock")) ||
                 !"rational-authored-v1".equals(asset.generationMetadata.optString("frameClock")))return;
         Object index=clip.effects.opt("frameIndex"), original=asset.generationMetadata.opt("frameIndex");
@@ -612,21 +631,25 @@ public final class NativeRenderEngine {
         if ("soft_glow".equals(preset) || "dream".equals(preset)) blur = Math.max(blur, 1.6);
         if (blur > .1) effects.add(new GaussianBlur((float) Math.min(18, blur)));
 
-        double rotation = clamp(fx.optDouble("rotate", 0), -45, 45);
-        double scale = clamp(fx.optDouble("scale", fx.optDouble("zoom", 1)), .5, 2.5);
-        if (Math.abs(rotation) > .01 || Math.abs(scale - 1) > .01) {
-            effects.add(new ScaleAndRotateTransformation.Builder()
-                    .setRotationDegrees((float) rotation)
-                    .setScale((float) scale, (float) scale)
-                    .build());
+        effects.add(StudioClipKeyframes.fromEffects(fx, Math.max(1, clip.outputDurationMs())));
+        if (clip.title != null && !clip.title.trim().isEmpty()) {
+            StudioLayer title = new StudioLayer();
+            title.text = clip.title;
+            title.durationMs = Math.max(100, clip.outputDurationMs());
+            title.position = 2;
+            effects.addAll(titleEffects(Collections.singletonList(title)));
         }
 
         String motion = fx.optString("motionPreset", "none");
         String transition = clip.transition == null ? "none" : clip.transition;
-        if (!"none".equals(motion) || (!"none".equals(transition) && !"cut".equals(transition))) {
+        boolean exactKeys = fx.optJSONArray("keyframes") != null && fx.optJSONArray("keyframes").length() > 0;
+        if (!exactKeys && (!"none".equals(motion) || (!"none".equals(transition) && !"cut".equals(transition)))) {
             String matrixPreset = "none".equals(motion) ? transition : motion;
             effects.add(new MotionMatrixEffect(matrixPreset, Math.max(100_000, clip.outputDurationMs() * 1000L), 280_000));
         }
+
+        StudioPixelEffect pixels=new StudioPixelEffect(fx,Math.max(1,clip.outputDurationMs()));
+        if(pixels.hasPixelChanges())effects.add(pixels);
 
         return effects;
     }

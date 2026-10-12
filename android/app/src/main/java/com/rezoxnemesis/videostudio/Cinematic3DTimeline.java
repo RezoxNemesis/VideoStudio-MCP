@@ -15,16 +15,17 @@ public final class Cinematic3DTimeline {
     public static final String SCHEMA="videostudio.cinematic3d.timeline.v1";
     public static final int MAX_JSON_BYTES=512*1024,MAX_SHOTS=80,MAX_FRAMES=12000;
     public static final String[] PRIMARY_JOINTS={"pelvis","chest","neck","head","swordShoulder","swordElbow","swordHand","freeShoulder","freeElbow","freeHand","leadingHip","leadingKnee","leadingFoot","trailingHip","trailingKnee","trailingFoot"};
-    private static final Set<String> ACTIONS=new HashSet<>(Arrays.asList("STANDOFF","CHARGE","CLASH","BLADE_LOCK","FOLLOW_THROUGH","KNOCKBACK","LANDING","RECOVERY","AERIAL_FLIP","TUMBLE","MACRO_CLASH"));
+    private static final Set<String> ACTIONS=new HashSet<>(Arrays.asList("STANDOFF","CHARGE","CLASH","BLADE_LOCK","FOLLOW_THROUGH","KNOCKBACK","LANDING","RECOVERY","AERIAL_FLIP","TUMBLE","MACRO_CLASH","IDLE","WALK","RUN","JUMP","DODGE","DUCK","PUNCH","KICK","DANCE","WAVE"));
     private Cinematic3DTimeline(){}
 
     public static JSONObject validate(JSONObject input)throws Exception {
         if(input==null)throw new IllegalArgumentException("Cinematic timeline required");JSONObject out=copy(input);
-        fields(out,"schema","name","fps","motionProvider","shots");
+        fields(out,"schema","name","fps","motionProvider","shots","actors");
         if(!SCHEMA.equals(text(out,"schema",64)))throw new IllegalArgumentException("Unknown cinematic timeline schema");
         String name=text(out,"name",256).trim();if(name.isEmpty())throw new IllegalArgumentException("Timeline name required");out.put("name",name);
         fps((int)integer(out,"fps",24,60));String provider=text(out,"motionProvider",64);
         if(!"procedural_mannequin".equals(provider)&&!"authored_3d".equals(provider))throw new IllegalArgumentException("Unavailable cinematic motion provider");
+        if(out.has("actors"))validateActors(object(out,"actors"));
         JSONArray shots=array(out,"shots");if(shots.length()<1||shots.length()>MAX_SHOTS)throw new IllegalArgumentException("Use 1..80 cinematic shots");
         Set<String> ids=new HashSet<>();int frames=0;JSONArray accepted=new JSONArray();
         for(int i=0;i<shots.length();i++){JSONObject shot=validateShot(object(shots,i));if(!ids.add(shot.getString("id")))throw new IllegalArgumentException("Duplicate cinematic shot id");frames=Math.addExact(frames,shot.getInt("durationFrames"));if(frames>MAX_FRAMES)throw new IllegalArgumentException("Cinematic timeline exceeds 12000 frames");accepted.put(shot);}
@@ -62,8 +63,9 @@ public final class Cinematic3DTimeline {
     }
 
     private static JSONObject validateShot(JSONObject source)throws Exception {
-        JSONObject shot=copy(source);fields(shot,"id","action","durationFrames","hitStopFrames","camera","vfx","sourceAnchors","poseKeyframes","footContacts");id(text(shot,"id",96));
+        JSONObject shot=copy(source);fields(shot,"id","action","durationFrames","hitStopFrames","camera","vfx","sourceAnchors","poseKeyframes","footContacts","motionStyle");id(text(shot,"id",96));
         String action=text(shot,"action",32);if(!ACTIONS.contains(action))throw new IllegalArgumentException("Unknown cinematic action");integer(shot,"durationFrames",8,600);int hold=(int)integer(shot,"hitStopFrames",0,5);
+        if(shot.has("motionStyle")){JSONObject style=object(shot,"motionStyle");fields(style,"preset","intensity");if(!Arrays.asList("grounded","anime","martial","cartoony").contains(text(style,"preset",16)))throw new IllegalArgumentException("Unknown motion style");if(style.has("intensity"))number(style,"intensity",0,1);}
         if(hold==1||hold>0&&!impact(action))throw new IllegalArgumentException("Hit-stop requires an impact action and 2..5 frames");
         JSONObject camera=object(shot,"camera");fields(camera,"mode","fovDegrees","shakeIntensity","keyframes");String mode=text(camera,"mode",16);if(!Arrays.asList("wide","orbit","macro","top_down").contains(mode))throw new IllegalArgumentException("Unknown cinematic camera mode");number(camera,"fovDegrees",35,100);number(camera,"shakeIntensity",0,1);
         if(camera.has("keyframes"))validateCameraKeys(array(camera,"keyframes"),mode);
@@ -85,6 +87,15 @@ public final class Cinematic3DTimeline {
             }
         }
         return shot;
+    }
+    private static void validateActors(JSONObject actors)throws Exception {
+        fields(actors,"black","white");
+        for(String name:new String[]{"black","white"}) {
+            JSONObject actor=object(actors,name);fields(actor,"preset","heightScale","buildScale","headScale","material");
+            if(!Arrays.asList("athletic","slender","stocky","chibi","robot").contains(text(actor,"preset",16)))throw new IllegalArgumentException("Unknown humanoid morphology preset");
+            for(String scale:new String[]{"heightScale","buildScale","headScale"})if(actor.has(scale))number(actor,scale,.8,1.2);
+            if(actor.has("material")){JSONObject material=object(actor,"material");fields(material,"color","metallic","roughness");JSONArray color=array(material,"color");finiteVector(color,3);for(int i=0;i<3;i++)if(color.getDouble(i)<0||color.getDouble(i)>1)throw new IllegalArgumentException("Material color must use linear RGB 0..1");number(material,"metallic",0,1);number(material,"roughness",.1,1);}
+        }
     }
     private static boolean impact(String action){return "CLASH".equals(action)||"BLADE_LOCK".equals(action)||"MACRO_CLASH".equals(action);}
     private static void fps(int fps){if(fps!=24&&fps!=30&&fps!=60)throw new IllegalArgumentException("Cinematic fps must be 24, 30 or 60");}

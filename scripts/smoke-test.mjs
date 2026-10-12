@@ -227,8 +227,8 @@ const checks = [
   ["True combat action uses fully native articulated frame generation", controlService.includes('case "animate_combat_rig"') && controlService.includes("queueCombatRig") && controlService.includes("combatRigBenchmarkReady")],
   ["Combat IK and independent per-frame sword motion is compiled", combatSolver.includes("elbow(") && combatSolver.includes("swordTipSeparation") && combatSolver.includes("remap(") && combatSolver.includes("leadingFoot")],
   ["VideoStudio 3.7 generalizes image animation to 100-frame five-batch continuous motion",
-    nativeProtocol.includes('APP_VERSION = "3.8.1"')
-    && androidBuild.includes('versionCode = 381')
+    nativeProtocol.includes('APP_VERSION = "3.9.0"')
+    && androidBuild.includes('versionCode = 390')
     && multigenrePlanner.includes('MAX_SOURCE_FRAMES=160')
     && multigenrePlanner.includes('maxPerBatch-1:maxPerBatch')
     && multigenreStudio.includes('StoryboardSegmentComposer.compose')
@@ -300,7 +300,7 @@ const checks = [
   ["Next is a safely coinstallable distinct Android package", androidBuild.includes('applicationId = "com.rezoxnemesis.videostudio.next"') && androidManifest.includes('android:label="VideoStudio Next"') && Number((androidBuild.match(/versionCode\s*=\s*(\d+)/)||[])[1] || 0)>=363],
   ["in-app updater verifies real installed and selected APK certificate and version before installer", nativeApkUpdater.includes("GET_SIGNING_CERTIFICATES") && nativeApkUpdater.includes("getPackageArchiveInfo") && nativeApkUpdater.includes("FileProvider.getUriForFile") && nextUpgradePolicy.includes("Different Android signing certificate") && nativeMain.includes("chooseUpdateApk")],
   ["cloud migration imports only complete source-owned archives without uninstall", legacyRecovery.includes("originalLegacyAppUnchanged") && legacyRecovery.includes("missing_source_media") && legacyRecovery.includes("ProjectStore.Project.fromJson") && legacyRecovery.includes("source_assets/") && nativeMain.includes("confirmLegacyProjectRecovery")],
-  ["cloud archives future explicitly imported media including originals", cloudProvider.includes('ensureDirectory(tree,projectDir,"Originals")') && cloudProvider.includes("allOriginalsArchived") && cloudProvider.includes("unavailableOriginalAssets")],
+  ["cloud archives future explicitly imported media including originals", driveWorkspace.includes('ArchiveSource("Originals/"') && driveWorkspace.includes("allOriginalsArchived") && driveWorkspace.includes("unavailableOriginalAssets")],
   ["native app version matches Gradle while retaining stable MCP v3", (() => { const app = nativeProtocol.match(/APP_VERSION\s*=\s*"([^"]+)"/), build = androidBuild.match(/versionName\s*=\s*"([^"]+)"/), code = androidBuild.match(/versionCode\s*=\s*(\d+)/); return !!app && !!build && !!code && app[1] === build[1] && Number(code[1]) >= 361 && nativeProtocol.includes("PROTOCOL_VERSION = 3"); })()],
   ["pairing message advertises stable upgrade-surviving endpoint", nativeProtocol.includes("Stable MCP endpoint:") && nativeProtocol.includes("survives compatible VideoStudio APK upgrades")],
   ["MCP Connection Core preserves stable endpoint across APK upgrades", mcpConnectionCore.includes('STABLE_MCP_PATH = "/app-mcp-v3/"') && mcpConnectionCore.includes("appGeneration") && mcpConnectionCore.includes("upgradeKeepsOwnerCredential") && mcpConnectionCore.includes("upgradeKeepsDeviceIdentity")],

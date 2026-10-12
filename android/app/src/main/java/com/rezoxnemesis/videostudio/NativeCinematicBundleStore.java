@@ -34,6 +34,7 @@ public final class NativeCinematicBundleStore {
     public static final long MAX_ARCHIVE_BYTES=64L*1024*1024,MAX_EXPANDED_BYTES=256L*1024*1024,MAX_GLB_BYTES=16L*1024*1024;
     public static final long MAX_ACCESSOR_BYTES=64L*1024*1024,MAX_TEXTURE_BYTES=64L*1024*1024;
     public static final int MAX_TEXTURE_DIMENSION=4096;
+    public static final int MAX_GLB_JSON_BYTES=1024*1024;
     private static final long MAX_STORED_BYTES=512L*1024*1024;
     private static final int MAX_FILES=256,MAX_BUNDLES=8;
     static final Object FILE_LOCK=new Object();
@@ -48,8 +49,10 @@ public final class NativeCinematicBundleStore {
     }
 
     public static JSONObject installBuiltin(Context context,ProjectStore projects,JSONObject request)throws Exception {
-        fields(request,"projectId","sourceProjectUpdatedAt");String projectId=id(text(request,"projectId",96));long revision=integer(request,"sourceProjectUpdatedAt",0,Long.MAX_VALUE);ProjectStore.Project source=source(projects,projectId,revision);
-        try(InputStream in=context.getAssets().open("cinematic3d/demo.vscinematic")){return installStream(context,projects,source,in,"","",true);}
+        fields(request,"projectId","sourceProjectUpdatedAt","pack");String projectId=id(text(request,"projectId",96));long revision=integer(request,"sourceProjectUpdatedAt",0,Long.MAX_VALUE);ProjectStore.Project source=source(projects,projectId,revision);
+        String pack=request.has("pack")?text(request,"pack",32):"starter";
+        if(!"starter".equals(pack)&&!"extended".equals(pack))throw new IllegalArgumentException("Unknown bundled cinematic pack");
+        try(InputStream in=context.getAssets().open("cinematic3d/"+("extended".equals(pack)?"extended":"demo")+".vscinematic")){return installStream(context,projects,source,in,"","",true);}
     }
 
     private static JSONObject installStream(Context context,ProjectStore projects,ProjectStore.Project source,InputStream input,String assetId,String registration,boolean builtin)throws Exception {
@@ -130,7 +133,7 @@ public final class NativeCinematicBundleStore {
     private static void verifyMagic(File file,String path)throws Exception {if(path.endsWith(".glb"))verifyGlb(file);else if(path.endsWith(".json"))readJson(file);else if(path.endsWith(".blend")||path.endsWith(".mp4")){byte[] first=new byte[12];try(FileInputStream in=new FileInputStream(file)){if(in.read(first)<12)throw new IllegalArgumentException("Inert artifact magic unavailable");}if(path.endsWith(".blend")&&!new String(first,0,7,StandardCharsets.US_ASCII).equals("BLENDER")||path.endsWith(".mp4")&&!new String(first,4,4,StandardCharsets.US_ASCII).equals("ftyp"))throw new IllegalArgumentException("Inert artifact magic differs");}}
     public static void verifyGlb(File file)throws Exception {
         plain(file);if(!file.isFile()||file.length()<20||file.length()>MAX_GLB_BYTES)throw new IllegalArgumentException("Cinematic GLB outside 16 MiB");try(RandomAccessFile in=new RandomAccessFile(file,"r")){byte[] header=new byte[12];in.readFully(header);ByteBuffer h=ByteBuffer.wrap(header).order(ByteOrder.LITTLE_ENDIAN);if(h.getInt()!=0x46546c67||h.getInt()!=2||(h.getInt()&0xffffffffL)!=in.length())throw new IllegalArgumentException("Cinematic GLB magic/version/length differs");JSONObject json=null;boolean binSeen=false;long binOffset=0,binBytes=0;
-            while(in.getFilePointer()<in.length()){byte[] chunk=new byte[8];in.readFully(chunk);ByteBuffer c=ByteBuffer.wrap(chunk).order(ByteOrder.LITTLE_ENDIAN);long size=c.getInt()&0xffffffffL;int type=c.getInt();if(size%4!=0||size>in.length()-in.getFilePointer())throw new IllegalArgumentException("GLB chunk length differs");if(type==0x4e4f534a){if(json!=null||binSeen||size>MAX_JSON_BYTES)throw new IllegalArgumentException("Invalid GLB JSON chunk");byte[] bytes=new byte[(int)size];in.readFully(bytes);json=parseJson(bytes);if(!"2.0".equals(json.getJSONObject("asset").getString("version")))throw new IllegalArgumentException("GLB asset version differs");rejectUris(json,0);}else if(type==0x004e4942){if(json==null||binSeen)throw new IllegalArgumentException("Invalid GLB binary chunk");binSeen=true;binOffset=in.getFilePointer();binBytes=size;in.seek(binOffset+size);}else throw new IllegalArgumentException("Unsupported GLB chunk");}
+            while(in.getFilePointer()<in.length()){byte[] chunk=new byte[8];in.readFully(chunk);ByteBuffer c=ByteBuffer.wrap(chunk).order(ByteOrder.LITTLE_ENDIAN);long size=c.getInt()&0xffffffffL;int type=c.getInt();if(size%4!=0||size>in.length()-in.getFilePointer())throw new IllegalArgumentException("GLB chunk length differs");if(type==0x4e4f534a){if(json!=null||binSeen||size>MAX_GLB_JSON_BYTES)throw new IllegalArgumentException("Invalid GLB JSON chunk");byte[] bytes=new byte[(int)size];in.readFully(bytes);json=parseJson(bytes);if(!"2.0".equals(json.getJSONObject("asset").getString("version")))throw new IllegalArgumentException("GLB asset version differs");rejectUris(json,0);}else if(type==0x004e4942){if(json==null||binSeen)throw new IllegalArgumentException("Invalid GLB binary chunk");binSeen=true;binOffset=in.getFilePointer();binBytes=size;in.seek(binOffset+size);}else throw new IllegalArgumentException("Unsupported GLB chunk");}
             if(json==null)throw new IllegalArgumentException("GLB JSON missing");validateResourceBudgets(json,in,binOffset,binBytes);
         }
     }

@@ -60,6 +60,27 @@ class PipelineTest(unittest.TestCase):
             for item in manifest['files']:
                 self.assertEqual(hashlib.sha256(archive.read(item['path'])).hexdigest(),item['sha256'])
 
+    def test_cloud_conditioning_sidecars_never_bloat_phone_archive(self):
+        folder,_=self.generation()
+        sidecar=folder/'conditioning';sidecar.mkdir()
+        (sidecar/'manifest.json').write_text('{"cloudOnly":true}')
+        (sidecar/'depth.exr').write_bytes(b'private cloud guide')
+        target=self.root/'phone.vscinematic';pipeline.build_bundle(folder,target)
+        with zipfile.ZipFile(target) as archive:
+            self.assertTrue(all(not name.startswith('conditioning/') for name in archive.namelist()))
+
+    def test_invalid_conditioning_and_pack_inputs_fail_before_child_execution(self):
+        folder,_=self.generation()
+        for value in (-1,1201,True):
+            with self.subTest(value=value),patch.object(pipeline.subprocess,'run') as child:
+                with self.assertRaises(ValueError):
+                    pipeline.build(folder/'timeline.json',self.root/'rejected',conditioning_frames=value)
+                child.assert_not_called()
+        with patch.object(pipeline.subprocess,'run') as child:
+            with self.assertRaises(ValueError):
+                pipeline.build(folder/'timeline.json',self.root/'rejected',library_only=True,selected_actions=['WAVE'])
+            child.assert_not_called()
+
     def test_change_between_verification_and_archive_copy_cannot_publish(self):
         folder,_=self.generation();target=self.root/'output.vscinematic';target.write_bytes(b'accepted generation')
         original=pipeline.verify_generation

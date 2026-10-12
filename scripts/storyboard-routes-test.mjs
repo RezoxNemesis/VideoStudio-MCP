@@ -7,12 +7,13 @@ import vm from 'node:vm';
 import {webcrypto} from 'node:crypto';
 import {z} from 'zod';
 import * as contract from '../src/storyboard-contract.js';
+import {studioToolSchemas} from '../src/studio-workbench-contract.js';
 const source=fs.readFileSync(new URL('../src/index.js',import.meta.url),'utf8');
 async function fixture(version='3.7.2',mode='everything') {
   const rows=new Map();
   const storage=memoryStorage(rows,{maxValueBytes:128*1024});
   class McpServer { constructor(){this.tools=new Map();} registerTool(name,definition,handler){this.tools.set(name,{definition,handler});} }
-  const context={...contract,...queueBindings,nativeCommandSummary,nativeResultPage,z,McpServer,crypto:webcrypto,TextEncoder,TextDecoder,Response,Request,Headers,URL,Date,setTimeout,clearTimeout,
+  const context={...contract,...queueBindings,studioToolSchemas,nativeCommandSummary,nativeResultPage,z,McpServer,crypto:webcrypto,TextEncoder,TextDecoder,Response,Request,Headers,URL,Date,setTimeout,clearTimeout,
     DurableObject:class {constructor(ctx){this.ctx=ctx;}},createMcpHandler:()=>()=>new Response(),
     APP_HTML:'',STUDIO_RUNTIME_JS:'',STUDIO_CINEMATIC_JS:'',STUDIO_NEURAL_JS:'',STUDIO_TEMPORAL_JS:'',STUDIO_CHARACTER_JS:'',STUDIO_ACTION_TIMELINE_JS:'',STUDIO_POSE_SEQUENCE_JS:'',LOCAL_VIDEO_DOWNLOAD_HTML:''};
   vm.createContext(context);

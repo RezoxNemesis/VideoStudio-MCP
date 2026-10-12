@@ -25,11 +25,11 @@ import bpy
 from mathutils import Matrix, Quaternion, Vector
 
 from cinematic3d.timeline import validate_timeline, sample_shot
-from cinematic3d.motion import PRIMARY_JOINTS, sample_pose, sample_foot_contacts, foot_lock_ik
+from cinematic3d.motion import PRIMARY_JOINTS, sample_pose, sample_foot_contacts, foot_lock_ik, support_root_drop, LEGACY_ACTIONS, NEW_ACTIONS
+from cinematic3d.characters import morphology, select_library_actions
 from cinematic3d.portable_glb import compact_glb
 
-ACTIONS = ("STANDOFF", "CHARGE", "CLASH", "BLADE_LOCK", "FOLLOW_THROUGH",
-           "KNOCKBACK", "LANDING", "RECOVERY", "AERIAL_FLIP", "TUMBLE", "MACRO_CLASH")
+ACTIONS = LEGACY_ACTIONS
 IMPACTS = {"CLASH", "BLADE_LOCK", "MACRO_CLASH"}
 PRIMARY_BONES = ("DEF-spine", "DEF-spine.003", "DEF-spine.004", "DEF-spine.006",
                  "DEF-upper_arm.R", "DEF-forearm.R", "DEF-hand.R",
@@ -137,12 +137,19 @@ def distance_segment(point, a, b):
     return (point - (a + direction * factor)).length
 
 
-def generate_actor(label, armour, joints, trim):
+def generate_actor(label, armour, joints, trim, descriptor=None):
     """Generate real Rigify rig, then bind a lightweight weighted mannequin.
 
     Rigify's controls remain in the authoring file. Constraints on the deform
     skeleton are baked away before portable export; phone playback needs none.
     """
+    shape = morphology(descriptor)
+    height, build, head_scale = shape["height"], shape["build"], shape["head"]
+    if descriptor is not None:
+        settings = shape.get("material", {})
+        armour = material(label + " " + shape["preset"] + " material", settings.get("color", tuple(armour.diffuse_color[:3])),
+                          settings.get("metallic", .8 if shape["preset"] == "robot" else .08),
+                          settings.get("roughness", .35 if shape["preset"] == "robot" else .62))
     bpy.ops.preferences.addon_enable(module="rigify")
     from rigify.metarigs.Basic import basic_human
     bpy.ops.object.armature_add()
@@ -158,6 +165,12 @@ def generate_actor(label, armour, joints, trim):
     for bone in meta.data.edit_bones:
         bone.head *= 0.9
         bone.tail *= 0.9
+        if descriptor is not None:
+            # Change actual bone lengths first, then build geometry from rest anchors.
+            bone.head *= height
+            bone.tail *= height
+            bone.head.x *= 1 + .35 * (build - 1)
+            bone.tail.x *= 1 + .35 * (build - 1)
     bpy.ops.object.mode_set(mode="OBJECT")
     # Single-segment deform limbs retain straightforward sixteen-primary map.
     for bone in meta.pose.bones:
@@ -190,20 +203,32 @@ def generate_actor(label, armour, joints, trim):
     for side in ("L", "R"):
         for limb, radius in (("upper_arm", 0.072), ("forearm", 0.061), ("thigh", 0.098), ("shin", 0.074)):
             bone = rig.data.bones["DEF-" + limb + "." + side]
+            radius *= height * build
             parts.append(capsule(label + "_" + limb + "_" + side, bone.head_local, bone.tail_local, radius, armour))
         for limb in ("upper_arm", "forearm", "thigh", "shin", "hand"):
             bone = rig.data.bones["DEF-" + limb + "." + side]
-            radius = 0.083 if limb == "thigh" else 0.057
+            radius = (0.083 if limb == "thigh" else 0.057) * height * build
             parts.append(ellipsoid(label + "_Joint_" + limb + "_" + side, bone.head_local, (radius, radius, radius), joints))
         hand = rig.data.bones["DEF-hand." + side]
-        parts.append(ellipsoid(label + "_Hand_" + side, (hand.head_local + hand.tail_local) / 2, (0.053, 0.055, 0.057), armour))
+        parts.append(ellipsoid(label + "_Hand_" + side, (hand.head_local + hand.tail_local) / 2, tuple(v*height*build for v in (.053, .055, .057)), armour))
         foot = rig.data.bones["DEF-foot." + side]
-        parts.append(ellipsoid(label + "_Foot_" + side, (foot.head_local.x, -0.065, 0.061), (0.084, 0.143, 0.061), armour))
-    parts.append(ellipsoid(label + "_Pelvis", (0, 0.025, 0.965), (0.18, 0.12, 0.14), armour))
-    parts.append(ellipsoid(label + "_Torso", (0, 0.015, 1.245), (0.215, 0.12, 0.25), armour))
-    parts.append(ellipsoid(label + "_Neck", (0, -0.014, 1.53), (0.056, 0.054, 0.065), joints))
-    parts.append(ellipsoid(label + "_Head", (0, -0.017, 1.665), (0.104, 0.094, 0.135), armour, 24, 12))
-    parts.append(box(label + "_Visor", (0, -0.102, 1.69), (0.133, 0.012, 0.017), trim, 0.004))
+        parts.append(ellipsoid(label + "_Foot_" + side, (foot.head_local.x, -.065*height, .061*height),
+                               tuple(v*height*(build if i==0 else 1) for i,v in enumerate((.084, .143, .061))), armour))
+    if descriptor is None:
+        pelvis_center, torso_center, neck_center, head_center = (0, .025, .965), (0, .015, 1.245), (0, -.014, 1.53), (0, -.017, 1.665)
+    else:
+        pelvis_bone, chest_bone = rig.data.bones["DEF-spine"], rig.data.bones["DEF-spine.003"]
+        neck_bone, head_bone = rig.data.bones["DEF-spine.004"], rig.data.bones["DEF-spine.006"]
+        pelvis_center = pelvis_bone.head_local.lerp(pelvis_bone.tail_local, .4)
+        torso_center = pelvis_bone.tail_local.lerp(chest_bone.head_local, .62)
+        neck_center = neck_bone.head_local.lerp(neck_bone.tail_local, .65)
+        head_center = head_bone.head_local.lerp(head_bone.tail_local, .55)
+    parts.append(ellipsoid(label + "_Pelvis", pelvis_center, (.18*height*build, .12*height*build, .14*height), armour))
+    parts.append(ellipsoid(label + "_Torso", torso_center, (.215*height*build, .12*height*build, .25*height), armour))
+    parts.append(ellipsoid(label + "_Neck", neck_center, tuple(v*height for v in (.056, .054, .065)), joints))
+    parts.append(ellipsoid(label + "_Head", head_center, tuple(v*height*head_scale for v in (.104, .094, .135)), armour, 24, 12))
+    visor_center = (0, -.102, 1.69) if descriptor is None else (head_center.x, head_center.y-.09*height*head_scale, head_center.z+.025*height*head_scale)
+    parts.append(box(label + "_Visor", visor_center, tuple(v*height*head_scale for v in (.133, .012, .017)), trim, .004*height))
     bpy.ops.object.select_all(action="DESELECT")
     for part in parts:
         part.select_set(True)
@@ -238,7 +263,9 @@ def generate_actor(label, armour, joints, trim):
     sword.matrix_basis = parent_rest.inverted() @ Matrix.Translation(wrist) @ hand.matrix_local.to_3x3().to_4x4()
     rig["katana_object"] = sword.name
     rig["katana_socket_local"] = list(sword.matrix_basis.to_translation())
-    return {"label": label, "root": root, "rig": rig, "mesh": mesh, "sword": sword,
+    if descriptor is not None:
+        rig["actor_morphology"] = json.dumps(shape, sort_keys=True)
+    return {"label": label, "root": root, "rig": rig, "mesh": mesh, "sword": sword, "morphology": shape,
             "deform": deform, "socket": sword.matrix_basis.copy(), "rest": {b.name: b.matrix_local.copy() for b in deform}}
 
 
@@ -401,10 +428,13 @@ def foot_targets(actor, shot, phase):
     direction = 1 if actor["label"] == "Black" else -1
     contacts = sample_foot_contacts(shot, phase)["black" if direction == 1 else "white"]
     authored = bool(shot.get("poseKeyframes"))
-    grounded = not authored and shot["action"] not in {"AERIAL_FLIP", "TUMBLE"} and root.location.z <= 0.005
+    action = shot["action"]
+    grounded = not authored and action not in {"AERIAL_FLIP", "TUMBLE", "JUMP"} and (action in NEW_ACTIONS or root.location.z <= .005)
     targets = {}
     for side, key in (("L", "leading"), ("R", "trailing")):
         explicit = contacts.get(key)
+        if explicit is None and action == "KICK" and side == "L" and .02 < phase < .98:
+            continue  # Kicking leg is deliberately free; the other foot supports it.
         if explicit is None and not grounded:
             continue
         rest = rig.data.bones["DEF-foot." + side].head_local
@@ -412,7 +442,27 @@ def foot_targets(actor, shot, phase):
         stance = True
         if explicit is None:
             goal.z = rest.z
-            if shot["action"] in IMPACTS:
+            if action in NEW_ACTIONS:
+                # Body translation cannot drag stance anchors along with the root.
+                name = "black" if direction == 1 else "white"
+                initial = yup(sample_pose(shot, 0)[name]["root"])
+                goal = rig.matrix_world.to_3x3() @ rest + initial
+                goal.z = rest.z
+                if action in {"WALK", "RUN"}:
+                    offset = 0.0 if side == "L" else .5
+                    cycle = phase * 2 + offset
+                    step, progress = math.floor(cycle), cycle % 1
+                    start = max(0., (step-offset)/2)
+                    end = min(1., (step+1-offset)/2)
+                    anchor = yup(sample_pose(shot, start)[name]["root"])
+                    next_anchor = yup(sample_pose(shot, end)[name]["root"])
+                    goal.x += anchor.x - initial.x
+                    stance = progress < .6
+                    if not stance:
+                        swing = (progress-.6)/.4
+                        goal.x += (next_anchor.x-anchor.x)*swing
+                        goal.z += (.16 if action == "RUN" else .10)*actor["morphology"]["height"]*math.sin(math.pi*swing)
+            elif action in IMPACTS:
                 goal.x = -direction * 0.92 + direction * (0.12 if side == "L" else -0.12)
                 goal.y = 0.088 if side == "L" else -0.088
             elif shot["action"] == "CHARGE":
@@ -443,7 +493,8 @@ def pose_actors(state, shot, phase):
         root = actor["root"]
         root.location = yup(entry["root"])
         # Rest human faces Blender -Y. Authored quaternions preserve local axes.
-        root.rotation_quaternion = Quaternion() if authored else Quaternion((0, 0, 1), direction * math.pi / 2)
+        frontal = shot["action"] in {"IDLE", "DANCE", "WAVE"}
+        root.rotation_quaternion = Quaternion() if authored or frontal else Quaternion((0, 0, 1), direction * math.pi / 2)
         if not authored:
             # Hand reach/contact is solved in metres from actual Rigify lengths.
             action = shot["action"]
@@ -451,6 +502,9 @@ def pose_actors(state, shot, phase):
                 approach = math.sin(min(1, phase * 2) * math.pi / 2)
                 root.location.x = -direction * (1.15 - 0.35 * approach)
                 root.location.z = -0.08  # Crouch gives real planted-leg reach.
+                if actor["morphology"]["configured"]:
+                    root.location.x = -direction * actor["contact_distance"]
+                    root.location.z *= actor["morphology"]["height"]
             elif action == "CHARGE":
                 root.location.x = -direction * (2.2 - 1.4 * phase)
                 root.location.z = -0.055
@@ -464,27 +518,44 @@ def pose_actors(state, shot, phase):
             bone.matrix_basis = Matrix.Identity(4)
         for name, rotation in zip(PRIMARY_BONES, entry["rotations"]):
             rig.pose.bones[name].rotation_quaternion = local_quaternion(rotation)
-        if not authored:
+        if not authored and shot["action"] in LEGACY_ACTIONS:
             # Heading belongs to the keyed world root, once, rather than being
             # duplicated in the procedural pelvis pose.
             rig.pose.bones["DEF-spine"].rotation_quaternion = Quaternion()
         bpy.context.view_layer.update()
+        planned_targets = foot_targets(actor, shot, phase)
+        if not authored and shot["action"] in NEW_ACTIONS and planned_targets and not any(t["explicit"] for t in planned_targets.values()):
+            # A straight resting leg cannot support positive body bobs or large
+            # lateral moves at fixed floor anchors. Solve body height from the
+            # evaluated hips BEFORE leg IK, instead of projecting planted feet.
+            supports = []
+            for side, target in planned_targets.items():
+                upper, lower = (rig.data.bones["DEF-"+name+"."+side] for name in ("thigh", "shin"))
+                hip = rig.matrix_world @ rig.pose.bones[upper.name].head
+                goal = target["goal"]
+                supports.append({"hip": [hip.x, hip.z, -hip.y], "target": [goal.x, goal.z, -goal.y],
+                                 "upperLength": upper.length, "lowerLength": lower.length})
+            drop = support_root_drop(supports)
+            root.location.z -= drop
+            state["support_root_drop_max"] = max(state.get("support_root_drop_max", 0.), drop)
+            bpy.context.view_layer.update()
         inverse = rig.matrix_world.inverted()
         actor["foot_goals"] = {}
         for side, target in foot_targets(actor, shot, phase).items():
             thigh_name, shin_name, foot_name = ("DEF-" + name + "." + side for name in ("thigh", "shin", "foot"))
             hip = rig.pose.bones[thigh_name].head.copy()
             goal = target["goal"]
-            set_chain(actor, thigh_name, shin_name, foot_name, hip, inverse @ goal, Vector((0, -1, 0)), require_reachable=target["explicit"])
+            set_chain(actor, thigh_name, shin_name, foot_name, hip, inverse @ goal, Vector((0, -1, 0)),
+                      require_reachable=target["explicit"] or shot["action"] in NEW_ACTIONS)
             if target["stance"]:
                 actor["foot_goals"][side] = goal.copy()
-        if authored:
+        if authored or shot["action"] in NEW_ACTIONS:
             continue
         # Procedural battle wrists: curve into contact at phase .5, then follow through.
         wrist_x = -direction * (0.4 + 0.32 * (1 - math.sin(math.pi * phase)))
         wrist_z = 1.28 + 0.18 * math.cos(math.pi * phase)
         if shot["action"] in IMPACTS:
-            wrist_z = 1.28
+            wrist_z = state.get("contact_height", 1.28)
         wrist_world = Vector((wrist_x, 0, wrist_z))
         shoulder = rig.pose.bones["DEF-upper_arm.R"].head.copy()
         wrist = inverse @ wrist_world
@@ -730,7 +801,17 @@ def prepare_impact_origin(state, shot):
             blade_mesh_raycast(state["actors"][1], state["actors"][0])]
 
 
-def build_scene(timeline, library_only=False):
+def build_scene(timeline, library_only=False, selected_actions=None):
+    timeline = validate_timeline(timeline)
+    if selected_actions is not None and not library_only:
+        raise ValueError("Selected actions require --library-only")
+    selected = select_library_actions(selected_actions)
+    if library_only and selected_actions is not None and set(selected) != {s["action"] for s in timeline["shots"]}:
+        raise ValueError("Selected pack actions must exactly match its declared timeline actions")
+    if library_only and any(s["action"] not in selected for s in timeline["shots"]):
+        raise ValueError("New library actions require an explicit selected action pack")
+    if library_only and len({s["action"] for s in timeline["shots"]}) != len(timeline["shots"]):
+        raise ValueError("Action libraries require one unique declared action per shot")
     if library_only and (timeline["motionProvider"] != "procedural_mannequin" or any(s.get("poseKeyframes") or s.get("footContacts") for s in timeline["shots"])):
         raise ValueError("The offline library is procedural_mannequin only; authored poses/contacts require a regular bundle rebuild")
     if timeline["motionProvider"] == "authored_3d" and any(not s.get("poseKeyframes") for s in timeline["shots"]):
@@ -744,12 +825,30 @@ def build_scene(timeline, library_only=False):
     white = material("White ceramic armour", (0.78, 0.8, 0.77), 0.06, 0.48)
     joint = material("Graphite mechanical joints", (0.07, 0.08, 0.09), 0.5, 0.4)
     trim = material("Amber identification trim", (0.72, 0.3, 0.04), 0.35, 0.4, 0.12)
-    actors = [generate_actor("Black", black, joint, trim), generate_actor("White", white, joint, trim)]
+    descriptors = timeline.get("actors", {})
+    actors = [generate_actor("Black", black, joint, trim, descriptors.get("black")),
+              generate_actor("White", white, joint, trim, descriptors.get("white"))]
     environment()
     state = {"actors": actors, "camera": camera(), "vfx": vfx_geometry(), "trail_samples": 0,
              "impact_distance": None, "contact": None, "timeline": timeline, "library_only": library_only}
+    if descriptors:
+        # Choose a shared contact height inside both measured arm reach intervals.
+        reaches = []
+        for actor in actors:
+            bones = actor["rig"].data.bones
+            shoulder = bones["DEF-upper_arm.R"].head_local.z - .08*actor["morphology"]["height"]
+            reach = .9*(bones["DEF-upper_arm.R"].length+bones["DEF-forearm.R"].length)
+            reaches.append((shoulder, reach))
+        low, high = max(h-r for h,r in reaches), min(h+r for h,r in reaches)
+        if low >= high:
+            raise ValueError("Actor proportions have no common reachable contact height")
+        state["contact_height"] = min(high-.01, max(low+.01, 1.28*sum(a["morphology"]["height"] for a in actors)/2))
+        for actor, (shoulder, reach) in zip(actors, reaches):
+            horizontal = math.sqrt(max(.0001, reach*reach-(shoulder-state["contact_height"])**2))
+            actor["contact_distance"] = .4 + max(.1, horizontal-.04)
     fps = timeline["fps"]
-    clips = [(default_shot(action, fps), "C3D_" + action, fps * 2) for action in ACTIONS] if library_only else [
+    templates = {s["action"]: s for s in timeline["shots"]}
+    clips = [(dict(default_shot(action, fps), **({"motionStyle": templates[action]["motionStyle"]} if action in templates and "motionStyle" in templates[action] else {})), "C3D_" + action, fps * 2) for action in selected] if library_only else [
         (shot, shot_clip_name(shot), (max(8, shot["durationFrames"] - shot["hitStopFrames"]) + 1) // 2 * 2) for shot in timeline["shots"]]
     if len({name for _, name, _ in clips}) != len(clips):
         raise ValueError("Portable clip names must be unique")
@@ -835,6 +934,7 @@ def measure_scene(state):
             "actualBladeMeshRaycastErrorMeters": max(c["errorMeters"] for c in impact_mesh_raycasts) if impact_mesh_raycasts and all(c["hit"] for c in impact_mesh_raycasts) else None,
             "bladeMeshRaycastMethod": "Both finite world blade rays into opposite evaluated katana mesh; measured hit-to-finite-axis-contact residual in metres",
             "groundedFootMaxErrorMeters": max(foot_errors) if foot_errors else None, "wristSocketMaxErrorMeters": max(socket_errors),
+            "proceduralSupportRootAdjustmentMaxMeters": state.get("support_root_drop_max"),
             "footMeasurement": "Full three-dimensional world-anchor residual; authored foot anchors are ankle joint positions with no hidden offset",
             "trailWindowOutputFrames": 6, "trailGeometrySamples": trail_samples,
             "contactDebrisCount": rubble_visible, "contactSparkCount": sparks_visible, "shotMeasurements": measurements,
@@ -931,8 +1031,8 @@ def export_bundle(state, output):
         (output / "scene.glb").unlink()
         raise ValueError("Full-scene GLB exceeds the phone's 16 MiB individual-asset limit")
     glb = (output / "scene.glb").read_bytes()
-    if struct.unpack_from("<I", glb, 12)[0] > 512 * 1024:
-        raise ValueError("Full-scene GLB JSON chunk exceeds the phone's 512 KiB metadata limit")
+    if struct.unpack_from("<I", glb, 12)[0] > 1024 * 1024:
+        raise ValueError("Full-scene GLB JSON chunk exceeds the phone's 1 MiB scene metadata limit")
     author_timeline_for_render(state)
     bpy.ops.wm.save_as_mainfile(filepath=str(output / "scene.blend"))
     write_json(output / "timeline.json", timeline)
@@ -941,6 +1041,7 @@ def export_bundle(state, output):
                   "rigging": "genuine Rigify basic_human generation; sixteen primary deform bones; deterministic skin weights; analytic world-space foot IK; baked portable channels",
                   "renderer": "Cycles CPU", "gpuObserved": False, "motionProvider": timeline["motionProvider"],
                   "denoiser": state["denoiser"],
+                  "actorMorphologies": {a["label"].lower(): a["morphology"] for a in state["actors"]},
                   "bladeCollision": "Finite world blade segments ray_cast into opposite evaluated mesh at exact impact pose; measured QA in qa.json",
                   "description": "Procedural carbon/ceramic mannequin demonstration in authored ruined-city geometry",
                   "originalImageReconstruction": False, "nativeRenderEvidence": False,
@@ -971,6 +1072,8 @@ def main(argv=None):
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--library-only", action="store_true")
     parser.add_argument("--render-frames", type=int, default=0)
+    parser.add_argument("--conditioning-frames", type=int, default=0)
+    parser.add_argument("--actions", help="Comma-separated exact action pack; requires --library-only")
     args = parser.parse_args(argv)
     raw = args.timeline.read_bytes()
     if len(raw) > 512 * 1024:
@@ -978,8 +1081,14 @@ def main(argv=None):
     timeline = validate_timeline(json.loads(raw))
     if args.render_frames < 0 or args.render_frames > 12000:
         raise ValueError("--render-frames must be 0..12000")
-    state = build_scene(timeline, args.library_only)
+    if not 0 <= args.conditioning_frames <= 1200:
+        raise ValueError("--conditioning-frames must be 0..1200")
+    selected = args.actions.split(",") if args.actions is not None else None
+    state = build_scene(timeline, args.library_only, selected)
     manifest = export_bundle(state, args.output)
+    if args.conditioning_frames:
+        from cinematic3d.conditioning import export_conditioning
+        export_conditioning(state, args.output, min(args.conditioning_frames, sum(s["durationFrames"] for s in timeline["shots"])))
     if args.render_frames:
         frames = args.output / "frames"
         frames.mkdir(exist_ok=True)

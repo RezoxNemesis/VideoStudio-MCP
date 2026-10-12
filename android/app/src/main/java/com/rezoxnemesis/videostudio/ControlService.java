@@ -29,6 +29,7 @@ import java.util.ArrayList;
 import java.util.Locale;
 import java.util.Set;
 import java.util.UUID;
+import java.nio.charset.StandardCharsets;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -51,6 +52,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     public static final String ACTION_LOCAL_STORYBOARD_SERIES = "com.rezoxnemesis.videostudio.LOCAL_STORYBOARD_SERIES";
     public static final String ACTION_LOCAL_GLTF_COMBAT = "com.rezoxnemesis.videostudio.LOCAL_GLTF_COMBAT_EXPORT";
     public static final String ACTION_LOCAL_CINEMATIC_3D = "com.rezoxnemesis.videostudio.LOCAL_CINEMATIC_3D_RENDER";
+    public static final String ACTION_LOCAL_SKETCH_EXPORT = "com.rezoxnemesis.videostudio.LOCAL_SKETCH_EXPORT";
     public static final String ACTION_LOCAL_PROMPT_VIDEO = "com.rezoxnemesis.videostudio.LOCAL_PROMPT_VIDEO";
     public static final String ACTION_LOCAL_EXPORT = "com.rezoxnemesis.videostudio.LOCAL_EXPORT_PROJECT";
     private static final String CHANNEL = "videostudio_private_control";
@@ -97,6 +99,8 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     private final ExecutorService directorSetupExecutor = Executors.newSingleThreadExecutor();
     private final ExecutorService nativeSourceExecutor=Executors.newFixedThreadPool(2);
     private final ExecutorService cinematic3DExecutor=Executors.newSingleThreadExecutor();
+    private final ExecutorService authoringExecutor=Executors.newSingleThreadExecutor();
+    private final ExecutorService pipelineExecutor=Executors.newSingleThreadExecutor();
     private final Set<String> watchedCommands = ConcurrentHashMap.newKeySet();
     private volatile boolean serviceAlive;
 
@@ -425,6 +429,16 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                         error.getMessage() == null ? "Could not queue prompt video" : error.getMessage(),
                         "failed", null, null, null);
             }
+        } else if (ACTION_LOCAL_SKETCH_EXPORT.equals(action)) {
+            final String request=intent.getStringExtra("requestJson");
+            authoringExecutor.execute(()->{
+                try {
+                    JSONObject queued=queueSketchRender(new JSONObject(request));
+                    ActivityLog.add(this,"user","Sketch export queued","Native Canvas and Media3 job", "queued",0,null,queued.optString("projectId",""));
+                } catch(Exception failure) {
+                    ActivityLog.add(this,"user","Sketch export failed",failure.getMessage()==null?"Cannot prepare sketch export":failure.getMessage(),"failed",null,null,null);
+                }
+            });
         } else if (ACTION_LOCAL_EXPORT.equals(action)) {
             try {
                 JSONObject p = new JSONObject();
@@ -473,6 +487,8 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         directorSetupExecutor.shutdownNow();
         nativeSourceExecutor.shutdownNow();
         cinematic3DExecutor.shutdownNow();
+        authoringExecutor.shutdownNow();
+        pipelineExecutor.shutdownNow();
         if (NativeAgentWatchdog.shouldRearm(paused)) {
             NativeAgentWatchdog.scheduleRetry(this, "service_destroyed");
         } else {
@@ -514,7 +530,9 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 // The remote relay may deliver the same lease again. AppProtocol's
                 // bounded per-ID dispatch guard suppresses duplicate main-thread posts.
                 // The durable journal remains the authority for replay/exactly-once work.
-                (incomingAction.startsWith("cinematic_3d_") ? cinematic3DExecutor : nativeSourceExecutor)
+                (incomingAction.startsWith("cinematic_3d_") ? cinematic3DExecutor
+                        : incomingAction.startsWith("open_pipeline_") ? pipelineExecutor
+                        : incomingAction.startsWith("sketch_")||"precision_edit".equals(incomingAction)||"apply_tool".equals(incomingAction)||"set_studio_layers".equals(incomingAction) ? authoringExecutor : nativeSourceExecutor)
                         .execute(() -> onCommand(command));
             } catch(java.util.concurrent.RejectedExecutionException rejected) {
                 JSONObject failed = new JSONObject();
@@ -588,6 +606,17 @@ public final class ControlService extends Service implements AppProtocol.Callbac
 
         try {
             switch (action) {
+                case "precision_edit": complete(command,StudioPrecisionEdits.apply(this,store,p));syncProtocolState();return;
+                case "sketch_create": case "sketch_list": case "sketch_get": case "sketch_edit":
+                case "sketch_undo": case "sketch_redo": case "sketch_import_reference": case "sketch_preview":
+                    complete(command,SketchEditOps.execute(this,action,p));return;
+                case "sketch_render": complete(command,queueSketchRender(p));return;
+                case "open_pipeline_configure": case "open_pipeline_capabilities": case "open_pipeline_list":
+                case "open_pipeline_status": case "open_pipeline_cancel":
+                    complete(command,OpenPipelineOperations.execute(this,store,action,p,null));return;
+                case "open_pipeline_export_request": case "open_pipeline_submit": case "open_pipeline_download_result":
+                case "open_pipeline_import_result": case "open_pipeline_archive_artifact": case "open_pipeline_restore_artifact":
+                    complete(command,queueOpenPipeline(action,p));return;
                 case "ping":
                 case "get_state":
                     complete(command, stateJson());
@@ -1010,31 +1039,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
      * an in-progress manual edit with a stale ChatGPT action.
      */
     private JSONObject setStudioLayers(JSONObject parameters) throws Exception {
-        String projectId=parameters.optString("projectId","");
-        if(projectId.isEmpty())throw new IllegalArgumentException("Project ID required");
-        ProjectStore.Project project=store.get(projectId);
-        if(project==null)throw new IllegalArgumentException("Project not found");
-        if(!parameters.has("expectedUpdatedAt"))
-            throw new IllegalArgumentException("expectedUpdatedAt required for safe collaboration");
-        long expected=parameters.getLong("expectedUpdatedAt");
-        if(expected!=project.updatedAt)
-            throw new IllegalArgumentException("Project changed since last read; request fresh state");
-        JSONArray raw=parameters.optJSONArray("studioLayers");
-        if(raw==null)throw new IllegalArgumentException("studioLayers array required");
-        java.util.List<StudioLayer> validated=StudioLayerContract.fromJson(project,raw);
-        project.studioLayers.clear();
-        project.studioLayers.addAll(validated);
-        store.save(project);
-        JSONObject result=ok();
-        result.put("projectId",project.id);
-        result.put("updatedAt",project.updatedAt);
-        result.put("audioTracks",StudioTrackLayout.audioLayers(project).size());
-        int captions=0;
-        for(StudioLayer layer:project.studioLayers)
-            if(StudioLayer.TITLE.equals(layer.type))captions++;
-        result.put("titleTracks",captions);
-        result.put("studioLayers",StudioLayerContract.toJson(project.studioLayers));
-        return result;
+        return StudioLayerContract.apply(store,parameters);
     }
 
     private JSONObject applyEditPlan(JSONObject p) throws Exception {
@@ -1073,91 +1078,54 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     }
 
     private JSONObject applyTool(JSONObject p) throws Exception {
-        ProjectStore.Project project = resolveProject(p.optString("projectId", ""));
-        int index = p.optInt("clipIndex", 0);
-        if (index < 0 || index >= project.clips.size()) throw new IllegalArgumentException("Clip not found");
-        ProjectStore.Clip clip = project.clips.get(index);
-        String tool = p.optString("tool", "effect");
-        JSONObject settings = p.optJSONObject("settings");
-        if (settings == null) settings = new JSONObject();
-
-        switch (tool) {
-            case "trim":
-                clip.inMs = Math.max(0, settings.optLong("inMs", clip.inMs));
-                clip.outMs = Math.max(clip.inMs + 100, settings.optLong("outMs", clip.outMs));
-                break;
-            case "speed":
-            case "slow_motion":
-                clip.speed = (float) Math.max(.25, Math.min(4, settings.optDouble("speed", .5)));
-                break;
-            case "volume":
-                clip.volume = (float) Math.max(0, Math.min(2, settings.optDouble("volume", 1)));
-                break;
-            case "transition":
-                clip.transition = settings.optString("name", "fade");
-                break;
-            case "green_screen":
-                clip.effects.put("chromaKey", true);
-                clip.effects.put("chromaColor", settings.optString("color", "#00FF00"));
-                clip.effects.put("chromaTolerance", settings.optDouble("tolerance", .18));
-                clip.effects.put("spillSuppression", settings.optDouble("spill", .35));
-                break;
-            case "motion":
-                clip.effects.put("motionPreset", settings.optString("preset", "push_in"));
-                clip.effects.put("ease", settings.optString("ease", "easeInOut"));
-                break;
-            case "effect":
-                clip.effects.put("effectPreset", settings.optString("preset", "cinematic"));
-                copyNumeric(settings, clip.effects, "blur", "brightness", "contrast", "saturation", "lightness");
-                break;
-            case "color":
-                clip.effects.put("colorPreset", settings.optString("preset", "cinematic"));
-                if (settings.has("brightness")) clip.effects.put("brightness", settings.optDouble("brightness"));
-                if (settings.has("contrast")) clip.effects.put("contrast", settings.optDouble("contrast"));
-                if (settings.has("saturation")) clip.effects.put("saturationAdjust", settings.optDouble("saturation"));
-                if (settings.has("lightness")) clip.effects.put("lightnessAdjust", settings.optDouble("lightness"));
-                break;
-            case "reframe":
-                clip.effects.put("reframe", settings.optString("preset", "9:16_subject_safe"));
-                break;
-            case "mask":
-                clip.effects.put("mask", settings.optString("shape", "rounded_rect"));
-                clip.effects.put("maskFeather", settings.optDouble("feather", .08));
-                break;
-            case "font":
-                clip.effects.put("fontFamily", settings.optString("family", "sans-serif-medium"));
-                break;
-            case "text_animation":
-                clip.effects.put("textAnimation", settings.optString("preset", "fade_up"));
-                break;
-            case "title":
-                clip.title = settings.optString("text", "");
-                if (settings.has("font")) clip.effects.put("fontFamily", settings.optString("font"));
-                if (settings.has("animation")) clip.effects.put("textAnimation", settings.optString("animation"));
-                break;
-            case "blur":
-                clip.effects.put("blur", Math.max(0, Math.min(18, settings.optDouble("sigma", 4))));
-                break;
-            case "transform":
-                if (settings.has("scale")) clip.effects.put("scale", settings.optDouble("scale", 1));
-                if (settings.has("rotate")) clip.effects.put("rotate", settings.optDouble("rotate", 0));
-                break;
-            case "audio_duck":
-                clip.effects.put("audioDucking", true);
-                clip.effects.put("duckLevel", settings.optDouble("level", .32));
-                break;
-            case "keyframes":
-                clip.effects.put("keyframes", settings.optJSONArray("keyframes") == null ? new JSONArray() : settings.optJSONArray("keyframes"));
-                break;
-            default:
-                clip.effects.put(tool, settings);
+        ProjectStore.Project project=resolveProject(p.optString("projectId",""));
+        int index=p.optInt("clipIndex",0);
+        if(p.has("clipId")){
+            index=-1;String id=p.getString("clipId");
+            for(int i=0;i<project.clips.size();i++)if(id.equals(project.clips.get(i).id)){index=i;break;}
         }
-        store.save(project);
-        JSONObject result = ok();
-        result.put("projectId", project.id);
-        result.put("clipIndex", index);
-        result.put("tool", tool);
-        return result;
+        if(index<0||index>=project.clips.size())throw new IllegalArgumentException("Clip not found in the named project");
+        ProjectStore.Clip clip=project.clips.get(index);
+        String tool=p.optString("tool","effect");JSONObject settings=p.optJSONObject("settings");
+        if(settings==null)settings=new JSONObject();
+        JSONObject set=new JSONObject(),operation=new JSONObject().put("clipId",clip.id);
+        switch(tool){
+            case "trim":set.put("inMs",settings.has("inMs")?settings.get("inMs"):clip.inMs).put("outMs",settings.has("outMs")?settings.get("outMs"):clip.outMs);break;
+            case "speed":case "slow_motion":set.put("speed",settings.has("speed")?settings.get("speed"):settings.has("value")?settings.get("value"):.5);break;
+            case "volume":set.put("volume",settings.has("volume")?settings.get("volume"):settings.has("gain")?settings.get("gain"):1);break;
+            case "transform":
+                for(String key:new String[]{"scale","scaleX","scaleY","rotate","x","y","anchorX","anchorY","opacity"})if(settings.has(key))set.put(key,settings.get(key));break;
+            case "color":case "colour":
+                if(settings.has("preset"))set.put("colorPreset",settings.get("preset"));
+                for(String key:new String[]{"brightness","contrast","saturationAdjust","lightnessAdjust"})if(settings.has(key))set.put(key,settings.get(key));
+                if(settings.has("saturation"))set.put("saturationAdjust",settings.get("saturation"));
+                if(settings.has("lightness"))set.put("lightnessAdjust",settings.get("lightness"));break;
+            case "effect":
+                String preset=settings.optString("preset","none");
+                set.put(StudioPrecisionEdits.COLORS.contains(preset)?"colorPreset":"effectPreset",preset);break;
+            case "motion":set.put("motionPreset",settings.optString("preset","none"));break;
+            case "blur":set.put("blur",settings.has("sigma")?settings.get("sigma"):4);break;
+            case "title":set.put("title",settings.optString("text",""));break;
+            case "keyframes":operation.put("keyframes",settings.getJSONArray("keyframes"));break;
+            case "green_screen":
+                set.put("chromaKey",settings.has("enabled")?settings.get("enabled"):true)
+                    .put("chromaColor",settings.has("color")?settings.get("color"):settings.optString("keyColor","#00FF00"));
+                if(settings.has("tolerance"))set.put("chromaTolerance",settings.get("tolerance"));
+                if(settings.has("feather"))set.put("chromaFeather",settings.get("feather"));break;
+            case "mask":
+                set.put("maskShape",settings.optString("shape","ellipse"));
+                for(String key:new String[]{"maskLeft","maskTop","maskRight","maskBottom","maskFeather"})if(settings.has(key))set.put(key,settings.get(key));
+                if(settings.has("feather"))set.put("maskFeather",settings.get("feather"));break;
+            case "glow":
+                set.put("glowStrength",settings.has("strength")?settings.get("strength"):1);
+                if(settings.has("radiusPx"))set.put("glowRadiusPx",settings.get("radiusPx"));
+                if(settings.has("threshold"))set.put("glowThreshold",settings.get("threshold"));break;
+            default:throw new IllegalArgumentException("UNSUPPORTED_EFFECT: "+tool+" has no implemented native rendering path");
+        }
+        if(set.length()>0)operation.put("set",set);
+        long revision=p.has("expectedUpdatedAt")?StudioClipKeyframes.integer(p,"expectedUpdatedAt",0,9_007_199_254_740_991L):project.updatedAt;
+        JSONObject result=StudioPrecisionEdits.apply(this,store,new JSONObject().put("projectId",project.id).put("expectedUpdatedAt",revision).put("operations",new JSONArray().put(operation)));
+        return result.put("clipId",clip.id).put("clipIndex",index).put("tool",tool);
     }
 
     private JSONObject applyCreatorPreset(JSONObject p) throws Exception {
@@ -1914,7 +1882,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             String projectId = plan.optString("projectId", "");
             String outputUri = plan.optString("outputUri", "");
 
-            if (!outputUri.isEmpty() && isReadableOutput(outputUri)) {
+            if (!outputUri.isEmpty() && isReadableOutput(outputUri) && !"sketch_render".equals(action)) {
                 if ("run_creative_graph".equals(action)) {
                     try {
                         ProjectStore.Asset rendered = latestGeneratedVideo(projectId);
@@ -1953,6 +1921,12 @@ public final class ControlService extends Service implements AppProtocol.Callbac
 
                 JSONObject queued;
                 switch (action) {
+                    case "sketch_render":
+                        parameters.remove("projectId");queued=queueSketchRender(parameters);break;
+                    case "open_pipeline_export_request": case "open_pipeline_submit": case "open_pipeline_download_result":
+                    case "open_pipeline_import_result": case "open_pipeline_archive_artifact": case "open_pipeline_restore_artifact":
+                        if(!"open_pipeline_export_request".equals(action))parameters.remove("projectId");
+                        queued=queueOpenPipeline(action,parameters);break;
                     case "animate_combat_rig":
                         queued = queueCombatRig(parameters);
                         break;
@@ -2091,7 +2065,15 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                     }
                     jobs.awaitSafeCheckpoint(state, "cloud_offload_commit");
                     checkpoint(state, "Cloud offload", "Archive verified • evicting only cloud-backed intermediates", 90, project.id);
-                    JSONObject evicted = creativeWorkspace.evictCloudBackedProject(project.id);
+                    JSONObject evicted;
+                    // Restore takes the provider before the SQLite writer; use
+                    // the same order so concurrent restore cannot deadlock offload.
+                    synchronized(driveWorkspace){evicted=store.guardedProject(project.id,project.updatedAt,current->{
+                        JSONObject evictionProof=driveWorkspace.verifyArchiveForEviction(current,workspace,archived);
+                        if(!evictionProof.optBoolean("verified",false)||!evictionProof.optBoolean("evictionEligible",false))
+                            throw new IllegalStateException("Cloud archive cannot verify this local generation; working files retained");
+                        return creativeWorkspace.evictCloudBackedProject(current.id);
+                    });}
                     checkpoint(state, "Cloud offload",
                             "Freed " + evicted.optLong("removedBytes", 0) + " bytes of local creative working data",
                             100, project.id);
@@ -2141,6 +2123,8 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                                 jobs.awaitSafeCheckpoint(state, state.stage);
                             }
                     );
+                    if(!restored.optBoolean("verified",false))throw new IllegalStateException("Cloud restore has no verified generation receipt");
+                    creativeWorkspace.markCloudHydrated(project.id);
                     checkpoint(state, "Cloud restore",
                             "Creative workspace restored • " + restored.optLong("bytesRestored", 0) + " bytes",
                             100, project.id);
@@ -2919,6 +2903,101 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     }
 
     /** Complete admission precedes output creation, recovery work and GPU effects. */
+    private JSONObject queueSketchRender(JSONObject input) throws Exception {
+        final JSONObject request=publicOperationParameters(input);
+        SketchDocument.fields(request,"sketchId,expectedRevision,operationId,aspect,quality");
+        String sketchId=SketchDocument.id(request,"sketchId"),operationId=SketchDocument.id(request,"operationId");
+        SketchDocument.integer(request,"expectedRevision",1,9_007_199_254_740_991L);
+        if(!input.has("_recoveryPlanId"))
+            SketchEditOps.execute(this,"sketch_get",new JSONObject().put("sketchId",sketchId).put("expectedRevision",request.get("expectedRevision")));
+        final String outputId=UUID.nameUUIDFromBytes(("sketch-output/"+sketchId+"/"+operationId).getBytes(StandardCharsets.UTF_8)).toString();
+        JSONObject durable=new JSONObject(request.toString());
+        if(input.has("_recoveryPlanId"))durable.put("_recoveryPlanId",input.get("_recoveryPlanId"));
+        if(input.has("_mcpCommandId"))durable.put("_mcpCommandId",input.get("_mcpCommandId"));
+        JobManager.Job job=submitRecoverableHeavy("sketch_render",durable,outputId,"Sketch animation export",state->{
+            jobs.awaitSafeCheckpoint(state,"sketch_prepare");
+            SketchNativeExport.Prepared prepared=SketchNativeExport.prepare(this,request,(frame,count)->{
+                if(frame%4==0||frame==count-1){
+                    checkpoint(state,"Sketch frame capture",(frame+1)+"/"+count+" authored frames",2+(int)(65d*frame/Math.max(1,count)),outputId);
+                    jobs.awaitSafeCheckpoint(state,"sketch_frame_"+frame);
+                }
+            });
+            if(!outputId.equals(prepared.project.id))throw new IllegalStateException("Sketch output identity changed");
+            JSONObject metadata;
+            if(prepared.completed)metadata=new JSONObject(prepared.metadata.toString());
+            else{
+                jobs.awaitSafeCheckpoint(state,"sketch_encode");
+                final CountDownLatch done=new CountDownLatch(1);
+                final AtomicReference<JSONObject> encoder=new AtomicReference<>();
+                final AtomicReference<String> failure=new AtomicReference<>();
+                String aspect="original".equals(prepared.aspect)?"source:"+prepared.metadata.getInt("width")+"x"+prepared.metadata.getInt("height"):prepared.aspect;
+                NativeRenderEngine.Handle handle=renderEngine.export(prepared.project,prepared.encodingFile,aspect,prepared.quality,new NativeRenderEngine.Listener(){
+                    public void onProgress(int value,String detail){checkpoint(state,"Sketch encoding",detail,68+(int)(value*.25),outputId);}
+                    public void onCompleted(File file,JSONObject result){encoder.set(result);done.countDown();}
+                    public void onError(String message){failure.set(message);done.countDown();}
+                });
+                if(handle==null)throw new IllegalStateException("Cannot start sketch encoder");
+                synchronized(this){activeRender=handle;activeRenderJobId=state.id;}
+                long deadline=android.os.SystemClock.elapsedRealtime()+30*60*1000L;
+                try{
+                    while(!done.await(500,TimeUnit.MILLISECONDS)){
+                        if(Thread.currentThread().isInterrupted()||"cancelled".equals(state.state)){handle.cancel();throw new InterruptedException();}
+                        if(android.os.SystemClock.elapsedRealtime()>deadline){handle.cancel();throw new IllegalStateException("Sketch encoding exceeded its bounded deadline");}
+                    }
+                    if(Thread.currentThread().isInterrupted()||"cancelled".equals(state.state))throw new InterruptedException();
+                    if(failure.get()!=null)throw new IllegalStateException(failure.get());
+                    if(encoder.get()==null)throw new IllegalStateException("Sketch encoder produced no completion receipt");
+                    metadata=SketchNativeExport.complete(this,prepared,encoder.get());
+                }finally{
+                    if(encoder.get()==null)handle.cancel();
+                    synchronized(this){if(activeRender==handle){activeRender=null;activeRenderJobId="";}}
+                }
+            }
+            jobs.awaitSafeCheckpoint(state,"sketch_publish");
+            JSONObject committed=recoveryPlans.outputForJob(state.id);
+            final String published=metadata.optString("publishedUri",committed==null?"":committed.optString("uri",""));
+            final String outputName="VideoStudio_Sketch_"+operationId+".mp4";
+            AtomicMediaPublisher.PublishResult publication=AtomicMediaPublisher.publish(prepared.file,new AtomicMediaPublisher.PublishTarget(){
+                public String existingPublishedUri(){return isReadableOutput(published)?published:"";}
+                public String publish(File source)throws Exception{return publishExport(source,outputName).toString();}
+                public String displayName(){return outputName;}
+            });
+            recoveryPlans.markOutputForJob(state.id,publication.uri,outputName);
+            metadata=SketchNativeExport.recordPublished(this,prepared,Uri.parse(publication.uri),outputName);
+            state.setResult(metadata.put("ok",true).put("projectId",outputId).put("decodedFrameCountVerified",false).put("cinematicAcceptance",false));
+            checkpoint(state,"Sketch export","Native MP4 is available in Movies/VideoStudio",100,outputId);syncProtocolState();
+        });
+        return ok().put("queued",true).put("jobId",job.id).put("projectId",outputId).put("outputProjectId",outputId)
+                .put("sketchId",sketchId).put("durableRecovery",true).put("render",true);
+    }
+
+    private static JSONObject publicOperationParameters(JSONObject input)throws Exception {
+        JSONObject result=new JSONObject(input.toString());JSONArray keys=result.names();
+        if(keys!=null)for(int i=0;i<keys.length();i++)if(keys.getString(i).startsWith("_"))result.remove(keys.getString(i));
+        return result;
+    }
+
+    private JSONObject queueOpenPipeline(String action,JSONObject input)throws Exception {
+        final JSONObject request=publicOperationParameters(input);
+        String requestId=OpenPipelineArtifacts.id(request.getString("requestId"));
+        String projectId=request.optString("projectId","");
+        if(projectId.isEmpty())projectId=new OpenPipelineStore(this).get(requestId).getString("projectId");
+        final String sourceProjectId=projectId;
+        JSONObject durable=new JSONObject(request.toString());
+        if(input.has("_recoveryPlanId"))durable.put("_recoveryPlanId",input.get("_recoveryPlanId"));
+        if(input.has("_mcpCommandId"))durable.put("_mcpCommandId",input.get("_mcpCommandId"));
+        JobManager.Job job=submitRecoverableTransfer(action,durable,projectId,"Open Pipeline • "+action.replace("open_pipeline_","").replace('_',' '),state->{
+            JSONObject result=OpenPipelineOperations.execute(this,store,action,request,(progress,detail)->{
+                checkpoint(state,"Open Pipeline",detail,Math.min(99,Math.max(0,progress)),sourceProjectId);
+                jobs.awaitSafeCheckpoint(state,"open_pipeline_transfer");
+            });
+            if(result.has("jobId")){result.put("remoteJobId",result.get("jobId"));result.remove("jobId");}
+            state.setResult(result.put("ok",true).put("submissionIsGenerationCompletion",false));syncProtocolState();
+        });
+        return ok().put("queued",true).put("jobId",job.id).put("projectId",projectId).put("requestId",requestId)
+                .put("durableRecovery",true).put("nativeRendered",false);
+    }
+
     private JSONObject queueCinematic3D(JSONObject input) throws Exception {
         final boolean recovering=input.has("_recoveryPlanId");
         JSONObject request=new JSONObject(input.toString());
@@ -4526,6 +4605,12 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             out.put("sourceRigPreparationStatusReady", true);
             out.put("sourceRigWorkbenchMinimumVersion", "3.7.3");
             out.put("cinematic3d",cinematic3DCapabilities());
+            out.put("studioWorkbench",new JSONObject().put("minimumNativeAppVersion","3.9.0")
+                    .put("sharedHumanAndMCP",true).put("sketchCanvasRenderer",true).put("sketchGeometryPaging",true)
+                    .put("atomicClipEdits",true).put("clipKeyframes",true).put("chromaKey",true)
+                    .put("featheredMasks",true).put("glow",true).put("timedImageOverlays",true)
+                    .put("openSourceGenerationPipeline",true).put("commercialGenerationApis",false)
+                    .put("driveVerifiedArchiveRequired",true).put("phoneGpuVerified",false));
             out.put("sourceRigAnatomicalInferenceAvailable", false);
             out.put("sourceTextured2DMeshSkinningReady", true);
             out.put("glbSkeletalPreviewReady", true);
@@ -4719,6 +4804,9 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     private boolean mayQueueBackgroundWork(String action) {
         if (action == null) return false;
         switch (action) {
+            case "sketch_render":
+            case "open_pipeline_export_request": case "open_pipeline_submit": case "open_pipeline_download_result":
+            case "open_pipeline_import_result": case "open_pipeline_archive_artifact": case "open_pipeline_restore_artifact":
             case "prompt_video":
             case "animate_images":
             case "animate_storyboard_series":
@@ -5061,6 +5149,21 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             case "render_rigged_2d": return "Animating original masked fighters through native 2D mesh skinning";
             case "cinematic_3d_render": return "Rendering articulated cinematic 3D scenes";
             case "cinematic_3d_capabilities": return "Reading cinematic 3D capabilities";
+            case "precision_edit": return "Applying exact clip edits";
+            case "sketch_create": return "Creating a sketch animation";
+            case "sketch_edit": case "sketch_undo": case "sketch_redo": return "Editing sketch layers and poses";
+            case "sketch_get": case "sketch_list": return "Reading sketch geometry";
+            case "sketch_preview": return "Rendering a sketch preview";
+            case "sketch_import_reference": return "Importing an owned sketch reference";
+            case "sketch_render": return "Exporting sketch animation";
+            case "open_pipeline_configure": return "Configuring the private open-source runner";
+            case "open_pipeline_capabilities": return "Reading actual runner readiness";
+            case "open_pipeline_list": case "open_pipeline_status": return "Reading open-source generation jobs";
+            case "open_pipeline_export_request": return "Preparing an immutable generation request";
+            case "open_pipeline_submit": return "Submitting an open-source generation job";
+            case "open_pipeline_cancel": return "Cancelling open-source generation";
+            case "open_pipeline_download_result": case "open_pipeline_import_result": return "Importing a verified generation result";
+            case "open_pipeline_archive_artifact": case "open_pipeline_restore_artifact": return "Transferring a verified cloud artifact";
             case "animate_storyboard_artwork": return "Animating original storyboard keyframes with source-textured character motion";
             case "storyboard_series_plan": return "Planning original illustrated multi-genre storyboard shots";
             case "storyboard_series_audit": return "Inspecting actual artwork movement and source masks";

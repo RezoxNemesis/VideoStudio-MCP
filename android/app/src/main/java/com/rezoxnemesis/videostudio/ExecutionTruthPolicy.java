@@ -141,6 +141,7 @@ public final class ExecutionTruthPolicy {
                 || "render_rigged_2d".equals(value)
                 || "render_gltf_combat".equals(value)
                 || "cinematic_3d_render".equals(value)
+                || "sketch_render".equals(value)
                 || "export_project".equals(value)
                 || "autonomous_edit".equals(value);
     }

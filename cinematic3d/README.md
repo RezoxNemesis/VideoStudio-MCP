@@ -5,6 +5,39 @@ Cycles output are cloud evidence. Android Filament/Media3 output requires actual
 device execution. Procedural mannequins and model predictions do not establish
 original-image reconstruction or cinematic acceptance.
 
+Optional timeline `actors` declares both `black` and `white` with one humanoid
+`preset`: `athletic`, `slender`, `stocky`, `chibi`, or `robot`. Optional
+`heightScale`, `buildScale`, and `headScale` each use 0.8..1.2. An optional
+`material` supplies linear RGB `color`, `metallic` (0..1), and `roughness`
+(0.1..1). Real rest bones, geometry, skin weights, and IK change together.
+Leaving `actors` absent retains the existing carbon/ceramic mannequins.
+
+Each shot can add `motionStyle: {"preset":"anime","intensity":0.8}`. Presets are
+`grounded`, `anime`, `martial`, and `cartoony`; intensity is 0..1. The ten added
+actions are IDLE/WALK/RUN/JUMP/DODGE/DUCK/PUNCH/KICK/DANCE/WAVE. Styles change
+sampled rotations and roots; custom model/style inputs require rebuilding the
+matching portable clips. The old eleven-action library remains the default.
+For a smaller imported action pack, declare exactly its actions in the timeline
+and use `--library-only --actions WAVE,WALK,PUNCH`. No expanded built-in APK asset
+is required for an imported pack.
+
+`build --conditioning-frames 8` also creates `conditioning/manifest.json` and an
+ordered prefix of the exact output clock, bounded to 1200 frames. Each frame has
+evaluated pose/camera JSON, beauty PNG, metric depth EXR, raw world Y-up normals,
+and separate actor/katana object masks. Every sidecar file has a size and SHA-256;
+conditioning remains in the cloud generation and is omitted from the phone
+archive. This exports real rendering guides for configured local open-source
+generation workflows; it does not itself execute video diffusion.
+
+`python -m cinematic3d guide --request reference-guide.json --output guide.json`
+maps sixteen original-image normalized joint marks into a scaled orthographic
+3D guide. Request schema is `videostudio.cinematic3d.reference-guide-request.v1`
+with `sourceSha256`, `profileSha256`, `joints`, oriented `imageWidth`/`imageHeight`,
+`heightMeters` (0.3..3), sixteen explicitly authored `depthMeters` (-10..10),
+and sixteen `uncertaintyMeters` (0..10). The receipt preserves those assumptions
+and declared hashes. It does not observe the original source/profile bytes or
+recover hidden depth, identity, texture, or motion.
+
 ```bash
 python -m cinematic3d capabilities
 python -m cinematic3d validate --timeline timeline.json
