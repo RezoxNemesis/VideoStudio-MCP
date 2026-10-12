@@ -11,3 +11,8 @@ dist/
 .wrangler-personal-dist/
 __pycache__/
 VideoStudio-Personal-Source.zip
+android/.gradle/
+android/**/build/
+android/local.properties
+*.keystore
+*.jks
