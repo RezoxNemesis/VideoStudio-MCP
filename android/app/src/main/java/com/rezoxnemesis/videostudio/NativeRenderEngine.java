@@ -176,14 +176,12 @@ public final class NativeRenderEngine {
                                         android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT));
                                 String rotation = verifier.extractMetadata(
                                         android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION);
-                                if ("90".equals(rotation) || "270".equals(rotation)) {
+                                int rotationDegrees = rotation == null ? 0
+                                        : Math.floorMod(Integer.parseInt(rotation), 360);
+                                if (rotationDegrees == 90 || rotationDegrees == 270) {
                                     int temp = actualWidth; actualWidth = actualHeight; actualHeight = temp;
                                 }
-                                boolean shouldBePortrait = "9:16".equals(aspect) || "4:5".equals(aspect);
-                                boolean shouldBeLandscape = "16:9".equals(aspect);
-                                if (actualWidth <= 0 || actualHeight <= 0 ||
-                                        shouldBePortrait && actualHeight <= actualWidth ||
-                                        shouldBeLandscape && actualWidth <= actualHeight) {
+                                if (!outputGeometryMatches(aspect, actualWidth, actualHeight)) {
                                     listener.onError("Export dimension mismatch: requested " + aspect
                                             + " but encoded " + actualWidth + "x" + actualHeight);
                                     return;
@@ -191,6 +189,7 @@ public final class NativeRenderEngine {
                                 info.put("encodedWidth", actualWidth);
                                 info.put("encodedHeight", actualHeight);
                                 info.put("orientationVerified", true);
+                                info.put("sourceRasterVerified", sourceRaster(aspect) != null);
                             } catch (Exception verificationFailed) {
                                 listener.onError("Could not verify encoded dimensions of exported video");
                                 return;
@@ -428,10 +427,8 @@ public final class NativeRenderEngine {
         ArrayList<Effect> effects = new ArrayList<>();
         JSONObject fx = clip.effects == null ? new JSONObject() : clip.effects;
 
-        int height = "720p".equalsIgnoreCase(quality)
-                ? ("16:9".equals(aspect) ? 720 : 1280)
-                : ("16:9".equals(aspect) ? 1080 : 1920);
-        int width = Math.round(height * aspectRatio(aspect));
+        int[] raster=outputSize(aspect,quality);
+        int width=raster[0],height=raster[1];
         effects.add(Presentation.createForWidthAndHeight(
                 width, height, Presentation.LAYOUT_SCALE_TO_FIT_WITH_CROP));
 
@@ -512,7 +509,8 @@ public final class NativeRenderEngine {
             // 250ms photo minimum would destroy 24fps action timing.
             boolean poseFrame = clip.effects != null && (clip.effects.optBoolean("poseInbetween", false)
                     || clip.effects.optBoolean("directorSequenceFrame", false));
-            media.setImageDurationMs(Math.max(poseFrame ? 34 : 250, clip.outputDurationMs()));
+            if(poseFrame)poseFrameRate(clip);
+            media.setImageDurationMs(Math.max(poseFrame ? 1 : 250, clip.outputDurationMs()));
         } else {
             media.setClippingConfiguration(
                     new MediaItem.ClippingConfiguration.Builder()
@@ -524,7 +522,8 @@ public final class NativeRenderEngine {
         EditedMediaItem.Builder edited = new EditedMediaItem.Builder(media.build());
         if (image) edited.setFrameRate(clip.effects != null && (clip.effects.optBoolean("poseInbetween", false)
                     || clip.effects.optBoolean("directorSequenceFrame", false))
-                ? Math.max(12, Math.min(30, clip.effects.optInt("poseFps", 24))) : 30);
+                ? poseFrameRate(clip) : 30);
+        if(image)applyAuthoredFrameClock(edited,asset,clip);
 
         if (!image && Math.abs(clip.speed - 1f) > .01f) {
             final float speed = Math.max(.25f, Math.min(4f, clip.speed));
@@ -548,16 +547,45 @@ public final class NativeRenderEngine {
         return edited.build();
     }
 
+    private static int poseFrameRate(ProjectStore.Clip clip) {
+        int fps=clip.effects.optInt("poseFps",24);
+        // Existing pose-sequence tools support 12..30. The cinematic request
+        // path applies its own stricter 24/30/60 contract before composition.
+        if(fps<12 || fps>60)throw new IllegalArgumentException("Pose frame FPS must be in 12..60");
+        return fps;
+    }
+
+    private static void applyAuthoredFrameClock(EditedMediaItem.Builder item,
+                                              ProjectStore.Asset asset,ProjectStore.Clip clip) {
+        if(!asset.generated || clip.effects==null || asset.generationMetadata==null ||
+                !("multigenre_storyboard_motion".equals(asset.role) || "storyboard_artwork_frame".equals(asset.role)
+                        || "generated_skinned_2d".equals(asset.role)) ||
+                !"rational-authored-v1".equals(clip.effects.optString("frameClock")) ||
+                !"rational-authored-v1".equals(asset.generationMetadata.optString("frameClock")))return;
+        Object index=clip.effects.opt("frameIndex"), original=asset.generationMetadata.opt("frameIndex");
+        if(!(index instanceof Number) || !(original instanceof Number) ||
+                !Double.isFinite(((Number)index).doubleValue()) || ((Number)index).doubleValue()<0 ||
+                ((Number)index).doubleValue()>2_000_000 || ((Number)index).doubleValue()!=((Number)index).longValue() ||
+                ((Number)index).doubleValue()!=((Number)original).doubleValue())
+            throw new IllegalArgumentException("Generated frame clock identity differs from its asset");
+        int fps=NativeFrameClock.requireFps(poseFrameRate(clip));
+        if(asset.generationMetadata.optInt("fps",0)!=fps)
+            throw new IllegalArgumentException("Generated frame FPS differs from its asset");
+        long frame=((Number)index).longValue();
+        // A person may extend, trim or retime a generated image. Such clips
+        // keep their edited duration instead of inheriting a one-frame clock.
+        if(clip.inMs==0 && clip.speed==1f && clip.outMs==NativeFrameClock.frameDurationMs(frame,fps))
+            item.setDurationUs(NativeFrameClock.frameDurationUs(frame,fps));
+    }
+
     private List<Effect> buildEffects(ProjectStore.Clip clip, String aspect, String quality, long inputDurationMs) {
         ArrayList<Effect> effects = new ArrayList<>();
         JSONObject fx = clip.effects == null ? new JSONObject() : clip.effects;
 
         // Enforce correct raster geometry instead of a 9:16 scene letterboxed
         // in a 16:9 output. The encoder still selects a supported size.
-        int height = "720p".equalsIgnoreCase(quality)
-                ? ("16:9".equals(aspect) ? 720 : 1280)
-                : ("16:9".equals(aspect) ? 1080 : 1920);
-        int width = Math.round(height * aspectRatio(aspect));
+        int[] raster=outputSize(aspect,quality);
+        int width=raster[0],height=raster[1];
         effects.add(Presentation.createForWidthAndHeight(
                 width, height, Presentation.LAYOUT_SCALE_TO_FIT_WITH_CROP));
 
@@ -616,10 +644,37 @@ public final class NativeRenderEngine {
     }
 
     private static float aspectRatio(String aspect) {
+        int[] exact=sourceRaster(aspect);
+        if(exact!=null)return exact[0]/(float)exact[1];
         if ("16:9".equals(aspect)) return 16f / 9f;
         if ("1:1".equals(aspect)) return 1f;
         if ("4:5".equals(aspect)) return 4f / 5f;
         return 9f / 16f;
+    }
+
+    private static int[] sourceRaster(String aspect) {
+        if(aspect==null || !aspect.startsWith("source:"))return null;
+        java.util.regex.Matcher dimensions=java.util.regex.Pattern.compile("source:([0-9]{3,4})x([0-9]{3,4})").matcher(aspect);
+        if(!dimensions.matches())throw new IllegalArgumentException("Exact storyboard raster is invalid");
+        int width=Integer.parseInt(dimensions.group(1)),height=Integer.parseInt(dimensions.group(2));
+        if(width<256 || height<256 || width>1280 || height>1280 || (width&1)!=0 || (height&1)!=0 ||
+                (long)width*height>720L*1280L)
+            throw new IllegalArgumentException("Exact storyboard raster exceeds its bounded frame geometry");
+        return new int[]{width,height};
+    }
+    private static int[] outputSize(String aspect,String quality) {
+        int[] exact=sourceRaster(aspect);if(exact!=null)return exact;
+        int height="720p".equalsIgnoreCase(quality)?("16:9".equals(aspect)?720:1280):("16:9".equals(aspect)?1080:1920);
+        return new int[]{Math.round(height*aspectRatio(aspect)),height};
+    }
+
+    static boolean outputGeometryMatches(String aspect, int width, int height) {
+        if (width <= 0 || height <= 0) return false;
+        int[] exact = sourceRaster(aspect);
+        if (exact != null) return width == exact[0] && height == exact[1];
+        if ("9:16".equals(aspect) || "4:5".equals(aspect)) return height > width;
+        if ("16:9".equals(aspect)) return width > height;
+        return true;
     }
 
     private static double clamp(double v, double min, double max) {

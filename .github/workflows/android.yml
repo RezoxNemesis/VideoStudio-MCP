@@ -88,24 +88,32 @@ jobs:
           retention-days: 7
 
       - name: Verify APK signing continuity
+        env:
+          VIDEOSTUDIO_SOURCE_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           set -euo pipefail
           expected="$(keytool -list -v -keystore "$HOME/.android/debug.keystore" -storepass android -alias androiddebugkey | awk -F': ' '/SHA256:/{print $2;exit}' | tr -d ':[:space:]' | tr '[:upper:]' '[:lower:]')"
           actual="$("$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --print-certs android/app/build/outputs/apk/debug/app-debug.apk | awk -F': ' '/Signer #1 certificate SHA-256 digest:/{print $2;exit}' | tr -d ':[:space:]' | tr '[:upper:]' '[:lower:]')"
           # Pin the pre-existing cached owner development key; never silently rotate it.
-          pinned="7e0187470356616be2a45bc7f41445894085185db110edf dc0cdfd232942a6dd"
-          pinned="${pinned// /}"
+          pinned="7e0187470356616be2a45bc7f41445894085185db110edfdc0cdfd232942a6dd"
           if [ -z "$expected" ] || [ -z "$actual" ] || [ "$expected" != "$actual" ] || [ "$expected" != "$pinned" ]; then
             echo "::error::APK signer differs from the cached, pinned VideoStudio signing identity"
             exit 1
           fi
           echo "APK signing identity verified against owner development key."
+          python3 scripts/verify-android-apk.py \
+            --apk android/app/build/outputs/apk/debug/app-debug.apk \
+            --aapt "$ANDROID_HOME/build-tools/35.0.0/aapt" \
+            --apksigner "$ANDROID_HOME/build-tools/35.0.0/apksigner"
 
       - name: Upload installable APK
         uses: actions/upload-artifact@v4
         with:
           name: VideoStudio-Android-debug
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          path: |
+            android/app/build/outputs/apk/debug/app-debug.apk
+            android/app/build/outputs/apk/debug/app-debug.apk.sha256
+            android/app/build/outputs/apk/debug/VideoStudio-build-proof.json
           if-no-files-found: error
 
       - name: Prepare stable direct-download APK

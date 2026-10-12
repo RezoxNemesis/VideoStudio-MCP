@@ -31,16 +31,18 @@ public final class StoryboardSegmentComposer {
     public interface Progress {
         void onFrame(int completed,int total,int shotIndex,
                      String backend,float confidence) throws Exception;
+        default void onSaved(ProjectStore.Project output) throws Exception { }
     }
     public static final class Summary {
         public final ProjectStore.Project output;
         public final int generatedFrames,animatedShots;
         public final double minimumConfidence;
         public final JSONArray shotReport;
+        public final List<StoryboardFoleySynth.CapturedEvent> capturedEvents;
         Summary(ProjectStore.Project output,int frames,int shots,
-                double confidence,JSONArray reports) {
+                double confidence,JSONArray reports,List<StoryboardFoleySynth.CapturedEvent> events) {
             this.output=output;generatedFrames=frames;animatedShots=shots;
-            minimumConfidence=confidence;shotReport=reports;
+            minimumConfidence=confidence;shotReport=reports;capturedEvents=java.util.Collections.unmodifiableList(new ArrayList<>(events));
         }
     }
     private interface Painter extends AutoCloseable {
@@ -48,6 +50,10 @@ public final class StoryboardSegmentComposer {
         String backend();
         float confidence();
         default StoryboardLayerIsolation.Result trackedSourceObjects(){return null;}
+        default boolean confidenceMeasured(){return true;}
+        default StoryboardPoseMotion.Frame motion(float time){return null;}
+        default boolean collisionIntent(){return false;}
+        default JSONObject sourceCoverageEvidence() throws Exception {return new JSONObject().put("status","UNAVAILABLE").put("hiddenSourceMaterialSynthesized",false);}
         @Override void close();
     }
     private StoryboardSegmentComposer(){}
@@ -75,9 +81,7 @@ public final class StoryboardSegmentComposer {
             throw new IllegalArgumentException("Source and separate native output projects required");
         if(batchIndex<0||batchIndex>=plan.batches.size())
             throw new IllegalArgumentException("Storyboard batch index not available");
-        if(width<256||height<432||width>720||height>1280||
-                (width&1)!=0||(height&1)!=0)
-            throw new IllegalArgumentException("Use bounded even portrait dimensions");
+        StoryboardMotionAdmission.dimensions(width,height);
         if(settings==null)settings=new JSONObject();
         StoryboardBatchPlanner.Batch batch=plan.batches.get(batchIndex);
         int expected=batch.expectedFrames-(append?1:0);
@@ -90,47 +94,71 @@ public final class StoryboardSegmentComposer {
                 !target.sourcePrompt.startsWith("storyboard-multigenre-v1")))
             throw new IllegalArgumentException("Output holds unrelated user content");
 
+        // Resolve/verify accepted sources before touching even a partial output graph.
+        if(!settings.has("_storyboardAdmission")) {
+            JSONObject manifest=StoryboardSourceManifest.capture(context,original,settings);
+            StoryboardBatchPlanner.Plan bound=StoryboardBatchPlanner.plan(original,settings,manifest);
+            settings=new JSONObject(settings.toString()).put("batchIndex",batchIndex).put("width",width).put("height",height)
+                    .put("motionIntent",StoryboardMotionAdmission.intent(settings)).put("_storyboardSourceManifest",manifest)
+                    .put("_storyboardAdmission",StoryboardMotionAdmission.freeze(context,store,original,bound,batchIndex,width,height,settings,manifest));
+            plan=bound;batch=plan.batches.get(batchIndex);
+        }
+        StoryboardMotionAdmission.verify(context,store,store.get(original.id),plan,settings);
+        if(settings.has("_storyboardOutputUpdatedAt")&&target.updatedAt!=settings.getLong("_storyboardOutputUpdatedAt"))
+            throw new IllegalStateException("STORYBOARD_OUTPUT_CHANGED: partial target was edited; previous generation retained");
+        JSONObject manifest=settings.getJSONObject("_storyboardSourceManifest");
         File outputDir=new File(context.getFilesDir(),
-                "creative_workspace/projects/"+target.id+
-                "/generated/storyboard_multigenre");
-        if(!outputDir.isDirectory()&&!outputDir.mkdirs())
-            throw new IllegalStateException("Cannot prepare private multi-shot workspace");
-        // Restart only replaces this ONE generated frame pattern in the
-        // separate output project; never delete user media or source files.
+                "creative_workspace/projects/"+target.id+"/generated/storyboard_multigenre/"+UUID.randomUUID());
+        if(!outputDir.mkdirs())throw new IllegalStateException("Cannot prepare immutable private animation generation");
+        String sidecarSha=writeAdmissionProof(outputDir,manifest,settings.getJSONObject("_storyboardAdmission"));
+        // Previous generation files remain intact for saved graphs/history and audit.
         if(!append){
-            File[] previous=outputDir.listFiles();
-            if(previous!=null)for(File f:previous)
-                if(f.isFile()&&f.getName().matches("story_[0-9]{5}\\.jpg")
-                        &&!f.delete())
-                    throw new IllegalStateException("Could not restart incomplete storyboard batch");
             target.assets.clear();target.clips.clear();target.studioLayers.clear();
             target.sourcePrompt="storyboard-multigenre-v1: source-owned layered motion series";
-            store.save(target);
         }
         final int priorFrames=target.clips.size();
 
+        boolean generationPublished=false;
+        try {
         Rig2DProjectStore rigs=new Rig2DProjectStore(context,store);
         int complete=0,shotCount=0;
-        double minConfidence=1;
+        double minConfidence=Double.NaN;
         JSONArray report=new JSONArray();
-        long durationMs=Math.max(34,Math.round(1000d/plan.fps));
+        NativeFrameClock.requireFps(plan.fps);
+        settings.put("fps",plan.fps);
+        List<StoryboardFoleySynth.CapturedEvent> captured=new ArrayList<>();
         for(StoryboardBatchPlanner.Shot shot:batch.shots){
             if(Thread.currentThread().isInterrupted())throw new InterruptedException();
             ProjectStore.Asset start=original.asset(shot.fromId);
             ProjectStore.Asset end=original.asset(shot.toId);
-            int[] from=read(context,start,width,height);
-            int[] to=read(context,end,width,height);
-            try(Painter painter=painter(context,original,rigs,plan.backend,
+            boolean registered=StoryboardMotionAdmission.CINEMATIC_ACTION.equals(StoryboardMotionAdmission.intent(settings))
+                    ||plan.backend==StoryboardBatchPlanner.Backend.SOURCE_RIG;
+            int[] from=read(context,start,width,height,StoryboardMotionAdmission.library(manifest,start.id),registered);
+            int[] to=read(context,end,width,height,StoryboardMotionAdmission.library(manifest,end.id),registered);
+            try(Painter painter=painter(context,store,original,rigs,plan.backend,
                     start,end,from,to,width,height,shot,settings)){
+                JSONObject provenance=new JSONObject().put("sourceManifestSha256",manifest.getString("manifestSha256"))
+                        .put("fromSourceSha256",StoryboardMotionAdmission.library(manifest,start.id).getString("sourceSha256"))
+                        .put("toSourceSha256",StoryboardMotionAdmission.library(manifest,end.id).getString("sourceSha256"))
+                        .put("shotIndex",shot.fromIndex).put("choreographyBeat",shot.beat==null?JSONObject.NULL:shot.beat.name()).put("admissionProofFile","admission.json").put("admissionProofSha256",sidecarSha);
                 int[] quarter=null,middle=null,threeQuarter=null;
                 int quarterIndex=Math.max(1,Math.round(shot.frames*.25f));
                 int middleIndex=Math.round(shot.frames*.5f);
                 int threeQuarterIndex=Math.min(shot.frames-1,
                         Math.round(shot.frames*.75f));
                 int initial=(shotCount==0&&!append)?0:1;
+                boolean capturedContact=false;
                 for(int step=initial;step<=shot.frames;step++){
                     if(Thread.currentThread().isInterrupted())throw new InterruptedException();
                     float t=step/(float)shot.frames;
+                    StoryboardPoseMotion.Frame motion=painter.motion(t);
+                    if(!capturedContact&&painter.collisionIntent()&&motion!=null&&motion.contact>.05) {
+                        captured.add(new StoryboardFoleySynth.CapturedEvent("blade-contact:"+shot.fromIndex,
+                                StoryboardMotionGrammar.Action.IMPACT,shot.scene,
+                                NativeFrameClock.presentationTimeUs(priorFrames+complete,plan.fps),
+                                (float)Math.min(1,motion.contact),StoryboardMotionEvidence.Origin.PREDICTED_NATIVE_EVALUATOR));
+                        capturedContact=true;
+                    }
                     Bitmap rendered=painter.frame(t,step);
                     try {
                         if(step==quarterIndex||step==middleIndex
@@ -141,15 +169,16 @@ public final class StoryboardSegmentComposer {
                             if(step==middleIndex)middle=snapshot;
                             if(step==threeQuarterIndex)threeQuarter=snapshot;
                         }
-                        add(target,outputDir,rendered,priorFrames+complete,durationMs,plan.fps,
+                        add(target,outputDir,rendered,priorFrames+complete,NativeFrameClock.frameDurationMs(priorFrames+complete,plan.fps),plan.fps,
                                 start.id,end.id,shot.action,painter.backend(),
-                                painter.confidence(),shot.scene);
+                                painter.confidenceMeasured()?painter.confidence():Float.NaN,shot.scene,provenance);
                     } finally {rendered.recycle();}
                     complete++;
                     if(progress!=null && (complete==1||complete%4==0||complete==expected))
                         progress.onFrame(complete,expected,shot.fromIndex,
                                 painter.backend(),painter.confidence());
                 }
+                boolean intentionalHold=shot.fromId.equals(shot.toId)&&shot.beat==StoryboardChoreography.Beat.STANDOFF;
                 boolean graphicOrCameraOnly=painter.backend().contains("graphic")
                         ||painter.backend().contains("environment")
                         ||painter.backend().contains("abstract");
@@ -158,14 +187,14 @@ public final class StoryboardSegmentComposer {
                             "Missing early, middle or late source-motion sample");
                 StoryboardTemporalCritic.Report inspected=
                         StoryboardTemporalCritic.inspect(from,to,middle,width,height,
-                                graphicOrCameraOnly);
+                                graphicOrCameraOnly||intentionalHold);
                 if(!inspected.acceptable)
                     throw new IllegalStateException("Source-artwork animation QA failed: "
                             +inspected.reason+" (source "+start.name+" → "+end.name+")");
                 StoryboardTemporalCritic.TrajectoryReport trajectory=
                         StoryboardTemporalCritic.inspectTrajectory(from,to,
                                 quarter,middle,threeQuarter,width,height,
-                                graphicOrCameraOnly||shot.action==StoryboardMotionGrammar.Action.HOLD
+                                graphicOrCameraOnly||intentionalHold||shot.action==StoryboardMotionGrammar.Action.HOLD
                                   ||shot.action==StoryboardMotionGrammar.Action.CUT);
                 if(!trajectory.acceptable)
                     throw new IllegalStateException(
@@ -193,20 +222,31 @@ public final class StoryboardSegmentComposer {
                         retained=current;
                     }
                 }
-                minConfidence=Math.min(minConfidence,painter.confidence());
+                if(painter.confidenceMeasured())minConfidence=Double.isNaN(minConfidence)?painter.confidence():Math.min(minConfidence,painter.confidence());
                 report.put(new JSONObject()
                         .put("fromAssetId",start.id)
                         .put("toAssetId",end.id)
-                        .put("action",shot.action.name())
+                        .put("action",shot.action.name()).put("actionOrigin","SOURCE_GRAMMAR_CLASSIFICATION")
+                        .put("choreographyBeat",shot.beat==null?JSONObject.NULL:shot.beat.name())
                         .put("scene",shot.scene.name())
                         .put("backend",painter.backend())
-                        .put("confidence",painter.confidence())
+                        .put("confidence",painter.confidenceMeasured()?painter.confidence():JSONObject.NULL)
+                        .put("confidenceStatus",painter.confidenceMeasured()?"MEASURED_SEGMENTATION_HEURISTIC":"UNAVAILABLE")
                         .put("motionFrames",shot.frames)
+                        .put("sourceManifestSha256",manifest.getString("manifestSha256"))
+                        .put("semanticPlanSha256",settings.getJSONObject("_storyboardAdmission").getString("planSha256"))
+                        .put("admissionProofSha256",sidecarSha).put("sourceCoverage",painter.sourceCoverageEvidence())
                         .put("actualMidpointSourceDifference",inspected.middleSourceDifference)
                         .put("actualMidpointTargetDifference",inspected.middleTargetDifference)
                         .put("stationaryWorldChange",inspected.unchangedWorldError)
-                        .put("qualityGatePassed",inspected.acceptable&&trajectory.acceptable)
-                        .put("fourIntervalMotionChecked",true)
+                        .put("pixelTemporalGatePassed",intentionalHold?JSONObject.NULL:inspected.acceptable&&trajectory.acceptable)
+                        .put("intentionalHold",intentionalHold).put("motionRequirement",intentionalHold?"INTENTIONAL_STANDOFF_HOLD":"SOURCE_MOTION_REQUIRED")
+                        .put("cinematicAcceptance",false)
+                        .put("cinematicQA",StoryboardMotionEvidence.unavailable(
+                                StoryboardMotionAdmission.CINEMATIC_ACTION.equals(StoryboardMotionAdmission.intent(settings)),
+                                painter.backend(),"Decoded physical action metrics have not been measured").toJson())
+                        .put("sourceFit",NativeStoryboardSourceImage.fitMapping(StoryboardMotionAdmission.library(manifest,start.id),width,height))
+                        .put("fourIntervalMotionChecked",!intentionalHold)
                         .put("minimumAdjacentMotion",trajectory.minAdjacentMotion)
                         .put("maximumAdjacentMotion",trajectory.maxAdjacentMotion)
                         .put("objectRetentionChecked",retained!=null)
@@ -215,17 +255,23 @@ public final class StoryboardSegmentComposer {
                                 retained.verifiedObjects)
                         .put("minimumSubjectRetention",retained==null?-1:
                                 smallestCoverage)
-                        .put("articulatedRigVerified",painter.backend().contains("source-rig")));
+                        .put("sourceAnnotationProviderBound",registered));
                 shotCount++;
                 // Checkpoint a complete shot (not just the next frame); the
                 // DB never refers to files that haven't been written yet.
-                store.save(target);
+                StoryboardMotionAdmission.verify(context,store,store.get(original.id),plan,settings);
+                saveOutput(store,original,target);
+                generationPublished=true;
+                settings.put("_storyboardOutputUpdatedAt",target.updatedAt);
+                if(progress!=null)progress.onSaved(target);
             }
         }
         if(complete!=expected)
             throw new IllegalStateException("Storyboard render ended with incorrect frame count");
-        if(!append&&settings.optBoolean("foley",true)){
-            long clipDuration=complete*durationMs;
+        if(!append&&settings.optBoolean("foley",true)&&!StoryboardMotionAdmission.CINEMATIC_ACTION.equals(StoryboardMotionAdmission.intent(settings))
+                &&batch.shots.stream().noneMatch(v->v.action==StoryboardMotionGrammar.Action.IMPACT)
+                &&!StoryboardFoleySynth.cues(batch,plan.fps).isEmpty()){
+            long clipDuration=NativeFrameClock.durationMs(complete,plan.fps);
             File audioFile=new File(outputDir,"shot_foley.wav");
             StoryboardFoleySynth.Result audio=StoryboardFoleySynth.render(
                     audioFile,clipDuration,
@@ -258,30 +304,51 @@ public final class StoryboardSegmentComposer {
             StudioLayerContract.validate(target,audioLane);
             target.studioLayers.add(audioLane);
         }
-        store.save(target);
-        return new Summary(target,complete,shotCount,minConfidence,report);
+        saveOutput(store,original,target);
+        generationPublished=true;
+        settings.put("_storyboardOutputUpdatedAt",target.updatedAt);
+        if(progress!=null)progress.onSaved(target);
+        return new Summary(target,complete,shotCount,minConfidence,report,captured);
+        } catch(Exception|Error failure) {
+            // A published generation may be referenced by another owner graph; never prune it here.
+            if(!generationPublished) {
+                File[] unpublished=outputDir.listFiles();
+                if(unpublished!=null)for(File file:unpublished)if(file.isFile())file.delete();
+                outputDir.delete();
+            }
+            throw failure;
+        }
     }
 
-    private static Painter painter(Context context,ProjectStore.Project source,
+    private static String writeAdmissionProof(File generation,JSONObject manifest,JSONObject admission) throws Exception {
+        byte[] bytes=new JSONObject().put("sourceManifest",manifest).put("admission",admission).toString().getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        if(bytes.length>512*1024){generation.delete();throw new IllegalArgumentException("Immutable storyboard admission proof exceeds 512 KiB");}
+        File pending=new File(generation,"admission.json.part"),saved=new File(generation,"admission.json");
+        boolean written=false;
+        try {
+            try(FileOutputStream out=new FileOutputStream(pending)){out.write(bytes);out.flush();out.getFD().sync();}
+            if(pending.length()!=bytes.length||!pending.renameTo(saved))throw new IllegalStateException("Could not publish immutable storyboard proof");
+            byte[] hash=java.security.MessageDigest.getInstance("SHA-256").digest(bytes);StringBuilder sha=new StringBuilder(64);
+            for(byte value:hash)sha.append(String.format(Locale.US,"%02x",value&255));written=true;return sha.toString();
+        } finally {if(!written){pending.delete();saved.delete();generation.delete();}}
+    }
+    private static void saveOutput(ProjectStore store,ProjectStore.Project source,ProjectStore.Project target) throws Exception {
+        store.guardedProject(source.id,source.updatedAt,current->store.guardedProject(target.id,target.updatedAt,owned->{
+            store.save(target);return null;
+        }));
+    }
+    private static Painter painter(Context context,ProjectStore store,ProjectStore.Project source,
             Rig2DProjectStore rigs,StoryboardBatchPlanner.Backend backend,
             ProjectStore.Asset fromAsset,ProjectStore.Asset toAsset,
             int[] pixelsA,int[] pixelsB,int width,int height,
             StoryboardBatchPlanner.Shot shot,JSONObject options) throws Exception {
-        // Explicit source-marked 2D actors take priority when selected, or
-        // when AUTO sees a complex cinematic/comic scene and both poses have
-        // already been annotated by the user.
-        Rig2DProfile[] fromRigs=actorRigs(rigs.list(source.id),fromAsset.id),
-                       toRigs=actorRigs(rigs.list(source.id),toAsset.id);
-        boolean sourceRigs=fromRigs[0]!=null&&fromRigs[1]!=null
-                &&toRigs[0]!=null&&toRigs[1]!=null;
-        boolean chooseRig=backend==StoryboardBatchPlanner.Backend.SOURCE_RIG ||
-                (sourceRigs&&(shot.scene==StoryboardMotionGrammar.SceneKind.ACTION||
-                               shot.scene==StoryboardMotionGrammar.SceneKind.COMIC||
-                               shot.scene==StoryboardMotionGrammar.SceneKind.PORTRAIT));
+        StoryboardMotionAdmission.FrozenShot frozen=StoryboardMotionAdmission.frozenShot(context,
+                store,source,options,shot);
+        boolean cinematic=StoryboardMotionAdmission.CINEMATIC_ACTION.equals(StoryboardMotionAdmission.intent(options));
+        boolean chooseRig=cinematic||backend==StoryboardBatchPlanner.Backend.SOURCE_RIG;
         if(chooseRig){
-            if(!sourceRigs)throw new IllegalArgumentException(
-                    "This illustrated action shot requires four source-masked actor profiles. "
-                  +"Annotate both actors on each of its two imported frames.");
+            if(frozen==null)throw new IllegalArgumentException("INSUFFICIENT_MOTION_PROVIDER: frozen source rigs are missing");
+            Rig2DProfile[] fromRigs=frozen.from,toRigs=frozen.to;
             float[] bkA=fromRigs[0].swordTip,whA=fromRigs[1].swordTip,
                     bkB=toRigs[0].swordTip,whB=toRigs[1].swordTip;
             if(bkA==null||whA==null||bkB==null||whB==null)
@@ -290,25 +357,36 @@ public final class StoryboardSegmentComposer {
             StoryboardPoseMotion.Action act=rigAction(shot.action);
             StoryboardCleanPlate.Result world=StoryboardCleanPlate.restore(
                     pixelsA,pixelsB,width,height,
-                    fromRigs[0].outline,fromRigs[1].outline,
-                    toRigs[0].outline,toRigs[1].outline);
+                    java.util.Arrays.asList(fromRigs[0].outline,fromRigs[1].outline,fromRigs[0].swordOutline,fromRigs[1].swordOutline),
+                    java.util.Arrays.asList(toRigs[0].outline,toRigs[1].outline,toRigs[0].swordOutline,toRigs[1].swordOutline));
             NativeSkinnedSprite2D b0=null,w0=null,b1=null,w1=null;
             try {
-                b0=new NativeSkinnedSprite2D(context,fromAsset,fromRigs[0],width,height);
-                w0=new NativeSkinnedSprite2D(context,fromAsset,fromRigs[1],width,height);
-                b1=new NativeSkinnedSprite2D(context,toAsset,toRigs[0],width,height);
-                w1=new NativeSkinnedSprite2D(context,toAsset,toRigs[1],width,height);
-                final NativeStoryboardArtworkRenderer engine=
-                        new NativeStoryboardArtworkRenderer(width,height,world.pixels,
-                                fromRigs[0],fromRigs[1],toRigs[0],toRigs[1],
-                                b0,w0,b1,w1,bkA,whA,bkB,whB,act);
+                b0=new NativeSkinnedSprite2D(context,fromAsset,fromRigs[0],width,height,StoryboardMotionAdmission.library(options.getJSONObject("_storyboardSourceManifest"),fromAsset.id));
+                w0=new NativeSkinnedSprite2D(context,fromAsset,fromRigs[1],width,height,StoryboardMotionAdmission.library(options.getJSONObject("_storyboardSourceManifest"),fromAsset.id));
+                b1=new NativeSkinnedSprite2D(context,toAsset,toRigs[0],width,height,StoryboardMotionAdmission.library(options.getJSONObject("_storyboardSourceManifest"),toAsset.id));
+                w1=new NativeSkinnedSprite2D(context,toAsset,toRigs[1],width,height,StoryboardMotionAdmission.library(options.getJSONObject("_storyboardSourceManifest"),toAsset.id));
+                final NativeStoryboardArtworkRenderer engine=cinematic
+                        ?new NativeStoryboardArtworkRenderer(width,height,world.pixels,fromRigs[0],fromRigs[1],toRigs[0],toRigs[1],
+                                b0,w0,b1,w1,bkA,whA,bkB,whB,frozen.beat,frozen.aspect,frozen.contacts,options.optBoolean("cameraEnabled",true),true)
+                        :new NativeStoryboardArtworkRenderer(width,height,world.pixels,fromRigs[0],fromRigs[1],toRigs[0],toRigs[1],
+                                b0,w0,b1,w1,bkA,whA,bkB,whB,act,frozen.aspect,frozen.contacts,options.optBoolean("cameraEnabled",true),false);
+                engine.setFrameRate(NativeFrameClock.requireFps(options.optInt("fps",24)));
                 return new Painter(){
-                    public Bitmap frame(float t,int i){return engine.render(t,i,24);}
+                    public JSONObject sourceCoverageEvidence() throws Exception{return engine.sourceCoverageEvidence();}
+                    public Bitmap frame(float t,int i){return engine.render(t,i,NativeFrameClock.requireFps(options.optInt("fps",24)));}
                     public String backend(){return "source-artwork-skinned-2d";}
-                    public float confidence(){return .93f;}
+                    public StoryboardPoseMotion.Frame motion(float t){return engine.sampleMotion(t);}
+                    public boolean collisionIntent(){
+                        StoryboardPoseMotion.Action black=cinematic?StoryboardChoreography.actionFor(frozen.beat,true):act,
+                                white=cinematic?StoryboardChoreography.actionFor(frozen.beat,false):act;
+                        return black==StoryboardPoseMotion.Action.IMPACT||black==StoryboardPoseMotion.Action.PARRY
+                                ||white==StoryboardPoseMotion.Action.IMPACT||white==StoryboardPoseMotion.Action.PARRY;
+                    }
+                    public float confidence(){return Float.NaN;}
+                    public boolean confidenceMeasured(){return false;}
                     public void close(){engine.close();}
                 };
-            }catch(Exception error){
+            }catch(Exception|Error error){
                 if(b0!=null)b0.close();if(w0!=null)w0.close();
                 if(b1!=null)b1.close();if(w1!=null)w1.close();
                 throw error;
@@ -399,18 +477,13 @@ public final class StoryboardSegmentComposer {
         return new Painter(){
             public Bitmap frame(float t,int index){return engine.render(t);}
             public String backend(){return engine.backend();}
-            public float confidence(){return .80f;}
+            public float confidence(){return Float.NaN;}
+            public boolean confidenceMeasured(){return false;}
             public void close(){engine.close();}
         };
     }
 
-    private static Rig2DProfile[] actorRigs(List<Rig2DProfile> available,String id) {
-        Rig2DProfile[] selected=new Rig2DProfile[2];
-        for(Rig2DProfile rig:available)if(id.equals(rig.sourceAssetId))
-            selected[rig.black?0:1]=rig;
-        return selected;
-    }
-    private static StoryboardPoseMotion.Action rigAction(
+    static StoryboardPoseMotion.Action rigAction(
             StoryboardMotionGrammar.Action motion) {
         switch(motion){
             case STRIKE:return StoryboardPoseMotion.Action.STRIKE;
@@ -454,41 +527,17 @@ public final class StoryboardSegmentComposer {
         return out;
     }
 
-    private static int[] read(Context context,ProjectStore.Asset source,
-                              int width,int height) throws Exception {
-        if(!StoryboardBatchPlanner.isImage(source))
-            throw new IllegalArgumentException("Only imported image assets may be read");
-        Uri uri=Uri.parse(source.uri);
-        BitmapFactory.Options bound=new BitmapFactory.Options();
-        bound.inJustDecodeBounds=true;
-        try(InputStream in=context.getContentResolver().openInputStream(uri)) {
-            if(in==null)throw new IllegalArgumentException("Source permissions expired");
-            BitmapFactory.decodeStream(in,null,bound);
-        }
-        if(bound.outWidth<32||bound.outHeight<32||
-                bound.outWidth>8192||bound.outHeight>8192)
-            throw new IllegalArgumentException("Bad imported storyboard dimensions");
-        BitmapFactory.Options opts=new BitmapFactory.Options();
-        opts.inPreferredConfig=Bitmap.Config.ARGB_8888;
-        int sample=1;
-        while(bound.outWidth/sample>width*2 || bound.outHeight/sample>height*2)sample*=2;
-        opts.inSampleSize=sample;
-        try(InputStream in=context.getContentResolver().openInputStream(uri)){
-            if(in==null)throw new IllegalArgumentException("Source image unavailable");
-            Bitmap decoded=BitmapFactory.decodeStream(in,null,opts);
-            if(decoded==null)throw new IllegalArgumentException("Cannot decode original frame");
-            Bitmap resized=Bitmap.createScaledBitmap(decoded,width,height,true);
-            if(resized!=decoded)decoded.recycle();
-            int[] pixels=new int[width*height];
-            resized.getPixels(pixels,0,width,0,0,width,height);
-            resized.recycle();
-            return pixels;
-        }
+    private static int[] read(Context context,ProjectStore.Asset source,int width,int height,
+                              JSONObject library,boolean registered) throws Exception {
+        Bitmap image=registered?NativeStoryboardSourceImage.readVerified(context,source,width,height,library)
+                :NativeStoryboardSourceImage.readVerifiedFit(context,source,width,height,library);
+        try {int[] pixels=new int[width*height];image.getPixels(pixels,0,width,0,0,width,height);return pixels;}
+        finally {image.recycle();}
     }
     private static void add(ProjectStore.Project project,File root,Bitmap pixels,
             int index,long durationMs,int fps,String fromId,String toId,
             StoryboardMotionGrammar.Action motion,String backend,
-            float confidence,StoryboardMotionGrammar.SceneKind kind) throws Exception {
+            float confidence,StoryboardMotionGrammar.SceneKind kind,JSONObject provenance) throws Exception {
         String name=String.format(Locale.US,"story_%05d.jpg",index);
         File dest=new File(root,name);
         File pending=new File(root,name+".part");
@@ -514,12 +563,14 @@ public final class StoryboardSegmentComposer {
         asset.generationMetadata=new JSONObject()
                 .put("provider","videostudio.storyboard-multigenre-v1")
                 .put("fromAssetId",fromId).put("toAssetId",toId)
-                .put("backend",backend).put("confidence",confidence)
+                .put("backend",backend).put("confidence",Float.isFinite(confidence)?confidence:JSONObject.NULL)
+                .put("confidenceStatus",Float.isFinite(confidence)?"MEASURED_SEGMENTATION_HEURISTIC":"UNAVAILABLE")
                 .put("originalArtwork",true)
                 .put("neuralVideoSynthesized",false)
                 .put("scene",kind.name())
                 .put("action",motion.name())
-                .put("frame",index);
+                .put("frame",index).put("frameClock","rational-authored-v1").put("frameIndex",index).put("fps",fps);
+        java.util.Iterator<String> proofKeys=provenance.keys();while(proofKeys.hasNext()){String key=proofKeys.next();asset.generationMetadata.put(key,provenance.get(key));}
         project.assets.add(asset);
         ProjectStore.Clip clip=new ProjectStore.Clip();
         clip.id=UUID.randomUUID().toString();
@@ -528,6 +579,8 @@ public final class StoryboardSegmentComposer {
         clip.speed=1;clip.volume=0;clip.transition="none";
         clip.effects.put("poseInbetween",true);
         clip.effects.put("poseFps",fps);
+        clip.effects.put("frameClock","rational-authored-v1");
+        clip.effects.put("frameIndex",index);
         clip.effects.put("storyboardObjectMotion",true);
         project.clips.add(clip);
     }

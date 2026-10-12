@@ -227,8 +227,8 @@ const checks = [
   ["True combat action uses fully native articulated frame generation", controlService.includes('case "animate_combat_rig"') && controlService.includes("queueCombatRig") && controlService.includes("combatRigBenchmarkReady")],
   ["Combat IK and independent per-frame sword motion is compiled", combatSolver.includes("elbow(") && combatSolver.includes("swordTipSeparation") && combatSolver.includes("remap(") && combatSolver.includes("leadingFoot")],
   ["VideoStudio 3.7 generalizes image animation to 100-frame five-batch continuous motion",
-    nativeProtocol.includes('APP_VERSION = "3.7.1"')
-    && androidBuild.includes('versionCode = 371')
+    nativeProtocol.includes('APP_VERSION = "3.7.2"')
+    && androidBuild.includes('versionCode = 372')
     && multigenrePlanner.includes('MAX_SOURCE_FRAMES=160')
     && multigenrePlanner.includes('maxPerBatch-1:maxPerBatch')
     && multigenreStudio.includes('StoryboardSegmentComposer.compose')
@@ -261,8 +261,10 @@ const checks = [
     controlService.includes('case "storyboard_series_audit"') &&
     controlService.includes('case "animate_storyboard_series"') &&
     controlService.includes("StoryboardSeriesOrchestrator.run") &&
-    nativeMain.includes("Storyboard → Cinematic Animation (Multi-Genre)") &&
-    nativeMain.includes("storyboardStudioDialog")],
+    nativeMain.includes("Storyboard → Scoped Motion Drafts") &&
+    nativeMain.includes("storyboardStudioDialog") &&
+    nativeMain.includes("StoryboardOwnerRequests.series") &&
+    nativeMain.includes("StoryboardContactEditorDialog.show")],
   ["Storyboard source-to-animation uses only 2D original actor textures and frames",
      storyboardRenderer.includes("NativeSkinnedSprite2D")
      && storyboardRenderer.includes("StoryboardPoseMotion.between")
@@ -270,18 +272,23 @@ const checks = [
      && storyboardComposer.includes("storyboard_artwork")
      && storyboardComposer.includes("notNeuralVideo")
      && !storyboardRenderer.includes("CombatRigSolver")],
-  ["Storyboard maintains actors, real traced sword tips and fixed cinematic city",
-     storyboardPose.includes("Sword tip must stay attached")
-     && originalRigProfile.includes("swordTip")
-     && storyboardRigEditor.includes('button("Sword tip"')
-     && storyboardPlate.includes("Large camera/scene cuts are REJECTED")
-     && skinnedSprite.includes("targetPose")],
+  ["Storyboard preserves original actor/weapon textures, closest contact witnesses and source world",
+     storyboardPose.includes("closestSegments") && storyboardPose.includes("blackBladeHilt")
+     && originalRigProfile.includes("swordTip") && originalRigProfile.includes("swordHilt") && originalRigProfile.includes("swordOutline")
+     && storyboardRigEditor.includes("swordOutline") && storyboardRigEditor.includes("displayedSourceSha256")
+     && storyboardRenderer.includes("renderSourceProp") && storyboardRenderer.includes("excludeSourceProps")
+     && storyboardRenderer.includes("bladeWitness") && !storyboardRenderer.includes("drawSword")
+     && storyboardPlate.includes("List<float[][]>") && skinnedSprite.includes("targetPose")],
   ["Storyboard animation rejects fake no-motion input and uses Media3 export",
      storyboardQuality.includes("no measurable fighter or sword motion")
      && controlService.includes('case "animate_storyboard_artwork"')
      && controlService.includes('case "storyboard_artwork_preflight"')
-     && controlService.includes('runExportBlocking(target,"9:16"')
-     && nativeMain.includes("Storyboard Art → Moving Fighters (2D Beta)")],
+     && controlService.includes('return queueStoryboardSeries(p)')
+     && controlService.includes('runExportBlocking(out,"source:"+w+"x"+h')
+     && multigenreComposer.includes('pixelTemporalGatePassed')
+     && multigenreComposer.includes('cinematicAcceptance')
+     && multigenreComposer.includes('readVerified')
+     && nativeMain.includes("Fighter Storyboard → Saved Program + Contacts")],
   ["private MCP can author source-textured actors from native project images", controlService.includes('case "save_source_rig_profile"') && controlService.includes('case "list_source_rig_profiles"') && controlService.includes("NativeRigAuthoring.parse") && controlService.includes("sourceProjectUpdatedAt") && controlService.includes("Rig2DProjectStore(this, store)")],
   ["Native combat rig can lock source city using only user-imported image clips", cleanScenePlate.includes("perChannelMedian") && cleanScenePlate.includes("source.clips") && combatRenderer.includes("staticBackground") && controlService.includes("backgroundMode")],
   ["Combat benchmark draws one locked background then moving fighters", combatRenderer.includes("drawWorld(c)") && combatRenderer.includes("drawWarrior") && combatRenderer.includes("drawImpact") && combatComposer.includes("NativeCombatRigRenderer")],
@@ -321,7 +328,7 @@ const checks = [
   ["worker uses an isolated v3 command queue", worker.includes('"app-v3-seq:"') && worker.includes('"app-v3-cl:"') && worker.includes("protocolVersion:3")],
   ["worker rejects unbound native credentials", worker.includes("Private App MCP credential rejected")],
   ["worker leases native commands", worker.includes('status:"claimed"') && worker.includes("leaseUntil")],
-  ["v3 leases track retries", worker.includes("claimCount:Number(c.claimCount||0)+1")],
+  ["v3 leases track retries", worker.includes("claimCount:Number(row.claimCount||0)+1")],
   ["worker keeps legacy private chat handoff as fallback", worker.includes("appCreateHandoff") && worker.includes("app_import_chat_file")],
   ["v3 primary ChatGPT attachment path uses authenticated private Worker handoff", worker.includes('"app_import_attachment"') && worker.includes("appQueueAttachmentHandoff") && worker.includes('"import_chat_file"') && controlService.includes('case "import_chat_file"') && controlService.includes("queuePrivateImport")],
   ["v3 attachment handoff survives rolling Worker deploys with an already-running Durable Object", worker.includes("st.appCreateHandoff(ownerKey,file.download_url") && worker.includes('st.appEnqueueV3(ownerKey,"import_chat_file"') && !worker.includes("st.appQueueAttachmentHandoff(ownerKey,file,projectId||\"\")")],

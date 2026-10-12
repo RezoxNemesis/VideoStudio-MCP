@@ -81,4 +81,22 @@ public class Rig2DProfileTest {
         new Rig2DProjectStore(c,new ProjectStore(c))
                 .load("../../DCIM/","../../secret");
     }
+
+    @Test public void distantActorGeometryIsNotRejectedByAnArbitrarySceneScale() {
+        float[][] points=joints(),mask=outline();
+        for(float[] point:points){point[0]=.7f+point[0]*.01f;point[1]=.3f+point[1]*.01f;}
+        for(float[] point:mask){point[0]=.7f+point[0]*.01f;point[1]=.3f+point[1]*.01f;}
+        Rig2DProfile distant=Rig2DProfile.create("project-1111","source-1111",false,false,points,mask);
+        assertEquals(16,distant.joints.length);
+        assertFalse(distant.black);
+        assertTrue("Tiny but nonzero source anatomy is valid annotation data",
+                Math.hypot(distant.joints[Rig2DProfile.NECK][0]-distant.joints[Rig2DProfile.HEAD][0],
+                        distant.joints[Rig2DProfile.NECK][1]-distant.joints[Rig2DProfile.HEAD][1])<.002);
+    }
+
+    @Test(expected=IllegalArgumentException.class)
+    public void aSelfIntersectingActorMaskCannotBeAcceptedAsAnAuthenticCutout() {
+        Rig2DProfile.create("project-1111","source-1111",true,false,joints(),new float[][]{
+                {.1f,.1f},{.8f,.8f},{.1f,.8f},{.8f,.1f},{.95f,.4f}});
+    }
 }

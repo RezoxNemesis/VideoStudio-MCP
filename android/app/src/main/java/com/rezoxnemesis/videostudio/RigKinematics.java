@@ -25,9 +25,9 @@ public final class RigKinematics {
         public Vec3 cross(Vec3 b) {
             return new Vec3(y*b.z-z*b.y,z*b.x-x*b.z,x*b.y-y*b.x);
         }
-        public double length() { return Math.sqrt(dot(this)); }
+        public double length() { return Math.hypot(Math.hypot(x,y),z); }
         public Vec3 normalized() {
-            double l=length(); return l<EPS?new Vec3(1,0,0):multiply(1/l);
+            double l=length(); return l==0?new Vec3(1,0,0):new Vec3(x/l,y/l,z/l);
         }
         public double distance(Vec3 b) { return subtract(b).length(); }
     }
@@ -48,26 +48,32 @@ public final class RigKinematics {
                                             double upper, double lower) {
         if (root==null||target==null||pole==null ||
                 !Double.isFinite(upper)||!Double.isFinite(lower)||
-                upper<=EPS||lower<=EPS)throw new IllegalArgumentException("Invalid bone rig");
+                upper<=0||lower<=0||!Double.isFinite(upper+lower))throw new IllegalArgumentException("Invalid bone rig");
         Vec3 delta=target.subtract(root);
         double raw=delta.length();
-        double min=Math.abs(upper-lower)+EPS;
-        double max=upper+lower-EPS;
-        double reach=clamp(raw,min,max);
-        Vec3 direction=raw<EPS?new Vec3(1,0,0):delta.multiply(1/raw);
+        if(!Double.isFinite(raw))throw new IllegalArgumentException("Rig distance exceeds numerical bounds");
+        double min=Math.abs(upper-lower),max=upper+lower;
+        double tolerance=Math.ulp(Math.max(max,raw))*16;
+        boolean reachable=raw>=min-tolerance&&raw<=max+tolerance;
+        double reach=reachable?raw:clamp(raw,min,max);
+        if(reach==0) {
+            Vec3 bend=pole.subtract(root).normalized();
+            return new TwoBonePose(root,root.add(bend.multiply(upper)),target,reachable);
+        }
+        Vec3 direction=raw==0?new Vec3(1,0,0):new Vec3(delta.x/raw,delta.y/raw,delta.z/raw);
         Vec3 poleVector=pole.subtract(root);
         Vec3 transverse=poleVector.subtract(direction.multiply(poleVector.dot(direction)));
-        if (transverse.length()<EPS) {
+        if (transverse.length()==0) {
             Vec3 axis=Math.abs(direction.z)<.8?new Vec3(0,0,1):new Vec3(0,1,0);
             transverse=direction.cross(axis);
         }
         transverse=transverse.normalized();
-        double along=(upper*upper-lower*lower+reach*reach)/(2*reach);
-        double radius=Math.sqrt(Math.max(0,upper*upper-along*along));
+        double metric=Math.max(Math.max(upper,lower),reach);
+        double u=upper/metric,l=lower/metric,r=reach/metric;
+        double along=metric*(u*u-l*l+r*r)/(2*r);
+        double radius=metric*Math.sqrt(Math.max(0,u*u-Math.pow(along/metric,2)));
         Vec3 elbow=root.add(direction.multiply(along)).add(transverse.multiply(radius));
-        Vec3 effector=root.add(direction.multiply(reach));
-        boolean reachable=raw>=Math.abs(upper-lower)-1e-7 &&
-                raw<=upper+lower+1e-7;
+        Vec3 effector=reachable?target:root.add(direction.multiply(reach));
         return new TwoBonePose(root,elbow,effector,reachable);
     }
 
@@ -83,25 +89,39 @@ public final class RigKinematics {
      * Based on standard closest-segments clamping; handles degenerate segments.
      */
     public static double segmentDistance(Vec3 a, Vec3 b, Vec3 c, Vec3 d) {
+        return closestSegments(a,b,c,d).separation;
+    }
+
+    /** Closest physical segment points. Sampling time and actual collision evidence belong to the caller. */
+    public static final class SegmentWitness {
+        public final Vec3 pointA,pointB;
+        public final double parameterA,parameterB,separation;
+        SegmentWitness(Vec3 pointA,Vec3 pointB,double a,double b) {
+            this.pointA=pointA;this.pointB=pointB;parameterA=a;parameterB=b;
+            separation=pointA.distance(pointB);
+        }
+    }
+    public static SegmentWitness closestSegments(Vec3 a,Vec3 b,Vec3 c,Vec3 d) {
         if (a==null||b==null||c==null||d==null)
             throw new IllegalArgumentException("Weapon endpoints are required");
         Vec3 u=b.subtract(a),v=d.subtract(c),w=a.subtract(c);
-        double uu=u.dot(u),vv=v.dot(v),uv=u.dot(v),uw=u.dot(w),vw=v.dot(w);
-        if(uu<EPS&&vv<EPS)return a.distance(c);
-        if(uu<EPS){
-            double t=clamp(vw/Math.max(vv,EPS),0,1);
-            return a.distance(c.add(v.multiply(t)));
+        double scale=Math.max(Math.max(u.length(),v.length()),w.length());
+        if(scale==0)return new SegmentWitness(a,c,0,0);
+        // Relative scaling keeps tiny distant actors out of a fixed world-size epsilon.
+        Vec3 us=new Vec3(u.x/scale,u.y/scale,u.z/scale),vs=new Vec3(v.x/scale,v.y/scale,v.z/scale),
+                ws=new Vec3(w.x/scale,w.y/scale,w.z/scale);
+        double uu=us.dot(us),vv=vs.dot(vs),uv=us.dot(vs),uw=us.dot(ws),vw=vs.dot(ws),s,t;
+        if(uu==0&&vv==0){s=0;t=0;}
+        else if(uu==0){s=0;t=clamp(vw/vv,0,1);}
+        else if(vv==0){s=clamp(-uw/uu,0,1);t=0;}
+        else {
+            double denominator=uu*vv-uv*uv;
+            s=denominator>Math.ulp(uu*vv)*8?clamp((uv*vw-vv*uw)/denominator,0,1):0;
+            t=(uv*s+vw)/vv;
+            if(t<0){t=0;s=clamp(-uw/uu,0,1);}
+            else if(t>1){t=1;s=clamp((uv-uw)/uu,0,1);}
         }
-        if(vv<EPS){
-            double t=clamp(-uw/uu,0,1);
-            return a.add(u.multiply(t)).distance(c);
-        }
-        double denominator=uu*vv-uv*uv;
-        double s=denominator<EPS?0:clamp((uv*vw-vv*uw)/denominator,0,1);
-        double t=clamp((uv*s+vw)/vv,0,1);
-        s=clamp((uv*t-uw)/uu,0,1);
-        t=clamp((uv*s+vw)/vv,0,1);
-        return a.add(u.multiply(s)).distance(c.add(v.multiply(t)));
+        return new SegmentWitness(a.add(u.multiply(s)),c.add(v.multiply(t)),s,t);
     }
 
     /**

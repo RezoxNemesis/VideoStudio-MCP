@@ -103,4 +103,16 @@ public final class StoryboardPoseMotionTest {
         assertEquals(a[12][1],middle[12][1],.00001f);
         assertEquals(a[15][0],middle[15][0],.00001f);
     }
+
+    @Test public void physicalPortraitSwordRotationPreservesSourcePixelLength() {
+        double aspect=720d/1280d;float[][] pose=joints(0,0);float[] hand=pose[Rig2DProfile.SWORD_HAND];
+        float[] horizontal={(float)(hand[0]+.1/aspect),hand[1]};float[] vertical={hand[0],hand[1]+.1f};
+        for(int i=0;i<=20;i++) {
+            double time=i/20d;float[] tip=StoryboardPoseMotion.blade(pose,pose,horizontal,vertical,time,StoryboardPoseMotion.Action.STRIKE,aspect);
+            float[][] target=StoryboardPoseMotion.interpolate(pose,pose,time,StoryboardPoseMotion.Action.STRIKE,aspect);
+            assertEquals(.1,Math.hypot((tip[0]-target[6][0])*aspect,tip[1]-target[6][1]),1e-7);
+        }
+        float[] middle=StoryboardPoseMotion.blade(pose,pose,horizontal,vertical,.5,StoryboardPoseMotion.Action.STRIKE,aspect);
+        assertEquals((middle[0]-hand[0])*aspect,middle[1]-hand[1],1e-7);
+    }
 }

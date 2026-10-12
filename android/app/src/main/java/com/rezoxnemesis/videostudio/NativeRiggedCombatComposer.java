@@ -2,12 +2,10 @@ package com.rezoxnemesis.videostudio;
 
 import android.content.Context;
 import android.graphics.Bitmap;
-import android.graphics.BitmapFactory;
 import android.net.Uri;
 import org.json.JSONObject;
 import java.io.File;
 import java.io.FileOutputStream;
-import java.io.InputStream;
 import java.util.Locale;
 import java.util.UUID;
 
@@ -54,6 +52,9 @@ public final class NativeRiggedCombatComposer {
         if(width<320||height<540||width>720||height>1280||
                 (width&1)!=0||(height&1)!=0)
             throw new IllegalArgumentException("Invalid bounded portrait render");
+        if(cleanPlate!=null&&(cleanPlate.isRecycled()
+                ||Math.abs(cleanPlate.getWidth()/(double)cleanPlate.getHeight()-width/(double)height)>.000001))
+            throw new IllegalArgumentException("Clean scene needs matching oriented aspect or explicit source registration");
         int frames=Math.round((float)(fps*durationSeconds));
         if(frames<2||frames>180)throw new IllegalArgumentException("Too many rigged frames");
         if(!output.assets.isEmpty()&&
@@ -64,29 +65,39 @@ public final class NativeRiggedCombatComposer {
         ProjectStore.Asset whiteAsset=source.asset(whiteProfile.sourceAssetId);
         if(blackAsset==null||whiteAsset==null)
             throw new IllegalArgumentException("Actor source image no longer exists");
-
-        File framesDir=new File(context.getFilesDir(),
-                "creative_workspace/projects/"+output.id+"/generated/skinned_2d");
-        if(!framesDir.exists()&&!framesDir.mkdirs())
-            throw new IllegalStateException("Could not prepare private rig output");
-        File[] old=framesDir.listFiles();
-        if(old!=null)for(File f:old) {
-            if(f.isFile()&&f.getName().matches("skin_[0-9]{4}\\.jpg")&&!f.delete())
-                throw new IllegalStateException("Could not reset partial rig frame");
-        }
-        output.assets.clear();
-        output.clips.clear();
-        output.sourcePrompt="rigged2d: two source-masked actor meshes animated by continuous IK";
-        store.save(output);
-
-        NativeSkinnedSprite2D black=new NativeSkinnedSprite2D(
-                context,blackAsset,blackProfile,width,height);
-        NativeSkinnedSprite2D white=null;
+        final long sourceRevision=source.updatedAt,outputRevision=output.updatedAt;
+        final Rig2DProfile frozenBlack=Rig2DProfile.fromJson(blackProfile.toJson()),frozenWhite=Rig2DProfile.fromJson(whiteProfile.toJson());
+        final ProjectStore.Asset frozenBlackAsset=ProjectStore.Asset.fromJson(blackAsset.toJson()),frozenWhiteAsset=ProjectStore.Asset.fromJson(whiteAsset.toJson());
+        JSONObject blackSource=StoryboardSourceManifest.captureSource(context,frozenBlackAsset),whiteSource=StoryboardSourceManifest.captureSource(context,frozenWhiteAsset);
+        if(frozenBlack.sourceSha256!=null&&!frozenBlack.sourceSha256.equals(blackSource.getString("sourceSha256"))
+                ||frozenWhite.sourceSha256!=null&&!frozenWhite.sourceSha256.equals(whiteSource.getString("sourceSha256")))
+            throw new IllegalArgumentException("SOURCE_IMAGE_CHANGED: source actor marks belong to different image bytes");
+        ProjectStore.Project prepared=ProjectStore.Project.fromJson(output.toJson());
+        prepared.assets.clear();prepared.clips.clear();prepared.studioLayers.clear();
+        prepared.sourcePrompt="rigged2d: two source-masked actor meshes animated by continuous IK";
+        prepared.latestExportUri="";prepared.latestExportName="";prepared.latestExportAt=0;
+        String generationId=UUID.randomUUID().toString();File framesDir=null;
+        NativeSkinnedSprite2D black=null,white=null;
         NativeRiggedCombatRenderer renderer=null;
+        boolean published=false;final boolean[] publicationAttempted={false};
         try{
-            white=new NativeSkinnedSprite2D(context,whiteAsset,whiteProfile,width,height);
+            // Predictable decode, registration and pose failures precede any destination change.
+            black=new NativeSkinnedSprite2D(context,frozenBlackAsset,frozenBlack,width,height,blackSource);
+            white=new NativeSkinnedSprite2D(context,frozenWhiteAsset,frozenWhite,width,height,whiteSource);
             renderer=new NativeRiggedCombatRenderer(width,height,cleanPlate,black,white);
-            long frameMs=Math.max(34,Math.round(1000.0/fps));
+            for(int i=0;i<frames;i++){
+                if(Thread.currentThread().isInterrupted())throw new InterruptedException();
+                double seconds=i*durationSeconds/Math.max(1,frames-1);
+                CombatActionPlan.Frame direction=director.at(seconds,durationSeconds);
+                CombatRigSolver.Frame motion=CombatRigSolver.at(direction.solverSeconds,durationSeconds,storyboardMotion);
+                NativeSkinnedSprite2D.requireRenderablePose(frozenBlack,motion.black,width,height);
+                NativeSkinnedSprite2D.requireRenderablePose(frozenWhite,motion.white,width,height);
+            }
+            framesDir=new File(context.getFilesDir(),"creative_workspace/projects/"+output.id+"/generated/skinned_2d/"+generationId);
+            if(!framesDir.mkdirs())throw new IllegalStateException("Could not prepare immutable private rig output");
+            long required=Math.addExact(Math.multiplyExact((long)width*height*4+128*1024,frames),64L*1024*1024);
+            if(new android.os.StatFs(framesDir.getAbsolutePath()).getAvailableBytes()<required)
+                throw new IllegalStateException("Not enough private storage for bounded native rig frames");
             for(int i=0;i<frames;i++){
                 if(Thread.currentThread().isInterrupted())throw new InterruptedException();
                 double seconds=i*durationSeconds/Math.max(1,frames-1);
@@ -98,7 +109,7 @@ public final class NativeRiggedCombatComposer {
                 boolean encoded=false;
                 try(FileOutputStream stream=new FileOutputStream(frame)){
                     encoded=image.compress(Bitmap.CompressFormat.JPEG,91,stream);
-                    stream.flush();
+                    stream.flush();stream.getFD().sync();
                 }finally{image.recycle();}
                 if(!encoded||frame.length()<100)
                     throw new IllegalStateException("Could not encode rigged frame "+i);
@@ -118,6 +129,15 @@ public final class NativeRiggedCombatComposer {
                 asset.generationMetadata.put("whiteRigId",whiteProfile.id);
                 asset.generationMetadata.put("sourceProjectId",source.id);
                 asset.generationMetadata.put("frame",i);
+                asset.generationMetadata.put("generationId",generationId);
+                asset.generationMetadata.put("frameIndex",i);
+                asset.generationMetadata.put("frameClock","rational-authored-v1");
+                asset.generationMetadata.put("fps",fps);
+                asset.generationMetadata.put("blackSourceSha256",blackSource.getString("sourceSha256"));
+                asset.generationMetadata.put("whiteSourceSha256",whiteSource.getString("sourceSha256"));
+                asset.generationMetadata.put("motionIntent","source_deformation");
+                asset.generationMetadata.put("cinematicAcceptanceVerified",false);
+                asset.generationMetadata.put("decodedFrameCadenceVerified",false);
                 asset.generationMetadata.put("poseTimeSeconds",seconds);
                 asset.generationMetadata.put("impact",motion.impactIntensity);
                 asset.generationMetadata.put("choreographyBeat",direction.beat.name());
@@ -125,12 +145,12 @@ public final class NativeRiggedCombatComposer {
                 asset.generationMetadata.put("sourceActorTexturesPreserved",true);
                 asset.generationMetadata.put("neuralReconstruction",false);
                 asset.generationMetadata.put("full3DMesh",false);
-                output.assets.add(asset);
+                prepared.assets.add(asset);
                 ProjectStore.Clip clip=new ProjectStore.Clip();
                 clip.id=UUID.randomUUID().toString();
                 clip.assetId=asset.id;
                 clip.inMs=0;
-                clip.outMs=frameMs;
+                clip.outMs=NativeFrameClock.frameDurationMs(i,fps);
                 clip.speed=1f;
                 clip.volume=0;
                 clip.title="";
@@ -138,14 +158,32 @@ public final class NativeRiggedCombatComposer {
                 clip.effects=new JSONObject();
                 clip.effects.put("directorSequenceFrame",true);
                 clip.effects.put("poseFps",fps);
-                output.clips.add(clip);
+                clip.effects.put("frameClock","rational-authored-v1");clip.effects.put("frameIndex",i);
+                prepared.clips.add(clip);
                 if(progress!=null)progress.onFrame(i+1,frames,seconds,motion.impactIntensity);
             }
-            store.save(output);
+            StoryboardSourceManifest.withVerifiedSource(context,frozenBlackAsset,blackSource,(file,entry)->null);
+            StoryboardSourceManifest.withVerifiedSource(context,frozenWhiteAsset,whiteSource,(file,entry)->null);
+            if(Thread.currentThread().isInterrupted())throw new InterruptedException();
+            // Reserve refresh capacity before the durable commit; the final object update allocates nothing.
+            output.assets.ensureCapacity(prepared.assets.size());output.clips.ensureCapacity(prepared.clips.size());
+            store.guardedProject(source.id,sourceRevision,current->store.guardedProject(output.id,outputRevision,owned->{
+                publicationAttempted[0]=true;store.save(prepared);return null;
+            }));
+            published=true;
+            output.assets.clear();for(int i=0;i<prepared.assets.size();i++)output.assets.add(prepared.assets.get(i));
+            output.clips.clear();for(int i=0;i<prepared.clips.size();i++)output.clips.add(prepared.clips.get(i));
+            output.studioLayers.clear();output.sourcePrompt=prepared.sourcePrompt;output.updatedAt=prepared.updatedAt;
+            output.latestExportUri="";output.latestExportName="";output.latestExportAt=0;
             return output;
         }finally{
             if(renderer!=null)renderer.close();
-            else{black.close();if(white!=null)white.close();}
+            else{if(black!=null)black.close();if(white!=null)white.close();}
+            // An uncertain SQLite commit can already reference this generation; retain it for recovery.
+            if(!published&&!publicationAttempted[0]&&framesDir!=null){
+                File[] partial=framesDir.listFiles();if(partial!=null)for(File file:partial)if(file.isFile())file.delete();
+                framesDir.delete();
+            }
         }
     }
 
@@ -155,29 +193,6 @@ public final class NativeRiggedCombatComposer {
         if(ctx==null||asset==null||asset.mime==null||
                 !asset.mime.startsWith("image/"))
             throw new IllegalArgumentException("A VideoStudio-owned clean scene image is required");
-        BitmapFactory.Options bounds=new BitmapFactory.Options();
-        bounds.inJustDecodeBounds=true;
-        Uri uri=Uri.parse(asset.uri);
-        try(InputStream in=ctx.getContentResolver().openInputStream(uri)){
-            if(in==null)throw new IllegalArgumentException("Clean plate unreadable");
-            BitmapFactory.decodeStream(in,null,bounds);
-        }
-        if(bounds.outWidth<1||bounds.outHeight<1||
-                bounds.outWidth>8192||bounds.outHeight>8192)
-            throw new IllegalArgumentException("Clean plate image dimensions are unsupported");
-        BitmapFactory.Options opts=new BitmapFactory.Options();
-        opts.inPreferredConfig=Bitmap.Config.ARGB_8888;
-        opts.inSampleSize=1;
-        while(bounds.outWidth/opts.inSampleSize>w*2&&
-                bounds.outHeight/opts.inSampleSize>h*2)opts.inSampleSize*=2;
-        Bitmap raw;
-        try(InputStream in=ctx.getContentResolver().openInputStream(uri)){
-            if(in==null)throw new IllegalArgumentException("Clean plate missing");
-            raw=BitmapFactory.decodeStream(in,null,opts);
-        }
-        if(raw==null)throw new IllegalArgumentException("Could not decode clean plate");
-        Bitmap scaled=Bitmap.createScaledBitmap(raw,w,h,true);
-        if(scaled!=raw)raw.recycle();
-        return scaled;
+        return NativeStoryboardSourceImage.read(ctx,asset,w,h);
     }
 }

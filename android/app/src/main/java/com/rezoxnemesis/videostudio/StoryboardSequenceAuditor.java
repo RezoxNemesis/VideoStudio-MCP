@@ -2,13 +2,10 @@ package com.rezoxnemesis.videostudio;
 
 import android.content.Context;
 import android.graphics.Bitmap;
-import android.graphics.BitmapFactory;
-import android.net.Uri;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
 
-import java.io.InputStream;
 import java.util.List;
 
 /**
@@ -37,6 +34,10 @@ public final class StoryboardSequenceAuditor {
                 batchIndex+1;
         if(start<0||end>plan.batches.size())
             throw new IllegalArgumentException("Unknown original storyboard batch");
+        JSONArray ordered=new JSONArray();for(String id:plan.assets)ordered.put(id);
+        JSONObject manifest=plan.sourceManifest==null
+                ?StoryboardSourceManifest.capture(ctx,project,new JSONObject().put("assetIds",ordered))
+                :StoryboardSourceManifest.validateForPlanning(project,plan.sourceManifest);
         Rig2DProjectStore storedRigs=new Rig2DProjectStore(ctx,new ProjectStore(ctx));
         List<Rig2DProfile> rigs=storedRigs.list(project.id);
         int total=0;
@@ -49,7 +50,9 @@ public final class StoryboardSequenceAuditor {
                 if(Thread.currentThread().isInterrupted())throw new InterruptedException();
                 ProjectStore.Asset from=project.asset(shot.fromId),
                                    to=project.asset(shot.toId);
-                int[] before=decode(ctx,from),after=decode(ctx,to);
+                JSONObject fromEntry=StoryboardMotionAdmission.library(manifest,from.id),
+                        toEntry=StoryboardMotionAdmission.library(manifest,to.id);
+                int[] before=decode(ctx,from,fromEntry),after=decode(ctx,to,toEntry);
                 StoryboardLayerIsolation.Result moved=
                         StoryboardLayerIsolation.analyse(before,after,W,H);
                 boolean sourceRig=hasRigs(rigs,from.id)&&hasRigs(rigs,to.id);
@@ -74,6 +77,8 @@ public final class StoryboardSequenceAuditor {
                         .put("toName",to.name)
                         .put("motion",shot.action.name())
                         .put("genre",shot.scene.name())
+                        .put("fromSourceMapping",NativeStoryboardSourceImage.fitMapping(fromEntry,W,H))
+                        .put("toSourceMapping",NativeStoryboardSourceImage.fitMapping(toEntry,W,H))
                         .put("autoStatus",moved.status.name())
                         .put("trackCount",moved.tracks.size())
                         .put("estimatedSceneDifference",moved.worldDifference)
@@ -91,6 +96,8 @@ public final class StoryboardSequenceAuditor {
         return new JSONObject()
                 .put("ok",true)
                 .put("sourceProjectId",project.id)
+                .put("sourceManifestSha256",manifest.getString("manifestSha256"))
+                .put("auditCoordinateSpace","oriented-source-uv-contain")
                 .put("pairsInspected",processed)
                 .put("readyOriginalRigPairs",readyRigs)
                 .put("readyAutoObjectPairs",readyLayers)
@@ -113,35 +120,14 @@ public final class StoryboardSequenceAuditor {
             }
         return black&&white;
     }
-    private static int[] decode(Context ctx,ProjectStore.Asset asset) throws Exception {
+    private static int[] decode(Context ctx,ProjectStore.Asset asset,JSONObject sourceEntry) throws Exception {
         if(!StoryboardBatchPlanner.isImage(asset))
             throw new IllegalArgumentException("Source keyframe not imported");
-        Uri uri=Uri.parse(asset.uri);
-        BitmapFactory.Options limits=new BitmapFactory.Options();
-        limits.inJustDecodeBounds=true;
-        try(InputStream in=ctx.getContentResolver().openInputStream(uri)){
-            if(in==null)throw new IllegalStateException("Imported source vanished");
-            BitmapFactory.decodeStream(in,null,limits);
-        }
-        if(limits.outWidth<16||limits.outHeight<16||
-                limits.outWidth>8192||limits.outHeight>8192)
-            throw new IllegalArgumentException("Original image dimensions unsafe");
-        BitmapFactory.Options opts=new BitmapFactory.Options();
-        opts.inPreferredConfig=Bitmap.Config.ARGB_8888;
-        int sample=1;
-        while(limits.outWidth/sample>W*2||limits.outHeight/sample>H*2)
-            sample*=2;
-        opts.inSampleSize=sample;
-        try(InputStream in=ctx.getContentResolver().openInputStream(uri)){
-            if(in==null)throw new IllegalStateException("Storyboard source was revoked");
-            Bitmap original=BitmapFactory.decodeStream(in,null,opts);
-            if(original==null)throw new IllegalStateException("Could not decode storyboard image");
-            Bitmap thumb=Bitmap.createScaledBitmap(original,W,H,true);
-            if(original!=thumb)original.recycle();
+        Bitmap thumb=NativeStoryboardSourceImage.readVerifiedFit(ctx,asset,W,H,sourceEntry);
+        try{
             int[] pixels=new int[W*H];
             thumb.getPixels(pixels,0,W,0,0,W,H);
-            thumb.recycle();
             return pixels;
-        }
+        }finally{thumb.recycle();}
     }
 }

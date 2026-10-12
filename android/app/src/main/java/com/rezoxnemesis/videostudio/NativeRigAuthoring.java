@@ -24,12 +24,14 @@ public final class NativeRigAuthoring {
             throw new IllegalArgumentException("Exactly sixteen labeled source joints are required");
         }
         JSONArray outline = request.optJSONArray("outline");
+        if(request.has("outline")&&outline==null)throw new IllegalArgumentException("outline must be an array");
         if (outline == null) outline = new JSONArray();
         if (outline.length() > 64) {
             throw new IllegalArgumentException("Character outline exceeds 64 points");
         }
 
-        String explicitId = request.optString("rigId", "").trim();
+        if(request.has("rigId")&&!(request.opt("rigId") instanceof String))throw new IllegalArgumentException("rigId must be a string");
+        String explicitId = request.optString("rigId", "");
         String profileId = explicitId.isEmpty() ? UUID.randomUUID().toString() : explicitId;
         JSONObject record = new JSONObject()
                 .put("version", 1)
@@ -40,6 +42,10 @@ public final class NativeRigAuthoring {
                 .put("transparentSource", request.optBoolean("transparentSource", false))
                 .put("joints", joints)
                 .put("outline", outline);
+        if(request.has("transparentSource")&&!(request.opt("transparentSource") instanceof Boolean))
+            throw new IllegalArgumentException("transparentSource must be boolean");
+        for(String field:new String[]{"swordTip","swordHilt","swordOutline","sourceSha256"})
+            if(request.has(field))record.put(field,request.get(field));
         // Existing profile constructor checks IDs, coordinate ranges,
         // nonzero bones and nondegenerate polygons, including traversal IDs.
         return Rig2DProfile.fromJson(record);

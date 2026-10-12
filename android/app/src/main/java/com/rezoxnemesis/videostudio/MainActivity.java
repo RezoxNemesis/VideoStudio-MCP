@@ -1879,10 +1879,10 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         });
         top.addView(exportButton);
         box.addView(top, margins(-1, -2, 0, dp(10), 0, 0));
-        Button storyboard=neonButton("Storyboard → Cinematic Animation (Multi-Genre)",C_MAGENTA);
+        Button storyboard=neonButton("Storyboard → Scoped Motion Drafts",C_MAGENTA);
         storyboard.setOnClickListener(v->storyboardStudioDialog());
         box.addView(storyboard,margins(-1,dp(51),0,0,0,dp(8)));
-        Button artwork=neonButton("Storyboard Art → Moving Fighters (2D Beta)",C_MAGENTA);
+        Button artwork=neonButton("Fighter Storyboard → Saved Program + Contacts",C_MAGENTA);
         artwork.setOnClickListener(v->storyboardArtworkDialog());
         box.addView(artwork,margins(-1,dp(49),0,0,0,dp(8)));
         Button directAnimation = neonButton("Animation Director • Make a Real Sequence", C_CYAN);
@@ -2341,10 +2341,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         }
         LinearLayout panel=column();
         panel.setPadding(dp(18),dp(8),dp(18),dp(8));
-        panel.addView(body("Animate actual source artwork. Supports comics, "+
-                "illustrated characters, product objects, scenes, titles, "+
-                "education and abstract drawings. Motion is object-by-object, "+
-                "not a slideshow or replacement skeleton."));
+        panel.addView(body("Choose the scope explicitly. Automatic/portrait options create source-deformation drafts; environmental motion moves the scene/camera. Cinematic fighters require an authored saved program, exact actor/sword profiles, contacts and choreography."));
         panel.addView(section("Story genre"));
         android.widget.Spinner genre=new android.widget.Spinner(this);
         String[] genres={"Auto / Mixed","Action","Comic / Manga","Portrait",
@@ -2358,10 +2355,10 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         panel.addView(genre,new LinearLayout.LayoutParams(-1,dp(49)));
         panel.addView(section("Character / object extraction"));
         android.widget.Spinner backend=new android.widget.Spinner(this);
-        String[] choices={"Automatic moving objects (local)",
-                "Human portraits (bundled ML Kit)",
-                "Hand-traced original artwork (high control)",
-                "Environmental / camera motion"};
+        String[] choices={"Source deformation draft · automatic layers",
+                "Source deformation draft · human portraits",
+                "Cinematic fighters · open saved program editor",
+                "Environmental / camera motion · non-action"};
         String[] backends={"AUTO_LAYERS","PERSON_SEGMENTATION",
                 "SOURCE_RIG","CAMERA_PARALLAX"};
         android.widget.ArrayAdapter<String> engines=new android.widget.ArrayAdapter<>(
@@ -2369,9 +2366,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         engines.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
         backend.setAdapter(engines);
         panel.addView(backend,new LinearLayout.LayoutParams(-1,dp(50)));
-        panel.addView(body("For difficult illustrated fights, automatic object "+
-                "separation may be uncertain. The engine will warn rather than "+
-                "render artificial fighters or distorted scenery."));
+        panel.addView(body("Draft separation/deformation and camera motion do not certify articulated fighting or cinematic quality. The saved-program editor supplies the explicit action annotations."));
         panel.addView(section("Scene idea / optional direction"));
         EditText prompt=new EditText(this);
         prompt.setHint("e.g. chase, dramatic leap, wind, reveal");
@@ -2405,12 +2400,12 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                 "is never overwritten. Full sequence needs trackable scenes "+
                 "or complete source object masks."));
         new AlertDialog.Builder(this)
-                .setTitle("VideoStudio Storyboard Motion Studio")
+                .setTitle("Storyboard motion scope")
                 .setView(panel)
                 .setNeutralButton("Analyze Source",(dlg,which)->
                         submitStoryboardStudio(genre,values,backend,backends,
                                 prompt,samples,stepCounts,full,audio,true))
-                .setPositiveButton("Animate + Render",(dlg,which)->
+                .setPositiveButton("Render selected scope",(dlg,which)->
                         submitStoryboardStudio(genre,values,backend,backends,
                                 prompt,samples,stepCounts,full,audio,false))
                 .setNegativeButton("Cancel",null).show();
@@ -2423,9 +2418,12 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
             boolean auditOnly){
         try{
             if(activeProject==null)throw new IllegalStateException("Original project closed");
+            String selectedBackend=modes[backend.getSelectedItemPosition()];
+            if("SOURCE_RIG".equals(selectedBackend)){storyboardArtworkDialog();return;}
             JSONObject options=new JSONObject()
                     .put("genre",values[genre.getSelectedItemPosition()])
-                    .put("backend",modes[backend.getSelectedItemPosition()])
+                    .put("backend",selectedBackend)
+                    .put("motionIntent",StoryboardOwnerRequests.intentForBackend(selectedBackend))
                     .put("direction",direction.getText().toString().trim())
                     .put("framesPerPair",steps[samples.getSelectedItemPosition()])
                     .put("fps",24)
@@ -2434,19 +2432,10 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                     StoryboardBatchPlanner.plan(activeProject,options);
             int batch=full.isChecked()?-1:0;
             int count=StoryboardSeriesOrchestrator.predictedFrames(plan,batch);
-            Intent action=new Intent(this,ControlService.class)
-                    .setAction(ControlService.ACTION_LOCAL_STORYBOARD_SERIES)
-                    .putExtra("projectId",activeProject.id)
-                    .putExtra("genre",values[genre.getSelectedItemPosition()])
-                    .putExtra("backend",modes[backend.getSelectedItemPosition()])
-                    .putExtra("direction",direction.getText().toString().trim())
-                    .putExtra("framesPerPair",steps[samples.getSelectedItemPosition()])
-                    .putExtra("batchIndex",batch)
-                    .putExtra("foley",foley.isChecked())
-                    .putExtra("analysisOnly",auditOnly);
+            Intent action=StoryboardOwnerRequests.series(this,activeProject.id,values[genre.getSelectedItemPosition()],selectedBackend,direction.getText().toString().trim(),steps[samples.getSelectedItemPosition()],batch,foley.isChecked(),auditOnly);
             startForegroundService(action);
             Toast.makeText(this,
-                    (auditOnly?"Checking original images and masks":"Animating source-owned film")+
+                    (auditOnly?"Checking selected motion scope":StoryboardOwnerRequests.intentForBackend(selectedBackend).equals("environmental")?"Environmental motion requested":"Source-deformation draft requested")+
                     " · "+plan.assets.size()+" distinct frames · "+
                     count+" output motion frames",
                     Toast.LENGTH_LONG).show();
@@ -2461,97 +2450,11 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
     }
 
     private void storyboardArtworkDialog() {
-        if(activeProject==null || activeProject.clips.size()<2) {
-            Toast.makeText(this,"Import at least two storyboard images",Toast.LENGTH_LONG).show();
-            return;
-        }
-        Rig2DProjectStore rigStore=new Rig2DProjectStore(this,store);
-        java.util.Map<String,Rig2DProfile[]> byFrame=new java.util.HashMap<>();
-        for(Rig2DProfile rig:rigStore.list(activeProject.id)){
-            if(rig.swordTip==null||rig.outline.length<3)continue;
-            Rig2DProfile[] profiles=byFrame.get(rig.sourceAssetId);
-            if(profiles==null){profiles=new Rig2DProfile[2];byFrame.put(rig.sourceAssetId,profiles);}
-            profiles[rig.black?0:1]=rig;
-        }
-        ArrayList<Integer> starts=new ArrayList<>();
-        ArrayList<String> labels=new ArrayList<>();
-        for(int i=0;i+1<activeProject.clips.size();i++){
-            ProjectStore.Asset first=activeProject.asset(activeProject.clips.get(i).assetId);
-            ProjectStore.Asset second=activeProject.asset(activeProject.clips.get(i+1).assetId);
-            if(first==null||second==null||
-                    first.mime==null||second.mime==null||
-                    !first.mime.startsWith("image/")||
-                    !second.mime.startsWith("image/")||
-                    first.id.equals(second.id))continue;
-            Rig2DProfile[] a=byFrame.get(first.id),b=byFrame.get(second.id);
-            if(a==null||b==null||a[0]==null||a[1]==null||
-                    b[0]==null||b[1]==null)continue;
-            starts.add(i);
-            labels.add((i+1)+" → "+(i+2)+" · "+first.name+" → "+second.name);
-            if(labels.size()>=40)break;
-        }
-        if(starts.isEmpty()) {
-            new AlertDialog.Builder(this)
-                    .setTitle("Prepare two authentic storyboard frames")
-                    .setMessage("VideoStudio needs a black and white body outline, "+
-                            "sixteen hidden 2D landmarks, and the end of each "+
-                            "real sword in BOTH adjacent source images. "+
-                            "Trace them with the 2D Rig Builder. The video "+
-                            "will display original fighter textures, NOT "+
-                            "the markup used to guide deformation.")
-                    .setPositiveButton("Open 2D Rig Builder",(d,w)->open2DRigEditor())
-                    .setNegativeButton("Cancel",null).show();
-            return;
-        }
-        String[] options=labels.toArray(new String[0]);
-        new AlertDialog.Builder(this)
-                .setTitle("Choose two continuous storyboard keyframes")
-                .setItems(options,(dialog,selected)->{
-                    int index=starts.get(selected);
-                    ProjectStore.Asset first=activeProject.asset(
-                            activeProject.clips.get(index).assetId);
-                    ProjectStore.Asset last=activeProject.asset(
-                            activeProject.clips.get(index+1).assetId);
-                    Rig2DProfile[] before=byFrame.get(first.id);
-                    Rig2DProfile[] after=byFrame.get(last.id);
-                    android.widget.Spinner beat=new android.widget.Spinner(this);
-                    String[] beats={"ADVANCE","STRIKE","PARRY","LEAP","IMPACT","KNOCKBACK"};
-                    android.widget.ArrayAdapter<String> adapter=new android.widget.ArrayAdapter<>(
-                            this,android.R.layout.simple_spinner_item,beats);
-                    adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
-                    beat.setAdapter(adapter);
-                    if(index<2)beat.setSelection(0);else beat.setSelection(1);
-                    LinearLayout panel=column();
-                    panel.setPadding(dp(18),dp(12),dp(18),dp(12));
-                    panel.addView(body("Original textures · fixed ruined city · "+
-                            "natural pose deformation · swords stay attached."),margins(-1,-2,dp(12),0,0,0));
-                    panel.addView(body("Fight action"),margins(-1,-2,dp(6),0,0,0));
-                    panel.addView(beat,new LinearLayout.LayoutParams(-1,dp(54)));
-                    panel.addView(body("2.6 seconds · 24 FPS · 432 × 768 portrait. "+
-                            "Scene/camera changes too large for 2D reconstruction "+
-                            "will stop with a clear warning."));
-                    new AlertDialog.Builder(this)
-                            .setTitle("Animate original artwork")
-                            .setView(panel)
-                            .setPositiveButton("Animate + Export",(dlg,which)->{
-                                Intent task=new Intent(this,ControlService.class)
-                                        .setAction(ControlService.ACTION_LOCAL_STORYBOARD_ARTWORK)
-                                        .putExtra("projectId",activeProject.id)
-                                        .putExtra("blackFromRigId",before[0].id)
-                                        .putExtra("whiteFromRigId",before[1].id)
-                                        .putExtra("blackToRigId",after[0].id)
-                                        .putExtra("whiteToRigId",after[1].id)
-                                        .putExtra("beat",beats[beat.getSelectedItemPosition()])
-                                        .putExtra("durationSeconds",2.6);
-                                startForegroundService(task);
-                                Toast.makeText(this,"Storyboard artwork animation requested. "+
-                                        "Check Activity for frame samples and MP4.",
-                                        Toast.LENGTH_LONG).show();
-                                showActivity();
-                            })
-                            .setNegativeButton("Cancel",null).show();
-                })
-                .setNegativeButton("Cancel",null).show();
+        if(activeProject==null){Toast.makeText(this,"Open a source storyboard project first",Toast.LENGTH_LONG).show();return;}
+        ProjectStore.Asset first=null;int images=0;
+        for(ProjectStore.Asset asset:activeProject.assets)if(asset.mime!=null&&asset.mime.startsWith("image/")){if(first==null)first=asset;images++;}
+        if(images<2){new AlertDialog.Builder(this).setTitle("Prepare authentic source frames").setMessage("Import at least two original storyboard images. The saved-program editor chooses exact actor profiles, original sword masks, visible source landmarks, foot contacts and twelve-beat choreography. Hidden anatomy and cinematic acceptance are not inferred.").setPositiveButton("Open source annotation",(d,w)->open2DRigEditor()).setNegativeButton("Close",null).show();return;}
+        StoryboardContactEditorDialog.show(this,store,new Rig2DProjectStore(this,store),activeProject.id,first.id);
     }
 
     private void queueUserRiggedDuel(){
@@ -2632,7 +2535,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
             case 1:
                 sections.add(new String[]{"Animate Imported Stills","Animate Stills"});
                 sections.add(new String[]{"Animation Director","Animation Director"});
-                sections.add(new String[]{"Storyboard → Cinematic Animation","Storyboard Studio"});
+                sections.add(new String[]{"Storyboard → Scoped Motion Drafts","Storyboard Studio"});
                 sections.add(new String[]{"Source-keyed fighter artwork (advanced)","Storyboard Artwork"});
                 sections.add(new String[]{"Trace Original Characters","Rig Builder"});
                 sections.add(new String[]{"Render Rigged 2D","Render Rigged 2D"});

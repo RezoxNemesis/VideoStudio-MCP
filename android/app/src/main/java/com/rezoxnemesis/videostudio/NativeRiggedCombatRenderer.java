@@ -34,7 +34,11 @@ public final class NativeRiggedCombatRenderer implements AutoCloseable {
         this.width=width;this.height=height;
         this.black=black;this.white=white;
         if(cleanPlate!=null) {
-            world=Bitmap.createScaledBitmap(cleanPlate,width,height,true);
+            Bitmap scaled=Bitmap.createScaledBitmap(cleanPlate,width,height,true);
+            // Android returns the caller's bitmap when no resize is needed.
+            // The world is renderer-owned and close() must never recycle that input.
+            world=scaled==cleanPlate?cleanPlate.copy(Bitmap.Config.ARGB_8888,false):scaled;
+            if(world==null)throw new IllegalStateException("Cannot allocate an owned clean scene bitmap");
         }else{
             NativeCombatRigRenderer env=new NativeCombatRigRenderer(width,height);
             world=env.staticBackgroundCopy();

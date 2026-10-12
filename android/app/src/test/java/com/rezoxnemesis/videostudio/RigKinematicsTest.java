@@ -58,4 +58,40 @@ public class RigKinematicsTest {
     public void invalidLegMeasurementsCannotBeAnimated() {
         RigKinematics.plantedLeg(v(0,0,0),v(0,0,1),v(0,1,0),0,.5);
     }
+
+    @Test public void reachableFullyExtendedFootDoesNotMoveOffItsAuthoredAnchor() {
+        RigKinematics.Vec3 foot=v(1,0,0);
+        RigKinematics.TwoBonePose pose=RigKinematics.plantedLeg(v(0,0,0),foot,v(0,1,0),.6,.4);
+        assertTrue(pose.targetReachable);
+        assertEquals("A reachable foot target must stay exact even at full leg extension",0,pose.effector.distance(foot),1e-12);
+        assertEquals(.6,pose.root.distance(pose.joint),1e-12);
+        assertEquals(.4,pose.joint.distance(pose.effector),1e-12);
+    }
+
+    @Test public void impossibleFootPlantIsReportedInsteadOfCertifiedAsLocked() {
+        RigKinematics.Vec3 foot=v(1,0,0);
+        RigKinematics.TwoBonePose pose=RigKinematics.plantedLeg(v(0,0,0),foot,v(0,1,0),.2,.2);
+        assertFalse(pose.targetReachable);
+        assertEquals(.2,pose.root.distance(pose.joint),1e-6);
+        assertEquals(.2,pose.joint.distance(pose.effector),1e-6);
+        assertTrue("Unreachable contact must carry nonzero error for admission/evidence",pose.effector.distance(foot)>.59);
+    }
+
+    @Test public void portraitPhysicalMetricPreservesBothLegLengthsAndFootLocation() {
+        double aspect=720d/1280d;
+        RigKinematics.Vec3 hip=v(.5*aspect,.55,0),foot=v(.56*aspect,.9,0),pole=v(.7*aspect,.7,0);
+        RigKinematics.TwoBonePose pose=RigKinematics.plantedLeg(hip,foot,pole,.2,.2);
+        assertTrue(pose.targetReachable);
+        assertEquals(.2,pose.root.distance(pose.joint),1e-10);
+        assertEquals(.2,pose.joint.distance(pose.effector),1e-10);
+        assertEquals(.56,pose.effector.x/aspect,1e-10);
+        assertEquals(.9,pose.effector.y,1e-10);
+    }
+    @Test public void tinyAuthoredBladeSegmentsStillIntersectAndExposeBothWitnesses() {
+        RigKinematics.Vec3 a=v(.7,.3,0),b=v(.70001,.3,0),c=v(.700005,.299995,0),d=v(.700005,.300005,0);
+        assertEquals(0,RigKinematics.segmentDistance(a,b,c,d),1e-12);
+        RigKinematics.SegmentWitness witness=RigKinematics.closestSegments(a,b,c,d);
+        assertEquals(.5,witness.parameterA,1e-9);assertEquals(.5,witness.parameterB,1e-9);
+        assertEquals(0,witness.pointA.distance(witness.pointB),1e-12);
+    }
 }

@@ -1,6 +1,7 @@
 package com.rezoxnemesis.videostudio;
 
 import java.util.Arrays;
+import java.util.List;
 
 /**
  * Restores the still illustrated world, independently of the moving actors.
@@ -35,14 +36,18 @@ public final class StoryboardCleanPlate {
     public static Result restore(int[] first,int[] last,int width,int height,
                                  float[][] blackFirst,float[][] whiteFirst,
                                  float[][] blackLast,float[][] whiteLast){
+        return restore(first,last,width,height,Arrays.asList(blackFirst,whiteFirst),Arrays.asList(blackLast,whiteLast));
+    }
+
+    /** Actor and original-prop occlusion masks in the same oriented source UV coordinates. */
+    public static Result restore(int[] first,int[] last,int width,int height,
+                                 List<float[][]> firstMasks,List<float[][]> lastMasks){
         if(first==null||last==null||width<16||height<16||
                 (long)width*height>1280L*1920L||
                 first.length!=width*height||last.length!=first.length)
             throw new IllegalArgumentException("Need two bounded imported source images");
-        boolean[] occludedFirst=mask(width,height,blackFirst);
-        boolean[] occludedLast=mask(width,height,blackLast);
-        or(occludedFirst,mask(width,height,whiteFirst));
-        or(occludedLast,mask(width,height,whiteLast));
+        boolean[] occludedFirst=union(width,height,firstMasks);
+        boolean[] occludedLast=union(width,height,lastMasks);
         int[] background=first.clone();
         int stable=0,recovered=0,uncovered=0;
         long disagreement=0;
@@ -73,6 +78,14 @@ public final class StoryboardCleanPlate {
         if(holes>0)fillNearest(background,missing,width,height);
         return new Result(background,difference,holes/(double)first.length,
                 stable,recovered,holes);
+    }
+
+    private static boolean[] union(int width,int height,List<float[][]> masks){
+        if(masks==null||masks.size()<2||masks.size()>8)
+            throw new IllegalArgumentException("Two actor masks and bounded original prop masks are required");
+        boolean[] combined=new boolean[width*height];
+        for(float[][] polygon:masks)or(combined,mask(width,height,polygon));
+        return combined;
     }
 
     /**

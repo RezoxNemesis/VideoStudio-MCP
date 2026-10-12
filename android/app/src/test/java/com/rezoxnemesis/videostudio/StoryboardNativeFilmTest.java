@@ -12,14 +12,16 @@ import org.junit.runner.RunWith;
 import org.robolectric.RobolectricTestRunner;
 import org.robolectric.RuntimeEnvironment;
 import org.robolectric.annotation.Config;
+import org.robolectric.annotation.GraphicsMode;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.util.UUID;
 import static org.junit.Assert.*;
 
-/** Actually render a tiny source-owned mobile film inside Robolectric. */
+/** Native Canvas source-deformation fixture; synthetic rectangles do not prove articulated cinema or MP4 timing. */
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk=33,manifest=Config.NONE)
+@GraphicsMode(GraphicsMode.Mode.NATIVE)
 public final class StoryboardNativeFilmTest {
     private static final int W=256,H=432;
 
@@ -45,7 +47,7 @@ public final class StoryboardNativeFilmTest {
             for(int col=x;col<x+width;col++)
                 image[row*W+col]=color;
     }
-    @Test public void buildsTrueIntermediateFramesAndFoleyWithoutAlteringSource()
+    @Test public void buildsSourceDeformationFramesAndExplicitAmbienceWithoutAlteringSource()
             throws Exception {
         Context ctx=RuntimeEnvironment.getApplication();
         ProjectStore store=new ProjectStore(ctx);
@@ -67,6 +69,7 @@ public final class StoryboardNativeFilmTest {
             source.clips.add(clip);
         }
         store.save(source);
+        String originalGraph=source.toJson().toString();
         // Emit source-mask telemetry so a failed renderer cannot hide
         // "no visible actor" behind a passing full-image pixel score.
         Bitmap frameA=BitmapFactory.decodeFile(Uri.parse(source.assets.get(0).uri).getPath());
@@ -75,6 +78,16 @@ public final class StoryboardNativeFilmTest {
         frameA.getPixels(firstImage,0,W,0,0,W,H);
         frameB.getPixels(lastImage,0,W,0,0,W,H);
         frameA.recycle();frameB.recycle();
+        JSONObject sourceRecord=StoryboardSourceManifest.captureSource(ctx,source.assets.get(0));
+        Bitmap verified=NativeStoryboardSourceImage.readVerifiedFit(ctx,source.assets.get(0),W,H,sourceRecord);
+        int[] verifiedPixels=new int[W*H];
+        try{verified.getPixels(verifiedPixels,0,W,0,0,W,H);}finally{verified.recycle();}
+        assertArrayEquals("Same-aspect verified contain fit preserves actual original pixels",firstImage,verifiedPixels);
+        Bitmap verifiedB=NativeStoryboardSourceImage.readVerifiedFit(ctx,source.assets.get(1),W,H,StoryboardSourceManifest.captureSource(ctx,source.assets.get(1)));
+        int[] verifiedLast=new int[W*H];try{verifiedB.getPixels(verifiedLast,0,W,0,0,W,H);}finally{verifiedB.recycle();}
+        assertArrayEquals("Verified B preserves the same moving source subjects",lastImage,verifiedLast);
+        int changedPixels=0;for(int i=0;i<verifiedPixels.length;i++)if(verifiedPixels[i]!=verifiedLast[i])changedPixels++;
+        assertTrue("Verified source pair contains the authored subject displacement",changedPixels>1000);
         StoryboardLayerIsolation.Result tracked=StoryboardLayerIsolation.analyse(
                 firstImage,lastImage,W,H);
         System.out.println("NATIVE_STORYBOARD_MASKS status="+tracked.status+
@@ -91,6 +104,7 @@ public final class StoryboardNativeFilmTest {
                     " confidence="+t.confidence);
         }
         JSONObject params=new JSONObject().put("backend","AUTO_LAYERS")
+                .put("motionIntent","source_deformation")
                 .put("genre","action").put("fps",24)
                 .put("framesPerPair",6).put("foley",true);
         StoryboardBatchPlanner.Plan plan=StoryboardBatchPlanner.plan(source,params);
@@ -110,15 +124,29 @@ public final class StoryboardNativeFilmTest {
         }
         assertEquals(7,finished.frames);
         assertEquals(7,generated.clips.size());
-        assertTrue(generated.assets.size()>=8);
+        assertEquals("Seven actual generated images plus one explicit ambient WAV",8,generated.assets.size());
         assertEquals(1,generated.studioLayers.size());
         assertEquals("audio",generated.studioLayers.get(0).type);
+        assertTrue(finished.soundtrack);assertFalse("Ambience is not captured action audio",finished.actionAudio);
+        JSONObject audioEvidence=finished.audioEvidence;
+        assertEquals("PROCEDURAL_AMBIENCE_ONLY",audioEvidence.getString("timingScope"));
+        assertEquals("NONE",audioEvidence.getString("origin"));assertTrue(audioEvidence.getBoolean("ambienceOnly"));
+        assertEquals(0,audioEvidence.getInt("audibleEventCount"));assertEquals(0,audioEvidence.getJSONArray("events").length());
+        assertFalse(audioEvidence.getBoolean("eventSynchronizationVerified"));
+        assertFalse(audioEvidence.getBoolean("decodedExportSynchronizationVerified"));
+        JSONObject completed=finished.toJson();assertFalse(completed.getBoolean("actionAudio"));
+        assertFalse(completed.getBoolean("cinematicAcceptance"));
+        ProjectStore.Asset ambient=generated.asset(generated.studioLayers.get(0).assetId);
+        assertNotNull(ambient);assertEquals("audio/wav",ambient.mime);
+        assertTrue(ambient.generationMetadata.getBoolean("ambienceOnly"));
+        assertEquals(0,ambient.generationMetadata.getInt("events"));assertFalse(ambient.generationMetadata.getBoolean("actionAudio"));
         assertNotNull(generated.asset(generated.clips.get(3).assetId));
         assertTrue(new File(Uri.parse(generated.asset(
                 generated.clips.get(3).assetId).uri).getPath()).isFile());
         ProjectStore.Project unchanged=store.get(source.id);
         assertEquals(2,unchanged.clips.size());
         assertEquals(2,unchanged.assets.size());
+        assertEquals("The entire owner source graph remains unchanged",originalGraph,unchanged.toJson().toString());
         assertEquals(7,store.get(generated.id).clips.size());
         // Visual regression from the actual encoded 2D compositing frame:
         // a passing mean-pixel motion score is NOT enough if the black
@@ -142,8 +170,8 @@ public final class StoryboardNativeFilmTest {
     }
 
     /**
-     * Saves real decoded output snapshots from the storyboard native
-     * renderer, plus a structured QA report and native synthesized Foley.
+     * Saves decoded generated JPEG snapshots from the native Canvas renderer,
+     * plus a structured source-deformation report and explicit procedural ambience.
      * GitHub Actions uploads these as a compact, inspectable test artifact.
      * This is visual proof from synthetic sample art, NOT proof that all
      * human/anime storyboard scenes meet cinematic quality.
@@ -194,6 +222,8 @@ public final class StoryboardNativeFilmTest {
                     .put("generatedProjectId",result.id)
                     .put("motionImage","original_artwork_motion_qa.png")
                     .put("qaSource","programmatic synthetic source drawing")
+                    .put("fixtureScope","SOURCE_DEFORMATION_WITH_PROCEDURAL_AMBIENCE")
+                    .put("decodedMp4TimingVerified",false)
                     .put("manualSourceArtVisualApproval",false)
                     .put("sourceProjectUnmodified",true)
                     .put("renderedNativeFramesSampled",samples.length);
@@ -205,9 +235,9 @@ public final class StoryboardNativeFilmTest {
             if(!result.studioLayers.isEmpty()){
                 File soundtrack=new File(Uri.parse(result.asset(
                         result.studioLayers.get(0).assetId).uri).getPath());
-                assertTrue("Foley soundtrack generated",soundtrack.exists());
+                assertTrue("Explicit ambient soundtrack generated",soundtrack.exists());
                 java.nio.file.Files.copy(soundtrack.toPath(),
-                        new File(directory,"native_action_audio.wav").toPath(),
+                        new File(directory,"native_procedural_ambience.wav").toPath(),
                         java.nio.file.StandardCopyOption.REPLACE_EXISTING);
             }
         }finally{sheet.recycle();}

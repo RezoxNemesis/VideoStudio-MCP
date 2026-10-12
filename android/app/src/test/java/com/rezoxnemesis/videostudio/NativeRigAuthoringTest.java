@@ -78,4 +78,37 @@ public class NativeRigAuthoringTest {
         assertEquals(.42,result.joints[0][0],.00001);
         assertEquals("11111111-2222-3333-4444-555555555555",result.id);
     }
+
+    @Test public void sourceSwordTipSurvivesTheActualNativeAuthoringPath() throws Exception {
+        JSONObject supplied=request().put("swordTip",new JSONArray().put(.72).put(.52));
+        Rig2DProfile result=NativeRigAuthoring.parse("project-id-01","asset-id-01",supplied);
+        assertNotNull("A supplied authentic sword endpoint must not disappear before rig preflight",result.swordTip);
+        assertArrayEquals(new float[]{.72f,.52f},result.swordTip,.000001f);
+    }
+
+    @Test public void sourceWeaponFlatAnnotationsSurviveAuthoringAndSerialization() throws Exception {
+        JSONArray polygon=new JSONArray().put(new JSONArray().put(.62).put(.56))
+                .put(new JSONArray().put(.62).put(.51)).put(new JSONArray().put(.75).put(.49))
+                .put(new JSONArray().put(.75).put(.54));
+        JSONObject supplied=request().put("swordTip",new JSONArray().put(.72).put(.52))
+                .put("swordHilt",new JSONArray().put(.64).put(.54)).put("swordOutline",polygon);
+        JSONObject stored=NativeRigAuthoring.parse("project-id-01","asset-id-01",supplied).toJson();
+        assertTrue("Native authoring must retain the original source hilt",stored.has("swordHilt"));
+        assertTrue("Native authoring must retain the actual painted sword mask",stored.has("swordOutline"));
+        assertEquals(.64,stored.getJSONArray("swordHilt").getDouble(0),.000001);
+        assertEquals(4,stored.getJSONArray("swordOutline").length());
+        JSONObject recovered=Rig2DProfile.fromJson(stored).toJson();
+        assertEquals(stored.getJSONArray("swordHilt").toString(),recovered.getJSONArray("swordHilt").toString());
+        assertEquals(stored.getJSONArray("swordOutline").toString(),recovered.getJSONArray("swordOutline").toString());
+    }
+    @Test public void sourceByteProofSurvivesAndCannotBeAStringCoercionOrInvalidDigest() throws Exception {
+        String digest="0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        Rig2DProfile profile=NativeRigAuthoring.parse("project-id-01","asset-id-01",request().put("sourceSha256",digest));
+        assertEquals(digest,profile.sourceSha256);assertEquals(digest,Rig2DProfile.fromJson(profile.toJson()).sourceSha256);
+        for(Object invalid:new Object[]{123,"","ABCDEF0123456789abcdef0123456789abcdef0123456789abcdef0123456789ab",JSONObject.NULL}) {
+            try{NativeRigAuthoring.parse("project-id-01","asset-id-01",request().put("sourceSha256",invalid));fail("Invalid source-byte proof accepted");}
+            catch(IllegalArgumentException expected){}
+        }
+        assertNull(NativeRigAuthoring.parse("project-id-01","asset-id-01",request()).sourceSha256);
+    }
 }

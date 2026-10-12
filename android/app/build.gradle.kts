@@ -1,3 +1,6 @@
+import java.security.KeyStore
+import java.security.MessageDigest
+
 plugins {
     id("com.android.application")
 }
@@ -10,8 +13,8 @@ android {
         applicationId = "com.rezoxnemesis.videostudio.next"
         minSdk = 29
         targetSdk = 35
-        versionCode = 371
-        versionName = "3.7.1"
+        versionCode = 372
+        versionName = "3.7.2"
     }
 
     testOptions { unitTests.isIncludeAndroidResources = true }
@@ -27,6 +30,8 @@ android {
     signingConfigs {
         getByName("debug") {
             val stableKey = System.getenv("VIDEOSTUDIO_SIGNING_KEYSTORE")
+            // Null prevents AGP from generating its default replacement key.
+            storeFile = null
             if (!stableKey.isNullOrBlank()) {
                 storeFile = file(stableKey)
                 storePassword = "android"
@@ -42,9 +47,35 @@ android {
         }
         release {
             isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("debug")
         }
     }
 }
+
+// Unit tests need no APK signing key. Every installable build requires the
+// pre-existing owner key and checks its public identity BEFORE packaging.
+val verifyContinuitySigning = tasks.register("verifyContinuitySigning") {
+    doLast {
+        val configured = System.getenv("VIDEOSTUDIO_SIGNING_KEYSTORE")
+        require(!configured.isNullOrBlank()) {
+            "Original VideoStudio signing key unavailable; refusing a replacement or unsigned APK"
+        }
+        val original = file(configured)
+        require(original.isFile && original.canRead()) { "Original VideoStudio signing key is not readable" }
+        val keyStore = KeyStore.getInstance(original, "android".toCharArray())
+        require(keyStore.isKeyEntry("androiddebugkey")) { "Original VideoStudio signing alias unavailable" }
+        val certificate = keyStore.getCertificate("androiddebugkey")
+        val fingerprint = MessageDigest.getInstance("SHA-256")
+            .digest(certificate.encoded).joinToString("") { "%02x".format(it.toInt() and 255) }
+        require(fingerprint == "7e0187470356616be2a45bc7f41445894085185db110edfdc0cdfd232942a6dd") {
+            "VideoStudio signing identity differs from the pinned original certificate"
+        }
+    }
+}
+tasks.matching {
+    it.name == "validateSigningDebug" || it.name == "validateSigningRelease" ||
+        it.name == "packageDebug" || it.name == "packageRelease"
+}.configureEach { dependsOn(verifyContinuitySigning) }
 
 dependencies {
     implementation("androidx.core:core:1.15.0")

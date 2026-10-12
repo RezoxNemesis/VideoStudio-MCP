@@ -4,14 +4,14 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
+import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
 
 /**
  * Production-friendly multi-shot storyboard plan, not a 2-actor fight script.
  *
- * Orders and deduplicates only explicitly imported VideoStudio project files.
+ * Preserves imported source occurrences and uses only explicitly declared variants.
  * Supports up to 160 source drawings and partitions long storyboards into
  * independently restartable batches with a shared endpoint between batches.
  *
@@ -31,15 +31,22 @@ public final class StoryboardBatchPlanner {
         public final int fromIndex,toIndex;
         public final String fromId,toId;
         public final StoryboardMotionGrammar.Action action;
+        public final StoryboardChoreography.Beat beat;
         public final int frames;
         public final StoryboardMotionGrammar.SceneKind scene;
         public final String sourceDescription;
         Shot(int fromIndex,int toIndex,String a,String b,
              StoryboardMotionGrammar.Action action,int frames,
              StoryboardMotionGrammar.SceneKind scene,String description){
+            this(fromIndex,toIndex,a,b,action,frames,scene,description,null);
+        }
+        Shot(int fromIndex,int toIndex,String a,String b,
+             StoryboardMotionGrammar.Action action,int frames,
+             StoryboardMotionGrammar.SceneKind scene,String description,StoryboardChoreography.Beat beat){
             this.fromIndex=fromIndex;this.toIndex=toIndex;
             fromId=a;toId=b;this.action=action;this.frames=frames;
             this.scene=scene;sourceDescription=description;
+            this.beat=beat;
         }
     }
     public static final class Batch {
@@ -47,7 +54,7 @@ public final class StoryboardBatchPlanner {
         public final List<Shot> shots;
         Batch(int index,int start,int end,List<Shot> shots,int count){
             this.index=index;this.start=start;this.end=end;
-            this.shots=shots;expectedFrames=count;
+            this.shots=Collections.unmodifiableList(new ArrayList<>(shots));expectedFrames=count;
         }
     }
     public static final class Plan {
@@ -58,12 +65,14 @@ public final class StoryboardBatchPlanner {
         public final List<String> assets;
         public final List<Batch> batches;
         public final int deduplicatedCount;
+        public final JSONObject sourceManifest;
         Plan(String projectId,int fps,Backend backend,
              StoryboardMotionGrammar.SceneKind scene,List<String> source,
-             List<Batch> batches,int skipped) {
+             List<Batch> batches,int skipped,JSONObject manifest) {
             this.projectId=projectId;this.fps=fps;this.backend=backend;
-            this.scene=scene;assets=source;this.batches=batches;
+            this.scene=scene;assets=Collections.unmodifiableList(new ArrayList<>(source));this.batches=Collections.unmodifiableList(new ArrayList<>(batches));
             deduplicatedCount=skipped;
+            sourceManifest=manifest;
         }
         public JSONObject toJson() throws Exception {
             JSONObject result=new JSONObject();
@@ -76,6 +85,9 @@ public final class StoryboardBatchPlanner {
             result.put("sourceDuplicatesFiltered",deduplicatedCount);
             result.put("batchCount",batches.size());
             result.put("sourceProjectUnmodified",true);
+            result.put("sourceManifestBound",sourceManifest!=null);
+            result.put("ownedBytesRequireVerification",true);
+            if(sourceManifest!=null)result.put("sourceManifest",new JSONObject(sourceManifest.toString()));
             result.put("galleryAccess",false);
             result.put("automaticPoseDiffusionAvailable",false);
             result.put("format","videostudio.storyboard-batches.v1");
@@ -101,6 +113,7 @@ public final class StoryboardBatchPlanner {
                         .put("fromAssetId",shot.fromId)
                         .put("toAssetId",shot.toId)
                         .put("action",shot.action.name())
+                        .put("beat",shot.beat==null?JSONObject.NULL:shot.beat.name())
                         .put("scene",shot.scene.name())
                         .put("plannedFrames",shot.frames)
                         .put("motionQualityValidated",false)
@@ -116,10 +129,21 @@ public final class StoryboardBatchPlanner {
 
     public static Plan plan(ProjectStore.Project project,JSONObject parameters)
             throws Exception {
+        return plan(project,parameters,null);
+    }
+
+    /** Native callers verify this frozen manifest's owned bytes before rendering. */
+    public static Plan plan(ProjectStore.Project project,JSONObject parameters,JSONObject acceptedManifest)
+            throws Exception {
         if(project==null)throw new IllegalArgumentException("Open an imported VideoStudio project");
         if(parameters==null)parameters=new JSONObject();
-        int fps=parameters.optInt("fps",24);
-        if(fps!=24&&fps!=30)throw new IllegalArgumentException("Use 24 or 30 FPS");
+        Object requestedFps=parameters.has("fps")?parameters.opt("fps"):Integer.valueOf(24);
+        if(!(requestedFps instanceof Number)||!Double.isFinite(((Number)requestedFps).doubleValue())
+                ||((Number)requestedFps).doubleValue()!=Math.rint(((Number)requestedFps).doubleValue()))
+            throw new IllegalArgumentException("Use an integer 24, 30 or 60 FPS");
+        double numericFps=((Number)requestedFps).doubleValue();
+        if(numericFps!=24&&numericFps!=30&&numericFps!=60)throw new IllegalArgumentException("Use 24, 30 or 60 FPS");
+        int fps=(int)numericFps;
         Backend backend=parseBackend(parameters.optString("backend","AUTO_LAYERS"));
         int maxPerBatch=parameters.optInt("maxFramesPerBatch",MAX_BATCH_SOURCE_FRAMES);
         if(maxPerBatch<MIN_BATCH_SOURCE_FRAMES||maxPerBatch>MAX_BATCH_SOURCE_FRAMES)
@@ -130,42 +154,18 @@ public final class StoryboardBatchPlanner {
         int maxGenerated=parameters.optInt("maxGeneratedFrames",240);
         if(maxGenerated<24||maxGenerated>480)
             throw new IllegalArgumentException("Bound each native batch to 24-480 samples");
-        boolean dedupe=parameters.optBoolean("deduplicateSourceVariants",true);
+        JSONObject manifest=acceptedManifest==null?null:StoryboardSourceManifest.validateForPlanning(project,acceptedManifest);
+        if(manifest!=null)StoryboardSourceManifest.validateSelectionAgainstManifest(project,parameters,manifest);
         List<ProjectStore.Asset> images=new ArrayList<>();
-        JSONArray explicit=parameters.optJSONArray("assetIds");
-        if(explicit!=null){
-            if(explicit.length()>MAX_SOURCE_FRAMES)
-                throw new IllegalArgumentException("Storyboard exceeds 160 images");
-            for(int i=0;i<explicit.length();i++){
-                ProjectStore.Asset asset=project.asset(explicit.getString(i));
-                if(!isImage(asset))
-                    throw new IllegalArgumentException("Unknown explicit image at index "+i);
-                images.add(asset);
-            }
-        }else{
-            for(ProjectStore.Clip clip:project.clips){
-                ProjectStore.Asset asset=project.asset(clip.assetId);
-                if(isImage(asset))images.add(asset);
-                if(images.size()>MAX_SOURCE_FRAMES)
-                    throw new IllegalArgumentException("Storyboard exceeds 160 images");
-            }
-        }
+        List<String> selected=manifest==null?StoryboardSourceManifest.resolveAssetIds(project,parameters):
+                StoryboardSourceManifest.manifestAssetIds(manifest);
+        for(String id:selected)images.add(project.asset(id));
         if(images.size()<2)throw new IllegalArgumentException("Need two or more imported frames");
-        int originalCount=images.size();
-        if(dedupe){
-            // Keep first appearance order, choose better available original
-            // media when JPG/WEBP/etc are parallel copies of same drawing.
-            LinkedHashMap<String,ProjectStore.Asset> selected=new LinkedHashMap<>();
-            for(ProjectStore.Asset a:images){
-                String key=normalizeFrameName(a.name);
-                ProjectStore.Asset old=selected.get(key);
-                if(old==null||qualityScore(a)>qualityScore(old))
-                    selected.put(key,a);
-            }
-            images=new ArrayList<>(selected.values());
-        }
-        if(images.size()<2)
-            throw new IllegalArgumentException("Only one unique storyboard drawing was imported");
+        // A filename, extension or byte size cannot prove visual equivalence.
+        // Literal repeat occurrences are beats. Only explicit variant groups
+        // select fewer representatives, without deleting any library assets.
+        int skipped=StoryboardSourceManifest.declaredVariantCount(project,
+                manifest==null?parameters:manifest);
         StoryboardMotionGrammar.SceneKind scene=
                 StoryboardMotionGrammar.scene(parameters.optString("genre",
                         project.sourcePrompt+" "+project.name));
@@ -178,6 +178,11 @@ public final class StoryboardBatchPlanner {
                 ?StoryboardMotionGrammar.parseAction(description,null):null;
         List<String> ids=new ArrayList<>();
         for(ProjectStore.Asset a:images)ids.add(a.id);
+        if(parameters.has("choreography")){
+            JSONArray choreography=parameters.optJSONArray("choreography");
+            if(choreography==null||choreography.length()!=ids.size()-1)
+                throw new IllegalArgumentException("Choreography must contain exactly one authored beat per ordered source transition");
+        }
         ArrayList<Batch> batches=new ArrayList<>();
         int start=0,index=0;
         // Pair count, rather than image count, is the real render budget.
@@ -199,7 +204,7 @@ public final class StoryboardBatchPlanner {
                                         ?StoryboardMotionGrammar.Action.DRIFT
                                         :StoryboardMotionGrammar.Action.TRACK);
                 shots.add(new Shot(end,end+1,images.get(end).id,to.id,
-                        beat,samples,scene,description));
+                        beat,samples,scene,description,StoryboardChoreography.resolveBeat(parameters,end,images.get(end).id,to.id)));
                 produced+=samples;end++;
             }
             if(end==start)throw new IllegalArgumentException(
@@ -210,7 +215,7 @@ public final class StoryboardBatchPlanner {
                 throw new IllegalArgumentException("Excessive batch count");
         }
         return new Plan(project.id,fps,backend,scene,ids,batches,
-                originalCount-images.size());
+                skipped,manifest);
     }
 
     public static Backend parseBackend(String requested) {
@@ -232,15 +237,5 @@ public final class StoryboardBatchPlanner {
         name=name.replaceFirst("^0+_","0_");
         name=name.replaceAll("[^a-z0-9]+","_").replaceAll("^_+|_+$","");
         return name;
-    }
-    private static long qualityScore(ProjectStore.Asset a) {
-        long size=Math.max(0,a.sizeBytes);
-        long width=a.generationMetadata==null?0:
-                a.generationMetadata.optLong("width",0);
-        long height=a.generationMetadata==null?0:
-                a.generationMetadata.optLong("height",0);
-        long pixels=Math.min(10000000L,width*height);
-        int type=a.mime.contains("png")?3:a.mime.contains("webp")?2:1;
-        return pixels*1000+size*4+type;
     }
 }

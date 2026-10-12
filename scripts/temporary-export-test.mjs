@@ -1,3 +1,6 @@
+import {nativeCommandSummary,nativeResultPage} from "../src/native-result-pages.js";
+import {queueBindings,memoryStorage} from "./native-queue-fixture.mjs";
+import * as storyboardContract from "../src/storyboard-contract.js";
 import {test} from "node:test";
 import assert from "node:assert/strict";
 import {readFileSync} from "node:fs";
@@ -7,7 +10,7 @@ import {webcrypto} from "node:crypto";
 const worker=readFileSync(new URL("../src/index.js",import.meta.url),"utf8");
 const runtime=readFileSync(new URL("../src/studio-runtime.js",import.meta.url),"utf8");
 const end=worker.indexOf("\n}\n",worker.indexOf("export class VideoStudioState"))+3;
-const ctx={
+const ctx={...storyboardContract,...queueBindings,nativeCommandSummary,nativeResultPage,
   crypto:webcrypto,TextEncoder,TextDecoder,Response,Request,Headers,URL,
   Date,Blob,Uint8Array,setTimeout,DurableObject:class{constructor(context){this.ctx=context;}}
 };
@@ -19,14 +22,8 @@ vm.runInContext(
 );
 function fixture(){
   const rows=new Map();let alarmAt=null;
-  const storage={
-    get:async key=>structuredClone(rows.get(key)),
-    put:async(key,value)=>rows.set(key,structuredClone(value)),
-    delete:async key=>rows.delete(key),
-    list:async({prefix})=>new Map([...rows].filter(([k])=>k.startsWith(prefix)).map(([k,v])=>[k,structuredClone(v)])),
-    getAlarm:async()=>alarmAt,
-    setAlarm:async time=>{alarmAt=time;}
-  };
+  const storage=memoryStorage(rows);
+  storage.getAlarm=async()=>alarmAt;storage.setAlarm=async time=>{alarmAt=time;};
   const relay=new ctx.VideoStudioState({storage},{});
   return {relay,storage,rows};
 }

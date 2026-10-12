@@ -16,17 +16,22 @@ public final class StoryboardSeriesOrchestrator {
     public interface Progress {
         void update(int generated,int total,int batch,int shotIndex,
                     String provider,float confidence) throws Exception;
+        default void onSaved(ProjectStore.Project output) throws Exception { }
     }
     public static final class Result {
         public final int frames,shots,batches;
         public final double minimumConfidence;
         public final JSONArray reports;
-        public final boolean soundtrack;
+        public final boolean soundtrack,actionAudio;
+        public final JSONObject audioEvidence;
+        public final String sourceManifestSha256,semanticPlanSha256;
         Result(int frames,int shots,int batches,double confidence,
-               JSONArray reports,boolean soundtrack) {
+               JSONArray reports,boolean soundtrack,JSONObject audioEvidence,String sourceSha,String planSha) {
             this.frames=frames;this.shots=shots;this.batches=batches;
             minimumConfidence=confidence;this.reports=reports;
-            this.soundtrack=soundtrack;
+            this.soundtrack=soundtrack;this.audioEvidence=audioEvidence;
+            actionAudio=soundtrack&&audioEvidence.optInt("audibleEventCount",0)>0;
+            sourceManifestSha256=sourceSha;semanticPlanSha256=planSha;
         }
         public JSONObject toJson() throws Exception {
             return new JSONObject()
@@ -35,10 +40,13 @@ public final class StoryboardSeriesOrchestrator {
                     .put("frames",frames)
                     .put("shots",shots)
                     .put("batches",batches)
-                    .put("minimumSegmentationConfidence",minimumConfidence)
+                    .put("minimumSegmentationConfidence",Double.isFinite(minimumConfidence)?minimumConfidence:JSONObject.NULL)
+                    .put("confidenceStatus",Double.isFinite(minimumConfidence)?"MEASURED_SEGMENTATION_HEURISTIC":"UNAVAILABLE")
                     .put("perBatchReports",reports)
-                    .put("sourceArtTexturePreserved",true)
-                    .put("synchronizedGeneratedFoley",soundtrack)
+                    .put("sourceArtTexturePreserved",true).put("sourceManifestSha256",sourceManifestSha256).put("semanticPlanSha256",semanticPlanSha256)
+                    .put("generatedFoley",soundtrack).put("actionAudio",actionAudio).put("foleyTimingEvidence",audioEvidence)
+                    .put("decodedExportSynchronizationVerified",false).put("cinematicAcceptance",false)
+                    .put("cinematicQaStatus","INCOMPLETE")
                     .put("neuralUnseenAnatomySynthesized",false)
                     .put("galleryAccess",false);
         }
@@ -76,7 +84,8 @@ public final class StoryboardSeriesOrchestrator {
         JSONObject isolated=new JSONObject(options.toString());
         isolated.put("foley",false);
         int produced=0,shots=0;
-        double min=1;
+        double min=Double.NaN;
+        java.util.ArrayList<StoryboardFoleySynth.CapturedEvent> captured=new java.util.ArrayList<>();
         JSONArray reports=new JSONArray();
         for(int index=start;index<end;index++){
             if(Thread.currentThread().isInterrupted())throw new InterruptedException();
@@ -84,36 +93,49 @@ public final class StoryboardSeriesOrchestrator {
             StoryboardSegmentComposer.Summary part=
                     StoryboardSegmentComposer.compose(context,store,source,
                             output,plan,index,width,height,isolated,
-                            index>start,(count,budget,shotId,backend,confidence)->{
-                                if(progress!=null)
-                                    progress.update(offset+count,expected,batch,
-                                            shotId,backend,confidence);
+                            index>start,new StoryboardSegmentComposer.Progress(){
+                                public void onFrame(int count,int budget,int shotId,String backend,float confidence) throws Exception {
+                                    if(progress!=null)progress.update(offset+count,expected,batch,shotId,backend,confidence);
+                                }
+                                public void onSaved(ProjectStore.Project saved) throws Exception {
+                                    isolated.put("_storyboardOutputUpdatedAt",saved.updatedAt);
+                                    if(progress!=null)progress.onSaved(saved);
+                                }
                             });
             produced+=part.generatedFrames;
             shots+=part.animatedShots;
-            min=Math.min(min,part.minimumConfidence);
+            if(Double.isFinite(part.minimumConfidence))min=Double.isNaN(min)?part.minimumConfidence:Math.min(min,part.minimumConfidence);
+            captured.addAll(part.capturedEvents);
             reports.put(new JSONObject()
                     .put("batchIndex",index)
                     .put("frames",part.generatedFrames)
                     .put("shots",part.animatedShots)
                     .put("providerReports",part.shotReport));
-            store.save(output);
+            if(progress!=null)progress.onSaved(output);
         }
         if(produced!=expected||output.clips.size()!=expected)
             throw new IllegalStateException(
                     "The continuous source-frame sequence has missing/duplicated animation frames");
+        boolean soundtrack=false;
+        JSONObject audioEvidence=new JSONObject().put("status","UNAVAILABLE").put("reason","No captured audible contact event")
+                .put("decodedExportSynchronizationVerified",false);
         if(sound){
-            List<StoryboardFoleySynth.Cue> cues=selected<0
-                    ?StoryboardFoleySynth.cues(plan)
-                    :StoryboardFoleySynth.cues(plan.batches.get(start),plan.fps);
-            File wav=new File(context.getFilesDir(),
-                    "creative_workspace/projects/"+output.id+
-                    "/generated/storyboard_multigenre/storyboard_foley.wav");
-            float level=(float)Math.min(1,Math.max(.05,
-                    options.optDouble("foleyGain",.65)));
-            StoryboardFoleySynth.attach(output,wav,cues,level);
+            File wav=new File(context.getFilesDir(),"creative_workspace/projects/"+output.id+
+                    "/generated/storyboard_multigenre/"+java.util.UUID.randomUUID()+"/storyboard_foley.wav");
+            float level=(float)Math.min(1,Math.max(.05,options.optDouble("foleyGain",.65)));
+            StoryboardFoleySynth.Result audio;
+            if(captured.isEmpty())audio=StoryboardFoleySynth.attachAmbience(output,wav,level);
+            else {
+                List<StoryboardFoleySynth.Cue> cues=StoryboardFoleySynth.cuesFromCapturedEvents(
+                        captured,NativeFrameClock.presentationTimeUs(produced,plan.fps));
+                audio=StoryboardFoleySynth.attach(output,wav,cues,level);
+            }
+            soundtrack=true;audioEvidence=audio.timingEvidence();
         }
-        store.save(output);
-        return new Result(produced,shots,end-start,min,reports,sound);
+        store.guardedProject(source.id,source.updatedAt,current->store.guardedProject(output.id,output.updatedAt,owned->{store.save(output);return null;}));
+        if(progress!=null)progress.onSaved(output);
+        String sourceSha=isolated.has("_storyboardSourceManifest")?isolated.getJSONObject("_storyboardSourceManifest").getString("manifestSha256"):null;
+        String planSha=isolated.has("_storyboardAdmission")?isolated.getJSONObject("_storyboardAdmission").getString("planSha256"):null;
+        return new Result(produced,shots,end-start,min,reports,soundtrack,audioEvidence,sourceSha,planSha);
     }
 }

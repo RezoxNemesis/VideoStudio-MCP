@@ -2,12 +2,12 @@ package com.rezoxnemesis.videostudio;
 
 import android.content.Context;
 import android.graphics.Bitmap;
-import android.graphics.BitmapFactory;
 import android.net.Uri;
+import android.os.StatFs;
 import org.json.JSONObject;
 import java.io.File;
 import java.io.FileOutputStream;
-import java.io.InputStream;
+import java.util.Arrays;
 import java.util.Locale;
 import java.util.UUID;
 
@@ -52,16 +52,41 @@ public final class NativeStoryboardArtworkComposer {
             float[] blackTipTo,float[] whiteTipTo,
             String action,int width,int height,int fps,
             double seconds,String backgroundAssetId,Progress progress) throws Exception {
+        return compose(context,store,source,output,blackFrom,whiteFrom,blackTo,whiteTo,
+                blackTipFrom,whiteTipFrom,blackTipTo,whiteTipTo,action,width,height,fps,
+                seconds,backgroundAssetId,progress,null);
+    }
+
+    public static Result compose(Context context,ProjectStore store,
+            ProjectStore.Project source,ProjectStore.Project output,
+            Rig2DProfile blackFrom,Rig2DProfile whiteFrom,Rig2DProfile blackTo,Rig2DProfile whiteTo,
+            float[] blackTipFrom,float[] whiteTipFrom,float[] blackTipTo,float[] whiteTipTo,
+            String action,int width,int height,int fps,double seconds,String backgroundAssetId,
+            Progress progress,JSONObject frozenSourceManifest) throws Exception {
+        return compose(context,store,source,output,blackFrom,whiteFrom,blackTo,whiteTo,
+                blackTipFrom,whiteTipFrom,blackTipTo,whiteTipTo,action,width,height,fps,
+                seconds,backgroundAssetId,progress,frozenSourceManifest,null,true);
+    }
+    public static Result compose(Context context,ProjectStore store,
+            ProjectStore.Project source,ProjectStore.Project output,
+            Rig2DProfile blackFrom,Rig2DProfile whiteFrom,Rig2DProfile blackTo,Rig2DProfile whiteTo,
+            float[] blackTipFrom,float[] whiteTipFrom,float[] blackTipTo,float[] whiteTipTo,
+            String action,int width,int height,int fps,double seconds,String backgroundAssetId,
+            Progress progress,JSONObject frozenSourceManifest,StoryboardContactPlan contacts,
+            boolean cameraEnabled) throws Exception {
         if(context==null||store==null||source==null||output==null||
                 source.id.equals(output.id))
             throw new IllegalArgumentException("Separate imported source and rendered project required");
-        if(fps!=24&&fps!=30||width<256||height<432||width>720||height>1280||
+        if(contacts==null)throw new IllegalArgumentException("INSUFFICIENT_MOTION_PROVIDER: an explicit source-bound contact plan is required for source-artwork action");
+        contacts.requireRigBindings(blackFrom,whiteFrom,blackTo,whiteTo);
+        NativeFrameClock.requireFps(fps);
+        if(width<256||height<256||width>1280||height>1280||(long)width*height>720L*1280L||
                 (width&1)!=0||(height&1)!=0)
-            throw new IllegalArgumentException("Use even portrait 256..720 wide, 432..1280 high, at 24 or 30fps");
+            throw new IllegalArgumentException("Use even dimensions 256..1280 with at most 720×1280 pixels, at 24, 30 or 60fps");
         if(!Double.isFinite(seconds)||seconds<1.5||seconds>5.0)
             throw new IllegalArgumentException("Storyboard shot must be 1.5 to 5 seconds");
         int frames=(int)Math.ceil(fps*seconds);
-        if(frames<3||frames>150)throw new IllegalArgumentException("Shot frame budget exceeded");
+        if(frames<3||frames>300)throw new IllegalArgumentException("Shot frame budget exceeded");
         validate(source,blackFrom,whiteFrom,blackTo,whiteTo,
                 blackTipFrom,whiteTipFrom,blackTipTo,whiteTipTo);
         StoryboardPoseMotion.Action beat=StoryboardPoseMotion.action(action);
@@ -79,59 +104,87 @@ public final class NativeStoryboardArtworkComposer {
 
         ProjectStore.Asset from=source.asset(blackFrom.sourceAssetId);
         ProjectStore.Asset to=source.asset(blackTo.sourceAssetId);
-        int[] start=read(context,from,width,height);
-        int[] end=read(context,to,width,height);
+        JSONObject manifest=frozenSourceManifest==null?StoryboardSourceManifest.capture(context,source,new JSONObject())
+                :StoryboardSourceManifest.validateForPlanning(source,frozenSourceManifest);
+        if(frozenSourceManifest!=null)StoryboardSourceManifest.verifyOwnedSources(context,source,manifest);
+        JSONObject fromEntry=entry(manifest,from.id),toEntry=entry(manifest,to.id);
+        if(contacts.sourceWidth!=fromEntry.getInt("orientedWidth")||contacts.sourceHeight!=fromEntry.getInt("orientedHeight"))
+            throw new IllegalArgumentException("Authored contact geometry differs from the accepted oriented source");
+        int[] start=read(context,from,width,height,fromEntry);
+        int[] end=read(context,to,width,height,toEntry);
         StoryboardCleanPlate.Result recovered=null;
         int[] plate;
         if(backgroundAssetId!=null&&!backgroundAssetId.trim().isEmpty()){
             ProjectStore.Asset clean=source.asset(backgroundAssetId);
             if(clean==null||clean.mime==null||!clean.mime.startsWith("image/"))
                 throw new IllegalArgumentException("Clean background must be an explicitly imported image");
-            plate=read(context,clean,width,height);
+            plate=read(context,clean,width,height,entry(manifest,clean.id));
         }else{
             recovered=StoryboardCleanPlate.restore(start,end,width,height,
-                    blackFrom.outline,whiteFrom.outline,
-                    blackTo.outline,whiteTo.outline);
+                    Arrays.asList(blackFrom.outline,whiteFrom.outline,blackFrom.swordOutline,whiteFrom.swordOutline),
+                    Arrays.asList(blackTo.outline,whiteTo.outline,blackTo.swordOutline,whiteTo.swordOutline));
             plate=recovered.pixels;
         }
         double sceneDrift=recovered==null?0:recovered.backgroundDifference;
         double fillFraction=recovered==null?0:recovered.unobservedFraction;
 
+        String generationId=UUID.randomUUID().toString();
+        long outputRevision=output.updatedAt,sourceRevision=source.updatedAt;
+        ProjectStore.Project prepared=ProjectStore.Project.fromJson(output.toJson());
+        prepared.assets.clear();prepared.clips.clear();prepared.studioLayers.clear();
+        prepared.latestExportUri="";prepared.latestExportName="";prepared.latestExportAt=0;
+        prepared.sourcePrompt="storyboard-artwork-v1: source traced 2D pixel/mesh animation";
         File outDir=new File(context.getFilesDir(),
-                "creative_workspace/projects/"+output.id+"/generated/storyboard_artwork");
+                "creative_workspace/projects/"+output.id+"/generated/storyboard_artwork/"+generationId);
         if(!outDir.isDirectory()&&!outDir.mkdirs())
             throw new IllegalStateException("Could not create private shot frame workspace");
-        File[] old=outDir.listFiles();
-        if(old!=null)for(File file:old)
-            if(file.isFile()&&file.getName().matches("story_[0-9]{4}\\.png")&&!file.delete())
-                throw new IllegalStateException("Cannot reset previous incomplete shot");
-        output.assets.clear();
-        output.clips.clear();
-        output.sourcePrompt="storyboard-artwork-v1: source traced 2D pixel/mesh animation";
-        store.save(output);
 
         NativeSkinnedSprite2D bkA=null,whA=null,bkB=null,whB=null;
         NativeStoryboardArtworkRenderer renderer=null;
+        boolean published=false;
         try {
-            bkA=new NativeSkinnedSprite2D(context,from,blackFrom,width,height);
-            whA=new NativeSkinnedSprite2D(context,from,whiteFrom,width,height);
-            bkB=new NativeSkinnedSprite2D(context,to,blackTo,width,height);
-            whB=new NativeSkinnedSprite2D(context,to,whiteTo,width,height);
+            long required=Math.addExact(Math.multiplyExact((long)width*height*4+128*1024,frames),64L*1024*1024);
+            if(new StatFs(outDir.getAbsolutePath()).getAvailableBytes()<required)
+                throw new IllegalStateException("Not enough private workspace storage for bounded native frames and source snapshots");
+            bkA=new NativeSkinnedSprite2D(context,from,blackFrom,width,height,fromEntry);
+            whA=new NativeSkinnedSprite2D(context,from,whiteFrom,width,height,fromEntry);
+            bkB=new NativeSkinnedSprite2D(context,to,blackTo,width,height,toEntry);
+            whB=new NativeSkinnedSprite2D(context,to,whiteTo,width,height,toEntry);
             renderer=new NativeStoryboardArtworkRenderer(width,height,plate,
                     blackFrom,whiteFrom,blackTo,whiteTo,
-                    bkA,whA,bkB,whB,blackTipFrom,whiteTipFrom,blackTipTo,whiteTipTo,beat);
-            long frameMs=Math.max(34,Math.round(1000d/fps));
+                    bkA,whA,bkB,whB,blackTipFrom,whiteTipFrom,blackTipTo,whiteTipTo,beat,
+                    contacts.sourceAspect(),contacts,cameraEnabled,true);
+            renderer.setFrameRate(fps);
             for(int i=0;i<frames;i++){
                 if(Thread.currentThread().isInterrupted())throw new InterruptedException();
                 double t=i/(double)(frames-1);
                 Bitmap pixels=renderer.render(t,i,frames);
                 try{
-                    save(output,outDir,pixels,i,frameMs,fps,
-                            from.id,to.id,action);
+                    save(prepared,outDir,pixels,i,NativeFrameClock.frameDurationMs(i,fps),fps,
+                            from.id,to.id,action,generationId,manifest);
+                    prepared.assets.get(prepared.assets.size()-1).generationMetadata
+                            .put("contactPlanBinding",contacts.bindingProof())
+                            .put("cameraEnabled",cameraEnabled)
+                            .put("motionEvidenceOrigin","PREDICTED_NATIVE_EVALUATOR")
+                            .put("sourceTexturesPreserved",true)
+                            .put("dynamicLimbOcclusionSupported",false)
+                            .put("sourceCoverageEvidence",renderer.sourceCoverageEvidence())
+                            .put("cinematicAcceptanceVerified",false);
                 }finally{pixels.recycle();}
                 if(progress!=null)progress.onFrame(i+1,frames,sceneDrift);
             }
-            store.save(output);
+            StoryboardSourceManifest.verifyOwnedSources(context,source,manifest);
+            synchronized(store){
+                ProjectStore.Project currentSource=store.get(source.id),currentOutput=store.get(output.id);
+                if(currentSource==null||currentSource.updatedAt!=sourceRevision||currentOutput==null||currentOutput.updatedAt!=outputRevision)
+                    throw new IllegalStateException("Source or destination changed during storyboard rendering; previous output retained");
+                store.save(prepared);published=true;
+            }
+            // The legacy service passes this object directly to export after compose returns.
+            output.assets.clear();output.assets.addAll(prepared.assets);
+            output.clips.clear();output.clips.addAll(prepared.clips);output.studioLayers.clear();
+            output.sourcePrompt=prepared.sourcePrompt;output.updatedAt=prepared.updatedAt;
+            output.latestExportUri="";output.latestExportName="";output.latestExportAt=0;
             return new Result(output,sceneDrift,fillFraction,frames,
                     quality.actorMotionPixels);
         }finally{
@@ -141,6 +194,11 @@ public final class NativeStoryboardArtworkComposer {
                 if(whA!=null)whA.close();
                 if(bkB!=null)bkB.close();
                 if(whB!=null)whB.close();
+            }
+            if(!published){
+                File[] partial=outDir.listFiles();
+                if(partial!=null)for(File file:partial)if(file.isFile())file.delete();
+                outDir.delete();
             }
         }
     }
@@ -156,6 +214,8 @@ public final class NativeStoryboardArtworkComposer {
         for(Rig2DProfile rig:rigs){
             if(!source.id.equals(rig.projectId)||source.asset(rig.sourceAssetId)==null)
                 throw new IllegalArgumentException("Rig belongs to another project or lost source");
+            if(rig.swordTip==null||rig.swordHilt==null||rig.swordOutline.length<3)
+                throw new IllegalArgumentException("INSUFFICIENT_MOTION_PROVIDER: annotate both original sword polygons, hilts and tips in both anchors");
         }
         if(!blackFrom.sourceAssetId.equals(whiteFrom.sourceAssetId)
                 ||!blackTo.sourceAssetId.equals(whiteTo.sourceAssetId)
@@ -168,48 +228,27 @@ public final class NativeStoryboardArtworkComposer {
                 StoryboardPoseMotion.Action.ADVANCE);
     }
 
-    private static int[] read(Context context,ProjectStore.Asset source,
-                              int width,int height) throws Exception {
-        if(source==null||source.uri==null||source.mime==null||
-                !source.mime.startsWith("image/"))
-            throw new IllegalArgumentException("Original storyboard image was not imported");
-        Uri uri=Uri.parse(source.uri);
-        BitmapFactory.Options limit=new BitmapFactory.Options();
-        limit.inJustDecodeBounds=true;
-        try(InputStream in=context.getContentResolver().openInputStream(uri)){
-            if(in==null)throw new IllegalArgumentException("Image permission expired");
-            BitmapFactory.decodeStream(in,null,limit);
-        }
-        if(limit.outWidth<64||limit.outHeight<64||
-                limit.outWidth>8192||limit.outHeight>8192)
-            throw new IllegalArgumentException("Unreasonable source-image dimensions");
-        BitmapFactory.Options options=new BitmapFactory.Options();
-        options.inPreferredConfig=Bitmap.Config.ARGB_8888;
-        int sample=1;
-        while(limit.outWidth/sample>width*2 || limit.outHeight/sample>height*2)sample*=2;
-        options.inSampleSize=sample;
-        try(InputStream in=context.getContentResolver().openInputStream(uri)){
-            if(in==null)throw new IllegalArgumentException("Original image is missing");
-            Bitmap full=BitmapFactory.decodeStream(in,null,options);
-            if(full==null)throw new IllegalArgumentException("Cannot decode original image");
-            Bitmap scaled=Bitmap.createScaledBitmap(full,width,height,true);
-            if(scaled!=full)full.recycle();
-            int[] pixels=new int[width*height];
-            scaled.getPixels(pixels,0,width,0,0,width,height);
-            scaled.recycle();
-            return pixels;
-        }
+    private static JSONObject entry(JSONObject manifest,String assetId)throws Exception {
+        org.json.JSONArray library=manifest.getJSONArray("library");
+        for(int i=0;i<library.length();i++)if(assetId.equals(library.getJSONObject(i).getString("assetId")))
+            return library.getJSONObject(i);
+        throw new IllegalArgumentException("Frozen source manifest does not contain the requested image");
+    }
+    private static int[] read(Context context,ProjectStore.Asset source,int width,int height,JSONObject entry)throws Exception {
+        Bitmap pixels=NativeStoryboardSourceImage.readVerified(context,source,width,height,entry);
+        try{int[] result=new int[width*height];pixels.getPixels(result,0,width,0,0,width,height);return result;}
+        finally{pixels.recycle();}
     }
 
     private static void save(ProjectStore.Project output,File dir,Bitmap bitmap,
                              int index,long durationMs,int fps,
-                             String anchorA,String anchorB,String action) throws Exception {
+                             String anchorA,String anchorB,String action,String generationId,JSONObject manifest) throws Exception {
         String name=String.format(Locale.US,"story_%04d.png",index);
         File destination=new File(dir,name);
         boolean ok;
         try(FileOutputStream out=new FileOutputStream(destination)){
             ok=bitmap.compress(Bitmap.CompressFormat.PNG,100,out);
-            out.flush();
+            out.flush();out.getFD().sync();
         }
         if(!ok||destination.length()==0){
             destination.delete();
@@ -227,10 +266,22 @@ public final class NativeStoryboardArtworkComposer {
         asset.sizeBytes=destination.length();
         asset.generationMetadata=new JSONObject()
                 .put("provider","videostudio.storyboard-artwork-mesh-v1")
+                .put("generationId",generationId)
+                .put("sourceManifestSha256",manifest.getString("manifestSha256"))
+                .put("sourceProjectId",manifest.getString("sourceProjectId"))
+                .put("fromSourceSha256",entry(manifest,anchorA).getString("sourceSha256"))
+                .put("toSourceSha256",entry(manifest,anchorB).getString("sourceSha256"))
+                .put("sourceCoordinateSpace","oriented-source-uv")
                 .put("fromSourceAssetId",anchorA)
                 .put("toSourceAssetId",anchorB)
                 .put("notNeuralVideo",true)
                 .put("frameIndex",index)
+                .put("frameClock","rational-authored-v1")
+                .put("fps",fps)
+                .put("authoredFrameRate",fps)
+                .put("authoredPresentationTimeUs",NativeFrameClock.presentationTimeUs(index,fps))
+                .put("authoredFrameHoldMs",durationMs)
+                .put("decodedFrameCadenceVerified",false)
                 .put("action",action);
         output.assets.add(asset);
         ProjectStore.Clip clip=new ProjectStore.Clip();
@@ -242,6 +293,8 @@ public final class NativeStoryboardArtworkComposer {
         clip.transition="none";
         clip.effects.put("poseInbetween",true);
         clip.effects.put("poseFps",fps);
+        clip.effects.put("frameClock","rational-authored-v1");
+        clip.effects.put("frameIndex",index);
         output.clips.add(clip);
     }
 }
