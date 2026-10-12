@@ -27,7 +27,7 @@ jobs:
           sha256sum --check --ignore-missing blender.sha256
           tar -xf blender-4.3.2-linux-x64.tar.xz
           echo '/tmp/blender-4.3.2-linux-x64' >> "$GITHUB_PATH"
-          python -m pip install numpy==2.3.5 opencv-python-headless==4.11.0.86
+          python -m pip install numpy==2.3.5 opencv-python-headless==4.11.0.86 Pillow==11.3.0
           sudo apt-get update -qq
           sudo apt-get install -y ffmpeg libegl1 libxkbcommon0 libsm6
       - name: Verify actual rigs, clips, contacts and optional-provider boundaries
