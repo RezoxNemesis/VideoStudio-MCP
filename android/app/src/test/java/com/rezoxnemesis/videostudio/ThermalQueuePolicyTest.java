@@ -19,20 +19,20 @@ public final class ThermalQueuePolicyTest {
         }
     }
 
-    @Test public void severeOnlyPausesGpuJobsWithoutBlockingProtectedArchives() {
+    @Test public void severeDoesNotImposeAnArtificialRenderHold() {
         int s=PowerManager.THERMAL_STATUS_SEVERE;
-        assertTrue(ThermalQueuePolicy.shouldPause(JobManager.Kind.HEAVY, s));
+        assertFalse(ThermalQueuePolicy.shouldPause(JobManager.Kind.HEAVY, s));
         assertFalse(ThermalQueuePolicy.shouldPause(JobManager.Kind.TRANSFER, s));
         assertFalse(ThermalQueuePolicy.shouldPause(JobManager.Kind.LIGHT, s));
-        assertEquals("render_hold_background_transfer",ThermalQueuePolicy.schedulingMode(s));
+        assertEquals("system_throttled",ThermalQueuePolicy.schedulingMode(s));
     }
 
-    @Test public void criticalAndEmergencyPauseBothGpuAndTransfers() {
+    @Test public void androidRetainsThermalControlWithoutAppQueueHolds() {
         for (int s=PowerManager.THERMAL_STATUS_CRITICAL;
                 s<=PowerManager.THERMAL_STATUS_SHUTDOWN; s++) {
-            assertTrue(ThermalQueuePolicy.shouldPause(JobManager.Kind.HEAVY,s));
-            assertTrue(ThermalQueuePolicy.shouldPause(JobManager.Kind.TRANSFER,s));
-            assertEquals("critical_hold",ThermalQueuePolicy.schedulingMode(s));
+            assertFalse(ThermalQueuePolicy.shouldPause(JobManager.Kind.HEAVY,s));
+            assertFalse(ThermalQueuePolicy.shouldPause(JobManager.Kind.TRANSFER,s));
+            assertEquals("system_throttled",ThermalQueuePolicy.schedulingMode(s));
         }
     }
 
@@ -44,10 +44,10 @@ public final class ThermalQueuePolicyTest {
     }
 
     @Test public void reportedPolicyIsHonestAboutRenderAndTransferDifference() {
-        assertFalse(ThermalQueuePolicy.canRunRender(PowerManager.THERMAL_STATUS_SEVERE));
+        assertTrue(ThermalQueuePolicy.canRunRender(PowerManager.THERMAL_STATUS_SEVERE));
         assertTrue(ThermalQueuePolicy.canRunTransfer(PowerManager.THERMAL_STATUS_SEVERE));
-        assertFalse(ThermalQueuePolicy.canRunTransfer(PowerManager.THERMAL_STATUS_CRITICAL));
+        assertTrue(ThermalQueuePolicy.canRunTransfer(PowerManager.THERMAL_STATUS_CRITICAL));
         assertTrue(ThermalQueuePolicy.waitingMessage(JobManager.Kind.HEAVY,
-                PowerManager.THERMAL_STATUS_SEVERE).contains("GPU/encoding paused"));
+                PowerManager.THERMAL_STATUS_CRITICAL).contains("continues"));
     }
 }

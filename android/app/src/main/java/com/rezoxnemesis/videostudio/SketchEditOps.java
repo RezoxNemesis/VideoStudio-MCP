@@ -10,12 +10,25 @@ import java.util.Iterator;
 public final class SketchEditOps {
     private SketchEditOps() {}
 
-    public static JSONObject execute(Context context, String action, JSONObject args) throws Exception {
+    public static JSONObject execute(Context context,String action,JSONObject args) throws Exception {
+        JSONObject result=executeInternal(context,action,args);result.put("ok",true);
+        if(result.has("sketchId")&&!java.util.Arrays.asList("sketch_get","sketch_preview","sketch_list","sketch_live_events").contains(action)){
+            android.content.SharedPreferences.Editor signal=context.getSharedPreferences("sketch_live_workspace",Context.MODE_PRIVATE).edit().putString("sketchId",result.getString("sketchId")).putLong("signal",System.nanoTime());
+            String priorBook=context.getSharedPreferences("sketch_live_workspace",Context.MODE_PRIVATE).getString("sketchId","").equals(result.getString("sketchId"))?context.getSharedPreferences("sketch_live_workspace",Context.MODE_PRIVATE).getString("bookId",""):"";signal.putString("bookId",action.equals("sketch_book_open_page")?args.getString("bookId"):priorBook);signal.putInt("page",args.optInt("page",0));signal.apply();
+        }
+        return result;
+    }
+    private static JSONObject executeInternal(Context context, String action, JSONObject args) throws Exception {
         if (args == null || args.toString().getBytes(StandardCharsets.UTF_8).length > 512 * 1024)
             throw SketchDocument.bad("Request exceeds 512 KiB; split the edit into revision-bound batches");
+        if("sketch_capabilities".equals(action)){SketchDocument.fields(args,"");return SketchCapabilities.get();}
+        if("sketch_live_begin".equals(action))return SketchLiveDrawing.begin(context,args);
+        if("sketch_live_end".equals(action)){SketchDocument.fields(args,"sketchId,sessionId,expectedRevision");try(SketchProjectStore store=new SketchProjectStore(context)){return store.endLiveSession(SketchDocument.id(args,"sketchId"),SketchDocument.id(args,"sessionId"),SketchDocument.integer(args,"expectedRevision",1,Long.MAX_VALUE-1));}}
+        if(action.startsWith("sketch_book_"))return SketchBookStore.execute(context,action,args);
         try (SketchProjectStore store = new SketchProjectStore(context)) {
             if ("sketch_list".equals(action)) { SketchDocument.fields(args, ""); return new JSONObject().put("sketches", store.list()); }
             String id = SketchDocument.id(args, "sketchId");
+            if("sketch_live_events".equals(action)){SketchDocument.fields(args,"sketchId,afterSequence,limit");store.get(id);long after=SketchDocument.integer(args,"afterSequence",0,Long.MAX_VALUE-1);int limit=args.has("limit")?(int)SketchDocument.integer(args,"limit",1,8):4;return store.liveEvents(id,after,limit);}
             if ("sketch_get".equals(action)) {
                 SketchDocument.fields(args, "sketchId,expectedRevision,layerId,objectId,pointOffset,pointLimit,objectOffset,objectLimit"); JSONObject doc = store.get(id);
                 if (args.has("expectedRevision")) SketchProjectStore.requireRevision(doc, SketchDocument.integer(args, "expectedRevision", 1, Long.MAX_VALUE - 1));
@@ -99,10 +112,14 @@ public final class SketchEditOps {
                     SketchDocument.fields(args, "sketchId,operationId,expectedRevision,operations");
                     JSONArray operations = args.getJSONArray("operations");
                     if (operations.length() < 1 || operations.length() > 64) throw SketchDocument.bad("Use 1..64 operations in an atomic batch");
+                    JSONArray visual=new JSONArray();
                     return store.mutate(id, op, revision, fingerprint, doc -> {
-                        for (int i = 0; i < operations.length(); i++) apply(doc, operations.getJSONObject(i));
+                        for (int i=0;i<operations.length();i++){JSONObject operation=operations.getJSONObject(i);
+                            if("trace_reference".equals(operation.optString("type"))){JSONObject layer=SketchDocument.layer(doc,operation.getString("layerId"));int before=layer.getJSONArray("objects").length();SketchReferenceTrace.apply(store,doc,operation);for(int j=before;j<layer.getJSONArray("objects").length();j++)visual.put(new JSONObject().put("type","add_object").put("layerId",layer.getString("id")).put("object",layer.getJSONArray("objects").getJSONObject(j)));}
+                            else{apply(doc,operation);visual.put(operation);}
+                        }
                         return doc;
-                    });
+                    },visual);
                 case "sketch_undo": case "sketch_redo":
                     SketchDocument.fields(args, "sketchId,operationId,expectedRevision");
                     return store.historyMove(id, op, revision, fingerprint, "sketch_redo".equals(action));
@@ -123,7 +140,9 @@ public final class SketchEditOps {
                                     .put("bounds", args.has("bounds") ? args.getJSONObject("bounds") : new JSONObject().put("x", 0).put("y", 0).put("width", 1).put("height", 1))
                                     .put("reference", referencePlaceholder));
                             layer.getJSONArray("objects").put(object); SketchDocument.validate(doc);
-                            object.put("reference", store.importReference(id, project, asset)); return doc;
+                            JSONObject reference=store.importReference(id, project, asset);object.put("reference", reference);
+                            if(!args.has("bounds")){double imageRatio=reference.getDouble("width")/reference.getDouble("height"),canvasRatio=doc.getDouble("width")/doc.getDouble("height");double bw=imageRatio>canvasRatio?1:imageRatio/canvasRatio,bh=imageRatio>canvasRatio?canvasRatio/imageRatio:1;object.put("bounds",new JSONObject().put("x",(1-bw)/2).put("y",(1-bh)/2).put("width",bw).put("height",bh));}
+                            return doc;
                         }));
                 default: throw SketchDocument.bad("Unsupported sketch action: " + action);
             }
@@ -135,7 +154,7 @@ public final class SketchEditOps {
         switch (type) {
             case "add_layer": {
                 SketchDocument.fields(op, "type,layer"); JSONObject layer = SketchDocument.copy(op.getJSONObject("layer"));
-                SketchDocument.fields(layer, "id,name,visible,locked,opacity,transform,keys,objects");
+                SketchDocument.fields(layer, "id,name,visible,locked,opacity,transform,keys,objects,blendMode");
                 if (!layer.has("name")) layer.put("name", "Layer"); if (!layer.has("visible")) layer.put("visible", true);
                 if (!layer.has("locked")) layer.put("locked", false); if (!layer.has("opacity")) layer.put("opacity", 1);
                 if (!layer.has("transform")) layer.put("transform", SketchDocument.transform()); if (!layer.has("keys")) layer.put("keys", new JSONArray());
@@ -144,7 +163,7 @@ public final class SketchEditOps {
             }
             case "update_layer": {
                 SketchDocument.fields(op, "type,layerId,patch"); JSONObject layer = SketchDocument.layer(doc, SketchDocument.id(op, "layerId"));
-                JSONObject patch = op.getJSONObject("patch"); SketchDocument.fields(patch, "name,visible,locked,opacity"); merge(layer, patch); break;
+                JSONObject patch = op.getJSONObject("patch"); SketchDocument.fields(patch, "name,visible,locked,opacity,blendMode"); merge(layer, patch); break;
             }
             case "delete_layer": {
                 SketchDocument.fields(op, "type,layerId"); String id = SketchDocument.id(op, "layerId"); requireUnlocked(SketchDocument.layer(doc, id));
@@ -164,8 +183,12 @@ public final class SketchEditOps {
             }
             case "update_object": {
                 SketchDocument.fields(op, "type,objectId,patch"); String id = SketchDocument.id(op, "objectId"); requireUnlocked(SketchDocument.owner(doc, id));
-                JSONObject patch = op.getJSONObject("patch"); SketchDocument.fields(patch, "color,width,fill,points,bounds,frame,exposure");
+                JSONObject patch = op.getJSONObject("patch"); SketchDocument.fields(patch, "color,width,fill,points,bounds,frame,exposure,brush,commands,gradient,referenceCrop");
                 merge(SketchDocument.object(doc, id), patch); break;
+            }
+            case "append_points": {
+                SketchDocument.fields(op,"type,objectId,points");String id=SketchDocument.id(op,"objectId");requireUnlocked(SketchDocument.owner(doc,id));JSONObject object=SketchDocument.object(doc,id);
+                if(!"stroke".equals(object.getString("kind"))&&!"eraser".equals(object.getString("kind")))throw SketchDocument.bad("Incremental points require a stroke");JSONArray added=op.getJSONArray("points");if(added.length()<1||added.length()>2048)throw SketchDocument.bad("Append 1..2048 points per live step");JSONArray points=object.getJSONArray("points");for(int i=0;i<added.length();i++)points.put(added.getJSONArray(i));break;
             }
             case "delete_object": {
                 SketchDocument.fields(op, "type,objectId"); String id = SketchDocument.id(op, "objectId"); JSONObject layer = SketchDocument.owner(doc, id);
@@ -208,6 +231,7 @@ public final class SketchEditOps {
                 }
                 if (!inserted && key != null) out.put(key); item.put("keys", out); break;
             }
+            case "duplicate_cel": case "clear_cel": case "insert_frame": case "delete_frame": SketchCelOps.apply(doc, op); break;
             default: throw SketchDocument.bad("Unsupported sketch edit operation: " + type);
         }
         // Bound every intermediate state as well as the final batch, before persistence.

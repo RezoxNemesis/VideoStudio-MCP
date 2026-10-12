@@ -109,8 +109,8 @@ test('closed studio relay aliases require 3.9 and validate their exact canonical
  for(const alias of STUDIO_ALIAS_ACTIONS){
   assert.equal(nativeStudioCanonicalAction(alias),alias.slice('studio_'.length));
   assert(STORYBOARD_NATIVE_ACTIONS.has(alias),'Every alias must remain native-only');
-  assert.throws(()=>requireStoryboardNativeVersion({appVersion:'3.8.1'},alias),/3\.9\.0/);
-  assert.doesNotThrow(()=>requireStoryboardNativeVersion({appVersion:'3.9.0'},alias));
+  assert.throws(()=>requireStoryboardNativeVersion({appVersion:'3.8.1'},alias),/3\.9\.[01]/);
+  assert.doesNotThrow(()=>requireStoryboardNativeVersion({appVersion:'3.9.1'},alias));
  }
  const p={projectId:'p',expectedUpdatedAt:1,operations:[{clipId:'c',set:{x:.2}}]};
  assert.deepEqual(nativeStoryboardParameters('studio_precision_edit',p),p);
@@ -121,4 +121,20 @@ test('closed studio relay aliases require 3.9 and validate their exact canonical
   assert.equal(nativeStudioCanonicalAction(unknown),unknown);
   assert(!STUDIO_ALIAS_ACTIONS.has(unknown));assert(!STORYBOARD_NATIVE_ACTIONS.has(unknown));
  }
+});
+
+test('professional paths brushes and live drawing steps pass strict native contracts',()=>{
+ const parsed=nativeStudioParameters('sketch_edit',{sketchId:'s',operationId:'live',expectedRevision:1,operations:[
+  {type:'add_object',layerId:'l',object:{id:'portrait',kind:'path',commands:[['M',.1,.5],['C',.2,.1,.8,.1,.9,.5]],gradient:{startColor:'#FFEECC99',endColor:'#FF886655',x0:0,y0:0,x1:1,y1:1}}},
+  {type:'append_points',objectId:'ink',points:[[.4,.5,1]]},
+  {type:'duplicate_cel',layerId:'l',fromFrame:0,toFrame:1,idPrefix:'cel'},
+  {type:'trace_reference',layerId:'l',objectId:'reference',frame:0,idPrefix:'trace',threshold:.1}
+ ]});assert.equal(parsed.operations.length,4);
+ assert.throws(()=>nativeStudioParameters('sketch_edit',{sketchId:'s',operationId:'bad',expectedRevision:1,operations:[{type:'add_object',layerId:'l',object:{id:'p',kind:'path',commands:[['M',0,0],['C',0,0,1,1,2,2]]}}]}));
+});
+
+test('advanced sketch authoring requires 3.9.1 while basic 3.9 tools remain compatible',()=>{
+ for(const action of ['sketch_book_create','sketch_live_begin','sketch_capabilities']){assert.throws(()=>requireStudioVersion({appVersion:'3.9.0'},action),/3\.9\.1/);assert.doesNotThrow(()=>requireStudioVersion({appVersion:'3.9.1'},action));}
+ assert.doesNotThrow(()=>requireStudioVersion({appVersion:'3.9.0'},'sketch_get'));
+ assert.throws(()=>requireStudioVersion({appVersion:'3.9.0'},'sketch_edit',{operations:[{type:'add_object',object:{kind:'path'}}]}),/3\.9\.1/);
 });

@@ -160,7 +160,7 @@ public final class NativeGlbCombatComposer {
 
         File blackFile=glbFile(context,source,blackAsset);
         File whiteFile=glbFile(context,source,whiteAsset);
-        Filament.init();
+        Native3DRuntime.initialize();
         Engine engine=null;
         Renderer renderer=null;
         Scene scene=null;

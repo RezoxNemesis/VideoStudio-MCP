@@ -1768,9 +1768,15 @@ function serverForApp(env,ownerKey,protocolVersion=1){
   s.registerTool("app_state",{description:"Request full current native app/project state including active asset metadata, jobs, creator capabilities and recent on-device ChatGPT activity.",inputSchema:{}},async()=>queue("get_state",{}));
   if(isV3) {
     for(const [action,inputSchema] of Object.entries(studioToolSchemas)){
-      const readOnly=['sketch_list','sketch_get','sketch_preview','open_pipeline_capabilities','open_pipeline_list','open_pipeline_status'].includes(action);
+      const readOnly=['sketch_list','sketch_get','sketch_preview','sketch_book_list','sketch_book_get','sketch_live_events','sketch_capabilities','open_pipeline_capabilities','open_pipeline_list','open_pipeline_status'].includes(action);
       const detail=action==='sketch_get'?' Geometry is paged by layer/object IDs; pointLimit<=512. Keep returned revision for atomic edits.'
         :action==='sketch_preview'?' Returns the actual shared Canvas frame as an MCP image; use it to verify exact drawing/mapping controls.'
+        :action==='sketch_capabilities'?' Read this before drawing. Original portraits, landscapes and animation may start from a text prompt and an empty canvas; reference images are optional.'
+        :action==='sketch_live_begin'?' Call before the first stroke. The open phone canvas presents every accepted drawing operation and stroke progress; it preserves rapid batches rather than skipping intermediate steps.'
+        :action==='sketch_live_end'?' Finish a drawing page using its final revision. This closes its ordered live stream so the phone can show the next page without dropping drawings.'
+        :action==='sketch_edit'?' Draw original artwork from a text prompt using measured pressure strokes, M/L/Q/C/Z Bezier paths, gradient fills, brushes and layers. Use stable object IDs and append_points for live strokes. Images are optional; avoid substituting a finished raster image for visible stroke authoring.'
+        :action==='sketch_book_create'?' Create a lazy animation book with up to 10000 pages, without loading thousands of drawings into phone RAM.'
+        :action==='sketch_book_render'?' Render 1..1200 consecutive book pages through the native Canvas and Media3 pipeline; originals are preserved.'
         :action.startsWith('open_pipeline_')?' Uses your own configured open-source runner or a hash-verified Drive artifact exchange. Submission is separate from inference completion. No commercial generation API.'
         :action==='precision_edit'?' Atomic stable-clip edits require the exact project revision. Flat keys, opacity, mask/chroma/glow share actual native preview/export.'
         :' Touch controls use the same native stored operations, revision checks and renderer.';

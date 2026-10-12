@@ -1,4 +1,4 @@
-/** Verify the existing generic MCP relay with synthetic native3.9 replies.
+/** Verify the existing generic MCP relay with synthetic native3.9.1 replies.
  * Start the unmodified3.8.1 Worker on loopback8791; this is transport evidence,
  * not a phone render, installed update, or live ChatGPT host assertion. */
 import assert from 'node:assert/strict';
@@ -8,7 +8,7 @@ import {Client,StreamableHTTPClientTransport} from '@modelcontextprotocol/client
 
 const origin=process.env.LEGACY_WORKBENCH_QA_ORIGIN||'http://127.0.0.1:8791';
 if(!/^http:\/\/(127\.0\.0\.1|localhost):\d+$/.test(origin))throw new Error('Synthetic native registration requires loopback');
-const owner='legacy_workbench_'+randomUUID().replaceAll('-',''),deviceId=randomUUID(),generation=390;
+const owner='legacy_workbench_'+randomUUID().replaceAll('-',''),deviceId=randomUUID(),generation=391;
 const png='iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+yN8sAAAAASUVORK5CYII=';
 const outcomes=[];
 const passed=name=>{outcomes.push(name);console.log('PASS:',name);};
@@ -17,7 +17,7 @@ async function http(path,body){
  const r=await fetch(origin+path,{method:body===undefined?'GET':'POST',headers:{authorization:'Bearer '+owner,...(body===undefined?{}:{'content-type':'application/json'})},...(body===undefined?{}:{body:JSON.stringify(body)}),signal:AbortSignal.timeout(20000)});
  assert.equal(r.status,200);return r.json();
 }
-await http('/api/v3/app/register',{deviceId,ownerKey:owner,meta:{name:'Synthetic native workbench',platform:'android-native',appVersion:'3.9.0',protocolVersion:3,protocolMin:3,protocolMax:3,appGeneration:generation,permissionMode:'everything',controlPaused:false,projects:[]}});
+await http('/api/v3/app/register',{deviceId,ownerKey:owner,meta:{name:'Synthetic native workbench',platform:'android-native',appVersion:'3.9.1',protocolVersion:3,protocolMin:3,protocolMax:3,appGeneration:generation,permissionMode:'everything',controlPaused:false,projects:[]}});
 const client=new Client({name:'legacy-workbench-qa',version:'1.0.0'},{capabilities:{},supportedProtocolVersions:['2025-11-25','2025-06-18','2025-03-26'],versionNegotiation:{mode:'legacy'}});
 try{
  await client.connect(new StreamableHTTPClientTransport(new URL(origin+'/app-mcp-v3/'+owner)),{timeout:20000});
@@ -28,6 +28,11 @@ try{
  const ack=(id,result)=>http('/api/v3/app/commands/'+id+'/complete',{deviceId,appGeneration:generation,protocolVersion:3,status:'completed',result});
  const timeline={schema:'videostudio.cinematic3d.timeline.v1',name:'Alias authoring',fps:30,motionProvider:'procedural_mannequin',actors:{black:{preset:'chibi'},white:{preset:'robot'}},shots:[{id:'wave',action:'WAVE',durationFrames:30,hitStopFrames:0,motionStyle:{preset:'anime',intensity:.8},camera:{mode:'wide',fovDegrees:57,shakeIntensity:0},vfx:{sparkBurst:false,slashTrail:false,rubble:false}}]};
  const examples=[
+  ['studio_sketch_capabilities',{}],
+  ['studio_sketch_book_create',{bookId:'owned-book',operationId:'create-book',pageCount:1000,fps:24}],
+  ['studio_sketch_live_begin',{sketchId:'owned-sketch',operationId:'live-session',expectedRevision:1,strokeDurationMs:120}],
+  ['studio_sketch_edit',{sketchId:'owned-sketch',operationId:'draw-nose',expectedRevision:1,operations:[{type:'add_object',layerId:'layer_1',object:{id:'nose',kind:'path',commands:[['M',.45,.4],['Q',.5,.6,.55,.4]],width:.003,color:'#FF443322'}}]}],
+  ['studio_sketch_live_end',{sketchId:'owned-sketch',sessionId:'live-session',expectedRevision:2}],
   ['studio_cinematic_3d_install_builtin',{projectId:'owned-project',sourceProjectUpdatedAt:1,pack:'extended'}],
   ['studio_cinematic_3d_save_program',{projectId:'owned-project',sourceProjectUpdatedAt:1,bundleId:'owned-bundle',timeline}],
   ['studio_precision_edit',{projectId:'owned-project',expectedUpdatedAt:1,operations:[{clipId:'stable-clip',set:{opacity:.5,maskShape:'ellipse'},keyframes:[{timeMs:0,x:0},{timeMs:1000,x:.2}]}]}],

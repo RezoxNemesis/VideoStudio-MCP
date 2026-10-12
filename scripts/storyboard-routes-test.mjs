@@ -289,7 +289,7 @@ test('studio relay alias generic execution keeps queued alias native-only when t
 });
 test('studio relay alias version and canonical parameter failures happen before queue writes',async()=>{
  const old=await fixture('3.8.1'),before=old.writes();
- for(const alias of STUDIO_ALIAS_ACTIONS)assert.throws(()=>contract.requireStoryboardNativeVersion({appVersion:'3.8.1'},alias),/3\.9\.0/);
+ for(const alias of STUDIO_ALIAS_ACTIONS)assert.throws(()=>contract.requireStoryboardNativeVersion({appVersion:'3.8.1'},alias),/3\.9\.[01]/);
  await assert.rejects(old.relay.appEnqueueV3(old.owner,'studio_sketch_get',{sketchId:'s'}),/3\.9\.0/);assert.equal(old.writes(),before);
  const current=await fixture('3.9.0'),currentBefore=current.writes();
  await assert.rejects(current.relay.appEnqueueV3(current.owner,'studio_sketch_get',{sketchId:'s',uri:'content://foreign'}));

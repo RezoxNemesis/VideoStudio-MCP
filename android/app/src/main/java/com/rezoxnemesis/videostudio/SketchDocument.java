@@ -56,25 +56,30 @@ public final class SketchDocument {
         int objects = 0, points = 0, keys = 0, images = 0;
         for (int i = 0; i < layers.length(); i++) {
             JSONObject layer = layers.getJSONObject(i);
-            fields(layer, "id,name,visible,locked,opacity,transform,keys,objects");
+            fields(layer, "id,name,visible,locked,opacity,transform,keys,objects,blendMode");
             unique(ids, id(layer, "id")); text(layer, "name", 160);
+            if (layer.has("blendMode") && !java.util.Arrays.asList("normal","multiply","screen","add").contains(layer.getString("blendMode"))) throw bad("Unknown layer blend mode");
             bool(layer, "visible"); bool(layer, "locked"); number(layer, "opacity", 0, 1);
             validateTransform(layer.getJSONObject("transform"));
             keys += validateKeys(layer.getJSONArray("keys"), frames);
             JSONArray items = layer.getJSONArray("objects");
             for (int j = 0; j < items.length(); j++) {
                 JSONObject item = items.getJSONObject(j);
-                fields(item, "id,kind,frame,exposure,color,width,fill,points,bounds,reference,transform,keys");
+                fields(item, "id,kind,frame,exposure,color,width,fill,points,bounds,reference,transform,keys,brush,commands,gradient,referenceCrop");
                 unique(ids, id(item, "id"));
                 String kind = item.getString("kind");
-                if (!java.util.Arrays.asList("stroke","eraser","line","rect","ellipse","polygon","image").contains(kind))
+                if (!java.util.Arrays.asList("stroke","eraser","line","rect","ellipse","polygon","image","path").contains(kind))
                     throw bad("Unsupported sketch object kind");
                 int start = (int) integer(item, "frame", 0, frames - 1);
                 integer(item, "exposure", 1, frames - start);
                 color(item.getString("color")); number(item, "width", .0005, .2); bool(item, "fill");
                 validateTransform(item.getJSONObject("transform"));
                 keys += validateKeys(item.getJSONArray("keys"), frames);
-                if ("stroke".equals(kind) || "eraser".equals(kind) || "line".equals(kind) || "polygon".equals(kind)) {
+                if (item.has("brush")) { if (!"stroke".equals(kind) && !"eraser".equals(kind)) throw bad("Brush requires stroke/eraser"); SketchBrushes.validate(item.getJSONObject("brush")); }
+                if (item.has("gradient")) validateGradient(item.getJSONObject("gradient"));
+                if (item.has("referenceCrop")) { if (!"image".equals(kind)) throw bad("Reference crop requires an image"); validateBounds(item.getJSONObject("referenceCrop")); }
+                if ("path".equals(kind)) { points += validateCommands(item.getJSONArray("commands")); }
+                else if ("stroke".equals(kind) || "eraser".equals(kind) || "line".equals(kind) || "polygon".equals(kind)) {
                     JSONArray pp = item.getJSONArray("points");
                     int min = "polygon".equals(kind) ? 3 : ("line".equals(kind) ? 2 : 1);
                     if (pp.length() < min || pp.length() > MAX_POINTS || ("line".equals(kind) && pp.length() != 2))
@@ -108,6 +113,23 @@ public final class SketchDocument {
         if (objects > MAX_OBJECTS || points > MAX_POINTS || keys > MAX_KEYS || images > 16)
             throw bad("Sketch budget exceeded (4096 objects, 131072 points, 4096 keys, 16 images)");
         if (doc.toString().getBytes(StandardCharsets.UTF_8).length > MAX_BYTES) throw bad("Sketch document exceeds 4 MiB");
+    }
+
+    static void validateBounds(JSONObject b) throws Exception {
+        fields(b,"x,y,width,height"); number(b,"x",0,1); number(b,"y",0,1); number(b,"width",.0001,1); number(b,"height",.0001,1);
+        if(b.getDouble("x")+b.getDouble("width")>1.000001||b.getDouble("y")+b.getDouble("height")>1.000001)throw bad("Crop must fit normalized reference");
+    }
+    static int validateCommands(JSONArray commands) throws Exception {
+        if(commands.length()<2||commands.length()>4096)throw bad("Path requires 2..4096 commands");int points=0;
+        for(int i=0;i<commands.length();i++){JSONArray command=commands.getJSONArray(i);String kind=command.getString(0);int size="C".equals(kind)?7:"Q".equals(kind)?5:("M".equals(kind)||"L".equals(kind))?3:"Z".equals(kind)?1:0;
+            if(size==0||command.length()!=size||i==0&&!"M".equals(kind))throw bad("Path must start with M and use M/L/Q/C/Z commands");
+            for(int j=1;j<size;j++)scalar(command.get(j),0,1,"Path coordinate");points+=(size-1)/2;
+        }return points;
+    }
+    static void validateGradient(JSONObject g) throws Exception {
+        fields(g,"startColor,endColor,x0,y0,x1,y1");color(g.getString("startColor"));color(g.getString("endColor"));
+        for(String key:new String[]{"x0","y0","x1","y1"})number(g,key,0,1);
+        if(g.getDouble("x0")==g.getDouble("x1")&&g.getDouble("y0")==g.getDouble("y1"))throw bad("Gradient endpoints must differ");
     }
 
     public static void validateTransform(JSONObject t) throws Exception {

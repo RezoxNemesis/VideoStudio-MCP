@@ -158,7 +158,7 @@ public final class NativeCinematicSceneComposer {
             // One source buffer is reused across all shots; no per-frame native buffer allocation.
             ByteBuffer model=ByteBuffer.allocateDirect(maxFileBytes).order(ByteOrder.LITTLE_ENDIAN);
             byte[] transfer=new byte[128*1024];
-            Filament.init();
+            Native3DRuntime.initialize();
             engine=Engine.create();
             materials=new UbershaderProvider(engine);
             loader=new AssetLoader(engine,materials,EntityManager.get());

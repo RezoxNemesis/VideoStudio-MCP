@@ -92,17 +92,19 @@ public final class FilamentGlbActivity extends Activity
         project=projectId==null?projectStore.active():projectStore.get(projectId);
         if(project==null){finish();return;}
         try{
-            Filament.init();
+            Native3DRuntime.initialize();
             engine=Engine.create();
             uiHelper=new UiHelper(UiHelper.ContextErrorPolicy.DONT_CHECK);
-        }catch(Throwable error){
-            Toast.makeText(this,"3D engine unavailable: "+error.getMessage(),
-                    Toast.LENGTH_LONG).show();
-            finish();return;
-        }
-        buildUi();
+            buildUi();
+        }catch(Exception|LinkageError|OutOfMemoryError error){show3DError(error);}
+
     }
 
+    private void show3DError(Throwable error){
+        loopActive=false;Choreographer.getInstance().removeFrameCallback(this);
+        ActivityLog.add(this,"user","3D preview unavailable",error.getClass().getSimpleName()+": "+String.valueOf(error.getMessage()),"failed",null,null,project==null?"":project.id);
+        LinearLayout screen=new LinearLayout(this);screen.setOrientation(LinearLayout.VERTICAL);screen.setPadding(24,24,24,24);screen.setBackgroundColor(0xff090d17);TextView explanation=new TextView(this);explanation.setTextColor(Color.WHITE);explanation.setTextSize(17);explanation.setText("3D preview could not start on this device. Your project is saved.\n\n"+error.getClass().getSimpleName()+": "+String.valueOf(error.getMessage()));screen.addView(explanation);screen.addView(action("Return to studio",v->finish()));setContentView(screen);
+    }
     private Button action(String text,View.OnClickListener listener){
         Button button=new Button(this);
         button.setText(text);
@@ -415,7 +417,7 @@ public final class FilamentGlbActivity extends Activity
                 ": "+viewer.getAnimator().getAnimationName(animationIndex));
     }
     @Override protected void onResume(){
-        super.onResume();loopActive=true;
+        super.onResume();loopActive=viewer!=null;
         Choreographer.getInstance().postFrameCallback(this);
     }
     @Override protected void onPause(){
@@ -425,6 +427,9 @@ public final class FilamentGlbActivity extends Activity
         super.onPause();
     }
     @Override public void doFrame(long frameTimeNanos){
+        try{renderFrame(frameTimeNanos);}catch(Exception|LinkageError|OutOfMemoryError error){show3DError(error);}
+    }
+    private void renderFrame(long frameTimeNanos){
         if(!loopActive||viewer==null)return;
         if(cinematic){
             if(!cinematicLoading&&!cinematicUnavailable&&cinematicResourcesReady&&cinematicTimeline!=null&&!paused){if(cinematicPlayStartedAt==0){cinematicPlayStartedAt=frameTimeNanos;cinematicPlayStartFrame=cinematicFrame;}long elapsed=frameTimeNanos-cinematicPlayStartedAt;long advance=elapsed/1_000_000_000L*cinematicFps+(elapsed%1_000_000_000L)*cinematicFps/1_000_000_000L;cinematicFrame=(int)Math.min(cinematicFrameCount-1,(long)cinematicPlayStartFrame+advance);if(cinematicFrame==cinematicFrameCount-1)paused=true;}
@@ -462,17 +467,8 @@ public final class FilamentGlbActivity extends Activity
         destroyed=true;cinematicLoadGeneration++;cinematicWorker.shutdownNow();main.removeCallbacksAndMessages(null);
         loopActive=false;
         Choreographer.getInstance().removeFrameCallback(this);
-        if(cinematic&&viewer!=null){
-            releaseCinematicScene();viewer.destroy();viewer=null;engine=null;uiHelper=null;
-        }else if(viewer!=null){
-            viewer.destroyModel();
-            viewer=null;
-        }
-        if(uiHelper!=null)uiHelper.detach();
-        if(engine!=null){
-            engine.destroy();
-            engine=null;
-        }
+        try{if(viewer!=null){if(cinematic)releaseCinematicScene();viewer.destroy();viewer=null;engine=null;uiHelper=null;}else{if(uiHelper!=null)uiHelper.detach();if(engine!=null)engine.destroy();}}
+        catch(Exception|LinkageError error){ActivityLog.add(this,"user","3D cleanup stopped",error.getClass().getSimpleName(),"failed",null,null,project==null?"":project.id);}
         super.onDestroy();
     }
 }

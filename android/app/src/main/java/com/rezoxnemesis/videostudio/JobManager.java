@@ -170,7 +170,7 @@ public final class JobManager {
             } catch (InterruptedException interrupted) {
                 setState(job, STATE_CANCELLED, "Cancelled");
                 Thread.currentThread().interrupt();
-            } catch (Exception error) {
+            } catch (Exception|LinkageError|OutOfMemoryError error) {
                 setState(job, STATE_FAILED, error.getMessage() == null ? "Job failed" : error.getMessage());
             } finally {
                 releaseLane(job);
@@ -227,7 +227,7 @@ public final class JobManager {
             root.put("heavyLaneBusy", heavyLane.availablePermits() == 0);
             root.put("parallelLightCapacity", 2);
             root.put("parallelBackgroundTransferCapacity", 1);
-            root.put("thermalQueuePolicy", "adaptive-safety-v1");
+            root.put("thermalQueuePolicy", "system-controlled-direct-v3");
         } catch (Exception ignored) {}
         return root;
     }
@@ -308,8 +308,8 @@ public final class JobManager {
     }
 
     /**
-     * Keep the Android SEVERE guard for GPU/encoding. Project-only file
-     * transfers, which do not perform GPU rendering, may run at SEVERE but
+     * Hold GPU/encoding only at Android CRITICAL. Project-only file
+     * transfers, which do not perform GPU rendering, run under Android throttling at SEVERE but
      * pause at CRITICAL. Every guarded job yields the exclusive lane while
      * thermally or memory paused; Android retains final thermal control.
      */
@@ -319,7 +319,7 @@ public final class JobManager {
             ActivityManager.MemoryInfo info = new ActivityManager.MemoryInfo();
             ActivityManager am = (ActivityManager) context.getSystemService(Context.ACTIVITY_SERVICE);
             if (am != null) am.getMemoryInfo(info);
-            boolean lowMemory = info.lowMemory || info.availMem < 520L * 1024L * 1024L;
+            boolean lowMemory = am != null && (info.lowMemory || info.availMem < Math.max(info.threshold,96L*1024*1024));
             int thermal = thermalStatus();
             boolean thermalHold = ThermalQueuePolicy.shouldPause(job.kind, thermal);
             if (!lowMemory && !thermalHold) return;
@@ -380,7 +380,7 @@ public final class JobManager {
             o.put("availableMb", info.availMem / 1024 / 1024);
             o.put("totalMb", info.totalMem / 1024 / 1024);
             o.put("lowMemory", info.lowMemory);
-            o.put("safeForHeavyWork", !info.lowMemory && info.availMem >= 520L * 1024L * 1024L);
+            o.put("safeForHeavyWork", !info.lowMemory && info.availMem >= Math.max(info.threshold,96L*1024*1024));
         } catch (Exception ignored) {}
         return o;
     }

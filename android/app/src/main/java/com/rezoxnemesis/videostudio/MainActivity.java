@@ -654,36 +654,13 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         box.addView(previewCard,margins(-1,-2,dp(8),0,0,0));
 
         JSONObject nativeState=NativeWorkMonitor.snapshot(this);
-        LinearLayout jobStrip=card(false);
-        jobStrip.setPadding(dp(12),dp(9),dp(12),dp(9));
-        jobStrip.setBackground(rounded(C_CARD_2,Color.rgb(37,53,82),dp(13)));
-        LinearLayout jobTop=new LinearLayout(this);
-        jobTop.setGravity(Gravity.CENTER_VERTICAL);
+        LinearLayout background=new LinearLayout(this);background.setGravity(Gravity.CENTER_VERTICAL);
         boolean nativeOnline=nativeState.optBoolean("nativeServiceOnline",false);
-        TextView status=title((nativeOnline?"● Native connected":"◌ Native reconnecting")
-                +"  ·  "+nativeState.optInt("active",0)+" jobs",13);
-        status.setTextColor(nativeOnline?C_CYAN:C_MUTED);
-        jobTop.addView(status,new LinearLayout.LayoutParams(0,-2,1));
-        Button queue=studioButton("Jobs ›",this::showStudioJobDetails);
-        jobTop.addView(queue,new LinearLayout.LayoutParams(dp(85),dp(39)));
-        jobStrip.addView(jobTop);
-        String jobState=nativeState.optString("jobState","");
-        String detail=nativeState.optString("jobDetail","");
-        if(!jobState.isEmpty()){
-            jobStrip.addView(body(nativeState.optString("jobName","VideoStudio task")+
-                    " · "+jobState.replace('_',' ')+
-                    " · "+nativeState.optInt("jobProgress",0)+"%"));
-        }
-        if(nativeState.optBoolean("thermalSafetyHold",false)||
-                "waiting_thermal".equals(jobState)){
-            TextView message=accent(nativeState.optString("thermalLabel","Android thermal hold")+
-                    (nativeState.optBoolean("thermalTransferAllowed",false)
-                        ? " · GPU render pauses; Drive transfer still available"
-                        : " · OS heat protection, not case temperature"),0xffffb66c);
-            jobStrip.addView(message);
-        }else if(!detail.isEmpty()&&nativeState.optInt("active",0)>0)
-            jobStrip.addView(body(detail));
-        box.addView(jobStrip,margins(-1,-2,dp(9),0,0,0));
+        String summary=nativeOnline?"● Native connected":"◌ Native reconnecting";
+        if(nativeState.optInt("active",0)>0)summary+=" · "+nativeState.optString("jobName","Background export")+" "+nativeState.optInt("jobProgress",0)+"%";
+        TextView backgroundStatus=title(summary,12);backgroundStatus.setTextColor(nativeOnline?C_CYAN:C_MUTED);background.addView(backgroundStatus,new LinearLayout.LayoutParams(0,-2,1));
+        background.addView(studioButton("Activity",this::showStudioJobDetails),new LinearLayout.LayoutParams(dp(85),dp(38)));
+        box.addView(background,margins(-1,dp(42),dp(5),0,0,0));
 
         LinearLayout timelineHeader=new LinearLayout(this);
         timelineHeader.setGravity(Gravity.CENTER_VERTICAL);

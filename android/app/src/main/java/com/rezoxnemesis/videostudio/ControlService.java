@@ -429,7 +429,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                         error.getMessage() == null ? "Could not queue prompt video" : error.getMessage(),
                         "failed", null, null, null);
             }
-        } else if (ACTION_LOCAL_SKETCH_EXPORT.equals(action)) {
+        } else if (ACTION_LOCAL_SKETCH_EXPORT.equals(action)||"com.rezoxnemesis.videostudio.LOCAL_SKETCH_BOOK_EXPORT".equals(action)) {
             final String request=intent.getStringExtra("requestJson");
             authoringExecutor.execute(()->{
                 try {
@@ -614,6 +614,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 case "precision_edit": complete(command,StudioPrecisionEdits.apply(this,store,p));syncProtocolState();return;
                 case "sketch_create": case "sketch_list": case "sketch_get": case "sketch_edit":
                 case "sketch_undo": case "sketch_redo": case "sketch_import_reference":
+                case "sketch_book_create": case "sketch_book_edit": case "sketch_book_list": case "sketch_book_get": case "sketch_book_open_page": case "sketch_live_begin": case "sketch_live_events": case "sketch_live_end": case "sketch_capabilities":
                     complete(command,SketchEditOps.execute(this,action,p));return;
                 case "sketch_preview":{
                     JSONObject preview=SketchEditOps.execute(this,action,p);
@@ -622,7 +623,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                     Object canvas=preview.remove("sketchPreviewImage");if(canvas!=null)preview.put("contactSheet",canvas);
                     complete(command,preview);return;
                 }
-                case "sketch_render": complete(command,queueSketchRender(p));return;
+                case "sketch_render": case "sketch_book_render": complete(command,queueSketchRender(p));return;
                 case "open_pipeline_configure": case "open_pipeline_capabilities": case "open_pipeline_list":
                 case "open_pipeline_status": case "open_pipeline_cancel":
                     complete(command,OpenPipelineOperations.execute(this,store,action,p,null));return;
@@ -1032,7 +1033,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                     protocol.complete(command, result, "failed");
                 }
             }
-        } catch (Exception error) {
+        } catch (Exception|LinkageError|OutOfMemoryError error) {
             JSONObject result = error instanceof StoryboardMotionAdmission.Rejected
                     ? ((StoryboardMotionAdmission.Rejected) error).toJson() : new JSONObject();
             try {
@@ -1933,7 +1934,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
 
                 JSONObject queued;
                 switch (action) {
-                    case "sketch_render":
+                    case "sketch_render": case "sketch_book_render":
                         parameters.remove("projectId");queued=queueSketchRender(parameters);break;
                     case "open_pipeline_export_request": case "open_pipeline_submit": case "open_pipeline_download_result":
                     case "open_pipeline_import_result": case "open_pipeline_archive_artifact": case "open_pipeline_restore_artifact":
@@ -2917,23 +2918,27 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     /** Complete admission precedes output creation, recovery work and GPU effects. */
     private JSONObject queueSketchRender(JSONObject input) throws Exception {
         final JSONObject request=publicOperationParameters(input);
-        SketchDocument.fields(request,"sketchId,expectedRevision,operationId,aspect,quality");
-        String sketchId=SketchDocument.id(request,"sketchId"),operationId=SketchDocument.id(request,"operationId");
+        boolean isBook=request.has("bookId");
+        SketchDocument.fields(request,isBook?"bookId,expectedRevision,operationId,pageStart,pageCount,aspect,quality":"sketchId,expectedRevision,operationId,aspect,quality");
+        String sketchId=SketchDocument.id(request,isBook?"bookId":"sketchId"),operationId=SketchDocument.id(request,"operationId");
         SketchDocument.integer(request,"expectedRevision",1,9_007_199_254_740_991L);
-        if(!input.has("_recoveryPlanId"))
-            SketchEditOps.execute(this,"sketch_get",new JSONObject().put("sketchId",sketchId).put("expectedRevision",request.get("expectedRevision")));
+        if(!input.has("_recoveryPlanId")){
+            if(isBook){JSONObject book=SketchEditOps.execute(this,"sketch_book_get",new JSONObject().put("bookId",sketchId)).getJSONObject("book");if(book.getLong("revision")!=request.getLong("expectedRevision"))throw new IllegalStateException("SKETCH_BOOK_REVISION_CONFLICT");}
+            else SketchEditOps.execute(this,"sketch_get",new JSONObject().put("sketchId",sketchId).put("expectedRevision",request.get("expectedRevision")));
+        }
         final String outputId=UUID.nameUUIDFromBytes(("sketch-output/"+sketchId+"/"+operationId).getBytes(StandardCharsets.UTF_8)).toString();
         JSONObject durable=new JSONObject(request.toString());
         if(input.has("_recoveryPlanId"))durable.put("_recoveryPlanId",input.get("_recoveryPlanId"));
         if(input.has("_mcpCommandId"))durable.put("_mcpCommandId",input.get("_mcpCommandId"));
-        JobManager.Job job=submitRecoverableHeavy("sketch_render",durable,outputId,"Sketch animation export",state->{
+        JobManager.Job job=submitRecoverableHeavy(isBook?"sketch_book_render":"sketch_render",durable,outputId,"Sketch animation export",state->{
             jobs.awaitSafeCheckpoint(state,"sketch_prepare");
-            SketchNativeExport.Prepared prepared=SketchNativeExport.prepare(this,request,(frame,count)->{
+            SketchNativeExport.Progress captureProgress=(frame,count)->{
                 if(frame%4==0||frame==count-1){
                     checkpoint(state,"Sketch frame capture",(frame+1)+"/"+count+" authored frames",2+(int)(65d*frame/Math.max(1,count)),outputId);
                     jobs.awaitSafeCheckpoint(state,"sketch_frame_"+frame);
                 }
-            });
+            };
+            SketchNativeExport.Prepared prepared=isBook?SketchBookExport.prepare(this,request,captureProgress):SketchNativeExport.prepare(this,request,captureProgress);
             if(!outputId.equals(prepared.project.id))throw new IllegalStateException("Sketch output identity changed");
             JSONObject metadata;
             if(prepared.completed)metadata=new JSONObject(prepared.metadata.toString());
@@ -4818,7 +4823,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     private boolean mayQueueBackgroundWork(String action) {
         if (action == null) return false;
         switch (action) {
-            case "sketch_render":
+            case "sketch_render": case "sketch_book_render":
             case "open_pipeline_export_request": case "open_pipeline_submit": case "open_pipeline_download_result":
             case "open_pipeline_import_result": case "open_pipeline_archive_artifact": case "open_pipeline_restore_artifact":
             case "prompt_video":
