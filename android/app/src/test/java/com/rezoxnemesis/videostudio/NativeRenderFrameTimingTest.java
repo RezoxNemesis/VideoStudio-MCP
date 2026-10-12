@@ -38,6 +38,10 @@ public class NativeRenderFrameTimingTest {
     @Test public void newTaggedLegacyRigFramesUseTheSameRationalEncoderClock()throws Exception{
         assertEquals(33_333,item(30,34,true,1,"generated_skinned_2d").durationUs);
     }
+    @Test public void newFullSceneCinematicFramesReachTheRationalSixtyFpsEncoderClock()throws Exception{
+        assertEquals(16_666,item(60,17,true,0,"generated_cinematic_3d").durationUs);
+        assertEquals(16_667,item(60,16,true,1,"generated_cinematic_3d").durationUs);
+    }
     private EditedMediaItem item(int fps,long duration) throws Exception {
         return item(fps,duration,false,0);
     }

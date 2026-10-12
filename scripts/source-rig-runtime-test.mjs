@@ -293,6 +293,24 @@ try {
     sourceBytesVerified: false, inspectionRequired: true, cinematicApproved: false, preparationComplete: false});
   passed('Batch byte proofs, explicit partial publication receipts and repeated ordered source occurrences survive the relay');
 
+  const old3d=parseText(await call(app,'app_cinematic_3d_render',{projectId,programId:'program-cinematic-123'}));
+  assert.equal(old3d.queued,false);assert.match(old3d.error,/3\.8\.0/);assert.equal((await poll()).length,0);
+  passed('Actual SDK rejects cinematic3D on3.7.3 before native queue effects');
+  await register('3.8.0');
+  const timeline={schema:'videostudio.cinematic3d.timeline.v1',name:'Cinematic relay boundary',fps:60,motionProvider:'procedural_mannequin',shots:[
+    {id:'shot_001',action:'CLASH',durationFrames:120,hitStopFrames:4,camera:{mode:'macro',fovDegrees:85,shakeIntensity:.4},vfx:{sparkBurst:true,slashTrail:true,rubble:true},sourceAnchors:[{assetId,sha256:sourceSha256},{assetId,sha256:sourceSha256}]}]};
+  const saveArgs={projectId,sourceProjectUpdatedAt:1,bundleId:'bundle-cinematic-123',timeline};
+  const saveQueued=parseText(await call(app,'app_cinematic_3d_save_program',saveArgs));assert.equal(saveQueued.queued,true);
+  const saveCommands=await poll();assert.equal(saveCommands.length,1);assert.equal(saveCommands[0].action,'cinematic_3d_save_program');assert.deepEqual(saveCommands[0].parameters,saveArgs);
+  await acknowledge(saveQueued.commandId,{ok:true,programId:'program-cinematic-123',timeline,nativeExecutionVerified:false,cinematicAcceptance:false});
+  const saveRead=parseText(await call(app,'app_get_command_result',{commandId:saveQueued.commandId}));assert.deepEqual(saveRead.result.timeline,timeline);assert.equal(saveRead.result.nativeExecutionVerified,false);
+  const editArgs={projectId,programId:'program-cinematic-123',expectedProgramSha256:'d'.repeat(64),editOnly:true};
+  const editQueued=parseText(await call(app,'app_cinematic_3d_get_program',editArgs));assert.deepEqual((await poll())[0].parameters,editArgs);
+  await acknowledge(editQueued.commandId,{ok:true,editOnly:true,renderReady:false,sourceBytesVerified:false,timeline});
+  await rejected(app,'app_cinematic_3d_save_program',{...saveArgs,timeline:{...timeline,shots:[{...timeline.shots[0],hitStopFrames:7}]}});
+  assert.equal((await poll()).length,0);
+  passed('Actual SDK queues exact sixty-FPS cinematic data and non-executable draft reads without inventing native render evidence');
+
   await register('3.7.3', {credential: foreignOwner, id: foreignDevice});
   const foreign = await connect('/app-mcp-v3/' + foreignOwner, 'foreign-owner');
   const foreignRead = await call(foreign, 'app_get_command_result', {commandId: queued.commandId});
@@ -304,7 +322,7 @@ try {
   assert.ok(rpcCalls.every(exchange => exchange.protocolVersion === '2025-11-25' && exchange.status === 200));
   passed('Foreign owners cannot retrieve source images; actual SDK calls retain the negotiated HTTP revision');
 
-  const files = ['src/index.js', 'src/storyboard-contract.js', 'src/personal-entry.js'];
+  const files = ['src/index.js', 'src/storyboard-contract.js', 'src/cinematic3d-contract.js', 'src/personal-entry.js'];
   const sourceFileSha256 = Object.fromEntries(await Promise.all(files.map(async path => [path, sha(await readFile(path))])));
   const sdk = JSON.parse(await readFile(new URL('../node_modules/@modelcontextprotocol/client/package.json', import.meta.url), 'utf8'));
   await mkdir('.work', {recursive: true});

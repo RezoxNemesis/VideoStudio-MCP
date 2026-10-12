@@ -74,6 +74,8 @@ jobs:
           python -m playwright install --with-deps chromium
       - name: Real offline-native MCP integration
         run: node scripts/personal-runtime-test.mjs verify
+      - name: Real source rig and cinematic 3D MCP contracts
+        run: node scripts/source-rig-runtime-test.mjs
       - name: Real browser core interactions
         run: |
           set -o pipefail
@@ -114,6 +116,7 @@ jobs:
             .work/worker.log
             .work/runtime-seed-results.json
             .work/runtime-mcp-results.json
+            .work/source-rig-runtime-results.json
             .work/backend-tests.log
             .work/browser-tests.log
             .work/browser-results.json

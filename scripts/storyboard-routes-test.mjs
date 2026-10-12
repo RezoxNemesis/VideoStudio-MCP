@@ -219,3 +219,58 @@ test('typed batch rig saves preserve per-profile byte proofs and do not accept n
   const row=(await queueBindings.readCommandQueue(f.storage,'app-v3-cl:'+f.deviceId))[0];assert.equal(row.action,'save_source_rig_profiles');assert.equal(row.parameters.profiles[0].sourceSha256,profile.sourceSha256);
   const before=f.writes();await assert.rejects(f.call('app_save_source_rig_profiles',{...args,profiles:Array(9).fill(profile)}));assert.equal(f.writes(),before);
 });
+
+const cinematicTimeline={schema:'videostudio.cinematic3d.timeline.v1',name:'Full scene',fps:60,motionProvider:'procedural_mannequin',shots:[
+ {id:'shot_001',action:'CLASH',durationFrames:120,hitStopFrames:4,camera:{mode:'macro',fovDegrees:85,shakeIntensity:.4},vfx:{sparkBurst:true,slashTrail:true,rubble:true},
+ sourceAnchors:[{assetId:'source-anchor-one',sha256:'a'.repeat(64)},{assetId:'source-anchor-two',sha256:'b'.repeat(64)},{assetId:'source-anchor-one',sha256:'a'.repeat(64)}]}]};
+test('new 3D typed render rejects 3.7.3 without queue or sequence effects',async()=>{
+ const f=await fixture('3.7.3'),before=f.writes(),r=await f.call('app_cinematic_3d_render',{projectId:'source-project-123',programId:'program-123456'});
+ assert.equal(r.queued,false);assert.match(r.error,/3\.8\.0/);assert.equal(f.writes(),before);
+});
+test('new 3D builtin installation queues native owned work on 3.8.0',async()=>{
+ const f=await fixture('3.8.0'),r=await f.call('app_cinematic_3d_install_builtin',{projectId:'source-project-123',sourceProjectUpdatedAt:1});
+ assert.equal(r.queued,true);assert.equal(r.nativeApp,true);const row=(await queueBindings.readCommandQueue(f.storage,'app-v3-cl:'+f.deviceId))[0];
+ assert.equal(row.action,'cinematic_3d_install_builtin');assert.deepEqual(row.parameters,{projectId:'source-project-123',sourceProjectUpdatedAt:1});
+});
+test('new 3D timeline save preserves sixty fps exact holds and source occurrences',async()=>{
+ const f=await fixture('3.8.0'),args={projectId:'source-project-123',sourceProjectUpdatedAt:1,bundleId:'bundle-123456',timeline:cinematicTimeline};
+ assert.equal((await f.call('app_cinematic_3d_save_program',args)).queued,true);
+ const row=(await queueBindings.readCommandQueue(f.storage,'app-v3-cl:'+f.deviceId))[0];assert.equal(row.action,'cinematic_3d_save_program');assert.deepEqual(row.parameters.timeline,cinematicTimeline);
+});
+test('generic 3D actions reject old native before any queue effects',async()=>{
+ const f=await fixture('3.7.3'),before=f.writes();await assert.rejects(f.relay.appEnqueueV3(f.owner,'cinematic_3d_render',{projectId:'source-project-123',programId:'program-123456'}),/3\.8\.0/);assert.equal(f.writes(),before);
+});
+test('3D bundle import is registered-asset only and callers cannot select output projects',async()=>{
+ const f=await fixture('3.8.0'),before=f.writes();
+ await assert.rejects(f.relay.appEnqueueV3(f.owner,'cinematic_3d_import_bundle',{projectId:'source-project-123',sourceProjectUpdatedAt:1,bundleAssetId:'bundle-asset-123',uri:'https://unowned.invalid/bundle.zip'}),/field|URI/);
+ await assert.rejects(f.relay.appEnqueueV3(f.owner,'cinematic_3d_render',{projectId:'source-project-123',programId:'program-123456',outputProjectId:'existing-output'}),/fresh|output/);
+ assert.equal(f.writes(),before);
+});
+test('generic 3D timeline validation rejects unsafe intervals unknown fields and metadata overflow',async()=>{
+ const f=await fixture('3.8.0'),before=f.writes(),args={projectId:'source-project-123',sourceProjectUpdatedAt:1,bundleId:'bundle-123456',timeline:cinematicTimeline};
+ for(const mutate of [t=>t.shots[0].hitStopFrames=7,t=>t.shots[0].camera.fovDegrees=180,t=>t.shots[0].vfx.python='run.py',t=>t.shots[0].durationFrames=3]){
+   const timeline=structuredClone(cinematicTimeline);mutate(timeline);await assert.rejects(f.relay.appEnqueueV3(f.owner,'cinematic_3d_save_program',{...args,timeline}));
+ }
+ assert.equal(f.writes(),before);
+});
+test('3D program retrieval and authoring export preserve exact program sha proof',async()=>{
+ const f=await fixture('3.8.0'),args={projectId:'source-project-123',programId:'program-123456',expectedProgramSha256:'c'.repeat(64)};
+ for(const [tool,action] of [['app_cinematic_3d_get_program','cinematic_3d_get_program'],['app_cinematic_3d_export_request','cinematic_3d_export_request']]){
+  assert.equal((await f.call(tool,args)).queued,true);const rows=await queueBindings.readCommandQueue(f.storage,'app-v3-cl:'+f.deviceId);assert.equal(rows.at(-1).action,action);assert.deepEqual(rows.at(-1).parameters,args);
+ }
+});
+test('3D capabilities distinguish available source contracts from installed neural providers',async()=>{
+ const f=await fixture('3.8.0'),result=await f.call('app_capabilities',{});
+ assert.equal(result.cinematic3d.minimumNativeAppVersion,'3.8.0');assert.equal(result.cinematic3d.cinematicAcceptance,false);assert.equal(result.cinematic3d.neuralProviderInstalled,false);
+ assert.equal((await f.call('app_cinematic_3d_capabilities',{})).queued,true);
+});
+test('edit-only 3D saved-program reads preserve the explicit non-executable mode',async()=>{
+ const f=await fixture('3.8.0'),args={projectId:'source-project-123',programId:'program-123456',expectedProgramSha256:'c'.repeat(64),editOnly:true};
+ assert.equal((await f.call('app_cinematic_3d_get_program',args)).queued,true);
+ const rows=await queueBindings.readCommandQueue(f.storage,'app-v3-cl:'+f.deviceId);assert.deepEqual(rows.at(-1).parameters,args);
+});
+test('solved cinematic camera keys reach the exact native timeline',async()=>{
+ const f=await fixture('3.8.0'),timeline=structuredClone(cinematicTimeline);timeline.shots[0].camera.keyframes=[{phase:0,position:[0,1.65,5.5],target:[0,1.1,0],up:[0,1,0]},{phase:1,position:[.5,1.7,5],target:[0,1.1,0],up:[0,1,0]}];
+ const args={projectId:'source-project-123',sourceProjectUpdatedAt:1,bundleId:'bundle-123456',timeline};assert.equal((await f.call('app_cinematic_3d_save_program',args)).queued,true);
+ const rows=await queueBindings.readCommandQueue(f.storage,'app-v3-cl:'+f.deviceId);assert.deepEqual(rows.at(-1).parameters.timeline.shots[0].camera.keyframes,timeline.shots[0].camera.keyframes);
+});

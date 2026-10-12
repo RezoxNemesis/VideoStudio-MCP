@@ -1,6 +1,6 @@
 import { nativeCommandSummary, nativeResultPage } from "./native-result-pages.js";
 import { readCommandQueue, mutateCommandQueue, requireCommandQueueAdmission, terminalCommandUpdate, commandIsPending, readCommandReceipt, acknowledgePrunedCommand, readCommandQueueInTransaction, writeCommandQueueInTransaction, mergeCommandReceiptsInTransaction, readCommandReceiptsInTransaction, canonicalCommandResultSha256, readNativeDevice, readNativeDeviceInTransaction, writeNativeDevice, writeNativeDeviceInTransaction } from "./native-command-store.js";
-import { STORYBOARD_NATIVE_ACTIONS, CINEMATIC_BEATS, requireStoryboardNativeVersion, nativeStoryboardParameters } from "./storyboard-contract.js";
+import { STORYBOARD_NATIVE_ACTIONS, CINEMATIC_BEATS, requireStoryboardNativeVersion, nativeStoryboardParameters, cinematic3dToolSchemas } from "./storyboard-contract.js";
 import { DurableObject } from "cloudflare:workers";
 import { McpServer } from "@modelcontextprotocol/server";
 import { createMcpHandler } from "agents/mcp/server";
@@ -1730,6 +1730,7 @@ function serverForApp(env,ownerKey,protocolVersion=1){
     protocolVersion:isV3?3:1,
     storyboard:{minimumNativeAppVersion:"3.7.2",defaultMotionIntent:"cinematic_action",frozenSourceHashes:true,explicitOriginalRigAndPropAnnotations:true,explicitContactPlans:true,typedChoreography:CINEMATIC_BEATS,cinematicAcceptance:"requires decoded physical QA; eligibility/pixel checks do not certify",neuralMotionProviderInstalled:false},
     sourceRigWorkbench:isV3?{minimumNativeAppVersion:"3.7.3",originalImageInspection:true,diagnosticPosePreview:true,batchProfileLimit:8,orderedPreparationStatus:true,anatomicalInferenceAvailable:false,cinematicAcceptance:false}:undefined,
+    cinematic3d:isV3?{minimumNativeAppVersion:"3.8.0",engine:"Blender/Rigify full-scene GLB",offlineActionLibrary:true,exactOutputFrameClock:true,neuralProviderInstalled:false,cinematicAcceptance:false,nativeExecutionVerified:false}:undefined,
     stableEndpoint:isV3,
     stableEndpointPath:isV3?"/app-mcp-v3/":"",
     primary:"Android native app",
@@ -1763,6 +1764,10 @@ function serverForApp(env,ownerKey,protocolVersion=1){
 
   s.registerTool("app_state",{description:"Request full current native app/project state including active asset metadata, jobs, creator capabilities and recent on-device ChatGPT activity.",inputSchema:{}},async()=>queue("get_state",{}));
   if(isV3) {
+    for(const [action,inputSchema] of Object.entries(cinematic3dToolSchemas)) {
+      const readOnly=["cinematic_3d_capabilities","cinematic_3d_get_program","cinematic_3d_list_programs","cinematic_3d_plan","cinematic_3d_export_request"].includes(action);
+      s.registerTool("app_"+action,{description:"Cinematic 3D: "+action.replace("cinematic_3d_","").replaceAll("_"," ")+". Requires native 3.8.0+. Uses owned full-scene GLB data, original source hashes and exact 24/30/60 FPS output timing. Procedural mannequins are explicitly identified; installed neural providers and native render acceptance require separate evidence.",inputSchema,annotations:{readOnlyHint:readOnly}},async args=>queue(action,args));
+    }
     const stableId=z.string().regex(/^[A-Za-z0-9_-]{8,128}$/), hash=z.string().regex(/^[a-f0-9]{64}$/);
     const xy=z.tuple([z.number().min(0).max(1),z.number().min(0).max(1)]);
     const crop=z.object({left:z.number().min(0).max(1),top:z.number().min(0).max(1),right:z.number().min(0).max(1),bottom:z.number().min(0).max(1)}).strict().refine(value=>value.left<value.right&&value.top<value.bottom,{message:"Invalid original-oriented crop"});

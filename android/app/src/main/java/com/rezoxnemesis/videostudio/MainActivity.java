@@ -2634,6 +2634,13 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         directorCard.addView(directorButton,margins(-1,dp(52),dp(12),0,0,0));
         box.addView(directorCard,margins(-1,-2,dp(10),0,0,0));
 
+        LinearLayout cinematicCard=card(true);
+        cinematicCard.addView(title("Cinematic 3D • Articulated Animation",22));
+        cinematicCard.addView(body("Build a sequence from eleven animated actions, watch both fighters in the scene, and adjust shot timing, camera, impacts and effects. Import custom cinematic scenes for authored character poses."));
+        Button cinematicButton=neonButton("Open Cinematic 3D Studio",C_CYAN);
+        cinematicButton.setOnClickListener(v->{Intent studio=new Intent(this,Cinematic3DStudioActivity.class);studio.putExtra("projectId",activeProject.id);startActivity(studio);});
+        cinematicCard.addView(cinematicButton,margins(-1,dp(52),dp(12),0,0,0));
+        box.addView(cinematicCard,margins(-1,-2,dp(10),0,0,0));
         LinearLayout modelCard=card(true);
         modelCard.addView(title("Real 3D Animation • GLB Skeletal Models",22));
         modelCard.addView(body("Load a user-selected glTF 2.0 GLB model with actual mesh geometry, material texture, bones, authored motion clips, directional light, perspective and camera orbit. Purely local GPU rendering; unlike a flat image, the model must already include true 3D surfaces and animation."));

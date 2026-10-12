@@ -50,6 +50,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     public static final String ACTION_LOCAL_STORYBOARD_ARTWORK = "com.rezoxnemesis.videostudio.LOCAL_STORYBOARD_ARTWORK";
     public static final String ACTION_LOCAL_STORYBOARD_SERIES = "com.rezoxnemesis.videostudio.LOCAL_STORYBOARD_SERIES";
     public static final String ACTION_LOCAL_GLTF_COMBAT = "com.rezoxnemesis.videostudio.LOCAL_GLTF_COMBAT_EXPORT";
+    public static final String ACTION_LOCAL_CINEMATIC_3D = "com.rezoxnemesis.videostudio.LOCAL_CINEMATIC_3D_RENDER";
     public static final String ACTION_LOCAL_PROMPT_VIDEO = "com.rezoxnemesis.videostudio.LOCAL_PROMPT_VIDEO";
     public static final String ACTION_LOCAL_EXPORT = "com.rezoxnemesis.videostudio.LOCAL_EXPORT_PROJECT";
     private static final String CHANNEL = "videostudio_private_control";
@@ -73,7 +74,8 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     private ResumableTransferManager transferManager;
     private AppProtocol protocol;
     private NativeRenderEngine renderEngine;
-    private NativeRenderEngine.Handle activeRender;
+    private volatile NativeRenderEngine.Handle activeRender;
+    private volatile String activeRenderJobId="";
     private PromptVideoEngine promptVideoEngine;
     private NativeMediaAnalyzer mediaAnalyzer;
     private NativePortraitMotionAnalyzer portraitMotionAnalyzer;
@@ -93,6 +95,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     private CommandJournal commandJournal;
     private final ExecutorService commandCompletionWatchers = Executors.newFixedThreadPool(2);
     private final ExecutorService directorSetupExecutor = Executors.newSingleThreadExecutor();
+    private final ExecutorService nativeSourceExecutor=Executors.newFixedThreadPool(2);
     private final Set<String> watchedCommands = ConcurrentHashMap.newKeySet();
     private volatile boolean serviceAlive;
 
@@ -146,6 +149,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             String jobId=intent==null?"":intent.getStringExtra("jobId");
             boolean cancelled=jobId!=null&&!jobId.isEmpty()&&jobs.cancel(jobId);
             if(cancelled){
+                cancelOwnedRender(jobId);
                 recoveryPlans.cancelByJob(jobId);
                 ActivityLog.add(this,"user","Cancelled selected render",
                         "Native job "+jobId.substring(0,Math.min(8,jobId.length()))+
@@ -204,6 +208,14 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                             error.getMessage()==null?"Cannot export GLB":error.getMessage(),
                             "failed",null,null,req.getStringExtra("projectId"));
                 }
+            });
+        } else if (ACTION_LOCAL_CINEMATIC_3D.equals(action)) {
+            final Intent req=intent;
+            directorSetupExecutor.submit(()->{
+                try{
+                    JSONObject work=queueCinematic3D(new JSONObject(req.getStringExtra("requestJson")));
+                    ActivityLog.add(this,"user","Cinematic 3D render queued",work.optInt("expectedFrames")+" articulated frames","queued",0,null,work.optString("projectId"));
+                }catch(Exception error){ActivityLog.add(this,"user","Cinematic 3D render failed",error.getMessage()==null?"Cannot render saved program":error.getMessage(),"failed",null,null,req.getStringExtra("projectId"));}
             });
         } else if (ACTION_LOCAL_STORYBOARD_SERIES.equals(action)) {
             final Intent userRequest=intent;
@@ -458,6 +470,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         if (protocol != null) protocol.stop();
         commandCompletionWatchers.shutdownNow();
         directorSetupExecutor.shutdownNow();
+        nativeSourceExecutor.shutdownNow();
         if (NativeAgentWatchdog.shouldRearm(paused)) {
             NativeAgentWatchdog.scheduleRetry(this, "service_destroyed");
         } else {
@@ -491,7 +504,25 @@ public final class ControlService extends Service implements AppProtocol.Callbac
 
     @Override
     public void onCommand(JSONObject command) {
-        String action = command.optString("action");
+        if(command == null)return;
+        String incomingAction = command.optString("action", "");
+        if(android.os.Looper.myLooper() == android.os.Looper.getMainLooper()
+                && NativeCommandExecutionPolicy.requiresBackgroundThread(incomingAction)) {
+            try {
+                // The remote relay may deliver the same lease again. AppProtocol's
+                // bounded per-ID dispatch guard suppresses duplicate main-thread posts.
+                // The durable journal remains the authority for replay/exactly-once work.
+                nativeSourceExecutor.execute(() -> onCommand(command));
+            } catch(java.util.concurrent.RejectedExecutionException rejected) {
+                JSONObject failed = new JSONObject();
+                try { failed.put("ok",false).put("error",
+                        "Native inspection worker unavailable; reconnect and retry"); }
+                catch(Exception ignored){}
+                complete(command,failed);
+            }
+            return;
+        }
+        String action = incomingAction;
         JSONObject p = command.optJSONObject("parameters");
         if (p == null) p = new JSONObject();
         // Host payloads cannot supply frozen proofs, recovery identities or
@@ -799,6 +830,19 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 case "render_rigged_2d":
                     complete(command,queueRigged2D(p));
                     return;
+                case "cinematic_3d_capabilities": complete(command,cinematic3DCapabilities()); return;
+                case "cinematic_3d_install_builtin": complete(command,NativeCinematicBundleStore.installBuiltin(this,store,p)); return;
+                case "cinematic_3d_import_bundle": complete(command,NativeCinematicBundleStore.install(this,store,p)); return;
+                case "cinematic_3d_save_program": complete(command,Cinematic3DProgramStore.save(this,store,p)); return;
+                case "cinematic_3d_get_program": {
+                    if(p.has("editOnly")&&!(p.opt("editOnly") instanceof Boolean))throw new IllegalArgumentException("editOnly must be boolean");
+                    boolean edit=p.optBoolean("editOnly",false);JSONObject identity=new JSONObject(p.toString());identity.remove("editOnly");
+                    complete(command,edit?Cinematic3DProgramStore.readForEdit(this,store,identity):Cinematic3DProgramStore.get(this,store,identity));return;
+                }
+                case "cinematic_3d_list_programs": complete(command,Cinematic3DProgramStore.list(this,store,p)); return;
+                case "cinematic_3d_plan": complete(command,Cinematic3DProgramStore.plan(this,store,p)); return;
+                case "cinematic_3d_export_request": complete(command,Cinematic3DProgramStore.exportRequest(this,store,p)); return;
+                case "cinematic_3d_render": complete(command,queueCinematic3D(p)); return;
                 case "animate_storyboard_artwork":
                     complete(command,queueStoryboardArtwork(p));
                     return;
@@ -875,7 +919,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 case "cancel_job": {
                     String jobId = p.optString("jobId");
                     boolean cancelled = jobs.cancel(jobId);
-                    if (cancelled && activeRender != null) activeRender.cancel();
+                    if (cancelled) cancelOwnedRender(jobId);
                     if (cancelled) recoveryPlans.cancelByJob(jobId);
                     JSONObject result = ok();
                     result.put("cancelled", cancelled);
@@ -1921,6 +1965,9 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                     case "animate_storyboard_series":
                         queued = queueStoryboardSeries(parameters);
                         break;
+                    case "cinematic_3d_render":
+                        queued = queueCinematic3D(parameters);
+                        break;
                     case "render_gltf_combat":
                         queued = queueNativeGltf3D(parameters);
                         break;
@@ -2855,6 +2902,105 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 .put("neuralSynthesized",false);
     }
 
+    private JSONObject cinematic3DCapabilities() throws Exception {
+        JSONObject out=ok().put("minimumNativeAppVersion","3.8.0").put("appVersion",AppProtocol.APP_VERSION)
+                .put("timelineSchema","videostudio.cinematic3d.timeline.v1").put("bundleSchema","videostudio.cinematic3d.bundle.v1")
+                .put("fps",new JSONArray().put(24).put(30).put(60)).put("maxShots",80).put("maxOutputFrames",12000)
+                .put("offlineActionLibrary",true).put("fullSceneGltfReplay",true).put("exactOutputFrameHitStops",true)
+                .put("humanStudioActivity","Cinematic3DStudioActivity").put("cloudEngine","Blender/Rigify")
+                .put("neuralProviderInstalled",false).put("originalImageReconstruction",false)
+                .put("nativeExecutionVerified",false).put("cinematicAcceptance",false).put("bakedPoseChangesRequireRebuild",true);
+        try(java.io.InputStream asset=getAssets().open("cinematic3d/demo.vscinematic")){out.put("builtinBundleAvailable",asset.read()!=-1);}
+        catch(java.io.IOException missing){out.put("builtinBundleAvailable",false);}
+        return out;
+    }
+
+    /** Complete admission precedes output creation, recovery work and GPU effects. */
+    private JSONObject queueCinematic3D(JSONObject input) throws Exception {
+        final boolean recovering=input.has("_recoveryPlanId");
+        JSONObject request=new JSONObject(input.toString());
+        JSONArray keys=request.names();if(keys!=null)for(int i=0;i<keys.length();i++)if(keys.getString(i).startsWith("_"))request.remove(keys.getString(i));
+        if(recovering){request.put("projectId",input.getString("sourceProjectId"));request.remove("sourceProjectId");request.remove("outputProjectId");}
+        Cinematic3DTimeline.fields(request,"projectId","programId","expectedProgramSha256","width","height","render","fileName");
+        Cinematic3DTimeline.canonical(request);
+        int width=request.has("width")?(int)Cinematic3DTimeline.integer(request,"width",256,1280):720;
+        int height=request.has("height")?(int)Cinematic3DTimeline.integer(request,"height",256,1280):1280;
+        NativeCinematicSceneComposer.requireDimensions(width,height);
+        if(request.has("render")&&!(request.get("render") instanceof Boolean))throw new IllegalArgumentException("render must be boolean");
+        if(request.has("fileName"))Cinematic3DTimeline.text(request,"fileName",180);
+        final boolean encode=request.optBoolean("render",true);
+        final String name=sanitizeFileName(request.optString("fileName","VideoStudio_Cinematic3D_"+System.currentTimeMillis()+".mp4"));
+        JSONObject identity=new JSONObject().put("projectId",Cinematic3DTimeline.id(Cinematic3DTimeline.text(request,"projectId",96)))
+                .put("programId",Cinematic3DTimeline.id(Cinematic3DTimeline.text(request,"programId",96)));
+        if(request.has("expectedProgramSha256"))identity.put("expectedProgramSha256",request.get("expectedProgramSha256"));
+        final JSONObject program=Cinematic3DProgramStore.get(this,store,identity);
+        final JSONObject bundle=NativeCinematicBundleStore.get(this,store,program.getString("projectId"),program.getString("bundleId"));
+        Cinematic3DProgramStore.requireUnchanged(this,store,program,bundle);
+        final ProjectStore.Project source=store.get(program.getString("projectId"));
+        if(source==null)throw new IllegalArgumentException("Source project unavailable");
+        final JSONObject clock=Cinematic3DTimeline.compile(program.getJSONObject("timeline"));
+        final int total=clock.getInt("totalFrames"),fps=clock.getInt("fps");
+        final ProjectStore.Project output;
+        final boolean reuseFrames;
+        if(recovering){
+            output=store.get(input.getString("outputProjectId"));
+            if(output==null||output.id.equals(source.id)||(output.sourcePrompt==null||!output.sourcePrompt.startsWith("cinematic3d:"))
+                    ||output.updatedAt!=input.getLong("_cinematicOutputUpdatedAt"))
+                throw new IllegalStateException("OUTPUT_PROJECT_CHANGED: cinematic recovery preserves the previous output");
+            reuseFrames=!output.clips.isEmpty();
+            if(reuseFrames)requireCinematicFrames(output,program,total,fps);
+            else NativeCinematicSceneComposer.requireNewOutput(source,output);
+        }else{
+            output=store.create("Cinematic 3D • "+source.name);output.sourcePrompt="cinematic3d:full-scene-v1";store.save(output);reuseFrames=false;
+        }
+        JSONObject durable=new JSONObject(request.toString()).put("projectId",output.id).put("sourceProjectId",source.id)
+                .put("outputProjectId",output.id).put("expectedProgramSha256",program.getString("sha256"))
+                .put("_cinematicOutputUpdatedAt",output.updatedAt).put("width",width).put("height",height).put("render",encode).put("fileName",name);
+        if(recovering)durable.put("_recoveryPlanId",input.getString("_recoveryPlanId"));
+        if(input.has("_mcpCommandId"))durable.put("_mcpCommandId",input.getString("_mcpCommandId"));
+        JobManager.Job job=submitRecoverableHeavy("cinematic_3d_render",durable,output.id,"Cinematic 3D • "+source.name,state->{
+            jobs.awaitSafeCheckpoint(state,"cinematic3d_prepare");
+            Cinematic3DProgramStore.requireUnchanged(this,store,program,bundle);
+            ProjectStore.Project generated=output;
+            if(!reuseFrames){
+                generated=NativeCinematicSceneComposer.compose(this,store,source,output,bundle,program,width,height,(done,count,seconds,impact)->{
+                    checkpoint(state,"Cinematic 3D",done+"/"+count+" articulated frames",2+(int)(70d*done/Math.max(1,count)),output.id);
+                    jobs.awaitSafeCheckpoint(state,"cinematic3d_frame_"+done);
+                });
+                recoveryPlans.checkpointCinematicOutputForJob(state.id,generated.id,generated.updatedAt);
+            }
+            requireCinematicFrames(generated,program,total,fps);
+            JSONObject result=ok().put("sourceProjectId",source.id).put("outputProjectId",generated.id).put("programId",program.getString("programId"))
+                    .put("programSha256",program.getString("sha256")).put("bundleSha256",bundle.getString("sha256"))
+                    .put("frameCount",total).put("fps",fps).put("durationSeconds",total/(double)fps)
+                    .put("execution","native_filament_full_scene").put("nativeFrameCaptureCompleted",true).put("renderRequested",encode)
+                    .put("motionProvider",program.getJSONObject("timeline").getString("motionProvider"))
+                    .put("originalImageReconstruction",false).put("cinematicAcceptance",false);
+            state.setResult(result);syncProtocolState();
+            if(encode){jobs.awaitSafeCheckpoint(state,"cinematic3d_media3");runExportBlocking(generated,"source:"+width+"x"+height,"720p",name,state);}
+            checkpoint(state,"Cinematic 3D",encode?"Native MP4 published":"Articulated frames ready in the output project",100,generated.id);
+        });
+        return ok().put("queued",true).put("jobId",job.id).put("projectId",output.id).put("outputProjectId",output.id).put("sourceProjectId",source.id)
+                .put("expectedFrames",total).put("fps",fps).put("render",encode).put("durableRecovery",true)
+                .put("nativeExecutionVerified",false).put("cinematicAcceptance",false);
+    }
+
+    private static void requireCinematicFrames(ProjectStore.Project output,JSONObject program,int total,int fps)throws Exception {
+        if(output.clips.size()!=total||output.assets.size()!=total)throw new IllegalStateException("Cinematic frame generation is incomplete");
+        for(int i=0;i<total;i++){
+            ProjectStore.Clip clip=output.clips.get(i);ProjectStore.Asset asset=output.asset(clip.assetId);
+            JSONObject m=asset==null?null:asset.generationMetadata;
+            if(m==null||!"generated_cinematic_3d".equals(asset.role)||!program.getString("sha256").equals(m.optString("programSha256"))
+                    ||m.optInt("frameIndex",-1)!=i||m.optInt("fps",0)!=fps||m.optLong("presentationTimeUs",-1)!=NativeFrameClock.presentationTimeUs(i,fps))
+                throw new IllegalStateException("Cinematic frame proof differs from the accepted program");
+        }
+    }
+
+    private synchronized boolean cancelOwnedRender(String jobId) {
+        if(jobId==null||!jobId.equals(activeRenderJobId)||activeRender==null)return false;
+        activeRender.cancel();return true;
+    }
+
     private JSONObject queueStoryboardSeries(JSONObject input) throws Exception {
         JSONObject p=storyboardParameters(input,"animate_storyboard_series",true);
         boolean recovering=p.has("_recoveryPlanId");
@@ -3669,14 +3815,16 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         CountDownLatch latch = new CountDownLatch(1);
         AtomicReference<String> error = new AtomicReference<>();
         AtomicReference<File> completed = new AtomicReference<>();
+        AtomicReference<JSONObject> encoderReceipt = new AtomicReference<>();
 
-        activeRender = renderEngine.export(project, temp, aspect, quality, new NativeRenderEngine.Listener() {
+        final NativeRenderEngine.Handle ownedHandle = renderEngine.export(project, temp, aspect, quality, new NativeRenderEngine.Listener() {
             @Override public void onProgress(int progress, String detail) {
                 checkpoint(state, "Rendering video", detail, Math.max(20, Math.min(96, 20 + (int) (progress * .76))), project.id);
             }
 
             @Override public void onCompleted(File file, JSONObject result) {
                 completed.set(file);
+                encoderReceipt.set(result);
                 latch.countDown();
             }
 
@@ -3685,18 +3833,26 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 latch.countDown();
             }
         });
-        if (activeRender == null) throw new IllegalStateException("Could not start native render");
+        if (ownedHandle == null) throw new IllegalStateException("Could not start native render");
+        synchronized(this){activeRender=ownedHandle;activeRenderJobId=state.id;}
+        final long deadline=android.os.SystemClock.elapsedRealtime()+30*60*1000L;
+        try {
 
         while (!latch.await(550, TimeUnit.MILLISECONDS)) {
-            if (Thread.currentThread().isInterrupted()) {
-                activeRender.cancel();
+            if (Thread.currentThread().isInterrupted()||"cancelled".equals(state.state)) {
+                ownedHandle.cancel();
                 throw new InterruptedException();
             }
+            if(android.os.SystemClock.elapsedRealtime()>deadline){ownedHandle.cancel();throw new IllegalStateException("Native encoding exceeded its bounded 30 minute execution window");}
         }
+        if("cancelled".equals(state.state)||Thread.currentThread().isInterrupted())throw new InterruptedException();
         if (error.get() != null) throw new IllegalStateException(error.get());
         File ready = completed.get();
         if (ready == null || !ready.exists() || ready.length() == 0) throw new IllegalStateException("Native export produced no file");
 
+        JSONObject encoder=encoderReceipt.get();
+        if(encoder!=null){JSONObject result=state.result==null?new JSONObject():new JSONObject(state.result.toString());
+            result.put("nativeEncoderReceipt",new JSONObject(encoder.toString())).put("encodedClockVerified",false).put("decodedFrameCountVerified",false).put("cinematicAcceptance",false);state.setResult(result);}
         checkpoint(state, "Exporting video", "Publishing to Movies/VideoStudio", 97, project.id);
         JSONObject committed = recoveryPlans.outputForJob(state.id);
         final String reusableUri = committed != null
@@ -3763,8 +3919,12 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                     "success", 100, null, fresh.id);
         }
         if (!ready.delete()) { /* cache cleanup best effort */ }
-        activeRender = null;
         syncProtocolState();
+        } finally {
+            if(completed.get()==null)ownedHandle.cancel();
+            synchronized(this){if(activeRender==ownedHandle){activeRender=null;activeRenderJobId="";}}
+            if(temp.exists())temp.delete();
+        }
     }
 
     private void ensureProjectWorkspaceHydrated(ProjectStore.Project project,
@@ -4362,6 +4522,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             out.put("sourceRigBatchProfileLimit", 8);
             out.put("sourceRigPreparationStatusReady", true);
             out.put("sourceRigWorkbenchMinimumVersion", "3.7.3");
+            out.put("cinematic3d",cinematic3DCapabilities());
             out.put("sourceRigAnatomicalInferenceAvailable", false);
             out.put("sourceTextured2DMeshSkinningReady", true);
             out.put("glbSkeletalPreviewReady", true);
@@ -4562,6 +4723,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             case "storyboard_series_audit":
             case "render_rigged_2d":
             case "render_gltf_combat":
+            case "cinematic_3d_render":
             case "export_project":
             case "autonomous_edit":
             case "generate_image":
@@ -4763,7 +4925,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 && !queuedResult.optBoolean("render", true)) {
             requirePlayableOutput = false;
         }
-        if (("render_rigged_2d".equals(action) || "render_gltf_combat".equals(action))
+        if (("render_rigged_2d".equals(action) || "render_gltf_combat".equals(action) || "cinematic_3d_render".equals(action))
                 && queuedResult != null
                 && !queuedResult.optBoolean("render", true)) {
             requirePlayableOutput = false;
@@ -4894,6 +5056,8 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             case "source_rig_status": return "Reading ordered source-rig preparation";
             case "list_source_rig_profiles": return "Reading original source-character rigs";
             case "render_rigged_2d": return "Animating original masked fighters through native 2D mesh skinning";
+            case "cinematic_3d_render": return "Rendering articulated cinematic 3D scenes";
+            case "cinematic_3d_capabilities": return "Reading cinematic 3D capabilities";
             case "animate_storyboard_artwork": return "Animating original storyboard keyframes with source-textured character motion";
             case "storyboard_series_plan": return "Planning original illustrated multi-genre storyboard shots";
             case "storyboard_series_audit": return "Inspecting actual artwork movement and source masks";

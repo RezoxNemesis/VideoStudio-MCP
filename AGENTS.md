@@ -1,5 +1,13 @@
 # VideoStudio current engineering priority
 
+The latest owner request adds the three-page `Cinematic Animation System Blueprint.pdf`:
+implement its Blender/Rigify 3D production pipeline as an additional workflow, preserving
+all earlier work. Cloud Blender generation/rendering is explicitly authorized by that
+request; label its evidence as cloud Blender output, never Android native output.
+Procedural mannequins and estimated poses must not claim exact original-image reconstruction.
+Use authored full-scene GLB replay for the new phone path, preserving baked roots, cameras,
+skins and props. Optional neural models require actual configured runtime/model evidence.
+
 The owner asked to complete the 2026-10-12 Cinematic Animation System Blueprint
 and QA first, then resume the earlier complete engineering blueprint. Preserve
 both documents and all existing user projects/media. The prior source branch

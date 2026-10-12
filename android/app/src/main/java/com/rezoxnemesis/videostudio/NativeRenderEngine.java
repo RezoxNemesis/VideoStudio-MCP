@@ -147,6 +147,13 @@ public final class NativeRenderEngine {
                                 info.put("ok", true);
                                 info.put("path", outputFile.getAbsolutePath());
                                 info.put("sizeBytes", outputFile.length());
+                                info.put("encoderReportedFrameCount",result.videoFrameCount);
+                                info.put("encoderReportedDurationMs",result.durationMs);
+                                info.put("encoderReportedWidth",result.width);
+                                info.put("encoderReportedHeight",result.height);
+                                info.put("encodedFrameCountVerified",false);
+                                info.put("encodedClockVerified",false);
+                                info.put("decodedFrameCountVerified",false);
                                 info.put("durationMs", project.outputDurationMs());
                                 info.put("clipCount", project.clips.size());
                                 info.put("aspect", aspect);
@@ -559,7 +566,7 @@ public final class NativeRenderEngine {
                                               ProjectStore.Asset asset,ProjectStore.Clip clip) {
         if(!asset.generated || clip.effects==null || asset.generationMetadata==null ||
                 !("multigenre_storyboard_motion".equals(asset.role) || "storyboard_artwork_frame".equals(asset.role)
-                        || "generated_skinned_2d".equals(asset.role)) ||
+                        || "generated_skinned_2d".equals(asset.role) || "generated_cinematic_3d".equals(asset.role)) ||
                 !"rational-authored-v1".equals(clip.effects.optString("frameClock")) ||
                 !"rational-authored-v1".equals(asset.generationMetadata.optString("frameClock")))return;
         Object index=clip.effects.opt("frameIndex"), original=asset.generationMetadata.opt("frameIndex");

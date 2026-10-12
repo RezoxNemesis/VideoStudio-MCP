@@ -69,6 +69,15 @@ public final class RecoveryPlanStore {
         upsert(plan, true);
     }
 
+    public synchronized void checkpointCinematicOutputForJob(String jobId,String targetId,long updatedAt) {
+        JSONObject plan=findByJobId(jobId);
+        if(plan==null||!"cinematic_3d_render".equals(plan.optString("action"))||targetId==null||!targetId.equals(plan.optString("projectId"))||updatedAt<0)
+            throw new IllegalStateException("Cinematic recovery output identity differs");
+        try{JSONObject parameters=plan.getJSONObject("parameters");if(!targetId.equals(parameters.getString("outputProjectId")))throw new IllegalStateException("Cinematic recovery target differs");parameters.put("_cinematicOutputUpdatedAt",updatedAt);plan.put("updatedAt",System.currentTimeMillis());}
+        catch(org.json.JSONException malformed){throw new IllegalStateException("Cinematic recovery parameters unavailable",malformed);}
+        upsert(plan,true);
+    }
+
     public synchronized JSONObject get(String id) {
         JSONArray arr = read();
         for (int i = 0; i < arr.length(); i++) {
@@ -203,7 +212,7 @@ public final class RecoveryPlanStore {
             String state = plan.optString("state");
             if ("queued".equals(state) || "running".equals(state) || "waiting_retry".equals(state)
                     || "interrupted".equals(state) || "waiting_thermal".equals(state)
-                    || "waiting_memory".equals(state)) {
+                    || "waiting_memory".equals(state) || "retrying".equals(state)) {
                 try {
                     plan.put("state", "cancelled");
                     plan.put("detail", "Cancelled");
@@ -228,7 +237,7 @@ public final class RecoveryPlanStore {
             String state = plan.optString("state");
             if ("queued".equals(state) || "running".equals(state) || "waiting_retry".equals(state)
                     || "interrupted".equals(state) || "waiting_thermal".equals(state)
-                    || "waiting_memory".equals(state)) {
+                    || "waiting_memory".equals(state) || "retrying".equals(state)) {
                 try { out.put(new JSONObject(plan.toString())); }
                 catch (Exception ignored) {}
             }
@@ -302,7 +311,7 @@ public final class RecoveryPlanStore {
             // the exact accepted sources and rig identities across restarts.
             if (key.startsWith("_") && !key.equals("_mcpCommandId") &&
                     !key.equals("_storyboardSourceManifest") && !key.equals("_storyboardAdmission") &&
-                    !key.equals("_storyboardOutputUpdatedAt")) continue;
+                    !key.equals("_storyboardOutputUpdatedAt") && !key.equals("_cinematicOutputUpdatedAt")) continue;
             try { out.put(key, input.opt(key)); }
             catch (Exception ignored) {}
         }
