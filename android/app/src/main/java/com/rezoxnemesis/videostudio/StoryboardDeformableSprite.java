@@ -14,23 +14,43 @@ import android.graphics.Paint;
  * For precise bodies the authored 2D rig path supersedes this generic mesh.
  */
 public final class StoryboardDeformableSprite {
-    private static final int MESH_Y=40;
+    private static final int MESH_Y=40, MESH_X=28;
     private final float[] startLeft=new float[MESH_Y+1],
                           startRight=new float[MESH_Y+1],
                           targetLeft=new float[MESH_Y+1],
                           targetRight=new float[MESH_Y+1];
+    private final float[] startTop=new float[MESH_X+1],
+                          startBottom=new float[MESH_X+1],
+                          targetTop=new float[MESH_X+1],
+                          targetBottom=new float[MESH_X+1];
+    private final StoryboardSourceArticulation sourceArticulation;
+    private final StoryboardMotionGrammar.Action action;
     private final boolean deformable;
     public StoryboardDeformableSprite(StoryboardLayerIsolation.Region start,
                                     StoryboardLayerIsolation.Region end,
                                     int sourceWidth,int sourceHeight,
                                     boolean deformable) {
+        this(start,end,sourceWidth,sourceHeight,deformable,
+                StoryboardMotionGrammar.Action.TRACK,false);
+    }
+    public StoryboardDeformableSprite(StoryboardLayerIsolation.Region start,
+                                    StoryboardLayerIsolation.Region end,
+                                    int sourceWidth,int sourceHeight,
+                                    boolean deformable,
+                                    StoryboardMotionGrammar.Action motion,
+                                    boolean sourceCharacter) {
         if(start==null||end==null||sourceWidth<32||sourceHeight<32
                 ||start.alpha.length!=sourceWidth*sourceHeight
-                ||end.alpha.length!=sourceWidth*sourceHeight)
+                ||end.alpha.length!=sourceWidth*sourceHeight||motion==null)
             throw new IllegalArgumentException("Two source masks and true frame size required");
         this.deformable=deformable;
+        this.action=motion;
         profile(start,sourceWidth,sourceHeight,startLeft,startRight);
         profile(end,sourceWidth,sourceHeight,targetLeft,targetRight);
+        verticalProfile(start,sourceWidth,startTop,startBottom);
+        verticalProfile(end,sourceWidth,targetTop,targetBottom);
+        sourceArticulation=new StoryboardSourceArticulation(
+                start,end,sourceWidth,sourceHeight,deformable&&sourceCharacter);
     }
     private static void profile(StoryboardLayerIsolation.Region region,
                                 int frameWidth,int frameHeight,
@@ -56,6 +76,27 @@ public final class StoryboardDeformableSprite {
             if(max<min){left[row]=0;right[row]=1;continue;}
             left[row]=Math.max(0,(min-region.left)/(float)regionWidth);
             right[row]=Math.min(1,(max-region.left+1)/(float)regionWidth);
+        }
+    }
+
+    /** Record actual top and bottom ink extents in each original column. */
+    private static void verticalProfile(StoryboardLayerIsolation.Region r,
+                                        int stride,float[] top,float[] bottom) {
+        int rw=r.right-r.left+1,rh=r.bottom-r.top+1;
+        for(int column=0;column<=MESH_X;column++){
+            int x=r.left+Math.min(rw-1,Math.round(column*(rw-1f)/MESH_X));
+            int min=r.bottom+1,max=r.top-1;
+            for(int search=0;search<=Math.max(2,rw/11);search++){
+                int xl=Math.max(r.left,x-search),xr=Math.min(r.right,x+search);
+                for(int xx=xl;xx<=xr;xx++)for(int yy=r.top;yy<=r.bottom;yy++)
+                    if(r.alpha[yy*stride+xx]!=0){
+                        min=Math.min(min,yy);max=Math.max(max,yy);
+                    }
+                if(max>=min)break;
+            }
+            if(max<min){top[column]=0;bottom[column]=1;continue;}
+            top[column]=Math.max(0,(min-r.top)/(float)rh);
+            bottom[column]=Math.min(1,(max-r.top+1)/(float)rh);
         }
     }
 
@@ -85,29 +126,37 @@ public final class StoryboardDeformableSprite {
         // Instead, the start texture progresses toward B and the target
         // texture progresses back toward A, at the exact shot time.
         float secondary=4f*t*(1f-t)*amount;
+        float[] limb=new float[2];
         for(int y=0;y<height;y++){
             float v=(y+.5f)/height;
             int row=Math.min(MESH_Y,Math.round(v*MESH_Y));
-            float sourceLeft=endTexture?targetLeft[row]:startLeft[row];
-            float sourceRight=endTexture?targetRight[row]:startRight[row];
-            float left=startLeft[row]+(targetLeft[row]-startLeft[row])*t;
-            float right=startRight[row]+(targetRight[row]-startRight[row])*t;
-            float fromSpan=Math.max(.06f,sourceRight-sourceLeft);
-            float toSpan=Math.max(.06f,right-left);
-            float ratio=Math.max(.68f,Math.min(1.45f,toSpan/fromSpan));
-            float stretch=1f+(ratio-1f)*amount;
-            float oldCenter=(sourceLeft+sourceRight)*.5f;
-            float newCenter=(left+right)*.5f;
-            float offset=(newCenter-oldCenter*stretch)*width*amount;
-            // Very restrained secondary movement; these are still the
-            // original painted pixels, NOT inferred body joints.
+            float srcL=endTexture?targetLeft[row]:startLeft[row];
+            float srcR=endTexture?targetRight[row]:startRight[row];
+            float wantedL=startLeft[row]+(targetLeft[row]-startLeft[row])*t;
+            float wantedR=startRight[row]+(targetRight[row]-startRight[row])*t;
+            float scaleX=1f+(Math.max(.68f,Math.min(1.45f,
+                    Math.max(.06f,wantedR-wantedL)/
+                    Math.max(.06f,srcR-srcL)))-1f)*amount;
+            float offsetX=((wantedL+wantedR)*.5f-
+                    (srcL+srcR)*.5f*scaleX)*width*amount;
             float sway=(float)Math.sin(v*4.2+t*3.1)*secondary*width*.0025f;
-            float vertical=(float)Math.sin(v*3.5+t*4.4)*secondary*height*.002f;
-            int sourceY=Math.max(0,Math.min(height-1,Math.round(y-vertical)));
             for(int x=0;x<width;x++){
-                int sx=Math.round((x-offset-sway)/stretch);
-                if(sx<0||sx>=width)continue;
-                warped[y*width+x]=original[sourceY*width+sx];
+                float u=(x+.5f)/width;
+                int col=Math.min(MESH_X,Math.round(u*MESH_X));
+                float srcT=endTexture?targetTop[col]:startTop[col];
+                float srcB=endTexture?targetBottom[col]:startBottom[col];
+                float wantedT=startTop[col]+(targetTop[col]-startTop[col])*t;
+                float wantedB=startBottom[col]+(targetBottom[col]-startBottom[col])*t;
+                float scaleY=1f+(Math.max(.73f,Math.min(1.32f,
+                        Math.max(.07f,wantedB-wantedT)/
+                        Math.max(.07f,srcB-srcT)))-1f)*amount;
+                float offsetY=((wantedT+wantedB)*.5f-
+                        (srcT+srcB)*.5f*scaleY)*height*amount;
+                sourceArticulation.shift(u,v,t,endTexture,action,limb);
+                int sx=Math.round((x-offsetX-sway)/scaleX-limb[0]*width*amount);
+                int sy=Math.round((y-offsetY)/scaleY-limb[1]*height*amount);
+                if(sx<0||sx>=width||sy<0||sy>=height)continue;
+                warped[y*width+x]=original[sy*width+sx];
             }
         }
         return Bitmap.createBitmap(warped,width,height,Bitmap.Config.ARGB_8888);

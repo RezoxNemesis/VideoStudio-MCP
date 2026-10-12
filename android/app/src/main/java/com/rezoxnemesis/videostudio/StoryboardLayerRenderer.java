@@ -76,7 +76,7 @@ public final class StoryboardLayerRenderer implements AutoCloseable {
         for(StoryboardLayerIsolation.Track t:analysis.tracks)
             sprites.add(new SpritePair(cutout(pixelsA,t.from),
                     cutout(pixelsB,t.to),t.confidence,
-                    new StoryboardDeformableSprite(t.from,t.to,width,height,softBodies)));
+                    new StoryboardDeformableSprite(t.from,t.to,width,height,softBodies,action,scene==StoryboardMotionGrammar.SceneKind.ACTION||scene==StoryboardMotionGrammar.SceneKind.COMIC)));
     }
 
     private Sprite cutout(int[] original,StoryboardLayerIsolation.Region region){
