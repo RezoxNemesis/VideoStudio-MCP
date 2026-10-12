@@ -227,8 +227,8 @@ const checks = [
   ["True combat action uses fully native articulated frame generation", controlService.includes('case "animate_combat_rig"') && controlService.includes("queueCombatRig") && controlService.includes("combatRigBenchmarkReady")],
   ["Combat IK and independent per-frame sword motion is compiled", combatSolver.includes("elbow(") && combatSolver.includes("swordTipSeparation") && combatSolver.includes("remap(") && combatSolver.includes("leadingFoot")],
   ["VideoStudio 3.7 generalizes image animation to 100-frame five-batch continuous motion",
-    nativeProtocol.includes('APP_VERSION = "3.7.3"')
-    && androidBuild.includes('versionCode = 373')
+    nativeProtocol.includes('APP_VERSION = "3.7.4"')
+    && androidBuild.includes('versionCode = 374')
     && multigenrePlanner.includes('MAX_SOURCE_FRAMES=160')
     && multigenrePlanner.includes('maxPerBatch-1:maxPerBatch')
     && multigenreStudio.includes('StoryboardSegmentComposer.compose')
