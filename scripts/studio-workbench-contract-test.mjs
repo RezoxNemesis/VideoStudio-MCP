@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
-import {nativeStudioParameters,requireStudioVersion,STUDIO_NATIVE_ACTIONS,studioToolSchemas} from '../src/studio-workbench-contract.js';
+import {nativeStudioParameters,requireStudioVersion,STUDIO_NATIVE_ACTIONS,STUDIO_ALIAS_ACTIONS,nativeStudioCanonicalAction,studioToolSchemas} from '../src/studio-workbench-contract.js';
+import {nativeStoryboardParameters,requireStoryboardNativeVersion,STORYBOARD_NATIVE_ACTIONS} from '../src/storyboard-contract.js';
 
 test('new native operations require 3.9 before effects, preserve the existing protocol',()=>{
  assert.throws(()=>requireStudioVersion({appVersion:'3.8.1'},'sketch_edit'),/UPGRADE_REQUIRED/);
@@ -103,4 +104,21 @@ test('configuration has no embedded secrets or alternate endpoint schemes',()=>{
  const p={endpoint:'https://own.invalid/runner',bearer:'x'.repeat(32)};assert.deepEqual(nativeStudioParameters('open_pipeline_configure',p),p);
  for(const endpoint of ['http://own.invalid','https://user:pass@own.invalid','https://own.invalid?token=x','https://own.invalid#fragment','https:\\own.invalid','https://own.invalid:0'])assert.throws(()=>nativeStudioParameters('open_pipeline_configure',{...p,endpoint}));
  for(const action of STUDIO_NATIVE_ACTIONS)assert.ok(studioToolSchemas[action],action);
+});
+test('closed studio relay aliases require 3.9 and validate their exact canonical contracts',()=>{
+ for(const alias of STUDIO_ALIAS_ACTIONS){
+  assert.equal(nativeStudioCanonicalAction(alias),alias.slice('studio_'.length));
+  assert(STORYBOARD_NATIVE_ACTIONS.has(alias),'Every alias must remain native-only');
+  assert.throws(()=>requireStoryboardNativeVersion({appVersion:'3.8.1'},alias),/3\.9\.0/);
+  assert.doesNotThrow(()=>requireStoryboardNativeVersion({appVersion:'3.9.0'},alias));
+ }
+ const p={projectId:'p',expectedUpdatedAt:1,operations:[{clipId:'c',set:{x:.2}}]};
+ assert.deepEqual(nativeStoryboardParameters('studio_precision_edit',p),p);
+ assert.throws(()=>nativeStoryboardParameters('studio_sketch_get',{sketchId:'s',pointLimit:513}));
+ assert.throws(()=>nativeStoryboardParameters('studio_cinematic_3d_render',{projectId:'p',programId:'r',uri:'https://unowned.invalid'}));
+ assert.throws(()=>nativeStoryboardParameters('studio_apply_tool',{tool:'transform',settings:{extra:'x'.repeat(65536)}}),/64 KiB/);
+ for(const unknown of ['studio_delete_project','studio_execute','studio_studio_sketch_get']){
+  assert.equal(nativeStudioCanonicalAction(unknown),unknown);
+  assert(!STUDIO_ALIAS_ACTIONS.has(unknown));assert(!STORYBOARD_NATIVE_ACTIONS.has(unknown));
+ }
 });

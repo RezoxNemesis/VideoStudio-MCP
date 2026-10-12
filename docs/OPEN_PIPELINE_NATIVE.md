@@ -66,3 +66,15 @@ Project archives now use immutable `Generations/<generationId>` directories, per
 | `restore_artifact` | `requestId`, matching `<requestId>.vsresult` `name`, `sha256` |
 
 The service must strip its internal recovery/command bookkeeping fields before invoking the strict facade. Credential configuration is a direct operation; bearer values must never enter plaintext command/recovery journals. Queue completion for submission means the runner accepted or retained a job, not that inference or native rendering completed.
+
+## Existing connector compatibility
+
+Native app version 3.9.0 and later supports a fixed set of `studio_` aliases through the existing `app_execute` tool. This lets the existing generic relay reach the new native workbench without waiting for new named Worker tools. Parameters stay flat and identical to the canonical operation:
+
+```json
+{"action":"studio_cinematic_3d_save_program","parameters":{"projectId":"owned_project","sourceProjectUpdatedAt":123,"programId":"owned_program","expectedProgramSha256":"<retained programme hash>","bundleId":"<verified bundle ID>","timeline":{}}}
+```
+
+Use the actual validated timeline and retained programme/bundle identifiers. The empty timeline above only illustrates the flat envelope. The same route supports `studio_precision_edit`, `studio_apply_tool`, `studio_set_studio_layers`, the nine `studio_sketch_*` operations, eleven `studio_open_pipeline_*` operations and nine `studio_cinematic_3d_*` operations advertised by native bridge capabilities. Unknown prefixes remain unknown; permission modes, source/revision checks, background lanes and durable command identity retain their canonical behavior.
+
+Configure the runner access token in the phone workbench when using an older relay. Native storage and journals protect the credential, but an older deployed relay may lack the newer server-side credential redaction. Generation submission still requires an available native agent and your configured inference computer; relay queue acceptance does not establish generation completion.

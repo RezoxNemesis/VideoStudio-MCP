@@ -1,7 +1,7 @@
 import { nativeCommandSummary, nativeResultPage } from "./native-result-pages.js";
 import { readCommandQueue, mutateCommandQueue, requireCommandQueueAdmission, terminalCommandUpdate, commandIsPending, readCommandReceipt, acknowledgePrunedCommand, readCommandQueueInTransaction, writeCommandQueueInTransaction, mergeCommandReceiptsInTransaction, readCommandReceiptsInTransaction, canonicalCommandResultSha256, readNativeDevice, readNativeDeviceInTransaction, writeNativeDevice, writeNativeDeviceInTransaction } from "./native-command-store.js";
 import { STORYBOARD_NATIVE_ACTIONS, CINEMATIC_BEATS, requireStoryboardNativeVersion, nativeStoryboardParameters, cinematic3dToolSchemas } from "./storyboard-contract.js";
-import { studioToolSchemas } from './studio-workbench-contract.js';
+import { studioToolSchemas, nativeStudioCanonicalAction } from './studio-workbench-contract.js';
 import { DurableObject } from "cloudflare:workers";
 import { McpServer } from "@modelcontextprotocol/server";
 import { createMcpHandler } from "agents/mcp/server";
@@ -81,7 +81,7 @@ const studioMcpAuthorized = async (request,env) => {
   return diff===0;
 };
 const appActionAllowed = (mode,action) => {
-  const a=String(action||"").toLowerCase();
+  const a=nativeStudioCanonicalAction(String(action||"").toLowerCase());
 
   // Permanent privacy wall. Full autonomy never means Gallery enumeration.
   if(a.includes("gallery")||a.includes("media_library")||a.includes("photo_library")) return false;

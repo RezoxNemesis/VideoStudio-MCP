@@ -6,6 +6,7 @@ public final class NativeCommandExecutionPolicy {
 
     public static boolean requiresBackgroundThread(String action) {
         if(action==null)return false;
+        action=NativeWorkbenchBridge.canonicalAction(action);
         switch(action){
             case "precision_edit":
             case "apply_tool": case "set_studio_layers":

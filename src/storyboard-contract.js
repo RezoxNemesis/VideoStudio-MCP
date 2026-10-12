@@ -1,9 +1,10 @@
 import { CINEMATIC_3D_ACTIONS, nativeCinematic3dParameters } from './cinematic3d-contract.js';
-import { STUDIO_NATIVE_ACTIONS, nativeStudioParameters, requireStudioVersion } from './studio-workbench-contract.js';
+import { STUDIO_NATIVE_ACTIONS, STUDIO_ALIAS_ACTIONS, nativeStudioCanonicalAction, nativeStudioParameters, requireStudioVersion } from './studio-workbench-contract.js';
 export { cinematic3dToolSchemas } from './cinematic3d-contract.js';
+export { nativeStudioCanonicalAction };
 // Additive native application-v3 contracts. No browser/provider execution fallback.
 export const STORYBOARD_NATIVE_ACTIONS = new Set([
-  ...CINEMATIC_3D_ACTIONS,...STUDIO_NATIVE_ACTIONS,'apply_tool','storyboard_artwork_preflight','storyboard_series_plan','storyboard_series_audit',
+  ...CINEMATIC_3D_ACTIONS,...STUDIO_NATIVE_ACTIONS,...STUDIO_ALIAS_ACTIONS,'apply_tool','storyboard_artwork_preflight','storyboard_series_plan','storyboard_series_audit',
   'animate_storyboard_series','animate_storyboard_artwork','save_source_rig_profile',
   'list_source_rig_profiles','save_storyboard_program','get_storyboard_program',
   'inspect_source_artwork','preview_source_rig','save_source_rig_profiles','source_rig_status'
@@ -19,6 +20,7 @@ export const CINEMATIC_BEATS = ['STANDOFF','BLACK_STEP','WHITE_ADVANCE','CHARGE'
   'PRE_IMPACT','CLASH','BLADE_LOCK','FOLLOW_THROUGH','WHITE_KNOCKBACK','BLACK_LANDING','AFTERMATH_RECOVERY'];
 export function requireStoryboardNativeVersion(device, action, parameters={}) {
   requireStudioVersion(device,action,parameters);
+  action=nativeStudioCanonicalAction(action);
   if (!STORYBOARD_NATIVE_ACTIONS.has(action)||action==='apply_tool') return;
   const minimum=CINEMATIC_3D_ACTIONS.has(action)?3008000:RIG_WORKBENCH_ACTIONS.has(action)?3007003:3007002;
   const name=minimum===3008000?'3.8.0':minimum===3007003?'3.7.3':'3.7.2';
@@ -28,6 +30,7 @@ export function requireStoryboardNativeVersion(device, action, parameters={}) {
 }
 export function nativeStoryboardParameters(action, parameters={}) {
   if (!parameters || typeof parameters !== 'object' || Array.isArray(parameters)) throw new Error('Native parameters must be an object');
+  action=nativeStudioCanonicalAction(action);
   if(STUDIO_NATIVE_ACTIONS.has(action))return nativeStudioParameters(action,parameters);
   if(CINEMATIC_3D_ACTIONS.has(action))return nativeCinematic3dParameters(action,parameters);
   const stack=[{value:parameters,depth:0}], seen=new Set();let nodes=0;

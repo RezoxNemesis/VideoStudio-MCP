@@ -1,6 +1,6 @@
 // Inert application-v3 authoring contracts. Native facades own storage/rendering.
 import {z} from 'zod';
-import {cinematic3dTimelineSchema} from './cinematic3d-contract.js';
+import {cinematic3dTimelineSchema,CINEMATIC_3D_ACTIONS} from './cinematic3d-contract.js';
 
 const finite=z.number().finite(),integer=(min,max)=>finite.int().min(min).max(max);
 const id=z.string().regex(/^[A-Za-z0-9_-]{1,96}$/),sha=z.string().regex(/^[a-f0-9]{64}$/);
@@ -121,6 +121,10 @@ export const studioToolSchemas={
  open_pipeline_restore_artifact:{...requestIdentity,name:z.string().regex(/^[A-Za-z0-9_-]{1,96}\.vsresult$/),sha256:sha}
 };
 export const STUDIO_NATIVE_ACTIONS=new Set(Object.keys(studioToolSchemas));
+const studioAliases=new Map([...new Set([...STUDIO_NATIVE_ACTIONS,...CINEMATIC_3D_ACTIONS,'apply_tool'])].map(action=>['studio_'+action,action]));
+export const STUDIO_ALIAS_ACTIONS=new Set(studioAliases.keys());
+/** A closed compatibility bridge; unknown names and repeated prefixes stay unchanged. */
+export function nativeStudioCanonicalAction(action){return studioAliases.get(action)??action;}
 
 function boundedJson(parameters){
  const active=new Set();let nodes=0;
@@ -155,6 +159,7 @@ function boundedJson(parameters){
 }
 
 export function nativeStudioParameters(action,parameters={}){
+ action=nativeStudioCanonicalAction(action);
  if(!STUDIO_NATIVE_ACTIONS.has(action))throw new Error('Unknown studio native action');
  if(!parameters||typeof parameters!=='object'||Array.isArray(parameters))throw new Error('Studio parameters must be an object');
  boundedJson(parameters);
@@ -184,6 +189,7 @@ export function nativeStudioParameters(action,parameters={}){
 const legacy3d=new Set(['STANDOFF','CHARGE','CLASH','BLADE_LOCK','FOLLOW_THROUGH','KNOCKBACK','LANDING','RECOVERY','AERIAL_FLIP','TUMBLE','MACRO_CLASH']);
 const pixelFields=new Set(['keyframes','opacity','chromaKey','chromaColor','chromaTolerance','chromaFeather','maskShape','maskLeft','maskTop','maskRight','maskBottom','maskFeather','glowStrength','glowRadiusPx','glowThreshold']);
 export function requireStudioVersion(device,action,parameters={}){
+ const alias=studioAliases.has(action);action=nativeStudioCanonicalAction(action);
  let required=STUDIO_NATIVE_ACTIONS.has(action)&&action!=='set_studio_layers';
  if(action==='cinematic_3d_install_builtin'&&parameters.pack==='extended')required=true;
  if(action==='set_studio_layers')required=[...(parameters.studioLayers||[]),...(parameters.layers||[])].some(l=>l?.type==='image');
@@ -192,6 +198,7 @@ export function requireStudioVersion(device,action,parameters={}){
   required=!!timeline&&(Object.hasOwn(timeline,'actors')||(Array.isArray(timeline.shots)&&timeline.shots.some(shot=>shot&&(Object.hasOwn(shot,'motionStyle')||typeof shot.action==='string'&&!legacy3d.has(shot.action)))));
  }
  if(action==='apply_tool')required=['keyframes','mask','green_screen','glow','opacity'].includes(parameters.tool)||['glow','mask','chroma'].includes(parameters.settings?.preset)||Object.keys(parameters.settings||{}).some(key=>pixelFields.has(key));
+ if(alias)required=true;
  if(!required)return;
  const match=String(device?.appVersion||'').match(/^(\d{1,9})\.(\d{1,9})\.(\d{1,9})(?:[-+].*)?$/);
  const version=match?match.slice(1,4).map(Number):null;

@@ -8,12 +8,20 @@ They do not certify phone installation or cinematic acceptance.
 | Combined Android JVM/native-Canvas suite | 575 tests, 118 suites, zero failures/skips |
 | Shared authoring/Drive/import focused Android batch | 87 tests passed |
 | Concurrent sketch completion regression after final assertion change | 6 tests passed |
-| Worker source smoke / Node suite | 306 checks / 154 tests passed |
+| Worker source smoke / Node suite | 306 checks / 158 tests passed after compatibility integration |
 | Installed MCP SDK against local workerd and SQLite | 13 scenarios passed; native ACKs explicitly synthetic |
 | Self-hosted job/archive/HTTP/cancellation/FFmpeg/mount suite | 21 tests passed |
 | Actual Blender / camera / producer suite | 99 tests executed; 98 passed initially; the failed conditioning case and its three related checks passed after the causal fixes |
 | Exact native shader sources under Mesa GLES2 | 12 measured pixel checks passed |
 | Worker bundle | Wrangler dry-run passed |
+
+Five additional native bridge tests passed in a 22-test focused batch. Eight
+installed-SDK scenarios against an unmodified 3.8.1 Worker verified its existing
+generic execute tool, exact flat aliases, extended actions/model/style data,
+stable clip edits, drawing, video-conditioning requests and the old image
+channel. These use synthetic native replies and do not claim live phone or
+ChatGPT execution. The new Worker validates the canonical forms, applies the
+3.9 version floor and keeps aliases on the native queue.
 
 The copied Blender scene initially lacked registered compositor depth sockets.
 Explicit scene/layer binding and pass registration fixed that. Binary ID masks

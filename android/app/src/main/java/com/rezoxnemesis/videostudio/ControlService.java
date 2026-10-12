@@ -523,7 +523,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     @Override
     public void onCommand(JSONObject command) {
         if(command == null)return;
-        String incomingAction = command.optString("action", "");
+        String incomingAction = NativeWorkbenchBridge.canonicalAction(command.optString("action", ""));
         if(android.os.Looper.myLooper() == android.os.Looper.getMainLooper()
                 && NativeCommandExecutionPolicy.requiresBackgroundThread(incomingAction)) {
             try {
@@ -541,6 +541,11 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 catch(Exception ignored){}
                 complete(command,failed);
             }
+            return;
+        }
+        if(!incomingAction.equals(command.optString("action",""))){
+            try{onCommand(NativeWorkbenchBridge.canonicalCommand(command));}
+            catch(Exception invalid){JSONObject failed=new JSONObject();try{failed.put("ok",false).put("error",invalid.getMessage());}catch(Exception ignored){}complete(command,failed);}
             return;
         }
         String action = incomingAction;
@@ -608,8 +613,15 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             switch (action) {
                 case "precision_edit": complete(command,StudioPrecisionEdits.apply(this,store,p));syncProtocolState();return;
                 case "sketch_create": case "sketch_list": case "sketch_get": case "sketch_edit":
-                case "sketch_undo": case "sketch_redo": case "sketch_import_reference": case "sketch_preview":
+                case "sketch_undo": case "sketch_redo": case "sketch_import_reference":
                     complete(command,SketchEditOps.execute(this,action,p));return;
+                case "sketch_preview":{
+                    JSONObject preview=SketchEditOps.execute(this,action,p);
+                    // Existing MCP v3 relays already deliver contactSheet as an
+                    // image. Rename, rather than duplicate, bounded PNG bytes.
+                    Object canvas=preview.remove("sketchPreviewImage");if(canvas!=null)preview.put("contactSheet",canvas);
+                    complete(command,preview);return;
+                }
                 case "sketch_render": complete(command,queueSketchRender(p));return;
                 case "open_pipeline_configure": case "open_pipeline_capabilities": case "open_pipeline_list":
                 case "open_pipeline_status": case "open_pipeline_cancel":
@@ -4605,6 +4617,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             out.put("sourceRigPreparationStatusReady", true);
             out.put("sourceRigWorkbenchMinimumVersion", "3.7.3");
             out.put("cinematic3d",cinematic3DCapabilities());
+            out.put("workbenchRelayCompatibility",NativeWorkbenchBridge.capabilities());
             out.put("studioWorkbench",new JSONObject().put("minimumNativeAppVersion","3.9.0")
                     .put("sharedHumanAndMCP",true).put("sketchCanvasRenderer",true).put("sketchGeometryPaging",true)
                     .put("atomicClipEdits",true).put("clipKeyframes",true).put("chromaKey",true)
@@ -4675,6 +4688,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             out.put("storyboardNeuralDiffusionInstalled", false);
             out.put("storyboardArtworkRequiresFourTracedActorRigs", true);
             out.put("neuralStoryboardModelAvailable", false);
+            out.put("workbenchRelayCompatibility",NativeWorkbenchBridge.capabilities());
             out.put("localEngineOwnsProjects", true);
             out.put("portraitAnimationEngine", "v3.2-articulated-parallax");
             out.put("onDevicePortraitAi", true);

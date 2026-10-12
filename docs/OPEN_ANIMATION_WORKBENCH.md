@@ -18,6 +18,14 @@ revision and a stable operation ID. Geometry reads are paged; preview returns
 an MCP image of the actual stored frame. Conflicting revisions fail before a
 save, so a stale command cannot replace newer drawing work.
 
+An older deployed connector can use its existing `app_execute` with a closed
+`studio_` alias, for example `studio_sketch_edit` or
+`studio_cinematic_3d_save_program`. Native 3.9 resolves these to the same guarded
+operations, background lanes and durable journal. Sketch previews use the
+existing image channel without duplicating PNG bytes. Native state advertises
+the 32 supported aliases. Keep batches within that relay's existing limits;
+see [connector compatibility](OPEN_PIPELINE_NATIVE.md#existing-connector-compatibility).
+
 The main editor previews the actual edited composition, including mixed
 images/video/audio, titles and image overlays. Numeric transforms, opacity and
 timed keys share the export effect builder. Chroma key, feathered rectangle and

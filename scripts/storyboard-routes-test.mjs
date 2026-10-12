@@ -8,12 +8,13 @@ import {webcrypto} from 'node:crypto';
 import {z} from 'zod';
 import * as contract from '../src/storyboard-contract.js';
 import {studioToolSchemas} from '../src/studio-workbench-contract.js';
+import {STUDIO_ALIAS_ACTIONS,nativeStudioCanonicalAction} from '../src/studio-workbench-contract.js';
 const source=fs.readFileSync(new URL('../src/index.js',import.meta.url),'utf8');
 async function fixture(version='3.7.2',mode='everything') {
   const rows=new Map();
   const storage=memoryStorage(rows,{maxValueBytes:128*1024});
   class McpServer { constructor(){this.tools=new Map();} registerTool(name,definition,handler){this.tools.set(name,{definition,handler});} }
-  const context={...contract,...queueBindings,studioToolSchemas,nativeCommandSummary,nativeResultPage,z,McpServer,crypto:webcrypto,TextEncoder,TextDecoder,Response,Request,Headers,URL,Date,setTimeout,clearTimeout,
+  const context={...contract,...queueBindings,studioToolSchemas,nativeStudioCanonicalAction,nativeCommandSummary,nativeResultPage,z,McpServer,crypto:webcrypto,TextEncoder,TextDecoder,Response,Request,Headers,URL,Date,setTimeout,clearTimeout,
     DurableObject:class {constructor(ctx){this.ctx=ctx;}},createMcpHandler:()=>()=>new Response(),
     APP_HTML:'',STUDIO_RUNTIME_JS:'',STUDIO_CINEMATIC_JS:'',STUDIO_NEURAL_JS:'',STUDIO_TEMPORAL_JS:'',STUDIO_CHARACTER_JS:'',STUDIO_ACTION_TIMELINE_JS:'',STUDIO_POSE_SEQUENCE_JS:'',LOCAL_VIDEO_DOWNLOAD_HTML:''};
   vm.createContext(context);
@@ -274,4 +275,33 @@ test('solved cinematic camera keys reach the exact native timeline',async()=>{
  const f=await fixture('3.8.0'),timeline=structuredClone(cinematicTimeline);timeline.shots[0].camera.keyframes=[{phase:0,position:[0,1.65,5.5],target:[0,1.1,0],up:[0,1,0]},{phase:1,position:[.5,1.7,5],target:[0,1.1,0],up:[0,1,0]}];
  const args={projectId:'source-project-123',sourceProjectUpdatedAt:1,bundleId:'bundle-123456',timeline};assert.equal((await f.call('app_cinematic_3d_save_program',args)).queued,true);
  const rows=await queueBindings.readCommandQueue(f.storage,'app-v3-cl:'+f.deviceId);assert.deepEqual(rows.at(-1).parameters.timeline.shots[0].camera.keyframes,timeline.shots[0].camera.keyframes);
+});
+test('studio relay alias generic execution keeps queued alias native-only when the phone is stale',async()=>{
+ const f=await fixture('3.9.0');
+ const device=await queueBindings.readNativeDevice(f.storage,'app-device:'+f.deviceId);device.lastSeenAt='2020-01-01T00:00:00.000Z';
+ await queueBindings.writeNativeDevice(f.storage,'app-device:'+f.deviceId,device);
+ let browserFallback=false;f.relay.appTryStudioWebFallback=async()=>{browserFallback=true;return {queued:true,nativeApp:false}};
+ const parameters={sketchId:'sketch_1',pointLimit:16},result=await f.call('app_execute',{action:'studio_sketch_get',parameters});
+ assert.equal(result.queued,true);assert.equal(result.nativeApp,true);assert.equal(browserFallback,false);
+ const rows=await queueBindings.readCommandQueue(f.storage,'app-v3-cl:'+f.deviceId);
+ assert.equal(rows.at(-1).action,'studio_sketch_get');assert.deepEqual(rows.at(-1).parameters,parameters);
+ assert.equal(nativeStudioCanonicalAction('studio_sketch_get'),'sketch_get');
+});
+test('studio relay alias version and canonical parameter failures happen before queue writes',async()=>{
+ const old=await fixture('3.8.1'),before=old.writes();
+ for(const alias of STUDIO_ALIAS_ACTIONS)assert.throws(()=>contract.requireStoryboardNativeVersion({appVersion:'3.8.1'},alias),/3\.9\.0/);
+ await assert.rejects(old.relay.appEnqueueV3(old.owner,'studio_sketch_get',{sketchId:'s'}),/3\.9\.0/);assert.equal(old.writes(),before);
+ const current=await fixture('3.9.0'),currentBefore=current.writes();
+ await assert.rejects(current.relay.appEnqueueV3(current.owner,'studio_sketch_get',{sketchId:'s',uri:'content://foreign'}));
+ await assert.rejects(current.relay.appEnqueueV3(current.owner,'studio_cinematic_3d_render',{projectId:'p',programId:'r',outputProjectId:'existing'}));
+ assert.equal(current.writes(),currentBefore);
+});
+test('studio relay alias permission checks use canonical one-file action and retain the Gallery wall',async()=>{
+ const f=await fixture('3.9.0','one_file');
+ assert.equal((await f.call('app_execute',{action:'studio_apply_tool',parameters:{clipIndex:0,tool:'opacity',settings:{opacity:.5}}})).queued,true);
+ const before=f.writes();
+ await assert.rejects(f.relay.appEnqueueV3(f.owner,'studio_precision_edit',{projectId:'p',expectedUpdatedAt:1,operations:[{clipId:'c',set:{x:.2}}]}),/permission mode|privacy boundary/);
+ await assert.rejects(f.relay.appEnqueueV3(f.owner,'studio_gallery_list',{}),/permission mode|privacy boundary/);
+ assert.equal(f.writes(),before);
+ const rows=await queueBindings.readCommandQueue(f.storage,'app-v3-cl:'+f.deviceId);assert.equal(rows.at(-1).action,'studio_apply_tool');
 });
