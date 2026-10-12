@@ -96,6 +96,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     private final ExecutorService commandCompletionWatchers = Executors.newFixedThreadPool(2);
     private final ExecutorService directorSetupExecutor = Executors.newSingleThreadExecutor();
     private final ExecutorService nativeSourceExecutor=Executors.newFixedThreadPool(2);
+    private final ExecutorService cinematic3DExecutor=Executors.newSingleThreadExecutor();
     private final Set<String> watchedCommands = ConcurrentHashMap.newKeySet();
     private volatile boolean serviceAlive;
 
@@ -471,6 +472,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         commandCompletionWatchers.shutdownNow();
         directorSetupExecutor.shutdownNow();
         nativeSourceExecutor.shutdownNow();
+        cinematic3DExecutor.shutdownNow();
         if (NativeAgentWatchdog.shouldRearm(paused)) {
             NativeAgentWatchdog.scheduleRetry(this, "service_destroyed");
         } else {
@@ -512,7 +514,8 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 // The remote relay may deliver the same lease again. AppProtocol's
                 // bounded per-ID dispatch guard suppresses duplicate main-thread posts.
                 // The durable journal remains the authority for replay/exactly-once work.
-                nativeSourceExecutor.execute(() -> onCommand(command));
+                (incomingAction.startsWith("cinematic_3d_") ? cinematic3DExecutor : nativeSourceExecutor)
+                        .execute(() -> onCommand(command));
             } catch(java.util.concurrent.RejectedExecutionException rejected) {
                 JSONObject failed = new JSONObject();
                 try { failed.put("ok",false).put("error",

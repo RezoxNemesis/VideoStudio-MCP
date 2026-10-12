@@ -42,7 +42,7 @@ import javax.crypto.spec.GCMParameterSpec;
 public final class AppProtocol {
     public static final String BASE = "https://wispy-queen-f9b5.prakasharuntandon634.workers.dev";
     public static final int PROTOCOL_VERSION = 3;
-    public static final String APP_VERSION = "3.8.0";
+    public static final String APP_VERSION = "3.8.1";
     /** Stable compatibility URL. APK updates must not change this path. */
     public static final String MCP_PATH = McpConnectionCore.STABLE_MCP_PATH;
     /** Stable registration bootstrap. Runtime requests use the negotiated profile. */
@@ -288,7 +288,11 @@ public final class AppProtocol {
                     if (message != null && message.matches("HTTP [0-9]{3}"))
                         lastResultDeliveryError = message;
                     else lastResultDeliveryError = "Native ACK upload/reply failed";
-                    if (++failures >= 3) break; // avoid network/thermal busy loops
+                    // A rejected older result must not permanently block all
+                    // newer native commands. Keep the exact result for later retry.
+                    try { outbox.defer(id); }
+                    catch(Exception ignored) { lastResultDeliveryError="ACK retry state unavailable"; }
+                    if (++failures >= 3) break; // bounded batch, fair across heartbeats
                 }
             }
         }
