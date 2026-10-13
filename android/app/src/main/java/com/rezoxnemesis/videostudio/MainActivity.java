@@ -57,15 +57,15 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
     private static final int PICK_MEDIA = 1201;
     private static final int PICK_CLOUD_WORKSPACE = 1202;
     private static final int PICK_UPDATE_APK = 1203;
-    private static final int C_BG = Color.rgb(5, 8, 18);
-    private static final int C_CARD = Color.rgb(13, 20, 37);
-    private static final int C_CARD_2 = Color.rgb(17, 27, 48);
-    private static final int C_TEXT = Color.rgb(246, 248, 255);
-    private static final int C_MUTED = Color.rgb(157, 170, 196);
-    private static final int C_CYAN = Color.rgb(34, 220, 255);
-    private static final int C_BLUE = Color.rgb(58, 114, 255);
-    private static final int C_PURPLE = Color.rgb(130, 70, 255);
-    private static final int C_MAGENTA = Color.rgb(235, 68, 255);
+    private static final int C_BG = StudioUi.BG;
+    private static final int C_CARD = StudioUi.SURFACE;
+    private static final int C_CARD_2 = StudioUi.SURFACE_ALT;
+    private static final int C_TEXT = StudioUi.TEXT;
+    private static final int C_MUTED = StudioUi.MUTED;
+    private static final int C_CYAN = StudioUi.ACCENT;
+    private static final int C_BLUE = StudioUi.SURFACE_ALT;
+    private static final int C_PURPLE = StudioUi.SURFACE_ALT;
+    private static final int C_MAGENTA = StudioUi.ACCENT;
     private static final String PREFS = "videostudio_native_v1";
     private static final String KEY_MODE = "permission_mode";
     private static final String KEY_FILE = "allowed_asset_id";
@@ -102,7 +102,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
     private FrameLayout studioPreviewFrame;
     private TextView studioTimeLabel;
     private int studioToolCategory=0;
-    private int studioToolsHubTab=0;
+    private AlertDialog studioToolDialog;
     private int studioTimelinePage=0;
     private int studioMediaPage=0;
     private long studioPlayheadMs=0;
@@ -202,15 +202,17 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         nav.addView(navButton("⌂", "Home", () -> showHome()), weight());
         nav.addView(navButton("▣", "Editor", () -> showEditor()), weight());
         nav.addView(navButton("◎", "Activity", this::showActivity), weight());
-        nav.addView(navButton("✦", "AI Tools", () -> showTools()), weight());
-        nav.addView(navButton("⚙", "Control", () -> showControl()), weight());
-        root.addView(nav, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(72)));
+        nav.addView(navButton("✦", "Tools", () -> showTools()), weight());
+        nav.addView(navButton("⚙", "Agent", () -> showControl()), weight());
+        nav.setMinimumHeight(dp(72));
+        root.addView(nav, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         return root;
     }
 
     private void setScreen(View view, String name) {
         if (activityRefresh != null) ui.removeCallbacks(activityRefresh);
         currentScreen = name;
+        StudioUi.prepareTouchLayout(view);
         content.removeAllViews();
         content.addView(view, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
     }
@@ -225,12 +227,12 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         box.addView(brandHeader());
 
         LinearLayout hero=card(true);
-        hero.addView(title("Your Studio",26));
+        hero.addView(title("Make something",26));
         hero.addView(body(activeProject==null?
                 "Create, import, edit and play videos right here on your phone.":
                 "Continue  ·  "+activeProject.name));
-        Button resume=neonButton(activeProject==null?"Create First Project":
-                "Open Editor  →",C_MAGENTA);
+        Button resume=neonButton(activeProject==null?"Create a project":
+                "Continue editing",C_MAGENTA);
         resume.setOnClickListener(v->{
             if(activeProject==null)createProjectDialog();else showEditor();
         });
@@ -261,7 +263,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         if(nativeWork.optInt("active",0)>0){
             nativeStrip.addView(body(nativeWork.optInt("active",0)+" active • "+
                     jobName+"  "+nativeWork.optInt("jobProgress",0)+"%"));
-        }else nativeStrip.addView(body("Native rendering and manual editing stay separate."));
+        }else nativeStrip.addView(body("Manage your connection and background work."));
         box.addView(nativeStrip,margins(-1,-2,dp(4),0,0,0));
 
         LinearLayout projectsTop=new LinearLayout(this);
@@ -276,10 +278,11 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
             box.addView(projectRow(projects.get(i)),margins(-1,-2,0,dp(6),0,0));
 
         LinearLayout creative=card(false);
-        creative.addView(title("AI Animation & Advanced Tools",18));
-        creative.addView(body("Create from a prompt, trace 2D character rigs, preview animated GLB models, or direct real combat motion."));
+        creative.addView(title("Explore the studio",18));
+        creative.addView(body("Draw, animate characters, build 3D scenes and find every editing tool."));
+        creative.addView(studioButton("Search tools",this::findStudioTool),margins(-1,-2,dp(10),dp(6),0,0));
         LinearLayout links=new LinearLayout(this);
-        links.addView(studioButton("AI Tools",this::showTools),
+        links.addView(studioButton("Browse tools",this::showTools),
                 new LinearLayout.LayoutParams(0,dp(46),1));
         links.addView(studioButton("Animation Director",this::animationDirectorDialog),
                 new LinearLayout.LayoutParams(0,dp(46),1));
@@ -294,11 +297,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         setScreen(scroll,"home");
     }
 
-    /**
-     * Pairing belongs to the native Android identity. The web *front-end* is
-     * optional; its underlying authenticated relay/Worker must remain online
-     * for off-device commands. No new public token is ever generated here.
-     */
+    /** Both delivery routes use the existing device-owned Android identity. */
     private void showStudioConnectionHub(){
         JSONObject state=NativeWorkMonitor.snapshot(this);
         boolean online=state.optBoolean("nativeServiceOnline",false);
@@ -306,15 +305,19 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         body.setPadding(dp(18),dp(3),dp(18),dp(5));
         body.addView(title(online?"● Native Agent connected":"◌ Native Agent reconnecting",19));
         body.addView(body(serviceConnectionText()),margins(-1,-2,dp(9),0,0,0));
-        body.addView(body("VideoStudio keeps its device identity and connection credentials inside Android. "+
-                "Removing the public website UI does not remove this installed app's saved projects. "+
-                "However, off-device ChatGPT control still needs the authenticated MCP relay to stay online."),
+        body.addView(body("Share your app key to connect through encrypted GitHub delivery, or share the existing MCP connection. "+
+                "The backup can deliver tasks while the MCP command store is unavailable. "+
+                "Remote result delivery still uses the relay's separate metadata service."),
                 margins(-1,-2,dp(9),0,0,0));
         body.addView(body("Android can suspend background execution during Doze or after force-stop. "+
                 "Pending commands resume when the native executor reconnects; no system can guarantee "+
                 "uninterrupted work after Android has force-stopped the app."),
                 margins(-1,-2,dp(9),0,0,0));
-        Button connect=studioButton("Connect / Share with ChatGPT",this::sharePairing);
+        Button appKey=studioButton("Share app key",this::shareAppKey);
+        body.addView(appKey,margins(-1,-2,dp(12),0,0,0));
+        Button settings=studioButton("Agent settings",this::showControl);
+        body.addView(settings,margins(-1,-2,dp(6),0,0,0));
+        Button connect=studioButton("Share MCP connection",this::sharePairing);
         body.addView(connect,margins(-1,dp(49),dp(12),0,0,0));
         Button reconnect=studioButton("Repair native connection",()->{
             try{
@@ -573,7 +576,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         projectButton.setTextSize(15);
         projectTop.addView(projectButton,new LinearLayout.LayoutParams(0,dp(49),1));
         Button export=studioButton("Export",this::queueStudioExport);
-        export.setBackground(rounded(C_MAGENTA,C_PURPLE,dp(12)));
+        StudioUi.styleButton(export,true);
         projectTop.addView(export,margins(dp(86),dp(48),0,0,dp(6),0));
         box.addView(projectTop);
         box.addView(body("PROJECT  •  "+activeProject.clips.size()+" clips  •  "+
@@ -783,8 +786,8 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
             Button tab=studioButton(group,()->{
                 studioToolCategory=choice;showEditor();
             });
-            tab.setBackground(rounded(studioToolCategory==i?0xff243b70:C_CARD_2,
-                    studioToolCategory==i?C_CYAN:0xff273552,dp(12)));
+            tab.setBackground(rounded(studioToolCategory==i?C_CARD_2:C_CARD,
+                    studioToolCategory==i?C_CYAN:StudioUi.BORDER,dp(12)));
             tabs.addView(tab,margins(dp(151),dp(45),0,0,0,dp(6)));
         }
         categories.addView(tabs);
@@ -818,11 +821,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
     private Button studioButton(String label,Runnable action){
         Button button=new Button(this);
         button.setText(label);
-        button.setTextColor(C_TEXT);
-        button.setAllCaps(false);
-        button.setTextSize(12);
-        button.setPadding(dp(7),0,dp(7),0);
-        button.setBackground(rounded(C_CARD_2,0xff344469,dp(11)));
+        StudioUi.styleButton(button,false);
         button.setOnClickListener(v->action.run());
         return button;
     }
@@ -837,7 +836,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                     +p.name+"  ·  "+p.clips.size()+" clips"
                     +(p.latestExportUri!=null&&!p.latestExportUri.isEmpty()?"  ·  MP4 ✓":"");
         }
-        new AlertDialog.Builder(this).setTitle("My VideoStudio Projects")
+        new AlertDialog.Builder(this).setTitle("My projects")
                 .setItems(labels,(dialog,index)->{
                     ProjectStore.Project chosen=store.get(all.get(index).id);
                     if(chosen==null)return;
@@ -1949,28 +1948,13 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
     }
 
     private void findStudioTool(){
-        EditText input=new EditText(this);
-        input.setHint("Search trim, speed, masks, audio, animation...");
-        input.setSingleLine(true);
-        input.setTextColor(C_TEXT);
-        LinearLayout holder=column();
-        holder.setPadding(dp(18),dp(5),dp(18),0);
-        holder.addView(input);
-        new AlertDialog.Builder(this).setTitle("Find VideoStudio Tool")
-                .setView(holder).setPositiveButton("Search",(dialog,which)->{
-                    List<StudioToolCatalog.Tool> results=StudioToolCatalog.find(
-                            input.getText().toString());
-                    String[] labels=new String[results.size()];
-                    for(int i=0;i<results.size();i++){
-                        StudioToolCatalog.Tool t=results.get(i);
-                        labels[i]=t.label+"  ·  "+t.group;
-                    }
-                    new AlertDialog.Builder(this).setTitle(
-                            results.isEmpty()?"No matching tools":"Select a tool")
-                            .setItems(labels,(d,index)->performStudioTool(
-                                    results.get(index).label))
-                            .setPositiveButton("Close",null).show();
-                }).setNegativeButton("Cancel",null).show();
+        ScrollView scroll=baseScroll();LinearLayout holder=column();
+        holder.setPadding(dp(16),dp(8),dp(16),dp(12));scroll.addView(holder);
+        addStudioSearch(holder);
+        studioToolDialog=new AlertDialog.Builder(this).setTitle("Find a tool").setView(scroll)
+                .setPositiveButton("Close",null).create();
+        studioToolDialog.setOnDismissListener(dialog->studioToolDialog=null);
+        studioToolDialog.show();
     }
 
     private void chooseNativeJobToCancel(){
@@ -2688,109 +2672,69 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         showActivity();
     }
 
-    /** Organized AI and advanced tools, not a wall of oversized cards. */
+    /** Search is shared by Home, Tools and the editor without hiding native studios. */
     private void showTools(){
         ScrollView scroll=baseScroll();
-        LinearLayout box=column();
-        box.setPadding(dp(14),dp(14),dp(14),dp(26));
+        LinearLayout box=column();box.setPadding(dp(16),dp(20),dp(16),dp(24));
         scroll.addView(box);
-        box.addView(title("AI Magic & Pro Tools",25));
-        box.addView(body("Choose what you're creating. Every button opens a real VideoStudio action; "+
-                "experimental presets are clearly marked."),
-                margins(-1,-2,dp(3),dp(7),0,0));
-        LinearLayout prompt=card(true);
-        prompt.addView(title("Prompt → Finished Video",18));
-        prompt.addView(body("Describe the scenes, movement, pacing and style."));
-        Button generate=neonButton("✦ Generate from Prompt",C_MAGENTA);
-        generate.setOnClickListener(v->promptVideoDialog());
-        prompt.addView(generate,margins(-1,dp(50),dp(8),0,0,0));
-        box.addView(prompt);
-
-        String[] tabs={"Create","Animate","Enhance","Text & Audio","Manage"};
-        HorizontalScrollView nav=new HorizontalScrollView(this);
-        nav.setHorizontalScrollBarEnabled(false);
-        LinearLayout choices=new LinearLayout(this);
-        for(int i=0;i<tabs.length;i++){
-            final int n=i;
-            Button button=studioButton(tabs[i],()->{
-                studioToolsHubTab=n;showTools();
-            });
-            button.setBackground(rounded(studioToolsHubTab==i?0xff213e77:C_CARD_2,
-                    studioToolsHubTab==i?C_CYAN:0xff303d5c,dp(12)));
-            choices.addView(button,margins(dp(119),dp(46),0,0,0,dp(6)));
-        }
-        nav.addView(choices);
-        box.addView(nav,margins(-1,dp(52),dp(10),0,0,0));
-
-        ArrayList<String[]> sections=new ArrayList<>();
-        switch(studioToolsHubTab){
-            case 0:
-                sections.add(new String[]{"Open Human Editor","Editor"});
-                sections.add(new String[]{"New Project","New"});
-                sections.add(new String[]{"Import Media","Import"});
-                sections.add(new String[]{"Watch All Renders","Renders"});
-                sections.add(new String[]{"AI Storyboard Director","Animation Director"});
-                break;
-            case 1:
-                sections.add(new String[]{"Animate Imported Stills","Animate Stills"});
-                sections.add(new String[]{"Animation Director","Animation Director"});
-                sections.add(new String[]{"Storyboard → Scoped Motion Drafts","Storyboard Studio"});
-                sections.add(new String[]{"Source-keyed fighter artwork (advanced)","Storyboard Artwork"});
-                sections.add(new String[]{"Trace Original Characters","Rig Builder"});
-                sections.add(new String[]{"Render Rigged 2D","Render Rigged 2D"});
-                sections.add(new String[]{"Preview 3D GLB","3D Model Viewer"});
-                sections.add(new String[]{"Render 3D Combat","Render 3D Fight"});
-                sections.add(new String[]{"Combat Motion Test","Combat Benchmark"});
-                break;
-            case 2:
-                for(StudioToolCatalog.Tool t:StudioToolCatalog.group(2))
-                    sections.add(new String[]{t.label+(t.supported?"":" (unavailable)"),t.label});
-                for(StudioToolCatalog.Tool t:StudioToolCatalog.group(1))
-                    sections.add(new String[]{t.label+(t.supported?"":" (unavailable)"),t.label});
-                break;
-            case 3:
-                for(StudioToolCatalog.Tool t:StudioToolCatalog.group(3))
-                    sections.add(new String[]{t.label+(t.supported?"":" (unavailable)"),t.label});
-                break;
-            case 4:
-                sections.add(new String[]{"Connect ChatGPT","Connect"});
-                sections.add(new String[]{"Native Jobs & Thermal","Jobs"});
-                sections.add(new String[]{"My Projects","Projects"});
-                sections.add(new String[]{"Archive to Google Drive","Archive"});
-                sections.add(new String[]{"All Generated MP4s","Renders"});
-                break;
-        }
-        for(int i=0;i<sections.size();i+=2){
-            LinearLayout row=new LinearLayout(this);
-            for(int j=i;j<Math.min(i+2,sections.size());j++){
-                String label=sections.get(j)[0];
-                String action=sections.get(j)[1];
-                Button button=studioButton(label,()->{
-                    switch(action){
-                        case "Editor":showEditor();return;
-                        case "New":createProjectDialog();return;
-                        case "Import":pickMedia();return;
-                        case "Renders":showStudioRenderLibrary();return;
-                        case "Animate Stills":animateImagesDialog();return;
-                        case "Connect":showStudioConnectionHub();return;
-                        case "Jobs":showStudioJobDetails();return;
-                        case "Projects":showStudioProjectLibrary();return;
-                        case "Archive":archiveActiveProjectToCloud();return;
-                        default:performStudioTool(action);return;
-                    }
-                });
-                row.addView(button,new LinearLayout.LayoutParams(0,dp(60),1));
-            }
-            if(sections.size()-i==1)row.addView(new View(this),
-                    new LinearLayout.LayoutParams(0,dp(60),1));
-            box.addView(row,margins(-1,dp(60),dp(6),0,0,0));
-        }
-        box.addView(studioButton("⌕ Search All Studio Tools",this::findStudioTool),
-                margins(-1,dp(47),dp(12),0,0,0));
-        box.addView(body("Unavailable tools explain their current limits. "+
-                "Touch and ChatGPT precision edits use the same validated operations."),
-                margins(-1,-2,dp(8),0,0,0));
+        box.addView(title("Studio tools",26));
+        box.addView(body("Find a workspace or an editing action."),margins(-1,-2,dp(4),dp(16),0,0));
+        addStudioSearch(box);
         setScreen(scroll,"tools");
+    }
+
+    private void addStudioSearch(LinearLayout box){
+        EditText search=new EditText(this);
+        search.setSingleLine(true);search.setTextColor(C_TEXT);search.setHintTextColor(C_MUTED);
+        search.setHint("Search tools and studios");search.setContentDescription("Search tools and studios");
+        search.setMinimumHeight(dp(48));
+        box.addView(search,margins(-1,-2,0,dp(12),0,0));
+        LinearLayout results=column();box.addView(results);
+        results.addView(buildStudioDirectory(""));
+        search.addTextChangedListener(new android.text.TextWatcher(){
+            public void beforeTextChanged(CharSequence text,int start,int count,int after){}
+            public void onTextChanged(CharSequence text,int start,int before,int count){
+                results.removeAllViews();results.addView(buildStudioDirectory(text.toString()));
+            }
+            public void afterTextChanged(android.text.Editable text){}
+        });
+    }
+
+    private LinearLayout buildStudioDirectory(String query){
+        LinearLayout list=column();
+        String q=query==null?"":query.trim().toLowerCase(java.util.Locale.ROOT);
+        String[] names={"New Project","Import Media","Open Editor","All Renders","Generate from Prompt",
+                "Cinematic 3D Studio","Storyboard Studio","Storyboard Artwork","Animate Imported Stills",
+                "My Projects","Agent connection","Native jobs","Archive to Google Drive"};
+        Runnable[] actions={this::createProjectDialog,this::pickMedia,this::showEditor,this::showStudioRenderLibrary,
+                this::promptVideoDialog,this::openCinematicStudio,this::storyboardStudioDialog,this::storyboardArtworkDialog,
+                this::animateImagesDialog,this::showStudioProjectLibrary,this::showStudioConnectionHub,
+                this::showStudioJobDetails,this::archiveActiveProjectToCloud};
+        for(int i=0;i<names.length;i++)if(names[i].toLowerCase(java.util.Locale.ROOT).contains(q)){
+            Runnable action=actions[i];
+            list.addView(studioButton(names[i],()->runStudioDirectoryAction(action)),margins(-1,-2,0,dp(6),0,0));
+        }
+        String group="";
+        for(StudioToolCatalog.Tool tool:StudioToolCatalog.find(q)){
+            if(!tool.group.equals(group)){group=tool.group;list.addView(section(group));}
+            Button button=studioButton(tool.label+(tool.supported?"":" (unavailable)"),
+                    ()->runStudioDirectoryAction(()->performStudioTool(tool.label)));
+            button.setContentDescription(tool.label+". "+tool.description+(tool.supported?"":". Unavailable"));
+            list.addView(button,margins(-1,-2,0,dp(6),0,0));
+        }
+        if(list.getChildCount()==0)list.addView(body("No matching tools. Try drawing, audio or motion."));
+        return list;
+    }
+
+    private void runStudioDirectoryAction(Runnable action){
+        if(studioToolDialog!=null)studioToolDialog.dismiss();
+        action.run();
+    }
+
+    private void openCinematicStudio(){
+        if(activeProject==null)activeProject=store.active();
+        if(activeProject==null)activeProject=store.create("Untitled Project");
+        startActivity(new Intent(this,Cinematic3DStudioActivity.class).putExtra("projectId",activeProject.id));
     }
 
     private void showLegacyTools() {
@@ -2933,7 +2877,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         box.setPadding(dp(16), dp(18), dp(16), dp(28));
         scroll.addView(box);
 
-        box.addView(title("Autonomous Control", 27));
+        box.addView(title("Agent & storage", 27));
         box.addView(studioButton("Connect / Repair ChatGPT ↗",this::showStudioConnectionHub),
                 margins(-1,dp(49),dp(5),dp(8),0,0));
         box.addView(body("Full Autonomous is the default. The MCP path is signalling/control only; projects, media and editing state live in the app. Gallery enumeration remains a hard technical boundary, not a permission toggle."));
@@ -2994,7 +2938,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
 
         box.addView(section("Safe Updates & Legacy Migration"));
         LinearLayout updates=card(false);
-        updates.addView(title("VideoStudio Next · no deletion of old app",17));
+        updates.addView(title("Video studio updates",17));
         JSONObject legacyInstall=NativeApkUpdater.legacyInstallationStatus(this);
         updates.addView(body(legacyInstall.optBoolean("installed",false)
                 ? "Existing old VideoStudio detected (versionCode "
@@ -3002,11 +2946,10 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                   +"). Its installed signing certificate: "
                   +legacyInstall.optString("certificateSha256","unavailable")
                 : "Old VideoStudio signing identity is not visible on this device."));
-        updates.addView(body("This new package installs alongside your existing VideoStudio. "
-                +"It uses a pinned signing certificate so subsequent Next APK updates can "
-                +"replace the Next app in place. Different certificates cannot update "
-                +"the old package; Android enforces this independently of VideoStudio."));
-        updates.addView(studioButton("Check and install newer Next APK",this::chooseUpdateApk),
+        updates.addView(body("Compatible signed APKs update this app in place and retain its projects and app key. "
+                +"The earlier legacy package, if installed, remains separate. "
+                +"Android verifies the signing certificate before installing an update."));
+        updates.addView(studioButton("Install an update APK",this::chooseUpdateApk),
                 margins(-1,dp(46),dp(7),0,0,0));
         updates.addView(studioButton("Recover projects from legacy cloud archive",
                 this::confirmLegacyProjectRecovery),
@@ -3044,6 +2987,25 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         Button share = neonButton("Connect / Share with ChatGPT", C_PURPLE);
         share.setOnClickListener(v -> sharePairing());
         privateCard.addView(share, margins(-1, dp(52), dp(12), 0, 0, 0));
+        privateCard.addView(studioButton("Share app key",this::shareAppKey),
+                margins(-1,ViewGroup.LayoutParams.WRAP_CONTENT,dp(12),0,0,0));
+        privateCard.addView(studioButton("Copy app key",this::copyAppKey),
+                margins(-1,ViewGroup.LayoutParams.WRAP_CONTENT,dp(6),0,0,0));
+        privateCard.addView(studioButton("Latest backup task result",this::showLatestBackupResult),
+                margins(-1,ViewGroup.LayoutParams.WRAP_CONTENT,dp(6),0,0,0));
+        privateCard.addView(body("Share one code with ChatGPT to use the encrypted backup delivery route. "
+                +"ChatGPT also needs write access to this project's GitHub repository. "
+                +"Your local control and media permissions apply to both connections."));
+        SharedPreferences backup=getSharedPreferences("videostudio_agent_mailbox_v1",MODE_PRIVATE);
+        long lastPoll=backup.getLong("lastPollAt",0),age=System.currentTimeMillis()-lastPoll;
+        boolean backupFresh=lastPoll>0&&age>=0&&age<30000&&backup.getBoolean("connected",false);
+        String backupStatus=protocol.isControlPaused()?"Paused":backupFresh?"Delivery reachable":"Waiting for a connection";
+        privateCard.addView(title("GitHub backup · "+backupStatus,16));
+        String receiptState=backup.getString("lastReceiptState","");
+        if(!receiptState.isEmpty())privateCard.addView(body(receiptState));
+        privateCard.addView(body("Task delivery can continue when the MCP command store fails. "
+                +"Remote results use the separate relay metadata route; a full relay outage delays those results. "
+                +"Execution results are retained privately on this phone."));
         box.addView(privateCard);
 
         setScreen(scroll, "control");
@@ -3054,15 +3016,13 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         row.setGravity(Gravity.CENTER_VERTICAL);
         ImageView logo = new ImageView(this);
         logo.setImageResource(com.rezoxnemesis.videostudio.R.drawable.logo_vs);
-        row.addView(logo, new LinearLayout.LayoutParams(dp(58), dp(58)));
+        row.addView(logo, new LinearLayout.LayoutParams(dp(40), dp(40)));
         LinearLayout copy = column();
         copy.setPadding(dp(12), 0, 0, 0);
-        TextView brand = title("VideoStudio", 27);
+        TextView brand = title("Video studio", 25);
         copy.addView(brand);
-        copy.addView(body("Create • Edit • Enhance • With AI"));
+        copy.addView(body("Your ideas, in motion"));
         row.addView(copy, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
-        TextView badge = accent("MCP v3", C_CYAN);
-        row.addView(badge);
         return row;
     }
 
@@ -3118,7 +3078,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         wrap.setPadding(dp(22), dp(4), dp(22), 0);
         wrap.addView(input, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(56)));
         new AlertDialog.Builder(this)
-                .setTitle("New VideoStudio project")
+                .setTitle("New project")
                 .setView(wrap)
                 .setPositiveButton("Create", (d, w) -> createProject(input.getText().toString()))
                 .setNegativeButton("Cancel", null)
@@ -4088,6 +4048,54 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         }
     }
 
+    private String availableAppKey() {
+        String key=protocol==null?"":protocol.appKey();
+        if(key.isEmpty())Toast.makeText(this,"App identity needs recovery before a key can be shared",Toast.LENGTH_LONG).show();
+        return key;
+    }
+
+    private void shareAppKey() {
+        String key=availableAppKey();if(key.isEmpty())return;
+        Intent send=new Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT,key);
+        startActivity(Intent.createChooser(send,"Share Video studio app key"));
+    }
+
+    private void copyAppKey() {
+        String key=availableAppKey();if(key.isEmpty())return;
+        ClipData clip=ClipData.newPlainText("Video studio app key",key);
+        if(android.os.Build.VERSION.SDK_INT>=33){
+            android.os.PersistableBundle sensitive=new android.os.PersistableBundle();
+            sensitive.putBoolean(android.content.ClipDescription.EXTRA_IS_SENSITIVE,true);
+            clip.getDescription().setExtras(sensitive);
+        }
+        android.content.ClipboardManager clipboard=(android.content.ClipboardManager)getSystemService(CLIPBOARD_SERVICE);
+        clipboard.setPrimaryClip(clip);
+        Toast.makeText(this,"App key copied",Toast.LENGTH_SHORT).show();
+    }
+
+    private void showLatestBackupResult() {
+        String id=getSharedPreferences("videostudio_agent_mailbox_v1",MODE_PRIVATE).getString("lastCommandId","");
+        if(id.isEmpty()){
+            Toast.makeText(this,"No backup task has arrived yet",Toast.LENGTH_SHORT).show();return;
+        }
+        new Thread(()->{
+            try{
+                JSONObject envelope=NativeAgentMailbox.readSavedReceipt(getApplicationContext(),id);
+                JSONObject receipt=envelope==null?null:NativeAgentMailboxCrypto.decodeReceipt(protocol.mailboxOwnerKey(),id,envelope);
+                String message=receipt==null?"This task has not produced a saved result yet.":receipt.toString(2);
+                if(message.length()>16000)message=message.substring(0,16000)+"\n… Full encrypted result retained on this phone.";
+                final String detail=message;
+                runOnUiThread(()->{
+                    if(isFinishing()||isDestroyed())return;
+                    new AlertDialog.Builder(this).setTitle("Backup task result").setMessage(detail)
+                            .setPositiveButton("Close",null).show();
+                });
+            }catch(Exception error){
+                runOnUiThread(()->{if(!isFinishing()&&!isDestroyed())Toast.makeText(this,"Saved result could not be authenticated",Toast.LENGTH_LONG).show();});
+            }
+        },"video-studio-result-reader").start();
+    }
+
     @Override
     public void onConnection(boolean connected, String detail) {
         if (connectionPill != null) {
@@ -4658,7 +4666,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         String serviceVersion = prefs.getString("control_service_app_version", "");
         long serviceGeneration = prefs.getLong("control_service_app_generation", 0);
         int coreVersion = prefs.getInt("control_service_connection_core_version", 0);
-        if (protocol != null && protocol.isControlPaused()) return "●  ChatGPT control paused • tap Control to resume";
+        if (protocol != null && protocol.isControlPaused()) return "●  ChatGPT control paused • tap Agent to resume";
         if (online && fresh
                 && AppProtocol.APP_VERSION.equals(serviceVersion)
                 && serviceGeneration == protocol.appGeneration()
@@ -4767,7 +4775,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
     private LinearLayout card(boolean hero) {
         LinearLayout card = column();
         card.setPadding(dp(16), dp(16), dp(16), dp(16));
-        card.setBackground(rounded(hero ? Color.rgb(12, 26, 51) : C_CARD, hero ? Color.rgb(44, 115, 190) : Color.rgb(35, 48, 72), dp(18)));
+        card.setBackground(rounded(C_CARD, StudioUi.BORDER, dp(16)));
         return card;
     }
 
@@ -4818,11 +4826,8 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
     private Button compactButton(String text) {
         Button b = new Button(this);
         b.setText(text);
-        b.setTextColor(C_TEXT);
-        b.setTextSize(12);
-        b.setAllCaps(false);
-        b.setBackground(rounded(C_CARD_2, Color.rgb(42, 58, 88), dp(12)));
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(78), dp(44));
+        StudioUi.styleButton(b,false);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         lp.setMargins(dp(6), 0, 0, 0);
         b.setLayoutParams(lp);
         return b;
@@ -4831,17 +4836,17 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
     private Button neonButton(String text, int color) {
         Button b = new Button(this);
         b.setText(text);
-        b.setTextColor(C_TEXT);
-        b.setTextSize(15);
-        b.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-        b.setAllCaps(false);
-        b.setBackground(rounded(color, C_CYAN, dp(15)));
+        StudioUi.styleButton(b,true);
         return b;
     }
 
     private View navButton(String icon, String label, Runnable action) {
         LinearLayout box = column();
         box.setGravity(Gravity.CENTER);
+        box.setMinimumHeight(dp(48));
+        box.setPadding(0,dp(4),0,dp(4));
+        box.setContentDescription(label);
+        box.setFocusable(true);
         TextView i = title(icon, "+".equals(icon) ? 28 : 20);
         i.setTextColor("+".equals(icon) ? C_CYAN : C_TEXT);
         i.setGravity(Gravity.CENTER);

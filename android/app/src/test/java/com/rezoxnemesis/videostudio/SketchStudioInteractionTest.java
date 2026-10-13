@@ -18,12 +18,77 @@ import static org.junit.Assert.*;
 @RunWith(RobolectricTestRunner.class) @Config(sdk=33,manifest=Config.NONE) @GraphicsMode(GraphicsMode.Mode.NATIVE)
 public class SketchStudioInteractionTest {
 
+    @Test @Config(qualifiers="w320dp-h640dp-mdpi") public void compactWorkspaceLeavesCanvasSpaceAndTouchTargetsAtLargeFont() throws Exception {
+        Context c=RuntimeEnvironment.getApplication();android.content.res.Configuration config=c.getResources().getConfiguration();config.fontScale=1.5f;c.getResources().updateConfiguration(config,c.getResources().getDisplayMetrics());
+        String id=createLiveSketch(c);
+        try(ActivityController<SketchStudioActivity> activity=Robolectric.buildActivity(SketchStudioActivity.class,new Intent(c,SketchStudioActivity.class).putExtra("sketchId",id)).create().start().resume().visible()){
+            SketchStudioActivity studio=activity.get();waitIo(studio);View root=studio.getWindow().getDecorView();root.measure(View.MeasureSpec.makeMeasureSpec(320,View.MeasureSpec.EXACTLY),View.MeasureSpec.makeMeasureSpec(640,View.MeasureSpec.EXACTLY));root.layout(0,0,320,640);
+            assertTrue("Canvas should occupy at least half a narrow phone",((View)field(studio,"canvas")).getHeight()>=320);
+            for(String name:new String[]{"File","Draw myself","Undo","Redo","Export","Brush / Text","More","Play"}){Button b=button(root,name);assertNotNull(name,b);assertTrue(name+" touch height",b.getHeight()>=48);assertTrue(name+" touch width",b.getWidth()>=48);assertNotNull(b.getLayout());for(int line=0;line<b.getLayout().getLineCount();line++)assertEquals(name+" label must not be truncated",0,b.getLayout().getEllipsisCount(line));assertTrue(name+" label must fit vertically",b.getLayout().getHeight()<=b.getHeight()-b.getCompoundPaddingTop()-b.getCompoundPaddingBottom());int[] pos=new int[2];b.getLocationOnScreen(pos);assertTrue(name+" visible",pos[0]>=0&&pos[0]+b.getWidth()<=320);}
+            assertTrue(((View)field(studio,"filmstrip")).getHeight()>=48);
+        }
+    }
+    @Test public void groupedMenusKeepProfessionalOperationsAndManualLayerChangesReachable() throws Exception {
+        Context c=RuntimeEnvironment.getApplication();String id=createLiveSketch(c);
+        try(ActivityController<SketchStudioActivity> activity=Robolectric.buildActivity(SketchStudioActivity.class,new Intent(c,SketchStudioActivity.class).putExtra("sketchId",id)).create().start().resume().visible()){
+            SketchStudioActivity studio=activity.get();waitIo(studio);button(studio.getWindow().getDecorView(),"Draw myself").performClick();waitIo(studio);
+            button(studio.getWindow().getDecorView(),"More").performClick();choose("Layers");assertMenu("Select layer","+ Layer","Layer settings","Up","Down");choose("+ Layer");((SketchEditorSession)field(studio,"session")).awaitIdle(10000);ShadowLooper.idleMainLooper();
+            assertEquals(2,((JSONObject)field(studio,"document")).getJSONArray("layers").length());
+            button(studio.getWindow().getDecorView(),"More").performClick();choose("Frames / Cels");assertMenu("Timing / canvas","Exposure","Copy → next","Cel tools","Onion skin");
+            org.robolectric.shadows.ShadowAlertDialog.getLatestAlertDialog().dismiss();button(studio.getWindow().getDecorView(),"Brush / Text").performClick();assertMenu("Brush","Colours","Text","Finish path","Transform / key","Delete object","Reference image");
+        }
+    }
+    @Test public void browsingColourLayerAndFrameDialogsPreservesLiveUntilAnActualSelection() throws Exception {
+        Context c=RuntimeEnvironment.getApplication();String id=createLiveSketch(c);
+        try(ActivityController<SketchStudioActivity> activity=Robolectric.buildActivity(SketchStudioActivity.class,new Intent(c,SketchStudioActivity.class).putExtra("sketchId",id)).create().start().resume().visible()){
+            SketchStudioActivity studio=activity.get();waitIo(studio);startLive(studio);Object player=field(studio,"livePlayer");
+            button(studio.getWindow().getDecorView(),"Brush / Text").performClick();choose("Colours");waitIo(studio);assertSame("Opening colours must preserve live player",player,field(studio,"livePlayer"));org.robolectric.shadows.ShadowAlertDialog.getLatestAlertDialog().cancel();
+            button(studio.getWindow().getDecorView(),"More").performClick();choose("Layers");choose("Select layer");assertSame(player,field(studio,"livePlayer"));org.robolectric.shadows.ShadowAlertDialog.getLatestAlertDialog().cancel();
+            button(studio.getWindow().getDecorView(),"More").performClick();choose("Frames / Cels");choose("Go to frame");assertSame(player,field(studio,"livePlayer"));org.robolectric.shadows.ShadowAlertDialog.getLatestAlertDialog().cancel();assertTrue((boolean)field(studio,"watching"));
+            button(studio.getWindow().getDecorView(),"Brush / Text").performClick();choose("Colours");description(org.robolectric.shadows.ShadowAlertDialog.getLatestAlertDialog().getWindow().getDecorView(),"Colour #FFFFFFFF").performClick();waitIo(studio);
+            assertFalse((boolean)field(studio,"watching"));assertNull(field(studio,"livePlayer"));assertEquals("#FFFFFFFF",field(studio,"brushColor"));assertNotNull(SketchDocument.object((JSONObject)field(studio,"document"),"agent_ink"));
+        }
+    }
+    @Test public void layerChooserKeepsSnapshotIdentityWhenLayersReorder() throws Exception {
+        Context c=RuntimeEnvironment.getApplication();String id=createLiveSketch(c);
+        try(ActivityController<SketchStudioActivity> activity=Robolectric.buildActivity(SketchStudioActivity.class,new Intent(c,SketchStudioActivity.class).putExtra("sketchId",id)).create().start().resume().visible()){
+            SketchStudioActivity studio=activity.get();waitIo(studio);button(studio.getWindow().getDecorView(),"Draw myself").performClick();waitIo(studio);
+            studio.onOperation(new JSONObject().put("type","add_layer").put("layer",new JSONObject().put("id","target").put("name","Target layer")));((SketchEditorSession)field(studio,"session")).awaitIdle(10000);ShadowLooper.idleMainLooper();
+            button(studio.getWindow().getDecorView(),"More").performClick();choose("Layers");choose("Select layer");
+            studio.onOperation(new JSONObject().put("type","reorder_layer").put("layerId","target").put("index",0));choose("Target layer");
+            assertEquals("Selected row must keep its original identity despite metadata reorder","target",((SketchCanvasView)field(studio,"canvas")).getLayerId());
+        }
+    }
+    @Test public void layerChooserRejectsRemovedSnapshotAfterMetadataShrinks() throws Exception {
+        Context c=RuntimeEnvironment.getApplication();String id=createLiveSketch(c);
+        try(ActivityController<SketchStudioActivity> activity=Robolectric.buildActivity(SketchStudioActivity.class,new Intent(c,SketchStudioActivity.class).putExtra("sketchId",id)).create().start().resume().visible()){
+            SketchStudioActivity studio=activity.get();waitIo(studio);button(studio.getWindow().getDecorView(),"Draw myself").performClick();waitIo(studio);
+            studio.onOperation(new JSONObject().put("type","add_layer").put("layer",new JSONObject().put("id","target").put("name","Target layer")));((SketchEditorSession)field(studio,"session")).awaitIdle(10000);ShadowLooper.idleMainLooper();
+            button(studio.getWindow().getDecorView(),"More").performClick();choose("Layers");choose("Select layer");
+            studio.onOperation(new JSONObject().put("type","delete_layer").put("layerId","target"));choose("Target layer");
+            assertEquals("layer_1",((SketchCanvasView)field(studio,"canvas")).getLayerId());assertEquals("That layer is no longer available. Open Layers to choose again.",org.robolectric.shadows.ShadowToast.getTextOfLatestToast());
+        }
+    }
+    @Test public void layerChooserValidatesSnapshotAgainAfterAuthoritativeLiveAdoption() throws Exception {
+        Context c=RuntimeEnvironment.getApplication();String id=UUID.randomUUID().toString();SketchEditOps.execute(c,"sketch_create",new JSONObject().put("sketchId",id).put("operationId","new"));
+        SketchEditOps.execute(c,"sketch_edit",new JSONObject().put("sketchId",id).put("operationId","add").put("expectedRevision",1).put("operations",new JSONArray().put(new JSONObject().put("type","add_layer").put("layer",new JSONObject().put("id","target").put("name","Target layer")))));
+        SketchEditOps.execute(c,"sketch_live_begin",new JSONObject().put("sketchId",id).put("operationId","live").put("expectedRevision",2));
+        try(ActivityController<SketchStudioActivity> activity=Robolectric.buildActivity(SketchStudioActivity.class,new Intent(c,SketchStudioActivity.class).putExtra("sketchId",id)).create().start().resume().visible()){
+            SketchStudioActivity studio=activity.get();waitIo(studio);startLive(studio);assertNotNull(field(studio,"livePlayer"));button(studio.getWindow().getDecorView(),"More").performClick();choose("Layers");choose("Select layer");
+            SketchEditOps.execute(c,"sketch_edit",new JSONObject().put("sketchId",id).put("operationId","remote-delete").put("expectedRevision",2).put("operations",new JSONArray().put(new JSONObject().put("type","delete_layer").put("layerId","target"))));choose("Target layer");waitIo(studio);
+            assertFalse((boolean)field(studio,"watching"));assertEquals("layer_1",((SketchCanvasView)field(studio,"canvas")).getLayerId());assertEquals("That layer is no longer available. Open Layers to choose again.",org.robolectric.shadows.ShadowToast.getTextOfLatestToast());
+        }
+    }
+    private static View description(View view,String text){if(text.contentEquals(view.getContentDescription()==null?"":view.getContentDescription()))return view;if(view instanceof ViewGroup){ViewGroup group=(ViewGroup)view;for(int i=0;i<group.getChildCount();i++){View found=description(group.getChildAt(i),text);if(found!=null)return found;}}return null;}
+    private static void assertMenu(String... names){android.widget.ListAdapter adapter=org.robolectric.shadows.ShadowAlertDialog.getLatestAlertDialog().getListView().getAdapter();java.util.List<String> actual=new java.util.ArrayList<>();for(int i=0;i<adapter.getCount();i++)actual.add(String.valueOf(adapter.getItem(i)));for(String name:names)assertTrue(name,actual.contains(name));}
+    private static void choose(String name){android.app.AlertDialog dialog=org.robolectric.shadows.ShadowAlertDialog.getLatestAlertDialog();android.widget.ListView list=dialog.getListView();for(int i=0;i<list.getCount();i++)if(name.equals(String.valueOf(list.getAdapter().getItem(i)))){list.performItemClick(list.getAdapter().getView(i,null,list),i,i);return;}fail("Missing menu item "+name);}
     @Test public void focusedCanvasKeepsTheLivePlayerAndRestoresToolsWithoutLosingGeometry() throws Exception {
         Context c=RuntimeEnvironment.getApplication();String id=createLiveSketch(c);
         try(ActivityController<SketchStudioActivity> activity=Robolectric.buildActivity(SketchStudioActivity.class,new Intent(c,SketchStudioActivity.class).putExtra("sketchId",id)).create().start().resume().visible()){
             SketchStudioActivity studio=activity.get();waitIo(studio);startLive(studio);Object player=field(studio,"livePlayer");assertNotNull(player);
-            Button brush=button(studio.getWindow().getDecorView(),"Brush");button(studio.getWindow().getDecorView(),"Canvas view").performClick();assertEquals(View.GONE,((View)brush.getParent().getParent()).getVisibility());assertSame(player,field(studio,"livePlayer"));
-            button(studio.getWindow().getDecorView(),"Canvas view").performClick();assertEquals(View.VISIBLE,((View)brush.getParent().getParent()).getVisibility());assertSame(player,field(studio,"livePlayer"));
+            button(studio.getWindow().getDecorView(),"More").performClick();assertSame("Browsing menus preserves live playback",player,field(studio,"livePlayer"));org.robolectric.shadows.ShadowAlertDialog.getLatestAlertDialog().dismiss();
+            Button brush=button(studio.getWindow().getDecorView(),"Brush / Text");button(studio.getWindow().getDecorView(),"File").performClick();choose("Canvas view");assertEquals(View.GONE,((View)brush.getParent()).getVisibility());assertSame(player,field(studio,"livePlayer"));
+            button(studio.getWindow().getDecorView(),"File").performClick();choose("Canvas view");assertEquals(View.VISIBLE,((View)brush.getParent()).getVisibility());assertSame(player,field(studio,"livePlayer"));
         }
     }
     @Test public void aLaterWatchRequestCancelsAnEarlierLoadingPlayTakeover() throws Exception {

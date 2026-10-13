@@ -75,6 +75,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     private TransferJournal transferJournal;
     private ResumableTransferManager transferManager;
     private AppProtocol protocol;
+    private NativeAgentMailbox mailbox;
     private NativeRenderEngine renderEngine;
     private volatile NativeRenderEngine.Handle activeRender;
     private volatile String activeRenderJobId="";
@@ -138,6 +139,16 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         syncProtocolState();
         markService(false, "VideoStudio stable MCP Native Agent starting");
         protocol.start();
+        try {
+            if (!protocol.appKey().isEmpty()) {
+                mailbox = new NativeAgentMailbox(this, protocol.mailboxOwnerKey(),
+                        protocol::isControlPaused, this::onCommand, this::mailboxCommandAllowed);
+                mailbox.start();
+            }
+        } catch (Exception unavailable) {
+            getSharedPreferences("videostudio_agent_mailbox_v1", MODE_PRIVATE).edit()
+                    .putBoolean("connected", false).putString("lastError", "Private mailbox unavailable").apply();
+        }
         ActivityLog.add(this, "system", "VideoStudio control starting",
                 "Stable MCP compatibility endpoint • app " + AppProtocol.APP_VERSION
                         + " • generation " + protocol.appGeneration(),
@@ -482,6 +493,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         boolean paused = protocol != null && protocol.isControlPaused();
         if (activeRender != null) activeRender.cancel();
         if (jobs != null) jobs.shutdown();
+        if (mailbox != null) mailbox.stop();
         if (protocol != null) protocol.stop();
         commandCompletionWatchers.shutdownNow();
         directorSetupExecutor.shutdownNow();
@@ -523,6 +535,13 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     @Override
     public void onCommand(JSONObject command) {
         if(command == null)return;
+        if (mailbox != null && mailbox.owns(command.optString("id"))
+                && !mailbox.allowExecution(command)) return;
+        if (mailbox != null && mailbox.owns(command.optString("id"))
+                && protocol != null && protocol.isControlPaused()) {
+            mailbox.holdBeforeExecution(command);
+            return;
+        }
         String incomingAction = NativeWorkbenchBridge.canonicalAction(command.optString("action", ""));
         if(android.os.Looper.myLooper() == android.os.Looper.getMainLooper()
                 && NativeCommandExecutionPolicy.requiresBackgroundThread(incomingAction)) {
@@ -570,7 +589,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             ActivityLog.add(this, "system", "MCP v3 command replay prevented",
                     friendlyAction(action) + " • returning durable prior result",
                     "success", 100, commandId, projectId);
-            protocol.complete(command, priorResult, priorStatus);
+            acknowledge(command, priorResult, priorStatus);
             return;
         }
 
@@ -605,7 +624,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             } catch (Exception ignored) {}
             ActivityLog.add(this, "chatgpt", friendlyAction(action), denied.optString("error"), "denied", null, commandId, projectId);
             commandJournal.finish(command, denied, "denied");
-            protocol.complete(command, denied, "denied");
+            acknowledge(command, denied, "denied");
             return;
         }
 
@@ -682,7 +701,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                                         "Legacy endpoint now targets this Native Agent",
                                         "success", 100, queuedCommand.optString("id", ""), null);
                                 commandJournal.finish(queuedCommand, result, "completed");
-                                protocol.complete(queuedCommand, result, "completed");
+                                acknowledge(queuedCommand, result, "completed");
                             }
                     );
                     ActivityLog.add(this, "chatgpt", "MCP identity rebind queued",
@@ -1032,7 +1051,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                     result.put("error", "Native background controller does not implement action: " + action);
                     ActivityLog.add(this, "chatgpt", friendlyAction(action), result.optString("error"), "failed", null, commandId, projectId);
                     commandJournal.finish(command, result, "failed");
-                    protocol.complete(command, result, "failed");
+                    acknowledge(command, result, "failed");
                 }
             }
         } catch (Exception|LinkageError|OutOfMemoryError error) {
@@ -1044,7 +1063,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             } catch (Exception ignored) {}
             ActivityLog.add(this, "chatgpt", friendlyAction(action), result.optString("error"), "failed", null, commandId, projectId);
             commandJournal.finish(command, result, "failed");
-            protocol.complete(command, result, "failed");
+            acknowledge(command, result, "failed");
         }
     }
 
@@ -1230,14 +1249,14 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                             +result.optInt("needsSceneReconstruction",0)+" need scene reconstruction",
                             "success",100,command.optString("id",""),project.id);
                     commandJournal.finish(command,result,"completed");
-                    protocol.complete(command,result,"completed");
+                    acknowledge(command,result,"completed");
                 }catch(Exception error){
                     JSONObject failed=new JSONObject();
                     failed.put("ok",false);
                     failed.put("error",error.getMessage()==null
                             ?"Motion assessment failed":error.getMessage());
                     commandJournal.finish(command,failed,"failed");
-                    protocol.complete(command,failed,"failed");
+                    acknowledge(command,failed,"failed");
                     throw error;
                 }
             });
@@ -1248,7 +1267,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 failed.put("error",error.getMessage());
             }catch(Exception ignored){}
             commandJournal.finish(command,failed,"failed");
-            protocol.complete(command,failed,"failed");
+            acknowledge(command,failed,"failed");
         }
     }
 
@@ -1275,14 +1294,14 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                     checkpoint(state, "Analysing media", "Analysis complete", 100, project.id);
                     ActivityLog.add(this, "chatgpt", "Media analysis complete", target.name + " analysed on-device", "success", 100, command.optString("id", ""), project.id);
                     commandJournal.finish(command, result, "completed");
-                    protocol.complete(command, result, "completed");
+                    acknowledge(command, result, "completed");
                 } catch (Exception error) {
                     JSONObject failed = new JSONObject();
                     failed.put("ok", false);
                     failed.put("error", error.getMessage() == null ? "Analysis failed" : error.getMessage());
                     ActivityLog.add(this, "chatgpt", "Media analysis failed", failed.optString("error"), "failed", null, command.optString("id", ""), project.id);
                     commandJournal.finish(command, failed, "failed");
-                    protocol.complete(command, failed, "failed");
+                    acknowledge(command, failed, "failed");
                     throw error;
                 }
             });
@@ -1293,7 +1312,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 failed.put("error", error.getMessage());
             } catch (Exception ignored) {}
             commandJournal.finish(command, failed, "failed");
-            protocol.complete(command, failed, "failed");
+            acknowledge(command, failed, "failed");
         }
     }
 
@@ -4843,6 +4862,50 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         return jobsCancelled;
     }
 
+    /** Receipts follow their durable origin, including restored native job watchers. */
+    private void acknowledge(JSONObject command, JSONObject result, String status) {
+        if (mailbox != null && mailbox.owns(command.optString("id"))) {
+            mailbox.complete(command, result, status);
+        } else if (protocol != null) {
+            // A failed mailbox/Keystore initialization must not change a restored
+            // job's transport origin. The ledger is readable without an owner key.
+            if (mailbox == null) {
+                try {
+                    if (NativeAgentMailboxStore.ownsSavedCommand(this, command.optString("id"))) {
+                        getSharedPreferences("videostudio_agent_mailbox_v1", MODE_PRIVATE).edit()
+                                .putString("lastReceiptState", "native journal retained; mailbox unavailable").apply();
+                        return;
+                    }
+                } catch (Exception unknownOrigin) {
+                    getSharedPreferences("videostudio_agent_mailbox_v1", MODE_PRIVATE).edit()
+                            .putString("lastError", "Receipt origin unavailable; native journal retained").apply();
+                    return;
+                }
+            }
+            protocol.complete(command, result, status);
+        }
+    }
+
+    private boolean mailboxCommandAllowed(JSONObject command) throws Exception {
+        String action = NativeWorkbenchBridge.canonicalAction(command.getString("action"));
+        if (!NativeAgentMailboxActions.supports(action)) return false;
+        String id = command.getString("id");
+        if ((mailbox == null || !mailbox.owns(id))
+                && (commandJournal.terminal(id) != null || commandJournal.inflight(id) != null)) return false;
+        JSONObject parameters = command.getJSONObject("parameters");
+        // isAllowed's legacy one-file apply_tool branch resolves/creates an active
+        // project. Packet preflight must remain side-effect free.
+        if ("one_file".equals(permissionMode()) && "apply_tool".equals(action)) {
+            String projectId = parameters.optString("projectId", "");
+            ProjectStore.Project project = projectId.isEmpty() ? store.active() : store.get(projectId);
+            int clip = parameters.optInt("clipIndex", -1);
+            String allowed = prefs.getString(KEY_FILE, "");
+            return !allowed.isEmpty() && project != null && clip >= 0 && clip < project.clips.size()
+                    && allowed.equals(project.clips.get(clip).assetId);
+        }
+        return isAllowed(action, parameters);
+    }
+
     private void complete(JSONObject command, JSONObject result) {
         boolean ok = result.optBoolean("ok", false);
         String action = command.optString("action", "");
@@ -4859,6 +4922,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             commandJournal.linkJob(command, jobId, projectId, result);
             ActivityLog.bindJob(this, command.optString("id", ""), jobId);
             watchDeferredCommand(command, result);
+            if (mailbox != null && mailbox.owns(command.optString("id"))) mailbox.admitted(command);
             return;
         }
 
@@ -4868,7 +4932,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 command.optString("id", ""), projectId);
         String terminalStatus = ok ? "completed" : "failed";
         commandJournal.finish(command, result, terminalStatus);
-        protocol.complete(command, result, terminalStatus);
+        acknowledge(command, result, terminalStatus);
     }
 
     private boolean mayQueueBackgroundWork(String action) {
@@ -5149,7 +5213,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 ok ? "success" : "failed", ok ? 100 : null,
                 commandId, projectId);
         commandJournal.finish(command, result, status);
-        protocol.complete(command, result, status);
+        acknowledge(command, result, status);
     }
 
     private void checkpoint(JobManager.Job state, String action, String detail, int progress, String projectId) {

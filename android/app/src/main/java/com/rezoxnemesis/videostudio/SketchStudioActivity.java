@@ -51,7 +51,7 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
     private Spinner layers;
     private final ArrayList<String> layerIds = new ArrayList<>();
     private final Handler handler = new Handler(Looper.getMainLooper());
-    private boolean updating, playing;
+    private boolean updating, playing, scrubbing;
     private long playStarted;
     private int playFirst;
     private String brushColor = "#FF161C2B";
@@ -62,44 +62,35 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
         watching=getPreferences(MODE_PRIVATE).getBoolean("watchLiveDrawing",true);
-        LinearLayout root = column(); root.setPadding(dp(8), dp(8), dp(8), dp(8)); root.setBackgroundColor(0xff080f1c);getWindow().setStatusBarColor(0xff080f1c);getWindow().setNavigationBarColor(0xff080f1c); setContentView(root);
-        status = new TextView(this); status.setTextSize(13);status.setTextColor(0xffcbddeb);status.setText("Sketch Studio · opening drawing…"); root.addView(status);
+        LinearLayout root = column(); root.setPadding(dp(6), dp(2), dp(6), dp(2)); root.setBackgroundColor(StudioUi.BG);getWindow().setStatusBarColor(StudioUi.BG);getWindow().setNavigationBarColor(StudioUi.BG); setContentView(root);
+        status = new TextView(this); status.setTextSize(12);status.setTextColor(StudioUi.MUTED);status.setSingleLine(true);status.setEllipsize(android.text.TextUtils.TruncateAt.END);status.setText("Sketch Studio · opening drawing…");root.addView(status);
         LinearLayout projects = row(root);
-        liveButton=button(projects,"Draw myself",this::toggleLiveWatch);updateLiveControl();
-        button(projects,"Canvas view",this::toggleCanvasFocus);
-        button(projects, "New", this::newDocument); button(projects, "Open", this::openDocument);button(projects,"Sketch books",this::booksDialog);
-        button(projects, "Undo", () -> history(false)); button(projects, "Redo", () -> history(true)); button(projects, "Export video", this::export);
+        button(projects,"File",this::fileMenu);
+        liveButton=button(projects,"Draw myself",this::toggleLiveWatch);liveButton.setLayoutParams(new LinearLayout.LayoutParams(0,-2,2));updateLiveControl();
+        LinearLayout history = row(root);
+        button(history,"Undo",()->history(false));button(history,"Redo",()->history(true));button(history,"Export",this::export);
+        canvas = new SketchCanvasView(this); canvas.setListener(this); root.addView(canvas, new LinearLayout.LayoutParams(-1, 0, 1));
         LinearLayout tools = row(root); Spinner tool = new Spinner(this);toolPicker=tool;
         String[] names = {"Pen", "Eraser", "Line", "Rectangle", "Ellipse", "Polygon", "Select / move", "Eyedropper", "Pan canvas", "Curve pen", "Edit curve nodes"};
-        String[] values=toolValues;
-        tool.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, names)); tools.addView(tool);
-        tool.setOnItemSelectedListener(new SimpleSelection() { @Override public void selected(int position) { if(canvas!=null)canvas.setTool(values[position]); } });
-        button(tools, "Brush", this::brushDialog);button(tools,"Text",this::textDialog);button(tools,"Workspace",this::workspaceDialog); button(tools, "Finish path", () -> canvas.finishPolygon());
-        canvas = new SketchCanvasView(this); canvas.setListener(this); root.addView(canvas, new LinearLayout.LayoutParams(-1, 0, 1));
-        LinearLayout palette=row(root);
-        for(String hex:new String[]{"#FF161C2B","#FFFFFFFF","#FF756157","#FFECC6A8","#FFB87958","#FFE45468","#FFEF9B52","#FFF3DA77","#FF61B787","#FF63BADA","#FF4E77BF","#FF8E6CB7"}){Button swatch=button(palette,"●",()->{brushColor=hex;updateBrush();});swatch.setTextColor(SketchDocument.color(hex));swatch.setMinWidth(dp(38));swatch.setMinimumWidth(dp(38));swatch.setContentDescription("Colour "+hex);}
-        toolStatus=new TextView(this);toolStatus.setTextColor(0xff78cad8);toolStatus.setTextSize(11);root.addView(toolStatus);
-        filmstrip=new SketchFilmstripView(this);filmstrip.setListener(this::selectFilmstrip);root.addView(filmstrip,new LinearLayout.LayoutParams(-1,dp(44)));
-        frames = new SeekBar(this); root.addView(frames); frames.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
-            public void onProgressChanged(SeekBar bar, int progress, boolean fromUser) { if (fromUser) { selectFilmstrip(progress); } }
-            public void onStartTrackingTouch(SeekBar bar) { stopPlayback(); }
-            public void onStopTrackingTouch(SeekBar bar) {}
+        tool.setAdapter(new ArrayAdapter<String>(this, android.R.layout.simple_spinner_dropdown_item, names){@Override public View getView(int position,View convert,android.view.ViewGroup parent){TextView view=(TextView)super.getView(position,convert,parent);view.setTextColor(StudioUi.TEXT);view.setTextSize(12);view.setSingleLine(true);view.setEllipsize(android.text.TextUtils.TruncateAt.END);return view;}});
+        tool.setContentDescription("Drawing tool");tool.setMinimumHeight(dp(48));tools.addView(tool,new LinearLayout.LayoutParams(0,dp(48),1));
+        tool.setOnItemSelectedListener(new SimpleSelection() { @Override public void selected(int position) { if(canvas!=null)canvas.setTool(toolValues[position]); } });
+        button(tools,"Brush / Text",this::brushMenu);button(tools,"More",this::moreMenu);
+        toolStatus=new TextView(this);toolStatus.setTextColor(StudioUi.MUTED);toolStatus.setTextSize(12);
+        filmstrip=new SketchFilmstripView(this);filmstrip.setListener(this::selectFilmstrip);filmstrip.setContentDescription("Animation frames; swipe to browse, tap to select");root.addView(filmstrip,new LinearLayout.LayoutParams(-1,dp(48)));
+        frames = new SeekBar(this);frames.setMinimumHeight(dp(48));frames.setContentDescription("Frame position");frames.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            public void onProgressChanged(SeekBar bar, int progress, boolean fromUser) { if (fromUser&&!scrubbing) { runAction("Select frame",()->selectFilmstrip(progress)); } }
+            public void onStartTrackingTouch(SeekBar bar) { scrubbing=true; }
+            public void onStopTrackingTouch(SeekBar bar) { scrubbing=false;int position=bar.getProgress();runAction("Select frame",()->selectFilmstrip(position)); }
         });
         LinearLayout timing = row(root);
-        button(timing, "◀", () -> selectFilmstrip((bookId==null?canvas.getFrame():bookPage)-1)); playButton = button(timing, "Play", this::togglePlayback);
-        button(timing, "▶", () -> selectFilmstrip((bookId==null?canvas.getFrame():bookPage)+1));
-        CheckBox onion = new CheckBox(this); onion.setText("Onion");onion.setTextColor(0xffcbddeb); onion.setChecked(true); onion.setOnCheckedChangeListener((v, checked) -> canvas.setOnion(checked)); timing.addView(onion);
-        button(timing, "Timing / canvas", this::timingDialog);
-        LinearLayout layerControls = row(root); layers = new Spinner(this); layerControls.addView(layers);
+        button(timing,"◀",()->selectFilmstrip((bookId==null?canvas.getFrame():bookPage)-1)).setContentDescription("Previous frame or page");playButton=button(timing,"Play",this::togglePlayback);
+        button(timing,"▶",()->selectFilmstrip((bookId==null?canvas.getFrame():bookPage)+1)).setContentDescription("Next frame or page");
+        layers = new Spinner(this);
         layers.setOnItemSelectedListener(new SimpleSelection() { @Override public void selected(int position) {
             if (!updating && position < layerIds.size()) { canvas.setLayerId(layerIds.get(position)); updateStatus(); }
         } });
-        button(layerControls, "+ Layer", this::addLayer); button(layerControls, "Layer settings", this::layerDialog);
-        button(layerControls, "Up", () -> reorderLayer(1)); button(layerControls, "Down", () -> reorderLayer(-1));
-        LinearLayout edits = row(root);
-        button(edits, "Transform / key", this::transformDialog); button(edits, "Exposure", this::exposureDialog);
-        button(edits, "Copy → next", this::duplicateCel);button(edits,"Cel tools",this::celDialog); button(edits, "Delete object", this::deleteObject); button(edits, "Reference image", this::referenceDialog);
-        for(int n=2;n<root.getChildCount();n++)if(root.getChildAt(n)!=canvas)drawingChrome.add(root.getChildAt(n));
+        drawingChrome.add(history);drawingChrome.add(tools);drawingChrome.add(filmstrip);drawingChrome.add(timing);
         canvasFocus=getPreferences(MODE_PRIVATE).getBoolean("canvasFocus",false);applyCanvasFocus();
         try {
             bookId=state==null?getPreferences(MODE_PRIVATE).getString("lastBookId",null):state.getString("bookId");bookPage=state==null?getPreferences(MODE_PRIVATE).getInt("lastBookPage",0):state.getInt("bookPage",0);
@@ -353,11 +344,48 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
     @Override protected void onResume() { super.onResume();resumed=true;liveSessionId="";if(loadingDrawing&&session!=null){if(session.pending()==0)reload();else afterSaves(()->postUi(this::reload));}handler.removeCallbacks(watchTick);handler.postDelayed(watchTick,250); }
     @Override protected void onDestroy() { destroyed=true;stopLivePlayer();stopPlayback();handler.removeCallbacksAndMessages(null);if(session!=null)session.close();io.shutdown();if(canvas!=null)canvas.dispose();super.onDestroy(); }
     @Override protected void onSaveInstanceState(Bundle state) { state.putString("bookId",bookId);state.putInt("bookPage",bookPage);state.putString("sketchId", sketchId); state.putInt("frame", canvas.getFrame()); super.onSaveInstanceState(state); }
-    private LinearLayout column() { LinearLayout layout = new LinearLayout(this); layout.setOrientation(LinearLayout.VERTICAL);layout.setBackgroundColor(0xff0e1828);layout.setPadding(dp(6),dp(2),dp(6),dp(2));return layout; }
-    private LinearLayout row(LinearLayout root) { HorizontalScrollView scroll = new HorizontalScrollView(this); scroll.setHorizontalScrollBarEnabled(false); LinearLayout layout = new LinearLayout(this); layout.setOrientation(LinearLayout.HORIZONTAL); scroll.addView(layout); root.addView(scroll); return layout; }
-    private Button button(LinearLayout row, String title, Runnable action) { Button button = new Button(this); button.setText(title); button.setTextSize(11);button.setAllCaps(false);button.setTextColor(0xffdce9f5);button.setBackgroundTintList(android.content.res.ColorStateList.valueOf(0xff1b2d46));button.setOnClickListener(v -> {try{if(loadingDrawing&&!java.util.Arrays.asList("New","Open","Sketch books","Workspace","Draw myself").contains(title)){onMessage("Opening the selected drawing");return;}if(playing&&!title.equals("Play")&&!title.equals("Draw myself")&&!title.equals("Canvas view")){onMessage("Pause playback before changing artwork");return;}if((livePlayer!=null||watchInFlight)&&watching&&!title.equals("Workspace")&&!title.equals("Draw myself")&&!title.equals("Canvas view")){takeOverLive(action);return;}action.run();}catch(Exception error){onMessage(error.getMessage());}}); row.addView(button); return button; }
-    private EditText input(String hint, String value, boolean number) { EditText input = new EditText(this); input.setHint(hint);input.setTextColor(Color.WHITE);input.setHintTextColor(0xff90a7bf);input.setContentDescription(hint);input.setText(value); input.setSingleLine(); if (number) input.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL | InputType.TYPE_NUMBER_FLAG_SIGNED); return input; }
-    private int dp(int pixels) { return Math.round(pixels * getResources().getDisplayMetrics().density); }
+    private LinearLayout column() { LinearLayout layout = new LinearLayout(this); layout.setOrientation(LinearLayout.VERTICAL);layout.setBackgroundColor(StudioUi.SURFACE);layout.setPadding(dp(6),dp(2),dp(6),dp(2));return layout; }
+    private LinearLayout row(LinearLayout root) { LinearLayout layout = new LinearLayout(this); layout.setOrientation(LinearLayout.HORIZONTAL);root.addView(layout,new LinearLayout.LayoutParams(-1,-2));return layout; }
+    private Button button(LinearLayout row, String title, Runnable action) { Button button = new Button(this);button.setText(title);StudioUi.styleButton(button,title.equals("Play"));button.setTextSize(12);button.setPadding(dp(4),dp(4),dp(4),dp(4));button.setOnClickListener(v->runAction(title,action));row.addView(button,new LinearLayout.LayoutParams(0,-2,1));return button; }
+    // Browsing a menu never takes ownership of an active drawing. Its chosen action
+    // goes through the same loading, playback and live-takeover gate as the toolbar.
+    private void runAction(String title,Runnable action){try{
+        boolean navigation=java.util.Arrays.asList("File","More","Brush / Text","Layers","Frames / Cels","Workspace","Canvas view","Drawing status","Colours","Select layer","Go to frame").contains(title);
+        if(navigation){action.run();return;}
+        if(loadingDrawing&&!java.util.Arrays.asList("New","Open","Sketch books","Draw myself").contains(title)){onMessage("Opening the selected drawing");return;}
+        if(playing&&!title.equals("Play")&&!title.equals("Draw myself")){onMessage("Pause playback before changing artwork");return;}
+        if((livePlayer!=null||watchInFlight)&&watching&&!title.equals("Draw myself")){takeOverLive(action);return;}
+        action.run();
+    }catch(Exception error){onMessage(error.getMessage());}}
+    private void menu(String title,String[] labels,Runnable... actions){new AlertDialog.Builder(this).setTitle(title).setItems(labels,(d,index)->runAction(labels[index],actions[index])).show();}
+    private void fileMenu(){menu("Sketch files",new String[]{"New","Open","Sketch books","Export video","Canvas view","Drawing status"},this::newDocument,this::openDocument,this::booksDialog,this::export,this::toggleCanvasFocus,()->new AlertDialog.Builder(this).setTitle("Drawing status").setMessage(status.getText()+"\n\n"+toolStatus.getText()).setPositiveButton("OK",null).show());}
+    private void moreMenu(){menu("Drawing tools",new String[]{"Layers","Frames / Cels","Workspace"},this::layersMenu,this::framesMenu,this::workspaceDialog);}
+    private void brushMenu(){menu("Brush / Text",new String[]{"Brush","Colours","Text","Finish path","Transform / key","Delete object","Reference image"},this::brushDialog,this::paletteDialog,this::textDialog,()->canvas.finishPolygon(),this::transformDialog,this::deleteObject,this::referenceDialog);}
+    private void layersMenu(){menu("Layers",new String[]{"Select layer","+ Layer","Layer settings","Up","Down"},this::chooseLayer,this::addLayer,this::layerDialog,()->reorderLayer(1),()->reorderLayer(-1));}
+    private void chooseLayer(){
+        if(document==null)return;
+        // Live metadata can replace/reorder the backing spinner while this dialog is open.
+        // Keep each displayed label bound to the identity the user actually saw.
+        ArrayList<String> choices=new ArrayList<>(layerIds);
+        String[] labels=new String[choices.size()];
+        for(int i=0;i<labels.length;i++)labels[i]=String.valueOf(layers.getAdapter().getItem(i));
+        new AlertDialog.Builder(this).setTitle("Select layer").setSingleChoiceItems(labels,Math.max(0,choices.indexOf(canvas.getLayerId())),(d,index)->{
+            String selectedLayer=choices.get(index);
+            runAction("Choose layer",()->{
+                // runAction may asynchronously adopt a newer authoritative document.
+                int currentIndex=layerIds.indexOf(selectedLayer);
+                if(document==null||currentIndex<0){onMessage("That layer is no longer available. Open Layers to choose again.");return;}
+                layers.setSelection(currentIndex);canvas.setLayerId(selectedLayer);updateStatus();
+            });
+            d.dismiss();
+        }).show();
+    }
+    private boolean onionEnabled=true;
+    private void framesMenu(){menu("Frames / Cels",new String[]{"Go to frame","Timing / canvas","Exposure","Copy → next","Cel tools","Onion skin"},this::scrubDialog,this::timingDialog,this::exposureDialog,this::duplicateCel,this::celDialog,()->{onionEnabled=!onionEnabled;canvas.setOnion(onionEnabled);onMessage(onionEnabled?"Onion skin on":"Onion skin off");});}
+    private void scrubDialog(){if(frames.getParent()!=null)((android.view.ViewGroup)frames.getParent()).removeView(frames);new AlertDialog.Builder(this).setTitle("Go to frame / page").setView(frames).setPositiveButton("Done",null).show();}
+    private void paletteDialog(){LinearLayout palette=column();String[] colours={"#FF161C2B","#FFFFFFFF","#FF756157","#FFECC6A8","#FFB87958","#FFE45468","#FFEF9B52","#FFF3DA77","#FF61B787","#FF63BADA","#FF4E77BF","#FF8E6CB7"};AlertDialog dialog=new AlertDialog.Builder(this).setTitle("Colours").setView(palette).setNegativeButton("Close",null).create();for(int i=0;i<colours.length;i+=3){LinearLayout line=row(palette);for(int n=i;n<i+3;n++){String colour=colours[n];Button swatch=button(line,"●",()->{brushColor=colour;updateBrush();dialog.dismiss();});swatch.setTextColor(SketchDocument.color(colour));swatch.setContentDescription("Colour "+colour);}}dialog.show();}
+    private EditText input(String hint, String value, boolean number) { EditText input = new EditText(this); input.setHint(hint);input.setTextColor(StudioUi.TEXT);input.setHintTextColor(StudioUi.MUTED);input.setContentDescription(hint);input.setText(value); input.setSingleLine(); if (number) input.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL | InputType.TYPE_NUMBER_FLAG_SIGNED); return input; }
+    private int dp(int pixels) { return StudioUi.dp(this,pixels); }
     private abstract static class SimpleSelection implements android.widget.AdapterView.OnItemSelectedListener {
         public void onItemSelected(android.widget.AdapterView<?> parent, View view, int position, long id) { selected(position); }
         public void onNothingSelected(android.widget.AdapterView<?> parent) {}
