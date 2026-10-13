@@ -10,6 +10,8 @@ The public release endpoint is absent(404). The observed main commit contains th
 
 Publication requires the existing CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID bindings. They are already declared in Environment Settings but have no usable saved/runtime values. GitHub read/push/PR access works; it does not provide Cloudflare deployment authority. The deployment workflow now fails early when either binding is missing, and checks the actual published source/storage fingerprint when deployment occurs. The private owner endpoint is excluded from this ledger and all repository artifacts.
 
+The verified branch was then submitted through the existing GitHub Worker deployment workflow. [Run 38376968160](https://github.com/RezoxNemesis/VideoStudio-MCP/actions/runs/38376968160) failed at **Check Cloudflare deploy credentials** before Node setup, dependencies, tests or deployment. This is a current external prerequisite failure, not a skipped green deployment; no Worker update occurred. No unchanged retry is warranted until the binding state changes.
+
 ## Record-by-record status
 
 | ID | Audit record | Implementation / remaining acceptance |

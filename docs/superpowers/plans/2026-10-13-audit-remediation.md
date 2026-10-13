@@ -35,7 +35,7 @@ Interfaces: relayRelease(env) returns source/storage identity; commandExecution(
 - [x] Run focused Node tests and observe failures.
 - [x] Implement pure diagnostics and wire public release/status/capabilities/results without changing owner namespace or accepted commands.
 - [x] Add deployment credential failure and post-deploy fingerprint readback.
-- [ ] Run focused tests plus actual local MCP/SQLite backlog and cold-restart harness; commit the deliverable.
+- [x] Run focused tests plus actual local MCP/SQLite backlog and cold-restart harness; commit the deliverable.
 
 ## Task 2: Native sketch capabilities and import scale
 
@@ -46,7 +46,7 @@ Interfaces: existing native add_object/update_object gains bounded editable text
 - [x] Write failing native tests for editable text, frame-content gaps, compressed packet expansion and streamed source hashes.
 - [x] Implement shared rendering/touch/MCP paths with conservative defaults and version floors.
 - [x] Reproduce dense live preparation on the UI path, move expensive detached geometry preparation to the existing reader lane with lifecycle fencing.
-- [ ] Verify native pixels/persistence, large event ordering, import replay and privacy; commit the deliverable.
+- [x] Verify native pixels/persistence, ordered dense saved-event presentation, import replay and privacy; commit the source deliverable. Installed-phone latency remains unverified.
 
 ## Task 3: Remaining editor/animation paths
 
@@ -62,10 +62,12 @@ Files: NativeRenderEngine.java, StudioPixelEffect.java, MainActivity.java, sourc
 - [x] Independent review; resolve material findings.
 - [x] Run full Node/native regressions once stabilized and verify every executed result.
 - [ ] After production relay admission passes, build through the pinned signing workflow and verify APK identity and original assets. This gate is deferred while production is blocked; another APK cannot update the Worker.
-- [ ] Publish reviewable source/artifact and closure ledger. Merge/publish only after applicable acceptance gates; preserve prior branches.
+- [x] Publish reviewable source PR #73 and closure ledger. No new APK or main merge; the existing signer and prior branches remain intact.
 
 ## Current acceptance boundary
 
 The owner requires all issues resolved, without routine approvals. Work proceeds autonomously, but no missing deployment credential or device/output proof may be invented. Production MCP admission and ACK both fail before Android despite a connected 3.9.5 phone. Existing Cloudflare credential requirements are declared but unbound; deployment/readback and actual phone workflows remain blocked. Independent source improvements are reviewable separately, with all 71 records retained in docs/AUDIT_REMEDIATION_396.md.
 
 Verified source evidence: 663 Android tests / 145 suites, 174 Node tests, 306 smoke checks, Worker dry-run and independent read-only review. Local SQLite cold-restart proof retained 36 accepted requests and 18,432,000 synthetic ACK bytes. No real phone/output/creative acceptance or Worker deployment inferred from these checks.
+
+Current deployment attempt: GitHub run 38376968160 from reviewed commit 3534eff failed at the Cloudflare credential gate before any build/deployment. Existing bindings are required; repeated attempts cannot supply them.
