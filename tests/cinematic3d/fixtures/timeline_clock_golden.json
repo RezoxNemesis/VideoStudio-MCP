@@ -1,0 +1,2044 @@
+{
+  "schema": "videostudio.cinematic3d.clock-golden.v1",
+  "clock": "Output n/fps; exact H phase=.5 hold samples; camera uses wall clock.",
+  "cases": [
+    {
+      "fps": 24,
+      "shot": {
+        "id": "golden_clash",
+        "action": "CLASH",
+        "durationFrames": 30,
+        "hitStopFrames": 3,
+        "camera": {
+          "mode": "wide",
+          "fovDegrees": 55,
+          "shakeIntensity": 0.5
+        },
+        "vfx": {
+          "sparkBurst": true,
+          "slashTrail": true,
+          "rubble": false
+        }
+      },
+      "samples": [
+        {
+          "frame": 0,
+          "phase": 0,
+          "motionSeconds": 0,
+          "hitStop": false,
+          "impactFrame": 13,
+          "camera": {
+            "position": [
+              0,
+              1.65,
+              5.5
+            ],
+            "target": [
+              0,
+              1.1,
+              0
+            ],
+            "fovDegrees": 55
+          }
+        },
+        {
+          "frame": 12,
+          "phase": 0.46153846153846156,
+          "motionSeconds": 0.5192307692307693,
+          "hitStop": false,
+          "impactFrame": 13,
+          "camera": {
+            "position": [
+              0,
+              1.65,
+              5.5
+            ],
+            "target": [
+              0,
+              1.1,
+              0
+            ],
+            "fovDegrees": 55
+          }
+        },
+        {
+          "frame": 13,
+          "phase": 0.5,
+          "motionSeconds": 0.5625,
+          "hitStop": true,
+          "impactFrame": 13,
+          "camera": {
+            "position": [
+              0.01288435374475382,
+              1.6615626982250062,
+              5.508
+            ],
+            "target": [
+              0,
+              1.1,
+              0
+            ],
+            "fovDegrees": 55
+          }
+        },
+        {
+          "frame": 14,
+          "phase": 0.5,
+          "motionSeconds": 0.5625,
+          "hitStop": true,
+          "impactFrame": 13,
+          "camera": {
+            "position": [
+              0.00345345888000765,
+              1.6419440828816154,
+              5.497741561597326
+            ],
+            "target": [
+              0,
+              1.1,
+              0
+            ],
+            "fovDegrees": 55
+          }
+        },
+        {
+          "frame": 15,
+          "phase": 0.5,
+          "motionSeconds": 0.5625,
+          "hitStop": true,
+          "impactFrame": 13,
+          "camera": {
+            "position": [
+              -0.010261002520970793,
+              1.65538188974423,
+              5.4968108548385075
+            ],
+            "target": [
+              0,
+              1.1,
+              0
+            ],
+            "fovDegrees": 55
+          }
+        },
+        {
+          "frame": 16,
+          "phase": 0.5333333333333333,
+          "motionSeconds": 0.6,
+          "hitStop": false,
+          "impactFrame": 13,
+          "camera": {
+            "position": [
+              0.007197718390622746,
+              1.646589395662706,
+              5.503060909979353
+            ],
+            "target": [
+              0,
+              1.1,
+              0
+            ],
+            "fovDegrees": 55
+          }
+        },
+        {
+          "frame": 29,
+          "phase": 0.9666666666666667,
+          "motionSeconds": 1.0875000000000001,
+          "hitStop": false,
+          "impactFrame": 13,
+          "camera": {
+            "position": [
+              -0.00018722353541415497,
+              1.649887369562179,
+              5.500074972055478
+            ],
+            "target": [
+              0,
+              1.1,
+              0
+            ],
+            "fovDegrees": 55
+          }
+        }
+      ]
+    },
+    {
+      "fps": 24,
+      "shot": {
+        "id": "golden_clash",
+        "action": "CLASH",
+        "durationFrames": 30,
+        "hitStopFrames": 3,
+        "camera": {
+          "mode": "orbit",
+          "fovDegrees": 55,
+          "shakeIntensity": 0.5
+        },
+        "vfx": {
+          "sparkBurst": true,
+          "slashTrail": true,
+          "rubble": false
+        }
+      },
+      "samples": [
+        {
+          "frame": 0,
+          "phase": 0,
+          "motionSeconds": 0,
+          "hitStop": false,
+          "impactFrame": 13,
+          "camera": {
+            "position": [
+              -1.783068598768347,
+              1.9,
+              4.88473810680637
+            ],
+            "target": [
+              0,
+              1.1,
+              0
+            ],
+            "fovDegrees": 55
+          }
+        },
+        {
+          "frame": 12,
+          "phase": 0.46153846153846156,
+          "motionSeconds": 0.5192307692307693,
+          "hitStop": false,
+          "impactFrame": 13,
+          "camera": {
+            "position": [
+              -0.3637028061551704,
+              1.9,
+              5.187265201317054
+            ],
+            "target": [
+              0,
+              1.1,
+              0
+            ],
+            "fovDegrees": 55
+          }
+        },
+        {
+          "frame": 13,
+          "phase": 0.5,
+          "motionSeconds": 0.5625,
+          "hitStop": true,
+          "impactFrame": 13,
+          "camera": {
+            "position": [
+              -0.2296942434998955,
+              1.9115626982250062,
+              5.202338805291663
+            ],
+            "target": [
+              0,
+              1.1,
+              0
+            ],
+            "fovDegrees": 55
+          }
+        },
+        {
+          "frame": 14,
+          "phase": 0.5,
+          "motionSeconds": 0.5625,
+          "hitStop": true,
+          "impactFrame": 13,
+          "camera": {
+            "position": [
+              -0.1178688648764921,
+              1.8919440828816154,
+              5.1963260702648855
+            ],
+            "target": [
+              0,
+              1.1,
+              0
+            ],
+            "fovDegrees": 55
+          }
+        },
+        {
+          "frame": 15,
+          "phase": 0.5,
+          "motionSeconds": 0.5625,
+          "hitStop": true,
+          "impactFrame": 13,
+          "camera": {
+            "position": [
+              -0.010261002520970793,
+              1.90538188974423,
+              5.196810854838508
+            ],
+            "target": [
+              0,
+              1.1,
+              0
+            ],
+            "fovDegrees": 55
+          }
+        },
+        {
+          "frame": 16,
+          "phase": 0.5333333333333333,
+          "motionSeconds": 0.6,
+          "hitStop": false,
+          "impactFrame": 13,
+          "camera": {
+            "position": [
+              0.1285200421471222,
+              1.896589395662706,
+              5.201645418646912
+            ],
+            "target": [
+              0,
+              1.1,
+              0
+            ],
+            "fovDegrees": 55
+          }
+        },
+        {
+          "frame": 29,
+          "phase": 0.9666666666666667,
+          "motionSeconds": 1.0875000000000001,
+          "hitStop": false,
+          "impactFrame": 13,
+          "camera": {
+            "position": [
+              1.668429125962475,
+              1.899887369562179,
+              4.925084563740385
+            ],
+            "target": [
+              0,
+              1.1,
+              0
+            ],
+            "fovDegrees": 55
+          }
+        }
+      ]
+    },
+    {
+      "fps": 24,
+      "shot": {
+        "id": "golden_clash",
+        "action": "CLASH",
+        "durationFrames": 30,
+        "hitStopFrames": 3,
+        "camera": {
+          "mode": "macro",
+          "fovDegrees": 55,
+          "shakeIntensity": 0.5
+        },
+        "vfx": {
+          "sparkBurst": true,
+          "slashTrail": true,
+          "rubble": false
+        }
+      },
+      "samples": [
+        {
+          "frame": 0,
+          "phase": 0,
+          "motionSeconds": 0,
+          "hitStop": false,
+          "impactFrame": 13,
+          "camera": {
+            "position": [
+              0.15,
+              1.45,
+              2.2
+            ],
+            "target": [
+              0,
+              1.1,
+              0
+            ],
+            "fovDegrees": 55
+          }
+        },
+        {
+          "frame": 12,
+          "phase": 0.46153846153846156,
+          "motionSeconds": 0.5192307692307693,
+          "hitStop": false,
+          "impactFrame": 13,
+          "camera": {
+            "position": [
+              0.15,
+              1.45,
+              2.2
+            ],
+            "target": [
+              0,
+              1.1,
+              0
+            ],
+            "fovDegrees": 55
+          }
+        },
+        {
+          "frame": 13,
+          "phase": 0.5,
+          "motionSeconds": 0.5625,
+          "hitStop": true,
+          "impactFrame": 13,
+          "camera": {
+            "position": [
+              0.16288435374475382,
+              1.4615626982250063,
+              2.208
+            ],
+            "target": [
+              0,
+              1.1,
+              0
+            ],
+            "fovDegrees": 55
+          }
+        },
+        {
+          "frame": 14,
+          "phase": 0.5,
+          "motionSeconds": 0.5625,
+          "hitStop": true,
+          "impactFrame": 13,
+          "camera": {
+            "position": [
+              0.15345345888000764,
+              1.4419440828816155,
+              2.1977415615973266
+            ],
+            "target": [
+              0,
+              1.1,
+              0
+            ],
+            "fovDegrees": 55
+          }
+        },
+        {
+          "frame": 15,
+          "phase": 0.5,
+          "motionSeconds": 0.5625,
+          "hitStop": true,
+          "impactFrame": 13,
+          "camera": {
+            "position": [
+              0.1397389974790292,
+              1.45538188974423,
+              2.1968108548385072
+            ],
+            "target": [
+              0,
+              1.1,
+              0
+            ],
+            "fovDegrees": 55
+          }
+        },
+        {
+          "frame": 16,
+          "phase": 0.5333333333333333,
+          "motionSeconds": 0.6,
+          "hitStop": false,
+          "impactFrame": 13,
+          "camera": {
+            "position": [
+              0.15719771839062274,
+              1.446589395662706,
+              2.2030609099793526
+            ],
+            "target": [
+              0,
+              1.1,
+              0
+            ],
+            "fovDegrees": 55
+          }
+        },
+        {
+          "frame": 29,
+          "phase": 0.9666666666666667,
+          "motionSeconds": 1.0875000000000001,
+          "hitStop": false,
+          "impactFrame": 13,
+          "camera": {
+            "position": [
+              0.14981277646458585,
+              1.449887369562179,
+              2.200074972055478
+            ],
+            "target": [
+              0,
+              1.1,
+              0
+            ],
+            "fovDegrees": 55
+          }
+        }
+      ]
+    },
+    {
+      "fps": 24,
+      "shot": {
+        "id": "golden_clash",
+        "action": "CLASH",
+        "durationFrames": 30,
+        "hitStopFrames": 3,
+        "camera": {
+          "mode": "top_down",
+          "fovDegrees": 55,
+          "shakeIntensity": 0.5
+        },
+        "vfx": {
+          "sparkBurst": true,
+          "slashTrail": true,
+          "rubble": false
+        }
+      },
+      "samples": [
+        {
+          "frame": 0,
+          "phase": 0,
+          "motionSeconds": 0,
+          "hitStop": false,
+          "impactFrame": 13,
+          "camera": {
+            "position": [
+              0,
+              6,
+              0.001
+            ],
+            "target": [
+              0,
+              0.8,
+              0
+            ],
+            "fovDegrees": 55,
+            "up": [
+              0,
+              0,
+              -1
+            ]
+          }
+        },
+        {
+          "frame": 12,
+          "phase": 0.46153846153846156,
+          "motionSeconds": 0.5192307692307693,
+          "hitStop": false,
+          "impactFrame": 13,
+          "camera": {
+            "position": [
+              0,
+              6,
+              0.001
+            ],
+            "target": [
+              0,
+              0.8,
+              0
+            ],
+            "fovDegrees": 55,
+            "up": [
+              0,
+              0,
+              -1
+            ]
+          }
+        },
+        {
+          "frame": 13,
+          "phase": 0.5,
+          "motionSeconds": 0.5625,
+          "hitStop": true,
+          "impactFrame": 13,
+          "camera": {
+            "position": [
+              0.01288435374475382,
+              6.011562698225006,
+              0.009000000000000001
+            ],
+            "target": [
+              0,
+              0.8,
+              0
+            ],
+            "fovDegrees": 55,
+            "up": [
+              0,
+              0,
+              -1
+            ]
+          }
+        },
+        {
+          "frame": 14,
+          "phase": 0.5,
+          "motionSeconds": 0.5625,
+          "hitStop": true,
+          "impactFrame": 13,
+          "camera": {
+            "position": [
+              0.00345345888000765,
+              5.9919440828816155,
+              -0.001258438402673517
+            ],
+            "target": [
+              0,
+              0.8,
+              0
+            ],
+            "fovDegrees": 55,
+            "up": [
+              0,
+              0,
+              -1
+            ]
+          }
+        },
+        {
+          "frame": 15,
+          "phase": 0.5,
+          "motionSeconds": 0.5625,
+          "hitStop": true,
+          "impactFrame": 13,
+          "camera": {
+            "position": [
+              -0.010261002520970793,
+              6.00538188974423,
+              -0.00218914516149275
+            ],
+            "target": [
+              0,
+              0.8,
+              0
+            ],
+            "fovDegrees": 55,
+            "up": [
+              0,
+              0,
+              -1
+            ]
+          }
+        },
+        {
+          "frame": 16,
+          "phase": 0.5333333333333333,
+          "motionSeconds": 0.6,
+          "hitStop": false,
+          "impactFrame": 13,
+          "camera": {
+            "position": [
+              0.007197718390622746,
+              5.996589395662706,
+              0.004060909979352504
+            ],
+            "target": [
+              0,
+              0.8,
+              0
+            ],
+            "fovDegrees": 55,
+            "up": [
+              0,
+              0,
+              -1
+            ]
+          }
+        },
+        {
+          "frame": 29,
+          "phase": 0.9666666666666667,
+          "motionSeconds": 1.0875000000000001,
+          "hitStop": false,
+          "impactFrame": 13,
+          "camera": {
+            "position": [
+              -0.00018722353541415497,
+              5.999887369562179,
+              0.001074972055477823
+            ],
+            "target": [
+              0,
+              0.8,
+              0
+            ],
+            "fovDegrees": 55,
+            "up": [
+              0,
+              0,
+              -1
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "fps": 30,
+      "shot": {
+        "id": "golden_clash",
+        "action": "CLASH",
+        "durationFrames": 30,
+        "hitStopFrames": 3,
+        "camera": {
+          "mode": "wide",
+          "fovDegrees": 55,
+          "shakeIntensity": 0.5
+        },
+        "vfx": {
+          "sparkBurst": true,
+          "slashTrail": true,
+          "rubble": false
+        }
+      },
+      "samples": [
+        {
+          "frame": 0,
+          "phase": 0,
+          "motionSeconds": 0,
+          "hitStop": false,
+          "impactFrame": 13,
+          "camera": {
+            "position": [
+              0,
+              1.65,
+              5.5
+            ],
+            "target": [
+              0,
+              1.1,
+              0
+            ],
+            "fovDegrees": 55
+          }
+        },
+        {
+          "frame": 12,
+          "phase": 0.46153846153846156,
+          "motionSeconds": 0.4153846153846154,
+          "hitStop": false,
+          "impactFrame": 13,
+          "camera": {
+            "position": [
+              0,
+              1.65,
+              5.5
+            ],
+            "target": [
+              0,
+              1.1,
+              0
+            ],
+            "fovDegrees": 55
+          }
+        },
+        {
+          "frame": 13,
+          "phase": 0.5,
+          "motionSeconds": 0.45,
+          "hitStop": true,
+          "impactFrame": 13,
+          "camera": {
+            "position": [
+              0.01288435374475382,
+              1.6615626982250062,
+              5.508
+            ],
+            "target": [
+              0,
+              1.1,
+              0
+            ],
+            "fovDegrees": 55
+          }
+        },
+        {
+          "frame": 14,
+          "phase": 0.5,
+          "motionSeconds": 0.45,
+          "hitStop": true,
+          "impactFrame": 13,
+          "camera": {
+            "position": [
+              0.009896078128312674,
+              1.6452365272245455,
+              5.500026161803784
+            ],
+            "target": [
+              0,
+              1.1,
+              0
+            ],
+            "fovDegrees": 55
+          }
+        },
+        {
+          "frame": 15,
+          "phase": 0.5,
+          "motionSeconds": 0.45,
+          "hitStop": true,
+          "impactFrame": 13,
+          "camera": {
+            "position": [
+              -0.011129960985957865,
+              1.648139347428723,
+              5.49498345842781
+            ],
+            "target": [
+              0,
+              1.1,
+              0
+            ],
+            "fovDegrees": 55
+          }
+        },
+        {
+          "frame": 16,
+          "phase": 0.5333333333333333,
+          "motionSeconds": 0.48000000000000004,
+          "hitStop": false,
+          "impactFrame": 13,
+          "camera": {
+            "position": [
+              -0.0027750726011428243,
+              1.6550925751007137,
+              5.499950783774326
+            ],
+            "target": [
+              0,
+              1.1,
+              0
+            ],
+            "fovDegrees": 55
+          }
+        },
+        {
+          "frame": 29,
+          "phase": 0.9666666666666667,
+          "motionSeconds": 0.87,
+          "hitStop": false,
+          "impactFrame": 13,
+          "camera": {
+            "position": [
+              -0.0003052898143193827,
+              1.6502854279682553,
+              5.500190886492868
+            ],
+            "target": [
+              0,
+              1.1,
+              0
+            ],
+            "fovDegrees": 55
+          }
+        }
+      ]
+    },
+    {
+      "fps": 30,
+      "shot": {
+        "id": "golden_clash",
+        "action": "CLASH",
+        "durationFrames": 30,
+        "hitStopFrames": 3,
+        "camera": {
+          "mode": "orbit",
+          "fovDegrees": 55,
+          "shakeIntensity": 0.5
+        },
+        "vfx": {
+          "sparkBurst": true,
+          "slashTrail": true,
+          "rubble": false
+        }
+      },
+      "samples": [
+        {
+          "frame": 0,
+          "phase": 0,
+          "motionSeconds": 0,
+          "hitStop": false,
+          "impactFrame": 13,
+          "camera": {
+            "position": [
+              -1.783068598768347,
+              1.9,
+              4.88473810680637
+            ],
+            "target": [
+              0,
+              1.1,
+              0
+            ],
+            "fovDegrees": 55
+          }
+        },
+        {
+          "frame": 12,
+          "phase": 0.46153846153846156,
+          "motionSeconds": 0.4153846153846154,
+          "hitStop": false,
+          "impactFrame": 13,
+          "camera": {
+            "position": [
+              -0.3637028061551704,
+              1.9,
+              5.187265201317054
+            ],
+            "target": [
+              0,
+              1.1,
+              0
+            ],
+            "fovDegrees": 55
+          }
+        },
+        {
+          "frame": 13,
+          "phase": 0.5,
+          "motionSeconds": 0.45,
+          "hitStop": true,
+          "impactFrame": 13,
+          "camera": {
+            "position": [
+              -0.2296942434998955,
+              1.9115626982250062,
+              5.202338805291663
+            ],
+            "target": [
+              0,
+              1.1,
+              0
+            ],
+            "fovDegrees": 55
+          }
+        },
+        {
+          "frame": 14,
+          "phase": 0.5,
+          "motionSeconds": 0.45,
+          "hitStop": true,
+          "impactFrame": 13,
+          "camera": {
+            "position": [
+              -0.11142624562818709,
+              1.8952365272245455,
+              5.198610670471343
+            ],
+            "target": [
+              0,
+              1.1,
+              0
+            ],
+            "fovDegrees": 55
+          }
+        },
+        {
+          "frame": 15,
+          "phase": 0.5,
+          "motionSeconds": 0.45,
+          "hitStop": true,
+          "impactFrame": 13,
+          "camera": {
+            "position": [
+              -0.011129960985957865,
+              1.898139347428723,
+              5.19498345842781
+            ],
+            "target": [
+              0,
+              1.1,
+              0
+            ],
+            "fovDegrees": 55
+          }
+        },
+        {
+          "frame": 16,
+          "phase": 0.5333333333333333,
+          "motionSeconds": 0.48000000000000004,
+          "hitStop": false,
+          "impactFrame": 13,
+          "camera": {
+            "position": [
+              0.11854725115535665,
+              1.9050925751007137,
+              5.198535292441885
+            ],
+            "target": [
+              0,
+              1.1,
+              0
+            ],
+            "fovDegrees": 55
+          }
+        },
+        {
+          "frame": 29,
+          "phase": 0.9666666666666667,
+          "motionSeconds": 0.87,
+          "hitStop": false,
+          "impactFrame": 13,
+          "camera": {
+            "position": [
+              1.6683110596835697,
+              1.9002854279682553,
+              4.925200478177776
+            ],
+            "target": [
+              0,
+              1.1,
+              0
+            ],
+            "fovDegrees": 55
+          }
+        }
+      ]
+    },
+    {
+      "fps": 30,
+      "shot": {
+        "id": "golden_clash",
+        "action": "CLASH",
+        "durationFrames": 30,
+        "hitStopFrames": 3,
+        "camera": {
+          "mode": "macro",
+          "fovDegrees": 55,
+          "shakeIntensity": 0.5
+        },
+        "vfx": {
+          "sparkBurst": true,
+          "slashTrail": true,
+          "rubble": false
+        }
+      },
+      "samples": [
+        {
+          "frame": 0,
+          "phase": 0,
+          "motionSeconds": 0,
+          "hitStop": false,
+          "impactFrame": 13,
+          "camera": {
+            "position": [
+              0.15,
+              1.45,
+              2.2
+            ],
+            "target": [
+              0,
+              1.1,
+              0
+            ],
+            "fovDegrees": 55
+          }
+        },
+        {
+          "frame": 12,
+          "phase": 0.46153846153846156,
+          "motionSeconds": 0.4153846153846154,
+          "hitStop": false,
+          "impactFrame": 13,
+          "camera": {
+            "position": [
+              0.15,
+              1.45,
+              2.2
+            ],
+            "target": [
+              0,
+              1.1,
+              0
+            ],
+            "fovDegrees": 55
+          }
+        },
+        {
+          "frame": 13,
+          "phase": 0.5,
+          "motionSeconds": 0.45,
+          "hitStop": true,
+          "impactFrame": 13,
+          "camera": {
+            "position": [
+              0.16288435374475382,
+              1.4615626982250063,
+              2.208
+            ],
+            "target": [
+              0,
+              1.1,
+              0
+            ],
+            "fovDegrees": 55
+          }
+        },
+        {
+          "frame": 14,
+          "phase": 0.5,
+          "motionSeconds": 0.45,
+          "hitStop": true,
+          "impactFrame": 13,
+          "camera": {
+            "position": [
+              0.15989607812831266,
+              1.4452365272245455,
+              2.2000261618037835
+            ],
+            "target": [
+              0,
+              1.1,
+              0
+            ],
+            "fovDegrees": 55
+          }
+        },
+        {
+          "frame": 15,
+          "phase": 0.5,
+          "motionSeconds": 0.45,
+          "hitStop": true,
+          "impactFrame": 13,
+          "camera": {
+            "position": [
+              0.13887003901404213,
+              1.448139347428723,
+              2.19498345842781
+            ],
+            "target": [
+              0,
+              1.1,
+              0
+            ],
+            "fovDegrees": 55
+          }
+        },
+        {
+          "frame": 16,
+          "phase": 0.5333333333333333,
+          "motionSeconds": 0.48000000000000004,
+          "hitStop": false,
+          "impactFrame": 13,
+          "camera": {
+            "position": [
+              0.14722492739885717,
+              1.4550925751007138,
+              2.1999507837743257
+            ],
+            "target": [
+              0,
+              1.1,
+              0
+            ],
+            "fovDegrees": 55
+          }
+        },
+        {
+          "frame": 29,
+          "phase": 0.9666666666666667,
+          "motionSeconds": 0.87,
+          "hitStop": false,
+          "impactFrame": 13,
+          "camera": {
+            "position": [
+              0.14969471018568062,
+              1.4502854279682553,
+              2.2001908864928685
+            ],
+            "target": [
+              0,
+              1.1,
+              0
+            ],
+            "fovDegrees": 55
+          }
+        }
+      ]
+    },
+    {
+      "fps": 30,
+      "shot": {
+        "id": "golden_clash",
+        "action": "CLASH",
+        "durationFrames": 30,
+        "hitStopFrames": 3,
+        "camera": {
+          "mode": "top_down",
+          "fovDegrees": 55,
+          "shakeIntensity": 0.5
+        },
+        "vfx": {
+          "sparkBurst": true,
+          "slashTrail": true,
+          "rubble": false
+        }
+      },
+      "samples": [
+        {
+          "frame": 0,
+          "phase": 0,
+          "motionSeconds": 0,
+          "hitStop": false,
+          "impactFrame": 13,
+          "camera": {
+            "position": [
+              0,
+              6,
+              0.001
+            ],
+            "target": [
+              0,
+              0.8,
+              0
+            ],
+            "fovDegrees": 55,
+            "up": [
+              0,
+              0,
+              -1
+            ]
+          }
+        },
+        {
+          "frame": 12,
+          "phase": 0.46153846153846156,
+          "motionSeconds": 0.4153846153846154,
+          "hitStop": false,
+          "impactFrame": 13,
+          "camera": {
+            "position": [
+              0,
+              6,
+              0.001
+            ],
+            "target": [
+              0,
+              0.8,
+              0
+            ],
+            "fovDegrees": 55,
+            "up": [
+              0,
+              0,
+              -1
+            ]
+          }
+        },
+        {
+          "frame": 13,
+          "phase": 0.5,
+          "motionSeconds": 0.45,
+          "hitStop": true,
+          "impactFrame": 13,
+          "camera": {
+            "position": [
+              0.01288435374475382,
+              6.011562698225006,
+              0.009000000000000001
+            ],
+            "target": [
+              0,
+              0.8,
+              0
+            ],
+            "fovDegrees": 55,
+            "up": [
+              0,
+              0,
+              -1
+            ]
+          }
+        },
+        {
+          "frame": 14,
+          "phase": 0.5,
+          "motionSeconds": 0.45,
+          "hitStop": true,
+          "impactFrame": 13,
+          "camera": {
+            "position": [
+              0.009896078128312674,
+              5.995236527224545,
+              0.0010261618037833793
+            ],
+            "target": [
+              0,
+              0.8,
+              0
+            ],
+            "fovDegrees": 55,
+            "up": [
+              0,
+              0,
+              -1
+            ]
+          }
+        },
+        {
+          "frame": 15,
+          "phase": 0.5,
+          "motionSeconds": 0.45,
+          "hitStop": true,
+          "impactFrame": 13,
+          "camera": {
+            "position": [
+              -0.011129960985957865,
+              5.998139347428723,
+              -0.004016541572190149
+            ],
+            "target": [
+              0,
+              0.8,
+              0
+            ],
+            "fovDegrees": 55,
+            "up": [
+              0,
+              0,
+              -1
+            ]
+          }
+        },
+        {
+          "frame": 16,
+          "phase": 0.5333333333333333,
+          "motionSeconds": 0.48000000000000004,
+          "hitStop": false,
+          "impactFrame": 13,
+          "camera": {
+            "position": [
+              -0.0027750726011428243,
+              6.005092575100714,
+              0.0009507837743256876
+            ],
+            "target": [
+              0,
+              0.8,
+              0
+            ],
+            "fovDegrees": 55,
+            "up": [
+              0,
+              0,
+              -1
+            ]
+          }
+        },
+        {
+          "frame": 29,
+          "phase": 0.9666666666666667,
+          "motionSeconds": 0.87,
+          "hitStop": false,
+          "impactFrame": 13,
+          "camera": {
+            "position": [
+              -0.0003052898143193827,
+              6.000285427968255,
+              0.001190886492868169
+            ],
+            "target": [
+              0,
+              0.8,
+              0
+            ],
+            "fovDegrees": 55,
+            "up": [
+              0,
+              0,
+              -1
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "fps": 60,
+      "shot": {
+        "id": "golden_clash",
+        "action": "CLASH",
+        "durationFrames": 30,
+        "hitStopFrames": 3,
+        "camera": {
+          "mode": "wide",
+          "fovDegrees": 55,
+          "shakeIntensity": 0.5
+        },
+        "vfx": {
+          "sparkBurst": true,
+          "slashTrail": true,
+          "rubble": false
+        }
+      },
+      "samples": [
+        {
+          "frame": 0,
+          "phase": 0,
+          "motionSeconds": 0,
+          "hitStop": false,
+          "impactFrame": 13,
+          "camera": {
+            "position": [
+              0,
+              1.65,
+              5.5
+            ],
+            "target": [
+              0,
+              1.1,
+              0
+            ],
+            "fovDegrees": 55
+          }
+        },
+        {
+          "frame": 12,
+          "phase": 0.46153846153846156,
+          "motionSeconds": 0.2076923076923077,
+          "hitStop": false,
+          "impactFrame": 13,
+          "camera": {
+            "position": [
+              0,
+              1.65,
+              5.5
+            ],
+            "target": [
+              0,
+              1.1,
+              0
+            ],
+            "fovDegrees": 55
+          }
+        },
+        {
+          "frame": 13,
+          "phase": 0.5,
+          "motionSeconds": 0.225,
+          "hitStop": true,
+          "impactFrame": 13,
+          "camera": {
+            "position": [
+              0.01288435374475382,
+              1.6615626982250062,
+              5.508
+            ],
+            "target": [
+              0,
+              1.1,
+              0
+            ],
+            "fovDegrees": 55
+          }
+        },
+        {
+          "frame": 14,
+          "phase": 0.5,
+          "motionSeconds": 0.225,
+          "hitStop": true,
+          "impactFrame": 13,
+          "camera": {
+            "position": [
+              0.017796236752765475,
+              1.6565325238414164,
+              5.505044314952292
+            ],
+            "target": [
+              0,
+              1.1,
+              0
+            ],
+            "fovDegrees": 55
+          }
+        },
+        {
+          "frame": 15,
+          "phase": 0.5,
+          "motionSeconds": 0.225,
+          "hitStop": true,
+          "impactFrame": 13,
+          "camera": {
+            "position": [
+              0.009896078128312674,
+              1.6452365272245455,
+              5.500026161803784
+            ],
+            "target": [
+              0,
+              1.1,
+              0
+            ],
+            "fovDegrees": 55
+          }
+        },
+        {
+          "frame": 16,
+          "phase": 0.5333333333333333,
+          "motionSeconds": 0.24000000000000002,
+          "hitStop": false,
+          "impactFrame": 13,
+          "camera": {
+            "position": [
+              -0.002916027103551275,
+              1.6416236838455054,
+              5.4960384517144645
+            ],
+            "target": [
+              0,
+              1.1,
+              0
+            ],
+            "fovDegrees": 55
+          }
+        },
+        {
+          "frame": 29,
+          "phase": 0.9666666666666667,
+          "motionSeconds": 0.435,
+          "hitStop": false,
+          "impactFrame": 13,
+          "camera": {
+            "position": [
+              0.002373098103337038,
+              1.6518233018140416,
+              5.501236431050678
+            ],
+            "target": [
+              0,
+              1.1,
+              0
+            ],
+            "fovDegrees": 55
+          }
+        }
+      ]
+    },
+    {
+      "fps": 60,
+      "shot": {
+        "id": "golden_clash",
+        "action": "CLASH",
+        "durationFrames": 30,
+        "hitStopFrames": 3,
+        "camera": {
+          "mode": "orbit",
+          "fovDegrees": 55,
+          "shakeIntensity": 0.5
+        },
+        "vfx": {
+          "sparkBurst": true,
+          "slashTrail": true,
+          "rubble": false
+        }
+      },
+      "samples": [
+        {
+          "frame": 0,
+          "phase": 0,
+          "motionSeconds": 0,
+          "hitStop": false,
+          "impactFrame": 13,
+          "camera": {
+            "position": [
+              -1.783068598768347,
+              1.9,
+              4.88473810680637
+            ],
+            "target": [
+              0,
+              1.1,
+              0
+            ],
+            "fovDegrees": 55
+          }
+        },
+        {
+          "frame": 12,
+          "phase": 0.46153846153846156,
+          "motionSeconds": 0.2076923076923077,
+          "hitStop": false,
+          "impactFrame": 13,
+          "camera": {
+            "position": [
+              -0.3637028061551704,
+              1.9,
+              5.187265201317054
+            ],
+            "target": [
+              0,
+              1.1,
+              0
+            ],
+            "fovDegrees": 55
+          }
+        },
+        {
+          "frame": 13,
+          "phase": 0.5,
+          "motionSeconds": 0.225,
+          "hitStop": true,
+          "impactFrame": 13,
+          "camera": {
+            "position": [
+              -0.2296942434998955,
+              1.9115626982250062,
+              5.202338805291663
+            ],
+            "target": [
+              0,
+              1.1,
+              0
+            ],
+            "fovDegrees": 55
+          }
+        },
+        {
+          "frame": 14,
+          "phase": 0.5,
+          "motionSeconds": 0.225,
+          "hitStop": true,
+          "impactFrame": 13,
+          "camera": {
+            "position": [
+              -0.10352608700373428,
+              1.9065325238414164,
+              5.203628823619851
+            ],
+            "target": [
+              0,
+              1.1,
+              0
+            ],
+            "fovDegrees": 55
+          }
+        },
+        {
+          "frame": 15,
+          "phase": 0.5,
+          "motionSeconds": 0.225,
+          "hitStop": true,
+          "impactFrame": 13,
+          "camera": {
+            "position": [
+              0.009896078128312674,
+              1.8952365272245455,
+              5.200026161803784
+            ],
+            "target": [
+              0,
+              1.1,
+              0
+            ],
+            "fovDegrees": 55
+          }
+        },
+        {
+          "frame": 16,
+          "phase": 0.5333333333333333,
+          "motionSeconds": 0.24000000000000002,
+          "hitStop": false,
+          "impactFrame": 13,
+          "camera": {
+            "position": [
+              0.11840629665294819,
+              1.8916236838455054,
+              5.1946229603820235
+            ],
+            "target": [
+              0,
+              1.1,
+              0
+            ],
+            "fovDegrees": 55
+          }
+        },
+        {
+          "frame": 29,
+          "phase": 0.9666666666666667,
+          "motionSeconds": 0.435,
+          "hitStop": false,
+          "impactFrame": 13,
+          "camera": {
+            "position": [
+              1.6709894476012261,
+              1.9018233018140416,
+              4.926246022735586
+            ],
+            "target": [
+              0,
+              1.1,
+              0
+            ],
+            "fovDegrees": 55
+          }
+        }
+      ]
+    },
+    {
+      "fps": 60,
+      "shot": {
+        "id": "golden_clash",
+        "action": "CLASH",
+        "durationFrames": 30,
+        "hitStopFrames": 3,
+        "camera": {
+          "mode": "macro",
+          "fovDegrees": 55,
+          "shakeIntensity": 0.5
+        },
+        "vfx": {
+          "sparkBurst": true,
+          "slashTrail": true,
+          "rubble": false
+        }
+      },
+      "samples": [
+        {
+          "frame": 0,
+          "phase": 0,
+          "motionSeconds": 0,
+          "hitStop": false,
+          "impactFrame": 13,
+          "camera": {
+            "position": [
+              0.15,
+              1.45,
+              2.2
+            ],
+            "target": [
+              0,
+              1.1,
+              0
+            ],
+            "fovDegrees": 55
+          }
+        },
+        {
+          "frame": 12,
+          "phase": 0.46153846153846156,
+          "motionSeconds": 0.2076923076923077,
+          "hitStop": false,
+          "impactFrame": 13,
+          "camera": {
+            "position": [
+              0.15,
+              1.45,
+              2.2
+            ],
+            "target": [
+              0,
+              1.1,
+              0
+            ],
+            "fovDegrees": 55
+          }
+        },
+        {
+          "frame": 13,
+          "phase": 0.5,
+          "motionSeconds": 0.225,
+          "hitStop": true,
+          "impactFrame": 13,
+          "camera": {
+            "position": [
+              0.16288435374475382,
+              1.4615626982250063,
+              2.208
+            ],
+            "target": [
+              0,
+              1.1,
+              0
+            ],
+            "fovDegrees": 55
+          }
+        },
+        {
+          "frame": 14,
+          "phase": 0.5,
+          "motionSeconds": 0.225,
+          "hitStop": true,
+          "impactFrame": 13,
+          "camera": {
+            "position": [
+              0.16779623675276548,
+              1.4565325238414164,
+              2.2050443149522914
+            ],
+            "target": [
+              0,
+              1.1,
+              0
+            ],
+            "fovDegrees": 55
+          }
+        },
+        {
+          "frame": 15,
+          "phase": 0.5,
+          "motionSeconds": 0.225,
+          "hitStop": true,
+          "impactFrame": 13,
+          "camera": {
+            "position": [
+              0.15989607812831266,
+              1.4452365272245455,
+              2.2000261618037835
+            ],
+            "target": [
+              0,
+              1.1,
+              0
+            ],
+            "fovDegrees": 55
+          }
+        },
+        {
+          "frame": 16,
+          "phase": 0.5333333333333333,
+          "motionSeconds": 0.24000000000000002,
+          "hitStop": false,
+          "impactFrame": 13,
+          "camera": {
+            "position": [
+              0.14708397289644873,
+              1.4416236838455054,
+              2.1960384517144647
+            ],
+            "target": [
+              0,
+              1.1,
+              0
+            ],
+            "fovDegrees": 55
+          }
+        },
+        {
+          "frame": 29,
+          "phase": 0.9666666666666667,
+          "motionSeconds": 0.435,
+          "hitStop": false,
+          "impactFrame": 13,
+          "camera": {
+            "position": [
+              0.15237309810333705,
+              1.4518233018140416,
+              2.201236431050679
+            ],
+            "target": [
+              0,
+              1.1,
+              0
+            ],
+            "fovDegrees": 55
+          }
+        }
+      ]
+    },
+    {
+      "fps": 60,
+      "shot": {
+        "id": "golden_clash",
+        "action": "CLASH",
+        "durationFrames": 30,
+        "hitStopFrames": 3,
+        "camera": {
+          "mode": "top_down",
+          "fovDegrees": 55,
+          "shakeIntensity": 0.5
+        },
+        "vfx": {
+          "sparkBurst": true,
+          "slashTrail": true,
+          "rubble": false
+        }
+      },
+      "samples": [
+        {
+          "frame": 0,
+          "phase": 0,
+          "motionSeconds": 0,
+          "hitStop": false,
+          "impactFrame": 13,
+          "camera": {
+            "position": [
+              0,
+              6,
+              0.001
+            ],
+            "target": [
+              0,
+              0.8,
+              0
+            ],
+            "fovDegrees": 55,
+            "up": [
+              0,
+              0,
+              -1
+            ]
+          }
+        },
+        {
+          "frame": 12,
+          "phase": 0.46153846153846156,
+          "motionSeconds": 0.2076923076923077,
+          "hitStop": false,
+          "impactFrame": 13,
+          "camera": {
+            "position": [
+              0,
+              6,
+              0.001
+            ],
+            "target": [
+              0,
+              0.8,
+              0
+            ],
+            "fovDegrees": 55,
+            "up": [
+              0,
+              0,
+              -1
+            ]
+          }
+        },
+        {
+          "frame": 13,
+          "phase": 0.5,
+          "motionSeconds": 0.225,
+          "hitStop": true,
+          "impactFrame": 13,
+          "camera": {
+            "position": [
+              0.01288435374475382,
+              6.011562698225006,
+              0.009000000000000001
+            ],
+            "target": [
+              0,
+              0.8,
+              0
+            ],
+            "fovDegrees": 55,
+            "up": [
+              0,
+              0,
+              -1
+            ]
+          }
+        },
+        {
+          "frame": 14,
+          "phase": 0.5,
+          "motionSeconds": 0.225,
+          "hitStop": true,
+          "impactFrame": 13,
+          "camera": {
+            "position": [
+              0.017796236752765475,
+              6.0065325238414164,
+              0.0060443149522913945
+            ],
+            "target": [
+              0,
+              0.8,
+              0
+            ],
+            "fovDegrees": 55,
+            "up": [
+              0,
+              0,
+              -1
+            ]
+          }
+        },
+        {
+          "frame": 15,
+          "phase": 0.5,
+          "motionSeconds": 0.225,
+          "hitStop": true,
+          "impactFrame": 13,
+          "camera": {
+            "position": [
+              0.009896078128312674,
+              5.995236527224545,
+              0.0010261618037833793
+            ],
+            "target": [
+              0,
+              0.8,
+              0
+            ],
+            "fovDegrees": 55,
+            "up": [
+              0,
+              0,
+              -1
+            ]
+          }
+        },
+        {
+          "frame": 16,
+          "phase": 0.5333333333333333,
+          "motionSeconds": 0.24000000000000002,
+          "hitStop": false,
+          "impactFrame": 13,
+          "camera": {
+            "position": [
+              -0.002916027103551275,
+              5.991623683845505,
+              -0.0029615482855353233
+            ],
+            "target": [
+              0,
+              0.8,
+              0
+            ],
+            "fovDegrees": 55,
+            "up": [
+              0,
+              0,
+              -1
+            ]
+          }
+        },
+        {
+          "frame": 29,
+          "phase": 0.9666666666666667,
+          "motionSeconds": 0.435,
+          "hitStop": false,
+          "impactFrame": 13,
+          "camera": {
+            "position": [
+              0.002373098103337038,
+              6.001823301814041,
+              0.002236431050678705
+            ],
+            "target": [
+              0,
+              0.8,
+              0
+            ],
+            "fovDegrees": 55,
+            "up": [
+              0,
+              0,
+              -1
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}
+

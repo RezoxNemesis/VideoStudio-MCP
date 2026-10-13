@@ -1,3 +1,7 @@
+import { nativeCommandSummary, nativeResultPage } from "./native-result-pages.js";
+import { readCommandQueue, mutateCommandQueue, requireCommandQueueAdmission, terminalCommandUpdate, commandIsPending, readCommandReceipt, acknowledgePrunedCommand, readCommandQueueInTransaction, writeCommandQueueInTransaction, mergeCommandReceiptsInTransaction, readCommandReceiptsInTransaction, canonicalCommandResultSha256, readNativeDevice, readNativeDeviceInTransaction, writeNativeDevice, writeNativeDeviceInTransaction } from "./native-command-store.js";
+import { STORYBOARD_NATIVE_ACTIONS, CINEMATIC_BEATS, requireStoryboardNativeVersion, nativeStoryboardParameters, cinematic3dToolSchemas } from "./storyboard-contract.js";
+import { studioToolSchemas, nativeStudioCanonicalAction } from './studio-workbench-contract.js';
 import { DurableObject } from "cloudflare:workers";
 import { McpServer } from "@modelcontextprotocol/server";
 import { createMcpHandler } from "agents/mcp/server";
@@ -16,18 +20,40 @@ const JH = {"content-type":"application/json; charset=UTF-8","cache-control":"no
 const now = () => new Date().toISOString();
 const redactCommand = command => {
   if(!command) return command;
-  const redact = (input,depth=0) => {
-    if(!input || typeof input!=="object" || depth>4) return input;
-    if(Array.isArray(input)) return input.map(v=>redact(v,depth+1));
-    const copy={};
+  const redact = (input,depth=0,omitPrivate=false) => {
+    if(!input || typeof input!=="object") return input;
+    if(depth>64) throw new Error("Command view exceeds the structural depth limit");
+    if(Array.isArray(input)) return input.map(v=>redact(v,depth+1,omitPrivate));
+    const copy=Object.create(null);
     for(const [key,value] of Object.entries(input)){
-      if(["base64","sourceUrl","downloadUrl","download_url","ownerKey","privateOwnerKey","authToken","accessToken"].includes(key))
-        copy[key]="[private command payload redacted]";
-      else copy[key]=value&&typeof value==="object"?redact(value,depth+1):value;
+      if(["base64","sourceurl","downloadurl","signedurl","ownerkey","privateownerkey","authtoken","accesstoken","refreshtoken","authorization","apikey","clientsecret","password","token","bearer"].includes(key.toLowerCase().replace(/[_-]/g,""))){
+        if(!omitPrivate)copy[key]="[private command payload redacted]";
+      }else copy[key]=value&&typeof value==="object"?redact(value,depth+1,omitPrivate):value;
     }
     return copy;
   };
-  return {...command, parameters:redact(command.parameters)};
+  // Removing credential fields keeps the full result view within the original
+  // result byte budget even when many tiny credential values are present.
+  return {...command, parameters:redact(command.parameters),result:redact(command.result,0,true)};
+};
+const redactedImageResult = command => {
+  const result=redactCommand(command).result;
+  return result;
+};
+const nativeImageBlocks = command => {
+  const result=command&&command.result;
+  if(!result||typeof result!=='object')return [];
+  const seen=new Set();
+  return ['contactSheet','sourceArtworkImage','rigPreviewImage','sketchPreviewImage'].flatMap(key=>{
+    const value=result[key];
+    if(!value||typeof value.base64!=='string'||!value.base64||value.base64.length>1500*1024)return [];
+    const mime=value.mimeType||'image/jpeg';
+    if(!['image/jpeg','image/png','image/webp'].includes(mime))return [];
+    const identity=mime+':'+value.base64;
+    if(seen.has(identity))return [];
+    seen.add(identity);
+    return [{type:"image",data:value.base64,mimeType:mime}];
+  });
 };
 const clean = (v,n=5000) => String(v ?? "").trim().slice(0,n);
 const reply = (x,s=200) => new Response(JSON.stringify(x),{status:s,headers:JH});
@@ -55,7 +81,7 @@ const studioMcpAuthorized = async (request,env) => {
   return diff===0;
 };
 const appActionAllowed = (mode,action) => {
-  const a=String(action||"").toLowerCase();
+  const a=nativeStudioCanonicalAction(String(action||"").toLowerCase());
 
   // Permanent privacy wall. Full autonomy never means Gallery enumeration.
   if(a.includes("gallery")||a.includes("media_library")||a.includes("photo_library")) return false;
@@ -229,8 +255,9 @@ export class VideoStudioState extends DurableObject {
     if(!deviceId||String(deviceId).length<8) throw new Error("Invalid native device ID");
     if(!ownerKey||String(ownerKey).length<32) throw new Error("Invalid owner key");
     const hash=await sha256Hex(ownerKey), key="app-owner:"+hash;
-    const bound=await this.ctx.storage.get(key);
-    const dk="app-device:"+deviceId, old=(await this.ctx.storage.get(dk))||{};
+    return this.ctx.storage.transaction(async transaction=>{
+    const bound=await transaction.get(key);
+    const dk="app-device:"+deviceId, old=(await readNativeDeviceInTransaction(transaction,dk))||{};
     if(old.supersededByDeviceId) throw new Error("This native identity is superseded by canonical device "+old.supersededByDeviceId);
     if(bound&&bound!==deviceId) throw new Error("Owner key is already bound to canonical device "+bound);
     if(old.ownerHash&&old.ownerHash!==hash) throw new Error("This native device is already bound to its owner credential");
@@ -271,7 +298,7 @@ export class VideoStudioState extends DurableObject {
       portraitAnimationEngine:clean(meta.portraitAnimationEngine||old.portraitAnimationEngine||"",80),
       onDevicePortraitAi:!!meta.onDevicePortraitAi,
       permissionMode:mode,
-      projects:Array.isArray(meta.projects)?meta.projects.slice(0,100):(old.projects||[]),
+      projects:Array.isArray(meta.projects)?meta.projects:(old.projects||[]),
       controlPaused:!!meta.controlPaused,
       connectionSession:clean(meta.connectionSession||old.connectionSession||"",80),
       galleryAccess:false,
@@ -280,18 +307,21 @@ export class VideoStudioState extends DurableObject {
       nativeApp:true,
       ownerHash:hash
     };
-    await this.ctx.storage.put(key,deviceId);
-    await this.ctx.storage.put(dk,d);
+    for(const field of ["ownerAliases","canonicalIdentity","identityConvergedAt","identityAliasCount"])
+      if(old[field]!==undefined)d[field]=old[field];
+    await transaction.put(key,deviceId);
+    await writeNativeDeviceInTransaction(transaction,dk,d);
     const {ownerHash,...safe}=d;
     return safe;
+    });
   }
   async appResolve(ownerKey){
     if(!ownerKey) return null;
     const hash=await sha256Hex(ownerKey), id=await this.ctx.storage.get("app-owner:"+hash);
     if(!id) return null;
-    let device=(await this.ctx.storage.get("app-device:"+id))||null;
+    let device=(await readNativeDevice(this.ctx.storage,"app-device:"+id))||null;
     if(device&&device.supersededByDeviceId){
-      const canonical=(await this.ctx.storage.get("app-device:"+device.supersededByDeviceId))||null;
+      const canonical=(await readNativeDevice(this.ctx.storage,"app-device:"+device.supersededByDeviceId))||null;
       if(canonical){
         await this.ctx.storage.put("app-owner:"+hash,canonical.deviceId);
         device=canonical;
@@ -305,17 +335,17 @@ export class VideoStudioState extends DurableObject {
     const primaryHash=await sha256Hex(primaryOwnerKey);
     let canonicalId=await this.ctx.storage.get("app-owner:"+primaryHash);
     if(!canonicalId&&primaryDeviceId){
-      const candidate=await this.ctx.storage.get("app-device:"+String(primaryDeviceId));
+      const candidate=await readNativeDevice(this.ctx.storage,"app-device:"+String(primaryDeviceId));
       if(candidate&&candidate.ownerHash===primaryHash){
         canonicalId=candidate.deviceId;
         await this.ctx.storage.put("app-owner:"+primaryHash,canonicalId);
       }
     }
     if(!canonicalId) throw new Error("Primary native identity could not be proven");
-    let canonical=await this.ctx.storage.get("app-device:"+canonicalId);
+    let canonical=await readNativeDevice(this.ctx.storage,"app-device:"+canonicalId);
     if(!canonical) throw new Error("Canonical native device record is missing");
     if(canonical.supersededByDeviceId){
-      const next=await this.ctx.storage.get("app-device:"+canonical.supersededByDeviceId);
+      const next=await readNativeDevice(this.ctx.storage,"app-device:"+canonical.supersededByDeviceId);
       if(!next) throw new Error("Canonical native identity chain is broken");
       canonical=next;
       canonicalId=next.deviceId;
@@ -339,50 +369,54 @@ export class VideoStudioState extends DurableObject {
         await this.ctx.storage.put("app-owner:"+hash,canonicalId);
         continue;
       }
-      const legacy=await this.ctx.storage.get("app-device:"+id);
+      const legacy=await readNativeDevice(this.ctx.storage,"app-device:"+id);
       if(!legacy) throw new Error("Legacy native device record is missing");
 
-      const currentRows=(await this.ctx.storage.get("app-v3-cl:"+canonicalId))||[];
-      const legacyRows=(await this.ctx.storage.get("app-v3-cl:"+id))||[];
-      const byId=new Map(currentRows.filter(Boolean).map(row=>[row.id,row]));
-      let seq=Math.max(
-        Number((await this.ctx.storage.get("app-v3-seq:"+canonicalId))||0),
-        ...currentRows.map(row=>Number(row&&row.seq||0)),
-        0
-      );
-      for(const row of legacyRows){
-        if(!row||!row.id||byId.has(row.id)) continue;
-        seq++;
-        byId.set(row.id,{
-          ...row,
-          seq,
-          deviceId:canonicalId,
-          migratedFromDeviceId:id,
-          migratedAt:now()
-        });
-      }
-      const merged=[...byId.values()].sort((a,b)=>Number(a.seq||0)-Number(b.seq||0)).slice(-160);
-      await this.ctx.storage.put("app-v3-cl:"+canonicalId,merged);
-      await this.ctx.storage.put("app-v3-seq:"+canonicalId,seq);
-
-      legacy.supersededByDeviceId=canonicalId;
-      legacy.supersededAt=now();
-      legacy.canonicalIdentity=false;
-      await this.ctx.storage.put("app-device:"+id,legacy);
-      await this.ctx.storage.put("app-owner:"+hash,canonicalId);
+      await this.ctx.storage.transaction(async transaction=>{
+        const liveCanonical=await readNativeDeviceInTransaction(transaction,"app-device:"+canonicalId),
+          liveLegacy=await readNativeDeviceInTransaction(transaction,"app-device:"+id);
+        if(!liveCanonical||!liveLegacy||liveCanonical.ownerHash!==canonical.ownerHash||liveLegacy.ownerHash!==legacy.ownerHash
+          ||await transaction.get("app-owner:"+hash)!==id||await transaction.get("app-owner:"+primaryHash)!==canonicalId)
+          throw new Error("Native ownership changed during alias convergence");
+        const targetKey="app-v3-cl:"+canonicalId,sourceKey="app-v3-cl:"+id;
+        const currentRows=await readCommandQueueInTransaction(transaction,targetKey),legacyRows=await readCommandQueueInTransaction(transaction,sourceKey);
+        const mergedProof=await mergeCommandReceiptsInTransaction(transaction,targetKey,sourceKey);
+        const completed=new Map((await readCommandReceiptsInTransaction(transaction,targetKey)).map(row=>[row.id,row]));
+        const byId=new Map(currentRows.map(row=>[row.id,row]));
+        let seq=Math.max(Number((await transaction.get("app-v3-seq:"+canonicalId))||0),mergedProof.highestSeq,...currentRows.map(row=>row.seq),0);
+        for(const row of legacyRows){
+          if(byId.has(row.id)){
+            const current=byId.get(row.id);
+            if(commandIsPending(current)!==commandIsPending(row)||current.action!==row.action
+                ||await canonicalCommandResultSha256(current.parameters)!==await canonicalCommandResultSha256(row.parameters))throw new Error("Conflicting accepted alias command identity");
+            if(!commandIsPending(current)&&(current.status!==row.status||await canonicalCommandResultSha256(current.result)!==await canonicalCommandResultSha256(row.result)))throw new Error("Conflicting terminal alias result");
+            continue;
+          }
+          if(completed.has(row.id))continue;
+          byId.set(row.id,{...row,seq:++seq,deviceId:canonicalId,migratedFromDeviceId:id,migratedAt:now()});
+        }
+        const merged=[...byId.values()].sort((left,right)=>left.seq-right.seq);
+        await writeCommandQueueInTransaction(transaction,targetKey,merged,new Set(merged.filter(row=>!commandIsPending(row)).map(row=>row.id)));
+        await transaction.put("app-v3-seq:"+canonicalId,seq);
+        liveLegacy.supersededByDeviceId=canonicalId;liveLegacy.supersededAt=now();liveLegacy.canonicalIdentity=false;
+        await writeNativeDeviceInTransaction(transaction,"app-device:"+id,liveLegacy);await transaction.put("app-owner:"+hash,canonicalId);
+      });
     }
 
-    canonical.ownerAliases=[...aliases];
-    canonical.canonicalIdentity=true;
-    canonical.identityConvergedAt=now();
-    canonical.identityAliasCount=canonical.ownerAliases.length;
-    await this.ctx.storage.put("app-device:"+canonicalId,canonical);
+    canonical=await this.ctx.storage.transaction(async transaction=>{
+      const live=await readNativeDeviceInTransaction(transaction,"app-device:"+canonicalId);
+      if(!live||live.ownerHash!==canonical.ownerHash||await transaction.get("app-owner:"+primaryHash)!==canonicalId)
+        throw new Error("Canonical native ownership changed during convergence");
+      const combined=new Set(Array.isArray(live.ownerAliases)?live.ownerAliases:[]);for(const alias of aliases)combined.add(alias);
+      live.ownerAliases=[...combined];live.canonicalIdentity=true;live.identityConvergedAt=now();live.identityAliasCount=combined.size;
+      await writeNativeDeviceInTransaction(transaction,"app-device:"+canonicalId,live);return live;
+    });
     return {
       ok:true,
       canonicalDeviceId:canonicalId,
       appVersion:canonical.appVersion||"",
       aliasCount:canonical.ownerAliases.length,
-      retainedCommandCount:((await this.ctx.storage.get("app-v3-cl:"+canonicalId))||[]).length,
+      retainedCommandCount:(await readCommandQueue(this.ctx.storage,"app-v3-cl:"+canonicalId)).length,
       galleryAccess:false
     };
   }
@@ -572,7 +606,7 @@ export class VideoStudioState extends DurableObject {
       throw new Error("Hybrid binding token expired");
     }
     if(record.webDeviceId!==String(webDeviceId)) throw new Error("Hybrid binding token belongs to another Studio Web device");
-    const native=await this.ctx.storage.get("app-device:"+record.nativeDeviceId);
+    const native=await readNativeDevice(this.ctx.storage,"app-device:"+record.nativeDeviceId);
     if(!native) throw new Error("Native device is no longer registered");
     const hybridKey=(crypto.randomUUID()+crypto.randomUUID()).replace(/-/g,"");
     const hybridHash=await sha256Hex(hybridKey);
@@ -604,62 +638,74 @@ export class VideoStudioState extends DurableObject {
   async appResolveHybrid(hybridKey){
     if(!hybridKey||String(hybridKey).length<32) return null;
     const hybridHash=await sha256Hex(hybridKey);
-    const binding=await this.ctx.storage.get("hybrid-binding:"+hybridHash);
-    if(!binding||binding.revoked) return null;
-    const native=await this.ctx.storage.get("app-device:"+binding.nativeDeviceId);
-    if(!native) return null;
-    binding.lastUsedAt=Date.now();
-    await this.ctx.storage.put("hybrid-binding:"+hybridHash,binding);
-    const {ownerHash,...safeBinding}=binding;
-    const {ownerHash:nativeOwnerHash,...safeNative}=native;
-    return {binding:safeBinding,native:safeNative};
+    return this.ctx.storage.transaction(async transaction=>{
+      const binding=await transaction.get("hybrid-binding:"+hybridHash);
+      if(!binding||binding.revoked) return null;
+      const canonicalId=await transaction.get("app-owner:"+binding.ownerHash);
+      if(!canonicalId) return null;
+      const native=await readNativeDeviceInTransaction(transaction,"app-device:"+canonicalId);
+      if(!native||native.supersededByDeviceId) return null;
+      binding.nativeDeviceId=canonicalId;binding.lastUsedAt=Date.now();
+      await transaction.put("hybrid-binding:"+hybridHash,binding);
+      const {ownerHash,...safeBinding}=binding;
+      const {ownerHash:nativeOwnerHash,...safeNative}=native;
+      return {binding:safeBinding,native:safeNative};
+    });
   }
   async appEnqueueHybrid(hybridKey,action,parameters={}){
     const resolved=await this.appResolveHybrid(hybridKey);
     if(!resolved) throw new Error("Private hybrid binding rejected");
+    parameters=nativeStoryboardParameters(action,parameters);
     const d=resolved.native;
+    requireStoryboardNativeVersion(d,action,parameters);
     const min=Number(d.protocolMin||d.protocolVersion||0), max=Number(d.protocolMax||d.protocolVersion||0);
     if(!(min<=3&&max>=3)) throw new Error("Hybrid native device does not support MCP v3");
     if(d.controlPaused) throw new Error("ChatGPT control is paused on the phone");
     if(!appActionAllowed(d.permissionMode,action)) throw new Error("Action blocked by device permission mode or Gallery privacy boundary: "+d.permissionMode);
-    const queueKey="app-v3-cl:"+d.deviceId, existing=(await this.ctx.storage.get(queueKey))||[];
-    if(existing.filter(c=>c.status==="queued"||c.status==="claimed"||c.status==="waiting_native").length>=160) throw new Error("Native command queue is full; reconnect the app before adding work");
-    const lastSeenMs=Date.parse(String(d.lastSeenAt||""))||0;
-    const fresh=lastSeenMs>0&&(Date.now()-lastSeenMs)<=45000;
-    const sk="app-v3-seq:"+d.deviceId, seq=((await this.ctx.storage.get(sk))||0)+1;
-    await this.ctx.storage.put(sk,seq);
-    const command={
-      id:crypto.randomUUID(),
-      seq,
-      protocolVersion:3,
-      deviceId:d.deviceId,
-      action,
-      parameters,
-      status:fresh?"queued":"waiting_native",
-      waitingReason:fresh?"":"native_offline",
-      createdAt:now(),
-      completedAt:null,
-      result:null
-    };
-    const list=[...existing,command];
-    const pending=list.filter(c=>c.status==="queued"||c.status==="claimed"||c.status==="waiting_native");
-    const terminal=list.filter(c=>c.status!=="queued"&&c.status!=="claimed"&&c.status!=="waiting_native");
-    const terminalSlots=Math.max(0,160-pending.length);
-    const retained=[...(terminalSlots?terminal.slice(-terminalSlots):[]),...pending].sort((a,b)=>a.seq-b.seq);
-    await this.ctx.storage.put(queueKey,retained.slice(-160));
-    return command;
+    return this.appQueueNativeV3(d,action,parameters,{hybridHash:await sha256Hex(hybridKey),bindingId:resolved.binding.id});
+  }
+  async appQueueNativeV3(device,action,parameters,identity){
+    const key="app-v3-cl:"+device.deviceId,sequenceKey="app-v3-seq:"+device.deviceId;
+    return this.ctx.storage.transaction(async transaction=>{
+      let ownerHash=identity&&identity.ownerHash;
+      if(identity&&identity.hybridHash){
+        const binding=await transaction.get("hybrid-binding:"+identity.hybridHash);
+        if(!binding||binding.revoked||binding.id!==identity.bindingId||binding.nativeDeviceId!==device.deviceId)
+          throw new Error("Private hybrid binding changed before command admission; retry the current binding");
+        ownerHash=binding.ownerHash;
+      }
+      const live=await readNativeDeviceInTransaction(transaction,"app-device:"+device.deviceId);
+      if(!ownerHash||!live||live.supersededByDeviceId||!live.ownerHash
+          ||device.ownerHash&&device.ownerHash!==live.ownerHash
+          ||await transaction.get("app-owner:"+ownerHash)!==device.deviceId)
+        throw new Error("Native identity changed before command admission; retry the current binding");
+      const min=Number(live.protocolMin||live.protocolVersion||0),max=Number(live.protocolMax||live.protocolVersion||0);
+      if(!(min<=3&&max>=3))throw new Error("VideoStudio stable MCP compatibility lane v3 is not registered");
+      requireStoryboardNativeVersion(live,action,parameters);
+      if(live.controlPaused)throw new Error("ChatGPT control is paused on the phone");
+      if(!appActionAllowed(live.permissionMode,action))throw new Error("Action blocked by device permission mode or Gallery privacy boundary: "+live.permissionMode);
+      const rows=await readCommandQueueInTransaction(transaction,key);
+      const lastSeenMs=Date.parse(String(live.lastSeenAt||""))||0,fresh=lastSeenMs>0&&Date.now()-lastSeenMs<=45000;
+      const sequence=Math.max(Number((await transaction.get(sequenceKey))||0),...rows.map(row=>row.seq),0)+1;
+      const command={id:crypto.randomUUID(),seq:sequence,protocolVersion:3,deviceId:device.deviceId,action,parameters,
+        status:fresh?"queued":"waiting_native",waitingReason:fresh?"":"native_offline",createdAt:now(),completedAt:null,result:null};
+      requireCommandQueueAdmission(rows,command);
+      await transaction.put(sequenceKey,sequence);
+      rows.push(command);await writeCommandQueueInTransaction(transaction,key,rows);
+      return command;
+    });
   }
   async appCommandHybrid(hybridKey,id){
     const resolved=await this.appResolveHybrid(hybridKey);
     if(!resolved) throw new Error("Private hybrid binding rejected");
-    const list=(await this.ctx.storage.get("app-v3-cl:"+resolved.native.deviceId))||[];
-    return list.find(c=>c.id===id)||null;
+    const list=await readCommandQueue(this.ctx.storage,"app-v3-cl:"+resolved.native.deviceId);
+    return list.find(c=>c.id===id)||await readCommandReceipt(this.ctx.storage,"app-v3-cl:"+resolved.native.deviceId,id);
   }
   async appStatusHybrid(hybridKey){
     const resolved=await this.appResolveHybrid(hybridKey);
     if(!resolved) return {connected:false,hybrid:true,error:"Private hybrid binding rejected"};
     const d=resolved.native, binding=resolved.binding;
-    const list=(await this.ctx.storage.get("app-v3-cl:"+d.deviceId))||[];
+    const list=await readCommandQueue(this.ctx.storage,"app-v3-cl:"+d.deviceId);
     const nativeLast=Date.parse(String(d.lastSeenAt||""))||0;
     const nativeAge=nativeLast>0?Math.max(0,Date.now()-nativeLast):Number.MAX_SAFE_INTEGER;
     const nativeFresh=nativeAge<=45000;
@@ -687,7 +733,7 @@ export class VideoStudioState extends DurableObject {
       },
       pendingNativeCommands:pending,
       waitingNative:!nativeFresh&&pending>0,
-      lastCommand:redactCommand(list[list.length-1]||null),
+      lastCommand:nativeCommandSummary(list[list.length-1]||null),
       galleryAccess:false
     };
   }
@@ -750,11 +796,11 @@ export class VideoStudioState extends DurableObject {
     const registered=await this.appRegister(deviceId,newOwnerKey,meta);
     if(registered&&registered.__staleClient) throw new Error("New Native Agent generation is stale");
     const newHash=await sha256Hex(newOwnerKey);
-    const device=(await this.ctx.storage.get("app-device:"+deviceId))||{};
+    const device=(await readNativeDevice(this.ctx.storage,"app-device:"+deviceId))||{deviceId};
     device.reboundFromDeviceId=record.oldDeviceId||"";
     device.reboundAt=now();
     device.stableEndpointAliases=2;
-    await this.ctx.storage.put("app-device:"+deviceId,device);
+    await writeNativeDevice(this.ctx.storage,"app-device:"+deviceId,device);
 
     // Preserve the old ChatGPT connector credential as an alias to the new
     // Native Agent while the newly installed app keeps its own fresh secret.
@@ -777,8 +823,10 @@ export class VideoStudioState extends DurableObject {
     return d&&d.deviceId===deviceId?d:null;
   }
   async appEnqueue(ownerKey,action,parameters={}){
+    parameters=nativeStoryboardParameters(action,parameters);
     const d=await this.appResolve(ownerKey);
     if(!d) throw new Error("Private App MCP credential rejected");
+    requireStoryboardNativeVersion(d,action,parameters);
     if(d.controlPaused) throw new Error("ChatGPT control is paused on the phone");
     if(!appActionAllowed(d.permissionMode,action)) throw new Error("Action blocked by device permission mode or Gallery privacy boundary: "+d.permissionMode);
     const sk="app-seq:"+d.deviceId, seq=((await this.ctx.storage.get(sk))||0)+1;
@@ -824,9 +872,9 @@ export class VideoStudioState extends DurableObject {
       }
     }
     await this.ctx.storage.put(k,list.slice(-100));
-    const d=(await this.ctx.storage.get("app-device:"+deviceId))||{};
+    const d=(await readNativeDevice(this.ctx.storage,"app-device:"+deviceId))||{};
     d.lastSeenAt=now();
-    await this.ctx.storage.put("app-device:"+deviceId,d);
+    await writeNativeDevice(this.ctx.storage,"app-device:"+deviceId,d);
     return list[i];
   }
   async appCommand(ownerKey,id){
@@ -843,7 +891,7 @@ export class VideoStudioState extends DurableObject {
       connected:true,
       device:((({ownerHash,...safe})=>safe)(d)),
       pendingCommands:list.filter(c=>c.status==="queued"||c.status==="claimed"||c.status==="waiting_native").length,
-      lastCommand:redactCommand(list[list.length-1]||null),
+      lastCommand:nativeCommandSummary(list[list.length-1]||null),
       projectCount:Array.isArray(d.projects)?d.projects.length:0
     };
   }
@@ -856,40 +904,17 @@ export class VideoStudioState extends DurableObject {
     return d;
   }
   async appEnqueueV3(ownerKey,action,parameters={}){
+    parameters=nativeStoryboardParameters(action,parameters);
     const d=await this.appV3Device(ownerKey);
+    requireStoryboardNativeVersion(d,action,parameters);
     if(d.controlPaused) throw new Error("ChatGPT control is paused on the phone");
     if(!appActionAllowed(d.permissionMode,action)) throw new Error("Action blocked by device permission mode or Gallery privacy boundary: "+d.permissionMode);
-    const queueKey="app-v3-cl:"+d.deviceId, existing=(await this.ctx.storage.get(queueKey))||[];
-    if(existing.filter(c=>c.status==="queued"||c.status==="claimed"||c.status==="waiting_native").length>=160) throw new Error("Native command queue is full; reconnect the app before adding work");
-    const lastSeenMs=Date.parse(String(d.lastSeenAt||""))||0;
-    const fresh=lastSeenMs>0&&(Date.now()-lastSeenMs)<=45000;
-    if(!fresh){
+    const lastSeenMs=Date.parse(String(d.lastSeenAt||""))||0,fresh=lastSeenMs>0&&Date.now()-lastSeenMs<=45000;
+    if(!fresh&&!STORYBOARD_NATIVE_ACTIONS.has(action)){
       const webCommand=await this.appTryStudioWebFallback(ownerKey,action,parameters);
-      if(webCommand) return webCommand;
+      if(webCommand)return webCommand;
     }
-    const sk="app-v3-seq:"+d.deviceId, seq=((await this.ctx.storage.get(sk))||0)+1;
-    await this.ctx.storage.put(sk,seq);
-    const c={
-      id:crypto.randomUUID(),
-      seq,
-      protocolVersion:3,
-      deviceId:d.deviceId,
-      action,
-      parameters,
-      status:fresh?"queued":"waiting_native",
-      waitingReason:fresh?"":"native_offline",
-      createdAt:now(),
-      completedAt:null,
-      result:null
-    };
-    const k="app-v3-cl:"+d.deviceId, list=(await this.ctx.storage.get(k))||[];
-    list.push(c);
-    const pending=list.filter(c=>c.status==="queued"||c.status==="claimed"||c.status==="waiting_native");
-    const terminal=list.filter(c=>c.status!=="queued"&&c.status!=="claimed"&&c.status!=="waiting_native");
-    const terminalSlots=Math.max(0,160-pending.length);
-    const retained=[...(terminalSlots?terminal.slice(-terminalSlots):[]),...pending].sort((a,b)=>a.seq-b.seq);
-    await this.ctx.storage.put(k,retained.slice(-160));
-    return c;
+    return this.appQueueNativeV3(d,action,parameters,{ownerHash:await sha256Hex(ownerKey)});
   }
   async appCommandsV3(deviceId,ownerKey,after=0,waitMs=0){
     const d=await this.appAuth(deviceId,ownerKey);
@@ -899,22 +924,19 @@ export class VideoStudioState extends DurableObject {
     const until=Date.now()+Math.max(0,Math.min(20000,Number(waitMs||0)));
     const key="app-v3-cl:"+deviceId;
     while(true){
-      const list=(await this.ctx.storage.get(key))||[], nowMs=Date.now();
-      const found=[];
-      let changed=false;
-      for(let i=0;i<list.length;i++){
-        const c=list[i];
-        // A later ack must never hide earlier unacknowledged commands.
-        // Terminal records are filtered by status; queued/expired leases are always eligible.
-        const expired=c.status==="claimed"&&Number(c.leaseUntil||0)<=nowMs;
-        if(c.status==="queued"||c.status==="waiting_native"||expired){
-          list[i]={...c,status:"claimed",waitingReason:"",claimedAt:now(),leaseUntil:nowMs+60000,claimCount:Number(c.claimCount||0)+1};
-          found.push(list[i]);
-          changed=true;
-          if(found.length>=4) break;
+      const found=await mutateCommandQueue(this.ctx.storage,key,(list)=>{
+        const nowMs=Date.now(),claimed=[];let replyBytes=2;
+        for(let i=0;i<list.length;i++){
+          const row=list[i],expired=row.status==="claimed"&&Number(row.leaseUntil||0)<=nowMs;
+          if(row.status==="queued"||row.status==="waiting_native"||expired){
+            const leased={...row,status:"claimed",waitingReason:"",claimedAt:now(),leaseUntil:nowMs+60000,claimCount:Number(row.claimCount||0)+1};
+            const bytes=new TextEncoder().encode(JSON.stringify(leased)).byteLength+1;
+            if(replyBytes+bytes>3*1024*1024)break;
+            list[i]=leased;replyBytes+=bytes;claimed.push(leased);if(claimed.length>=4)break;
+          }
         }
-      }
-      if(changed) await this.ctx.storage.put(key,list.slice(-160));
+        return {rows:list,result:claimed,changed:claimed.length>0};
+      });
       if(found.length||Date.now()>=until) return found;
       await new Promise(resolve=>setTimeout(resolve,500));
     }
@@ -924,34 +946,34 @@ export class VideoStudioState extends DurableObject {
     if(!d) throw new Error("VideoStudio v3 native authorization failed");
     const min=Number(d.protocolMin||d.protocolVersion||0), max=Number(d.protocolMax||d.protocolVersion||0);
     if(!(min<=3&&max>=3)) throw new Error("VideoStudio stable MCP compatibility lane v3 is not registered");
-    const k="app-v3-cl:"+deviceId, list=(await this.ctx.storage.get(k))||[], i=list.findIndex(c=>c.id===id);
-    if(i<0) return null;
-    const completedParameters={...(list[i].parameters||{})};
-    if(completedParameters.base64) completedParameters.base64="[completed payload purged]";
-    if(completedParameters.sourceUrl) completedParameters.sourceUrl="[temporary URL purged]";
-    if(completedParameters.nativeParameters && typeof completedParameters.nativeParameters==="object"){
-      const inner={...completedParameters.nativeParameters};
-      if(inner.base64) inner.base64="[completed payload purged]";
-      if(inner.sourceUrl) inner.sourceUrl="[temporary URL purged]";
-      completedParameters.nativeParameters=inner;
-    }
-    list[i]={...list[i],parameters:completedParameters,status:clean(status,30)||"completed",completedAt:now(),leaseUntil:0,result};
-    for(let j=0;j<list.length;j++){
-      if(j!==i&&list[j]&&list[j].result&&list[j].result.contactSheet&&list[j].result.contactSheet.base64){
-        list[j]={...list[j],result:{...list[j].result,contactSheet:{...list[j].result.contactSheet,base64:undefined,expired:true}}};
+    const key="app-v3-cl:"+deviceId;
+    const acknowledged=await mutateCommandQueue(this.ctx.storage,key,async(list,transaction)=>{
+      const index=list.findIndex(row=>row.id===id);
+      if(index<0)return {rows:list,changed:false,result:await acknowledgePrunedCommand(transaction,key,id,result,status)};
+      const old=list[index],parameters={...(old.parameters||{})};
+      if(parameters.base64)parameters.base64="[completed payload purged]";
+      if(parameters.sourceUrl)parameters.sourceUrl="[temporary URL purged]";
+      if(parameters.bearer)parameters.bearer="[private runner credential purged]";
+      if(parameters.nativeParameters&&typeof parameters.nativeParameters==="object"){
+        parameters.nativeParameters={...parameters.nativeParameters};
+        if(parameters.nativeParameters.base64)parameters.nativeParameters.base64="[completed payload purged]";
+        if(parameters.nativeParameters.sourceUrl)parameters.nativeParameters.sourceUrl="[temporary URL purged]";
       }
-    }
-    await this.ctx.storage.put(k,list.slice(-160));
-    const stored=(await this.ctx.storage.get("app-device:"+deviceId))||d;
-    stored.lastSeenAt=now();
-    await this.ctx.storage.put("app-device:"+deviceId,stored);
-    return list[i];
+      const updated=await terminalCommandUpdate(old,result,status,parameters);
+      list[index]=updated;
+      const stored=(await readNativeDeviceInTransaction(transaction,"app-device:"+deviceId))||d;
+      stored.lastSeenAt=now();await writeNativeDeviceInTransaction(transaction,"app-device:"+deviceId,stored);
+      return {rows:list,result:{...updated,result,resultReplayed:!commandIsPending(old)}};
+    });
+    return acknowledged;
   }
   async appCommandV3(ownerKey,id){
     const d=await this.appV3Device(ownerKey);
-    const list=(await this.ctx.storage.get("app-v3-cl:"+d.deviceId))||[];
+    const list=await readCommandQueue(this.ctx.storage,"app-v3-cl:"+d.deviceId);
     const native=list.find(c=>c.id===id);
-    if(native) return native;
+    if(native){if(native.resultSha256&&native.resultSha256!==await canonicalCommandResultSha256(native.result))throw new Error("Retained result checksum conflicts with original receipt");return native;}
+    const compact=await readCommandReceipt(this.ctx.storage,"app-v3-cl:"+d.deviceId,id);
+    if(compact)return compact;
     const fallback=await this.appResolveStudioWebFallback(ownerKey);
     if(!fallback) return null;
     const webDeviceId=fallback.binding.webDeviceId;
@@ -980,7 +1002,7 @@ export class VideoStudioState extends DurableObject {
         error:"Installed VideoStudio does not expose the stable MCP compatibility lane v3"
       };
     }
-    const list=(await this.ctx.storage.get("app-v3-cl:"+d.deviceId))||[];
+    const list=await readCommandQueue(this.ctx.storage,"app-v3-cl:"+d.deviceId);
     const {ownerHash,...safe}=d;
     const lastSeenMs=Date.parse(String(d.lastSeenAt||""))||0;
     const ageMs=lastSeenMs>0?Math.max(0,Date.now()-lastSeenMs):Number.MAX_SAFE_INTEGER;
@@ -1028,7 +1050,7 @@ export class VideoStudioState extends DurableObject {
       waitingNativeCommands:waitingNative,
       canAcceptAutonomousWork:true,
       queuedExecutionPolicy:fallbackConnected?"studio-web-when-compatible-otherwise-native-on-reconnect":"native-on-reconnect",
-      lastCommand:redactCommand(list[list.length-1]||null),
+      lastCommand:nativeCommandSummary(list[list.length-1]||null),
       projectCount:Array.isArray(d.projects)?d.projects.length:0,
       galleryAccess:false,
       directAttachmentIngest:true,
@@ -1511,25 +1533,25 @@ function serverFor(env,hybridKey=""){
     if(native){
       const c=await commandNative(st,native,deviceId,commandId);
       if(!c) return out({error:"Command not found"});
-      const sheet=c.result&&c.result.contactSheet;
-      if(sheet&&sheet.base64){
-        const safeResult={...c.result,contactSheet:{...sheet,base64:undefined}};
+      const images=nativeImageBlocks(c);
+      if(images.length){
+        const safeResult=redactedImageResult(c);
         return {content:[
           {type:"text",text:JSON.stringify({...redactCommand(c),result:safeResult})},
-          {type:"image",data:sheet.base64,mimeType:sheet.mimeType||"image/jpeg"}
+          ...images
         ]};
       }
       return out(redactCommand(c));
     }
     const c=await st.command(deviceId,commandId);
     if(!c) return out({error:"Command not found"});
-    const sheet=c.result&&c.result.contactSheet;
-    if(sheet&&sheet.base64){
-      const safeResult={...c.result,contactSheet:{...sheet,base64:undefined}};
+    const images=nativeImageBlocks(c);
+    if(images.length){
+      const safeResult=redactedImageResult(c);
       const safeCommand={...redactCommand(c),result:safeResult};
       return {content:[
         {type:"text",text:JSON.stringify(safeCommand)},
-        {type:"image",data:sheet.base64,mimeType:sheet.mimeType||"image/jpeg"}
+        ...images
       ]};
     }
     return out(redactCommand(c));
@@ -1617,16 +1639,27 @@ function serverFor(env,hybridKey=""){
       try{
         const command=await st.appCommandHybrid(hybridKey,commandId);
         if(!command) return out({error:"Command not found",hybrid:true});
-        const sheet=command.result&&command.result.contactSheet;
-        if(sheet&&sheet.base64){
-          const safeResult={...command.result,contactSheet:{...sheet,base64:undefined}};
+        const view=redactCommand(command);
+        if(command.result&&new TextEncoder().encode(JSON.stringify(view.result)).byteLength>48*1024){
+          const page=await nativeResultPage(command,view.result,0);page.retrievalTool="hybrid_get_command_result_page";
+          return {content:[{type:"text",text:JSON.stringify({...page,hybrid:true})},...nativeImageBlocks(command)]};
+        }
+        const images=nativeImageBlocks(command);
+        if(images.length){
+          const safeResult=redactedImageResult(command);
           return {content:[
             {type:"text",text:JSON.stringify({...redactCommand(command),result:safeResult,hybrid:true})},
-            {type:"image",data:sheet.base64,mimeType:sheet.mimeType||"image/jpeg"}
+            ...images
           ]};
         }
         return out({...redactCommand(command),hybrid:true});
       }catch(e){ return out({error:e.message,hybrid:true}); }
+    });
+
+    s.registerTool("hybrid_get_command_result_page",{description:"Read a bounded JSON fragment of the complete retained native result through this exact private hybrid binding; concatenate pages and verify viewSha256. No result is silently truncated.",inputSchema:{commandId:z.string().min(8),pageIndex:z.number().int().min(0).max(255).optional()},annotations:{readOnlyHint:true}},async({commandId,pageIndex})=>{
+      try{const command=await st.appCommandHybrid(hybridKey,commandId);if(!command)return out({error:"Command not found",hybrid:true});
+        const page=await nativeResultPage(command,redactCommand(command).result,pageIndex||0);page.retrievalTool="hybrid_get_command_result_page";return out({...page,hybrid:true});}
+      catch(error){return out({error:error.message,hybrid:true});}
     });
 
     s.registerTool("hybrid_revoke_native_binding",{
@@ -1674,12 +1707,18 @@ function serverForApp(env,ownerKey,protocolVersion=1){
     try{
       const c=await readCommand(commandId);
       if(!c) return out({error:"Command not found"});
-      const sheet=c.result&&c.result.contactSheet;
-      if(sheet&&sheet.base64){
-        const safeResult={...c.result,contactSheet:{...sheet,base64:undefined}};
+      const view=redactCommand(c);
+      if(c.resultExpired&&!c.result)return out({command:nativeCommandSummary(c),resultExpired:true,resultRetained:false});
+      if(c.result&&new TextEncoder().encode(JSON.stringify(view.result)).byteLength>48*1024){
+        const page=await nativeResultPage(c,view.result,0);
+        return {content:[{type:"text",text:JSON.stringify(page)},...nativeImageBlocks(c)]};
+      }
+      const images=nativeImageBlocks(c);
+      if(images.length){
+        const safeResult=redactedImageResult(c);
         return {content:[
           {type:"text",text:JSON.stringify({...redactCommand(c),result:safeResult})},
-          {type:"image",data:sheet.base64,mimeType:sheet.mimeType||"image/jpeg"}
+          ...images
         ]};
       }
       return out(redactCommand(c));
@@ -1689,8 +1728,12 @@ function serverForApp(env,ownerKey,protocolVersion=1){
   s.registerTool("app_status",{description:isV3?"Check the VideoStudio v3 Native Agent connection, protocol version, permission mode, projects and pending native work. Gallery access is always false.":"Check the private native VideoStudio Android connection, permission mode, projects, control-pause state and pending work. Gallery access is always false.",inputSchema:{}},async()=>out(await readStatus()));
 
   s.registerTool("app_capabilities",{description:isV3?"Read VideoStudio v3 Native Agent capabilities and architecture guarantees.":"Read the native v1.1 editing, AI, render and privacy capabilities available to ChatGPT.",inputSchema:{}},async()=>out({
-    version:isV3?"3.4.2":"1.1.2",
+    version:isV3?"3.9.0":"1.1.2",
     protocolVersion:isV3?3:1,
+    storyboard:{minimumNativeAppVersion:"3.7.2",defaultMotionIntent:"cinematic_action",frozenSourceHashes:true,explicitOriginalRigAndPropAnnotations:true,explicitContactPlans:true,typedChoreography:CINEMATIC_BEATS,cinematicAcceptance:"requires decoded physical QA; eligibility/pixel checks do not certify",neuralMotionProviderInstalled:false},
+    sourceRigWorkbench:isV3?{minimumNativeAppVersion:"3.7.3",originalImageInspection:true,diagnosticPosePreview:true,batchProfileLimit:8,orderedPreparationStatus:true,anatomicalInferenceAvailable:false,cinematicAcceptance:false}:undefined,
+    cinematic3d:isV3?{minimumNativeAppVersion:"3.8.0",engine:"Blender/Rigify full-scene GLB",offlineActionLibrary:true,exactOutputFrameClock:true,neuralProviderInstalled:false,cinematicAcceptance:false,nativeExecutionVerified:false}:undefined,
+    studioWorkbench:isV3?{minimumNativeAppVersion:"3.9.0",sharedHumanAndMCP:true,sketchGeometryPaging:true,sketchDiagnosticImages:true,preciseClipKeyframes:true,editedPreviewAndExportShared:true,timedImageOverlays:true,openSourceRunner:true,commercialGenerationAPIs:false,driveArchiveReadbackRequired:true,phoneGpuVerified:false}:undefined,
     stableEndpoint:isV3,
     stableEndpointPath:isV3?"/app-mcp-v3/":"",
     primary:"Android native app",
@@ -1704,7 +1747,7 @@ function serverForApp(env,ownerKey,protocolVersion=1){
     media:isV3
       ?["direct ChatGPT attachment ingest to app-private storage","owner-authenticated inline still-frame fallback","VideoStudio-owned media","explicit HTTPS import","manual Android picker","no Gallery enumeration","legacy short-lived relay fallback"]
       :["VideoStudio-owned media","explicit HTTPS import","manual Android picker","private handoff"],
-    editing:["trim","split","0.25x-4x speed","slow motion","volume","titles","fonts","text animations","scale","rotate","blur","colour/HSL","motion presets","transition presets","reframe model","mask model","green-screen model","audio-duck model"],
+    editing:["trim","split","0.25x-4x speed","slow motion","volume","static titles","scale","rotate","blur","colour/HSL","motion presets","precise transform/opacity keyframes","chroma key","feathered masks","glow","timed owned image overlays"],
     ai:["native visual analysis","scene-change sampling","bundled person segmentation","bundled face mesh","subject-aware image animation","2.5D parallax","autonomous edit plans","creator presets","prompt-to-video","multi-variant planning","short-form recut planning","render/export orchestration"],
     animation:isV3?["AI subject/background layer extraction","feathered head/hair torso and lower-drape layers","face-aware camera anchoring","multi-keyframe easing","head drift/nod","torso breathing","lower-drape sway","independent depth motion","story-shot reordering","procedural atmosphere","layered Media3 composition"]:[],
     export:["Media3 native MP4","H.264","AAC","720p","1080p","9:16","16:9","1:1","4:5","Movies/VideoStudio"],
@@ -1723,6 +1766,68 @@ function serverForApp(env,ownerKey,protocolVersion=1){
   }));
 
   s.registerTool("app_state",{description:"Request full current native app/project state including active asset metadata, jobs, creator capabilities and recent on-device ChatGPT activity.",inputSchema:{}},async()=>queue("get_state",{}));
+  if(isV3) {
+    for(const [action,inputSchema] of Object.entries(studioToolSchemas)){
+      const readOnly=['sketch_list','sketch_get','sketch_preview','sketch_book_list','sketch_book_get','sketch_live_events','sketch_capabilities','open_pipeline_capabilities','open_pipeline_list','open_pipeline_status'].includes(action);
+      const detail=action==='sketch_get'?' Geometry is paged by layer/object IDs; pointLimit<=512. Keep returned revision for atomic edits.'
+        :action==='sketch_preview'?' Returns the actual shared Canvas frame as an MCP image. Native 3.9.3 adds crop bounds for close inspection of eyes, hair and other details; sourcePixelBounds maps the preview back to exact full-canvas coordinates.'
+        :action==='sketch_capabilities'?' Read this before drawing. Original portraits, landscapes and animation may start from a text prompt and an empty canvas; reference images are optional.'
+        :action==='sketch_live_begin'?' Call before the first stroke. The open phone canvas presents every accepted drawing operation and stroke progress; it preserves rapid batches rather than skipping intermediate steps.'
+        :action==='sketch_live_end'?' Finish a drawing page using its final revision. This closes its ordered live stream so the phone can show the next page without dropping drawings.'
+        :action==='sketch_edit'?' Draw original artwork from a text prompt using measured pressure strokes, M/L/Q/C/Z Bezier paths, gradient fills, brushes and layers. Use stable object IDs and append_points for live strokes. Images are optional; avoid substituting a finished raster image for visible stroke authoring.'
+        :action==='sketch_book_create'?' Create a lazy animation book with up to 10000 pages, without loading thousands of drawings into phone RAM.'
+        :action==='sketch_book_render'?' Render 1..1200 consecutive book pages through the native Canvas and Media3 pipeline; originals are preserved.'
+        :action.startsWith('open_pipeline_')?' Uses your own configured open-source runner or a hash-verified Drive artifact exchange. Submission is separate from inference completion. No commercial generation API.'
+        :action==='precision_edit'?' Atomic stable-clip edits require the exact project revision. Flat keys, opacity, mask/chroma/glow share actual native preview/export.'
+        :' Touch controls use the same native stored operations, revision checks and renderer.';
+      s.registerTool('app_'+action,{description:'VideoStudio authoring: '+action.replaceAll('_',' ')+'. New features require native3.9.0+.'+detail,inputSchema,annotations:{readOnlyHint:readOnly}},async args=>queue(action,args));
+    }
+    for(const [action,inputSchema] of Object.entries(cinematic3dToolSchemas)) {
+      const readOnly=["cinematic_3d_capabilities","cinematic_3d_get_program","cinematic_3d_list_programs","cinematic_3d_plan","cinematic_3d_export_request"].includes(action);
+      s.registerTool("app_"+action,{description:"Cinematic 3D: "+action.replace("cinematic_3d_","").replaceAll("_"," ")+". Requires native 3.8.0+. Uses owned full-scene GLB data, original source hashes and exact 24/30/60 FPS output timing. Procedural mannequins are explicitly identified; installed neural providers and native render acceptance require separate evidence.",inputSchema,annotations:{readOnlyHint:readOnly}},async args=>queue(action,args));
+    }
+    const stableId=z.string().regex(/^[A-Za-z0-9_-]{8,128}$/), hash=z.string().regex(/^[a-f0-9]{64}$/);
+    const xy=z.tuple([z.number().min(0).max(1),z.number().min(0).max(1)]);
+    const crop=z.object({left:z.number().min(0).max(1),top:z.number().min(0).max(1),right:z.number().min(0).max(1),bottom:z.number().min(0).max(1)}).strict().refine(value=>value.left<value.right&&value.top<value.bottom,{message:"Invalid original-oriented crop"});
+    const batchProfile=z.object({sourceAssetId:stableId,rigId:stableId.optional(),black:z.boolean(),transparentSource:z.boolean().optional(),
+      joints:z.array(xy).length(16),outline:z.array(xy).min(3).max(64),swordTip:xy.optional(),swordHilt:xy.optional(),swordOutline:z.array(xy).min(3).max(64).optional(),
+      sourceSha256:hash,expectedRigSha256:hash.optional()}).strict();
+    const authoringNote=" Requires native VideoStudio 3.7.3+. Authoring and pose diagnostics do not certify anatomy, motion synthesis or cinematic acceptance.";
+    s.registerTool("app_inspect_source_artwork",{description:"Inspect one exact owned original image, optionally cropped in EXIF-oriented normalized coordinates. The native result returns an MCP image, original byte SHA, dimensions and a reversible preview coordinate mapping. Use that image to author joints and body/weapon polygons; no arbitrary URI or Gallery access."+authoringNote,inputSchema:{projectId:stableId,assetId:stableId,expectedSourceSha256:hash.optional(),crop:crop.optional(),maxDimension:z.number().int().min(128).max(1024).optional(),rigIds:z.array(stableId).max(8).optional()},annotations:{readOnlyHint:true}},async args=>queue("inspect_source_artwork",args));
+    s.registerTool("app_preview_source_rig",{description:"Render a saved source-bound actor and original sword on a diagnostic stage. Optional targetJoints16 changes only this preview; targetJoints is a compatibility alias. Inspect actual source material deformation before saving animation. Rest/profile/source bytes remain unchanged."+authoringNote,inputSchema:{projectId:stableId,rigId:stableId,expectedRigSha256:hash.optional(),expectedSourceSha256:hash.optional(),targetJoints16:z.array(xy).length(16).optional(),targetJoints:z.array(xy).length(16).optional(),swordTip:xy.optional(),maxDimension:z.number().int().min(128).max(720).optional()},annotations:{readOnlyHint:true}},async args=>queue("preview_source_rig",args));
+    s.registerTool("app_save_source_rig_profiles",{description:"Save 1..8 original-byte-bound actor definitions with source revision and stable batch identity. Prevalidates the complete request; individual profiles publish atomically. Explicit partial receipts are retained after interruption; retry the same batch unchanged or inspect status. This is not an all-or-nothing transaction."+authoringNote,inputSchema:{projectId:stableId,sourceProjectUpdatedAt:z.number().int().nonnegative(),batchId:stableId,profiles:z.array(batchProfile).min(1).max(8)},annotations:{idempotentHint:true}},async args=>queue("save_source_rig_profiles",args));
+    s.registerTool("app_source_rig_status",{description:"Read preparation status for exact ordered asset occurrences, a saved program, or project import order. Reports missing/ambiguous black and white actor profiles without implying verified anatomy or render readiness. Structural status does not rehash source bytes."+authoringNote,inputSchema:{projectId:stableId,assetIds:z.array(stableId).min(1).max(160).optional(),programId:stableId.optional(),expectedProgramSha256:hash.optional()},annotations:{readOnlyHint:true}},async args=>queue("source_rig_status",args));
+    const contact=z.object({foot:z.enum(["leadingFoot","trailingFoot"]),start:z.number().min(0).max(1),end:z.number().min(0).max(1),anchor:xy}).strict();
+    const contacts=z.object({black:z.array(contact).max(32),white:z.array(contact).max(32)}).strict();
+    const binding=z.object({assetId:stableId,blackRigId:stableId,whiteRigId:stableId,blackRigSha256:hash.optional(),whiteRigSha256:hash.optional()}).strict();
+    const contactRow=z.object({shotIndex:z.number().int().min(0).max(158),fromAssetId:stableId,toAssetId:stableId,
+      sourceWidth:z.number().int().min(32).max(8192).optional(),sourceHeight:z.number().int().min(32).max(8192).optional(),contactPlan:contacts}).strict();
+    const beatRow=z.object({shotIndex:z.number().int().min(0).max(158),fromAssetId:stableId,toAssetId:stableId,beat:z.enum(CINEMATIC_BEATS)}).strict();
+    const series={sourceProjectId:stableId,assetIds:z.array(stableId).min(2).max(160).optional(),
+      anchorGroups:z.array(z.object({representativeAssetId:stableId,assetIds:z.array(stableId).min(1).max(160)}).strict()).min(2).max(160).optional(),
+      programId:stableId.optional(),expectedProgramSha256:hash.optional(),
+      motionIntent:z.enum(["cinematic_action","source_deformation","environmental"]).optional(),
+      backend:z.enum(["AUTO_LAYERS","SOURCE_RIG","MANUAL_MASKS","CAMERA_PARALLAX","PERSON_SEGMENTATION","NEURAL_IF_AVAILABLE"]).optional(),
+      genre:z.string().max(80).optional(),direction:z.string().max(80).optional(),fps:z.union([z.literal(24),z.literal(30),z.literal(60)]).optional(),
+      batchIndex:z.number().int().min(-1).max(158).optional(),framesPerPair:z.number().int().min(4).max(24).optional(),
+      maxFramesPerBatch:z.number().int().min(2).max(20).optional(),maxGeneratedFrames:z.number().int().min(24).max(480).optional(),
+      sourceRigBindings:z.array(binding).max(160).optional(),contactPlans:z.array(contactRow).max(159).optional(),choreography:z.array(beatRow).max(159).optional(),
+      width:z.number().int().min(256).max(1280).optional(),height:z.number().int().min(256).max(1280).optional(),
+      durationSeconds:z.number().positive().max(12.5).optional(),cameraEnabled:z.boolean().optional(),foley:z.boolean().optional(),foleyGain:z.number().min(.05).max(1).optional(),
+      render:z.boolean().optional(),quality:z.enum(["720p","1080p"]).optional(),fileName:z.string().max(180).optional()};
+    const note=" Requires native VideoStudio 3.7.2+. Default cinematic_action needs original-byte-bound black/white actor and weapon annotations at both anchors, exact ordered contacts and one of twelve explicit choreography beats. Queue acknowledgement does not certify rendered motion or cinematic acceptance.";
+    s.registerTool("app_storyboard_series_plan",{description:"Plan exact owned source-frame order and report missing motion annotations without creating an output or render job."+note,inputSchema:series,annotations:{readOnlyHint:true}},async args=>queue("storyboard_series_plan",args));
+    s.registerTool("app_storyboard_series_audit",{description:"Admit source-bound annotations before queueing an on-device pixel/scene audit. Missing authentic motion providers reject before a heavy job."+note,inputSchema:series},async args=>queue("storyboard_series_audit",args));
+    s.registerTool("app_animate_storyboard_series",{description:"Create a fresh separate native source-artwork animation from frozen image hashes, exact rig/contact bindings and typed choreography. Explicit source_deformation/environmental modes have limited scope; no neural hidden-limb provider is installed."+note,inputSchema:series},async args=>queue("animate_storyboard_series",args));
+    s.registerTool("app_storyboard_artwork_preflight",{description:"Read source annotations and exact image hashes for authoring; no output or heavy job. Provider eligibility is separate from cinematic QA. Requires native 3.7.2+.",inputSchema:series,annotations:{readOnlyHint:true}},async args=>queue("storyboard_artwork_preflight",args));
+    s.registerTool("app_save_source_rig_profile",{description:"Save authentic original-image actor geometry with a source revision and optional profile CAS digest. SourceSha256 must identify the displayed source bytes for cinematic eligibility. Joint array order: pelvis,chest,neck,head,swordShoulder,swordElbow,swordHand,freeShoulder,freeElbow,freeHand,leadingHip,leadingKnee,leadingFoot,trailingHip,trailingKnee,trailingFoot. No inference, Gallery, URI or substitute sword.",inputSchema:{projectId:stableId,sourceAssetId:stableId,sourceProjectUpdatedAt:z.number().int().nonnegative(),rigId:stableId.optional(),black:z.boolean(),transparentSource:z.boolean().optional(),joints:z.array(xy).length(16),outline:z.array(xy).min(3).max(64),swordTip:xy.optional(),swordHilt:xy.optional(),swordOutline:z.array(xy).min(3).max(64).optional(),sourceSha256:hash.optional(),expectedRigSha256:hash.optional()}},async args=>queue("save_source_rig_profile",args));
+    s.registerTool("app_list_source_rig_profiles",{description:"Read exact source actor/weapon definitions and SHA digests from one owned project. Requires native 3.7.2+.",inputSchema:{projectId:stableId,offset:z.number().int().min(0).max(100).optional(),limit:z.number().int().min(1).max(8).optional()},annotations:{readOnlyHint:true}},async args=>queue("list_source_rig_profiles",args));
+    const program=z.object({programId:stableId.optional(),name:z.string().max(120).optional(),sourceAssetIds:z.array(stableId).min(2).max(160),
+      sourceRigBindings:z.record(z.string(),z.object({blackRigId:stableId,whiteRigId:stableId,blackRigSha256:hash,whiteRigSha256:hash}).strict()),
+      contactPlans:z.array(contactRow).min(1).max(159),choreography:z.array(beatRow).min(1).max(159)}).strict();
+    s.registerTool("app_storyboard_program_save",{description:"Persist one ordered source/contact/choreography program using source revision and program SHA guards; the phone editor uses the same program store. This does not create a film or certify QA. Requires native 3.7.2+.",inputSchema:{projectId:stableId,sourceProjectUpdatedAt:z.number().int().nonnegative(),expectedProgramSha256:hash.optional(),program}},async args=>queue("save_storyboard_program",args));
+    s.registerTool("app_storyboard_program_get",{description:"Read and revalidate one exact saved native storyboard program, including ordered beats, contact intervals and original image/profile hashes. Explicit editOnly:true reads stale draft metadata with renderReady:false; default is strict byte/profile revalidation. Requires native 3.7.2+.",inputSchema:{projectId:stableId,programId:stableId,editOnly:z.boolean().optional()},annotations:{readOnlyHint:true}},async args=>queue("get_storyboard_program",args));
+  }
   if(isV3) s.registerTool("app_generate_image",{description:"Generate an original local procedural image from a sceneGraph or supported scene prompt. Not photorealistic diffusion. Registers output in the app Media Bin.",inputSchema:{prompt:z.string().max(10000).optional(),sceneGraph:z.record(z.string(),z.any()).optional(),projectId:z.string().min(8).optional(),width:z.number().int().min(128).max(1920).optional(),height:z.number().int().min(128).max(1920).optional(),appendToTimeline:z.boolean().optional()}},async args=>queue("generate_image",args));
   if(isV3) s.registerTool("app_self_test",{description:"Run VideoStudio v3's on-device native self-test before autonomous work. Verifies protocol v3, app-private storage, local project state, job/render/analysis engines, direct attachment ingest and the no-Gallery boundary.",inputSchema:{}},async()=>queue("self_test",{}));
   s.registerTool("app_activity_note",{description:"Post a live progress message into VideoStudio's ChatGPT Activity screen. Use this to mirror autonomous-work updates such as planning, analysing, applying edits, rendering or retrying.",inputSchema:{title:z.string().min(1).max(120),message:z.string().min(1).max(500),status:z.enum(["info","queued","running","success","failed"]).optional(),progress:z.number().int().min(0).max(100).optional(),projectId:z.string().min(8).optional()}},async args=>queue("activity_note",args));
@@ -1737,7 +1842,7 @@ function serverForApp(env,ownerKey,protocolVersion=1){
 
   s.registerTool("app_apply_edit_plan",{description:"Replace the active project's timeline with a structured multi-cut plan referencing already imported local asset IDs.",inputSchema:{clips:z.array(z.record(z.string(),z.any())).min(1).max(80)}},async({clips})=>queue("apply_edit_plan",{clips}));
 
-  s.registerTool("app_apply_tool",{description:"Apply a precise native edit primitive to one clip. Tool names include trim, speed, slow_motion, green_screen, transition, motion, effect, color, reframe, mask, font, text_animation, blur, transform, audio_duck, title and volume.",inputSchema:{clipIndex:z.number().int().min(0),tool:z.string().min(1).max(80),settings:z.record(z.string(),z.any()).optional()}},async({clipIndex,tool,settings})=>queue("apply_tool",{clipIndex,tool,settings:settings||{}}));
+  s.registerTool("app_apply_tool",{description:"Apply a native rendered edit to a named stable clip: trim, speed, slow_motion, motion, effect, color, blur, transform, keyframes, green_screen, mask, glow, title or volume. Prefer projectId, clipId and expectedUpdatedAt for collaboration; app_precision_edit applies strict atomic batches. Metadata-only unsupported effects fail clearly.",inputSchema:{projectId:z.string().min(1).max(96).optional(),clipId:z.string().min(1).max(128).optional(),expectedUpdatedAt:z.number().int().nonnegative().optional(),clipIndex:z.number().int().min(0).optional(),tool:z.string().min(1).max(80),settings:z.record(z.string(),z.any()).optional()}},async args=>queue("apply_tool",{...args,settings:args.settings||{}}));
 
   s.registerTool("app_creator_preset",{description:"Apply a creator look plus optional motion, transition and font to one clip or the full active timeline.",inputSchema:{preset:z.string().min(1).max(80),motion:z.string().max(80).optional(),transition:z.string().max(80).optional(),font:z.string().max(80).optional(),allClips:z.boolean().optional(),clipIndex:z.number().int().min(0).optional()}},async args=>queue("creator_preset",args));
 
@@ -1974,11 +2079,11 @@ function serverForApp(env,ownerKey,protocolVersion=1){
   });
 
   if(isV3) s.registerTool("app_import_inline_base64",{
-    description:"Private compatibility fallback for small ChatGPT media when temporary HTTPS handoff is unavailable. Bytes stay inside the owner-authenticated MCP command and are written directly to VideoStudio app-private storage. PNG, JPEG, WebP and MP4 are accepted up to 12 MB decoded.",
+    description:"Private compatibility fallback for small ChatGPT media when temporary HTTPS handoff is unavailable. Bytes stay inside the owner-authenticated MCP command and are written directly to VideoStudio app-private storage. PNG, JPEG, WebP and MP4 are accepted up to 1 MiB decoded; larger explicit files use private direct HTTPS/attachment handoff.",
     inputSchema:{
       name:z.string().min(1).max(180),
       mime:z.enum(["image/png","image/jpeg","image/webp","video/mp4"]),
-      base64:z.string().min(1).max(17*1024*1024),
+      base64:z.string().min(1).max(4*Math.ceil(1024*1024/3)),
       sha256:z.string().regex(/^[a-fA-F0-9]{64}$/).optional(),
       projectId:z.string().min(8).optional()
     }
@@ -2043,6 +2148,10 @@ function serverForApp(env,ownerKey,protocolVersion=1){
 
   s.registerTool("app_cancel_job",{description:"Cancel one native VideoStudio background job.",inputSchema:{jobId:z.string().min(8)}},async({jobId})=>queue("cancel_job",{jobId}));
   s.registerTool("app_cancel_all_jobs",{description:"Cancel every active VideoStudio job and current export.",inputSchema:{}},async()=>queue("cancel_all_jobs",{}));
+  if(isV3)s.registerTool("app_get_command_result_page",{description:"Retrieve one bounded JSON text fragment of a large retained native result, including full source programme/plan/effect definitions. Concatenate ordered fragments and verify viewSha256; view is credential-redacted, never silently truncated. Result may explicitly expire under bounded terminal retention.",inputSchema:{commandId:z.string().min(8),pageIndex:z.number().int().min(0).max(255).optional()},annotations:{readOnlyHint:true}},async({commandId,pageIndex})=>{
+    try{const command=await readCommand(commandId);if(!command)return out({error:"Command not found"});return out(await nativeResultPage(command,redactCommand(command).result,pageIndex||0));}
+    catch(error){return out({error:error.message});}
+  });
   s.registerTool("app_get_command_result",{description:"Read completion status/result for a native command. Analysis results render their contact sheet directly for ChatGPT to inspect.",inputSchema:{commandId:z.string().min(8)}},async({commandId})=>commandResult(commandId));
   return s;
 }

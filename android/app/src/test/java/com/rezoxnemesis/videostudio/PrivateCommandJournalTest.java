@@ -12,6 +12,17 @@ import static org.junit.Assert.*;
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk=33,manifest=Config.NONE)
 public class PrivateCommandJournalTest {
+    @Test public void runnerBearerNeverEntersPersistentCommandDiagnostics()throws Exception{
+        CommandJournal journal=new CommandJournal(RuntimeEnvironment.getApplication());
+        JSONObject command=new JSONObject().put("id","runner-secret-"+java.util.UUID.randomUUID()).put("seq",390)
+                .put("action","open_pipeline_configure").put("parameters",new JSONObject()
+                        .put("endpoint","https://owner.example/runner").put("bearer","SECRET_RUNNER_NEVER_PERSIST"));
+        journal.begin(command);
+        String admitted=RuntimeEnvironment.getApplication().getSharedPreferences("videostudio_native_v1",Context.MODE_PRIVATE).getString("mcp_v3_command_journal","");
+        assertFalse(admitted.contains("SECRET_RUNNER_NEVER_PERSIST"));assertEquals("https://owner.example/runner",new org.json.JSONArray(admitted).getJSONObject(0).getJSONObject("command").getJSONObject("parameters").getString("endpoint"));
+        journal.finish(command,new JSONObject().put("configured",true),"completed");
+        String persisted=journal.recent(40).toString();assertFalse(persisted.contains("SECRET_RUNNER_NEVER_PERSIST"));assertTrue(journal.terminal(command.getString("id")).getJSONObject("result").getBoolean("configured"));
+    }
     @Test public void privateMcpImageBytesAreNeverSavedToAndroidJournal() throws Exception {
         Context context=RuntimeEnvironment.getApplication();
         CommandJournal journal=new CommandJournal(context);
