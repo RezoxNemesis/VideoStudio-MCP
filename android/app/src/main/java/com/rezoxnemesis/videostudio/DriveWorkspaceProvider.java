@@ -109,6 +109,24 @@ public final class DriveWorkspaceProvider {
         return out;
     }
 
+    /**
+     * Exact-name read from the user-selected SAF workspace folder only.
+     * The caller must verify the content hash before any sketch mutation.
+     * No Drive-wide search, Gallery enumeration or URI fabrication.
+     */
+    public synchronized InputStream openLinkedSourceFile(String exactName) throws Exception {
+        if(exactName==null||!exactName.matches("[A-Za-z0-9_.-]{1,120}")
+                ||exactName.contains(".."))
+            throw new IllegalArgumentException("Exact scoped workspace filename required");
+        Uri tree=requireTree();
+        Uri child=findChild(tree,rootDocumentUri(tree),exactName,false);
+        if(child==null)throw new IllegalStateException(
+                "Linked VideoStudio workspace source is missing: "+exactName);
+        InputStream in=resolver.openInputStream(child);
+        if(in==null)throw new IllegalStateException("Cannot read selected workspace source");
+        return new BufferedInputStream(in,BUFFER);
+    }
+
     public synchronized JSONObject syncProject(ProjectStore.Project project,
                                                File projectWorkspace,
                                                Progress progress) throws Exception {

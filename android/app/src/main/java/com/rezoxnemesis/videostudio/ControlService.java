@@ -624,6 +624,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                     complete(command,preview);return;
                 }
                 case "sketch_render": case "sketch_book_render": complete(command,queueSketchRender(p));return;
+                case "sketch_import_frame_manifest": complete(command,queueSketchFrameManifest(p));return;
                 case "open_pipeline_configure": case "open_pipeline_capabilities": case "open_pipeline_list":
                 case "open_pipeline_status": case "open_pipeline_cancel":
                     complete(command,OpenPipelineOperations.execute(this,store,action,p,null));return;
@@ -1936,6 +1937,9 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 switch (action) {
                     case "sketch_render": case "sketch_book_render":
                         parameters.remove("projectId");queued=queueSketchRender(parameters);break;
+                    case "sketch_import_frame_manifest":
+                        parameters.remove("projectId");
+                        queued=queueSketchFrameManifest(parameters);break;
                     case "open_pipeline_export_request": case "open_pipeline_submit": case "open_pipeline_download_result":
                     case "open_pipeline_import_result": case "open_pipeline_archive_artifact": case "open_pipeline_restore_artifact":
                         if(!"open_pipeline_export_request".equals(action))parameters.remove("projectId");
@@ -2913,6 +2917,46 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         try(java.io.InputStream asset=getAssets().open("cinematic3d/demo.vscinematic")){out.put("builtinBundleAvailable",asset.read()!=-1);}
         catch(java.io.IOException missing){out.put("builtinBundleAvailable",false);}
         return out;
+    }
+
+    /**
+     * The source movie and its 192 ordered ink-cel operations are both read
+     * from VideoStudio's user-linked single SAF folder; no Gallery access,
+     * public URL or enormous MCP payload. The import uses normal Sketch Studio
+     * revision-bound vector edits and resumes after a process restart.
+     */
+    private JSONObject queueSketchFrameManifest(JSONObject input) throws Exception {
+        final JSONObject request=publicOperationParameters(input);
+        SketchDocument.fields(request,
+                "sketchId,manifestName,videoName,expectedSourceSha256,expectedFrameCount");
+        String sketchId=SketchDocument.id(request,"sketchId");
+        JSONObject durable=new JSONObject(request.toString());
+        if(input.has("_recoveryPlanId"))
+            durable.put("_recoveryPlanId",input.get("_recoveryPlanId"));
+        if(input.has("_mcpCommandId"))
+            durable.put("_mcpCommandId",input.get("_mcpCommandId"));
+        JobManager.Job job=submitRecoverableTransfer("sketch_import_frame_manifest",
+                durable,sketchId,"Sketch Studio • Source video ink frames",state->{
+                    checkpoint(state,"Source verification",
+                            "Verifying scoped video and source-manifest checksums",2,sketchId);
+                    jobs.awaitSafeCheckpoint(state,"sketch_manifest_source");
+                    JSONObject result=SketchFrameManifestImporter.importFromWorkspace(
+                            this,request,(frame,total)->{
+                                if(frame%8==0||frame==total){
+                                    checkpoint(state,"Editable sketch frames",
+                                            frame+"/"+total+" saved source-derived cels",
+                                            5+(int)(90d*frame/Math.max(1,total)),sketchId);
+                                    jobs.awaitSafeCheckpoint(state,
+                                            "sketch_source_frame_"+frame);
+                                }
+                            });
+                    state.setResult(result);
+                    checkpoint(state,"Sketch Studio",
+                            "Native frame sequence saved; source video untouched",100,sketchId);
+                });
+        return ok().put("queued",true).put("jobId",job.id)
+                .put("sketchId",sketchId).put("durableRecovery",true)
+                .put("sourceVideoUnchanged",true).put("galleryAccess",false);
     }
 
     /** Complete admission precedes output creation, recovery work and GPU effects. */
@@ -4824,6 +4868,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         if (action == null) return false;
         switch (action) {
             case "sketch_render": case "sketch_book_render":
+            case "sketch_import_frame_manifest":
             case "open_pipeline_export_request": case "open_pipeline_submit": case "open_pipeline_download_result":
             case "open_pipeline_import_result": case "open_pipeline_archive_artifact": case "open_pipeline_restore_artifact":
             case "prompt_video":
@@ -5174,6 +5219,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             case "sketch_get": case "sketch_list": return "Reading sketch geometry";
             case "sketch_preview": return "Rendering a sketch preview";
             case "sketch_import_reference": return "Importing an owned sketch reference";
+            case "sketch_import_frame_manifest": return "Drawing source video frames in Sketch Studio";
             case "sketch_render": return "Exporting sketch animation";
             case "open_pipeline_configure": return "Configuring the private open-source runner";
             case "open_pipeline_capabilities": return "Reading actual runner readiness";
