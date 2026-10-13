@@ -109,8 +109,8 @@ test('closed studio relay aliases require 3.9 and validate their exact canonical
  for(const alias of STUDIO_ALIAS_ACTIONS){
   assert.equal(nativeStudioCanonicalAction(alias),alias.slice('studio_'.length));
   assert(STORYBOARD_NATIVE_ACTIONS.has(alias),'Every alias must remain native-only');
-  assert.throws(()=>requireStoryboardNativeVersion({appVersion:'3.8.1'},alias),/3\.9\.[0145]/);
-  assert.doesNotThrow(()=>requireStoryboardNativeVersion({appVersion:'3.9.5'},alias));
+  assert.throws(()=>requireStoryboardNativeVersion({appVersion:'3.8.1'},alias),/3\.9\.[01456]/);
+  assert.doesNotThrow(()=>requireStoryboardNativeVersion({appVersion:'3.9.6'},alias));
  }
  const p={projectId:'p',expectedUpdatedAt:1,operations:[{clipId:'c',set:{x:.2}}]};
  assert.deepEqual(nativeStoryboardParameters('studio_precision_edit',p),p);
@@ -169,4 +169,15 @@ test('frame manifest aliases require395 but394 raw actions remain compatible',()
  assert.throws(()=>requireStudioVersion({appVersion:'3.9.4'},'studio_sketch_import_frame_manifest'),/3\.9\.5/);
  assert.doesNotThrow(()=>requireStudioVersion({appVersion:'3.9.4'},'sketch_import_frame_manifest'));
  assert.doesNotThrow(()=>requireStudioVersion({appVersion:'3.9.5'},'studio_sketch_import_frame_manifest'));
+});
+test('editable lettering source crop and frame inspection require their native396 implementation',()=>{
+ const text={sketchId:'owned',operationId:'letters',expectedRevision:2,operations:[{type:'add_object',layerId:'layer_1',object:{id:'caption',kind:'text',text:'MIGHT PROVE USEFUL',bounds:{x:.1,y:.2,width:.8,height:.2},fontSize:.04,fontStyle:'italic',textAlign:'center'}}]};assert.deepEqual(nativeStudioParameters('sketch_edit',text),text);assert.throws(()=>requireStudioVersion({appVersion:'3.9.5'},'sketch_edit',text),/3\.9\.6/);assert.doesNotThrow(()=>requireStudioVersion({appVersion:'3.9.6'},'sketch_edit',text));
+ const crop={projectId:'project',expectedUpdatedAt:3,operations:[{clipId:'clip',set:{crop:{x:.25,y:.25,width:.5,height:.5}}}]};assert.deepEqual(nativeStudioParameters('precision_edit',crop),crop);assert.throws(()=>requireStudioVersion({appVersion:'3.9.5'},'precision_edit',crop),/3\.9\.6/);
+ const inspect={sketchId:'owned',expectedRevision:3,frameOffset:64,frameLimit:32,characterLayerIds:['black','white']};assert.deepEqual(nativeStudioParameters('sketch_inspect',inspect),inspect);assert.throws(()=>requireStudioVersion({appVersion:'3.9.5'},'sketch_inspect',inspect),/3\.9\.6/);
+ const packet={sketchId:'owned',manifestName:'frames.jsonl.gz',sourceName:'source.png',expectedSourceSha256:'a'.repeat(64),expectedFrameCount:200};assert.deepEqual(nativeStudioParameters('sketch_import_drawing_manifest',packet),packet);assert.throws(()=>requireStudioVersion({appVersion:'3.9.5'},'sketch_import_drawing_manifest',packet),/3\.9\.6/);
+});
+test('native text nested in an added layer requires its renderer version before admission',()=>{
+ const request={operations:[{type:'add_layer',layer:{id:'lettering_layer',objects:[{id:'caption',kind:'text',text:'Hello',frame:0,exposure:1,color:'#FF000000',width:.01,fill:true,keys:[],transform:{x:0,y:0,scaleX:1,scaleY:1,rotation:0,anchorX:.5,anchorY:.5,opacity:1},bounds:{x:0,y:0,width:1,height:1}}]}}]};
+ assert.throws(()=>requireStudioVersion({appVersion:'3.9.5'},'sketch_edit',request),/3\.9\.6/);
+ assert.doesNotThrow(()=>requireStudioVersion({appVersion:'3.9.6'},'sketch_edit',request));
 });

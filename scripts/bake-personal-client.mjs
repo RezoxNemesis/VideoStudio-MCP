@@ -1,3 +1,4 @@
+import './bake-relay-build.mjs';
 /** Serialize the browser closure before esbuild injects Worker-scoped helpers. */
 import {mkdir,readFile,writeFile} from 'node:fs/promises';
 import client from '../src/personal-client.js';

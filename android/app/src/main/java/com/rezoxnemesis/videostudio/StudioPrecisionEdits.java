@@ -123,7 +123,7 @@ public final class StudioPrecisionEdits {
             Object raw=operation.opt("set");if(!(raw instanceof JSONObject))throw new IllegalArgumentException("set must be an object");
             JSONObject values=(JSONObject)raw;java.util.Iterator<String> keys=values.keys();
             while(keys.hasNext()){
-                String key=keys.next();if(!NUMBERS.contains(key)&&!TEXT.contains(key)&&!"chromaKey".equals(key))throw new IllegalArgumentException("Unsupported clip setting: "+key);
+                String key=keys.next();if(!NUMBERS.contains(key)&&!TEXT.contains(key)&&!"crop".equals(key)&&!"chromaKey".equals(key))throw new IllegalArgumentException("Unsupported clip setting: "+key);
                 switch(key){
                     case "inMs":clip.inMs=StudioClipKeyframes.integer(values,key,0,86_400_000);break;
                     case "outMs":clip.outMs=StudioClipKeyframes.integer(values,key,1,86_400_000);break;
@@ -166,6 +166,7 @@ public final class StudioPrecisionEdits {
             clip.effects.remove("studioKeyframeDurationMs");clip.effects.remove("studioKeyframeOffsetMs");
             clip.effects.put("keyframes",new JSONArray(operation.getJSONArray("keyframes").toString()));
         }
+        if(clip.effects.has("crop"))new StudioCropEffect(clip.effects.optJSONObject("crop"));
         StudioClipKeyframes.fromEffects(clip.effects,clip.outputDurationMs());
         new StudioPixelEffect(clip.effects,clip.outputDurationMs());
     }

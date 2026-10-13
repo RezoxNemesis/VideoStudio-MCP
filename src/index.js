@@ -1,3 +1,4 @@
+import {relayRelease,commandBacklog,commandExecution} from './relay-diagnostics.js';
 import { nativeCommandSummary, nativeResultPage } from "./native-result-pages.js";
 import { readCommandQueue, mutateCommandQueue, requireCommandQueueAdmission, terminalCommandUpdate, commandIsPending, readCommandReceipt, acknowledgePrunedCommand, readCommandQueueInTransaction, writeCommandQueueInTransaction, mergeCommandReceiptsInTransaction, readCommandReceiptsInTransaction, canonicalCommandResultSha256, readNativeDevice, readNativeDeviceInTransaction, writeNativeDevice, writeNativeDeviceInTransaction } from "./native-command-store.js";
 import { STORYBOARD_NATIVE_ACTIONS, CINEMATIC_BEATS, requireStoryboardNativeVersion, nativeStoryboardParameters, cinematic3dToolSchemas } from "./storyboard-contract.js";
@@ -713,7 +714,7 @@ export class VideoStudioState extends DurableObject {
     const webLast=Date.parse(String(web&&web.lastSeenAt||""))||0;
     const webAge=webLast>0?Math.max(0,Date.now()-webLast):Number.MAX_SAFE_INTEGER;
     const webFresh=!!web&&webAge<=45000;
-    const pending=list.filter(c=>c.status==="queued"||c.status==="claimed"||c.status==="waiting_native").length;
+    const pending=list.filter(commandIsPending).length;
     return {
       connected:true,
       controlPlaneConnected:true,
@@ -732,6 +733,8 @@ export class VideoStudioState extends DurableObject {
         deviceId:d.deviceId
       },
       pendingNativeCommands:pending,
+      relay:relayRelease(),
+      commandBacklog:commandBacklog(list),
       waitingNative:!nativeFresh&&pending>0,
       lastCommand:nativeCommandSummary(list[list.length-1]||null),
       galleryAccess:false
@@ -1007,7 +1010,7 @@ export class VideoStudioState extends DurableObject {
     const lastSeenMs=Date.parse(String(d.lastSeenAt||""))||0;
     const ageMs=lastSeenMs>0?Math.max(0,Date.now()-lastSeenMs):Number.MAX_SAFE_INTEGER;
     const fresh=ageMs<=45000;
-    const pending=list.filter(c=>c.status==="queued"||c.status==="claimed"||c.status==="waiting_native");
+    const pending=list.filter(commandIsPending);
     const waitingNative=pending.filter(c=>c.status==="waiting_native").length;
     const fallback=await this.appResolveStudioWebFallback(ownerKey);
     const fallbackConnected=!!fallback&&!!fallback.fresh;
@@ -1046,6 +1049,8 @@ export class VideoStudioState extends DurableObject {
       appGeneration:Number(d.appGeneration||0),
       nativeAgent:"videostudio-v3",
       device:safe,
+      relay:relayRelease(),
+      commandBacklog:commandBacklog(list),
       pendingCommands:pending.length,
       waitingNativeCommands:waitingNative,
       canAcceptAutonomousWork:true,
@@ -1533,15 +1538,16 @@ function serverFor(env,hybridKey=""){
     if(native){
       const c=await commandNative(st,native,deviceId,commandId);
       if(!c) return out({error:"Command not found"});
+      const view={...redactCommand(c),execution:commandExecution(c)};
       const images=nativeImageBlocks(c);
       if(images.length){
         const safeResult=redactedImageResult(c);
         return {content:[
-          {type:"text",text:JSON.stringify({...redactCommand(c),result:safeResult})},
+          {type:"text",text:JSON.stringify({...view,result:safeResult})},
           ...images
         ]};
       }
-      return out(redactCommand(c));
+      return out(view);
     }
     const c=await st.command(deviceId,commandId);
     if(!c) return out({error:"Command not found"});
@@ -1707,7 +1713,7 @@ function serverForApp(env,ownerKey,protocolVersion=1){
     try{
       const c=await readCommand(commandId);
       if(!c) return out({error:"Command not found"});
-      const view=redactCommand(c);
+      const view={...redactCommand(c),execution:commandExecution(c)};
       if(c.resultExpired&&!c.result)return out({command:nativeCommandSummary(c),resultExpired:true,resultRetained:false});
       if(c.result&&new TextEncoder().encode(JSON.stringify(view.result)).byteLength>48*1024){
         const page=await nativeResultPage(c,view.result,0);
@@ -1717,18 +1723,19 @@ function serverForApp(env,ownerKey,protocolVersion=1){
       if(images.length){
         const safeResult=redactedImageResult(c);
         return {content:[
-          {type:"text",text:JSON.stringify({...redactCommand(c),result:safeResult})},
+          {type:"text",text:JSON.stringify({...view,result:safeResult})},
           ...images
         ]};
       }
-      return out(redactCommand(c));
+      return out(view);
     }catch(e){ return out({error:e.message}); }
   };
 
   s.registerTool("app_status",{description:isV3?"Check the VideoStudio v3 Native Agent connection, protocol version, permission mode, projects and pending native work. Gallery access is always false.":"Check the private native VideoStudio Android connection, permission mode, projects, control-pause state and pending work. Gallery access is always false.",inputSchema:{}},async()=>out(await readStatus()));
 
   s.registerTool("app_capabilities",{description:isV3?"Read VideoStudio v3 Native Agent capabilities and architecture guarantees.":"Read the native v1.1 editing, AI, render and privacy capabilities available to ChatGPT.",inputSchema:{}},async()=>out({
-    version:isV3?"3.9.0":"1.1.2",
+    version:isV3?"3.9.6":"1.1.2",
+    relay:relayRelease(),
     protocolVersion:isV3?3:1,
     storyboard:{minimumNativeAppVersion:"3.7.2",defaultMotionIntent:"cinematic_action",frozenSourceHashes:true,explicitOriginalRigAndPropAnnotations:true,explicitContactPlans:true,typedChoreography:CINEMATIC_BEATS,cinematicAcceptance:"requires decoded physical QA; eligibility/pixel checks do not certify",neuralMotionProviderInstalled:false},
     sourceRigWorkbench:isV3?{minimumNativeAppVersion:"3.7.3",originalImageInspection:true,diagnosticPosePreview:true,batchProfileLimit:8,orderedPreparationStatus:true,anatomicalInferenceAvailable:false,cinematicAcceptance:false}:undefined,
@@ -2492,6 +2499,7 @@ export default {
     if(u.pathname==="/manifest.webmanifest") return new Response(MANIFEST,{headers:{"content-type":"application/manifest+json"}});
     if(u.pathname==="/icon.svg") return new Response(ICON,{headers:{"content-type":"image/svg+xml"}});
     if(u.pathname==="/sw.js") return new Response(SW,{headers:{"content-type":"application/javascript","cache-control":"no-cache"}});
+    if(u.pathname==="/api/relay/release"&&request.method==="GET")return reply(relayRelease());
     if(u.pathname.startsWith("/api/")) return api(request,env);
     // Permanent compatibility endpoint. Do not rename this route for APK releases.
     // Future app versions evolve behind protocol-v3 additive actions/app_execute.

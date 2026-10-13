@@ -39,6 +39,22 @@ public final class SketchFrameRenderer implements AutoCloseable {
         if(!preview)geometryCache.put(id,shape);return shape;
     }
     private JSONObject geometryPreview;public void setGeometryPreview(JSONObject object){geometryPreview=object;}
+    /** Live snapshots warm vector paths before ownership transfers to the UI. */
+    void prepareVectorGeometry() throws Exception {
+        if(android.os.Looper.myLooper()==android.os.Looper.getMainLooper())
+            throw new IllegalStateException("Vector preparation requires a background worker");
+        int w=document.getInt("width"),h=document.getInt("height");
+        JSONArray layers=document.getJSONArray("layers");
+        for(int i=0;i<layers.length();i++){
+            JSONArray objects=layers.getJSONObject(i).getJSONArray("objects");
+            for(int j=0;j<objects.length();j++){
+                if(Thread.currentThread().isInterrupted())throw new InterruptedException("Vector preparation cancelled");
+                JSONObject object=objects.getJSONObject(j);String kind=object.getString("kind");
+                if("path".equals(kind)||"polygon".equals(kind)||"rect".equals(kind)||"ellipse".equals(kind))
+                    geometry(object,kind,w,h);
+            }
+        }
+    }
     private String presentationObject;private float presentationFraction=1;
     public void setPresentation(String objectId,float fraction){presentationObject=objectId;presentationFraction=fraction;}
 
@@ -127,6 +143,7 @@ public final class SketchFrameRenderer implements AutoCloseable {
         } else {
             RectF bounds = bounds(object.getJSONObject("bounds"), w, h);
             if ("rect".equals(kind)||"ellipse".equals(kind)){Path shape=geometry(object,kind,w,h);canvas.drawPath(partial?partialPath(shape,presentationFraction,paint):shape,paint);}
+            else if ("text".equals(kind)) {SketchText.draw(canvas,object,bounds,paint,h,partial?presentationFraction:1);}
             else if ("image".equals(kind)) {
                 paint.setAlpha((int) Math.round(255 * alpha*(partial?presentationFraction:1))); Bitmap bitmap=image(object.getJSONObject("reference"));JSONObject crop=object.optJSONObject("referenceCrop");Rect source=null;
                 if(crop!=null)source=referencePixels(crop,bitmap.getWidth(),bitmap.getHeight());
@@ -218,7 +235,7 @@ public final class SketchFrameRenderer implements AutoCloseable {
                         if (radius <= 1 + allowed && (object.getBoolean("fill") || Math.abs(radius - 1) <= allowed)) return object.getString("id");
                     } else {
                         RectF expanded = new RectF(bounds); expanded.inset(-t, -t);
-                        if (expanded.contains(p[0], p[1]) && ("image".equals(kind) || object.getBoolean("fill") ||
+                        if (expanded.contains(p[0], p[1]) && ("image".equals(kind) || "text".equals(kind) || object.getBoolean("fill") ||
                                 Math.min(Math.min(Math.abs(p[0] - bounds.left), Math.abs(p[0] - bounds.right)), Math.min(Math.abs(p[1] - bounds.top), Math.abs(p[1] - bounds.bottom))) <= t)) return object.getString("id");
                     }
                 } else {

@@ -1138,6 +1138,13 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         }
     }
 
+    private void studioCropDialog(){
+        if(activeProject==null||selectedClip==null){Toast.makeText(this,"Select a clip first",Toast.LENGTH_SHORT).show();return;}
+        String clipId=selectedClip.id;long revision=activeProject.updatedAt;JSONObject old=selectedClip.effects.optJSONObject("crop");LinearLayout form=column();String[] names={"x","y","width","height"};EditText[] fields=new EditText[4];
+        for(int n=0;n<4;n++){fields[n]=numberInput(0);fields[n].setHint("Source "+names[n]+" (0..1)");fields[n].setText(String.valueOf(old==null?(n<2?0:1):old.optDouble(names[n],n<2?0:1)));form.addView(fields[n]);}
+        new AlertDialog.Builder(this).setTitle("Crop / reframe source").setView(form).setNegativeButton("Cancel",null).setNeutralButton("Reset",(d,w)->{try{applyStudioPrecision(new JSONObject().put("clipId",clipId).put("set",new JSONObject().put("crop",new JSONObject().put("x",0).put("y",0).put("width",1).put("height",1))),revision);}catch(Exception error){Toast.makeText(this,error.getMessage(),Toast.LENGTH_LONG).show();}}).setPositiveButton("Apply",(d,w)->{try{JSONObject crop=new JSONObject();for(int n=0;n<4;n++)crop.put(names[n],Double.parseDouble(fields[n].getText().toString()));new StudioCropEffect(crop);applyStudioPrecision(new JSONObject().put("clipId",clipId).put("set",new JSONObject().put("crop",crop)),revision);}catch(Exception error){Toast.makeText(this,error.getMessage(),Toast.LENGTH_LONG).show();}}).show();
+    }
+
     private void performStudioTool(String name){
         if(!StudioToolCatalog.isSupported(name)){
             new AlertDialog.Builder(this).setTitle(name+" is unavailable")
@@ -1151,6 +1158,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
             case "Transform":studioAdvancedAdjustDialog(true);return;
             case "Exact Transform":studioNumericDialog(true,false);return;
             case "Keyframes":studioNumericDialog(true,true);return;
+            case "Crop":case "Reframe":studioCropDialog();return;
             case "Opacity":studioPixelDialog("Opacity");return;
             case "Green Screen":studioPixelDialog("Green Screen");return;
             case "Mask":studioPixelDialog("Mask");return;
@@ -3453,7 +3461,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         if(!StudioToolCatalog.isSupported(tool)){
             Toast.makeText(this,tool+" is unavailable: no implemented native effect. Project unchanged.",Toast.LENGTH_LONG).show();return;
         }
-        if(java.util.Set.of("Green Screen","Mask","Glow","Overlay","Opacity").contains(tool)){
+        if(java.util.Set.of("Green Screen","Mask","Glow","Overlay","Opacity","Crop","Reframe").contains(tool)){
             performStudioTool(tool);return;
         }
         if(activeProject==null||selectedClip==null){Toast.makeText(this,"Select a clip first",Toast.LENGTH_SHORT).show();return;}

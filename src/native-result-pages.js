@@ -1,9 +1,10 @@
+import {commandExecution} from './relay-diagnostics.js';
 import {canonicalCommandResultSha256} from './native-command-store.js';
 const encoder=new TextEncoder();
 const sha=async bytes=>Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes)),value=>value.toString(16).padStart(2,'0')).join('');
 export function nativeCommandSummary(command){
   if(!command)return null;
-  const summary={resultExpired:command.resultExpired===true},omitted=[];
+  const summary={resultExpired:command.resultExpired===true,execution:commandExecution(command)},omitted=[];
   const scalar=(target,key,value,max=256)=>{
     if(value===undefined)return;
     if(value===null||typeof value==='boolean'||typeof value==='number'&&Number.isFinite(value))target[key]=value;
