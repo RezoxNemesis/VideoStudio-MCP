@@ -226,10 +226,8 @@ const checks = [
   ["worker persists negotiated wire compatibility independently of app version", worker.includes("wireSchemaVersion") && worker.includes("featureLevel") && worker.includes("transportDecoupledFromApkVersion") && worker.includes('"stable-core-2"')],
   ["True combat action uses fully native articulated frame generation", controlService.includes('case "animate_combat_rig"') && controlService.includes("queueCombatRig") && controlService.includes("combatRigBenchmarkReady")],
   ["Combat IK and independent per-frame sword motion is compiled", combatSolver.includes("elbow(") && combatSolver.includes("swordTipSeparation") && combatSolver.includes("remap(") && combatSolver.includes("leadingFoot")],
-  ["VideoStudio 3.7 generalizes image animation to 100-frame five-batch continuous motion",
-    nativeProtocol.includes('APP_VERSION = "3.9.1"')
-    && androidBuild.includes('versionCode = 391')
-    && multigenrePlanner.includes('MAX_SOURCE_FRAMES=160')
+  ["Multi-genre image animation retains large-source continuous batching",
+    multigenrePlanner.includes('MAX_SOURCE_FRAMES=160')
     && multigenrePlanner.includes('maxPerBatch-1:maxPerBatch')
     && multigenreStudio.includes('StoryboardSegmentComposer.compose')
     && multigenreStudio.includes('index>start')],

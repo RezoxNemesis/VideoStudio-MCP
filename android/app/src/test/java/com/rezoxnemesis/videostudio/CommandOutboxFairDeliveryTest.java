@@ -15,6 +15,25 @@ import static org.junit.Assert.*;
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk=33,manifest=Config.NONE)
 public final class CommandOutboxFairDeliveryTest {
+    @Test public void pendingBatchBoundsMemoryWhileRetainingEveryLargeReceipt() throws Exception {
+        Context context=RuntimeEnvironment.getApplication();String payload="x".repeat(700000);
+        try(CommandOutbox q=new CommandOutbox(context)){
+            for(int n=0;n<10;n++)q.put(command("heavy_"+n,n+1),new JSONObject().put("ok",true).put("payload",payload),"completed");
+            JSONArray first=q.pending();assertTrue("ACK reads must not load sixteen large bodies at once",first.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8).length<=4*1024*1024);assertEquals(10,q.count());
+            for(int n=0;n<first.length();n++)q.defer(first.getJSONObject(n).getString("id"));
+            assertEquals("heavy_"+first.length(),q.pending().getJSONObject(0).getString("id"));assertEquals(10,q.count());
+        }
+    }
+    @Test public void receiptLargerThanCursorWindowDoesNotBlockSmallAcknowledgements() throws Exception {
+        Context context=RuntimeEnvironment.getApplication();String large=UUID.randomUUID().toString(),small=UUID.randomUUID().toString();
+        String payload="\uD83C\uDFA8".repeat(800000);
+        try(CommandOutbox q=new CommandOutbox(context)){
+            q.put(command(large,1),new JSONObject().put("ok",true).put("artwork",payload),"completed");
+            q.put(command(small,2),new JSONObject().put("ok",true),"completed");
+            JSONArray pending=q.pending();assertEquals(2,pending.length());assertEquals(payload,pending.getJSONObject(0).getJSONObject("result").getString("artwork"));
+            q.defer(large);assertEquals(small,q.pending().getJSONObject(0).getString("id"));q.acknowledge(small);assertTrue(q.contains(large));
+        }
+    }
     private static JSONObject command(String id,int seq)throws Exception{
         return new JSONObject().put("id",id).put("seq",seq).put("action","self_test");
     }

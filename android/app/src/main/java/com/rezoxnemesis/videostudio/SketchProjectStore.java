@@ -34,7 +34,7 @@ public final class SketchProjectStore implements AutoCloseable {
             db.execSQL("CREATE TABLE sketch_live_sessions(sequence INTEGER PRIMARY KEY AUTOINCREMENT,sketch_id TEXT NOT NULL,session_id TEXT NOT NULL,json TEXT NOT NULL,end_sequence INTEGER NOT NULL DEFAULT 0,ended INTEGER NOT NULL DEFAULT 0,consumed INTEGER NOT NULL DEFAULT 0,UNIQUE(sketch_id,session_id))");
             db.execSQL("CREATE TABLE sketch_operations(sketch_id TEXT NOT NULL,operation_id TEXT NOT NULL,fingerprint TEXT NOT NULL,result TEXT NOT NULL,PRIMARY KEY(sketch_id,operation_id))");
         }
-        @Override public void onUpgrade(SQLiteDatabase db, int old, int next) { if(old==1&&next>=2){db.execSQL("ALTER TABLE sketches ADD COLUMN summary TEXT NOT NULL DEFAULT '{}'");try(Cursor c=db.rawQuery("SELECT id,json FROM sketches",null)){while(c.moveToNext()){try{ContentValues values=new ContentValues();values.put("summary",summary(new JSONObject(c.getString(1))).toString());db.update("sketches",values,"id=?",new String[]{c.getString(0)});}catch(Exception error){throw new IllegalStateException("Sketch metadata migration failed",error);}}}}
+        @Override public void onUpgrade(SQLiteDatabase db, int old, int next) { if(old==1&&next>=2){db.execSQL("ALTER TABLE sketches ADD COLUMN summary TEXT NOT NULL DEFAULT '{}'");try(Cursor c=db.rawQuery("SELECT id FROM sketches",null)){while(c.moveToNext()){try{ContentValues values=new ContentValues();values.put("summary",summary(new JSONObject(SQLiteLargeText.read(db,"SELECT json FROM sketches WHERE id=?",c.getString(0)))).toString());db.update("sketches",values,"id=?",new String[]{c.getString(0)});}catch(Exception error){throw new IllegalStateException("Sketch metadata migration failed",error);}}}}
             if(old<3&&next>=3){db.execSQL("CREATE TABLE sketch_live_events(sequence INTEGER PRIMARY KEY AUTOINCREMENT,sketch_id TEXT NOT NULL,base_revision INTEGER NOT NULL,revision INTEGER NOT NULL,operations TEXT NOT NULL)");db.execSQL("CREATE INDEX sketch_live_lookup ON sketch_live_events(sketch_id,sequence)");}
             if(old<4&&next>=4){db.execSQL("CREATE TABLE sketch_live_sessions(sequence INTEGER PRIMARY KEY AUTOINCREMENT,sketch_id TEXT NOT NULL,session_id TEXT NOT NULL,json TEXT NOT NULL,end_sequence INTEGER NOT NULL DEFAULT 0,ended INTEGER NOT NULL DEFAULT 0,consumed INTEGER NOT NULL DEFAULT 0,UNIQUE(sketch_id,session_id))");}
             else if(old==4&&next>=5)db.execSQL("ALTER TABLE sketch_live_sessions ADD COLUMN consumed INTEGER NOT NULL DEFAULT 0"); }
@@ -46,10 +46,9 @@ public final class SketchProjectStore implements AutoCloseable {
 
     public JSONObject get(String id) throws Exception {
         SketchDocument.id(new JSONObject().put("id", id), "id");
-        try (Cursor c = db.rawQuery("SELECT json FROM sketches WHERE id=?", new String[]{id})) {
-            if (!c.moveToFirst()) throw new IllegalArgumentException("UNKNOWN_SKETCH: " + id);
-            JSONObject doc = new JSONObject(c.getString(0)); SketchDocument.validate(doc); return doc;
-        }
+        String json = SQLiteLargeText.read(db, "SELECT json FROM sketches WHERE id=?", id);
+        if (json == null) throw new IllegalArgumentException("UNKNOWN_SKETCH: " + id);
+        JSONObject doc = new JSONObject(json); SketchDocument.validate(doc); return doc;
     }
     void beginSnapshot(){db.beginTransactionNonExclusive();}
     void endSnapshot(){db.endTransaction();}
@@ -137,11 +136,12 @@ public final class SketchProjectStore implements AutoCloseable {
             try (Cursor c = db.rawQuery("SELECT position,next_position FROM sketches WHERE id=?", new String[]{id})) {
                 c.moveToFirst(); position = c.getInt(0); nextPosition = c.getInt(1);
             }
-            String sql = "SELECT position,json FROM sketch_history WHERE sketch_id=? AND position" + (redo ? ">? ORDER BY position ASC" : "<? ORDER BY position DESC") + " LIMIT 1";
+            String sql = "SELECT position FROM sketch_history WHERE sketch_id=? AND position" + (redo ? ">? ORDER BY position ASC" : "<? ORDER BY position DESC") + " LIMIT 1";
             JSONObject restored; int target;
             try (Cursor c = db.rawQuery(sql, new String[]{id, Integer.toString(position)})) {
                 if (!c.moveToFirst()) throw new IllegalStateException(redo ? "SKETCH_REDO_EMPTY" : "SKETCH_UNDO_EMPTY");
-                target = c.getInt(0); restored = new JSONObject(c.getString(1));
+                target = c.getInt(0);
+                restored = new JSONObject(SQLiteLargeText.read(db, "SELECT json FROM sketch_history WHERE sketch_id=? AND position=?", id, Integer.toString(target)));
             }
             restored.put("revision", Math.addExact(expectedRevision, 1)); SketchDocument.validate(restored); verifyReferences(restored);
             if (db.update("sketches", values(id, restored, target, nextPosition), "id=? AND revision=?", new String[]{id, Long.toString(expectedRevision)}) != 1)

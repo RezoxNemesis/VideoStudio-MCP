@@ -10,6 +10,7 @@ import org.json.JSONObject;
 
 /** Results stay on disk until the relay confirms their receipt. No owner credentials are stored. */
 public final class CommandOutbox extends SQLiteOpenHelper {
+    private static final long BATCH_BYTES = 4L * 1024 * 1024;
     public CommandOutbox(Context context) { super(context, "mcp_result_outbox.db", null, 2); }
     @Override public void onCreate(SQLiteDatabase db) {
         db.execSQL("CREATE TABLE results (id TEXT PRIMARY KEY, seq INTEGER NOT NULL, body TEXT NOT NULL, retry_after_ms INTEGER NOT NULL DEFAULT 0, attempt_count INTEGER NOT NULL DEFAULT 0)");
@@ -37,10 +38,19 @@ public final class CommandOutbox extends SQLiteOpenHelper {
     }
     public synchronized JSONArray pending() throws Exception {
         JSONArray out = new JSONArray();
-        try (Cursor cursor = getReadableDatabase().rawQuery("SELECT id,seq,body FROM results WHERE retry_after_ms<=? ORDER BY seq LIMIT 16",new String[]{String.valueOf(System.currentTimeMillis())})) {
+        SQLiteDatabase db = getReadableDatabase();
+        long bytes = 2;
+        try (Cursor cursor = db.rawQuery("SELECT id,seq,length(CAST(body AS BLOB)) FROM results WHERE retry_after_ms<=? ORDER BY seq LIMIT 16",new String[]{String.valueOf(System.currentTimeMillis())})) {
             while (cursor.moveToNext()) {
-                JSONObject value = new JSONObject(cursor.getString(2));
+                long nextBytes = cursor.getLong(2) + 256;
+                // A legacy oversized receipt may travel alone, retaining its exact
+                // bytes. Ordinary batches never load sixteen large JSON bodies.
+                if (out.length() > 0 && bytes + nextBytes > BATCH_BYTES) break;
+                String body = SQLiteLargeText.read(db, "SELECT body FROM results WHERE id=?", cursor.getString(0));
+                if (body == null) continue;
+                JSONObject value = new JSONObject(body);
                 value.put("id", cursor.getString(0)); value.put("seq", cursor.getLong(1)); out.put(value);
+                bytes += nextBytes;
             }
         }
         return out;
