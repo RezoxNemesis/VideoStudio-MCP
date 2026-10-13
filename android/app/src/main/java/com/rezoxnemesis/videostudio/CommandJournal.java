@@ -65,6 +65,16 @@ public final class CommandJournal {
                 p.remove("sourceUrl");
                 p.remove("ownerKey");
                 p.remove("privateOwnerKey");
+                // Runner configuration executes with the full in-memory payload,
+                // but only Keystore ciphertext belongs on disk. These fields are
+                // never needed to reconstruct a journalled operation.
+                p.remove("bearer");
+                p.remove("authorization");
+                p.remove("authToken");
+                p.remove("accessToken");
+                p.remove("refreshToken");
+                p.remove("apiKey");
+                p.remove("password");
                 safe.put("parameters", p);
             }
         } catch (Exception ignored) {}

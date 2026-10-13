@@ -6,8 +6,10 @@ import android.database.Cursor;
 import android.net.Uri;
 import android.os.ParcelFileDescriptor;
 import android.provider.OpenableColumns;
+import android.webkit.MimeTypeMap;
 
 import java.util.List;
+import java.util.Locale;
 
 /**
  * Bounded metadata probe for URI-backed media.
@@ -78,6 +80,21 @@ public final class AssetProbe {
                 }
             }
         } catch (Exception ignored) {}
+
+        // File URIs have no document-provider metadata. Some SAF providers also
+        // return only a generic MIME while supplying a useful display filename.
+        String leaf = uri.getLastPathSegment();
+        if ("file".equals(uri.getScheme()) && "Media".equals(name) && leaf != null && !leaf.isEmpty()) name = leaf;
+        if ("application/octet-stream".equalsIgnoreCase(mime) || "binary/octet-stream".equalsIgnoreCase(mime)) {
+            String candidate = "Media".equals(name) ? leaf : name;
+            if (candidate != null) {
+                int dot = candidate.lastIndexOf('.');
+                if (dot >= 0 && dot < candidate.length() - 1) {
+                    String inferred = MimeTypeMap.getSingleton().getMimeTypeFromExtension(candidate.substring(dot + 1).toLowerCase(Locale.ROOT));
+                    if (inferred != null && !inferred.isEmpty()) mime = inferred;
+                }
+            }
+        }
 
         boolean persisted = hasPersistedReadAccess(resolver, uri);
         boolean readable = false;
