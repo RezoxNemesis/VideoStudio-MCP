@@ -33,3 +33,26 @@ jobs:
       - name: Cloudflare dry-run build
         run: npx wrangler deploy --dry-run --outdir .wrangler-dist
 
+      - name: Verify source-rig images through the installed MCP SDK and local Worker
+        env:
+          WRANGLER_SEND_METRICS: 'false'
+        run: |
+          set -euo pipefail
+          mkdir -p .work
+          npx wrangler dev --local --ip 127.0.0.1 --port 8790 --persist-to .work/source-rig-state > .work/source-rig-worker.log 2>&1 &
+          rig_worker_pid=$!
+          trap 'kill "$rig_worker_pid" 2>/dev/null || true' EXIT
+          node --input-type=module -e 'for (let i=0; i<80; i++) { try { await fetch("http://127.0.0.1:8790/"); process.exit(0); } catch {} await new Promise(r=>setTimeout(r,250)); } process.exit(1);'
+          SOURCE_RIG_QA_ORIGIN=http://127.0.0.1:8790 node scripts/source-rig-runtime-test.mjs
+
+      - name: Preserve source-rig protocol evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: VideoStudio-source-rig-MCP-verification
+          retention-days: 7
+          include-hidden-files: true
+          path: |
+            .work/source-rig-runtime-results.json
+            .work/source-rig-worker.log
+

@@ -45,6 +45,8 @@ public class ExecutionTruthTest {
         assertTrue(ExecutionTruthPolicy.requiresValidatedMediaOutput("prompt_video"));
         assertTrue(ExecutionTruthPolicy.requiresValidatedMediaOutput("animate_images"));
         assertTrue(ExecutionTruthPolicy.requiresValidatedMediaOutput("export_project"));
+        assertTrue(ExecutionTruthPolicy.requiresValidatedMediaOutput("sketch_render"));
+        assertFalse(ExecutionTruthPolicy.requiresValidatedMediaOutput("open_pipeline_submit"));
         assertTrue(ExecutionTruthPolicy.requiresValidatedMediaOutput("autonomous_edit"));
         assertFalse(ExecutionTruthPolicy.requiresValidatedMediaOutput("generate_image"));
     }

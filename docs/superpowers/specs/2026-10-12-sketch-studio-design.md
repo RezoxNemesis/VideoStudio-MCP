@@ -1,0 +1,13 @@
+# Responsive reference and flipbook studio
+
+The owner prioritizes professional drawing and flipbook animation on the phone and through ChatGPT, with ordinary editing responding without native render jobs. Preserve all earlier projects, references, signing identity and device MCP pairing. Exact reconstruction of arbitrary pictures is not guaranteed by drawing tools; retain the source as an owned reference and provide editable tracing and precise geometry.
+
+Use the existing transactional SketchEditOps facade for both human and agent operations. Extend it with cubic Bézier paths, six brush presets, gradient fills, layer blend modes, reference crops and tracing, and atomic whole-cel duplicate/clear/insert/delete operations. Preview/export must use the same renderer. Keep document bounds and fail transactions before publishing invalid changes. Paged books support 10000 lazy pages, 24/30/60 FPS and page exposures; each native export segment contains up to 1200 actual frames. Live sessions journal every accepted operation and preserve unconsumed steps across pauses; they start before the first mark and end at an exact revision.
+
+The native canvas uses bounded frame caches and pinch zoom/two-finger pan, pressure/stabilization controls, eyedropper, grid/symmetry guides and configurable coloured onion skins. Draw immediately in memory; serialize durable SQLite saves away from the main thread. Retain a private recovery draft if a concurrent agent changes the document, instead of silently overwriting or discarding pending strokes.
+
+A dark, canvas-first editor exposes a colour palette, brush presets, flipbook frames and reference controls. References are imported only from owned VideoStudio project assets, never by browsing Gallery. Edge tracing creates editable vector strokes; it is not neural reconstruction.
+
+Load Filament, gltfio and utility native libraries before their JNI entrypoints. Catch initialization failures at the 3D screen boundary and show a recoverable error. Following the owner’s subsequent request, remove all app-imposed thermal holds; Android keeps hardware throttling and shutdown control. Keep cancellation, memory bounds and background exports; do not hide actual unfinished work or remove durable native commands required while Android sleeps.
+
+Verification: focused native Canvas pixel tests, transactional cel/crop tests, activity gesture and async-save tests, shared MCP schema tests, native loader contract and thermal regressions, then one Android build signed with the existing pinned key. Real phone/GPU acceptance remains separate until a native endpoint is connected.

@@ -1,0 +1,65 @@
+package com.rezoxnemesis.videostudio;
+
+import org.json.JSONArray;
+import org.json.JSONObject;
+import java.nio.charset.StandardCharsets;
+import java.math.BigDecimal;
+import java.math.BigInteger;
+import java.util.*;
+
+/** Closed native aliases for the existing generic app_execute relay. No permission is added. */
+public final class NativeWorkbenchBridge {
+    public static final String PREFIX="studio_",MINIMUM_NATIVE_VERSION="3.9.0";
+    private static final int MAX_COMMAND_BYTES=2*1024*1024,MAX_DEPTH=64,MAX_VALUES=2*1024*1024;
+    private static final Set<String> ACTIONS=Collections.unmodifiableSet(new LinkedHashSet<>(Arrays.asList(
+            "precision_edit","apply_tool","set_studio_layers",
+            "sketch_create","sketch_list","sketch_get","sketch_edit","sketch_undo","sketch_redo",
+            "sketch_import_reference","sketch_import_frame_manifest","sketch_import_drawing_manifest","sketch_preview","sketch_render",
+            "sketch_book_create","sketch_book_edit","sketch_book_list","sketch_book_get","sketch_book_open_page","sketch_book_render","sketch_live_begin","sketch_live_events","sketch_live_end","sketch_capabilities",
+            "open_pipeline_configure","open_pipeline_capabilities","open_pipeline_list",
+            "open_pipeline_export_request","open_pipeline_submit","open_pipeline_status","open_pipeline_cancel",
+            "open_pipeline_download_result","open_pipeline_import_result","open_pipeline_archive_artifact","open_pipeline_restore_artifact",
+            "cinematic_3d_capabilities","cinematic_3d_install_builtin","cinematic_3d_import_bundle",
+            "cinematic_3d_save_program","cinematic_3d_get_program","cinematic_3d_list_programs",
+            "cinematic_3d_plan","cinematic_3d_export_request","cinematic_3d_render"
+    )));
+    private NativeWorkbenchBridge() {}
+
+    public static String canonicalAction(String action) {
+        if(action!=null&&action.startsWith(PREFIX)){
+            String candidate=action.substring(PREFIX.length());
+            if(ACTIONS.contains(candidate))return candidate;
+        }
+        return action;
+    }
+    /** Clone ordinary JSON deeply; retain credentials in memory for the existing protected facade. */
+    public static JSONObject canonicalCommand(JSONObject command)throws Exception {
+        if(command==null)throw new IllegalArgumentException("A native command is required");
+        JSONObject copy=(JSONObject)copy(command,0,new IdentityHashMap<>(),new Budget());
+        if(copy.toString().getBytes(StandardCharsets.UTF_8).length>MAX_COMMAND_BYTES)throw new IllegalArgumentException("Native command exceeds its relay metadata budget");
+        Object action=copy.opt("action");if(action instanceof String)copy.put("action",canonicalAction((String)action));
+        return copy;
+    }
+    public static JSONObject capabilities()throws Exception {
+        JSONArray actions=new JSONArray(),aliases=new JSONArray();for(String action:ACTIONS){actions.put(action);aliases.put(PREFIX+action);}
+        return new JSONObject().put("tool","app_execute").put("aliasPrefix",PREFIX)
+                .put("minimumNativeVersion",MINIMUM_NATIVE_VERSION).put("canonicalActions",actions).put("aliases",aliases)
+                .put("colourTraceMinimumNativeVersion","3.9.5").put("drawingManifestMinimumNativeVersion","3.9.5").put("advancedSketchMinimumNativeVersion","3.9.1").put("croppedSketchPreviewMinimumNativeVersion","3.9.3").put("flatParameters",true).put("permissionPolicy","existing-native-action-permissions-and-source-validation")
+                .put("galleryAccess",false).put("nativeExecutionVerified",false);
+    }
+    private static final class Budget {int values;long characters;void add(long amount){characters+=amount;if(characters>MAX_COMMAND_BYTES)throw new IllegalArgumentException("Native command exceeds its relay metadata budget");}}
+    private static Object copy(Object value,int depth,IdentityHashMap<Object,Boolean> active,Budget budget)throws Exception {
+        if(depth>MAX_DEPTH||++budget.values>MAX_VALUES)throw new IllegalArgumentException("Native command exceeds its bounded JSON structure");
+        if(value==null||value==JSONObject.NULL){budget.add(4);return JSONObject.NULL;}
+        if(value instanceof String){budget.add(((String)value).length()+2L);return value;}
+        if(value instanceof Boolean){budget.add(5);return value;}
+        if(value instanceof Number){Class<?> type=value.getClass();if(!Arrays.asList(Byte.class,Short.class,Integer.class,Long.class,Float.class,Double.class,BigDecimal.class,BigInteger.class).contains(type)||!Double.isFinite(((Number)value).doubleValue()))throw new IllegalArgumentException("Native command requires finite plain JSON numbers");budget.add(JSONObject.numberToString((Number)value).length());return value;}
+        if(!(value instanceof JSONObject)&&!(value instanceof JSONArray))throw new IllegalArgumentException("Native command requires plain JSON values");
+        if(active.put(value,true)!=null)throw new IllegalArgumentException("Native command cannot contain a JSON cycle");
+        try {
+            budget.add(2);
+            if(value instanceof JSONObject){JSONObject source=(JSONObject)value,result=new JSONObject();Iterator<String> keys=source.keys();while(keys.hasNext()){String key=keys.next();budget.add(key.length()+4L);result.put(key,copy(source.get(key),depth+1,active,budget));}return result;}
+            JSONArray source=(JSONArray)value,result=new JSONArray();for(int i=0;i<source.length();i++){budget.add(1);result.put(copy(source.get(i),depth+1,active,budget));}return result;
+        }finally{active.remove(value);}
+    }
+}

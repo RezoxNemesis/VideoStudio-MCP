@@ -13,6 +13,6 @@
   },
   "build": {
     "command": "node scripts/bake-personal-client.mjs",
-    "watch_dir": ["src/personal-client.js"]
+    "watch_dir": ["src"]
   }
 }

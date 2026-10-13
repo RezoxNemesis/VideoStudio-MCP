@@ -47,6 +47,10 @@ public class NativeCombatRigComposerTest {
                 });
         assertEquals(48,progress[0]);
         assertEquals(48,output.clips.size());
+        java.io.File archiveVisible = new java.io.File(context.getFilesDir(),
+                "creative_workspace/projects/"+output.id+"/generated/combat_rig/rig_0000.jpg");
+        assertTrue("Generated combat frames must be inside the cloud-archive root",
+                archiveVisible.isFile());
         assertEquals(48,output.assets.size());
         assertEquals(48,store.get(output.id).clips.size());
         assertEquals(48*42,output.outputDurationMs());
