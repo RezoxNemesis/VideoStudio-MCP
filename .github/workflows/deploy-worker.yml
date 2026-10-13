@@ -5,6 +5,9 @@ on:
     branches: [ main ]
     paths:
       - "src/**"
+      - "scripts/bake-relay-build.mjs"
+      - "scripts/bake-personal-client.mjs"
+      - "scripts/verify-relay-release.mjs"
       - "wrangler.jsonc"
       - "package.json"
       - ".github/workflows/deploy-worker.yml"
@@ -24,28 +27,27 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Check Cloudflare deploy credentials
+        shell: bash
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ] || [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            echo "::error::Worker deployment is BLOCKED: existing Cloudflare account/token bindings are required. No deployment occurred."
+            exit 1
+          fi
+
       - name: Use Node
         uses: actions/setup-node@v4
         with:
           node-version: 22
 
       - name: Install dependencies
-        run: npm install --no-audit --no-fund
+        run: npm install --no-audit --no-fund --package-lock=false
 
       - name: Validate Studio Web
         run: npm test
 
-      - name: Check Cloudflare deploy credentials
-        id: cf
-        shell: bash
-        run: |
-          if [ -n "$CLOUDFLARE_API_TOKEN" ] && [ -n "$CLOUDFLARE_ACCOUNT_ID" ]; then
-            echo "ready=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "ready=false" >> "$GITHUB_OUTPUT"
-            echo "Cloudflare deploy secrets are not configured. Source is validated but deployment is skipped."
-          fi
-
       - name: Deploy Worker
-        if: steps.cf.outputs.ready == 'true'
         run: npx wrangler deploy
+
+      - name: Verify deployed source and storage identity
+        run: node scripts/verify-relay-release.mjs https://wispy-queen-f9b5.prakasharuntandon634.workers.dev

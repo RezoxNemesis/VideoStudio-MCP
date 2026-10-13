@@ -19,12 +19,12 @@ async function fixture(version='3.7.2',mode='everything') {
     APP_HTML:'',STUDIO_RUNTIME_JS:'',STUDIO_CINEMATIC_JS:'',STUDIO_NEURAL_JS:'',STUDIO_TEMPORAL_JS:'',STUDIO_CHARACTER_JS:'',STUDIO_ACTION_TIMELINE_JS:'',STUDIO_POSE_SEQUENCE_JS:'',LOCAL_VIDEO_DOWNLOAD_HTML:''};
   vm.createContext(context);
   vm.runInContext(source.replace(/^import .*$/gm,'').replace('export class VideoStudioState','globalThis.VideoStudioState = class VideoStudioState')
-    .replace('export default {','globalThis.worker = {')+'\nglobalThis.nativeTools=serverForApp;',context);
+    .replace('export default {','globalThis.worker = {')+'\nglobalThis.nativeTools=serverForApp;globalThis.compatibilityTools=serverFor;',context);
   const relay=new context.VideoStudioState({storage},{}),owner='x'.repeat(43),deviceId='storyboard-test-device';
   await relay.appRegister(deviceId,owner,{appVersion:version,protocolVersion:3,protocolMin:3,protocolMax:3,permissionMode:mode});
   const server=context.nativeTools({VIDEO_STATE:{getByName:()=>relay}},owner,3);
   const call=async(name,args)=>{const tool=server.tools.get(name);assert.ok(tool,name);const parsed=z.object(tool.definition.inputSchema).parse(args);return JSON.parse((await tool.handler(parsed)).content[0].text);};
-  return {rows,storage,relay,owner,deviceId,call,server,writes:()=>storage.writes()};
+  return {rows,storage,relay,owner,deviceId,call,server,compatibilityServer:()=>context.compatibilityTools({VIDEO_STATE:{getByName:()=>relay}}),writes:()=>storage.writes()};
 }
 const request={sourceProjectId:'source-project-123',motionIntent:'cinematic_action'};
 test('actual typed handler rejects old native app before queue or sequence writes',async()=>{
@@ -289,7 +289,7 @@ test('studio relay alias generic execution keeps queued alias native-only when t
 });
 test('studio relay alias version and canonical parameter failures happen before queue writes',async()=>{
  const old=await fixture('3.8.1'),before=old.writes();
- for(const alias of STUDIO_ALIAS_ACTIONS)assert.throws(()=>contract.requireStoryboardNativeVersion({appVersion:'3.8.1'},alias),/3\.9\.[015]/);
+ for(const alias of STUDIO_ALIAS_ACTIONS)assert.throws(()=>contract.requireStoryboardNativeVersion({appVersion:'3.8.1'},alias),/3\.9\.[0156]/);
  await assert.rejects(old.relay.appEnqueueV3(old.owner,'studio_sketch_get',{sketchId:'s'}),/3\.9\.0/);assert.equal(old.writes(),before);
  const current=await fixture('3.9.0'),currentBefore=current.writes();
  await assert.rejects(current.relay.appEnqueueV3(current.owner,'studio_sketch_get',{sketchId:'s',uri:'content://foreign'}));
@@ -304,4 +304,22 @@ test('studio relay alias permission checks use canonical one-file action and ret
  await assert.rejects(f.relay.appEnqueueV3(f.owner,'studio_gallery_list',{}),/permission mode|privacy boundary/);
  assert.equal(f.writes(),before);
  const rows=await queueBindings.readCommandQueue(f.storage,'app-v3-cl:'+f.deviceId);assert.equal(rows.at(-1).action,'studio_apply_tool');
+});
+test('live app status exposes relay and distinct running/backlog states without claiming job completion',async()=>{
+ const f=await fixture('3.9.5');const c=await f.relay.appEnqueueV3(f.owner,'get_state',{});
+ await f.relay.appCompleteV3(f.deviceId,f.owner,c.id,{ok:true,queued:true,background:true,jobId:'native-job-owned'},'completed');
+ const status=await f.call('app_status',{});assert.equal(status.relay.commandStorage.version,1);assert.equal(status.commandBacklog.pending,0);assert.equal(status.lastCommand.execution.workState,'awaiting_job');
+ const receipt=await f.call('app_get_command_result',{commandId:c.id});assert.equal(receipt.status,'completed');assert.equal(receipt.execution.workState,'awaiting_job');assert.equal(receipt.execution.outputVerified,false);
+});
+
+test('legacy native result compatibility returns delivery and job evidence with or without images',async()=>{
+ const f=await fixture();const legacy=f.compatibilityServer().tools.get('get_video_command_result');
+ for(const image of [false,true]){
+  const command=await f.relay.appEnqueueV3(f.owner,'get_state',{});
+  const result={ok:true,queued:true,jobId:'legacy-job',...(image?{contactSheet:{base64:'aGVsbG8=',mime:'image/png'}}:{})};
+  await f.relay.appCompleteV3(f.deviceId,f.owner,command.id,result,'completed');
+  const response=await legacy.handler({deviceId:f.owner,commandId:command.id});const view=JSON.parse(response.content[0].text);
+  assert.equal(view.execution.workState,'awaiting_job');assert.equal(view.execution.outputVerified,false);
+  assert.equal(response.content.filter(item=>item.type==='image').length,image?1:0);
+ }
 });

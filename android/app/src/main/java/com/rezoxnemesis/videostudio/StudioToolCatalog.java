@@ -9,7 +9,7 @@ import java.util.Set;
 /** Human-facing organization; every entry maps to a real existing editor action. */
 public final class StudioToolCatalog {
     private static final Set<String> UNAVAILABLE=Set.of("Freeze","Reverse","Speed Ramp","Motion Blur",
-            "Transitions","Reframe","Fonts","Captions","Audio Duck","Crop");
+            "Transitions","Fonts","Captions","Audio Duck");
     public static final String[] GROUPS={
         "Cut & Arrange","Motion","Color & Effects","Text & Audio","Animation & 3D"
     };
@@ -49,8 +49,8 @@ public final class StudioToolCatalog {
         add(2,"Blur","Apply blur",true,false);
         add(2,"Opacity","Exact static or keyframed alpha",false,false);
         add(2,"Glow","Native thresholded nine-tap bloom",false,false);
-        add(2,"Crop","Fill frame",true,false);
-        add(2,"Reframe","Safe portrait crop preset",true,true);
+        add(2,"Crop","Exact normalized source crop",false,false);
+        add(2,"Reframe","Choose the source viewport",false,false);
         add(2,"Green Screen","Native chroma key with tolerance and feather",false,false);
         add(2,"Mask","Native feathered rectangle or ellipse",false,false);
         add(2,"Effects","Creative effect preset",true,true);

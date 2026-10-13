@@ -451,6 +451,7 @@ public final class NativeRenderEngine {
         JSONObject fx = clip.effects == null ? new JSONObject() : clip.effects;
 
         int[] raster=outputSize(aspect,quality);
+        if(fx.has("crop"))effects.add(new StudioCropEffect(fx.optJSONObject("crop")));
         int width=raster[0],height=raster[1];
         effects.add(Presentation.createForWidthAndHeight(
                 width, height, Presentation.LAYOUT_SCALE_TO_FIT_WITH_CROP));
@@ -608,6 +609,7 @@ public final class NativeRenderEngine {
         ArrayList<Effect> effects = new ArrayList<>();
         JSONObject fx = clip.effects == null ? new JSONObject() : clip.effects;
 
+        if(fx.has("crop"))effects.add(new StudioCropEffect(fx.optJSONObject("crop")));
         // Enforce correct raster geometry instead of a 9:16 scene letterboxed
         // in a 16:9 output. The encoder still selects a supported size.
         int[] raster=outputSize(aspect,quality);

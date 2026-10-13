@@ -191,4 +191,29 @@ public final class SketchFrameManifestImporterTest {
         try(SketchProjectStore store=new SketchProjectStore(context)){try{SketchDocument.object(store.get(id),"legacy_6");fail("Deleted source object was restored");}catch(IllegalArgumentException expected){}}
     }
 
+    @Test public void compressedDrawingPacketsDecodeWithinBudgetAndRejectExpansionWithoutWrites() throws Exception {
+        String id=name();byte[] plain=manifest(id,hash);java.io.ByteArrayOutputStream bytes=new java.io.ByteArrayOutputStream();try(java.util.zip.GZIPOutputStream gzip=new java.util.zip.GZIPOutputStream(bytes)){gzip.write(plain);}
+        byte[] decoded=SketchFrameManifestImporter.readPacket(new java.io.ByteArrayInputStream(bytes.toByteArray()),true);assertArrayEquals(plain,decoded);assertEquals(4,SketchFrameManifestImporter.applyBytes(context,decoded,hash,id,3,null).getInt("validatedObjects"));
+        bytes.reset();try(java.util.zip.GZIPOutputStream gzip=new java.util.zip.GZIPOutputStream(bytes)){byte[] block=new byte[32768];for(int n=0;n<129;n++)gzip.write(block);}try{SketchFrameManifestImporter.readPacket(new java.io.ByteArrayInputStream(bytes.toByteArray()),true);fail("Oversized gzip expansion must fail before any import");}catch(IllegalArgumentException expected){assertTrue(expected.getMessage().contains("budget"));}
+    }
+    @Test public void sourceHashStreamsBeyondTheOld64MiBLimitWithoutBufferingTheSource() throws Exception {
+        final long length=65L*1024*1024;java.io.InputStream input=new java.io.InputStream(){long remaining=length;public int read(){return remaining-->0?0:-1;}public int read(byte[] b,int off,int max){if(remaining==0)return -1;int n=(int)Math.min(remaining,max);java.util.Arrays.fill(b,off,off+n,(byte)0);remaining-=n;return n;}};
+        java.security.MessageDigest digest=java.security.MessageDigest.getInstance("SHA-256");byte[] zeros=new byte[32768];for(long n=0;n<length;n+=zeros.length)digest.update(zeros);StringBuilder expected=new StringBuilder();for(byte b:digest.digest())expected.append(String.format(java.util.Locale.ROOT,"%02x",b&255));assertEquals(expected.toString(),SketchFrameManifestImporter.sourceHash(input));
+    }
+
+ @Test public void oversizedCompressedMetadataFailsBeforeUnboundedHeaderConsumption() throws Exception {
+  byte[] packet=new byte[4*1024*1024+65536+20];java.util.Arrays.fill(packet,(byte)'x');packet[0]=(byte)0x1f;packet[1]=(byte)0x8b;packet[2]=8;packet[3]=8;for(int n=4;n<10;n++)packet[n]=0;
+  try{SketchFrameManifestImporter.readPacket(new java.io.ByteArrayInputStream(packet),true);fail("Oversized gzip header accepted");}catch(Exception expected){assertTrue(expected.toString(),String.valueOf(expected.getMessage()).contains("Compressed drawing packet exceeds"));}
+ }
+ @Test public void concatenatedEmptyGzipMembersCannotExhaustTheWorkerStack() throws Exception {
+  java.io.ByteArrayOutputStream one=new java.io.ByteArrayOutputStream();try(java.util.zip.GZIPOutputStream gzip=new java.util.zip.GZIPOutputStream(one)){}java.io.ByteArrayOutputStream many=new java.io.ByteArrayOutputStream();for(int n=0;n<10000;n++)many.write(one.toByteArray());
+  try{SketchFrameManifestImporter.readPacket(new java.io.ByteArrayInputStream(many.toByteArray()),true);fail("Multiple gzip members accepted");}catch(java.io.IOException expected){assertTrue(expected.toString(),expected.getMessage().contains("single gzip member"));}
+ }
+ @Test public void gzipOptionalMetadataAndHeaderCrcRemainCompatible() throws Exception {
+  byte[] plain="native drawing packet π".getBytes(StandardCharsets.UTF_8);java.io.ByteArrayOutputStream compressed=new java.io.ByteArrayOutputStream();try(java.util.zip.GZIPOutputStream gzip=new java.util.zip.GZIPOutputStream(compressed)){gzip.write(plain);}byte[] base=compressed.toByteArray();java.io.ByteArrayOutputStream packet=new java.io.ByteArrayOutputStream();packet.write(base,0,10);byte[] header=packet.toByteArray();header[3]=30;packet.reset();packet.write(header);packet.write(new byte[]{3,0,1,2,3});packet.write("drawing.jsonl".getBytes(StandardCharsets.UTF_8));packet.write(0);packet.write("owned source".getBytes(StandardCharsets.UTF_8));packet.write(0);java.util.zip.CRC32 crc=new java.util.zip.CRC32();crc.update(packet.toByteArray());packet.write((int)(crc.getValue()&255));packet.write((int)((crc.getValue()>>>8)&255));packet.write(base,10,base.length-10);assertArrayEquals(plain,SketchFrameManifestImporter.readPacket(new java.io.ByteArrayInputStream(packet.toByteArray()),true));
+ }
+ @Test public void gzipCorruptedTrailerCannotReturnUnverifiedDrawingBytes() throws Exception {
+  java.io.ByteArrayOutputStream compressed=new java.io.ByteArrayOutputStream();try(java.util.zip.GZIPOutputStream gzip=new java.util.zip.GZIPOutputStream(compressed)){gzip.write("owned source packet".getBytes(StandardCharsets.UTF_8));}byte[] packet=compressed.toByteArray();packet[packet.length-8]^=1;
+  try{SketchFrameManifestImporter.readPacket(new java.io.ByteArrayInputStream(packet),true);fail("Corrupt CRC accepted");}catch(java.io.IOException expected){assertTrue(expected.getMessage().contains("checksum/size mismatch"));}
+ }
 }

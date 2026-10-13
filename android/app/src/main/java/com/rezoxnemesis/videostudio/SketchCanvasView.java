@@ -56,6 +56,18 @@ public final class SketchCanvasView extends View {
     public void setDocument(JSONObject doc) throws Exception {
         SketchDocument.validate(doc);boolean same=document!=null&&document.getString("id").equals(doc.getString("id"));
         document=SketchDocument.copy(doc);if(renderer==null||!same){if(renderer!=null)renderer.close();renderer=new SketchFrameRenderer(getContext(),document);zoom=1;panX=panY=0;}else renderer.updateDocument(getContext(),document);clearFrameCache();
+        restoreDocumentCursor(doc);
+    }
+    /** A validated worker snapshot transfers ownership without UI parsing/indexing. */
+    void setPreparedDocument(SketchLivePreparation.Prepared prepared) throws Exception {
+        if(android.os.Looper.myLooper()!=android.os.Looper.getMainLooper())
+            throw new IllegalStateException("Canvas adoption requires the UI thread");
+        boolean same=document!=null&&document.getString("id").equals(prepared.document.getString("id"));
+        SketchFrameRenderer next=prepared.takeRenderer();
+        if(renderer!=null)renderer.close();renderer=next;document=prepared.document;
+        if(!same){zoom=1;panX=panY=0;}clearFrameCache();restoreDocumentCursor(document);
+    }
+    private void restoreDocumentCursor(JSONObject doc) throws Exception {
         frame = Math.min(frame, doc.getInt("frameCount") - 1);
         try { SketchDocument.layer(document, layerId); } catch (Exception missing) { layerId = document.getJSONArray("layers").getJSONObject(0).getString("id"); }
         if (selectedId != null) try { SketchDocument.object(document, selectedId); } catch (Exception missing) { selectedId = null; }
@@ -107,7 +119,7 @@ public final class SketchCanvasView extends View {
             if(dragTransform==null&&liveObject==null&&nodePreview==null)canvas.drawBitmap(frameImage(frame),0,0,null);else renderer.draw(canvas,frame,false,selectedId,dragTransform);
             if(grid||symmetry){paint.setStyle(Paint.Style.STROKE);paint.setStrokeWidth(1/viewScale);paint.setColor(0x553fa4c9);if(grid){for(int i=1;i<10;i++){canvas.drawLine(w*i/10f,0,w*i/10f,h,paint);canvas.drawLine(0,h*i/10f,w,h*i/10f,paint);}}if(symmetry){paint.setColor(0x998ed4ac);canvas.drawLine(w/2f,0,w/2f,h,paint);}}
             if (gesture.length() > 0 || polygon.length() > 0) drawGesture(canvas, w, h);
-            if (selectedId != null) drawSelection(canvas, w, h);
+            if (selectedId != null && isEnabled() && liveObject == null) drawSelection(canvas, w, h);
             canvas.restoreToCount(save);
         } catch (Exception e) { if (listener != null) listener.onMessage(e.getMessage()); }
     }

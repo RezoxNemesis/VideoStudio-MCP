@@ -12,7 +12,7 @@ public final class SketchEditOps {
 
     public static JSONObject execute(Context context,String action,JSONObject args) throws Exception {
         JSONObject result=executeInternal(context,action,args);result.put("ok",true);
-        if(result.has("sketchId")&&!java.util.Arrays.asList("sketch_get","sketch_preview","sketch_list","sketch_live_events").contains(action)){
+        if(result.has("sketchId")&&!java.util.Arrays.asList("sketch_get","sketch_preview","sketch_list","sketch_live_events","sketch_inspect").contains(action)){
             android.content.SharedPreferences.Editor signal=context.getSharedPreferences("sketch_live_workspace",Context.MODE_PRIVATE).edit().putString("sketchId",result.getString("sketchId")).putLong("signal",System.nanoTime());
             String priorBook=context.getSharedPreferences("sketch_live_workspace",Context.MODE_PRIVATE).getString("sketchId","").equals(result.getString("sketchId"))?context.getSharedPreferences("sketch_live_workspace",Context.MODE_PRIVATE).getString("bookId",""):"";signal.putString("bookId",action.equals("sketch_book_open_page")?args.getString("bookId"):priorBook);signal.putInt("page",args.optInt("page",0));signal.apply();
         }
@@ -28,6 +28,9 @@ public final class SketchEditOps {
         try (SketchProjectStore store = new SketchProjectStore(context)) {
             if ("sketch_list".equals(action)) { SketchDocument.fields(args, ""); return new JSONObject().put("sketches", store.list()); }
             String id = SketchDocument.id(args, "sketchId");
+            if("sketch_inspect".equals(action)){
+                SketchDocument.fields(args,"sketchId,expectedRevision,frameOffset,frameLimit,characterLayerIds");JSONObject doc=store.get(id);if(args.has("expectedRevision"))SketchProjectStore.requireRevision(doc,SketchDocument.integer(args,"expectedRevision",1,Long.MAX_VALUE-1));return SketchInspection.inspect(doc,args);
+            }
             if("sketch_live_events".equals(action)){
                 SketchDocument.fields(args,"sketchId,afterSequence,limit,operationOffset,operationLimit,eventSequence");
                 store.get(id);
@@ -242,7 +245,7 @@ public final class SketchEditOps {
             }
             case "update_object": {
                 SketchDocument.fields(op, "type,objectId,patch"); String id = SketchDocument.id(op, "objectId"); requireUnlocked(SketchDocument.owner(doc, id));
-                JSONObject patch = op.getJSONObject("patch"); SketchDocument.fields(patch, "color,width,fill,points,bounds,frame,exposure,brush,commands,gradient,referenceCrop");
+                JSONObject patch = op.getJSONObject("patch"); SketchDocument.fields(patch, "color,width,fill,points,bounds,frame,exposure,brush,commands,gradient,referenceCrop,text,fontFamily,fontSize,fontStyle,textAlign,letterSpacing");
                 merge(SketchDocument.object(doc, id), patch); break;
             }
             case "append_points": {

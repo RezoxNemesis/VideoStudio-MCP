@@ -17,7 +17,6 @@ import java.util.HashSet;
  */
 public final class SketchFrameManifestImporter {
     private static final int MAX_MANIFEST_BYTES=4*1024*1024;
-    private static final int MAX_VIDEO_BYTES=64*1024*1024;
     private static final String SCHEMA="videostudio.sketch.frame-ops.v1";
     private static final String[] EXTRA_LAYERS={"bg_ink","combat_black","combat_white","action_ink"};
 
@@ -30,7 +29,7 @@ public final class SketchFrameManifestImporter {
                                                   Progress progress) throws Exception {
         SketchDocument.fields(params,"sketchId,manifestName,videoName,expectedSourceSha256,expectedFrameCount");
         String id=SketchDocument.id(params,"sketchId");
-        String manifestName=checkedName(params.getString("manifestName"),".jsonl");
+        String manifestName=checkedPacketName(params.getString("manifestName"));
         String videoName=checkedName(params.getString("videoName"),null);
         String expectedHash=params.getString("expectedSourceSha256").toLowerCase(java.util.Locale.ROOT);
         if(!expectedHash.matches("[a-f0-9]{64}"))throw new IllegalArgumentException("Source SHA-256 must be explicit");
@@ -39,7 +38,7 @@ public final class SketchFrameManifestImporter {
         byte[] manifest;
         String actualHash;
         try(InputStream input=drive.openLinkedSourceFile(manifestName)){
-            manifest=bounded(input,MAX_MANIFEST_BYTES);
+            manifest=readPacket(input,manifestName.endsWith(".gz"));
         }
         actualHash=sourceHash(context,videoName);
         if(!expectedHash.equals(actualHash))
@@ -50,10 +49,23 @@ public final class SketchFrameManifestImporter {
 
     public static String sourceHash(Context context,String sourceName)throws Exception {
         checkedName(sourceName,null);try(InputStream input=new DriveWorkspaceProvider(context).openLinkedSourceFile(sourceName)){
-            MessageDigest sha=MessageDigest.getInstance("SHA-256");byte[] buffer=new byte[32768];int n;long total=0;
-            while((n=input.read(buffer))!=-1){if(Thread.currentThread().isInterrupted())throw new InterruptedException();total+=n;if(total>MAX_VIDEO_BYTES)throw SketchDocument.bad("Owned source exceeds 64 MiB import budget");sha.update(buffer,0,n);}
-            if(total==0)throw SketchDocument.bad("Drawing source is empty");return hex(sha.digest());
+            return sourceHash(input);
         }
+    }
+
+    /** Hashing an owned source streams 32KiB blocks; source bytes never enter the drawing/relay. */
+    static String sourceHash(InputStream input)throws Exception {
+        MessageDigest sha=MessageDigest.getInstance("SHA-256");byte[] buffer=new byte[32768];int n;long total=0;
+        while((n=input.read(buffer))!=-1){if(Thread.currentThread().isInterrupted())throw new InterruptedException();total=Math.addExact(total,n);sha.update(buffer,0,n);}
+        if(total==0)throw SketchDocument.bad("Drawing source is empty");return hex(sha.digest());
+    }
+    static byte[] readPacket(InputStream input,boolean gzip)throws Exception {
+        if(!gzip)return bounded(input,MAX_MANIFEST_BYTES);
+        return SketchCompressedPacket.read(input,MAX_MANIFEST_BYTES);
+    }
+
+    private static String checkedPacketName(String value){
+        if(value==null||!value.matches("[A-Za-z0-9_.-]{1,120}")||value.contains("..")||!(value.endsWith(".jsonl")||value.endsWith(".jsonl.gz")))throw new IllegalArgumentException("Use an exact linked .jsonl or .jsonl.gz packet name");return value;
     }
 
     /** Bounded pure-source entrypoint also exercised by native Robolectric tests. */

@@ -65,10 +65,10 @@ public final class SketchDocument {
             JSONArray items = layer.getJSONArray("objects");
             for (int j = 0; j < items.length(); j++) {
                 JSONObject item = items.getJSONObject(j);
-                fields(item, "id,kind,frame,exposure,color,width,fill,points,bounds,reference,transform,keys,brush,commands,gradient,referenceCrop");
+                fields(item, "id,kind,frame,exposure,color,width,fill,points,bounds,reference,transform,keys,brush,commands,gradient,referenceCrop,text,fontFamily,fontSize,fontStyle,textAlign,letterSpacing");
                 unique(ids, id(item, "id"));
                 String kind = item.getString("kind");
-                if (!java.util.Arrays.asList("stroke","eraser","line","rect","ellipse","polygon","image","path").contains(kind))
+                if (!java.util.Arrays.asList("stroke","eraser","line","rect","ellipse","polygon","image","path","text").contains(kind))
                     throw bad("Unsupported sketch object kind");
                 int start = (int) integer(item, "frame", 0, frames - 1);
                 integer(item, "exposure", 1, frames - start);
@@ -78,6 +78,7 @@ public final class SketchDocument {
                 if (item.has("brush")) { if (!"stroke".equals(kind) && !"eraser".equals(kind)) throw bad("Brush requires stroke/eraser"); SketchBrushes.validate(item.getJSONObject("brush")); }
                 if (item.has("gradient")) validateGradient(item.getJSONObject("gradient"));
                 if (item.has("referenceCrop")) { if (!"image".equals(kind)) throw bad("Reference crop requires an image"); validateBounds(item.getJSONObject("referenceCrop")); }
+                if ("text".equals(kind)) SketchText.validate(item);
                 if ("path".equals(kind)) { points += validateCommands(item.getJSONArray("commands")); }
                 else if ("stroke".equals(kind) || "eraser".equals(kind) || "line".equals(kind) || "polygon".equals(kind)) {
                     JSONArray pp = item.getJSONArray("points");

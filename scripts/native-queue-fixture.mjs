@@ -1,10 +1,11 @@
 import {webcrypto} from "node:crypto";
 if(!globalThis.crypto)globalThis.crypto=webcrypto;
 import * as queue from '../src/native-command-store.js';
+import * as diagnostics from '../src/relay-diagnostics.js';
 const json=value=>value===undefined?undefined:JSON.parse(JSON.stringify(value));
 // These VM fixtures cross a JS realm boundary. Normalize their JSON at the
 // same boundary as HTTP; production keeps the real helper's strict type guard.
-export const queueBindings={...queue,
+export const queueBindings={...queue,...diagnostics,
   mutateCommandQueue:(storage,key,mutator)=>queue.mutateCommandQueue(storage,key,async(rows,transaction)=>{
     const mutation=await mutator(rows,transaction);return {...mutation,rows:json(mutation.rows)};
   }),
