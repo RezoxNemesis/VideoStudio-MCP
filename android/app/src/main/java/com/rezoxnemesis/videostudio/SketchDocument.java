@@ -100,11 +100,17 @@ public final class SketchDocument {
                         throw bad("Shape bounds must fit normalized canvas");
                     if ("image".equals(kind)) {
                         JSONObject ref = item.getJSONObject("reference");
-                        fields(ref, "file,sha256,width,height,sourceProjectId,sourceAssetId");
+                        fields(ref, "file,sha256,width,height,sourceProjectId,sourceAssetId,sourceWidth,sourceHeight,sourceOrientation,sourceSha256");
                         String hash = ref.getString("sha256");
                         if (!hash.matches("[a-f0-9]{64}") || !ref.getString("file").equals(hash + ".png"))
                             throw bad("Reference image must be an owned hash-bound PNG");
-                        integer(ref, "width", 1, 1280); integer(ref, "height", 1, 1280);
+                        integer(ref, "width", 1, 2048); integer(ref, "height", 1, 2048);
+                        if(ref.has("sourceWidth")||ref.has("sourceHeight")){
+                            long sourceWidth=integer(ref,"sourceWidth",1,64_000_000),sourceHeight=integer(ref,"sourceHeight",1,64_000_000);
+                            if(sourceWidth*sourceHeight>64_000_000L)throw bad("Reference source dimensions exceed decode budget");
+                        }
+                        if(ref.has("sourceOrientation"))integer(ref,"sourceOrientation",1,8);
+                        if(ref.has("sourceSha256")&&!ref.getString("sourceSha256").matches("[a-f0-9]{64}"))throw bad("Reference source hash is invalid");
                         id(ref, "sourceProjectId"); id(ref, "sourceAssetId"); images++;
                     }
                 }

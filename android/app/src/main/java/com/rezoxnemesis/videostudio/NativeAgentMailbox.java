@@ -132,7 +132,7 @@ public final class NativeAgentMailbox {
         })){dispatched.remove(id);wakeDispatch();}
     }
     private void pollIndex()throws Exception{
-        HttpURLConnection c=open(RAW+channel+"/index.json");
+        HttpURLConnection c=openFreshMailboxRead(channel+"/index.json");
         try{
             if(!etag.isEmpty())c.setRequestProperty("If-None-Match",etag);c.setRequestProperty("Cache-Control","no-cache");int code=c.getResponseCode();
             if(code==404)return;
@@ -146,7 +146,7 @@ public final class NativeAgentMailbox {
             String id=index.getString(n);long now=System.currentTimeMillis();
             if(store.hasPacket(id))continue;attempted++;
             String text;
-            HttpURLConnection packet=open(RAW+channel+"/"+id+".vscmd");
+            HttpURLConnection packet=openFreshMailboxRead(channel+"/"+id+".vscmd");
             try{
                 packet.setRequestProperty("Cache-Control","no-cache");
                 if(packet.getResponseCode()!=200)throw new IOException("Packet request failed");
@@ -186,6 +186,12 @@ public final class NativeAgentMailbox {
                 }catch(Exception error){store.deferReceipt(id,System.currentTimeMillis()+30000);prefs.edit().putString("lastReceiptState","saved privately; carrier retry pending").apply();}
             }
         }catch(Exception error){error("Private receipt queue unavailable");}
+    }
+    private HttpURLConnection openFreshMailboxRead(String path)throws Exception{
+        // Raw GitHub may serve a five-minute CDN snapshot despite no-cache.
+        // A fresh public nonce also avoids retaining a packet's cached 404.
+        // Keep ETag validation; the query contains no credential or command data.
+        return open(RAW+path+"?vs_read="+UUID.randomUUID());
     }
     private synchronized HttpURLConnection open(String address)throws Exception{if(!running)throw new IOException("Mailbox stopped");HttpURLConnection c=connectionFactory.apply(address);c.setConnectTimeout(12000);c.setReadTimeout(12000);c.setInstanceFollowRedirects(false);c.setRequestProperty("Accept","application/json");c.setRequestProperty("User-Agent","VideoStudio-Android/"+AppProtocol.APP_VERSION);connections.add(c);return c;}
     private void close(HttpURLConnection c){connections.remove(c);c.disconnect();}

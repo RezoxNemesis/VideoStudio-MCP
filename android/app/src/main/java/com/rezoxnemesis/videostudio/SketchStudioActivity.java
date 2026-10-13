@@ -240,9 +240,18 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
             for (ProjectStore.Project project : projects.list()) for (ProjectStore.Asset asset : project.assets) if (asset.mime != null && asset.mime.startsWith("image/")) { owners.add(project); assets.add(asset); labels.add(project.name + " / " + asset.name); }
             if (assets.isEmpty()) throw SketchDocument.bad("Import an image into a VideoStudio project first");
             new AlertDialog.Builder(this).setTitle("Copy a project reference image").setItems(labels.toArray(new String[0]), (d,index) -> {
-                try { ProjectStore.Project project = owners.get(index); JSONObject args = request().put("projectId", project.id).put("sourceProjectUpdatedAt", project.updatedAt).put("assetId", assets.get(index).id)
-                        .put("layerId", canvas.getLayerId()).put("objectId", UUID.randomUUID().toString()).put("frame", canvas.getFrame()).put("exposure", document.getInt("frameCount") - canvas.getFrame());
-                    afterSaves(()->{args.put("expectedRevision",document.getLong("revision"));SketchEditOps.execute(this,"sketch_import_reference",args);postUi(this::reload);});
+                try {
+                    SketchEditorSession active=session;if(active==null)throw SketchDocument.bad("Open a drawing before importing its guide");
+                    String target=sketchId;int generation=loadGeneration,page=pageGeneration;
+                    ProjectStore.Project project = owners.get(index); JSONObject args = request().put("projectId", project.id).put("sourceProjectUpdatedAt", project.updatedAt).put("assetId", assets.get(index).id)
+                        .put("layerId", canvas.getLayerId()).put("objectId", UUID.randomUUID().toString()).put("frame", canvas.getFrame()).put("exposure", document.getInt("frameCount") - canvas.getFrame()).put("guideVisible",false);
+                    afterSaves(()->{
+                        args.put("expectedRevision",active.document().getLong("revision"));
+                        // Visibility commits with the reference itself: an interruption
+                        // cannot leave a completed photograph masquerading as artwork.
+                        SketchEditOps.execute(this,"sketch_import_reference",args);
+                        postUi(()->{if(session==active&&generation==loadGeneration&&page==pageGeneration&&target.equals(sketchId))reload();});
+                    });
                 } catch (Exception e) { onMessage(e.getMessage()); }
             }).show();
         } catch (Exception e) { onMessage(e.getMessage()); }
@@ -267,10 +276,69 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
     private void onionDialog(){LinearLayout form=column();EditText distance=input("Frames on each side (1..3)","1",true),opacity=input("Onion opacity (0..128)","48",true);form.addView(distance);form.addView(opacity);new AlertDialog.Builder(this).setTitle("Red previous / blue next").setView(form).setPositiveButton("Apply",(d,w)->{try{canvas.setOnionOptions(Integer.parseInt(distance.getText().toString()),Integer.parseInt(opacity.getText().toString()));}catch(Exception error){onMessage(error.getMessage());}}).setNegativeButton("Cancel",null).show();}
     private void celDialog(){if(document==null)return;String[] choices=bookId==null?new String[]{"Duplicate drawing to next cel","Insert blank frame here","Delete current frame","Clear current layer cel"}:new String[]{"Duplicate drawing to next page","Clear current layer"};new AlertDialog.Builder(this).setTitle("Flipbook cels").setItems(choices,(d,index)->{try{if(index==0){duplicateCel();return;}if(bookId!=null){onOperation(new JSONObject().put("type","clear_cel").put("layerId",canvas.getLayerId()).put("frame",0));return;}String kind=index==1?"insert_frame":index==2?"delete_frame":"clear_cel";JSONObject op=new JSONObject().put("type",kind).put("frame",canvas.getFrame());if(index==3)op.put("layerId",canvas.getLayerId());onOperation(op);setFrame(canvas.getFrame());}catch(Exception error){onMessage(error.getMessage());}}).show();}
     private void referenceTools(){
-        try{String objectId=canvas.getSelectedId();if(objectId==null||!"image".equals(SketchDocument.object(document,objectId).getString("kind"))){onMessage("Choose Select / move and select a reference image first");return;}JSONObject image=SketchDocument.object(document,objectId),crop=image.optJSONObject("referenceCrop");LinearLayout form=column();String[] names={"x","y","width","height"};EditText[] fields=new EditText[4];for(int i=0;i<4;i++){fields[i]=input("Reference crop "+names[i]+" (0..1)",String.valueOf(crop==null?(i<2?0:1):crop.getDouble(names[i])),true);form.addView(fields[i]);}EditText alpha=input("Reference opacity 0..1",String.valueOf(image.getJSONObject("transform").getDouble("opacity")),true),threshold=input("Edge trace threshold .01..1","0.15",true);form.addView(alpha);form.addView(threshold);Spinner traceMode=new Spinner(this);traceMode.setAdapter(new ArrayAdapter<>(this,android.R.layout.simple_spinner_dropdown_item,new String[]{"Colour regions (editable fills)","Edge strokes"}));form.addView(traceMode);EditText resolution=input("Trace detail (32..384)","192",true),levels=input("Colour levels (2..32)","8",true);form.addView(resolution);form.addView(levels);CheckBox guide=new CheckBox(this);guide.setText("Keep the reference guide visible");form.addView(guide);
-            new AlertDialog.Builder(this).setTitle("Crop, fade and trace owned reference").setView(form).setNegativeButton("Cancel",null).setPositiveButton("Apply crop / opacity",(d,w)->{try{JSONObject value=new JSONObject();for(int i=0;i<4;i++)value.put(names[i],Double.parseDouble(fields[i].getText().toString()));apply(new JSONArray().put(new JSONObject().put("type","update_object").put("objectId",objectId).put("patch",new JSONObject().put("referenceCrop",value))).put(new JSONObject().put("type","set_transform").put("objectId",objectId).put("transform",new JSONObject().put("opacity",Double.parseDouble(alpha.getText().toString())))));}catch(Exception error){onMessage(error.getMessage());}})
-                .setNeutralButton("Trace to editable layer",(d,w)->{try{String layerId=UUID.randomUUID().toString();JSONObject trace=new JSONObject().put("type","trace_reference").put("objectId",objectId).put("layerId",layerId).put("frame",canvas.getFrame()).put("threshold",Double.parseDouble(threshold.getText().toString())).put("idPrefix",UUID.randomUUID().toString()).put("mode",traceMode.getSelectedItemPosition()==0?"colour_regions":"edges").put("maxDimension",Integer.parseInt(resolution.getText().toString())).put("colourLevels",Integer.parseInt(levels.getText().toString()));JSONArray ops=new JSONArray().put(new JSONObject().put("type","add_layer").put("layer",new JSONObject().put("id",layerId).put("name",traceMode.getSelectedItemPosition()==0?"Reference colour regions":"Reference contours"))).put(trace);if(!guide.isChecked())ops.put(new JSONObject().put("type","set_transform").put("objectId",objectId).put("transform",new JSONObject().put("opacity",0)));afterSaves(()->{SketchEditOps.execute(this,"sketch_edit",request().put("operations",ops));postUi(this::reload);});}catch(Exception error){onMessage(error.getMessage());}}).show();
+        if(document==null)return;
+        try{
+            String selected=canvas.getSelectedId();
+            if(selected!=null&&"image".equals(SketchDocument.object(document,selected).getString("kind"))){referenceTools(selected);return;}
+            ArrayList<String> ids=new ArrayList<>(),labels=new ArrayList<>();JSONArray layers=document.getJSONArray("layers");
+            for(int n=0;n<layers.length();n++){JSONObject layer=layers.getJSONObject(n);JSONArray objects=layer.getJSONArray("objects");for(int k=0;k<objects.length();k++){JSONObject object=objects.getJSONObject(k);if(!"image".equals(object.getString("kind")))continue;ids.add(object.getString("id"));labels.add(layer.getString("name")+" · reference "+ids.size()+(object.getJSONObject("transform").getDouble("opacity")==0?" (hidden)":""));}}
+            if(ids.isEmpty()){onMessage("Import a reference image from Brush / Text first");return;}
+            if(ids.size()==1){canvas.selectObject(ids.get(0));referenceTools(ids.get(0));return;}
+            new AlertDialog.Builder(this).setTitle("Choose a reference guide").setItems(labels.toArray(new String[0]),(dialog,index)->{canvas.selectObject(ids.get(index));referenceTools(ids.get(index));}).show();
         }catch(Exception error){onMessage(error.getMessage());}
+    }
+    private void referenceTools(String objectId){
+        try{
+            JSONObject image=SketchDocument.object(document,objectId),crop=image.optJSONObject("referenceCrop");LinearLayout form=column();String[] names={"x","y","width","height"};EditText[] fields=new EditText[4];
+            for(int i=0;i<4;i++){fields[i]=input("Reference crop "+names[i]+" (0..1)",String.valueOf(crop==null?(i<2?0:1):crop.getDouble(names[i])),true);form.addView(fields[i]);}
+            EditText alpha=input("Reference opacity 0..1",String.valueOf(image.getJSONObject("transform").getDouble("opacity")),true),threshold=input("Edge trace threshold .01..1","0.15",true);form.addView(alpha);form.addView(threshold);
+            Spinner traceMode=new Spinner(this);traceMode.setAdapter(new ArrayAdapter<>(this,android.R.layout.simple_spinner_dropdown_item,new String[]{"Colour regions (editable fills)","Edge strokes"}));form.addView(traceMode);
+            EditText resolution=input("Trace detail (32..384)","192",true),levels=input("Colour levels (2..32)","8",true);form.addView(resolution);form.addView(levels);
+            CheckBox guide=new CheckBox(this);guide.setText("Show the reference guide while tracing");form.addView(guide);
+            ScrollView scroll=new ScrollView(this);scroll.addView(form,new ScrollView.LayoutParams(-1,-2));
+            new AlertDialog.Builder(this).setTitle("Crop, fade and trace owned reference").setView(scroll).setNegativeButton("Cancel",null)
+                    .setPositiveButton("Apply crop / opacity",(dialog,which)->runAction("Apply reference settings",()->{try{JSONObject value=new JSONObject();for(int i=0;i<4;i++)value.put(names[i],Double.parseDouble(fields[i].getText().toString()));apply(new JSONArray().put(new JSONObject().put("type","update_object").put("objectId",objectId).put("patch",new JSONObject().put("referenceCrop",value))).put(new JSONObject().put("type","set_transform").put("objectId",objectId).put("transform",new JSONObject().put("opacity",Double.parseDouble(alpha.getText().toString())))));}catch(Exception error){onMessage(error.getMessage());}}))
+                    .setNeutralButton("Trace to editable layer",(dialog,which)->runAction("Trace reference",()->{try{
+                        JSONObject trace=new JSONObject().put("type","trace_reference").put("objectId",objectId).put("layerId",UUID.randomUUID().toString()).put("frame",canvas.getFrame()).put("threshold",Double.parseDouble(threshold.getText().toString())).put("idPrefix",UUID.randomUUID().toString()).put("mode",traceMode.getSelectedItemPosition()==0?"colour_regions":"edges").put("maxDimension",Integer.parseInt(resolution.getText().toString())).put("colourLevels",Integer.parseInt(levels.getText().toString()));
+                        traceReference(trace,guide.isChecked());
+                    }catch(Exception error){onMessage(error.getMessage());}})).show();
+        }catch(Exception error){onMessage(error.getMessage());}
+    }
+    /** Trace geometry uses the same durable operation stream as agent-authored marks.
+     * A hidden guide is persisted before the snapshot so replay starts with artwork,
+     * never with the photograph that the user asked the studio to draw. */
+    private void traceReference(JSONObject trace,boolean keepGuide){
+        if(session==null||loadingDrawing)return;
+        SketchEditorSession active=session;String id=sketchId;int generation=loadGeneration,page=pageGeneration,liveGeneration=++liveLoadGeneration;
+        loadingDrawing=true;stopLivePlayer();
+        // Expose takeover while preparation is still running, rather than only
+        // after the worker finishes and begins replaying the accepted marks.
+        watching=true;getPreferences(MODE_PRIVATE).edit().putBoolean("watchLiveDrawing",true).apply();updateLiveControl();
+        canvas.setEnabled(false);status.setText("Preparing editable reference drawing…");
+        io.execute(()->{
+            String streamId=null;
+            try{
+                active.awaitIdle(15000);if(active.error()!=null)throw new IllegalStateException(active.error());
+                JSONObject current;try(SketchProjectStore store=new SketchProjectStore(this)){current=store.get(id);}
+                SketchProjectStore.requireRevision(current,active.document().getLong("revision"));
+                // Keyframes override the base transform. Change guide opacity
+                // across its whole animation atomically, preserving every pose.
+                SketchEditOps.execute(this,"sketch_edit",new JSONObject().put("sketchId",id).put("operationId",UUID.randomUUID().toString()).put("expectedRevision",current.getLong("revision"))
+                        .put("operations",new JSONArray().put(new JSONObject().put("type","set_reference_visibility").put("objectId",trace.getString("objectId")).put("visible",keepGuide))));
+                try(SketchProjectStore store=new SketchProjectStore(this)){current=store.get(id);}
+                JSONObject baseline=current;
+                streamId=UUID.randomUUID().toString();SketchEditOps.execute(this,"sketch_live_begin",new JSONObject().put("sketchId",id).put("operationId",streamId).put("expectedRevision",baseline.getLong("revision")));
+                postUi(()->{if(session!=active||generation!=loadGeneration||page!=pageGeneration||liveGeneration!=liveLoadGeneration)return;try{if(active.adopt(baseline))present(active.document());status.setText("Preparing editable reference drawing…");}catch(Exception error){onMessage(error.getMessage());}});
+                JSONArray operations=new JSONArray().put(new JSONObject().put("type","add_layer").put("layer",new JSONObject().put("id",trace.getString("layerId")).put("name","colour_regions".equals(trace.getString("mode"))?"Reference colour regions":"Reference contours"))).put(trace);
+                JSONObject result=SketchEditOps.execute(this,"sketch_edit",new JSONObject().put("sketchId",id).put("operationId",UUID.randomUUID().toString()).put("expectedRevision",baseline.getLong("revision")).put("operations",operations));
+                SketchEditOps.execute(this,"sketch_live_end",new JSONObject().put("sketchId",id).put("sessionId",streamId).put("expectedRevision",result.getLong("revision")));
+                String completedStream=streamId;
+                postUi(()->{if(session!=active||generation!=loadGeneration||page!=pageGeneration||liveGeneration!=liveLoadGeneration)return;loadingDrawing=false;watching=true;getPreferences(MODE_PRIVATE).edit().putBoolean("watchLiveDrawing",true).apply();updateLiveControl();startLivePlayer(completedStream);});
+            }catch(Exception|OutOfMemoryError error){
+                if(streamId!=null)try(SketchProjectStore store=new SketchProjectStore(this)){store.endLiveSession(id,streamId,store.get(id).getLong("revision"));}catch(Exception ignored){}
+                postUi(()->{if(session!=active||generation!=loadGeneration||page!=pageGeneration||liveGeneration!=liveLoadGeneration)return;loadingDrawing=false;onMessage(error.getMessage());reload();});
+            }
+        });
     }
     private void booksDialog(){stopPlayback();io.execute(()->{try{JSONArray books=SketchEditOps.execute(this,"sketch_book_list",new JSONObject()).getJSONArray("books");String[] names=new String[books.length()+1];names[0]="New sketch book · up to 10000 pages";for(int i=0;i<books.length();i++)names[i+1]=books.getJSONObject(i).getString("name")+" · "+books.getJSONObject(i).getInt("pageCount")+" pages";postUi(()->new AlertDialog.Builder(this).setTitle("Paged animation books").setItems(names,(d,index)->{try{if(index==0)newBookDialog();else openBookPage(books.getJSONObject(index-1).getString("bookId"),0);}catch(Exception error){onMessage(error.getMessage());}}).show());}catch(Exception error){postUi(()->onMessage(error.getMessage()));}});}
     private void newBookDialog(){LinearLayout form=column();EditText name=input("Book name","Untitled animation book",false),count=input("Pages 1..10000","1000",true),fps=input("FPS 24, 30 or 60","24",true);form.addView(name);form.addView(count);form.addView(fps);new AlertDialog.Builder(this).setTitle("New frame-by-frame sketch book").setView(form).setNegativeButton("Cancel",null).setPositiveButton("Create",(d,w)->{try{JSONObject args=new JSONObject().put("bookId",UUID.randomUUID().toString()).put("operationId",UUID.randomUUID().toString()).put("name",name.getText().toString()).put("pageCount",Integer.parseInt(count.getText().toString())).put("fps",Integer.parseInt(fps.getText().toString()));afterSaves(()->{SketchEditOps.execute(this,"sketch_book_create",args);postUi(()->openBookPage(args.optString("bookId"),0));});}catch(Exception error){onMessage(error.getMessage());}}).show();}

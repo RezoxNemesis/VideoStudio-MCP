@@ -15,3 +15,9 @@ This build includes the earlier 3.9.6 source repairs: bounded gzip decoding, str
 Verified before packaging: **694 Android tests in 148 suites**, **188 Node tests** and **306 smoke checks**, with no failures or skipped tests. Connection and UI reviews resolved packet overwrite, uncertain retry identity, bounded/private result transport, persistence progress, offline packet order, native expiry/recovery origin, immediate local drain, Sketch selector takeover/layer races and 48dp touch width. A production metadata-carrier check round-tripped 87089 encrypted bytes across 3 pages and authenticated the complete synthetic result.
 
 These are source/runtime and synthetic-carrier checks. The connected phone was still 3.9.5; installation, real-device 4.0.0 execution, interactive latency and artistic output acceptance remain separate gates. The Android workflow restores the pinned original key and verifies APK package, visible label, version and certificate before publishing a build artifact. Feature-branch builds do not promote the stable main release.
+
+## Delivered APK and subsequent device evidence
+
+The original-signer [4.0.0 APK](https://github.com/RezoxNemesis/VideoStudio-MCP/releases/download/videostudio-v4.0.0-preview/Video-studio-4.0.0.apk) is published as a prerelease. Its exact source is `05459d5f91d3a24e6278422803e284e4f105c288`; Android build `38409824944` passed, and publisher-only run `38412922138` uploaded that existing artifact without rebuilding it. APK SHA-256: `7c70ad283d80d0ee7397c48ab91806795ced1d554a083f12fb0730cfa0f58fb5`.
+
+The phone subsequently reported 4.0.0. Encrypted backup delivery completed native health, Sketch capabilities, Sketch listing and owned-project state commands, each with an authenticated completed receipt. This establishes execution on the new native route. It does not establish photographic redraw, interactive latency or completion of the older audit.
