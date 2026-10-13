@@ -39,7 +39,7 @@ public final class LiveEditPlayer {
         this.context=app;
         player = new ExoPlayer.Builder(app).build();
         view = new PlayerView(context);
-        view.setUseController(true);
+        view.setUseController(true);view.setShowBuffering(PlayerView.SHOW_BUFFERING_ALWAYS);
         view.setPlayer(player);
     }
 

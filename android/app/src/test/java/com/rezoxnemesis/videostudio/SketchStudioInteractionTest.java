@@ -17,6 +17,15 @@ import java.lang.reflect.*;
 import static org.junit.Assert.*;
 @RunWith(RobolectricTestRunner.class) @Config(sdk=33,manifest=Config.NONE) @GraphicsMode(GraphicsMode.Mode.NATIVE)
 public class SketchStudioInteractionTest {
+
+    @Test public void focusedCanvasKeepsTheLivePlayerAndRestoresToolsWithoutLosingGeometry() throws Exception {
+        Context c=RuntimeEnvironment.getApplication();String id=createLiveSketch(c);
+        try(ActivityController<SketchStudioActivity> activity=Robolectric.buildActivity(SketchStudioActivity.class,new Intent(c,SketchStudioActivity.class).putExtra("sketchId",id)).create().start().resume().visible()){
+            SketchStudioActivity studio=activity.get();waitIo(studio);startLive(studio);Object player=field(studio,"livePlayer");assertNotNull(player);
+            Button brush=button(studio.getWindow().getDecorView(),"Brush");button(studio.getWindow().getDecorView(),"Canvas view").performClick();assertEquals(View.GONE,((View)brush.getParent().getParent()).getVisibility());assertSame(player,field(studio,"livePlayer"));
+            button(studio.getWindow().getDecorView(),"Canvas view").performClick();assertEquals(View.VISIBLE,((View)brush.getParent().getParent()).getVisibility());assertSame(player,field(studio,"livePlayer"));
+        }
+    }
     @Test public void aLaterWatchRequestCancelsAnEarlierLoadingPlayTakeover() throws Exception {
         Context c=RuntimeEnvironment.getApplication();String id=createLiveSketch(c);
         try(ActivityController<SketchStudioActivity> activity=Robolectric.buildActivity(SketchStudioActivity.class,new Intent(c,SketchStudioActivity.class).putExtra("sketchId",id)).create().start().resume().visible()){

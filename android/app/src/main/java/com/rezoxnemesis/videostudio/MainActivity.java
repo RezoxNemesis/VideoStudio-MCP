@@ -628,6 +628,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                 }
             }
         }
+        studioTimeLabel.setText(time(studioPlayheadMs)+" / "+time(projectLength));
         seek.setProgress((int)(1000*Math.min(projectLength,studioPlayheadMs)/(double)projectLength));
         seek.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener(){
             @Override public void onStartTrackingTouch(SeekBar b){stopStillSequenceOnly();}
@@ -968,7 +969,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                     error->{timelinePreviewRunning=false;
                         Toast.makeText(this,error,Toast.LENGTH_LONG).show();});
             timelinePreviewRunning=play;
-            if(play)startStudioEditedClock();
+            startStudioEditedClock();
         }catch(Exception error){
             timelinePreviewRunning=false;
             Toast.makeText(this,"Edited preview unavailable: "+error.getMessage(),Toast.LENGTH_LONG).show();
@@ -979,7 +980,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         if(studioCaptionClock!=null)ui.removeCallbacks(studioCaptionClock);
         studioCaptionClock=new Runnable(){
             @Override public void run(){
-                if(!timelinePreviewRunning||activeProject==null||!livePlayer.isEditedPreview())return;
+                if(!"editor".equals(currentScreen)||activeProject==null||!livePlayer.isEditedPreview())return;
                 studioPlayheadMs=Math.min(activeProject.outputDurationMs(),livePlayer.currentPositionMs());
                 if(studioTimeLabel!=null)studioTimeLabel.setText(time(studioPlayheadMs)+" / "+time(activeProject.outputDurationMs()));
                 ui.postDelayed(this,100);
@@ -3058,7 +3059,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
     }
 
     private View projectRow(ProjectStore.Project project) {
-        LinearLayout row = card(false);
+        LinearLayout row = card(false);row.setOrientation(LinearLayout.HORIZONTAL);
         row.setGravity(Gravity.CENTER_VERTICAL);
         LinearLayout copy = column();
         copy.addView(title(project.name, 16));

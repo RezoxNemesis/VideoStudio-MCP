@@ -60,7 +60,7 @@ public final class FilamentGlbActivity extends Activity
     private Engine engine;
     private UiHelper uiHelper;
     private SurfaceView surface;
-    private TextView status;
+    private TextView status,modelHint;
     private final Handler main=new Handler(Looper.getMainLooper());
     private boolean loopActive=false,orbit=false,paused=false;
     private long lastRenderedAt=0;
@@ -105,6 +105,7 @@ public final class FilamentGlbActivity extends Activity
         ActivityLog.add(this,"user","3D preview unavailable",error.getClass().getSimpleName()+": "+String.valueOf(error.getMessage()),"failed",null,null,project==null?"":project.id);
         LinearLayout screen=new LinearLayout(this);screen.setOrientation(LinearLayout.VERTICAL);screen.setPadding(24,24,24,24);screen.setBackgroundColor(0xff090d17);TextView explanation=new TextView(this);explanation.setTextColor(Color.WHITE);explanation.setTextSize(17);explanation.setText("3D preview could not start on this device. Your project is saved.\n\n"+error.getClass().getSimpleName()+": "+String.valueOf(error.getMessage()));screen.addView(explanation);screen.addView(action("Return to studio",v->finish()));setContentView(screen);
     }
+    private int dp(int value){return Math.round(value*getResources().getDisplayMetrics().density);}
     private Button action(String text,View.OnClickListener listener){
         Button button=new Button(this);
         button.setText(text);
@@ -132,22 +133,23 @@ public final class FilamentGlbActivity extends Activity
         description.setTextSize(12);description.setPadding(14,0,14,10);
         root.addView(description);
         LinearLayout first=new LinearLayout(this);
-        first.addView(action("Import GLB",v->selectGlb()),new LinearLayout.LayoutParams(0,50,1));
-        first.addView(action("Existing model",v->chooseExisting()),new LinearLayout.LayoutParams(0,50,1));
-        first.addView(action("Return",v->finish()),new LinearLayout.LayoutParams(0,50,1));
+        first.addView(action("Import GLB",v->selectGlb()),new LinearLayout.LayoutParams(0,dp(50),1));
+        first.addView(action("Existing model",v->chooseExisting()),new LinearLayout.LayoutParams(0,dp(50),1));
+        first.addView(action("Return",v->finish()),new LinearLayout.LayoutParams(0,dp(50),1));
         root.addView(first);
 
-        surface=new SurfaceView(this);
-        root.addView(surface,new LinearLayout.LayoutParams(-1,0,1));
+        FrameLayout modelFrame=new FrameLayout(this);root.addView(modelFrame,new LinearLayout.LayoutParams(-1,0,1));
+        surface=new SurfaceView(this);modelFrame.addView(surface,new FrameLayout.LayoutParams(-1,-1));
+        modelHint=new TextView(this);modelHint.setText("No 3D model loaded in this project.\nUse Import GLB or Existing model to open your geometry.");modelHint.setTextColor(0xffb9ccdf);modelHint.setTextSize(15);modelHint.setGravity(Gravity.CENTER);modelHint.setPadding(dp(24),dp(24),dp(24),dp(24));modelFrame.addView(modelHint,new FrameLayout.LayoutParams(-1,-1));
         viewer=new ModelViewer(surface,engine,uiHelper,null);
 
         LinearLayout second=new LinearLayout(this);
         second.addView(action("Play / Pause",v->togglePlayback()),
-                new LinearLayout.LayoutParams(0,50,1));
+                new LinearLayout.LayoutParams(0,dp(50),1));
         second.addView(action("Next motion",v->nextAnimation()),
-                new LinearLayout.LayoutParams(0,50,1));
+                new LinearLayout.LayoutParams(0,dp(50),1));
         second.addView(action("Orbit camera",v->{orbit=!orbit;}),
-                new LinearLayout.LayoutParams(0,50,1));
+                new LinearLayout.LayoutParams(0,dp(50),1));
         root.addView(second);
         status=new TextView(this);
         status.setText("Choose a VideoStudio GLB or import one. A rigged model can contain multiple reusable animation clips.");
@@ -174,7 +176,7 @@ public final class FilamentGlbActivity extends Activity
             @Override public void onStartTrackingTouch(SeekBar bar){paused=true;cinematicPlayStartedAt=0;}
             @Override public void onStopTrackingTouch(SeekBar bar){}
         });root.addView(cinematicScrub);
-        LinearLayout actions=new LinearLayout(this);actions.addView(action("Play / Pause",v->togglePlayback()),new LinearLayout.LayoutParams(0,50,1));actions.addView(action("Restart",v->{if(cinematicLoading||cinematicUnavailable)return;cinematicFrame=0;cinematicPlayStartedAt=0;paused=false;requestCinematicFrame();}),new LinearLayout.LayoutParams(0,50,1));actions.addView(action("Return",v->finish()),new LinearLayout.LayoutParams(0,50,1));root.addView(actions);
+        LinearLayout actions=new LinearLayout(this);actions.addView(action("Play / Pause",v->togglePlayback()),new LinearLayout.LayoutParams(0,dp(50),1));actions.addView(action("Restart",v->{if(cinematicLoading||cinematicUnavailable)return;cinematicFrame=0;cinematicPlayStartedAt=0;paused=false;requestCinematicFrame();}),new LinearLayout.LayoutParams(0,dp(50),1));actions.addView(action("Return",v->finish()),new LinearLayout.LayoutParams(0,dp(50),1));root.addView(actions);
         status=new TextView(this);status.setText("Verifying the saved source, program and scene bundle…");status.setTextColor(0xff5adff4);status.setTextSize(12);status.setPadding(14,9,14,22);root.addView(status);setContentView(root);loadCinematicProgram();
     }
 
@@ -306,9 +308,9 @@ public final class FilamentGlbActivity extends Activity
         new Thread(()->{
             try{
                 ProjectStore.Asset asset=storeSelectedFile(chosen,name);
-                main.post(()->{project=projectStore.get(project.id);loadRegistered(asset);});
+                main.post(()->{if(destroyed)return;project=projectStore.get(project.id);loadRegistered(asset);});
             }catch(Exception error){
-                main.post(()->status.setText("3D import failed: "+error.getMessage()));
+                main.post(()->{if(!destroyed)status.setText("3D import failed: "+error.getMessage());});
             }
         },"VideoStudio-glb-import").start();
     }
@@ -372,7 +374,7 @@ public final class FilamentGlbActivity extends Activity
         }
     }
     private void loadRegistered(ProjectStore.Asset asset){
-        if(viewer==null||asset==null)return;
+        if(destroyed||viewer==null||asset==null)return;
         status.setText("Loading 3D scene and skinned materials...");
         try{
             File file=new File(Uri.parse(asset.uri).getPath());
@@ -389,6 +391,7 @@ public final class FilamentGlbActivity extends Activity
             if(viewer.getAsset()==null)
                 throw new IllegalArgumentException("Filament could not create the model asset");
             if(normalizeSceneForPreview(cinematic))viewer.resetToDefaultState();
+            if(modelHint!=null)modelHint.setVisibility(View.GONE);
             paused=false;animationIndex=0;cameraAngle=0;
             animationStartedAt=0;
             Animator animations=viewer.getAnimator();
@@ -397,8 +400,8 @@ public final class FilamentGlbActivity extends Activity
                     " embedded animation(s). "+(count==0
                     ?"Rig has no authored animation: import a model with animation clips."
                     :"Playing native skinned 3D motion."));
-        }catch(Exception error){
-            status.setText("Cannot load 3D model: "+error.getMessage());
+        }catch(Exception|LinkageError|OutOfMemoryError error){
+            status.setText("Cannot load 3D model: "+error.getClass().getSimpleName()+": "+error.getMessage());
         }
     }
     private void togglePlayback(){
@@ -442,6 +445,7 @@ public final class FilamentGlbActivity extends Activity
             }
             Choreographer.getInstance().postFrameCallback(this);return;
         }
+        if(viewer.getAsset()==null){Choreographer.getInstance().postFrameCallback(this);return;}
         // 30fps GPU cap protects battery/thermal headroom on phone.
         if(frameTimeNanos-lastRenderedAt>=33_000_000L){
             lastRenderedAt=frameTimeNanos;

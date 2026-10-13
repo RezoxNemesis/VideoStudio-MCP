@@ -27,7 +27,7 @@ poses.
 
 ## New native workflow
 
-Invoke \`studio_sketch_import_frame_manifest\` through the existing
+With 3.9.5 or newer, invoke \`studio_sketch_import_frame_manifest\` through the existing
 owner-authenticated native MCP v3 bridge, or use the compatible generic
 \`autonomous_request\` with \`nativeAction=sketch_import_frame_manifest\`
 and these flat parameters:
@@ -58,7 +58,7 @@ For work-lane admission, use the existing durable transfer queue
 rather than the 2 MiB MCP command receipt channel. The import job
 returns \`jobId\` immediately; a completion acknowledgement is NOT
 evidence that all frames were saved. Verify the terminal native job
-result contains \`validatedObjects=663\` (660 per-frame +
+result contains \`validatedObjects=660\` (657 per-frame +
 3 background objects), \`frameCount=192\`, \`fps=24\`,
 \`verifiedSourceSha256\`, and \`nativeSketchEditable=true\`.
 Read \`sketch_get\` and sample \`sketch_preview\` at frames

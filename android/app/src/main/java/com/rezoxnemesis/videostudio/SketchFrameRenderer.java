@@ -26,6 +26,18 @@ public final class SketchFrameRenderer implements AutoCloseable {
     private final Map<String, File> references = new java.util.HashMap<>();
     private final LinkedHashMap<String, Bitmap> imageCache = new LinkedHashMap<>(16, .75f, true);
     private long imageBytes;
+    private final Map<String,Path> geometryCache=new java.util.HashMap<>();
+    private final Map<String,java.util.BitSet[]> exposures=new java.util.HashMap<>();
+    private void indexExposures() throws Exception {
+        exposures.clear();geometryCache.clear();int frames=document.getInt("frameCount");JSONArray layers=document.getJSONArray("layers");
+        for(int n=0;n<layers.length();n++){JSONObject layer=layers.getJSONObject(n);java.util.BitSet[] index=new java.util.BitSet[frames];JSONArray objects=layer.getJSONArray("objects");for(int k=0;k<objects.length();k++){JSONObject object=objects.getJSONObject(k);int start=object.getInt("frame"),end=start+object.getInt("exposure");for(int f=start;f<end;f++){if(index[f]==null)index[f]=new java.util.BitSet(objects.length());index[f].set(k);}}exposures.put(layer.getString("id"),index);}
+    }
+    private Path geometry(JSONObject object,String kind,int w,int h) throws Exception {
+        boolean preview=object==geometryPreview;String id=object.getString("id");Path shape=preview?null:geometryCache.get(id);if(shape!=null)return shape;
+        if("path".equals(kind))shape=path(object.getJSONArray("commands"),w,h);
+        else {shape=new Path();if("polygon".equals(kind)){JSONArray points=object.getJSONArray("points");for(int n=0;n<points.length();n++){JSONArray p=points.getJSONArray(n);if(n==0)shape.moveTo((float)p.getDouble(0)*w,(float)p.getDouble(1)*h);else shape.lineTo((float)p.getDouble(0)*w,(float)p.getDouble(1)*h);}shape.close();}else if("rect".equals(kind))shape.addRect(bounds(object.getJSONObject("bounds"),w,h),Path.Direction.CW);else shape.addOval(bounds(object.getJSONObject("bounds"),w,h),Path.Direction.CW);}
+        if(!preview)geometryCache.put(id,shape);return shape;
+    }
     private JSONObject geometryPreview;public void setGeometryPreview(JSONObject object){geometryPreview=object;}
     private String presentationObject;private float presentationFraction=1;
     public void setPresentation(String objectId,float fraction){presentationObject=objectId;presentationFraction=fraction;}
@@ -45,6 +57,7 @@ public final class SketchFrameRenderer implements AutoCloseable {
                 }
             }
         } finally {if(store!=null)store.close();}
+        indexExposures();
     }
 
     public Bitmap render(int frame) throws Exception { return render(frame,true); }
@@ -58,7 +71,7 @@ public final class SketchFrameRenderer implements AutoCloseable {
     public void updateDocument(Context context,JSONObject doc) throws Exception {
         SketchDocument.validate(doc);JSONObject copy=SketchDocument.copy(doc);JSONArray layers=copy.getJSONArray("layers");
         SketchProjectStore store=null;try{for(int i=0;i<layers.length();i++){JSONArray objects=layers.getJSONObject(i).getJSONArray("objects");for(int j=0;j<objects.length();j++){JSONObject o=objects.getJSONObject(j);if("image".equals(o.getString("kind"))){JSONObject ref=o.getJSONObject("reference");if(!references.containsKey(ref.getString("sha256"))){if(store==null)store=new SketchProjectStore(context);references.put(ref.getString("sha256"),store.referenceFile(copy.getString("id"),ref));}}}}}finally{if(store!=null)store.close();}
-        document=copy;
+        document=copy;indexExposures();
     }
     public void draw(Canvas canvas, int frame, boolean background) throws Exception {
         draw(canvas, frame, background, null, null);
@@ -80,7 +93,8 @@ public final class SketchFrameRenderer implements AutoCloseable {
             int save = canvas.saveLayer(new RectF(0, 0, w, h), composite);
             canvas.concat(matrix(transform, w, h));
             JSONArray objects = layer.getJSONArray("objects");
-            for (int j = 0; j < objects.length(); j++) {
+            java.util.BitSet visible=exposures.get(layer.getString("id"))[frame];
+            for (int j = visible==null?-1:visible.nextSetBit(0); j>=0; j=visible.nextSetBit(j+1)) {
                 JSONObject object = objects.getJSONObject(j);if(geometryPreview!=null&&object.getString("id").equals(geometryPreview.getString("id")))object=geometryPreview; if (!exposed(object, frame)) continue;
                 int objectSave = canvas.save(); JSONObject objectTransform = previewTransform != null && object.getString("id").equals(previewObjectId) ? previewTransform : SketchDocument.transformAt(object, frame);
                 canvas.concat(matrix(objectTransform, w, h));
@@ -104,20 +118,18 @@ public final class SketchFrameRenderer implements AutoCloseable {
         paint.setStyle(object.getBoolean("fill") ? Paint.Style.FILL : Paint.Style.STROKE);
         JSONObject gradient=object.optJSONObject("gradient");
         if(gradient!=null)paint.setShader(new LinearGradient((float)gradient.getDouble("x0")*w,(float)gradient.getDouble("y0")*h,(float)gradient.getDouble("x1")*w,(float)gradient.getDouble("y1")*h,SketchDocument.color(gradient.getString("startColor")),SketchDocument.color(gradient.getString("endColor")),Shader.TileMode.CLAMP));
-        if("path".equals(kind)){Path shape=path(object.getJSONArray("commands"),w,h);if(partial)shape=partialPath(shape,presentationFraction,paint);canvas.drawPath(shape,paint);return;}
+        if("path".equals(kind)){Path shape=geometry(object,kind,w,h);if(partial)shape=partialPath(shape,presentationFraction,paint);canvas.drawPath(shape,paint);return;}
         if ("line".equals(kind)) {
             JSONArray pp = object.getJSONArray("points"), a = pp.getJSONArray(0), b = pp.getJSONArray(1);
             paint.setStyle(Paint.Style.STROKE); float f=partial?presentationFraction:1;canvas.drawLine((float)a.getDouble(0)*w,(float)a.getDouble(1)*h,(float)(a.getDouble(0)+(b.getDouble(0)-a.getDouble(0))*f)*w,(float)(a.getDouble(1)+(b.getDouble(1)-a.getDouble(1))*f)*h,paint);
         } else if ("polygon".equals(kind)) {
-            JSONArray points = object.getJSONArray("points"); Path path = new Path();
-            for (int i = 0; i < points.length(); i++) { JSONArray p = points.getJSONArray(i); float x = (float) p.getDouble(0) * w, y = (float) p.getDouble(1) * h; if (i == 0) path.moveTo(x, y); else path.lineTo(x, y); }
-            path.close(); canvas.drawPath(partial?partialPath(path,presentationFraction,paint):path, paint);
+            Path path=geometry(object,kind,w,h);canvas.drawPath(partial?partialPath(path,presentationFraction,paint):path,paint);
         } else {
             RectF bounds = bounds(object.getJSONObject("bounds"), w, h);
-            if ("rect".equals(kind)||"ellipse".equals(kind)){Path shape=new Path();if("rect".equals(kind))shape.addRect(bounds,Path.Direction.CW);else shape.addOval(bounds,Path.Direction.CW);canvas.drawPath(partial?partialPath(shape,presentationFraction,paint):shape,paint);}
+            if ("rect".equals(kind)||"ellipse".equals(kind)){Path shape=geometry(object,kind,w,h);canvas.drawPath(partial?partialPath(shape,presentationFraction,paint):shape,paint);}
             else if ("image".equals(kind)) {
                 paint.setAlpha((int) Math.round(255 * alpha*(partial?presentationFraction:1))); Bitmap bitmap=image(object.getJSONObject("reference"));JSONObject crop=object.optJSONObject("referenceCrop");Rect source=null;
-                if(crop!=null)source=new Rect((int)Math.round(crop.getDouble("x")*bitmap.getWidth()),(int)Math.round(crop.getDouble("y")*bitmap.getHeight()),(int)Math.round((crop.getDouble("x")+crop.getDouble("width"))*bitmap.getWidth()),(int)Math.round((crop.getDouble("y")+crop.getDouble("height"))*bitmap.getHeight()));
+                if(crop!=null)source=referencePixels(crop,bitmap.getWidth(),bitmap.getHeight());
                 canvas.drawBitmap(bitmap, source, bounds, paint);
             }
         }
@@ -178,6 +190,10 @@ public final class SketchFrameRenderer implements AutoCloseable {
         matrix.preRotate((float) transform.getDouble("rotation")); matrix.preScale((float) transform.getDouble("scaleX"), (float) transform.getDouble("scaleY"));
         matrix.preTranslate(-ax, -ay); return matrix;
     }
+    /** Any nonempty normalized crop includes its intersecting source pixels. Shared with tracing. */
+    static Rect referencePixels(JSONObject crop,int width,int height)throws Exception {
+        SketchDocument.validateBounds(crop);int left=Math.min(width-1,(int)Math.floor(crop.getDouble("x")*width)),top=Math.min(height-1,(int)Math.floor(crop.getDouble("y")*height));int right=Math.min(width,Math.max(left+1,(int)Math.ceil((crop.getDouble("x")+crop.getDouble("width"))*width))),bottom=Math.min(height,Math.max(top+1,(int)Math.ceil((crop.getDouble("y")+crop.getDouble("height"))*height)));return new Rect(left,top,right,bottom);
+    }
     public static RectF bounds(JSONObject bounds, int w, int h) throws Exception {
         float x = (float) bounds.getDouble("x") * w, y = (float) bounds.getDouble("y") * h;
         return new RectF(x, y, x + (float) bounds.getDouble("width") * w, y + (float) bounds.getDouble("height") * h);
@@ -234,5 +250,5 @@ public final class SketchFrameRenderer implements AutoCloseable {
         }
         return inside;
     }
-    @Override public void close() { for (Bitmap image : imageCache.values()) image.recycle(); imageCache.clear(); imageBytes = 0; }
+    @Override public void close() { for (Bitmap image : imageCache.values()) image.recycle(); imageCache.clear(); imageBytes = 0;geometryCache.clear();exposures.clear(); }
 }

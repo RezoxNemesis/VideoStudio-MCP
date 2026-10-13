@@ -73,6 +73,15 @@ public final class SketchCanvasView extends View {
     public void setGuides(boolean grid,boolean symmetry){this.grid=grid;this.symmetry=symmetry;invalidate();}
     public void setOnionOptions(int range,int alpha){onionRange=Math.max(1,Math.min(3,range));onionAlpha=Math.max(0,Math.min(128,alpha));invalidate();}
     public void resetView(){zoom=1;panX=panY=0;invalidate();}
+    public void focusSelection() throws Exception {
+        if(document==null||selectedId==null)throw SketchDocument.bad("Select an object to focus");
+        JSONObject object=SketchDocument.object(document,selectedId),layer=SketchDocument.owner(document,selectedId);int w=document.getInt("width"),h=document.getInt("height");RectF bounds;
+        if(object.has("bounds"))bounds=SketchFrameRenderer.bounds(object.getJSONObject("bounds"),w,h);
+        else if(object.has("commands")){bounds=new RectF();SketchFrameRenderer.path(object.getJSONArray("commands"),w,h).computeBounds(bounds,true);}
+        else{bounds=new RectF(Float.MAX_VALUE,Float.MAX_VALUE,-Float.MAX_VALUE,-Float.MAX_VALUE);JSONArray points=object.getJSONArray("points");for(int n=0;n<points.length();n++){JSONArray p=points.getJSONArray(n);float x=(float)p.getDouble(0)*w,y=(float)p.getDouble(1)*h;bounds.left=Math.min(bounds.left,x);bounds.right=Math.max(bounds.right,x);bounds.top=Math.min(bounds.top,y);bounds.bottom=Math.max(bounds.bottom,y);}}
+        Matrix world=new Matrix();world.setConcat(SketchFrameRenderer.matrix(SketchDocument.transformAt(layer,frame),w,h),SketchFrameRenderer.matrix(SketchDocument.transformAt(object,frame),w,h));world.mapRect(bounds);
+        float fit=Math.min(getWidth()/(float)w,getHeight()/(float)h);if(fit<=0)return;zoom=Math.max(1,Math.min(12,Math.min(getWidth()*.85f/Math.max(1,bounds.width()),getHeight()*.85f/Math.max(1,bounds.height()))/fit));panX=-(bounds.centerX()-w/2f)*fit*zoom;panY=-(bounds.centerY()-h/2f)*fit*zoom;invalidate();
+    }
     public boolean isDrawing(){return pointerDown||nodePreview!=null||gesture.length()>0||polygon.length()>0||dragTransform!=null||navigating;}
     public float getZoom(){return zoom;}
     public void selectObject(String id){selectedId=id;invalidate();}

@@ -28,9 +28,39 @@ public final class SketchEditOps {
         try (SketchProjectStore store = new SketchProjectStore(context)) {
             if ("sketch_list".equals(action)) { SketchDocument.fields(args, ""); return new JSONObject().put("sketches", store.list()); }
             String id = SketchDocument.id(args, "sketchId");
-            if("sketch_live_events".equals(action)){SketchDocument.fields(args,"sketchId,afterSequence,limit");store.get(id);long after=SketchDocument.integer(args,"afterSequence",0,Long.MAX_VALUE-1);int limit=args.has("limit")?(int)SketchDocument.integer(args,"limit",1,8):4;return store.liveEvents(id,after,limit);}
+            if("sketch_live_events".equals(action)){
+                SketchDocument.fields(args,"sketchId,afterSequence,limit,operationOffset,operationLimit,eventSequence");
+                store.get(id);
+                long after=SketchDocument.integer(args,"afterSequence",0,Long.MAX_VALUE-1);
+                int offset=args.has("operationOffset")?(int)SketchDocument.integer(args,"operationOffset",0,32768):0;
+                int maximum=args.has("operationLimit")?(int)SketchDocument.integer(args,"operationLimit",1,64):64;
+                long pinned=args.has("eventSequence")?SketchDocument.integer(args,"eventSequence",1,Long.MAX_VALUE-1):0;
+                if(offset>0&&pinned==0)throw SketchDocument.bad("A live operation offset requires its eventSequence cursor");
+                int requestedLimit=args.has("limit")?(int)SketchDocument.integer(args,"limit",1,8):4;
+                JSONObject batch=store.liveEvents(id,after,requestedLimit);
+                if(!args.has("operationOffset")&&!args.has("operationLimit")&&pinned==0&&batch.toString().getBytes(StandardCharsets.UTF_8).length<=500*1024)return batch.put("operationPagination",false);
+                JSONArray events=batch.getJSONArray("events");
+                if(pinned>0&&(events.length()==0||events.getJSONObject(0).getLong("sequence")!=pinned))throw new IllegalStateException("SKETCH_EVENT_CURSOR_EXPIRED: requested live event is no longer retained; inspect the current drawing before restarting");
+                if(events.length()==0)return batch;
+                JSONObject event=events.getJSONObject(0);JSONArray all=event.getJSONArray("operations"),page=new JSONArray();
+                if(offset>all.length())throw SketchDocument.bad("Live operation cursor is outside the event");
+                int bytes=0,next=offset;
+                while(next<all.length()&&page.length()<maximum){
+                    JSONObject operation=all.getJSONObject(next);int size=operation.toString().getBytes(StandardCharsets.UTF_8).length;
+                    if(size>500*1024)throw new IllegalStateException("SKETCH_EVENT_OPERATION_BUDGET: inspect the object's geometry using sketch_get pages");
+                    if(bytes+size>500*1024&&page.length()>0)break;
+                    page.put(operation);bytes+=size;next++;
+                }
+                batch.put("events",new JSONArray().put(event));
+                event.put("operations",page).put("operationOffset",offset).put("operationCount",all.length()).put("nextOperationOffset",next).put("moreOperations",next<all.length());
+                JSONObject cursor=new JSONObject().put("afterSequence",next<all.length()?after:event.getLong("sequence")).put("operationOffset",next<all.length()?next:0);
+                if(next<all.length())cursor.put("eventSequence",event.getLong("sequence"));
+                batch.put("operationPagination",true).put("nextCursor",cursor);
+                if(batch.toString().getBytes(StandardCharsets.UTF_8).length>512*1024-32)throw new IllegalStateException("SKETCH_EVENT_OPERATION_BUDGET: request a smaller operation page");
+                return batch;
+            }
             if ("sketch_get".equals(action)) {
-                SketchDocument.fields(args, "sketchId,expectedRevision,layerId,objectId,pointOffset,pointLimit,objectOffset,objectLimit"); JSONObject doc = store.get(id);
+                SketchDocument.fields(args, "sketchId,expectedRevision,layerId,objectId,pointOffset,pointLimit,commandOffset,commandLimit,objectOffset,objectLimit"); JSONObject doc = store.get(id);
                 if (args.has("expectedRevision")) SketchProjectStore.requireRevision(doc, SketchDocument.integer(args, "expectedRevision", 1, Long.MAX_VALUE - 1));
                 JSONObject result = new JSONObject().put("sketchId", id).put("revision", doc.getLong("revision"))
                         .put("documentSha256", SketchDocument.sha256(SketchDocument.canonical(doc).getBytes(StandardCharsets.UTF_8)));
@@ -46,6 +76,7 @@ public final class SketchEditOps {
                         JSONArray page = new JSONArray(); for (int i = offset; i < Math.min(points.length(), offset + limit); i++) page.put(points.getJSONArray(i));
                         object.put("points", page); result.put("pointCount", points.length()).put("pointOffset", offset).put("morePoints", offset + page.length() < points.length());
                     }
+                    if(object.has("commands")){JSONArray commands=object.getJSONArray("commands");int offset=args.has("commandOffset")?(int)SketchDocument.integer(args,"commandOffset",0,commands.length()):0,max=args.has("commandLimit")?(int)SketchDocument.integer(args,"commandLimit",1,512):512;JSONArray page=new JSONArray();for(int n=offset;n<Math.min(commands.length(),offset+max);n++)page.put(commands.getJSONArray(n));object.put("commands",page);result.put("commandCount",commands.length()).put("commandOffset",offset).put("moreCommands",offset+page.length()<commands.length());}
                     result.put("object", object);
                 } else if (args.has("layerId")) {
                     JSONObject layer = SketchDocument.copy(SketchDocument.layer(doc, SketchDocument.id(args, "layerId")));
@@ -74,6 +105,11 @@ public final class SketchEditOps {
             }
             if ("sketch_preview".equals(action)) {
                 SketchDocument.fields(args, "sketchId,expectedRevision,frameIndex,maxDimension,crop");
+                long observed=store.revision(id);int requestedFrame=args.has("frameIndex")?(int)SketchDocument.integer(args,"frameIndex",0,SketchDocument.MAX_FRAMES-1):0;
+                int requestedDimension=args.has("maxDimension")?(int)SketchDocument.integer(args,"maxDimension",128,720):720;
+                JSONObject requestedCrop=args.optJSONObject("crop");if(args.has("crop")){requestedCrop=args.getJSONObject("crop");SketchDocument.validateBounds(requestedCrop);}
+                if(observed>0&&args.has("expectedRevision")&&SketchDocument.integer(args,"expectedRevision",1,Long.MAX_VALUE-1)!=observed)throw new IllegalStateException("SKETCH_REVISION_CONFLICT: source drawing changed");
+                String cacheKey=SketchPreviewCache.key(context,id,observed,requestedFrame,requestedDimension,requestedCrop);JSONObject cached=SketchPreviewCache.get(store,id,cacheKey);if(cached!=null)return cached;
                 JSONObject doc = store.get(id);
                 if (args.has("expectedRevision")) SketchProjectStore.requireRevision(doc, SketchDocument.integer(args, "expectedRevision", 1, Long.MAX_VALUE - 1));
                 int frame = args.has("frameIndex") ? (int) SketchDocument.integer(args, "frameIndex", 0, doc.getInt("frameCount") - 1) : 0;
@@ -108,13 +144,14 @@ public final class SketchEditOps {
                             dimension = Math.max(128, dimension * 3 / 4);
                             if (Math.max(bitmap.getWidth(), bitmap.getHeight()) <= 128) throw new IllegalStateException("SKETCH_PREVIEW_BUDGET: PNG exceeds 1 MiB");
                         }
-                        return new JSONObject().put("sketchId", id).put("revision", doc.getLong("revision")).put("frameIndex", frame)
+                        JSONObject result=new JSONObject().put("previewCached",false).put("sketchId", id).put("revision", doc.getLong("revision")).put("frameIndex", frame)
                                 .put("canvasWidth",canvasWidth).put("canvasHeight",canvasHeight)
                                 .put("sourcePixelBounds",new JSONObject().put("x",left).put("y",top).put("width",right-left).put("height",bottom-top))
                                 .put("documentSha256", SketchDocument.sha256(SketchDocument.canonical(doc).getBytes(StandardCharsets.UTF_8)))
                                 .put("renderer", "android-bitmap-canvas").put("sketchPreviewImage", new JSONObject().put("mimeType", "image/png")
                                         .put("base64", android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP))
                                         .put("width", bitmap.getWidth()).put("height", bitmap.getHeight()).put("sha256", SketchDocument.sha256(bytes)));
+                        SketchPreviewCache.put(SketchPreviewCache.key(context,id,doc.getLong("revision"),frame,requestedDimension,requestedCrop),result,doc);return result;
                     } finally { bitmap.recycle(); }
                 }
             }
@@ -129,9 +166,12 @@ public final class SketchEditOps {
                     SketchDocument.fields(args, "sketchId,operationId,expectedRevision,operations");
                     JSONArray operations = args.getJSONArray("operations");
                     if (operations.length() < 1 || operations.length() > 64) throw SketchDocument.bad("Use 1..64 operations in an atomic batch");
-                    JSONArray visual=new JSONArray();
+                    JSONArray visual=new JSONArray();boolean additions=true;for(int n=0;n<operations.length();n++)if(!"add_object".equals(operations.getJSONObject(n).optString("type")))additions=false;final boolean appendOnly=additions;
                     return store.mutate(id, op, revision, fingerprint, doc -> {
+                        // For pure additions, a valid final document implies every growing subset
+                        // is valid. Store.mutate validates once before commit/history/live events.
                         for (int i=0;i<operations.length();i++){JSONObject operation=operations.getJSONObject(i);
+                            if(appendOnly){appendObject(doc,operation);visual.put(operation);continue;}
                             if("trace_reference".equals(operation.optString("type"))){JSONObject layer=SketchDocument.layer(doc,operation.getString("layerId"));int before=layer.getJSONArray("objects").length();SketchReferenceTrace.apply(store,doc,operation);for(int j=before;j<layer.getJSONArray("objects").length();j++)visual.put(new JSONObject().put("type","add_object").put("layerId",layer.getString("id")).put("object",layer.getJSONArray("objects").getJSONObject(j)));}
                             else{apply(doc,operation);visual.put(operation);}
                         }
@@ -166,6 +206,9 @@ public final class SketchEditOps {
         }
     }
 
+    private static void appendObject(JSONObject doc,JSONObject op)throws Exception {
+        SketchDocument.fields(op,"type,layerId,object");JSONObject layer=SketchDocument.layer(doc,SketchDocument.id(op,"layerId"));requireUnlocked(layer);layer.getJSONArray("objects").put(completeObject(op.getJSONObject("object")));
+    }
     static void apply(JSONObject doc, JSONObject op) throws Exception {
         String type = op.getString("type");
         switch (type) {
@@ -195,8 +238,7 @@ public final class SketchEditOps {
                 doc.put("layers", reordered); break;
             }
             case "add_object": {
-                SketchDocument.fields(op, "type,layerId,object"); JSONObject layer = SketchDocument.layer(doc, SketchDocument.id(op, "layerId")); requireUnlocked(layer);
-                layer.getJSONArray("objects").put(completeObject(op.getJSONObject("object"))); break;
+                appendObject(doc,op);break;
             }
             case "update_object": {
                 SketchDocument.fields(op, "type,objectId,patch"); String id = SketchDocument.id(op, "objectId"); requireUnlocked(SketchDocument.owner(doc, id));

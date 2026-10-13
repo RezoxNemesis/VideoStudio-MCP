@@ -625,6 +625,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 }
                 case "sketch_render": case "sketch_book_render": complete(command,queueSketchRender(p));return;
                 case "sketch_import_frame_manifest": complete(command,queueSketchFrameManifest(p));return;
+                case "sketch_import_drawing_manifest": complete(command,queueSketchDrawingManifest(p));return;
                 case "open_pipeline_configure": case "open_pipeline_capabilities": case "open_pipeline_list":
                 case "open_pipeline_status": case "open_pipeline_cancel":
                     complete(command,OpenPipelineOperations.execute(this,store,action,p,null));return;
@@ -2925,6 +2926,12 @@ public final class ControlService extends Service implements AppProtocol.Callbac
      * public URL or enormous MCP payload. The import uses normal Sketch Studio
      * revision-bound vector edits and resumes after a process restart.
      */
+    private JSONObject queueSketchDrawingManifest(JSONObject input) throws Exception {
+        JSONObject request=publicOperationParameters(input);SketchDocument.fields(request,"sketchId,manifestName,sourceName,expectedSourceSha256,expectedFrameCount");
+        request.put("videoName",request.remove("sourceName"));
+        if(input.has("_mcpCommandId"))request.put("_mcpCommandId",input.get("_mcpCommandId"));
+        return queueSketchFrameManifest(request);
+    }
     private JSONObject queueSketchFrameManifest(JSONObject input) throws Exception {
         final JSONObject request=publicOperationParameters(input);
         SketchDocument.fields(request,
@@ -4868,7 +4875,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         if (action == null) return false;
         switch (action) {
             case "sketch_render": case "sketch_book_render":
-            case "sketch_import_frame_manifest":
+            case "sketch_import_frame_manifest": case "sketch_import_drawing_manifest":
             case "open_pipeline_export_request": case "open_pipeline_submit": case "open_pipeline_download_result":
             case "open_pipeline_import_result": case "open_pipeline_archive_artifact": case "open_pipeline_restore_artifact":
             case "prompt_video":
@@ -5219,7 +5226,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             case "sketch_get": case "sketch_list": return "Reading sketch geometry";
             case "sketch_preview": return "Rendering a sketch preview";
             case "sketch_import_reference": return "Importing an owned sketch reference";
-            case "sketch_import_frame_manifest": return "Drawing source video frames in Sketch Studio";
+            case "sketch_import_frame_manifest": case "sketch_import_drawing_manifest": return "Importing editable drawings in Sketch Studio";
             case "sketch_render": return "Exporting sketch animation";
             case "open_pipeline_configure": return "Configuring the private open-source runner";
             case "open_pipeline_capabilities": return "Reading actual runner readiness";

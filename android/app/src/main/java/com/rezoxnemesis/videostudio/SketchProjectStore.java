@@ -61,7 +61,7 @@ public final class SketchProjectStore implements AutoCloseable {
     public long latestSequence(String id){try(Cursor c=db.rawQuery("SELECT COALESCE(MAX(sequence),0) FROM sketch_live_events WHERE sketch_id=?",new String[]{id})){c.moveToFirst();return c.getLong(0);}}
     public JSONObject liveEvents(String id,long after,int limit) throws Exception {
         JSONArray events=new JSONArray();long oldest=0;try(Cursor c=db.rawQuery("SELECT COALESCE(MIN(sequence),0) FROM sketch_live_events WHERE sketch_id=?",new String[]{id})){c.moveToFirst();oldest=c.getLong(0);}
-        try(Cursor c=db.rawQuery("SELECT sequence,base_revision,revision,operations FROM sketch_live_events WHERE sketch_id=? AND sequence>? ORDER BY sequence LIMIT ?",new String[]{id,String.valueOf(after),String.valueOf(limit)})){int bytes=0;while(c.moveToNext()){String json=c.getString(3);if(bytes+json.getBytes(StandardCharsets.UTF_8).length>512*1024&&events.length()>0)break;bytes+=json.getBytes(StandardCharsets.UTF_8).length;events.put(new JSONObject().put("sequence",c.getLong(0)).put("baseRevision",c.getLong(1)).put("revision",c.getLong(2)).put("operations",new JSONArray(json)));}}
+        try(Cursor c=db.rawQuery("SELECT sequence,base_revision,revision,length(CAST(operations AS BLOB)) FROM sketch_live_events WHERE sketch_id=? AND sequence>? ORDER BY sequence LIMIT ?",new String[]{id,String.valueOf(after),String.valueOf(limit)})){int bytes=0;while(c.moveToNext()){int length=c.getInt(3);if(bytes+length>512*1024&&events.length()>0)break;String json=SQLiteLargeText.read(db,"SELECT operations FROM sketch_live_events WHERE sketch_id=? AND sequence=?",id,String.valueOf(c.getLong(0)));bytes+=length;events.put(new JSONObject().put("sequence",c.getLong(0)).put("baseRevision",c.getLong(1)).put("revision",c.getLong(2)).put("operations",new JSONArray(json)));}}
         return new JSONObject().put("sketchId",id).put("events",events).put("latestSequence",latestSequence(id)).put("oldestSequence",oldest);
     }
     public void consumeLiveSession(long sequence){ContentValues values=new ContentValues();values.put("consumed",1);db.update("sketch_live_sessions",values,"sequence=? AND ended=1",new String[]{String.valueOf(sequence)});}
@@ -121,6 +121,7 @@ public final class SketchProjectStore implements AutoCloseable {
                 throw new IllegalStateException("SKETCH_REVISION_CONFLICT");
             trimHistory(id, position);
             JSONObject result = result(next, canMove(id, position, false), false);
+            if(liveOperations!=null&&(liveOperations.length()>32768||liveOperations.toString().getBytes(StandardCharsets.UTF_8).length>8*1024*1024))throw new IllegalStateException("SKETCH_LIVE_EVENT_BUDGET: split generated tracing into smaller atomic batches");
             if(liveOperations!=null&&liveOperations.length()>0){if(context.getFilesDir().getUsableSpace()<16L*1024*1024+liveOperations.toString().getBytes(StandardCharsets.UTF_8).length*3L)throw new IllegalStateException("SKETCH_LIVE_STORAGE_FULL");ContentValues event=new ContentValues();event.put("sketch_id",id);event.put("base_revision",expectedRevision);event.put("revision",next.getLong("revision"));event.put("operations",liveOperations.toString());db.insertOrThrow("sketch_live_events",null,event);trimLiveEvents(id);}
             saveReceipt(id, operationId, fingerprint, result); db.setTransactionSuccessful(); return result;
         } finally { db.endTransaction(); }
@@ -171,6 +172,7 @@ public final class SketchProjectStore implements AutoCloseable {
         }
         for (Integer position : remove) db.delete("sketch_history", "sketch_id=? AND position=?", new String[]{id, position.toString()});
     }
+    boolean hasOperation(String id,String operationId){try(Cursor c=db.rawQuery("SELECT 1 FROM sketch_operations WHERE sketch_id=? AND operation_id=?",new String[]{id,operationId})){return c.moveToFirst();}}
     private JSONObject receipt(String id, String op, String fingerprint) throws Exception {
         try (Cursor c = db.rawQuery("SELECT fingerprint,result FROM sketch_operations WHERE sketch_id=? AND operation_id=?", new String[]{id, op})) {
             if (!c.moveToFirst()) return null;

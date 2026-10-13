@@ -53,7 +53,7 @@ const operation=z.discriminatedUnion('type',[
  z.object({type:z.literal('clear_cel'),layerId:id,frame}).strict(),
  z.object({type:z.literal('insert_frame'),frame:integer(0,1200)}).strict(),
  z.object({type:z.literal('delete_frame'),frame}).strict(),
- z.object({type:z.literal('trace_reference'),objectId:id,layerId:id,frame,threshold:finite.min(.01).max(1).optional(),idPrefix:id.max(72),exposure:integer(1,1200).optional(),color:color.optional(),width:finite.min(.0005).max(.2).optional()}).strict(),
+ z.object({type:z.literal('trace_reference'),objectId:id,layerId:id,frame,threshold:finite.min(.01).max(1).optional(),mode:z.enum(['edges','colour_regions']).optional(),maxDimension:integer(32,384).optional(),colourLevels:integer(2,32).optional(),idPrefix:id.max(72),exposure:integer(1,1200).optional(),color:color.optional(),width:finite.min(.0005).max(.2).optional()}).strict(),
  z.object({type:z.literal('delete_object'),objectId:id}).strict(),
  z.object({type:z.literal('set_canvas'),width:dimensions.width.optional(),height:dimensions.height.optional(),background:color.optional(),name:text(160).optional()}).strict(),
  z.object({type:z.literal('set_timing'),fps:fps.optional(),frameCount:integer(1,1200).optional()}).strict(),
@@ -118,16 +118,18 @@ export const studioToolSchemas={
  precision_edit:{projectId:id,expectedUpdatedAt:updatedAt,operations:z.array(clipOperation).min(1).max(64)},
  set_studio_layers:{projectId:id,expectedUpdatedAt:updatedAt,studioLayers},
  sketch_capabilities:{},
- sketch_live_begin:{...mutation,strokeDurationMs:integer(80,5000).optional()},sketch_live_end:{sketchId:id,sessionId:id,expectedRevision:revision},sketch_live_events:{sketchId:id,afterSequence:integer(0,Number.MAX_SAFE_INTEGER),limit:integer(1,8).optional()},
+ sketch_live_begin:{...mutation,strokeDurationMs:integer(80,5000).optional()},sketch_live_end:{sketchId:id,sessionId:id,expectedRevision:revision},sketch_live_events:{sketchId:id,afterSequence:integer(0,Number.MAX_SAFE_INTEGER),limit:integer(1,8).optional(),operationOffset:integer(0,32768).optional(),operationLimit:integer(1,64).optional(),eventSequence:integer(1,Number.MAX_SAFE_INTEGER).optional()},
  sketch_book_edit:{bookId:id,operationId:id,expectedRevision:revision,name:text(160).optional(),fps:fps.optional(),exposures:z.array(z.object({page:integer(0,9999),frames:integer(1,600)}).strict()).max(128).optional()},
  sketch_book_create:{bookId:id.max(72),operationId:id,name:text(160).optional(),pageCount:integer(1,10000).optional(),width:dimensions.width.optional(),height:dimensions.height.optional(),fps:fps.optional(),background:color.optional()},
  sketch_book_render:{bookId:id,operationId:id,expectedRevision:revision,pageStart:integer(0,9999).optional(),pageCount:integer(1,1200).optional(),aspect:z.enum(['original','9:16','16:9','1:1']).optional(),quality:z.enum(['720p','1080p']).optional()},
  sketch_book_list:{},sketch_book_get:{bookId:id,pageOffset:integer(0,10000).optional(),pageLimit:integer(1,128).optional()},sketch_book_open_page:{bookId:id,page:integer(0,9999)},
  sketch_create:{...sketchIdentity,operationId:id,name:text(160).optional(),width:dimensions.width.optional(),height:dimensions.height.optional(),fps:fps.optional(),frameCount:integer(1,1200).optional(),background:color.optional()},
  sketch_list:{},
- sketch_get:{...sketchIdentity,expectedRevision:revision.optional(),layerId:id.optional(),objectId:id.optional(),pointOffset:integer(0,131072).optional(),pointLimit:integer(1,512).optional(),objectOffset:integer(0,4096).optional(),objectLimit:integer(1,128).optional()},
+ sketch_get:{...sketchIdentity,expectedRevision:revision.optional(),layerId:id.optional(),objectId:id.optional(),pointOffset:integer(0,131072).optional(),pointLimit:integer(1,512).optional(),commandOffset:integer(0,4096).optional(),commandLimit:integer(1,512).optional(),objectOffset:integer(0,4096).optional(),objectLimit:integer(1,128).optional()},
  sketch_edit:{...mutation,operations:z.array(operation).min(1).max(64)},sketch_undo:mutation,sketch_redo:mutation,
  sketch_import_reference:{...mutation,projectId:id,sourceProjectUpdatedAt:updatedAt,assetId:id,layerId:id,objectId:id,frame:frame.optional(),exposure:integer(1,1200).optional(),bounds:bounds.optional()},
+ sketch_import_frame_manifest:{sketchId:id,manifestName:z.string().min(1).max(120).regex(/^[A-Za-z0-9_.-]+\.jsonl$/).refine(v=>!v.includes('..')),videoName:z.string().min(1).max(120).regex(/^[A-Za-z0-9_.-]+\.mp4$/).refine(v=>!v.includes('..')),expectedSourceSha256:sha,expectedFrameCount:integer(1,1200)},
+ sketch_import_drawing_manifest:{sketchId:id,manifestName:z.string().min(1).max(120).regex(/^[A-Za-z0-9_.-]+\.jsonl$/).refine(v=>!v.includes('..')),sourceName:z.string().min(1).max(120).regex(/^[A-Za-z0-9_.-]+\.(mp4|png|jpg|jpeg|webp|txt)$/i).refine(v=>!v.includes('..')),expectedSourceSha256:sha,expectedFrameCount:integer(1,1200)},
  sketch_preview:{...sketchIdentity,expectedRevision:revision.optional(),frameIndex:frame.optional(),maxDimension:integer(128,720).optional(),crop:bounds.optional()},
  sketch_render:{...mutation,aspect:z.enum(['original','9:16','16:9','1:1']).optional(),quality:z.enum(['720p','1080p']).optional()},
  open_pipeline_configure:{endpoint,bearer:z.string().min(16).max(4096).regex(/^[A-Za-z0-9_.~+/-]+=*$/)},
@@ -208,6 +210,9 @@ const legacy3d=new Set(['STANDOFF','CHARGE','CLASH','BLADE_LOCK','FOLLOW_THROUGH
 const pixelFields=new Set(['keyframes','opacity','chromaKey','chromaColor','chromaTolerance','chromaFeather','maskShape','maskLeft','maskTop','maskRight','maskBottom','maskFeather','glowStrength','glowRadiusPx','glowThreshold']);
 export function requireStudioVersion(device,action,parameters={}){
  const alias=studioAliases.has(action);action=nativeStudioCanonicalAction(action);
+ const needs395=action==='sketch_live_events'&&(parameters.operationOffset!==undefined||parameters.operationLimit!==undefined||parameters.eventSequence!==undefined)||action==='sketch_get'&&(parameters.commandOffset!==undefined||parameters.commandLimit!==undefined)||action==='sketch_import_drawing_manifest'||action==='sketch_import_frame_manifest'&&alias||action==='sketch_edit'&&(parameters.operations||[]).some(op=>op.type==='trace_reference'&&(op.mode||op.maxDimension||op.colourLevels));
+ if(needs395&&!atLeast(device?.appVersion,'3.9.5'))throw new Error('NATIVE_APP_UPGRADE_REQUIRED: precision sketch queries, source-linked imports and colour tracing require VideoStudio 3.9.5 or newer');
+ if(action==='sketch_import_frame_manifest'&&!atLeast(device?.appVersion,'3.9.4'))throw new Error('NATIVE_APP_UPGRADE_REQUIRED: frame manifest imports require VideoStudio 3.9.4 or newer');
  if(action==='sketch_preview'&&parameters.crop){const match=String(device?.appVersion||'').match(/^(\d+)\.(\d+)\.(\d+)/);const v=match?match.slice(1,4).map(Number):null;if(!v||v[0]<3||v[0]===3&&(v[1]<9||v[1]===9&&v[2]<3))throw new Error('NATIVE_APP_UPGRADE_REQUIRED: cropped sketch previews require VideoStudio 3.9.3 or newer');}
  const advancedSketch=action==='sketch_capabilities'||action.startsWith('sketch_book_')||action.startsWith('sketch_live_')||action==='sketch_edit'&&(parameters.operations||[]).some(op=>['append_points','duplicate_cel','clear_cel','insert_frame','delete_frame','trace_reference'].includes(op.type)||op.object?.kind==='path'||op.object?.brush||op.object?.gradient||op.object?.referenceCrop||op.patch?.brush||op.patch?.commands||op.patch?.gradient||op.patch?.referenceCrop||op.layer?.blendMode||op.patch?.blendMode);
  if(advancedSketch){const match=String(device?.appVersion||'').match(/^(\d+)\.(\d+)\.(\d+)/);const v=match?match.slice(1,4).map(Number):null;if(!v||v[0]<3||v[0]===3&&(v[1]<9||v[1]===9&&v[2]<1))throw new Error('NATIVE_APP_UPGRADE_REQUIRED: advanced and live sketch authoring requires VideoStudio 3.9.1 or newer');}
@@ -226,3 +231,5 @@ export function requireStudioVersion(device,action,parameters={}){
  const version=match?match.slice(1,4).map(Number):null;
  if(!version||version[0]<3||version[0]===3&&version[1]<9)throw new Error('NATIVE_APP_UPGRADE_REQUIRED: this workbench operation requires VideoStudio 3.9.0 or newer; native application protocol v3 remains unchanged');
 }
+
+function atLeast(value,minimum){const match=String(value||'').match(/^(\d+)\.(\d+)\.(\d+)/);if(!match)return false;const v=match.slice(1).map(Number),m=minimum.split('.').map(Number);for(let n=0;n<3;n++){if(v[n]!==m[n])return v[n]>m[n];}return true;}

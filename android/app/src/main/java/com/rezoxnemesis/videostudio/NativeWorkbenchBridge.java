@@ -14,7 +14,7 @@ public final class NativeWorkbenchBridge {
     private static final Set<String> ACTIONS=Collections.unmodifiableSet(new LinkedHashSet<>(Arrays.asList(
             "precision_edit","apply_tool","set_studio_layers",
             "sketch_create","sketch_list","sketch_get","sketch_edit","sketch_undo","sketch_redo",
-            "sketch_import_reference","sketch_preview","sketch_render",
+            "sketch_import_reference","sketch_import_frame_manifest","sketch_import_drawing_manifest","sketch_preview","sketch_render",
             "sketch_book_create","sketch_book_edit","sketch_book_list","sketch_book_get","sketch_book_open_page","sketch_book_render","sketch_live_begin","sketch_live_events","sketch_live_end","sketch_capabilities",
             "open_pipeline_configure","open_pipeline_capabilities","open_pipeline_list",
             "open_pipeline_export_request","open_pipeline_submit","open_pipeline_status","open_pipeline_cancel",
@@ -44,7 +44,7 @@ public final class NativeWorkbenchBridge {
         JSONArray actions=new JSONArray(),aliases=new JSONArray();for(String action:ACTIONS){actions.put(action);aliases.put(PREFIX+action);}
         return new JSONObject().put("tool","app_execute").put("aliasPrefix",PREFIX)
                 .put("minimumNativeVersion",MINIMUM_NATIVE_VERSION).put("canonicalActions",actions).put("aliases",aliases)
-                .put("advancedSketchMinimumNativeVersion","3.9.1").put("croppedSketchPreviewMinimumNativeVersion","3.9.3").put("flatParameters",true).put("permissionPolicy","existing-native-action-permissions-and-source-validation")
+                .put("colourTraceMinimumNativeVersion","3.9.5").put("drawingManifestMinimumNativeVersion","3.9.5").put("advancedSketchMinimumNativeVersion","3.9.1").put("croppedSketchPreviewMinimumNativeVersion","3.9.3").put("flatParameters",true).put("permissionPolicy","existing-native-action-permissions-and-source-validation")
                 .put("galleryAccess",false).put("nativeExecutionVerified",false);
     }
     private static final class Budget {int values;long characters;void add(long amount){characters+=amount;if(characters>MAX_COMMAND_BYTES)throw new IllegalArgumentException("Native command exceeds its relay metadata budget");}}

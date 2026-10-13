@@ -109,8 +109,8 @@ test('closed studio relay aliases require 3.9 and validate their exact canonical
  for(const alias of STUDIO_ALIAS_ACTIONS){
   assert.equal(nativeStudioCanonicalAction(alias),alias.slice('studio_'.length));
   assert(STORYBOARD_NATIVE_ACTIONS.has(alias),'Every alias must remain native-only');
-  assert.throws(()=>requireStoryboardNativeVersion({appVersion:'3.8.1'},alias),/3\.9\.[01]/);
-  assert.doesNotThrow(()=>requireStoryboardNativeVersion({appVersion:'3.9.1'},alias));
+  assert.throws(()=>requireStoryboardNativeVersion({appVersion:'3.8.1'},alias),/3\.9\.[0145]/);
+  assert.doesNotThrow(()=>requireStoryboardNativeVersion({appVersion:'3.9.5'},alias));
  }
  const p={projectId:'p',expectedUpdatedAt:1,operations:[{clipId:'c',set:{x:.2}}]};
  assert.deepEqual(nativeStoryboardParameters('studio_precision_edit',p),p);
@@ -146,4 +146,27 @@ test('precision preview validates bounded crops and requires the native crop imp
  assert.throws(()=>requireStudioVersion({appVersion:'3.9.2'},'studio_sketch_preview',p),/3\.9\.3/);
  assert.doesNotThrow(()=>requireStudioVersion({appVersion:'3.9.3'},'studio_sketch_preview',p));
  assert.doesNotThrow(()=>requireStudioVersion({appVersion:'3.9.0'},'studio_sketch_preview',{sketchId:'owned-sketch'}));
+});
+
+test('native colour tracing and source-linked bulk drawings expose strict versioned contracts',()=>{
+ const edit={sketchId:'owned',operationId:'colours',expectedRevision:2,operations:[{type:'trace_reference',objectId:'reference',layerId:'colours',frame:0,idPrefix:'trace',mode:'colour_regions',maxDimension:192,colourLevels:8}]};
+ assert.deepEqual(nativeStudioParameters('sketch_edit',edit),edit);
+ assert.throws(()=>requireStudioVersion({appVersion:'3.9.4'},'sketch_edit',edit),/3\.9\.5/);
+ assert.doesNotThrow(()=>requireStudioVersion({appVersion:'3.9.5'},'sketch_edit',edit));
+ const p={sketchId:'drawing',manifestName:'portrait.jsonl',sourceName:'portrait.jpg',expectedSourceSha256:'a'.repeat(64),expectedFrameCount:1};
+ assert.deepEqual(nativeStudioParameters('studio_sketch_import_drawing_manifest',p),p);
+ assert.throws(()=>nativeStudioParameters('sketch_import_drawing_manifest',{...p,sourceName:'../portrait.jpg'}));
+ assert.throws(()=>requireStudioVersion({appVersion:'3.9.4'},'studio_sketch_import_drawing_manifest',p),/3\.9\.5/);
+});
+
+test('dense live streams and curve queries have bounded revision-aware geometry cursors',()=>{
+ const live={sketchId:'owned',afterSequence:2,operationOffset:4096,operationLimit:32,eventSequence:3};assert.deepEqual(nativeStudioParameters('studio_sketch_live_events',live),live);assert.throws(()=>requireStudioVersion({appVersion:'3.9.4'},'sketch_live_events',live),/3\.9\.5/);
+ const curve={sketchId:'owned',expectedRevision:3,objectId:'eye',commandOffset:512,commandLimit:128};assert.deepEqual(nativeStudioParameters('sketch_get',curve),curve);assert.throws(()=>nativeStudioParameters('sketch_get',{...curve,commandLimit:513}));assert.throws(()=>requireStudioVersion({appVersion:'3.9.4'},'sketch_get',curve),/3\.9\.5/);
+});
+
+
+test('frame manifest aliases require395 but394 raw actions remain compatible',()=>{
+ assert.throws(()=>requireStudioVersion({appVersion:'3.9.4'},'studio_sketch_import_frame_manifest'),/3\.9\.5/);
+ assert.doesNotThrow(()=>requireStudioVersion({appVersion:'3.9.4'},'sketch_import_frame_manifest'));
+ assert.doesNotThrow(()=>requireStudioVersion({appVersion:'3.9.5'},'studio_sketch_import_frame_manifest'));
 });
