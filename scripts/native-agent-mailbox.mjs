@@ -98,4 +98,3 @@ if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href){
     else{const child=spawnSync(process.execPath,['--use-env-proxy',...process.execArgv,process.argv[1],...process.argv.slice(2)],{env:process.env,stdio:'inherit'});process.exitCode=child.status??1;}
   }else cli().catch(()=>{console.error('Mailbox operation failed; check local inputs, GitHub access, and receipt service.');process.exitCode=1;});
 }
-
