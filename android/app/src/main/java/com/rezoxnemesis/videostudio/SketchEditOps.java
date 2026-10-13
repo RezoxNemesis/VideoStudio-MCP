@@ -73,13 +73,28 @@ public final class SketchEditOps {
                 return result;
             }
             if ("sketch_preview".equals(action)) {
-                SketchDocument.fields(args, "sketchId,expectedRevision,frameIndex,maxDimension");
+                SketchDocument.fields(args, "sketchId,expectedRevision,frameIndex,maxDimension,crop");
                 JSONObject doc = store.get(id);
                 if (args.has("expectedRevision")) SketchProjectStore.requireRevision(doc, SketchDocument.integer(args, "expectedRevision", 1, Long.MAX_VALUE - 1));
                 int frame = args.has("frameIndex") ? (int) SketchDocument.integer(args, "frameIndex", 0, doc.getInt("frameCount") - 1) : 0;
                 int dimension = args.has("maxDimension") ? (int) SketchDocument.integer(args, "maxDimension", 128, 720) : 720;
+                int canvasWidth=doc.getInt("width"),canvasHeight=doc.getInt("height");
+                int left=0,top=0,right=canvasWidth,bottom=canvasHeight;
+                if(args.has("crop")){
+                    JSONObject crop=args.getJSONObject("crop");SketchDocument.validateBounds(crop);
+                    left=(int)Math.floor(crop.getDouble("x")*canvasWidth);top=(int)Math.floor(crop.getDouble("y")*canvasHeight);
+                    right=Math.min(canvasWidth,Math.max(left+1,(int)Math.ceil((crop.getDouble("x")+crop.getDouble("width"))*canvasWidth)));
+                    bottom=Math.min(canvasHeight,Math.max(top+1,(int)Math.ceil((crop.getDouble("y")+crop.getDouble("height"))*canvasHeight)));
+                }
                 try (SketchFrameRenderer renderer = new SketchFrameRenderer(context, doc)) {
-                    android.graphics.Bitmap bitmap = renderer.render(frame);
+                    android.graphics.Bitmap bitmap;
+                    if(args.has("crop")){
+                        double zoom=dimension/(double)Math.max(right-left,bottom-top);
+                        bitmap=android.graphics.Bitmap.createBitmap(Math.max(1,(int)Math.round((right-left)*zoom)),Math.max(1,(int)Math.round((bottom-top)*zoom)),android.graphics.Bitmap.Config.ARGB_8888);
+                        try{
+                            android.graphics.Canvas viewport=new android.graphics.Canvas(bitmap);viewport.scale((float)zoom,(float)zoom);viewport.translate(-left,-top);renderer.draw(viewport,frame,true);
+                        }catch(Exception error){bitmap.recycle();throw error;}
+                    }else bitmap=renderer.render(frame);
                     try {
                         byte[] bytes;
                         while (true) {
@@ -94,6 +109,8 @@ public final class SketchEditOps {
                             if (Math.max(bitmap.getWidth(), bitmap.getHeight()) <= 128) throw new IllegalStateException("SKETCH_PREVIEW_BUDGET: PNG exceeds 1 MiB");
                         }
                         return new JSONObject().put("sketchId", id).put("revision", doc.getLong("revision")).put("frameIndex", frame)
+                                .put("canvasWidth",canvasWidth).put("canvasHeight",canvasHeight)
+                                .put("sourcePixelBounds",new JSONObject().put("x",left).put("y",top).put("width",right-left).put("height",bottom-top))
                                 .put("documentSha256", SketchDocument.sha256(SketchDocument.canonical(doc).getBytes(StandardCharsets.UTF_8)))
                                 .put("renderer", "android-bitmap-canvas").put("sketchPreviewImage", new JSONObject().put("mimeType", "image/png")
                                         .put("base64", android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP))

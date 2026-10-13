@@ -44,7 +44,7 @@ public final class NativeWorkbenchBridge {
         JSONArray actions=new JSONArray(),aliases=new JSONArray();for(String action:ACTIONS){actions.put(action);aliases.put(PREFIX+action);}
         return new JSONObject().put("tool","app_execute").put("aliasPrefix",PREFIX)
                 .put("minimumNativeVersion",MINIMUM_NATIVE_VERSION).put("canonicalActions",actions).put("aliases",aliases)
-                .put("advancedSketchMinimumNativeVersion","3.9.1").put("flatParameters",true).put("permissionPolicy","existing-native-action-permissions-and-source-validation")
+                .put("advancedSketchMinimumNativeVersion","3.9.1").put("croppedSketchPreviewMinimumNativeVersion","3.9.3").put("flatParameters",true).put("permissionPolicy","existing-native-action-permissions-and-source-validation")
                 .put("galleryAccess",false).put("nativeExecutionVerified",false);
     }
     private static final class Budget {int values;long characters;void add(long amount){characters+=amount;if(characters>MAX_COMMAND_BYTES)throw new IllegalArgumentException("Native command exceeds its relay metadata budget");}}

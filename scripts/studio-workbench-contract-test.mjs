@@ -138,3 +138,12 @@ test('advanced sketch authoring requires 3.9.1 while basic 3.9 tools remain comp
  assert.doesNotThrow(()=>requireStudioVersion({appVersion:'3.9.0'},'sketch_get'));
  assert.throws(()=>requireStudioVersion({appVersion:'3.9.0'},'sketch_edit',{operations:[{type:'add_object',object:{kind:'path'}}]}),/3\.9\.1/);
 });
+
+test('precision preview validates bounded crops and requires the native crop implementation',()=>{
+ const p={sketchId:'owned-sketch',expectedRevision:2,crop:{x:.5,y:0,width:.5,height:1}};
+ assert.deepEqual(nativeStudioParameters('sketch_preview',p),p);
+ assert.throws(()=>nativeStudioParameters('sketch_preview',{...p,crop:{x:.9,y:0,width:.2,height:1}}));
+ assert.throws(()=>requireStudioVersion({appVersion:'3.9.2'},'studio_sketch_preview',p),/3\.9\.3/);
+ assert.doesNotThrow(()=>requireStudioVersion({appVersion:'3.9.3'},'studio_sketch_preview',p));
+ assert.doesNotThrow(()=>requireStudioVersion({appVersion:'3.9.0'},'studio_sketch_preview',{sketchId:'owned-sketch'}));
+});

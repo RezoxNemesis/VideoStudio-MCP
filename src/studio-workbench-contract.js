@@ -128,7 +128,7 @@ export const studioToolSchemas={
  sketch_get:{...sketchIdentity,expectedRevision:revision.optional(),layerId:id.optional(),objectId:id.optional(),pointOffset:integer(0,131072).optional(),pointLimit:integer(1,512).optional(),objectOffset:integer(0,4096).optional(),objectLimit:integer(1,128).optional()},
  sketch_edit:{...mutation,operations:z.array(operation).min(1).max(64)},sketch_undo:mutation,sketch_redo:mutation,
  sketch_import_reference:{...mutation,projectId:id,sourceProjectUpdatedAt:updatedAt,assetId:id,layerId:id,objectId:id,frame:frame.optional(),exposure:integer(1,1200).optional(),bounds:bounds.optional()},
- sketch_preview:{...sketchIdentity,expectedRevision:revision.optional(),frameIndex:frame.optional(),maxDimension:integer(128,720).optional()},
+ sketch_preview:{...sketchIdentity,expectedRevision:revision.optional(),frameIndex:frame.optional(),maxDimension:integer(128,720).optional(),crop:bounds.optional()},
  sketch_render:{...mutation,aspect:z.enum(['original','9:16','16:9','1:1']).optional(),quality:z.enum(['720p','1080p']).optional()},
  open_pipeline_configure:{endpoint,bearer:z.string().min(16).max(4096).regex(/^[A-Za-z0-9_.~+/-]+=*$/)},
  open_pipeline_capabilities:{},open_pipeline_list:{},
@@ -208,6 +208,7 @@ const legacy3d=new Set(['STANDOFF','CHARGE','CLASH','BLADE_LOCK','FOLLOW_THROUGH
 const pixelFields=new Set(['keyframes','opacity','chromaKey','chromaColor','chromaTolerance','chromaFeather','maskShape','maskLeft','maskTop','maskRight','maskBottom','maskFeather','glowStrength','glowRadiusPx','glowThreshold']);
 export function requireStudioVersion(device,action,parameters={}){
  const alias=studioAliases.has(action);action=nativeStudioCanonicalAction(action);
+ if(action==='sketch_preview'&&parameters.crop){const match=String(device?.appVersion||'').match(/^(\d+)\.(\d+)\.(\d+)/);const v=match?match.slice(1,4).map(Number):null;if(!v||v[0]<3||v[0]===3&&(v[1]<9||v[1]===9&&v[2]<3))throw new Error('NATIVE_APP_UPGRADE_REQUIRED: cropped sketch previews require VideoStudio 3.9.3 or newer');}
  const advancedSketch=action==='sketch_capabilities'||action.startsWith('sketch_book_')||action.startsWith('sketch_live_')||action==='sketch_edit'&&(parameters.operations||[]).some(op=>['append_points','duplicate_cel','clear_cel','insert_frame','delete_frame','trace_reference'].includes(op.type)||op.object?.kind==='path'||op.object?.brush||op.object?.gradient||op.object?.referenceCrop||op.patch?.brush||op.patch?.commands||op.patch?.gradient||op.patch?.referenceCrop||op.layer?.blendMode||op.patch?.blendMode);
  if(advancedSketch){const match=String(device?.appVersion||'').match(/^(\d+)\.(\d+)\.(\d+)/);const v=match?match.slice(1,4).map(Number):null;if(!v||v[0]<3||v[0]===3&&(v[1]<9||v[1]===9&&v[2]<1))throw new Error('NATIVE_APP_UPGRADE_REQUIRED: advanced and live sketch authoring requires VideoStudio 3.9.1 or newer');}
 
