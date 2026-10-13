@@ -1,0 +1,41 @@
+{
+  "ownerKey": "synthetic_owner_key_for_tests_00000001",
+  "now": 1791849600000,
+  "channel": "de4336450d91ce9788fe703ce9edf08c",
+  "plaintext": {
+    "schema": "videostudio.agent.commands.v1",
+    "packetId": "12345678-1234-4234-8234-123456789abc",
+    "issuedAtMs": 1791849600000,
+    "expiresAtMs": 1791849660000,
+    "commands": [
+      {
+        "id": "12345678-1234-4234-8234-123456789abc",
+        "action": "connection_health",
+        "parameters": {}
+      }
+    ]
+  },
+  "packet": {
+    "schema": "videostudio.agent.packet.v1",
+    "channel": "de4336450d91ce9788fe703ce9edf08c",
+    "nonce": "BwcHBwcHBwcHBwcH",
+    "ciphertext": "6DTkQ79RVxYwjARTwztNGwc8kEXqz5kiWfU8rwpOsVgli8XbWKHHBHjvEEdANsbOuzjGqqpygwxiBfmhaiJ3MQRU_gWm9ZxPBhp-RKxjze8UC5qclyTt8wm5RdxGz7Lhrr5zaGadKGGZc1sKmtH_zwvMZ8A28pSB3CuHPPDcY2A0aID5EoPrv9SJ4Cu0QqcKQiqZTfJ_U4iM2OhnMqFKw0agfoIOWKLcVOkL2PcspQiR0lhVuRjdwWFvAotx7qCAB2Ar9Vw-JhL-xF8hqvTdN2za3VhE8rF6f-SO-4uWIf3fPgZSoK4ocz222RmL74DqwU87ZwZZ5QwUfd4GkW6HRbpbZaSSPU-mezb9"
+  },
+  "receiptPlaintext": {
+    "schema": "videostudio.agent.receipt.v1",
+    "commandId": "12345678-1234-4234-8234-123456789abc",
+    "status": "completed",
+    "result": {
+      "ok": true,
+      "message": "synthetic fixture"
+    },
+    "completedAtMs": 1791849600000
+  },
+  "receipt": {
+    "schema": "videostudio.agent.receipt-envelope.v1",
+    "channel": "de4336450d91ce9788fe703ce9edf08c",
+    "commandId": "12345678-1234-4234-8234-123456789abc",
+    "nonce": "CAgICAgICAgICAgI",
+    "ciphertext": "DAtnu-GbtzJmrewHnQoGQEINhmN8vXOZJsIrRenjq3sWUtqhWnNAR0ZxeyO55vD1RDTzCfwIfvzowOfYrsISi0m6NtxUyyYxrW2oN0rMqSgVQ0CKxc5FkAblxnQtRVjArEnWiynt5q45lcWRO5a-lhvi9pvpvH15capu0HCvWML1DS55DqAxV4vdRH8KKVkjBuYbHC0dunHuco2s5J7zWeAWBLx_EDj-qYjyto19AJM1D4ZMRvDvCZWkbQLh53DjeUW-Nxpk2bCyV4x0IkTGtvav"
+  }
+}

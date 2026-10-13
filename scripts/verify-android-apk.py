@@ -18,6 +18,10 @@ manifest = re.search(r"^package: name='([^']+)' versionCode='(\d+)' versionName=
 if manifest is None:
     raise SystemExit('APK package metadata unavailable')
 package, actual_code, actual_name = manifest.groups()
+label_match = re.search(r"^application-label:'([^']+)'", badging, re.M)
+label = label_match.group(1) if label_match else ''
+if expected_code >= 400 and label != 'Video studio':
+    raise SystemExit('APK visible application name differs from Video studio')
 if package != 'com.rezoxnemesis.videostudio.next' or int(actual_code) != expected_code or actual_name != expected_name or actual_name != native_name or expected_code <= 371:
     raise SystemExit('APK package/version continuity check failed')
 signature = subprocess.check_output([str(args.apksigner), 'verify', '--print-certs', str(args.apk)], text=True)
@@ -32,7 +36,7 @@ with args.apk.open('rb') as stream:
 proof = {
     'format': 'videostudio.apk-build-proof.v1', 'commit': os.environ.get('GITHUB_SHA', ''),
     'sourceHeadCommit': os.environ.get('VIDEOSTUDIO_SOURCE_HEAD_SHA', os.environ.get('GITHUB_SHA', '')),
-    'package': package, 'versionCode': int(actual_code), 'versionName': actual_name,
+    'package': package, 'applicationLabel': label, 'versionCode': int(actual_code), 'versionName': actual_name,
     'apkSha256': digest.hexdigest(), 'certificateSha256': pinned,
     'apkBytes': args.apk.stat().st_size, 'packageVersionAndSignerVerified': True,
     'installedDeviceComparison': 'UNAVAILABLE', 'nativeCinematicAcceptance': False,

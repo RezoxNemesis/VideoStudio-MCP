@@ -12,7 +12,10 @@ public final class SketchEditOps {
 
     public static JSONObject execute(Context context,String action,JSONObject args) throws Exception {
         JSONObject result=executeInternal(context,action,args);result.put("ok",true);
-        if(result.has("sketchId")&&!java.util.Arrays.asList("sketch_get","sketch_preview","sketch_list","sketch_live_events","sketch_inspect").contains(action)){
+        // A hidden guide is preparatory data, not a request to change the
+        // foreground drawing. Actual edits and live sessions still follow.
+        boolean hiddenGuideImport="sketch_import_reference".equals(action)&&!args.optBoolean("guideVisible",true);
+        if(result.has("sketchId")&&!hiddenGuideImport&&!java.util.Arrays.asList("sketch_get","sketch_preview","sketch_list","sketch_live_events","sketch_inspect").contains(action)){
             android.content.SharedPreferences.Editor signal=context.getSharedPreferences("sketch_live_workspace",Context.MODE_PRIVATE).edit().putString("sketchId",result.getString("sketchId")).putLong("signal",System.nanoTime());
             String priorBook=context.getSharedPreferences("sketch_live_workspace",Context.MODE_PRIVATE).getString("sketchId","").equals(result.getString("sketchId"))?context.getSharedPreferences("sketch_live_workspace",Context.MODE_PRIVATE).getString("bookId",""):"";signal.putString("bookId",action.equals("sketch_book_open_page")?args.getString("bookId"):priorBook);signal.putInt("page",args.optInt("page",0));signal.apply();
         }
@@ -184,7 +187,8 @@ public final class SketchEditOps {
                     SketchDocument.fields(args, "sketchId,operationId,expectedRevision");
                     return store.historyMove(id, op, revision, fingerprint, "sketch_redo".equals(action));
                 case "sketch_import_reference":
-                    SketchDocument.fields(args, "sketchId,operationId,expectedRevision,projectId,sourceProjectUpdatedAt,assetId,layerId,objectId,frame,exposure,bounds");
+                    SketchDocument.fields(args, "sketchId,operationId,expectedRevision,projectId,sourceProjectUpdatedAt,assetId,layerId,objectId,frame,exposure,bounds,guideVisible");
+                    if(args.has("guideVisible"))SketchDocument.bool(args,"guideVisible");
                     ProjectStore projects = new ProjectStore(context);
                     return projects.guardedProject(SketchDocument.id(args, "projectId"), SketchDocument.integer(args, "sourceProjectUpdatedAt", 0, Long.MAX_VALUE), project ->
                         store.mutate(id, op, revision, fingerprint, doc -> {
@@ -198,6 +202,7 @@ public final class SketchEditOps {
                                     .put("frame", args.has("frame") ? args.get("frame") : 0)
                                     .put("exposure", args.has("exposure") ? args.get("exposure") : doc.getInt("frameCount"))
                                     .put("bounds", args.has("bounds") ? args.getJSONObject("bounds") : new JSONObject().put("x", 0).put("y", 0).put("width", 1).put("height", 1))
+                                    .put("transform",SketchDocument.transform().put("opacity",args.optBoolean("guideVisible",true)?1:0))
                                     .put("reference", referencePlaceholder));
                             layer.getJSONArray("objects").put(object); SketchDocument.validate(doc);
                             JSONObject reference=store.importReference(id, project, asset);object.put("reference", reference);
@@ -274,6 +279,14 @@ public final class SketchEditOps {
                 SketchDocument.fields(op.getJSONObject("transform"), "x,y,scaleX,scaleY,rotation,anchorX,anchorY,opacity");
                 merge(transform, op.getJSONObject("transform")); item.put("transform", transform); break;
             }
+            case "set_reference_visibility": {
+                SketchDocument.fields(op,"type,objectId,visible");SketchDocument.bool(op,"visible");String id=SketchDocument.id(op,"objectId");
+                JSONObject reference=SketchDocument.object(doc,id);if(!"image".equals(reference.getString("kind")))throw SketchDocument.bad("Reference visibility requires an owned image guide");
+                requireUnlocked(SketchDocument.owner(doc,id));boolean visible=op.getBoolean("visible");
+                referenceOpacity(reference.getJSONObject("transform"),visible);
+                JSONArray keys=reference.getJSONArray("keys");for(int n=0;n<keys.length();n++)referenceOpacity(keys.getJSONObject(n).getJSONObject("transform"),visible);
+                break;
+            }
             case "set_keyframe": {
                 SketchDocument.fields(op, "type,layerId,objectId,frame,transform,interpolation,remove"); JSONObject item = target(doc, op);
                 int frame = (int) SketchDocument.integer(op, "frame", 0, doc.getInt("frameCount") - 1);
@@ -300,6 +313,9 @@ public final class SketchEditOps {
         SketchDocument.validate(doc);
     }
 
+    private static void referenceOpacity(JSONObject transform,boolean visible)throws Exception{
+        double opacity=transform.getDouble("opacity");transform.put("opacity",visible?(opacity>0?opacity:.35):0);
+    }
     public static JSONObject completeObject(JSONObject source) throws Exception {
         JSONObject object = SketchDocument.copy(source);
         if (!object.has("frame")) object.put("frame", 0); if (!object.has("exposure")) object.put("exposure", 1);

@@ -42,7 +42,7 @@ import javax.crypto.spec.GCMParameterSpec;
 public final class AppProtocol {
     public static final String BASE = "https://wispy-queen-f9b5.prakasharuntandon634.workers.dev";
     public static final int PROTOCOL_VERSION = 3;
-    public static final String APP_VERSION = "3.9.6";
+    public static final String APP_VERSION = "4.0.1";
     /** Stable compatibility URL. APK updates must not change this path. */
     public static final String MCP_PATH = McpConnectionCore.STABLE_MCP_PATH;
     /** Stable registration bootstrap. Runtime requests use the negotiated profile. */
@@ -99,6 +99,12 @@ public final class AppProtocol {
         ownerKey = identity.ownerKey;
         identityRecoveryRequired = identity.recoveryRequired;
     }
+
+    /** Explicit sharing only; never included in diagnostics or registration metadata. */
+    public String appKey() {
+        return identityRecoveryRequired || ownerKey == null || ownerKey.isEmpty() ? "" : "vsapp1." + ownerKey;
+    }
+    String mailboxOwnerKey() { return identityRecoveryRequired ? "" : ownerKey; }
 
     public String deviceId() { return deviceId; }
     public int protocolVersion() { return connectionCore.selectedProtocol(); }

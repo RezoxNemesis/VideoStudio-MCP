@@ -33,6 +33,15 @@ test('sketch geometry and paged queries are bounded and precise',()=>{
  assert.throws(()=>nativeStudioParameters('sketch_edit',{...p,operations:[{type:'set_keyframe',objectId:'o',frame:0}]}));
  assert.deepEqual(nativeStudioParameters('sketch_get',{sketchId:'s',expectedRevision:1,layerId:'l',objectOffset:10,objectLimit:8}),{sketchId:'s',expectedRevision:1,layerId:'l',objectOffset:10,objectLimit:8});
 });
+test('reference visibility is shared, strictly boolean and gated before older native execution',()=>{
+ const p={sketchId:'sketch_1',operationId:'guide_visibility',expectedRevision:1,operations:[{type:'set_reference_visibility',objectId:'guide',visible:false}]};
+ assert.deepEqual(nativeStudioParameters('sketch_edit',p),p);
+ assert.throws(()=>requireStudioVersion({appVersion:'4.0.0'},'sketch_edit',p),/UPGRADE_REQUIRED/);
+ assert.doesNotThrow(()=>requireStudioVersion({appVersion:'4.0.1'},'sketch_edit',p));
+ assert.throws(()=>nativeStudioParameters('sketch_edit',{...p,operations:[{...p.operations[0],visible:'false'}]}));
+ assert.throws(()=>nativeStudioParameters('sketch_edit',{...p,operations:[{...p.operations[0],layerId:'layer_1'}]}));
+ assert.deepEqual(nativeStudioParameters('sketch_edit',{...p,operations:[{...p.operations[0],visible:true}]}).operations[0].visible,true);
+});
 test('open generation accepts own sources and distinct backend controls',()=>{
  const p={projectId:'project_1',sourceProjectUpdatedAt:1,requestId:'request_1',backend:'cogvideox',controls:{prompt:'Two robots wave',width:64,height:64,numFrames:9,fps:8,seed:17,numInferenceSteps:2,guidanceScale:6},assetIds:[]};
  assert.deepEqual(nativeStudioParameters('open_pipeline_export_request',p),p);
@@ -131,6 +140,26 @@ test('professional paths brushes and live drawing steps pass strict native contr
   {type:'trace_reference',layerId:'l',objectId:'reference',frame:0,idPrefix:'trace',threshold:.1}
  ]});assert.equal(parsed.operations.length,4);
  assert.throws(()=>nativeStudioParameters('sketch_edit',{sketchId:'s',operationId:'bad',expectedRevision:1,operations:[{type:'add_object',layerId:'l',object:{id:'p',kind:'path',commands:[['M',0,0],['C',0,0,1,1,2,2]]}}]}));
+});
+
+test('photo reference contract preserves bounded native dimensions and original-source provenance',()=>{
+ const reference={file:'a'.repeat(64)+'.png',sha256:'a'.repeat(64),width:941,height:1672,
+  sourceProjectId:'p',sourceAssetId:'a',sourceWidth:941,sourceHeight:1672,sourceOrientation:1,sourceSha256:'b'.repeat(64)};
+ const payload=ref=>({sketchId:'s',operationId:'reference',expectedRevision:1,operations:[{type:'add_object',layerId:'l',object:{id:'guide',kind:'image',bounds:{x:0,y:0,width:1,height:1},reference:ref}}]});
+ assert.deepEqual(nativeStudioParameters('sketch_edit',payload(reference)),payload(reference));
+ assert.throws(()=>requireStudioVersion({appVersion:'4.0.0'},'sketch_edit',payload(reference)),/4\.0\.1/);
+ assert.doesNotThrow(()=>requireStudioVersion({appVersion:'4.0.1'},'sketch_edit',payload(reference)));
+ for(const ref of [{...reference,width:2049},{...reference,sourceWidth:8001,sourceHeight:8000},{...reference,sourceOrientation:9},{...reference,sourceSha256:'bad'}])
+  assert.throws(()=>nativeStudioParameters('sketch_edit',payload(ref)));
+ const oneDimension={...reference};delete oneDimension.sourceHeight;
+ assert.throws(()=>nativeStudioParameters('sketch_edit',payload(oneDimension)));
+ const legacy={file:'a'.repeat(64)+'.png',sha256:'a'.repeat(64),width:640,height:1280,sourceProjectId:'p',sourceAssetId:'a'};
+ assert.deepEqual(nativeStudioParameters('sketch_edit',payload(legacy)),payload(legacy));
+ const hiddenImport={sketchId:'s',operationId:'import',expectedRevision:1,projectId:'p',sourceProjectUpdatedAt:1,assetId:'a',layerId:'l',objectId:'guide',guideVisible:false};
+ assert.deepEqual(nativeStudioParameters('sketch_import_reference',hiddenImport),hiddenImport);
+ assert.throws(()=>requireStudioVersion({appVersion:'4.0.0'},'sketch_import_reference',hiddenImport),/4\.0\.1/);
+ assert.doesNotThrow(()=>requireStudioVersion({appVersion:'4.0.1'},'sketch_import_reference',hiddenImport));
+ assert.throws(()=>nativeStudioParameters('sketch_import_reference',{...hiddenImport,guideVisible:'false'}));
 });
 
 test('advanced sketch authoring requires 3.9.1 while basic 3.9 tools remain compatible',()=>{

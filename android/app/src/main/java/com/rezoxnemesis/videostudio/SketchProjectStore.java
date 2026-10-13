@@ -7,6 +7,8 @@ import android.database.sqlite.SQLiteDatabase;
 import android.database.sqlite.SQLiteOpenHelper;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.graphics.ImageDecoder;
+import android.media.ExifInterface;
 import android.net.Uri;
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -239,10 +241,26 @@ public final class SketchProjectStore implements AutoCloseable {
             BitmapFactory.Options options = new BitmapFactory.Options(); options.inJustDecodeBounds = true; BitmapFactory.decodeFile(staged.getPath(), options);
             if (options.outWidth < 1 || options.outHeight < 1 || (long) options.outWidth * options.outHeight > 64_000_000L)
                 throw SketchDocument.bad("Source image dimensions exceed decode budget");
-            options.inJustDecodeBounds = false; options.inSampleSize = 1;
-            while (options.outWidth / options.inSampleSize > 1280 || options.outHeight / options.inSampleSize > 1280) options.inSampleSize *= 2;
-            options.inPreferredConfig = Bitmap.Config.ARGB_8888; bitmap = BitmapFactory.decodeFile(staged.getPath(), options);
-            if (bitmap == null) throw SketchDocument.bad("Source image could not be decoded");
+            int sourceWidth=options.outWidth,sourceHeight=options.outHeight,orientation=ExifInterface.ORIENTATION_NORMAL;
+            if(!"image/bmp".equals(options.outMimeType)&&!"image/gif".equals(options.outMimeType)){
+                orientation=new ExifInterface(staged.getAbsolutePath()).getAttributeInt(ExifInterface.TAG_ORIENTATION,ExifInterface.ORIENTATION_NORMAL);
+                if(orientation==ExifInterface.ORIENTATION_UNDEFINED)orientation=ExifInterface.ORIENTATION_NORMAL;
+                if(orientation<1||orientation>8)throw SketchDocument.bad("Source image EXIF orientation is invalid");
+            }
+            String sourceSha256=fileHash(staged);
+            int orientedWidth=orientation>=5?sourceHeight:sourceWidth,orientedHeight=orientation>=5?sourceWidth:sourceHeight;
+            double ratio=Math.min(1,2048d/Math.max(orientedWidth,orientedHeight));
+            final int targetWidth=Math.max(1,(int)Math.round(orientedWidth*ratio)),targetHeight=Math.max(1,(int)Math.round(orientedHeight*ratio));
+            // ImageDecoder applies all EXIF rotations/mirrors and allocates the exact
+            // bounded target. BitmapFactory power-of-two sampling discarded up to
+            // half the available detail, even for a modest portrait photograph.
+            bitmap=ImageDecoder.decodeBitmap(ImageDecoder.createSource(staged),(decoder,info,input)->{
+                decoder.setAllocator(ImageDecoder.ALLOCATOR_SOFTWARE);
+                decoder.setTargetSize(targetWidth,targetHeight);
+                decoder.setOnPartialImageListener(error->false);
+            });
+            if(bitmap.getWidth()!=targetWidth||bitmap.getHeight()!=targetHeight)
+                throw SketchDocument.bad("Source image decode did not preserve its oriented aspect");
             encoded = File.createTempFile("reference-", ".png", root);
             try (FileOutputStream out = new FileOutputStream(encoded)) { if (!bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)) throw new IllegalStateException("Reference PNG encoding failed"); out.getFD().sync(); }
             if (encoded.length() > 8L * 1024 * 1024) throw SketchDocument.bad("Owned reference exceeds 8 MiB");
@@ -251,7 +269,8 @@ public final class SketchProjectStore implements AutoCloseable {
             if (target.exists()) { if (!hash.equals(fileHash(target))) throw new IllegalStateException("SKETCH_REFERENCE_CHANGED"); }
             else if (!encoded.renameTo(target)) throw new IllegalStateException("Atomic reference publication failed");
             return new JSONObject().put("file", target.getName()).put("sha256", hash).put("width", bitmap.getWidth()).put("height", bitmap.getHeight())
-                    .put("sourceProjectId", project.id).put("sourceAssetId", asset.id);
+                    .put("sourceProjectId", project.id).put("sourceAssetId", asset.id)
+                    .put("sourceWidth",sourceWidth).put("sourceHeight",sourceHeight).put("sourceOrientation",orientation).put("sourceSha256",sourceSha256);
         } finally { staged.delete(); if (encoded != null) encoded.delete(); if (bitmap != null) bitmap.recycle(); }
     }
     public static String fileHash(File file) throws Exception {

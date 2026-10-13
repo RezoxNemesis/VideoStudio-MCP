@@ -1,6 +1,16 @@
 name: Android APK
 
 on:
+  workflow_dispatch:
+    inputs:
+      artifact_run_id:
+        description: "Publish an already verified APK from this Android workflow run"
+        required: false
+        default: ""
+      artifact_source_sha:
+        description: "Exact source SHA for the existing APK (required with artifact_run_id)"
+        required: false
+        default: ""
   push:
     branches: [ main ]
   pull_request:
@@ -12,9 +22,11 @@ concurrency:
 
 permissions:
   contents: write
+  actions: read
 
 jobs:
   build-apk:
+    if: github.event_name != 'workflow_dispatch' || inputs.artifact_run_id == ''
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -161,3 +173,73 @@ jobs:
               --notes-file release-notes.md
           fi
 
+  publish-existing-apk:
+    if: github.event_name == 'workflow_dispatch' && inputs.artifact_run_id != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VST_BUILD_RUN: ${{ inputs.artifact_run_id }}
+      VST_SOURCE_SHA: ${{ inputs.artifact_source_sha }}
+    steps:
+      - name: Verify the source Android build
+        run: |
+          python3 - <<'PY'
+          import os,re,subprocess,json
+          run=os.environ['VST_BUILD_RUN']; sha=os.environ['VST_SOURCE_SHA']
+          assert re.fullmatch(r'[0-9]+',run) and re.fullmatch(r'[0-9a-f]{40}',sha)
+          result=json.loads(subprocess.check_output(['gh','run','view',run,'--repo',os.environ['GITHUB_REPOSITORY'],'--json','conclusion,headSha,workflowName'],text=True))
+          assert result['conclusion']=='success' and result['headSha']==sha and result['workflowName']=='Android APK'
+          PY
+
+      - name: Checkout verified APK source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.artifact_source_sha }}
+
+      - name: Use Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Ensure package inspection tools
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "build-tools;35.0.0" >/dev/null
+
+      - name: Download the existing signed artifact
+        run: gh run download "$VST_BUILD_RUN" --repo "$GITHUB_REPOSITORY" --name VideoStudio-Android-debug --dir apk
+
+      - name: Reverify APK and retain original build provenance
+        run: |
+          cp apk/VideoStudio-build-proof.json apk/original-build-proof.json
+          VIDEOSTUDIO_SOURCE_HEAD_SHA="$VST_SOURCE_SHA" python3 scripts/verify-android-apk.py \
+            --apk apk/app-debug.apk \
+            --aapt "$ANDROID_HOME/build-tools/35.0.0/aapt" \
+            --apksigner "$ANDROID_HOME/build-tools/35.0.0/apksigner"
+          python3 - <<'PY'
+          import os,json,pathlib,re,shutil,hashlib
+          root=pathlib.Path('apk'); original=json.loads((root/'original-build-proof.json').read_text()); verified=json.loads((root/'VideoStudio-build-proof.json').read_text())
+          assert original['sourceHeadCommit']==os.environ['VST_SOURCE_SHA'] and original['commit']==os.environ['VST_SOURCE_SHA']
+          for key in ['package','versionCode','versionName','applicationLabel','apkSha256','certificateSha256','apkBytes']:
+              assert original[key]==verified[key],key
+          (root/'VideoStudio-build-proof.json').write_text(json.dumps(original,indent=2)+'\n')
+          version=original['versionName']; assert re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+',version)
+          name='Video-studio-'+version+'.apk'; shutil.copy2(root/'app-debug.apk',name)
+          pathlib.Path('Video-studio-'+version+'.sha256').write_text(original['apkSha256']+'  '+name+'\n')
+          with open(os.environ['GITHUB_ENV'],'a') as out:
+              out.write('VST_RELEASE_VERSION='+version+'\n')
+          pathlib.Path('apk-release-notes.md').write_text('Video studio '+version+'\n\nInstall over the existing app. Original package, signing identity and projects are retained.\n\nVerified source: '+os.environ['VST_SOURCE_SHA']+'\nOriginal Android build: '+os.environ['VST_BUILD_RUN']+'\nSHA-256: '+original['apkSha256']+'\n\nPhone installation and artistic acceptance remain separate checks.\n')
+          PY
+
+      - name: Publish the verified prerelease APK
+        run: |
+          tag="videostudio-v${VST_RELEASE_VERSION}-preview"
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            actual="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$tag" --jq '.object.sha')"
+            test "$actual" = "$VST_SOURCE_SHA"
+            gh release upload "$tag" "Video-studio-${VST_RELEASE_VERSION}.apk" "Video-studio-${VST_RELEASE_VERSION}.sha256" apk/VideoStudio-build-proof.json --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$tag" "Video-studio-${VST_RELEASE_VERSION}.apk" "Video-studio-${VST_RELEASE_VERSION}.sha256" apk/VideoStudio-build-proof.json \
+              --repo "$GITHUB_REPOSITORY" --target "$VST_SOURCE_SHA" --prerelease --latest=false \
+              --title "Video studio ${VST_RELEASE_VERSION}" --notes-file apk-release-notes.md
+          fi

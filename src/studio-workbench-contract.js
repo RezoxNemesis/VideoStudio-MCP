@@ -17,8 +17,10 @@ const sketchKeys=z.array(z.object({frame,transform:fullTransform,interpolation:z
 const points=z.array(z.tuple([finite.min(0).max(1),finite.min(0).max(1),finite.min(0).max(1)])).min(1).max(131072);
 const bounds=z.object({x:finite.min(0).max(1),y:finite.min(0).max(1),width:finite.min(.0001).max(1),height:finite.min(.0001).max(1)}).strict()
  .refine(v=>v.x+v.width<=1.000001&&v.y+v.height<=1.000001,'Shape bounds must fit the normalized canvas');
-const reference=z.object({file:z.string().regex(/^[a-f0-9]{64}\.png$/),sha256:sha,width:integer(1,1280),height:integer(1,1280),sourceProjectId:id,sourceAssetId:id}).strict()
- .refine(v=>v.file===v.sha256+'.png','Reference must use its owned hash-bound PNG filename');
+const reference=z.object({file:z.string().regex(/^[a-f0-9]{64}\.png$/),sha256:sha,width:integer(1,2048),height:integer(1,2048),sourceProjectId:id,sourceAssetId:id,
+ sourceWidth:integer(1,64000000).optional(),sourceHeight:integer(1,64000000).optional(),sourceOrientation:integer(1,8).optional(),sourceSha256:sha.optional()}).strict()
+ .refine(v=>v.file===v.sha256+'.png','Reference must use its owned hash-bound PNG filename')
+ .refine(v=>(v.sourceWidth===undefined)===(v.sourceHeight===undefined)&&((v.sourceWidth??1)*(v.sourceHeight??1)<=64000000),'Original source dimensions must be paired and within the decode budget');
 const brush=z.object({preset:z.enum(['ink','pencil','marker','airbrush','charcoal','calligraphy']),opacity:finite.min(0).max(1).optional(),hardness:finite.min(0).max(1).optional(),pressure:z.boolean().optional(),angle:finite.min(-180).max(180).optional()}).strict();
 const coordinate=finite.min(0).max(1);
 const commands=z.array(z.union([z.tuple([z.literal('M'),coordinate,coordinate]),z.tuple([z.literal('L'),coordinate,coordinate]),z.tuple([z.literal('Q'),coordinate,coordinate,coordinate,coordinate]),z.tuple([z.literal('C'),coordinate,coordinate,coordinate,coordinate,coordinate,coordinate]),z.tuple([z.literal('Z')])])).min(2).max(4096).refine(v=>v[0][0]==='M','Path must start with M');
@@ -55,6 +57,7 @@ const operation=z.discriminatedUnion('type',[
  z.object({type:z.literal('insert_frame'),frame:integer(0,1200)}).strict(),
  z.object({type:z.literal('delete_frame'),frame}).strict(),
  z.object({type:z.literal('trace_reference'),objectId:id,layerId:id,frame,threshold:finite.min(.01).max(1).optional(),mode:z.enum(['edges','colour_regions']).optional(),maxDimension:integer(32,384).optional(),colourLevels:integer(2,32).optional(),idPrefix:id.max(72),exposure:integer(1,1200).optional(),color:color.optional(),width:finite.min(.0005).max(.2).optional()}).strict(),
+ z.object({type:z.literal('set_reference_visibility'),objectId:id,visible:z.boolean()}).strict(),
  z.object({type:z.literal('delete_object'),objectId:id}).strict(),
  z.object({type:z.literal('set_canvas'),width:dimensions.width.optional(),height:dimensions.height.optional(),background:color.optional(),name:text(160).optional()}).strict(),
  z.object({type:z.literal('set_timing'),fps:fps.optional(),frameCount:integer(1,1200).optional()}).strict(),
@@ -130,7 +133,7 @@ export const studioToolSchemas={
  sketch_list:{},
  sketch_get:{...sketchIdentity,expectedRevision:revision.optional(),layerId:id.optional(),objectId:id.optional(),pointOffset:integer(0,131072).optional(),pointLimit:integer(1,512).optional(),commandOffset:integer(0,4096).optional(),commandLimit:integer(1,512).optional(),objectOffset:integer(0,4096).optional(),objectLimit:integer(1,128).optional()},
  sketch_edit:{...mutation,operations:z.array(operation).min(1).max(64)},sketch_undo:mutation,sketch_redo:mutation,
- sketch_import_reference:{...mutation,projectId:id,sourceProjectUpdatedAt:updatedAt,assetId:id,layerId:id,objectId:id,frame:frame.optional(),exposure:integer(1,1200).optional(),bounds:bounds.optional()},
+ sketch_import_reference:{...mutation,projectId:id,sourceProjectUpdatedAt:updatedAt,assetId:id,layerId:id,objectId:id,frame:frame.optional(),exposure:integer(1,1200).optional(),bounds:bounds.optional(),guideVisible:z.boolean().optional()},
  sketch_import_frame_manifest:{sketchId:id,manifestName:z.string().min(1).max(120).regex(/^[A-Za-z0-9_.-]+\.jsonl(?:\.gz)?$/).refine(v=>!v.includes('..')),videoName:z.string().min(1).max(120).regex(/^[A-Za-z0-9_.-]+\.mp4$/).refine(v=>!v.includes('..')),expectedSourceSha256:sha,expectedFrameCount:integer(1,1200)},
  sketch_import_drawing_manifest:{sketchId:id,manifestName:z.string().min(1).max(120).regex(/^[A-Za-z0-9_.-]+\.jsonl(?:\.gz)?$/).refine(v=>!v.includes('..')),sourceName:z.string().min(1).max(120).regex(/^[A-Za-z0-9_.-]+\.(mp4|png|jpg|jpeg|webp|txt)$/i).refine(v=>!v.includes('..')),expectedSourceSha256:sha,expectedFrameCount:integer(1,1200)},
  sketch_preview:{...sketchIdentity,expectedRevision:revision.optional(),frameIndex:frame.optional(),maxDimension:integer(128,720).optional(),crop:bounds.optional()},
@@ -213,6 +216,9 @@ const legacy3d=new Set(['STANDOFF','CHARGE','CLASH','BLADE_LOCK','FOLLOW_THROUGH
 const pixelFields=new Set(['keyframes','opacity','chromaKey','chromaColor','chromaTolerance','chromaFeather','maskShape','maskLeft','maskTop','maskRight','maskBottom','maskFeather','glowStrength','glowRadiusPx','glowThreshold']);
 export function requireStudioVersion(device,action,parameters={}){
  const alias=studioAliases.has(action);action=nativeStudioCanonicalAction(action);
+ const enhancedReference=object=>object?.kind==='image'&&(object.reference?.width>1280||object.reference?.height>1280||['sourceWidth','sourceHeight','sourceOrientation','sourceSha256'].some(key=>object.reference?.[key]!==undefined));
+ const needs401=action==='sketch_import_reference'&&parameters.guideVisible!==undefined||action==='sketch_edit'&&(parameters.operations||[]).some(op=>op.type==='set_reference_visibility'||enhancedReference(op.object)||(op.layer?.objects||[]).some(enhancedReference));
+ if(needs401&&!atLeast(device?.appVersion,'4.0.1'))throw new Error('NATIVE_APP_UPGRADE_REQUIRED: photo references and guide visibility require Video studio 4.0.1 or newer');
  const needs396=action==='precision_edit'&&(parameters.operations||[]).some(op=>op.set?.crop!==undefined)||action==='sketch_inspect'||(action==='sketch_import_frame_manifest'||action==='sketch_import_drawing_manifest')&&parameters.manifestName?.endsWith('.gz')||action==='sketch_edit'&&(parameters.operations||[]).some(op=>op.object?.kind==='text'||(op.layer?.objects||[]).some(object=>object.kind==='text')||op.patch?.text!==undefined||op.patch?.fontSize!==undefined||op.patch?.fontFamily!==undefined||op.patch?.fontStyle!==undefined||op.patch?.textAlign!==undefined||op.patch?.letterSpacing!==undefined);
  if(needs396&&!atLeast(device?.appVersion,'3.9.6'))throw new Error('NATIVE_APP_UPGRADE_REQUIRED: new native sketch tools and source crop require VideoStudio 3.9.6 or newer');
  const needs395=action==='sketch_live_events'&&(parameters.operationOffset!==undefined||parameters.operationLimit!==undefined||parameters.eventSequence!==undefined)||action==='sketch_get'&&(parameters.commandOffset!==undefined||parameters.commandLimit!==undefined)||action==='sketch_import_drawing_manifest'||action==='sketch_import_frame_manifest'&&alias||action==='sketch_edit'&&(parameters.operations||[]).some(op=>op.type==='trace_reference'&&(op.mode||op.maxDimension||op.colourLevels));

@@ -51,7 +51,7 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
     private Spinner layers;
     private final ArrayList<String> layerIds = new ArrayList<>();
     private final Handler handler = new Handler(Looper.getMainLooper());
-    private boolean updating, playing;
+    private boolean updating, playing, scrubbing;
     private long playStarted;
     private int playFirst;
     private String brushColor = "#FF161C2B";
@@ -62,44 +62,35 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
         watching=getPreferences(MODE_PRIVATE).getBoolean("watchLiveDrawing",true);
-        LinearLayout root = column(); root.setPadding(dp(8), dp(8), dp(8), dp(8)); root.setBackgroundColor(0xff080f1c);getWindow().setStatusBarColor(0xff080f1c);getWindow().setNavigationBarColor(0xff080f1c); setContentView(root);
-        status = new TextView(this); status.setTextSize(13);status.setTextColor(0xffcbddeb);status.setText("Sketch Studio · opening drawing…"); root.addView(status);
+        LinearLayout root = column(); root.setPadding(dp(6), dp(2), dp(6), dp(2)); root.setBackgroundColor(StudioUi.BG);getWindow().setStatusBarColor(StudioUi.BG);getWindow().setNavigationBarColor(StudioUi.BG); setContentView(root);
+        status = new TextView(this); status.setTextSize(12);status.setTextColor(StudioUi.MUTED);status.setSingleLine(true);status.setEllipsize(android.text.TextUtils.TruncateAt.END);status.setText("Sketch Studio · opening drawing…");root.addView(status);
         LinearLayout projects = row(root);
-        liveButton=button(projects,"Draw myself",this::toggleLiveWatch);updateLiveControl();
-        button(projects,"Canvas view",this::toggleCanvasFocus);
-        button(projects, "New", this::newDocument); button(projects, "Open", this::openDocument);button(projects,"Sketch books",this::booksDialog);
-        button(projects, "Undo", () -> history(false)); button(projects, "Redo", () -> history(true)); button(projects, "Export video", this::export);
+        button(projects,"File",this::fileMenu);
+        liveButton=button(projects,"Draw myself",this::toggleLiveWatch);liveButton.setLayoutParams(new LinearLayout.LayoutParams(0,-2,2));updateLiveControl();
+        LinearLayout history = row(root);
+        button(history,"Undo",()->history(false));button(history,"Redo",()->history(true));button(history,"Export",this::export);
+        canvas = new SketchCanvasView(this); canvas.setListener(this); root.addView(canvas, new LinearLayout.LayoutParams(-1, 0, 1));
         LinearLayout tools = row(root); Spinner tool = new Spinner(this);toolPicker=tool;
         String[] names = {"Pen", "Eraser", "Line", "Rectangle", "Ellipse", "Polygon", "Select / move", "Eyedropper", "Pan canvas", "Curve pen", "Edit curve nodes"};
-        String[] values=toolValues;
-        tool.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, names)); tools.addView(tool);
-        tool.setOnItemSelectedListener(new SimpleSelection() { @Override public void selected(int position) { if(canvas!=null)canvas.setTool(values[position]); } });
-        button(tools, "Brush", this::brushDialog);button(tools,"Text",this::textDialog);button(tools,"Workspace",this::workspaceDialog); button(tools, "Finish path", () -> canvas.finishPolygon());
-        canvas = new SketchCanvasView(this); canvas.setListener(this); root.addView(canvas, new LinearLayout.LayoutParams(-1, 0, 1));
-        LinearLayout palette=row(root);
-        for(String hex:new String[]{"#FF161C2B","#FFFFFFFF","#FF756157","#FFECC6A8","#FFB87958","#FFE45468","#FFEF9B52","#FFF3DA77","#FF61B787","#FF63BADA","#FF4E77BF","#FF8E6CB7"}){Button swatch=button(palette,"●",()->{brushColor=hex;updateBrush();});swatch.setTextColor(SketchDocument.color(hex));swatch.setMinWidth(dp(38));swatch.setMinimumWidth(dp(38));swatch.setContentDescription("Colour "+hex);}
-        toolStatus=new TextView(this);toolStatus.setTextColor(0xff78cad8);toolStatus.setTextSize(11);root.addView(toolStatus);
-        filmstrip=new SketchFilmstripView(this);filmstrip.setListener(this::selectFilmstrip);root.addView(filmstrip,new LinearLayout.LayoutParams(-1,dp(44)));
-        frames = new SeekBar(this); root.addView(frames); frames.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
-            public void onProgressChanged(SeekBar bar, int progress, boolean fromUser) { if (fromUser) { selectFilmstrip(progress); } }
-            public void onStartTrackingTouch(SeekBar bar) { stopPlayback(); }
-            public void onStopTrackingTouch(SeekBar bar) {}
+        tool.setAdapter(new ArrayAdapter<String>(this, android.R.layout.simple_spinner_dropdown_item, names){@Override public View getView(int position,View convert,android.view.ViewGroup parent){TextView view=(TextView)super.getView(position,convert,parent);view.setTextColor(StudioUi.TEXT);view.setTextSize(12);view.setSingleLine(true);view.setEllipsize(android.text.TextUtils.TruncateAt.END);return view;}});
+        tool.setContentDescription("Drawing tool");tool.setMinimumHeight(dp(48));tools.addView(tool,new LinearLayout.LayoutParams(0,dp(48),1));
+        tool.setOnItemSelectedListener(new SimpleSelection() { @Override public void selected(int position) { if(canvas!=null)canvas.setTool(toolValues[position]); } });
+        button(tools,"Brush / Text",this::brushMenu);button(tools,"More",this::moreMenu);
+        toolStatus=new TextView(this);toolStatus.setTextColor(StudioUi.MUTED);toolStatus.setTextSize(12);
+        filmstrip=new SketchFilmstripView(this);filmstrip.setListener(this::selectFilmstrip);filmstrip.setContentDescription("Animation frames; swipe to browse, tap to select");root.addView(filmstrip,new LinearLayout.LayoutParams(-1,dp(48)));
+        frames = new SeekBar(this);frames.setMinimumHeight(dp(48));frames.setContentDescription("Frame position");frames.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            public void onProgressChanged(SeekBar bar, int progress, boolean fromUser) { if (fromUser&&!scrubbing) { runAction("Select frame",()->selectFilmstrip(progress)); } }
+            public void onStartTrackingTouch(SeekBar bar) { scrubbing=true; }
+            public void onStopTrackingTouch(SeekBar bar) { scrubbing=false;int position=bar.getProgress();runAction("Select frame",()->selectFilmstrip(position)); }
         });
         LinearLayout timing = row(root);
-        button(timing, "◀", () -> selectFilmstrip((bookId==null?canvas.getFrame():bookPage)-1)); playButton = button(timing, "Play", this::togglePlayback);
-        button(timing, "▶", () -> selectFilmstrip((bookId==null?canvas.getFrame():bookPage)+1));
-        CheckBox onion = new CheckBox(this); onion.setText("Onion");onion.setTextColor(0xffcbddeb); onion.setChecked(true); onion.setOnCheckedChangeListener((v, checked) -> canvas.setOnion(checked)); timing.addView(onion);
-        button(timing, "Timing / canvas", this::timingDialog);
-        LinearLayout layerControls = row(root); layers = new Spinner(this); layerControls.addView(layers);
+        button(timing,"◀",()->selectFilmstrip((bookId==null?canvas.getFrame():bookPage)-1)).setContentDescription("Previous frame or page");playButton=button(timing,"Play",this::togglePlayback);
+        button(timing,"▶",()->selectFilmstrip((bookId==null?canvas.getFrame():bookPage)+1)).setContentDescription("Next frame or page");
+        layers = new Spinner(this);
         layers.setOnItemSelectedListener(new SimpleSelection() { @Override public void selected(int position) {
             if (!updating && position < layerIds.size()) { canvas.setLayerId(layerIds.get(position)); updateStatus(); }
         } });
-        button(layerControls, "+ Layer", this::addLayer); button(layerControls, "Layer settings", this::layerDialog);
-        button(layerControls, "Up", () -> reorderLayer(1)); button(layerControls, "Down", () -> reorderLayer(-1));
-        LinearLayout edits = row(root);
-        button(edits, "Transform / key", this::transformDialog); button(edits, "Exposure", this::exposureDialog);
-        button(edits, "Copy → next", this::duplicateCel);button(edits,"Cel tools",this::celDialog); button(edits, "Delete object", this::deleteObject); button(edits, "Reference image", this::referenceDialog);
-        for(int n=2;n<root.getChildCount();n++)if(root.getChildAt(n)!=canvas)drawingChrome.add(root.getChildAt(n));
+        drawingChrome.add(history);drawingChrome.add(tools);drawingChrome.add(filmstrip);drawingChrome.add(timing);
         canvasFocus=getPreferences(MODE_PRIVATE).getBoolean("canvasFocus",false);applyCanvasFocus();
         try {
             bookId=state==null?getPreferences(MODE_PRIVATE).getString("lastBookId",null):state.getString("bookId");bookPage=state==null?getPreferences(MODE_PRIVATE).getInt("lastBookPage",0):state.getInt("bookPage",0);
@@ -249,9 +240,18 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
             for (ProjectStore.Project project : projects.list()) for (ProjectStore.Asset asset : project.assets) if (asset.mime != null && asset.mime.startsWith("image/")) { owners.add(project); assets.add(asset); labels.add(project.name + " / " + asset.name); }
             if (assets.isEmpty()) throw SketchDocument.bad("Import an image into a VideoStudio project first");
             new AlertDialog.Builder(this).setTitle("Copy a project reference image").setItems(labels.toArray(new String[0]), (d,index) -> {
-                try { ProjectStore.Project project = owners.get(index); JSONObject args = request().put("projectId", project.id).put("sourceProjectUpdatedAt", project.updatedAt).put("assetId", assets.get(index).id)
-                        .put("layerId", canvas.getLayerId()).put("objectId", UUID.randomUUID().toString()).put("frame", canvas.getFrame()).put("exposure", document.getInt("frameCount") - canvas.getFrame());
-                    afterSaves(()->{args.put("expectedRevision",document.getLong("revision"));SketchEditOps.execute(this,"sketch_import_reference",args);postUi(this::reload);});
+                try {
+                    SketchEditorSession active=session;if(active==null)throw SketchDocument.bad("Open a drawing before importing its guide");
+                    String target=sketchId;int generation=loadGeneration,page=pageGeneration;
+                    ProjectStore.Project project = owners.get(index); JSONObject args = request().put("projectId", project.id).put("sourceProjectUpdatedAt", project.updatedAt).put("assetId", assets.get(index).id)
+                        .put("layerId", canvas.getLayerId()).put("objectId", UUID.randomUUID().toString()).put("frame", canvas.getFrame()).put("exposure", document.getInt("frameCount") - canvas.getFrame()).put("guideVisible",false);
+                    afterSaves(()->{
+                        args.put("expectedRevision",active.document().getLong("revision"));
+                        // Visibility commits with the reference itself: an interruption
+                        // cannot leave a completed photograph masquerading as artwork.
+                        SketchEditOps.execute(this,"sketch_import_reference",args);
+                        postUi(()->{if(session==active&&generation==loadGeneration&&page==pageGeneration&&target.equals(sketchId))reload();});
+                    });
                 } catch (Exception e) { onMessage(e.getMessage()); }
             }).show();
         } catch (Exception e) { onMessage(e.getMessage()); }
@@ -276,10 +276,69 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
     private void onionDialog(){LinearLayout form=column();EditText distance=input("Frames on each side (1..3)","1",true),opacity=input("Onion opacity (0..128)","48",true);form.addView(distance);form.addView(opacity);new AlertDialog.Builder(this).setTitle("Red previous / blue next").setView(form).setPositiveButton("Apply",(d,w)->{try{canvas.setOnionOptions(Integer.parseInt(distance.getText().toString()),Integer.parseInt(opacity.getText().toString()));}catch(Exception error){onMessage(error.getMessage());}}).setNegativeButton("Cancel",null).show();}
     private void celDialog(){if(document==null)return;String[] choices=bookId==null?new String[]{"Duplicate drawing to next cel","Insert blank frame here","Delete current frame","Clear current layer cel"}:new String[]{"Duplicate drawing to next page","Clear current layer"};new AlertDialog.Builder(this).setTitle("Flipbook cels").setItems(choices,(d,index)->{try{if(index==0){duplicateCel();return;}if(bookId!=null){onOperation(new JSONObject().put("type","clear_cel").put("layerId",canvas.getLayerId()).put("frame",0));return;}String kind=index==1?"insert_frame":index==2?"delete_frame":"clear_cel";JSONObject op=new JSONObject().put("type",kind).put("frame",canvas.getFrame());if(index==3)op.put("layerId",canvas.getLayerId());onOperation(op);setFrame(canvas.getFrame());}catch(Exception error){onMessage(error.getMessage());}}).show();}
     private void referenceTools(){
-        try{String objectId=canvas.getSelectedId();if(objectId==null||!"image".equals(SketchDocument.object(document,objectId).getString("kind"))){onMessage("Choose Select / move and select a reference image first");return;}JSONObject image=SketchDocument.object(document,objectId),crop=image.optJSONObject("referenceCrop");LinearLayout form=column();String[] names={"x","y","width","height"};EditText[] fields=new EditText[4];for(int i=0;i<4;i++){fields[i]=input("Reference crop "+names[i]+" (0..1)",String.valueOf(crop==null?(i<2?0:1):crop.getDouble(names[i])),true);form.addView(fields[i]);}EditText alpha=input("Reference opacity 0..1",String.valueOf(image.getJSONObject("transform").getDouble("opacity")),true),threshold=input("Edge trace threshold .01..1","0.15",true);form.addView(alpha);form.addView(threshold);Spinner traceMode=new Spinner(this);traceMode.setAdapter(new ArrayAdapter<>(this,android.R.layout.simple_spinner_dropdown_item,new String[]{"Colour regions (editable fills)","Edge strokes"}));form.addView(traceMode);EditText resolution=input("Trace detail (32..384)","192",true),levels=input("Colour levels (2..32)","8",true);form.addView(resolution);form.addView(levels);CheckBox guide=new CheckBox(this);guide.setText("Keep the reference guide visible");form.addView(guide);
-            new AlertDialog.Builder(this).setTitle("Crop, fade and trace owned reference").setView(form).setNegativeButton("Cancel",null).setPositiveButton("Apply crop / opacity",(d,w)->{try{JSONObject value=new JSONObject();for(int i=0;i<4;i++)value.put(names[i],Double.parseDouble(fields[i].getText().toString()));apply(new JSONArray().put(new JSONObject().put("type","update_object").put("objectId",objectId).put("patch",new JSONObject().put("referenceCrop",value))).put(new JSONObject().put("type","set_transform").put("objectId",objectId).put("transform",new JSONObject().put("opacity",Double.parseDouble(alpha.getText().toString())))));}catch(Exception error){onMessage(error.getMessage());}})
-                .setNeutralButton("Trace to editable layer",(d,w)->{try{String layerId=UUID.randomUUID().toString();JSONObject trace=new JSONObject().put("type","trace_reference").put("objectId",objectId).put("layerId",layerId).put("frame",canvas.getFrame()).put("threshold",Double.parseDouble(threshold.getText().toString())).put("idPrefix",UUID.randomUUID().toString()).put("mode",traceMode.getSelectedItemPosition()==0?"colour_regions":"edges").put("maxDimension",Integer.parseInt(resolution.getText().toString())).put("colourLevels",Integer.parseInt(levels.getText().toString()));JSONArray ops=new JSONArray().put(new JSONObject().put("type","add_layer").put("layer",new JSONObject().put("id",layerId).put("name",traceMode.getSelectedItemPosition()==0?"Reference colour regions":"Reference contours"))).put(trace);if(!guide.isChecked())ops.put(new JSONObject().put("type","set_transform").put("objectId",objectId).put("transform",new JSONObject().put("opacity",0)));afterSaves(()->{SketchEditOps.execute(this,"sketch_edit",request().put("operations",ops));postUi(this::reload);});}catch(Exception error){onMessage(error.getMessage());}}).show();
+        if(document==null)return;
+        try{
+            String selected=canvas.getSelectedId();
+            if(selected!=null&&"image".equals(SketchDocument.object(document,selected).getString("kind"))){referenceTools(selected);return;}
+            ArrayList<String> ids=new ArrayList<>(),labels=new ArrayList<>();JSONArray layers=document.getJSONArray("layers");
+            for(int n=0;n<layers.length();n++){JSONObject layer=layers.getJSONObject(n);JSONArray objects=layer.getJSONArray("objects");for(int k=0;k<objects.length();k++){JSONObject object=objects.getJSONObject(k);if(!"image".equals(object.getString("kind")))continue;ids.add(object.getString("id"));labels.add(layer.getString("name")+" · reference "+ids.size()+(object.getJSONObject("transform").getDouble("opacity")==0?" (hidden)":""));}}
+            if(ids.isEmpty()){onMessage("Import a reference image from Brush / Text first");return;}
+            if(ids.size()==1){canvas.selectObject(ids.get(0));referenceTools(ids.get(0));return;}
+            new AlertDialog.Builder(this).setTitle("Choose a reference guide").setItems(labels.toArray(new String[0]),(dialog,index)->{canvas.selectObject(ids.get(index));referenceTools(ids.get(index));}).show();
         }catch(Exception error){onMessage(error.getMessage());}
+    }
+    private void referenceTools(String objectId){
+        try{
+            JSONObject image=SketchDocument.object(document,objectId),crop=image.optJSONObject("referenceCrop");LinearLayout form=column();String[] names={"x","y","width","height"};EditText[] fields=new EditText[4];
+            for(int i=0;i<4;i++){fields[i]=input("Reference crop "+names[i]+" (0..1)",String.valueOf(crop==null?(i<2?0:1):crop.getDouble(names[i])),true);form.addView(fields[i]);}
+            EditText alpha=input("Reference opacity 0..1",String.valueOf(image.getJSONObject("transform").getDouble("opacity")),true),threshold=input("Edge trace threshold .01..1","0.15",true);form.addView(alpha);form.addView(threshold);
+            Spinner traceMode=new Spinner(this);traceMode.setAdapter(new ArrayAdapter<>(this,android.R.layout.simple_spinner_dropdown_item,new String[]{"Colour regions (editable fills)","Edge strokes"}));form.addView(traceMode);
+            EditText resolution=input("Trace detail (32..384)","192",true),levels=input("Colour levels (2..32)","8",true);form.addView(resolution);form.addView(levels);
+            CheckBox guide=new CheckBox(this);guide.setText("Show the reference guide while tracing");form.addView(guide);
+            ScrollView scroll=new ScrollView(this);scroll.addView(form,new ScrollView.LayoutParams(-1,-2));
+            new AlertDialog.Builder(this).setTitle("Crop, fade and trace owned reference").setView(scroll).setNegativeButton("Cancel",null)
+                    .setPositiveButton("Apply crop / opacity",(dialog,which)->runAction("Apply reference settings",()->{try{JSONObject value=new JSONObject();for(int i=0;i<4;i++)value.put(names[i],Double.parseDouble(fields[i].getText().toString()));apply(new JSONArray().put(new JSONObject().put("type","update_object").put("objectId",objectId).put("patch",new JSONObject().put("referenceCrop",value))).put(new JSONObject().put("type","set_transform").put("objectId",objectId).put("transform",new JSONObject().put("opacity",Double.parseDouble(alpha.getText().toString())))));}catch(Exception error){onMessage(error.getMessage());}}))
+                    .setNeutralButton("Trace to editable layer",(dialog,which)->runAction("Trace reference",()->{try{
+                        JSONObject trace=new JSONObject().put("type","trace_reference").put("objectId",objectId).put("layerId",UUID.randomUUID().toString()).put("frame",canvas.getFrame()).put("threshold",Double.parseDouble(threshold.getText().toString())).put("idPrefix",UUID.randomUUID().toString()).put("mode",traceMode.getSelectedItemPosition()==0?"colour_regions":"edges").put("maxDimension",Integer.parseInt(resolution.getText().toString())).put("colourLevels",Integer.parseInt(levels.getText().toString()));
+                        traceReference(trace,guide.isChecked());
+                    }catch(Exception error){onMessage(error.getMessage());}})).show();
+        }catch(Exception error){onMessage(error.getMessage());}
+    }
+    /** Trace geometry uses the same durable operation stream as agent-authored marks.
+     * A hidden guide is persisted before the snapshot so replay starts with artwork,
+     * never with the photograph that the user asked the studio to draw. */
+    private void traceReference(JSONObject trace,boolean keepGuide){
+        if(session==null||loadingDrawing)return;
+        SketchEditorSession active=session;String id=sketchId;int generation=loadGeneration,page=pageGeneration,liveGeneration=++liveLoadGeneration;
+        loadingDrawing=true;stopLivePlayer();
+        // Expose takeover while preparation is still running, rather than only
+        // after the worker finishes and begins replaying the accepted marks.
+        watching=true;getPreferences(MODE_PRIVATE).edit().putBoolean("watchLiveDrawing",true).apply();updateLiveControl();
+        canvas.setEnabled(false);status.setText("Preparing editable reference drawing…");
+        io.execute(()->{
+            String streamId=null;
+            try{
+                active.awaitIdle(15000);if(active.error()!=null)throw new IllegalStateException(active.error());
+                JSONObject current;try(SketchProjectStore store=new SketchProjectStore(this)){current=store.get(id);}
+                SketchProjectStore.requireRevision(current,active.document().getLong("revision"));
+                // Keyframes override the base transform. Change guide opacity
+                // across its whole animation atomically, preserving every pose.
+                SketchEditOps.execute(this,"sketch_edit",new JSONObject().put("sketchId",id).put("operationId",UUID.randomUUID().toString()).put("expectedRevision",current.getLong("revision"))
+                        .put("operations",new JSONArray().put(new JSONObject().put("type","set_reference_visibility").put("objectId",trace.getString("objectId")).put("visible",keepGuide))));
+                try(SketchProjectStore store=new SketchProjectStore(this)){current=store.get(id);}
+                JSONObject baseline=current;
+                streamId=UUID.randomUUID().toString();SketchEditOps.execute(this,"sketch_live_begin",new JSONObject().put("sketchId",id).put("operationId",streamId).put("expectedRevision",baseline.getLong("revision")));
+                postUi(()->{if(session!=active||generation!=loadGeneration||page!=pageGeneration||liveGeneration!=liveLoadGeneration)return;try{if(active.adopt(baseline))present(active.document());status.setText("Preparing editable reference drawing…");}catch(Exception error){onMessage(error.getMessage());}});
+                JSONArray operations=new JSONArray().put(new JSONObject().put("type","add_layer").put("layer",new JSONObject().put("id",trace.getString("layerId")).put("name","colour_regions".equals(trace.getString("mode"))?"Reference colour regions":"Reference contours"))).put(trace);
+                JSONObject result=SketchEditOps.execute(this,"sketch_edit",new JSONObject().put("sketchId",id).put("operationId",UUID.randomUUID().toString()).put("expectedRevision",baseline.getLong("revision")).put("operations",operations));
+                SketchEditOps.execute(this,"sketch_live_end",new JSONObject().put("sketchId",id).put("sessionId",streamId).put("expectedRevision",result.getLong("revision")));
+                String completedStream=streamId;
+                postUi(()->{if(session!=active||generation!=loadGeneration||page!=pageGeneration||liveGeneration!=liveLoadGeneration)return;loadingDrawing=false;watching=true;getPreferences(MODE_PRIVATE).edit().putBoolean("watchLiveDrawing",true).apply();updateLiveControl();startLivePlayer(completedStream);});
+            }catch(Exception|OutOfMemoryError error){
+                if(streamId!=null)try(SketchProjectStore store=new SketchProjectStore(this)){store.endLiveSession(id,streamId,store.get(id).getLong("revision"));}catch(Exception ignored){}
+                postUi(()->{if(session!=active||generation!=loadGeneration||page!=pageGeneration||liveGeneration!=liveLoadGeneration)return;loadingDrawing=false;onMessage(error.getMessage());reload();});
+            }
+        });
     }
     private void booksDialog(){stopPlayback();io.execute(()->{try{JSONArray books=SketchEditOps.execute(this,"sketch_book_list",new JSONObject()).getJSONArray("books");String[] names=new String[books.length()+1];names[0]="New sketch book · up to 10000 pages";for(int i=0;i<books.length();i++)names[i+1]=books.getJSONObject(i).getString("name")+" · "+books.getJSONObject(i).getInt("pageCount")+" pages";postUi(()->new AlertDialog.Builder(this).setTitle("Paged animation books").setItems(names,(d,index)->{try{if(index==0)newBookDialog();else openBookPage(books.getJSONObject(index-1).getString("bookId"),0);}catch(Exception error){onMessage(error.getMessage());}}).show());}catch(Exception error){postUi(()->onMessage(error.getMessage()));}});}
     private void newBookDialog(){LinearLayout form=column();EditText name=input("Book name","Untitled animation book",false),count=input("Pages 1..10000","1000",true),fps=input("FPS 24, 30 or 60","24",true);form.addView(name);form.addView(count);form.addView(fps);new AlertDialog.Builder(this).setTitle("New frame-by-frame sketch book").setView(form).setNegativeButton("Cancel",null).setPositiveButton("Create",(d,w)->{try{JSONObject args=new JSONObject().put("bookId",UUID.randomUUID().toString()).put("operationId",UUID.randomUUID().toString()).put("name",name.getText().toString()).put("pageCount",Integer.parseInt(count.getText().toString())).put("fps",Integer.parseInt(fps.getText().toString()));afterSaves(()->{SketchEditOps.execute(this,"sketch_book_create",args);postUi(()->openBookPage(args.optString("bookId"),0));});}catch(Exception error){onMessage(error.getMessage());}}).show();}
@@ -353,11 +412,48 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
     @Override protected void onResume() { super.onResume();resumed=true;liveSessionId="";if(loadingDrawing&&session!=null){if(session.pending()==0)reload();else afterSaves(()->postUi(this::reload));}handler.removeCallbacks(watchTick);handler.postDelayed(watchTick,250); }
     @Override protected void onDestroy() { destroyed=true;stopLivePlayer();stopPlayback();handler.removeCallbacksAndMessages(null);if(session!=null)session.close();io.shutdown();if(canvas!=null)canvas.dispose();super.onDestroy(); }
     @Override protected void onSaveInstanceState(Bundle state) { state.putString("bookId",bookId);state.putInt("bookPage",bookPage);state.putString("sketchId", sketchId); state.putInt("frame", canvas.getFrame()); super.onSaveInstanceState(state); }
-    private LinearLayout column() { LinearLayout layout = new LinearLayout(this); layout.setOrientation(LinearLayout.VERTICAL);layout.setBackgroundColor(0xff0e1828);layout.setPadding(dp(6),dp(2),dp(6),dp(2));return layout; }
-    private LinearLayout row(LinearLayout root) { HorizontalScrollView scroll = new HorizontalScrollView(this); scroll.setHorizontalScrollBarEnabled(false); LinearLayout layout = new LinearLayout(this); layout.setOrientation(LinearLayout.HORIZONTAL); scroll.addView(layout); root.addView(scroll); return layout; }
-    private Button button(LinearLayout row, String title, Runnable action) { Button button = new Button(this); button.setText(title); button.setTextSize(11);button.setAllCaps(false);button.setTextColor(0xffdce9f5);button.setBackgroundTintList(android.content.res.ColorStateList.valueOf(0xff1b2d46));button.setOnClickListener(v -> {try{if(loadingDrawing&&!java.util.Arrays.asList("New","Open","Sketch books","Workspace","Draw myself").contains(title)){onMessage("Opening the selected drawing");return;}if(playing&&!title.equals("Play")&&!title.equals("Draw myself")&&!title.equals("Canvas view")){onMessage("Pause playback before changing artwork");return;}if((livePlayer!=null||watchInFlight)&&watching&&!title.equals("Workspace")&&!title.equals("Draw myself")&&!title.equals("Canvas view")){takeOverLive(action);return;}action.run();}catch(Exception error){onMessage(error.getMessage());}}); row.addView(button); return button; }
-    private EditText input(String hint, String value, boolean number) { EditText input = new EditText(this); input.setHint(hint);input.setTextColor(Color.WHITE);input.setHintTextColor(0xff90a7bf);input.setContentDescription(hint);input.setText(value); input.setSingleLine(); if (number) input.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL | InputType.TYPE_NUMBER_FLAG_SIGNED); return input; }
-    private int dp(int pixels) { return Math.round(pixels * getResources().getDisplayMetrics().density); }
+    private LinearLayout column() { LinearLayout layout = new LinearLayout(this); layout.setOrientation(LinearLayout.VERTICAL);layout.setBackgroundColor(StudioUi.SURFACE);layout.setPadding(dp(6),dp(2),dp(6),dp(2));return layout; }
+    private LinearLayout row(LinearLayout root) { LinearLayout layout = new LinearLayout(this); layout.setOrientation(LinearLayout.HORIZONTAL);root.addView(layout,new LinearLayout.LayoutParams(-1,-2));return layout; }
+    private Button button(LinearLayout row, String title, Runnable action) { Button button = new Button(this);button.setText(title);StudioUi.styleButton(button,title.equals("Play"));button.setTextSize(12);button.setPadding(dp(4),dp(4),dp(4),dp(4));button.setOnClickListener(v->runAction(title,action));row.addView(button,new LinearLayout.LayoutParams(0,-2,1));return button; }
+    // Browsing a menu never takes ownership of an active drawing. Its chosen action
+    // goes through the same loading, playback and live-takeover gate as the toolbar.
+    private void runAction(String title,Runnable action){try{
+        boolean navigation=java.util.Arrays.asList("File","More","Brush / Text","Layers","Frames / Cels","Workspace","Canvas view","Drawing status","Colours","Select layer","Go to frame").contains(title);
+        if(navigation){action.run();return;}
+        if(loadingDrawing&&!java.util.Arrays.asList("New","Open","Sketch books","Draw myself").contains(title)){onMessage("Opening the selected drawing");return;}
+        if(playing&&!title.equals("Play")&&!title.equals("Draw myself")){onMessage("Pause playback before changing artwork");return;}
+        if((livePlayer!=null||watchInFlight)&&watching&&!title.equals("Draw myself")){takeOverLive(action);return;}
+        action.run();
+    }catch(Exception error){onMessage(error.getMessage());}}
+    private void menu(String title,String[] labels,Runnable... actions){new AlertDialog.Builder(this).setTitle(title).setItems(labels,(d,index)->runAction(labels[index],actions[index])).show();}
+    private void fileMenu(){menu("Sketch files",new String[]{"New","Open","Sketch books","Export video","Canvas view","Drawing status"},this::newDocument,this::openDocument,this::booksDialog,this::export,this::toggleCanvasFocus,()->new AlertDialog.Builder(this).setTitle("Drawing status").setMessage(status.getText()+"\n\n"+toolStatus.getText()).setPositiveButton("OK",null).show());}
+    private void moreMenu(){menu("Drawing tools",new String[]{"Layers","Frames / Cels","Workspace"},this::layersMenu,this::framesMenu,this::workspaceDialog);}
+    private void brushMenu(){menu("Brush / Text",new String[]{"Brush","Colours","Text","Finish path","Transform / key","Delete object","Reference image"},this::brushDialog,this::paletteDialog,this::textDialog,()->canvas.finishPolygon(),this::transformDialog,this::deleteObject,this::referenceDialog);}
+    private void layersMenu(){menu("Layers",new String[]{"Select layer","+ Layer","Layer settings","Up","Down"},this::chooseLayer,this::addLayer,this::layerDialog,()->reorderLayer(1),()->reorderLayer(-1));}
+    private void chooseLayer(){
+        if(document==null)return;
+        // Live metadata can replace/reorder the backing spinner while this dialog is open.
+        // Keep each displayed label bound to the identity the user actually saw.
+        ArrayList<String> choices=new ArrayList<>(layerIds);
+        String[] labels=new String[choices.size()];
+        for(int i=0;i<labels.length;i++)labels[i]=String.valueOf(layers.getAdapter().getItem(i));
+        new AlertDialog.Builder(this).setTitle("Select layer").setSingleChoiceItems(labels,Math.max(0,choices.indexOf(canvas.getLayerId())),(d,index)->{
+            String selectedLayer=choices.get(index);
+            runAction("Choose layer",()->{
+                // runAction may asynchronously adopt a newer authoritative document.
+                int currentIndex=layerIds.indexOf(selectedLayer);
+                if(document==null||currentIndex<0){onMessage("That layer is no longer available. Open Layers to choose again.");return;}
+                layers.setSelection(currentIndex);canvas.setLayerId(selectedLayer);updateStatus();
+            });
+            d.dismiss();
+        }).show();
+    }
+    private boolean onionEnabled=true;
+    private void framesMenu(){menu("Frames / Cels",new String[]{"Go to frame","Timing / canvas","Exposure","Copy → next","Cel tools","Onion skin"},this::scrubDialog,this::timingDialog,this::exposureDialog,this::duplicateCel,this::celDialog,()->{onionEnabled=!onionEnabled;canvas.setOnion(onionEnabled);onMessage(onionEnabled?"Onion skin on":"Onion skin off");});}
+    private void scrubDialog(){if(frames.getParent()!=null)((android.view.ViewGroup)frames.getParent()).removeView(frames);new AlertDialog.Builder(this).setTitle("Go to frame / page").setView(frames).setPositiveButton("Done",null).show();}
+    private void paletteDialog(){LinearLayout palette=column();String[] colours={"#FF161C2B","#FFFFFFFF","#FF756157","#FFECC6A8","#FFB87958","#FFE45468","#FFEF9B52","#FFF3DA77","#FF61B787","#FF63BADA","#FF4E77BF","#FF8E6CB7"};AlertDialog dialog=new AlertDialog.Builder(this).setTitle("Colours").setView(palette).setNegativeButton("Close",null).create();for(int i=0;i<colours.length;i+=3){LinearLayout line=row(palette);for(int n=i;n<i+3;n++){String colour=colours[n];Button swatch=button(line,"●",()->{brushColor=colour;updateBrush();dialog.dismiss();});swatch.setTextColor(SketchDocument.color(colour));swatch.setContentDescription("Colour "+colour);}}dialog.show();}
+    private EditText input(String hint, String value, boolean number) { EditText input = new EditText(this); input.setHint(hint);input.setTextColor(StudioUi.TEXT);input.setHintTextColor(StudioUi.MUTED);input.setContentDescription(hint);input.setText(value); input.setSingleLine(); if (number) input.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL | InputType.TYPE_NUMBER_FLAG_SIGNED); return input; }
+    private int dp(int pixels) { return StudioUi.dp(this,pixels); }
     private abstract static class SimpleSelection implements android.widget.AdapterView.OnItemSelectedListener {
         public void onItemSelected(android.widget.AdapterView<?> parent, View view, int position, long id) { selected(position); }
         public void onNothingSelected(android.widget.AdapterView<?> parent) {}
