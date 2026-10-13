@@ -44,7 +44,7 @@ public final class SketchNativeExport {
         synchronized (SketchNativeExport.class) {
             File snapshotFile = new File(generation, "snapshot.json"); JSONObject snapshot;
             if (snapshotFile.isFile()) {
-                snapshot = readJson(snapshotFile, SketchDocument.MAX_BYTES + 2048);
+                snapshot = readJson(snapshotFile, SketchDocument.MAX_BYTES + 16 * 1024 * 1024 + 4096);
                 if (!fingerprint.equals(snapshot.getString("requestSha256"))) throw new IllegalStateException("SKETCH_OPERATION_ID_CONFLICT");
             } else {
                 JSONObject document;
@@ -55,11 +55,15 @@ public final class SketchNativeExport {
                 long frameBuffer = (long) document.getInt("width") * document.getInt("height") * 4;
                 if (context.getFilesDir().getUsableSpace() < frameBuffer + 64L * 1024 * 1024) throw new IllegalStateException("SKETCH_EXPORT_STORAGE: insufficient free space");
                 if (!generation.isDirectory() && !generation.mkdirs()) throw new IllegalStateException("Sketch output storage unavailable");
+                JSONObject dependencies = SketchPaintArchive.freezeDependencies(context, document, new File(generation, "assets"));
                 snapshot = new JSONObject().put("requestSha256", fingerprint).put("document", document)
+                        .put("dependencyInventory", dependencies)
                         .put("documentSha256", SketchDocument.sha256(SketchDocument.canonical(document).getBytes(StandardCharsets.UTF_8)));
                 atomicJson(snapshotFile, snapshot);
             }
             JSONObject doc = snapshot.getJSONObject("document"); SketchDocument.validate(doc);
+            File ownedDependencyRoot = snapshot.has("dependencyInventory") ? new File(generation, "assets") : null;
+            if (ownedDependencyRoot != null) SketchPaintArchive.verifyFrozen(context, doc, ownedDependencyRoot, snapshot.getJSONObject("dependencyInventory"));
             String aspect = "original".equals(requestedAspect) ? "source:" + doc.getInt("width") + "x" + doc.getInt("height") : requestedAspect;
             if (!id.equals(doc.getString("id")) || revision != doc.getLong("revision") ||
                     !snapshot.getString("documentSha256").equals(SketchDocument.sha256(SketchDocument.canonical(doc).getBytes(StandardCharsets.UTF_8))))
@@ -86,7 +90,7 @@ public final class SketchNativeExport {
             if (previousManifest != null && (!snapshot.getString("documentSha256").equals(previousManifest.getString("documentSha256")) ||
                     previousManifest.getInt("frameCount") != doc.getInt("frameCount") || previousManifest.getInt("fps") != doc.getInt("fps")))
                 throw new IllegalStateException("SKETCH_EXPORT_MANIFEST_CHANGED");
-            try (SketchFrameRenderer renderer = new SketchFrameRenderer(context, doc)) {
+            try (SketchFrameRenderer renderer = new SketchFrameRenderer(context, doc, ownedDependencyRoot)) {
                 for (int frame = 0; frame < doc.getInt("frameCount"); frame++) {
                     if (Thread.currentThread().isInterrupted()) throw new InterruptedException("Sketch capture cancelled");
                     progress.onProgress(frame, doc.getInt("frameCount"));

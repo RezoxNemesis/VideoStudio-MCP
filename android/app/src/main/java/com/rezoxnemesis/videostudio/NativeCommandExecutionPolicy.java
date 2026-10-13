@@ -11,6 +11,7 @@ public final class NativeCommandExecutionPolicy {
             case "precision_edit":
             case "apply_tool": case "set_studio_layers":
             case "sketch_create": case "sketch_list": case "sketch_get": case "sketch_inspect": case "sketch_edit":
+            case "sketch_paint_journal": case "sketch_sample_color": case "sketch_archive": case "sketch_restore_archive":
             case "sketch_book_create": case "sketch_book_edit": case "sketch_book_list": case "sketch_book_get": case "sketch_book_open_page": case "sketch_book_render":
             case "sketch_live_begin": case "sketch_live_events": case "sketch_live_end": case "sketch_capabilities":
             case "sketch_undo": case "sketch_redo": case "sketch_import_reference": case "sketch_preview": case "sketch_render":

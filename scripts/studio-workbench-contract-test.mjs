@@ -118,8 +118,11 @@ test('closed studio relay aliases require 3.9 and validate their exact canonical
  for(const alias of STUDIO_ALIAS_ACTIONS){
   assert.equal(nativeStudioCanonicalAction(alias),alias.slice('studio_'.length));
   assert(STORYBOARD_NATIVE_ACTIONS.has(alias),'Every alias must remain native-only');
-  assert.throws(()=>requireStoryboardNativeVersion({appVersion:'3.8.1'},alias),/3\.9\.[01456]/);
-  assert.doesNotThrow(()=>requireStoryboardNativeVersion({appVersion:'3.9.6'},alias));
+  const paint=['studio_sketch_paint_journal','studio_sketch_sample_color','studio_sketch_archive','studio_sketch_restore_archive'].includes(alias);
+  assert.throws(()=>requireStoryboardNativeVersion({appVersion:'3.8.1'},alias),paint?/4\.1\.0/:/3\.9\.[01456]/);
+  if(paint)assert.throws(()=>requireStoryboardNativeVersion({appVersion:'3.9.6'},alias),/4\.1\.0/);
+  else assert.doesNotThrow(()=>requireStoryboardNativeVersion({appVersion:'3.9.6'},alias));
+  assert.doesNotThrow(()=>requireStoryboardNativeVersion({appVersion:'4.1.0'},alias));
  }
  const p={projectId:'p',expectedUpdatedAt:1,operations:[{clipId:'c',set:{x:.2}}]};
  assert.deepEqual(nativeStoryboardParameters('studio_precision_edit',p),p);

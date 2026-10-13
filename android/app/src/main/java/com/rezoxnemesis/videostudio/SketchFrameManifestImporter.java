@@ -196,7 +196,9 @@ public final class SketchFrameManifestImporter {
             String layer=operation.getString("layerId");
             if(!allowedLayers.contains(layer))
                 throw new IllegalArgumentException("Sketch layer outside approved import set");
-            JSONObject o=SketchEditOps.completeObject(operation.getJSONObject("object"));
+            JSONObject raw=operation.getJSONObject("object");
+            if("paint".equals(raw.optString("kind")))throw SketchDocument.bad("Vector drawing packets cannot import paint snapshot pointers; use a checked owned archive");
+            JSONObject o=SketchEditOps.completeObject(raw);
             if(operation.toString().getBytes(StandardCharsets.UTF_8).length>500*1024)throw SketchDocument.bad("One drawing exceeds the atomic edit budget; split its paths or strokes before import");
             if("image".equals(o.getString("kind")))throw SketchDocument.bad("Vector drawing packets cannot embed raster references; import a guide through sketch_import_reference");
             if(o.getInt("frame")!=frame||o.getInt("exposure")!=(background?count:1))

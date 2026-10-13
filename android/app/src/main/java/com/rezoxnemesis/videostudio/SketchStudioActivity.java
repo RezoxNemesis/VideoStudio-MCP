@@ -34,16 +34,25 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
     private JSONObject document;
     private SketchEditorSession session;
     private final ExecutorService io=Executors.newSingleThreadExecutor();
+    private final ExecutorService transfers=Executors.newSingleThreadExecutor();
     private boolean loadingDrawing;
     private boolean destroyed,resumed,watching=true,watchInFlight,grid,symmetry;
     private String brushPreset="ink",bookId;
     private JSONObject book;
     private int bookPage,loadGeneration,pageGeneration,liveLoadGeneration;
     private float brushOpacity=1,brushHardness=.7f,brushAngle=35,smoothing=.2f;
+    private float paintSize=12,paintFlow=.65f,paintSpacing=.2f;
+    private boolean paintPressure=true,paintAlphaLock,paintClipEnabled,sampleCloneReference;
+    private String paintTip="round",paintTexture="smooth",paintMode="paint",pendingPaintCelId;
+    private int paintSeed;
+    private JSONObject paintClip,paintCloneSource;
     private SketchFilmstripView filmstrip;
     private TextView toolStatus;
     private Spinner toolPicker;
-    private final String[] toolValues={"stroke","eraser","line","rect","ellipse","polygon","select","eyedropper","pan","curve","nodes"};
+    private int humanToolPosition,pendingAgentToolSelection=-1;
+    private boolean syncingAgentTool,agentGlobalTool;
+    private android.graphics.drawable.Drawable agentToolIndicator;
+    private final String[] toolValues={"stroke","eraser","line","rect","ellipse","polygon","select","eyedropper","pan","curve","nodes","paint","paint_erase","clone"};
     private String sketchId;
     private SketchCanvasView canvas;
     private TextView status;
@@ -69,12 +78,12 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
         liveButton=button(projects,"Draw myself",this::toggleLiveWatch);liveButton.setLayoutParams(new LinearLayout.LayoutParams(0,-2,2));updateLiveControl();
         LinearLayout history = row(root);
         button(history,"Undo",()->history(false));button(history,"Redo",()->history(true));button(history,"Export",this::export);
-        canvas = new SketchCanvasView(this); canvas.setListener(this); root.addView(canvas, new LinearLayout.LayoutParams(-1, 0, 1));
+        canvas = new SketchCanvasView(this); canvas.setListener(this);canvas.setAgentHandEnabled(getPreferences(MODE_PRIVATE).getBoolean("agentHand",true)); root.addView(canvas, new LinearLayout.LayoutParams(-1, 0, 1));
         LinearLayout tools = row(root); Spinner tool = new Spinner(this);toolPicker=tool;
-        String[] names = {"Pen", "Eraser", "Line", "Rectangle", "Ellipse", "Polygon", "Select / move", "Eyedropper", "Pan canvas", "Curve pen", "Edit curve nodes"};
+        String[] names = {"Pen", "Eraser", "Line", "Rectangle", "Ellipse", "Polygon", "Select / move", "Eyedropper", "Pan canvas", "Curve pen", "Edit curve nodes", "Paint brush", "Erase paint", "Clone brush"};
         tool.setAdapter(new ArrayAdapter<String>(this, android.R.layout.simple_spinner_dropdown_item, names){@Override public View getView(int position,View convert,android.view.ViewGroup parent){TextView view=(TextView)super.getView(position,convert,parent);view.setTextColor(StudioUi.TEXT);view.setTextSize(12);view.setSingleLine(true);view.setEllipsize(android.text.TextUtils.TruncateAt.END);return view;}});
         tool.setContentDescription("Drawing tool");tool.setMinimumHeight(dp(48));tools.addView(tool,new LinearLayout.LayoutParams(0,dp(48),1));
-        tool.setOnItemSelectedListener(new SimpleSelection() { @Override public void selected(int position) { if(canvas!=null)canvas.setTool(toolValues[position]); } });
+        tool.setOnItemSelectedListener(new SimpleSelection() { @Override public void selected(int position) { if(canvas!=null){if(syncingAgentTool||position==pendingAgentToolSelection){pendingAgentToolSelection=-1;return;}humanToolPosition=position;if(position>=11)runAction("Choose paint tool",()->activatePaint(position==12?"erase":position==13?"clone":"paint"));else canvas.setTool(toolValues[position]);} } });
         button(tools,"Brush / Text",this::brushMenu);button(tools,"More",this::moreMenu);
         toolStatus=new TextView(this);toolStatus.setTextColor(StudioUi.MUTED);toolStatus.setTextSize(12);
         filmstrip=new SketchFilmstripView(this);filmstrip.setListener(this::selectFilmstrip);filmstrip.setContentDescription("Animation frames; swipe to browse, tap to select");root.addView(filmstrip,new LinearLayout.LayoutParams(-1,dp(48)));
@@ -110,7 +119,20 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
         if(destroyed)return;loadingDrawing=true;stopLivePlayer();
         if(session!=null&&session.pending()>0){onMessage("Finishing the current drawing save");return;}
         if(session!=null){session.close();session=null;}canvas.setEnabled(false);
-        int generation=++loadGeneration,requestedPageGeneration=pageGeneration;io.execute(()->{try{JSONObject loaded;String target=id;try(SketchProjectStore store=new SketchProjectStore(this)){loaded=store.get(id);}SketchEditorSession opened=new SketchEditorSession(this,loaded);boolean recovered=opened.error()!=null;if(recovered){opened.close();target=SketchEditorSession.recoverAsCopy(this,id);try(SketchProjectStore store=new SketchProjectStore(this)){loaded=store.get(target);}opened=new SketchEditorSession(this,loaded);}SketchEditorSession prepared=opened;String selectedId=target;if(destroyed){prepared.close();return;}postUi(()->{if(destroyed||generation!=loadGeneration||requestedPageGeneration!=pageGeneration){prepared.close();return;}try{if(recovered){bookId=null;book=null;onMessage("Your interrupted drawing was recovered as a separate sketch");}sketchId=selectedId;session=prepared;session.setListener(new SketchEditorSession.Listener(){public void saved(int count){updateStatus();}public void failed(String error){status.setText("Drawing conflict · local draft retained");onMessage(error+". Workspace → Recover local draft keeps it as a separate sketch.");}});present(session.document());setFrame(frame);loadingDrawing=false;canvas.setEnabled(!loadingDrawing&&!playing&&livePlayer==null);}catch(Exception error){onMessage(error.getMessage());}});}catch(Exception error){postUi(()->onMessage(error.getMessage()));}});
+        int generation=++loadGeneration,requestedPageGeneration=pageGeneration;io.execute(()->{try{JSONObject loaded;String target=id;try(SketchProjectStore store=new SketchProjectStore(this)){loaded=store.get(id);}SketchEditorSession opened=new SketchEditorSession(this,loaded);boolean recovered=opened.error()!=null;if(recovered){opened.close();target=SketchEditorSession.recoverAsCopy(this,id);try(SketchProjectStore store=new SketchProjectStore(this)){loaded=store.get(target);}opened=new SketchEditorSession(this,loaded);}SketchEditorSession prepared=opened;String selectedId=target;if(destroyed){prepared.close();return;}postUi(()->{if(destroyed||generation!=loadGeneration||requestedPageGeneration!=pageGeneration){prepared.close();return;}try{if(recovered){bookId=null;book=null;onMessage("Your interrupted drawing was recovered as a separate sketch");}sketchId=selectedId;session=prepared;session.setListener(new SketchEditorSession.Listener(){
+                    private boolean current(){return !destroyed&&session==prepared&&generation==loadGeneration&&requestedPageGeneration==pageGeneration;}
+                    public void saved(int count){if(current())updateStatus();}
+                    public void preparedSaved(JSONObject drawing,JSONArray operations,int count){if(!current())return;try{canvas.acknowledgePaint(operations);present(prepared.document());if(pendingPaintCelId!=null){try{SketchDocument.object(document,pendingPaintCelId);canvas.selectObject(pendingPaintCelId);pendingPaintCelId=null;canvas.setTool("erase".equals(paintMode)?"paint_erase":"clone".equals(paintMode)?"clone":"paint");int selectedTool="erase".equals(paintMode)?12:"clone".equals(paintMode)?13:11;if(toolPicker.getSelectedItemPosition()!=selectedTool)toolPicker.setSelection(selectedTool);}catch(Exception missing){}}updateStatus();}catch(Exception error){onMessage(error.getMessage());}}
+                    public void failed(String error){if(current()){status.setText("Drawing retained · local stroke intent available");onMessage(error+". Workspace → Recover local draft keeps it as a separate sketch.");}}
+                });present(session.document());setFrame(frame);prepareBookOnion(prepared,selectedId,generation,requestedPageGeneration);loadingDrawing=false;canvas.setEnabled(!loadingDrawing&&!playing&&livePlayer==null);}catch(Exception error){onMessage(error.getMessage());}});}catch(Exception error){postUi(()->onMessage(error.getMessage()));}});
+    }
+    private void prepareBookOnion(SketchEditorSession active,String owner,int generation,int pageGenerationAtLoad){
+        if(bookId==null||book==null)return;String selectedBook=bookId;int selectedPage=bookPage,total=book.optInt("pageCount");
+        io.execute(()->{try{JSONObject previous=null,next=null;try(SketchProjectStore store=new SketchProjectStore(this)){
+            if(selectedPage>0)try{previous=store.get(selectedBook+"_p"+(selectedPage-1));}catch(IllegalArgumentException missing){if(!missing.getMessage().startsWith("UNKNOWN_SKETCH"))throw missing;}
+            if(selectedPage+1<total)try{next=store.get(selectedBook+"_p"+(selectedPage+1));}catch(IllegalArgumentException missing){if(!missing.getMessage().startsWith("UNKNOWN_SKETCH"))throw missing;}
+        }JSONObject before=previous,after=next;postUi(()->{if(session!=active||generation!=loadGeneration||pageGenerationAtLoad!=pageGeneration||!selectedBook.equals(bookId)||selectedPage!=bookPage)return;try{canvas.setBookOnionDocuments(owner,before,after);}catch(Exception failure){onMessage(failure.getMessage());}});
+        }catch(Exception failure){postUi(()->{if(session==active&&generation==loadGeneration)onMessage("Adjacent onion page: "+failure.getMessage());});}});
     }
     private void present(JSONObject value) throws Exception {
         canvas.setDocument(value);presentMetadata(value);
@@ -125,10 +147,25 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
         try{if("mirror_gesture".equals(operation.optString("type"))){apply(new JSONArray().put(new JSONObject().put("type","add_object").put("layerId",operation.getString("layerId")).put("object",operation.getJSONObject("object"))).put(new JSONObject().put("type","add_object").put("layerId",operation.getString("layerId")).put("object",operation.getJSONObject("mirror"))));}else apply(new JSONArray().put(operation));}catch(Exception error){onMessage(error.getMessage());}
     }
     private void apply(JSONArray operations) {
-        if(session==null||loadingDrawing)return;if(livePlayer!=null){onMessage("Tap Draw myself to pause live drawing before editing");return;}stopPlayback();try{session.submit(operations);present(session.document());}catch(Exception error){onMessage(error.getMessage());}
+        if(session==null||loadingDrawing)return;if(livePlayer!=null){onMessage("Tap Draw myself to pause live drawing before editing");return;}stopPlayback();try{if(SketchPaintOps.containsPaint(operations)||session.hasPreparedSaves()){session.submitPrepared(operations);updateStatus();}else{session.submit(operations);present(session.document());}}catch(Exception error){onMessage(error.getMessage());}
     }
-    @Override public void onColorPicked(String value){brushColor=value;toolPicker.setSelection(0);updateBrush();}
-    private void updateBrush(){if(canvas==null)return;canvas.setBrush(brushColor,brushWidth,brushFill);try{canvas.setBrushStyle(SketchBrushes.style(brushPreset,brushOpacity,brushHardness,true,brushAngle),smoothing);}catch(Exception error){onMessage(error.getMessage());}if(toolStatus!=null)toolStatus.setText(brushPreset+" · "+(document==null?"":Math.round(brushWidth*Math.min(document.optInt("width"),document.optInt("height")))+" px · ")+brushColor+" · pinch to zoom / two fingers to pan");}
+    @Override public void onColorPicked(String value){brushColor=value;if(toolPicker.getSelectedItemPosition()<11)toolPicker.setSelection(0);updateBrush();}
+    @Override public SketchCanvasView.PaintCommitter beginPaintGesture(String id,long revision,int frame,String objectId){
+        SketchEditorSession origin=session;int generation=loadGeneration,page=pageGeneration;
+        if(origin==null||loadingDrawing||!id.equals(sketchId))return operation->{throw SketchDocument.bad("Open the selected drawing before painting");};
+        return operation->{origin.submitPrepared(new JSONArray().put(operation));if(session==origin&&generation==loadGeneration&&page==pageGeneration)updateStatus();};
+    }
+    @Override public void onSampleRequested(double x,double y,int frame){
+        if(session==null||document==null)return;SketchEditorSession active=session;String id=sketchId;long revision=document.optLong("revision");int generation=loadGeneration,page=pageGeneration;
+        JSONObject reference=sampleCloneReference?paintCloneSource:null;
+        io.execute(()->{try{active.awaitIdle(15000);if(active.error()!=null)throw new IllegalStateException(active.error());
+            JSONObject args=new JSONObject().put("sketchId",id).put("expectedRevision",active.document().getLong("revision")).put("x",x).put("y",y).put("frameIndex",frame).put("source",reference==null?"composite":"reference");
+            if(reference!=null)args.put("objectId",reference.getString("objectId")).put("sha256",reference.getString("sha256"));
+            String sampled=SketchEditOps.execute(this,"sketch_sample_color",args).getString("color");
+            postUi(()->{if(session==active&&generation==loadGeneration&&page==pageGeneration){onColorPicked(sampled);onMessage("Sampled "+sampled);}});
+        }catch(Exception failure){postUi(()->{if(session==active&&generation==loadGeneration&&page==pageGeneration)onMessage(failure.getMessage());});}});
+    }
+    private void updateBrush(){if(canvas==null)return;canvas.setBrush(brushColor,brushWidth,brushFill);try{canvas.setBrushStyle(SketchBrushes.style(brushPreset,brushOpacity,brushHardness,true,brushAngle),smoothing);canvas.setPaintBrush(paintStyle(),paintAlphaLock,paintClipEnabled?paintClip:null,paintCloneSource);}catch(Exception error){onMessage(error.getMessage());}if(toolStatus!=null)toolStatus.setText(brushPreset+" · "+(document==null?"":Math.round(brushWidth*Math.min(document.optInt("width"),document.optInt("height")))+" px · ")+brushColor+" · pinch to zoom / two fingers to pan");}
     private void postUi(Runnable work){if(!destroyed)handler.post(()->{if(!destroyed)work.run();});}
     private interface IoAction{void run() throws Exception;}
     private void afterSaves(IoAction work){if(destroyed)return;SketchEditorSession active=session;io.execute(()->{try{if(active!=null){active.awaitIdle(15000);if(active.error()!=null)throw new IllegalStateException(active.error());}work.run();}catch(Exception error){postUi(()->onMessage(error.getMessage()));}});}
@@ -259,8 +296,8 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
 
     private static boolean hasArtwork(JSONObject doc) throws Exception {JSONArray layers=doc.getJSONArray("layers");for(int i=0;i<layers.length();i++)if(layers.getJSONObject(i).getJSONArray("objects").length()>0)return true;return false;}
     private void workspaceDialog(){
-        if(document==null)return;String[] choices={"Fit canvas","Grid guides","Mirror drawing","Onion skin settings","Live ChatGPT drawing","Reference crop / tracing","Recover local draft as a separate sketch","Focus selected object","Import linked drawing packet","Drawing content audit"};
-        new AlertDialog.Builder(this).setTitle("Drawing workspace").setItems(choices,(d,index)->{try{switch(index){case 0:canvas.resetView();break;case 1:grid=!grid;canvas.setGuides(grid,symmetry);break;case 2:symmetry=!symmetry;canvas.setGuides(grid,symmetry);break;case 3:onionDialog();break;case 4:toggleLiveWatch();break;case 5:referenceTools();break;case 6:String source=sketchId;io.execute(()->{try{if(session!=null)session.awaitIdle(15000);String recovered=SketchEditorSession.recoverAsCopy(this,source);postUi(()->{bookId=null;book=null;loadSketch(recovered,0);});}catch(Exception error){postUi(()->onMessage(error.getMessage()));}});break;case 7:canvas.focusSelection();break;case 8:importDrawingDialog();break;case 9:inspectDrawing();break;}}catch(Exception error){onMessage(error.getMessage());}}).show();
+        if(document==null)return;String[] choices={"Fit canvas","Grid guides","Mirror drawing","Onion skin settings","Live ChatGPT drawing","Reference crop / tracing","Recover local draft as a separate sketch","Focus selected object","Import linked drawing packet","Drawing content audit","ChatGPT hand"};
+        new AlertDialog.Builder(this).setTitle("Drawing workspace").setItems(choices,(d,index)->{try{switch(index){case 0:canvas.resetView();break;case 1:grid=!grid;canvas.setGuides(grid,symmetry);break;case 2:symmetry=!symmetry;canvas.setGuides(grid,symmetry);break;case 3:onionDialog();break;case 4:toggleLiveWatch();break;case 5:referenceTools();break;case 6:String source=sketchId;io.execute(()->{try{if(session!=null)session.awaitIdle(15000);String recovered=SketchEditorSession.recoverAsCopy(this,source);postUi(()->{bookId=null;book=null;loadSketch(recovered,0);});}catch(Exception error){postUi(()->onMessage(error.getMessage()));}});break;case 7:canvas.focusSelection();break;case 8:importDrawingDialog();break;case 9:inspectDrawing();break;case 10:boolean hand=!getPreferences(MODE_PRIVATE).getBoolean("agentHand",true);getPreferences(MODE_PRIVATE).edit().putBoolean("agentHand",hand).apply();canvas.setAgentHandEnabled(hand);updateAgentToolIndicator();onMessage(hand?"ChatGPT hand visible":"ChatGPT hand hidden");break;}}catch(Exception error){onMessage(error.getMessage());}}).show();
     }
     private void applyCanvasFocus(){for(View view:drawingChrome)view.setVisibility(canvasFocus?View.GONE:View.VISIBLE);}
     private void toggleCanvasFocus(){canvasFocus=!canvasFocus;getPreferences(MODE_PRIVATE).edit().putBoolean("canvasFocus",canvasFocus).apply();applyCanvasFocus();}
@@ -350,7 +387,13 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
             JSONObject drawing=loaded;postUi(()->{watchInFlight=false;if(!playing||destroyed)return;try{bookPage=page;canvas.setDocument(drawing);frames.setProgress(page);filmstrip.setFrames(count,page);handler.postDelayed(playTick,Math.max(1,1000*(book.optJSONObject("exposures")==null?1:book.optJSONObject("exposures").optInt(String.valueOf(page),1))/fps));}catch(Exception error){stopPlayback();onMessage(error.getMessage());}});
         }catch(Exception error){postUi(()->{watchInFlight=false;stopPlayback();onMessage(error.getMessage());});}});
     }
-    private void stopLivePlayer(){if(livePlayer!=null){livePlayer.close();livePlayer=null;}canvas.setPresentation(null,1);canvas.setEnabled(session!=null&&!loadingDrawing&&!playing&&!destroyed);liveDrawingObject=null;}
+    private void stopLivePlayer(){if(livePlayer!=null){livePlayer.close();livePlayer=null;}canvas.hideAgentHand();agentGlobalTool=false;if(status!=null)status.setCompoundDrawables(null,null,null,null);showAgentToolPosition(humanToolPosition);canvas.setPresentation(null,1);canvas.setEnabled(session!=null&&!loadingDrawing&&!playing&&!destroyed);liveDrawingObject=null;}
+    private void showAgentToolPosition(int position){if(toolPicker==null||position<0||position>=toolValues.length||toolPicker.getSelectedItemPosition()==position)return;pendingAgentToolSelection=position;syncingAgentTool=true;try{toolPicker.setSelection(position);}finally{syncingAgentTool=false;}}
+    private static int agentToolPosition(String label){
+        switch(label){case "Brush":return 11;case "Eraser":return 12;case "Clone brush":return 13;case "Line":return 2;case "Rectangle":return 3;case "Ellipse":return 4;case "Path":return 9;case "Ink":case "Pen":case "Pencil":case "Marker":case "Airbrush":case "Charcoal":case "Calligraphy":return 0;default:return -1;}
+    }
+    private void showActualAgentTool(String label){int position=agentToolPosition(label);if(position>=0)showAgentToolPosition(position);}
+    private void updateAgentToolIndicator(){if(status==null)return;boolean enabled=getPreferences(MODE_PRIVATE).getBoolean("agentHand",true);if(enabled&&agentGlobalTool){if(agentToolIndicator==null)agentToolIndicator=SketchAgentHand.toolIndicator(this,18);status.setCompoundDrawablePadding(dp(4));status.setCompoundDrawablesWithIntrinsicBounds(agentToolIndicator,null,null,null);}else status.setCompoundDrawables(null,null,null,null);}
     private void updateLiveControl(){if(liveButton!=null){liveButton.setText(watching?"Draw myself":"Watch ChatGPT");liveButton.setContentDescription(watching?"Pause live drawing and draw yourself":"Resume watching every drawing step");}}
     private void toggleLiveWatch(){
         if(watching){takeOverLive(null);return;}
@@ -376,11 +419,19 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
     }
     private boolean currentLive(int generation,SketchEditorSession active){return !destroyed&&resumed&&watching&&generation==liveLoadGeneration&&session==active;}
     private void startLivePlayer(String streamId){watchInFlight=true;String id=sketchId;SketchEditorSession active=session;int generation=++liveLoadGeneration;io.execute(()->{try{JSONObject baseline=SketchLiveDrawing.read(this,id,streamId);postUi(()->{watchInFlight=false;if(!currentLive(generation,active)||loadingDrawing||session.pending()>0)return;try{stopLivePlayer();liveSessionId=streamId;liveDisplayedRevision=-1;livePlayer=new SketchLivePlayer(this,baseline,new SketchLivePlayer.Listener(){
-        private boolean preparedShown;
+        private boolean preparedShown,paintShown;private SketchLivePreparation.Prepared shownPaint;
         public void drawing(JSONObject drawing,String objectId,float fraction,String caption){showDrawing(drawing,null,objectId,fraction,caption);}
         public void preparedDrawing(SketchLivePreparation.Prepared prepared,String objectId,float fraction,String caption){showDrawing(prepared.document,prepared,objectId,fraction,caption);}
+        public void agentHand(SketchAgentHand.State state){if(currentLive(generation,active))canvas.setAgentHand(state);}
+        public void agentTool(String toolLabel,String caption){if(!currentLive(generation,active))return;agentGlobalTool=agentToolPosition(toolLabel)<0;showActualAgentTool(toolLabel);updateAgentToolIndicator();status.setText("ChatGPT · "+caption);}
+        public SketchPaintReplay.Viewport paintViewport(String objectId){return canvas.paintViewport(objectId);}
+        public SketchPaintReplay.Viewport paintViewport(String objectId,int frameIndex){return canvas.paintViewport(objectId,frameIndex);}
+        public void preparedPaintDrawing(SketchLivePreparation.Prepared prepared,SketchPaintReplay.Frame image,String objectId,float fraction,String caption){
+            if(!currentLive(generation,active)){image.close();return;}
+            try{if(shownPaint!=prepared){canvas.setPreparedDocument(prepared);shownPaint=prepared;preparedShown=true;}paintShown=true;liveDrawingObject=objectId;liveCaption=caption;canvas.setFrame(prepared.frameIndex);canvas.setPaintPresentation(objectId,image);canvas.setPresentation(objectId,fraction);canvas.setEnabled(false);status.setText(caption);}catch(Exception error){image.close();failed(error.getMessage());}
+        }
         private void showDrawing(JSONObject drawing,SketchLivePreparation.Prepared prepared,String objectId,float fraction,String caption){if(!currentLive(generation,active))return;try{if(objectId==null||!objectId.equals(liveDrawingObject)||!caption.equals(liveCaption)){if(prepared==null)canvas.setDocument(drawing);else{canvas.setPreparedDocument(prepared);preparedShown=true;}liveDrawingObject=objectId;liveCaption=caption;}if(objectId!=null)canvas.setFrame(SketchDocument.object(drawing,objectId).getInt("frame"));canvas.setPresentation(objectId,fraction);canvas.setEnabled(false);status.setText(caption);}catch(Exception error){failed(error.getMessage());}}
-        public void committed(JSONObject drawing){if(!currentLive(generation,active))return;try{if(session.adopt(drawing)){if(preparedShown)presentMetadata(session.document());else present(session.document());canvas.setPresentation(null,1);liveDrawingObject=null;liveDisplayedRevision=drawing.optLong("revision");}}catch(Exception error){failed(error.getMessage());}}
+        public void committed(JSONObject drawing){if(!currentLive(generation,active))return;try{if(session.adopt(drawing)){if(paintShown){canvas.setCommittedPaintDocument(session.document());presentMetadata(session.document());paintShown=false;}else if(preparedShown)presentMetadata(session.document());else present(session.document());canvas.setPresentation(null,1);liveDrawingObject=null;liveDisplayedRevision=drawing.optLong("revision");}}catch(Exception error){failed(error.getMessage());}}
         public void finished(long cursor){if(!currentLive(generation,active))return;io.execute(()->{try(SketchProjectStore store=new SketchProjectStore(SketchStudioActivity.this)){store.consumeLiveSession(cursor);}});getPreferences(MODE_PRIVATE).edit().putLong("lastLiveSequence",cursor).apply();stopLivePlayer();reload();}
         public void idle(){if(!currentLive(generation,active))return;canvas.setPresentation(null,1);canvas.setEnabled(false);status.setText("Live ChatGPT · waiting for drawing steps · Play or Draw myself is available");}
         public void failed(String error){if(!currentLive(generation,active))return;loadingDrawing=true;stopLivePlayer();status.setText(error);onMessage(error);}
@@ -410,7 +461,7 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
     private void stopPlayback() { boolean wasPlaying=playing;playing = false;if(wasPlaying&&bookId!=null&&session!=null&&!destroyed){openBookPage(bookId,bookPage);} handler.removeCallbacks(playTick); if(canvas!=null&&!destroyed)canvas.setEnabled(!loadingDrawing&&(!wasPlaying||bookId==null)&&session!=null&&livePlayer==null);if (playButton != null) playButton.setText("Play"); }
     @Override protected void onPause() { resumed=false;++liveLoadGeneration;if(livePlayer!=null||watchInFlight)loadingDrawing=true;stopLivePlayer();stopPlayback();handler.removeCallbacks(watchTick);super.onPause(); }
     @Override protected void onResume() { super.onResume();resumed=true;liveSessionId="";if(loadingDrawing&&session!=null){if(session.pending()==0)reload();else afterSaves(()->postUi(this::reload));}handler.removeCallbacks(watchTick);handler.postDelayed(watchTick,250); }
-    @Override protected void onDestroy() { destroyed=true;stopLivePlayer();stopPlayback();handler.removeCallbacksAndMessages(null);if(session!=null)session.close();io.shutdown();if(canvas!=null)canvas.dispose();super.onDestroy(); }
+    @Override protected void onDestroy() { destroyed=true;stopLivePlayer();stopPlayback();handler.removeCallbacksAndMessages(null);if(session!=null)session.close();io.shutdown();transfers.shutdown();if(canvas!=null)canvas.dispose();super.onDestroy(); }
     @Override protected void onSaveInstanceState(Bundle state) { state.putString("bookId",bookId);state.putInt("bookPage",bookPage);state.putString("sketchId", sketchId); state.putInt("frame", canvas.getFrame()); super.onSaveInstanceState(state); }
     private LinearLayout column() { LinearLayout layout = new LinearLayout(this); layout.setOrientation(LinearLayout.VERTICAL);layout.setBackgroundColor(StudioUi.SURFACE);layout.setPadding(dp(6),dp(2),dp(6),dp(2));return layout; }
     private LinearLayout row(LinearLayout root) { LinearLayout layout = new LinearLayout(this); layout.setOrientation(LinearLayout.HORIZONTAL);root.addView(layout,new LinearLayout.LayoutParams(-1,-2));return layout; }
@@ -418,7 +469,7 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
     // Browsing a menu never takes ownership of an active drawing. Its chosen action
     // goes through the same loading, playback and live-takeover gate as the toolbar.
     private void runAction(String title,Runnable action){try{
-        boolean navigation=java.util.Arrays.asList("File","More","Brush / Text","Layers","Frames / Cels","Workspace","Canvas view","Drawing status","Colours","Select layer","Go to frame").contains(title);
+        boolean navigation=java.util.Arrays.asList("File","More","Brush / Text","Layers","Frames / Cels","Workspace","Canvas view","Drawing status","Colours","Select layer","Go to frame","Paint studio","Paint settings","Clone source").contains(title);
         if(navigation){action.run();return;}
         if(loadingDrawing&&!java.util.Arrays.asList("New","Open","Sketch books","Draw myself").contains(title)){onMessage("Opening the selected drawing");return;}
         if(playing&&!title.equals("Play")&&!title.equals("Draw myself")){onMessage("Pause playback before changing artwork");return;}
@@ -426,9 +477,9 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
         action.run();
     }catch(Exception error){onMessage(error.getMessage());}}
     private void menu(String title,String[] labels,Runnable... actions){new AlertDialog.Builder(this).setTitle(title).setItems(labels,(d,index)->runAction(labels[index],actions[index])).show();}
-    private void fileMenu(){menu("Sketch files",new String[]{"New","Open","Sketch books","Export video","Canvas view","Drawing status"},this::newDocument,this::openDocument,this::booksDialog,this::export,this::toggleCanvasFocus,()->new AlertDialog.Builder(this).setTitle("Drawing status").setMessage(status.getText()+"\n\n"+toolStatus.getText()).setPositiveButton("OK",null).show());}
+    private void fileMenu(){menu("Sketch files",new String[]{"New","Open","Sketch books","Export video","Archive sketch","Restore archive","Canvas view","Drawing status"},this::newDocument,this::openDocument,this::booksDialog,this::export,this::archiveSketch,this::restoreArchiveDialog,this::toggleCanvasFocus,()->new AlertDialog.Builder(this).setTitle("Drawing status").setMessage(status.getText()+"\n\n"+toolStatus.getText()).setPositiveButton("OK",null).show());}
     private void moreMenu(){menu("Drawing tools",new String[]{"Layers","Frames / Cels","Workspace"},this::layersMenu,this::framesMenu,this::workspaceDialog);}
-    private void brushMenu(){menu("Brush / Text",new String[]{"Brush","Colours","Text","Finish path","Transform / key","Delete object","Reference image"},this::brushDialog,this::paletteDialog,this::textDialog,()->canvas.finishPolygon(),this::transformDialog,this::deleteObject,this::referenceDialog);}
+    private void brushMenu(){menu("Brush / Text",new String[]{"Brush","Colours","Paint studio","Text","Finish path","Transform / key","Delete object","Reference image"},this::brushDialog,this::paletteDialog,this::paintMenu,this::textDialog,()->canvas.finishPolygon(),this::transformDialog,this::deleteObject,this::referenceDialog);}
     private void layersMenu(){menu("Layers",new String[]{"Select layer","+ Layer","Layer settings","Up","Down"},this::chooseLayer,this::addLayer,this::layerDialog,()->reorderLayer(1),()->reorderLayer(-1));}
     private void chooseLayer(){
         if(document==null)return;
@@ -451,8 +502,102 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
     private boolean onionEnabled=true;
     private void framesMenu(){menu("Frames / Cels",new String[]{"Go to frame","Timing / canvas","Exposure","Copy → next","Cel tools","Onion skin"},this::scrubDialog,this::timingDialog,this::exposureDialog,this::duplicateCel,this::celDialog,()->{onionEnabled=!onionEnabled;canvas.setOnion(onionEnabled);onMessage(onionEnabled?"Onion skin on":"Onion skin off");});}
     private void scrubDialog(){if(frames.getParent()!=null)((android.view.ViewGroup)frames.getParent()).removeView(frames);new AlertDialog.Builder(this).setTitle("Go to frame / page").setView(frames).setPositiveButton("Done",null).show();}
-    private void paletteDialog(){LinearLayout palette=column();String[] colours={"#FF161C2B","#FFFFFFFF","#FF756157","#FFECC6A8","#FFB87958","#FFE45468","#FFEF9B52","#FFF3DA77","#FF61B787","#FF63BADA","#FF4E77BF","#FF8E6CB7"};AlertDialog dialog=new AlertDialog.Builder(this).setTitle("Colours").setView(palette).setNegativeButton("Close",null).create();for(int i=0;i<colours.length;i+=3){LinearLayout line=row(palette);for(int n=i;n<i+3;n++){String colour=colours[n];Button swatch=button(line,"●",()->{brushColor=colour;updateBrush();dialog.dismiss();});swatch.setTextColor(SketchDocument.color(colour));swatch.setContentDescription("Colour "+colour);}}dialog.show();}
-    private EditText input(String hint, String value, boolean number) { EditText input = new EditText(this); input.setHint(hint);input.setTextColor(StudioUi.TEXT);input.setHintTextColor(StudioUi.MUTED);input.setContentDescription(hint);input.setText(value); input.setSingleLine(); if (number) input.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL | InputType.TYPE_NUMBER_FLAG_SIGNED); return input; }
+    private void archiveSketch(){
+        if(session==null||document==null)return;SketchEditorSession active=session;String id=sketchId,title=document.optString("name");
+        io.execute(()->{try{active.awaitIdle(15000);if(active.error()!=null)throw new IllegalStateException(active.error());long revision=active.document().getLong("revision");
+            JSONObject request=null;try{String retained=getPreferences(MODE_PRIVATE).getString("pendingEditableArchive","");if(!retained.isEmpty()){JSONObject prior=new JSONObject(retained);if(id.equals(prior.optString("sketchId"))&&revision==prior.optLong("expectedRevision"))request=prior;}}catch(Exception ignored){}
+            if(request==null)request=new JSONObject().put("sketchId",id).put("expectedRevision",revision).put("operationId",UUID.randomUUID().toString());
+            getPreferences(MODE_PRIVATE).edit().putString("pendingEditableArchive",request.toString()).commit();JSONObject frozen=request;
+            postUi(()->onMessage("Archiving editable drawing to your linked workspace. You can keep drawing."));
+            transfers.execute(()->{try{JSONObject result=SketchPaintArchive.archive(this,frozen);if(!result.optBoolean("remoteVerified"))throw new IllegalStateException("Archive transfer was not verified");
+                getPreferences(MODE_PRIVATE).edit().remove("pendingEditableArchive").putString("lastEditableArchive",result.toString()).commit();
+                postUi(()->new AlertDialog.Builder(this).setTitle("Editable sketch archived").setMessage(title+" · revision "+result.optLong("sourceRevision")+"\n\nPaint, reference images and editable strokes are verified in your linked workspace.\n\n"+result.optString("archiveName")).setPositiveButton("Done",null).show());
+            }catch(Exception failure){postUi(()->onMessage("Archive retained for retry: "+failure.getMessage()));}});
+        }catch(Exception failure){postUi(()->onMessage(failure.getMessage()));}});
+    }
+    private ArrayList<JSONObject> knownEditableArchives()throws Exception {
+        ArrayList<JSONObject> archives=new ArrayList<>();java.util.HashSet<String> seen=new java.util.HashSet<>();java.io.File root=new java.io.File(getFilesDir(),"sketch_studio");java.io.File[] sketches=root.listFiles();
+        if(sketches!=null)for(java.io.File sketch:sketches){if(archives.size()>=128)break;if(!sketch.isDirectory()||java.nio.file.Files.isSymbolicLink(sketch.toPath()))continue;java.io.File[] generations=new java.io.File(sketch,"archives").listFiles();if(generations==null)continue;
+            for(java.io.File generation:generations){if(archives.size()>=128)break;java.io.File receipt=new java.io.File(generation,"completed.json");if(!receipt.isFile()||receipt.length()>65536||java.nio.file.Files.isSymbolicLink(generation.toPath())||java.nio.file.Files.isSymbolicLink(receipt.toPath())||!receipt.getCanonicalPath().startsWith(root.getCanonicalPath()+java.io.File.separator))continue;
+                try(java.io.InputStream input=new java.io.FileInputStream(receipt)){JSONObject value=new JSONObject(new String(input.readNBytes(65537),java.nio.charset.StandardCharsets.UTF_8));String owner=SketchDocument.id(value,"archiveProjectId"),name=value.getString("archiveName"),hash=value.getString("archiveSha256");if(!name.matches("[A-Za-z0-9_.-]{1,120}")||!name.endsWith(".vssketch")||name.contains("..")||!hash.matches("[a-f0-9]{64}"))continue;if(seen.add(owner+"/"+name)){try(SketchProjectStore store=new SketchProjectStore(this)){value.put("displayName",store.get(owner).optString("name",name));}catch(Exception missing){value.put("displayName",name);}archives.add(value);}}catch(Exception invalid){}
+            }
+        }
+        return archives;
+    }
+    private void restoreArchiveDialog(){
+        transfers.execute(()->{try{ArrayList<JSONObject> archives=knownEditableArchives();String[] labels=new String[archives.size()+1];for(int i=0;i<archives.size();i++){JSONObject archive=archives.get(i);labels[i]=archive.optString("displayName")+" · revision "+archive.optLong("sourceRevision");}labels[archives.size()]="Restore with archive details";
+            postUi(()->new AlertDialog.Builder(this).setTitle("Restore editable archive as a new sketch").setItems(labels,(d,index)->runAction("Restore selected archive",()->{if(index==archives.size())archiveDetailsDialog();else beginArchiveRestore(archives.get(index));})).setNegativeButton("Cancel",null).show());
+        }catch(Exception failure){postUi(()->onMessage(failure.getMessage()));}});
+    }
+    private void archiveDetailsDialog(){
+        JSONObject last=null;try{last=new JSONObject(getPreferences(MODE_PRIVATE).getString("lastEditableArchive","{}"));}catch(Exception ignored){}
+        LinearLayout form=column();EditText owner=input("Archive sketch ID",last==null?"":last.optString("archiveProjectId"),false),filename=input("Exact linked .vssketch filename",last==null?"":last.optString("archiveName"),false),hash=input("Archive SHA-256",last==null?"":last.optString("archiveSha256"),false);form.addView(owner);form.addView(filename);form.addView(hash);ScrollView scroll=new ScrollView(this);scroll.addView(form);
+        new AlertDialog.Builder(this).setTitle("Verified linked-workspace archive").setView(scroll).setNegativeButton("Cancel",null).setPositiveButton("Restore new sketch",(d,w)->runAction("Restore selected archive",()->{try{beginArchiveRestore(new JSONObject().put("archiveProjectId",owner.getText().toString()).put("archiveName",filename.getText().toString()).put("archiveSha256",hash.getText().toString()));}catch(Exception failure){onMessage(failure.getMessage());}})).show();
+    }
+    private void beginArchiveRestore(JSONObject archive){
+        try{JSONObject args=new JSONObject().put("archiveProjectId",archive.getString("archiveProjectId")).put("archiveName",archive.getString("archiveName")).put("expectedSha256",archive.getString("archiveSha256")).put("operationId",UUID.randomUUID().toString());
+            String prior=getPreferences(MODE_PRIVATE).getString("pendingEditableRestore","");if(!prior.isEmpty()){JSONObject retained=new JSONObject(prior);if(args.getString("archiveProjectId").equals(retained.optString("archiveProjectId"))&&args.getString("archiveName").equals(retained.optString("archiveName"))&&args.getString("expectedSha256").equals(retained.optString("expectedSha256")))args=retained;}
+            getPreferences(MODE_PRIVATE).edit().putString("pendingEditableRestore",args.toString()).apply();JSONObject frozen=args;SketchEditorSession active=session;int generation=loadGeneration,page=pageGeneration;
+            io.execute(()->{try{if(active!=null){active.awaitIdle(15000);if(active.error()!=null)throw new IllegalStateException(active.error());}transfers.execute(()->{try{JSONObject result=SketchPaintArchive.restore(this,frozen);getPreferences(MODE_PRIVATE).edit().remove("pendingEditableRestore").apply();String restored=result.getString("sketchId");postUi(()->{if(session!=active||generation!=loadGeneration||page!=pageGeneration){onMessage("Archive restored as a new sketch. Find it in File → Open.");return;}bookId=null;book=null;loadSketch(restored,0);onMessage("Verified editable archive restored. Your existing drawing is preserved.");});}catch(Exception failure){postUi(()->onMessage("Restore retained for retry: "+failure.getMessage()));}});}catch(Exception failure){postUi(()->onMessage(failure.getMessage()));}});
+        }catch(Exception failure){onMessage(failure.getMessage());}
+    }
+    private JSONObject paintStyle()throws Exception{return new JSONObject().put("mode",paintMode).put("color",brushColor).put("sizePx",paintSize).put("opacity",brushOpacity).put("flow",paintFlow).put("hardness",brushHardness).put("spacing",paintSpacing).put("pressure",paintPressure).put("texture",paintTexture).put("seed",paintSeed).put("angle",brushAngle).put("tip",paintTip);}
+    private void paintMenu(){menu("Paint studio",new String[]{"New paint cel","Paint brush","Erase paint","Clone brush","Paint settings","Clone source","Sample clone colour"},this::newPaintCel,()->activatePaint("paint"),()->activatePaint("erase"),()->activatePaint("clone"),this::paintSettings,this::chooseCloneSource,()->{if(paintCloneSource==null){onMessage("Choose an owned Clone source first");return;}sampleCloneReference=true;toolPicker.setSelection(7);canvas.setTool("eyedropper");onMessage("Tap the canvas to sample the owned reference");});}
+    private void newPaintCel(){
+        if(document==null||session==null)return;
+        try{String id=UUID.randomUUID().toString();pendingPaintCelId=id;
+            if(watching&&livePlayer==null&&!watchInFlight){watching=false;++liveLoadGeneration;getPreferences(MODE_PRIVATE).edit().putBoolean("watchLiveDrawing",false).apply();updateLiveControl();}
+            apply(new JSONArray().put(new JSONObject().put("type","add_paint_cel").put("layerId",canvas.getLayerId()).put("objectId",id).put("frame",canvas.getFrame()).put("exposure",1)));
+        }catch(Exception error){pendingPaintCelId=null;onMessage(error.getMessage());}
+    }
+    private void activatePaint(String mode){
+        if(document==null)return;
+        if("clone".equals(mode)&&paintCloneSource==null){onMessage("Choose an owned Clone source first");chooseCloneSource();return;}
+        paintMode=mode;sampleCloneReference=false;if("erase".equals(mode))paintAlphaLock=false;
+        if(watching&&livePlayer==null&&!watchInFlight){watching=false;++liveLoadGeneration;getPreferences(MODE_PRIVATE).edit().putBoolean("watchLiveDrawing",false).apply();updateLiveControl();}
+        String target=null;try{if(canvas.getSelectedId()!=null&&"paint".equals(SketchDocument.object(document,canvas.getSelectedId()).optString("kind")))target=canvas.getSelectedId();
+            if(target==null){JSONArray objects=SketchDocument.layer(document,canvas.getLayerId()).getJSONArray("objects");for(int i=objects.length()-1;i>=0;i--){JSONObject object=objects.getJSONObject(i);if("paint".equals(object.optString("kind"))&&SketchFrameRenderer.exposed(object,canvas.getFrame())){target=object.getString("id");break;}}}
+            if(target==null)newPaintCel();else canvas.selectObject(target);
+            canvas.setTool("erase".equals(mode)?"paint_erase":"clone".equals(mode)?"clone":"paint");int selectedTool="erase".equals(mode)?12:"clone".equals(mode)?13:11;if(toolPicker.getSelectedItemPosition()!=selectedTool)toolPicker.setSelection(selectedTool);updateBrush();updateStatus();
+        }catch(Exception error){onMessage(error.getMessage());}
+    }
+    private void chooseCloneSource(){
+        if(document==null)return;ArrayList<String> ids=new ArrayList<>(),hashes=new ArrayList<>(),labels=new ArrayList<>();
+        try{JSONArray values=document.getJSONArray("layers");for(int i=0;i<values.length();i++){JSONObject layer=values.getJSONObject(i);JSONArray objects=layer.getJSONArray("objects");for(int j=0;j<objects.length();j++){JSONObject object=objects.getJSONObject(j);if("image".equals(object.optString("kind"))){ids.add(object.getString("id"));hashes.add(object.getJSONObject("reference").getString("sha256"));labels.add(layer.getString("name")+" · "+object.getString("id")+" · "+object.getJSONObject("reference").getInt("width")+" × "+object.getJSONObject("reference").getInt("height"));}}}
+            if(ids.isEmpty()){onMessage("Import a reference from this project's assets first. The guide stays hidden.");return;}
+            String owner=sketchId;new AlertDialog.Builder(this).setTitle("Owned clone source").setItems(labels.toArray(new String[0]),(d,index)->runAction("Choose clone source",()->{try{
+                if(!owner.equals(sketchId))throw SketchDocument.bad("The drawing changed. Choose its source again.");JSONObject object=SketchDocument.object(document,ids.get(index));
+                if(!hashes.get(index).equals(object.getJSONObject("reference").getString("sha256")))throw SketchDocument.bad("Reference changed. Choose the clone source again.");
+                paintCloneSource=new JSONObject().put("objectId",ids.get(index)).put("sha256",hashes.get(index)).put("offsetX",0).put("offsetY",0).put("scale",1).put("rotation",0);paintMode="clone";updateBrush();activatePaint("clone");
+            }catch(Exception error){onMessage(error.getMessage());}})).setNegativeButton("Cancel",null).show();
+        }catch(Exception error){onMessage(error.getMessage());}
+    }
+    private static double bounded(EditText input,double min,double max,String name)throws Exception{double value=Double.parseDouble(input.getText().toString());if(!Double.isFinite(value)||value<min||value>max)throw SketchDocument.bad(name+" must be "+min+".."+max);return value;}
+    private void paintSettings(){
+        if(document==null)return;String sourceOwner=sketchId;LinearLayout form=column();
+        EditText colour=input("Paint colour #AARRGGBB",brushColor,false),size=input("Paint size in pixels 0.5..256",String.valueOf(paintSize),true),opacity=input("Paint opacity 0..1",String.valueOf(brushOpacity),true),flow=input("Flow 0..1",String.valueOf(paintFlow),true),hardness=input("Hardness 0..1",String.valueOf(brushHardness),true),spacing=input("Dab spacing 0.05..1",String.valueOf(paintSpacing),true),angle=input("Paint tip angle -180..180",String.valueOf(brushAngle),true),seed=input("Grain seed 0..2147483647",String.valueOf(paintSeed),true);
+        form.addView(new SketchColourPicker(this,brushColor,colour::setText),new LinearLayout.LayoutParams(-1,dp(180)));for(EditText value:new EditText[]{colour,size,opacity,flow,hardness,spacing,angle,seed})form.addView(value);
+        Spinner tip=new Spinner(this),texture=new Spinner(this);tip.setContentDescription("Paint tip");tip.setAdapter(new ArrayAdapter<>(this,android.R.layout.simple_spinner_dropdown_item,new String[]{"round","flat"}));tip.setSelection("flat".equals(paintTip)?1:0);texture.setContentDescription("Paint texture");texture.setAdapter(new ArrayAdapter<>(this,android.R.layout.simple_spinner_dropdown_item,new String[]{"smooth","grain"}));texture.setSelection("grain".equals(paintTexture)?1:0);tip.setMinimumHeight(dp(48));texture.setMinimumHeight(dp(48));form.addView(tip);form.addView(texture);
+        CheckBox pressure=new CheckBox(this),alpha=new CheckBox(this),clip=new CheckBox(this);pressure.setText("Pressure changes stroke width");pressure.setChecked(paintPressure);alpha.setText("Alpha lock · keep existing painted alpha");alpha.setChecked(paintAlphaLock);clip.setText("Rectangular clip");clip.setChecked(paintClipEnabled);for(CheckBox value:new CheckBox[]{pressure,alpha,clip}){value.setTextColor(StudioUi.TEXT);value.setMinimumHeight(dp(48));form.addView(value);}
+        JSONObject currentClip=paintClip;EditText clipX=input("Clip x 0..1",currentClip==null?"0":String.valueOf(currentClip.optDouble("x")),true),clipY=input("Clip y 0..1",currentClip==null?"0":String.valueOf(currentClip.optDouble("y")),true),clipW=input("Clip width 0..1",currentClip==null?"1":String.valueOf(currentClip.optDouble("width")),true),clipH=input("Clip height 0..1",currentClip==null?"1":String.valueOf(currentClip.optDouble("height")),true);for(EditText value:new EditText[]{clipX,clipY,clipW,clipH})form.addView(value);
+        JSONObject currentSource=paintCloneSource;EditText offX=input("Clone source offset x -1..1",currentSource==null?"0":String.valueOf(currentSource.optDouble("offsetX")),true),offY=input("Clone source offset y -1..1",currentSource==null?"0":String.valueOf(currentSource.optDouble("offsetY")),true),scale=input("Clone source scale 0.01..8",currentSource==null?"1":String.valueOf(currentSource.optDouble("scale",1)),true),rotation=input("Clone source rotation -180..180",currentSource==null?"0":String.valueOf(currentSource.optDouble("rotation")),true);for(EditText value:new EditText[]{offX,offY,scale,rotation})form.addView(value);
+        ScrollView scroll=new ScrollView(this);scroll.addView(form);AlertDialog dialog=new AlertDialog.Builder(this).setTitle("Native paint settings").setView(scroll).setNegativeButton("Cancel",null).setPositiveButton("Apply",null).create();dialog.show();dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->runAction("Apply paint settings",()->{try{
+            String nextColour=colour.getText().toString();SketchDocument.color(nextColour);float nextSize=(float)bounded(size,.5,256,"Paint size"),nextOpacity=(float)bounded(opacity,0,1,"Opacity"),nextFlow=(float)bounded(flow,0,1,"Flow"),nextHardness=(float)bounded(hardness,0,1,"Hardness"),nextSpacing=(float)bounded(spacing,.05,1,"Spacing"),nextAngle=(float)bounded(angle,-180,180,"Angle");double nextSeed=bounded(seed,0,Integer.MAX_VALUE,"Seed");if(nextSeed!=(int)nextSeed)throw SketchDocument.bad("Grain seed must be an integer");
+            if(alpha.isChecked()&&"erase".equals(paintMode))throw SketchDocument.bad("Alpha lock cannot be used while erasing");
+            JSONObject nextClip=new JSONObject().put("x",bounded(clipX,0,1,"Clip x")).put("y",bounded(clipY,0,1,"Clip y")).put("width",bounded(clipW,.0001,1,"Clip width")).put("height",bounded(clipH,.0001,1,"Clip height"));SketchDocument.validateBounds(nextClip);
+            JSONObject nextSource=currentSource==null?null:SketchDocument.copy(currentSource);if(nextSource!=null){if(!sourceOwner.equals(sketchId)||!nextSource.getString("sha256").equals(SketchDocument.object(document,nextSource.getString("objectId")).getJSONObject("reference").getString("sha256")))throw SketchDocument.bad("Clone source changed. Choose it again.");nextSource.put("offsetX",bounded(offX,-1,1,"Clone x offset")).put("offsetY",bounded(offY,-1,1,"Clone y offset")).put("scale",bounded(scale,.01,8,"Clone scale")).put("rotation",bounded(rotation,-180,180,"Clone rotation"));}
+            brushColor=nextColour;paintSize=nextSize;brushOpacity=nextOpacity;paintFlow=nextFlow;brushHardness=nextHardness;paintSpacing=nextSpacing;brushAngle=nextAngle;paintSeed=(int)nextSeed;paintPressure=pressure.isChecked();paintAlphaLock=alpha.isChecked();paintClipEnabled=clip.isChecked();paintClip=nextClip;paintTip=tip.getSelectedItem().toString();paintTexture=texture.getSelectedItem().toString();paintCloneSource=nextSource;updateBrush();dialog.dismiss();
+        }catch(Exception error){onMessage(error.getMessage());}}));
+    }
+    private void savePaletteColour(String colour)throws Exception{
+        SketchDocument.color(colour);JSONArray saved=new JSONArray(getPreferences(MODE_PRIVATE).getString("savedPalette","[]"));for(int i=0;i<saved.length();i++)if(colour.equals(saved.getString(i)))return;if(saved.length()>=64)saved.remove(0);saved.put(colour);getPreferences(MODE_PRIVATE).edit().putString("savedPalette",saved.toString()).apply();
+    }
+    private void paletteDialog(){LinearLayout palette=column();ArrayList<String> colours=new ArrayList<>(java.util.Arrays.asList("#FF161C2B","#FFFFFFFF","#FF756157","#FFECC6A8","#FFB87958","#FFE45468","#FFEF9B52","#FFF3DA77","#FF61B787","#FF63BADA","#FF4E77BF","#FF8E6CB7"));
+        try{JSONArray saved=new JSONArray(getPreferences(MODE_PRIVATE).getString("savedPalette","[]"));for(int i=0;i<saved.length();i++){String value=saved.getString(i);SketchDocument.color(value);if(!colours.contains(value))colours.add(value);}}catch(Exception ignored){}
+        ScrollView scroll=new ScrollView(this);scroll.addView(palette);AlertDialog dialog=new AlertDialog.Builder(this).setTitle("Colours").setView(scroll).setNegativeButton("Close",null).create();for(int i=0;i<colours.size();i+=3){LinearLayout line=row(palette);for(int n=i;n<Math.min(i+3,colours.size());n++){String colour=colours.get(n);Button swatch=button(line,"●",()->{brushColor=colour;updateBrush();dialog.dismiss();});swatch.setTextColor(SketchDocument.color(colour));swatch.setContentDescription("Colour "+colour);}}
+        LinearLayout actions=row(palette);button(actions,"Save current colour",()->{try{savePaletteColour(brushColor);dialog.dismiss();paletteDialog();}catch(Exception error){onMessage(error.getMessage());}});button(actions,"Full colour picker",()->{dialog.dismiss();paintSettings();});dialog.show();
+    }
+    private EditText input(String hint, String value, boolean number) { EditText input = new EditText(this); input.setHint(hint);input.setTextColor(StudioUi.TEXT);input.setHintTextColor(StudioUi.MUTED);input.setContentDescription(hint);input.setText(value); input.setSingleLine();input.setMinimumHeight(dp(48)); if (number) input.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL | InputType.TYPE_NUMBER_FLAG_SIGNED); return input; }
     private int dp(int pixels) { return StudioUi.dp(this,pixels); }
     private abstract static class SimpleSelection implements android.widget.AdapterView.OnItemSelectedListener {
         public void onItemSelected(android.widget.AdapterView<?> parent, View view, int position, long id) { selected(position); }

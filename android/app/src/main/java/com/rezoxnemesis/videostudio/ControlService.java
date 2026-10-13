@@ -551,7 +551,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 // The durable journal remains the authority for replay/exactly-once work.
                 (incomingAction.startsWith("cinematic_3d_") ? cinematic3DExecutor
                         : incomingAction.startsWith("open_pipeline_") ? pipelineExecutor
-                        : incomingAction.startsWith("sketch_")||"precision_edit".equals(incomingAction)||"apply_tool".equals(incomingAction)||"set_studio_layers".equals(incomingAction) ? authoringExecutor : nativeSourceExecutor)
+                        : incomingAction.startsWith("sketch_")&&!"sketch_archive".equals(incomingAction)&&!"sketch_restore_archive".equals(incomingAction)||"precision_edit".equals(incomingAction)||"apply_tool".equals(incomingAction)||"set_studio_layers".equals(incomingAction) ? authoringExecutor : nativeSourceExecutor)
                         .execute(() -> onCommand(command));
             } catch(java.util.concurrent.RejectedExecutionException rejected) {
                 JSONObject failed = new JSONObject();
@@ -632,9 +632,12 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             switch (action) {
                 case "precision_edit": complete(command,StudioPrecisionEdits.apply(this,store,p));syncProtocolState();return;
                 case "sketch_create": case "sketch_list": case "sketch_get": case "sketch_inspect": case "sketch_edit":
+                case "sketch_paint_journal": case "sketch_sample_color":
                 case "sketch_undo": case "sketch_redo": case "sketch_import_reference":
                 case "sketch_book_create": case "sketch_book_edit": case "sketch_book_list": case "sketch_book_get": case "sketch_book_open_page": case "sketch_live_begin": case "sketch_live_events": case "sketch_live_end": case "sketch_capabilities":
                     complete(command,SketchEditOps.execute(this,action,p));return;
+                case "sketch_archive": complete(command,SketchPaintArchive.archive(this,p));return;
+                case "sketch_restore_archive": complete(command,SketchPaintArchive.restore(this,p));return;
                 case "sketch_preview":{
                     JSONObject preview=SketchEditOps.execute(this,action,p);
                     // Existing MCP v3 relays already deliver contactSheet as an

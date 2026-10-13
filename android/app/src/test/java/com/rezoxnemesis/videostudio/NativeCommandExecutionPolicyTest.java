@@ -4,6 +4,12 @@ import org.junit.Test;
 import static org.junit.Assert.*;
 
 public final class NativeCommandExecutionPolicyTest {
+    @Test public void paintReadsAndEditableTransfersCannotExecuteOnTheUiThread() {
+        for(String action:new String[]{"sketch_paint_journal","sketch_sample_color","sketch_archive","sketch_restore_archive"}) {
+            assertTrue(action,NativeCommandExecutionPolicy.requiresBackgroundThread(action));
+            assertTrue("studio_"+action,NativeCommandExecutionPolicy.requiresBackgroundThread("studio_"+action));
+        }
+    }
     @Test public void noSourceReadMayBlockUiLooper() {
         for(String operation:new String[]{
                 "inspect_source_artwork","preview_source_rig",
