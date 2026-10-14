@@ -5,6 +5,10 @@ final class NativeAgentMailboxActions {
  private static final Set<String> ACTIONS=new HashSet<>(Arrays.asList(
   "precision_edit",
   "sketch_create",
+  "sketch_animation_save",
+  "sketch_animation_get",
+  "sketch_animation_list",
+  "sketch_animation_bake",
   "sketch_list",
   "sketch_get",
   "sketch_inspect",

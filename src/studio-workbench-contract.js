@@ -141,11 +141,43 @@ const endpoint=text(1024).refine(value=>{
 },'Use your own HTTPS runner without embedded credentials, query or fragment');
 const sketchIdentity={sketchId:id},mutation={...sketchIdentity,operationId:id,expectedRevision:revision};
 const requestIdentity={requestId:id};
+const animationInterpolation=z.enum(['linear','smooth','hold']);
+const orderedFrames=keys=>keys.every((key,i)=>i===0||key.frame>keys[i-1].frame);
+const animationRange={start:frame,end:frame};
+const animationVisibility=z.object({objectId:id,...animationRange}).strict().refine(v=>v.end>=v.start,'Cel end must follow start');
+const animationRig=z.object({id,
+ joints:z.array(z.object({id,parent:id.optional(),x:coordinate,y:coordinate}).strict()).min(1).max(64),
+ bindings:z.array(z.object({objectId:id,jointId:id,weights:z.array(z.record(id,coordinate)).max(131072).optional()}).strict()).max(4096),
+ poses:z.array(z.object({frame,interpolation:animationInterpolation.optional(),rootX:finite.min(-4).max(4).optional(),rootY:finite.min(-4).max(4).optional(),rotations:z.record(id,finite.min(-3600).max(3600)).optional()}).strict()).max(1200).refine(orderedFrames,'Pose frames must strictly increase').optional(),
+ ik:z.array(z.object({hip:id,knee:id,ankle:id,...animationRange,x:coordinate,y:coordinate,bend:z.union([z.literal(-1),z.literal(1)]).optional(),rotation:finite.min(-3600).max(3600).optional()}).strict().refine(v=>v.end>=v.start,'Contact end must follow start')).max(256).optional()
+}).strict();
+export const sketchAnimationProgramSchema=z.object({schema:z.literal('videostudio.sketch-animation.v1'),name:text(160).optional(),frameCount:integer(1,1200),fps:fps.optional(),
+ rigs:z.array(animationRig).max(16),
+ camera:z.array(z.object({frame,x:finite.min(-4).max(4).optional(),y:finite.min(-4).max(4).optional(),zoom:finite.min(.01).max(8).optional(),rotation:finite.min(-3600).max(3600).optional(),interpolation:animationInterpolation.optional()}).strict()).max(1200).refine(orderedFrames,'Camera frames must strictly increase').optional(),
+ cameraLayerIds:z.array(id).max(32).optional(),
+ dialogues:z.array(z.object({...animationRange,text:text(4096),layerId:id,bounds,color:color.optional(),fontSize:finite.min(.005).max(.3).optional()}).strict().refine(v=>v.end>=v.start,'Dialogue end must follow start')).max(256).optional(),
+ mouthCels:z.array(animationVisibility).max(4096).optional(),celRanges:z.array(animationVisibility).max(4096).optional()
+}).strict().superRefine((value,ctx)=>{
+ const fail=message=>ctx.addIssue({code:z.ZodIssueCode.custom,message});
+ for(const rig of value.rigs){
+  const ids=new Set(rig.joints.map(j=>j.id));if(ids.size!==rig.joints.length)fail('Joint IDs must be unique within a rig');
+  for(const joint of rig.joints)if(joint.parent!==undefined&&!ids.has(joint.parent))fail('Parent joint must exist');
+  for(const binding of rig.bindings){if(!ids.has(binding.jointId))fail('Binding joint must exist');for(const weights of binding.weights||[]){const entries=Object.entries(weights);if(entries.length<1||entries.length>4||entries.some(([id,w])=>!ids.has(id)||w<=0)||Math.abs(entries.reduce((sum,[,w])=>sum+w,0)-1)>1e-7)fail('Each vertex needs 1..4 positive existing joint weights summing to one');}}
+  for(const pose of rig.poses||[])if(pose.frame>=value.frameCount||Object.keys(pose.rotations||{}).some(id=>!ids.has(id)))fail('Pose must fit the timeline and name existing joints');
+  for(const contact of rig.ik||[])if(contact.end>=value.frameCount||['hip','knee','ankle'].some(key=>!ids.has(contact[key])))fail('Contact must fit the timeline and name existing joints');
+ }
+ for(const key of value.camera||[])if(key.frame>=value.frameCount)fail('Camera key must fit the timeline');
+ for(const cue of [...value.dialogues||[],...value.mouthCels||[],...value.celRanges||[]])if(cue.end>=value.frameCount)fail('Cue must fit the timeline');
+ if(value.camera?.length&&!value.cameraLayerIds?.length)fail('Camera keys require explicit layer IDs');
+});
 export const studioToolSchemas={
  import_mailbox_media:{projectId:id,attachmentId:z.string().uuid(),manifestSha256:sha},
  precision_edit:{projectId:id,expectedUpdatedAt:updatedAt,operations:z.array(clipOperation).min(1).max(64)},
  set_studio_layers:{projectId:id,expectedUpdatedAt:updatedAt,studioLayers},
  sketch_capabilities:{},
+ sketch_animation_save:{animationId:id,sketchId:id,sourceRevision:revision,expectedRevision:integer(0,Number.MAX_SAFE_INTEGER-1),operationId:id,program:sketchAnimationProgramSchema},
+ sketch_animation_get:{animationId:id},sketch_animation_list:{},
+ sketch_animation_bake:{animationId:id,expectedRevision:revision,operationId:id,outputSketchId:id},
  sketch_paint_journal:{sketchId:id,expectedRevision:revision,objectId:id,offset:integer(0,8192).optional(),limit:integer(1,128).optional()},
  sketch_sample_color:{sketchId:id,expectedRevision:revision,frameIndex:frame.optional(),x:coordinate,y:coordinate,source:z.enum(['paint','reference','composite']),objectId:id.optional(),sha256:sha.optional()},
  sketch_archive:{...mutation},
@@ -250,6 +282,7 @@ const legacy3d=new Set(['STANDOFF','CHARGE','CLASH','BLADE_LOCK','FOLLOW_THROUGH
 const pixelFields=new Set(['keyframes','opacity','chromaKey','chromaColor','chromaTolerance','chromaFeather','maskShape','maskLeft','maskTop','maskRight','maskBottom','maskFeather','glowStrength','glowRadiusPx','glowThreshold']);
 export function requireStudioVersion(device,action,parameters={}){
  const alias=studioAliases.has(action);action=nativeStudioCanonicalAction(action);
+ if(action.startsWith('sketch_animation_')&&!atLeast(device?.appVersion,'4.4.0'))throw new Error('NATIVE_APP_UPGRADE_REQUIRED: prepared-sketch character animation requires Video studio 4.4.0 or newer');
  if(['sketch_import_drawing_asset','get_native_result_page','get_native_delivery_status','compact_native_delivery'].includes(action)&&!atLeast(device?.appVersion,'4.3.1'))throw new Error('NATIVE_APP_UPGRADE_REQUIRED: registered drawing imports and durable native result delivery require Video studio 4.3.1 or newer');
  const needs430=action==='cinematic_3d_edit_program'||action==='precision_edit'&&(parameters.operations||[]).some(op=>op.keyframeEdits!==undefined||op.set?.audioPan!==undefined||op.set?.audioMono!==undefined)
   ||action==='sketch_edit'&&(parameters.operations||[]).some(op=>op.type==='symmetry_stroke')

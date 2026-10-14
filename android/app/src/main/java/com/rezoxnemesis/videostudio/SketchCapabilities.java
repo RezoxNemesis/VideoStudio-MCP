@@ -5,6 +5,11 @@ public final class SketchCapabilities {
     private SketchCapabilities(){}
     public static JSONObject get() throws Exception {
         return new JSONObject().put("minimumNativeVersion","3.9.1").put("promptFirstDrawing",true).put("referenceImageRequired",false).put("humanAndAgentShareOperations",true)
+                .put("characterAnimation",new JSONObject().put("minimumNativeVersion","4.4.0").put("schema","videostudio.sketch-animation.v1")
+                        .put("actions",new JSONArray(new String[]{"sketch_animation_save","sketch_animation_get","sketch_animation_list","sketch_animation_bake"}))
+                        .put("controls",new JSONArray(new String[]{"parented joints","pose keys","linear/smooth/hold timing","two-bone IK contacts","vector skin weights","rigid painted parts","camera keys","dialogue","mouth cels"}))
+                        .put("sourceFrozen",true).put("bakeCreatesNewEditableSketch",true).put("maximumFrames",1200).put("maximumProgramBytes",512*1024)
+                        .put("automaticAnatomyInference",false).put("automaticAlternateViews",false).put("phonePlaybackVerified",false))
                 .put("symmetry",new JSONObject().put("minimumNativeVersion","4.3.0").put("operation","symmetry_stroke").put("modes",new JSONArray(new String[]{"vertical","horizontal","both","radial"})).put("radialSegmentsMin",2).put("radialSegmentsMax",8).put("maximumSourcePoints",8192).put("editableVectorStrokes",true).put("pixelSpaceRotation",true).put("atomicGesture",true))
                 .put("brushes",new JSONArray(SketchBrushes.PRESETS)).put("geometry",new JSONArray(new String[]{"pressure strokes","M/L/Q/C/Z Bezier paths","lines","polygons","rectangles","ellipses","linear gradient fills","normal/multiply/screen/add layers"}))
                 .put("liveDrawing",new JSONObject().put("begin","sketch_live_begin").put("draw","sketch_edit").put("incrementalStroke","append_points").put("end","sketch_live_end").put("everyAcceptedOperationRecorded",true).put("closedPagesPlayedInOrder",true).put("phoneMustHaveSketchStudioOpen",true).put("queryOperationPagination",true).put("queryPaginationMinimumNativeVersion","3.9.5").put("vectorSnapshotPreparationOffMainThread",true).put("vectorSnapshotMinimumNativeVersion","3.9.6").put("phoneLatencyVerified",false)

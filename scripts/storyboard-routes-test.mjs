@@ -27,6 +27,16 @@ async function fixture(version='3.7.2',mode='everything') {
   return {rows,storage,relay,owner,deviceId,call,server,compatibilityServer:()=>context.compatibilityTools({VIDEO_STATE:{getByName:()=>relay}}),writes:()=>storage.writes()};
 }
 const request={sourceProjectId:'source-project-123',motionIntent:'cinematic_action'};
+test('prepared-sketch animation tools reject old native before writes and retain exact new native intent',async()=>{
+ const parameters={animationId:'arm_scene',sketchId:'prepared',sourceRevision:1,expectedRevision:0,operationId:'save_1',program:{schema:'videostudio.sketch-animation.v1',frameCount:100,fps:24,rigs:[]}};
+ const old=await fixture('4.3.1'),before=old.writes(),blocked=await old.call('app_sketch_animation_save',parameters);
+ assert.equal(blocked.queued,false);assert.match(blocked.error,/4\.4\.0/);assert.equal(old.writes(),before);
+ const current=await fixture('4.4.0');assert.equal((await current.call('app_sketch_animation_save',parameters)).queued,true);
+ const rows=await queueBindings.readCommandQueue(current.storage,'app-v3-cl:'+current.deviceId);assert.deepEqual(rows.at(-1).parameters,parameters);
+ const writes=current.writes();await assert.rejects(current.relay.appEnqueueV3(current.owner,'studio_sketch_animation_bake',{animationId:'arm_scene',expectedRevision:0,operationId:'bake_1',outputSketchId:'out'}));assert.equal(current.writes(),writes);
+ assert.equal(current.server.tools.get('app_sketch_animation_get').definition.annotations.readOnlyHint,true);
+ assert.equal(current.server.tools.get('app_sketch_animation_list').definition.annotations.readOnlyHint,true);
+});
 test('actual typed handler rejects old native app before queue or sequence writes',async()=>{
   const f=await fixture('3.7.1'),before=f.writes();
   const result=await f.call('app_animate_storyboard_series',request);
@@ -289,7 +299,7 @@ test('studio relay alias generic execution keeps queued alias native-only when t
 });
 test('studio relay alias version and canonical parameter failures happen before queue writes',async()=>{
  const old=await fixture('3.8.1'),before=old.writes();
- for(const alias of STUDIO_ALIAS_ACTIONS){const paint=['studio_sketch_paint_journal','studio_sketch_sample_color','studio_sketch_archive','studio_sketch_restore_archive'].includes(alias);const repair=['studio_sketch_import_drawing_asset','studio_get_native_result_page','studio_get_native_delivery_status','studio_compact_native_delivery'].includes(alias);assert.throws(()=>contract.requireStoryboardNativeVersion({appVersion:'3.8.1'},alias),repair?/4\.3\.1/:alias==='studio_cinematic_3d_edit_program'?/4\.3\.0/:alias==='studio_import_mailbox_media'?/4\.2\.0/:paint?/4\.1\.0/:/3\.9\.[0156]/);}
+ for(const alias of STUDIO_ALIAS_ACTIONS){const paint=['studio_sketch_paint_journal','studio_sketch_sample_color','studio_sketch_archive','studio_sketch_restore_archive'].includes(alias);const repair=['studio_sketch_import_drawing_asset','studio_get_native_result_page','studio_get_native_delivery_status','studio_compact_native_delivery'].includes(alias);assert.throws(()=>contract.requireStoryboardNativeVersion({appVersion:'3.8.1'},alias),alias.startsWith('studio_sketch_animation_')?/4\.4\.0/:repair?/4\.3\.1/:alias==='studio_cinematic_3d_edit_program'?/4\.3\.0/:alias==='studio_import_mailbox_media'?/4\.2\.0/:paint?/4\.1\.0/:/3\.9\.[0156]/);}
  await assert.rejects(old.relay.appEnqueueV3(old.owner,'studio_sketch_get',{sketchId:'s'}),/3\.9\.0/);assert.equal(old.writes(),before);
  const current=await fixture('3.9.0'),currentBefore=current.writes();
  await assert.rejects(current.relay.appEnqueueV3(current.owner,'studio_sketch_get',{sketchId:'s',uri:'content://foreign'}));

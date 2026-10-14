@@ -636,6 +636,8 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         try {
             switch (action) {
                 case "precision_edit": complete(command,StudioPrecisionEdits.apply(this,store,p));syncProtocolState();return;
+                case "sketch_animation_save": case "sketch_animation_get": case "sketch_animation_list": case "sketch_animation_bake":
+                    complete(command,SketchAnimationOps.execute(this,action,p));return;
                 case "sketch_create": case "sketch_list": case "sketch_get": case "sketch_inspect": case "sketch_edit":
                 case "sketch_paint_journal": case "sketch_sample_color":
                 case "sketch_undo": case "sketch_redo": case "sketch_import_reference":
@@ -5344,6 +5346,9 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             case "cinematic_3d_capabilities": return "Reading cinematic 3D capabilities";
             case "precision_edit": return "Applying exact clip edits";
             case "sketch_create": return "Creating a sketch animation";
+            case "sketch_animation_save": return "Saving prepared-sketch animation";
+            case "sketch_animation_get": case "sketch_animation_list": return "Reading sketch animation scenes";
+            case "sketch_animation_bake": return "Baking editable character animation";
             case "sketch_edit": case "sketch_undo": case "sketch_redo": return "Editing sketch layers and poses";
             case "sketch_get": case "sketch_list": return "Reading sketch geometry";
             case "sketch_preview": return "Rendering a sketch preview";

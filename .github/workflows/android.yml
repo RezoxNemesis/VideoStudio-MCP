@@ -98,6 +98,8 @@ jobs:
           path: |
             android/app/build/storyboard-qa/
             android/app/build/source-rig-workbench/
+            android/app/build/sketch-action-film/
+            android/app/build/sketch-animation-ui/
           if-no-files-found: warn
           retention-days: 7
 
@@ -243,3 +245,56 @@ jobs:
               --repo "$GITHUB_REPOSITORY" --target "$VST_SOURCE_SHA" --prerelease --latest=false \
               --title "Video studio ${VST_RELEASE_VERSION}" --notes-file apk-release-notes.md
           fi
+
+      - name: Prepare verified native animation proof
+        if: env.VST_RELEASE_VERSION == '4.4.0'
+        run: |
+          set -euo pipefail
+          gh run download "$VST_BUILD_RUN" --repo "$GITHUB_REPOSITORY" --name VideoStudio-storyboard-visual-qa --dir proof-input
+          gh run download "$VST_BUILD_RUN" --repo "$GITHUB_REPOSITORY" --name VideoStudio-native-junit-diagnostics --dir proof-junit
+          if ! command -v ffmpeg >/dev/null; then
+            sudo apt-get update -qq
+            sudo apt-get install -y ffmpeg
+          fi
+          python3 - <<'PY'
+          import hashlib,json,pathlib,subprocess,xml.etree.ElementTree as ET
+          candidates=list(pathlib.Path('proof-input').rglob('native-frame-manifest.json'))
+          assert len(candidates)==1,'Exactly one verified original-art sequence is required'
+          root=candidates[0].parent; manifest=json.loads(candidates[0].read_text())
+          assert manifest['frameCount']==100 and manifest['fps']==24
+          files=sorted((root/'frames').glob('frame-*.png'))
+          assert [p.name for p in files]==[f'frame-{f:04d}.png' for f in range(100)]
+          digest=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
+          for frame in manifest['frames']:
+              assert digest(root/'frames'/f"frame-{frame['frame']:04d}.png")==frame['sha256']
+          video=root/'Rooftop-Relay-100-frames-workspace.mp4'
+          subprocess.run(['ffmpeg','-nostdin','-y','-v','error','-framerate','24','-start_number','0','-i',str(root/'frames/frame-%04d.png'),'-frames:v','100','-c:v','libx264','-preset','medium','-crf','18','-pix_fmt','yuv420p','-movflags','+faststart','-metadata','comment=Workspace encoding of verified native Android Canvas PNGs; not phone execution',str(video)],check=True)
+          probe=json.loads(subprocess.check_output(['ffprobe','-v','error','-select_streams','v:0','-count_frames','-show_entries','stream=width,height,r_frame_rate,nb_read_frames,duration','-of','json',str(video)],text=True))
+          stream=probe['streams'][0]
+          assert int(stream['nb_read_frames'])==100 and stream['r_frame_rate']=='24/1'
+          assert (stream['width'],stream['height'])==(1280,720) and abs(float(stream['duration'])-100/24)<.001
+          encode=dict(renderer='VideoStudio SketchFrameRenderer / Robolectric native Android Canvas',encoder='GitHub workspace FFmpeg; exact verified native PNG sequence',executionLocation='workspace; not phone execution',video=video.name,sha256=digest(video),bytes=video.stat().st_size,frameCount=100,fps=24,durationSeconds=100/24,sourcePngCount=100,audio='No audio; authored lettering and mouth timing',probe=probe)
+          (root/'workspace-encode-verification.json').write_text(json.dumps(encode,indent=2)+'\n')
+          suites=[ET.parse(p).getroot() for p in pathlib.Path('proof-junit').rglob('TEST-*.xml')]
+          summary=dict(suites=len(suites),**{k:sum(int(s.attrib.get(k,0)) for s in suites) for k in ['tests','failures','errors','skipped']})
+          assert summary['tests']==1054 and not any(summary[k] for k in ['failures','errors','skipped'])
+          pathlib.Path('proof-test-summary.json').write_text(json.dumps(summary,indent=2)+'\n')
+          subprocess.run(['python3','scripts/package-sketch-action-proof.py','--evidence-dir',str(root),'--output-dir','release-proof','--test-summary','proof-test-summary.json'],check=True)
+          PY
+
+      - name: Publish verified animation film, screenshots and guides
+        if: env.VST_RELEASE_VERSION == '4.4.0'
+        run: |
+          gh release upload "videostudio-v${VST_RELEASE_VERSION}-preview" \
+            release-proof/Video-studio-2D-animation-proof.zip \
+            release-proof/Rooftop-Relay-100-frames-workspace.mp4 \
+            release-proof/contact-sheet.png \
+            release-proof/animation-studio-frame-16.png \
+            release-proof/animation-studio-frame-43.png \
+            release-proof/animation-studio-frame-76.png \
+            release-proof/proof-frame-16.png \
+            release-proof/proof-frame-43.png \
+            release-proof/proof-frame-84.png \
+            release-proof/proof-bundle-integrity.json \
+            docs/SKETCH_2D_ANIMATION_GUIDE.md docs/SKETCH_2D_ANIMATION_CHATGPT_GUIDE.md \
+            --repo "$GITHUB_REPOSITORY" --clobber
