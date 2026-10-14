@@ -52,6 +52,15 @@ public final class StudioClipKeyframes implements MatrixTransformation {
         StudioClipKeyframes parsed=parse(readCompatibleKeys(effects.optJSONArray("keyframes"),span),span,effects);
         return new StudioClipKeyframes(parsed.keys,parsed.base,offset);
     }
+    /** Detached canonical keys in their original authored clock; reading never rewrites a project. */
+    public static JSONArray authoredKeys(JSONObject effects,long durationMs){
+        fromEffects(effects,durationMs);
+        if(effects==null)return new JSONArray();
+        long span=effects.has("studioKeyframeDurationMs")?integer(effects,"studioKeyframeDurationMs",1,86_400_000L):durationMs;
+        JSONArray keys=readCompatibleKeys(effects.optJSONArray("keyframes"),span);
+        try{return keys==null?new JSONArray():new JSONArray(keys.toString());}
+        catch(org.json.JSONException error){throw new IllegalArgumentException("Could not read authored keys",error);}
+    }
     /** Legacy read adapter only. Canonical parse and new edit writes still require timeMs. */
     private static JSONArray readCompatibleKeys(JSONArray frames,long durationMs){
         if(frames==null||frames.length()==0)return frames;

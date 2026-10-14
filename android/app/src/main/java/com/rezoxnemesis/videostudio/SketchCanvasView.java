@@ -75,6 +75,7 @@ public final class SketchCanvasView extends View {
     private JSONObject touchCompositeDocument;
     private float zoom=1,panX,panY,lastPanX,lastPanY,stabilization=.2f;
     private boolean navigating,grid,symmetry,pointerDown;
+    private JSONObject symmetryConfiguration;
     private int onionRange=1,onionAlpha=48;
     private final ScaleGestureDetector scaling;
     private static final long VIEWPORT_BYTES=12L*1024*1024;
@@ -174,7 +175,16 @@ public final class SketchCanvasView extends View {
             return new SketchPaintReplay.Viewport(viewportEdge(),new JSONObject().put("x",x).put("y",y).put("width",right-x).put("height",bottom-y));
         }catch(Exception invalid){return new SketchPaintReplay.Viewport(viewportEdge(),null);}
     }
-    public void setGuides(boolean grid,boolean symmetry){this.grid=grid;this.symmetry=symmetry;invalidate();}
+    /** Compatibility entry point: enabling the old mirror setting starts with vertical midpoint symmetry. */
+    public void setGuides(boolean grid,boolean symmetry){
+        this.grid=grid;this.symmetry=symmetry;
+        if(symmetry&&symmetryConfiguration==null)try{symmetryConfiguration=SketchSymmetry.configuration(new JSONObject().put("mode","vertical"));}catch(Exception invalid){throw new IllegalStateException(invalid);}
+        invalidate();
+    }
+    public void setSymmetry(JSONObject configuration)throws Exception {
+        if(pointerDown)throw SketchDocument.bad("Lift the pen before changing symmetry");
+        symmetryConfiguration=configuration==null?null:SketchSymmetry.configuration(configuration);symmetry=configuration!=null;invalidate();
+    }
     public void setOnionOptions(int range,int alpha){onionRange=Math.max(1,Math.min(3,range));onionAlpha=Math.max(0,Math.min(128,alpha));invalidate();}
     public void resetView(){zoom=1;panX=panY=0;invalidate();}
     public void focusSelection() throws Exception {
@@ -261,7 +271,7 @@ public final class SketchCanvasView extends View {
             else if((smallVector&&(frameCache.get(frame)==null||dragTransform!=null||nodePreview!=null))&&renderer!=null)renderer.draw(canvas,frame,false,selectedId,dragTransform);
             else drawRaster(canvas,frameCache.get(frame),w,h,null);
             for(JSONObject preview:pendingPaintPreviews.values())if(!actualTouch||!preview.optString("strokeId").equals(touchCompositeStroke))drawPaintPreview(canvas,preview,w,h);
-            if(grid||symmetry){paint.setStyle(Paint.Style.STROKE);paint.setStrokeWidth(1/viewScale);paint.setColor(0x553fa4c9);if(grid){for(int i=1;i<10;i++){canvas.drawLine(w*i/10f,0,w*i/10f,h,paint);canvas.drawLine(0,h*i/10f,w,h*i/10f,paint);}}if(symmetry){paint.setColor(0x998ed4ac);canvas.drawLine(w/2f,0,w/2f,h,paint);}}
+            if(grid||symmetry){paint.setStyle(Paint.Style.STROKE);paint.setStrokeWidth(1/viewScale);paint.setColor(0x553fa4c9);if(grid){for(int i=1;i<10;i++){canvas.drawLine(w*i/10f,0,w*i/10f,h,paint);canvas.drawLine(0,h*i/10f,w,h*i/10f,paint);}}if(symmetry)drawSymmetryGuides(canvas,w,h);}
             if((gesture.length()>0||polygon.length()>0)&&(!actualTouch||!isPaintTool()||!java.util.Objects.equals(paintStrokeId,touchCompositeStroke)))drawGesture(canvas,w,h);
             if (selectedId != null && isEnabled() && liveObject == null) drawSelection(canvas, w, h);
             canvas.restoreToCount(save);
@@ -276,8 +286,13 @@ public final class SketchCanvasView extends View {
         paint.setColor("eraser".equals(tool) ? 0xAAE77989 : SketchDocument.color(color)); paint.setStrokeWidth(brushWidth * Math.min(w, h));
         paint.setStrokeJoin(Paint.Join.ROUND); paint.setStrokeCap(Paint.Cap.ROUND); paint.setStyle(fill ? Paint.Style.FILL : Paint.Style.STROKE);
         if ("stroke".equals(tool) || "eraser".equals(tool)) {
-            SketchBrushes.draw(canvas,gesture,w,h,brushWidth*Math.min(w,h),paint,brushStyle);
-            if(symmetry){int mirror=canvas.save();canvas.translate(w,0);canvas.scale(-1,1);SketchBrushes.draw(canvas,gesture,w,h,brushWidth*Math.min(w,h),paint,brushStyle);canvas.restoreToCount(mirror);}
+            JSONArray copies;
+            try{copies=symmetry?SketchSymmetry.copies(gesture,symmetryConfiguration,w,h):new JSONArray().put(gesture);}
+            catch(IllegalArgumentException outside){
+                // Invalid previews stay visibly provisional; lifting reports the rejected complete gesture.
+                paint.setColor(0xAAE77989);copies=new JSONArray().put(gesture);
+            }
+            for(int i=0;i<copies.length();i++)SketchBrushes.draw(canvas,copies.getJSONArray(i),w,h,brushWidth*Math.min(w,h),paint,brushStyle);
         }
         else if (("polygon".equals(tool)||"curve".equals(tool))) {
             Path path = new Path(); for (int i = 0; i < polygon.length(); i++) { JSONArray p = polygon.getJSONArray(i); float x = (float) p.getDouble(0) * w, y = (float) p.getDouble(1) * h; if (i == 0) path.moveTo(x, y); else path.lineTo(x, y); }
@@ -292,6 +307,21 @@ public final class SketchCanvasView extends View {
 
         }
         canvas.restoreToCount(save);
+    }
+
+    private void drawSymmetryGuides(Canvas canvas,int w,int h)throws Exception {
+        if(symmetryConfiguration==null)return;
+        int save=canvas.save();canvas.concat(SketchFrameRenderer.matrix(SketchDocument.transformAt(SketchDocument.layer(document,layerId),frame),w,h));
+        paint.setColor(0x998ed4ac);paint.setStyle(Paint.Style.STROKE);
+        float cx=(float)symmetryConfiguration.getDouble("centerX")*w,cy=(float)symmetryConfiguration.getDouble("centerY")*h;
+        String mode=symmetryConfiguration.getString("mode");
+        if("vertical".equals(mode)||"both".equals(mode))canvas.drawLine(cx,0,cx,h,paint);
+        if("horizontal".equals(mode)||"both".equals(mode))canvas.drawLine(0,cy,w,cy,paint);
+        if("radial".equals(mode)){
+            float radius=(float)Math.hypot(w,h);int count=symmetryConfiguration.getInt("segments");
+            for(int i=0;i<count;i++){double angle=2*Math.PI*i/count;canvas.drawLine(cx,cy,cx+(float)Math.cos(angle)*radius,cy+(float)Math.sin(angle)*radius,paint);}
+        }
+        canvas.drawCircle(cx,cy,4/viewScale,paint);canvas.restoreToCount(save);
     }
     private void drawSelection(Canvas canvas, int w, int h) throws Exception {
         JSONObject object = SketchDocument.object(document, selectedId), layer = SketchDocument.owner(document, selectedId);
@@ -495,7 +525,11 @@ public final class SketchCanvasView extends View {
                 object.put("bounds", new JSONObject().put("x", x).put("y", y).put("width", width).put("height", height));
             }
         }
-        if(symmetry&&( "stroke".equals(tool)||"eraser".equals(tool))){JSONArray mirrored=new JSONArray();for(int i=0;i<gesture.length();i++){JSONArray p=gesture.getJSONArray(i);mirrored.put(new JSONArray().put(1-p.getDouble(0)).put(p.getDouble(1)).put(p.getDouble(2)));}JSONObject twin=SketchDocument.copy(object).put("id",UUID.randomUUID().toString()).put("points",mirrored);listener.onOperation(new JSONObject().put("type","mirror_gesture").put("layerId",layerId).put("object",object).put("mirror",twin));}
+        if(symmetry&&( "stroke".equals(tool)||"eraser".equals(tool))){
+            JSONObject operation=new JSONObject().put("type","symmetry_stroke").put("layerId",layerId).put("object",object).put("symmetry",SketchDocument.copy(symmetryConfiguration));
+            // Validate before invoking the editor listener; a rejected gesture must not become local intent.
+            SketchSymmetry.expand(document,operation);listener.onOperation(operation);
+        }
         else listener.onOperation(new JSONObject().put("type", "add_object").put("layerId", layerId).put("object", object));
     }
     public void finishPolygon() {

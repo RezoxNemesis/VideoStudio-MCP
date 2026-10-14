@@ -903,6 +903,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 case "cinematic_3d_install_builtin": complete(command,NativeCinematicBundleStore.installBuiltin(this,store,p)); return;
                 case "cinematic_3d_import_bundle": complete(command,NativeCinematicBundleStore.install(this,store,p)); return;
                 case "cinematic_3d_save_program": complete(command,Cinematic3DProgramStore.save(this,store,p)); return;
+                case "cinematic_3d_edit_program": complete(command,Cinematic3DProgramStore.edit(this,store,p)); return;
                 case "cinematic_3d_get_program": {
                     if(p.has("editOnly")&&!(p.opt("editOnly") instanceof Boolean))throw new IllegalArgumentException("editOnly must be boolean");
                     boolean edit=p.optBoolean("editOnly",false);JSONObject identity=new JSONObject(p.toString());identity.remove("editOnly");
@@ -2941,6 +2942,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 .put("timelineSchema","videostudio.cinematic3d.timeline.v1").put("bundleSchema","videostudio.cinematic3d.bundle.v1")
                 .put("fps",new JSONArray().put(24).put(30).put(60)).put("maxShots",80).put("maxOutputFrames",12000)
                 .put("offlineActionLibrary",true).put("fullSceneGltfReplay",true).put("exactOutputFrameHitStops",true)
+                .put("cameraEditing",new JSONObject().put("action","cinematic_3d_edit_program").put("minimumNativeVersion","4.3.0").put("sourceRevisionAndProgramShaRequired",true).put("maximumOperations",128).put("outputFrameBasisPreflight",true))
                 .put("humanStudioActivity","Cinematic3DStudioActivity").put("cloudEngine","Blender/Rigify")
                 .put("neuralProviderInstalled",false).put("originalImageReconstruction",false)
                 .put("nativeExecutionVerified",false).put("cinematicAcceptance",false).put("bakedPoseChangesRequireRebuild",true);

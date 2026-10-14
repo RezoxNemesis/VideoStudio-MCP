@@ -11,7 +11,10 @@ import static org.junit.Assert.*;
 @RunWith(RobolectricTestRunner.class) @Config(sdk=33,manifest=Config.NONE)
 public class NativeWorkbenchBridgeTest {
     @Test public void onlyTheClosedKnownAliasesResolveToExistingActions()throws Exception {
-        JSONObject advertised=NativeWorkbenchBridge.capabilities();JSONArray actions=advertised.getJSONArray("canonicalActions");assertEquals(50,actions.length());assertEquals("app_execute",advertised.getString("tool"));assertEquals("3.9.0",advertised.getString("minimumNativeVersion"));assertEquals("4.1.0",advertised.getString("paintMinimumNativeVersion"));
+        JSONObject advertised=NativeWorkbenchBridge.capabilities();JSONArray actions=advertised.getJSONArray("canonicalActions");assertEquals(51,actions.length());assertEquals("app_execute",advertised.getString("tool"));assertEquals("3.9.0",advertised.getString("minimumNativeVersion"));assertEquals("4.1.0",advertised.getString("paintMinimumNativeVersion"));
+        assertEquals("cinematic_3d_edit_program",NativeWorkbenchBridge.canonicalAction("studio_cinematic_3d_edit_program"));
+        assertTrue(NativeCommandExecutionPolicy.requiresBackgroundThread("studio_cinematic_3d_edit_program"));
+        assertEquals("4.3.0",advertised.getString("cameraEditMinimumNativeVersion"));
         assertEquals("import_mailbox_media",NativeWorkbenchBridge.canonicalAction("studio_import_mailbox_media"));
         assertTrue(NativeCommandExecutionPolicy.requiresBackgroundThread("studio_import_mailbox_media"));
         assertEquals("4.2.0",advertised.getString("encryptedMediaImportMinimumNativeVersion"));

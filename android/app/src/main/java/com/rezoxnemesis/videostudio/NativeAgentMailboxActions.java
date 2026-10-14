@@ -92,6 +92,7 @@ final class NativeAgentMailboxActions {
   "cinematic_3d_install_builtin",
   "cinematic_3d_import_bundle",
   "cinematic_3d_save_program",
+  "cinematic_3d_edit_program",
   "cinematic_3d_get_program",
   "cinematic_3d_list_programs",
   "cinematic_3d_plan",

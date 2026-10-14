@@ -24,6 +24,7 @@ public final class NativeCommandExecutionPolicy {
             case "cinematic_3d_install_builtin":
             case "cinematic_3d_import_bundle":
             case "cinematic_3d_save_program":
+            case "cinematic_3d_edit_program":
             case "cinematic_3d_get_program":
             case "cinematic_3d_list_programs":
             case "cinematic_3d_plan":

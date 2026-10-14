@@ -37,7 +37,7 @@ public final class StudioToolCatalog {
         add(1,"Slow Motion","Change playback speed",true,false);
         add(1,"Speed Ramp","Speed curve preset",true,true);
         add(1,"Motion","Pan or tracking motion",true,true);
-        add(1,"Keyframes","Exact transform times and interpolation",false,false);
+        add(1,"Keyframes","Browse, sample and edit exact transform keys with easing",false,false);
         add(1,"Motion Blur","Add directional blur",true,true);
         add(1,"Shake","Impact camera movement",true,true);
         add(1,"Transitions","Change between-clip transition",true,true);

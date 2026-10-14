@@ -7,7 +7,7 @@ import androidx.media3.common.util.UnstableApi;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 
-/** Per-frame gain for every channel with saturating PCM, including gains above unity. */
+/** Stereo L/R mixing and balance, followed by per-frame gain and saturating PCM on every channel. */
 @UnstableApi
 public final class StudioClipAudioProcessor extends BaseAudioProcessor {
     private final StudioClipAudioEnvelope envelope;
@@ -22,7 +22,7 @@ public final class StudioClipAudioProcessor extends BaseAudioProcessor {
     @Override protected AudioFormat onConfigure(AudioFormat input)throws UnhandledAudioFormatException{
         if((input.encoding!=C.ENCODING_PCM_16BIT&&input.encoding!=C.ENCODING_PCM_FLOAT)||
                 input.sampleRate<=0||input.channelCount<=0)
-            throw new UnhandledAudioFormatException("Clip fades require 16-bit or float PCM",input);
+            throw new UnhandledAudioFormatException("Clip audio requires 16-bit or float PCM",input);
         return envelope.changesAudio()?input:AudioFormat.NOT_SET;
     }
 
@@ -38,18 +38,33 @@ public final class StudioClipAudioProcessor extends BaseAudioProcessor {
         ByteBuffer samples=input.duplicate().order(ByteOrder.nativeOrder());
         while(samples.hasRemaining()){
             float gain=envelope.gainAtOutputTimeUs(positionOffsetUs+frames*1_000_000.0/inputAudioFormat.sampleRate);
-            for(int channel=0;channel<inputAudioFormat.channelCount;channel++){
-                if(inputAudioFormat.encoding==C.ENCODING_PCM_16BIT){
-                    int value=Math.round(samples.getShort()*gain);
-                    output.putShort((short)Math.max(Short.MIN_VALUE,Math.min(Short.MAX_VALUE,value)));
-                }else{
-                    float value=samples.getFloat()*gain;
-                    output.putFloat(Float.isNaN(value)?0f:Math.max(-1f,Math.min(1f,value)));
+            int channel=0;
+            if(inputAudioFormat.channelCount>=2){
+                float left=readSample(samples),right=readSample(samples);
+                if(envelope.mixesStereoToMono()){
+                    // Halve before summing so even unusually large finite float PCM cannot overflow the average.
+                    left=right=left*.5f+right*.5f;
                 }
+                writeSample(output,left*envelope.leftBalance()*gain);
+                writeSample(output,right*envelope.rightBalance()*gain);
+                channel=2;
             }
+            // Mono sources have no L/R pair. Surround channels retain their positions and existing envelope gain.
+            for(;channel<inputAudioFormat.channelCount;channel++)writeSample(output,readSample(samples)*gain);
             frames++;
         }
         input.position(input.limit());output.flip();
+    }
+
+    private float readSample(ByteBuffer samples){
+        return inputAudioFormat.encoding==C.ENCODING_PCM_16BIT?samples.getShort():samples.getFloat();
+    }
+
+    private void writeSample(ByteBuffer output,float sample){
+        if(inputAudioFormat.encoding==C.ENCODING_PCM_16BIT){
+            int value=Math.round(sample);
+            output.putShort((short)Math.max(Short.MIN_VALUE,Math.min(Short.MAX_VALUE,value)));
+        }else output.putFloat(Float.isNaN(sample)?0f:Math.max(-1f,Math.min(1f,sample)));
     }
 
     @Override protected void onFlush(AudioProcessor.StreamMetadata metadata){

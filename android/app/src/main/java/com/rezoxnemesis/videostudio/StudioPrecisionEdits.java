@@ -9,8 +9,8 @@ import java.util.Set;
 /** Shared phone/MCP operation facade. A whole batch validates before one guarded SQLite save. */
 public final class StudioPrecisionEdits {
     private StudioPrecisionEdits(){}
-    private static final Set<String> OP_FIELDS=Set.of("clipId","set","keyframes","clearKeyframes","resetColor","resetTransform");
-    private static final Set<String> NUMBERS=Set.of("inMs","outMs","speed","volume","audioFadeInMs","audioFadeOutMs","brightness","contrast","saturationAdjust","lightnessAdjust","blur","scale","scaleX","scaleY","rotate","x","y","anchorX","anchorY","opacity",
+    private static final Set<String> OP_FIELDS=Set.of("clipId","set","keyframes","keyframeEdits","clearKeyframes","resetColor","resetTransform");
+    private static final Set<String> NUMBERS=Set.of("inMs","outMs","speed","volume","audioPan","audioFadeInMs","audioFadeOutMs","brightness","contrast","saturationAdjust","lightnessAdjust","blur","scale","scaleX","scaleY","rotate","x","y","anchorX","anchorY","opacity",
             "chromaTolerance","chromaFeather","maskLeft","maskTop","maskRight","maskBottom","maskFeather","glowStrength","glowRadiusPx","glowThreshold");
     private static final Set<String> TEXT=Set.of("motionPreset","colorPreset","effectPreset","title","chromaColor","maskShape");
     public static final Set<String> MOTIONS=Set.of("none","push_in","pull_out","pan_left","pan_right","pan_up","pan_down","drift","float","orbit","micro_shake","handheld","impact_shake","snap_zoom","zoom_punch","tilt","roll","hero_reveal","ken_burns");
@@ -113,6 +113,8 @@ public final class StudioPrecisionEdits {
     }
 
     private static void applyOperation(ProjectStore.Clip clip,ProjectStore.Asset asset,JSONObject operation)throws Exception{
+        if(operation.has("keyframeEdits")&&(operation.has("keyframes")||operation.has("clearKeyframes")))
+            throw new IllegalArgumentException("keyframeEdits cannot be combined with replacement or clearKeyframes");
         for(String name:new String[]{"clearKeyframes","resetColor","resetTransform"})
             if(operation.has(name)&&!(operation.opt(name) instanceof Boolean))throw new IllegalArgumentException(name+" must be boolean");
         if(operation.optBoolean("resetColor"))for(String name:StudioClipAdjustments.COLOR_KEYS)clip.effects.remove(name);
@@ -124,12 +126,16 @@ public final class StudioPrecisionEdits {
             Object raw=operation.opt("set");if(!(raw instanceof JSONObject))throw new IllegalArgumentException("set must be an object");
             JSONObject values=(JSONObject)raw;java.util.Iterator<String> keys=values.keys();
             while(keys.hasNext()){
-                String key=keys.next();if(!NUMBERS.contains(key)&&!TEXT.contains(key)&&!"crop".equals(key)&&!"chromaKey".equals(key))throw new IllegalArgumentException("Unsupported clip setting: "+key);
+                String key=keys.next();if(!NUMBERS.contains(key)&&!TEXT.contains(key)&&!"crop".equals(key)&&!"chromaKey".equals(key)&&!"audioMono".equals(key))throw new IllegalArgumentException("Unsupported clip setting: "+key);
                 switch(key){
                     case "inMs":clip.inMs=StudioClipKeyframes.integer(values,key,0,86_400_000);break;
                     case "outMs":clip.outMs=StudioClipKeyframes.integer(values,key,1,86_400_000);break;
                     case "speed":clip.speed=(float)StudioClipKeyframes.number(values,key,1,.25,4);break;
                     case "volume":clip.volume=(float)StudioClipKeyframes.number(values,key,1,0,2);break;
+                    case "audioPan":clip.effects.put(key,StudioClipKeyframes.number(values,key,0,-1,1));break;
+                    case "audioMono":
+                        if(!(values.opt(key) instanceof Boolean))throw new IllegalArgumentException("audioMono must be boolean");
+                        clip.effects.put(key,values.getBoolean(key));break;
                     case "audioFadeInMs":case "audioFadeOutMs":clip.effects.put(key,StudioClipKeyframes.integer(values,key,0,86_400_000));break;
                     case "brightness":case "contrast":clip.effects.put(key,StudioClipKeyframes.number(values,key,0,-1,1));break;
                     case "saturationAdjust":case "lightnessAdjust":clip.effects.put(key,StudioClipKeyframes.number(values,key,0,-100,100));break;
@@ -170,6 +176,10 @@ public final class StudioPrecisionEdits {
             StudioClipKeyframes.parse(operation.getJSONArray("keyframes"),clip.outputDurationMs());
             clip.effects.remove("studioKeyframeDurationMs");clip.effects.remove("studioKeyframeOffsetMs");
             clip.effects.put("keyframes",new JSONArray(operation.getJSONArray("keyframes").toString()));
+        }
+        if(operation.has("keyframeEdits")){
+            if(!(operation.opt("keyframeEdits") instanceof JSONArray))throw new IllegalArgumentException("keyframeEdits must be an array");
+            clip.effects=StudioKeyframeEdits.apply(clip.effects,clip.outputDurationMs(),operation.getJSONArray("keyframeEdits"));
         }
         if(clip.effects.has("crop"))new StudioCropEffect(clip.effects.optJSONObject("crop"));
         StudioClipKeyframes.fromEffects(clip.effects,clip.outputDurationMs());

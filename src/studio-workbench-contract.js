@@ -49,7 +49,12 @@ function objectUnion(complete=false){
 const sketchObject=objectUnion(),completeSketchObject=objectUnion(true);
 const layer=z.object({id,name:text(160).optional(),visible:z.boolean().optional(),locked:z.boolean().optional(),blendMode:blendMode.optional(),opacity:finite.min(0).max(1).optional(),transform:fullTransform.optional(),keys:sketchKeys.optional(),objects:z.array(completeSketchObject).max(4096).optional()}).strict();
 const target={layerId:id.optional(),objectId:id.optional()};
+const symmetry=z.object({mode:z.enum(['vertical','horizontal','both','radial']),segments:integer(2,8).optional(),centerX:coordinate.optional(),centerY:coordinate.optional()}).strict()
+ .refine(v=>(v.mode==='radial')===(v.segments!==undefined),'Only radial symmetry requires segments');
+const symmetryObject=z.object({id:id.max(90),kind:z.enum(['stroke','eraser']),points:points.max(8192),frame:frame.optional(),exposure:integer(1,1200).optional(),color:color.optional(),width:finite.min(.0005).max(.2).optional(),fill:z.boolean().optional(),brush:brush.optional()}).strict()
+ .refine(v=>(v.frame??0)+(v.exposure??1)<=1200,'Exposure exceeds the bounded frame domain');
 const operation=z.discriminatedUnion('type',[
+ z.object({type:z.literal('symmetry_stroke'),layerId:id,object:symmetryObject,symmetry}).strict(),
  z.object({type:z.literal('add_paint_cel'),layerId:id,objectId:id,frame:frame.optional(),exposure:integer(1,1200).optional()}).strict(),
  z.object({type:z.literal('paint_stroke'),objectId:id,strokeId:id,frameIndex:frame.optional(),points:points.max(2048),brush:paintBrush,alphaLock:z.boolean().optional(),clip:bounds.optional(),cloneSource:cloneSource.optional()}).strict(),
  z.object({type:z.literal('add_layer'),layer}).strict(),
@@ -88,21 +93,26 @@ const clipTransformShape={x:finite.min(-2).max(2),y:finite.min(-2).max(2),scale:
 const optionalClipTransform=Object.fromEntries(Object.entries(clipTransformShape).map(([key,value])=>[key,value.optional()]));
 const clipKeys=z.array(z.object({timeMs:time,...optionalClipTransform,easing:z.enum(['linear','ease_in','ease_out','ease_in_out','hold']).optional()}).strict()).max(64)
  .refine(keys=>keys.every((key,i)=>i===0||key.timeMs>keys[i-1].timeMs),'Clip keyframe timeMs must strictly increase');
+const incrementalKeys=z.array(z.discriminatedUnion('action',[
+ z.object({action:z.literal('upsert'),keyframe:z.object({timeMs:time,...optionalClipTransform,easing:z.enum(['linear','ease_in','ease_out','ease_in_out','hold']).optional()}).strict()}).strict(),
+ z.object({action:z.literal('delete'),timeMs:time}).strict()
+])).min(1).max(64);
 const cropBounds=bounds.refine(v=>v.width>=.01&&v.height>=.01,"Crop must cover at least 1% of each source axis");
-const clipSettings=z.object({...optionalClipTransform,crop:cropBounds.optional(),inMs:time.optional(),outMs:integer(1,86400000).optional(),speed:finite.min(.25).max(4).optional(),volume:finite.min(0).max(2).optional(),audioFadeInMs:time.optional(),audioFadeOutMs:time.optional(),brightness:finite.min(-1).max(1).optional(),contrast:finite.min(-1).max(1).optional(),saturationAdjust:finite.min(-100).max(100).optional(),lightnessAdjust:finite.min(-100).max(100).optional(),blur:finite.min(0).max(18).optional(),
+const clipSettings=z.object({...optionalClipTransform,crop:cropBounds.optional(),inMs:time.optional(),outMs:integer(1,86400000).optional(),speed:finite.min(.25).max(4).optional(),volume:finite.min(0).max(2).optional(),audioFadeInMs:time.optional(),audioFadeOutMs:time.optional(),audioPan:finite.min(-1).max(1).optional(),audioMono:z.boolean().optional(),brightness:finite.min(-1).max(1).optional(),contrast:finite.min(-1).max(1).optional(),saturationAdjust:finite.min(-100).max(100).optional(),lightnessAdjust:finite.min(-100).max(100).optional(),blur:finite.min(0).max(18).optional(),
  motionPreset:z.enum(['none','push_in','pull_out','pan_left','pan_right','pan_up','pan_down','drift','float','orbit','micro_shake','handheld','impact_shake','snap_zoom','zoom_punch','tilt','roll','hero_reveal','ken_burns']).optional(),
  colorPreset:z.enum(['none','cinematic','teal_orange','warm_film','cool_night','noir','high_contrast','soft_portrait','matte','golden_hour','cyberpunk']).optional(),effectPreset:z.enum(['none','gaussian_blur','dream']).optional(),title:text(160,false).optional(),
  chromaKey:z.boolean().optional(),chromaColor:z.string().regex(/^#[a-fA-F0-9]{6}$/).optional(),chromaTolerance:finite.min(0).max(1).optional(),chromaFeather:finite.min(0).max(1).optional(),
  maskShape:z.enum(['none','rectangle','ellipse']).optional(),maskLeft:finite.min(0).max(1).optional(),maskTop:finite.min(0).max(1).optional(),maskRight:finite.min(0).max(1).optional(),maskBottom:finite.min(0).max(1).optional(),maskFeather:finite.min(0).max(.5).optional(),
  glowStrength:finite.min(0).max(2).optional(),glowRadiusPx:finite.min(0).max(24).optional(),glowThreshold:finite.min(0).max(1).optional()
 }).strict().refine(v=>(v.maskLeft??0)<(v.maskRight??1)&&(v.maskTop??0)<(v.maskBottom??1),'Mask rectangle must have positive extent');
-const clipOperation=z.object({clipId:text(128),set:clipSettings.optional(),keyframes:clipKeys.optional(),clearKeyframes:z.boolean().optional(),resetColor:z.boolean().optional(),resetTransform:z.boolean().optional()}).strict();
+const clipOperation=z.object({clipId:text(128),set:clipSettings.optional(),keyframes:clipKeys.optional(),keyframeEdits:incrementalKeys.optional(),clearKeyframes:z.boolean().optional(),resetColor:z.boolean().optional(),resetTransform:z.boolean().optional()}).strict()
+ .refine(v=>v.keyframeEdits===undefined||v.keyframes===undefined&&v.clearKeyframes===undefined,'Incremental key edits cannot replace or clear the same track');
 
 const studioLayerBase={id:text(128).optional(),assetId:text(96,false).optional(),text:text(160,false).optional(),startMs:time.optional(),durationMs:integer(100,86400000).optional(),sourceInMs:time.optional(),gain:finite.min(0).max(1).optional(),color:integer(-2147483648,4294967295).optional(),position:integer(0,2).optional()};
 const imageGeometry={x:finite.min(0).max(1).optional(),y:finite.min(0).max(1).optional(),width:finite.min(.01).max(2).optional(),height:finite.min(.01).max(2).optional(),rotation:finite.min(-360).max(360).optional(),opacity:finite.min(0).max(1).optional()};
 const studioLayer=z.discriminatedUnion('type',[
  z.object({...studioLayerBase,type:z.literal('audio'),assetId:id}).strict(),
- z.object({...studioLayerBase,type:z.literal('title'),text:text(160)}).strict(),
+ z.object({...studioLayerBase,type:z.literal('title'),text:text(160),fontSize:integer(12,96).optional(),fontFamily:z.enum(['sans-serif','sans-serif-condensed','serif','monospace','cursive']).optional(),fontStyle:z.enum(['normal','bold','italic','bold_italic']).optional(),textAlign:z.enum(['left','center','right']).optional(),backgroundColor:integer(-2147483648,4294967295).optional()}).strict(),
  z.object({...studioLayerBase,...imageGeometry,type:z.literal('image'),assetId:id}).strict()
 ]);
 const studioLayers=z.array(studioLayer).max(32).refine(v=>v.filter(l=>l.type==='image').length<=8,'At most eight image layers');
@@ -236,6 +246,10 @@ const legacy3d=new Set(['STANDOFF','CHARGE','CLASH','BLADE_LOCK','FOLLOW_THROUGH
 const pixelFields=new Set(['keyframes','opacity','chromaKey','chromaColor','chromaTolerance','chromaFeather','maskShape','maskLeft','maskTop','maskRight','maskBottom','maskFeather','glowStrength','glowRadiusPx','glowThreshold']);
 export function requireStudioVersion(device,action,parameters={}){
  const alias=studioAliases.has(action);action=nativeStudioCanonicalAction(action);
+ const needs430=action==='cinematic_3d_edit_program'||action==='precision_edit'&&(parameters.operations||[]).some(op=>op.keyframeEdits!==undefined||op.set?.audioPan!==undefined||op.set?.audioMono!==undefined)
+  ||action==='sketch_edit'&&(parameters.operations||[]).some(op=>op.type==='symmetry_stroke')
+  ||action==='set_studio_layers'&&(parameters.studioLayers||parameters.layers||[]).some(layer=>layer?.type==='title'&&['fontSize','fontFamily','fontStyle','textAlign','backgroundColor'].some(key=>layer[key]!==undefined));
+ if(needs430&&!atLeast(device?.appVersion,'4.3.0'))throw new Error('NATIVE_APP_UPGRADE_REQUIRED: camera paths, incremental keyframes, symmetry, stereo tools and styled captions require Video studio 4.3.0 or newer');
  if((action==='import_mailbox_media'||action==='precision_edit'&&(parameters.operations||[]).some(op=>op.set?.audioFadeInMs!==undefined||op.set?.audioFadeOutMs!==undefined))&&!atLeast(device?.appVersion,'4.2.0'))throw new Error('NATIVE_APP_UPGRADE_REQUIRED: encrypted media imports and clip audio fades require Video studio 4.2.0 or newer');
  if(action==='sketch_live_begin'&&parameters.drawingMethod!==undefined&&!atLeast(device?.appVersion,'4.1.1'))throw new Error('NATIVE_APP_UPGRADE_REQUIRED: declared live drawing methods require Video studio 4.1.1 or newer');
  const enlarged=value=>(value?.width??720)>1280||(value?.height??1280)>1280||(value?.width??720)*(value?.height??1280)>720*1280;
