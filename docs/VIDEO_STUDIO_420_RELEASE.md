@@ -27,3 +27,13 @@ The additional app-key media helper stages encrypted immutable chunks and an enc
 Regression coverage includes editor transactions and gestures, PCM samples and fade clocks, Activity/lifecycle state, rig coordinates, Sketch timing, encrypted cross-language fixtures and interrupted imports. Local Worker/SQLite checks use synthetic uploads and device replies, including a process restart; they do not establish production deployment or phone execution.
 
 Prior installed-phone app-key commands and native imports have authenticated receipts. Those earlier results do not verify installation of 4.2.0 or execution of its new encrypted media action. APK/source checks, backend deployment, installed version and authenticated terminal receipts must be assessed separately. This release does not claim measured phone GPU rendering, audible playback, notification delivery, drawing latency, exact artistic matching or cinematic acceptance.
+
+## Published artifact and actual results
+
+[Download Video studio 4.2.0](https://github.com/RezoxNemesis/VideoStudio-MCP/releases/download/videostudio-v4.2.0-preview/Video-studio-4.2.0.apk) and install over the existing app. Do not uninstall or clear its data.
+
+The [signed build](https://github.com/RezoxNemesis/VideoStudio-MCP/actions/runs/38534992541) passed all **889 Android tests** across 176 suites, with no failures, errors or skips. The Node suite passed **224 tests and 306 smoke checks**. Source revision: `0de61fb4acd7e1fe0c76ac5eb617620f3325005c`. [Publication](https://github.com/RezoxNemesis/VideoStudio-MCP/actions/runs/38535514318) reused that signed APK. An independent download of the public asset matched its 129,779,101 bytes, SHA-256 and original CI proof.
+
+APK SHA-256: `953937edc599a541b8d68d633cebae5b36a0442bbc947f3534e5b379001a24d7`.
+
+The [primary relay deployment attempt](https://github.com/RezoxNemesis/VideoStudio-MCP/actions/runs/38534369538) stopped because the existing Cloudflare account/token bindings were unavailable. No backend deployment occurred, and the production release endpoint returned HTTP 404. The durable relay improvements are verified locally and remain undeployed. A fresh encrypted backup health command returned an authenticated completed receipt from the installed **4.1.0** app, with Gallery disabled; it does not verify 4.2.0 installation or media import execution.
