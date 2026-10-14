@@ -13,6 +13,8 @@ import android.database.Cursor;
 import android.view.Choreographer;
 import android.view.Gravity;
 import android.view.SurfaceView;
+import android.view.MotionEvent;
+import android.view.ScaleGestureDetector;
 import android.view.View;
 import android.widget.Button;
 import android.widget.LinearLayout;
@@ -40,6 +42,7 @@ import java.util.UUID;
 import java.security.MessageDigest;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import org.json.JSONObject;
 import org.json.JSONArray;
 
@@ -60,13 +63,22 @@ public final class FilamentGlbActivity extends Activity
     private Engine engine;
     private UiHelper uiHelper;
     private SurfaceView surface;
-    private TextView status,modelHint;
+    private TextView status,modelHint,clipTime;
+    private Button playbackButton,orbitButton,rateButton;
+    private SeekBar modelScrub;
+    private final Preview3DPlayback clipClock=new Preview3DPlayback();
     private final Handler main=new Handler(Looper.getMainLooper());
     private boolean loopActive=false,orbit=false,paused=false;
     private long lastRenderedAt=0;
-    private long animationStartedAt=0;
     private int animationIndex=0;
     private double cameraAngle=0;
+    private double cameraPitch=0,cameraDistance=4;
+    private String loadedModelId="",modelName="";
+    private boolean renderUnavailable,restoringModel;
+    private double restoredClipPosition;
+    private int modelLoadGeneration;
+    private Future<?> modelTask;
+    private volatile InputStream modelInput;
     private boolean cinematic;
     private volatile boolean destroyed;
     private boolean cinematicLoading,cinematicUnavailable,cinematicResourcesReady;
@@ -87,10 +99,19 @@ public final class FilamentGlbActivity extends Activity
         projectStore=new ProjectStore(this);
         cinematicProgramId=getIntent().getStringExtra("cinematicProgramId");
         cinematic=cinematicProgramId!=null&&!cinematicProgramId.isEmpty();
+        if(cinematic)cinematicFrame=Math.max(0,getIntent().getIntExtra("previewStartFrame",0));
         cinematicProgramSha=getIntent().getStringExtra("expectedProgramSha256");
         String projectId=getIntent().getStringExtra("projectId");
         project=projectId==null?projectStore.active():projectStore.get(projectId);
         if(project==null){finish();return;}
+        if(state!=null){
+            paused=state.getBoolean("paused",false);cinematicFrame=Math.max(0,state.getInt("cinematicFrame",0));
+            loadedModelId=state.getString("modelId","");animationIndex=Math.max(0,state.getInt("animationIndex",0));
+            restoredClipPosition=state.getDouble("clipPosition",0);restoringModel=!loadedModelId.isEmpty();
+            try{clipClock.rate(state.getDouble("playbackRate",1));}catch(IllegalArgumentException ignored){}
+            cameraAngle=finiteOr(state.getDouble("cameraAngle",0),0);cameraPitch=Math.max(-80,Math.min(80,finiteOr(state.getDouble("cameraPitch",0),0)));
+            cameraDistance=Math.max(2,Math.min(12,finiteOr(state.getDouble("cameraDistance",4),4)));
+        }
         try{
             Native3DRuntime.initialize();
             engine=Engine.create();
@@ -101,7 +122,9 @@ public final class FilamentGlbActivity extends Activity
     }
 
     private void show3DError(Throwable error){
+        if(destroyed||renderUnavailable)return;renderUnavailable=true;modelLoadGeneration++;cinematicLoadGeneration++;
         loopActive=false;Choreographer.getInstance().removeFrameCallback(this);
+        if(modelTask!=null)modelTask.cancel(true);closeModelInput();destroyViewer();
         ActivityLog.add(this,"user","3D preview unavailable",error.getClass().getSimpleName()+": "+String.valueOf(error.getMessage()),"failed",null,null,project==null?"":project.id);
         LinearLayout screen=new LinearLayout(this);screen.setOrientation(LinearLayout.VERTICAL);screen.setPadding(24,24,24,24);screen.setBackgroundColor(0xff090d17);TextView explanation=new TextView(this);explanation.setTextColor(Color.WHITE);explanation.setTextSize(17);explanation.setText("3D preview could not start on this device. Your project is saved.\n\n"+error.getClass().getSimpleName()+": "+String.valueOf(error.getMessage()));screen.addView(explanation);screen.addView(action("Return to studio",v->finish()));setContentView(screen);
     }
@@ -139,18 +162,30 @@ public final class FilamentGlbActivity extends Activity
         root.addView(first);
 
         FrameLayout modelFrame=new FrameLayout(this);root.addView(modelFrame,new LinearLayout.LayoutParams(-1,0,1));
-        surface=new SurfaceView(this);modelFrame.addView(surface,new FrameLayout.LayoutParams(-1,-1));
+        surface=new CinematicSurfaceView(this);modelFrame.addView(surface,new FrameLayout.LayoutParams(-1,-1));
         modelHint=new TextView(this);modelHint.setText("No 3D model loaded in this project.\nUse Import GLB or Existing model to open your geometry.");modelHint.setTextColor(0xffb9ccdf);modelHint.setTextSize(15);modelHint.setGravity(Gravity.CENTER);modelHint.setPadding(dp(24),dp(24),dp(24),dp(24));modelFrame.addView(modelHint,new FrameLayout.LayoutParams(-1,-1));
         viewer=new ModelViewer(surface,engine,uiHelper,null);
+        configureCameraGestures();
 
         LinearLayout second=new LinearLayout(this);
-        second.addView(action("Play / Pause",v->togglePlayback()),
+        playbackButton=action("Pause",v->togglePlayback());second.addView(playbackButton,
                 new LinearLayout.LayoutParams(0,dp(50),1));
-        second.addView(action("Next motion",v->nextAnimation()),
+        second.addView(action("Choose motion",v->chooseAnimation()),
                 new LinearLayout.LayoutParams(0,dp(50),1));
-        second.addView(action("Orbit camera",v->{orbit=!orbit;}),
+        orbitButton=action("Orbit: off",v->{orbit=!orbit;orbitButton.setText(orbit?"Orbit: on":"Orbit: off");});second.addView(orbitButton,
                 new LinearLayout.LayoutParams(0,dp(50),1));
         root.addView(second);
+        LinearLayout cameraTools=new LinearLayout(this);
+        cameraTools.addView(action("Camera views",v->chooseCamera()),new LinearLayout.LayoutParams(0,dp(48),1));
+        cameraTools.addView(action("Fit model",v->{cameraAngle=cameraPitch=0;cameraDistance=4;orbit=false;orbitButton.setText("Orbit: off");updateModelCamera();}),new LinearLayout.LayoutParams(0,dp(48),1));
+        rateButton=action("Speed 1×",v->chooseRate());cameraTools.addView(rateButton,new LinearLayout.LayoutParams(0,dp(48),1));root.addView(cameraTools);
+        clipTime=new TextView(this);clipTime.setTextColor(0xffb9ccdf);clipTime.setPadding(dp(14),0,dp(14),0);clipTime.setText("Drag to orbit • pinch to zoom • select a clip to scrub");root.addView(clipTime);
+        modelScrub=new SeekBar(this);modelScrub.setMax(1000);modelScrub.setEnabled(false);modelScrub.setContentDescription("3D animation clip time");
+        modelScrub.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener(){
+            public void onProgressChanged(SeekBar bar,int progress,boolean fromUser){if(fromUser){paused=true;clipClock.seek(clipDuration()*progress/1000d,clipDuration());applyModelPose();updatePlaybackUi();}}
+            public void onStartTrackingTouch(SeekBar bar){paused=true;clipClock.suspend();updatePlaybackUi();}
+            public void onStopTrackingTouch(SeekBar bar){}
+        });root.addView(modelScrub);
         status=new TextView(this);
         status.setText("Choose a VideoStudio GLB or import one. A rigged model can contain multiple reusable animation clips.");
         status.setTextColor(0xff5adff4);
@@ -192,7 +227,7 @@ public final class FilamentGlbActivity extends Activity
             final JSONObject acceptedProgram=program,acceptedBundle=bundle;final Throwable failure=problem;
             main.post(()->{if(destroyed||generation!=cinematicLoadGeneration)return;cinematicLoading=false;
                 if(failure!=null){cinematicFailure(failure);return;}
-                try{cinematicProgram=acceptedProgram;cinematicBundle=acceptedBundle;cinematicTimeline=Cinematic3DTimeline.validate(acceptedProgram.getJSONObject("timeline"));JSONObject plan=Cinematic3DTimeline.compile(cinematicTimeline);cinematicShots=plan.getJSONArray("shots");cinematicFps=plan.getInt("fps");cinematicFrameCount=plan.getInt("totalFrames");cinematicScrub.setMax(cinematicFrameCount-1);cinematicFrame=0;cinematicPlayStartedAt=0;requestCinematicFrame();}
+                try{cinematicProgram=acceptedProgram;cinematicBundle=acceptedBundle;cinematicTimeline=Cinematic3DTimeline.validate(acceptedProgram.getJSONObject("timeline"));JSONObject plan=Cinematic3DTimeline.compile(cinematicTimeline);cinematicShots=plan.getJSONArray("shots");cinematicFps=plan.getInt("fps");cinematicFrameCount=plan.getInt("totalFrames");cinematicScrub.setMax(cinematicFrameCount-1);cinematicFrame=Math.min(cinematicFrame,cinematicFrameCount-1);cinematicPlayStartedAt=0;requestCinematicFrame();}
                 catch(Exception error){cinematicFailure(error);}
             });
         });
@@ -272,6 +307,7 @@ public final class FilamentGlbActivity extends Activity
     }
 
     private void chooseFirstExisting(){
+        if(!loadedModelId.isEmpty()){ProjectStore.Asset saved=project.asset(loadedModelId);if(saved!=null&&"model/gltf-binary".equals(saved.mime)){loadRegistered(saved);return;}}
         for(ProjectStore.Asset a:project.assets)
             if("model/gltf-binary".equals(a.mime)){
                 loadRegistered(a);return;
@@ -305,14 +341,15 @@ public final class FilamentGlbActivity extends Activity
         Uri chosen=data.getData();
         String name=safeDisplayName(chosen);
         status.setText("Importing explicitly selected 3D file...");
-        new Thread(()->{
+        cancelModelLoad();final int generation=modelLoadGeneration;
+        modelTask=cinematicWorker.submit(()->{
             try{
                 ProjectStore.Asset asset=storeSelectedFile(chosen,name);
-                main.post(()->{if(destroyed)return;project=projectStore.get(project.id);loadRegistered(asset);});
-            }catch(Exception error){
-                main.post(()->{if(!destroyed)status.setText("3D import failed: "+error.getMessage());});
+                main.post(()->{if(destroyed||renderUnavailable||generation!=modelLoadGeneration)return;project=projectStore.get(project.id);loadRegistered(asset);});
+            }catch(Exception|OutOfMemoryError error){
+                main.post(()->{if(!destroyed&&generation==modelLoadGeneration)status.setText("3D import failed: "+error.getMessage());});
             }
-        },"VideoStudio-glb-import").start();
+        });
     }
     private String safeDisplayName(Uri uri){
         String fallback="imported_model.glb";
@@ -332,20 +369,22 @@ public final class FilamentGlbActivity extends Activity
             throw new IllegalStateException("Could not prepare private 3D workspace");
         String assetId=UUID.randomUUID().toString();
         File file=new File(folder,assetId+".glb");
-        long bytes=0;
+        long bytes=0;boolean registered=false;
+        try{
         try(InputStream in=getContentResolver().openInputStream(uri);
             FileOutputStream out=new FileOutputStream(file)){
             if(in==null)throw new IllegalArgumentException("The selected GLB cannot be read");
+            modelInput=in;
             byte[] buffer=new byte[256*1024];int length;
             while((length=in.read(buffer))!=-1){
-                if(Thread.currentThread().isInterrupted())throw new InterruptedException();
+                if(Thread.currentThread().isInterrupted()||destroyed)throw new InterruptedException("3D import cancelled");
                 bytes+=length;
                 if(bytes>MAX_GLB_BYTES)
                     throw new IllegalArgumentException("For mobile safety, GLB previews are limited to 64 MB");
                 out.write(buffer,0,length);
             }
             out.getFD().sync();
-        }catch(Exception error){file.delete();throw error;}
+        }finally{modelInput=null;}
         if(bytes<20){file.delete();throw new IllegalArgumentException("GLB is empty");}
         verifyGlb(file);
         ProjectStore.Asset asset=new ProjectStore.Asset();
@@ -353,12 +392,14 @@ public final class FilamentGlbActivity extends Activity
         asset.uri=Uri.fromFile(file).toString();asset.sizeBytes=bytes;
         asset.seekable=true;asset.persistedReadAccess=true;asset.role="source_glb";
         synchronized(projectStore){
+            if(Thread.currentThread().isInterrupted()||destroyed)throw new InterruptedException("3D import cancelled");
             ProjectStore.Project fresh=projectStore.get(project.id);
             if(fresh==null)throw new IllegalArgumentException("VideoStudio project no longer exists");
             fresh.assets.add(asset);
             projectStore.save(fresh);
         }
-        return asset;
+        registered=true;return asset;
+        }finally{if(!registered)file.delete();}
     }
     static void verifyGlb(File file) throws Exception{
         try(FileInputStream in=new FileInputStream(file)){
@@ -374,40 +415,47 @@ public final class FilamentGlbActivity extends Activity
         }
     }
     private void loadRegistered(ProjectStore.Asset asset){
-        if(destroyed||viewer==null||asset==null)return;
+        if(destroyed||renderUnavailable||viewer==null||asset==null)return;
+        cancelModelLoad();final int generation=modelLoadGeneration;
         status.setText("Loading 3D scene and skinned materials...");
-        try{
+        modelTask=cinematicWorker.submit(()->{try{
             File file=new File(Uri.parse(asset.uri).getPath());
             if(!file.isFile()||file.length()>MAX_GLB_BYTES)
                 throw new IllegalArgumentException("Model is missing or too large");
             verifyGlb(file);
             ByteBuffer buffer=ByteBuffer.allocateDirect((int)file.length());
             try(FileInputStream in=new FileInputStream(file)){
+                modelInput=in;
                 byte[] part=new byte[128*1024];int n;
-                while((n=in.read(part))!=-1)buffer.put(part,0,n);
-            }
+                while((n=in.read(part))!=-1){if(Thread.currentThread().isInterrupted()||destroyed)throw new InterruptedException("3D load cancelled");buffer.put(part,0,n);}
+            }finally{modelInput=null;}
             buffer.flip();
+            main.post(()->{if(destroyed||renderUnavailable||generation!=modelLoadGeneration||viewer==null)return;try{
             viewer.loadModelGlb(buffer);
             if(viewer.getAsset()==null)
                 throw new IllegalArgumentException("Filament could not create the model asset");
             if(normalizeSceneForPreview(cinematic))viewer.resetToDefaultState();
             if(modelHint!=null)modelHint.setVisibility(View.GONE);
-            paused=false;animationIndex=0;cameraAngle=0;
-            animationStartedAt=0;
             Animator animations=viewer.getAnimator();
             int count=animations==null?0:animations.getAnimationCount();
+            boolean restore=restoringModel&&asset.id.equals(loadedModelId);restoringModel=false;
+            if(!restore){paused=false;animationIndex=0;cameraAngle=cameraPitch=0;cameraDistance=4;}
+            loadedModelId=asset.id;modelName=asset.name;animationIndex=Math.min(animationIndex,Math.max(0,count-1));
+            clipClock.seek(restore&&Double.isFinite(restoredClipPosition)&&restoredClipPosition>=0?restoredClipPosition:0,clipDuration());
+            modelScrub.setEnabled(count>0);applyModelPose();updateModelCamera();updatePlaybackUi();
             status.setText(asset.name+" • real glTF skeletal/PBR model • "+count+
                     " embedded animation(s). "+(count==0
                     ?"Rig has no authored animation: import a model with animation clips."
-                    :"Playing native skinned 3D motion."));
+                    :"Choose motion, scrub a pose, adjust speed or frame the camera."));
+            }catch(Exception|LinkageError|OutOfMemoryError error){status.setText("Cannot load 3D model: "+error.getClass().getSimpleName()+": "+error.getMessage());}});
         }catch(Exception|LinkageError|OutOfMemoryError error){
-            status.setText("Cannot load 3D model: "+error.getClass().getSimpleName()+": "+error.getMessage());
-        }
+            main.post(()->{if(!destroyed&&generation==modelLoadGeneration)status.setText("Cannot load 3D model: "+error.getClass().getSimpleName()+": "+error.getMessage());});
+        }});
     }
     private void togglePlayback(){
         if(cinematic){if(cinematicLoading||cinematicUnavailable||cinematicTimeline==null)return;paused=!paused;cinematicPlayStartFrame=cinematicFrame;cinematicPlayStartedAt=0;return;}
         paused=!paused;
-        if(!paused)animationStartedAt=0;
+        clipClock.suspend();updatePlaybackUi();
     }
     private void nextAnimation(){
         if(viewer==null||viewer.getAnimator()==null)return;
@@ -415,16 +463,67 @@ public final class FilamentGlbActivity extends Activity
         if(count<1)return;
         animationIndex=(animationIndex+1)%count;
         paused=false;
-        animationStartedAt=0;
+        clipClock.seek(0,clipDuration());applyModelPose();updatePlaybackUi();
         status.setText("Playing actual glTF animation "+(animationIndex+1)+"/"+count+
                 ": "+viewer.getAnimator().getAnimationName(animationIndex));
     }
+    private void chooseAnimation(){
+        Animator animator=viewer==null?null:viewer.getAnimator();int count=animator==null?0:animator.getAnimationCount();
+        if(count==0){Toast.makeText(this,"This model has no embedded motion clips",Toast.LENGTH_SHORT).show();return;}
+        String[] names=new String[count];for(int index=0;index<count;index++)names[index]=(index+1)+". "+clipName(index)+String.format(java.util.Locale.US," • %.2f s",animator.getAnimationDuration(index));
+        new AlertDialog.Builder(this).setTitle("Choose embedded motion").setSingleChoiceItems(names,animationIndex,(dialog,index)->{
+            animationIndex=index;clipClock.seek(0,clipDuration());applyModelPose();updatePlaybackUi();dialog.dismiss();
+        }).setNegativeButton("Cancel",null).show();
+    }
+    private String clipName(int index){String name=viewer.getAnimator().getAnimationName(index);return name==null||name.trim().isEmpty()?"Motion "+(index+1):name;}
+    private double clipDuration(){
+        Animator animator=viewer==null?null:viewer.getAnimator();if(animator==null||animationIndex<0||animationIndex>=animator.getAnimationCount())return 0;
+        double duration=animator.getAnimationDuration(animationIndex);return Double.isFinite(duration)&&duration>0?duration:0;
+    }
+    private void applyModelPose(){
+        Animator animator=viewer==null?null:viewer.getAnimator();if(animator==null||animationIndex>=animator.getAnimationCount())return;
+        animator.applyAnimation(animationIndex,(float)clipClock.position());animator.updateBoneMatrices();
+    }
+    private void updatePlaybackUi(){
+        if(playbackButton!=null)playbackButton.setText(paused?"Play":"Pause");
+        if(rateButton!=null)rateButton.setText(String.format(java.util.Locale.US,"Speed %s×",clipClock.rate()));
+        if(modelScrub==null)return;double duration=clipDuration();modelScrub.setProgress(duration>0?(int)Math.round(1000*clipClock.position()/duration):0);
+        if(duration>0)clipTime.setText(String.format(java.util.Locale.US,"%s • %.2f / %.2f s • %s",clipName(animationIndex),clipClock.position(),duration,paused?"paused":"playing"));
+    }
+    private void chooseRate(){
+        double[] rates={.25,.5,1,1.5,2};String[] names={"0.25× · inspect","0.5× · slow","1× · authored","1.5×","2×"};
+        new AlertDialog.Builder(this).setTitle("Preview playback speed").setItems(names,(dialog,index)->{clipClock.rate(rates[index]);updatePlaybackUi();}).setNegativeButton("Cancel",null).show();
+    }
+    private void chooseCamera(){
+        new AlertDialog.Builder(this).setTitle("Model camera view").setItems(new String[]{"Front","Right","Back","Left","Above","Three-quarter"},(dialog,index)->{
+            cameraAngle=new double[]{0,Math.PI/2,Math.PI,-Math.PI/2,0,Math.PI/4}[index];cameraPitch=index==4?75:index==5?20:0;cameraDistance=4;orbit=false;orbitButton.setText("Orbit: off");updateModelCamera();
+        }).setNegativeButton("Cancel",null).show();
+    }
+    private void updateModelCamera(){
+        if(viewer==null||cinematic)return;double pitch=Math.toRadians(cameraPitch),horizontal=cameraDistance*Math.cos(pitch);
+        viewer.getCamera().lookAt(horizontal*Math.sin(cameraAngle),cameraDistance*Math.sin(pitch),-4+horizontal*Math.cos(cameraAngle),0,0,-4,0,1,0);
+    }
+    private void configureCameraGestures(){
+        ScaleGestureDetector scale=new ScaleGestureDetector(this,new ScaleGestureDetector.SimpleOnScaleGestureListener(){@Override public boolean onScale(ScaleGestureDetector detector){float factor=detector.getScaleFactor();if(Float.isFinite(factor)&&factor>0){cameraDistance=Math.max(2,Math.min(12,cameraDistance/factor));updateModelCamera();}return true;}});
+        float[] last={0,0};boolean[] dragging={false};surface.setContentDescription("3D model. Drag to orbit and pinch to zoom. Camera views and Fit model provide accessible alternatives.");
+        surface.setOnTouchListener((view,event)->{
+            for(int index=0;index<event.getPointerCount();index++)if(!Float.isFinite(event.getX(index))||!Float.isFinite(event.getY(index))){dragging[0]=false;return true;}scale.onTouchEvent(event);
+            int action=event.getActionMasked();if(action==MotionEvent.ACTION_DOWN){last[0]=event.getX();last[1]=event.getY();dragging[0]=true;}
+            else if(event.getPointerCount()>1){dragging[0]=false;}
+            else if(action==MotionEvent.ACTION_MOVE&&dragging[0]&&!scale.isInProgress()){cameraAngle+=((double)event.getX()-last[0])*.008;cameraPitch=Math.max(-80,Math.min(80,cameraPitch+((double)event.getY()-last[1])*.25));last[0]=event.getX();last[1]=event.getY();updateModelCamera();}
+            else if(action==MotionEvent.ACTION_UP||action==MotionEvent.ACTION_CANCEL){dragging[0]=false;if(action==MotionEvent.ACTION_UP)view.performClick();}return true;
+        });
+    }
+    private static double finiteOr(double value,double fallback){return Double.isFinite(value)?value:fallback;}
+    private void closeModelInput(){InputStream input=modelInput;modelInput=null;if(input!=null)try{input.close();}catch(Exception ignored){}}
+    private void cancelModelLoad(){modelLoadGeneration++;if(modelTask!=null){modelTask.cancel(true);modelTask=null;}closeModelInput();}
     @Override protected void onResume(){
-        super.onResume();loopActive=viewer!=null;
-        Choreographer.getInstance().postFrameCallback(this);
+        super.onResume();loopActive=viewer!=null&&!renderUnavailable&&!destroyed;clipClock.suspend();lastRenderedAt=0;
+        Choreographer.getInstance().removeFrameCallback(this);if(loopActive)Choreographer.getInstance().postFrameCallback(this);
     }
     @Override protected void onPause(){
         loopActive=false;
+        clipClock.suspend();
         if(cinematic)cinematicPlayStartedAt=0;
         Choreographer.getInstance().removeFrameCallback(this);
         super.onPause();
@@ -433,7 +532,7 @@ public final class FilamentGlbActivity extends Activity
         try{renderFrame(frameTimeNanos);}catch(Exception|LinkageError|OutOfMemoryError error){show3DError(error);}
     }
     private void renderFrame(long frameTimeNanos){
-        if(!loopActive||viewer==null)return;
+        if(!loopActive||viewer==null||destroyed||renderUnavailable)return;
         if(cinematic){
             if(!cinematicLoading&&!cinematicUnavailable&&cinematicResourcesReady&&cinematicTimeline!=null&&!paused){if(cinematicPlayStartedAt==0){cinematicPlayStartedAt=frameTimeNanos;cinematicPlayStartFrame=cinematicFrame;}long elapsed=frameTimeNanos-cinematicPlayStartedAt;long advance=elapsed/1_000_000_000L*cinematicFps+(elapsed%1_000_000_000L)*cinematicFps/1_000_000_000L;cinematicFrame=(int)Math.min(cinematicFrameCount-1,(long)cinematicPlayStartFrame+advance);if(cinematicFrame==cinematicFrameCount-1)paused=true;}
             boolean frameChanged=!cinematicLoading&&cinematicFrame!=cinematicLastRenderedFrame;
@@ -448,31 +547,28 @@ public final class FilamentGlbActivity extends Activity
         if(viewer.getAsset()==null){Choreographer.getInstance().postFrameCallback(this);return;}
         // 30fps GPU cap protects battery/thermal headroom on phone.
         if(frameTimeNanos-lastRenderedAt>=33_000_000L){
+            long elapsed=lastRenderedAt==0?0:Math.max(0,frameTimeNanos-lastRenderedAt);
             lastRenderedAt=frameTimeNanos;
             if(orbit) {
-                cameraAngle+=.009;
-                double cx=3.5*Math.sin(cameraAngle);
-                double cz=-4+3.5*Math.cos(cameraAngle);
-                viewer.getCamera().lookAt(cx,1.2,cz,0,0,-4,0,1,0);
+                cameraAngle+=Math.min(.1,elapsed/1_000_000_000d)*.35;updateModelCamera();
             }
             Animator animator=viewer.getAnimator();
-            if(!paused&&animator!=null&&animator.getAnimationCount()>0){
-                if(animationStartedAt==0)animationStartedAt=frameTimeNanos;
-                float elapsed=(frameTimeNanos-animationStartedAt)/1_000_000_000f;
-                float duration=Math.max(.001f,animator.getAnimationDuration(animationIndex));
-                animator.applyAnimation(animationIndex,elapsed%duration);
-                animator.updateBoneMatrices();
+            if(animator!=null&&animator.getAnimationCount()>0){
+                clipClock.frame(frameTimeNanos,!paused,clipDuration());applyModelPose();updatePlaybackUi();
             }
             viewer.render(frameTimeNanos);
         }
         Choreographer.getInstance().postFrameCallback(this);
     }
     @Override protected void onDestroy(){
-        destroyed=true;cinematicLoadGeneration++;cinematicWorker.shutdownNow();main.removeCallbacksAndMessages(null);
+        destroyed=true;cancelModelLoad();cinematicLoadGeneration++;cinematicWorker.shutdownNow();main.removeCallbacksAndMessages(null);
         loopActive=false;
         Choreographer.getInstance().removeFrameCallback(this);
-        try{if(viewer!=null){if(cinematic)releaseCinematicScene();viewer.destroy();viewer=null;engine=null;uiHelper=null;}else{if(uiHelper!=null)uiHelper.detach();if(engine!=null)engine.destroy();}}
-        catch(Exception|LinkageError error){ActivityLog.add(this,"user","3D cleanup stopped",error.getClass().getSimpleName(),"failed",null,null,project==null?"":project.id);}
-        super.onDestroy();
+        destroyViewer();super.onDestroy();
     }
+    private void destroyViewer(){
+        try{if(viewer!=null){ModelViewer owned=viewer;try{if(cinematic)releaseCinematicScene();}catch(Exception|LinkageError error){ActivityLog.add(this,"user","3D scene cleanup stopped",error.getClass().getSimpleName(),"failed",null,null,project==null?"":project.id);}finally{viewer=null;engine=null;uiHelper=null;owned.destroy();}}else{if(uiHelper!=null)uiHelper.detach();if(engine!=null)engine.destroy();engine=null;uiHelper=null;}}
+        catch(Exception|LinkageError error){ActivityLog.add(this,"user","3D cleanup stopped",error.getClass().getSimpleName(),"failed",null,null,project==null?"":project.id);}
+    }
+    @Override protected void onSaveInstanceState(Bundle state){super.onSaveInstanceState(state);state.putBoolean("paused",paused);state.putInt("cinematicFrame",cinematicFrame);state.putString("modelId",loadedModelId);state.putInt("animationIndex",animationIndex);state.putDouble("clipPosition",restoringModel?restoredClipPosition:clipClock.position());state.putDouble("playbackRate",clipClock.rate());state.putDouble("cameraAngle",cameraAngle);state.putDouble("cameraPitch",cameraPitch);state.putDouble("cameraDistance",cameraDistance);}
 }

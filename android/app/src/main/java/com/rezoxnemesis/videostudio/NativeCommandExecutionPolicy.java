@@ -8,6 +8,8 @@ public final class NativeCommandExecutionPolicy {
         if(action==null)return false;
         action=NativeWorkbenchBridge.canonicalAction(action);
         switch(action){
+            case "import_mailbox_media": case "import_inline_base64": case "append_frame_chunk": case "finish_frame_transfer":
+            case "import_chat_file": case "import_attachment": case "import_url":
             case "precision_edit":
             case "apply_tool": case "set_studio_layers":
             case "sketch_create": case "sketch_list": case "sketch_get": case "sketch_inspect": case "sketch_edit":

@@ -2,6 +2,7 @@ import fs from "node:fs";
 
 const app = fs.readFileSync(new URL("../src/app.html", import.meta.url), "utf8");
 const worker = fs.readFileSync(new URL("../src/index.js", import.meta.url), "utf8");
+const privateBlobStore = fs.readFileSync(new URL("../src/private-blob-store.js", import.meta.url), "utf8");
 const studioRuntime = fs.readFileSync(new URL("../src/studio-runtime.js", import.meta.url), "utf8");
 const studioCinematic = fs.readFileSync(new URL("../src/studio-cinematic.js", import.meta.url), "utf8");
 const studioNeural = fs.readFileSync(new URL("../src/studio-neural.js", import.meta.url), "utf8");
@@ -333,11 +334,11 @@ const checks = [
   ["v3 ChatGPT attachment keeps temporary source URL out of Android command", worker.includes('"openai/fileParams":["file"]') && worker.includes("download_url") && worker.includes("appQueueAttachmentHandoff") && worker.includes("handoffId:handoff.id") && worker.includes('action:"import_chat_file"')],
   ["private inline small-media fallback crosses stale connector schemas", worker.includes('"app_import_inline_base64"') && worker.includes('"video/mp4"') && worker.includes('"import_inline_base64"') && controlService.includes('case "import_inline_base64"') && controlService.includes("MAX_INLINE_MEDIA_BYTES") && controlService.includes("owner-authenticated-inline-mcp")],
   ["v3 MCP import is a real ChatGPT file parameter", worker.includes('file:z.object({') && worker.includes('file_id:z.string()') && worker.includes('mime_type:z.string()') && worker.includes('file_name:z.string()')],
-  ["worker has ephemeral direct private upload relay", worker.includes("/api/app/private/upload") && worker.includes("appCreateCachedHandoff") && worker.includes("__videostudio_private_upload")],
+  ["worker private uploads publish durable bounded chunks with their native command", worker.includes("/api/app/private/upload") && worker.includes("receivePrivateBlob(this.ctx.storage") && worker.includes("storage:'durable-object'") && worker.includes("await writeCommandQueueInTransaction(transaction,key,rows)") && privateBlobStore.includes("chunkBytes:64*1024") && privateBlobStore.includes("await publish(transaction,ready)") && !worker.includes("caches.default.put")],
   ["private upload relay is owner-authenticated and only blocked by One File Lock", worker.includes("Native app authorization failed") && worker.includes("Full Autonomous mode is required while One File Lock is active")],
-  ["private handoff can stream cached uploads to app", worker.includes("Private upload expired or unavailable") && worker.includes("caches.default.match")],
+  ["private handoff streams verified durable bytes and retains existing cached handoff compatibility", worker.includes("privateBlobResponse(this.ctx.storage") && worker.includes("caches.default.match") && privateBlobStore.includes("part.sha256!==digest(bytes)") && privateBlobStore.includes("manifest.expiresAt<=Date.now()") && privateBlobStore.includes("manifest.deviceId!==deviceId")],
   ["installed connector exposes direct chat-file import", worker.includes('"import_chat_file"') && worker.includes("Securely stream a ChatGPT conversation attachment")],
-  ["worker streams handoff bytes without permanent storage", worker.includes("Attachment source unavailable") && worker.includes("new Response(upstream.body")],
+  ["private handoff bytes expire and are reclaimed without altering native identity", worker.includes("cleanupPrivateBlobs(this.ctx.storage,current)") && privateBlobStore.includes("ttlMs:20*60*1000") && privateBlobStore.includes("await storage.delete(Array.from") && worker.includes("readCommandQueue(this.ctx.storage,\"app-cl:\"+d.deviceId)")],
   ["native app supports authenticated handoff download", nativeProtocol.includes("openPrivateHandoff") && nativeMain.includes('case "import_chat_file"')],
   ["native app exposes v3 direct attachment capability", nativeMain.includes('"direct-chatgpt-attachment-ingest"') && nativeMain.includes('"chat-attachment-handoff-fallback"')],
   ["native v3 uses Media3 Transformer", androidBuild.includes("media3-transformer:1.11.1") && nativeRender.includes("Transformer.Builder")],

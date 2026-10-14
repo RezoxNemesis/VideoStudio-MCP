@@ -89,7 +89,7 @@ const optionalClipTransform=Object.fromEntries(Object.entries(clipTransformShape
 const clipKeys=z.array(z.object({timeMs:time,...optionalClipTransform,easing:z.enum(['linear','ease_in','ease_out','ease_in_out','hold']).optional()}).strict()).max(64)
  .refine(keys=>keys.every((key,i)=>i===0||key.timeMs>keys[i-1].timeMs),'Clip keyframe timeMs must strictly increase');
 const cropBounds=bounds.refine(v=>v.width>=.01&&v.height>=.01,"Crop must cover at least 1% of each source axis");
-const clipSettings=z.object({...optionalClipTransform,crop:cropBounds.optional(),inMs:time.optional(),outMs:integer(1,86400000).optional(),speed:finite.min(.25).max(4).optional(),volume:finite.min(0).max(2).optional(),brightness:finite.min(-1).max(1).optional(),contrast:finite.min(-1).max(1).optional(),saturationAdjust:finite.min(-100).max(100).optional(),lightnessAdjust:finite.min(-100).max(100).optional(),blur:finite.min(0).max(18).optional(),
+const clipSettings=z.object({...optionalClipTransform,crop:cropBounds.optional(),inMs:time.optional(),outMs:integer(1,86400000).optional(),speed:finite.min(.25).max(4).optional(),volume:finite.min(0).max(2).optional(),audioFadeInMs:time.optional(),audioFadeOutMs:time.optional(),brightness:finite.min(-1).max(1).optional(),contrast:finite.min(-1).max(1).optional(),saturationAdjust:finite.min(-100).max(100).optional(),lightnessAdjust:finite.min(-100).max(100).optional(),blur:finite.min(0).max(18).optional(),
  motionPreset:z.enum(['none','push_in','pull_out','pan_left','pan_right','pan_up','pan_down','drift','float','orbit','micro_shake','handheld','impact_shake','snap_zoom','zoom_punch','tilt','roll','hero_reveal','ken_burns']).optional(),
  colorPreset:z.enum(['none','cinematic','teal_orange','warm_film','cool_night','noir','high_contrast','soft_portrait','matte','golden_hour','cyberpunk']).optional(),effectPreset:z.enum(['none','gaussian_blur','dream']).optional(),title:text(160,false).optional(),
  chromaKey:z.boolean().optional(),chromaColor:z.string().regex(/^#[a-fA-F0-9]{6}$/).optional(),chromaTolerance:finite.min(0).max(1).optional(),chromaFeather:finite.min(0).max(1).optional(),
@@ -132,6 +132,7 @@ const endpoint=text(1024).refine(value=>{
 const sketchIdentity={sketchId:id},mutation={...sketchIdentity,operationId:id,expectedRevision:revision};
 const requestIdentity={requestId:id};
 export const studioToolSchemas={
+ import_mailbox_media:{projectId:id,attachmentId:z.string().uuid(),manifestSha256:sha},
  precision_edit:{projectId:id,expectedUpdatedAt:updatedAt,operations:z.array(clipOperation).min(1).max(64)},
  set_studio_layers:{projectId:id,expectedUpdatedAt:updatedAt,studioLayers},
  sketch_capabilities:{},
@@ -235,6 +236,7 @@ const legacy3d=new Set(['STANDOFF','CHARGE','CLASH','BLADE_LOCK','FOLLOW_THROUGH
 const pixelFields=new Set(['keyframes','opacity','chromaKey','chromaColor','chromaTolerance','chromaFeather','maskShape','maskLeft','maskTop','maskRight','maskBottom','maskFeather','glowStrength','glowRadiusPx','glowThreshold']);
 export function requireStudioVersion(device,action,parameters={}){
  const alias=studioAliases.has(action);action=nativeStudioCanonicalAction(action);
+ if((action==='import_mailbox_media'||action==='precision_edit'&&(parameters.operations||[]).some(op=>op.set?.audioFadeInMs!==undefined||op.set?.audioFadeOutMs!==undefined))&&!atLeast(device?.appVersion,'4.2.0'))throw new Error('NATIVE_APP_UPGRADE_REQUIRED: encrypted media imports and clip audio fades require Video studio 4.2.0 or newer');
  if(action==='sketch_live_begin'&&parameters.drawingMethod!==undefined&&!atLeast(device?.appVersion,'4.1.1'))throw new Error('NATIVE_APP_UPGRADE_REQUIRED: declared live drawing methods require Video studio 4.1.1 or newer');
  const enlarged=value=>(value?.width??720)>1280||(value?.height??1280)>1280||(value?.width??720)*(value?.height??1280)>720*1280;
  const enlargedPatch=value=>value.width>1280||value.height>1280||value.width!==undefined&&value.height!==undefined&&value.width*value.height>720*1280;

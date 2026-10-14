@@ -289,7 +289,7 @@ test('studio relay alias generic execution keeps queued alias native-only when t
 });
 test('studio relay alias version and canonical parameter failures happen before queue writes',async()=>{
  const old=await fixture('3.8.1'),before=old.writes();
- for(const alias of STUDIO_ALIAS_ACTIONS){const paint=['studio_sketch_paint_journal','studio_sketch_sample_color','studio_sketch_archive','studio_sketch_restore_archive'].includes(alias);assert.throws(()=>contract.requireStoryboardNativeVersion({appVersion:'3.8.1'},alias),paint?/4\.1\.0/:/3\.9\.[0156]/);}
+ for(const alias of STUDIO_ALIAS_ACTIONS){const paint=['studio_sketch_paint_journal','studio_sketch_sample_color','studio_sketch_archive','studio_sketch_restore_archive'].includes(alias);assert.throws(()=>contract.requireStoryboardNativeVersion({appVersion:'3.8.1'},alias),alias==='studio_import_mailbox_media'?/4\.2\.0/:paint?/4\.1\.0/:/3\.9\.[0156]/);}
  await assert.rejects(old.relay.appEnqueueV3(old.owner,'studio_sketch_get',{sketchId:'s'}),/3\.9\.0/);assert.equal(old.writes(),before);
  const current=await fixture('3.9.0'),currentBefore=current.writes();
  await assert.rejects(current.relay.appEnqueueV3(current.owner,'studio_sketch_get',{sketchId:'s',uri:'content://foreign'}));

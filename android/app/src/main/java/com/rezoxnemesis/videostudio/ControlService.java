@@ -1023,6 +1023,9 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 case "import_attachment":
                     complete(command, queueDirectAttachmentImport(p));
                     return;
+                case "import_mailbox_media":
+                    complete(command, queueMailboxMediaImport(p));
+                    return;
                 case "append_frame_chunk":
                     complete(command, appendFrameChunk(p));
                     return;
@@ -1844,7 +1847,8 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 else recoveryPlans.failByJob(state.id, "Interrupted after checkpoint; safe to resume", true);
                 throw interrupted;
             } catch (Exception error) {
-                recoveryPlans.failByJob(
+                if (JobManager.STATE_CANCELLED.equals(state.state)) recoveryPlans.cancelByJob(state.id);
+                else recoveryPlans.failByJob(
                         state.id,
                         error.getMessage() == null ? "Recoverable background job failure" : error.getMessage(),
                         true
@@ -1899,12 +1903,14 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                         "Interrupted after checkpoint; safe to resume", true);
                 throw interrupted;
             } catch (Exception error) {
-                recoveryPlans.failByJob(state.id,
+                if (JobManager.STATE_CANCELLED.equals(state.state)) recoveryPlans.cancelByJob(state.id);
+                else recoveryPlans.failByJob(state.id,
                         error.getMessage() == null ? "Recoverable background job failure" : error.getMessage(),
                         true);
                 throw error;
             }
         });
+        recoveryPlans.attachJob(durablePlanId,job.id);
         return job;
     }
 
@@ -1958,6 +1964,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
 
                 JSONObject queued;
                 switch (action) {
+                    case "import_mailbox_media":queued=queueMailboxMediaImport(parameters);break;
                     case "sketch_render": case "sketch_book_render":
                         parameters.remove("projectId");queued=queueSketchRender(parameters);break;
                     case "sketch_import_frame_manifest":
@@ -4216,6 +4223,24 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         return result;
     }
 
+    private JSONObject queueMailboxMediaImport(JSONObject p)throws Exception{
+        SketchDocument.fields(p,"projectId,attachmentId,manifestSha256,_mcpCommandId,_recoveryPlanId");
+        String projectId=SketchDocument.id(p,"projectId"),attachmentId=SketchDocument.id(p,"attachmentId");
+        if(store.get(projectId)==null)throw new IllegalArgumentException("Unknown import project");
+        String manifestHash=p.getString("manifestSha256");if(!manifestHash.matches("[a-f0-9]{64}"))throw new IllegalArgumentException("Invalid encrypted manifest hash");
+        JSONObject request=new JSONObject(p.toString());request.remove("_mcpCommandId");request.remove("_recoveryPlanId");
+        JobManager.Job job=submitRecoverableTransfer("import_mailbox_media",p,projectId,"Encrypted attachment import",state->{
+            NativeMediaMailbox.Result media=NativeMediaMailbox.download(this,protocol.mailboxOwnerKey(),projectId,request,(completed,total)->{
+                checkpoint(state,"Encrypted attachment import","Receiving verified private media",(int)Math.min(97,completed*97/Math.max(1,total)),projectId);
+            });
+            ProjectStore.Project project=store.get(projectId);if(project==null)throw new IllegalArgumentException("Import project no longer exists");
+            ProjectStore.Asset asset=addImportedAsset(project,media.file,media.name,media.mime);
+            state.setResult(ok().put("projectId",projectId).put("assetId",asset.id).put("size",media.size).put("sha256",media.sha256).put("transport","encrypted-native-media-mailbox"));
+            checkpoint(state,"Encrypted attachment import","Verified media saved in Video studio",100,projectId);syncProtocolState();
+        });
+        return ok().put("queued",true).put("jobId",job.id).put("projectId",projectId).put("attachmentId",attachmentId).put("transport","encrypted-native-media-mailbox");
+    }
+
     private void validateRemoteHttps(String raw) throws Exception {
         URL parsed = new URL(raw);
         if (!"https".equalsIgnoreCase(parsed.getProtocol())) {
@@ -4554,30 +4579,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     }
 
     private ProjectStore.Asset addImportedAsset(ProjectStore.Project project, File file, String name, String mime) {
-        ProjectStore.Asset asset = new ProjectStore.Asset();
-        asset.id = UUID.randomUUID().toString();
-        asset.uri = Uri.fromFile(file).toString();
-        asset.name = name;
-        asset.mime = mime;
-        asset.durationMs = fileDuration(file);
-        asset.sizeBytes = file.length();
-        asset.seekable = true;
-        asset.persistedReadAccess = true;
-        asset.providerAuthority = "";
-        for (ProjectStore.Asset existing : project.assets) {
-            if (asset.uri.equals(existing.uri)) return existing;
-        }
-        project.assets.add(asset);
-        if (mime.startsWith("video/") || mime.startsWith("image/")) {
-            ProjectStore.Clip clip = new ProjectStore.Clip();
-            clip.id = UUID.randomUUID().toString();
-            clip.assetId = asset.id;
-            clip.inMs = 0;
-            clip.outMs = mime.startsWith("image/") ? 3000 : Math.max(1000, asset.durationMs);
-            project.clips.add(clip);
-        }
-        store.save(project);
-        return asset;
+        return store.registerImportedAsset(project.id,Uri.fromFile(file),name,mime,fileDuration(file),file.length());
     }
 
     private Uri publishExport(File file, String displayName) throws Exception {
@@ -4941,6 +4943,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     private boolean mayQueueBackgroundWork(String action) {
         if (action == null) return false;
         switch (action) {
+            case "import_mailbox_media":
             case "sketch_render": case "sketch_book_render":
             case "sketch_import_frame_manifest": case "sketch_import_drawing_manifest":
             case "open_pipeline_export_request": case "open_pipeline_submit": case "open_pipeline_download_result":
@@ -5316,6 +5319,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             case "insert_asset_timeline": return "Adding media to timeline";
             case "import_attachment": return "Importing ChatGPT attachment directly";
             case "import_chat_file": return "Importing ChatGPT file";
+            case "import_mailbox_media": return "Importing encrypted ChatGPT media";
             case "import_url": return "Importing media";
             case "preview_project": return "Opening preview";
             case "cancel_job": return "Cancelling job";

@@ -2,7 +2,7 @@ import build from '../.generated/relay-build.js';
 import {COMMAND_QUEUE_LIMITS,commandIsPending} from './native-command-store.js';
 
 /** Source/storage identity is independent of installed APK and creative acceptance. */
-export function relayRelease(){return {schema:'videostudio.relay-release.v1',capabilityVersion:'3.9.6',sourceCommit:build.commit,sourceTreeSha256:build.sourceTreeSha256,sourceDirty:build.sourceDirty,deploymentId:null,deploymentEvidence:'Observe this response from the actual deployed endpoint; source identity alone does not establish device execution',commandStorage:{version:1,chunkBytes:COMMAND_QUEUE_LIMITS.chunkBytes,transactional:true,checksummed:true,terminalReceipts:true},resultPaging:true,ownerEndpointChanged:false,phoneExecutionVerified:false};}
+export function relayRelease(){return {schema:'videostudio.relay-release.v1',capabilityVersion:'4.2.0',sourceCommit:build.commit,sourceTreeSha256:build.sourceTreeSha256,sourceDirty:build.sourceDirty,deploymentId:null,deploymentEvidence:'Observe this response from the actual deployed endpoint; source identity alone does not establish device execution',commandStorage:{version:1,chunkBytes:COMMAND_QUEUE_LIMITS.chunkBytes,transactional:true,checksummed:true,terminalReceipts:true},privateMediaStorage:{version:1,chunkBytes:65536,durable:true,maximumBytes:262144000},resultPaging:true,ownerEndpointChanged:false,phoneExecutionVerified:false};}
 
 /** Command ACK is delivery evidence; a queued background job remains unfinished. */
 export function commandExecution(command){

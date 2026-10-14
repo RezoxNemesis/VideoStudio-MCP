@@ -122,6 +122,7 @@ final class NativeAgentMailboxActions {
   "insert_asset_timeline",
   "import_url",
   "import_attachment",
+  "import_mailbox_media",
   "append_frame_chunk",
   "finish_frame_transfer",
   "frame_transfer_status",

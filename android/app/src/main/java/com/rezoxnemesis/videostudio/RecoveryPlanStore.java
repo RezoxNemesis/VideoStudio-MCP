@@ -93,6 +93,7 @@ public final class RecoveryPlanStore {
     public synchronized void attachJob(String planId, String jobId) {
         JSONObject plan = get(planId);
         if (plan == null) return;
+        if(jobId==null||jobId.isEmpty()||jobId.equals(plan.optString("jobId"))||isTerminal(plan))return;
         try {
             plan.put("jobId", clean(jobId, ""));
             plan.put("state", "running");
@@ -104,7 +105,7 @@ public final class RecoveryPlanStore {
 
     public synchronized void checkpointForJob(String jobId, String stage, int progress, String detail) {
         JSONObject plan = findByJobId(jobId);
-        if (plan == null) return;
+        if (plan == null || isTerminal(plan)) return;
         try {
             plan.put("state", progress >= 100 ? "completed" : "running");
             plan.put("stage", clean(stage, "working"));
@@ -132,7 +133,7 @@ public final class RecoveryPlanStore {
 
     public synchronized void markOutputForJob(String jobId, String uri, String name) {
         JSONObject plan = findByJobId(jobId);
-        if (plan == null) return;
+        if (plan == null || isTerminal(plan)) return;
         try {
             plan.put("outputUri", clean(uri, ""));
             plan.put("outputName", clean(name, ""));
@@ -145,7 +146,7 @@ public final class RecoveryPlanStore {
 
     public synchronized void completeByJob(String jobId) {
         JSONObject plan = findByJobId(jobId);
-        if (plan == null) return;
+        if (plan == null || isTerminal(plan)) return;
         try {
             plan.put("state", "completed");
             plan.put("stage", "completed");
@@ -158,7 +159,7 @@ public final class RecoveryPlanStore {
 
     public synchronized void completePlan(String planId, String detail) {
         JSONObject plan = get(planId);
-        if (plan == null) return;
+        if (plan == null || isTerminal(plan)) return;
         try {
             plan.put("state", "completed");
             plan.put("stage", "completed");
@@ -171,7 +172,7 @@ public final class RecoveryPlanStore {
 
     public synchronized void markResuming(String planId) {
         JSONObject plan = get(planId);
-        if (plan == null) return;
+        if (plan == null || isTerminal(plan)) return;
         try {
             plan.put("state", "retrying");
             plan.put("stage", "restart_recovery");
@@ -183,7 +184,7 @@ public final class RecoveryPlanStore {
 
     public synchronized void failByJob(String jobId, String error, boolean recoverable) {
         JSONObject plan = findByJobId(jobId);
-        if (plan == null) return;
+        if (plan == null || isTerminal(plan)) return;
         try {
             plan.put("state", recoverable ? "waiting_retry" : "failed");
             plan.put("detail", clean(error, recoverable ? "Recoverable failure" : "Failed"));
@@ -194,7 +195,7 @@ public final class RecoveryPlanStore {
 
     public synchronized void cancelByJob(String jobId) {
         JSONObject plan = findByJobId(jobId);
-        if (plan == null) return;
+        if (plan == null || isTerminal(plan)) return;
         try {
             plan.put("state", "cancelled");
             plan.put("detail", "Cancelled");
@@ -254,6 +255,12 @@ public final class RecoveryPlanStore {
             if (plan != null) out.put(plan);
         }
         return out;
+    }
+
+    /** Worker callbacks can arrive after cancellation or completion; terminal state wins. */
+    private static boolean isTerminal(JSONObject plan) {
+        String state=plan.optString("state");
+        return "cancelled".equals(state)||"completed".equals(state)||"failed".equals(state);
     }
 
     private JSONObject findByJobId(String jobId) {

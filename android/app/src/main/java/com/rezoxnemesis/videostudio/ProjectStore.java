@@ -257,36 +257,37 @@ public final class ProjectStore {
 
     public synchronized List<Project> list() {
         ArrayList<Project> out = new ArrayList<>();
+        ArrayList<String> ids = new ArrayList<>();
         try (Cursor c = db.query(
                 "projects",
-                new String[]{"json"},
+                new String[]{"id"},
                 null, null, null, null,
                 "updated_at DESC")) {
             while (c.moveToNext()) {
-                try {
-                    Project p = Project.fromJson(new JSONObject(c.getString(0)));
-                    out.add(p);
-                } catch (Exception ignored) {}
+                ids.add(c.getString(0));
             }
         }
+        for(String id:ids){Project project=get(id);if(project!=null)out.add(project);}
         return out;
     }
 
     public synchronized Project get(String id) {
         if (id == null || id.isEmpty()) return null;
-        try (Cursor c = db.query(
-                "projects",
-                new String[]{"json"},
-                "id=?",
-                new String[]{id},
-                null, null, null,
-                "1")) {
-            if (c.moveToFirst()) {
-                try { return Project.fromJson(new JSONObject(c.getString(0))); }
-                catch (Exception ignored) {}
-            }
-        }
+        try {String json=SQLiteLargeText.read(db,"SELECT json FROM projects WHERE id=?",id);if(json!=null)return Project.fromJson(new JSONObject(json));}
+        catch(Exception invalid){return null;}
         return null;
+    }
+
+    /** Merge completed imports into the current project while holding the shared SQLite writer lock. */
+    public synchronized Asset registerImportedAsset(String projectId,Uri uri,String name,String mime,long durationMs,long sizeBytes){
+        if(uri==null||name==null||name.trim().isEmpty()||mime==null||mime.isEmpty()||durationMs<0||sizeBytes<0)throw new IllegalArgumentException("Valid imported media metadata is required");
+        db.beginTransaction();try{
+            Project current=get(projectId);if(current==null)throw new IllegalArgumentException("Import project no longer exists");
+            for(Asset existing:current.assets)if(uri.toString().equals(existing.uri)){db.setTransactionSuccessful();return existing;}
+            Asset asset=new Asset();asset.id=UUID.randomUUID().toString();asset.uri=uri.toString();asset.name=name;asset.mime=mime;asset.durationMs=durationMs;asset.sizeBytes=sizeBytes;asset.seekable=true;asset.persistedReadAccess=true;asset.providerAuthority="";current.assets.add(asset);
+            if(mime.startsWith("video/")||mime.startsWith("image/")){Clip clip=new Clip();clip.id=UUID.randomUUID().toString();clip.assetId=asset.id;clip.inMs=0;clip.outMs=mime.startsWith("image/")?3000:Math.max(1000,durationMs);current.clips.add(clip);}
+            save(current);db.setTransactionSuccessful();return asset;
+        }finally{db.endTransaction();}
     }
 
     @FunctionalInterface

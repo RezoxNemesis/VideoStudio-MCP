@@ -22,6 +22,11 @@ import static org.junit.Assert.*;
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk=33,manifest=Config.NONE)
 public class Cinematic3DPreviewBindingTest {
+    @Test public void selectedShotPreviewKeepsItsExactSavedBindingsAndStartFrame() {
+        Intent intent=Cinematic3DStudioActivity.previewIntent(RuntimeEnvironment.getApplication(),"source-project","saved-program","d".repeat(64),147);
+        assertEquals(147,intent.getIntExtra("previewStartFrame",-1));assertEquals("saved-program",intent.getStringExtra("cinematicProgramId"));assertEquals("d".repeat(64),intent.getStringExtra("expectedProgramSha256"));
+        try{Cinematic3DStudioActivity.previewIntent(RuntimeEnvironment.getApplication(),"source-project","saved-program","d".repeat(64),-1);fail("Negative preview frame accepted");}catch(IllegalArgumentException expected){}
+    }
     @Test public void previewRequiresTheSavedProgramGenerationAndExactSourceProject() throws Exception {
         Class<?> studio;
         try{studio=Class.forName("com.rezoxnemesis.videostudio.Cinematic3DStudioActivity");}catch(ClassNotFoundException missing){throw new AssertionError("Saved cinematic preview entry missing",missing);}

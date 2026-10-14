@@ -6,11 +6,12 @@ import assert from "node:assert/strict";
 import {readFileSync} from "node:fs";
 import vm from "node:vm";
 import {webcrypto} from "node:crypto";
+import {cleanupPrivateBlobs} from '../src/private-blob-store.js';
 
 const worker=readFileSync(new URL("../src/index.js",import.meta.url),"utf8");
 const runtime=readFileSync(new URL("../src/studio-runtime.js",import.meta.url),"utf8");
 const end=worker.indexOf("\n}\n",worker.indexOf("export class VideoStudioState"))+3;
-const ctx={...storyboardContract,...queueBindings,nativeCommandSummary,nativeResultPage,
+const ctx={...storyboardContract,...queueBindings,nativeCommandSummary,nativeResultPage,cleanupPrivateBlobs,
   crypto:webcrypto,TextEncoder,TextDecoder,Response,Request,Headers,URL,
   Date,Blob,Uint8Array,setTimeout,DurableObject:class{constructor(context){this.ctx=context;}}
 };
@@ -20,16 +21,16 @@ vm.runInContext(
     .replace("export class VideoStudioState","globalThis.VideoStudioState = class VideoStudioState"),
   ctx
 );
-function fixture(){
+function fixture(options={}){
   const rows=new Map();let alarmAt=null;
-  const storage=memoryStorage(rows);
+  const storage=memoryStorage(rows,{maxValueBytes:128*1024,...options});
   storage.getAlarm=async()=>alarmAt;storage.setAlarm=async time=>{alarmAt=time;};
   const relay=new ctx.VideoStudioState({storage},{});
   return {relay,storage,rows};
 }
 const deviceId="verified-web-device-0001";
-async function setup(){
-  const f=fixture();
+async function setup(options={}){
+  const f=fixture(options);
   const project=await f.relay.createProject(deviceId,"User animation");
   const asset={id:"exact-video-asset-0001",kind:"video",type:"video/mp4",size:500000,name:"Goku vs Saitama V2.mp4"};
   await f.relay.update(deviceId,project.id,{assets:[asset]});
@@ -48,7 +49,7 @@ test("explicit video export never accepts another project, asset or image",async
   assert.equal(await f.relay.getTemporaryVideoExportInfo(t.uploadToken),null);
 });
 
-test("binary transfer stores exact MP4 bytes, SHA-256 and 192KiB chunks",async()=>{
+test("binary transfer stores exact MP4 bytes, SHA-256 and bounded64KiB chunks",async()=>{
   const f=await setup();
   const t=await f.relay.createTemporaryVideoExport(deviceId,f.project.id,f.asset.id);
   const bytes=new Uint8Array(455000);for(let i=0;i<bytes.length;i++)bytes[i]=i%239;
@@ -61,16 +62,25 @@ test("binary transfer stores exact MP4 bytes, SHA-256 and 192KiB chunks",async()
   assert.equal(data.name,"Goku_vs_Saitama_V2.mp4");
   assert.equal(data.mime,"video/mp4");
   assert.equal(data.size,bytes.length);
-  assert.equal(data.parts,3);
+  assert.equal(data.parts,7);
   const joined=new Uint8Array(bytes.length);let offset=0;
   for(let i=0;i<data.parts;i++){
     const part=await f.relay.getTemporaryVideoExportPart(data.uploadToken,i);
+    assert.ok(part.byteLength<=64*1024);
     joined.set(part,offset);offset+=part.length;
   }
   assert.deepEqual(Buffer.from(joined),Buffer.from(bytes));
   assert.equal((await f.relay.storeTemporaryVideoExport(t.uploadToken,bytes,"video/mp4")).reused,true);
   const digest=Buffer.from(await webcrypto.subtle.digest("SHA-256",bytes)).toString("hex");
   assert.equal(uploaded.digest,digest);
+});
+
+test('temporary transfer chunk failure rolls back every byte and publication together',async()=>{
+  const f=await setup({beforePut(key){if(key.startsWith('te:part:')&&key.endsWith(':1'))throw new Error('injected export chunk failure');}});
+  const transfer=await f.relay.createTemporaryVideoExport(deviceId,f.project.id,f.asset.id);
+  await assert.rejects(f.relay.storeTemporaryVideoExport(transfer.uploadToken,new Uint8Array(180000),'video/mp4'),/injected export chunk/);
+  assert.equal(await f.relay.getTemporaryVideoExportInfo(transfer.downloadToken),null);
+  assert.equal([...f.rows.keys()].some(key=>key.startsWith('te:part:')),false);
 });
 
 test("temporary transfer expires and cleans itself on Durable Object alarm",async()=>{

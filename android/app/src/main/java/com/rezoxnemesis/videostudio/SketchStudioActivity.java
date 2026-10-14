@@ -63,6 +63,7 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
     private final ArrayList<String> layerIds = new ArrayList<>();
     private final Handler handler = new Handler(Looper.getMainLooper());
     private boolean updating, playing, scrubbing;
+    private boolean bookPlaybackInFlight;private int playbackGeneration;
     private long playStarted;
     private int playFirst;
     private String brushColor = "#FF161C2B";
@@ -83,7 +84,9 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
         liveButton=button(projects,"Draw myself",this::toggleLiveWatch);liveButton.setLayoutParams(new LinearLayout.LayoutParams(0,-2,2));updateLiveControl();
         LinearLayout history = row(root);
         button(history,"Undo",()->history(false));button(history,"Redo",()->history(true));button(history,"Export",this::export);
-        canvas = new SketchCanvasView(this); canvas.setListener(this);canvas.setAgentHandEnabled(getPreferences(MODE_PRIVATE).getBoolean("agentHand",true)); root.addView(canvas, new LinearLayout.LayoutParams(-1, 0, 1));
+        canvas = new SketchCanvasView(this); canvas.setListener(this);canvas.setAgentHandEnabled(getPreferences(MODE_PRIVATE).getBoolean("agentHand",true));
+        onionEnabled=getPreferences(MODE_PRIVATE).getBoolean("onionEnabled",true);onionRange=getPreferences(MODE_PRIVATE).getInt("onionRange",1);onionAlpha=getPreferences(MODE_PRIVATE).getInt("onionAlpha",48);canvas.setOnion(onionEnabled);canvas.setOnionOptions(onionRange,onionAlpha);
+        root.addView(canvas, new LinearLayout.LayoutParams(-1, 0, 1));
         LinearLayout tools = row(root); Spinner tool = new Spinner(this);toolPicker=tool;
         String[] names = {"Pen", "Eraser", "Line", "Rectangle", "Ellipse", "Polygon", "Select / move", "Eyedropper", "Pan canvas", "Curve pen", "Edit curve nodes", "Paint brush", "Erase paint", "Clone brush"};
         tool.setAdapter(new ArrayAdapter<String>(this, android.R.layout.simple_spinner_dropdown_item, names){@Override public View getView(int position,View convert,android.view.ViewGroup parent){TextView view=(TextView)super.getView(position,convert,parent);view.setTextColor(StudioUi.TEXT);view.setTextSize(12);view.setSingleLine(true);view.setEllipsize(android.text.TextUtils.TruncateAt.END);return view;}});
@@ -91,7 +94,7 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
         tool.setOnItemSelectedListener(new SimpleSelection() { @Override public void selected(int position) { if(canvas!=null){if(syncingAgentTool||position==pendingAgentToolSelection){pendingAgentToolSelection=-1;return;}humanToolPosition=position;if(position>=11)runAction("Choose paint tool",()->activatePaint(position==12?"erase":position==13?"clone":"paint"));else canvas.setTool(toolValues[position]);} } });
         button(tools,"Brush / Text",this::brushMenu);button(tools,"More",this::moreMenu);
         toolStatus=new TextView(this);toolStatus.setTextColor(StudioUi.MUTED);toolStatus.setTextSize(12);
-        filmstrip=new SketchFilmstripView(this);filmstrip.setListener(this::selectFilmstrip);filmstrip.setContentDescription("Animation frames; swipe to browse, tap to select");root.addView(filmstrip,new LinearLayout.LayoutParams(-1,dp(48)));
+        filmstrip=new SketchFilmstripView(this);filmstrip.setListener(index->runAction("Select frame",()->selectFilmstrip(index)));root.addView(filmstrip,new LinearLayout.LayoutParams(-1,dp(48)));
         frames = new SeekBar(this);frames.setMinimumHeight(dp(48));frames.setContentDescription("Frame position");frames.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
             public void onProgressChanged(SeekBar bar, int progress, boolean fromUser) { if (fromUser&&!scrubbing) { runAction("Select frame",()->selectFilmstrip(progress)); } }
             public void onStartTrackingTouch(SeekBar bar) { scrubbing=true; }
@@ -100,6 +103,7 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
         LinearLayout timing = row(root);
         button(timing,"◀",()->selectFilmstrip((bookId==null?canvas.getFrame():bookPage)-1)).setContentDescription("Previous frame or page");playButton=button(timing,"Play",this::togglePlayback);
         button(timing,"▶",()->selectFilmstrip((bookId==null?canvas.getFrame():bookPage)+1)).setContentDescription("Next frame or page");
+        button(timing,"Go",this::scrubDialog).setContentDescription("Go to an exact frame or book page");
         layers = new Spinner(this);
         layers.setOnItemSelectedListener(new SimpleSelection() { @Override public void selected(int position) {
             if (!updating && position < layerIds.size()) { canvas.setLayerId(layerIds.get(position)); updateStatus(); }
@@ -198,7 +202,7 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
     @Override public void onSelection(String id) { updateStatus(); }
     @Override public void onMessage(String message) { if (message != null) Toast.makeText(this, message, Toast.LENGTH_LONG).show(); }
     private void updateStatus() {
-        try { if (document != null) status.setText((bookId==null?document.getString("name"):book.optString("name")+" · page "+(bookPage+1)+"/"+book.optInt("pageCount")) + " · r" + document.getLong("revision") + " · frame " + (canvas.getFrame() + 1) + "/" + document.getInt("frameCount") + " · " + document.getInt("fps") + " FPS" + (canvas.getSelectedId() == null ? "" : " · selected")+(session!=null&&session.pending()>0?" · saving":"")+(watching?" · live agent":""));filmstrip.setFrames(bookId==null?document.getInt("frameCount"):book.getInt("pageCount"),bookId==null?canvas.getFrame():bookPage); }
+        try { if (document != null) {status.setText((bookId==null?document.getString("name"):book.optString("name")+" · page "+(bookPage+1)+"/"+book.optInt("pageCount")) + " · r" + document.getLong("revision") + " · frame " + (canvas.getFrame() + 1) + "/" + document.getInt("frameCount") + " · " + (bookId==null?document.getInt("fps"):book.getInt("fps")) + " FPS" + (bookId==null?"":" · hold ×"+SketchTimelineTools.exposure(book.optJSONObject("exposures"),bookPage)) + (canvas.getSelectedId() == null ? "" : " · selected")+(session!=null&&session.pending()>0?" · saving":"")+(watching?" · live agent":""));filmstrip.setTimelineKey(bookId==null?"sketch:"+sketchId:"book:"+bookId);filmstrip.setExposures(bookId==null?null:book.optJSONObject("exposures"));filmstrip.setFrames(bookId==null?document.getInt("frameCount"):book.getInt("pageCount"),bookId==null?canvas.getFrame():bookPage);} }
         catch (Exception ignored) {}
     }
     private void history(boolean redo) {stopPlayback();afterSaves(()->{SketchEditOps.execute(this,redo?"sketch_redo":"sketch_undo",request());postUi(this::reload);});}
@@ -226,7 +230,27 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
         SketchColourPicker picker=new SketchColourPicker(this,brushColor,value->color.setText(value));form.addView(picker,new LinearLayout.LayoutParams(-1,dp(180)));for(EditText value:new EditText[]{color,width,opacity,hardness,angle,smooth})form.addView(value);CheckBox fill=new CheckBox(this);fill.setText("Fill shapes");fill.setTextColor(Color.WHITE);fill.setChecked(brushFill);form.addView(fill);
         ScrollView scroll=new ScrollView(this);scroll.addView(form);AlertDialog dialog=new AlertDialog.Builder(this).setTitle("Brush and colour").setView(scroll).setNegativeButton("Cancel",null).setPositiveButton("Apply",null).create();dialog.show();dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{try{String next=color.getText().toString();SketchDocument.color(next);float size=Float.parseFloat(width.getText().toString())/Math.min(document.getInt("width"),document.getInt("height"));if(!Float.isFinite(size)||size<.0005||size>.2)throw SketchDocument.bad("Choose a positive canvas stroke width");float nextSmoothing=Float.parseFloat(smooth.getText().toString());if(!Float.isFinite(nextSmoothing)||nextSmoothing<0||nextSmoothing>.9)throw SketchDocument.bad("Stabilisation must be 0..0.9");JSONObject style=SketchBrushes.style(preset.getSelectedItem().toString(),Double.parseDouble(opacity.getText().toString()),Double.parseDouble(hardness.getText().toString()),true,Double.parseDouble(angle.getText().toString()));brushColor=next;brushWidth=size;brushFill=fill.isChecked();brushPreset=style.getString("preset");brushOpacity=(float)style.getDouble("opacity");brushHardness=(float)style.getDouble("hardness");brushAngle=(float)style.getDouble("angle");smoothing=nextSmoothing;updateBrush();dialog.dismiss();}catch(Exception error){onMessage(error.getMessage());}});
     }
-    private void bookTimingDialog(){LinearLayout form=column();EditText fps=input("Book FPS 24, 30 or 60",String.valueOf(book.optInt("fps")),true),hold=input("Current page exposure in frames",String.valueOf(book.optJSONObject("exposures")==null?1:book.optJSONObject("exposures").optInt(String.valueOf(bookPage),1)),true);form.addView(fps);form.addView(hold);new AlertDialog.Builder(this).setTitle("Flipbook exposure timing").setView(form).setNegativeButton("Cancel",null).setPositiveButton("Apply",(d,w)->{try{JSONObject args=new JSONObject().put("bookId",bookId).put("expectedRevision",book.getLong("revision")).put("operationId",UUID.randomUUID().toString()).put("fps",Integer.parseInt(fps.getText().toString())).put("exposures",new JSONArray().put(new JSONObject().put("page",bookPage).put("frames",Integer.parseInt(hold.getText().toString()))));afterSaves(()->{JSONObject result=SketchEditOps.execute(this,"sketch_book_edit",args);postUi(()->{book=result.optJSONObject("book");updateStatus();});});}catch(Exception error){onMessage(error.getMessage());}}).show();}
+    private void bookTimingDialog(){
+        if(bookId==null||book==null){onMessage("Open a sketch book to edit its page exposure sheet");return;}
+        final String targetBook=bookId;final long revision=book.optLong("revision");final int count=book.optInt("pageCount");
+        LinearLayout form=column();
+        TextView summary=new TextView(this);summary.setTextColor(StudioUi.TEXT);summary.setText(String.format(java.util.Locale.ROOT,"%d pages · %d exposed frames · %.2f seconds\nSet up to 128 pages per edit. Page numbers start at 1.",count,SketchTimelineTools.totalFrames(book.optJSONObject("exposures"),count),SketchTimelineTools.totalFrames(book.optJSONObject("exposures"),count)/(double)book.optInt("fps",24)));form.addView(summary);
+        EditText first=input("First page (1.."+count+")",String.valueOf(bookPage+1),true),last=input("Last page (inclusive)",String.valueOf(bookPage+1),true),hold=input("Exposure per page (1..600 frames)",String.valueOf(SketchTimelineTools.exposure(book.optJSONObject("exposures"),bookPage)),true),fps=input("Book FPS 24, 30 or 60",String.valueOf(book.optInt("fps")),true);
+        first.setContentDescription("First exposure page");last.setContentDescription("Last exposure page");hold.setContentDescription("Page exposure frames");fps.setContentDescription("Book frames per second");
+        form.addView(first);form.addView(last);form.addView(hold);LinearLayout presets=row(form);
+        button(presets,"On ones",()->hold.setText("1"));button(presets,"On twos",()->hold.setText("2"));button(presets,"On threes",()->hold.setText("3"));form.addView(fps);
+        ScrollView scroll=new ScrollView(this);scroll.addView(form);
+        AlertDialog dialog=new AlertDialog.Builder(this).setTitle("Book exposure sheet").setView(scroll).setNegativeButton("Cancel",null).setPositiveButton("Apply",null).create();dialog.show();
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{try{
+            JSONArray edits=SketchTimelineTools.exposureEdits(first.getText().toString(),last.getText().toString(),hold.getText().toString(),count);int nextFps=Integer.parseInt(fps.getText().toString().trim());NativeFrameClock.requireFps(nextFps);
+            if(!targetBook.equals(bookId)){onMessage("The book changed. Open its exposure sheet again.");return;}
+            JSONObject args=new JSONObject().put("bookId",targetBook).put("expectedRevision",revision).put("operationId",UUID.randomUUID().toString()).put("fps",nextFps).put("exposures",edits);
+            runAction("Apply exposure sheet",()->{if(!targetBook.equals(bookId)){onMessage("The book changed. Open its exposure sheet again.");return;}afterSaves(()->{
+                JSONObject saved=SketchEditOps.execute(this,"sketch_book_edit",args).getJSONObject("book");
+                postUi(()->{if(targetBook.equals(bookId)&&book!=null&&saved.optLong("revision")>=book.optLong("revision")){book=saved;updateStatus();onMessage("Updated "+edits.length()+" page exposures");}});
+            });dialog.dismiss();});
+        }catch(Exception error){onMessage(error.getMessage());}});
+    }
     private void timingDialog() {
         if(document==null)return;
         if(bookId!=null){bookTimingDialog();return;}LinearLayout form = column(); EditText fps = input("FPS: 24, 30 or 60", String.valueOf(document.optInt("fps")), true), count = input("Frame count (1..1200)", String.valueOf(document.optInt("frameCount")), true);
@@ -283,6 +307,7 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
     }
     private void exposureDialog() {
         if(document==null)return;
+        if(bookId!=null){bookTimingDialog();return;}
         try {
             if (canvas.getSelectedId() == null) throw SketchDocument.bad("Select an object first"); JSONObject object = SketchDocument.object(document, canvas.getSelectedId()); LinearLayout form = column();
             EditText start = input("First frame (1-based)", String.valueOf(object.getInt("frame") + 1), true), exposure = input("Exposure in frames", String.valueOf(object.getInt("exposure")), true); form.addView(start); form.addView(exposure);
@@ -335,7 +360,12 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
             afterSaves(()->{JSONObject report=SketchEditOps.execute(this,"sketch_inspect",args);StringBuilder message=new StringBuilder("Saved drawing: ").append(report.getInt("frameCount")).append(" frames · ").append(report.getJSONObject("usage").getInt("objects")).append(" objects\n");JSONArray rows=report.getJSONArray("frames");for(int n=0;n<rows.length();n++){JSONObject row=rows.getJSONObject(n);message.append("Frame ").append(row.getInt("frame")+1).append(": ").append(row.getInt("exposedObjects")).append(" exposed marks");if(!row.getBoolean("contentChanged"))message.append(" · same content");message.append('\n');}message.append("\nContent counts do not certify likeness or articulated motion.");postUi(()->new AlertDialog.Builder(this).setTitle("Drawing content audit").setMessage(message.toString()).setPositiveButton("OK",null).show());});
         }catch(Exception error){onMessage(error.getMessage());}
     }
-    private void onionDialog(){LinearLayout form=column();EditText distance=input("Frames on each side (1..3)","1",true),opacity=input("Onion opacity (0..128)","48",true);form.addView(distance);form.addView(opacity);new AlertDialog.Builder(this).setTitle("Red previous / blue next").setView(form).setPositiveButton("Apply",(d,w)->{try{canvas.setOnionOptions(Integer.parseInt(distance.getText().toString()),Integer.parseInt(opacity.getText().toString()));}catch(Exception error){onMessage(error.getMessage());}}).setNegativeButton("Cancel",null).show();}
+    private void onionDialog(){
+        LinearLayout form=column();CheckBox enabled=new CheckBox(this);enabled.setText("Show onion skin");enabled.setTextColor(StudioUi.TEXT);enabled.setChecked(onionEnabled);form.addView(enabled);
+        EditText distance=input(bookId==null?"Frames on each side (1..3)":"Book shows the adjacent page on each side",String.valueOf(onionRange),true),opacity=input("Onion opacity (0..128)",String.valueOf(onionAlpha),true);distance.setEnabled(bookId==null);form.addView(distance);form.addView(opacity);
+        AlertDialog dialog=new AlertDialog.Builder(this).setTitle("Red previous / blue next").setView(form).setPositiveButton("Apply",null).setNegativeButton("Cancel",null).create();dialog.show();dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{try{int range=Integer.parseInt(distance.getText().toString()),alpha=Integer.parseInt(opacity.getText().toString());if(range<1||range>3||alpha<0||alpha>128)throw new IllegalArgumentException("Choose 1..3 onion frames and opacity 0..128");onionEnabled=enabled.isChecked();onionRange=range;onionAlpha=alpha;canvas.setOnion(onionEnabled);canvas.setOnionOptions(range,alpha);saveOnionOptions();dialog.dismiss();}catch(Exception error){onMessage(error.getMessage());}});
+    }
+    private void saveOnionOptions(){getPreferences(MODE_PRIVATE).edit().putBoolean("onionEnabled",onionEnabled).putInt("onionRange",onionRange).putInt("onionAlpha",onionAlpha).apply();}
     private void celDialog(){if(document==null)return;String[] choices=bookId==null?new String[]{"Duplicate drawing to next cel","Insert blank frame here","Delete current frame","Clear current layer cel"}:new String[]{"Duplicate drawing to next page","Clear current layer"};new AlertDialog.Builder(this).setTitle("Flipbook cels").setItems(choices,(d,index)->{try{if(index==0){duplicateCel();return;}if(bookId!=null){onOperation(new JSONObject().put("type","clear_cel").put("layerId",canvas.getLayerId()).put("frame",0));return;}String kind=index==1?"insert_frame":index==2?"delete_frame":"clear_cel";JSONObject op=new JSONObject().put("type",kind).put("frame",canvas.getFrame());if(index==3)op.put("layerId",canvas.getLayerId());onOperation(op);setFrame(canvas.getFrame());}catch(Exception error){onMessage(error.getMessage());}}).show();}
     private void referenceTools(){
         if(document==null)return;
@@ -407,10 +437,11 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
     private void openBookPage(String id,int page){if(destroyed)return;stopPlayback();loadingDrawing=true;canvas.setEnabled(false);if(session!=null&&session.pending()>0){afterSaves(()->postUi(()->openBookPage(id,page)));return;}int generation=++pageGeneration;io.execute(()->{try{JSONObject result=SketchEditOps.execute(this,"sketch_book_open_page",new JSONObject().put("bookId",id).put("page",page));postUi(()->{if(destroyed||generation!=pageGeneration)return;bookId=id;book=result.optJSONObject("book");bookPage=page;loadSketch(result.optString("sketchId"),0);});}catch(Exception error){postUi(()->onMessage(error.getMessage()));}});}
     private void selectFilmstrip(int index){if(document==null)return;if(bookId==null)setFrame(index);else if(index>=0&&index<book.optInt("pageCount")&&index!=bookPage)openBookPage(bookId,index);}
     private void playBookTick(){
-        if(book==null||watchInFlight){handler.postDelayed(playTick,16);return;}int fps=book.optInt("fps"),count=book.optInt("pageCount");int page=(int)((bookPage+1)%count);String id=bookId;watchInFlight=true;
-        io.execute(()->{try{JSONObject loaded;String sketch=id+"_p"+page;try(SketchProjectStore store=new SketchProjectStore(this)){try{loaded=store.get(sketch);}catch(IllegalArgumentException unknown){if(!unknown.getMessage().startsWith("UNKNOWN_SKETCH"))throw unknown;loaded=SketchDocument.create(new JSONObject().put("sketchId",sketch).put("name",book.optString("name")).put("width",book.optInt("width")).put("height",book.optInt("height")).put("fps",fps).put("frameCount",1).put("background",book.optString("background")));}}
-            JSONObject drawing=loaded;postUi(()->{watchInFlight=false;if(!playing||destroyed)return;try{bookPage=page;canvas.setDocument(drawing);frames.setProgress(page);filmstrip.setFrames(count,page);handler.postDelayed(playTick,Math.max(1,1000*(book.optJSONObject("exposures")==null?1:book.optJSONObject("exposures").optInt(String.valueOf(page),1))/fps));}catch(Exception error){stopPlayback();onMessage(error.getMessage());}});
-        }catch(Exception error){postUi(()->{watchInFlight=false;stopPlayback();onMessage(error.getMessage());});}});
+        if(book==null)return;if(bookPlaybackInFlight){handler.postDelayed(playTick,16);return;}
+        JSONObject playingBook=book;int fps=playingBook.optInt("fps"),count=playingBook.optInt("pageCount"),page=(bookPage+1)%count,generation=playbackGeneration,pageAtRequest=pageGeneration;String id=bookId;bookPlaybackInFlight=true;
+        io.execute(()->{try{JSONObject loaded;String sketch=id+"_p"+page;try(SketchProjectStore store=new SketchProjectStore(this)){try{loaded=store.get(sketch);}catch(IllegalArgumentException unknown){if(!unknown.getMessage().startsWith("UNKNOWN_SKETCH"))throw unknown;loaded=SketchDocument.create(new JSONObject().put("sketchId",sketch).put("name",playingBook.optString("name")).put("width",playingBook.optInt("width")).put("height",playingBook.optInt("height")).put("fps",fps).put("frameCount",1).put("background",playingBook.optString("background")));}}
+            JSONObject drawing=loaded;postUi(()->{if(generation!=playbackGeneration)return;bookPlaybackInFlight=false;if(!playing||destroyed||pageAtRequest!=pageGeneration||!id.equals(bookId))return;try{bookPage=page;canvas.setDocument(drawing);frames.setProgress(page);updateStatus();handler.postDelayed(playTick,NativeFrameClock.durationMs(SketchTimelineTools.exposure(playingBook.optJSONObject("exposures"),page),fps));}catch(Exception error){stopPlayback();onMessage(error.getMessage());}});
+        }catch(Exception error){postUi(()->{if(generation!=playbackGeneration)return;bookPlaybackInFlight=false;stopPlayback();onMessage(error.getMessage());});}});
     }
     private void stopLivePlayer(){if(livePlayer!=null){livePlayer.close();livePlayer=null;}canvas.hideAgentHand();agentGlobalTool=false;if(status!=null)status.setCompoundDrawables(null,null,null,null);showAgentToolPosition(humanToolPosition);canvas.setPresentation(null,1);canvas.setEnabled(session!=null&&!loadingDrawing&&!playing&&!destroyed);liveDrawingObject=null;}
     private void showAgentToolPosition(int position){if(toolPicker==null||position<0||position>=toolValues.length||toolPicker.getSelectedItemPosition()==position)return;pendingAgentToolSelection=position;syncingAgentTool=true;try{toolPicker.setSelection(position);}finally{syncingAgentTool=false;}}
@@ -480,13 +511,13 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
     }};
 
     private void setFrame(int index) { stopPlayback(); if (document == null) return; int next = Math.max(0, Math.min(document.optInt("frameCount") - 1, index)); canvas.setFrame(next); frames.setProgress(bookId==null?next:bookPage); updateStatus(); }
-    private void togglePlayback() { if (playing) { stopPlayback(); return; } if (document == null) return; playing = true;canvas.setEnabled(false); playStarted = SystemClock.uptimeMillis(); playFirst = canvas.getFrame();if(bookId!=null&&session.pending()>0){playing=false;afterSaves(()->postUi(this::togglePlayback));return;} playButton.setText("Pause"); postUi(playTick); }
+    private void togglePlayback() { if (playing) { stopPlayback(); return; } if (document == null) return; playing = true;++playbackGeneration;bookPlaybackInFlight=false;canvas.setEnabled(false); playStarted = SystemClock.uptimeMillis(); playFirst = canvas.getFrame();if(bookId!=null&&session.pending()>0){playing=false;afterSaves(()->postUi(this::togglePlayback));return;} playButton.setText("Pause");if(bookId==null)postUi(playTick);else handler.postDelayed(playTick,NativeFrameClock.durationMs(SketchTimelineTools.exposure(book.optJSONObject("exposures"),bookPage),book.optInt("fps"))); }
     private final Runnable playTick = new Runnable() { @Override public void run() {
         if (!playing || document == null) return; if(bookId!=null){playBookTick();return;}int fps = document.optInt("fps"), count = document.optInt("frameCount"); long elapsed = SystemClock.uptimeMillis() - playStarted;
         long index = elapsed * fps / 1000; int frame = (int) ((playFirst + index) % count); canvas.setFrame(frame); frames.setProgress(frame); updateStatus();
         long nextAt = NativeFrameClock.presentationTimeMs(index + 1, fps); handler.postDelayed(this, Math.max(1, nextAt - elapsed));
     } };
-    private void stopPlayback() { boolean wasPlaying=playing;playing = false;if(wasPlaying&&bookId!=null&&session!=null&&!destroyed){openBookPage(bookId,bookPage);} handler.removeCallbacks(playTick); if(canvas!=null&&!destroyed)canvas.setEnabled(!loadingDrawing&&(!wasPlaying||bookId==null)&&session!=null&&livePlayer==null);if (playButton != null) playButton.setText("Play"); }
+    private void stopPlayback() { boolean wasPlaying=playing;playing = false;++playbackGeneration;bookPlaybackInFlight=false;if(wasPlaying&&bookId!=null&&session!=null&&!destroyed){openBookPage(bookId,bookPage);} handler.removeCallbacks(playTick); if(canvas!=null&&!destroyed)canvas.setEnabled(!loadingDrawing&&(!wasPlaying||bookId==null)&&session!=null&&livePlayer==null);if (playButton != null) playButton.setText("Play"); }
     @Override protected void onPause() { resumed=false;++liveLoadGeneration;if(livePlayer!=null||watchInFlight){loadingDrawing=true;if(notifiedSessionId!=null)notificationReplayPending=true;}stopLivePlayer();stopPlayback();handler.removeCallbacks(watchTick);super.onPause(); }
     @Override protected void onResume() { super.onResume();resumed=true;liveSessionId="";if(loadingDrawing&&session!=null){if(session.pending()==0)reload();else afterSaves(()->postUi(this::reload));}handler.removeCallbacks(watchTick);handler.postDelayed(watchTick,250); }
     @Override protected void onDestroy() { destroyed=true;stopLivePlayer();stopPlayback();handler.removeCallbacksAndMessages(null);if(session!=null)session.close();io.shutdown();transfers.shutdown();if(canvas!=null)canvas.dispose();super.onDestroy(); }
@@ -497,7 +528,7 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
     // Browsing a menu never takes ownership of an active drawing. Its chosen action
     // goes through the same loading, playback and live-takeover gate as the toolbar.
     private void runAction(String title,Runnable action){try{
-        boolean navigation=java.util.Arrays.asList("File","More","Brush / Text","Layers","Frames / Cels","Workspace","Canvas view","Drawing status","Drawing alerts","Colours","Select layer","Go to frame","Paint studio","Paint settings","Clone source").contains(title);
+        boolean navigation=java.util.Arrays.asList("File","More","Brush / Text","Layers","Frames / Cels","Workspace","Canvas view","Drawing status","Drawing alerts","Colours","Select layer","Go to frame","Go","Exposure sheet","Onion skin","Onion settings","First","−100","+100","Last","On ones","On twos","On threes","Paint studio","Paint settings","Clone source").contains(title);
         if(navigation){action.run();return;}
         if(loadingDrawing&&!java.util.Arrays.asList("New","Open","Sketch books","Draw myself").contains(title)){onMessage("Opening the selected drawing");return;}
         if(playing&&!title.equals("Play")&&!title.equals("Draw myself")){onMessage("Pause playback before changing artwork");return;}
@@ -542,9 +573,23 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
             d.dismiss();
         }).show();
     }
-    private boolean onionEnabled=true;
-    private void framesMenu(){menu("Frames / Cels",new String[]{"Go to frame","Timing / canvas","Exposure","Copy → next","Cel tools","Onion skin"},this::scrubDialog,this::timingDialog,this::exposureDialog,this::duplicateCel,this::celDialog,()->{onionEnabled=!onionEnabled;canvas.setOnion(onionEnabled);onMessage(onionEnabled?"Onion skin on":"Onion skin off");});}
-    private void scrubDialog(){if(frames.getParent()!=null)((android.view.ViewGroup)frames.getParent()).removeView(frames);new AlertDialog.Builder(this).setTitle("Go to frame / page").setView(frames).setPositiveButton("Done",null).show();}
+    private boolean onionEnabled=true;private int onionRange=1,onionAlpha=48;
+    private void framesMenu(){menu("Frames / Cels",new String[]{"Go to frame","Timing / canvas","Exposure","Exposure sheet","Copy → next","Cel tools","Onion skin","Onion settings"},this::scrubDialog,this::timingDialog,this::exposureDialog,this::bookTimingDialog,this::duplicateCel,this::celDialog,()->{onionEnabled=!onionEnabled;canvas.setOnion(onionEnabled);saveOnionOptions();onMessage(onionEnabled?"Onion skin on":"Onion skin off");},this::onionDialog);}
+    private boolean navigatorStillCurrent(String openedBook,String openedSketch){return document!=null&&java.util.Objects.equals(openedBook,bookId)&&(openedBook!=null||java.util.Objects.equals(openedSketch,sketchId));}
+    private void scrubDialog(){
+        if(document==null)return;final String openedBook=bookId,openedSketch=sketchId;final int count=bookId==null?document.optInt("frameCount"):book.optInt("pageCount"),current=bookId==null?canvas.getFrame():bookPage;
+        LinearLayout form=column();EditText number=input("Frame / page number (1.."+count+")",String.valueOf(current+1),true);number.setInputType(InputType.TYPE_CLASS_NUMBER);number.setContentDescription("Frame or page number");number.selectAll();form.addView(number);
+        SeekBar slider=new SeekBar(this);slider.setMax(count-1);slider.setProgress(current);slider.setMinimumHeight(dp(48));slider.setContentDescription("Preview frame or page position");form.addView(slider);
+        slider.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener(){public void onProgressChanged(SeekBar bar,int progress,boolean fromUser){if(fromUser)number.setText(String.valueOf(progress+1));}public void onStartTrackingTouch(SeekBar bar){}public void onStopTrackingTouch(SeekBar bar){}});
+        LinearLayout jumps=row(form);
+        java.util.function.IntConsumer preview=index->{int clamped=Math.max(0,Math.min(count-1,index));number.setText(String.valueOf(clamped+1));slider.setProgress(clamped);};
+        button(jumps,"First",()->preview.accept(0));button(jumps,"−100",()->{try{preview.accept(SketchTimelineTools.position(number.getText().toString(),count)-100);}catch(Exception error){onMessage(error.getMessage());}});button(jumps,"+100",()->{try{preview.accept(SketchTimelineTools.position(number.getText().toString(),count)+100);}catch(Exception error){onMessage(error.getMessage());}});button(jumps,"Last",()->preview.accept(count-1));
+        AlertDialog dialog=new AlertDialog.Builder(this).setTitle("Go to frame / page").setView(form).setNegativeButton("Cancel",null).setPositiveButton("Go",null).create();dialog.show();dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{try{
+            int selected=SketchTimelineTools.position(number.getText().toString(),count);
+            if(!navigatorStillCurrent(openedBook,openedSketch)){onMessage("The drawing changed. Open Go again.");return;}
+            runAction("Select frame",()->{if(!navigatorStillCurrent(openedBook,openedSketch)){onMessage("The drawing changed. Open Go again.");return;}selectFilmstrip(selected);dialog.dismiss();});
+        }catch(Exception error){onMessage(error.getMessage());}});
+    }
     private void archiveSketch(){
         if(session==null||document==null)return;SketchEditorSession active=session;String id=sketchId,title=document.optString("name");
         io.execute(()->{try{active.awaitIdle(15000);if(active.error()!=null)throw new IllegalStateException(active.error());long revision=active.document().getLong("revision");
