@@ -11,7 +11,11 @@ import static org.junit.Assert.*;
 @RunWith(RobolectricTestRunner.class) @Config(sdk=33,manifest=Config.NONE)
 public class NativeWorkbenchBridgeTest {
     @Test public void onlyTheClosedKnownAliasesResolveToExistingActions()throws Exception {
-        JSONObject advertised=NativeWorkbenchBridge.capabilities();JSONArray actions=advertised.getJSONArray("canonicalActions");assertEquals(49,actions.length());assertEquals("app_execute",advertised.getString("tool"));assertEquals("3.9.0",advertised.getString("minimumNativeVersion"));assertEquals("4.1.0",advertised.getString("paintMinimumNativeVersion"));
+        JSONObject advertised=NativeWorkbenchBridge.capabilities();JSONArray actions=advertised.getJSONArray("canonicalActions");assertEquals(50,actions.length());assertEquals("app_execute",advertised.getString("tool"));assertEquals("3.9.0",advertised.getString("minimumNativeVersion"));assertEquals("4.1.0",advertised.getString("paintMinimumNativeVersion"));
+        assertEquals("import_mailbox_media",NativeWorkbenchBridge.canonicalAction("studio_import_mailbox_media"));
+        assertTrue(NativeCommandExecutionPolicy.requiresBackgroundThread("studio_import_mailbox_media"));
+        assertEquals("4.2.0",advertised.getString("encryptedMediaImportMinimumNativeVersion"));
+        assertEquals(256L*1024*1024,advertised.getLong("encryptedMediaImportMaximumBytes"));
         for(int i=0;i<actions.length();i++){String action=actions.getString(i);assertEquals(action,NativeWorkbenchBridge.canonicalAction("studio_"+action));assertEquals(action,NativeWorkbenchBridge.canonicalAction(action));}
         for(String unknown:new String[]{"studio_gallery_list","studio_delete_project","studio_run_shell","studio_unknown_action","studio_studio_sketch_edit","studio_cinematic_3d_save_program/execute","Studio_sketch_edit","studio_"})assertEquals(unknown,NativeWorkbenchBridge.canonicalAction(unknown));assertNull(NativeWorkbenchBridge.canonicalAction(null));
     }
