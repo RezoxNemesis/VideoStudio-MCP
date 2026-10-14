@@ -11,6 +11,7 @@ import STUDIO_CHARACTER_JS from "./studio-character.js";
 import STUDIO_ACTION_TIMELINE_JS from "./studio-action-timeline.js";
 import STUDIO_POSE_SEQUENCE_JS from "./studio-pose-sequence.js";
 import LOCAL_VIDEO_DOWNLOAD_HTML from "./local-download.js";
+import {persistNativeCommandQueue, hydrateNativeField, hydrateNativeCommand} from "./native-payload-storage.js";
 
 const JH = {"content-type":"application/json; charset=UTF-8","cache-control":"no-store"};
 const now = () => new Date().toISOString();
@@ -362,7 +363,7 @@ export class VideoStudioState extends DurableObject {
         });
       }
       const merged=[...byId.values()].sort((a,b)=>Number(a.seq||0)-Number(b.seq||0)).slice(-160);
-      await this.ctx.storage.put("app-v3-cl:"+canonicalId,merged);
+      await persistNativeCommandQueue(this.ctx.storage,canonicalId,merged);
       await this.ctx.storage.put("app-v3-seq:"+canonicalId,seq);
 
       legacy.supersededByDeviceId=canonicalId;
@@ -646,14 +647,14 @@ export class VideoStudioState extends DurableObject {
     const terminal=list.filter(c=>c.status!=="queued"&&c.status!=="claimed"&&c.status!=="waiting_native");
     const terminalSlots=Math.max(0,160-pending.length);
     const retained=[...(terminalSlots?terminal.slice(-terminalSlots):[]),...pending].sort((a,b)=>a.seq-b.seq);
-    await this.ctx.storage.put(queueKey,retained.slice(-160));
+    await persistNativeCommandQueue(this.ctx.storage,d.deviceId,retained.slice(-160));
     return command;
   }
   async appCommandHybrid(hybridKey,id){
     const resolved=await this.appResolveHybrid(hybridKey);
     if(!resolved) throw new Error("Private hybrid binding rejected");
     const list=(await this.ctx.storage.get("app-v3-cl:"+resolved.native.deviceId))||[];
-    return list.find(c=>c.id===id)||null;
+    return await hydrateNativeCommand(this.ctx.storage,list.find(c=>c.id===id)||null);
   }
   async appStatusHybrid(hybridKey){
     const resolved=await this.appResolveHybrid(hybridKey);
@@ -888,7 +889,7 @@ export class VideoStudioState extends DurableObject {
     const terminal=list.filter(c=>c.status!=="queued"&&c.status!=="claimed"&&c.status!=="waiting_native");
     const terminalSlots=Math.max(0,160-pending.length);
     const retained=[...(terminalSlots?terminal.slice(-terminalSlots):[]),...pending].sort((a,b)=>a.seq-b.seq);
-    await this.ctx.storage.put(k,retained.slice(-160));
+    await persistNativeCommandQueue(this.ctx.storage,d.deviceId,retained.slice(-160));
     return c;
   }
   async appCommandsV3(deviceId,ownerKey,after=0,waitMs=0){
@@ -914,8 +915,8 @@ export class VideoStudioState extends DurableObject {
           if(found.length>=4) break;
         }
       }
-      if(changed) await this.ctx.storage.put(key,list.slice(-160));
-      if(found.length||Date.now()>=until) return found;
+      if(changed) await persistNativeCommandQueue(this.ctx.storage,deviceId,list.slice(-160));
+      if(found.length||Date.now()>=until) return await Promise.all(found.map(c=>hydrateNativeCommand(this.ctx.storage,c)));
       await new Promise(resolve=>setTimeout(resolve,500));
     }
   }
@@ -926,7 +927,7 @@ export class VideoStudioState extends DurableObject {
     if(!(min<=3&&max>=3)) throw new Error("VideoStudio stable MCP compatibility lane v3 is not registered");
     const k="app-v3-cl:"+deviceId, list=(await this.ctx.storage.get(k))||[], i=list.findIndex(c=>c.id===id);
     if(i<0) return null;
-    const completedParameters={...(list[i].parameters||{})};
+    const completedParameters={...((await hydrateNativeField(this.ctx.storage,list[i].parameters))||{})};
     if(completedParameters.base64) completedParameters.base64="[completed payload purged]";
     if(completedParameters.sourceUrl) completedParameters.sourceUrl="[temporary URL purged]";
     if(completedParameters.nativeParameters && typeof completedParameters.nativeParameters==="object"){
@@ -941,17 +942,17 @@ export class VideoStudioState extends DurableObject {
         list[j]={...list[j],result:{...list[j].result,contactSheet:{...list[j].result.contactSheet,base64:undefined,expired:true}}};
       }
     }
-    await this.ctx.storage.put(k,list.slice(-160));
+    const storedQueue=await persistNativeCommandQueue(this.ctx.storage,deviceId,list.slice(-160));
     const stored=(await this.ctx.storage.get("app-device:"+deviceId))||d;
     stored.lastSeenAt=now();
     await this.ctx.storage.put("app-device:"+deviceId,stored);
-    return list[i];
+    return storedQueue.find(c=>c.id===id)||null;
   }
   async appCommandV3(ownerKey,id){
     const d=await this.appV3Device(ownerKey);
     const list=(await this.ctx.storage.get("app-v3-cl:"+d.deviceId))||[];
     const native=list.find(c=>c.id===id);
-    if(native) return native;
+    if(native) return await hydrateNativeCommand(this.ctx.storage,native);
     const fallback=await this.appResolveStudioWebFallback(ownerKey);
     if(!fallback) return null;
     const webDeviceId=fallback.binding.webDeviceId;
