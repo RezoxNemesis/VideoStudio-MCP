@@ -43,3 +43,13 @@ Timed captions add font family, size, weight/italic, alignment, text colour and 
 All new fields/actions require a native 4.3.0 executor. Check `app_status` first. [The app-key connection](VIDEO_STUDIO_APP_KEY.md) can deliver these operations through encrypted backup commands without waiting for production tool discovery to change. Delivery and queue admission remain distinct from authenticated terminal execution.
 
 The primary Cloudflare deployment is still blocked by unavailable existing account/token bindings. Source and local MCP/SQLite checks do not establish that these backend changes are deployed. Tests and signed artifacts also do not establish phone GPU/audio performance, notification delivery, exact artistic likeness or cinematic acceptance. Release build and public artifact evidence are recorded after verification.
+
+## Verified release artifact
+
+[Download Video studio 4.3.0](https://github.com/RezoxNemesis/VideoStudio-MCP/releases/download/videostudio-v4.3.0-preview/Video-studio-4.3.0.apk). Install over the existing app without uninstalling or clearing data.
+
+All **960 Android tests** across 186 suites passed, with no failures/errors/skips. The Node suite passed **229 tests plus 306 smoke checks**. [Signed build 38540534006](https://github.com/RezoxNemesis/VideoStudio-MCP/actions/runs/38540534006) compiled source `2a8dd6a6729b4ea8559f42154ac58aa8bd2edd9f`; [publication 38541045823](https://github.com/RezoxNemesis/VideoStudio-MCP/actions/runs/38541045823) reused that artifact without rebuilding.
+
+The independently downloaded public APK exactly matched the signed artifact's 129,828,253 bytes, original signing certificate, SHA-256 and CI proof. APK SHA-256: `a9d426da6b8dac13b5fe722e569b3562c14f30ce65f7d0599e3a064ea1157312`.
+
+Installed native 4.3.0 execution remains unverified. Backend deployment remains blocked as described above; local SDK evidence is not production activation or phone execution.
