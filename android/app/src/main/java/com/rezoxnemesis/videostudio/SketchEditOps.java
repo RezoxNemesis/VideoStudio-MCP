@@ -11,7 +11,15 @@ public final class SketchEditOps {
     private SketchEditOps() {}
 
     public static JSONObject execute(Context context,String action,JSONObject args) throws Exception {
-        JSONObject result=executeInternal(context,action,args);result.put("ok",true);
+        return executeWithSession(context,action,args,null);
+    }
+    /** Trusted importer boundary; the session pin is never accepted from public JSON. */
+    static JSONObject executeLiveEdit(Context context,JSONObject args,String expectedSessionId)throws Exception {
+        SketchDocument.id(new JSONObject().put("sessionId",expectedSessionId),"sessionId");
+        return executeWithSession(context,"sketch_edit",args,expectedSessionId);
+    }
+    private static JSONObject executeWithSession(Context context,String action,JSONObject args,String expectedSessionId)throws Exception {
+        JSONObject result=executeInternal(context,action,args,expectedSessionId);result.put("ok",true);
         // A hidden guide is preparatory data, not a request to change the
         // foreground drawing. Actual edits and live sessions still follow.
         boolean hiddenGuideImport="sketch_import_reference".equals(action)&&!args.optBoolean("guideVisible",true);
@@ -21,7 +29,7 @@ public final class SketchEditOps {
         }
         return result;
     }
-    private static JSONObject executeInternal(Context context, String action, JSONObject args) throws Exception {
+    private static JSONObject executeInternal(Context context, String action, JSONObject args,String expectedSessionId) throws Exception {
         if (args == null || args.toString().getBytes(StandardCharsets.UTF_8).length > 512 * 1024)
             throw SketchDocument.bad("Request exceeds 512 KiB; split the edit into revision-bound batches");
         if("sketch_capabilities".equals(action)){SketchDocument.fields(args,"");return SketchCapabilities.get();}
@@ -175,9 +183,17 @@ public final class SketchEditOps {
                     JSONArray operations = args.getJSONArray("operations");
                     if (operations.length() < 1 || operations.length() > 64) throw SketchDocument.bad("Use 1..64 operations in an atomic batch");
                     SketchPaintOps.validatePublicOperations(operations);
-                    if(SketchPaintOps.containsPaint(operations)||SketchPaintOps.containsDependencyCopies(operations))return SketchPaintOps.executeEdit(context,store,id,op,revision,fingerprint,operations);
+                    if(SketchPaintOps.containsPaint(operations)||SketchPaintOps.containsDependencyCopies(operations)){
+                        if(expectedSessionId!=null)throw SketchDocument.bad("Session-bound drawing imports accept vector operations only");
+                        return SketchPaintOps.executeEdit(context,store,id,op,revision,fingerprint,operations);
+                    }
                     JSONArray visual=new JSONArray();boolean additions=true;for(int n=0;n<operations.length();n++)if(!"add_object".equals(operations.getJSONObject(n).optString("type")))additions=false;final boolean appendOnly=additions;
                     return store.mutate(id, op, revision, fingerprint, doc -> {
+                        if(expectedSessionId!=null){
+                            JSONObject active=store.activeDrawingSession(id);
+                            if(active==null||!expectedSessionId.equals(active.getString("sessionId")))
+                                throw new IllegalStateException("SKETCH_LIVE_SESSION_ENDED: drawing import stopped after session takeover");
+                        }
                         SketchDrawingPolicy.requireOperations(store.activeDrawingSession(id),operations);
                         // For pure additions, a valid final document implies every growing subset
                         // is valid. Store.mutate validates once before commit/history/live events.

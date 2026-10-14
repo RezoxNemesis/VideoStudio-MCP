@@ -27,9 +27,17 @@ public final class NativeCommandExecutionPolicyTest {
             assertTrue(action,NativeCommandExecutionPolicy.requiresBackgroundThread(action));
     }
     @Test public void lightweightCommandsRemainAvailableDuringAnArtworkRead() {
-        for(String operation:new String[]{"get_state","ping","self_test",
+        for(String operation:new String[]{"self_test",
                 "connection_health","reconnect_mcp","cancel_job"})
             assertFalse(operation,NativeCommandExecutionPolicy.requiresBackgroundThread(operation));
+    }
+    @Test public void projectAndJournalSnapshotsCannotBlockTheUiLooper() {
+        assertTrue(NativeCommandExecutionPolicy.requiresBackgroundThread("get_state"));
+        assertTrue(NativeCommandExecutionPolicy.requiresBackgroundThread("ping"));
+    }
+    @Test public void retainedResultsAndOwnedDrawingImportsCannotBlockTheUiLooper() {
+        assertTrue(NativeCommandExecutionPolicy.requiresBackgroundThread("get_native_result_page"));
+        assertTrue(NativeCommandExecutionPolicy.requiresBackgroundThread("sketch_import_drawing_asset"));
     }
     @Test public void nullAndUnknownActionsAreNotAutomaticallyOffloaded() {
         assertFalse(NativeCommandExecutionPolicy.requiresBackgroundThread(null));

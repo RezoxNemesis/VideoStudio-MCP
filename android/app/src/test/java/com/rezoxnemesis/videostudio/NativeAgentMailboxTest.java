@@ -90,4 +90,161 @@ public class NativeAgentMailboxTest {
  java.lang.reflect.Field running=NativeAgentMailbox.class.getDeclaredField("running");running.setAccessible(true);running.set(mailbox,true);java.lang.reflect.Method poll=NativeAgentMailbox.class.getDeclaredMethod("pollIndex");poll.setAccessible(true);
  try{poll.invoke(mailbox);assertFalse(mailbox.owns(commandId));packetVisible.set(true);poll.invoke(mailbox);assertTrue("A cached CDN404 must not keep an immutable packet unavailable after it reaches origin",mailbox.owns(commandId));}finally{mailbox.stop();}
  }
+
+ @Test public void oneSweepDeliversSeveralReceiptPagesWithoutThreeSecondGaps()throws Exception {
+  NativeAgentMailbox mailbox=newMailbox();Carrier carrier=new Carrier(mailbox);
+  JSONObject cmd=completed(mailbox,250000);String id=cmd.getString("id");
+  try {
+   flush(mailbox);
+   assertTrue("An available carrier must receive more than one page per sweep",carrier.bodies.size()>1);
+   assertEquals(receiptPageCount(mailbox,id),carrier.bodies.size());
+   assertEquals(0,mailboxStore(mailbox).pendingReceipts(Long.MAX_VALUE).length());
+   JSONObject health=health(mailbox);
+   assertEquals(carrier.bodies.size(),health.getInt("lastSweepRequests"));
+   assertEquals(receiptPageCount(mailbox,id),health.getInt("receiptNextPage"));
+   assertEquals("encrypted receipt published",health.getString("lastReceiptState"));
+   assertFalse(health.toString().contains(KEY));
+   assertFalse(health.toString().contains("ciphertext"));
+  } finally {mailbox.stop();}
+ }
+
+ @Test public void largeReceiptBatchHasRequestByteBoundsAndDoesNotStarveSmallReceipts()throws Exception {
+  NativeAgentMailbox mailbox=newMailbox();Carrier carrier=new Carrier(mailbox);
+  JSONObject large=completed(mailbox,1500000),small=completed(mailbox,0);
+  try {
+   flush(mailbox);
+   assertEquals("Per-sweep request budget",16,carrier.bodies.size());
+   assertTrue(carrier.bytes<=640*1024);
+   assertEquals(large.getString("id"),carrier.page(0).getString("commandId"));
+   assertEquals(small.getString("id"),carrier.page(1).getString("commandId"));
+   assertEquals(15,mailboxStore(mailbox).receiptPage(large.getString("id")));
+   assertEquals(1,mailboxStore(mailbox).receiptPage(small.getString("id")));
+   assertEquals(1,mailboxStore(mailbox).pendingReceipts(Long.MAX_VALUE).length());
+   assertEquals(carrier.bytes,health(mailbox).getLong("lastSweepBytes"));
+  } finally {mailbox.stop();}
+ }
+
+ @Test public void carrierFailureRetriesExactFragmentAndReportsBoundedProgress()throws Exception {
+  NativeAgentMailbox mailbox=newMailbox();Carrier carrier=new Carrier(mailbox);
+  JSONObject cmd=completed(mailbox,90000);String id=cmd.getString("id");carrier.fail=true;
+  try {
+   flush(mailbox);
+   assertEquals(1,carrier.bodies.size());assertEquals(0,mailboxStore(mailbox).receiptPage(id));
+   JSONObject failed=health(mailbox);
+   assertEquals("saved privately; carrier retry pending",failed.getString("lastReceiptState"));
+   assertEquals(0,failed.getInt("receiptNextPage"));
+   assertFalse(failed.getString("lastReceiptError").isEmpty());
+   JSONObject first=carrier.page(0);carrier.fail=false;mailboxStore(mailbox).deferReceipt(id,0);
+   flush(mailbox);
+   assertEquals(first.toString(),carrier.page(1).toString());
+   assertEquals(receiptPageCount(mailbox,id),mailboxStore(mailbox).receiptPage(id));
+   assertEquals("",health(mailbox).getString("lastReceiptError"));
+  } finally {mailbox.stop();}
+ }
+
+ @Test public void receiptSweepStopsStartingRequestsWhenItsTimeBudgetExpires()throws Exception {
+  NativeAgentMailbox mailbox=newMailbox();Carrier carrier=new Carrier(mailbox);
+  completed(mailbox,250000);carrier.advanceClock=true;
+  try {
+   flush(mailbox);
+   assertEquals(1,carrier.bodies.size());
+   JSONObject health=health(mailbox);
+   assertEquals("time",health.getString("lastSweepLimit"));
+   assertTrue(health.getLong("lastSweepDurationMs")>=6000);
+   assertTrue(carrier.timeout>0&&carrier.timeout<=6000);
+  } finally {mailbox.stop();}
+ }
+
+ @Test public void publishedPageCheckpointResumesAfterMailboxRecreation()throws Exception {
+  NativeAgentMailbox first=newMailbox();Carrier sent=new Carrier(first);
+  JSONObject cmd=completed(first,1500000);String id=cmd.getString("id");
+  flush(first);assertEquals(16,sent.bodies.size());
+  JSONObject expected=NativeAgentMailboxCrypto.receiptPages(first.receipt(id)).getJSONObject(16);first.stop();
+  NativeAgentMailbox resumed=newMailbox();Carrier carrier=new Carrier(resumed);
+  try {
+   mailboxStore(resumed).deferReceipt(id,0);flush(resumed);
+   assertEquals(expected.toString(),carrier.page(0).toString());
+   assertEquals(32,mailboxStore(resumed).receiptPage(id));
+  } finally {resumed.stop();}
+ }
+
+ @Test public void savedHealthDistinguishesGitHubPollSuccessFromReceiptDelivery()throws Exception {
+  NativeAgentMailbox mailbox=newMailbox();Carrier carrier=new Carrier(mailbox);
+  try {
+   java.lang.reflect.Method tick=NativeAgentMailbox.class.getDeclaredMethod("tick");tick.setAccessible(true);tick.invoke(mailbox);
+   JSONObject healthy=health(mailbox);
+   assertTrue(healthy.getBoolean("pollFresh"));
+   assertTrue(healthy.getLong("lastPollSuccessAt")>0);
+   assertEquals("",healthy.getString("lastError"));
+   carrier.fail=true;tick.invoke(mailbox);
+   JSONObject failed=health(mailbox);
+   assertFalse(failed.getBoolean("connected"));
+   assertFalse(failed.getString("lastError").isEmpty());
+   assertEquals(healthy.getLong("lastPollSuccessAt"),failed.getLong("lastPollSuccessAt"));
+   java.lang.reflect.Method saved=NativeAgentMailbox.class.getMethod("savedHealth",android.content.Context.class);
+   JSONObject persisted=(JSONObject)saved.invoke(null,org.robolectric.RuntimeEnvironment.getApplication());
+   assertEquals(failed.getLong("lastPollAt"),persisted.getLong("lastPollAt"));
+  } finally {mailbox.stop();}
+ }
+
+ @Test public void successfulPollCannotHideAnAdmittedPacketRecoveryFailure()throws Exception {
+  NativeAgentMailbox mailbox=newMailbox();new Carrier(mailbox);
+  long now=System.currentTimeMillis();JSONObject p=packet(now),cmd=p.getJSONArray("commands").getJSONObject(0);
+  mailboxStore(mailbox).accept(NativeAgentMailboxCrypto.encodePacket(KEY,p).toString(),now);
+  mailboxStore(mailbox).admitted(cmd.getString("id"));
+  java.io.File encrypted=new java.io.File(org.robolectric.RuntimeEnvironment.getApplication().getNoBackupFilesDir(),"agent-mailbox-v1/"+p.getString("packetId")+".vscmd");
+  assertTrue(encrypted.delete());
+  try {
+   java.lang.reflect.Method tick=NativeAgentMailbox.class.getDeclaredMethod("tick");tick.setAccessible(true);tick.invoke(mailbox);
+   JSONObject health=health(mailbox);assertTrue(health.getBoolean("pollFresh"));
+   assertEquals("Private mailbox recovery unavailable",health.getString("lastError"));
+  } finally {mailbox.stop();}
+ }
+
+ private NativeAgentMailbox newMailbox()throws Exception {
+  NativeAgentMailbox result=new NativeAgentMailbox(org.robolectric.RuntimeEnvironment.getApplication(),KEY,()->false,c->{},c->true);
+  java.lang.reflect.Field running=NativeAgentMailbox.class.getDeclaredField("running");running.setAccessible(true);running.set(result,true);return result;
+ }
+ private JSONObject completed(NativeAgentMailbox mailbox,int size)throws Exception {
+  long now=System.currentTimeMillis();JSONObject p=packet(now),cmd=p.getJSONArray("commands").getJSONObject(0);
+  mailbox.accept(NativeAgentMailboxCrypto.encodePacket(KEY,p).toString(),now);
+  mailbox.complete(cmd,new JSONObject().put("ok",true).put("payload","x".repeat(size)),"completed");return cmd;
+ }
+ private NativeAgentMailboxStore mailboxStore(NativeAgentMailbox mailbox)throws Exception {
+  java.lang.reflect.Field field=NativeAgentMailbox.class.getDeclaredField("store");field.setAccessible(true);return (NativeAgentMailboxStore)field.get(mailbox);
+ }
+ private int receiptPageCount(NativeAgentMailbox mailbox,String id)throws Exception {return NativeAgentMailboxCrypto.receiptPages(mailbox.receipt(id)).length();}
+ private void flush(NativeAgentMailbox mailbox)throws Exception {
+  java.lang.reflect.Method flush=NativeAgentMailbox.class.getDeclaredMethod("flushReceipts");flush.setAccessible(true);flush.invoke(mailbox);
+ }
+ private JSONObject health(NativeAgentMailbox mailbox)throws Exception {
+  try{return (JSONObject)NativeAgentMailbox.class.getMethod("health").invoke(mailbox);}
+  catch(NoSuchMethodException missing){fail("Mailbox health must expose poll and receipt progress independently");return null;}
+ }
+ private static final class Carrier {
+  final List<JSONObject> bodies=new ArrayList<>();long bytes;boolean fail,advanceClock;int timeout;
+  Carrier(NativeAgentMailbox mailbox)throws Exception {
+   java.lang.reflect.Field field=NativeAgentMailbox.class.getDeclaredField("connectionFactory");field.setAccessible(true);
+   field.set(mailbox,(java.util.function.Function<String,java.net.HttpURLConnection>)(address)->new java.net.HttpURLConnection(null){
+    final java.io.ByteArrayOutputStream output=new java.io.ByteArrayOutputStream();JSONObject body;
+    public void disconnect(){}public boolean usingProxy(){return false;}public void connect(){}
+    public java.io.OutputStream getOutputStream(){return output;}
+    public int getResponseCode()throws java.io.IOException {
+     if(address.contains("/api/device/register")){
+      try{body=new JSONObject(output.toString("UTF-8"));bodies.add(body);bytes+=output.size();timeout=getReadTimeout();}
+      catch(Exception invalid){throw new java.io.IOException(invalid);}
+      if(advanceClock)org.robolectric.shadows.ShadowSystemClock.advanceBy(java.time.Duration.ofSeconds(6));
+     }
+     if(fail)throw new java.io.IOException("synthetic private carrier failure");return 200;
+    }
+    public java.io.InputStream getInputStream()throws java.io.IOException {
+     try{
+      String reply=body==null?new JSONObject().put("schema","videostudio.agent.index.v1").put("packets",new JSONArray()).toString():new JSONObject().put("ok",true).put("device",new JSONObject().put("deviceId",body.getString("deviceId")).put("capabilities",body.getJSONObject("meta").getJSONArray("capabilities"))).toString();
+      return new java.io.ByteArrayInputStream(reply.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+     }catch(Exception invalid){throw new java.io.IOException(invalid);}
+    }
+   });
+  }
+  JSONObject page(int index)throws Exception {return new JSONObject(bodies.get(index).getJSONObject("meta").getJSONArray("capabilities").getString(1));}
+ }
 }

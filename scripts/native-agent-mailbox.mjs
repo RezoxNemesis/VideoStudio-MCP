@@ -60,8 +60,16 @@ export async function publishPacket(packet,{packetId,gh=ghDefault}={}){
   }
   throw new Error('Mailbox index conflict; retry the persisted packet');
 }
+export function parseMailboxOptions(mode,args){
+  const allowed=mode==='send'?['--app-key-file','--action','--parameters-file','--parameters','--command-id','--retry-file']:mode==='status'?['--app-key-file','--command-id','--output-file']:[];
+  if(!allowed.length||args.length%2)fail();const opts={};
+  for(let i=0;i<args.length;i+=2){if(!allowed.includes(args[i])||Object.hasOwn(opts,args[i])||!args[i+1])fail();opts[args[i]]=args[i+1];}
+  if(!opts['--app-key-file']||opts['--parameters']&&opts['--parameters-file'])fail();
+  return opts;
+}
 async function cli(){
-  const [mode,...args]=process.argv.slice(2),opts={};for(let i=0;i<args.length;i+=2)opts[args[i]]=args[i+1];
+  const [mode,...args]=process.argv.slice(2),opts=parseMailboxOptions(mode,args);
+  const suppliedParameters=opts['--parameters-file']?JSON.parse(await readFile(opts['--parameters-file'],'utf8')):opts['--parameters']?JSON.parse(opts['--parameters']):undefined;
   const {ownerKey,origin}=parseAppKey(await readFile(opts['--app-key-file'],'utf8'));
   let id=opts['--command-id'];
   if(mode==='status'){
@@ -78,7 +86,7 @@ async function cli(){
     id=id||randomUUID();if(!uuid.test(id))fail();stateFile=join(stateDir,id+'.json');
     try{state=JSON.parse(await readFile(stateFile,'utf8'));}catch(e){if(e.code!=='ENOENT')throw e;}
     if(!state){
-      if(!opts['--action'])fail();const parameters=opts['--parameters-file']?JSON.parse(await readFile(opts['--parameters-file'],'utf8')):{};
+      if(!opts['--action'])fail();const parameters=suppliedParameters??{};
       const now=Date.now(),packetId=randomUUID();const packet=encodePacket(ownerKey,{schema:'videostudio.agent.commands.v1',packetId,issuedAtMs:now,expiresAtMs:now+86400000,commands:[{id,action:opts['--action'],parameters}]});
       state={schema:'videostudio.agent.outbox.v1',commandId:id,packetId,packet};await writeFile(stateFile,JSON.stringify(state)+'\n',{mode:0o600,flag:'wx'});
     }
@@ -86,7 +94,7 @@ async function cli(){
   const plain=decodePacket(ownerKey,state.packet);if(state.schema!=='videostudio.agent.outbox.v1'||plain.packetId!==state.packetId||plain.commands.length!==1||plain.commands[0].id!==id)fail();
   if(opts['--command-id']&&opts['--command-id']!==id)fail();
   if(opts['--action']&&opts['--action']!==plain.commands[0].action)throw new Error('Persisted command action differs');
-  if(opts['--parameters-file']){const supplied=JSON.parse(await readFile(opts['--parameters-file'],'utf8'));if(!isDeepStrictEqual(supplied,plain.commands[0].parameters))throw new Error('Persisted command parameters differ');}
+  if(suppliedParameters!==undefined&&!isDeepStrictEqual(suppliedParameters,plain.commands[0].parameters))throw new Error('Persisted command parameters differ');
   console.log(JSON.stringify({commandId:id,packetId:state.packetId,delivery:'prepared',execution:'unconfirmed',retryFile:stateFile}));
   await publishPacket(state.packet,{packetId:state.packetId});
   console.log(JSON.stringify({commandId:id,packetId:state.packetId,delivery:'published',execution:'unconfirmed'}));

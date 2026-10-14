@@ -121,7 +121,13 @@ test('closed studio relay aliases enforce each native minimum and validate their
   const paint=['studio_sketch_paint_journal','studio_sketch_sample_color','studio_sketch_archive','studio_sketch_restore_archive'].includes(alias);
   const media=alias==='studio_import_mailbox_media';
   const cameraEdit=alias==='studio_cinematic_3d_edit_program';
-  assert.throws(()=>requireStoryboardNativeVersion({appVersion:'3.8.1'},alias),cameraEdit?/4\.3\.0/:media?/4\.2\.0/:paint?/4\.1\.0/:/3\.9\.[01456]/);
+  const repair=['studio_sketch_import_drawing_asset','studio_get_native_result_page','studio_get_native_delivery_status','studio_compact_native_delivery'].includes(alias);
+  assert.throws(()=>requireStoryboardNativeVersion({appVersion:'3.8.1'},alias),repair?/4\.3\.1/:cameraEdit?/4\.3\.0/:media?/4\.2\.0/:paint?/4\.1\.0/:/3\.9\.[01456]/);
+  if(repair){
+   assert.throws(()=>requireStoryboardNativeVersion({appVersion:'4.3.0'},alias),/4\.3\.1/);
+   assert.doesNotThrow(()=>requireStoryboardNativeVersion({appVersion:'4.3.1'},alias));
+   continue;
+  }
   if(cameraEdit){
    assert.throws(()=>requireStoryboardNativeVersion({appVersion:'4.2.0'},alias),/4\.3\.0/);
    assert.doesNotThrow(()=>requireStoryboardNativeVersion({appVersion:'4.3.0'},alias));
@@ -224,4 +230,19 @@ test('native text nested in an added layer requires its renderer version before 
  const request={operations:[{type:'add_layer',layer:{id:'lettering_layer',objects:[{id:'caption',kind:'text',text:'Hello',frame:0,exposure:1,color:'#FF000000',width:.01,fill:true,keys:[],transform:{x:0,y:0,scaleX:1,scaleY:1,rotation:0,anchorX:.5,anchorY:.5,opacity:1},bounds:{x:0,y:0,width:1,height:1}}]}}]};
  assert.throws(()=>requireStudioVersion({appVersion:'3.9.5'},'sketch_edit',request),/3\.9\.6/);
  assert.doesNotThrow(()=>requireStudioVersion({appVersion:'3.9.6'},'sketch_edit',request));
+});
+
+test('431 owned drawing import and receipt repair contracts are strict and native-only',()=>{
+ const packet={projectId:'owned-project',sourceProjectUpdatedAt:1234,sketchId:'new-drawing',manifestAssetId:'packet-asset',expectedManifestSha256:'a'.repeat(64),sourceAssetId:'source-asset',expectedSourceSha256:'b'.repeat(64),expectedFrameCount:2,drawingMethod:'original_strokes'};
+ assert.deepEqual(nativeStudioParameters('studio_sketch_import_drawing_asset',packet),packet);
+ for(const patch of [{drawingMethod:undefined},{drawingMethod:'ai_generated'},{sourceProjectUpdatedAt:0},{expectedManifestSha256:'invalid'},{sourceUrl:'https://unowned.invalid'}])assert.throws(()=>nativeStudioParameters('sketch_import_drawing_asset',{...packet,...patch}));
+ assert.deepEqual(nativeStudioParameters('get_native_delivery_status',{limit:4}),{limit:4});
+ assert.throws(()=>nativeStudioParameters('get_native_delivery_status',{limit:5}));
+ assert.deepEqual(nativeStudioParameters('compact_native_delivery',{commandId:'terminal-command',expectedResultSha256:'c'.repeat(64)}),{commandId:'terminal-command',expectedResultSha256:'c'.repeat(64)});
+ assert.throws(()=>nativeStudioParameters('compact_native_delivery',{commandId:'terminal-command',expectedResultSha256:'x'}));
+ for(const action of ['sketch_import_drawing_asset','get_native_result_page','get_native_delivery_status','compact_native_delivery']){
+  assert(STORYBOARD_NATIVE_ACTIONS.has(action));
+  assert.throws(()=>requireStudioVersion({appVersion:'4.3.0'},action),/4\.3\.1/);
+  assert.doesNotThrow(()=>requireStudioVersion({appVersion:'4.3.1'},action));
+ }
 });

@@ -51,14 +51,19 @@ public final class NativeCinematicSceneComposer {
         return Math.multiplyExact(Math.multiplyExact(width,height),4);
     }
 
-    /** Reuses the caller's array and never changes the direct buffer's position. */
+    /**
+     * Filament returns top-first RGBA; convert channels without reversing its rows again.
+     * The pinned v1.74.0 backend already flips raw OpenGL rows to match the public API:
+     * https://github.com/google/filament/blob/v1.74.0/filament/backend/src/opengl/OpenGLDriver.cpp#L4224-L4237
+     * Reuses the caller's array and never changes the direct buffer's position.
+     */
     public static void copyTopLeftArgb(ByteBuffer rgba,int width,int height,int[] pixels) {
         if(rgba==null||pixels==null||width<=0||height<=0||(long)width*height>MAX_PIXELS||
                 pixels.length<(long)width*height||rgba.remaining()<(long)width*height*4)
             throw new IllegalArgumentException("Invalid bounded cinematic GPU readback");
         int start=rgba.position(),stride=width*4;
         for(int y=0;y<height;y++) for(int x=0;x<width;x++) {
-            int offset=start+(height-1-y)*stride+x*4;
+            int offset=start+y*stride+x*4;
             pixels[y*width+x]=((rgba.get(offset+3)&255)<<24)|((rgba.get(offset)&255)<<16)|
                     ((rgba.get(offset+1)&255)<<8)|(rgba.get(offset+2)&255);
         }

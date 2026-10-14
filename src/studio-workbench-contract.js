@@ -163,6 +163,10 @@ export const studioToolSchemas={
  sketch_import_reference:{...mutation,projectId:id,sourceProjectUpdatedAt:updatedAt,assetId:id,layerId:id,objectId:id,frame:frame.optional(),exposure:integer(1,1200).optional(),bounds:bounds.optional(),guideVisible:z.boolean().optional()},
  sketch_import_frame_manifest:{sketchId:id,manifestName:z.string().min(1).max(120).regex(/^[A-Za-z0-9_.-]+\.jsonl(?:\.gz)?$/).refine(v=>!v.includes('..')),videoName:z.string().min(1).max(120).regex(/^[A-Za-z0-9_.-]+\.mp4$/).refine(v=>!v.includes('..')),expectedSourceSha256:sha,expectedFrameCount:integer(1,1200)},
  sketch_import_drawing_manifest:{sketchId:id,manifestName:z.string().min(1).max(120).regex(/^[A-Za-z0-9_.-]+\.jsonl(?:\.gz)?$/).refine(v=>!v.includes('..')),sourceName:z.string().min(1).max(120).regex(/^[A-Za-z0-9_.-]+\.(mp4|png|jpg|jpeg|webp|txt)$/i).refine(v=>!v.includes('..')),expectedSourceSha256:sha,expectedFrameCount:integer(1,1200)},
+ sketch_import_drawing_asset:{projectId:id,sourceProjectUpdatedAt:integer(1,Number.MAX_SAFE_INTEGER),sketchId:id,manifestAssetId:id,expectedManifestSha256:sha,sourceAssetId:id,expectedSourceSha256:sha,expectedFrameCount:integer(1,1200),drawingMethod:z.enum(['original_strokes','source_assisted'])},
+ get_native_result_page:{commandId:id,pageIndex:integer(0,2147483647)},
+ get_native_delivery_status:{limit:integer(1,4).optional()},
+ compact_native_delivery:{commandId:id,expectedResultSha256:sha},
  sketch_preview:{...sketchIdentity,expectedRevision:revision.optional(),frameIndex:frame.optional(),maxDimension:integer(128,720).optional(),crop:bounds.optional()},
  sketch_render:{...mutation,aspect:z.enum(['original','9:16','16:9','1:1']).optional(),quality:z.enum(['720p','1080p']).optional()},
  open_pipeline_configure:{endpoint,bearer:z.string().min(16).max(4096).regex(/^[A-Za-z0-9_.~+/-]+=*$/)},
@@ -246,6 +250,7 @@ const legacy3d=new Set(['STANDOFF','CHARGE','CLASH','BLADE_LOCK','FOLLOW_THROUGH
 const pixelFields=new Set(['keyframes','opacity','chromaKey','chromaColor','chromaTolerance','chromaFeather','maskShape','maskLeft','maskTop','maskRight','maskBottom','maskFeather','glowStrength','glowRadiusPx','glowThreshold']);
 export function requireStudioVersion(device,action,parameters={}){
  const alias=studioAliases.has(action);action=nativeStudioCanonicalAction(action);
+ if(['sketch_import_drawing_asset','get_native_result_page','get_native_delivery_status','compact_native_delivery'].includes(action)&&!atLeast(device?.appVersion,'4.3.1'))throw new Error('NATIVE_APP_UPGRADE_REQUIRED: registered drawing imports and durable native result delivery require Video studio 4.3.1 or newer');
  const needs430=action==='cinematic_3d_edit_program'||action==='precision_edit'&&(parameters.operations||[]).some(op=>op.keyframeEdits!==undefined||op.set?.audioPan!==undefined||op.set?.audioMono!==undefined)
   ||action==='sketch_edit'&&(parameters.operations||[]).some(op=>op.type==='symmetry_stroke')
   ||action==='set_studio_layers'&&(parameters.studioLayers||parameters.layers||[]).some(layer=>layer?.type==='title'&&['fontSize','fontFamily','fontStyle','textAlign','backgroundColor'].some(key=>layer[key]!==undefined));

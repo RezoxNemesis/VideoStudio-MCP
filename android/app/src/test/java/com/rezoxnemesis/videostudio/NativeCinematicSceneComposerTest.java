@@ -39,11 +39,22 @@ public class NativeCinematicSceneComposerTest {
         rgba.position(4);
         int[] pixels=new int[2];
         copyTopLeftArgb(rgba,1,2,pixels);
-        assertArrayEquals(new int[]{0x800000ff,0x32ff0000},pixels);
+        assertArrayEquals(new int[]{0x32ff0000,0x800000ff},pixels);
         assertEquals(4,rgba.position());
         rgba.put(4,(byte)12);
         copyTopLeftArgb(rgba,1,2,pixels);
-        assertEquals(0x320c0000,pixels[1]);
+        assertEquals(0x320c0000,pixels[0]);
+    }
+    @Test public void filamentTopFirstReadbackKeepsAsymmetricRowsAndColumnsUpright() {
+        // Filament v1.74.0 Renderer.readPixels returns top-first client rows, even on OpenGL.
+        // Distinct 2x3 corners expose both a vertical reversal and an accidental transpose.
+        ByteBuffer rgba=ByteBuffer.wrap(new byte[]{9,9,9,9,
+                (byte)255,0,0,17, 0,(byte)255,0,34,
+                0,0,(byte)255,51, (byte)255,(byte)255,0,68,
+                0,(byte)255,(byte)255,85, (byte)255,0,(byte)255,102});
+        rgba.position(4);int[] pixels=new int[6];copyTopLeftArgb(rgba,2,3,pixels);
+        assertArrayEquals(new int[]{0x11ff0000,0x2200ff00,0x330000ff,0x44ffff00,0x5500ffff,0x66ff00ff},pixels);
+        assertEquals(4,rgba.position());
     }
     @Test public void reusableReadbackRejectsShortDestinationAndTruncatedBuffer() {
         for(int[] sizes:new int[][]{{8,1},{4,2}}) {

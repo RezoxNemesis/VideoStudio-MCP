@@ -18,17 +18,24 @@ public final class CommandOutboxFairDeliveryTest {
     @Test public void pendingBatchBoundsMemoryWhileRetainingEveryLargeReceipt() throws Exception {
         Context context=RuntimeEnvironment.getApplication();String payload="x".repeat(700000);
         try(CommandOutbox q=new CommandOutbox(context)){
-            for(int n=0;n<10;n++)q.put(command("heavy_"+n,n+1),new JSONObject().put("ok",true).put("payload",payload),"completed");
-            JSONArray first=q.pending();assertTrue("ACK reads must not load sixteen large bodies at once",first.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8).length<=4*1024*1024);assertEquals(10,q.count());
+            for(int n=0;n<20;n++)q.put(command("heavy_"+n,n+1),new JSONObject().put("ok",true).put("payload",payload),"completed");
+            JSONArray first=q.pending();assertEquals(16,first.length());
+            assertTrue("Replicated receipts must stay bounded",first.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8).length<=16*2304);assertEquals(20,q.count());
             for(int n=0;n<first.length();n++)q.defer(first.getJSONObject(n).getString("id"));
-            assertEquals("heavy_"+first.length(),q.pending().getJSONObject(0).getString("id"));assertEquals(10,q.count());
+            assertEquals("heavy_"+first.length(),q.pending().getJSONObject(0).getString("id"));assertEquals(20,q.count());
         }
     }
     @Test public void receiptLargerThanCursorWindowDoesNotBlockSmallAcknowledgements() throws Exception {
         Context context=RuntimeEnvironment.getApplication();String large=UUID.randomUUID().toString(),small=UUID.randomUUID().toString();
         String payload="\uD83C\uDFA8".repeat(800000);
+        // Receipts from the preceding APK may already have reached the relay.
+        // They keep their original wire bytes, including this large result.
+        android.database.sqlite.SQLiteDatabase legacy=context.openOrCreateDatabase("mcp_result_outbox.db",Context.MODE_PRIVATE,null);
+        legacy.execSQL("CREATE TABLE results (id TEXT PRIMARY KEY, seq INTEGER NOT NULL, body TEXT NOT NULL, retry_after_ms INTEGER NOT NULL DEFAULT 0, attempt_count INTEGER NOT NULL DEFAULT 0)");
+        legacy.execSQL("INSERT INTO results (id,seq,body) VALUES (?,?,?)",new Object[]{large,1,
+                new JSONObject().put("status","completed").put("result",new JSONObject().put("ok",true).put("artwork",payload)).toString()});
+        legacy.setVersion(2);legacy.close();
         try(CommandOutbox q=new CommandOutbox(context)){
-            q.put(command(large,1),new JSONObject().put("ok",true).put("artwork",payload),"completed");
             q.put(command(small,2),new JSONObject().put("ok",true),"completed");
             JSONArray pending=q.pending();assertEquals(2,pending.length());assertEquals(payload,pending.getJSONObject(0).getJSONObject("result").getString("artwork"));
             q.defer(large);assertEquals(small,q.pending().getJSONObject(0).getString("id"));q.acknowledge(small);assertTrue(q.contains(large));
