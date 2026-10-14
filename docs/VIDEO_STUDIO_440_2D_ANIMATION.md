@@ -97,3 +97,31 @@ revision contracts and existing privacy/transport paths.
 These checks establish workspace implementation and regression evidence. APK
 installation, physical-device performance and final artistic approval remain
 separate from those results.
+
+## Published update and proof
+
+- [Compatible 4.4.0 APK](https://github.com/RezoxNemesis/VideoStudio-MCP/releases/download/videostudio-v4.4.0-preview/Video-studio-4.4.0.apk)
+- [100-frame film](https://github.com/RezoxNemesis/VideoStudio-MCP/releases/download/videostudio-v4.4.0-preview/Rooftop-Relay-100-frames-workspace.mp4)
+- [Actual animation Activity screenshot](https://github.com/RezoxNemesis/VideoStudio-MCP/releases/download/videostudio-v4.4.0-preview/animation-studio-frame-16.png)
+- [Complete editable proof bundle](https://github.com/RezoxNemesis/VideoStudio-MCP/releases/download/videostudio-v4.4.0-preview/Video-studio-2D-animation-proof.zip)
+- [PR #78](https://github.com/RezoxNemesis/VideoStudio-MCP/pull/78)
+
+The APK was built from `8b366ae09a178b3bfce73e75eb762c06f2d6ea9c` in
+[Android run 38566109168](https://github.com/RezoxNemesis/VideoStudio-MCP/actions/runs/38566109168).
+That clean CI run also passed all 1054 Android tests. The package remains
+`com.rezoxnemesis.videostudio.next`, label **Video studio**, version code **440**.
+The 130070996-byte APK has SHA-256
+`8c1fe5ed0b7bb01328bf91fd66e38828364483a651dd1ee0ce84b6867d5ba197`.
+Its original signing certificate was independently verified:
+`7e0187470356616be2a45bc7f41445894085185db110edfdc0cdfd232942a6dd`.
+
+[Proof publication run 38567136817](https://github.com/RezoxNemesis/VideoStudio-MCP/actions/runs/38567136817)
+used the already verified APK and original native PNG artifacts, without
+rebuilding the app. It verified every PNG checksum and encoded exactly 100 frames.
+The release MP4 SHA-256 is
+`6944d6844633529f537b8862fff695c80364d4f1aa844ce3b6fdb2b56484bd52`;
+the 12194825-byte proof ZIP SHA-256 is
+`f607551bee67bce403951a3e9b7745156a6414305cda8ef47d6071608bb15c47`.
+Public APK, MP4, screenshot and ZIP downloads were retrieved and checked after
+publication; the MP4 again decoded as 100 frames, 24 FPS, 1280×720, 4.166667 seconds.
+The Activity screenshot was inspected again from the public release asset.
