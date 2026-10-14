@@ -289,12 +289,20 @@ test('studio relay alias generic execution keeps queued alias native-only when t
 });
 test('studio relay alias version and canonical parameter failures happen before queue writes',async()=>{
  const old=await fixture('3.8.1'),before=old.writes();
- for(const alias of STUDIO_ALIAS_ACTIONS)assert.throws(()=>contract.requireStoryboardNativeVersion({appVersion:'3.8.1'},alias),/3\.9\.[0156]/);
+ for(const alias of STUDIO_ALIAS_ACTIONS){const paint=['studio_sketch_paint_journal','studio_sketch_sample_color','studio_sketch_archive','studio_sketch_restore_archive'].includes(alias);assert.throws(()=>contract.requireStoryboardNativeVersion({appVersion:'3.8.1'},alias),alias==='studio_import_mailbox_media'?/4\.2\.0/:paint?/4\.1\.0/:/3\.9\.[0156]/);}
  await assert.rejects(old.relay.appEnqueueV3(old.owner,'studio_sketch_get',{sketchId:'s'}),/3\.9\.0/);assert.equal(old.writes(),before);
  const current=await fixture('3.9.0'),currentBefore=current.writes();
  await assert.rejects(current.relay.appEnqueueV3(current.owner,'studio_sketch_get',{sketchId:'s',uri:'content://foreign'}));
  await assert.rejects(current.relay.appEnqueueV3(current.owner,'studio_cinematic_3d_render',{projectId:'p',programId:'r',outputProjectId:'existing'}));
  assert.equal(current.writes(),currentBefore);
+});
+test('native painting requires a compatible phone before any relay command is stored',async()=>{
+ const older=await fixture('4.0.1'),before=older.writes();
+ await assert.rejects(older.relay.appEnqueueV3(older.owner,'studio_sketch_edit',{sketchId:'s',operationId:'op',expectedRevision:1,operations:[{type:'add_paint_cel',layerId:'layer_1',objectId:'cel'}]}),/4\.1\.0/);
+ await assert.rejects(older.relay.appEnqueueV3(older.owner,'studio_sketch_sample_color',{sketchId:'s',expectedRevision:1,source:'composite',x:.5,y:.5}),/4\.1\.0/);
+ assert.equal(older.writes(),before);
+ const current=await fixture('4.1.0');await current.relay.appEnqueueV3(current.owner,'studio_sketch_edit',{sketchId:'s',operationId:'op',expectedRevision:1,operations:[{type:'add_paint_cel',layerId:'layer_1',objectId:'cel'}]});
+ const rows=await queueBindings.readCommandQueue(current.storage,'app-v3-cl:'+current.deviceId);assert.equal(rows.at(-1).action,'studio_sketch_edit');assert.equal(rows.at(-1).parameters.operations[0].type,'add_paint_cel');
 });
 test('studio relay alias permission checks use canonical one-file action and retain the Gallery wall',async()=>{
  const f=await fixture('3.9.0','one_file');

@@ -1,5 +1,6 @@
 import {relayRelease,commandBacklog,commandExecution} from './relay-diagnostics.js';
 import { nativeCommandSummary, nativeResultPage } from "./native-result-pages.js";
+import {receivePrivateBlob,privateBlobResponse,cleanupPrivateBlobs,deletePrivateBlob} from './private-blob-store.js';
 import { readCommandQueue, mutateCommandQueue, requireCommandQueueAdmission, terminalCommandUpdate, commandIsPending, readCommandReceipt, acknowledgePrunedCommand, readCommandQueueInTransaction, writeCommandQueueInTransaction, mergeCommandReceiptsInTransaction, readCommandReceiptsInTransaction, canonicalCommandResultSha256, readNativeDevice, readNativeDeviceInTransaction, writeNativeDevice, writeNativeDeviceInTransaction } from "./native-command-store.js";
 import { STORYBOARD_NATIVE_ACTIONS, CINEMATIC_BEATS, requireStoryboardNativeVersion, nativeStoryboardParameters, cinematic3dToolSchemas } from "./storyboard-contract.js";
 import { studioToolSchemas, nativeStudioCanonicalAction } from './studio-workbench-contract.js';
@@ -101,6 +102,46 @@ const appActionAllowed = (mode,action) => {
 
 export class VideoStudioState extends DurableObject {
   constructor(ctx,env){ super(ctx,env); }
+  async fetch(request){
+    const url=new URL(request.url),deviceId=url.searchParams.get('deviceId')||'',ownerKey=bearer(request);
+    const device=await this.appAuth(deviceId,ownerKey);
+    if(!device)return reply({error:'Native app authorization failed'},401);
+    if(url.pathname==='/private-upload'&&request.method==='POST'){
+      if(device.permissionMode==='one_file'||device.controlPaused)return reply({error:'Chat-file import is unavailable while device control is locked or paused'},403);
+      try{
+        const ownerHash=await sha256Hex(ownerKey),projectId=clean(url.searchParams.get('projectId')||'',120);
+        const uploaded=await receivePrivateBlob(this.ctx.storage,request.body,{deviceId,ownerHash,
+          name:clean(url.searchParams.get('name')||'ChatGPT import',180),
+          mime:clean(url.searchParams.get('mime')||request.headers.get('content-type')||'application/octet-stream',120),
+          declaredSize:Number(request.headers.get('content-length')||0),expectedSha256:request.headers.get('x-content-sha256')||'',signal:request.signal},async(transaction,manifest)=>{
+          const live=await readNativeDeviceInTransaction(transaction,'app-device:'+deviceId);
+          if(!live||live.supersededByDeviceId||await transaction.get('app-owner:'+ownerHash)!==deviceId)
+            throw new Error('Native identity changed before private upload publication');
+          if(live.controlPaused||!appActionAllowed(live.permissionMode,'import_chat_file'))throw new Error('Device control changed before private upload publication');
+          const v3=Number(live.protocolMin||live.protocolVersion||0)<=3&&Number(live.protocolMax||live.protocolVersion||0)>=3;
+          const key=(v3?'app-v3-cl:':'app-cl:')+deviceId,sequenceKey=(v3?'app-v3-seq:':'app-seq:')+deviceId;
+          const rows=await readCommandQueueInTransaction(transaction,key),seq=Math.max(Number(await transaction.get(sequenceKey)||0),...rows.map(row=>row.seq),0)+1;
+          const command={id:crypto.randomUUID(),seq,deviceId,...(v3?{protocolVersion:3}:{}),action:'import_chat_file',
+            parameters:{handoffId:manifest.id,name:manifest.name,mime:manifest.mime,size:manifest.size,sha256:manifest.sha256,projectId},
+            status:'queued',createdAt:now(),completedAt:null,result:null};
+          requireCommandQueueAdmission(rows,command);rows.push(command);
+          await writeCommandQueueInTransaction(transaction,key,rows);await transaction.put(sequenceKey,seq);
+          await transaction.put('app-handoff:'+deviceId+':'+manifest.id,{id:manifest.id,deviceId,blobId:manifest.id,
+            name:manifest.name,mime:manifest.mime,size:manifest.size,sha256:manifest.sha256,expiresAt:manifest.expiresAt,createdAt:now()});
+          return command;
+        });
+        const {manifest,result:command}=uploaded;
+        return reply({ok:true,queued:true,commandId:command.id,sequence:command.seq,handoffId:manifest.id,expiresAt:manifest.expiresAt,
+          name:manifest.name,mime:manifest.mime,size:manifest.size,sha256:manifest.sha256,storage:'durable-object',projectId});
+      }catch(error){return reply({error:error.message},error.status||409);}
+    }
+    const match=url.pathname.match(/^\/private-content\/([^/]+)$/);
+    if(match&&request.method==='GET'){
+      const response=await privateBlobResponse(this.ctx.storage,match[1],deviceId);
+      return response||reply({error:'Handoff missing or expired'},404);
+    }
+    return reply({error:'Private storage route not found'},404);
+  }
   async register(deviceId,meta={}){
     const k="d:"+deviceId, old=(await this.ctx.storage.get(k))||{};
     const d={
@@ -216,11 +257,16 @@ export class VideoStudioState extends DurableObject {
     if(!(bytes instanceof Uint8Array))bytes=new Uint8Array(bytes);
     if(!bytes.length||bytes.length>12*1024*1024||bytes.length>rec.expectedSize+8192)throw new Error("Invalid or oversized video payload");
     if(!["video/mp4","video/webm"].includes(String(mime||"").split(";")[0].trim()))throw new Error("Unsupported video MIME type");
-    const partSize=192*1024,parts=Math.ceil(bytes.length/partSize);
+    const partSize=64*1024,parts=Math.ceil(bytes.length/partSize);
     const digest=Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",bytes))).map(n=>n.toString(16).padStart(2,"0")).join("");
-    for(let i=0;i<parts;i++)await this.ctx.storage.put("te:part:"+uploadToken+":"+i,bytes.slice(i*partSize,(i+1)*partSize));
-    await this.ctx.storage.put(key,{...rec,status:"ready",size:bytes.length,mime:String(mime).split(";")[0].trim(),parts,digest});
-    return {ok:true,size:bytes.length,digest};
+    return this.ctx.storage.transaction(async transaction=>{
+      const current=await transaction.get(key);
+      if(!current||Date.now()>current.expiresAt)throw new Error("This export request expired");
+      if(current.status==="ready")return {ok:true,size:current.size,reused:true};
+      for(let i=0;i<parts;i++)await transaction.put("te:part:"+uploadToken+":"+i,bytes.slice(i*partSize,(i+1)*partSize));
+      await transaction.put(key,{...current,status:"ready",size:bytes.length,mime:String(mime).split(";")[0].trim(),parts,digest});
+      return {ok:true,size:bytes.length,digest};
+    });
   }
   async getTemporaryVideoExportInfo(downloadToken){
     const uploadToken=await this.ctx.storage.get("te:down:"+downloadToken);
@@ -244,6 +290,8 @@ export class VideoStudioState extends DurableObject {
       for(let i=0;i<(rec.parts||0);i++)await this.ctx.storage.delete("te:part:"+key.slice(6)+":"+i);
       await this.ctx.storage.delete(key);
     }
+    const privateNext=await cleanupPrivateBlobs(this.ctx.storage,current);
+    if(privateNext!==null)next=next===null?privateNext:Math.min(next,privateNext);
     if(next!==null)await this.ctx.storage.setAlarm(next);
   }
 
@@ -829,74 +877,65 @@ export class VideoStudioState extends DurableObject {
     parameters=nativeStoryboardParameters(action,parameters);
     const d=await this.appResolve(ownerKey);
     if(!d) throw new Error("Private App MCP credential rejected");
-    requireStoryboardNativeVersion(d,action,parameters);
-    if(d.controlPaused) throw new Error("ChatGPT control is paused on the phone");
-    if(!appActionAllowed(d.permissionMode,action)) throw new Error("Action blocked by device permission mode or Gallery privacy boundary: "+d.permissionMode);
-    const sk="app-seq:"+d.deviceId, seq=((await this.ctx.storage.get(sk))||0)+1;
-    await this.ctx.storage.put(sk,seq);
-    const c={id:crypto.randomUUID(),seq,deviceId:d.deviceId,action,parameters,status:"queued",createdAt:now(),completedAt:null,result:null};
-    const k="app-cl:"+d.deviceId, list=(await this.ctx.storage.get(k))||[];
-    list.push(c);
-    await this.ctx.storage.put(k,list.slice(-100));
-    return c;
+    const ownerHash=await sha256Hex(ownerKey),key="app-cl:"+d.deviceId,sequenceKey="app-seq:"+d.deviceId;
+    return mutateCommandQueue(this.ctx.storage,key,async(rows,transaction)=>{
+      const live=await readNativeDeviceInTransaction(transaction,"app-device:"+d.deviceId);
+      if(!live||live.supersededByDeviceId||await transaction.get("app-owner:"+ownerHash)!==d.deviceId)throw new Error("Native identity changed before command admission");
+      requireStoryboardNativeVersion(live,action,parameters);
+      if(live.controlPaused)throw new Error("ChatGPT control is paused on the phone");
+      if(!appActionAllowed(live.permissionMode,action))throw new Error("Action blocked by device permission mode or Gallery privacy boundary: "+live.permissionMode);
+      const seq=Math.max(Number(await transaction.get(sequenceKey)||0),...rows.map(row=>row.seq),0)+1;
+      const command={id:crypto.randomUUID(),seq,deviceId:d.deviceId,action,parameters,status:"queued",createdAt:now(),completedAt:null,result:null};
+      requireCommandQueueAdmission(rows,command);rows.push(command);await transaction.put(sequenceKey,seq);
+      return {rows,result:command};
+    });
   }
   async appCommands(deviceId,ownerKey,after=0,waitMs=0){
     if(!(await this.appAuth(deviceId,ownerKey))) throw new Error("Native app authorization failed");
-    const until=Date.now()+Math.max(0,Math.min(20000,Number(waitMs||0))), key="app-cl:"+deviceId;
+    const until=Date.now()+Math.max(0,Math.min(20000,Number(waitMs||0))),key="app-cl:"+deviceId;
     while(true){
-      const list=(await this.ctx.storage.get(key))||[], nowMs=Date.now();
-      const found=[];
-      let changed=false;
-      for(let i=0;i<list.length;i++){
-        const c=list[i];
-        // A later ack must never hide earlier unacknowledged commands.
-        // Terminal records are filtered by status; queued/expired leases are always eligible.
-        const expired=c.status==="claimed"&&Number(c.leaseUntil||0)<=nowMs;
-        if(c.status==="queued"||c.status==="waiting_native"||expired){
-          list[i]={...c,status:"claimed",claimedAt:now(),leaseUntil:nowMs+45000};
-          found.push(list[i]);
-          changed=true;
-          if(found.length>=4) break;
+      const found=await mutateCommandQueue(this.ctx.storage,key,rows=>{
+        const claimed=[];let bytes=2;
+        for(let i=0;i<rows.length;i++){
+          const row=rows[i],expired=row.status==="claimed"&&Number(row.leaseUntil||0)<=Date.now();
+          if(row.status==="queued"||row.status==="waiting_native"||expired){
+            const next={...row,status:"claimed",claimedAt:now(),leaseUntil:Date.now()+45000,claimCount:Number(row.claimCount||0)+1};
+            const length=new TextEncoder().encode(JSON.stringify(next)).byteLength+1;
+            if(bytes+length>3*1024*1024)break;
+            rows[i]=next;claimed.push(next);bytes+=length;if(claimed.length>=4)break;
+          }
         }
-      }
-      if(changed) await this.ctx.storage.put(key,list.slice(-100));
-      if(found.length||Date.now()>=until) return found;
+        return {rows,result:claimed,changed:claimed.length>0};
+      });
+      if(found.length||Date.now()>=until)return found;
       await new Promise(resolve=>setTimeout(resolve,650));
     }
   }
   async appComplete(deviceId,ownerKey,id,result={},status="completed"){
-    if(!(await this.appAuth(deviceId,ownerKey))) throw new Error("Native app authorization failed");
-    const k="app-cl:"+deviceId, list=(await this.ctx.storage.get(k))||[], i=list.findIndex(c=>c.id===id);
-    if(i<0) return null;
-    list[i]={...list[i],status:clean(status,30)||"completed",completedAt:now(),result};
-    for(let j=0;j<list.length;j++){
-      if(j!==i&&list[j]&&list[j].result&&list[j].result.contactSheet&&list[j].result.contactSheet.base64){
-        list[j]={...list[j],result:{...list[j].result,contactSheet:{...list[j].result.contactSheet,base64:undefined,expired:true}}};
-      }
-    }
-    await this.ctx.storage.put(k,list.slice(-100));
-    const d=(await readNativeDevice(this.ctx.storage,"app-device:"+deviceId))||{};
-    d.lastSeenAt=now();
-    await writeNativeDevice(this.ctx.storage,"app-device:"+deviceId,d);
-    return list[i];
+    if(!(await this.appAuth(deviceId,ownerKey)))throw new Error("Native app authorization failed");
+    const key="app-cl:"+deviceId;
+    return mutateCommandQueue(this.ctx.storage,key,async(rows,transaction)=>{
+      const index=rows.findIndex(row=>row.id===id);
+      if(index<0)return {rows,changed:false,result:await acknowledgePrunedCommand(transaction,key,id,result,status)};
+      const old=rows[index],updated=await terminalCommandUpdate(old,result,status);
+      rows[index]=updated;
+      const device=await readNativeDeviceInTransaction(transaction,"app-device:"+deviceId);
+      if(device){device.lastSeenAt=now();await writeNativeDeviceInTransaction(transaction,"app-device:"+deviceId,device);}
+      return {rows,result:{...updated,resultReplayed:!commandIsPending(old)}};
+    });
   }
   async appCommand(ownerKey,id){
     const d=await this.appResolve(ownerKey);
-    if(!d) throw new Error("Private App MCP credential rejected");
-    const list=(await this.ctx.storage.get("app-cl:"+d.deviceId))||[];
-    return list.find(c=>c.id===id)||null;
+    if(!d)throw new Error("Private App MCP credential rejected");
+    const key="app-cl:"+d.deviceId,rows=await readCommandQueue(this.ctx.storage,key);
+    return rows.find(row=>row.id===id)||await readCommandReceipt(this.ctx.storage,key,id);
   }
   async appStatus(ownerKey){
     const d=await this.appResolve(ownerKey);
-    if(!d) return {connected:false,error:"Private App MCP credential rejected"};
-    const list=(await this.ctx.storage.get("app-cl:"+d.deviceId))||[];
-    return {
-      connected:true,
-      device:((({ownerHash,...safe})=>safe)(d)),
-      pendingCommands:list.filter(c=>c.status==="queued"||c.status==="claimed"||c.status==="waiting_native").length,
-      lastCommand:nativeCommandSummary(list[list.length-1]||null),
-      projectCount:Array.isArray(d.projects)?d.projects.length:0
-    };
+    if(!d)return {connected:false,error:"Private App MCP credential rejected"};
+    const rows=await readCommandQueue(this.ctx.storage,"app-cl:"+d.deviceId);
+    return {connected:true,device:((({ownerHash,...safe})=>safe)(d)),pendingCommands:rows.filter(commandIsPending).length,
+      lastCommand:nativeCommandSummary(rows[rows.length-1]||null),projectCount:Array.isArray(d.projects)?d.projects.length:0};
   }
   async appV3Device(ownerKey){
     const d=await this.appResolve(ownerKey);
@@ -1127,15 +1166,18 @@ export class VideoStudioState extends DurableObject {
     if(!(await this.appAuth(deviceId,ownerKey))) throw new Error("Native app authorization failed");
     const key="app-handoff:"+deviceId+":"+id, record=await this.ctx.storage.get(key);
     if(!record) return null;
-    if(Number(record.expiresAt||0)<Date.now()){
-      await this.ctx.storage.delete(key);
+    if(Number(record.expiresAt||0)<=Date.now()){
+      if(record.blobId)await deletePrivateBlob(this.ctx.storage,record.blobId);
+      else await this.ctx.storage.delete(key);
       return null;
     }
     return record;
   }
   async appDeleteHandoff(deviceId,ownerKey,id){
     if(!(await this.appAuth(deviceId,ownerKey))) throw new Error("Native app authorization failed");
-    await this.ctx.storage.delete("app-handoff:"+deviceId+":"+id);
+    const key="app-handoff:"+deviceId+":"+id,record=await this.ctx.storage.get(key);
+    if(record?.blobId)await deletePrivateBlob(this.ctx.storage,record.blobId);
+    else await this.ctx.storage.delete(key);
   }
 }
 
@@ -1775,14 +1817,18 @@ function serverForApp(env,ownerKey,protocolVersion=1){
   s.registerTool("app_state",{description:"Request full current native app/project state including active asset metadata, jobs, creator capabilities and recent on-device ChatGPT activity.",inputSchema:{}},async()=>queue("get_state",{}));
   if(isV3) {
     for(const [action,inputSchema] of Object.entries(studioToolSchemas)){
-      const readOnly=['sketch_list','sketch_get','sketch_preview','sketch_book_list','sketch_book_get','sketch_live_events','sketch_capabilities','open_pipeline_capabilities','open_pipeline_list','open_pipeline_status'].includes(action);
+      const readOnly=['sketch_list','sketch_get','sketch_inspect','sketch_preview','sketch_paint_journal','sketch_sample_color','sketch_book_list','sketch_book_get','sketch_live_events','sketch_capabilities','open_pipeline_capabilities','open_pipeline_list','open_pipeline_status'].includes(action);
       const detail=action==='sketch_get'?' Geometry is paged by layer/object IDs; pointLimit<=512. Keep returned revision for atomic edits.'
         :action==='sketch_preview'?' Returns the actual shared Canvas frame as an MCP image. Native 3.9.3 adds crop bounds for close inspection of eyes, hair and other details; sourcePixelBounds maps the preview back to exact full-canvas coordinates.'
         :action==='sketch_import_drawing_manifest'||action==='sketch_import_frame_manifest'?' Reads a hash-bound JSONL drawing packet and original source from the app’s already linked folder, without placing geometry in the relay. Full preflight precedes any drawing; replay preserves human edits. Read the returned native job through completion. Valid objects do not certify visual likeness.'
         :action==='sketch_capabilities'?' Read this before drawing. Original portraits, landscapes and animation may start from a text prompt and an empty canvas; reference images are optional.'
         :action==='sketch_live_begin'?' Call before the first stroke. The open phone canvas presents every accepted drawing operation and stroke progress; it preserves rapid batches rather than skipping intermediate steps.'
         :action==='sketch_live_end'?' Finish a drawing page using its final revision. This closes its ordered live stream so the phone can show the next page without dropping drawings.'
-        :action==='sketch_edit'?' Draw original artwork from a text prompt using measured pressure strokes, M/L/Q/C/Z Bezier paths, gradient fills, brushes and layers. Use stable object IDs and append_points for live strokes. Images are optional; avoid substituting a finished raster image for visible stroke authoring.'
+        :action==='sketch_edit'?' Native 4.1.0 adds add_paint_cel and paint_stroke with real pressure, flow, hardness, grain, flat tips, alpha lock and owned-reference clone mapping. Keep strokeId stable and use expectedRevision. Start sketch_live_begin before drawing to show actual ordered brush prefixes. Prompt-only original drawings also use these controls. Reference tracing does not recover the original artist stroke order.'
+        :action==='sketch_paint_journal'?' Native 4.1.0: read revision-bound, newest-first stroke records in pages of at most 128. Pixels and source pins remain app-owned.'
+        :action==='sketch_sample_color'?' Native 4.1.0: sample the selected paint cel, owned hash-bound reference or current composite. Paint x/y are object-local; reference/composite x/y are full-canvas normalized.'
+        :action==='sketch_archive'?' Native 4.1.0: archive a revision-bound editable sketch and its verified paint/reference dependencies to the app-linked Drive Results folder. Completion requires actual upload evidence.'
+        :action==='sketch_restore_archive'?' Native 4.1.0: restore a hash-bound scoped Drive archive as a new sketch. Keep operationId stable to avoid duplicate restores; existing projects are preserved.'
         :action==='sketch_book_create'?' Create a lazy animation book with up to 10000 pages, without loading thousands of drawings into phone RAM.'
         :action==='sketch_book_render'?' Render 1..1200 consecutive book pages through the native Canvas and Media3 pipeline; originals are preserved.'
         :action.startsWith('open_pipeline_')?' Uses your own configured open-source runner or a hash-verified Drive artifact exchange. Submission is separate from inference completion. No commercial generation API.'
@@ -2326,6 +2372,10 @@ async function api(request,env){
       },409);
       const handoff=await st.appHandoff(deviceId,token,v3hm[1]);
       if(!handoff) return reply({error:"Handoff missing or expired"},404);
+      if(handoff.blobId){
+        const durableUrl=new URL(request.url);durableUrl.pathname='/private-content/'+handoff.blobId;
+        return st.fetch(new Request(durableUrl,request));
+      }
       let upstream;
       if(handoff.cacheUrl){
         upstream=await caches.default.match(new Request(handoff.cacheUrl));
@@ -2367,40 +2417,30 @@ async function api(request,env){
     }
     if(u.pathname==="/api/app/private/status"&&request.method==="GET"){
       const token=bearer(request);
-      const status=await st.appStatus(token);
+      const device=await st.appResolve(token);
+      if(!device)return reply({error:"Native app authorization failed"},401);
+      const v3=Number(device.protocolMin||device.protocolVersion||0)<=3&&Number(device.protocolMax||device.protocolVersion||0)>=3;
+      const status=v3?await st.appStatusV3(token):await st.appStatus(token);
       if(!status.connected) return reply(status,401);
       return reply(status);
     }
     const pcm=u.pathname.match(/^\/api\/app\/private\/commands\/([^/]+)$/);
     if(pcm&&request.method==="GET"){
       const token=bearer(request);
-      const command=await st.appCommand(token,pcm[1]);
+      const device=await st.appResolve(token);
+      if(!device)return reply({error:"Native app authorization failed"},401);
+      const v3=Number(device.protocolMin||device.protocolVersion||0)<=3&&Number(device.protocolMax||device.protocolVersion||0)>=3;
+      const command=(v3?await st.appCommandV3(token,pcm[1]):null)||await st.appCommand(token,pcm[1]);
       return command?reply({command}):reply({error:"Command not found"},404);
     }
     if(u.pathname==="/api/app/private/upload"&&request.method==="POST"){
       const token=bearer(request), deviceId=u.searchParams.get("deviceId")||"";
-      if(!(await st.appAuth(deviceId,token))) return reply({error:"Native app authorization failed"},401);
-      const status=await st.appStatus(token);
-      if(!status.connected||status.device.permissionMode==="one_file") return reply({error:"Full Autonomous mode is required while One File Lock is active"},403);
+      const device=await st.appAuth(deviceId,token);
+      if(!device) return reply({error:"Native app authorization failed"},401);
+      if(device.permissionMode==="one_file") return reply({error:"Full Autonomous mode is required while One File Lock is active"},403);
 
-      const declared=Number(request.headers.get("content-length")||0);
-      const max=250*1024*1024;
-      if(declared>max) return reply({error:"Upload exceeds 250 MB private relay limit"},413);
-      const name=clean(u.searchParams.get("name")||"ChatGPT import",180);
-      const mime=clean(u.searchParams.get("mime")||request.headers.get("content-type")||"application/octet-stream",120);
-      const projectId=clean(u.searchParams.get("projectId")||"",120);
-      const uploadId=crypto.randomUUID();
-      const cacheUrl=u.origin+"/__videostudio_private_upload/"+uploadId;
-      const cacheHeaders=new Headers();
-      cacheHeaders.set("content-type",mime);
-      if(declared>0) cacheHeaders.set("content-length",String(declared));
-      cacheHeaders.set("cache-control","public, max-age=1200");
-      cacheHeaders.set("x-content-type-options","nosniff");
-      await caches.default.put(new Request(cacheUrl),new Response(request.body,{status:200,headers:cacheHeaders}));
-
-      const handoff=await st.appCreateCachedHandoff(token,cacheUrl,{name,mime,size:declared});
-      const c=await st.appEnqueue(token,"import_chat_file",{handoffId:handoff.id,name:handoff.name,mime:handoff.mime,size:handoff.size,projectId});
-      return reply({ok:true,queued:true,commandId:c.id,sequence:c.seq,handoffId:handoff.id,expiresAt:handoff.expiresAt,name,mime,size:declared,projectId});
+      const durableUrl=new URL(request.url);durableUrl.pathname='/private-upload';
+      return st.fetch(new Request(durableUrl,request));
     }
     if(u.pathname==="/api/app/commands"&&request.method==="GET"){
       const deviceId=u.searchParams.get("deviceId")||"", after=Number(u.searchParams.get("after")||0), wait=Number(u.searchParams.get("wait")||0);
@@ -2410,8 +2450,13 @@ async function api(request,env){
     const hm=u.pathname.match(/^\/api\/app\/handoffs\/([^/]+)\/content$/);
     if(hm&&request.method==="GET"){
       const deviceId=u.searchParams.get("deviceId")||"", token=bearer(request);
+      if(!(await st.appAuth(deviceId,token)))return reply({error:"Native app authorization failed"},401);
       const handoff=await st.appHandoff(deviceId,token,hm[1]);
       if(!handoff) return reply({error:"Handoff missing or expired"},404);
+      if(handoff.blobId){
+        const durableUrl=new URL(request.url);durableUrl.pathname='/private-content/'+handoff.blobId;
+        return st.fetch(new Request(durableUrl,request));
+      }
       let upstream;
       if(handoff.cacheUrl){
         upstream=await caches.default.match(new Request(handoff.cacheUrl));

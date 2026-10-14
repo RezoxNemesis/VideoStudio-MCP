@@ -560,11 +560,10 @@ public final class NativeRenderEngine {
         }
 
         List<AudioProcessor> audio=Collections.emptyList();
-        if(asset.mime!=null&&asset.mime.startsWith("video/")&&
-                Math.abs(clip.volume-1f)>.001f){
-            float gain=Math.max(0f,Math.min(2f,clip.volume));
-            audio=Collections.singletonList(new GainProcessor(
-                    new DefaultGainProvider.Builder(gain).build()));
+        if(asset.mime!=null&&asset.mime.startsWith("video/")){
+            StudioClipAudioEnvelope envelope=StudioClipAudioEnvelope.fromEffects(
+                    clip.effects,clip.outputDurationMs(),clip.speed,clip.volume);
+            if(envelope.changesAudio())audio=Collections.singletonList(new StudioClipAudioProcessor(envelope));
         }
         List<Effect> video = buildEffects(clip, aspect, quality, inputDurationMs);
         video.addAll(titleEffects(titles));

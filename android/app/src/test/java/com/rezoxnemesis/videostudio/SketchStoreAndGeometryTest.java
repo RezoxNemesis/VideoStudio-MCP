@@ -90,7 +90,7 @@ public final class SketchStoreAndGeometryTest {
         assertEquals(1400, page.getInt("pointCount")); assertEquals(512, page.getJSONObject("object").getJSONArray("points").length()); assertTrue(page.getBoolean("morePoints")); assertEquals(2, page.getLong("revision"));
     }
     @Test public void geometryAndCanvasBudgetsRejectInvalidKindsNonIntegralFpsAndUnsafeIds() throws Exception {
-        for (JSONObject args : new JSONObject[]{new JSONObject().put("sketchId", "../escape"),new JSONObject().put("sketchId", "odd").put("width", 257),new JSONObject().put("sketchId", "fps").put("fps", 24.5),new JSONObject().put("sketchId", "area").put("width", 1280).put("height", 1280)}) {
+        for (JSONObject args : new JSONObject[]{new JSONObject().put("sketchId", "../escape"),new JSONObject().put("sketchId", "odd").put("width", 257),new JSONObject().put("sketchId", "fps").put("fps", 24.5),new JSONObject().put("sketchId", "size").put("width", 2050).put("height", 2048)}) {
             try { SketchDocument.create(args); fail("Invalid document admitted"); } catch (IllegalArgumentException expected) {}
         }
         JSONObject doc = SketchDocument.create(new JSONObject().put("sketchId", "valid").put("frameCount", 3));

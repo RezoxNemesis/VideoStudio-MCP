@@ -22,6 +22,7 @@ public final class StudioTracksView extends View {
     public interface ChangeListener {
         void onChange(String layerId,long startMs,long durationMs);
         void onSelect(String layerId);
+        default void onTrimLeft(String layerId,long startMs,long durationMs){onChange(layerId,startMs,durationMs);}
     }
     private final Paint brush=new Paint(Paint.ANTI_ALIAS_FLAG);
     private final ArrayList<StudioLayer> layers=new ArrayList<>();
@@ -31,12 +32,23 @@ public final class StudioTracksView extends View {
     private SeekListener callback;
     private ChangeListener change;
     private String draggingId="";
-    private boolean resize=false,dragChanged=false;
+    private boolean resize=false,resizeLeft=false,dragChanged=false,seeking=false;
+    private long[] snapPoints=new long[0];
+    private boolean snapping=true;
+    private long minimumStart=0;
     private float downX=0;
     private long originalStart,originalDuration,previewStart,previewDuration;
+    private long seekOriginalPlayhead;
     private static final int MIN_DURATION=100;
 
     public StudioTracksView(Context context){super(context);setMinimumHeight(dp(135));}
+    @Override protected void onMeasure(int widthSpec,int heightSpec){
+        // HorizontalScrollView measures its child with UNSPECIFIED width.
+        // Preserve the authored zoom width instead of collapsing this custom View to zero.
+        int requested=getLayoutParams()==null?0:getLayoutParams().width;
+        int width=Math.max(getSuggestedMinimumWidth(),requested>0?requested:dp(280));
+        setMeasuredDimension(resolveSize(width,widthSpec),resolveSize(getSuggestedMinimumHeight(),heightSpec));
+    }
     public void setTimeline(long duration,long position,List<StudioLayer> content,
                             SeekListener callback){
         setTimeline(duration,position,content,callback,null);
@@ -57,6 +69,10 @@ public final class StudioTracksView extends View {
         waveformCoverage.put(laneId,Math.max(0f,Math.min(1f,coverage)));
         invalidate();
     }
+    public void setSnapping(long[] points,boolean enabled){
+        snapPoints=points==null?new long[0]:points.clone();snapping=enabled;invalidate();
+    }
+    public void setPlayhead(long position){playheadMs=Math.max(0,Math.min(durationMs,position));invalidate();}
     private int dp(int value){return Math.round(getResources().getDisplayMetrics().density*value);}
     private float begin(){return dp(56);}
     private float available(){return Math.max(1,getWidth()-dp(66));}
@@ -81,6 +97,20 @@ public final class StudioTracksView extends View {
         brush.setColor(0xff1a2840);
         canvas.drawRoundRect(new RectF(left,audioY,right,audioY+barHeight),dp(6),dp(6),brush);
         canvas.drawRoundRect(new RectF(left,titleY,right,titleY+barHeight),dp(6),dp(6),brush);
+
+        brush.setTextSize(dp(9));
+        for(int tick=0;tick<=8;tick++){
+            long at=Math.round(durationMs*tick/8.0);
+            float tickX=x(at);brush.setColor(0xff344660);
+            canvas.drawLine(tickX,dp(19),tickX,height-dp(20),brush);
+            brush.setColor(0xffb4bacc);
+            String stamp=StudioEditCursor.timecode(at);
+            canvas.drawText(stamp,Math.min(right-brush.measureText(stamp),tickX),dp(14),brush);
+        }
+        if(snapping){
+            brush.setColor(0x665bd5e6);brush.setStrokeWidth(dp(1));
+            for(long boundary:snapPoints)canvas.drawLine(x(boundary),dp(19),x(boundary),height-dp(20),brush);
+        }
 
         for(StudioLayer lane:layers){
             long start=lane.id.equals(draggingId)?previewStart:lane.startMs;
@@ -118,6 +148,7 @@ public final class StudioTracksView extends View {
                 }
             }
             brush.setColor(0x99ffffff);
+            canvas.drawRect(x+dp(3),top+dp(6),x+dp(5),top+barHeight-dp(6),brush);
             canvas.drawRect(x2-dp(5),top+dp(6),x2-dp(3),top+barHeight-dp(6),brush);
             if(lane.id.equals(draggingId)){
                 brush.setColor(Color.WHITE);
@@ -134,7 +165,7 @@ public final class StudioTracksView extends View {
         canvas.drawCircle(play,dp(7),dp(4),brush);
         brush.setTextSize(dp(9));
         brush.setColor(0xff8d9dba);
-        canvas.drawText("Drag colored bars to move • right edge to trim",dp(8),
+        canvas.drawText("Drag bars to move • either edge to trim • ruler to seek",dp(8),
                 height-dp(5),brush);
     }
 
@@ -154,6 +185,7 @@ public final class StudioTracksView extends View {
             case MotionEvent.ACTION_DOWN:{
                 StudioLayer selected=hit(e.getX(),e.getY());
                 downX=e.getX();dragChanged=false;
+                seeking=false;
                 if(selected!=null&&change!=null){
                     draggingId=selected.id;
                     originalStart=selected.startMs;
@@ -161,29 +193,44 @@ public final class StudioTracksView extends View {
                     previewStart=originalStart;
                     previewDuration=originalDuration;
                     resize=e.getX()>=x(originalStart+originalDuration)-dp(13);
-                    getParent().requestDisallowInterceptTouchEvent(true);
+                    resizeLeft=!resize&&e.getX()<=x(originalStart)+dp(13);
+                    minimumStart=StudioLayer.AUDIO.equals(selected.type)?Math.max(0,originalStart-selected.sourceInMs):0;
+                    if(getParent()!=null)getParent().requestDisallowInterceptTouchEvent(true);
                     invalidate();
                     return true;
                 }
                 draggingId="";
+                seeking=true;
+                seekOriginalPlayhead=playheadMs;
+                // The containing HorizontalScrollView owns drags over empty space.
+                // A tap still seeks on UP; a pan cancels this pending seek.
+                if(getParent()!=null)getParent().requestDisallowInterceptTouchEvent(false);
                 playheadMs=Math.round(Math.max(0,Math.min(1,
                         (e.getX()-begin())/available()))*durationMs);
                 invalidate();
-                if(callback!=null)callback.onSeek(playheadMs);
                 return true;
             }
             case MotionEvent.ACTION_MOVE:{
                 if(!draggingId.isEmpty()){
                     long shift=delta(e.getX()-downX);
-                    StudioLayerTouchMath.Timing p=resize
-                            ?StudioLayerTouchMath.trimRight(durationMs,
-                                    originalStart,originalDuration,shift)
-                            :StudioLayerTouchMath.move(durationMs,
-                                    originalStart,originalDuration,shift);
+                    long tolerance=snapping?Math.max(1,Math.round(dp(9)/available()*durationMs)):0;
+                    long[] points=snapping?gestureSnapPoints():null;
+                    StudioLayerTouchMath.Timing p;
+                    if(resize){
+                        long end=StudioLayerTouchMath.snap(originalStart+originalDuration+shift,points,tolerance);
+                        p=StudioLayerTouchMath.trimRight(durationMs,originalStart,originalDuration,end-originalStart-originalDuration);
+                    }else if(resizeLeft){
+                        long start=StudioLayerTouchMath.snap(originalStart+shift,points,tolerance);
+                        p=StudioLayerTouchMath.trimLeft(durationMs,originalStart,originalDuration,start-originalStart,minimumStart);
+                    }else p=StudioLayerTouchMath.moveSnapped(durationMs,originalStart,originalDuration,shift,points,tolerance);
                     previewStart=p.startMs;previewDuration=p.durationMs;
                     dragChanged=dragChanged||Math.abs(e.getX()-downX)>dp(5);
                     invalidate();
                     return true;
+                }
+                if(seeking){
+                    playheadMs=Math.round(Math.max(0,Math.min(1,(e.getX()-begin())/available()))*durationMs);
+                    invalidate();
                 }
                 return true;
             }
@@ -193,17 +240,39 @@ public final class StudioTracksView extends View {
                     long start=previewStart,duration=previewDuration;
                     draggingId="";
                     if(change!=null){
-                        if(dragChanged)change.onChange(selected,start,duration);
+                        if(dragChanged&&(start!=originalStart||duration!=originalDuration)){
+                            if(resizeLeft)change.onTrimLeft(selected,start,duration);
+                            else change.onChange(selected,start,duration);
+                        }
                         else change.onSelect(selected);
                     }
+                    if(getParent()!=null)getParent().requestDisallowInterceptTouchEvent(false);
                     invalidate();
                     return true;
                 }
+                if(seeking&&callback!=null)callback.onSeek(playheadMs);
+                seeking=false;
+                if(getParent()!=null)getParent().requestDisallowInterceptTouchEvent(false);
+                performClick();
                 return true;
             }
             case MotionEvent.ACTION_CANCEL:
-                draggingId="";invalidate();return true;
+                if(seeking)playheadMs=seekOriginalPlayhead;
+                draggingId="";seeking=false;
+                if(getParent()!=null)getParent().requestDisallowInterceptTouchEvent(false);
+                invalidate();return true;
             default:return true;
         }
     }
+
+    private long[] gestureSnapPoints(){
+        long[] points=new long[snapPoints.length+1+layers.size()*2];
+        int at=0;for(long cut:snapPoints)points[at++]=cut;
+        points[at++]=playheadMs;
+        for(StudioLayer layer:layers)if(!layer.id.equals(draggingId)){
+            points[at++]=layer.startMs;points[at++]=layer.startMs+layer.durationMs;
+        }
+        return java.util.Arrays.copyOf(points,at);
+    }
+    @Override public boolean performClick(){super.performClick();return true;}
 }

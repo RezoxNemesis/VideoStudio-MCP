@@ -1,5 +1,6 @@
 package com.rezoxnemesis.videostudio;
 
+import android.app.AlertDialog;
 import android.content.Context;
 import android.content.Intent;
 import android.graphics.Bitmap;
@@ -11,6 +12,8 @@ import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
+import android.widget.EditText;
+import android.widget.HorizontalScrollView;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.robolectric.Robolectric;
@@ -26,6 +29,7 @@ import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeUnit;
 import org.robolectric.shadows.ShadowLooper;
+import org.robolectric.shadows.ShadowAlertDialog;
 import static org.junit.Assert.*;
 import static org.robolectric.Shadows.shadowOf;
 
@@ -33,6 +37,42 @@ import static org.robolectric.Shadows.shadowOf;
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk=33,manifest=Config.NONE)
 public class RigEditorActivityTest {
+    @Test public void precisionNudgesUseOriginalPixelsAndCommitOneUndoableEdit()throws Exception{
+        Fixture fixture=fixture();ActivityController<RigEditorActivity> controller=Robolectric.buildActivity(RigEditorActivity.class,fixture.intent).create().start().resume().visible();
+        try{
+            RigEditorActivity activity=controller.get();awaitOwnerWorker(activity);String before=draft(activity);
+            Button fit=findButton(activity.getWindow().getDecorView(),"Fit");assertNotNull(fit);for(android.view.ViewParent parent=fit.getParent();parent!=null;parent=parent.getParent())assertFalse("Fit must remain visible without scrolling the tool strip",parent instanceof HorizontalScrollView);
+            findButton(activity.getWindow().getDecorView(),"Coordinates").performClick();AlertDialog dialog=ShadowAlertDialog.getLatestAlertDialog();
+            EditText u=dialog.getWindow().getDecorView().findViewWithTag("rig-coordinate-u"),v=dialog.getWindow().getDecorView().findViewWithTag("rig-coordinate-v");assertNotNull("Normalized U must have an accessible named field",u);assertNotNull(v);
+            findButton(dialog.getWindow().getDecorView(),"X +1 px").performClick();findButton(dialog.getWindow().getDecorView(),"Y −1 px").performClick();
+            assertEquals(.43f,Float.parseFloat(u.getText().toString()),.00001f);assertEquals(.56f,Float.parseFloat(v.getText().toString()),.00001f);assertEquals("Dialog nudges are staged until Set point",before,draft(activity));
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).performClick();assertEquals(.43f,new org.json.JSONObject(draft(activity)).getJSONArray("joints").getJSONArray(0).getDouble(0),.00001f);
+            assertEquals(1,((java.util.ArrayDeque<?>)field(activity,"undo")).size());findButton(activity.getWindow().getDecorView(),"Undo").performClick();assertEquals(before,draft(activity));
+        }finally{controller.pause().stop().destroy();}
+    }
+
+    @Test public void malformedCoordinateDraftsAreRejectedBeforeAnyAcceptedStateChanges()throws Exception{
+        Fixture fixture=fixture();ActivityController<RigEditorActivity> controller=Robolectric.buildActivity(RigEditorActivity.class,fixture.intent).create().start().resume().visible();
+        try{
+            RigEditorActivity activity=controller.get();awaitOwnerWorker(activity);String before=draft(activity);Method apply=RigEditorActivity.class.getDeclaredMethod("applyDraft",String.class);apply.setAccessible(true);
+            for(String invalid:new String[]{"NaN","Infinity","1e300","-0.1","1.1"}){
+                org.json.JSONObject corrupt=new org.json.JSONObject(before);corrupt.put("rigId","must-not-replace-accepted-rig");corrupt.put("black",false);corrupt.getJSONArray("outline").getJSONArray(1).put(0,invalid);
+                try{apply.invoke(activity,corrupt.toString());fail("Coordinate "+invalid+" must be rejected");}catch(java.lang.reflect.InvocationTargetException expected){assertTrue(expected.getCause() instanceof IllegalArgumentException);}
+                assertEquals("Rejected geometry must preserve all draft metadata and points",before,draft(activity));
+            }
+        }finally{controller.pause().stop().destroy();}
+    }
+
+    @Test public void nonfiniteTouchRollsBackActiveDragAndLeavesHistoryClean()throws Exception{
+        Fixture fixture=fixture();ActivityController<RigEditorActivity> controller=Robolectric.buildActivity(RigEditorActivity.class,fixture.intent).create().start().resume().visible();
+        try{
+            RigEditorActivity activity=controller.get();awaitOwnerWorker(activity);String before=draft(activity);View drawing=(View)field(activity,"drawing");drawing.layout(0,0,1000,1000);
+            touch(drawing,MotionEvent.ACTION_DOWN,420,570,10);touch(drawing,MotionEvent.ACTION_MOVE,490,580,20);touch(drawing,MotionEvent.ACTION_MOVE,Float.NaN,580,25);touch(drawing,MotionEvent.ACTION_UP,500,590,30);
+            assertEquals(before,draft(activity));assertTrue(((java.util.ArrayDeque<?>)field(activity,"undo")).isEmpty());assertFalse((Boolean)field(activity,"dirty"));
+            drawing.layout(0,0,0,0);touch(drawing,MotionEvent.ACTION_DOWN,0,0,40);touch(drawing,MotionEvent.ACTION_UP,0,0,50);assertEquals(before,draft(activity));
+        }finally{controller.pause().stop().destroy();}
+    }
+
     @Test public void recreationBeforeOriginalLoadKeepsRequestedSavedProfileReachable()throws Exception{
         Fixture fixture=fixture();ActivityController<RigEditorActivity> first=Robolectric.buildActivity(RigEditorActivity.class,fixture.intent).create();Bundle state=new Bundle();first.saveInstanceState(state);
         assertFalse("A not-yet-accepted source cannot persist an empty draft over the requested rig",state.containsKey("draft"));first.destroy();
@@ -85,6 +125,7 @@ public class RigEditorActivityTest {
     }
     private static void awaitOwnerWorker(RigEditorActivity activity)throws Exception{Field field=RigEditorActivity.class.getDeclaredField("ownerWorker");field.setAccessible(true);((ExecutorService)field.get(activity)).submit(()->{}).get(10,TimeUnit.SECONDS);ShadowLooper.idleMainLooper();}
     private static Object field(Object activity,String name)throws Exception{Field field=RigEditorActivity.class.getDeclaredField(name);field.setAccessible(true);return field.get(activity);}
+    private static String draft(RigEditorActivity activity)throws Exception{Method method=RigEditorActivity.class.getDeclaredMethod("draft");method.setAccessible(true);return(String)method.invoke(activity);}
     private static final class Fixture {ProjectStore projects;ProjectStore.Project project;ProjectStore.Asset asset;Rig2DProjectStore rigs;Rig2DProfile profile;Intent intent;}
     private static Fixture fixture()throws Exception{
         Context context=RuntimeEnvironment.getApplication();Fixture fixture=new Fixture();fixture.projects=new ProjectStore(context);fixture.project=fixture.projects.create("Phone lifecycle source");fixture.asset=new ProjectStore.Asset();fixture.asset.id=UUID.randomUUID().toString();fixture.asset.name="lifecycle.png";fixture.asset.mime="image/png";

@@ -114,12 +114,21 @@ test('configuration has no embedded secrets or alternate endpoint schemes',()=>{
  for(const endpoint of ['http://own.invalid','https://user:pass@own.invalid','https://own.invalid?token=x','https://own.invalid#fragment','https:\\own.invalid','https://own.invalid:0'])assert.throws(()=>nativeStudioParameters('open_pipeline_configure',{...p,endpoint}));
  for(const action of STUDIO_NATIVE_ACTIONS)assert.ok(studioToolSchemas[action],action);
 });
-test('closed studio relay aliases require 3.9 and validate their exact canonical contracts',()=>{
+test('closed studio relay aliases enforce each native minimum and validate their exact canonical contracts',()=>{
  for(const alias of STUDIO_ALIAS_ACTIONS){
   assert.equal(nativeStudioCanonicalAction(alias),alias.slice('studio_'.length));
   assert(STORYBOARD_NATIVE_ACTIONS.has(alias),'Every alias must remain native-only');
-  assert.throws(()=>requireStoryboardNativeVersion({appVersion:'3.8.1'},alias),/3\.9\.[01456]/);
-  assert.doesNotThrow(()=>requireStoryboardNativeVersion({appVersion:'3.9.6'},alias));
+  const paint=['studio_sketch_paint_journal','studio_sketch_sample_color','studio_sketch_archive','studio_sketch_restore_archive'].includes(alias);
+  const media=alias==='studio_import_mailbox_media';
+  assert.throws(()=>requireStoryboardNativeVersion({appVersion:'3.8.1'},alias),media?/4\.2\.0/:paint?/4\.1\.0/:/3\.9\.[01456]/);
+  if(media){
+   assert.throws(()=>requireStoryboardNativeVersion({appVersion:'4.1.1'},alias),/4\.2\.0/);
+   assert.doesNotThrow(()=>requireStoryboardNativeVersion({appVersion:'4.2.0'},alias));
+   continue;
+  }
+  if(paint)assert.throws(()=>requireStoryboardNativeVersion({appVersion:'3.9.6'},alias),/4\.1\.0/);
+  else assert.doesNotThrow(()=>requireStoryboardNativeVersion({appVersion:'3.9.6'},alias));
+  assert.doesNotThrow(()=>requireStoryboardNativeVersion({appVersion:'4.1.0'},alias));
  }
  const p={projectId:'p',expectedUpdatedAt:1,operations:[{clipId:'c',set:{x:.2}}]};
  assert.deepEqual(nativeStoryboardParameters('studio_precision_edit',p),p);

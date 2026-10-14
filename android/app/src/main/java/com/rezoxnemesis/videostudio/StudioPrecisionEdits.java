@@ -10,7 +10,7 @@ import java.util.Set;
 public final class StudioPrecisionEdits {
     private StudioPrecisionEdits(){}
     private static final Set<String> OP_FIELDS=Set.of("clipId","set","keyframes","clearKeyframes","resetColor","resetTransform");
-    private static final Set<String> NUMBERS=Set.of("inMs","outMs","speed","volume","brightness","contrast","saturationAdjust","lightnessAdjust","blur","scale","scaleX","scaleY","rotate","x","y","anchorX","anchorY","opacity",
+    private static final Set<String> NUMBERS=Set.of("inMs","outMs","speed","volume","audioFadeInMs","audioFadeOutMs","brightness","contrast","saturationAdjust","lightnessAdjust","blur","scale","scaleX","scaleY","rotate","x","y","anchorX","anchorY","opacity",
             "chromaTolerance","chromaFeather","maskLeft","maskTop","maskRight","maskBottom","maskFeather","glowStrength","glowRadiusPx","glowThreshold");
     private static final Set<String> TEXT=Set.of("motionPreset","colorPreset","effectPreset","title","chromaColor","maskShape");
     public static final Set<String> MOTIONS=Set.of("none","push_in","pull_out","pan_left","pan_right","pan_up","pan_down","drift","float","orbit","micro_shake","handheld","impact_shake","snap_zoom","zoom_punch","tilt","roll","hero_reveal","ken_burns");
@@ -92,6 +92,7 @@ public final class StudioPrecisionEdits {
                     long originalDuration=clip.outputDurationMs();
                     ProjectStore.Clip second=ProjectStore.Clip.fromJson(new JSONObject(clip.toJson().toString()));second.id=java.util.UUID.randomUUID().toString();
                     second.inMs=at;clip.outMs=at;
+                    StudioClipAudioEnvelope.preserveSplit(clip.effects,second.effects,originalDuration,clip.outputDurationMs());
                     if(clip.effects.optJSONArray("keyframes")!=null&&clip.effects.optJSONArray("keyframes").length()>0){
                         long span=clip.effects.has("studioKeyframeDurationMs")?StudioClipKeyframes.integer(clip.effects,"studioKeyframeDurationMs",1,86_400_000):originalDuration;
                         long offset=clip.effects.has("studioKeyframeOffsetMs")?StudioClipKeyframes.integer(clip.effects,"studioKeyframeOffsetMs",0,span):0;
@@ -129,6 +130,7 @@ public final class StudioPrecisionEdits {
                     case "outMs":clip.outMs=StudioClipKeyframes.integer(values,key,1,86_400_000);break;
                     case "speed":clip.speed=(float)StudioClipKeyframes.number(values,key,1,.25,4);break;
                     case "volume":clip.volume=(float)StudioClipKeyframes.number(values,key,1,0,2);break;
+                    case "audioFadeInMs":case "audioFadeOutMs":clip.effects.put(key,StudioClipKeyframes.integer(values,key,0,86_400_000));break;
                     case "brightness":case "contrast":clip.effects.put(key,StudioClipKeyframes.number(values,key,0,-1,1));break;
                     case "saturationAdjust":case "lightnessAdjust":clip.effects.put(key,StudioClipKeyframes.number(values,key,0,-100,100));break;
                     case "blur":clip.effects.put(key,StudioClipKeyframes.number(values,key,0,0,18));break;
@@ -155,6 +157,9 @@ public final class StudioPrecisionEdits {
                 if(!values.has("scaleX"))clip.effects.remove("scaleX");
                 if(!values.has("scaleY"))clip.effects.remove("scaleY");
             }
+            if(values.has("audioFadeInMs")||values.has("audioFadeOutMs")){
+                clip.effects.remove("studioAudioDurationMs");clip.effects.remove("studioAudioOffsetMs");
+            }
         }
         boolean image=asset.mime!=null&&asset.mime.startsWith("image/");
         if(clip.inMs<0||clip.outMs<=clip.inMs||clip.outputDurationMs()<(image?1:100)||clip.outputDurationMs()>86_400_000L)
@@ -168,6 +173,7 @@ public final class StudioPrecisionEdits {
         }
         if(clip.effects.has("crop"))new StudioCropEffect(clip.effects.optJSONObject("crop"));
         StudioClipKeyframes.fromEffects(clip.effects,clip.outputDurationMs());
+        StudioClipAudioEnvelope.fromEffects(clip.effects,clip.outputDurationMs(),clip.speed,clip.volume);
         new StudioPixelEffect(clip.effects,clip.outputDurationMs());
     }
 }

@@ -22,6 +22,25 @@ public final class StudioLayerTouchMath {
         return new Timing(start,result);
     }
 
+    /** Left trim preserves the out point; minimumStart protects source-backed audio. */
+    public static Timing trimLeft(long videoLength,long start,long duration,long delta,long minimumStart){
+        move(videoLength,start,duration,0);
+        long position=Math.max(Math.max(0,minimumStart),Math.min(start+duration-100,start+delta));
+        if(position>start+duration-100)throw new IllegalArgumentException("Invalid source in-point");
+        return new Timing(position,start+duration-position);
+    }
+
+    public static Timing moveSnapped(long videoLength,long start,long duration,long delta,long[] boundaries,long toleranceMs){
+        Timing moved=move(videoLength,start,duration,delta);
+        if(boundaries==null||toleranceMs<0)return moved;
+        long snapped=moved.startMs,best=toleranceMs+1;
+        for(long boundary:boundaries)for(long candidate:new long[]{boundary,boundary-duration}){
+            long distance=Math.abs(candidate-moved.startMs);
+            if(candidate>=0&&candidate<=videoLength-duration&&distance<best){snapped=candidate;best=distance;}
+        }
+        return move(videoLength,start,duration,snapped-start);
+    }
+
     /** Snaps only when a nearby video-clip boundary actually exists. */
     public static long snap(long value,long[] boundaries,long toleranceMs){
         if(boundaries==null||toleranceMs<0)return value;

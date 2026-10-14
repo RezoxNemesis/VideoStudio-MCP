@@ -44,9 +44,9 @@ public final class SketchDocument {
         id(doc, "id");
         text(doc, "name", 160);
         integer(doc, "revision", 1, Long.MAX_VALUE - 1);
-        int width = (int) integer(doc, "width", 256, 1280), height = (int) integer(doc, "height", 256, 1280);
-        if ((width & 1) != 0 || (height & 1) != 0 || (long) width * height > 720L * 1280)
-            throw bad("Raster must be even and at most 720×1280 pixels");
+        int width = (int) integer(doc, "width", 256, 2048), height = (int) integer(doc, "height", 256, 2048);
+        if ((width & 1) != 0 || (height & 1) != 0 || (long) width * height > 2048L * 2048)
+            throw bad("Raster must be even and at most 2048×2048 pixels");
         NativeFrameClock.requireFps((int) integer(doc, "fps", 24, 60));
         int frames = (int) integer(doc, "frameCount", 1, MAX_FRAMES);
         color(doc.getString("background"));
@@ -65,16 +65,18 @@ public final class SketchDocument {
             JSONArray items = layer.getJSONArray("objects");
             for (int j = 0; j < items.length(); j++) {
                 JSONObject item = items.getJSONObject(j);
-                fields(item, "id,kind,frame,exposure,color,width,fill,points,bounds,reference,transform,keys,brush,commands,gradient,referenceCrop,text,fontFamily,fontSize,fontStyle,textAlign,letterSpacing");
+                fields(item, "id,kind,frame,exposure,color,width,fill,points,bounds,reference,paint,transform,keys,brush,commands,gradient,referenceCrop,text,fontFamily,fontSize,fontStyle,textAlign,letterSpacing");
                 unique(ids, id(item, "id"));
                 String kind = item.getString("kind");
-                if (!java.util.Arrays.asList("stroke","eraser","line","rect","ellipse","polygon","image","path","text").contains(kind))
+                if (!java.util.Arrays.asList("stroke","eraser","line","rect","ellipse","polygon","image","paint","path","text").contains(kind))
                     throw bad("Unsupported sketch object kind");
                 int start = (int) integer(item, "frame", 0, frames - 1);
                 integer(item, "exposure", 1, frames - start);
                 color(item.getString("color")); number(item, "width", .0005, .2); bool(item, "fill");
                 validateTransform(item.getJSONObject("transform"));
                 keys += validateKeys(item.getJSONArray("keys"), frames);
+                if(item.has("paint")&&!"paint".equals(kind))throw bad("Paint snapshots require a paint cel");
+                if("paint".equals(kind))fields(item,"id,kind,frame,exposure,color,width,fill,bounds,paint,transform,keys");
                 if (item.has("brush")) { if (!"stroke".equals(kind) && !"eraser".equals(kind)) throw bad("Brush requires stroke/eraser"); SketchBrushes.validate(item.getJSONObject("brush")); }
                 if (item.has("gradient")) validateGradient(item.getJSONObject("gradient"));
                 if (item.has("referenceCrop")) { if (!"image".equals(kind)) throw bad("Reference crop requires an image"); validateBounds(item.getJSONObject("referenceCrop")); }
@@ -112,6 +114,11 @@ public final class SketchDocument {
                         if(ref.has("sourceOrientation"))integer(ref,"sourceOrientation",1,8);
                         if(ref.has("sourceSha256")&&!ref.getString("sourceSha256").matches("[a-f0-9]{64}"))throw bad("Reference source hash is invalid");
                         id(ref, "sourceProjectId"); id(ref, "sourceAssetId"); images++;
+                    }
+                    if("paint".equals(kind)){
+                        if(b.getDouble("x")!=0||b.getDouble("y")!=0||b.getDouble("width")!=1||b.getDouble("height")!=1)throw bad("Paint cels require full-canvas bounds");
+                        JSONObject paint=item.getJSONObject("paint");SketchPaintStore.validateDescriptor(paint);
+                        if(paint.getInt("width")!=width||paint.getInt("height")!=height)throw bad("Paint snapshot dimensions must match the canvas");
                     }
                 }
                 objects++;

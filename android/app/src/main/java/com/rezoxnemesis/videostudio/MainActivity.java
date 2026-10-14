@@ -101,6 +101,11 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
     private Runnable studioCaptionClock;
     private FrameLayout studioPreviewFrame;
     private TextView studioTimeLabel;
+    private SeekBar studioSeek;
+    private StudioTracksView studioTracks;
+    private Button studioSplitButton;
+    private int studioTrackZoom=1;
+    private boolean studioTrackSnap=true;
     private int studioToolCategory=0;
     private AlertDialog studioToolDialog;
     private int studioTimelinePage=0;
@@ -546,6 +551,8 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
      * searchable categories instead of an unstructured 24-button wall.
      */
     private void showEditor() {
+        final int previousScroll="editor".equals(currentScreen)&&content!=null&&content.getChildCount()>0&&content.getChildAt(0) instanceof ScrollView
+                ?content.getChildAt(0).getScrollY():0;
         if(studioCaptionClock!=null){
             ui.removeCallbacks(studioCaptionClock);studioCaptionClock=null;
         }
@@ -616,7 +623,8 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         studioTimeLabel=body("0:00 / "+time(activeProject.outputDurationMs()));
         previewCard.addView(studioTimeLabel,margins(-1,-2,dp(7),0,0,0));
         SeekBar seek=new SeekBar(this);
-        seek.setMax(1000);
+        studioSeek=seek;
+        seek.setMax(1_000_000);
         long projectLength=Math.max(1,activeProject.outputDurationMs());
         studioPlayheadMs=Math.max(0,Math.min(projectLength,studioPlayheadMs));
         if(selectedClip!=null){
@@ -631,20 +639,26 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                 }
             }
         }
-        studioTimeLabel.setText(time(studioPlayheadMs)+" / "+time(projectLength));
-        seek.setProgress((int)(1000*Math.min(projectLength,studioPlayheadMs)/(double)projectLength));
+        studioTimeLabel.setText(StudioEditCursor.timecode(studioPlayheadMs)+" / "+StudioEditCursor.timecode(projectLength));
+        seek.setProgress((int)(seek.getMax()*Math.min(projectLength,studioPlayheadMs)/(double)projectLength));
         seek.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener(){
             @Override public void onStartTrackingTouch(SeekBar b){stopStillSequenceOnly();}
             @Override public void onProgressChanged(SeekBar b,int value,boolean fromUser){
                 if(fromUser)studioTimeLabel.setText(
-                        time(Math.round(projectLength*value/1000.0))+" / "+time(projectLength));
+                        StudioEditCursor.timecode(Math.round(projectLength*value/(double)b.getMax()))+" / "+StudioEditCursor.timecode(projectLength));
             }
             @Override public void onStopTrackingTouch(SeekBar b){
-                long playhead=Math.round(projectLength*b.getProgress()/1000.0);
+                long playhead=Math.round(projectLength*b.getProgress()/(double)b.getMax());
                 scrubStudioTo(playhead);
             }
         });
         previewCard.addView(seek,margins(-1,dp(38),0,0,0,0));
+
+        LinearLayout precisionTransport=new LinearLayout(this);
+        String[] transportLabels={"|‹ Cut","−0.1s","Time…","+0.1s","Cut ›|"};
+        Runnable[] transportActions={()->seekStudioBoundary(-1),()->scrubStudioTo(studioPlayheadMs-100),this::studioSeekDialog,()->scrubStudioTo(studioPlayheadMs+100),()->seekStudioBoundary(1)};
+        for(int i=0;i<transportLabels.length;i++)precisionTransport.addView(studioButton(transportLabels[i],transportActions[i]),new LinearLayout.LayoutParams(0,dp(42),1));
+        previewCard.addView(precisionTransport);
 
         LinearLayout controls=new LinearLayout(this);
         controls.setGravity(Gravity.CENTER_VERTICAL);
@@ -677,6 +691,21 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         redo.setEnabled(editHistory.canRedo());
         timelineHeader.addView(redo,new LinearLayout.LayoutParams(dp(76),dp(42)));
         box.addView(timelineHeader,margins(-1,-2,dp(9),dp(2),0,0));
+
+        if(selectedClip!=null){
+            TextView selectedInfo=body("SELECTED CLIP  "+(activeProject.clips.indexOf(selectedClip)+1)+"  •  Source "+StudioEditCursor.timecode(selectedClip.inMs)+" – "+StudioEditCursor.timecode(selectedClip.outMs)+"  •  "+trimFloat(selectedClip.speed)+"×");
+            box.addView(selectedInfo,margins(-1,-2,dp(3),dp(4),0,0));
+            HorizontalScrollView quickScroll=new HorizontalScrollView(this);
+            quickScroll.setHorizontalScrollBarEnabled(false);
+            LinearLayout quick=new LinearLayout(this);
+            studioSplitButton=studioButton("Split Here",this::splitClip);
+            studioSplitButton.setEnabled(canSplitStudioAtCursor());
+            quick.addView(studioSplitButton,new LinearLayout.LayoutParams(dp(106),dp(44)));
+            String[] labels={"Trim…","Set In Here","Set Out Here","Duplicate","Speed","Volume"};
+            Runnable[] actions={this::trimDialog,()->trimStudioAtCursor(true),()->trimStudioAtCursor(false),()->applyTool("Duplicate"),this::studioSpeedDialog,this::studioVolumeDialog};
+            for(int i=0;i<labels.length;i++)quick.addView(studioButton(labels[i],actions[i]),new LinearLayout.LayoutParams(dp(113),dp(44)));
+            quickScroll.addView(quick);box.addView(quickScroll,margins(-1,dp(46),0,dp(5),0,0));
+        }else studioSplitButton=null;
 
         HorizontalScrollView timeline=new HorizontalScrollView(this);
         timeline.setHorizontalScrollBarEnabled(false);
@@ -812,6 +841,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                 margins(-1,-2,dp(5),0,0,0));
 
         setScreen(scroll,"editor");
+        if(previousScroll>0)scroll.post(()->scroll.scrollTo(0,previousScroll));
         previewSelectedStudioClip(false);
         updateStudioCaptionAt(studioPlayheadMs);
         scheduleEditorRefresh(activeProject.id,activeProject.updatedAt);
@@ -981,7 +1011,10 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
             @Override public void run(){
                 if(!"editor".equals(currentScreen)||activeProject==null||!livePlayer.isEditedPreview())return;
                 studioPlayheadMs=Math.min(activeProject.outputDurationMs(),livePlayer.currentPositionMs());
-                if(studioTimeLabel!=null)studioTimeLabel.setText(time(studioPlayheadMs)+" / "+time(activeProject.outputDurationMs()));
+                if(studioTimeLabel!=null)studioTimeLabel.setText(StudioEditCursor.timecode(studioPlayheadMs)+" / "+StudioEditCursor.timecode(activeProject.outputDurationMs()));
+                if(studioSeek!=null&&!studioSeek.isPressed())studioSeek.setProgress((int)Math.round(studioPlayheadMs*studioSeek.getMax()/(double)Math.max(1,activeProject.outputDurationMs())));
+                if(studioTracks!=null)studioTracks.setPlayhead(studioPlayheadMs);
+                if(studioSplitButton!=null)studioSplitButton.setEnabled(canSplitStudioAtCursor());
                 ui.postDelayed(this,100);
             }
         };
@@ -998,10 +1031,29 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         selectedClip=activeProject.clips.get(position.clipIndex);
         studioTimelinePage=position.clipIndex/20;
         showEditor();
-        ProjectStore.Asset asset=activeProject.asset(selectedClip.assetId);
-        if(asset!=null&&asset.mime!=null&&asset.mime.startsWith("video/")){
-            livePlayer.seekTo(livePlayer.isEditedPreview()?position.globalTimeMs:position.assetTimeMs);
-        }
+    }
+
+    private long[] studioClipBoundaries(){
+        long[] cuts=new long[activeProject.clips.size()+1];long at=0;int i=0;
+        for(ProjectStore.Clip clip:activeProject.clips){cuts[i++]=at;at+=clip.outputDurationMs();}
+        cuts[i]=at;return cuts;
+    }
+
+    private void seekStudioBoundary(int direction){
+        if(activeProject!=null)scrubStudioTo(StudioEditCursor.adjacentBoundary(studioClipBoundaries(),studioPlayheadMs,direction));
+    }
+
+    private void studioSeekDialog(){
+        if(activeProject==null||activeProject.clips.isEmpty())return;
+        EditText position=numberInput(0);position.setText(String.format(Locale.US,"%.3f",studioPlayheadMs/1000.0));
+        position.setHint("Timeline position in seconds");
+        AlertDialog dialog=new AlertDialog.Builder(this).setTitle("Go to exact timeline time (seconds)").setView(position)
+                .setPositiveButton("Go",null).setNegativeButton("Cancel",null).create();
+        dialog.setOnShowListener(d->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{
+            try{long requested=secondsToMs(position);if(requested>activeProject.outputDurationMs())throw new IllegalArgumentException("Time exceeds the edit duration");
+                dialog.dismiss();scrubStudioTo(requested);
+            }catch(Exception error){position.setError(error.getMessage());}
+        }));dialog.show();
     }
 
     /** GPU edited composition, including stills, timed text and independently mixed audio. */
@@ -1213,11 +1265,15 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         box.addView(studioButton("+ Image Overlay",this::chooseStudioImage),margins(-1,dp(43),0,dp(4),0,0));
 
         StudioTracksView bands=new StudioTracksView(this);
+        studioTracks=bands;
         bands.setTimeline(activeProject.outputDurationMs(),studioPlayheadMs,
                 activeProject.studioLayers,this::scrubStudioTo,
                 new StudioTracksView.ChangeListener(){
                     @Override public void onChange(String id,long start,long duration){
                         moveStudioLayerOnTimeline(id,start,duration);
+                    }
+                    @Override public void onTrimLeft(String id,long start,long duration){
+                        moveStudioLayerOnTimeline(id,start,duration,true);
                     }
                     @Override public void onSelect(String id){
                         for(StudioLayer layer:activeProject.studioLayers){
@@ -1230,7 +1286,22 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                         }
                     }
                 });
-        box.addView(bands,margins(-1,dp(139),dp(4),dp(6),0,0));
+        bands.setSnapping(studioClipBoundaries(),studioTrackSnap);
+        LinearLayout zoom=new LinearLayout(this);
+        Button zoomOut=studioButton("− Zoom",()->{studioTrackZoom=Math.max(1,studioTrackZoom/2);showEditor();});
+        zoomOut.setEnabled(studioTrackZoom>1);
+        zoom.addView(zoomOut,new LinearLayout.LayoutParams(0,dp(40),1));
+        zoom.addView(body(studioTrackZoom+"×"),new LinearLayout.LayoutParams(dp(36),dp(40)));
+        Button zoomIn=studioButton("+ Zoom",()->{studioTrackZoom=Math.min(16,studioTrackZoom*2);showEditor();});
+        zoomIn.setEnabled(studioTrackZoom<16);
+        zoom.addView(zoomIn,new LinearLayout.LayoutParams(0,dp(40),1));
+        zoom.addView(studioButton(studioTrackSnap?"Snap: On":"Snap: Off",()->{studioTrackSnap=!studioTrackSnap;bands.setSnapping(studioClipBoundaries(),studioTrackSnap);showEditor();}),new LinearLayout.LayoutParams(0,dp(40),1));
+        box.addView(zoom);
+        HorizontalScrollView tracksScroll=new HorizontalScrollView(this);
+        int trackWidth=Math.max(dp(280),getResources().getDisplayMetrics().widthPixels-dp(24));
+        tracksScroll.addView(bands,new android.widget.FrameLayout.LayoutParams(trackWidth*studioTrackZoom,dp(150)));
+        box.addView(tracksScroll,margins(-1,dp(150),dp(4),dp(6),0,0));
+        tracksScroll.post(()->tracksScroll.scrollTo(Math.max(0,(int)(studioPlayheadMs/(double)Math.max(1,activeProject.outputDurationMs())*bands.getWidth())-trackWidth/2),0));
         if(studioAudioWaveforms!=null){
             for(StudioLayer audio:activeProject.studioLayers){
                 if(!StudioLayer.AUDIO.equals(audio.type))continue;
@@ -1278,6 +1349,10 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
     }
 
     private void moveStudioLayerOnTimeline(String id,long start,long duration){
+        moveStudioLayerOnTimeline(id,start,duration,false);
+    }
+
+    private void moveStudioLayerOnTimeline(String id,long start,long duration,boolean trimLeft){
         if(activeProject==null||id==null)return;
         ProjectStore.Project latest=store.get(activeProject.id);
         if(latest==null)return;
@@ -1293,6 +1368,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         if(existing==null||existing.startMs==start&&existing.durationMs==duration)return;
         try{
             StudioLayer changed=existing.copy();
+            if(trimLeft&&StudioLayer.AUDIO.equals(changed.type))changed.sourceInMs+=start-existing.startMs;
             changed.startMs=start;
             changed.durationMs=duration;
             changed.validate();
@@ -1827,13 +1903,30 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         if(selectedClip==null){Toast.makeText(this,"Select a clip first",
                 Toast.LENGTH_SHORT).show();return;}
         final String clipId=selectedClip.id;final long revision=activeProject.updatedAt;
-        int volume=(int)Math.round(selectedClip.volume*100);
-        studioSliderDialog("Clip Volume",0,200,Math.max(0,Math.min(200,volume)),
-                "% gain",value->{
-                    try{applyStudioPrecision(new JSONObject().put("clipId",clipId)
-                            .put("set",new JSONObject().put("volume",value/100.0)),revision);}
-                    catch(Exception error){Toast.makeText(this,error.getMessage(),Toast.LENGTH_LONG).show();}
-                });
+        final long duration=selectedClip.outputDurationMs();
+        final long originalFadeInMs=selectedClip.effects.optLong("audioFadeInMs",0),originalFadeOutMs=selectedClip.effects.optLong("audioFadeOutMs",0);
+        LinearLayout form=column();form.setPadding(dp(18),dp(5),dp(18),dp(8));
+        TextView gain=body("Volume "+Math.round(selectedClip.volume*100)+"%");form.addView(gain);
+        SeekBar volume=new SeekBar(this);volume.setMax(200);volume.setProgress(Math.round(selectedClip.volume*100));
+        volume.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener(){
+            @Override public void onProgressChanged(SeekBar b,int value,boolean user){gain.setText("Volume "+value+"%");}
+            @Override public void onStartTrackingTouch(SeekBar b){}
+            @Override public void onStopTrackingTouch(SeekBar b){}
+        });form.addView(volume,margins(-1,dp(45),0,0,0,0));
+        form.addView(body("Fade in (seconds, 0 disables)"));
+        EditText fadeIn=numberInput(0);fadeIn.setText(String.format(Locale.US,"%.3f",originalFadeInMs/1000.0));form.addView(fadeIn);
+        form.addView(body("Fade out (seconds, 0 disables)"));
+        EditText fadeOut=numberInput(0);fadeOut.setText(String.format(Locale.US,"%.3f",originalFadeOutMs/1000.0));form.addView(fadeOut);
+        form.addView(body("Clip duration "+StudioEditCursor.timecode(duration)+". Fades use edited playback time and appear in preview and MP4 export."));
+        AlertDialog dialog=new AlertDialog.Builder(this).setTitle("Clip Volume & Fades").setView(form)
+                .setPositiveButton("Apply",null).setNegativeButton("Cancel",null).create();
+        dialog.setOnShowListener(d->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{
+            try{
+                long in=secondsToMs(fadeIn),out=secondsToMs(fadeOut);
+                JSONObject settings=StudioVolumeEdits.settings(volume.getProgress(),duration,originalFadeInMs,originalFadeOutMs,in,out);
+                if(applyStudioPrecision(new JSONObject().put("clipId",clipId).put("set",settings),revision))dialog.dismiss();
+            }catch(Exception error){Toast.makeText(this,error.getMessage(),Toast.LENGTH_LONG).show();}
+        }));dialog.show();
     }
     private void studioBlurDialog(){
         if(selectedClip==null){Toast.makeText(this,"Select a clip first",
@@ -1920,7 +2013,10 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
             if(saved.updatedAt==result.getLong("updatedAt"))editHistory.checkpoint(before);else editHistory.reset(null);
             activeProject=saved;selectedClip=null;String id=result.getString("selectedClipId");
             for(ProjectStore.Clip clip:saved.clips)if(id.equals(clip.id)){selectedClip=clip;break;}
-            studioPlayheadMs=selectedClip==null?0:StudioTimelineEditOps.startOf(saved.clips,selectedClip.id);
+            if("split".equals(operation.optString("action"))){
+                StudioTimelineClock.Position position=StudioTimelineClock.locate(saved.clips,studioPlayheadMs);
+                if(position.clipIndex>=0)selectedClip=saved.clips.get(position.clipIndex);
+            }else studioPlayheadMs=selectedClip==null?0:StudioTimelineEditOps.startOf(saved.clips,selectedClip.id);
             studioTimelinePage=selectedClip==null?0:saved.clips.indexOf(selectedClip)/20;
             syncProtocolState();showEditor();return true;
         }catch(Exception error){Toast.makeText(this,"Timeline edit not applied: "+error.getMessage(),Toast.LENGTH_LONG).show();return false;}
@@ -3453,87 +3549,86 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
 
     private void splitClip() {
         if(selectedClip==null||activeProject==null)return;
-        StudioTimelineClock.Position where=
-                StudioTimelineClock.locate(activeProject.clips,studioPlayheadMs);
-        long at=selectedClip.inMs+(selectedClip.outMs-selectedClip.inMs)/2;
-        if(where.clipIndex>=0&&where.clipIndex<activeProject.clips.size()&&
-                activeProject.clips.get(where.clipIndex).id.equals(selectedClip.id)&&
-                where.offsetInClipMs>150){
-            at=where.assetTimeMs;
-        }
-        if (at <= selectedClip.inMs + 250 || at >= selectedClip.outMs - 250) {
-            Toast.makeText(this, "Move playback inside the clip before splitting", Toast.LENGTH_SHORT).show();
+        if(livePlayer.isEditedPreview()&&timelinePreviewRunning)studioPlayheadMs=livePlayer.currentPositionMs();
+        if(!canSplitStudioAtCursor()){
+            Toast.makeText(this,"Move the playhead inside the selected clip, leaving at least 0.1 seconds on each side",Toast.LENGTH_LONG).show();
             return;
         }
+        long at=StudioEditCursor.sourceAt(selectedClip.inMs,selectedClip.outMs,selectedClip.speed,
+                StudioTimelineEditOps.startOf(activeProject.clips,selectedClip.id),studioPlayheadMs);
+        stopStillSequenceOnly();
         try{applyStudioTimeline(new JSONObject().put("action","split").put("clipId",selectedClip.id)
                 .put("sourceTimeMs",at),activeProject.updatedAt);}
         catch(Exception error){Toast.makeText(this,"Split not applied: "+error.getMessage(),Toast.LENGTH_LONG).show();}
     }
 
+    private boolean canSplitStudioAtCursor(){
+        return activeProject!=null&&selectedClip!=null&&StudioEditCursor.canSplit(selectedClip.inMs,selectedClip.outMs,
+                selectedClip.speed,StudioTimelineEditOps.startOf(activeProject.clips,selectedClip.id),studioPlayheadMs);
+    }
+
+    private void trimStudioAtCursor(boolean trimIn){
+        if(activeProject==null||selectedClip==null)return;
+        long previous=studioPlayheadMs;
+        try{
+            if(livePlayer.isEditedPreview()&&timelinePreviewRunning)studioPlayheadMs=livePlayer.currentPositionMs();
+            long start=StudioTimelineEditOps.startOf(activeProject.clips,selectedClip.id);
+            long source=StudioEditCursor.sourceAt(selectedClip.inMs,selectedClip.outMs,selectedClip.speed,start,studioPlayheadMs);
+            long minimum=Math.max(100,(long)Math.ceil(100*selectedClip.speed));
+            if(trimIn&&selectedClip.outMs-source<minimum||!trimIn&&source-selectedClip.inMs<minimum)
+                throw new IllegalArgumentException("Leave at least 0.1 seconds in the selected clip");
+            JSONObject settings=new JSONObject().put(trimIn?"inMs":"outMs",source);
+            String id=selectedClip.id;long revision=activeProject.updatedAt;
+            stopStillSequenceOnly();studioPlayheadMs=trimIn?start:Math.max(start,studioPlayheadMs-1);
+            if(!applyStudioPrecision(new JSONObject().put("clipId",id).put("set",settings),revision))studioPlayheadMs=previous;
+        }catch(Exception error){studioPlayheadMs=previous;Toast.makeText(this,error.getMessage(),Toast.LENGTH_LONG).show();}
+    }
+
     private void trimDialog() {
         if(activeProject==null||selectedClip==null)return;
         final String clipId=selectedClip.id;final long revision=activeProject.updatedAt;
-        ProjectStore.Asset asset=activeProject.asset(selectedClip.assetId);
-        final long maximum=StudioTrimMath.sourceLength(
-                asset==null?0:asset.durationMs,selectedClip);
-        LinearLayout wrap=column();
-        wrap.setPadding(dp(20),dp(5),dp(20),dp(7));
-        wrap.addView(body("Drag the trim handles, or type exact seconds."));
+        final ProjectStore.Clip original=selectedClip;
+        ProjectStore.Asset asset=activeProject.asset(original.assetId);
+        final long maximum=StudioTrimMath.sourceLength(asset==null?0:asset.durationMs,original);
+        ScrollView scroll=new ScrollView(this);
+        LinearLayout wrap=column();wrap.setPadding(dp(20),dp(5),dp(20),dp(7));scroll.addView(wrap);
+        wrap.addView(body("Set exact source seconds (millisecond precision). Preview and export use the saved trim."));
         wrap.addView(body("Start / In-point"));
-        EditText start=numberInput(selectedClip.inMs/1000f);
-        wrap.addView(start);
-        SeekBar inSeek=new SeekBar(this);
-        inSeek.setMax(1000);
-        inSeek.setProgress(StudioTrimMath.toSeek(selectedClip.inMs,maximum));
+        EditText start=numberInput(0);start.setText(String.format(Locale.US,"%.3f",original.inMs/1000.0));wrap.addView(start);
+        SeekBar inSeek=new SeekBar(this);inSeek.setMax(1000);inSeek.setProgress(StudioTrimMath.toSeek(original.inMs,maximum));
         inSeek.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener(){
-            @Override public void onProgressChanged(SeekBar bar,int position,boolean user){
-                if(user)start.setText(String.format(Locale.US,"%.2f",
-                        StudioTrimMath.fromSeek(position,maximum)/1000.0));
-            }
+            @Override public void onProgressChanged(SeekBar bar,int position,boolean user){if(user)start.setText(String.format(Locale.US,"%.3f",StudioTrimMath.fromSeek(position,maximum)/1000.0));}
             @Override public void onStartTrackingTouch(SeekBar bar){}
             @Override public void onStopTrackingTouch(SeekBar bar){}
-        });
-        wrap.addView(inSeek,margins(-1,dp(45),0,0,0,0));
+        });wrap.addView(inSeek,margins(-1,dp(45),0,0,0,0));
         wrap.addView(body("End / Out-point"));
-        EditText end=numberInput(selectedClip.outMs/1000f);
-        wrap.addView(end);
-        SeekBar outSeek=new SeekBar(this);
-        outSeek.setMax(1000);
-        outSeek.setProgress(StudioTrimMath.toSeek(selectedClip.outMs,maximum));
+        EditText end=numberInput(0);end.setText(String.format(Locale.US,"%.3f",original.outMs/1000.0));wrap.addView(end);
+        SeekBar outSeek=new SeekBar(this);outSeek.setMax(1000);outSeek.setProgress(StudioTrimMath.toSeek(original.outMs,maximum));
         outSeek.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener(){
-            @Override public void onProgressChanged(SeekBar bar,int position,boolean user){
-                if(user)end.setText(String.format(Locale.US,"%.2f",
-                        StudioTrimMath.fromSeek(position,maximum)/1000.0));
-            }
+            @Override public void onProgressChanged(SeekBar bar,int position,boolean user){if(user)end.setText(String.format(Locale.US,"%.3f",StudioTrimMath.fromSeek(position,maximum)/1000.0));}
             @Override public void onStartTrackingTouch(SeekBar bar){}
             @Override public void onStopTrackingTouch(SeekBar bar){}
-        });
-        wrap.addView(outSeek,margins(-1,dp(45),0,0,0,0));
-        Button playheadIn=studioButton("Use Playhead as In",()->{
-            StudioTimelineClock.Position p=StudioTimelineClock.locate(
-                    activeProject.clips,studioPlayheadMs);
-            if(p.clipIndex>=0&&activeProject.clips.get(p.clipIndex).id.equals(selectedClip.id)){
-                long seek=Math.max(0,Math.min(maximum,p.assetTimeMs));
-                start.setText(String.format(Locale.US,"%.2f",seek/1000.0));
-                inSeek.setProgress(StudioTrimMath.toSeek(seek,maximum));
-            }
-        });
-        wrap.addView(playheadIn,margins(-1,dp(42),dp(6),0,0,0));
-        new AlertDialog.Builder(this).setTitle("Trim selected clip")
-                .setView(wrap)
-                .setPositiveButton("Apply",(d,w)->{
-                    try{
-                        long a=secondsToMs(start);
-                        long b=secondsToMs(end);
-                        if(!StudioTrimMath.valid(a,b,maximum))
-                            throw new IllegalArgumentException("Trim must fit source and be at least 0.1 seconds");
-                        applyStudioPrecision(new JSONObject().put("clipId",clipId)
-                                .put("set",new JSONObject().put("inMs",a).put("outMs",b)),revision);
-                    }catch(Exception error){
-                        Toast.makeText(this,error.getMessage()==null?
-                                "Invalid trim range":error.getMessage(),Toast.LENGTH_LONG).show();
-                    }
-                }).setNegativeButton("Cancel",null).show();
+        });wrap.addView(outSeek,margins(-1,dp(45),0,0,0,0));
+        LinearLayout handles=new LinearLayout(this);
+        for(boolean isIn:new boolean[]{true,false})handles.addView(studioButton(isIn?"Playhead → In":"Playhead → Out",()->{
+            try{
+                long source=StudioEditCursor.sourceAt(original.inMs,original.outMs,original.speed,
+                        StudioTimelineEditOps.startOf(activeProject.clips,clipId),studioPlayheadMs);
+                (isIn?start:end).setText(String.format(Locale.US,"%.3f",source/1000.0));
+                (isIn?inSeek:outSeek).setProgress(StudioTrimMath.toSeek(source,maximum));
+            }catch(Exception error){Toast.makeText(this,error.getMessage(),Toast.LENGTH_LONG).show();}
+        }),new LinearLayout.LayoutParams(0,dp(44),1));wrap.addView(handles);
+        TextView errorLabel=body("");wrap.addView(errorLabel);
+        AlertDialog dialog=new AlertDialog.Builder(this).setTitle("Trim selected clip").setView(scroll)
+                .setPositiveButton("Apply",null).setNegativeButton("Cancel",null).create();
+        dialog.setOnShowListener(d->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{
+            try{
+                long a=secondsToMs(start),b=secondsToMs(end);
+                if(!StudioTrimMath.valid(a,b,maximum))throw new IllegalArgumentException("Trim must fit the source and retain at least 0.1 seconds");
+                if(applyStudioPrecision(new JSONObject().put("clipId",clipId)
+                        .put("set",new JSONObject().put("inMs",a).put("outMs",b)),revision))dialog.dismiss();
+            }catch(Exception error){errorLabel.setText(error.getMessage()==null?"Invalid trim range":error.getMessage());}
+        }));dialog.show();
     }
 
     private void textDialog() {

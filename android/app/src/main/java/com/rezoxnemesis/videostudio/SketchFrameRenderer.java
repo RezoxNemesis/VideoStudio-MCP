@@ -23,6 +23,14 @@ import java.util.Map;
 public final class SketchFrameRenderer implements AutoCloseable {
     private static final long CACHE_BYTES = 12L * 1024 * 1024;
     private JSONObject document;
+    private final Context context;
+    private final File ownedDependencyRoot;
+    private SketchPaintStore paintStore;
+    private final LinkedHashMap<String, Bitmap> paintCache = new LinkedHashMap<>(16,.75f,true);
+    private long paintBytes;
+    private int preparedDimension;
+    private String paintPresentationObject;
+    private SketchPaintReplay.Frame paintPresentation;
     private final Map<String, File> references = new java.util.HashMap<>();
     private final LinkedHashMap<String, Bitmap> imageCache = new LinkedHashMap<>(16, .75f, true);
     private long imageBytes;
@@ -56,10 +64,17 @@ public final class SketchFrameRenderer implements AutoCloseable {
         }
     }
     private String presentationObject;private float presentationFraction=1;
+    private String appendPresentationObject;
+    private int appendBaselinePoints;
     public void setPresentation(String objectId,float fraction){presentationObject=objectId;presentationFraction=fraction;}
+    /** New live points extend existing ink; they never reveal that old ink a second time. */
+    void setAppendPresentation(String objectId,int baselinePoints){appendPresentationObject=objectId;appendBaselinePoints=baselinePoints;}
 
-    public SketchFrameRenderer(Context context, JSONObject document) throws Exception {
+    public SketchFrameRenderer(Context context, JSONObject document) throws Exception {this(context,document,null);}
+    /** Immutable export generations may resolve dependencies from a checked owned assets root. */
+    public SketchFrameRenderer(Context context, JSONObject document,File ownedDependencyRoot) throws Exception {
         SketchDocument.validate(document); this.document = SketchDocument.copy(document);
+        this.context=context.getApplicationContext();this.ownedDependencyRoot=ownedDependencyRoot;
         SketchProjectStore store=null;try {
             JSONArray layers = document.getJSONArray("layers");
             for (int i = 0; i < layers.length(); i++) {
@@ -68,7 +83,8 @@ public final class SketchFrameRenderer implements AutoCloseable {
                     JSONObject object = objects.getJSONObject(j);
                     if ("image".equals(object.getString("kind"))) {
                         JSONObject reference = object.getJSONObject("reference");
-                        if(store==null)store=new SketchProjectStore(context);references.put(reference.getString("sha256"), store.referenceFile(document.getString("id"), reference));
+                        if(ownedDependencyRoot!=null)references.put(reference.getString("sha256"), frozenReference(reference));
+                        else {if(store==null)store=new SketchProjectStore(context);references.put(reference.getString("sha256"), store.referenceFile(document.getString("id"), reference));}
                     }
                 }
             }
@@ -76,18 +92,106 @@ public final class SketchFrameRenderer implements AutoCloseable {
         indexExposures();
     }
 
+    private File frozenReference(JSONObject reference)throws Exception{
+        String name=reference.getString("file");if(!name.matches("[0-9a-f]{64}\\.png")||!name.equals(reference.getString("sha256")+".png"))throw SketchDocument.bad("Invalid frozen reference filename");
+        File root=ownedDependencyRoot.getCanonicalFile(),files=context.getFilesDir().getCanonicalFile();
+        if(!root.getPath().startsWith(files.getPath()+File.separator))throw SketchDocument.bad("Frozen dependencies must remain app-owned");
+        File expectedDir=new File(root,"references"),dir=expectedDir.getCanonicalFile(),expectedFile=new File(dir,name),file=expectedFile.getCanonicalFile();
+        if(!dir.getPath().equals(expectedDir.getPath())||!file.getPath().equals(expectedFile.getPath())||!dir.equals(file.getParentFile())||!file.isFile()||file.length()>8L*1024*1024||!SketchProjectStore.fileHash(file).equals(reference.getString("sha256")))throw new IllegalStateException("SKETCH_REFERENCE_CHANGED");
+        return file;
+    }
+
+    private SketchPaintStore paints()throws Exception{
+        if(paintStore==null)paintStore=ownedDependencyRoot==null?new SketchPaintStore(context,document.getString("id")):new SketchPaintStore(context,document.getString("id"),ownedDependencyRoot);
+        return paintStore;
+    }
+    /** A borrowed publication; its UI owner detaches it before closing its bitmap lease. */
+    public void setPaintPresentation(String objectId,SketchPaintReplay.Frame frame){paintPresentationObject=objectId;paintPresentation=frame;}
+
+    /** Warm raster resources on a worker before direct UI drawing. */
+    public void prepareRasterResources(int maxDimension)throws Exception{prepareRasterResources(maxDimension,-1);}
+    public void prepareRasterResources(int maxDimension,int frame)throws Exception {
+        requireRasterWorker();
+        if(maxDimension<128||maxDimension>1024)throw SketchDocument.bad("Raster preparation dimension must be 128..1024");
+        clearImageCache();clearPaintCache();preparedDimension=0;
+        java.util.ArrayList<JSONObject> visible=new java.util.ArrayList<>();
+        java.util.HashSet<String> unique=new java.util.HashSet<>();
+        JSONArray layers=document.getJSONArray("layers");
+        for(int i=0;i<layers.length();i++){
+            JSONObject layer=layers.getJSONObject(i);
+            if(!layer.getBoolean("visible")||layer.getDouble("opacity")<=0||
+                    frame>=0&&SketchDocument.transformAt(layer,frame).getDouble("opacity")<=0)continue;
+            JSONArray objects=layer.getJSONArray("objects");
+            for(int j=0;j<objects.length();j++){
+                JSONObject object=objects.getJSONObject(j);String kind=object.getString("kind");
+                if(!"paint".equals(kind)&&!"image".equals(kind))continue;
+                if(frame>=0&&(!exposed(object,frame)||SketchDocument.transformAt(object,frame).getDouble("opacity")<=0))continue;
+                String key=kind+":"+object.getJSONObject("paint".equals(kind)?"paint":"reference").getString("sha256");
+                unique.add(key);visible.add(object);
+            }
+        }
+        int edge=Math.min(maxDimension,Math.max(1,(int)Math.sqrt(CACHE_BYTES/(4d*Math.max(1,unique.size())))));
+        preparedDimension=edge;
+        for(JSONObject object:visible){
+            if(Thread.currentThread().isInterrupted())throw new InterruptedException("Raster preparation cancelled");
+            if("image".equals(object.getString("kind"))){image(object.getJSONObject("reference"));continue;}
+            JSONObject descriptor=object.getJSONObject("paint");String hash=descriptor.getString("sha256");
+            if(paintCache.containsKey(hash))continue;
+            Bitmap bitmap=fitCacheBitmap(paints().render(descriptor,Math.max(128,edge),null),edge);
+            paintCache.put(hash,bitmap);paintBytes+=bitmap.getAllocationByteCount();
+        }
+    }
+    private static Bitmap fitCacheBitmap(Bitmap image,int edge){
+        if(Math.max(image.getWidth(),image.getHeight())<=edge)return image;
+        double scale=edge/(double)Math.max(image.getWidth(),image.getHeight());
+        try{
+            Bitmap scaled=Bitmap.createScaledBitmap(image,Math.max(1,(int)Math.round(image.getWidth()*scale)),
+                    Math.max(1,(int)Math.round(image.getHeight()*scale)),true);
+            if(scaled!=image)image.recycle();return scaled;
+        }catch(RuntimeException|Error error){image.recycle();throw error;}
+    }
+    long preparedRasterBytes(){return imageBytes+paintBytes;}
+    private static void requireRasterWorker(){if(android.os.Looper.myLooper()==android.os.Looper.getMainLooper())throw new IllegalStateException("Raster preparation requires a background worker");}
+
     public Bitmap render(int frame) throws Exception { return render(frame,true); }
     public Bitmap render(int frame, boolean background) throws Exception {
         int frames = document.getInt("frameCount"); if (frame < 0 || frame >= frames) throw SketchDocument.bad("Frame outside document");
         Bitmap bitmap = Bitmap.createBitmap(document.getInt("width"), document.getInt("height"), Bitmap.Config.ARGB_8888);
         try { draw(new Canvas(bitmap), frame, background); return bitmap; }
-        catch (Exception e) { bitmap.recycle(); throw e; }
+        catch (Exception|OutOfMemoryError e) { bitmap.recycle(); throw e; }
+    }
+    /** Render directly into destination pixels; no full-canvas bitmap is allocated first. */
+    public Bitmap render(int frame,boolean background,int maxDimension,JSONObject crop)throws Exception{
+        if(maxDimension<128||maxDimension>1024)throw SketchDocument.bad("Preview dimension must be 128..1024");
+        int w=document.getInt("width"),h=document.getInt("height");double x=0,y=0,width=1,height=1;
+        if(crop!=null){SketchDocument.validateBounds(crop);x=crop.getDouble("x");y=crop.getDouble("y");width=crop.getDouble("width");height=crop.getDouble("height");}
+        double cw=width*w,ch=height*h,scale=maxDimension/Math.max(cw,ch);if(crop==null)scale=Math.min(1,scale);int outW=Math.max(1,(int)Math.round(cw*scale)),outH=Math.max(1,(int)Math.round(ch*scale));
+        Bitmap bitmap=Bitmap.createBitmap(outW,outH,Bitmap.Config.ARGB_8888);
+        try{Canvas canvas=new Canvas(bitmap);canvas.scale((float)(outW/cw),(float)(outH/ch));canvas.translate((float)(-x*w),(float)(-y*h));canvas.clipRect((float)(x*w),(float)(y*h),(float)((x+width)*w),(float)((y+height)*h));draw(canvas,frame,background);return bitmap;}
+        catch(Exception|OutOfMemoryError error){bitmap.recycle();throw error;}
     }
 
     public void updateDocument(Context context,JSONObject doc) throws Exception {
         SketchDocument.validate(doc);JSONObject copy=SketchDocument.copy(doc);JSONArray layers=copy.getJSONArray("layers");
-        SketchProjectStore store=null;try{for(int i=0;i<layers.length();i++){JSONArray objects=layers.getJSONObject(i).getJSONArray("objects");for(int j=0;j<objects.length();j++){JSONObject o=objects.getJSONObject(j);if("image".equals(o.getString("kind"))){JSONObject ref=o.getJSONObject("reference");if(!references.containsKey(ref.getString("sha256"))){if(store==null)store=new SketchProjectStore(context);references.put(ref.getString("sha256"),store.referenceFile(copy.getString("id"),ref));}}}}}finally{if(store!=null)store.close();}
-        document=copy;indexExposures();
+        if(!copy.getString("id").equals(document.getString("id")))throw SketchDocument.bad("Renderer owner cannot change; create a new renderer for another sketch");
+        SketchProjectStore store=null;
+        try {
+            for(int i=0;i<layers.length();i++){
+                JSONArray objects=layers.getJSONObject(i).getJSONArray("objects");
+                for(int j=0;j<objects.length();j++){
+                    JSONObject object=objects.getJSONObject(j);
+                    if(!"image".equals(object.getString("kind")))continue;
+                    JSONObject reference=object.getJSONObject("reference");String hash=reference.getString("sha256");
+                    if(references.containsKey(hash))continue;
+                    if(ownedDependencyRoot!=null)references.put(hash,frozenReference(reference));
+                    else{
+                        if(store==null)store=new SketchProjectStore(context);
+                        references.put(hash,store.referenceFile(copy.getString("id"),reference));
+                    }
+                }
+            }
+        }finally{if(store!=null)store.close();}
+        document=copy;indexExposures();clearPaintCache();preparedDimension=0;appendPresentationObject=null;appendBaselinePoints=0;
     }
     public void draw(Canvas canvas, int frame, boolean background) throws Exception {
         draw(canvas, frame, background, null, null);
@@ -101,6 +205,7 @@ public final class SketchFrameRenderer implements AutoCloseable {
         for (int i = 0; i < layers.length(); i++) {
             JSONObject layer = layers.getJSONObject(i); if (!layer.getBoolean("visible")) continue;
             JSONObject transform = SketchDocument.transformAt(layer, frame);
+            if(layer.getDouble("opacity")<=0||transform.getDouble("opacity")<=0)continue;
             Paint composite = new Paint(Paint.ANTI_ALIAS_FLAG);
             composite.setAlpha((int) Math.round(255 * layer.getDouble("opacity") * transform.getDouble("opacity")));
             String blend=layer.optString("blendMode","normal");
@@ -113,6 +218,7 @@ public final class SketchFrameRenderer implements AutoCloseable {
             for (int j = visible==null?-1:visible.nextSetBit(0); j>=0; j=visible.nextSetBit(j+1)) {
                 JSONObject object = objects.getJSONObject(j);if(geometryPreview!=null&&object.getString("id").equals(geometryPreview.getString("id")))object=geometryPreview; if (!exposed(object, frame)) continue;
                 int objectSave = canvas.save(); JSONObject objectTransform = previewTransform != null && object.getString("id").equals(previewObjectId) ? previewTransform : SketchDocument.transformAt(object, frame);
+                if(objectTransform.getDouble("opacity")<=0){canvas.restoreToCount(objectSave);continue;}
                 canvas.concat(matrix(objectTransform, w, h));
                 drawObject(canvas, object, w, h, objectTransform.getDouble("opacity"));
                 canvas.restoreToCount(objectSave);
@@ -122,14 +228,20 @@ public final class SketchFrameRenderer implements AutoCloseable {
     }
 
     private void drawObject(Canvas canvas, JSONObject object, int w, int h, double alpha) throws Exception {
-        String kind = object.getString("kind"); boolean partial=object.getString("id").equals(presentationObject)&&presentationFraction<1;if(partial&&presentationFraction<=0)return;Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
+        String kind = object.getString("kind");
+        if("paint".equals(kind)){drawPaint(canvas,object,w,h,alpha);return;}
+        boolean partial=object.getString("id").equals(presentationObject)&&presentationFraction<1;
+        boolean append=appendBaselinePoints>0&&object.getString("id").equals(appendPresentationObject)&&("stroke".equals(kind)||"eraser".equals(kind));
+        if(partial&&presentationFraction<=0&&!append)return;Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
         int color = SketchDocument.color(object.getString("color")); paint.setColor(color);
         paint.setAlpha((int) Math.round(((color >>> 24) & 255) * alpha));
         paint.setStrokeJoin(Paint.Join.ROUND); paint.setStrokeCap(Paint.Cap.ROUND);
         float width = (float) object.getDouble("width") * Math.min(w, h); paint.setStrokeWidth(width);
         if ("eraser".equals(kind)) { paint.setColor(0xFFFFFFFF); paint.setAlpha((int) Math.round(255 * alpha)); paint.setXfermode(new PorterDuffXfermode(PorterDuff.Mode.DST_OUT)); }
         if ("stroke".equals(kind) || "eraser".equals(kind)) {
-            SketchBrushes.draw(canvas, partial?SketchStrokeProgress.prefix(object.getJSONArray("points"),presentationFraction):object.getJSONArray("points"), w, h, width, paint, object.optJSONObject("brush")); return;
+            JSONArray points=object.getJSONArray("points");
+            if(partial)points=append?appendPrefix(points,appendBaselinePoints,presentationFraction):SketchStrokeProgress.prefix(points,presentationFraction);
+            SketchBrushes.draw(canvas,points,w,h,width,paint,object.optJSONObject("brush"));return;
         }
         paint.setStyle(object.getBoolean("fill") ? Paint.Style.FILL : Paint.Style.STROKE);
         JSONObject gradient=object.optJSONObject("gradient");
@@ -149,6 +261,25 @@ public final class SketchFrameRenderer implements AutoCloseable {
                 if(crop!=null)source=referencePixels(crop,bitmap.getWidth(),bitmap.getHeight());
                 canvas.drawBitmap(bitmap, source, bounds, paint);
             }
+        }
+    }
+    private static JSONArray appendPrefix(JSONArray points,int baseline,double fraction)throws Exception{
+        if(baseline<1||baseline>points.length())throw SketchDocument.bad("Live append baseline is outside its stroke");
+        JSONArray result=new JSONArray();for(int i=0;i<baseline;i++)result.put(points.getJSONArray(i));
+        if(fraction<=0||baseline==points.length())return result;
+        JSONArray travel=new JSONArray();for(int i=baseline-1;i<points.length();i++)travel.put(points.getJSONArray(i));
+        JSONArray revealed=SketchStrokeProgress.prefix(travel,fraction);for(int i=1;i<revealed.length();i++)result.put(revealed.getJSONArray(i));return result;
+    }
+
+    private void drawPaint(Canvas canvas,JSONObject object,int w,int h,double alpha)throws Exception{
+        if(alpha<=0)return;Paint composite=new Paint(Paint.ANTI_ALIAS_FLAG|Paint.FILTER_BITMAP_FLAG);composite.setAlpha((int)Math.round(255*alpha));
+        SketchPaintReplay.Frame frame=object.getString("id").equals(paintPresentationObject)?paintPresentation:null;
+        if(frame!=null){if(frame.bitmap.isRecycled())throw new IllegalStateException("Paint publication was recycled before detachment");RectF region=frame.crop==null?new RectF(0,0,w,h):bounds(frame.crop,w,h);canvas.drawBitmap(frame.bitmap,null,region,composite);return;}
+        JSONObject descriptor=object.getJSONObject("paint");
+        if(android.os.Looper.myLooper()==android.os.Looper.getMainLooper()){
+            Bitmap bitmap=paintCache.get(descriptor.getString("sha256"));if(bitmap==null)throw new IllegalStateException("Paint cel must be prepared before UI drawing");canvas.drawBitmap(bitmap,null,new RectF(0,0,w,h),composite);
+        }else{
+            int save=canvas.saveLayer(new RectF(0,0,w,h),composite);try{paints().draw(canvas,descriptor);}finally{canvas.restoreToCount(save);}
         }
     }
 
@@ -189,11 +320,13 @@ public final class SketchFrameRenderer implements AutoCloseable {
 
     private Bitmap image(JSONObject reference) throws Exception {
         String hash = reference.getString("sha256"); Bitmap cached = imageCache.get(hash); if (cached != null) return cached;
+        if(android.os.Looper.myLooper()==android.os.Looper.getMainLooper()&&preparedDimension>0)throw new IllegalStateException("Reference must be prepared before UI drawing");
         File file = references.get(hash); if (file == null) throw new IllegalStateException("SKETCH_REFERENCE_UNAVAILABLE");
         BitmapFactory.Options options = new BitmapFactory.Options(); options.inPreferredConfig = Bitmap.Config.ARGB_8888;
         Bitmap image = BitmapFactory.decodeFile(file.getPath(), options);
         if (image == null) throw new IllegalStateException("Owned reference PNG decode failed");
         if (image.getWidth() != reference.getInt("width") || image.getHeight() != reference.getInt("height")) { image.recycle(); throw new IllegalStateException("SKETCH_REFERENCE_CHANGED"); }
+        if(preparedDimension>0)image=fitCacheBitmap(image,preparedDimension);
         while (!imageCache.isEmpty() && imageBytes + image.getAllocationByteCount() > CACHE_BYTES) {
             Map.Entry<String, Bitmap> oldest = imageCache.entrySet().iterator().next(); Bitmap removed = oldest.getValue();
             imageBytes -= removed.getAllocationByteCount(); imageCache.remove(oldest.getKey()); removed.recycle();
@@ -235,7 +368,7 @@ public final class SketchFrameRenderer implements AutoCloseable {
                         if (radius <= 1 + allowed && (object.getBoolean("fill") || Math.abs(radius - 1) <= allowed)) return object.getString("id");
                     } else {
                         RectF expanded = new RectF(bounds); expanded.inset(-t, -t);
-                        if (expanded.contains(p[0], p[1]) && ("image".equals(kind) || "text".equals(kind) || object.getBoolean("fill") ||
+                        if (expanded.contains(p[0], p[1]) && ("image".equals(kind) || "paint".equals(kind) || "text".equals(kind) || object.getBoolean("fill") ||
                                 Math.min(Math.min(Math.abs(p[0] - bounds.left), Math.abs(p[0] - bounds.right)), Math.min(Math.abs(p[1] - bounds.top), Math.abs(p[1] - bounds.bottom))) <= t)) return object.getString("id");
                     }
                 } else {
@@ -267,5 +400,7 @@ public final class SketchFrameRenderer implements AutoCloseable {
         }
         return inside;
     }
-    @Override public void close() { for (Bitmap image : imageCache.values()) image.recycle(); imageCache.clear(); imageBytes = 0;geometryCache.clear();exposures.clear(); }
+    private void clearPaintCache(){for(Bitmap bitmap:paintCache.values())bitmap.recycle();paintCache.clear();paintBytes=0;}
+    private void clearImageCache(){for(Bitmap image:imageCache.values())image.recycle();imageCache.clear();imageBytes=0;}
+    @Override public void close() {clearImageCache();clearPaintCache();if(paintStore!=null){paintStore.close();paintStore=null;}paintPresentation=null;paintPresentationObject=null;geometryCache.clear();exposures.clear(); }
 }

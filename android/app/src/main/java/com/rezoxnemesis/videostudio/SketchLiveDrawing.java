@@ -7,17 +7,26 @@ import java.nio.charset.StandardCharsets;
 /** Source-bound live session, starting before drawing; accepted operations are journalled in SQLite. */
 public final class SketchLiveDrawing {
     private SketchLiveDrawing(){}
-    public static JSONObject begin(Context context,JSONObject args) throws Exception {
-        SketchDocument.fields(args,"sketchId,expectedRevision,operationId,strokeDurationMs");String id=SketchDocument.id(args,"sketchId"),session=SketchDocument.id(args,"operationId");long revision=SketchDocument.integer(args,"expectedRevision",1,Long.MAX_VALUE-1);int duration=args.has("strokeDurationMs")?(int)SketchDocument.integer(args,"strokeDurationMs",80,5000):120;
+    public static synchronized JSONObject begin(Context context,JSONObject args) throws Exception {
+        SketchDocument.fields(args,"sketchId,expectedRevision,operationId,strokeDurationMs,drawingMethod");String id=SketchDocument.id(args,"sketchId"),session=SketchDocument.id(args,"operationId");long revision=SketchDocument.integer(args,"expectedRevision",1,Long.MAX_VALUE-1);int duration=args.has("strokeDurationMs")?(int)SketchDocument.integer(args,"strokeDurationMs",80,5000):120;
+        String method=SketchDrawingPolicy.method(args);SketchDrawingPolicy.requireMethod(method);
         JSONObject baseline;long sequence;
-        try(SketchProjectStore store=new SketchProjectStore(context)){try{JSONObject previous=store.liveSession(id,session);JSONObject saved=read(context,id,session);if(saved.getJSONObject("document").getLong("revision")!=revision||saved.getInt("strokeDurationMs")!=duration)throw new IllegalStateException("SKETCH_LIVE_SESSION_CONFLICT");return previous.put("revision",revision).put("everyAcceptedOperationRecorded",true);}catch(IllegalArgumentException missing){if(!missing.getMessage().contains("Unknown live drawing session"))throw missing;}}try(SketchProjectStore store=new SketchProjectStore(context)){store.beginSnapshot();try{baseline=store.get(id);SketchProjectStore.requireRevision(baseline,revision);sequence=store.latestSequence(id);}finally{store.endSnapshot();}}
-        JSONObject state=new JSONObject().put("sessionId",session).put("sketchId",id).put("afterSequence",sequence).put("strokeDurationMs",duration).put("document",baseline);
+        try(SketchProjectStore store=new SketchProjectStore(context)){try{JSONObject previous=store.liveSession(id,session);JSONObject saved=read(context,id,session);if(saved.getJSONObject("document").getLong("revision")!=revision||saved.getInt("strokeDurationMs")!=duration||!SketchDrawingPolicy.method(saved).equals(method))throw new IllegalStateException("SKETCH_LIVE_SESSION_CONFLICT");return invitation(context,previous.put("revision",revision));}catch(IllegalArgumentException missing){if(!missing.getMessage().contains("Unknown live drawing session"))throw missing;}}try(SketchProjectStore store=new SketchProjectStore(context)){store.beginSnapshot();try{baseline=store.get(id);SketchProjectStore.requireRevision(baseline,revision);sequence=store.latestSequence(id);SketchDrawingPolicy.requireBegin(baseline,method);}finally{store.endSnapshot();}}
+        JSONObject state=new JSONObject().put("sessionId",session).put("sketchId",id).put("afterSequence",sequence).put("strokeDurationMs",duration).put("drawingMethod",method).put("baselineRevision",revision).put("document",baseline);
         File root=new File(context.getFilesDir(),"sketch_studio/"+id+"/live");if(!root.isDirectory()&&!root.mkdirs())throw new IOException("Live drawing storage unavailable");File file=new File(root,session+".json");AtomicFile target=new AtomicFile(file);FileOutputStream out=null;
         try{out=target.startWrite();out.write(state.toString().getBytes(StandardCharsets.UTF_8));target.finishWrite(out);}catch(Exception error){if(out!=null)target.failWrite(out);throw error;}
         try(SketchBookStore books=new SketchBookStore(context)){JSONObject page=books.pageForSketch(id);if(page!=null){state.put("bookId",page.getString("bookId")).put("page",page.getInt("page"));}}
         JSONObject metadata;try(SketchProjectStore store=new SketchProjectStore(context)){metadata=store.createLiveSession(state);}
         context.getSharedPreferences("sketch_live_workspace",Context.MODE_PRIVATE).edit().putString("sketchId",id).putString("streamSketchId",id).putString("streamSessionId",session).putLong("signal",System.nanoTime()).apply();
-        return metadata.put("sketchId",id).put("sessionId",session).put("revision",revision).put("afterSequence",sequence).put("strokeDurationMs",duration).put("everyAcceptedOperationRecorded",true).put("phoneMustHaveSketchStudioOpen",true);
+        return invitation(context,metadata.put("sketchId",id).put("sessionId",session).put("revision",revision).put("afterSequence",sequence).put("strokeDurationMs",duration));
+    }
+    private static JSONObject invitation(Context context,JSONObject metadata)throws Exception{
+        String method=SketchDrawingPolicy.method(metadata);
+        JSONObject notification=metadata.optBoolean("ended")?SketchLiveNotification.status(context).put("status","session_ended"):
+                SketchLiveNotification.drawingStarted(context,metadata.getString("sketchId"),metadata.getString("sessionId"),method);
+        return metadata.put("drawingMethod",method).put("referencePixelsMayBeCopied",SketchDrawingPolicy.ASSISTED.equals(method))
+                .put("everyAcceptedOperationRecorded",true).put("phoneMustHaveSketchStudioOpen",true)
+                .put("notification",notification).put("tapNotificationToWatch",notification.optBoolean("posted"));
     }
     public static JSONObject read(Context context,String id,String session) throws Exception {
         SketchDocument.id(new JSONObject().put("id",id),"id");SketchDocument.id(new JSONObject().put("id",session),"id");File file=new File(context.getFilesDir(),"sketch_studio/"+id+"/live/"+session+".json");byte[] bytes;

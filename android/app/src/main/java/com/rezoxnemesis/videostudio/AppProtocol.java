@@ -42,7 +42,7 @@ import javax.crypto.spec.GCMParameterSpec;
 public final class AppProtocol {
     public static final String BASE = "https://wispy-queen-f9b5.prakasharuntandon634.workers.dev";
     public static final int PROTOCOL_VERSION = 3;
-    public static final String APP_VERSION = "4.0.1";
+    public static final String APP_VERSION = "4.2.0";
     /** Stable compatibility URL. APK updates must not change this path. */
     public static final String MCP_PATH = McpConnectionCore.STABLE_MCP_PATH;
     /** Stable registration bootstrap. Runtime requests use the negotiated profile. */
@@ -390,6 +390,7 @@ public final class AppProtocol {
         meta.put("connectionSession", connectionSession);
         meta.put("galleryAccess", false);
         meta.put("directAttachmentIngest", true);
+        meta.put("encryptedMediaMailbox",new JSONObject().put("action","import_mailbox_media").put("minimumNativeVersion","4.2.0").put("maximumBytes",256L*1024*1024).put("hashVerified",true).put("publicPlaintext",false));
         meta.put("localEngineOwnsProjects", true);
         meta.put("portraitAnimationEngine", "v3.2-articulated-parallax");
         meta.put("onDevicePortraitAi", true);
