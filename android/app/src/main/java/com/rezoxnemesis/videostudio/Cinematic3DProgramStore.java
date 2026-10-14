@@ -20,7 +20,7 @@ public final class Cinematic3DProgramStore {
 
     public static JSONObject save(Context context,ProjectStore projects,JSONObject request)throws Exception {
         fields(request,"projectId","sourceProjectUpdatedAt","programId","expectedProgramSha256","bundleId","timeline");String projectId=id(text(request,"projectId",96)),bundleId=id(text(request,"bundleId",96));long revision=integer(request,"sourceProjectUpdatedAt",0,Long.MAX_VALUE);
-        String programId=request.has("programId")?id(text(request,"programId",96)):UUID.randomUUID().toString();String expected=optionalDigest(request,"expectedProgramSha256");JSONObject timeline=validate(object(request,"timeline"));ProjectStore.Project source=projects.get(projectId);
+        String programId=request.has("programId")?id(text(request,"programId",96)):UUID.randomUUID().toString();String expected=optionalDigest(request,"expectedProgramSha256");JSONObject timeline=validate(object(request,"timeline"));Cinematic3DCameraEditOps.preflight(timeline);ProjectStore.Project source=projects.get(projectId);
         if(source==null)throw new IllegalArgumentException("Source project unavailable");if(source.updatedAt!=revision)throw new IllegalStateException("SOURCE_PROJECT_CHANGED: source revision differs");
         JSONObject bundle=NativeCinematicBundleStore.get(context,projects,projectId,bundleId);bindScenes(bundle,timeline);SourceProof proof=measureSources(context,source,timeline);
         JSONObject payload=new JSONObject().put("schema",SCHEMA).put("projectId",projectId).put("sourceProjectUpdatedAt",revision).put("programId",programId).put("bundleId",bundleId)
@@ -35,6 +35,18 @@ public final class Cinematic3DProgramStore {
             File target=new File(dir,digest+".json");plain(target);if(!target.exists()){File[] versions=dir.listFiles((folder,name)->name.matches("[0-9a-f]{64}\\.json"));if(versions!=null&&versions.length>=MAX_REVISIONS)throw new IllegalArgumentException("Cinematic program revision limit is 128");if(storage(root)+bytes.length>MAX_STORAGE)throw new IllegalArgumentException("Cinematic program storage exceeds 64 MiB");writeAtomic(target,bytes);}else if(!digest.equals(sha(readJson(target))))throw new IllegalStateException("SOURCE_PROGRAM_CHANGED: immutable program revision corrupted");
             JSONObject pointer=new JSONObject().put("schema","videostudio.cinematic3d.program-pointer.v1").put("programId",programId).put("sha256",digest);writeAtomic(new File(dir,"_current.json"),canonical(pointer).getBytes(StandardCharsets.UTF_8));return receipt(payload,digest,bundle);
         }});
+    }
+
+    /** Incremental authoring retains the current bundle and publishes through the same guarded CAS. */
+    public static JSONObject edit(Context context,ProjectStore projects,JSONObject request)throws Exception {
+        fields(request,"projectId","programId","expectedProgramSha256","sourceProjectUpdatedAt","operations");
+        String projectId=id(text(request,"projectId",96)),programId=id(text(request,"programId",96)),expected=digest(text(request,"expectedProgramSha256",64),false);long revision=integer(request,"sourceProjectUpdatedAt",0,Long.MAX_VALUE);
+        JSONObject accepted=get(context,projects,new JSONObject().put("projectId",projectId).put("programId",programId).put("expectedProgramSha256",expected));
+        if(accepted.getLong("sourceProjectUpdatedAt")!=revision)throw new IllegalStateException("SOURCE_PROJECT_CHANGED: camera edit source revision differs");
+        JSONObject edited=Cinematic3DCameraEditOps.apply(accepted.getJSONObject("timeline"),array(request,"operations"));
+        // save rechecks the latest source revision, bundle proof and actual program SHA under the
+        // existing SQLite writer -> file lock before publishing an immutable revision pointer.
+        return save(context,projects,new JSONObject().put("projectId",projectId).put("programId",programId).put("expectedProgramSha256",expected).put("sourceProjectUpdatedAt",revision).put("bundleId",accepted.getString("bundleId")).put("timeline",edited));
     }
 
     public static JSONObject get(Context context,ProjectStore projects,JSONObject request)throws Exception {

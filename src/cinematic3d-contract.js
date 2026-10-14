@@ -1,6 +1,6 @@
 // Inert full-scene data contracts. The phone executes every native action.
 import { z } from 'zod';
-export const CINEMATIC_3D_ACTIONS = new Set(['cinematic_3d_capabilities','cinematic_3d_install_builtin','cinematic_3d_import_bundle','cinematic_3d_save_program','cinematic_3d_get_program','cinematic_3d_list_programs','cinematic_3d_plan','cinematic_3d_render','cinematic_3d_export_request']);
+export const CINEMATIC_3D_ACTIONS = new Set(['cinematic_3d_capabilities','cinematic_3d_install_builtin','cinematic_3d_import_bundle','cinematic_3d_save_program','cinematic_3d_edit_program','cinematic_3d_get_program','cinematic_3d_list_programs','cinematic_3d_plan','cinematic_3d_render','cinematic_3d_export_request']);
 export const CINEMATIC_3D_BEATS = ['STANDOFF','CHARGE','CLASH','BLADE_LOCK','FOLLOW_THROUGH','KNOCKBACK','LANDING','RECOVERY','AERIAL_FLIP','TUMBLE','MACRO_CLASH','IDLE','WALK','RUN','JUMP','DODGE','DUCK','PUNCH','KICK','DANCE','WAVE'];
 const id=z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_-]{0,95}$/),hash=z.string().regex(/^[a-f0-9]{64}$/),number=z.number().finite();
 const vector=z.tuple([number,number,number]),quaternion=z.tuple([number,number,number,number]).refine(q=>q.some(v=>v!==0),'Quaternion cannot be zero');
@@ -38,9 +38,22 @@ export const cinematic3dTimelineSchema=z.object({schema:z.literal('videostudio.c
  if(value.shots.reduce((n,s)=>n+s.durationFrames,0)>12000)ctx.addIssue({code:z.ZodIssueCode.custom,message:'Timeline exceeds 12000 frames'});
 });
 const project={projectId:id},revision={...project,sourceProjectUpdatedAt:z.number().int().nonnegative()},program={...project,programId:id,expectedProgramSha256:hash.optional()};
+const cameraEdit=z.discriminatedUnion('type',[
+ z.object({type:z.literal('upsert_camera_key'),shotId:id,phase:number.min(0).max(1),position:cameraVector,target:cameraVector,up:cameraVector.optional()}).strict(),
+ z.object({type:z.literal('remove_camera_key'),shotId:id,phase:number.min(0).max(1)}).strict(),
+ z.object({type:z.literal('clear_camera_keys'),shotId:id}).strict()
+]).superRefine((v,ctx)=>{
+ if(v.type!=='upsert_camera_key')return;
+ const direction=v.target.map((x,i)=>x-v.position[i]),length=Math.hypot(...direction),scale=Math.max(1,...v.position.map(Math.abs),...v.target.map(Math.abs));
+ if(length<=1e-6*scale)ctx.addIssue({code:z.ZodIssueCode.custom,message:'Camera position and target must differ'});
+ if(v.up){const height=Math.hypot(...v.up),cross=Math.hypot(direction[1]*v.up[2]-direction[2]*v.up[1],direction[2]*v.up[0]-direction[0]*v.up[2],direction[0]*v.up[1]-direction[1]*v.up[0]);
+  if(height<=1e-9||cross<=1e-6*length*height)ctx.addIssue({code:z.ZodIssueCode.custom,message:'Camera up must define a valid view basis'});
+ }
+});
 export const cinematic3dToolSchemas={
  cinematic_3d_capabilities:{},cinematic_3d_install_builtin:{...revision,pack:z.enum(['starter','extended']).optional()},cinematic_3d_import_bundle:{...revision,bundleAssetId:id},
  cinematic_3d_save_program:{...revision,programId:id.optional(),expectedProgramSha256:z.union([hash,z.literal('')]).optional(),bundleId:id,timeline:cinematic3dTimelineSchema},
+ cinematic_3d_edit_program:{...revision,programId:id,expectedProgramSha256:hash,operations:z.array(cameraEdit).min(1).max(128)},
  cinematic_3d_get_program:{...program,editOnly:z.boolean().optional()},cinematic_3d_list_programs:project,cinematic_3d_plan:program,cinematic_3d_export_request:program,
  cinematic_3d_render:{...program,width:z.number().int().min(256).max(1280).optional(),height:z.number().int().min(256).max(1280).optional(),render:z.boolean().optional(),fileName:z.string().min(1).max(180).optional()}
 };

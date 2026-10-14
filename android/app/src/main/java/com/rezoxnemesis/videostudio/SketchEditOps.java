@@ -183,7 +183,8 @@ public final class SketchEditOps {
                         // is valid. Store.mutate validates once before commit/history/live events.
                         for (int i=0;i<operations.length();i++){JSONObject operation=operations.getJSONObject(i);
                             if(appendOnly){appendObject(doc,operation);visual.put(operation);continue;}
-                            if("trace_reference".equals(operation.optString("type"))){JSONObject layer=SketchDocument.layer(doc,operation.getString("layerId"));int before=layer.getJSONArray("objects").length();SketchReferenceTrace.apply(store,doc,operation);for(int j=before;j<layer.getJSONArray("objects").length();j++)visual.put(new JSONObject().put("type","add_object").put("layerId",layer.getString("id")).put("object",layer.getJSONArray("objects").getJSONObject(j)));}
+                            if("symmetry_stroke".equals(operation.optString("type"))){JSONArray expanded=SketchSymmetry.apply(doc,operation);for(int j=0;j<expanded.length();j++)visual.put(SketchDocument.copy(expanded.getJSONObject(j)));}
+                            else if("trace_reference".equals(operation.optString("type"))){JSONObject layer=SketchDocument.layer(doc,operation.getString("layerId"));int before=layer.getJSONArray("objects").length();SketchReferenceTrace.apply(store,doc,operation);for(int j=before;j<layer.getJSONArray("objects").length();j++)visual.put(new JSONObject().put("type","add_object").put("layerId",layer.getString("id")).put("object",layer.getJSONArray("objects").getJSONObject(j)));}
                             else{apply(doc,operation);visual.put(operation);}
                         }
                         return doc;
@@ -255,6 +256,9 @@ public final class SketchEditOps {
             }
             case "add_object": {
                 appendObject(doc,op);break;
+            }
+            case "symmetry_stroke": {
+                SketchSymmetry.apply(doc,op);break;
             }
             case "paint_stroke": {
                 SketchPaintOps.applyPreparedStroke(doc,op);break;

@@ -48,6 +48,8 @@ public final class SketchPaintOps {
                     visual.put(SketchDocument.copy(prepared.visualOperation));changes.put(new JSONObject().put("objectId",SketchDocument.id(operation,"objectId")).put("snapshotSha256",prepared.descriptor.getString("sha256")).put("strokeSha256",prepared.strokeSha256).put("dirtyTileCount",prepared.dirtyTileCount));
                 }else if("trace_reference".equals(type)){
                     JSONObject layer=SketchDocument.layer(next,operation.getString("layerId"));int before=layer.getJSONArray("objects").length();SketchReferenceTrace.apply(sketches,next,operation);SketchDocument.validate(next);for(int k=before;k<layer.getJSONArray("objects").length();k++)visual.put(new JSONObject().put("type","add_object").put("layerId",layer.getString("id")).put("object",SketchDocument.copy(layer.getJSONArray("objects").getJSONObject(k))));
+                }else if("symmetry_stroke".equals(type)){
+                    JSONArray expanded=SketchSymmetry.apply(next,operation);for(int k=0;k<expanded.length();k++)visual.put(SketchDocument.copy(expanded.getJSONObject(k)));
                 }else{
                     SketchEditOps.apply(next,operation);visual.put(SketchDocument.copy(operation));
                 }

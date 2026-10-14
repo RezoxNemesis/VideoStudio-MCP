@@ -59,6 +59,11 @@ public final class SketchDrawingPolicy {
                     throw rejected("The clone brush copies reference pixels; use paint or erase strokes for original drawing");
             }
             if ("add_object".equals(type)) requireAuthoredObject(operation.getJSONObject("object"));
+            if ("symmetry_stroke".equals(type)) {
+                JSONObject source=operation.getJSONObject("object");requireAuthoredObject(source);
+                try { SketchSymmetry.requireSource(source);SketchSymmetry.configuration(operation.getJSONObject("symmetry")); }
+                catch (Exception invalid) { throw rejected("Symmetry requires a source-free authored stroke or eraser: "+invalid.getMessage()); }
+            }
             if ("add_layer".equals(type)) {
                 JSONArray objects = operation.getJSONObject("layer").optJSONArray("objects");
                 if (objects != null) for (int j = 0; j < objects.length(); j++) requireAuthoredObject(objects.getJSONObject(j));

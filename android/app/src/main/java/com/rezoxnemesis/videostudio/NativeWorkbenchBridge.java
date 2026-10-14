@@ -21,7 +21,7 @@ public final class NativeWorkbenchBridge {
             "open_pipeline_export_request","open_pipeline_submit","open_pipeline_status","open_pipeline_cancel",
             "open_pipeline_download_result","open_pipeline_import_result","open_pipeline_archive_artifact","open_pipeline_restore_artifact",
             "cinematic_3d_capabilities","cinematic_3d_install_builtin","cinematic_3d_import_bundle",
-            "cinematic_3d_save_program","cinematic_3d_get_program","cinematic_3d_list_programs",
+            "cinematic_3d_save_program","cinematic_3d_edit_program","cinematic_3d_get_program","cinematic_3d_list_programs",
             "cinematic_3d_plan","cinematic_3d_export_request","cinematic_3d_render"
     )));
     private NativeWorkbenchBridge() {}
@@ -48,6 +48,8 @@ public final class NativeWorkbenchBridge {
                 .put("colourTraceMinimumNativeVersion","3.9.5").put("drawingManifestMinimumNativeVersion","3.9.5").put("advancedSketchMinimumNativeVersion","3.9.1").put("croppedSketchPreviewMinimumNativeVersion","3.9.3").put("flatParameters",true).put("permissionPolicy","existing-native-action-permissions-and-source-validation")
                 .put("paintMinimumNativeVersion","4.1.0").put("editableArchiveMinimumNativeVersion","4.1.0")
                 .put("encryptedMediaImportMinimumNativeVersion","4.2.0").put("encryptedMediaImportMaximumBytes",256L*1024*1024)
+                .put("incrementalKeyframeMinimumNativeVersion","4.3.0").put("cameraEditMinimumNativeVersion","4.3.0")
+                .put("symmetryMinimumNativeVersion","4.3.0").put("stereoMixMinimumNativeVersion","4.3.0").put("captionStyleMinimumNativeVersion","4.3.0")
                 .put("galleryAccess",false).put("nativeExecutionVerified",false);
     }
     private static final class Budget {int values;long characters;void add(long amount){characters+=amount;if(characters>MAX_COMMAND_BYTES)throw new IllegalArgumentException("Native command exceeds its relay metadata budget");}}

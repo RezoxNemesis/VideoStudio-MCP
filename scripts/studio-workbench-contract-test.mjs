@@ -120,7 +120,13 @@ test('closed studio relay aliases enforce each native minimum and validate their
   assert(STORYBOARD_NATIVE_ACTIONS.has(alias),'Every alias must remain native-only');
   const paint=['studio_sketch_paint_journal','studio_sketch_sample_color','studio_sketch_archive','studio_sketch_restore_archive'].includes(alias);
   const media=alias==='studio_import_mailbox_media';
-  assert.throws(()=>requireStoryboardNativeVersion({appVersion:'3.8.1'},alias),media?/4\.2\.0/:paint?/4\.1\.0/:/3\.9\.[01456]/);
+  const cameraEdit=alias==='studio_cinematic_3d_edit_program';
+  assert.throws(()=>requireStoryboardNativeVersion({appVersion:'3.8.1'},alias),cameraEdit?/4\.3\.0/:media?/4\.2\.0/:paint?/4\.1\.0/:/3\.9\.[01456]/);
+  if(cameraEdit){
+   assert.throws(()=>requireStoryboardNativeVersion({appVersion:'4.2.0'},alias),/4\.3\.0/);
+   assert.doesNotThrow(()=>requireStoryboardNativeVersion({appVersion:'4.3.0'},alias));
+   continue;
+  }
   if(media){
    assert.throws(()=>requireStoryboardNativeVersion({appVersion:'4.1.1'},alias),/4\.2\.0/);
    assert.doesNotThrow(()=>requireStoryboardNativeVersion({appVersion:'4.2.0'},alias));

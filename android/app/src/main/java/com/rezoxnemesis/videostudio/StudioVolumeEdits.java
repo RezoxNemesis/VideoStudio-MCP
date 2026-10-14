@@ -15,4 +15,9 @@ public final class StudioVolumeEdits {
         if(changedOut)set.put("audioFadeOutMs",outMs);
         return set;
     }
+    public static JSONObject settings(int volumePercent,long durationMs,long originalInMs,long originalOutMs,long inMs,long outMs,int panPercent,boolean mono)throws Exception{
+        if(panPercent< -100||panPercent>100)throw new IllegalArgumentException("Stereo balance must be -100..100 percent");
+        return settings(volumePercent,durationMs,originalInMs,originalOutMs,inMs,outMs)
+                .put("audioPan",panPercent/100.0).put("audioMono",mono);
+    }
 }

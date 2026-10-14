@@ -25,4 +25,16 @@ public class StudioVolumeEditsTest {
     @Test(expected=IllegalArgumentException.class) public void explicitLocalFadeReauthoringStillRequiresBothFadesToFit()throws Exception{
         StudioVolumeEdits.settings(70,500,2000,2000,300,2000);
     }
+    @Test public void stereoDialogSettingsKeepUnchangedSplitFadesOutOfTheOperation()throws Exception{
+        JSONObject set=StudioVolumeEdits.settings(70,500,2000,2000,2000,2000,-35,true);
+        assertEquals(.7,set.getDouble("volume"),0);assertEquals(-.35,set.getDouble("audioPan"),0);assertTrue(set.getBoolean("audioMono"));
+        assertEquals(3,set.length());assertFalse(set.has("audioFadeInMs"));assertFalse(set.has("audioFadeOutMs"));
+        JSONObject reset=StudioVolumeEdits.settings(100,500,0,0,0,0,0,false);
+        assertEquals(0,reset.getDouble("audioPan"),0);assertFalse(reset.getBoolean("audioMono"));
+    }
+    @Test public void stereoDialogSettingsRejectPanOutsideTheSliderContract()throws Exception{
+        for(int pan:new int[]{-101,101,Integer.MIN_VALUE,Integer.MAX_VALUE}){
+            try{StudioVolumeEdits.settings(70,500,0,0,0,0,pan,false);fail("Accepted pan "+pan);}catch(IllegalArgumentException expected){}
+        }
+    }
 }

@@ -1472,55 +1472,19 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         if(activeProject==null||activeProject.clips.isEmpty()){
             Toast.makeText(this,"Add video or image clips first",Toast.LENGTH_LONG).show();return;
         }
-        final long revision=activeProject.updatedAt;
-        StudioLayer original=existing==null?new StudioLayer():existing.copy();
-        original.type=StudioLayer.TITLE;
-        if(existing==null){
-            original.startMs=Math.min(studioPlayheadMs,
-                    Math.max(0,activeProject.outputDurationMs()-1000));
-            original.durationMs=Math.min(2500,
-                    Math.max(100,activeProject.outputDurationMs()-original.startMs));
+        if(activeProject.outputDurationMs()<100){
+            Toast.makeText(this,"A caption needs at least 0.100 seconds on the timeline",Toast.LENGTH_LONG).show();return;
         }
-        LinearLayout wrap=column();
-        wrap.setPadding(dp(20),dp(6),dp(20),0);
-        EditText caption=new EditText(this);
-        caption.setSingleLine(false);caption.setMaxLines(3);
-        caption.setTextColor(C_TEXT);
-        caption.setHint("Enter subtitle or cinematic title");
-        caption.setText(original.text);
-        wrap.addView(caption);
-        wrap.addView(body("Start (seconds)"));
-        EditText start=numberInput(original.startMs/1000f);
-        wrap.addView(start);
-        wrap.addView(body("Duration (seconds)"));
-        EditText duration=numberInput(original.durationMs/1000f);
-        wrap.addView(duration);
-        String[] positions={"Top","Center","Bottom"};
-        android.widget.Spinner position=new android.widget.Spinner(this);
-        android.widget.ArrayAdapter<String> adapter=new android.widget.ArrayAdapter<>(
-                this,android.R.layout.simple_spinner_item,positions);
-        adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
-        position.setAdapter(adapter);
-        position.setSelection(original.position);
-        wrap.addView(body("On-screen position"));
-        wrap.addView(position,new LinearLayout.LayoutParams(-1,dp(49)));
-        new AlertDialog.Builder(this).setTitle("T  Timed Caption")
-                .setView(wrap)
-                .setPositiveButton("Apply",(d,w)->{
-                    try{
-                        StudioLayer edited=existing==null?new StudioLayer():original.copy();
-                        edited.id=original.id;
-                        edited.text=caption.getText().toString().trim();
-                        edited.startMs=secondsToMs(start);
-                        edited.durationMs=secondsToMs(duration);
-                        edited.position=position.getSelectedItemPosition();
-                        edited.validate();validateStudioLayerTiming(edited);
-                        saveStudioLayer(edited,revision);
-                    }catch(Exception error){
-                        Toast.makeText(this,error.getMessage()==null?"Invalid caption":error.getMessage(),
-                                Toast.LENGTH_LONG).show();
-                    }
-                }).setNegativeButton("Cancel",null).show();
+        final String projectId=activeProject.id;final long revision=activeProject.updatedAt;
+        StudioLayer original=existing==null?new StudioLayer():existing.copy();original.type=StudioLayer.TITLE;
+        if(existing==null){
+            original.startMs=Math.min(studioPlayheadMs,Math.max(0,activeProject.outputDurationMs()-1000));
+            original.durationMs=Math.min(2500,Math.max(100,activeProject.outputDurationMs()-original.startMs));
+        }
+        StudioCaptionEditor.show(this,original,activeProject.outputDurationMs(),edited->{
+            if(isFinishing()||isDestroyed()||activeProject==null||!projectId.equals(activeProject.id))return false;
+            validateStudioLayerTiming(edited);return saveStudioLayer(edited,revision);
+        });
     }
 
     private void validateStudioLayerTiming(StudioLayer lane){
@@ -1644,63 +1608,55 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
 
     private void studioNumericDialog(boolean transform,boolean keyframe){
         if(activeProject==null||selectedClip==null){Toast.makeText(this,"Select a clip first",Toast.LENGTH_SHORT).show();return;}
+        if(keyframe){studioKeyframeManager();return;}
         final String clipId=selectedClip.id;final long revision=activeProject.updatedAt;
         final long duration=selectedClip.outputDurationMs();
-        final long local=Math.max(0,Math.min(duration,studioPlayheadMs-StudioTimelineEditOps.startOf(activeProject.clips,clipId)));
         try{
             JSONObject effects=new JSONObject(selectedClip.effects.toString());
-            StudioClipKeyframes.Values values=StudioClipKeyframes.fromEffects(effects,duration).at(keyframe?local:0);
+            StudioClipKeyframes.Values values=StudioClipKeyframes.fromEffects(effects,duration).at(0);
             String[] keys=transform?new String[]{"x","y","scaleX","scaleY","rotate","anchorX","anchorY","opacity"}:StudioClipAdjustments.COLOR_KEYS;
             double[] initial=transform?new double[]{values.x,values.y,values.scaleX,values.scaleY,values.rotate,values.anchorX,values.anchorY,values.opacity}:
                     new double[]{effects.optDouble("brightness",0),effects.optDouble("contrast",0),effects.optDouble("saturationAdjust",0),effects.optDouble("lightnessAdjust",0)};
             LinearLayout content=column();content.setPadding(dp(18),dp(8),dp(18),dp(8));
             content.addView(body(transform?"X/Y: fraction of output frame, positive right/down. Scale: 0.1..8. Rotation: degrees. Anchor: 0..1.":
                     "Brightness/contrast: -1..1. Saturation/lightness: -100..100."));
-            EditText timeField=numberInput(0);timeField.setText(Long.toString(local));
-            android.widget.Spinner easing=new android.widget.Spinner(this);
-            String[] easingNames={"linear","ease_in","ease_out","ease_in_out","hold"};
-            easing.setAdapter(new android.widget.ArrayAdapter<>(this,android.R.layout.simple_spinner_dropdown_item,easingNames));
-            if(keyframe){content.addView(body("Clip-local edited time (ms), 0.."+duration));content.addView(timeField);content.addView(body("Interpolation from this key to the next"));content.addView(easing);}
             EditText[] fields=new EditText[keys.length];
             for(int i=0;i<keys.length;i++){content.addView(body(keys[i]));fields[i]=numberInput((float)initial[i]);content.addView(fields[i]);}
-            JSONArray existing=effects.optJSONArray("keyframes");
-            final JSONArray original=existing==null?new JSONArray():new JSONArray(existing.toString());
-            if(keyframe){
-                for(int i=0;i<original.length();i++)if(original.getJSONObject(i).getLong("timeMs")==local){
-                    int index=java.util.Arrays.asList(easingNames).indexOf(original.getJSONObject(i).optString("easing","linear"));
-                    easing.setSelection(Math.max(0,index));break;
-                }
-                content.addView(studioButton("Remove key at entered time",()->{
-                    try{long at=Long.parseLong(timeField.getText().toString());JSONArray retained=new JSONArray();
-                        for(int i=0;i<original.length();i++)if(original.getJSONObject(i).getLong("timeMs")!=at)retained.put(original.getJSONObject(i));
-                        applyStudioPrecision(new JSONObject().put("clipId",clipId).put("keyframes",retained),revision);
-                    }catch(Exception error){Toast.makeText(this,error.getMessage(),Toast.LENGTH_LONG).show();}
-                }));
-            }
             ScrollView scroll=new ScrollView(this);scroll.addView(content);
-            AlertDialog dialog=new AlertDialog.Builder(this).setTitle(keyframe?"Exact transform keyframe":transform?"Exact transform":"Exact color")
-                    .setView(scroll).setPositiveButton(keyframe?"Set key":"Apply",null)
-                    .setNeutralButton(keyframe?"Clear keys":"Reset",null).setNegativeButton("Cancel",null).create();
+            AlertDialog dialog=new AlertDialog.Builder(this).setTitle(transform?"Exact transform":"Exact color")
+                    .setView(scroll).setPositiveButton("Apply",null)
+                    .setNeutralButton("Reset",null).setNegativeButton("Cancel",null).create();
             dialog.setOnShowListener(d->{
                 dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{
                     try{
                         JSONObject settings=new JSONObject();for(int i=0;i<keys.length;i++)settings.put(keys[i],Double.parseDouble(fields[i].getText().toString()));
-                        JSONObject operation=new JSONObject().put("clipId",clipId);
-                        if(keyframe){
-                            long timeMs=Long.parseLong(timeField.getText().toString());settings.put("timeMs",timeMs).put("easing",easing.getSelectedItem().toString());
-                            ArrayList<JSONObject> ordered=new ArrayList<>();
-                            for(int i=0;i<original.length();i++)if(original.getJSONObject(i).getLong("timeMs")!=timeMs)ordered.add(original.getJSONObject(i));
-                            ordered.add(settings);ordered.sort(java.util.Comparator.comparingLong(o->o.optLong("timeMs")));
-                            operation.put("keyframes",new JSONArray(ordered));
-                        }else operation.put("set",settings);
+                        JSONObject operation=new JSONObject().put("clipId",clipId).put("set",settings);
                         if(applyStudioPrecision(operation,revision))dialog.dismiss();
                     }catch(Exception error){Toast.makeText(this,"Invalid values: "+error.getMessage(),Toast.LENGTH_LONG).show();}
                 });
                 dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener(v->{try{
-                    if(applyStudioPrecision(new JSONObject().put("clipId",clipId).put(keyframe?"clearKeyframes":transform?"resetTransform":"resetColor",true),revision))dialog.dismiss();
+                    if(applyStudioPrecision(new JSONObject().put("clipId",clipId).put(transform?"resetTransform":"resetColor",true),revision))dialog.dismiss();
                 }catch(Exception error){Toast.makeText(this,error.getMessage(),Toast.LENGTH_LONG).show();}});
             });dialog.show();
         }catch(Exception error){Toast.makeText(this,"Cannot edit transform: "+error.getMessage(),Toast.LENGTH_LONG).show();}
+    }
+
+    private void studioKeyframeManager(){
+        if(activeProject==null||selectedClip==null)return;
+        final String clipId=selectedClip.id;
+        final long[] revision={activeProject.updatedAt};
+        final long clipStart=StudioTimelineEditOps.startOf(activeProject.clips,clipId);
+        final long duration=selectedClip.outputDurationMs();
+        final long local=Math.max(0,Math.min(duration,studioPlayheadMs-clipStart));
+        try{
+            StudioKeyframeEditor.show(this,selectedClip.effects,duration,local,fragment->{
+                try{
+                    fragment.put("clipId",clipId);
+                    if(!applyStudioPrecision(fragment,revision[0]))return false;
+                    revision[0]=activeProject.updatedAt;return true;
+                }catch(Exception error){Toast.makeText(this,error.getMessage(),Toast.LENGTH_LONG).show();return false;}
+            },at->{studioPlayheadMs=clipStart+at;previewSelectedStudioClip(false);});
+        }catch(Exception error){Toast.makeText(this,"Cannot open keyframes: "+error.getMessage(),Toast.LENGTH_LONG).show();}
     }
 
     private void openPipelineStudio(){
@@ -1834,15 +1790,17 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
             studioCaptionPreview.setVisibility(View.GONE);
             return;
         }
-        StringBuilder copy=new StringBuilder();
+        android.text.SpannableStringBuilder copy=new android.text.SpannableStringBuilder();
         for(int i=0;i<Math.min(3,active.size());i++){
             if(i>0)copy.append("\n");
-            copy.append(active.get(i).text);
+            copy.append(new StudioTimedTitleOverlay(active.get(i)).getText(globalTimeMs*1000L));
         }
         StudioLayer first=active.get(0);
-        studioCaptionPreview.setText(copy.toString());
+        studioCaptionPreview.setTypeface(android.graphics.Typeface.DEFAULT,android.graphics.Typeface.NORMAL);
+        studioCaptionPreview.setTextSize(android.util.TypedValue.COMPLEX_UNIT_DIP,first.fontSize);
+        studioCaptionPreview.setText(copy);
         studioCaptionPreview.setTextColor(first.color);
-        studioCaptionPreview.setBackground(rounded(0x99050a12,0,dp(8)));
+        studioCaptionPreview.setBackgroundColor(android.graphics.Color.TRANSPARENT);
         int vertical=first.position==0?Gravity.TOP:
                 (first.position==2?Gravity.BOTTOM:Gravity.CENTER_VERTICAL);
         FrameLayout.LayoutParams place=new FrameLayout.LayoutParams(
@@ -1902,7 +1860,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
     private void studioVolumeDialog(){
         if(selectedClip==null){Toast.makeText(this,"Select a clip first",
                 Toast.LENGTH_SHORT).show();return;}
-        final String clipId=selectedClip.id;final long revision=activeProject.updatedAt;
+        final String clipId=selectedClip.id,projectId=activeProject.id;final long revision=activeProject.updatedAt;
         final long duration=selectedClip.outputDurationMs();
         final long originalFadeInMs=selectedClip.effects.optLong("audioFadeInMs",0),originalFadeOutMs=selectedClip.effects.optLong("audioFadeOutMs",0);
         LinearLayout form=column();form.setPadding(dp(18),dp(5),dp(18),dp(8));
@@ -1917,13 +1875,32 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         EditText fadeIn=numberInput(0);fadeIn.setText(String.format(Locale.US,"%.3f",originalFadeInMs/1000.0));form.addView(fadeIn);
         form.addView(body("Fade out (seconds, 0 disables)"));
         EditText fadeOut=numberInput(0);fadeOut.setText(String.format(Locale.US,"%.3f",originalFadeOutMs/1000.0));form.addView(fadeOut);
+        TextView balanceText=body("Stereo balance");form.addView(balanceText);
+        SeekBar balance=new SeekBar(this);balance.setMax(200);balance.setContentDescription("Stereo balance");
+        balance.setProgress(100+(int)Math.round(selectedClip.effects.optDouble("audioPan",0)*100));
+        balance.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener(){
+            @Override public void onProgressChanged(SeekBar bar,int value,boolean user){
+                int pan=value-100;balanceText.setText(pan==0?"Stereo balance: Center":"Stereo balance: "+Math.abs(pan)+"% "+(pan<0?"Left":"Right"));
+            }
+            @Override public void onStartTrackingTouch(SeekBar bar){}
+            @Override public void onStopTrackingTouch(SeekBar bar){}
+        });
+        int initialPan=balance.getProgress()-100;balanceText.setText(initialPan==0?"Stereo balance: Center":"Stereo balance: "+Math.abs(initialPan)+"% "+(initialPan<0?"Left":"Right"));
+        form.addView(balance,margins(-1,dp(48),0,0,0,0));
+        form.addView(studioButton("Center balance",()->balance.setProgress(100)));
+        android.widget.CheckBox mono=new android.widget.CheckBox(this);mono.setText("Fold stereo L/R to mono");
+        mono.setContentDescription("Fold stereo L/R to mono");mono.setTextColor(C_TEXT);mono.setChecked(selectedClip.effects.optBoolean("audioMono",false));form.addView(mono);
+        form.addView(body("Balance and mono affect the left/right pair. Single-channel sources and additional surround channels keep their positions."));
         form.addView(body("Clip duration "+StudioEditCursor.timecode(duration)+". Fades use edited playback time and appear in preview and MP4 export."));
-        AlertDialog dialog=new AlertDialog.Builder(this).setTitle("Clip Volume & Fades").setView(form)
+        ScrollView scroll=new ScrollView(this);scroll.addView(form);
+        AlertDialog dialog=new AlertDialog.Builder(this).setTitle("Clip Volume & Fades").setView(scroll)
                 .setPositiveButton("Apply",null).setNegativeButton("Cancel",null).create();
         dialog.setOnShowListener(d->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{
+            if(isFinishing()||isDestroyed()){dialog.dismiss();return;}
+            if(activeProject==null||!projectId.equals(activeProject.id)){Toast.makeText(this,"The project changed. Open Volume again.",Toast.LENGTH_LONG).show();return;}
             try{
                 long in=secondsToMs(fadeIn),out=secondsToMs(fadeOut);
-                JSONObject settings=StudioVolumeEdits.settings(volume.getProgress(),duration,originalFadeInMs,originalFadeOutMs,in,out);
+                JSONObject settings=StudioVolumeEdits.settings(volume.getProgress(),duration,originalFadeInMs,originalFadeOutMs,in,out,balance.getProgress()-100,mono.isChecked());
                 if(applyStudioPrecision(new JSONObject().put("clipId",clipId).put("set",settings),revision))dialog.dismiss();
             }catch(Exception error){Toast.makeText(this,error.getMessage(),Toast.LENGTH_LONG).show();}
         }));dialog.show();

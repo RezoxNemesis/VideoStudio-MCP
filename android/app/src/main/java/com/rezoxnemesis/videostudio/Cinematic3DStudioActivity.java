@@ -53,6 +53,10 @@ public final class Cinematic3DStudioActivity extends Activity {
     private long expectedSourceUpdatedAt;
     private int selectedShot,operationGeneration;
     private boolean busy,dirty,savePending,pickerUpdating,bindingReady,sceneRebuildRequired;
+    private boolean cameraEditPending;
+    private volatile boolean cameraUiActive;
+    private volatile int cameraEditGeneration;
+    private AlertDialog pendingCameraDialog;
     private volatile boolean destroyed;
     private volatile InputStream activeInput;
     private volatile OutputStream activeOutput;
@@ -109,6 +113,7 @@ public final class Cinematic3DStudioActivity extends Activity {
             @Override public void onNothingSelected(android.widget.AdapterView<?> parent){}
         });root.addView(shots,new LinearLayout.LayoutParams(-1,dp(52)));
         row(root,button("Move earlier",()->moveSelected(-1)),button("Move later",()->moveSelected(1)),button("Edit shot",this::editSelected));
+        row(root,button("Camera keys",this::editCameraKeys));
         addShotButton=button("Add shot",this::addShot);duplicateButton=button("Duplicate",this::duplicateShot);deleteShotButton=button("Delete shot",this::deleteShot);row(root,addShotButton,duplicateButton,deleteShotButton);
         root.addView(label("Edit shot order, duration, impact hold, camera and effects. Custom pose, root and foot-contact changes need a rebuilt Blender bundle.",12));
         row(root,button("Actor body / material",this::chooseActor),button("Motion style",this::editMotionStyle));
@@ -140,11 +145,15 @@ public final class Cinematic3DStudioActivity extends Activity {
 
     @FunctionalInterface private interface Work {JSONObject run() throws Exception;}
     @FunctionalInterface private interface Accept {void run(JSONObject receipt) throws Exception;}
+    @FunctionalInterface private interface Failure {void run(Throwable problem);}
     private void perform(String progress,Work work,Accept accept){
+        perform(progress,work,accept,null);
+    }
+    private void perform(String progress,Work work,Accept accept,Failure onFailure){
         if(busy||destroyed)return;busy=true;int generation=++operationGeneration;setStatus(progress);refresh();
         ownerWorker.execute(()->{JSONObject value=null;Throwable failure=null;try{if(Thread.currentThread().isInterrupted())throw new InterruptedException("Operation cancelled");value=work.run();}catch(Exception|OutOfMemoryError error){failure=error;}
             final JSONObject receipt=value;final Throwable problem=failure;main.post(()->{if(destroyed||generation!=operationGeneration)return;busy=false;
-                try{if(problem!=null){if(message(problem).contains("SOURCE_")&&message(problem).contains("_CHANGED"))bindingReady=false;if(message(problem).contains("SOURCE_PROJECT_CHANGED")&&savePending&&acceptedTimeline!=null){timeline=copy(acceptedTimeline);dirty=false;}setStatus("Operation failed: "+message(problem));}else accept.run(receipt);}catch(Exception error){setStatus("Operation failed: "+message(error));}finally{savePending=false;pendingSaveRequest=null;loadingProgramId="";refresh();}
+                try{if(problem!=null){if(message(problem).contains("SOURCE_")&&message(problem).contains("_CHANGED"))bindingReady=false;if(message(problem).contains("SOURCE_PROJECT_CHANGED")&&savePending&&acceptedTimeline!=null){timeline=copy(acceptedTimeline);dirty=false;}setStatus("Operation failed: "+message(problem));if(onFailure!=null)onFailure.run(problem);}else accept.run(receipt);}catch(Exception error){setStatus("Operation failed: "+message(error));}finally{savePending=false;pendingSaveRequest=null;loadingProgramId="";refresh();}
             });
         });
     }
@@ -198,6 +207,56 @@ public final class Cinematic3DStudioActivity extends Activity {
         EditText fov=numeric(form,"Field of view (35–100°)",String.valueOf(camera.getDouble("fovDegrees")),true),shake=numeric(form,"Camera shake (0–1)",String.valueOf(camera.getDouble("shakeIntensity")),true);
         CheckBox spark=check(form,"Spark burst",vfx.getBoolean("sparkBurst")),trail=check(form,"Slash trail",vfx.getBoolean("slashTrail")),rubble=check(form,"Contact debris",vfx.getBoolean("rubble"));
         AlertDialog dialog=new AlertDialog.Builder(this).setTitle(shot.getString("action")+" • "+shot.getString("id")).setView(scroll).setPositiveButton("Apply",null).setNegativeButton("Cancel",null).create();dialog.setOnShowListener(d->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{try{String selectedAction=actionNames.get(action.getSelectedItemPosition());JSONObject edited=timeline;if(!selectedAction.equals(shot.getString("action")))edited=changeLibraryAction(timeline,editorBundle,shotIndex,selectedAction);if(authoredTrack!=null&&!authoredTrack.isChecked())edited=chooseCameraTrack(edited,shotIndex,false);int hitStop=Integer.parseInt(hold.getText().toString());if(!selectedAction.equals(shot.getString("action"))&&!isImpact(selectedAction))hitStop=0;edited=editShot(edited,shotIndex,Integer.parseInt(duration.getText().toString()),hitStop,modes[mode.getSelectedItemPosition()],Double.parseDouble(fov.getText().toString()),Double.parseDouble(shake.getText().toString()),spark.isChecked(),trail.isChecked(),rubble.isChecked());timeline=edited;dirty=true;refresh();dialog.dismiss();}catch(Exception error){Toast.makeText(this,message(error),Toast.LENGTH_LONG).show();}}));dialog.show();
+    }catch(Exception error){setStatus(message(error));}}
+
+    private void acceptCameraOperations(JSONArray operations,AlertDialog dialog,TextView error) throws Exception {
+        if(busy||destroyed||!cameraUiActive)throw new IllegalStateException("Wait for the current camera operation");
+        final JSONObject frozen=copy(timeline);final JSONArray frozenOperations=new JSONArray(operations.toString());
+        final String fingerprint=Cinematic3DTimeline.canonical(frozen),frozenProject=project.id,frozenBundle=bundleId,frozenProgram=programId,frozenProgramSha=expectedProgramSha256;
+        final long revision=expectedSourceUpdatedAt;final int generation=++cameraEditGeneration;
+        cameraEditPending=true;pendingCameraDialog=dialog;error.setText("");dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(false);
+        perform("Checking the camera path on the scene worker…",()->{
+            if(!cameraUiActive||generation!=cameraEditGeneration)throw new InterruptedException("Camera edit cancelled while leaving the studio");
+            return Cinematic3DCameraEditOps.apply(frozen,frozenOperations,()->!cameraUiActive||generation!=cameraEditGeneration);
+        },edited->{
+            cameraEditPending=false;pendingCameraDialog=null;dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(true);
+            ProjectStore.Project current=projectStore.get(frozenProject);
+            if(!cameraUiActive||generation!=cameraEditGeneration)return;
+            if(current==null||current.updatedAt!=revision||!frozenProject.equals(project.id)||!frozenBundle.equals(bundleId)||!frozenProgram.equals(programId)||!frozenProgramSha.equals(expectedProgramSha256)||expectedSourceUpdatedAt!=revision||timeline==null||!fingerprint.equals(Cinematic3DTimeline.canonical(timeline))){
+                String warning="The source or draft changed. This camera edit was not applied; reopen Camera keys for the current draft.";error.setText(warning);setStatus(warning);return;
+            }
+            timeline=edited;dirty=true;refresh();setStatus("Camera path updated in this draft. Save the timeline before native preview or MP4.");dialog.dismiss();
+        },problem->{cameraEditPending=false;pendingCameraDialog=null;dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(true);error.setText(message(problem));});
+    }
+    private EditText cameraNumber(LinearLayout form,String title,String value,String tag) {
+        EditText input=numeric(form,title,value,true);input.setTag(tag);input.setContentDescription(title);return input;
+    }
+    private void editCameraKeys(){if(!requireTimeline())return;try{
+        JSONObject shot=timeline.getJSONArray("shots").getJSONObject(selectedShot),camera=shot.getJSONObject("camera");String shotId=shot.getString("id");JSONArray keys=camera.optJSONArray("keyframes");
+        LinearLayout form=draftForm();form.addView(label("Author a camera path in Y-up metres. Keys interpolate over shot time while actor impact holds keep their own clock.",12));
+        java.util.List<String> names=new java.util.ArrayList<>();names.add("New key");for(int i=0;keys!=null&&i<keys.length();i++)names.add(String.format(java.util.Locale.US,"Key %d · phase %.6f",i+1,keys.getJSONObject(i).getDouble("phase")));
+        Spinner picker=select(form,"Camera key",names.toArray(new String[0]),names.get(keys==null?0:1));
+        EditText phase=cameraNumber(form,"Shot phase (0–1)","0","camera_phase");
+        EditText[][] vectors=new EditText[3][3];String[] fields={"position","target","up"},titles={"Camera position","Look-at target","Camera up"},axes={"X right","Y up","Z depth"};
+        for(int vector=0;vector<3;vector++)for(int axis=0;axis<3;axis++)vectors[vector][axis]=cameraNumber(form,titles[vector]+" · "+axes[axis]+" (±10000)","0","camera_"+fields[vector]+"_"+axis);
+        CheckBox explicitUp=check(form,"Use an explicit up vector",true);
+        JSONObject initial=Cinematic3DTimeline.sampleShot(shot,0,timeline.getInt("fps")).getJSONObject("camera");
+        JSONArray defaultUp=new JSONArray("top_down".equals(camera.getString("mode"))?new double[]{0,0,-1}:new double[]{0,1,0});
+        Runnable load=()->{try{
+            int selected=picker.getSelectedItemPosition();JSONObject key=selected>0&&keys!=null?keys.getJSONObject(selected-1):initial;phase.setText(selected>0?String.valueOf(key.getDouble("phase")):"0");explicitUp.setChecked(selected==0||key.has("up"));
+            for(int vector=0;vector<3;vector++){JSONArray value=key.optJSONArray(fields[vector]);if(value==null)value=defaultUp;for(int axis=0;axis<3;axis++)vectors[vector][axis].setText(String.valueOf(value.getDouble(axis)));}
+        }catch(Exception error){setStatus(message(error));}};
+        selection(picker,load);load.run();
+        TextView error=label("",12);error.setTextColor(0xffff8888);error.setTag("camera_error");form.addView(error);
+        AlertDialog dialog=new AlertDialog.Builder(this).setTitle(shot.getString("action")+" · camera path").setView(scrollForm(form)).setPositiveButton("Apply key",null).setNegativeButton("Close",null).create();
+        Button remove=button("Remove selected key",()->{try{if(picker.getSelectedItemPosition()<1||keys==null)throw new IllegalArgumentException("Choose an existing camera key to remove");JSONObject operation=new JSONObject().put("type","remove_camera_key").put("shotId",shotId).put("phase",keys.getJSONObject(picker.getSelectedItemPosition()-1).getDouble("phase"));acceptCameraOperations(new JSONArray().put(operation),dialog,error);}catch(Exception invalid){error.setText(message(invalid));}});form.addView(remove);
+        Button clear=button("Clear camera path",()->{try{acceptCameraOperations(new JSONArray().put(new JSONObject().put("type","clear_camera_keys").put("shotId",shotId)),dialog,error);}catch(Exception invalid){error.setText(message(invalid));}});form.addView(clear);
+        dialog.setOnDismissListener(ignored->{controls.remove(remove);controls.remove(clear);if(pendingCameraDialog==dialog)cancelCameraEdit();});
+        dialog.show();dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{try{
+            JSONObject operation=new JSONObject().put("type","upsert_camera_key").put("shotId",shotId).put("phase",Double.parseDouble(phase.getText().toString()));
+            for(int vector=0;vector<3;vector++)if(vector<2||explicitUp.isChecked()){JSONArray value=new JSONArray();for(int axis=0;axis<3;axis++)value.put(Double.parseDouble(vectors[vector][axis].getText().toString()));operation.put(fields[vector],value);}
+            acceptCameraOperations(new JSONArray().put(operation),dialog,error);
+        }catch(Exception invalid){error.setText(message(invalid));}});
     }catch(Exception error){setStatus(message(error));}}
 
     private LinearLayout draftForm(){LinearLayout form=new LinearLayout(this);form.setOrientation(LinearLayout.VERTICAL);form.setPadding(dp(10),dp(4),dp(10),dp(4));form.setBackgroundColor(BACKGROUND);return form;}
@@ -323,7 +382,14 @@ public final class Cinematic3DStudioActivity extends Activity {
         Bundle restored=new Bundle(state);for(String key:new String[]{"bundleId","programId","loadingProgramId","programSha"})restored.putString(key,snapshot.getString(key));restored.putLong("sourceRevision",snapshot.getLong("sourceRevision"));restored.putInt("selectedShot",snapshot.getInt("selectedShot"));for(String key:new String[]{"dirty","bindingReady","savePending"})restored.putBoolean(key,snapshot.getBoolean(key));restored.putBoolean("sceneRebuildRequired",snapshot.optBoolean("sceneRebuildRequired",false));for(String key:new String[]{"draft","acceptedTimeline","pendingSaveRequest","editorBundle"})if(snapshot.has(key))restored.putString(key,snapshot.getJSONObject(key).toString());if(snapshot.has("exportedRequest"))restored.putString("exportedRequest",snapshot.getString("exportedRequest"));privateStateId=id;privateStateSha256=expected;return restored;
     }
     private void deleteStateFile(String id) throws Exception {File file=stateFile(stateFolder(false),id);if(file.exists()&&!file.delete())throw new IOException("Cannot remove superseded private draft snapshot");}
-    @Override protected void onDestroy(){destroyed=true;operationGeneration++;ownerWorker.shutdownNow();if(android.os.Build.VERSION.SDK_INT>=33&&systemBackCallback!=null)getOnBackInvokedDispatcher().unregisterOnBackInvokedCallback(systemBackCallback);try{if(activeInput!=null)activeInput.close();}catch(Exception ignored){}try{if(activeOutput!=null)activeOutput.close();}catch(Exception ignored){}main.removeCallbacksAndMessages(null);if(isFinishing()&&!privateStateId.isEmpty())try{deleteStateFile(privateStateId);}catch(Exception error){ActivityLog.add(this,"user","Private draft cleanup failed",message(error),"failed",null,null,project==null?"":project.id);}super.onDestroy();}
+    private void cancelCameraEdit(){
+        if(!cameraEditPending)return;cameraEditGeneration++;operationGeneration++;cameraEditPending=false;busy=false;
+        if(pendingCameraDialog!=null)pendingCameraDialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(true);pendingCameraDialog=null;
+        setStatus("Camera checking cancelled. The current draft is unchanged.");refresh();
+    }
+    @Override protected void onResume(){super.onResume();cameraUiActive=true;}
+    @Override protected void onPause(){cameraUiActive=false;cancelCameraEdit();super.onPause();}
+    @Override protected void onDestroy(){cameraUiActive=false;AlertDialog cameraDialog=pendingCameraDialog;cancelCameraEdit();if(cameraDialog!=null&&cameraDialog.isShowing())cameraDialog.dismiss();destroyed=true;operationGeneration++;ownerWorker.shutdownNow();if(android.os.Build.VERSION.SDK_INT>=33&&systemBackCallback!=null)getOnBackInvokedDispatcher().unregisterOnBackInvokedCallback(systemBackCallback);try{if(activeInput!=null)activeInput.close();}catch(Exception ignored){}try{if(activeOutput!=null)activeOutput.close();}catch(Exception ignored){}main.removeCallbacksAndMessages(null);if(isFinishing()&&!privateStateId.isEmpty())try{deleteStateFile(privateStateId);}catch(Exception error){ActivityLog.add(this,"user","Private draft cleanup failed",message(error),"failed",null,null,project==null?"":project.id);}super.onDestroy();}
 
     private static JSONObject copy(JSONObject object) throws Exception{return new JSONObject(object.toString());}
     private static JSONObject editorProjection(JSONObject bundle) throws Exception {JSONObject manifest=bundle.getJSONObject("manifest");return new JSONObject().put("manifest",new JSONObject().put("generator",copy(manifest.getJSONObject("generator"))).put("scenes",new JSONArray(manifest.getJSONArray("scenes").toString()))).put("timeline",Cinematic3DTimeline.validate(bundle.getJSONObject("timeline")));}

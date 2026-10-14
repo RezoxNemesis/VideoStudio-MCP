@@ -39,6 +39,7 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
     private final ExecutorService transfers=Executors.newSingleThreadExecutor();
     private boolean loadingDrawing;
     private boolean destroyed,resumed,watching=true,watchInFlight,grid,symmetry;
+    private JSONObject symmetrySettings;
     private String brushPreset="ink",bookId;
     private JSONObject book;
     private int bookPage,loadGeneration,pageGeneration,liveLoadGeneration;
@@ -85,6 +86,11 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
         LinearLayout history = row(root);
         button(history,"Undo",()->history(false));button(history,"Redo",()->history(true));button(history,"Export",this::export);
         canvas = new SketchCanvasView(this); canvas.setListener(this);canvas.setAgentHandEnabled(getPreferences(MODE_PRIVATE).getBoolean("agentHand",true));
+        try{
+            symmetrySettings=SketchSymmetry.configuration(new JSONObject(getPreferences(MODE_PRIVATE).getString("symmetrySettings","{\"mode\":\"vertical\"}")));
+            symmetry=getPreferences(MODE_PRIVATE).getBoolean("symmetry",false);grid=getPreferences(MODE_PRIVATE).getBoolean("grid",false);
+            canvas.setSymmetry(symmetrySettings);canvas.setGuides(grid,symmetry);
+        }catch(Exception invalid){symmetry=false;grid=false;try{symmetrySettings=SketchSymmetry.configuration(new JSONObject().put("mode","vertical"));canvas.setSymmetry(null);}catch(Exception impossible){throw new IllegalStateException(impossible);}}
         onionEnabled=getPreferences(MODE_PRIVATE).getBoolean("onionEnabled",true);onionRange=getPreferences(MODE_PRIVATE).getInt("onionRange",1);onionAlpha=getPreferences(MODE_PRIVATE).getInt("onionAlpha",48);canvas.setOnion(onionEnabled);canvas.setOnionOptions(onionRange,onionAlpha);
         root.addView(canvas, new LinearLayout.LayoutParams(-1, 0, 1));
         LinearLayout tools = row(root); Spinner tool = new Spinner(this);toolPicker=tool;
@@ -173,7 +179,7 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
         getPreferences(MODE_PRIVATE).edit().putString("lastSketchId",sketchId).putString("lastBookId",bookId).putInt("lastBookPage",bookPage).apply();updateBrush();updateStatus();
     }
     @Override public void onOperation(JSONObject operation) {
-        try{if("mirror_gesture".equals(operation.optString("type"))){apply(new JSONArray().put(new JSONObject().put("type","add_object").put("layerId",operation.getString("layerId")).put("object",operation.getJSONObject("object"))).put(new JSONObject().put("type","add_object").put("layerId",operation.getString("layerId")).put("object",operation.getJSONObject("mirror"))));}else apply(new JSONArray().put(operation));}catch(Exception error){onMessage(error.getMessage());}
+        try{apply(new JSONArray().put(operation));}catch(Exception error){onMessage(error.getMessage());}
     }
     private void apply(JSONArray operations) {
         if(session==null||loadingDrawing)return;if(livePlayer!=null){onMessage("Tap Draw myself to pause live drawing before editing");return;}stopPlayback();try{if(SketchPaintOps.containsPaint(operations)||session.hasPreparedSaves()){session.submitPrepared(operations);updateStatus();}else{session.submit(operations);present(session.document());}}catch(Exception error){onMessage(error.getMessage());}
@@ -346,8 +352,26 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
 
     private static boolean hasArtwork(JSONObject doc) throws Exception {JSONArray layers=doc.getJSONArray("layers");for(int i=0;i<layers.length();i++)if(layers.getJSONObject(i).getJSONArray("objects").length()>0)return true;return false;}
     private void workspaceDialog(){
-        if(document==null)return;String[] choices={"Fit canvas","Grid guides","Mirror drawing","Onion skin settings","Live ChatGPT drawing","Reference crop / tracing","Recover local draft as a separate sketch","Focus selected object","Import linked drawing packet","Drawing content audit","ChatGPT hand"};
-        new AlertDialog.Builder(this).setTitle("Drawing workspace").setItems(choices,(d,index)->{try{switch(index){case 0:canvas.resetView();break;case 1:grid=!grid;canvas.setGuides(grid,symmetry);break;case 2:symmetry=!symmetry;canvas.setGuides(grid,symmetry);break;case 3:onionDialog();break;case 4:toggleLiveWatch();break;case 5:referenceTools();break;case 6:String source=sketchId;io.execute(()->{try{if(session!=null)session.awaitIdle(15000);String recovered=SketchEditorSession.recoverAsCopy(this,source);postUi(()->{bookId=null;book=null;loadSketch(recovered,0);});}catch(Exception error){postUi(()->onMessage(error.getMessage()));}});break;case 7:canvas.focusSelection();break;case 8:importDrawingDialog();break;case 9:inspectDrawing();break;case 10:boolean hand=!getPreferences(MODE_PRIVATE).getBoolean("agentHand",true);getPreferences(MODE_PRIVATE).edit().putBoolean("agentHand",hand).apply();canvas.setAgentHandEnabled(hand);updateAgentToolIndicator();onMessage(hand?"ChatGPT hand visible":"ChatGPT hand hidden");break;}}catch(Exception error){onMessage(error.getMessage());}}).show();
+        if(document==null)return;String[] choices={"Fit canvas","Grid guides","Symmetry drawing","Onion skin settings","Live ChatGPT drawing","Reference crop / tracing","Recover local draft as a separate sketch","Focus selected object","Import linked drawing packet","Drawing content audit","ChatGPT hand"};
+        new AlertDialog.Builder(this).setTitle("Drawing workspace").setItems(choices,(d,index)->{try{switch(index){case 0:canvas.resetView();break;case 1:grid=!grid;canvas.setGuides(grid,symmetry);getPreferences(MODE_PRIVATE).edit().putBoolean("grid",grid).apply();break;case 2:symmetryDialog();break;case 3:onionDialog();break;case 4:toggleLiveWatch();break;case 5:referenceTools();break;case 6:String source=sketchId;io.execute(()->{try{if(session!=null)session.awaitIdle(15000);String recovered=SketchEditorSession.recoverAsCopy(this,source);postUi(()->{bookId=null;book=null;loadSketch(recovered,0);});}catch(Exception error){postUi(()->onMessage(error.getMessage()));}});break;case 7:canvas.focusSelection();break;case 8:importDrawingDialog();break;case 9:inspectDrawing();break;case 10:boolean hand=!getPreferences(MODE_PRIVATE).getBoolean("agentHand",true);getPreferences(MODE_PRIVATE).edit().putBoolean("agentHand",hand).apply();canvas.setAgentHandEnabled(hand);updateAgentToolIndicator();onMessage(hand?"ChatGPT hand visible":"ChatGPT hand hidden");break;}}catch(Exception error){onMessage(error.getMessage());}}).show();
+    }
+    private void symmetryDialog(){
+        try{
+            JSONObject previous=symmetrySettings==null?SketchSymmetry.configuration(new JSONObject().put("mode","vertical")):symmetrySettings;
+            LinearLayout form=column();CheckBox enabled=new CheckBox(this);enabled.setText("Enable vector symmetry");enabled.setTextColor(StudioUi.TEXT);enabled.setChecked(symmetry);enabled.setMinimumHeight(dp(48));form.addView(enabled);
+            Spinner mode=new Spinner(this);String[] modes={"vertical","horizontal","both","radial"};mode.setAdapter(new ArrayAdapter<>(this,android.R.layout.simple_spinner_dropdown_item,modes));mode.setContentDescription("Symmetry mode");mode.setMinimumHeight(dp(48));mode.setSelection(java.util.Arrays.asList(modes).indexOf(previous.getString("mode")));form.addView(mode);
+            EditText centerX=input("Center X 0..1",String.valueOf(previous.getDouble("centerX")),true),centerY=input("Center Y 0..1",String.valueOf(previous.getDouble("centerY")),true),segments=input("Radial sectors 2..8",String.valueOf(previous.optInt("segments",4)),true);
+            form.addView(centerX);form.addView(centerY);form.addView(segments);segments.setEnabled("radial".equals(previous.getString("mode")));
+            mode.setOnItemSelectedListener(new SimpleSelection(){@Override public void selected(int position){segments.setEnabled(position==3);}});
+            TextView explanation=new TextView(this);explanation.setText("Pen and vector eraser only. The center follows the selected layer. Every reflected point must stay inside its canvas.");explanation.setTextColor(StudioUi.MUTED);form.addView(explanation);
+            ScrollView scroll=new ScrollView(this);scroll.addView(form);AlertDialog dialog=new AlertDialog.Builder(this).setTitle("Symmetry drawing").setView(scroll).setNegativeButton("Cancel",null).setPositiveButton("Apply",null).create();dialog.show();
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{try{
+                JSONObject requested=new JSONObject().put("mode",mode.getSelectedItem().toString()).put("centerX",Double.parseDouble(centerX.getText().toString())).put("centerY",Double.parseDouble(centerY.getText().toString()));
+                if("radial".equals(requested.getString("mode")))requested.put("segments",Integer.parseInt(segments.getText().toString()));
+                JSONObject next=SketchSymmetry.configuration(requested);canvas.setSymmetry(next);canvas.setGuides(grid,enabled.isChecked());symmetry=enabled.isChecked();symmetrySettings=next;
+                getPreferences(MODE_PRIVATE).edit().putString("symmetrySettings",next.toString()).putBoolean("symmetry",symmetry).apply();dialog.dismiss();
+            }catch(Exception invalid){onMessage(invalid.getMessage());}});
+        }catch(Exception invalid){onMessage(invalid.getMessage());}
     }
     private void applyCanvasFocus(){for(View view:drawingChrome)view.setVisibility(canvasFocus?View.GONE:View.VISIBLE);}
     private void toggleCanvasFocus(){canvasFocus=!canvasFocus;getPreferences(MODE_PRIVATE).edit().putBoolean("canvasFocus",canvasFocus).apply();applyCanvasFocus();}

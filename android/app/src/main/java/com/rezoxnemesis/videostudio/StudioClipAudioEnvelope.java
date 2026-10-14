@@ -2,15 +2,18 @@ package com.rezoxnemesis.videostudio;
 
 import org.json.JSONObject;
 
-/** Linear clip fades in output time, after Media3's speed processing. */
+/** Clip stereo controls and linear fades in output time, after Media3's speed processing. */
 public final class StudioClipAudioEnvelope {
     private static final long MAX_DURATION_MS=86_400_000L;
     private final long durationUs,offsetUs,fadeInUs,fadeOutUs;
     private final float volume;
+    private final float leftBalance,rightBalance;
+    private final boolean mono;
 
-    private StudioClipAudioEnvelope(long durationMs,long offsetMs,long fadeInMs,long fadeOutMs,float volume){
+    private StudioClipAudioEnvelope(long durationMs,long offsetMs,long fadeInMs,long fadeOutMs,float volume,float pan,boolean mono){
         durationUs=durationMs*1000;offsetUs=offsetMs*1000;
         fadeInUs=fadeInMs*1000;fadeOutUs=fadeOutMs*1000;this.volume=volume;
+        leftBalance=Math.min(1f,1f-pan);rightBalance=Math.min(1f,1f+pan);this.mono=mono;
     }
 
     public static StudioClipAudioEnvelope fromEffects(JSONObject effects,long outputDurationMs,float speed,float volume){
@@ -31,7 +34,10 @@ public final class StudioClipAudioEnvelope {
         }
         long in=effects.has("audioFadeInMs")?StudioClipKeyframes.integer(effects,"audioFadeInMs",0,span):0;
         long out=effects.has("audioFadeOutMs")?StudioClipKeyframes.integer(effects,"audioFadeOutMs",0,span):0;
-        return new StudioClipAudioEnvelope(span,offset,in,out,volume);
+        float pan=(float)StudioClipKeyframes.number(effects,"audioPan",0,-1,1);
+        if(effects.has("audioMono")&&!(effects.opt("audioMono") instanceof Boolean))
+            throw new IllegalArgumentException("audioMono must be boolean");
+        return new StudioClipAudioEnvelope(span,offset,in,out,volume,pan,effects.optBoolean("audioMono",false));
     }
 
     /** Split calls preserve one continuous envelope rather than adding a dip at the cut. */
@@ -49,7 +55,11 @@ public final class StudioClipAudioEnvelope {
         }catch(org.json.JSONException error){throw new IllegalArgumentException("Could not preserve split audio clock",error);}
     }
 
-    public boolean changesAudio(){return volume!=1f||fadeInUs>0||fadeOutUs>0;}
+    public boolean changesAudio(){return volume!=1f||fadeInUs>0||fadeOutUs>0||leftBalance!=1f||rightBalance!=1f||mono;}
+
+    boolean mixesStereoToMono(){return mono;}
+    float leftBalance(){return leftBalance;}
+    float rightBalance(){return rightBalance;}
 
     /** Receives the edited item's local output clock, independent of its source trim. */
     public float gainAtOutputTimeUs(double outputTimeUs){
