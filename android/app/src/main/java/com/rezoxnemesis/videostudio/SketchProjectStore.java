@@ -57,10 +57,31 @@ public final class SketchProjectStore implements AutoCloseable {
     void beginSnapshot(){db.beginTransactionNonExclusive();}
     void endSnapshot(){db.endTransaction();}
     public JSONObject createLiveSession(JSONObject state) throws Exception {
-        String id=state.getString("sketchId"),session=state.getString("sessionId");JSONObject metadata=SketchDocument.copy(state);metadata.remove("document");ContentValues values=new ContentValues();values.put("sketch_id",id);values.put("session_id",session);values.put("json",metadata.toString());db.insertWithOnConflict("sketch_live_sessions",null,values,SQLiteDatabase.CONFLICT_IGNORE);return liveSession(id,session);
+        String id=state.getString("sketchId"),session=state.getString("sessionId");
+        db.beginTransaction();try{
+            try{JSONObject previous=liveSession(id,session);
+                if(!SketchDrawingPolicy.method(previous).equals(SketchDrawingPolicy.method(state))||previous.getInt("strokeDurationMs")!=state.getInt("strokeDurationMs")||previous.getLong("afterSequence")!=state.getLong("afterSequence")||previous.optLong("baselineRevision",state.getJSONObject("document").getLong("revision"))!=state.getJSONObject("document").getLong("revision"))throw new IllegalStateException("SKETCH_LIVE_SESSION_CONFLICT");
+                db.setTransactionSuccessful();return previous;}
+            catch(IllegalArgumentException missing){if(!missing.getMessage().contains("Unknown live drawing session"))throw missing;}
+            JSONObject current=get(id);requireRevision(current,state.getJSONObject("document").getLong("revision"));
+            JSONObject active=activeDrawingSession(id);
+            if(SketchDrawingPolicy.requiresOriginal(active))throw new IllegalStateException("SKETCH_ORIGINAL_SESSION_ACTIVE: end the current drawing session before starting another");
+            SketchDrawingPolicy.requireBegin(current,SketchDrawingPolicy.method(state));
+            JSONObject metadata=SketchDocument.copy(state);metadata.remove("document");ContentValues values=new ContentValues();values.put("sketch_id",id);values.put("session_id",session);values.put("json",metadata.toString());db.insertOrThrow("sketch_live_sessions",null,values);
+            JSONObject result=liveSession(id,session);db.setTransactionSuccessful();return result;
+        }finally{db.endTransaction();}
+    }
+    /** Admission policy follows the newest unended session, inside the caller's transaction. */
+    public JSONObject activeDrawingSession(String id) throws Exception {try(Cursor c=db.rawQuery("SELECT session_id FROM sketch_live_sessions WHERE sketch_id=? AND ended=0 ORDER BY sequence DESC LIMIT 1",new String[]{id})){return c.moveToFirst()?liveSession(id,c.getString(0)):null;}}
+    /** Ends protected agent authoring and snapshots the human's starting revision under one writer lock. */
+    public JSONObject takeOverDrawing(String id)throws Exception{
+        db.beginTransaction();try{JSONObject current=get(id),active=activeDrawingSession(id);
+            if(SketchDrawingPolicy.requiresOriginal(active)){ContentValues values=new ContentValues();values.put("end_sequence",latestSequence(id));values.put("ended",1);db.update("sketch_live_sessions",values,"sketch_id=? AND session_id=?",new String[]{id,active.getString("sessionId")});}
+            db.setTransactionSuccessful();return current;
+        }finally{db.endTransaction();}
     }
     public JSONObject liveSession(String id,String session) throws Exception {try(Cursor c=db.rawQuery("SELECT sequence,json,end_sequence,ended FROM sketch_live_sessions WHERE sketch_id=? AND session_id=?",new String[]{id,session})){if(!c.moveToFirst())throw SketchDocument.bad("Unknown live drawing session");JSONObject result=new JSONObject(c.getString(1));return result.put("sessionSequence",c.getLong(0)).put("endSequence",c.getLong(2)).put("ended",c.getInt(3)!=0);}}
-    public JSONObject nextLiveSession(long after) throws Exception {try(Cursor c=db.rawQuery("SELECT sketch_id,session_id FROM sketch_live_sessions WHERE sequence>? ORDER BY sequence LIMIT 1",new String[]{String.valueOf(after)})){return c.moveToFirst()?liveSession(c.getString(0),c.getString(1)):null;}}
+    public JSONObject nextLiveSession(long after) throws Exception {try(Cursor c=db.rawQuery("SELECT sketch_id,session_id FROM sketch_live_sessions WHERE sequence>? AND consumed=0 ORDER BY sequence LIMIT 1",new String[]{String.valueOf(after)})){return c.moveToFirst()?liveSession(c.getString(0),c.getString(1)):null;}}
     public JSONObject endLiveSession(String id,String session,long revision) throws Exception {db.beginTransaction();try{requireRevision(get(id),revision);JSONObject state=liveSession(id,session);if(!state.getBoolean("ended")){ContentValues values=new ContentValues();values.put("end_sequence",latestSequence(id));values.put("ended",1);db.update("sketch_live_sessions",values,"sketch_id=? AND session_id=?",new String[]{id,session});}JSONObject result=liveSession(id,session);db.setTransactionSuccessful();return result;}finally{db.endTransaction();}}
     public long latestSequence(String id){try(Cursor c=db.rawQuery("SELECT COALESCE(MAX(sequence),0) FROM sketch_live_events WHERE sketch_id=?",new String[]{id})){c.moveToFirst();return c.getLong(0);}}
     public JSONObject liveEvents(String id,long after,int limit) throws Exception {
@@ -80,6 +101,7 @@ public final class SketchProjectStore implements AutoCloseable {
     private static JSONObject summary(JSONObject doc) throws Exception {return new JSONObject().put("sketchId",doc.getString("id")).put("name",doc.getString("name")).put("revision",doc.getLong("revision")).put("width",doc.getInt("width")).put("height",doc.getInt("height")).put("fps",doc.getInt("fps")).put("frameCount",doc.getInt("frameCount"));}
     public void copyDrawingToPage(JSONObject source,JSONObject target) throws Exception {
         String targetId=target.getString("id");
+        if(SketchDrawingPolicy.requiresOriginal(activeDrawingSession(targetId)))throw new IllegalStateException("SKETCH_ORIGINAL_DRAWING_REQUIRED: copied page contents are not authored drawing steps");
         JSONObject drawing=SketchDocument.copy(source);drawing.put("id",targetId).put("name",target.getString("name"));JSONArray layers=drawing.getJSONArray("layers");
         for(int i=0;i<layers.length();i++){JSONObject layer=layers.getJSONObject(i);layer.put("transform",SketchDocument.transformAt(layer,0)).put("keys",new JSONArray());JSONArray items=layer.getJSONArray("objects");for(int j=items.length()-1;j>=0;j--){JSONObject o=items.getJSONObject(j);if(!SketchFrameRenderer.exposed(o,0)){items.remove(j);continue;}o.put("frame",0).put("exposure",1).put("transform",SketchDocument.transformAt(o,0)).put("keys",new JSONArray());}}
         drawing.put("frameCount",1);JSONObject selected=SketchDocument.copy(drawing).put("id",source.getString("id"));copyOwnedDependencies(selected,targetId);java.util.ArrayList<PaintIntent> seeds=paintIntents(drawing);
@@ -152,8 +174,10 @@ public final class SketchProjectStore implements AutoCloseable {
             JSONObject current = get(id);
             requireRevision(current, expectedRevision);
             JSONObject next = mutation.apply(SketchDocument.copy(current));
+            if(SketchDrawingPolicy.requiresOriginal(activeDrawingSession(id))&&(liveOperations==null||liveOperations.length()==0))throw new IllegalStateException("SKETCH_ORIGINAL_DRAWING_REQUIRED: every drawing change must have recorded operations");
             next.put("id", id).put("revision", Math.addExact(expectedRevision, 1));
             SketchDocument.validate(next); verifyReferences(next);
+            SketchDrawingPolicy.requireDocument(activeDrawingSession(id),current,next);
             recordPaintIntents(id,liveOperations);if(seeds!=null)seedPaintIntents(id,seeds);
             int position;
             try (Cursor c = db.rawQuery("SELECT position,next_position FROM sketches WHERE id=?", new String[]{id})) {
@@ -226,6 +250,7 @@ public final class SketchProjectStore implements AutoCloseable {
             if (previous != null) { db.setTransactionSuccessful(); return previous; }
             requireReceiptCapacity(id);
             JSONObject current = get(id); requireRevision(current, expectedRevision);
+            if(SketchDrawingPolicy.requiresOriginal(activeDrawingSession(id)))throw new IllegalStateException("SKETCH_ORIGINAL_STROKES_ONLY: end the drawing-only session before undo or redo");
             int position, nextPosition;
             try (Cursor c = db.rawQuery("SELECT position,next_position FROM sketches WHERE id=?", new String[]{id})) {
                 c.moveToFirst(); position = c.getInt(0); nextPosition = c.getInt(1);

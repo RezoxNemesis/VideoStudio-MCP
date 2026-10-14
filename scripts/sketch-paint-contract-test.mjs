@@ -4,6 +4,17 @@ import {nativeStudioParameters,requireStudioVersion,STUDIO_NATIVE_ACTIONS} from 
 const edit=op=>({sketchId:'s',operationId:'o',expectedRevision:2,operations:[op]});
 const brush={mode:'paint',color:'#FF875533',sizePx:7,hardness:.3,flow:.4,opacity:.8,spacing:.15,pressure:true,texture:'grain',seed:17,angle:20,tip:'flat'};
 const stroke={type:'paint_stroke',objectId:'cel',strokeId:'stroke',points:[[.1,.2,.5],[.3,.4,1]],brush};
+test('live drawing declares its actual method without retroactively upgrading legacy sessions',()=>{
+ const begin={sketchId:'s',operationId:'live',expectedRevision:1};
+ assert.deepEqual(nativeStudioParameters('sketch_live_begin',begin),begin);
+ for(const drawingMethod of ['original_strokes','source_assisted']){
+  const declared={...begin,drawingMethod};assert.deepEqual(nativeStudioParameters('sketch_live_begin',declared),declared);
+  assert.throws(()=>requireStudioVersion({appVersion:'4.1.0'},'sketch_live_begin',declared),/4\.1\.1/);
+  assert.doesNotThrow(()=>requireStudioVersion({appVersion:'4.1.1'},'sketch_live_begin',declared));
+ }
+ assert.doesNotThrow(()=>requireStudioVersion({appVersion:'4.1.0'},'sketch_live_begin',begin));
+ for(const drawingMethod of ['photorealistic','mixed',true])assert.throws(()=>nativeStudioParameters('sketch_live_begin',{...begin,drawingMethod}));
+});
 test('native paint strokes accept real brush controls and reject internal pixels and resource escapes',()=>{
  assert.deepEqual(nativeStudioParameters('sketch_edit',edit(stroke)),edit(stroke));
  for(const patch of [{afterPaint:{}},{beforePaint:{}},{stroke:{}},{cloneSource:{objectId:'ref',sha256:'a'.repeat(64)}}])assert.throws(()=>nativeStudioParameters('sketch_edit',edit({...stroke,...patch})));

@@ -27,6 +27,7 @@ public final class SketchPaintOps {
     private static void rejectPaintPointer(JSONObject object){if(object.has("paint")||"paint".equals(object.optString("kind")))throw SketchDocument.bad("Create paint cels with add_paint_cel and author pixels with paint_stroke");}
 
     public static JSONObject executeEdit(Context context,SketchProjectStore sketches,String id,String operationId,long revision,String fingerprint,JSONArray operations)throws Exception {
+        SketchDrawingPolicy.requireOperations(sketches.activeDrawingSession(id),operations);
         SketchProjectStore.MutationPreflight admitted=sketches.preflightMutation(id,operationId,revision,fingerprint,operations);if(admitted.receipt!=null)return admitted.receipt;
         JSONObject next=SketchDocument.copy(admitted.document);JSONArray visual=new JSONArray(),changes=new JSONArray();
         SketchPaintStore assets=null;try{
@@ -57,7 +58,10 @@ public final class SketchPaintOps {
         JSONObject seedDrawing=SketchDocument.copy(next);JSONArray seedLayers=seedDrawing.getJSONArray("layers");for(int i=0;i<seedLayers.length();i++){JSONArray objects=seedLayers.getJSONObject(i).getJSONArray("objects");for(int j=objects.length()-1;j>=0;j--){JSONObject object=objects.getJSONObject(j);if(!"paint".equals(object.getString("kind"))||priorObjects.contains(object.getString("id")))objects.remove(j);}}
         // Final admission rechecks revision and receipt. A conflict leaves only harmless
         // immutable orphan files and produces no history, accepted stroke or live event.
-        return sketches.mutatePrepared(id,operationId,revision,fingerprint,ignored->SketchDocument.copy(preparedDocument),visual,details,seedDrawing);
+        return sketches.mutatePrepared(id,operationId,revision,fingerprint,ignored->{
+            SketchDrawingPolicy.requireOperations(sketches.activeDrawingSession(id),operations);
+            return SketchDocument.copy(preparedDocument);
+        },visual,details,seedDrawing);
     }
 
     /** Internal visual events only. Never resolves files, brush work or a public stroke request. */

@@ -31,6 +31,7 @@ public final class SketchEditOps {
         try (SketchProjectStore store = new SketchProjectStore(context)) {
             if ("sketch_list".equals(action)) { SketchDocument.fields(args, ""); return new JSONObject().put("sketches", store.list()); }
             String id = SketchDocument.id(args, "sketchId");
+            SketchDrawingPolicy.requireAction(store.activeDrawingSession(id),action,args);
             if("sketch_paint_journal".equals(action)||"sketch_sample_color".equals(action))return SketchPaintOps.query(context,store,action,args);
             if("sketch_inspect".equals(action)){
                 SketchDocument.fields(args,"sketchId,expectedRevision,frameOffset,frameLimit,characterLayerIds");JSONObject doc=store.get(id);if(args.has("expectedRevision"))SketchProjectStore.requireRevision(doc,SketchDocument.integer(args,"expectedRevision",1,Long.MAX_VALUE-1));return SketchInspection.inspect(doc,args);
@@ -177,6 +178,7 @@ public final class SketchEditOps {
                     if(SketchPaintOps.containsPaint(operations)||SketchPaintOps.containsDependencyCopies(operations))return SketchPaintOps.executeEdit(context,store,id,op,revision,fingerprint,operations);
                     JSONArray visual=new JSONArray();boolean additions=true;for(int n=0;n<operations.length();n++)if(!"add_object".equals(operations.getJSONObject(n).optString("type")))additions=false;final boolean appendOnly=additions;
                     return store.mutate(id, op, revision, fingerprint, doc -> {
+                        SketchDrawingPolicy.requireOperations(store.activeDrawingSession(id),operations);
                         // For pure additions, a valid final document implies every growing subset
                         // is valid. Store.mutate validates once before commit/history/live events.
                         for (int i=0;i<operations.length();i++){JSONObject operation=operations.getJSONObject(i);
@@ -193,8 +195,10 @@ public final class SketchEditOps {
                     SketchDocument.fields(args, "sketchId,operationId,expectedRevision,projectId,sourceProjectUpdatedAt,assetId,layerId,objectId,frame,exposure,bounds,guideVisible");
                     if(args.has("guideVisible"))SketchDocument.bool(args,"guideVisible");
                     ProjectStore projects = new ProjectStore(context);
+                    JSONArray importedVisual=new JSONArray();
                     return projects.guardedProject(SketchDocument.id(args, "projectId"), SketchDocument.integer(args, "sourceProjectUpdatedAt", 0, Long.MAX_VALUE), project ->
                         store.mutate(id, op, revision, fingerprint, doc -> {
+                            SketchDrawingPolicy.requireAction(store.activeDrawingSession(id),action,args);
                             JSONObject layer = SketchDocument.layer(doc, SketchDocument.id(args, "layerId")); requireUnlocked(layer);
                             ProjectStore.Asset asset = project.asset(SketchDocument.id(args, "assetId"));
                             // Validate the future image geometry and document before copying any bytes.
@@ -210,8 +214,9 @@ public final class SketchEditOps {
                             layer.getJSONArray("objects").put(object); SketchDocument.validate(doc);
                             JSONObject reference=store.importReference(id, project, asset);object.put("reference", reference);
                             if(!args.has("bounds")){double imageRatio=reference.getDouble("width")/reference.getDouble("height"),canvasRatio=doc.getDouble("width")/doc.getDouble("height");double bw=imageRatio>canvasRatio?1:imageRatio/canvasRatio,bh=imageRatio>canvasRatio?canvasRatio/imageRatio:1;object.put("bounds",new JSONObject().put("x",(1-bw)/2).put("y",(1-bh)/2).put("width",bw).put("height",bh));}
+                            importedVisual.put(new JSONObject().put("type","add_object").put("layerId",layer.getString("id")).put("object",SketchDocument.copy(object)));
                             return doc;
-                        }));
+                        },importedVisual));
                 default: throw SketchDocument.bad("Unsupported sketch action: " + action);
             }
         }

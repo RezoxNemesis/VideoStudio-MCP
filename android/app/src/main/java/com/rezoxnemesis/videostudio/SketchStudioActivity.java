@@ -31,6 +31,8 @@ import java.util.UUID;
 /** Real native vector/cel studio. Touch and numeric changes call the same facade as ChatGPT. */
 public final class SketchStudioActivity extends Activity implements SketchCanvasView.Listener {
     private SketchLivePlayer livePlayer;private String liveSessionId="",liveDrawingObject,liveCaption;private long liveDisplayedRevision;
+    private String notifiedSketchId,notifiedSessionId,liveMethod="";
+    private boolean notificationReplayPending;
     private JSONObject document;
     private SketchEditorSession session;
     private final ExecutorService io=Executors.newSingleThreadExecutor();
@@ -71,6 +73,9 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
         watching=getPreferences(MODE_PRIVATE).getBoolean("watchLiveDrawing",true);
+        readDrawingInvitation(getIntent());
+        if(notifiedSketchId==null&&state!=null){notifiedSketchId=state.getString("notifiedSketchId");notifiedSessionId=state.getString("notifiedSessionId");notificationReplayPending=notifiedSessionId!=null;}
+        if(notifiedSessionId!=null)watching=true;
         LinearLayout root = column(); root.setPadding(dp(6), dp(2), dp(6), dp(2)); root.setBackgroundColor(StudioUi.BG);getWindow().setStatusBarColor(StudioUi.BG);getWindow().setNavigationBarColor(StudioUi.BG); setContentView(root);
         status = new TextView(this); status.setTextSize(12);status.setTextColor(StudioUi.MUTED);status.setSingleLine(true);status.setEllipsize(android.text.TextUtils.TruncateAt.END);status.setText("Sketch Studio · opening drawing…");root.addView(status);
         LinearLayout projects = row(root);
@@ -104,6 +109,7 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
         try {
             bookId=state==null?getPreferences(MODE_PRIVATE).getString("lastBookId",null):state.getString("bookId");bookPage=state==null?getPreferences(MODE_PRIVATE).getInt("lastBookPage",0):state.getInt("bookPage",0);
             sketchId = state == null ? getIntent().getStringExtra("sketchId") : state.getString("sketchId");
+            if(notifiedSketchId!=null){bookId=null;book=null;sketchId=notifiedSketchId;}
             if (sketchId == null) sketchId = getPreferences(MODE_PRIVATE).getString("lastSketchId", null);
             if (sketchId == null) {
                 try (SketchProjectStore store = new SketchProjectStore(this)) { JSONArray list = store.list(); if (list.length() > 0) sketchId = list.getJSONObject(0).getString("sketchId"); }
@@ -114,9 +120,28 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
         } catch (Exception e) { onMessage(e.getMessage()); openDocument(); }
     }
 
+    private boolean readDrawingInvitation(Intent intent){
+        if(intent==null||!SketchLiveNotification.ACTION_WATCH.equals(intent.getAction()))return false;
+        try{JSONObject ids=new JSONObject().put("sketchId",intent.getStringExtra(SketchLiveNotification.EXTRA_SKETCH_ID)).put("sessionId",intent.getStringExtra(SketchLiveNotification.EXTRA_SESSION_ID));
+            String target=SketchDocument.id(ids,"sketchId"),stream=SketchDocument.id(ids,"sessionId");
+            notifiedSketchId=target;notifiedSessionId=stream;notificationReplayPending=true;watching=true;
+            return true;
+        }catch(Exception invalid){return false;}
+    }
+    @Override protected void onNewIntent(Intent intent){
+        super.onNewIntent(intent);if(intent==null||!SketchLiveNotification.ACTION_WATCH.equals(intent.getAction()))return;
+        if(!readDrawingInvitation(intent))return;setIntent(intent);updateLiveControl();
+        final String target=notifiedSketchId,stream=notifiedSessionId;SketchEditorSession active=session;
+        ++liveLoadGeneration;++pageGeneration;playing=false;handler.removeCallbacks(playTick);playButton.setText("Play");stopLivePlayer();loadingDrawing=true;
+        Runnable open=()->postUi(()->{if(destroyed||!target.equals(notifiedSketchId)||!stream.equals(notifiedSessionId))return;bookId=null;book=null;loadSketch(target,0);});
+        if(active!=null&&active.pending()>0)afterSaves(()->open.run());else open.run();
+    }
+    private String liveMethodLabel(){return SketchDrawingPolicy.ORIGINAL.equals(liveMethod)?"Original strokes":"Reference-assisted";}
+
     private void reload() { loadSketch(sketchId,canvas.getFrame()); }
     private void loadSketch(String id,int frame) {
         if(destroyed)return;loadingDrawing=true;stopLivePlayer();
+        if(notifiedSketchId!=null&&!notifiedSketchId.equals(id)){notifiedSketchId=null;notifiedSessionId=null;notificationReplayPending=false;}
         if(session!=null&&session.pending()>0){onMessage("Finishing the current drawing save");return;}
         if(session!=null){session.close();session=null;}canvas.setEnabled(false);
         int generation=++loadGeneration,requestedPageGeneration=pageGeneration;io.execute(()->{try{JSONObject loaded;String target=id;try(SketchProjectStore store=new SketchProjectStore(this)){loaded=store.get(id);}SketchEditorSession opened=new SketchEditorSession(this,loaded);boolean recovered=opened.error()!=null;if(recovered){opened.close();target=SketchEditorSession.recoverAsCopy(this,id);try(SketchProjectStore store=new SketchProjectStore(this)){loaded=store.get(target);}opened=new SketchEditorSession(this,loaded);}SketchEditorSession prepared=opened;String selectedId=target;if(destroyed){prepared.close();return;}postUi(()->{if(destroyed||generation!=loadGeneration||requestedPageGeneration!=pageGeneration){prepared.close();return;}try{if(recovered){bookId=null;book=null;onMessage("Your interrupted drawing was recovered as a separate sketch");}sketchId=selectedId;session=prepared;session.setListener(new SketchEditorSession.Listener(){
@@ -397,7 +422,7 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
     private void updateLiveControl(){if(liveButton!=null){liveButton.setText(watching?"Draw myself":"Watch ChatGPT");liveButton.setContentDescription(watching?"Pause live drawing and draw yourself":"Resume watching every drawing step");}}
     private void toggleLiveWatch(){
         if(watching){takeOverLive(null);return;}
-        ++liveLoadGeneration;stopPlayback();watching=true;getPreferences(MODE_PRIVATE).edit().putBoolean("watchLiveDrawing",true).apply();updateLiveControl();
+        ++liveLoadGeneration;stopPlayback();watching=true;if(notifiedSessionId!=null)notificationReplayPending=true;getPreferences(MODE_PRIVATE).edit().putBoolean("watchLiveDrawing",true).apply();updateLiveControl();
         if(loadingDrawing&&session!=null){if(session.pending()==0)reload();else afterSaves(()->postUi(this::reload));}updateStatus();
     }
     /** A local action pauses presentation, then adopts the authoritative revision.
@@ -409,21 +434,21 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
         if(active==null){updateStatus();return;}
         io.execute(()->{try{
             active.awaitIdle(15000);if(active.error()!=null)throw new IllegalStateException(active.error());
-            JSONObject current;try(SketchProjectStore store=new SketchProjectStore(this)){current=store.get(id);}
+            JSONObject current;try(SketchProjectStore store=new SketchProjectStore(this)){current=store.takeOverDrawing(id);}
             postUi(()->{if(!resumed||liveGeneration!=liveLoadGeneration||session!=active||generation!=loadGeneration||page!=pageGeneration)return;try{
                 if(!session.adopt(current))throw new IllegalStateException("Your local drawing save is still pending");
                 present(session.document());canvas.setFrame(Math.min(frame,document.optInt("frameCount")-1));loadingDrawing=false;canvas.setEnabled(!playing);updateStatus();
                 if(action!=null)action.run();
             }catch(Exception error){status.setText("Drawing retained · "+error.getMessage());onMessage(error.getMessage());}});
-        }catch(Exception error){postUi(()->{if(session==active){status.setText("Drawing retained · "+error.getMessage());onMessage(error.getMessage());}});}});
+        }catch(Exception error){postUi(()->{if(session==active&&liveGeneration==liveLoadGeneration){loadingDrawing=false;canvas.setEnabled(active.error()==null&&!playing);status.setText("Drawing retained · "+error.getMessage());onMessage(error.getMessage());}});}});
     }
     private boolean currentLive(int generation,SketchEditorSession active){return !destroyed&&resumed&&watching&&generation==liveLoadGeneration&&session==active;}
-    private void startLivePlayer(String streamId){watchInFlight=true;String id=sketchId;SketchEditorSession active=session;int generation=++liveLoadGeneration;io.execute(()->{try{JSONObject baseline=SketchLiveDrawing.read(this,id,streamId);postUi(()->{watchInFlight=false;if(!currentLive(generation,active)||loadingDrawing||session.pending()>0)return;try{stopLivePlayer();liveSessionId=streamId;liveDisplayedRevision=-1;livePlayer=new SketchLivePlayer(this,baseline,new SketchLivePlayer.Listener(){
+    private void startLivePlayer(String streamId){watchInFlight=true;String id=sketchId;SketchEditorSession active=session;int generation=++liveLoadGeneration;io.execute(()->{try{JSONObject baseline=SketchLiveDrawing.read(this,id,streamId);postUi(()->{watchInFlight=false;if(!currentLive(generation,active)||loadingDrawing||session.pending()>0)return;try{stopLivePlayer();liveSessionId=streamId;liveMethod=SketchDrawingPolicy.method(baseline);if(streamId.equals(notifiedSessionId)&&id.equals(notifiedSketchId))notificationReplayPending=false;liveDisplayedRevision=-1;livePlayer=new SketchLivePlayer(this,baseline,new SketchLivePlayer.Listener(){
         private boolean preparedShown,paintShown;private SketchLivePreparation.Prepared shownPaint;
         public void drawing(JSONObject drawing,String objectId,float fraction,String caption){showDrawing(drawing,null,objectId,fraction,caption);}
         public void preparedDrawing(SketchLivePreparation.Prepared prepared,String objectId,float fraction,String caption){showDrawing(prepared.document,prepared,objectId,fraction,caption);}
         public void agentHand(SketchAgentHand.State state){if(currentLive(generation,active))canvas.setAgentHand(state);}
-        public void agentTool(String toolLabel,String caption){if(!currentLive(generation,active))return;agentGlobalTool=agentToolPosition(toolLabel)<0;showActualAgentTool(toolLabel);updateAgentToolIndicator();status.setText("ChatGPT · "+caption);}
+        public void agentTool(String toolLabel,String caption){if(!currentLive(generation,active))return;agentGlobalTool=agentToolPosition(toolLabel)<0;showActualAgentTool(toolLabel);updateAgentToolIndicator();status.setText(liveMethodLabel()+" · "+caption);}
         public SketchPaintReplay.Viewport paintViewport(String objectId){return canvas.paintViewport(objectId);}
         public SketchPaintReplay.Viewport paintViewport(String objectId,int frameIndex){return canvas.paintViewport(objectId,frameIndex);}
         public void preparedPaintDrawing(SketchLivePreparation.Prepared prepared,SketchPaintReplay.Frame image,String objectId,float fraction,String caption){
@@ -432,13 +457,16 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
         }
         private void showDrawing(JSONObject drawing,SketchLivePreparation.Prepared prepared,String objectId,float fraction,String caption){if(!currentLive(generation,active))return;try{if(objectId==null||!objectId.equals(liveDrawingObject)||!caption.equals(liveCaption)){if(prepared==null)canvas.setDocument(drawing);else{canvas.setPreparedDocument(prepared);preparedShown=true;}liveDrawingObject=objectId;liveCaption=caption;}if(objectId!=null)canvas.setFrame(SketchDocument.object(drawing,objectId).getInt("frame"));canvas.setPresentation(objectId,fraction);canvas.setEnabled(false);status.setText(caption);}catch(Exception error){failed(error.getMessage());}}
         public void committed(JSONObject drawing){if(!currentLive(generation,active))return;try{if(session.adopt(drawing)){if(paintShown){canvas.setCommittedPaintDocument(session.document());presentMetadata(session.document());paintShown=false;}else if(preparedShown)presentMetadata(session.document());else present(session.document());canvas.setPresentation(null,1);liveDrawingObject=null;liveDisplayedRevision=drawing.optLong("revision");}}catch(Exception error){failed(error.getMessage());}}
-        public void finished(long cursor){if(!currentLive(generation,active))return;io.execute(()->{try(SketchProjectStore store=new SketchProjectStore(SketchStudioActivity.this)){store.consumeLiveSession(cursor);}});getPreferences(MODE_PRIVATE).edit().putLong("lastLiveSequence",cursor).apply();stopLivePlayer();reload();}
-        public void idle(){if(!currentLive(generation,active))return;canvas.setPresentation(null,1);canvas.setEnabled(false);status.setText("Live ChatGPT · waiting for drawing steps · Play or Draw myself is available");}
+        public void finished(long cursor){if(!currentLive(generation,active))return;io.execute(()->{try(SketchProjectStore store=new SketchProjectStore(SketchStudioActivity.this)){store.consumeLiveSession(cursor);}});if(notifiedSessionId==null)getPreferences(MODE_PRIVATE).edit().putLong("lastLiveSequence",cursor).apply();stopLivePlayer();if(notifiedSessionId==null)reload();else status.setText(liveMethodLabel()+" · session replay complete · Draw myself to edit");}
+        public void idle(){if(!currentLive(generation,active))return;canvas.setPresentation(null,1);canvas.setEnabled(false);status.setText(liveMethodLabel()+" · live · waiting for drawing steps · Draw myself is available");}
         public void failed(String error){if(!currentLive(generation,active))return;loadingDrawing=true;stopLivePlayer();status.setText(error);onMessage(error);}
-    });livePlayer.start();}catch(Exception error){onMessage(error.getMessage());}});}catch(Exception error){postUi(()->{watchInFlight=false;onMessage(error.getMessage());});}});}
+    });livePlayer.start();}catch(Exception error){notificationReplayPending=false;onMessage(error.getMessage());}});}catch(Exception error){postUi(()->{watchInFlight=false;notificationReplayPending=false;onMessage(error.getMessage());});}});}
     private final Runnable watchTick=new Runnable(){public void run(){
         if(destroyed)return;
         if(resumed&&watching&&!loadingDrawing&&!playing&&livePlayer==null&&session!=null&&session.pending()==0&&session.error()==null&&!canvas.isDrawing()&&!watchInFlight){
+            if(notificationReplayPending){startLivePlayer(notifiedSessionId);handler.postDelayed(this,250);return;}
+            // An explicit invitation stays on its drawing, even while other books have pending sessions.
+            if(notifiedSessionId!=null){handler.postDelayed(this,250);return;}
             watchInFlight=true;long cursor=getPreferences(MODE_PRIVATE).getLong("lastLiveSequence",0),revision=document.optLong("revision");String id=sketchId;SketchEditorSession active=session;
             io.execute(()->{try{JSONObject next,changed=null;try(SketchProjectStore store=new SketchProjectStore(SketchStudioActivity.this)){next=store.nextLiveSession(cursor);if(next==null&&store.revision(id)!=revision)changed=store.get(id);}JSONObject pending=next,incoming=changed;
                 postUi(()->{watchInFlight=false;if(destroyed||!resumed||!watching||active!=session||session.pending()>0||canvas.isDrawing())return;try{
@@ -459,17 +487,17 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
         long nextAt = NativeFrameClock.presentationTimeMs(index + 1, fps); handler.postDelayed(this, Math.max(1, nextAt - elapsed));
     } };
     private void stopPlayback() { boolean wasPlaying=playing;playing = false;if(wasPlaying&&bookId!=null&&session!=null&&!destroyed){openBookPage(bookId,bookPage);} handler.removeCallbacks(playTick); if(canvas!=null&&!destroyed)canvas.setEnabled(!loadingDrawing&&(!wasPlaying||bookId==null)&&session!=null&&livePlayer==null);if (playButton != null) playButton.setText("Play"); }
-    @Override protected void onPause() { resumed=false;++liveLoadGeneration;if(livePlayer!=null||watchInFlight)loadingDrawing=true;stopLivePlayer();stopPlayback();handler.removeCallbacks(watchTick);super.onPause(); }
+    @Override protected void onPause() { resumed=false;++liveLoadGeneration;if(livePlayer!=null||watchInFlight){loadingDrawing=true;if(notifiedSessionId!=null)notificationReplayPending=true;}stopLivePlayer();stopPlayback();handler.removeCallbacks(watchTick);super.onPause(); }
     @Override protected void onResume() { super.onResume();resumed=true;liveSessionId="";if(loadingDrawing&&session!=null){if(session.pending()==0)reload();else afterSaves(()->postUi(this::reload));}handler.removeCallbacks(watchTick);handler.postDelayed(watchTick,250); }
     @Override protected void onDestroy() { destroyed=true;stopLivePlayer();stopPlayback();handler.removeCallbacksAndMessages(null);if(session!=null)session.close();io.shutdown();transfers.shutdown();if(canvas!=null)canvas.dispose();super.onDestroy(); }
-    @Override protected void onSaveInstanceState(Bundle state) { state.putString("bookId",bookId);state.putInt("bookPage",bookPage);state.putString("sketchId", sketchId); state.putInt("frame", canvas.getFrame()); super.onSaveInstanceState(state); }
+    @Override protected void onSaveInstanceState(Bundle state) { state.putString("bookId",bookId);state.putInt("bookPage",bookPage);state.putString("sketchId", sketchId); state.putInt("frame", canvas.getFrame());state.putString("notifiedSketchId",notifiedSketchId);state.putString("notifiedSessionId",notifiedSessionId); super.onSaveInstanceState(state); }
     private LinearLayout column() { LinearLayout layout = new LinearLayout(this); layout.setOrientation(LinearLayout.VERTICAL);layout.setBackgroundColor(StudioUi.SURFACE);layout.setPadding(dp(6),dp(2),dp(6),dp(2));return layout; }
     private LinearLayout row(LinearLayout root) { LinearLayout layout = new LinearLayout(this); layout.setOrientation(LinearLayout.HORIZONTAL);root.addView(layout,new LinearLayout.LayoutParams(-1,-2));return layout; }
     private Button button(LinearLayout row, String title, Runnable action) { Button button = new Button(this);button.setText(title);StudioUi.styleButton(button,title.equals("Play"));button.setTextSize(12);button.setPadding(dp(4),dp(4),dp(4),dp(4));button.setOnClickListener(v->runAction(title,action));row.addView(button,new LinearLayout.LayoutParams(0,-2,1));return button; }
     // Browsing a menu never takes ownership of an active drawing. Its chosen action
     // goes through the same loading, playback and live-takeover gate as the toolbar.
     private void runAction(String title,Runnable action){try{
-        boolean navigation=java.util.Arrays.asList("File","More","Brush / Text","Layers","Frames / Cels","Workspace","Canvas view","Drawing status","Colours","Select layer","Go to frame","Paint studio","Paint settings","Clone source").contains(title);
+        boolean navigation=java.util.Arrays.asList("File","More","Brush / Text","Layers","Frames / Cels","Workspace","Canvas view","Drawing status","Drawing alerts","Colours","Select layer","Go to frame","Paint studio","Paint settings","Clone source").contains(title);
         if(navigation){action.run();return;}
         if(loadingDrawing&&!java.util.Arrays.asList("New","Open","Sketch books","Draw myself").contains(title)){onMessage("Opening the selected drawing");return;}
         if(playing&&!title.equals("Play")&&!title.equals("Draw myself")){onMessage("Pause playback before changing artwork");return;}
@@ -478,7 +506,22 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
     }catch(Exception error){onMessage(error.getMessage());}}
     private void menu(String title,String[] labels,Runnable... actions){new AlertDialog.Builder(this).setTitle(title).setItems(labels,(d,index)->runAction(labels[index],actions[index])).show();}
     private void fileMenu(){menu("Sketch files",new String[]{"New","Open","Sketch books","Export video","Archive sketch","Restore archive","Canvas view","Drawing status"},this::newDocument,this::openDocument,this::booksDialog,this::export,this::archiveSketch,this::restoreArchiveDialog,this::toggleCanvasFocus,()->new AlertDialog.Builder(this).setTitle("Drawing status").setMessage(status.getText()+"\n\n"+toolStatus.getText()).setPositiveButton("OK",null).show());}
-    private void moreMenu(){menu("Drawing tools",new String[]{"Layers","Frames / Cels","Workspace"},this::layersMenu,this::framesMenu,this::workspaceDialog);}
+    private void moreMenu(){menu("Drawing tools",new String[]{"Layers","Frames / Cels","Workspace","Drawing alerts"},this::layersMenu,this::framesMenu,this::workspaceDialog,this::drawingAlerts);}
+    private void drawingAlerts(){
+        JSONObject availability=SketchLiveNotification.status(this);boolean enabled=availability.optBoolean("available");
+        new AlertDialog.Builder(this).setTitle("Drawing alerts").setMessage(enabled?
+                "Drawing alerts are enabled. Tap a drawing notification to open its exact session and watch the saved strokes catch up with live work.":
+                "Android notifications are disabled for drawing. Allow alerts to receive an invitation when ChatGPT begins. Your drawing is saved even when alerts are off.")
+                .setNegativeButton("Close",null).setPositiveButton(enabled?"Settings":"Enable alerts",(d,w)->{
+                    if(android.os.Build.VERSION.SDK_INT>=33&&checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS)!=android.content.pm.PackageManager.PERMISSION_GRANTED){
+                        if(!getPreferences(MODE_PRIVATE).getBoolean("drawingAlertPermissionRequested",false)||shouldShowRequestPermissionRationale(android.Manifest.permission.POST_NOTIFICATIONS)){
+                            getPreferences(MODE_PRIVATE).edit().putBoolean("drawingAlertPermissionRequested",true).apply();requestPermissions(new String[]{android.Manifest.permission.POST_NOTIFICATIONS},701);return;
+                        }
+                    }
+                    Intent settings=new Intent(android.provider.Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS).putExtra(android.provider.Settings.EXTRA_APP_PACKAGE,getPackageName()).putExtra(android.provider.Settings.EXTRA_CHANNEL_ID,SketchLiveNotification.CHANNEL_ID);
+                    try{startActivity(settings);}catch(android.content.ActivityNotFoundException unavailable){onMessage("Open Android app settings to allow drawing notifications");}
+                }).show();
+    }
     private void brushMenu(){menu("Brush / Text",new String[]{"Brush","Colours","Paint studio","Text","Finish path","Transform / key","Delete object","Reference image"},this::brushDialog,this::paletteDialog,this::paintMenu,this::textDialog,()->canvas.finishPolygon(),this::transformDialog,this::deleteObject,this::referenceDialog);}
     private void layersMenu(){menu("Layers",new String[]{"Select layer","+ Layer","Layer settings","Up","Down"},this::chooseLayer,this::addLayer,this::layerDialog,()->reorderLayer(1),()->reorderLayer(-1));}
     private void chooseLayer(){
