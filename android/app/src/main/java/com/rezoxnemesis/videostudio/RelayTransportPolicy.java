@@ -32,7 +32,7 @@ final class RelayTransportPolicy {
         // Preserve useful operation identity and success/failure without copying
         // nested state, images, journals or arbitrary owner text into every ACK.
         for(String key:new String[]{"ok","projectId","sketchId","bookId","assetId","jobId","programId",
-                "revision","documentSha256","persisted","canUndo","canRedo","outputVerified","error","code"}) {
+                "revision","documentSha256","sourceSha256","persisted","canUndo","canRedo","outputVerified","error","code"}) {
             Object value=full.opt(key);
             if(value instanceof Boolean || value instanceof Number
                     || value instanceof String && bytes((String)value).length<=128) receipt.put(key,value);

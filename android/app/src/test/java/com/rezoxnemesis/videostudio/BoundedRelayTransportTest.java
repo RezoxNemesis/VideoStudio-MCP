@@ -20,13 +20,15 @@ public final class BoundedRelayTransportTest {
     @Test public void largeResultUsesExplicitBoundedReceiptInsteadOfCopyingArtworkIntoRelay() throws Exception {
         Context context=RuntimeEnvironment.getApplication();
         JSONObject result=new JSONObject().put("ok",true).put("projectId","project-owned")
-                .put("artwork","🎨".repeat(800000));
+                .put("sourceSha256","a".repeat(64)).put("artwork","🎨".repeat(800000));
         try(CommandOutbox outbox=new CommandOutbox(context)) {
             outbox.put(command(),result,"completed");
             JSONObject delivered=outbox.pending().getJSONObject(0).getJSONObject("result");
             assertTrue("One ACK must fit its transport budget",bytes(delivered)<=2048);
             assertTrue(delivered.getBoolean("ok"));
             assertEquals("project-owned",delivered.getString("projectId"));
+            assertTrue("Compact native results retain the source fingerprint",delivered.has("sourceSha256"));
+            assertEquals("a".repeat(64),delivered.getString("sourceSha256"));
             assertTrue(delivered.getBoolean("resultExternalized"));
             assertEquals(bytes(result),delivered.getInt("resultBytes"));
             assertEquals(64,delivered.getString("resultSha256").length());
