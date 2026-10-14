@@ -133,8 +133,8 @@ public final class NativeRenderEngine {
                                         : "standard");
                             } catch (Exception ignored) {}
                             
-                            // A successful encoder callback is not sufficient. Verify
-                            // the actual raster orientation before reporting a final video.
+                            // A successful encoder callback is not sufficient. Verify displayed
+                            // dimensions; these metadata checks cannot prove that content is upright.
                             android.media.MediaMetadataRetriever verifier =
                                     new android.media.MediaMetadataRetriever();
                             try {
@@ -157,7 +157,9 @@ public final class NativeRenderEngine {
                                 }
                                 info.put("encodedWidth", actualWidth);
                                 info.put("encodedHeight", actualHeight);
-                                info.put("orientationVerified", true);
+                                info.put("displayDimensionsVerified", true);
+                                info.put("orientationVerified", false);
+                                info.put("physicalContentOrientationVerified", false);
                                 info.put("sourceRasterVerified", sourceRaster(aspect) != null);
                             } catch (Exception verificationFailed) {
                                 listener.onError("Could not verify encoded dimensions of exported video");

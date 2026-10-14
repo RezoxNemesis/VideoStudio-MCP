@@ -8,7 +8,7 @@ The installed phone reported 4.3.0 and a fresh heartbeat while a new, empty `con
 
 The deployed legacy relay retains commands and their results in a single storage value. One already completed `sketch_get` result was privately archived and replaced with an explicit checksum/byte-count history envelope, preserving its completed status. After this reduction, a fresh primary health command was accepted and completed on the phone. Nine older native result deliveries still required recovery; the temporary reduction does not establish that the legacy server is permanently repaired.
 
-All three MP4s from the uploaded archive were imported through the encrypted native media mailbox, checked by native size/SHA-256 results, and sampled by Video studio's native analyzer. No Gallery browsing or host video processing was used. The first recording shows sideways decoded 3D content. Coded dimensions alone do not identify its cause: Media3 can intentionally store portrait video using landscape dimensions and rotation metadata. A pre-encode frame comparison remains required; this patch does not claim to fix that rendering defect or establish artistic fidelity.
+All three MP4s from the uploaded archive were imported through the encrypted native media mailbox, checked by native size/SHA-256 results, and sampled by Video studio's native analyzer. No Gallery browsing or host video processing was used. The first recording shows vertically mirrored 3D content. Native inspection of its registered pre-encode JPEG confirmed the same mirror before video encoding (540 × 960, EXIF orientation 1). The pinned Filament 1.74.0 OpenGL driver already returns top-first rows; Video studio reversed them again. The composer now follows that documented row contract. Existing generations remain unchanged; device acceptance requires inspecting a newly rendered generation after installation. No artistic-fidelity claim follows from this orientation repair.
 
 ## Changes
 
@@ -19,6 +19,7 @@ All three MP4s from the uploaded archive were imported through the encrypted nat
 - State reads and receipt recovery run away from Android's UI thread.
 - `sketch_import_drawing_asset` reads a packet and source already registered as private project assets. Both hashes, project revision, canonical ownership, bounded gzip expansion, declared drawing method and the complete geometry are checked before marks. Resume preserves human edits. Every batch atomically requires the same live session, so human takeover stops further import marks.
 - Human users can choose imported project files by name from Sketch Studio's drawing import dialog. The linked-folder flow remains available. Neither flow requires entering internal IDs or hashes.
+- Cinematic readback no longer reverses Filament’s already top-first pixel rows. An asymmetric 2 × 3 fixture guards both axes and padded buffer boundaries. Dimension verification is recorded separately from physical content orientation. Library contract: https://github.com/google/filament/blob/v1.74.0/filament/backend/src/opengl/OpenGLDriver.cpp#L4224-L4237 .
 - Native video analysis distinguishes coded/display dimensions and decoded frame sizes, reports rotation/duration availability and labels approximate sync-frame sampling. Unknown metadata is not treated as successful motion evidence.
 
 ## Verification and deployment boundary
