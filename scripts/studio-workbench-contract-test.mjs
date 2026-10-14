@@ -1,8 +1,25 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
+import fs from 'node:fs';
 import {nativeStudioParameters,requireStudioVersion,STUDIO_NATIVE_ACTIONS,STUDIO_ALIAS_ACTIONS,nativeStudioCanonicalAction,studioToolSchemas} from '../src/studio-workbench-contract.js';
 import {nativeStoryboardParameters,requireStoryboardNativeVersion,STORYBOARD_NATIVE_ACTIONS} from '../src/storyboard-contract.js';
+
+test('prepared-art animation validates real programs, revision contracts and version gates',()=>{
+ const program={schema:'videostudio.sketch-animation.v1',frameCount:100,fps:24,rigs:[{id:'arm',joints:[{id:'shoulder',x:.4,y:.3},{id:'elbow',parent:'shoulder',x:.5,y:.4}],bindings:[{objectId:'sleeve',jointId:'shoulder'}],poses:[{frame:0,rotations:{elbow:0},interpolation:'smooth'},{frame:99,rotations:{elbow:80}}]}]};
+ const save={animationId:'scene',sketchId:'prepared',sourceRevision:1,expectedRevision:0,operationId:'save_1',program};
+ for(const action of ['sketch_animation_save','studio_sketch_animation_save'])assert.deepEqual(nativeStudioParameters(action,save),save);
+ assert.deepEqual(nativeStudioParameters('sketch_animation_bake',{animationId:'scene',expectedRevision:1,operationId:'bake_1',outputSketchId:'new_output'}),{animationId:'scene',expectedRevision:1,operationId:'bake_1',outputSketchId:'new_output'});
+ for(const action of ['sketch_animation_save','sketch_animation_get','sketch_animation_list','sketch_animation_bake']){assert.throws(()=>requireStudioVersion({appVersion:'4.3.1'},action),/4\.4\.0/);assert.doesNotThrow(()=>requireStudioVersion({appVersion:'4.4.0'},action));}
+ for(const patch of [{frameCount:1201},{unknown:true},{camera:[{frame:0}]},{dialogues:[{start:0,end:100,text:'Late',layerId:'letters',bounds:{x:0,y:0,width:1,height:.1}}]},{rigs:[{...program.rigs[0],poses:[{frame:3},{frame:2}]}]},{rigs:[{...program.rigs[0],bindings:[{objectId:'sleeve',jointId:'shoulder',weights:[{shoulder:.2,elbow:.2}]}]}]}])assert.throws(()=>nativeStudioParameters('sketch_animation_save',{...save,program:{...program,...patch}}));
+ assert.throws(()=>nativeStudioParameters('sketch_animation_save',{...save,expectedRevision:-1}));
+ assert.throws(()=>nativeStudioParameters('sketch_animation_save',{...save,program:{...program,rigs:[{...program.rigs[0],poses:[{frame:0,rotations:{elbow:Infinity}}]}]}}));
+});
+
+test('original native action-film program passes the production relay schema',()=>{
+ const program=JSON.parse(fs.readFileSync(new URL('../android/app/src/test/resources/sketch-animation/rooftop-relay-program.json',import.meta.url),'utf8'));
+ assert.deepEqual(nativeStudioParameters('sketch_animation_save',{animationId:'film',sketchId:'courier_source',sourceRevision:1,expectedRevision:0,operationId:'save_1',program}).program,program);
+});
 
 test('new native operations require 3.9 before effects, preserve the existing protocol',()=>{
  assert.throws(()=>requireStudioVersion({appVersion:'3.8.1'},'sketch_edit'),/UPGRADE_REQUIRED/);
@@ -121,8 +138,14 @@ test('closed studio relay aliases enforce each native minimum and validate their
   const paint=['studio_sketch_paint_journal','studio_sketch_sample_color','studio_sketch_archive','studio_sketch_restore_archive'].includes(alias);
   const media=alias==='studio_import_mailbox_media';
   const cameraEdit=alias==='studio_cinematic_3d_edit_program';
+  const animation=alias.startsWith('studio_sketch_animation_');
   const repair=['studio_sketch_import_drawing_asset','studio_get_native_result_page','studio_get_native_delivery_status','studio_compact_native_delivery'].includes(alias);
-  assert.throws(()=>requireStoryboardNativeVersion({appVersion:'3.8.1'},alias),repair?/4\.3\.1/:cameraEdit?/4\.3\.0/:media?/4\.2\.0/:paint?/4\.1\.0/:/3\.9\.[01456]/);
+  assert.throws(()=>requireStoryboardNativeVersion({appVersion:'3.8.1'},alias),animation?/4\.4\.0/:repair?/4\.3\.1/:cameraEdit?/4\.3\.0/:media?/4\.2\.0/:paint?/4\.1\.0/:/3\.9\.[01456]/);
+  if(animation){
+   assert.throws(()=>requireStoryboardNativeVersion({appVersion:'4.3.1'},alias),/4\.4\.0/);
+   assert.doesNotThrow(()=>requireStoryboardNativeVersion({appVersion:'4.4.0'},alias));
+   continue;
+  }
   if(repair){
    assert.throws(()=>requireStoryboardNativeVersion({appVersion:'4.3.0'},alias),/4\.3\.1/);
    assert.doesNotThrow(()=>requireStoryboardNativeVersion({appVersion:'4.3.1'},alias));

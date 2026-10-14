@@ -46,6 +46,7 @@
                 android:value="VideoStudio v3 Native Agent: user-enabled private MCP control for local editing, analysis and rendering" />
         </service>
         <activity android:name=".Cinematic3DStudioActivity" android:enableOnBackInvokedCallback="true" android:exported="false" android:screenOrientation="unspecified" />
+        <activity android:name=".SketchAnimationActivity" android:exported="false" android:screenOrientation="unspecified" />
         <activity android:name=".SketchStudioActivity" android:exported="false" android:launchMode="singleTop" android:screenOrientation="unspecified" />
         <activity android:name=".OpenPipelineActivity" android:exported="false" android:screenOrientation="unspecified" />
         <activity

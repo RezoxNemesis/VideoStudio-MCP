@@ -14,6 +14,7 @@ public final class NativeWorkbenchBridge {
     private static final Set<String> ACTIONS=Collections.unmodifiableSet(new LinkedHashSet<>(Arrays.asList(
             "precision_edit","apply_tool","set_studio_layers","import_mailbox_media","get_native_result_page","get_native_delivery_status","compact_native_delivery",
             "sketch_create","sketch_list","sketch_get","sketch_inspect","sketch_edit","sketch_undo","sketch_redo",
+            "sketch_animation_save","sketch_animation_get","sketch_animation_list","sketch_animation_bake",
             "sketch_paint_journal","sketch_sample_color","sketch_archive","sketch_restore_archive",
             "sketch_import_reference","sketch_import_frame_manifest","sketch_import_drawing_manifest","sketch_import_drawing_asset","sketch_preview","sketch_render",
             "sketch_book_create","sketch_book_edit","sketch_book_list","sketch_book_get","sketch_book_open_page","sketch_book_render","sketch_live_begin","sketch_live_events","sketch_live_end","sketch_capabilities",
@@ -47,6 +48,7 @@ public final class NativeWorkbenchBridge {
                 .put("minimumNativeVersion",MINIMUM_NATIVE_VERSION).put("canonicalActions",actions).put("aliases",aliases)
                 .put("colourTraceMinimumNativeVersion","3.9.5").put("drawingManifestMinimumNativeVersion","3.9.5").put("advancedSketchMinimumNativeVersion","3.9.1").put("croppedSketchPreviewMinimumNativeVersion","3.9.3").put("flatParameters",true).put("permissionPolicy","existing-native-action-permissions-and-source-validation")
                 .put("paintMinimumNativeVersion","4.1.0").put("editableArchiveMinimumNativeVersion","4.1.0")
+                .put("characterAnimationMinimumNativeVersion","4.4.0")
                 .put("encryptedMediaImportMinimumNativeVersion","4.2.0").put("encryptedMediaImportMaximumBytes",256L*1024*1024)
                 .put("drawingAssetImportMinimumNativeVersion","4.3.1").put("nativeResultPageMinimumNativeVersion","4.3.1")
                 .put("incrementalKeyframeMinimumNativeVersion","4.3.0").put("cameraEditMinimumNativeVersion","4.3.0")

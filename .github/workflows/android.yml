@@ -98,6 +98,8 @@ jobs:
           path: |
             android/app/build/storyboard-qa/
             android/app/build/source-rig-workbench/
+            android/app/build/sketch-action-film/
+            android/app/build/sketch-animation-ui/
           if-no-files-found: warn
           retention-days: 7
 
