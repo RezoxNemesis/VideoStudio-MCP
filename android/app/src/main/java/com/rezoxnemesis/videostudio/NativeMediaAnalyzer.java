@@ -31,9 +31,12 @@ public final class NativeMediaAnalyzer {
         MediaMetadataRetriever retriever = new MediaMetadataRetriever();
         try {
             retriever.setDataSource(context, Uri.parse(asset.uri));
-            long durationMs = parseLong(retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION), asset.durationMs);
+            String durationMetadata = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION);
+            long durationMs = parseLong(durationMetadata, asset.durationMs);
+            boolean durationMetadataAvailable = parseLong(durationMetadata, -1) > 0;
             int width = (int) parseLong(retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH), 0);
             int height = (int) parseLong(retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT), 0);
+            Integer rotation = rotationDegrees(retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION));
             if (endMs <= 0 || endMs > durationMs) endMs = durationMs;
             startMs = Math.max(0, Math.min(startMs, Math.max(0, endMs - 1)));
             long span = Math.max(1, endMs - startMs);
@@ -41,12 +44,17 @@ public final class NativeMediaAnalyzer {
             ArrayList<Bitmap> frames = new ArrayList<>();
             ArrayList<Long> times = new ArrayList<>();
             JSONArray changes = new JSONArray();
+            JSONArray sampledFrames = new JSONArray();
             double[] previous = null;
 
             for (int i = 0; i < frameCount; i++) {
                 long timeMs = startMs + (long) ((i / (double) Math.max(1, frameCount - 1)) * span);
                 Bitmap frame = retriever.getFrameAtTime(timeMs * 1000L, MediaMetadataRetriever.OPTION_CLOSEST_SYNC);
                 if (frame == null) continue;
+                // These are returned decoder dimensions, before our contact-sheet thumbnailing.
+                // Closest-sync retrieval does not expose the actual decoded presentation timestamp.
+                sampledFrames.put(new JSONObject().put("requestedTimeMs", timeMs)
+                        .put("width", frame.getWidth()).put("height", frame.getHeight()));
                 Bitmap thumb = scaleInside(frame, 270, 480);
                 if (thumb != frame) frame.recycle();
                 frames.add(thumb);
@@ -68,6 +76,7 @@ public final class NativeMediaAnalyzer {
 
             if (frames.isEmpty()) throw new IllegalStateException("Could not decode analysis frames");
             Bitmap sheet = contactSheet(frames, times);
+            int sheetWidth = sheet.getWidth(), sheetHeight = sheet.getHeight();
             ByteArrayOutputStream bytes = new ByteArrayOutputStream();
             sheet.compress(Bitmap.CompressFormat.JPEG, 76, bytes);
             sheet.recycle();
@@ -77,6 +86,8 @@ public final class NativeMediaAnalyzer {
             contact.put("mimeType", "image/jpeg");
             contact.put("base64", Base64.encodeToString(bytes.toByteArray(), Base64.NO_WRAP));
             contact.put("frameCount", times.size());
+            contact.put("width", sheetWidth);
+            contact.put("height", sheetHeight);
 
             JSONArray sampled = new JSONArray();
             for (Long t : times) sampled.put(Math.round(t / 100d) / 10d);
@@ -86,8 +97,20 @@ public final class NativeMediaAnalyzer {
             result.put("assetId", asset.id);
             result.put("name", asset.name);
             result.put("durationMs", durationMs);
+            result.put("durationMetadataAvailable", durationMetadataAvailable);
             result.put("width", width);
             result.put("height", height);
+            result.put("codedWidth", width);
+            result.put("codedHeight", height);
+            result.put("rotationMetadataAvailable", rotation != null);
+            result.put("rotationDegrees", rotation == null ? JSONObject.NULL : rotation);
+            boolean displayKnown = rotation != null && width > 0 && height > 0;
+            boolean swapped = rotation != null && (rotation == 90 || rotation == 270);
+            result.put("displayWidth", displayKnown ? (swapped ? height : width) : JSONObject.NULL);
+            result.put("displayHeight", displayKnown ? (swapped ? width : height) : JSONObject.NULL);
+            result.put("samplingMode", "closest_sync");
+            result.put("exactFrameTimes", false);
+            result.put("sampledFrames", sampledFrames);
             result.put("sampleTimesSeconds", sampled);
             result.put("sceneChanges", changes);
             result.put("contactSheet", contact);
@@ -164,5 +187,13 @@ public final class NativeMediaAnalyzer {
     private long parseLong(String value, long fallback) {
         try { return value == null ? fallback : Long.parseLong(value); }
         catch (Exception ignored) { return fallback; }
+    }
+
+    private Integer rotationDegrees(String value) {
+        if (value == null) return null;
+        try {
+            int rotation = Math.floorMod(Integer.parseInt(value), 360);
+            return rotation % 90 == 0 ? rotation : null;
+        } catch (NumberFormatException invalid) { return null; }
     }
 }

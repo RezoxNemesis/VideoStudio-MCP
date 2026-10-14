@@ -17,6 +17,8 @@ public final class NativeAgentMailbox {
     public interface Receiver { void receive(JSONObject command); }
     public interface Validator { boolean allowed(JSONObject command) throws Exception; }
     private static final String RAW="https://raw.githubusercontent.com/RezoxNemesis/VideoStudio-MCP/videostudio-agent-mailbox/mailbox/";
+    private static final int RECEIPT_SWEEP_REQUESTS=16,RECEIPT_SWEEP_BYTES=640*1024;
+    private static final long RECEIPT_SWEEP_MS=6000;
     private final String owner,channel;
     private final NativeAgentMailboxStore store;
     private final SharedPreferences prefs;
@@ -28,6 +30,7 @@ public final class NativeAgentMailbox {
     private final ScheduledExecutorService polling=Executors.newSingleThreadScheduledExecutor();
     private final ExecutorService delivery=Executors.newSingleThreadExecutor();
     private final ScheduledExecutorService receipts=Executors.newSingleThreadScheduledExecutor();
+    private final ScheduledExecutorService receiptTimeouts=Executors.newSingleThreadScheduledExecutor();
     private final Set<HttpURLConnection> connections=ConcurrentHashMap.newKeySet();
     private final Set<String> dispatched=ConcurrentHashMap.newKeySet();
     private java.util.function.Function<String,HttpURLConnection> connectionFactory=address->{
@@ -44,8 +47,30 @@ public final class NativeAgentMailbox {
         prefs=context.getSharedPreferences("videostudio_agent_mailbox_v1",Context.MODE_PRIVATE);
         store=new NativeAgentMailboxStore(new File(context.getNoBackupFilesDir(),"agent-mailbox-v1"),owner);journal=new CommandJournal(context);
     }
-    public synchronized void start(){if(running||closed)return;running=true;polling.scheduleWithFixedDelay(this::tick,0,5,TimeUnit.SECONDS);receipts.scheduleWithFixedDelay(this::flushReceipts,0,3,TimeUnit.SECONDS);}
-    public synchronized void stop(){running=false;closed=true;polling.shutdownNow();delivery.shutdownNow();receipts.shutdownNow();for(HttpURLConnection c:connections)c.disconnect();connections.clear();prefs.edit().putBoolean("connected",false).apply();}
+    public synchronized void start(){if(running||closed)return;running=true;prefs.edit().putBoolean("runningReported",true).putLong("observedAtMs",System.currentTimeMillis()).apply();polling.scheduleWithFixedDelay(this::tick,0,5,TimeUnit.SECONDS);receipts.scheduleWithFixedDelay(this::flushReceipts,0,3,TimeUnit.SECONDS);}
+    public synchronized void stop(){running=false;closed=true;polling.shutdownNow();delivery.shutdownNow();receipts.shutdownNow();receiptTimeouts.shutdownNow();for(HttpURLConnection c:connections)c.disconnect();connections.clear();prefs.edit().putBoolean("connected",false).putBoolean("runningReported",false).putLong("observedAtMs",System.currentTimeMillis()).apply();}
+    /** Bounded saved observations, usable from registration without opening the mailbox ledger. */
+    public static JSONObject savedHealth(Context context){
+        return healthFromPrefs(context.getApplicationContext().getSharedPreferences("videostudio_agent_mailbox_v1",Context.MODE_PRIVATE));
+    }
+    private static JSONObject healthFromPrefs(SharedPreferences saved){
+        JSONObject out=new JSONObject();
+        try{
+            out.put("schema","videostudio.agent.health.v1");
+            for(String key:new String[]{"runningReported","paused","connected"})out.put(key,saved.getBoolean(key,false));
+            for(String key:new String[]{"observedAtMs","lastPollAt","lastPollSuccessAt","lastReceiptProgressAt","receiptPublishedPages","receiptPublishedBytes","lastSweepAt","lastSweepBytes","lastSweepDurationMs"})out.put(key,saved.getLong(key,0));
+            for(String key:new String[]{"receiptNextPage","receiptTotalPages","lastSweepRequests"})out.put(key,saved.getInt(key,0));
+            for(String key:new String[]{"lastError","lastReceiptState","lastReceiptError","receiptCommandId","lastSweepLimit"}){
+                String value=saved.getString(key,"");out.put(key,value.substring(0,Math.min(160,value.length())));
+            }
+            long age=System.currentTimeMillis()-saved.getLong("lastPollAt",0);
+            out.put("pollFresh",saved.getBoolean("connected",false)&&saved.getLong("lastPollAt",0)>0&&age>=0&&age<30000);
+            out.put("sweepMaxRequests",RECEIPT_SWEEP_REQUESTS).put("sweepMaxBytes",RECEIPT_SWEEP_BYTES).put("sweepMaxDurationMs",RECEIPT_SWEEP_MS);
+        }catch(JSONException ignored){}
+        return out;
+    }
+    /** Current lifecycle flags plus the same credential-free persisted observations. */
+    public JSONObject health(){JSONObject out=healthFromPrefs(prefs);try{out.put("runningReported",running).put("paused",paused.getAsBoolean());}catch(JSONException ignored){}return out;}
     public boolean owns(String id){return id!=null&&store.owns(id);}
     public JSONObject receipt(String id)throws Exception{return store.receipt(id);}
     /** Returns ciphertext only. Caller authenticates/decrypts using its existing AppProtocol. */
@@ -93,11 +118,12 @@ public final class NativeAgentMailbox {
         }
     }
     private void tick(){
-        if(!running)return;if(paused.getAsBoolean()){prefs.edit().putBoolean("connected",false).apply();return;}
+        if(!running)return;prefs.edit().putBoolean("paused",paused.getAsBoolean()).putLong("observedAtMs",System.currentTimeMillis()).apply();if(paused.getAsBoolean()){prefs.edit().putBoolean("connected",false).apply();return;}
+        prefs.edit().putString("lastError","").apply();
         for(JSONObject pending:new ArrayList<>(pendingPersistence.values()))
             complete(pending.optJSONObject("command"),pending.optJSONObject("result"),pending.optString("status"));
         try{recover();dispatchPending();}catch(Exception error){error("Private mailbox recovery unavailable");}
-        try{pollIndex();prefs.edit().putBoolean("connected",true).putLong("lastPollAt",System.currentTimeMillis()).apply();}
+        try{pollIndex();long now=System.currentTimeMillis();prefs.edit().putBoolean("connected",true).putLong("lastPollAt",now).putLong("lastPollSuccessAt",now).apply();}
         catch(Exception error){prefs.edit().putBoolean("connected",false).putLong("lastPollAt",System.currentTimeMillis()).apply();error("GitHub mailbox unavailable or invalid; retrying");}
         try{dispatchPending();}catch(Exception error){error("Private mailbox dispatch unavailable");}
     }
@@ -172,20 +198,54 @@ public final class NativeAgentMailbox {
 
     private void flushReceipts(){
         if(!running||paused.getAsBoolean())return;
+        long started=android.os.SystemClock.elapsedRealtime(),deadline=started+RECEIPT_SWEEP_MS;
+        int requests=0;long sentBytes=0;String limit="complete";
         try{
             JSONArray ids=store.pendingReceipts(System.currentTimeMillis());
-            // One page per receipt per sweep prevents a large/offline old receipt starving newer work.
-            for(int i=0;i<ids.length()&&running&&!paused.getAsBoolean();i++){
-                String id=ids.getString(i);try{
-                    JSONObject envelope=store.receipt(id);if(envelope==null)throw new IOException("Receipt unavailable");JSONArray pages=NativeAgentMailboxCrypto.receiptPages(envelope);int page=store.receiptPage(id);if(page>=pages.length()){store.pageSent(id,page,true);continue;}
-                    JSONObject fragment=pages.getJSONObject(page);String device="vsm_"+channel+"_"+id.replace("-","")+"_p"+page;
-                    JSONObject body=new JSONObject().put("deviceId",device).put("meta",new JSONObject().put("name","Encrypted native receipt").put("platform","android-native-receipt").put("appVersion",AppProtocol.APP_VERSION).put("capabilities",new JSONArray().put("videostudio.agent.receipt-carrier.v1").put(fragment.toString())));
-                    HttpURLConnection c=open(AppProtocol.BASE+"/api/device/register");try{c.setRequestMethod("POST");c.setDoOutput(true);c.setRequestProperty("Content-Type","application/json; charset=utf-8");byte[] bytes=body.toString().getBytes(StandardCharsets.UTF_8);c.setFixedLengthStreamingMode(bytes.length);try(OutputStream out=c.getOutputStream()){out.write(bytes);}if(c.getResponseCode()!=200)throw new IOException("Receipt carrier unavailable");JSONObject response=NativeAgentMailboxCrypto.parse(readBounded(c.getInputStream(),128*1024),128*1024);JSONObject returned=response.optJSONObject("device");if(!response.optBoolean("ok")||returned==null||!device.equals(returned.optString("deviceId"))||!body.getJSONObject("meta").getJSONArray("capabilities").toString().equals(returned.optJSONArray("capabilities")==null?"":returned.getJSONArray("capabilities").toString()))throw new IOException("Receipt carrier did not preserve fragment");}
-                    finally{close(c);}
-                    store.pageSent(id,page+1,page+1==pages.length());store.deferReceipt(id,System.currentTimeMillis()+1000);prefs.edit().putString("lastReceiptState",page+1==pages.length()?"encrypted receipt published":"encrypted receipt pages publishing").apply();
-                }catch(Exception error){store.deferReceipt(id,System.currentTimeMillis()+30000);prefs.edit().putString("lastReceiptState","saved privately; carrier retry pending").apply();}
+            boolean[] eligible=new boolean[ids.length()];Arrays.fill(eligible,true);
+            // One page per receipt per round preserves fairness. More rounds remove
+            // the old three-second delay between every pair of available fragments.
+            boolean remaining=ids.length()>0;
+            sweep:while(remaining&&running&&!paused.getAsBoolean()){
+                remaining=false;
+                for(int i=0;i<ids.length();i++){
+                    if(!eligible[i])continue;
+                    if(!running||paused.getAsBoolean()){limit=running?"paused":"stopped";break sweep;}
+                    if(requests>=RECEIPT_SWEEP_REQUESTS){limit="requests";break sweep;}
+                    if(android.os.SystemClock.elapsedRealtime()>=deadline){limit="time";break sweep;}
+                    String id=ids.getString(i);try{
+                        JSONObject envelope=store.receipt(id);if(envelope==null)throw new IOException("Receipt unavailable");JSONArray pages=NativeAgentMailboxCrypto.receiptPages(envelope);int page=store.receiptPage(id);
+                        if(page>=pages.length()){store.pageSent(id,page,true);eligible[i]=false;continue;}
+                        prefs.edit().putString("receiptCommandId",id).putInt("receiptNextPage",page).putInt("receiptTotalPages",pages.length()).apply();
+                        JSONObject fragment=pages.getJSONObject(page);String device="vsm_"+channel+"_"+id.replace("-","")+"_p"+page;
+                        JSONObject body=new JSONObject().put("deviceId",device).put("meta",new JSONObject().put("name","Encrypted native receipt").put("platform","android-native-receipt").put("appVersion",AppProtocol.APP_VERSION).put("capabilities",new JSONArray().put("videostudio.agent.receipt-carrier.v1").put(fragment.toString())));
+                        byte[] bytes=body.toString().getBytes(StandardCharsets.UTF_8);
+                        if(sentBytes+bytes.length>RECEIPT_SWEEP_BYTES){limit="bytes";break sweep;}
+                        long requestMs=deadline-android.os.SystemClock.elapsedRealtime();if(requestMs<=0){limit="time";break sweep;}
+                        HttpURLConnection c=open(AppProtocol.BASE+"/api/device/register");ScheduledFuture<?> timeout=null;
+                        requests++;sentBytes+=bytes.length;
+                        try{
+                            c.setConnectTimeout((int)requestMs);c.setReadTimeout((int)requestMs);
+                            timeout=receiptTimeouts.schedule(c::disconnect,requestMs,TimeUnit.MILLISECONDS);
+                            c.setRequestMethod("POST");c.setDoOutput(true);c.setRequestProperty("Content-Type","application/json; charset=utf-8");c.setFixedLengthStreamingMode(bytes.length);
+                            try(OutputStream out=c.getOutputStream()){out.write(bytes);}
+                            if(c.getResponseCode()!=200)throw new IOException("Receipt carrier unavailable");
+                            JSONObject response=NativeAgentMailboxCrypto.parse(readBounded(c.getInputStream(),128*1024),128*1024);JSONObject returned=response.optJSONObject("device");
+                            if(!response.optBoolean("ok")||returned==null||!device.equals(returned.optString("deviceId"))||!body.getJSONObject("meta").getJSONArray("capabilities").toString().equals(returned.optJSONArray("capabilities")==null?"":returned.getJSONArray("capabilities").toString()))throw new IOException("Receipt carrier did not preserve fragment");
+                        }finally{if(timeout!=null)timeout.cancel(false);close(c);}
+                        // Persist acknowledgement before another page is attempted. A
+                        // lost reply retries the identical encrypted fragment and ID.
+                        boolean done=page+1==pages.length();store.pageSent(id,page+1,done);store.deferReceipt(id,System.currentTimeMillis()+1000);
+                        prefs.edit().putString("lastReceiptState",done?"encrypted receipt published":"encrypted receipt pages publishing").putString("lastReceiptError","")
+                                .putInt("receiptNextPage",page+1).putLong("lastReceiptProgressAt",System.currentTimeMillis())
+                                .putLong("receiptPublishedPages",prefs.getLong("receiptPublishedPages",0)+1)
+                                .putLong("receiptPublishedBytes",prefs.getLong("receiptPublishedBytes",0)+bytes.length).apply();
+                        eligible[i]=!done;remaining|=!done;
+                    }catch(Exception error){eligible[i]=false;store.deferReceipt(id,System.currentTimeMillis()+30000);prefs.edit().putString("lastReceiptState","saved privately; carrier retry pending").putString("lastReceiptError","Receipt carrier unavailable or fragment acknowledgement rejected").apply();}
+                }
             }
         }catch(Exception error){error("Private receipt queue unavailable");}
+        finally{prefs.edit().putLong("observedAtMs",System.currentTimeMillis()).putLong("lastSweepAt",System.currentTimeMillis()).putInt("lastSweepRequests",requests).putLong("lastSweepBytes",sentBytes).putLong("lastSweepDurationMs",android.os.SystemClock.elapsedRealtime()-started).putString("lastSweepLimit",limit).apply();}
     }
     private HttpURLConnection openFreshMailboxRead(String path)throws Exception{
         // Raw GitHub may serve a five-minute CDN snapshot despite no-cache.

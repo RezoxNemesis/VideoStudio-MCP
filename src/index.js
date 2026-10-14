@@ -90,7 +90,7 @@ const appActionAllowed = (mode,action) => {
 
   // One-file mode is an explicit user lock, not the normal operating mode.
   if(mode==="one_file"){
-    return ["ping","get_state","self_test","job_status","activity_note","apply_tool","preview_project","analyse_media","export_project","cancel_job","cancel_all_jobs","stop_all"].includes(a);
+    return ["ping","get_state","get_native_result_page","self_test","job_status","activity_note","apply_tool","preview_project","analyse_media","export_project","cancel_job","cancel_all_jobs","stop_all"].includes(a);
   }
 
   // "all_tools" remains a backward-compatible alias for Full Autonomous.
@@ -1817,9 +1817,13 @@ function serverForApp(env,ownerKey,protocolVersion=1){
   s.registerTool("app_state",{description:"Request full current native app/project state including active asset metadata, jobs, creator capabilities and recent on-device ChatGPT activity.",inputSchema:{}},async()=>queue("get_state",{}));
   if(isV3) {
     for(const [action,inputSchema] of Object.entries(studioToolSchemas)){
-      const readOnly=['sketch_list','sketch_get','sketch_inspect','sketch_preview','sketch_paint_journal','sketch_sample_color','sketch_book_list','sketch_book_get','sketch_live_events','sketch_capabilities','open_pipeline_capabilities','open_pipeline_list','open_pipeline_status'].includes(action);
+      const readOnly=['get_native_delivery_status','get_native_result_page','sketch_list','sketch_get','sketch_inspect','sketch_preview','sketch_paint_journal','sketch_sample_color','sketch_book_list','sketch_book_get','sketch_live_events','sketch_capabilities','open_pipeline_capabilities','open_pipeline_list','open_pipeline_status'].includes(action);
       const detail=action==='sketch_get'?' Geometry is paged by layer/object IDs; pointLimit<=512. Keep returned revision for atomic edits.'
         :action==='sketch_preview'?' Returns the actual shared Canvas frame as an MCP image. Native 3.9.3 adds crop bounds for close inspection of eyes, hair and other details; sourcePixelBounds maps the preview back to exact full-canvas coordinates.'
+        :action==='sketch_import_drawing_asset'?' Native 4.3.1: reads a hash-bound drawing packet and source already imported as private assets. No manual Drive handoff. Requires source-project revision, both file hashes, and an explicit original_strokes or source_assisted declaration. Full preflight precedes every mark; resume preserves human edits. Valid geometry does not certify likeness.'
+        :action==='get_native_result_page'?' Native 4.3.1: retrieves a bounded base64 page of an archived full native result. Concatenate pages, verify resultBytes and resultSha256, then decode the original JSON; terminal status is preserved.'
+        :action==='get_native_delivery_status'?' Native 4.3.1: inspect pending legacy result deliveries, their original checksums and reconciliation state in bounded pages. Does not report transport publication as native execution.'
+        :action==='compact_native_delivery'?' Native 4.3.1: explicitly prepare a smaller legacy terminal receipt after matching its original result checksum. Full result and original wire receipt remain private on the phone. Local preparation does not mean the server acknowledged it; verify delivery status.'
         :action==='sketch_import_drawing_manifest'||action==='sketch_import_frame_manifest'?' Reads a hash-bound JSONL drawing packet and original source from the app’s already linked folder, without placing geometry in the relay. Full preflight precedes any drawing; replay preserves human edits. Read the returned native job through completion. Valid objects do not certify visual likeness.'
         :action==='sketch_capabilities'?' Read this before drawing. Original portraits, landscapes and animation may start from a text prompt and an empty canvas; reference images are optional.'
         :action==='sketch_live_begin'?' Call before the first stroke. The open phone canvas presents every accepted drawing operation and stroke progress; it preserves rapid batches rather than skipping intermediate steps.'

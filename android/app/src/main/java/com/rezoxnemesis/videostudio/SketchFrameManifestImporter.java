@@ -2,11 +2,16 @@ package com.rezoxnemesis.videostudio;
 
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.net.Uri;
 import org.json.JSONArray;
 import org.json.JSONObject;
+import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.FileInputStream;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.security.MessageDigest;
 import java.util.HashSet;
 
@@ -17,13 +22,94 @@ import java.util.HashSet;
  */
 public final class SketchFrameManifestImporter {
     private static final int MAX_MANIFEST_BYTES=4*1024*1024;
+    private static final long MAX_SOURCE_BYTES=256L*1024*1024;
     private static final String SCHEMA="videostudio.sketch.frame-ops.v1";
     private static final String[] EXTRA_LAYERS={"bg_ink","combat_black","combat_white","action_ink"};
 
     public interface Progress {
         void completed(int frames,int total) throws Exception;
     }
+    private interface BeforeWrite {void verify()throws Exception;}
+    private static final class AssetPacket {
+        final byte[] manifest;
+        final String packetSha,sourceSha,sourceName,packetRegistration,sourceRegistration;
+        AssetPacket(byte[] manifest,String packetSha,String sourceSha,String sourceName,
+                    ProjectStore.Asset packet,ProjectStore.Asset source)throws Exception {
+            this.manifest=manifest;this.packetSha=packetSha;this.sourceSha=sourceSha;this.sourceName=sourceName;
+            packetRegistration=SketchDocument.canonical(packet.toJson());sourceRegistration=SketchDocument.canonical(source.toJson());
+        }
+    }
     private SketchFrameManifestImporter(){}
+
+    /** Imports exact registered private assets; bytes never pass through the command relay. */
+    public static JSONObject importFromProjectAssets(Context context,ProjectStore projects,
+                                                      JSONObject params,Progress progress)throws Exception {
+        SketchDocument.fields(params,"projectId,sourceProjectUpdatedAt,sketchId,manifestAssetId,expectedManifestSha256,sourceAssetId,expectedSourceSha256,expectedFrameCount,drawingMethod");
+        String projectId=SketchDocument.id(params,"projectId"),sketchId=SketchDocument.id(params,"sketchId"),
+                manifestId=SketchDocument.id(params,"manifestAssetId"),sourceId=SketchDocument.id(params,"sourceAssetId");
+        long revision=SketchDocument.integer(params,"sourceProjectUpdatedAt",0,Long.MAX_VALUE);
+        String expectedPacket=checkedHash(params.getString("expectedManifestSha256")),
+                expectedSource=checkedHash(params.getString("expectedSourceSha256")),
+                method=params.getString("drawingMethod");
+        SketchDrawingPolicy.requireMethod(method);
+        int count=(int)SketchDocument.integer(params,"expectedFrameCount",1,1200);
+        // Capture immutable packet bytes and source proof under the project revision guard.
+        AssetPacket captured=projects.guardedProject(projectId,revision,project->{
+            ProjectStore.Asset packetAsset=project.asset(manifestId),sourceAsset=project.asset(sourceId);
+            if(packetAsset==null||sourceAsset==null)throw SketchDocument.bad("Drawing packet and source must be registered in the selected project");
+            String packetName=checkedPacketName(packetAsset.name),sourceName=checkedName(sourceAsset.name,null);
+            boolean gzip=packetName.endsWith(".gz");
+            File packetFile=privateAsset(context,packetAsset,gzip?MAX_MANIFEST_BYTES+65536L:MAX_MANIFEST_BYTES),
+                    sourceFile=privateAsset(context,sourceAsset,MAX_SOURCE_BYTES);
+            byte[] packet;
+            try(InputStream in=new FileInputStream(packetFile)){packet=bounded(in,gzip?MAX_MANIFEST_BYTES+65536:MAX_MANIFEST_BYTES);}
+            String packetSha=hex(MessageDigest.getInstance("SHA-256").digest(packet));
+            if(!expectedPacket.equals(packetSha))throw new IllegalStateException("SKETCH_MANIFEST_SHA256_MISMATCH: no sketch changes made");
+            String sourceSha;
+            try(InputStream in=new FileInputStream(sourceFile)){sourceSha=sourceHash(in,MAX_SOURCE_BYTES);}
+            if(!expectedSource.equals(sourceSha))throw new IllegalStateException("VIDEO_SOURCE_SHA256_MISMATCH: no sketch changes made");
+            return new AssetPacket(readPacket(new ByteArrayInputStream(packet),gzip),packetSha,sourceSha,sourceName,packetAsset,sourceAsset);
+        });
+        // Full geometry preflight happens before this admission recheck. Never hold the
+        // source project's writer lock during sketch edits, progress callbacks or pauses.
+        BeforeWrite admission=()->projects.guardedProject(projectId,revision,project->{
+            ProjectStore.Asset packet=project.asset(manifestId),source=project.asset(sourceId);
+            if(packet==null||source==null||!captured.packetRegistration.equals(SketchDocument.canonical(packet.toJson()))
+                    ||!captured.sourceRegistration.equals(SketchDocument.canonical(source.toJson())))
+                throw new IllegalStateException("SOURCE_ASSET_CHANGED: drawing inputs changed before admission");
+            verifyPrivateHash(context,packet,MAX_MANIFEST_BYTES+65536L,captured.packetSha);
+            verifyPrivateHash(context,source,MAX_SOURCE_BYTES,captured.sourceSha);
+            return null;
+        });
+        JSONObject result=applyBytes(context,captured.manifest,captured.sourceSha,sketchId,count,method,admission,progress)
+                .put("projectId",projectId).put("sourceProjectUpdatedAt",revision)
+                .put("manifestAssetId",manifestId).put("sourceAssetId",sourceId)
+                .put("verifiedManifestAssetSha256",captured.packetSha).put("sourceName",captured.sourceName)
+                .put("sourceProjectVerifiedAtAdmission",true).put("sourceProjectModifiedByImporter",false);
+        if(!captured.sourceName.toLowerCase(java.util.Locale.ROOT).endsWith(".mp4"))result.remove("sourceVideoUnchanged");
+        return result;
+    }
+
+    private static String checkedHash(String value){
+        if(!value.matches("[a-f0-9]{64}"))throw SketchDocument.bad("An exact lowercase SHA-256 is required");return value;
+    }
+    private static File privateAsset(Context context,ProjectStore.Asset asset,long maximum)throws Exception {
+        Uri uri=Uri.parse(asset.uri);
+        if(!"file".equals(uri.getScheme())||uri.getAuthority()!=null&&!uri.getAuthority().isEmpty()
+                ||uri.getQuery()!=null||uri.getFragment()!=null||uri.getPath()==null)
+            throw SketchDocument.bad("Drawing import requires an app-private registered file");
+        File input=new File(uri.getPath()),file=input.getCanonicalFile();
+        String root=context.getFilesDir().getCanonicalPath()+File.separator;
+        if(!file.getPath().startsWith(root)||Files.isSymbolicLink(input.toPath())||!file.isFile()
+                ||file.length()<1||file.length()>maximum||asset.sizeBytes!=file.length())
+            throw SketchDocument.bad("Drawing asset ownership, size or private storage changed");
+        return file;
+    }
+    private static void verifyPrivateHash(Context context,ProjectStore.Asset asset,long maximum,String expected)throws Exception {
+        try(InputStream in=new FileInputStream(privateAsset(context,asset,maximum))){
+            if(!expected.equals(sourceHash(in,maximum)))throw new IllegalStateException("SOURCE_ASSET_CHANGED: drawing input bytes changed before admission");
+        }
+    }
 
     public static JSONObject importFromWorkspace(Context context,JSONObject params,
                                                   Progress progress) throws Exception {
@@ -55,8 +141,11 @@ public final class SketchFrameManifestImporter {
 
     /** Hashing an owned source streams 32KiB blocks; source bytes never enter the drawing/relay. */
     static String sourceHash(InputStream input)throws Exception {
+        return sourceHash(input,Long.MAX_VALUE);
+    }
+    private static String sourceHash(InputStream input,long maximum)throws Exception {
         MessageDigest sha=MessageDigest.getInstance("SHA-256");byte[] buffer=new byte[32768];int n;long total=0;
-        while((n=input.read(buffer))!=-1){if(Thread.currentThread().isInterrupted())throw new InterruptedException();total=Math.addExact(total,n);sha.update(buffer,0,n);}
+        while((n=input.read(buffer))!=-1){if(Thread.currentThread().isInterrupted())throw new InterruptedException();total=Math.addExact(total,n);if(total>maximum)throw SketchDocument.bad("Drawing source exceeds bounded import budget");sha.update(buffer,0,n);}
         if(total==0)throw SketchDocument.bad("Drawing source is empty");return hex(sha.digest());
     }
     static byte[] readPacket(InputStream input,boolean gzip)throws Exception {
@@ -71,6 +160,12 @@ public final class SketchFrameManifestImporter {
     /** Bounded pure-source entrypoint also exercised by native Robolectric tests. */
     static JSONObject applyBytes(Context context,byte[] data,String sourceSha,String sketchId,
                                  int expectedCount,Progress progress) throws Exception {
+        return applyBytes(context,data,sourceSha,sketchId,expectedCount,SketchDrawingPolicy.ASSISTED,null,progress);
+    }
+    private static JSONObject applyBytes(Context context,byte[] data,String sourceSha,String sketchId,
+                                        int expectedCount,String method,BeforeWrite admission,Progress progress)throws Exception {
+        SketchDrawingPolicy.requireMethod(method);
+        JSONObject policy=new JSONObject().put("drawingMethod",method);
         if(data==null||data.length<30||data.length>MAX_MANIFEST_BYTES)
             throw new IllegalArgumentException("Source sketch manifest exceeds bounded size");
         if(sourceSha==null||!sourceSha.matches("[a-f0-9]{64}"))
@@ -108,8 +203,10 @@ public final class SketchFrameManifestImporter {
         if(declared.length()>31)throw SketchDocument.bad("Use at most 31 imported layers");
         JSONObject candidate=SketchDocument.create(create);
         for(int n=0;n<declared.length();n++){JSONObject layer=declared.getJSONObject(n);SketchDocument.fields(layer,"id,name,visible,locked,opacity,transform,keys,objects,blendMode");String layerId=SketchDocument.id(layer,"id");if(!allowedLayers.add(layerId)||layer.optJSONArray("objects")!=null&&layer.getJSONArray("objects").length()!=0)throw SketchDocument.bad("Imported layers require unique IDs and empty objects");JSONObject add=new JSONObject().put("type","add_layer").put("layer",layer);layers.put(add);SketchEditOps.apply(candidate,add);}
+        SketchDrawingPolicy.requireOperations(policy,layers);
         HashSet<String> allIds=new HashSet<>();
         checkOps(background,0,count,true,allIds,allowedLayers);
+        SketchDrawingPolicy.requireOperations(policy,background);
         for(int n=0;n<background.length();n++)appendCandidate(candidate,background.getJSONObject(n));
         for(int f=0;f<count;f++){
             String line=scan.readLine();
@@ -120,6 +217,7 @@ public final class SketchFrameManifestImporter {
             if(commands.length()<1||commands.length()>SketchDocument.MAX_OBJECTS)
                 throw new IllegalArgumentException("Frame exceeds the document drawing-object budget");
             checkOps(commands,f,count,false,allIds,allowedLayers);
+            SketchDrawingPolicy.requireOperations(policy,commands);
             for(int n=0;n<commands.length();n++)appendCandidate(candidate,commands.getJSONObject(n));
         }
         if(scan.readLine()!=null)throw new IllegalArgumentException("Unexpected frames after declared video length");
@@ -130,6 +228,8 @@ public final class SketchFrameManifestImporter {
         String binding=sourceSha+":"+manifestSha;
         SharedPreferences prefs=context.getSharedPreferences("sketch_manifest_import_v1",Context.MODE_PRIVATE);
         String previous=prefs.getString(sketchId,"");
+        if(!previous.isEmpty()&&!method.equals(prefs.getString(sketchId+":drawingMethod",SketchDrawingPolicy.ASSISTED)))
+            throw new IllegalStateException("SKETCH_DRAWING_METHOD_CHANGED: preserving the original import declaration");
         JSONObject present=readExisting(context,sketchId);
         boolean legacyPartition=!previous.isEmpty()&&!prefs.getBoolean(sketchId+":partition395",false);
         if(!previous.isEmpty()&&!previous.equals(binding))
@@ -140,14 +240,25 @@ public final class SketchFrameManifestImporter {
             requireMatchingObjects(present,candidate);
             if(legacyPartition)requireLegacyReceiptsIntact(context,sketchId,manifestSha,raw,count,objectIds(present));
         }
-        if(previous.isEmpty()&&!prefs.edit().putString(sketchId,binding).putBoolean(sketchId+":partition395",true).commit())
+        String liveSession="manifest_live_"+manifestSha.substring(0,16);boolean startLive=false;
+        try(SketchProjectStore store=new SketchProjectStore(context)){
+            JSONObject active=store.activeDrawingSession(sketchId);
+            if(SketchDrawingPolicy.requiresOriginal(active)&&!liveSession.equals(active.getString("sessionId")))
+                throw new IllegalStateException("SKETCH_ORIGINAL_SESSION_ACTIVE: preserving the current drawing session");
+            try{
+                JSONObject live=store.liveSession(sketchId,liveSession);
+                if(!method.equals(SketchDrawingPolicy.method(live)))throw new IllegalStateException("SKETCH_DRAWING_METHOD_CHANGED: preserving the existing live session");
+                if(live.optBoolean("ended")&&(present==null||!objectIds(present).containsAll(allIds)))
+                    throw new IllegalStateException("SKETCH_IMPORT_CONFLICT: SKETCH_LIVE_SESSION_ENDED; preserving the closed drawing session");
+            }catch(IllegalArgumentException unknown){if(!unknown.getMessage().contains("Unknown live drawing session"))throw unknown;startLive=true;}
+        }
+        if(admission!=null)admission.verify();
+        if(previous.isEmpty()&&!prefs.edit().putString(sketchId,binding).putBoolean(sketchId+":partition395",true).putString(sketchId+":drawingMethod",method).commit())
             throw new IllegalStateException("Unable to retain source manifest identity");
         if(present==null)SketchEditOps.execute(context,"sketch_create",create);
-        String liveSession="manifest_live_"+manifestSha.substring(0,16);boolean startLive=false;
-        try(SketchProjectStore store=new SketchProjectStore(context)){try{store.liveSession(sketchId,liveSession);}catch(IllegalArgumentException unknown){if(!unknown.getMessage().contains("Unknown live drawing session"))throw unknown;startLive=true;}}
-        if(startLive){JSONObject current=readExisting(context,sketchId);SketchEditOps.execute(context,"sketch_live_begin",new JSONObject().put("sketchId",sketchId).put("operationId",liveSession).put("expectedRevision",current.getLong("revision")));}
-        applyMissing(context,sketchId,layers,"manifest_layers_"+manifestSha.substring(0,10));
-        applyMissing(context,sketchId,background,"manifest_background_"+manifestSha.substring(0,10));
+        if(startLive){JSONObject current=readExisting(context,sketchId);SketchEditOps.execute(context,"sketch_live_begin",new JSONObject().put("sketchId",sketchId).put("operationId",liveSession).put("expectedRevision",current.getLong("revision")).put("drawingMethod",method));}
+        applyMissing(context,sketchId,layers,"manifest_layers_"+manifestSha.substring(0,10),liveSession);
+        applyMissing(context,sketchId,background,"manifest_background_"+manifestSha.substring(0,10),liveSession);
 
         java.io.BufferedReader reader=new java.io.BufferedReader(new java.io.StringReader(raw));
         reader.readLine();
@@ -158,13 +269,13 @@ public final class SketchFrameManifestImporter {
             for(int i=0;i<ops.length();i++){
                 JSONObject item=ops.getJSONObject(i);int itemBytes=item.toString().getBytes(StandardCharsets.UTF_8).length;
                 if(batch.length()>0&&(batch.length()>=64||batchBytes+itemBytes>480*1024)){
-                    applyMissing(context,sketchId,batch,batchId);batch=new JSONArray();batchBytes=0;
+                    applyMissing(context,sketchId,batch,batchId,liveSession);batch=new JSONArray();batchBytes=0;
                     batchId=chunkPrefix+f+(i==0?"":"_part_"+i);
                 }
                 batch.put(item);batchBytes+=itemBytes;
             }
             if(batch.length()>=28||f==count-1){
-                applyMissing(context,sketchId,batch,batchId);batch=new JSONArray();batchBytes=0;
+                applyMissing(context,sketchId,batch,batchId,liveSession);batch=new JSONArray();batchBytes=0;
                 batchId=chunkPrefix+(f+1);
             }
             if(progress!=null)progress.completed(f+1,count);
@@ -178,6 +289,7 @@ public final class SketchFrameManifestImporter {
             throw new IllegalStateException("Native sketch import missing authored frames: imported source retained");
         SketchEditOps.execute(context,"sketch_live_end",new JSONObject().put("sketchId",sketchId).put("sessionId",liveSession).put("expectedRevision",finalDoc.getLong("revision")));
         return new JSONObject().put("ok",true).put("sketchId",sketchId).put("liveSessionId",liveSession).put("everyAcceptedOperationRecorded",true)
+                .put("drawingMethod",method).put("referencePixelsMayBeCopied",SketchDrawingPolicy.ASSISTED.equals(method))
                 .put("revision",finalDoc.getLong("revision"))
                 .put("frameCount",count).put("fps",fps).put("width",width).put("height",height)
                 .put("validatedObjects",allIds.size())
@@ -255,7 +367,7 @@ public final class SketchFrameManifestImporter {
         }
         return ids;
     }
-    private static void applyMissing(Context ctx,String id,JSONArray proposed,String operationId)
+    private static void applyMissing(Context ctx,String id,JSONArray proposed,String operationId,String liveSession)
             throws Exception {
         JSONObject doc=readExisting(ctx,id);
         if(doc==null)throw new IllegalStateException("Source sketch disappeared");
@@ -277,7 +389,7 @@ public final class SketchFrameManifestImporter {
         JSONObject request=new JSONObject().put("sketchId",id)
                 .put("expectedRevision",doc.getLong("revision"))
                 .put("operationId",operationId).put("operations",missing);
-        SketchEditOps.execute(ctx,"sketch_edit",request);
+        SketchEditOps.executeLiveEdit(ctx,request,liveSession);
     }
     private static byte[] bounded(InputStream in,int limit)throws Exception{
         ByteArrayOutputStream out=new ByteArrayOutputStream();byte[] buffer=new byte[32768];int n;

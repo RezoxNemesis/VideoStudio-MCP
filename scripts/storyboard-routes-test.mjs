@@ -289,7 +289,7 @@ test('studio relay alias generic execution keeps queued alias native-only when t
 });
 test('studio relay alias version and canonical parameter failures happen before queue writes',async()=>{
  const old=await fixture('3.8.1'),before=old.writes();
- for(const alias of STUDIO_ALIAS_ACTIONS){const paint=['studio_sketch_paint_journal','studio_sketch_sample_color','studio_sketch_archive','studio_sketch_restore_archive'].includes(alias);assert.throws(()=>contract.requireStoryboardNativeVersion({appVersion:'3.8.1'},alias),alias==='studio_cinematic_3d_edit_program'?/4\.3\.0/:alias==='studio_import_mailbox_media'?/4\.2\.0/:paint?/4\.1\.0/:/3\.9\.[0156]/);}
+ for(const alias of STUDIO_ALIAS_ACTIONS){const paint=['studio_sketch_paint_journal','studio_sketch_sample_color','studio_sketch_archive','studio_sketch_restore_archive'].includes(alias);const repair=['studio_sketch_import_drawing_asset','studio_get_native_result_page','studio_get_native_delivery_status','studio_compact_native_delivery'].includes(alias);assert.throws(()=>contract.requireStoryboardNativeVersion({appVersion:'3.8.1'},alias),repair?/4\.3\.1/:alias==='studio_cinematic_3d_edit_program'?/4\.3\.0/:alias==='studio_import_mailbox_media'?/4\.2\.0/:paint?/4\.1\.0/:/3\.9\.[0156]/);}
  await assert.rejects(old.relay.appEnqueueV3(old.owner,'studio_sketch_get',{sketchId:'s'}),/3\.9\.0/);assert.equal(old.writes(),before);
  const current=await fixture('3.9.0'),currentBefore=current.writes();
  await assert.rejects(current.relay.appEnqueueV3(current.owner,'studio_sketch_get',{sketchId:'s',uri:'content://foreign'}));
@@ -330,4 +330,24 @@ test('legacy native result compatibility returns delivery and job evidence with 
   assert.equal(view.execution.workState,'awaiting_job');assert.equal(view.execution.outputVerified,false);
   assert.equal(response.content.filter(item=>item.type==='image').length,image?1:0);
  }
+});
+
+test('native archived result pages retain exact encoded bytes through the real MCP result handler',async()=>{
+ const f=await fixture('4.3.1'),original=Buffer.from(JSON.stringify({ok:true,details:'日本語 drawing receipt'}));
+ const request=await f.call('app_get_native_result_page',{commandId:'original-command',pageIndex:0});
+ assert.equal(request.queued,true);
+ const digest=Buffer.from(await webcrypto.subtle.digest('SHA-256',original)).toString('hex');
+ const page={ok:true,schema:'videostudio.native-result-page.v1',commandId:'original-command',status:'completed',resultBytes:original.length,resultSha256:digest,encoding:'base64',pageIndex:0,pageCount:1,encodedChunk:original.toString('base64')};
+ await f.relay.appCompleteV3(f.deviceId,f.owner,request.commandId,page,'completed');
+ const returned=await f.call('app_get_command_result',{commandId:request.commandId});
+ assert.equal(returned.result.encodedChunk,page.encodedChunk);
+ assert.deepEqual(Buffer.from(returned.result.encodedChunk,'base64'),original);
+ assert.equal(returned.result.resultSha256,digest);
+});
+test('one-file mode admits receipt paging while retaining drawing-import and history-repair restrictions',async()=>{
+ const f=await fixture('4.3.1','one_file');
+ const result=await f.call('app_get_native_result_page',{commandId:'selected-file-original-result',pageIndex:0});
+ assert.equal(result.queued,true);
+ assert.equal((await f.call('app_get_native_delivery_status',{})).queued,false);
+ assert.equal((await f.call('app_compact_native_delivery',{commandId:'original-command',expectedResultSha256:'a'.repeat(64)})).queued,false);
 });

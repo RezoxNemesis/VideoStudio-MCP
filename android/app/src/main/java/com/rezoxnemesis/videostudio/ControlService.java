@@ -616,7 +616,8 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         }
         ActivityLog.add(this, "chatgpt", friendlyAction(action), commandDetail(action, p), "running", 0, commandId, projectId);
 
-        if (!isAllowed(action, p)) {
+        String admissionMode=permissionMode(),admissionFile=prefs.getString(KEY_FILE, "");
+        if (!isAllowed(action, p, admissionMode, admissionFile)) {
             JSONObject denied = new JSONObject();
             try {
                 denied.put("ok", false);
@@ -626,6 +627,10 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             commandJournal.finish(command, denied, "denied");
             acknowledge(command, denied, "denied");
             return;
+        }
+
+        if (protocol != null && (mailbox == null || !mailbox.owns(commandId))) {
+            protocol.captureResultScope(command,admissionMode,admissionFile);
         }
 
         try {
@@ -648,6 +653,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 case "sketch_render": case "sketch_book_render": complete(command,queueSketchRender(p));return;
                 case "sketch_import_frame_manifest": complete(command,queueSketchFrameManifest(p));return;
                 case "sketch_import_drawing_manifest": complete(command,queueSketchDrawingManifest(p));return;
+                case "sketch_import_drawing_asset": complete(command,queueSketchDrawingAsset(p));return;
                 case "open_pipeline_configure": case "open_pipeline_capabilities": case "open_pipeline_list":
                 case "open_pipeline_status": case "open_pipeline_cancel":
                     complete(command,OpenPipelineOperations.execute(this,store,action,p,null));return;
@@ -663,6 +669,21 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                     return;
                 case "connection_health":
                     complete(command, connectionHealth());
+                    return;
+                case "get_native_result_page":
+                    SketchDocument.fields(p,"commandId,pageIndex");
+                    complete(command,protocol.readResultPage(SketchDocument.id(p,"commandId"),
+                            (int)SketchDocument.integer(p,"pageIndex",0,Integer.MAX_VALUE)));
+                    return;
+                case "get_native_delivery_status":
+                    SketchDocument.fields(p,"limit");
+                    complete(command,protocol.deliveryStatus(p.has("limit")?(int)SketchDocument.integer(p,"limit",1,4):4));
+                    return;
+                case "compact_native_delivery":
+                    SketchDocument.fields(p,"commandId,expectedResultSha256");
+                    String resultHash=p.getString("expectedResultSha256");
+                    if(!resultHash.matches("[a-f0-9]{64}"))throw new IllegalArgumentException("A native result SHA-256 is required");
+                    complete(command,protocol.compactLegacyReceipt(SketchDocument.id(p,"commandId"),resultHash));
                     return;
                 case "create_hybrid_binding": {
                     String webDeviceId = p.optString("webDeviceId", "").trim();
@@ -1971,6 +1992,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                     case "sketch_import_frame_manifest":
                         parameters.remove("projectId");
                         queued=queueSketchFrameManifest(parameters);break;
+                    case "sketch_import_drawing_asset":queued=queueSketchDrawingAsset(parameters);break;
                     case "open_pipeline_export_request": case "open_pipeline_submit": case "open_pipeline_download_result":
                     case "open_pipeline_import_result": case "open_pipeline_archive_artifact": case "open_pipeline_restore_artifact":
                         if(!"open_pipeline_export_request".equals(action))parameters.remove("projectId");
@@ -2957,6 +2979,27 @@ public final class ControlService extends Service implements AppProtocol.Callbac
      * public URL or enormous MCP payload. The import uses normal Sketch Studio
      * revision-bound vector edits and resumes after a process restart.
      */
+    private JSONObject queueSketchDrawingAsset(JSONObject input) throws Exception {
+        final JSONObject request=publicOperationParameters(input);
+        SketchDocument.fields(request,"projectId,sourceProjectUpdatedAt,sketchId,manifestAssetId,expectedManifestSha256,sourceAssetId,expectedSourceSha256,expectedFrameCount,drawingMethod");
+        String sketchId=SketchDocument.id(request,"sketchId"),projectId=SketchDocument.id(request,"projectId");
+        JSONObject durable=new JSONObject(request.toString());
+        if(input.has("_recoveryPlanId"))durable.put("_recoveryPlanId",input.get("_recoveryPlanId"));
+        if(input.has("_mcpCommandId"))durable.put("_mcpCommandId",input.get("_mcpCommandId"));
+        JobManager.Job job=submitRecoverableTransfer("sketch_import_drawing_asset",durable,projectId,
+                "Sketch Studio • Verified drawing file",state->{
+                    checkpoint(state,"Drawing verification","Verifying imported drawing and source hashes",2,projectId);
+                    JSONObject result=SketchFrameManifestImporter.importFromProjectAssets(this,store,request,(frame,total)->{
+                        checkpoint(state,"Editable drawings",frame+"/"+total+" frames saved",
+                                5+(int)(90d*frame/Math.max(1,total)),projectId);
+                        jobs.awaitSafeCheckpoint(state,"sketch_asset_frame_"+frame);
+                    });
+                    state.setResult(result);
+                    checkpoint(state,"Sketch Studio","Drawing file applied to editable frames",100,projectId);
+                });
+        return ok().put("queued",true).put("jobId",job.id).put("projectId",projectId)
+                .put("sketchId",sketchId).put("durableRecovery",true).put("galleryAccess",false);
+    }
     private JSONObject queueSketchDrawingManifest(JSONObject input) throws Exception {
         JSONObject request=publicOperationParameters(input);SketchDocument.fields(request,"sketchId,manifestName,sourceName,expectedSourceSha256,expectedFrameCount");
         request.put("videoName",request.remove("sourceName"));
@@ -4627,6 +4670,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             out.put("stableMcpEndpoint", true);
             out.put("stableMcpPath", McpConnectionCore.STABLE_MCP_PATH);
             out.put("connectionCore", protocol.connectionStatus());
+            out.put("backupConnection", mailbox == null ? NativeAgentMailbox.savedHealth(this) : mailbox.health());
             out.put("serviceOnline", prefs.getBoolean(KEY_SERVICE_ONLINE, false));
             out.put("serviceDetail", prefs.getString(KEY_SERVICE_DETAIL, ""));
             out.put("serviceHeartbeat", prefs.getLong("control_service_heartbeat", 0));
@@ -4817,22 +4861,28 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             out.put("driveWorkspace", driveWorkspace.status());
             out.put("creatorCatalog", CreatorCatalog.describe());
             out.put("recentActivity", ActivityLog.recent(this, 30));
-            out.put("commandJournal", commandJournal.recent(20));
+            out.put("commandJournal", commandJournal.recentSummaries(20));
+            out.put("backupConnection", mailbox == null ? NativeAgentMailbox.savedHealth(this) : mailbox.health());
         } catch (Exception ignored) {}
         return out;
     }
 
     private boolean isAllowed(String action, JSONObject parameters) {
+        return isAllowed(action,parameters,permissionMode(),prefs.getString(KEY_FILE,""));
+    }
+
+    private boolean isAllowed(String action, JSONObject parameters, String mode, String allowed) {
         String lower = action == null ? "" : action.toLowerCase(Locale.US);
 
         // This is an architectural privacy wall, not a user permission tier.
         // Even Full Autonomous cannot enumerate or browse the phone Gallery.
         if (lower.contains("gallery") || lower.contains("media_library") || lower.contains("photo_library")) return false;
 
-        String mode = permissionMode();
         if ("one_file".equals(mode)) {
-            String allowed = prefs.getString(KEY_FILE, "");
             if (allowed.isEmpty()) return false;
+            if ("get_native_result_page".equals(action)) {
+                return protocol.canReadResultForFile(parameters.optString("commandId",""),allowed);
+            }
             if ("apply_tool".equals(action)) {
                 ProjectStore.Project project = resolveProject(parameters.optString("projectId", ""));
                 int index = parameters.optInt("clipIndex", -1);
@@ -4947,7 +4997,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         switch (action) {
             case "import_mailbox_media":
             case "sketch_render": case "sketch_book_render":
-            case "sketch_import_frame_manifest": case "sketch_import_drawing_manifest":
+            case "sketch_import_frame_manifest": case "sketch_import_drawing_manifest": case "sketch_import_drawing_asset":
             case "open_pipeline_export_request": case "open_pipeline_submit": case "open_pipeline_download_result":
             case "open_pipeline_import_result": case "open_pipeline_archive_artifact": case "open_pipeline_restore_artifact":
             case "prompt_video":
@@ -5298,7 +5348,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             case "sketch_get": case "sketch_list": return "Reading sketch geometry";
             case "sketch_preview": return "Rendering a sketch preview";
             case "sketch_import_reference": return "Importing an owned sketch reference";
-            case "sketch_import_frame_manifest": case "sketch_import_drawing_manifest": return "Importing editable drawings in Sketch Studio";
+            case "sketch_import_frame_manifest": case "sketch_import_drawing_manifest": case "sketch_import_drawing_asset": return "Importing editable drawings in Sketch Studio";
             case "sketch_render": return "Exporting sketch animation";
             case "open_pipeline_configure": return "Configuring the private open-source runner";
             case "open_pipeline_capabilities": return "Reading actual runner readiness";

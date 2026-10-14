@@ -82,7 +82,7 @@ public final class CommandJournal {
     }
 
     public synchronized void begin(JSONObject command) {
-        if (command == null || "get_state".equals(command.optString("action"))) return;
+        if (command == null || "get_state".equals(command.optString("action")) || "ping".equals(command.optString("action"))) return;
         String id = command.optString("id");
         if (id.isEmpty()) return;
         JSONObject entry = new JSONObject();
@@ -160,7 +160,7 @@ public final class CommandJournal {
     }
 
     public synchronized void finish(JSONObject command, JSONObject result, String status) {
-        if (command == null || "get_state".equals(command.optString("action"))) return;
+        if (command == null || "get_state".equals(command.optString("action")) || "ping".equals(command.optString("action"))) return;
         String id = command.optString("id");
         if (id.isEmpty()) return;
         JSONObject entry = new JSONObject();
@@ -182,6 +182,30 @@ public final class CommandJournal {
         for (int i = 0; i < entries.length() && out.length() < count; i++) {
             JSONObject item = entries.optJSONObject(i);
             if (item != null) out.put(item);
+        }
+        return out;
+    }
+
+    /** Diagnostic state must never embed another command's document or image payload. */
+    public synchronized JSONArray recentSummaries(int limit) {
+        JSONArray entries = read(), out = new JSONArray();
+        int count = Math.max(1, Math.min(MAX, limit));
+        for (int i = 0; i < entries.length() && out.length() < count; i++) {
+            JSONObject item = entries.optJSONObject(i);
+            if (item == null) continue;
+            JSONObject summary = new JSONObject();
+            try {
+                for (String key : new String[]{"id", "seq", "action", "status", "updatedAt", "jobId", "projectId"}) {
+                    if (item.has(key)) summary.put(key, item.get(key));
+                }
+                JSONObject result = item.optJSONObject("result");
+                if (result != null) {
+                    summary.put("resultBytes", result.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8).length);
+                    summary.put("resultRetainedLocally", true);
+                    if (result.has("ok")) summary.put("ok", result.optBoolean("ok"));
+                }
+                out.put(summary);
+            } catch (org.json.JSONException ignored) {}
         }
         return out;
     }
@@ -214,7 +238,7 @@ public final class CommandJournal {
             JSONArray safe = new JSONArray();
             for (int i = 0; i < stored.length() && safe.length() < MAX; i++) {
                 JSONObject entry = stored.optJSONObject(i);
-                if (entry != null && !"get_state".equals(entry.optString("action"))) safe.put(entry);
+                if (entry != null && !"get_state".equals(entry.optString("action")) && !"ping".equals(entry.optString("action"))) safe.put(entry);
             }
             return safe;
         }

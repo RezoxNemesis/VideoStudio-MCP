@@ -42,7 +42,7 @@ import javax.crypto.spec.GCMParameterSpec;
 public final class AppProtocol {
     public static final String BASE = "https://wispy-queen-f9b5.prakasharuntandon634.workers.dev";
     public static final int PROTOCOL_VERSION = 3;
-    public static final String APP_VERSION = "4.3.0";
+    public static final String APP_VERSION = "4.3.1";
     /** Stable compatibility URL. APK updates must not change this path. */
     public static final String MCP_PATH = McpConnectionCore.STABLE_MCP_PATH;
     /** Stable registration bootstrap. Runtime requests use the negotiated profile. */
@@ -76,6 +76,7 @@ public final class AppProtocol {
     private ConnectivityManager.NetworkCallback networkCallback;
     private volatile boolean running;
     private volatile String permissionMode = "everything";
+    private final java.util.concurrent.ConcurrentHashMap<String,String> resultScopes=new java.util.concurrent.ConcurrentHashMap<>();
     private volatile JSONObject projectSummary = new JSONObject();
     private volatile int consecutiveFailures = 0;
     private final String deviceId;
@@ -247,12 +248,63 @@ public final class AppProtocol {
     public void complete(JSONObject command, JSONObject result, String status) {
         if (command == null) return;
         try {
-            if (!outbox.contains(command.optString("id"))) outbox.put(command, result, status);
+            if (!outbox.contains(command.optString("id"))) {
+                String selected=selectedResultFileIfLocked();
+                String proven=resultScopes.get(command.optString("id"));
+                String binding=proven!=null && !proven.isEmpty() && proven.equals(selected)?proven:"";
+                outbox.put(command,result,status,binding.isEmpty()?"everything":"one_file",binding);
+            }
+            resultScopes.remove(command.optString("id"));
         } catch (Exception error) {
             notifyConnection(false, "Result persistence failed; command will be retried from its journal");
             return;
         }
         if (!io.isShutdown()) io.execute(this::flushOutbox);
+    }
+
+    /** Called before fresh native work with the exact snapshot used to authorize admission. */
+    public void captureResultScope(JSONObject command,String admittedMode,String admittedFileId) {
+        String id=command==null?"":command.optString("id");
+        if(id.isEmpty()) return;
+        String selected="one_file".equals(admittedMode) && admittedFileId!=null?admittedFileId:"";
+        // Absence of a captured scope (restored work/journal replay) and broad
+        // admission must never become permission to read under a later file lock.
+        resultScopes.putIfAbsent(id,selected);
+    }
+
+    public JSONObject readResultPage(String commandId,int pageIndex) throws Exception {
+        requireResultFileAccess(commandId);
+        JSONObject page=outbox.readResultPage(commandId,pageIndex);
+        // The selected file may change while a background read is running.
+        requireResultFileAccess(commandId);
+        return page;
+    }
+
+    public boolean canReadResultForFile(String commandId,String allowedFileId) {
+        return outbox.canReadResultForFile(commandId,allowedFileId);
+    }
+
+    private String selectedResultFileIfLocked() {
+        java.util.Map<String,?> saved=prefs.getAll();
+        Object mode=saved.get("permission_mode"),selected=saved.get("allowed_asset_id");
+        String currentMode=mode instanceof String?(String)mode:permissionMode;
+        if(!"one_file".equals(currentMode)) return null;
+        return selected instanceof String?(String)selected:"";
+    }
+
+    private void requireResultFileAccess(String commandId) {
+        String selected=selectedResultFileIfLocked();
+        if(selected!=null && !canReadResultForFile(commandId,selected))
+            throw new SecurityException("Native result is not bound to the selected file");
+    }
+
+    public JSONObject deliveryStatus(int limit) throws Exception {return outbox.deliveryStatus(limit);}
+
+    public JSONObject compactLegacyReceipt(String commandId,String expectedResultSha256) throws Exception {
+        JSONObject result;
+        synchronized(outboxLock) {result=outbox.compactLegacyReceipt(commandId,expectedResultSha256);}
+        if(!io.isShutdown()) io.execute(this::flushOutbox);
+        return result;
     }
 
     private void flushOutbox() {
@@ -291,9 +343,10 @@ public final class AppProtocol {
                     // Crucial: one rejected/oversized result must not block
                     // every later self-test, rig status or animation ACK.
                     String message = error.getMessage();
-                    if (message != null && message.matches("HTTP [0-9]{3}"))
+                    if (message != null && message.matches("HTTP [0-9]{3}( SQLITE_TOOBIG| TERMINAL_ACK_CONFLICT)?"))
                         lastResultDeliveryError = message;
                     else lastResultDeliveryError = "Native ACK upload/reply failed";
+                    if(message!=null && message.endsWith(" TERMINAL_ACK_CONFLICT")) outbox.markNeedsReconciliation(id);
                     // A rejected older result must not permanently block all
                     // newer native commands. Keep the exact result for later retry.
                     try { outbox.defer(id); }
@@ -401,7 +454,13 @@ public final class AppProtocol {
         meta.put("modelPacks", true);
         meta.put("computePlanner", true);
         meta.put("folderScopedCloudWorkspace", true);
-        meta.put("projects", projectSummary.optJSONArray("projects") == null ? new JSONArray() : projectSummary.optJSONArray("projects"));
+        JSONArray fullProjects=projectSummary.optJSONArray("projects");
+        JSONArray projects=RelayTransportPolicy.projects(fullProjects);
+        meta.put("projects",projects);
+        meta.put("projectSummary",new JSONObject().put("kind","bounded-native-index")
+                .put("totalProjects",fullProjects==null?0:fullProjects.length())
+                .put("includedProjects",projects.length()).put("fullProjectsRemainOnDevice",true));
+        meta.put("nativeMailbox",NativeAgentMailbox.savedHealth(context));
         return meta;
     }
 
@@ -497,8 +556,8 @@ public final class AppProtocol {
         }
         int code = c.getResponseCode();
         InputStream stream = code >= 200 && code < 300 ? c.getInputStream() : c.getErrorStream();
-        String text = read(stream);
-        if (code < 200 || code >= 300) throw new IllegalStateException("HTTP " + code);
+        String text = code>=200 && code<300 ? read(stream) : readError(stream);
+        if (code < 200 || code >= 300) throw new IllegalStateException(RelayTransportPolicy.safeHttpError(code,text));
         return text.isEmpty() ? new JSONObject() : new JSONObject(text);
         } finally { c.disconnect(); }
     }
@@ -514,6 +573,15 @@ public final class AppProtocol {
             }
         }
         return b.toString();
+    }
+
+    private static String readError(InputStream stream) throws Exception {
+        if(stream==null)return "";
+        char[] prefix=new char[4096];int offset=0;
+        try(InputStreamReader reader=new InputStreamReader(stream,StandardCharsets.UTF_8)) {
+            while(offset<prefix.length) {int read=reader.read(prefix,offset,prefix.length-offset);if(read<0)break;offset+=read;}
+        }
+        return new String(prefix,0,offset);
     }
 
     private static final class OwnerLoadResult {

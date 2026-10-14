@@ -352,7 +352,7 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
 
     private static boolean hasArtwork(JSONObject doc) throws Exception {JSONArray layers=doc.getJSONArray("layers");for(int i=0;i<layers.length();i++)if(layers.getJSONObject(i).getJSONArray("objects").length()>0)return true;return false;}
     private void workspaceDialog(){
-        if(document==null)return;String[] choices={"Fit canvas","Grid guides","Symmetry drawing","Onion skin settings","Live ChatGPT drawing","Reference crop / tracing","Recover local draft as a separate sketch","Focus selected object","Import linked drawing packet","Drawing content audit","ChatGPT hand"};
+        if(document==null)return;String[] choices={"Fit canvas","Grid guides","Symmetry drawing","Onion skin settings","Live ChatGPT drawing","Reference crop / tracing","Recover local draft as a separate sketch","Focus selected object","Import drawing packet","Drawing content audit","ChatGPT hand"};
         new AlertDialog.Builder(this).setTitle("Drawing workspace").setItems(choices,(d,index)->{try{switch(index){case 0:canvas.resetView();break;case 1:grid=!grid;canvas.setGuides(grid,symmetry);getPreferences(MODE_PRIVATE).edit().putBoolean("grid",grid).apply();break;case 2:symmetryDialog();break;case 3:onionDialog();break;case 4:toggleLiveWatch();break;case 5:referenceTools();break;case 6:String source=sketchId;io.execute(()->{try{if(session!=null)session.awaitIdle(15000);String recovered=SketchEditorSession.recoverAsCopy(this,source);postUi(()->{bookId=null;book=null;loadSketch(recovered,0);});}catch(Exception error){postUi(()->onMessage(error.getMessage()));}});break;case 7:canvas.focusSelection();break;case 8:importDrawingDialog();break;case 9:inspectDrawing();break;case 10:boolean hand=!getPreferences(MODE_PRIVATE).getBoolean("agentHand",true);getPreferences(MODE_PRIVATE).edit().putBoolean("agentHand",hand).apply();canvas.setAgentHandEnabled(hand);updateAgentToolIndicator();onMessage(hand?"ChatGPT hand visible":"ChatGPT hand hidden");break;}}catch(Exception error){onMessage(error.getMessage());}}).show();
     }
     private void symmetryDialog(){
@@ -376,8 +376,94 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
     private void applyCanvasFocus(){for(View view:drawingChrome)view.setVisibility(canvasFocus?View.GONE:View.VISIBLE);}
     private void toggleCanvasFocus(){canvasFocus=!canvasFocus;getPreferences(MODE_PRIVATE).edit().putBoolean("canvasFocus",canvasFocus).apply();applyCanvasFocus();}
     private void importDrawingDialog(){
-        LinearLayout form=column();EditText id=input("New drawing ID","drawing_"+UUID.randomUUID().toString().replace("-",""),false),manifest=input("JSONL in your linked workspace","drawing.jsonl",false),source=input("Source image, video or prompt TXT in that folder","reference.png",false),count=input("Ordered frame count (1..1200)","1",true);form.addView(id);form.addView(manifest);form.addView(source);form.addView(count);
-        new AlertDialog.Builder(this).setTitle("Import editable drawing packet").setView(form).setNegativeButton("Cancel",null).setPositiveButton("Import",(d,w)->{try{String drawingId=id.getText().toString(),manifestName=manifest.getText().toString(),sourceName=source.getText().toString();int frames=Integer.parseInt(count.getText().toString());afterSaves(()->{String hash=SketchFrameManifestImporter.sourceHash(this,sourceName);JSONObject args=new JSONObject().put("sketchId",drawingId).put("manifestName",manifestName).put("videoName",sourceName).put("expectedSourceSha256",hash).put("expectedFrameCount",frames);SketchFrameManifestImporter.importFromWorkspace(this,args,(done,total)->postUi(()->status.setText("Importing editable frames · "+done+"/"+total)));postUi(()->{bookId=null;book=null;loadSketch(drawingId,0);});});}catch(Exception error){onMessage(error.getMessage());}}).show();
+        new AlertDialog.Builder(this).setTitle("Import drawing packet")
+                .setItems(new String[]{"Imported project files","Linked workspace folder"},(d,index)->{
+                    if(index==0)projectDrawingImportDialog();else linkedDrawingImportDialog();
+                }).setNegativeButton("Cancel",null).show();
+    }
+    private void linkedDrawingImportDialog(){
+        LinearLayout form=column();EditText manifest=input("JSONL in your linked workspace","drawing.jsonl",false),source=input("Source image, video or prompt TXT in that folder","reference.png",false),count=input("Ordered frame count (1..1200)","1",true);form.addView(manifest);form.addView(source);form.addView(count);
+        TextView method=new TextView(this);method.setText("Linked packets retain source-assisted drawing provenance.");method.setTextColor(StudioUi.MUTED);form.addView(method);
+        new AlertDialog.Builder(this).setTitle("Import linked drawing packet").setView(form).setNegativeButton("Cancel",null).setPositiveButton("Import",(d,w)->{try{String manifestName=manifest.getText().toString(),sourceName=source.getText().toString();int frames=Integer.parseInt(count.getText().toString());afterSaves(()->{
+            JSONObject header;try(java.io.InputStream in=new DriveWorkspaceProvider(this).openLinkedSourceFile(manifestName)){header=drawingPacketHeader(in,manifestName.endsWith(".gz"));}
+            String drawingId=SketchDocument.id(header,"targetSketchId"),hash=SketchFrameManifestImporter.sourceHash(this,sourceName);JSONObject args=new JSONObject().put("sketchId",drawingId).put("manifestName",manifestName).put("videoName",sourceName).put("expectedSourceSha256",hash).put("expectedFrameCount",frames);SketchFrameManifestImporter.importFromWorkspace(this,args,(done,total)->postUi(()->status.setText("Importing editable frames · "+done+"/"+total)));postUi(()->{bookId=null;book=null;loadSketch(drawingId,0);});});}catch(Exception error){onMessage(error.getMessage());}}).show();
+    }
+    private static final class DrawingImportProject {
+        final ProjectStore.Project project;
+        final ArrayList<ProjectStore.Asset> packets=new ArrayList<>(),sources=new ArrayList<>();
+        DrawingImportProject(ProjectStore.Project project){this.project=project;}
+    }
+    private java.io.File drawingImportFile(ProjectStore.Asset asset,long maximum)throws Exception {
+        android.net.Uri uri=android.net.Uri.parse(asset.uri);
+        if(!"file".equals(uri.getScheme())||uri.getPath()==null||uri.getQuery()!=null||uri.getFragment()!=null
+                ||uri.getAuthority()!=null&&!uri.getAuthority().isEmpty())throw SketchDocument.bad("Choose an imported private project file");
+        java.io.File input=new java.io.File(uri.getPath()),file=input.getCanonicalFile();
+        if(!file.getPath().startsWith(getFilesDir().getCanonicalPath()+java.io.File.separator)
+                ||java.nio.file.Files.isSymbolicLink(input.toPath())||!file.isFile()||file.length()<1
+                ||file.length()>maximum||file.length()!=asset.sizeBytes)throw SketchDocument.bad("Imported project file is unavailable or changed");
+        return file;
+    }
+    private void projectDrawingImportDialog(){
+        afterSaves(()->{
+            ArrayList<DrawingImportProject> choices=new ArrayList<>();
+            for(ProjectStore.Project project:new ProjectStore(this).list()){
+                DrawingImportProject candidate=new DrawingImportProject(project);
+                for(ProjectStore.Asset asset:project.assets){
+                    if(asset.name==null||!asset.name.matches("[A-Za-z0-9_.-]{1,120}")||asset.name.contains(".."))continue;
+                    boolean packet=asset.name.endsWith(".jsonl")||asset.name.endsWith(".jsonl.gz"),source=asset.name.toLowerCase(java.util.Locale.ROOT).matches(".*\\.(mp4|png|jpg|jpeg|webp|txt)");
+                    if(!packet&&!source)continue;
+                    try{drawingImportFile(asset,packet?4L*1024*1024+65536:256L*1024*1024);if(packet)candidate.packets.add(asset);else candidate.sources.add(asset);}catch(Exception unavailable){}
+                }
+                if(!candidate.packets.isEmpty()&&!candidate.sources.isEmpty())choices.add(candidate);
+            }
+            postUi(()->{
+                if(choices.isEmpty()){onMessage("Import a drawing packet and its source into a VideoStudio project first.");return;}
+                String[] names=new String[choices.size()];for(int i=0;i<names.length;i++)names[i]=choices.get(i).project.name;
+                new AlertDialog.Builder(this).setTitle("Choose source project").setItems(names,(d,index)->chooseProjectDrawingPacket(choices.get(index))).setNegativeButton("Cancel",null).show();
+            });
+        });
+    }
+    private void chooseProjectDrawingPacket(DrawingImportProject selected){
+        String[] names=new String[selected.packets.size()];for(int i=0;i<names.length;i++)names[i]=selected.packets.get(i).name;
+        new AlertDialog.Builder(this).setTitle("Choose drawing packet").setItems(names,(d,index)->{
+            ProjectStore.Asset packet=selected.packets.get(index);String[] sources=new String[selected.sources.size()];for(int i=0;i<sources.length;i++)sources[i]=selected.sources.get(i).name;
+            new AlertDialog.Builder(this).setTitle("Choose drawing source").setItems(sources,(sourceDialog,sourceIndex)->afterSaves(()->{
+                JSONObject header;try(java.io.InputStream in=new java.io.FileInputStream(drawingImportFile(packet,4L*1024*1024+65536))){header=drawingPacketHeader(in,packet.name.endsWith(".gz"));}
+                postUi(()->drawingAssetSettings(selected,packet,selected.sources.get(sourceIndex),header));
+            })).setNegativeButton("Cancel",null).show();
+        }).setNegativeButton("Cancel",null).show();
+    }
+    private static JSONObject drawingPacketHeader(java.io.InputStream input,boolean gzip)throws Exception {
+        byte[] bytes=SketchFrameManifestImporter.readPacket(input,gzip);
+        String first=new java.io.BufferedReader(new java.io.StringReader(new String(bytes,java.nio.charset.StandardCharsets.UTF_8))).readLine();
+        if(first==null)throw SketchDocument.bad("Drawing packet is empty");JSONObject header=new JSONObject(first).getJSONObject("header");
+        if(!"videostudio.sketch.frame-ops.v1".equals(header.getString("schema")))throw SketchDocument.bad("Choose a supported drawing packet");
+        SketchDocument.id(header,"targetSketchId");SketchDocument.integer(header,"frameCount",1,1200);return header;
+    }
+    private String drawingAssetHash(ProjectStore.Asset asset,long maximum)throws Exception {
+        try(java.io.InputStream input=new java.io.FileInputStream(drawingImportFile(asset,maximum))){return SketchFrameManifestImporter.sourceHash(input);}
+    }
+    private void drawingAssetSettings(DrawingImportProject selected,ProjectStore.Asset packet,ProjectStore.Asset source,JSONObject header){
+        LinearLayout form=column();TextView files=new TextView(this);files.setText(packet.name+"\nSource: "+source.name);files.setTextColor(StudioUi.TEXT);form.addView(files);
+        EditText count=input("Drawing packet frame count",String.valueOf(header.optInt("frameCount")),true);count.setInputType(InputType.TYPE_CLASS_NUMBER);form.addView(count);
+        Spinner method=new Spinner(this);method.setContentDescription("Drawing method");method.setMinimumHeight(dp(48));
+        method.setAdapter(new ArrayAdapter<>(this,android.R.layout.simple_spinner_dropdown_item,new String[]{"Choose drawing method","Source assisted","Original strokes"}));form.addView(method);
+        TextView explanation=new TextView(this);explanation.setText("Confirm the ordered frame count (1..1200). Choose Original strokes only for artwork authored without tracing or copying a reference.");explanation.setTextColor(StudioUi.MUTED);form.addView(explanation);
+        ScrollView scroll=new ScrollView(this);scroll.addView(form);AlertDialog dialog=new AlertDialog.Builder(this).setTitle("Import editable drawing").setView(scroll).setNegativeButton("Cancel",null).setPositiveButton("Import",null).create();dialog.show();
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{try{
+            int frames=Integer.parseInt(count.getText().toString());if(frames<1||frames>1200)throw SketchDocument.bad("Frame count must be 1..1200");
+            int choice=method.getSelectedItemPosition();if(choice<1)throw SketchDocument.bad("Choose the drawing method before importing");
+            String declared=choice==2?SketchDrawingPolicy.ORIGINAL:SketchDrawingPolicy.ASSISTED,drawingId=SketchDocument.id(header,"targetSketchId");
+            SketchEditorSession opened=session;int generation=loadGeneration;stopPlayback();dialog.dismiss();status.setText("Verifying drawing packet…");
+            afterSaves(()->{
+                String packetHash=drawingAssetHash(packet,4L*1024*1024+65536),sourceHash=drawingAssetHash(source,256L*1024*1024);
+                JSONObject request=new JSONObject().put("projectId",selected.project.id).put("sourceProjectUpdatedAt",selected.project.updatedAt)
+                        .put("sketchId",drawingId).put("manifestAssetId",packet.id).put("expectedManifestSha256",packetHash)
+                        .put("sourceAssetId",source.id).put("expectedSourceSha256",sourceHash).put("expectedFrameCount",frames).put("drawingMethod",declared);
+                SketchFrameManifestImporter.importFromProjectAssets(this,new ProjectStore(this),request,(done,total)->postUi(()->status.setText("Importing editable frames · "+done+"/"+total)));
+                postUi(()->{if(session!=opened||loadGeneration!=generation||session!=null&&session.pending()>0){onMessage("Drawing imported. Find it in File → Open.");return;}bookId=null;book=null;loadSketch(drawingId,0);});
+            });
+        }catch(Exception error){onMessage(error.getMessage());}});
     }
     private void inspectDrawing(){
         if(document==null)return;try{JSONObject args=new JSONObject().put("sketchId",sketchId).put("expectedRevision",document.getLong("revision")).put("frameOffset",Math.max(0,canvas.getFrame()-1)).put("frameLimit",32);

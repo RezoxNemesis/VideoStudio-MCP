@@ -1,0 +1,28 @@
+# Video studio 4.3.1 reliability repair
+
+This patch addresses the recurring `SQLITE_TOOBIG` command failure and drawing-file handoff reported after 4.3.0. It preserves the application ID, original signer, device identity, projects and media. Gallery access remains disabled.
+
+## Live evidence, 14 October 2026
+
+The installed phone reported 4.3.0 and a fresh heartbeat while a new, empty `connection_health` request failed at command admission with `SQLITE_TOOBIG`. Heartbeat success therefore did not prove command delivery.
+
+The deployed legacy relay retains commands and their results in a single storage value. One already completed `sketch_get` result was privately archived and replaced with an explicit checksum/byte-count history envelope, preserving its completed status. After this reduction, a fresh primary health command was accepted and completed on the phone. Nine older native result deliveries still required recovery; the temporary reduction does not establish that the legacy server is permanently repaired.
+
+All three MP4s from the uploaded archive were imported through the encrypted native media mailbox, checked by native size/SHA-256 results, and sampled by Video studio's native analyzer. No Gallery browsing or host video processing was used. The first recording shows sideways decoded 3D content. Coded dimensions alone do not identify its cause: Media3 can intentionally store portrait video using landscape dimensions and rotation metadata. A pre-encode frame comparison remains required; this patch does not claim to fix that rendering defect or establish artistic fidelity.
+
+## Changes
+
+- Native terminal results are archived in full before sending a bounded relay envelope. The first receipt and original command sequence remain stable across retries and process restart. Large results advertise exact bytes, SHA-256 and `get_native_result_page` for reconstruction: decode each `encodedChunk` using the declared `encoding: "base64"`, join the bytes in page order, and verify `resultBytes` and `resultSha256` before parsing JSON. In One File Lock, paging requires the same selected file at admission, receipt capture and retrieval; older, unrestricted-mode and restored work without proven admission scope receive no file binding.
+- Existing pending receipts keep their original bytes on migration. `get_native_delivery_status` exposes bounded recovery metadata; `compact_native_delivery` explicitly verifies the original hash, retains the full result and original wire receipt, and prepares a smaller delivery. Preparation never claims server acknowledgement. Conflicting terminal acknowledgements remain pending for reconciliation.
+- Registration sends a bounded project index. State diagnostics summarize journal entries instead of embedding prior drawing documents and image results. Only allowlisted HTTP error causes enter diagnostics.
+- Backup receipt delivery batches fairly with limits of 16 requests, 640 KiB and six seconds per sweep. Every acknowledged fragment has a durable checkpoint; retries preserve ciphertext and IDs. Poll status, receipt progress and failures are visible independently of the primary heartbeat.
+- State reads and receipt recovery run away from Android's UI thread.
+- `sketch_import_drawing_asset` reads a packet and source already registered as private project assets. Both hashes, project revision, canonical ownership, bounded gzip expansion, declared drawing method and the complete geometry are checked before marks. Resume preserves human edits. Every batch atomically requires the same live session, so human takeover stops further import marks.
+- Human users can choose imported project files by name from Sketch Studio's drawing import dialog. The linked-folder flow remains available. Neither flow requires entering internal IDs or hashes.
+- Native video analysis distinguishes coded/display dimensions and decoded frame sizes, reports rotation/duration availability and labels approximate sync-frame sampling. Unknown metadata is not treated as successful motion evidence.
+
+## Verification and deployment boundary
+
+Focused regressions cover oversized ACKs, frozen retry bytes, Unicode result reconstruction, explicit legacy recovery, receipt fragment retry/restart/budgets, drawing ownership/hashes/gzip/replay, human takeover, project lock release and the human import UI. The complete Node suite passes 233 tests plus 306 smoke assertions. Signed Android build and publication evidence is recorded after CI completes.
+
+The repaired Worker implementation must still be deployed to bound aggregate cloud command storage. Existing Cloudflare deployment credentials are not configured in this environment; an APK cannot replace the running Worker. New APK functions require installation and real-device acceptance before being called verified on the phone.
