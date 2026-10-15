@@ -358,11 +358,9 @@ public final class SketchStoryFilmGenerator {
                     .put("sketchId",id).put("sessionId",session).put("expectedRevision",revision));
             try(SketchProjectStore store=new SketchProjectStore(context)){
                 JSONObject actual=store.get(id);
-                if(!SketchDocument.sha256(completed.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8))
-                        .equals(SketchDocument.sha256(canonicalWithoutRevision(actual).toString().getBytes(java.nio.charset.StandardCharsets.UTF_8)))){
-                    // JSON object insertion order is not a proof; validate identities/coverage instead.
-                    SketchDocument.validate(actual);verifyCoverage(actual);
-                }
+                SketchDocument.validate(actual);
+                verifyCoverage(actual);
+                if(count(actual)!=total)throw SketchDocument.bad("Some storyboard parts did not persist");
                 return new JSONObject().put("sketchId",id).put("revision",revision).put("sessionId",session)
                         .put("frameCount",actual.getInt("frameCount")).put("fps",fps)
                         .put("live",true).put("storyTheme",classify(story)).put("persisted",true);
@@ -373,9 +371,6 @@ public final class SketchStoryFilmGenerator {
             catch(Exception ignored){}
             throw error;
         }
-    }
-    private static JSONObject canonicalWithoutRevision(JSONObject document)throws Exception{
-        return SketchDocument.copy(document).put("revision",1);
     }
     private static int count(JSONObject document)throws Exception{
         int total=0;JSONArray layers=document.getJSONArray("layers");
