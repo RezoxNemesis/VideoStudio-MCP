@@ -125,7 +125,12 @@ public final class SketchStoryFilmGenerator {
         return base(id,"ellipse",c,start,span,true).put("bounds",bounds(x,y,w,h));
     }
     private static JSONObject poly(String id,String c,int start,int span,double...xy)throws Exception{
-        JSONArray points=new JSONArray();for(int n=0;n<xy.length;n+=2)points.put(new JSONArray().put(xy[n]).put(xy[n+1]).put(1));
+        if(xy.length<6||xy.length%2!=0)throw SketchDocument.bad("Polygon "+id+" needs at least three points");
+        JSONArray points=new JSONArray();for(int n=0;n<xy.length;n+=2){
+            if(!Double.isFinite(xy[n])||!Double.isFinite(xy[n+1])||xy[n]<0||xy[n]>1||xy[n+1]<0||xy[n+1]>1)
+                throw SketchDocument.bad("Polygon "+id+" must fit the visible canvas");
+            points.put(new JSONArray().put(xy[n]).put(xy[n+1]).put(1));
+        }
         return base(id,"polygon",c,start,span,true).put("points",points);
     }
     private static JSONObject line(String id,String c,int start,int span,double x0,double y0,double x1,double y1,double weight)throws Exception{
@@ -152,7 +157,7 @@ public final class SketchStoryFilmGenerator {
         if("nature".equals(theme)){
             add(city,poly("hill_far_"+act,p.far,start,span,0,.7,.10,.55,.18,.61,.34,.38,.50,.63,.7,.44,.85,.59,1,.39,1,1,0,1));
             add(city,poly("hill_near_"+act,p.city,start,span,0,.84,.1,.73,.22,.76,.32,.58,.44,.72,.55,.65,.68,.77,.80,.60,.90,.68,1,.59,1,1,0,1));
-            for(int n=0;n<12;n++){int r=noise(seed,n+act*50);double x=.02+(n*.081),y=.65+((r/13)%16)/100d;
+            for(int n=0;n<12;n++){int r=noise(seed,n+act*50);double x=.05+(n*.078),y=.65+((r/13)%16)/100d;
                 addAll(city,line("trunk_"+act+"_"+n,p.deep,start,span,x,y,x,y-.12,.008),
                     poly("tree_"+act+"_"+n,n%2==0?p.city:p.far,start,span,x-.038,y-.035,x,y-.20,x+.038,y-.035));}
         }else{
