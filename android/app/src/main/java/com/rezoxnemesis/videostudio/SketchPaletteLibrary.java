@@ -1,7 +1,5 @@
 package com.rezoxnemesis.videostudio;
 
-import android.graphics.Color;
-import java.util.Arrays;
 
 /** Hand-picked opaque ARGB pigments for painting; exact hex values are kept in the sketch. */
 public final class SketchPaletteLibrary {
@@ -34,9 +32,9 @@ public final class SketchPaletteLibrary {
         // Compare sRGB in perceptual-ish linear light to avoid oversaturating close skin shades.
         for(int i=0;i<candidates.length;i++){
             int c=SketchDocument.color(candidates[i]);
-            double dr=linear(Color.red(target))-linear(Color.red(c));
-            double dg=linear(Color.green(target))-linear(Color.green(c));
-            double db=linear(Color.blue(target))-linear(Color.blue(c));
+            double dr=linear((target>>>16)&255)-linear((c>>>16)&255);
+            double dg=linear((target>>>8)&255)-linear((c>>>8)&255);
+            double db=linear(target&255)-linear(c&255);
             double distance=.2126*dr*dr+.7152*dg*dg+.0722*db*db;
             if(distance<lowest){lowest=distance;best=i;}
         }
