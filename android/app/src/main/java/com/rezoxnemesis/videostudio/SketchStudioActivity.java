@@ -857,7 +857,7 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
         form.addView(exact);
         LinearLayout buttons=row(form);
         ScrollView scroll=new ScrollView(this);scroll.addView(form);
-        AlertDialog dialog=new AlertDialog.Builder(this).setTitle("Colour studio · 160 pigments")
+        AlertDialog dialog=new AlertDialog.Builder(this).setTitle("Colour studio · 176 pigments")
                 .setView(scroll).setNegativeButton("Close",null).create();
         Runnable refresh=()->{
             swatches.removeAllViews();int group=picker.getSelectedItemPosition();
@@ -885,7 +885,7 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
                         brushColor=pigment;updateBrush();dialog.dismiss();
                     });
                     swatch.setTextColor(SketchDocument.color(pigment));
-                    swatch.setContentDescription("Use pigment "+pigment);
+                    swatch.setContentDescription("Colour "+pigment);
                     swatch.setMinHeight(dp(42));
                 }
             }
