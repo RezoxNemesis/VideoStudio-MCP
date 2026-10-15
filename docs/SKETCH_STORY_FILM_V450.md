@@ -8,7 +8,7 @@ Open Sketch Studio → More → Story → 2D film (also under File). Enter a sho
 
 Optionally select Watch the actual vector drawing journal. This creates blank owned layers, begins a source-bound original_strokes live session, and adds all objects in ordered revision-checked batches. Sketch Studio can replay real accepted draw operations. The phone must be open for live viewing; the replay journal is retained. Rendering/physical-phone playback are separate acceptance steps.
 
-Brush / Text → Colours now gives ten collections of 16 pigments (160 distinct true #AARRGGBB colours): multiple skin-tone/undertone groups, hair, fabrics, nature, night/city, sunset, effects, stone/metal. Personal saved colours, exact ARGB input and the existing advanced full-spectrum HSV editor are retained.
+Brush / Text → Colours now gives eleven collections of 16 pigments (176 distinct true #AARRGGBB colours): multiple skin-tone/undertone groups, hair, fabrics, nature, night/city, sunset, effects, stone/metal. Personal saved colours, exact ARGB input and the existing advanced full-spectrum HSV editor are retained.
 
 Vector pen and eraser stabilization now backs off as strokes accelerate and at sharp corners. Brush/render/export all use the same original saved point geometry. Paint, clone, reference import, human edits and existing projects are unaffected.
 
