@@ -5,7 +5,7 @@ import org.junit.Test;
 import static org.junit.Assert.*;
 
 public final class SketchStrokePrecisionTest {
-    private JSONArray samples(double...xy){
+    private JSONArray samples(double...xy)throws Exception{
         JSONArray out=new JSONArray();
         for(int i=0;i<xy.length;i+=2)out.put(new JSONArray().put(xy[i]).put(xy[i+1]).put(1));
         return out;
