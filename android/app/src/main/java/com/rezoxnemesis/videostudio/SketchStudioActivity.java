@@ -843,10 +843,65 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
     private void savePaletteColour(String colour)throws Exception{
         SketchDocument.color(colour);JSONArray saved=new JSONArray(getPreferences(MODE_PRIVATE).getString("savedPalette","[]"));for(int i=0;i<saved.length();i++)if(colour.equals(saved.getString(i)))return;if(saved.length()>=64)saved.remove(0);saved.put(colour);getPreferences(MODE_PRIVATE).edit().putString("savedPalette",saved.toString()).apply();
     }
-    private void paletteDialog(){LinearLayout palette=column();ArrayList<String> colours=new ArrayList<>(java.util.Arrays.asList("#FF161C2B","#FFFFFFFF","#FF756157","#FFECC6A8","#FFB87958","#FFE45468","#FFEF9B52","#FFF3DA77","#FF61B787","#FF63BADA","#FF4E77BF","#FF8E6CB7"));
-        try{JSONArray saved=new JSONArray(getPreferences(MODE_PRIVATE).getString("savedPalette","[]"));for(int i=0;i<saved.length();i++){String value=saved.getString(i);SketchDocument.color(value);if(!colours.contains(value))colours.add(value);}}catch(Exception ignored){}
-        ScrollView scroll=new ScrollView(this);scroll.addView(palette);AlertDialog dialog=new AlertDialog.Builder(this).setTitle("Colours").setView(scroll).setNegativeButton("Close",null).create();for(int i=0;i<colours.size();i+=3){LinearLayout line=row(palette);for(int n=i;n<Math.min(i+3,colours.size());n++){String colour=colours.get(n);Button swatch=button(line,"●",()->{brushColor=colour;updateBrush();dialog.dismiss();});swatch.setTextColor(SketchDocument.color(colour));swatch.setContentDescription("Colour "+colour);}}
-        LinearLayout actions=row(palette);button(actions,"Save current colour",()->{try{savePaletteColour(brushColor);dialog.dismiss();paletteDialog();}catch(Exception error){onMessage(error.getMessage());}});button(actions,"Full colour picker",()->{dialog.dismiss();paintSettings();});dialog.show();
+    /** Dense but touch-friendly colour library with exact ARGB entry and saved personal pigments. */
+    private void paletteDialog(){
+        LinearLayout form=column();form.setPadding(dp(12),dp(8),dp(12),dp(8));
+        java.util.ArrayList<String> categories=new java.util.ArrayList<>();
+        for(int i=0;i<SketchPaletteLibrary.groupCount();i++)categories.add(SketchPaletteLibrary.name(i));
+        categories.add("My saved colours");
+        Spinner picker=new Spinner(this);picker.setContentDescription("Palette category");
+        picker.setAdapter(new ArrayAdapter<>(this,android.R.layout.simple_spinner_dropdown_item,categories));
+        picker.setMinimumHeight(dp(48));form.addView(picker);
+        LinearLayout swatches=column();form.addView(swatches);
+        EditText exact=input("Exact colour #AARRGGBB",brushColor,false);
+        form.addView(exact);
+        LinearLayout buttons=row(form);
+        ScrollView scroll=new ScrollView(this);scroll.addView(form);
+        AlertDialog dialog=new AlertDialog.Builder(this).setTitle("Colour studio · 160 pigments")
+                .setView(scroll).setNegativeButton("Close",null).create();
+        Runnable refresh=()->{
+            swatches.removeAllViews();int group=picker.getSelectedItemPosition();
+            if(group<0)return;
+            String[] colours;
+            if(group==SketchPaletteLibrary.groupCount()){
+                java.util.ArrayList<String> saved=new java.util.ArrayList<>();
+                try{
+                    JSONArray stored=new JSONArray(getPreferences(MODE_PRIVATE).getString("savedPalette","[]"));
+                    for(int i=0;i<stored.length();i++){
+                        String colour=stored.getString(i);SketchDocument.color(colour);
+                        if(!saved.contains(colour))saved.add(colour);
+                    }
+                }catch(Exception invalid){onMessage("Some saved colours were invalid and were skipped");}
+                colours=saved.toArray(new String[0]);
+            }else colours=SketchPaletteLibrary.colors(group);
+            if(colours.length==0){
+                TextView empty=new TextView(this);empty.setText("No saved colours yet. Choose a pigment or enter an exact ARGB value.");
+                empty.setTextColor(StudioUi.MUTED);swatches.addView(empty);return;
+            }
+            for(int i=0;i<colours.length;i+=4){
+                LinearLayout line=row(swatches);
+                for(int n=i;n<Math.min(i+4,colours.length);n++){
+                    String pigment=colours[n];Button swatch=button(line,"●",()->{
+                        brushColor=pigment;updateBrush();dialog.dismiss();
+                    });
+                    swatch.setTextColor(SketchDocument.color(pigment));
+                    swatch.setContentDescription("Use pigment "+pigment);
+                    swatch.setMinHeight(dp(42));
+                }
+            }
+        };
+        picker.setOnItemSelectedListener(new SimpleSelection(){@Override public void selected(int index){refresh.run();}});
+        button(buttons,"Use exact colour",()->{
+            try{String next=exact.getText().toString().trim();SketchDocument.color(next);
+                brushColor=next;savePaletteColour(next);updateBrush();dialog.dismiss();
+            }catch(Exception error){onMessage(error.getMessage());}
+        });
+        button(buttons,"Save current",()->{
+            try{savePaletteColour(brushColor);picker.setSelection(SketchPaletteLibrary.groupCount());refresh.run();}
+            catch(Exception error){onMessage(error.getMessage());}
+        });
+        button(form,"Advanced HSV / opacity / brush settings",()->{dialog.dismiss();brushDialog();});
+        dialog.show();refresh.run();
     }
     private EditText input(String hint, String value, boolean number) { EditText input = new EditText(this); input.setHint(hint);input.setTextColor(StudioUi.TEXT);input.setHintTextColor(StudioUi.MUTED);input.setContentDescription(hint);input.setText(value); input.setSingleLine();input.setMinimumHeight(dp(48)); if (number) input.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL | InputType.TYPE_NUMBER_FLAG_SIGNED); return input; }
     private int dp(int pixels) { return StudioUi.dp(this,pixels); }
