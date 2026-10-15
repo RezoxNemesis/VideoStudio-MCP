@@ -646,9 +646,60 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
         action.run();
     }catch(Exception error){onMessage(error.getMessage());}}
     private void menu(String title,String[] labels,Runnable... actions){new AlertDialog.Builder(this).setTitle(title).setItems(labels,(d,index)->runAction(labels[index],actions[index])).show();}
-    private void fileMenu(){menu("Sketch files",new String[]{"New","Open","Sketch books","Export video","Archive sketch","Restore archive","Canvas view","Drawing status"},this::newDocument,this::openDocument,this::booksDialog,this::export,this::archiveSketch,this::restoreArchiveDialog,this::toggleCanvasFocus,()->new AlertDialog.Builder(this).setTitle("Drawing status").setMessage(status.getText()+"\n\n"+toolStatus.getText()).setPositiveButton("OK",null).show());}
-    private void moreMenu(){menu("Drawing tools",new String[]{"Layers","Frames / Cels","2D animation","Workspace","Drawing alerts"},this::layersMenu,this::framesMenu,this::openAnimationStudio,this::workspaceDialog,this::drawingAlerts);}
+    private void fileMenu(){menu("Sketch files",new String[]{"New","Open","Sketch books","Export video","Archive sketch","Restore archive","Canvas view","Drawing status","Story → 2D film"},this::newDocument,this::openDocument,this::booksDialog,this::export,this::archiveSketch,this::restoreArchiveDialog,this::toggleCanvasFocus,()->new AlertDialog.Builder(this).setTitle("Drawing status").setMessage(status.getText()+"\n\n"+toolStatus.getText()).setPositiveButton("OK",null).show(),this::storyFilmDialog);}
+    private void moreMenu(){menu("Drawing tools",new String[]{"Layers","Frames / Cels","2D animation","Workspace","Drawing alerts","Story → 2D film"},this::layersMenu,this::framesMenu,this::openAnimationStudio,this::workspaceDialog,this::drawingAlerts,this::storyFilmDialog);}
     private void openAnimationStudio(){if(document==null)return;stopPlayback();afterSaves(()->postUi(()->startActivity(new Intent(this,SketchAnimationActivity.class).putExtra("sketchId",sketchId))));}
+
+    /** Prompt-driven original storyboard; all created cels remain ordinary editable Sketch Studio parts. */
+    private void storyFilmDialog(){
+        LinearLayout form=column();form.setPadding(dp(12),dp(8),dp(12),dp(8));
+        EditText story=new EditText(this);story.setTextColor(StudioUi.TEXT);story.setHintTextColor(StudioUi.MUTED);
+        story.setHint("Describe your character, struggle, action or journey…");
+        story.setContentDescription("Story for original vector animation");
+        story.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_FLAG_MULTI_LINE);
+        story.setMinLines(4);story.setText("The struggle of a man");
+        form.addView(story);
+        EditText duration=input("Duration in seconds (4–12)","10",true);form.addView(duration);
+        CheckBox watch=new CheckBox(this);watch.setText("Watch the actual vector drawing journal");
+        watch.setChecked(true);watch.setTextColor(StudioUi.TEXT);form.addView(watch);
+        TextView note=new TextView(this);note.setTextColor(StudioUi.MUTED);note.setTextSize(12);
+        note.setText("Creates three connected shots with separated character parts, timed poses, camera depth, full-colour environments and editable cels. The text engine stages an original animation draft; it does not infer unseen anatomy or produce neural image generation.");
+        form.addView(note);
+        ScrollView scroll=new ScrollView(this);scroll.addView(form);
+        new AlertDialog.Builder(this).setTitle("Story → 2D film")
+                .setView(scroll).setNegativeButton("Cancel",null)
+                .setPositiveButton("Create film",(d,w)->{
+                    final String narrative=story.getText().toString();
+                    final int seconds;try{seconds=Integer.parseInt(duration.getText().toString().trim());}
+                    catch(NumberFormatException invalid){onMessage("Duration must be a whole number from 4 to 12");return;}
+                    stopPlayback();status.setText("Preparing original storyboard and keyframed character artwork…");
+                    // The transfer worker is separate from UI sketch loading, enabling a real live viewer.
+                    afterSaves(()->transfers.execute(()->{
+                        try{
+                            JSONObject receipt=SketchStoryFilmGenerator.create(this,narrative,seconds,24,watch.isChecked(),new SketchStoryFilmGenerator.Listener(){
+                                public void opened(String id,String stream){
+                                    postUi(()->{
+                                        watching=true;notifiedSketchId=id;notifiedSessionId=stream;notificationReplayPending=true;
+                                        getPreferences(MODE_PRIVATE).edit().putBoolean("watchLiveDrawing",true).apply();
+                                        updateLiveControl();bookId=null;book=null;loadSketch(id,0);
+                                    });
+                                }
+                                public void progress(int finished,int total){
+                                    postUi(()->{if(!destroyed&&finished<total)status.setText("Drawing story frames · "+finished+" / "+total+" parts · all original vector operations saved");});
+                                }
+                            });
+                            String created=receipt.getString("sketchId");
+                            postUi(()->{
+                                if(!receipt.optBoolean("live")){bookId=null;book=null;loadSketch(created,0);}
+                                onMessage("Story film saved · "+receipt.optInt("frameCount")+" frames, 24 FPS · Play or Export video");
+                            });
+                        }catch(Exception error){postUi(()->{
+                            status.setText("Story film retained where already saved · "+error.getMessage());
+                            onMessage(error.getMessage());
+                        });}
+                    }));
+                }).show();
+    }
     private void drawingAlerts(){
         JSONObject availability=SketchLiveNotification.status(this);boolean enabled=availability.optBoolean("available");
         new AlertDialog.Builder(this).setTitle("Drawing alerts").setMessage(enabled?
