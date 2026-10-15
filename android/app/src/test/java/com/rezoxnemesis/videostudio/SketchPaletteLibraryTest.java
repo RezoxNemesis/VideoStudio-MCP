@@ -28,7 +28,7 @@ public final class SketchPaletteLibraryTest {
     @Test public void groupsAreImmutableAndNearestColorIsDeterministic(){
         String[] source=SketchPaletteLibrary.colors(4),previous=source.clone();
         source[0]="#00000000";
-        assertArrayEquals(previous,SketchPaletteLibrary.colors(3));
+        assertArrayEquals(previous,SketchPaletteLibrary.colors(4));
         assertEquals("#FF060A14",SketchPaletteLibrary.nearest("#FF060A14",previous));
         String nearest=SketchPaletteLibrary.nearest("#FF121A27",previous);
         assertTrue(java.util.Arrays.asList(previous).contains(nearest));
