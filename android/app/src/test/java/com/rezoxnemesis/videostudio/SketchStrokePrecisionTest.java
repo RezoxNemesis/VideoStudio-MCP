@@ -2,8 +2,13 @@ package com.rezoxnemesis.videostudio;
 
 import org.json.JSONArray;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.robolectric.RobolectricTestRunner;
+import org.robolectric.annotation.Config;
 import static org.junit.Assert.*;
 
+@RunWith(RobolectricTestRunner.class)
+@Config(sdk=33,manifest=Config.NONE)
 public final class SketchStrokePrecisionTest {
     private JSONArray samples(double...xy)throws Exception{
         JSONArray out=new JSONArray();
