@@ -670,13 +670,14 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
                 .setView(scroll).setNegativeButton("Cancel",null)
                 .setPositiveButton("Create film",(d,w)->{
                     final String narrative=story.getText().toString();
+                    final boolean liveStory=watch.isChecked();
                     final int seconds;try{seconds=Integer.parseInt(duration.getText().toString().trim());}
                     catch(NumberFormatException invalid){onMessage("Duration must be a whole number from 4 to 12");return;}
                     stopPlayback();status.setText("Preparing original storyboard and keyframed character artwork…");
                     // The transfer worker is separate from UI sketch loading, enabling a real live viewer.
                     afterSaves(()->transfers.execute(()->{
                         try{
-                            JSONObject receipt=SketchStoryFilmGenerator.create(this,narrative,seconds,24,watch.isChecked(),new SketchStoryFilmGenerator.Listener(){
+                            JSONObject receipt=SketchStoryFilmGenerator.create(this,narrative,seconds,24,liveStory,new SketchStoryFilmGenerator.Listener(){
                                 public void opened(String id,String stream){
                                     postUi(()->{
                                         watching=true;notifiedSketchId=id;notifiedSessionId=stream;notificationReplayPending=true;
