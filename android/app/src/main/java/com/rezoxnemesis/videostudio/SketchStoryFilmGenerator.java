@@ -189,14 +189,25 @@ public final class SketchStoryFilmGenerator {
             for(int n=0;n<8;n++)add(fx,line("speed_"+act+"_"+n,p.flare,start,span,.03,.13+n*.078,.23+(n%3)*.07,.11+n*.078,.002));
         }
     }
+    /** Three true inbetween poses per beat, eased without expanding the app's supported key schema. */
     private static void motion(JSONObject object,int start,int span,double ax,double ay,double[] dx,double[] dy,double[] rotation)throws Exception{
         JSONObject base=object.getJSONObject("transform");base.put("anchorX",ax).put("anchorY",ay);
-        JSONArray keys=new JSONArray();
-        for(int i=0;i<TIMES.length;i++){
-            int frame=start+(int)Math.round((span-1)*TIMES[i]/4d);
-            JSONObject t=SketchDocument.copy(base).put("x",dx[i]).put("y",dy[i]).put("rotation",rotation[i]);
-            keys.put(new JSONObject().put("frame",frame).put("transform",t).put("interpolation",i==4?"hold":"linear"));
+        JSONArray keys=new JSONArray();int last=-1;
+        for(int i=0;i<4;i++){
+            for(int k=0;k<3;k++){
+                double t=k/3d,e=t*t*(3-2*t);
+                int frame=start+(int)Math.round((span-1)*(i+t)/4d);
+                if(frame<=last)continue;last=frame;
+                JSONObject transform=SketchDocument.copy(base)
+                        .put("x",dx[i]+(dx[i+1]-dx[i])*e)
+                        .put("y",dy[i]+(dy[i+1]-dy[i])*e)
+                        .put("rotation",rotation[i]+(rotation[i+1]-rotation[i])*e);
+                keys.put(new JSONObject().put("frame",frame).put("transform",transform).put("interpolation","linear"));
+            }
         }
+        int finalFrame=start+span-1;
+        keys.put(new JSONObject().put("frame",finalFrame).put("transform",SketchDocument.copy(base)
+                .put("x",dx[4]).put("y",dy[4]).put("rotation",rotation[4])).put("interpolation","hold"));
         object.put("keys",keys);
     }
     private static void character(JSONObject hero,JSONObject ground,int start,int span,int act,Palette p,String theme)throws Exception{
