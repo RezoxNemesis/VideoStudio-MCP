@@ -415,7 +415,7 @@ public final class SketchCanvasView extends View {
         float[] p = {(screenX - left) / viewScale, (screenY - top) / viewScale}; inverse.mapPoints(p);
         double x = Math.max(0, Math.min(1, p[0] / document.getInt("width"))), y = Math.max(0, Math.min(1, p[1] / document.getInt("height")));
         if (gesture.length() > 0) { JSONArray last = gesture.getJSONArray(gesture.length() - 1); if (Math.hypot(x - last.getDouble(0), y - last.getDouble(1)) < .0002 && Math.abs(pressure - last.getDouble(2)) < .01) return; }
-        if(gesture.length()>0&&("stroke".equals(tool)||"eraser".equals(tool))){JSONArray prior=gesture.getJSONArray(gesture.length()-1);x=prior.getDouble(0)*stabilization+x*(1-stabilization);y=prior.getDouble(1)*stabilization+y*(1-stabilization);}
+        if(gesture.length()>0&&("stroke".equals(tool)||"eraser".equals(tool))){double[] precise=SketchStrokePrecision.filter(gesture,x,y,stabilization,document.getInt("width"),document.getInt("height"));x=precise[0];y=precise[1];}
         if(isPaintTool())appendPaintPoint(x,y,Math.max(0,Math.min(1,pressure)));else gesture.put(new JSONArray().put(x).put(y).put(Math.max(0, Math.min(1, pressure))));
     }
     private boolean isPaintTool(){return "paint".equals(tool)||"paint_erase".equals(tool)||"clone".equals(tool);}
