@@ -38,3 +38,5 @@ The full existing Android suite and all three new test files must pass before an
 ## Next engineering milestone (not claimed implemented)
 
 Long-story semantic storyboard planning with exact subject/location continuity, independently authored 360° turnarounds, arbitrary multi-character action and facial/phoneme animation, advanced skin-mesh deformation, audio timing, and real-device export/performance QA. No measured 50x-quality improvement is asserted without side-by-side artistic evaluation.
+
+CI note: the temporary ci/v450-stacked-native-qa branch adds only an Android workflow pull-request filter, so native compilation and unit tests can run without merging the diverged main branch. Restore the PR base to feat/sketch-character-animation-v440 after verification.
