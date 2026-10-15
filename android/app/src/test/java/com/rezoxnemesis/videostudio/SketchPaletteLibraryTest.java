@@ -8,7 +8,7 @@ import static org.junit.Assert.*;
 /** Palette data is finite, duplicate-free per category and suitable for persisted native pigment fields. */
 public final class SketchPaletteLibraryTest {
     @Test public void providesRichVerifiedPaletteForDetailedSketchPainting()throws Exception{
-        assertEquals(10,SketchPaletteLibrary.groupCount());int count=0;
+        assertEquals(11,SketchPaletteLibrary.groupCount());int count=0;
         HashSet<String> all=new HashSet<>();
         for(int i=0;i<SketchPaletteLibrary.groupCount();i++){
             assertNotNull(SketchPaletteLibrary.name(i));
@@ -22,11 +22,11 @@ public final class SketchPaletteLibraryTest {
                 all.add(c);count++;
             }
         }
-        assertEquals(160,count);
-        assertTrue("Sketch colours must have many distinct tones",all.size()>110);
+        assertEquals(176,count);
+        assertTrue("Sketch colours must have many distinct tones",all.size()>160);
     }
     @Test public void groupsAreImmutableAndNearestColorIsDeterministic(){
-        String[] source=SketchPaletteLibrary.colors(3),previous=source.clone();
+        String[] source=SketchPaletteLibrary.colors(4),previous=source.clone();
         source[0]="#00000000";
         assertArrayEquals(previous,SketchPaletteLibrary.colors(3));
         assertEquals("#FF060A14",SketchPaletteLibrary.nearest("#FF060A14",previous));
