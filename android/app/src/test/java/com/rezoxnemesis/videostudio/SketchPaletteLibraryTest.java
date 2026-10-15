@@ -17,7 +17,7 @@ public final class SketchPaletteLibraryTest {
             HashSet<String> group=new HashSet<>();
             for(String c:colors){
                 assertTrue(c.matches("#[0-9A-F]{8}"));
-                assertEquals(255,android.graphics.Color.alpha(SketchDocument.color(c)));
+                assertEquals(255,(SketchDocument.color(c)>>>24)&255);
                 assertTrue("A palette must not repeat its own pigment",group.add(c));
                 all.add(c);count++;
             }
