@@ -14,7 +14,7 @@ on:
   push:
     branches: [ main ]
   pull_request:
-    branches: [ main ]
+    branches: [ main, ci/v450-stacked-native-qa ]
 
 concurrency:
   group: videostudio-android-${{ github.ref }}
