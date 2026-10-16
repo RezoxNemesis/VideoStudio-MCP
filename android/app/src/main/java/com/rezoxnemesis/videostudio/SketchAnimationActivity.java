@@ -415,7 +415,7 @@ public final class SketchAnimationActivity extends Activity {
         }catch(Exception invalid){message(invalid.getMessage());}
     }
     private void cameraLayers(){try{JSONArray layers=source.getJSONArray("layers"),selected=program.getJSONArray("cameraLayerIds");String[] labels=new String[layers.length()];boolean[] chosen=new boolean[layers.length()];for(int i=0;i<layers.length();i++){labels[i]=layers.getJSONObject(i).getString("name");for(int j=0;j<selected.length();j++)if(selected.getString(j).equals(layers.getJSONObject(i).getString("id")))chosen[i]=true;}new AlertDialog.Builder(this).setTitle("Camera affects layers").setMultiChoiceItems(labels,chosen,(d,i,value)->chosen[i]=value).setPositiveButton("Apply",(d,w)->{try{JSONArray next=new JSONArray();for(int i=0;i<chosen.length;i++)if(chosen[i])next.put(layers.getJSONObject(i).getString("id"));program.put("cameraLayerIds",next);changed();}catch(Exception invalid){message(invalid.getMessage());}}).setNegativeButton("Cancel",null).show();}catch(Exception invalid){message(invalid.getMessage());}}
-    private void dialogueMenu(){if(!ready())return;menu("Dialogue and cel timing",new String[]{"Timed dialogue","Automatic text mouth timing","Mouth cel range","Artwork visibility range","Existing cel ranges"},this::dialogue,this::autoMouthTiming,()->celRange(true),()->celRange(false),this::celRangeList);}
+    private void dialogueMenu(){if(!ready())return;menu("Dialogue and cel timing",new String[]{"Timed dialogue","Automatic text mouth timing","Audio-waveform mouth timing","Mouth cel range","Artwork visibility range","Existing cel ranges"},this::dialogue,this::autoMouthTiming,this::audioMouthTiming,()->celRange(true),()->celRange(false),this::celRangeList);}
     private void autoMouthTiming(){
         if(!ready())return;
         try{
@@ -458,6 +458,112 @@ public final class SketchAnimationActivity extends Activity {
                 message("Mouth replacement cels added. Adjust their timing against actual voice audio.");
             });
         }catch(Exception invalid){message(invalid.getMessage());}
+    }
+    /** Audio is decoded from ONE explicitly selected VideoStudio project asset.
+     * No MediaStore query, Gallery scan, network inference or background upload. */
+    private void audioMouthTiming(){
+        if(!ready()||saving)return;
+        try{
+            JSONArray dialogues=program.optJSONArray("dialogues");
+            if(dialogues==null||dialogues.length()==0){
+                message("Create a frame-timed dialogue cue before selecting its recorded audio");return;
+            }
+            ArrayList<ProjectStore.Project> owners=new ArrayList<>();
+            ArrayList<ProjectStore.Asset> audioAssets=new ArrayList<>();
+            ArrayList<String> audioLabels=new ArrayList<>();
+            for(ProjectStore.Project project:new ProjectStore(this).list()){
+                for(ProjectStore.Asset asset:project.assets){
+                    if(asset.mime!=null&&asset.mime.startsWith("audio/")){
+                        owners.add(project);audioAssets.add(asset);
+                        audioLabels.add(project.name+" / "+asset.name);
+                    }
+                }
+            }
+            if(audioAssets.isEmpty()){
+                message("Import or generate a voice recording inside a VideoStudio project first");return;
+            }
+            ArrayList<String> ids=new ArrayList<>(),names=new ArrayList<>();
+            JSONArray layers=source.getJSONArray("layers");
+            for(int i=0;i<layers.length();i++){
+                JSONObject layer=layers.getJSONObject(i);
+                JSONArray objects=layer.getJSONArray("objects");
+                for(int j=0;j<objects.length();j++){
+                    JSONObject object=objects.getJSONObject(j);
+                    String type=object.getString("kind");
+                    if("image".equals(type)||"paint".equals(type)||"text".equals(type))continue;
+                    ids.add(object.getString("id"));
+                    names.add(layer.getString("name")+" / "+object.getString("id"));
+                }
+            }
+            if(ids.size()<4){
+                message("Prepare four vector mouth drawings: closed, open, round and teeth");return;
+            }
+            LinearLayout form=column();
+            Spinner assetPicker=picker("Recorded audio asset");
+            assetPicker.setAdapter(adapter(audioLabels));
+            form.addView(label("Explicitly imported VideoStudio audio",12));form.addView(assetPicker);
+            ArrayList<String> cues=new ArrayList<>();
+            for(int i=0;i<dialogues.length();i++){
+                JSONObject cue=dialogues.getJSONObject(i);
+                cues.add((cue.getInt("start")+1)+"–"+(cue.getInt("end")+1)+" · "+cue.getString("text"));
+            }
+            Spinner dialogue=picker("Dialogue to align");dialogue.setAdapter(adapter(cues));
+            form.addView(label("Timed dialogue",12));form.addView(dialogue);
+            EditText offset=field(form,"Source recording offset (milliseconds)","0",true);
+            String[] roles={"closed","open","round","teeth"};
+            Spinner[] mouth=new Spinner[roles.length];
+            for(int i=0;i<roles.length;i++){
+                mouth[i]=picker("Mouth "+roles[i]);mouth[i].setAdapter(adapter(names));
+                int candidate=Math.min(i,ids.size()-1);
+                for(int n=0;n<ids.size();n++)if(ids.get(n).toLowerCase(java.util.Locale.ROOT).contains(roles[i])){
+                    candidate=n;break;
+                }
+                mouth[i].setSelection(candidate);
+                form.addView(label("Prepared "+roles[i]+" mouth shape",12));form.addView(mouth[i]);
+            }
+            form.addView(label("Analyses actual decoded audio energy at each animation frame. Recorded activity opens the prepared text-derived viseme sequence; silence closes the mouth. This is NOT speech recognition, phoneme-level forced alignment, source vocal isolation or an audio mixer. Include the same selected audio in the final video editor and check lip-sync by watching the output.",12));
+            dialog("Real-audio waveform → mouth cels",form,"Analyse selected audio",()->{
+                final int index=dialogue.getSelectedItemPosition();
+                JSONObject cue=dialogues.getJSONObject(index);
+                final int total=cue.getInt("end")-cue.getInt("start")+1;
+                final long durationMs=(long)Math.ceil(total*1000d/program.getInt("fps"));
+                if(total<4||total>StudioAudioWaveforms.MAX_DIALOGUE_BUCKETS||durationMs>30000)
+                    throw SketchDocument.bad("Voice analysis needs 4..720 dialogue frames and at most 30 seconds");
+                final int sourceOffset=SketchAnimationUiModel.integer(offset.getText().toString(),0,3600000,"Recording offset milliseconds");
+                final ProjectStore.Project owner=owners.get(assetPicker.getSelectedItemPosition());
+                final ProjectStore.Asset asset=audioAssets.get(assetPicker.getSelectedItemPosition());
+                final String[] shapes=new String[4];
+                for(int i=0;i<4;i++)shapes[i]=ids.get(mouth[i].getSelectedItemPosition());
+                final JSONObject frozenSource=SketchDocument.copy(source),frozenProgram=SketchDocument.copy(program);
+                final int acceptedGeneration=generation,request=++qualityRequest;
+                if(qualityTask!=null)qualityTask.cancel(true);
+                status.setText("Decoding selected voice energy and preparing editable mouth cels…");
+                qualityTask=quality.submit(()->{
+                    try{
+                        float[] peaks=StudioAudioWaveforms.analyzeOwnedDialogue(this,owner,asset,sourceOffset,durationMs,total);
+                        JSONObject aligned=SketchVoiceActivityTiming.apply(frozenSource,frozenProgram,index,
+                                shapes[0],shapes[1],shapes[2],shapes[3],peaks);
+                        JSONObject resulting=aligned.getJSONObject("program"),report=aligned.getJSONObject("evidence");
+                        String checkId="voice_check_"+UUID.randomUUID().toString().replace("-","");
+                        SketchAnimationCompiler.compile(frozenSource,resulting,checkId);
+                        post(()->{
+                            if(acceptedGeneration!=generation||request!=qualityRequest)return;
+                            program=resulting;mapping=false;mode.setText("Pose mode");changed();
+                            status.setText("Audio-gated mouth cels added as an unsaved editable draft");
+                            message("Speech-activity samples: "+report.optInt("voiceActivityFrames")+
+                                    " · quiet frames: "+report.optInt("quietFrames")+
+                                    ". Align recorded phonemes and audio export manually.");
+                        });
+                    }catch(Exception failure){
+                        post(()->{
+                            if(acceptedGeneration!=generation||request!=qualityRequest)return;
+                            status.setText("Voice waveform not applied · "+failure.getMessage());
+                            message(failure.getMessage());
+                        });
+                    }
+                });
+            });
+        }catch(Exception failure){message(failure.getMessage());}
     }
     private void celRange(boolean mouth){
         try{LinearLayout form=column();ArrayList<String> ids=new ArrayList<>(),names=new ArrayList<>();JSONArray layers=source.getJSONArray("layers");for(int i=0;i<layers.length();i++){JSONObject layer=layers.getJSONObject(i);JSONArray objects=layer.getJSONArray("objects");for(int j=0;j<objects.length();j++){JSONObject object=objects.getJSONObject(j);ids.add(object.getString("id"));names.add(layer.getString("name")+" / "+object.getString("id"));}}
