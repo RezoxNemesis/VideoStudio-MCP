@@ -45,7 +45,17 @@ jobs:
           gradle-version: "8.9"
 
       - name: Ensure Android SDK 36
-        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;35.0.0" >/dev/null
+        run: |
+          set -euo pipefail
+          sdk="$ANDROID_HOME"
+          if [ -f "$sdk/platforms/android-36/package.xml" ] && [ -x "$sdk/build-tools/35.0.0/aapt" ]; then
+            echo "Android API 36 and build-tools 35 are already installed."
+          else
+            echo "Required Android SDK components missing; attempting a bounded installation."
+            timeout 240s bash -c 'yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;35.0.0" >/dev/null'
+          fi
+          test -f "$sdk/platforms/android-36/package.xml"
+          test -x "$sdk/build-tools/35.0.0/aapt"
 
       - name: Prepare stable development signing
         run: mkdir -p "$HOME/.android"
