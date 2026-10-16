@@ -23,6 +23,7 @@ final class SketchAnimationProductionPreflight {
             notes.put("Acting: articulated movement appears in fewer than 1 in 12 frames; inspect action and recovery.");
         if(dialogue>0&&mouth==0)notes.put("Dialogue: captions exist but no mouth replacement cels are timed.");
         if(dialogue>0&&mouth>0)notes.put("Dialogue: mouth timing is visual only; align it to a voice recording for accurate lip sync.");
+        if(r.getInt("contactCount")>0&&r.optInt("blendedContactCount",0)==0)notes.put("Footwork: contacts have no entry/exit blending; check for snapping at touchdown and release.");
         if(r.getInt("contactCount")==0&&r.getInt("rootMotionFrames")>0)
             notes.put("Footwork: moving roots have no planted-foot IK contacts; check for sliding.");
         if(r.getDouble("maxFootContactErrorPixels")>2)
