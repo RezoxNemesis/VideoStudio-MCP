@@ -114,10 +114,26 @@ public final class SketchAnimationCompiler {
             SketchDocument.layer(out,cue.getString("layerId")).getJSONArray("objects").put(text);
         }
         double maxApproximation=0;int denseKeys=0;
-        for(int li=0;li<layers.length();li++){JSONObject layer=layers.getJSONObject(li);if(m.cameraLayers.contains(layer.getString("id"))){denseKeys+=layer.getJSONArray("keys").length();Reduction reduced=reduceKeys(m,layer.getJSONArray("keys"),new double[]{-16d*m.width,-16d*m.height,16d*m.width,16d*m.height},0);layer.put("keys",reduced.keys);maxApproximation=Math.max(maxApproximation,reduced.error);}JSONArray items=layer.getJSONArray("objects");for(int oi=0;oi<items.length();oi++){JSONObject object=items.getJSONObject(oi);Binding binding=m.bindings.get(object.getString("id"));if(binding!=null&&binding.weights==null){denseKeys+=object.getJSONArray("keys").length();double layerScale=maxLayerScale(m,m.owners.get(binding.objectId));Reduction reduced=reduceKeys(m,object.getJSONArray("keys"),geometryBounds(m,object),KEYFRAME_TOLERANCE_PIXELS/layerScale);object.put("keys",reduced.keys);maxApproximation=Math.max(maxApproximation,reduced.error*layerScale);}}}
+        for(int li=0;li<layers.length();li++){JSONObject layer=layers.getJSONObject(li);if(m.cameraLayers.contains(layer.getString("id"))){denseKeys+=layer.getJSONArray("keys").length();Reduction reduced=reduceKeys(m,layer.getJSONArray("keys"),new double[]{-16d*m.width,-16d*m.height,16d*m.width,16d*m.height},0);layer.put("keys",reduced.keys);maxApproximation=Math.max(maxApproximation,reduced.error);}JSONArray items=layer.getJSONArray("objects");for(int oi=0;oi<items.length();oi++){JSONObject object=items.getJSONObject(oi);Binding binding=m.bindings.get(object.getString("id"));if(binding!=null&&binding.weights==null){denseKeys+=object.getJSONArray("keys").length();double layerScale=maxLayerScale(m,m.owners.get(binding.objectId));Reduction reduced=reduceKeys(m,object.getJSONArray("keys"),geometryBounds(m,object),m.keyTolerancePixels/layerScale);object.put("keys",reduced.keys);maxApproximation=Math.max(maxApproximation,reduced.error*layerScale);}}}
+        int objectCount=0,keyCount=0,pointCount=0;
+        for(int i=0;i<layers.length();i++){
+            JSONObject layer=layers.getJSONObject(i);
+            keyCount+=layer.getJSONArray("keys").length();
+            JSONArray items=layer.getJSONArray("objects");objectCount+=items.length();
+            for(int j=0;j<items.length();j++){
+                JSONObject object=items.getJSONObject(j);
+                keyCount+=object.getJSONArray("keys").length();
+                pointCount+=geometryPoints(object);
+            }
+        }
+        if(keyCount>SketchDocument.MAX_KEYS)
+            throw bad("ANIMATION_DOCUMENT_KEY_BUDGET: "+keyCount+" keys exceed "+
+                    SketchDocument.MAX_KEYS+"; increase program keyframeTolerancePixels (maximum 2.0) or shorten the shot");
+        if(objectCount>SketchDocument.MAX_OBJECTS||pointCount>SketchDocument.MAX_POINTS)
+            throw bad("ANIMATION_DOCUMENT_GEOMETRY_BUDGET: "+objectCount+" objects, "+
+                    pointCount+" points; reduce deforming parts or shorten the shot");
         SketchDocument.validate(out);
         JSONObject contactEvidence=interactionEvidence(m);
-        int objectCount=0,keyCount=0;for(int i=0;i<layers.length();i++){JSONObject l=layers.getJSONObject(i);keyCount+=l.getJSONArray("keys").length();JSONArray items=l.getJSONArray("objects");objectCount+=items.length();for(int j=0;j<items.length();j++)keyCount+=items.getJSONObject(j).getJSONArray("keys").length();}
         animatedJoints=movingJoints.size();int weighted=0,contacts=0,oriented=0,blended=0;for(Rig r:m.rigs){contacts+=r.contacts.size();for(Contact c:r.contacts){if(c.hasRotation)oriented++;if(c.blendIn>0||c.blendOut>0)blended++;}for(Binding b:r.bindings)if(b.weights!=null)weighted++;}
         JSONObject report=new JSONObject().put("provider","authored_articulated_2d").put("schema",SCHEMA)
                 .put("frameCount",m.frames).put("fps",m.fps).put("durationMs",Math.round(m.frames*1000d/m.fps))
@@ -130,7 +146,7 @@ public final class SketchAnimationCompiler {
                 .put("maxInterCharacterContactGapPixels",contactEvidence.getDouble("maxGapPixels"))
                 .put("interCharacterContacts",contactEvidence.getJSONArray("contacts"))
                 .put("cameraSampleCount",m.cameraLayers.isEmpty()?0:m.frames).put("outputObjectCount",objectCount).put("outputTransformKeys",keyCount)
-                .put("denseTransformSampleCount",denseKeys).put("keyframeTolerancePixels",KEYFRAME_TOLERANCE_PIXELS).put("maxBakedTransformApproximationPixels",maxApproximation)
+                .put("denseTransformSampleCount",denseKeys).put("keyframeTolerancePixels",m.keyTolerancePixels).put("maxBakedTransformApproximationPixels",maxApproximation)
                 .put("outputBytes",out.toString().getBytes(StandardCharsets.UTF_8).length).put("sourcePreserved",true)
                 .put("sourceSha256",hash(source)).put("programSha256",hash(program)).put("artisticQualityVerified",false)
                 .put("limitations",new JSONArray().put("Authored rig mapping is required; no anatomy or alternate-view inference")
@@ -259,7 +275,7 @@ public final class SketchAnimationCompiler {
     private static final class Camera {int frame;String interpolation="linear";double x,y,zoom=1,rotation;}
 
     private static final class Model {
-        final JSONObject source;final int frames,fps,sourceFrames,width,height;final boolean single;
+        final JSONObject source;final int frames,fps,sourceFrames,width,height;final boolean single;final double keyTolerancePixels;
         final Map<String,JSONObject> objects=new LinkedHashMap<>();final Map<String,String> owners=new HashMap<>();
         final Map<String,int[]> ranges=new HashMap<>();final Map<String,Binding> bindings=new HashMap<>();
         final Map<String,List<String>> celClones=new HashMap<>();final Map<String,List<int[]>> intervals=new HashMap<>();
@@ -267,7 +283,7 @@ public final class SketchAnimationCompiler {
         final JSONArray dialogues,interactionCues;final Set<String> reservedIds=new HashSet<>();int mouthCount,celCount,hiddenCount;
         Model(JSONObject source,JSONObject p)throws Exception {
             SketchDocument.validate(source);this.source=SketchDocument.copy(source);
-            SketchDocument.fields(p,"schema,name,frameCount,fps,rigs,camera,cameraLayerIds,dialogues,mouthCels,celRanges,hiddenArtwork,interactionCues");
+            SketchDocument.fields(p,"schema,name,frameCount,fps,rigs,camera,cameraLayerIds,dialogues,mouthCels,celRanges,hiddenArtwork,interactionCues,keyframeTolerancePixels");
             if(p.has("name"))SketchDocument.text(p,"name",160);
             if(!SCHEMA.equals(p.getString("schema")))throw bad("Unknown animation program schema");
             if(p.toString().getBytes(StandardCharsets.UTF_8).length>MAX_PROGRAM_BYTES)throw bad("Animation program exceeds 512 KiB");
@@ -275,6 +291,8 @@ public final class SketchAnimationCompiler {
             frames=(int)SketchDocument.integer(p,"frameCount",1,SketchDocument.MAX_FRAMES);
             fps=p.has("fps")?(int)SketchDocument.integer(p,"fps",24,60):source.getInt("fps");NativeFrameClock.requireFps(fps);
             sourceFrames=source.getInt("frameCount");single=sourceFrames==1;width=source.getInt("width");height=source.getInt("height");
+            keyTolerancePixels=p.has("keyframeTolerancePixels")?
+                    SketchDocument.number(p,"keyframeTolerancePixels",KEYFRAME_TOLERANCE_PIXELS,2):KEYFRAME_TOLERANCE_PIXELS;
             JSONArray layers=this.source.getJSONArray("layers");
             for(int i=0;i<layers.length();i++) {
                 JSONObject layer=layers.getJSONObject(i);String layerId=layer.getString("id");reservedIds.add(layerId);JSONArray items=layer.getJSONArray("objects");
