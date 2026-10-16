@@ -252,9 +252,11 @@ final class SketchFrameStreamEncoder {
             }
             if (written != count) throw new IllegalStateException(
                     "SKETCH_CODEC_FRAME_COUNT: muxed " + written + " of " + count + " frames");
-            if (!muxerStarted || output.length() == 0)
-                throw new IllegalStateException("SKETCH_CODEC_EMPTY: no completed H.264 samples");
+            if (!muxerStarted)
+                throw new IllegalStateException("SKETCH_CODEC_EMPTY: no initialized H.264 track");
             muxer.stop();
+            if (output.length() == 0)
+                throw new IllegalStateException("SKETCH_CODEC_EMPTY: muxed MP4 is empty");
             muxerStarted = false;
             muxer.release();
             muxer = null;
@@ -281,7 +283,8 @@ final class SketchFrameStreamEncoder {
                     .put("width", width).put("height", height).put("fps", fps)
                     .put("sourceCanvasWidth", sourceWidth).put("sourceCanvasHeight", sourceHeight)
                     .put("frameCount", count).put("muxedVideoSamples", written)
-                    .put("encodedClockVerified", true).put("decodedFrameCountVerified", false)
+                    .put("authoredTimestampInput", true).put("encodedClockVerified", false)
+                    .put("decodedFrameCountVerified", false)
                     .put("sourceRasterVerified", true).put("nativeSketchStreaming", true)
                     .put("outputBytes", output.length());
         } finally {
