@@ -140,7 +140,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         motionScriptCompiler = new MotionScriptCompiler();
         recoveryPlans = new RecoveryPlanStore(this);
         startupGuard.holdInterruptedUpgrade(recoveryPlans.pendingForAutoResume(),boot.upgraded);
-        startupGuard.holdInterruptedUpgrade(commandJournal.inflightEntries(160),boot.upgraded);
+        startupGuard.holdInterruptedUpgrade(commandJournal.pendingForStartupSafety(160),boot.upgraded);
         capabilityRegistry = new CapabilityRegistry(this);
         modelPackManager = new ModelPackManager(this);
         computeProfile = new DeviceComputeProfile(this);
