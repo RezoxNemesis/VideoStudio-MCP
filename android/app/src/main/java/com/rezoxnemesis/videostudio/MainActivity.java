@@ -122,6 +122,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         window.setNavigationBarColor(C_BG);
         window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
 
+        try {
         prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
         migrateAutonomyDefaultOnce();
         store = new ProjectStore(this);
@@ -148,6 +149,9 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         handleMcpRebindIntent(getIntent());
         requestServiceSync();
         startServiceWatchdog();
+        }catch(RuntimeException|LinkageError startupFailure){
+            showSafeStartScreen(startupFailure);
+        }
     }
 
     @Override
@@ -192,6 +196,41 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         if (protocol != null) protocol.stop();
         if (jobs != null) jobs.shutdown();
         super.onDestroy();
+    }
+
+    /** Last-resort landing page for failures in project/editor preparation.
+     * No database deletion, preference reset or Gallery access is attempted. */
+    private void showSafeStartScreen(Throwable failure){
+        LinearLayout root=new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setPadding(dp(22),dp(45),dp(22),dp(20));
+        root.setBackgroundColor(C_BG);
+        TextView heading=new TextView(this);
+        heading.setText("VideoStudio safe startup");
+        heading.setTextSize(24);heading.setTextColor(C_TEXT);
+        root.addView(heading);
+        TextView detail=new TextView(this);
+        detail.setText("The editing workspace could not initialize. Your saved projects and imported files have NOT been deleted. "+
+                "Please keep the app installed and share the startup diagnostic.");
+        detail.setTextSize(15);detail.setTextColor(C_MUTED);
+        detail.setPadding(0,dp(14),0,dp(14));
+        root.addView(detail);
+        String note="VideoStudio "+AppProtocol.APP_VERSION+" startup failed: "+
+                failure.getClass().getSimpleName();
+        Button copy=new Button(this);
+        copy.setText("Copy safe diagnostic");
+        copy.setOnClickListener(v->{
+            android.content.ClipboardManager clipboard=
+                    (android.content.ClipboardManager)getSystemService(CLIPBOARD_SERVICE);
+            if(clipboard!=null)clipboard.setPrimaryClip(ClipData.newPlainText("VideoStudio startup",note));
+            Toast.makeText(this,"Startup diagnostic copied",Toast.LENGTH_SHORT).show();
+        });
+        root.addView(copy);
+        Button retry=new Button(this);
+        retry.setText("Retry safe launch");
+        retry.setOnClickListener(v->recreate());
+        root.addView(retry);
+        setContentView(root);
     }
 
     private LiveEditPlayer player(){
@@ -282,6 +321,18 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                     jobName+"  "+nativeWork.optInt("jobProgress",0)+"%"));
         }else nativeStrip.addView(body("Manage your connection and background work."));
         box.addView(nativeStrip,margins(-1,-2,dp(4),0,0,0));
+        NativeStartupGuard launchGuard=new NativeStartupGuard(this);
+        if(launchGuard.held()){
+            LinearLayout safety=card(false);
+            safety.addView(title("Safe startup • previous render paused",17));
+            safety.addView(body("The native renderer may have interrupted the last session. "+
+                    "VideoStudio has kept the project's source, imported assets and recovery record. "+
+                    "Heavy jobs will not restart automatically while recovery is held."));
+            safety.addView(body(launchGuard.reason()));
+            Button retry=studioButton("Retry interrupted work (optional)",this::retryHeldRecovery);
+            safety.addView(retry,margins(-1,dp(48),dp(10),0,0,0));
+            box.addView(safety,margins(-1,-2,dp(10),0,0,0));
+        }
 
         LinearLayout projectsTop=new LinearLayout(this);
         projectsTop.setGravity(Gravity.CENTER_VERTICAL);
@@ -312,6 +363,26 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         creative.addView(authoring,margins(-1,dp(46),dp(7),0,0,0));
         box.addView(creative,margins(-1,-2,dp(16),0,0,0));
         setScreen(scroll,"home");
+    }
+
+    private void retryHeldRecovery(){
+        new AlertDialog.Builder(this).setTitle("Retry interrupted native work?")
+                .setMessage("The previous media render may have caused the app to restart. "+
+                        "Your projects remain safe while it is paused. "+
+                        "Retry only after VideoStudio has remained open normally; another render may use significant RAM.")
+                .setNegativeButton("Keep paused",null)
+                .setPositiveButton("Retry once",(d,w)->{
+                    try{
+                        Intent request=new Intent(this,ControlService.class)
+                                .setAction(ControlService.ACTION_RETRY_RECOVERY);
+                        startForegroundService(request);
+                        Toast.makeText(this,"Retry requested; source projects preserved",
+                                Toast.LENGTH_LONG).show();
+                    }catch(Exception failure){
+                        Toast.makeText(this,"Retry unavailable: "+failure.getClass().getSimpleName(),
+                                Toast.LENGTH_LONG).show();
+                    }
+                }).show();
     }
 
     /** Both delivery routes use the existing device-owned Android identity. */
