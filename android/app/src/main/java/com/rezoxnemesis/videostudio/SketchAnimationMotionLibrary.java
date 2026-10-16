@@ -69,7 +69,11 @@ final class SketchAnimationMotionLibrary {
                     boolean running="run".equals(preset);double amplitude=running?35:23;
                     double sine=Math.sin(phase),other=-sine;
                     dx=t*(duration/(double)result.getInt("fps"))*(running?.23:.12);
-                    dy=-(running?.015:.007)*Math.abs(Math.sin(phase));
+                    // A short knee-settle leaves reach for a planted sole. Ease that
+                    // crouch in and out to avoid a hard vertical cut at clip boundaries.
+                    double settle=Math.max(0,Math.min(1,Math.min(t*8,(1-t)*8)));
+                    settle=settle*settle*(3-2*settle);
+                    dy=settle*((running?.025:.018)+(running?.008:.005)*Math.abs(sine));
                     angle(angles,"hip_left",amplitude*sine);
                     angle(angles,"hip_right",amplitude*other);
                     angle(angles,"knee_left",(running?39:26)*Math.max(0,-sine));

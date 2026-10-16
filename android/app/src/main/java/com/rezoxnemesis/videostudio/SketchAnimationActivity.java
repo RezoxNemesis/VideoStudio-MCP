@@ -35,15 +35,18 @@ import java.util.ArrayList;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 
 /** Local visual authoring for prepared sketches. Preview and ChatGPT use the same compiler. */
 public final class SketchAnimationActivity extends Activity {
     private final ExecutorService io=Executors.newSingleThreadExecutor();
+    private final ExecutorService quality=Executors.newSingleThreadExecutor();
+    private Future<?> qualityTask;
     private final Handler main=new Handler(Looper.getMainLooper());
     private JSONObject source,program,sampled=new JSONObject();
     private String sketchId,animationId,selectedRig="",selectedJoint="",interpolation="smooth";
     private long revision,sourceRevision,playStarted;
-    private int frame,displayedFrame=-1,playFirst,generation,snapshotGeneration=-1;
+    private int frame,displayedFrame=-1,playFirst,generation,snapshotGeneration=-1,qualityRequest;
     private JSONObject previewProgramSnapshot;
     private volatile boolean destroyed;
     private boolean loading=true,dirty,mapping=true,playing,previewInFlight,previewAgain,pickerUpdating,saving;
@@ -86,7 +89,7 @@ public final class SketchAnimationActivity extends Activity {
         StudioUi.prepareTouchLayout(root);
     }
     private void load(){
-        loading=true;++generation;sampled=new JSONObject();final String requested=animationId;
+        loading=true;++generation;++qualityRequest;if(qualityTask!=null)qualityTask.cancel(true);sampled=new JSONObject();final String requested=animationId;
         io.execute(()->{try{
             JSONObject loadedSource,loadedProgram;long loadedRevision=0;String loadedId=requested;
             if(requested!=null&&!requested.isEmpty()){
@@ -122,7 +125,7 @@ public final class SketchAnimationActivity extends Activity {
         frameLabel.setText("Frame "+((playing&&displayedFrame>=0?displayedFrame:frame)+1)+" / "+count+" · "+String.format(java.util.Locale.ROOT,"%.2f s",frame/(double)fps)+" · "+fps+" FPS");
         selectionLabel.setText((mapping?"Fit rig · ":"Pose · ")+selectedJoint+(mapping?" · drag joints; then bind artwork":" · drag endpoint or use rotation controls"));
     }
-    private void changed(){dirty=true;++generation;previewError="";requestPreview();main.removeCallbacks(draftTick);main.postDelayed(draftTick,250);refreshFrame();}
+    private void changed(){++qualityRequest;if(qualityTask!=null)qualityTask.cancel(true);dirty=true;++generation;previewError="";requestPreview();main.removeCallbacks(draftTick);main.postDelayed(draftTick,250);refreshFrame();}
     private final Runnable draftTick=()->persistDraft();
     private void persistDraft(){
         if(program==null||source==null||destroyed)return;try{
@@ -225,20 +228,54 @@ public final class SketchAnimationActivity extends Activity {
     private void removeJoint(){try{JSONObject rig=SketchAnimationUiModel.rig(program,selectedRig);JSONArray values=rig.getJSONArray("joints"),next=new JSONArray();for(int i=0;i<values.length();i++){JSONObject joint=values.getJSONObject(i);if(selectedJoint.equals(joint.optString("parent")))throw SketchDocument.bad("Remove or reparent child joints before removing this joint");if(!selectedJoint.equals(joint.getString("id")))next.put(joint);}JSONArray bindings=rig.getJSONArray("bindings");for(int i=0;i<bindings.length();i++)if(selectedJoint.equals(bindings.getJSONObject(i).getString("jointId")))throw SketchDocument.bad("Unbind this joint's artwork first");JSONArray contacts=rig.getJSONArray("ik");for(int i=0;i<contacts.length();i++)for(String name:new String[]{"hip","knee","ankle"})if(selectedJoint.equals(contacts.getJSONObject(i).getString(name)))throw SketchDocument.bad("Remove this joint's foot contact first");for(int i=0;i<bindings.length();i++){JSONArray weights=bindings.getJSONObject(i).optJSONArray("weights");if(weights!=null)for(int n=0;n<weights.length();n++)if(weights.getJSONObject(n).has(selectedJoint))throw SketchDocument.bad("Remove this joint's skin influences first");}if(next.length()==0)throw SketchDocument.bad("Keep a root joint");rig.put("joints",next);JSONArray poses=rig.getJSONArray("poses");for(int i=0;i<poses.length();i++)poses.getJSONObject(i).getJSONObject("rotations").remove(selectedJoint);selectedJoint="";refreshPickers();changed();}catch(Exception invalid){message(invalid.getMessage());}}
     private void motionPresets(){
         if(!ready())return;
-        menu("Editable acting presets",new String[]{"Idle / breathing","Walk cycle","Run cycle","Anticipation → strike → recover"},
-                ()->applyMotionPreset("idle"),()->applyMotionPreset("walk"),()->applyMotionPreset("run"),()->applyMotionPreset("strike"));
+        menu("Editable acting presets",new String[]{"Idle / breathing","Walk cycle","Run cycle","Anticipation → strike → recover","Plant gait feet (walk/run)"},
+                ()->applyMotionPreset("idle"),()->applyMotionPreset("walk"),()->applyMotionPreset("run"),()->applyMotionPreset("strike"),this::plantGaitFeet);
     }
     private void applyMotionPreset(String style){
         if(!ready())return;
         LinearLayout form=column();
         int remaining=program.optInt("frameCount")-frame;
         EditText duration=field(form,"Duration in frames",String.valueOf(Math.min(remaining,48)),true);
-        form.addView(label("Adds independent, editable joint pose keys to the selected character starting at frame "+(frame+1)+". Bind individual body parts first. Existing keys are never overwritten. Walk/run cycles do not automatically plant feet; add IK foot contacts and review every step.",12));
+        form.addView(label("Adds independent, editable joint pose keys to the selected character starting at frame "+(frame+1)+". Bind individual body parts first. Existing keys are never overwritten. After adding walk/run keys, choose Plant gait feet to calculate real IK contacts (requires separate foot drawings).",12));
         dialog("Add "+style+" motion",form,"Add keys",()->{
             int count=SketchAnimationUiModel.integer(duration.getText().toString(),9,360,"Preset duration");
             JSONObject result=SketchAnimationMotionLibrary.insert(program,selectedRig,frame,count,style);
             program=result;mapping=false;mode.setText("Pose mode");changed();
-            message("Editable "+style+" pose keys added. Review motion and planted feet.");
+            message("Editable "+style+" pose keys added. Add gait foot contacts, then inspect each stride.");
+        });
+    }
+    private void plantGaitFeet(){
+        if(!ready()||saving)return;
+        LinearLayout form=column();
+        EditText first=field(form,"First gait frame",String.valueOf(frame+1),true),
+                length=field(form,"Gait frames (24..240)",String.valueOf(Math.min(48,Math.max(24,program.optInt("frameCount")-frame))),true);
+        Spinner kind=picker("Walking or running");
+        kind.setAdapter(adapter(java.util.Arrays.asList("walk","run")));
+        form.addView(label("Preset gait style",12));form.addView(kind);
+        form.addView(label("Start with Walk or Run preset keys. Bind separately drawn left and right foot pieces, then calculate world-space sole targets from the actual rig. Contact blending eases the transition, but standing balance, ground surface, silhouettes and motion quality still need visual review. The original sketch is never overwritten.",12));
+        dialog("Plant feet in the native rig",form,"Calculate IK",()->{
+            final int firstFrame=index(first);
+            final int count=SketchAnimationUiModel.integer(length.getText().toString(),24,240,"Foot-plant frames");
+            final String style=kind.getSelectedItem().toString(),rigId=selectedRig;
+            final JSONObject frozenSource=SketchDocument.copy(source),frozenProgram=SketchDocument.copy(program);
+            final int sourceGeneration=generation,request=++qualityRequest;
+            if(qualityTask!=null)qualityTask.cancel(true);
+            status.setText("Solving real leg reach, plant windows and contact easing…");
+            qualityTask=quality.submit(()->{
+                try{
+                    JSONObject solved=SketchAnimationFootwork.plant(frozenSource,frozenProgram,rigId,firstFrame,count,style);
+                    post(()->{
+                        if(sourceGeneration!=generation||request!=qualityRequest||!rigId.equals(selectedRig)){
+                            status.setText("Gait changed during calculation; original edits preserved");
+                            message("Gait changed: recalculate foot contacts on the latest poses");return;
+                        }
+                        program=solved;mapping=false;mode.setText("Pose mode");changed();
+                        message("Planted-foot IK saved in local draft. Inspect the pose and run Production QA.");
+                    });
+                }catch(Exception error){post(()->{
+                    if(sourceGeneration==generation&&request==qualityRequest){status.setText("Foot plants not changed · "+error.getMessage());message(error.getMessage());}
+                });}
+            });
         });
     }
     private void poseTools(){if(!ready())return;menu("Pose at frame "+(frame+1),new String[]{"Joint rotation / root motion","Save pose key","Delete pose key","Smooth timing","Linear timing","Hold timing"},this::rotation,()->{try{SketchAnimationUiModel.pose(program,selectedRig,frame,interpolation);changed();}catch(Exception invalid){message(invalid.getMessage());}},this::deleteKey,()->setTiming("smooth"),()->setTiming("linear"),()->setTiming("hold"));}
@@ -253,7 +290,7 @@ public final class SketchAnimationActivity extends Activity {
     private void jumpKey(boolean next){if(!ready())return;stopPlayback();try{JSONArray poses=SketchAnimationUiModel.rig(program,selectedRig).getJSONArray("poses");int destination=next?program.getInt("frameCount")-1:0;for(int i=0;i<poses.length();i++){int key=poses.getJSONObject(i).getInt("frame");if(next&&key>frame)destination=Math.min(destination,key);else if(!next&&key<frame)destination=Math.max(destination,key);}frame=destination;refreshFrame();requestPreview();}catch(Exception invalid){message(invalid.getMessage());}}
     private void timing(){if(!ready())return;LinearLayout form=column();EditText count=field(form,"Animation frames",String.valueOf(program.optInt("frameCount")),true),fps=field(form,"Frames per second",String.valueOf(program.optInt("fps")),true);form.addView(label("Frames are numbered from 1 in these controls. The native program uses zero-based frame indices. Shortening is rejected if a key, contact or dialogue would be lost.",12));dialog("Animation timing",form,"Apply",()->{int frames=SketchAnimationUiModel.integer(count.getText().toString(),1,1200,"Animation frames"),rate=SketchAnimationUiModel.integer(fps.getText().toString(),24,60,"Frames per second");NativeFrameClock.requireFps(rate);JSONObject candidate=SketchDocument.copy(program);candidate.put("frameCount",frames).put("fps",rate);requireTimingFits(candidate,frames);program=candidate;frame=Math.min(frame,frames-1);changed();});}
     private void requireTimingFits(JSONObject candidate,int count)throws Exception {
-        JSONArray rigs=candidate.getJSONArray("rigs");for(int i=0;i<rigs.length();i++){JSONObject rig=rigs.getJSONObject(i);JSONArray poses=rig.getJSONArray("poses"),contacts=rig.getJSONArray("ik");for(int n=0;n<poses.length();n++)if(poses.getJSONObject(n).getInt("frame")>=count)throw SketchDocument.bad("A pose key is outside the new duration");for(int n=0;n<contacts.length();n++)if(contacts.getJSONObject(n).getInt("end")>=count)throw SketchDocument.bad("A foot contact is outside the new duration");}
+        JSONArray rigs=candidate.getJSONArray("rigs");for(int i=0;i<rigs.length();i++){JSONObject rig=rigs.getJSONObject(i);JSONArray poses=rig.getJSONArray("poses"),contacts=rig.getJSONArray("ik");for(int n=0;n<poses.length();n++)if(poses.getJSONObject(n).getInt("frame")>=count)throw SketchDocument.bad("A pose key is outside the new duration");for(int n=0;n<contacts.length();n++)if(contacts.getJSONObject(n).getInt("end")+contacts.getJSONObject(n).optInt("blendOutFrames",0)>=count)throw SketchDocument.bad("A foot contact or its blend ramp is outside the new duration");}
         for(String name:new String[]{"camera","dialogues","mouthCels","celRanges"}){JSONArray values=candidate.optJSONArray(name);if(values==null)continue;for(int n=0;n<values.length();n++){JSONObject value=values.getJSONObject(n);if(value.optInt("end",value.optInt("frame"))>=count)throw SketchDocument.bad(name+" contains a key outside the new duration");}}
     }
     private void contacts(){
@@ -336,12 +373,13 @@ public final class SketchAnimationActivity extends Activity {
     private void openAnimation(){if(!ready())return;stopPlayback();status.setText("Loading saved animations…");io.execute(()->{try{JSONArray values=SketchAnimationOps.execute(this,"sketch_animation_list",new JSONObject()).getJSONArray("animations");String[] labels=new String[values.length()];for(int i=0;i<labels.length;i++){JSONObject item=values.getJSONObject(i);labels[i]=item.optString("animationId")+" · r"+item.optLong("revision");}post(()->{new AlertDialog.Builder(this).setTitle("Saved animation scenes").setItems(labels,(d,index)->{persistDraft();animationId=values.optJSONObject(index).optString("animationId");selectedRig="";selectedJoint="";load();}).setNegativeButton("Cancel",null).show();});}catch(Exception failure){post(()->message(failure.getMessage()));}});}
     private void productionCheck(){
         if(!ready()||saving)return;
-        final int checkedGeneration=generation;
+        final int checkedGeneration=generation,request=++qualityRequest;
         final JSONObject sourceSnapshot,programSnapshot;
         try{sourceSnapshot=SketchDocument.copy(source);programSnapshot=SketchDocument.copy(program);}
         catch(Exception failure){message(failure.getMessage());return;}
         status.setText("Checking authored pose timing, bound parts, cels and camera…");
-        io.execute(()->{
+        if(qualityTask!=null)qualityTask.cancel(true);
+        qualityTask=quality.submit(()->{
             try{
                 JSONObject proof=SketchAnimationProductionPreflight.inspect(sourceSnapshot,programSnapshot);
                 JSONArray notes=proof.getJSONArray("diagnostics");
@@ -356,11 +394,11 @@ public final class SketchAnimationActivity extends Activity {
                     .append(" · mouth cels: ").append(report.getInt("mouthCelCount")).append("\n\n");
                 for(int i=0;i<notes.length();i++)message.append("• ").append(notes.getString(i)).append("\n");
                 String summary=message.toString();
-                post(()->{if(checkedGeneration!=generation){status.setText("Scene changed during preflight; run Production QA again.");return;}
+                post(()->{if(checkedGeneration!=generation||request!=qualityRequest)return;
                     status.setText("Animation structural preflight finished · artistic review still required");
                     new AlertDialog.Builder(this).setTitle("2D production QA · source-verified").setMessage(summary).setPositiveButton("Close",null).show();
                 });
-            }catch(Exception failure){post(()->{status.setText("Production QA found a compilation problem");new AlertDialog.Builder(this).setTitle("2D production QA · fix before export").setMessage(failure.getMessage()).setPositiveButton("Close",null).show();});}
+            }catch(Exception failure){post(()->{if(checkedGeneration!=generation||request!=qualityRequest)return;status.setText("Production QA found a compilation problem");new AlertDialog.Builder(this).setTitle("2D production QA · fix before export").setMessage(failure.getMessage()).setPositiveButton("Close",null).show();});}
         });
     }
     private void saveScene(){if(!ready()||saving)return;stopPlayback();try{saveSnapshot(false);}catch(Exception invalid){message(invalid.getMessage());}}
@@ -378,12 +416,12 @@ public final class SketchAnimationActivity extends Activity {
     private final Runnable playTick=new Runnable(){public void run(){if(!playing||destroyed||program==null)return;int fps=program.optInt("fps");int next=playFirst+(int)((SystemClock.uptimeMillis()-playStarted)*fps/1000);if(next>=program.optInt("frameCount")){frame=program.optInt("frameCount")-1;stopPlayback();refreshFrame();requestPreview();return;}if(frame!=next){frame=next;refreshFrame();requestPreview();}main.postDelayed(this,Math.max(8,1000/fps));}};
     private void stopPlayback(){playing=false;main.removeCallbacks(playTick);if(play!=null)play.setText("Play");}
     private boolean ready(){if(loading||program==null){message("Open a prepared sketch first");return false;}return true;}
-    private void guide(){new AlertDialog.Builder(this).setTitle("Prepared sketches → 2D animation").setMessage("1. Prepare separate head, torso, arm, forearm, hand, thigh, shin and foot objects. Keep backgrounds on separate layers. A single photo does not contain hidden body parts.\n\n2. In Rig mode, drag the joints over the matching parts. Rig / bind assigns artwork to the selected joint. Add character makes another actor.\n\n3. Switch to Pose mode. Scrub to a frame, drag bone endpoints or set joint rotations, then save pose keys. Smooth timing eases between keys; linear timing moves at a steady rate; hold timing holds until the next key.\n\n4. Add planted foot contacts with a hip–knee–foot chain. Add camera keys and timed dialogue. Play to inspect the actual artwork moving through the poses.\n\n5. Save scene preserves your rig and controls. Bake animation makes a NEW editable sketch; your source stays intact. Open it for cel refinements and use Export video.\n\nChatGPT uses sketch_animation_save, sketch_animation_get and sketch_animation_bake with the same native program. Saved scenes can be listed with sketch_animation_list. No Gallery access is used. Limits and contact errors are reported; a successful export does not establish artistic quality.").setPositiveButton("Got it",null).show();}
+    private void guide(){new AlertDialog.Builder(this).setTitle("Prepared sketches → 2D animation").setMessage("1. Prepare separate head, torso, arm, forearm, hand, thigh, shin and foot objects. Keep backgrounds on separate layers. A single photo does not contain hidden body parts.\n\n2. In Rig mode, drag the joints over the matching parts. Rig / bind assigns artwork to the selected joint. Add character makes another actor.\n\n3. Switch to Pose mode. Scrub to a frame, drag bone endpoints or set joint rotations, then save pose keys. Smooth timing eases between keys; linear timing moves at a steady rate; hold timing holds until the next key.\n\n4. Use Acting presets for walk/run, then Plant gait feet to calculate reachable IK and softened transitions; or add manual hip–knee–foot contacts. Add camera keys and timed dialogue. Play to inspect the actual artwork moving through the poses.\n\n5. Save scene preserves your rig and controls. Bake animation makes a NEW editable sketch; your source stays intact. Open it for cel refinements and use Export video.\n\nChatGPT uses sketch_animation_save, sketch_animation_get and sketch_animation_bake with the same native program. Saved scenes can be listed with sketch_animation_list. No Gallery access is used. Limits and contact errors are reported; a successful export does not establish artistic quality.").setPositiveButton("Got it",null).show();}
     private void requestBack(){persistDraft();finish();}
     @Override public void onBackPressed(){requestBack();}
-    @Override protected void onPause(){stopPlayback();persistDraft();super.onPause();}
+    @Override protected void onPause(){stopPlayback();++qualityRequest;if(qualityTask!=null)qualityTask.cancel(true);persistDraft();super.onPause();}
     @Override protected void onSaveInstanceState(Bundle state){state.putString("sketchId",sketchId);state.putString("animationId",revision>0?animationId:null);state.putInt("frame",frame);state.putBoolean("mapping",mapping);state.putString("selectedRig",selectedRig);state.putString("selectedJoint",selectedJoint);persistDraft();super.onSaveInstanceState(state);}
-    @Override protected void onDestroy(){destroyed=true;stopPlayback();main.removeCallbacksAndMessages(null);canvas.replace(null);io.execute(()->{if(renderer!=null){renderer.close();renderer=null;}});io.shutdown();super.onDestroy();}
+    @Override protected void onDestroy(){destroyed=true;stopPlayback();if(qualityTask!=null)qualityTask.cancel(true);quality.shutdownNow();main.removeCallbacksAndMessages(null);canvas.replace(null);io.execute(()->{if(renderer!=null){renderer.close();renderer=null;}});io.shutdown();super.onDestroy();}
     private void post(Runnable run){main.post(()->{if(!destroyed)run.run();});}
     private void message(String text){if(text!=null&&!destroyed)Toast.makeText(this,text,Toast.LENGTH_LONG).show();}
     private int dp(int value){return StudioUi.dp(this,value);}
