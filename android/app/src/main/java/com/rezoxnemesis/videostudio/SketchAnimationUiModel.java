@@ -16,7 +16,7 @@ final class SketchAnimationUiModel {
                 .put("frameCount",Math.max(100,source.getInt("frameCount"))).put("fps",source.getInt("fps"))
                 .put("rigs",new JSONArray().put(humanoid("character_1")))
                 .put("camera",new JSONArray()).put("cameraLayerIds",layerIds)
-                .put("dialogues",new JSONArray()).put("mouthCels",new JSONArray());
+                .put("dialogues",new JSONArray()).put("mouthCels",new JSONArray()).put("interactionCues",new JSONArray());
     }
     static JSONObject humanoid(String id)throws Exception {
         JSONArray joints=new JSONArray();
