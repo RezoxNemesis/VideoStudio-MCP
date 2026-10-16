@@ -37,6 +37,7 @@ final class SketchXsheetDialog {
             JSONArray levels=sheet.getJSONArray("columns");
             int col=Math.max(0,Math.min(columnStart,Math.max(0,levels.length()-COLS)));
             int last=Math.min(col+COLS,levels.length());
+            final int firstShownCol=col;
             LinearLayout root=new LinearLayout(owner);
             root.setOrientation(LinearLayout.VERTICAL);
             root.setPadding(StudioUi.dp(owner,8),StudioUi.dp(owner,5),StudioUi.dp(owner,8),StudioUi.dp(owner,5));
@@ -69,7 +70,7 @@ final class SketchXsheetDialog {
                 final int selectedFrame=start+f;
                 TableRow row=new TableRow(owner);
                 TextView frameLabel=cell(owner,String.valueOf(selectedFrame+1),false,StudioUi.ACCENT,80);
-                frameLabel.setOnClickListener(v->selection.jump(selectedFrame,levels.optJSONObject(col).optString("layerId")));
+                frameLabel.setOnClickListener(v->selection.jump(selectedFrame,levels.optJSONObject(firstShownCol).optString("layerId")));
                 row.addView(frameLabel);
                 for(int c=col;c<last;c++){
                     JSONObject level=levels.getJSONObject(c),slot=level.getJSONArray("cells").getJSONObject(f);
