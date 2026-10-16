@@ -113,10 +113,20 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
     private long studioPlayheadMs=0;
     private boolean studioShowMedia=false;
     private String currentScreen = "home";
+    private NativeEditorStartupGuard editorStartupGuard;
+    private Runnable markLaunchHealthy;
+    private boolean editorBootstrapReady;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        NativeJavaCrashJournal.install(this);
+        editorStartupGuard=new NativeEditorStartupGuard(this);
+        NativeEditorStartupGuard.Admission boot=editorStartupGuard.begin(System.currentTimeMillis());
+        if(boot.rescueMode){
+            showSafeStartScreen(null);
+            return;
+        }
         Window window = getWindow();
         window.setStatusBarColor(C_BG);
         window.setNavigationBarColor(C_BG);
@@ -125,6 +135,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         try {
         prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
         migrateAutonomyDefaultOnce();
+        editorStartupGuard.stage("loading_project_store");
         store = new ProjectStore(this);
         // UI/local proxy work must never rewrite the native MCP job journal.
         jobs = new JobManager(this,"videostudio_editor_local_jobs_v2");
@@ -132,6 +143,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         // Construct Media3 audio components only when the human opens the editor.
         // Instantiating ExoPlayer/AudioTrack during splash consumed scarce native
         // decoder memory while the agent might also be recovering a render.
+        editorStartupGuard.stage("creating_media_factories");
         renderEngine = new NativeRenderEngine(this);
         promptVideoEngine = new PromptVideoEngine(this);
         mediaAnalyzer = new NativeMediaAnalyzer(this);
@@ -140,16 +152,29 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         proxyManager = new ProxyManager(this, store, jobs);
         // ExoPlayer is heavyweight; lazy startup leaves media codecs untouched
         // until a preview or editor playback is explicitly requested.
+        editorStartupGuard.stage("loading_active_project");
         activeProject = store.active();
+        editorStartupGuard.stage("creating_native_protocol");
         protocol = new AppProtocol(this, this);
         syncProtocolState();
 
+        editorStartupGuard.stage("building_home");
         setContentView(buildShell());
         showHome();
+        editorBootstrapReady=true;
+        editorStartupGuard.stage("home_shown");
         handleMcpRebindIntent(getIntent());
-        requestServiceSync();
-        startServiceWatchdog();
+        // The home screen becomes responsive before expensive native recovery.
+        ui.postDelayed(this::requestServiceSync,750L);
+        ui.postDelayed(this::startServiceWatchdog,1200L);
+        markLaunchHealthy=()->{
+            if(editorBootstrapReady&&editorStartupGuard!=null)
+                editorStartupGuard.success();
+        };
+        ui.postDelayed(markLaunchHealthy,5000L);
         }catch(RuntimeException|LinkageError startupFailure){
+            editorBootstrapReady=false;
+            if(editorStartupGuard!=null)editorStartupGuard.failed(startupFailure);
             showSafeStartScreen(startupFailure);
         }
     }
@@ -191,7 +216,9 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         if(studioAudioPreview!=null)studioAudioPreview.release();
         if (activityRefresh != null) ui.removeCallbacks(activityRefresh);
         if (serviceWatchdog != null) ui.removeCallbacks(serviceWatchdog);
-        if (livePlayer != null) player().release();
+        if(markLaunchHealthy!=null)ui.removeCallbacks(markLaunchHealthy);
+        if(editorBootstrapReady&&editorStartupGuard!=null)editorStartupGuard.success();
+        if (livePlayer != null) livePlayer.release();
         if (activeRenderHandle != null) activeRenderHandle.cancel();
         if (protocol != null) protocol.stop();
         if (jobs != null) jobs.shutdown();
@@ -215,8 +242,19 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         detail.setTextSize(15);detail.setTextColor(C_MUTED);
         detail.setPadding(0,dp(14),0,dp(14));
         root.addView(detail);
-        String note="VideoStudio "+AppProtocol.APP_VERSION+" startup failed: "+
-                failure.getClass().getSimpleName();
+        JSONObject checkpoint=editorStartupGuard==null?new JSONObject():editorStartupGuard.status();
+        String summary="VideoStudio "+AppProtocol.APP_VERSION+" safe startup; "+
+                "lastStage="+checkpoint.optString("lastStage","unknown")+
+                "; lastJavaFailure="+checkpoint.optString("lastJavaFailure","unknown")+
+                "; rapidFailures="+checkpoint.optInt("rapidFailures",0)+
+                "; projectDataCleared=false; galleryBrowsed=false";
+        detail.setText("VideoStudio stopped during startup. Your source projects and "+
+                "imported files are preserved. No native media render was started "+
+                "by this recovery screen.\n\nLast stage: "+
+                checkpoint.optString("lastStage","unknown")+
+                "\nJava error type: "+checkpoint.optString("lastJavaFailure","unknown")+
+                "\nNative SIGKILL or OOM may not produce a Java trace.");
+        String note=summary;
         Button copy=new Button(this);
         copy.setText("Copy safe diagnostic");
         copy.setOnClickListener(v->{
@@ -228,7 +266,10 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         root.addView(copy);
         Button retry=new Button(this);
         retry.setText("Retry safe launch");
-        retry.setOnClickListener(v->recreate());
+        retry.setOnClickListener(v->{
+            if(editorStartupGuard!=null)editorStartupGuard.allowNormalOnce();
+            recreate();
+        });
         root.addView(retry);
         setContentView(root);
     }
