@@ -135,6 +135,13 @@ final class SketchDuelAnimationExample {
         mouths.put(range("rook_mouth_open",74,77));
         mouths.put(range("rook_medium_mouth",78,99));
 
+        // The native compiler will enforce this two-actor contact against actual
+        // prepared-space joint positions. A decorative spark alone cannot pass.
+        program.put("interactionCues",new JSONArray().put(new JSONObject()
+                .put("frame",16).put("rigA","wide_rig").put("jointA","wrist")
+                .put("rigB","rook_wide_rig").put("jointB","wrist")
+                .put("maxGapPx",80).put("description","Vale and Rook baton contact")));
+
         // Move the authored impact flash/rays to the exact midpoint of both
         // opposing baton wrists, rather than leaving an unrelated spark.
         JSONObject a=joint(SketchAnimationCompiler.sample(source,program,16),"wide_rig","wrist");
