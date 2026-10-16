@@ -340,7 +340,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         projectsTop.addView(studioButton("View All ›",this::showStudioProjectLibrary),
                 new LinearLayout.LayoutParams(dp(107),dp(44)));
         box.addView(projectsTop,margins(-1,-2,dp(16),dp(6),0,0));
-        List<ProjectStore.Project> projects=store.list();
+        List<ProjectStore.Project> projects=store.listRecent(8);
         if(projects.isEmpty())box.addView(body("No projects yet. Create one and import your clips."));
         else for(int i=0;i<Math.min(8,projects.size());i++)
             box.addView(projectRow(projects.get(i)),margins(-1,-2,0,dp(6),0,0));
