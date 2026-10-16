@@ -117,13 +117,13 @@ public final class SketchAnimationCompiler {
         for(int li=0;li<layers.length();li++){JSONObject layer=layers.getJSONObject(li);if(m.cameraLayers.contains(layer.getString("id"))){denseKeys+=layer.getJSONArray("keys").length();Reduction reduced=reduceKeys(m,layer.getJSONArray("keys"),new double[]{-16d*m.width,-16d*m.height,16d*m.width,16d*m.height},0);layer.put("keys",reduced.keys);maxApproximation=Math.max(maxApproximation,reduced.error);}JSONArray items=layer.getJSONArray("objects");for(int oi=0;oi<items.length();oi++){JSONObject object=items.getJSONObject(oi);Binding binding=m.bindings.get(object.getString("id"));if(binding!=null&&binding.weights==null){denseKeys+=object.getJSONArray("keys").length();double layerScale=maxLayerScale(m,m.owners.get(binding.objectId));Reduction reduced=reduceKeys(m,object.getJSONArray("keys"),geometryBounds(m,object),KEYFRAME_TOLERANCE_PIXELS/layerScale);object.put("keys",reduced.keys);maxApproximation=Math.max(maxApproximation,reduced.error*layerScale);}}}
         SketchDocument.validate(out);
         int objectCount=0,keyCount=0;for(int i=0;i<layers.length();i++){JSONObject l=layers.getJSONObject(i);keyCount+=l.getJSONArray("keys").length();JSONArray items=l.getJSONArray("objects");objectCount+=items.length();for(int j=0;j<items.length();j++)keyCount+=items.getJSONObject(j).getJSONArray("keys").length();}
-        animatedJoints=movingJoints.size();int weighted=0,contacts=0,oriented=0;for(Rig r:m.rigs){contacts+=r.contacts.size();for(Contact c:r.contacts)if(c.hasRotation)oriented++;for(Binding b:r.bindings)if(b.weights!=null)weighted++;}
+        animatedJoints=movingJoints.size();int weighted=0,contacts=0,oriented=0,blended=0;for(Rig r:m.rigs){contacts+=r.contacts.size();for(Contact c:r.contacts){if(c.hasRotation)oriented++;if(c.blendIn>0||c.blendOut>0)blended++;}for(Binding b:r.bindings)if(b.weights!=null)weighted++;}
         JSONObject report=new JSONObject().put("provider","authored_articulated_2d").put("schema",SCHEMA)
                 .put("frameCount",m.frames).put("fps",m.fps).put("durationMs",Math.round(m.frames*1000d/m.fps))
                 .put("rigCount",m.rigs.size()).put("boundObjectCount",m.bindings.size()).put("deformedObjectCount",weighted)
                 .put("animatedJointCount",animatedJoints).put("articulatedMotionFrames",articulatedFrames)
                 .put("independentArticulation",articulatedFrames>0).put("motionMetric","exposed bindings with visible layers and nonzero transform opacity; no pixel-content or occlusion assessment").put("rootMotionFrames",rootFrames)
-                .put("contactCount",contacts).put("orientationContactCount",oriented).put("maxFootContactRotationErrorDegrees",maxContactRotationError).put("contactSampleCount",contactSamples).put("maxFootContactErrorPixels",maxContactError).put("contactCoordinateSpace","prepared_canvas_pixels_before_camera")
+                .put("contactCount",contacts).put("blendedContactCount",blended).put("orientationContactCount",oriented).put("maxFootContactRotationErrorDegrees",maxContactRotationError).put("contactSampleCount",contactSamples).put("maxFootContactErrorPixels",maxContactError).put("contactCoordinateSpace","prepared_canvas_pixels_before_camera")
                 .put("dialogueCount",m.dialogues.length()).put("mouthCelCount",m.mouthCount).put("celRangeCount",m.celCount).put("hiddenArtworkCount",m.hiddenCount)
                 .put("cameraSampleCount",m.cameraLayers.isEmpty()?0:m.frames).put("outputObjectCount",objectCount).put("outputTransformKeys",keyCount)
                 .put("denseTransformSampleCount",denseKeys).put("keyframeTolerancePixels",KEYFRAME_TOLERANCE_PIXELS).put("maxBakedTransformApproximationPixels",maxApproximation)
@@ -205,7 +205,7 @@ public final class SketchAnimationCompiler {
 
     private static final class Joint {String id;int parent=-1;double x,y;}
     private static final class Pose {int frame;String interpolation;double rootX,rootY;double[] rotations;}
-    private static final class Contact {int hip,knee,ankle,start,end,bend;double x,y,rotation;boolean hasRotation;}
+    private static final class Contact {int hip,knee,ankle,start,end,bend,blendIn,blendOut;double x,y,rotation;boolean hasRotation;}
     private static final class Binding {String objectId;int joint;List<Map<Integer,Double>> weights;}
     private static final class Rig {String id;boolean cameraAffected;List<Joint> joints=new ArrayList<>();List<Pose> poses=new ArrayList<>();List<Contact> contacts=new ArrayList<>();List<Binding> bindings=new ArrayList<>();Map<String,Integer> index=new LinkedHashMap<>();}
     private static final class Snapshot {double[] x,y,angle,local;double rootX,rootY;JSONArray contactErrors=new JSONArray();Snapshot(int n){x=new double[n];y=new double[n];angle=new double[n];local=new double[n];}}
@@ -287,7 +287,12 @@ public final class SketchAnimationCompiler {
                 bindings.put(v.objectId,v);r.bindings.add(v);
                 if(celClones.containsKey(v.objectId))for(String cloneId:celClones.get(v.objectId)){Binding clone=new Binding();clone.objectId=cloneId;clone.joint=v.joint;clone.weights=v.weights;bindings.put(cloneId,clone);r.bindings.add(clone);}
             }
-            JSONArray ii=o.optJSONArray("ik");if(ii!=null){if(ii.length()>256)throw bad("Use at most 256 IK contact intervals per rig");for(int i=0;i<ii.length();i++){JSONObject c=ii.getJSONObject(i);SketchDocument.fields(c,"hip,knee,ankle,start,end,x,y,bend,rotation");Contact v=new Contact();v.hip=jointIndex(r,c.getString("hip"));v.knee=jointIndex(r,c.getString("knee"));v.ankle=jointIndex(r,c.getString("ankle"));if(r.joints.get(v.knee).parent!=v.hip||r.joints.get(v.ankle).parent!=v.knee)throw bad("IK requires a direct hip-knee-ankle chain");int[] range=range(c);v.start=range[0];v.end=range[1];v.x=SketchDocument.number(c,"x",0,1)*width;v.y=SketchDocument.number(c,"y",0,1)*height;v.bend=c.has("bend")?(int)SketchDocument.integer(c,"bend",-1,1):1;if(v.bend==0)throw bad("IK bend must be -1 or 1");v.hasRotation=c.has("rotation");if(v.hasRotation)v.rotation=SketchDocument.number(c,"rotation",-3600,3600);if(distance(r.joints.get(v.hip),r.joints.get(v.knee))<EPS||distance(r.joints.get(v.knee),r.joints.get(v.ankle))<EPS)throw bad("IK requires nonzero bone lengths");for(Contact prior:r.contacts)if(prior.end>=v.start&&v.end>=prior.start&&(ancestor(r,prior.hip,v.hip)||ancestor(r,v.hip,prior.hip)))throw bad("Overlapping IK contacts cannot control dependent ancestor chains");r.contacts.add(v);}}
+            JSONArray ii=o.optJSONArray("ik");if(ii!=null){if(ii.length()>256)throw bad("Use at most 256 IK contact intervals per rig");for(int i=0;i<ii.length();i++){JSONObject c=ii.getJSONObject(i);SketchDocument.fields(c,"hip,knee,ankle,start,end,x,y,bend,rotation,blendInFrames,blendOutFrames");Contact v=new Contact();v.hip=jointIndex(r,c.getString("hip"));v.knee=jointIndex(r,c.getString("knee"));v.ankle=jointIndex(r,c.getString("ankle"));if(r.joints.get(v.knee).parent!=v.hip||r.joints.get(v.ankle).parent!=v.knee)throw bad("IK requires a direct hip-knee-ankle chain");int[] range=range(c);v.start=range[0];v.end=range[1];
+                v.blendIn=c.has("blendInFrames")?(int)SketchDocument.integer(c,"blendInFrames",0,12):0;
+                v.blendOut=c.has("blendOutFrames")?(int)SketchDocument.integer(c,"blendOutFrames",0,12):0;
+                if(v.start-v.blendIn<0||v.end+v.blendOut>=frames)
+                    throw bad("Foot-contact blends must stay within the animation timeline");
+                v.x=SketchDocument.number(c,"x",0,1)*width;v.y=SketchDocument.number(c,"y",0,1)*height;v.bend=c.has("bend")?(int)SketchDocument.integer(c,"bend",-1,1):1;if(v.bend==0)throw bad("IK bend must be -1 or 1");v.hasRotation=c.has("rotation");if(v.hasRotation)v.rotation=SketchDocument.number(c,"rotation",-3600,3600);if(distance(r.joints.get(v.hip),r.joints.get(v.knee))<EPS||distance(r.joints.get(v.knee),r.joints.get(v.ankle))<EPS)throw bad("IK requires nonzero bone lengths");for(Contact prior:r.contacts)if(prior.end+prior.blendOut>=v.start-v.blendIn&&v.end+v.blendOut>=prior.start-prior.blendIn&&(ancestor(r,prior.hip,v.hip)||ancestor(r,v.hip,prior.hip)))throw bad("Overlapping IK contacts cannot control dependent ancestor chains");r.contacts.add(v);}}
             return r;
         }
         private void readCamera(JSONArray cc)throws Exception {
@@ -301,16 +306,45 @@ public final class SketchAnimationCompiler {
         for(Pose p:r.poses){if(p.frame<=frame)left=p;else{right=p;break;}}
         if(left!=null){double f=right==null?0:fraction(left.interpolation,(frame-left.frame)/(double)(right.frame-left.frame));s.rootX=left.rootX+(right==null?0:(right.rootX-left.rootX)*f);s.rootY=left.rootY+(right==null?0:(right.rootY-left.rootY)*f);for(int i=0;i<s.local.length;i++)s.local[i]=left.rotations[i]+(right==null?0:(right.rotations[i]-left.rotations[i])*f);}
         forward(m,r,s);
-        for(Contact contact:r.contacts)if(frame>=contact.start&&frame<=contact.end) {
+        for(Contact contact:r.contacts) {
+            boolean locked=frame>=contact.start&&frame<=contact.end;
+            if(frame<contact.start-contact.blendIn||frame>contact.end+contact.blendOut)continue;
+            double strength=1;
+            if(frame<contact.start){
+                strength=(frame-(contact.start-contact.blendIn))/(double)contact.blendIn;
+            }else if(frame>contact.end){
+                strength=(contact.end+contact.blendOut-frame)/(double)contact.blendOut;
+            }
+            strength=Math.max(0,Math.min(1,strength));
+            strength=strength*strength*(3-2*strength);
+            if(strength<=EPS)continue;
             Joint hip=r.joints.get(contact.hip),knee=r.joints.get(contact.knee),ankle=r.joints.get(contact.ankle);
-            double upper=distance(hip,knee),lower=distance(knee,ankle),dx=contact.x-s.x[contact.hip],dy=contact.y-s.y[contact.hip],distance=Math.hypot(dx,dy);
-            if(distance>upper+lower+1e-6||distance<Math.abs(upper-lower)-1e-6||distance<EPS)throw bad("UNREACHABLE_IK_TARGET at frame "+frame+" for "+r.id+":"+ankle.id);
+            double upper=distance(hip,knee),lower=distance(knee,ankle);
+            double dx=contact.x-s.x[contact.hip],dy=contact.y-s.y[contact.hip],distance=Math.hypot(dx,dy);
+            double max=upper+lower,min=Math.abs(upper-lower);
+            if(locked&&(distance>max+1e-6||distance<min-1e-6||distance<EPS))
+                throw bad("UNREACHABLE_IK_TARGET at frame "+frame+" for "+r.id+":"+ankle.id);
+            // During ease-in/out, use the closest reachable target. Hard plant frames still
+            // reject an unreachable point, so easing can never disguise a sliding foot.
+            if(!locked){
+                if(distance<EPS)continue;
+                double radius=Math.max(min+1e-4,Math.min(max-1e-4,distance));
+                double scale=radius/distance;dx*=scale;dy*=scale;distance=radius;
+            }
+            double originalHip=s.local[contact.hip],originalKnee=s.local[contact.knee],originalAnkle=s.local[contact.ankle];
             double cosine=Math.max(-1,Math.min(1,(upper*upper+distance*distance-lower*lower)/(2*upper*distance)));
             double worldUpper=Math.toDegrees(Math.atan2(dy,dx)+contact.bend*Math.acos(cosine)-Math.atan2(knee.y-hip.y,knee.x-hip.x));
             s.local[contact.hip]=worldUpper-(hip.parent<0?0:s.angle[hip.parent]);forward(m,r,s);
-            double worldLower=Math.toDegrees(Math.atan2(contact.y-s.y[contact.knee],contact.x-s.x[contact.knee])-Math.atan2(ankle.y-knee.y,ankle.x-knee.x));
+            double targetX=s.x[contact.hip]+dx,targetY=s.y[contact.hip]+dy;
+            double worldLower=Math.toDegrees(Math.atan2(targetY-s.y[contact.knee],targetX-s.x[contact.knee])-Math.atan2(ankle.y-knee.y,ankle.x-knee.x));
             s.local[contact.knee]=worldLower-s.angle[contact.hip];forward(m,r,s);
             if(contact.hasRotation){s.local[contact.ankle]=contact.rotation-s.angle[contact.knee];forward(m,r,s);}
+            if(strength<1-EPS){
+                s.local[contact.hip]=originalHip+(s.local[contact.hip]-originalHip)*strength;
+                s.local[contact.knee]=originalKnee+(s.local[contact.knee]-originalKnee)*strength;
+                if(contact.hasRotation)s.local[contact.ankle]=originalAnkle+(s.local[contact.ankle]-originalAnkle)*strength;
+                forward(m,r,s);
+            }
         }
         for(Contact contact:r.contacts)if(frame>=contact.start&&frame<=contact.end){
             double error=Math.hypot(s.x[contact.ankle]-contact.x,s.y[contact.ankle]-contact.y);
