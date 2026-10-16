@@ -116,6 +116,7 @@ public final class SketchAnimationCompiler {
         double maxApproximation=0;int denseKeys=0;
         for(int li=0;li<layers.length();li++){JSONObject layer=layers.getJSONObject(li);if(m.cameraLayers.contains(layer.getString("id"))){denseKeys+=layer.getJSONArray("keys").length();Reduction reduced=reduceKeys(m,layer.getJSONArray("keys"),new double[]{-16d*m.width,-16d*m.height,16d*m.width,16d*m.height},0);layer.put("keys",reduced.keys);maxApproximation=Math.max(maxApproximation,reduced.error);}JSONArray items=layer.getJSONArray("objects");for(int oi=0;oi<items.length();oi++){JSONObject object=items.getJSONObject(oi);Binding binding=m.bindings.get(object.getString("id"));if(binding!=null&&binding.weights==null){denseKeys+=object.getJSONArray("keys").length();double layerScale=maxLayerScale(m,m.owners.get(binding.objectId));Reduction reduced=reduceKeys(m,object.getJSONArray("keys"),geometryBounds(m,object),KEYFRAME_TOLERANCE_PIXELS/layerScale);object.put("keys",reduced.keys);maxApproximation=Math.max(maxApproximation,reduced.error*layerScale);}}}
         SketchDocument.validate(out);
+        JSONObject contactEvidence=interactionEvidence(m);
         int objectCount=0,keyCount=0;for(int i=0;i<layers.length();i++){JSONObject l=layers.getJSONObject(i);keyCount+=l.getJSONArray("keys").length();JSONArray items=l.getJSONArray("objects");objectCount+=items.length();for(int j=0;j<items.length();j++)keyCount+=items.getJSONObject(j).getJSONArray("keys").length();}
         animatedJoints=movingJoints.size();int weighted=0,contacts=0,oriented=0,blended=0;for(Rig r:m.rigs){contacts+=r.contacts.size();for(Contact c:r.contacts){if(c.hasRotation)oriented++;if(c.blendIn>0||c.blendOut>0)blended++;}for(Binding b:r.bindings)if(b.weights!=null)weighted++;}
         JSONObject report=new JSONObject().put("provider","authored_articulated_2d").put("schema",SCHEMA)
@@ -125,14 +126,54 @@ public final class SketchAnimationCompiler {
                 .put("independentArticulation",articulatedFrames>0).put("motionMetric","exposed bindings with visible layers and nonzero transform opacity; no pixel-content or occlusion assessment").put("rootMotionFrames",rootFrames)
                 .put("contactCount",contacts).put("blendedContactCount",blended).put("orientationContactCount",oriented).put("maxFootContactRotationErrorDegrees",maxContactRotationError).put("contactSampleCount",contactSamples).put("maxFootContactErrorPixels",maxContactError).put("contactCoordinateSpace","prepared_canvas_pixels_before_camera")
                 .put("dialogueCount",m.dialogues.length()).put("mouthCelCount",m.mouthCount).put("celRangeCount",m.celCount).put("hiddenArtworkCount",m.hiddenCount)
+                .put("interCharacterContactCount",m.interactionCues.length())
+                .put("maxInterCharacterContactGapPixels",contactEvidence.getDouble("maxGapPixels"))
+                .put("interCharacterContacts",contactEvidence.getJSONArray("contacts"))
                 .put("cameraSampleCount",m.cameraLayers.isEmpty()?0:m.frames).put("outputObjectCount",objectCount).put("outputTransformKeys",keyCount)
                 .put("denseTransformSampleCount",denseKeys).put("keyframeTolerancePixels",KEYFRAME_TOLERANCE_PIXELS).put("maxBakedTransformApproximationPixels",maxApproximation)
                 .put("outputBytes",out.toString().getBytes(StandardCharsets.UTF_8).length).put("sourcePreserved",true)
                 .put("sourceSha256",hash(source)).put("programSha256",hash(program)).put("artisticQualityVerified",false)
                 .put("limitations",new JSONArray().put("Authored rig mapping is required; no anatomy or alternate-view inference")
                         .put("Timed mouth cels may follow approximate text visemes; no recorded-audio alignment, synthesized speech, or verified lip synchronization")
+                        .put("Baton/hand contact cues validate joint distance only, not silhouettes, collision volume or film-grade choreography")
                         .put("Motion metrics verify constraints, not cinematic or exact-reference quality"));
         return new JSONObject().put("document",out).put("report",report);
+    }
+
+    /** Validated authored action contact: use sampled real rig positions in prepared-canvas
+     * pixels, not camera-relative screen pixels or a decorative spark. Never mutates rigs. */
+    private static JSONObject interactionEvidence(Model m)throws Exception {
+        JSONArray results=new JSONArray();double maximum=0;
+        Map<String,Snapshot> cache=new HashMap<>();
+        for(int i=0;i<m.interactionCues.length();i++){
+            if(Thread.currentThread().isInterrupted())throw new InterruptedException("Action contact QA cancelled");
+            JSONObject cue=m.interactionCues.getJSONObject(i);
+            int frame=cue.getInt("frame");
+            Rig a=rigById(m,cue.getString("rigA")),b=rigById(m,cue.getString("rigB"));
+            Snapshot first=cachedSample(m,a,frame,cache),second=cachedSample(m,b,frame,cache);
+            int aJoint=jointIndex(a,cue.getString("jointA")),bJoint=jointIndex(b,cue.getString("jointB"));
+            double gap=Math.hypot(first.x[aJoint]-second.x[bJoint],first.y[aJoint]-second.y[bJoint]);
+            double allowed=cue.getDouble("maxGapPx");
+            if(gap>allowed+1e-7)throw bad("INTERACTION_CONTACT_MISS at frame "+frame+": "+
+                    cue.getString("rigA")+":"+cue.getString("jointA")+" to "+
+                    cue.getString("rigB")+":"+cue.getString("jointB")+" is "+
+                    Math.round(gap)+" source pixels apart; allowed "+allowed);
+            results.put(new JSONObject().put("frame",frame).put("rigA",a.id)
+                    .put("jointA",cue.getString("jointA")).put("rigB",b.id)
+                    .put("jointB",cue.getString("jointB")).put("gapPixels",gap)
+                    .put("allowedPixels",allowed).put("description",cue.optString("description","")));
+            maximum=Math.max(maximum,gap);
+        }
+        return new JSONObject().put("maxGapPixels",maximum).put("contacts",results);
+    }
+    private static Snapshot cachedSample(Model m,Rig rig,int frame,Map<String,Snapshot> cache)throws Exception{
+        String key=rig.id+":"+frame;Snapshot found=cache.get(key);
+        if(found==null){found=sampleRig(m,rig,frame);cache.put(key,found);}
+        return found;
+    }
+    private static Rig rigById(Model m,String id){
+        for(Rig r:m.rigs)if(id.equals(r.id))return r;
+        throw bad("Unknown contact character rig: "+id);
     }
 
     /** UI joint overlays and contact diagnostics use exactly the same solver as compilation. */
@@ -217,14 +258,14 @@ public final class SketchAnimationCompiler {
         final Map<String,int[]> ranges=new HashMap<>();final Map<String,Binding> bindings=new HashMap<>();
         final Map<String,List<String>> celClones=new HashMap<>();final Map<String,List<int[]>> intervals=new HashMap<>();
         final List<Rig> rigs=new ArrayList<>();final Set<String> cameraLayers=new HashSet<>();final List<Camera> camera=new ArrayList<>();
-        final JSONArray dialogues;final Set<String> reservedIds=new HashSet<>();int mouthCount,celCount,hiddenCount;
+        final JSONArray dialogues,interactionCues;final Set<String> reservedIds=new HashSet<>();int mouthCount,celCount,hiddenCount;
         Model(JSONObject source,JSONObject p)throws Exception {
             SketchDocument.validate(source);this.source=SketchDocument.copy(source);
-            SketchDocument.fields(p,"schema,name,frameCount,fps,rigs,camera,cameraLayerIds,dialogues,mouthCels,celRanges,hiddenArtwork");
+            SketchDocument.fields(p,"schema,name,frameCount,fps,rigs,camera,cameraLayerIds,dialogues,mouthCels,celRanges,hiddenArtwork,interactionCues");
             if(p.has("name"))SketchDocument.text(p,"name",160);
             if(!SCHEMA.equals(p.getString("schema")))throw bad("Unknown animation program schema");
             if(p.toString().getBytes(StandardCharsets.UTF_8).length>MAX_PROGRAM_BYTES)throw bad("Animation program exceeds 512 KiB");
-            for(String key:new String[]{"rigs","camera","cameraLayerIds","dialogues","mouthCels","celRanges","hiddenArtwork"})optionalArray(p,key);
+            for(String key:new String[]{"rigs","camera","cameraLayerIds","dialogues","mouthCels","celRanges","hiddenArtwork","interactionCues"})optionalArray(p,key);
             frames=(int)SketchDocument.integer(p,"frameCount",1,SketchDocument.MAX_FRAMES);
             fps=p.has("fps")?(int)SketchDocument.integer(p,"fps",24,60):source.getInt("fps");NativeFrameClock.requireFps(fps);
             sourceFrames=source.getInt("frameCount");single=sourceFrames==1;width=source.getInt("width");height=source.getInt("height");
@@ -256,6 +297,20 @@ public final class SketchAnimationCompiler {
                 requireIdentityLayer(layer.getJSONObject("transform"));JSONArray keys=layer.getJSONArray("keys");for(int i=0;i<keys.length();i++)requireIdentityLayer(keys.getJSONObject(i).getJSONObject("transform"));
                 boolean affected=cameraLayers.contains(owner);if(selected!=null&&selected!=affected)throw bad("All bound layers of one rig must share the same camera selection");selected=affected;
             }rig.cameraAffected=Boolean.TRUE.equals(selected);}
+            interactionCues=p.optJSONArray("interactionCues")==null?new JSONArray():p.getJSONArray("interactionCues");
+            if(interactionCues.length()>64)throw bad("Use at most 64 authored inter-character contact cues");
+            for(int i=0;i<interactionCues.length();i++){
+                JSONObject cue=interactionCues.getJSONObject(i);
+                SketchDocument.fields(cue,"frame,rigA,jointA,rigB,jointB,maxGapPx,description");
+                SketchDocument.integer(cue,"frame",0,frames-1);
+                double gap=SketchDocument.number(cue,"maxGapPx",.1,512);
+                String first=SketchDocument.id(cue,"rigA"),second=SketchDocument.id(cue,"rigB");
+                if(first.equals(second))throw bad("Action contact requires two distinct character rigs");
+                Rig a=rigById(this,first),b=rigById(this,second);
+                jointIndex(a,SketchDocument.id(cue,"jointA"));
+                jointIndex(b,SketchDocument.id(cue,"jointB"));
+                if(cue.has("description"))SketchDocument.text(cue,"description",120);
+            }
             dialogues=p.optJSONArray("dialogues")==null?new JSONArray():p.getJSONArray("dialogues");if(dialogues.length()>256)throw bad("Use at most 256 dialogue cues");
             for(int i=0;i<dialogues.length();i++) {
                 JSONObject c=dialogues.getJSONObject(i);SketchDocument.fields(c,"start,end,text,layerId,bounds,color,fontSize");range(c);SketchDocument.layer(source,c.getString("layerId"));SketchDocument.text(c,"text",4096);SketchDocument.validateBounds(c.getJSONObject("bounds"));
