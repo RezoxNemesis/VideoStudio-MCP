@@ -23,7 +23,7 @@ public final class SketchEditOps {
         // A hidden guide is preparatory data, not a request to change the
         // foreground drawing. Actual edits and live sessions still follow.
         boolean hiddenGuideImport="sketch_import_reference".equals(action)&&!args.optBoolean("guideVisible",true);
-        if(result.has("sketchId")&&!hiddenGuideImport&&!java.util.Arrays.asList("sketch_get","sketch_preview","sketch_list","sketch_live_events","sketch_inspect","sketch_paint_journal","sketch_sample_color").contains(action)){
+        if(result.has("sketchId")&&!hiddenGuideImport&&!java.util.Arrays.asList("sketch_get","sketch_preview","sketch_list","sketch_live_events","sketch_inspect","sketch_xsheet","sketch_paint_journal","sketch_sample_color").contains(action)){
             android.content.SharedPreferences.Editor signal=context.getSharedPreferences("sketch_live_workspace",Context.MODE_PRIVATE).edit().putString("sketchId",result.getString("sketchId")).putLong("signal",System.nanoTime());
             String priorBook=context.getSharedPreferences("sketch_live_workspace",Context.MODE_PRIVATE).getString("sketchId","").equals(result.getString("sketchId"))?context.getSharedPreferences("sketch_live_workspace",Context.MODE_PRIVATE).getString("bookId",""):"";signal.putString("bookId",action.equals("sketch_book_open_page")?args.getString("bookId"):priorBook);signal.putInt("page",args.optInt("page",0));signal.apply();
         }
@@ -43,6 +43,17 @@ public final class SketchEditOps {
             if("sketch_paint_journal".equals(action)||"sketch_sample_color".equals(action))return SketchPaintOps.query(context,store,action,args);
             if("sketch_inspect".equals(action)){
                 SketchDocument.fields(args,"sketchId,expectedRevision,frameOffset,frameLimit,characterLayerIds");JSONObject doc=store.get(id);if(args.has("expectedRevision"))SketchProjectStore.requireRevision(doc,SketchDocument.integer(args,"expectedRevision",1,Long.MAX_VALUE-1));return SketchInspection.inspect(doc,args);
+            }
+            if("sketch_xsheet".equals(action)){
+                SketchDocument.fields(args,"sketchId,expectedRevision,frameOffset,frameLimit");
+                JSONObject doc=store.get(id);
+                if(args.has("expectedRevision"))SketchProjectStore.requireRevision(
+                        doc,SketchDocument.integer(args,"expectedRevision",1,Long.MAX_VALUE-1));
+                int offset=args.has("frameOffset")?(int)SketchDocument.integer(
+                        args,"frameOffset",0,doc.getInt("frameCount")-1):0;
+                int limit=args.has("frameLimit")?(int)SketchDocument.integer(
+                        args,"frameLimit",1,SketchXsheetProjection.MAX_ROWS):12;
+                return SketchXsheetProjection.project(doc,offset,limit);
             }
             if("sketch_live_events".equals(action)){
                 SketchDocument.fields(args,"sketchId,afterSequence,limit,operationOffset,operationLimit,eventSequence");
@@ -281,8 +292,37 @@ public final class SketchEditOps {
             }
             case "update_object": {
                 SketchDocument.fields(op, "type,objectId,patch"); String id = SketchDocument.id(op, "objectId"); requireUnlocked(SketchDocument.owner(doc, id));
-                JSONObject patch = op.getJSONObject("patch"); SketchDocument.fields(patch, "color,width,fill,points,bounds,frame,exposure,brush,commands,gradient,referenceCrop,text,fontFamily,fontSize,fontStyle,textAlign,letterSpacing");
-                merge(SketchDocument.object(doc, id), patch); break;
+                JSONObject patch = op.getJSONObject("patch"); SketchDocument.fields(patch, "color,styleId,width,fill,points,bounds,frame,exposure,brush,commands,gradient,referenceCrop,text,fontFamily,fontSize,fontStyle,textAlign,letterSpacing");
+                JSONObject target=SketchDocument.object(doc,id);
+                // An explicit direct recolor is a deliberate opt-out of the linked palette.
+                if(patch.has("color")&&!patch.has("styleId"))target.remove("styleId");
+                merge(target, patch); break;
+            }
+            case "palette_upsert": {
+                SketchDocument.fields(op,"type,styleId,name,color");
+                SketchPaletteStyles.upsert(doc,SketchDocument.id(op,"styleId"),
+                        op.getString("name"),op.getString("color"));break;
+            }
+            case "palette_assign": {
+                SketchDocument.fields(op,"type,objectId,styleId");
+                String objectId=SketchDocument.id(op,"objectId");
+                SketchEditOps.requireUnlocked(SketchDocument.owner(doc,objectId));
+                SketchPaletteStyles.assign(doc,objectId,SketchDocument.id(op,"styleId"));break;
+            }
+            case "palette_link_matching": {
+                SketchDocument.fields(op,"type,styleId,originalColor");
+                SketchPaletteStyles.linkMatching(doc,SketchDocument.id(op,"styleId"),
+                        op.getString("originalColor"));break;
+            }
+            case "palette_unlink": {
+                SketchDocument.fields(op,"type,objectId");
+                String objectId=SketchDocument.id(op,"objectId");
+                SketchEditOps.requireUnlocked(SketchDocument.owner(doc,objectId));
+                SketchPaletteStyles.unlink(doc,objectId);break;
+            }
+            case "palette_delete": {
+                SketchDocument.fields(op,"type,styleId");
+                SketchPaletteStyles.deleteUnused(doc,SketchDocument.id(op,"styleId"));break;
             }
             case "append_points": {
                 SketchDocument.fields(op,"type,objectId,points");String id=SketchDocument.id(op,"objectId");requireUnlocked(SketchDocument.owner(doc,id));JSONObject object=SketchDocument.object(doc,id);
