@@ -13,7 +13,8 @@ final class SketchAnimationProductionPreflight {
     static JSONObject inspect(JSONObject source,JSONObject program)throws Exception{
         JSONObject compiled=SketchAnimationCompiler.compile(source,program,
                 "preflight_"+java.util.UUID.randomUUID().toString().replace("-",""));
-        JSONObject r=compiled.getJSONObject("report"),result=new JSONObject(),notes=new JSONArray();
+        JSONObject r=compiled.getJSONObject("report"),result=new JSONObject();
+        JSONArray notes=new JSONArray();
         int frames=r.getInt("frameCount"),fps=r.getInt("fps");
         int bindings=r.getInt("boundObjectCount"),mouth=r.getInt("mouthCelCount"),dialogue=r.getInt("dialogueCount");
         if(bindings<2)notes.put("Character motion: bind at least two independently movable artwork pieces to a rig.");
