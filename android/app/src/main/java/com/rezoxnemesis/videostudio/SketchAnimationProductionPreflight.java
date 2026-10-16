@@ -21,6 +21,7 @@ final class SketchAnimationProductionPreflight {
         if(!r.getBoolean("independentArticulation"))notes.put("Motion: no independent visible body-part articulation was measured. Camera movement alone is insufficient.");
         if(r.getInt("articulatedMotionFrames")<Math.max(1,frames/12))
             notes.put("Acting: articulated movement appears in fewer than 1 in 12 frames; inspect action and recovery.");
+        if(r.optInt("interCharacterContactCount",0)>0)notes.put("Action contacts: sampled physical joint distances were checked; inspect weapon silhouettes, depth and impact timing visually.");
         if(dialogue>0&&mouth==0)notes.put("Dialogue: captions exist but no mouth replacement cels are timed.");
         if(dialogue>0&&mouth>0)notes.put("Dialogue: mouth timing is visual only; align it to a voice recording for accurate lip sync.");
         if(r.getInt("contactCount")>0&&r.optInt("blendedContactCount",0)==0)notes.put("Footwork: contacts have no entry/exit blending; check for snapping at touchdown and release.");
