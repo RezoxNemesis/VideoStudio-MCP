@@ -337,7 +337,7 @@ public final class SketchAnimationActivity extends Activity {
                         post(()->{
                             if(origin!=generation||request!=qualityRequest)return;
                             program=candidate;changed();
-                            message("Physical contact verified and added · "+checked.getJSONArray("contacts").length()+" authored cue(s)");
+                            message("Physical contact verified and added · "+candidate.optJSONArray("interactionCues").length()+" authored cue(s)");
                         });
                     }catch(Exception error){
                         post(()->{
