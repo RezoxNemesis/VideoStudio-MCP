@@ -215,7 +215,12 @@ public final class SketchPhotoReferenceTest {
             }
             ShadowLooper.idleMainLooper();
             try(SketchProjectStore store=new SketchProjectStore(context)){
-                committed=SketchDocument.object(store.get(id),"guide").getJSONObject("transform").getDouble("opacity");
+                JSONObject saved=store.get(id);
+                JSONArray objects=saved.getJSONArray("layers").getJSONObject(0).getJSONArray("objects");
+                assertEquals("Manual reference test expects one imported owned image",1,objects.length());
+                JSONObject importedImage=objects.getJSONObject(0);
+                assertEquals("image",importedImage.getString("kind"));
+                committed=importedImage.getJSONObject("transform").getDouble("opacity");
                 if(committed==1)return;
             }
         }
