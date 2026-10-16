@@ -46,7 +46,7 @@ public final class SketchAnimationActivity extends Activity {
     private JSONObject source,program,sampled=new JSONObject();
     private String sketchId,animationId,selectedRig="",selectedJoint="",interpolation="smooth";
     private long revision,sourceRevision,playStarted;
-    private int frame,displayedFrame=-1,playFirst,generation,snapshotGeneration=-1;
+    private int frame,displayedFrame=-1,playFirst,generation,snapshotGeneration=-1,qualityRequest;
     private JSONObject previewProgramSnapshot;
     private volatile boolean destroyed;
     private boolean loading=true,dirty,mapping=true,playing,previewInFlight,previewAgain,pickerUpdating,saving;
@@ -89,7 +89,7 @@ public final class SketchAnimationActivity extends Activity {
         StudioUi.prepareTouchLayout(root);
     }
     private void load(){
-        loading=true;++generation;sampled=new JSONObject();final String requested=animationId;
+        loading=true;++generation;++qualityRequest;if(qualityTask!=null)qualityTask.cancel(true);sampled=new JSONObject();final String requested=animationId;
         io.execute(()->{try{
             JSONObject loadedSource,loadedProgram;long loadedRevision=0;String loadedId=requested;
             if(requested!=null&&!requested.isEmpty()){
@@ -125,7 +125,7 @@ public final class SketchAnimationActivity extends Activity {
         frameLabel.setText("Frame "+((playing&&displayedFrame>=0?displayedFrame:frame)+1)+" / "+count+" · "+String.format(java.util.Locale.ROOT,"%.2f s",frame/(double)fps)+" · "+fps+" FPS");
         selectionLabel.setText((mapping?"Fit rig · ":"Pose · ")+selectedJoint+(mapping?" · drag joints; then bind artwork":" · drag endpoint or use rotation controls"));
     }
-    private void changed(){if(qualityTask!=null)qualityTask.cancel(true);dirty=true;++generation;previewError="";requestPreview();main.removeCallbacks(draftTick);main.postDelayed(draftTick,250);refreshFrame();}
+    private void changed(){++qualityRequest;if(qualityTask!=null)qualityTask.cancel(true);dirty=true;++generation;previewError="";requestPreview();main.removeCallbacks(draftTick);main.postDelayed(draftTick,250);refreshFrame();}
     private final Runnable draftTick=()->persistDraft();
     private void persistDraft(){
         if(program==null||source==null||destroyed)return;try{
@@ -258,13 +258,14 @@ public final class SketchAnimationActivity extends Activity {
             final int count=SketchAnimationUiModel.integer(length.getText().toString(),24,240,"Foot-plant frames");
             final String style=kind.getSelectedItem().toString(),rigId=selectedRig;
             final JSONObject frozenSource=SketchDocument.copy(source),frozenProgram=SketchDocument.copy(program);
-            final int sourceGeneration=generation;
+            final int sourceGeneration=generation,request=++qualityRequest;
+            if(qualityTask!=null)qualityTask.cancel(true);
             status.setText("Solving real leg reach, plant windows and contact easing…");
-            io.execute(()->{
+            qualityTask=quality.submit(()->{
                 try{
                     JSONObject solved=SketchAnimationFootwork.plant(frozenSource,frozenProgram,rigId,firstFrame,count,style);
                     post(()->{
-                        if(sourceGeneration!=generation||!rigId.equals(selectedRig)){
+                        if(sourceGeneration!=generation||request!=qualityRequest||!rigId.equals(selectedRig)){
                             status.setText("Gait changed during calculation; original edits preserved");
                             message("Gait changed: recalculate foot contacts on the latest poses");return;
                         }
@@ -272,7 +273,7 @@ public final class SketchAnimationActivity extends Activity {
                         message("Planted-foot IK saved in local draft. Inspect the pose and run Production QA.");
                     });
                 }catch(Exception error){post(()->{
-                    if(sourceGeneration==generation){status.setText("Foot plants not changed · "+error.getMessage());message(error.getMessage());}
+                    if(sourceGeneration==generation&&request==qualityRequest){status.setText("Foot plants not changed · "+error.getMessage());message(error.getMessage());}
                 });}
             });
         });
@@ -372,7 +373,7 @@ public final class SketchAnimationActivity extends Activity {
     private void openAnimation(){if(!ready())return;stopPlayback();status.setText("Loading saved animations…");io.execute(()->{try{JSONArray values=SketchAnimationOps.execute(this,"sketch_animation_list",new JSONObject()).getJSONArray("animations");String[] labels=new String[values.length()];for(int i=0;i<labels.length;i++){JSONObject item=values.getJSONObject(i);labels[i]=item.optString("animationId")+" · r"+item.optLong("revision");}post(()->{new AlertDialog.Builder(this).setTitle("Saved animation scenes").setItems(labels,(d,index)->{persistDraft();animationId=values.optJSONObject(index).optString("animationId");selectedRig="";selectedJoint="";load();}).setNegativeButton("Cancel",null).show();});}catch(Exception failure){post(()->message(failure.getMessage()));}});}
     private void productionCheck(){
         if(!ready()||saving)return;
-        final int checkedGeneration=generation;
+        final int checkedGeneration=generation,request=++qualityRequest;
         final JSONObject sourceSnapshot,programSnapshot;
         try{sourceSnapshot=SketchDocument.copy(source);programSnapshot=SketchDocument.copy(program);}
         catch(Exception failure){message(failure.getMessage());return;}
@@ -393,11 +394,11 @@ public final class SketchAnimationActivity extends Activity {
                     .append(" · mouth cels: ").append(report.getInt("mouthCelCount")).append("\n\n");
                 for(int i=0;i<notes.length();i++)message.append("• ").append(notes.getString(i)).append("\n");
                 String summary=message.toString();
-                post(()->{if(checkedGeneration!=generation){status.setText("Scene changed during preflight; run Production QA again.");return;}
+                post(()->{if(checkedGeneration!=generation||request!=qualityRequest)return;
                     status.setText("Animation structural preflight finished · artistic review still required");
                     new AlertDialog.Builder(this).setTitle("2D production QA · source-verified").setMessage(summary).setPositiveButton("Close",null).show();
                 });
-            }catch(Exception failure){post(()->{if(checkedGeneration!=generation)return;status.setText("Production QA found a compilation problem");new AlertDialog.Builder(this).setTitle("2D production QA · fix before export").setMessage(failure.getMessage()).setPositiveButton("Close",null).show();});}
+            }catch(Exception failure){post(()->{if(checkedGeneration!=generation||request!=qualityRequest)return;status.setText("Production QA found a compilation problem");new AlertDialog.Builder(this).setTitle("2D production QA · fix before export").setMessage(failure.getMessage()).setPositiveButton("Close",null).show();});}
         });
     }
     private void saveScene(){if(!ready()||saving)return;stopPlayback();try{saveSnapshot(false);}catch(Exception invalid){message(invalid.getMessage());}}
@@ -418,7 +419,7 @@ public final class SketchAnimationActivity extends Activity {
     private void guide(){new AlertDialog.Builder(this).setTitle("Prepared sketches → 2D animation").setMessage("1. Prepare separate head, torso, arm, forearm, hand, thigh, shin and foot objects. Keep backgrounds on separate layers. A single photo does not contain hidden body parts.\n\n2. In Rig mode, drag the joints over the matching parts. Rig / bind assigns artwork to the selected joint. Add character makes another actor.\n\n3. Switch to Pose mode. Scrub to a frame, drag bone endpoints or set joint rotations, then save pose keys. Smooth timing eases between keys; linear timing moves at a steady rate; hold timing holds until the next key.\n\n4. Add planted foot contacts with a hip–knee–foot chain. Add camera keys and timed dialogue. Play to inspect the actual artwork moving through the poses.\n\n5. Save scene preserves your rig and controls. Bake animation makes a NEW editable sketch; your source stays intact. Open it for cel refinements and use Export video.\n\nChatGPT uses sketch_animation_save, sketch_animation_get and sketch_animation_bake with the same native program. Saved scenes can be listed with sketch_animation_list. No Gallery access is used. Limits and contact errors are reported; a successful export does not establish artistic quality.").setPositiveButton("Got it",null).show();}
     private void requestBack(){persistDraft();finish();}
     @Override public void onBackPressed(){requestBack();}
-    @Override protected void onPause(){stopPlayback();if(qualityTask!=null)qualityTask.cancel(true);persistDraft();super.onPause();}
+    @Override protected void onPause(){stopPlayback();++qualityRequest;if(qualityTask!=null)qualityTask.cancel(true);persistDraft();super.onPause();}
     @Override protected void onSaveInstanceState(Bundle state){state.putString("sketchId",sketchId);state.putString("animationId",revision>0?animationId:null);state.putInt("frame",frame);state.putBoolean("mapping",mapping);state.putString("selectedRig",selectedRig);state.putString("selectedJoint",selectedJoint);persistDraft();super.onSaveInstanceState(state);}
     @Override protected void onDestroy(){destroyed=true;stopPlayback();if(qualityTask!=null)qualityTask.cancel(true);quality.shutdownNow();main.removeCallbacksAndMessages(null);canvas.replace(null);io.execute(()->{if(renderer!=null){renderer.close();renderer=null;}});io.shutdown();super.onDestroy();}
     private void post(Runnable run){main.post(()->{if(!destroyed)run.run();});}
