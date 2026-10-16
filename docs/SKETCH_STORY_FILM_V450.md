@@ -40,3 +40,22 @@ The full existing Android suite and all three new test files must pass before an
 Long-story semantic storyboard planning with exact subject/location continuity, independently authored 360° turnarounds, arbitrary multi-character action and facial/phoneme animation, advanced skin-mesh deformation, audio timing, and real-device export/performance QA. No measured 50x-quality improvement is asserted without side-by-side artistic evaluation.
 
 CI note: the temporary ci/v450-stacked-native-qa branch adds only an Android workflow pull-request filter, so native compilation and unit tests can run without merging the diverged main branch. Restore the PR base to feat/sketch-character-animation-v440 after verification.
+
+## Second artistic-quality engineering pass
+
+Native full-sequence visual review exposed repetitive human staging and intrusive dark cloud ellipses. The source now positions softer high-altitude clouds, makes the night character more legible, gives the middle shot a closer impact view, increases the collapse/recovery body-angle range, and adds independent articulated hands, pencil-like hair strands and coat folds. The timing keeps native keyframes and the original sketch structure; it does not pretend to be independently re-drawn cels.
+
+The scripted protagonist is no longer always the same human figure. The subject compiler now chooses:
+- A person for emotional/dramatic and general subjects.
+- A wheeled car for car/racing narratives, with original vector car silhouette, suspension, independent spinning rims/spokes and motion streaks.
+- A dragon for dragon/fantasy narratives, with foreground/background wings, keyed tail and claws, head, crest and fire/breath components.
+
+Text subject detection uses word boundaries so "career" does not accidentally become a car race. Users still have editable native layers/cels. These are explicit artist-coded subject archetypes, not unrestricted generative animation from arbitrary nouns.
+
+## Full native video verification
+
+The optional SketchStoryFilmNativeProofTest exports all 240 native 1280×720 Android Canvas PNG frames from the exact 10-second "Struggle of a Man" story. It verifies frame coverage, distinct adjacent frame content and source hashes. scripts/encode-story-film-proof.py checks ordered PNG identity, packages the exact sequence with FFmpeg at 24 FPS, verifies all 240 decodable MP4 frames, ten-second duration, mobile delivery size, and makes a 20-panel contact sheet with selected native screenshots. The encoder is a CI tool; it is not a phone render or AI-generated imagery.
+
+GitHub-hosted CI may not have FFmpeg initially, so the workflow installs Ubuntu-distributed ffmpeg/ffprobe when absent; the Android app gets no new binary/external dependency.
+
+Artistic approval still requires inspecting the new contact sheet and actual 10-second MP4. Successful frame count or changed pixels alone are not grounds to claim an arbitrary animation is professional quality.
