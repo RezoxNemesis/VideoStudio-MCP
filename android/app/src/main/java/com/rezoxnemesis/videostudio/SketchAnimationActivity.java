@@ -280,7 +280,8 @@ public final class SketchAnimationActivity extends Activity {
             ArrayList<String> ids=new ArrayList<>(),names=new ArrayList<>();
             JSONArray layers=source.getJSONArray("layers");
             for(int i=0;i<layers.length();i++){
-                JSONObject layer=layers.getJSONObject(i),objects=layer.getJSONArray("objects");
+                JSONObject layer=layers.getJSONObject(i);
+                JSONArray objects=layer.getJSONArray("objects");
                 for(int j=0;j<objects.length();j++){
                     JSONObject object=objects.getJSONObject(j);
                     String kind=object.getString("kind");
