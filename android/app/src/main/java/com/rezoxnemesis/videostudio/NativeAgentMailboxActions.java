@@ -12,6 +12,7 @@ final class NativeAgentMailboxActions {
   "sketch_list",
   "sketch_get",
   "sketch_inspect",
+  "sketch_review",
   "sketch_paint_journal",
   "sketch_sample_color",
   "sketch_archive",
