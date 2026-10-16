@@ -45,8 +45,8 @@ public final class SketchStoryFilmGenerator {
                 ?new Palette("#FF775773","#FFFFC9A7","#FF55445E","#FF986E86","#FF77617A","#FF5E536B","#FFC99275","#FF94634F","#FF56536C","#FF9B8197","#FF2D3048","#FFFFE5B7","#FFFF9E89","#FFEAC2DC")
                 :new Palette("#FF302B51","#FF9B667C","#FF302848","#FF5C4B70","#FF5E4464","#FF48374E","#FFC99275","#FF94634F","#FF34365B","#FF9C6988","#FF28253E","#FFFDE1D1","#FFFFA5A6","#FFE9C1DA");
         return act==2
-                ?new Palette("#FF243F6F","#FFFFC27C","#FF202F4C","#FF6B7B85","#FF4A6078","#FF334158","#FFD4A486","#FFAA765A","#FF273E56","#FF71849A","#FF192B44","#FFFFEBBA","#FFFFAB58","#FFB5DFE7")
-                :new Palette("#FF111D39","#FF445A73","#FF11192C","#FF29374F","#FF35435B","#FF212B3E","#FFCCA185","#FF9B6F5B","#FF1D293C","#FF566782","#FF0A1425","#FFF2D8AE","#FFE6A774","#FF84A9C3");
+                ?new Palette("#FF243F6F","#FFFFC27C","#FF202F4C","#FF6B7B85","#FF4A6078","#FF334158","#FFD4A486","#FFAA765A","#FF426781","#FF9AADB9","#FF192B44","#FFFFEBBA","#FFFFAB58","#FFB5DFE7")
+                :new Palette("#FF111D39","#FF445A73","#FF11192C","#FF29374F","#FF35435B","#FF212B3E","#FFCCA185","#FF9B6F5B","#FF3B5573","#FF849DB5","#FF0A1425","#FFF2D8AE","#FFE6A774","#FF84A9C3");
     }
     static String classify(String story) {
         String s=story.toLowerCase(Locale.ROOT);
@@ -270,6 +270,12 @@ public final class SketchStoryFilmGenerator {
         double[] right=act==0?new double[]{-16,16,-13,20,-10}:act==1?new double[]{-4,26,57,82,75}:new double[]{75,38,0,-13,-37};
         motion(leftArm,start,span,c-.068,shoulderY,travel,bob,left);
         motion(rightArm,start,span,c+.065,shoulderY,travel,bob,right);addAll(hero,leftArm,rightArm);
+        // Each glove/hand stays attached to its independently articulated forearm.
+        JSONObject handL=gradient(oval("hand_left_"+act,p.skin,start,span,c-.137,.692,.044,.048),p.skin,p.skinShadow);
+        JSONObject handR=gradient(oval("hand_right_"+act,p.skin,start,span,c+.094,.69,.044,.048),p.skin,p.skinShadow);
+        motion(handL,start,span,c-.068,shoulderY,travel,bob,left);
+        motion(handR,start,span,c+.065,shoulderY,travel,bob,right);
+        addAll(hero,handL,handR);
         JSONObject face=gradient(oval("face_"+act,p.skin,start,span,c-headW/2,headY,headW,headH),p.skin,p.skinShadow);
         motion(face,start,span,c,headY+.1,travel,bob,sway);add(hero,face);
         JSONObject ear=oval("ear_"+act,p.skinShadow,start,span,c+headW*.39,headY+.068,.016,.042);
@@ -298,6 +304,23 @@ public final class SketchStoryFilmGenerator {
         JSONObject scarf=poly("scarf_"+act,p.flare,start,span,c-.055,.484,c+.028,.492,c+.096,.527,c+.018,.523,c-.053,.518);
         double[] flutter=act==0?new double[]{-8,4,-7,6,-3}:act==1?new double[]{-3,-10,-16,-8,-4}:new double[]{8,14,-9,10,-6};
         motion(scarf,start,span,c,shoulderY,travel,bob,flutter);add(hero,scarf);
+        // Thin moving pencil/fabric accents prevent every pose reading as a flat cutout.
+        for(int fold=0;fold<4;fold++){
+            double x=c-.061+fold*.032;
+            JSONObject crease=line("jacket_fold_"+act+"_"+fold,p.coatLight,start,span,
+                    x,.57+fold*.022,x+.021,.652+fold*.012,.0018);
+            motion(crease,start,span,c,shoulderY,travel,bob,sway);add(hero,crease);
+        }
+        for(int strand=0;strand<4;strand++){
+            JSONObject hairLine=line("hair_strand_"+act+"_"+strand,p.coatLight,start,span,
+                    c-.038+strand*.019,headY-.012,c-.039+strand*.019,headY+.017,.0014);
+            motion(hairLine,start,span,c,headY+.1,travel,bob,sway);add(hero,hairLine);
+        }
+        if(act==1){
+            JSONObject rainTear=oval("face_rain_droplet_"+act,p.light,start,span,c+.034,headY+.11,.007,.02);
+            motion(rainTear,start,span,c,headY+.1,travel,bob,sway);
+            add(hero,rainTear);
+        }
         if("connection".equals(theme)&&act==2){
             JSONObject companion=oval("companion_"+act,p.far,start,span,.71,.45,.105,.2);
             JSONObject silhouette=poly("companion_coat_"+act,p.deep,start,span,.68,.61,.76,.61,.81,.91,.62,.92);
@@ -347,7 +370,7 @@ public final class SketchStoryFilmGenerator {
             try(SketchProjectStore store=new SketchProjectStore(context)){
                 JSONObject receipt=store.importOwnedDocument(completed,"story_import_"+id);
                 if(listener!=null)listener.progress(count(completed),count(completed));
-                return receipt.put("live",false).put("storyTheme",classify(story));
+                return receipt.put("live",false).put("storyTheme",classify(story)).put("subject",subject(story));
             }
         }
         JSONObject empty=SketchDocument.copy(completed);
@@ -391,7 +414,7 @@ public final class SketchStoryFilmGenerator {
                 if(count(actual)!=total)throw SketchDocument.bad("Some storyboard parts did not persist");
                 return new JSONObject().put("sketchId",id).put("revision",revision).put("sessionId",session)
                         .put("frameCount",actual.getInt("frameCount")).put("fps",fps)
-                        .put("live",true).put("storyTheme",classify(story)).put("persisted",true);
+                        .put("live",true).put("storyTheme",classify(story)).put("subject",subject(story)).put("persisted",true);
             }
         }catch(Exception error){
             try{SketchEditOps.execute(context,"sketch_live_end",new JSONObject()
