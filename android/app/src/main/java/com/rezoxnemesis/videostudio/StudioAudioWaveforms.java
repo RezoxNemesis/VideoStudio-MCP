@@ -24,6 +24,7 @@ import java.util.concurrent.Executors;
 public final class StudioAudioWaveforms {
     public interface Callback {void ready(String key,float[] peaks);}
     public static final int MAX_BUCKETS=96;
+    static final int MAX_DIALOGUE_BUCKETS=720; // <= 30 seconds at 24 FPS, chosen audio only
     private static final long MAX_WINDOW_US=30_000_000L;
     private final Context context;
     private final Handler main=new Handler(Looper.getMainLooper());
@@ -62,6 +63,38 @@ public final class StudioAudioWaveforms {
         });
     }
 
+    /** Explicit owner-provided audio only. Never enumerate Android's Gallery or accept
+     * arbitrary file/HTTPS URLs. The selected URI must still belong to the same
+     * persisted VideoStudio project and MIME identity before it is decoded. */
+    static float[] analyzeOwnedDialogue(Context context,ProjectStore.Project selectedProject,
+                                        ProjectStore.Asset selectedAsset,long sourceMs,
+                                        long durationMs,int frames)throws Exception {
+        if(context==null||selectedProject==null||selectedAsset==null||
+                sourceMs<0||durationMs<100||durationMs>30000||
+                frames<4||frames>MAX_DIALOGUE_BUCKETS)
+            throw new IllegalArgumentException("Bounded, explicitly selected VideoStudio audio is required");
+        if(Looper.myLooper()==Looper.getMainLooper())
+            throw new IllegalStateException("Waveform decoding must not block the animation UI");
+        if(selectedProject.id==null||selectedAsset.id==null||selectedAsset.uri==null||selectedAsset.mime==null)
+            throw new IllegalArgumentException("Project-owned audio identity is incomplete");
+        ProjectStore.Project project=new ProjectStore(context).get(selectedProject.id);
+        if(project==null)throw new IllegalArgumentException("The selected audio project no longer exists");
+        ProjectStore.Asset owned=project.asset(selectedAsset.id);
+        if(owned==null||!selectedAsset.uri.equals(owned.uri)||
+                !selectedAsset.mime.equals(owned.mime)||
+                !owned.mime.startsWith("audio/"))
+            throw new IllegalArgumentException("Selected audio no longer matches an owned VideoStudio audio asset");
+        if(owned.durationMs>0&&sourceMs+durationMs>owned.durationMs+100)
+            throw new IllegalArgumentException("The dialogue window extends beyond the selected recording");
+        Uri uri=Uri.parse(owned.uri);
+        String scheme=uri.getScheme();
+        if(!"content".equals(scheme)&&!"file".equals(scheme))
+            throw new IllegalArgumentException("Only explicitly imported local content/file audio is supported");
+        StudioAudioWaveforms reader=new StudioAudioWaveforms(context);
+        try{return reader.decode(uri,sourceMs,durationMs,frames);}
+        finally{reader.shutdown();}
+    }
+
     static float[] normalize(double[] sum,int[] samples) {
         if(sum==null||samples==null||sum.length!=samples.length)
             throw new IllegalArgumentException("Invalid waveform buckets");
@@ -78,7 +111,7 @@ public final class StudioAudioWaveforms {
     }
 
     private float[] decode(Uri uri,long sourceMs,long durationMs,int buckets) throws Exception{
-        if(uri==null||sourceMs<0||durationMs<100||buckets<1||buckets>MAX_BUCKETS)
+        if(uri==null||sourceMs<0||durationMs<100||buckets<1||buckets>MAX_DIALOGUE_BUCKETS)
             throw new IllegalArgumentException("Invalid audio waveform source");
         long from=sourceMs*1000L;
         long visible=Math.min(durationMs*1000L,MAX_WINDOW_US);
