@@ -278,7 +278,114 @@ public final class SketchAnimationActivity extends Activity {
             });
         });
     }
-    private void poseTools(){if(!ready())return;menu("Pose at frame "+(frame+1),new String[]{"Joint rotation / root motion","Save pose key","Delete pose key","Smooth timing","Linear timing","Hold timing"},this::rotation,()->{try{SketchAnimationUiModel.pose(program,selectedRig,frame,interpolation);changed();}catch(Exception invalid){message(invalid.getMessage());}},this::deleteKey,()->setTiming("smooth"),()->setTiming("linear"),()->setTiming("hold"));}
+    private void poseTools(){if(!ready())return;menu("Pose at frame "+(frame+1),new String[]{"Joint rotation / root motion","Save pose key","Delete pose key","Smooth timing","Linear timing","Hold timing","Action contact markers"},this::rotation,()->{try{SketchAnimationUiModel.pose(program,selectedRig,frame,interpolation);changed();}catch(Exception invalid){message(invalid.getMessage());}},this::deleteKey,()->setTiming("smooth"),()->setTiming("linear"),()->setTiming("hold"),this::interactionMenu);}
+    private void interactionMenu(){
+        if(!ready())return;
+        menu("Physical choreography contacts",
+                new String[]{"New two-actor contact at current frame","Inspect / remove authored contact"},
+                this::addActionContact,this::deleteActionContact);
+    }
+    private void addActionContact(){
+        if(!ready())return;
+        try{
+            JSONArray available=program.getJSONArray("rigs");
+            if(available.length()<2){message("Add a second character and bind its artwork before a two-actor interaction.");return;}
+            ArrayList<String> ids=new ArrayList<>();
+            for(int i=0;i<available.length();i++)ids.add(available.getJSONObject(i).getString("id"));
+            LinearLayout form=column();
+            Spinner first=picker("First character");first.setAdapter(adapter(ids));
+            first.setSelection(Math.max(0,ids.indexOf(selectedRig)));
+            Spinner second=picker("Other character");second.setAdapter(adapter(ids));
+            second.setSelection((Math.max(0,ids.indexOf(selectedRig))+1)%ids.size());
+            Spinner firstJoint=picker("First hand/weapon joint");
+            Spinner secondJoint=picker("Other hand/weapon joint");
+            Runnable updateFirst=()->fillContactJoints(first,firstJoint);
+            Runnable updateSecond=()->fillContactJoints(second,secondJoint);
+            first.setOnItemSelectedListener(new Selected(){public void selected(int position){updateFirst.run();}});
+            second.setOnItemSelectedListener(new Selected(){public void selected(int position){updateSecond.run();}});
+            form.addView(label("First actor",12));form.addView(first);
+            form.addView(label("Second actor",12));form.addView(second);
+            form.addView(label("First contact joint",12));form.addView(firstJoint);
+            form.addView(label("Second contact joint",12));form.addView(secondJoint);
+            updateFirst.run();updateSecond.run();
+            EditText distance=field(form,"Maximum contact distance in source pixels","80",true);
+            EditText words=field(form,"Action description","Hand / weapon contact",false);
+            form.addView(label("A contact marker is evaluated against actual joint world positions, not the drawn spark or camera transform. New marks are checked without blocking ordinary preview/save. Move the characters or change the tolerance if physical contact is not correct.",12));
+            dialog("Contact frame "+(frame+1),form,"Verify and add",()->{
+                if(first.getSelectedItem()==null||second.getSelectedItem()==null||
+                    firstJoint.getSelectedItem()==null||secondJoint.getSelectedItem()==null)
+                    throw SketchDocument.bad("Select both character rigs and their contact joints");
+                String a=first.getSelectedItem().toString(),b=second.getSelectedItem().toString();
+                if(a.equals(b))throw SketchDocument.bad("An action contact requires two different character rigs");
+                double allowed=number(distance,.1,512);
+                String desc=words.getText().toString().trim();
+                if(desc.length()>120)throw SketchDocument.bad("Action description exceeds 120 characters");
+                JSONObject sourceSnapshot=SketchDocument.copy(source),candidate=SketchDocument.copy(program);
+                JSONArray authored=candidate.optJSONArray("interactionCues");
+                if(authored==null){authored=new JSONArray();candidate.put("interactionCues",authored);}
+                if(authored.length()>=64)throw SketchDocument.bad("At most 64 contact markers per animation");
+                authored.put(new JSONObject().put("frame",frame).put("rigA",a)
+                        .put("jointA",firstJoint.getSelectedItem().toString())
+                        .put("rigB",b).put("jointB",secondJoint.getSelectedItem().toString())
+                        .put("maxGapPx",allowed).put("description",desc));
+                final int origin=generation,request=++qualityRequest;
+                if(qualityTask!=null)qualityTask.cancel(true);
+                status.setText("Checking real two-character contact at frame "+(frame+1)+"…");
+                qualityTask=quality.submit(()->{
+                    try{
+                        JSONObject checked=SketchAnimationCompiler.verifyInteractionCues(sourceSnapshot,candidate);
+                        post(()->{
+                            if(origin!=generation||request!=qualityRequest)return;
+                            program=candidate;changed();
+                            message("Physical contact verified and added · "+checked.getJSONArray("contacts").length()+" authored cue(s)");
+                        });
+                    }catch(Exception error){
+                        post(()->{
+                            if(origin!=generation||request!=qualityRequest)return;
+                            status.setText("Interaction unchanged · "+error.getMessage());
+                            message(error.getMessage());
+                        });
+                    }
+                });
+            });
+        }catch(Exception failure){message(failure.getMessage());}
+    }
+    private void fillContactJoints(Spinner actor,Spinner picker){
+        if(program==null||actor.getSelectedItem()==null)return;
+        try{
+            JSONObject rig=SketchAnimationUiModel.rig(program,actor.getSelectedItem().toString());
+            JSONArray values=rig.getJSONArray("joints");ArrayList<String> names=new ArrayList<>();
+            for(int i=0;i<values.length();i++)names.add(values.getJSONObject(i).getString("id"));
+            picker.setAdapter(adapter(names));
+            int selected=names.indexOf("wrist");
+            if(selected<0)selected=names.indexOf("hand");
+            if(selected<0)selected=names.indexOf("hand_right");
+            picker.setSelection(Math.max(0,selected));
+        }catch(Exception error){message(error.getMessage());}
+    }
+    private void deleteActionContact(){
+        if(!ready())return;
+        try{
+            JSONArray old=program.optJSONArray("interactionCues");
+            if(old==null||old.length()==0){message("This scene has no hand/weapon contact markers.");return;}
+            String[] labels=new String[old.length()];
+            for(int i=0;i<old.length();i++){
+                JSONObject mark=old.getJSONObject(i);
+                labels[i]=(mark.getInt("frame")+1)+" · "+mark.getString("rigA")+":"+mark.getString("jointA")
+                        +" → "+mark.getString("rigB")+":"+mark.getString("jointB")
+                        +" · "+mark.optString("description","");
+            }
+            new AlertDialog.Builder(this).setTitle("Delete a physical contact marker")
+                    .setItems(labels,(d,index)->{
+                        try{
+                            JSONObject next=SketchDocument.copy(program);
+                            JSONArray all=next.getJSONArray("interactionCues"),filtered=new JSONArray();
+                            for(int i=0;i<all.length();i++)if(i!=index)filtered.put(all.getJSONObject(i));
+                            next.put("interactionCues",filtered);program=next;changed();
+                        }catch(Exception failure){message(failure.getMessage());}
+                    }).setNegativeButton("Cancel",null).show();
+        }catch(Exception failure){message(failure.getMessage());}
+    }
     private void rotation(){
         try{JSONObject previous=SketchAnimationUiModel.previousPose(SketchAnimationUiModel.rig(program,selectedRig),frame);LinearLayout form=column();EditText rotation=field(form,"Joint rotation degrees",String.valueOf(previous.getJSONObject("rotations").optDouble(selectedJoint)),true),x=field(form,"Root motion X",String.valueOf(previous.optDouble("rootX")),true),y=field(form,"Root motion Y",String.valueOf(previous.optDouble("rootY")),true);
             LinearLayout nudge=row(form);button(nudge,"−5°",()->{try{rotation.setText(String.valueOf(number(rotation,-3600,3600)-5));}catch(Exception invalid){message(invalid.getMessage());}},false);button(nudge,"+5°",()->{try{rotation.setText(String.valueOf(number(rotation,-3600,3600)+5));}catch(Exception invalid){message(invalid.getMessage());}},false);
