@@ -244,15 +244,18 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         root.addView(detail);
         JSONObject checkpoint=editorStartupGuard==null?new JSONObject():editorStartupGuard.status();
         String summary="VideoStudio "+AppProtocol.APP_VERSION+" safe startup; "+
-                "lastStage="+checkpoint.optString("lastStage","unknown")+
+                "previousInterruptedStage="+checkpoint.optString("previousInterruptedStage","unknown")+
+                "; lastAppFrame="+checkpoint.optString("lastAppFrame","unknown")+
+                "; lastStage="+checkpoint.optString("lastStage","unknown")+
                 "; lastJavaFailure="+checkpoint.optString("lastJavaFailure","unknown")+
                 "; rapidFailures="+checkpoint.optInt("rapidFailures",0)+
                 "; projectDataCleared=false; galleryBrowsed=false";
         detail.setText("VideoStudio stopped during startup. Your source projects and "+
                 "imported files are preserved. No native media render was started "+
                 "by this recovery screen.\n\nLast stage: "+
-                checkpoint.optString("lastStage","unknown")+
+                checkpoint.optString("previousInterruptedStage",checkpoint.optString("lastStage","unknown"))+
                 "\nJava error type: "+checkpoint.optString("lastJavaFailure","unknown")+
+                "\nLast app code frame: "+checkpoint.optString("lastAppFrame","not_available")+
                 "\nNative SIGKILL or OOM may not produce a Java trace.");
         String note=summary;
         Button copy=new Button(this);
@@ -362,6 +365,37 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                     jobName+"  "+nativeWork.optInt("jobProgress",0)+"%"));
         }else nativeStrip.addView(body("Manage your connection and background work."));
         box.addView(nativeStrip,margins(-1,-2,dp(4),0,0,0));
+        NativeStartupGuard nativeRecovery=new NativeStartupGuard(this);
+        if(nativeRecovery.held()){
+            LinearLayout recoveryCard=card(false);
+            recoveryCard.addView(title("Interrupted render safely paused",17));
+            recoveryCard.addView(body(
+                    "A previous rendering task could not finish. VideoStudio has preserved "+
+                    "the source, saved projects and native job checkpoints. "+
+                    "Automatic heavy recovery is held to prevent another startup crash."));
+            recoveryCard.addView(body(nativeRecovery.reason()));
+            Button retry=studioButton("Retry saved render (optional)",()->{
+                new AlertDialog.Builder(this)
+                        .setTitle("Retry interrupted native render?")
+                        .setMessage("Only retry after confirming the app opens and its "+
+                                "projects load normally. The saved render might still "+
+                                "exceed your device's memory or fail. No Gallery access is used.")
+                        .setNegativeButton("Keep paused",null)
+                        .setPositiveButton("Retry once",(d,w)->{
+                            try{
+                                startForegroundService(new Intent(this,ControlService.class)
+                                        .setAction(ControlService.ACTION_RETRY_RECOVERY));
+                                Toast.makeText(this,"Retry requested; track status in Activity",
+                                        Toast.LENGTH_LONG).show();
+                            }catch(Exception err){
+                                Toast.makeText(this,"Retry not started: "+err.getClass().getSimpleName(),
+                                        Toast.LENGTH_LONG).show();
+                            }
+                        }).show();
+            });
+            recoveryCard.addView(retry,margins(-1,dp(46),dp(8),0,0,0));
+            box.addView(recoveryCard,margins(-1,-2,dp(9),0,0,0));
+        }
         NativeStartupGuard launchGuard=new NativeStartupGuard(this);
         if(launchGuard.held()){
             LinearLayout safety=card(false);
