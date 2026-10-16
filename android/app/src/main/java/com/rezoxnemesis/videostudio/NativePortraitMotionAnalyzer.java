@@ -65,7 +65,7 @@ public final class NativePortraitMotionAnalyzer {
         }
     }
 
-    private static final int MAX_ANALYSIS_EDGE = 1440;
+    private static final int MAX_ANALYSIS_EDGE = 1200;
 
     private final Context context;
 
@@ -79,11 +79,16 @@ public final class NativePortraitMotionAnalyzer {
             throw new IllegalArgumentException("Portrait animation requires an image asset");
         }
 
-        Bitmap original = decode(asset.uri);
-        if (original == null) throw new IllegalStateException("Could not decode image");
-
-        Bitmap working = scaleForAnalysis(original);
-        if (working != original) original.recycle();
+        // The read-only original is decoded at an edge selected from actual
+        // Android memory pressure. All native bitmap allocations below are
+        // reclaimed even if segmentation, encoding or storage throws.
+        int edge=PortraitMemoryAdmission.edgeFor(context);
+        Bitmap original=null,working=null,foreground=null,background=null;
+        SubjectParts parts=null;
+        try{
+        original=decode(asset.uri,edge);
+        if(original==null)throw new IllegalStateException("PORTRAIT_DECODE_FAILED: source image could not be decoded");
+        working=scaleForAnalysis(original,edge);
 
         Segmenter segmenter = Segmentation.getClient(
                 new SelfieSegmenterOptions.Builder()
@@ -109,9 +114,9 @@ public final class NativePortraitMotionAnalyzer {
 
         MaskStats stats = readMask(mask, working.getWidth(), working.getHeight());
         Rect face = faces.isEmpty() ? null : largestFace(faces);
-        Bitmap foreground = buildForeground(working, stats);
-        SubjectParts parts = buildSubjectParts(foreground, stats, face);
-        Bitmap background = buildReconstructedBackground(working, stats);
+        foreground = buildForeground(working, stats);
+        parts = buildSubjectParts(foreground, stats, face);
+        background = buildReconstructedBackground(working, stats);
 
         CreativeWorkspace workspace = new CreativeWorkspace(context);
         File projectRoot = workspace.projectRoot(projectId);
@@ -131,6 +136,8 @@ public final class NativePortraitMotionAnalyzer {
 
         JSONObject analysis = new JSONObject();
         analysis.put("engine", "bundled-on-device-portrait-ai");
+        analysis.put("memoryBoundedDecode",true);
+        analysis.put("analysisEdgeLimit",edge);
         analysis.put("backgroundReconstruction", "mask-aware-edge-fill-v1");
         analysis.put("articulatedLayering", "head-torso-lower-v1");
         analysis.put("articulatedParts", true);
@@ -181,13 +188,6 @@ public final class NativePortraitMotionAnalyzer {
             out.getFD().sync();
         }
 
-        foreground.recycle();
-        parts.head.recycle();
-        parts.torso.recycle();
-        parts.lower.recycle();
-        background.recycle();
-        working.recycle();
-
         return new Result(
                 Uri.fromFile(fgFile),
                 Uri.fromFile(headFile),
@@ -198,9 +198,13 @@ public final class NativePortraitMotionAnalyzer {
                 mask.getWidth(),
                 mask.getHeight()
         );
+        }finally{
+            if(parts!=null)PortraitMemoryAdmission.recycle(parts.head,parts.torso,parts.lower);
+            PortraitMemoryAdmission.recycle(foreground,background,working,original);
+        }
     }
 
-    private Bitmap decode(String uriString) throws Exception {
+    private Bitmap decode(String uriString,int limit) throws Exception {
         Uri uri = Uri.parse(uriString);
         BitmapFactory.Options bounds = new BitmapFactory.Options();
         bounds.inJustDecodeBounds = true;
@@ -211,7 +215,7 @@ public final class NativePortraitMotionAnalyzer {
         if (bounds.outWidth <= 0 || bounds.outHeight <= 0) throw new IllegalArgumentException("Unsupported portrait image");
         BitmapFactory.Options options = new BitmapFactory.Options();
         options.inSampleSize = 1;
-        while (Math.max(bounds.outWidth, bounds.outHeight) / options.inSampleSize > MAX_ANALYSIS_EDGE)
+        while (Math.max(bounds.outWidth, bounds.outHeight) / options.inSampleSize > limit)
             options.inSampleSize *= 2;
         options.inPreferredConfig = Bitmap.Config.ARGB_8888;
         // Subsample at decode time: never allocate the full camera image merely to shrink it.
@@ -221,12 +225,12 @@ public final class NativePortraitMotionAnalyzer {
         }
     }
 
-    private Bitmap scaleForAnalysis(Bitmap source) {
+    private Bitmap scaleForAnalysis(Bitmap source,int limit) {
         int w = source.getWidth();
         int h = source.getHeight();
         int max = Math.max(w, h);
-        if (max <= MAX_ANALYSIS_EDGE) return source;
-        float scale = MAX_ANALYSIS_EDGE / (float) max;
+        if (max <= limit) return source;
+        float scale = limit / (float) max;
         return Bitmap.createScaledBitmap(source, Math.max(2, Math.round(w * scale)), Math.max(2, Math.round(h * scale)), true);
     }
 
@@ -303,28 +307,32 @@ public final class NativePortraitMotionAnalyzer {
                 clamp01(l), clamp01(t), clamp01(r), clamp01(b));
     }
 
+    /** Memory-bounded foreground extraction: process 64-row tiles instead of
+     * a full second ARGB int[] while person segmentation and face mesh live in RAM. */
     private Bitmap buildForeground(Bitmap source, MaskStats stats) {
-        int w = source.getWidth(), h = source.getHeight();
-        int[] pixels = new int[w * h];
-        source.getPixels(pixels, 0, w, 0, 0, w, h);
-
-        for (int y = 0; y < h; y++) {
-            int my = Math.min(stats.maskHeight - 1,
-                    Math.max(0, Math.round(y * (stats.maskHeight - 1f) / Math.max(1, h - 1))));
-            for (int x = 0; x < w; x++) {
-                int mx = Math.min(stats.maskWidth - 1,
-                        Math.max(0, Math.round(x * (stats.maskWidth - 1f) / Math.max(1, w - 1))));
-                float confidence = stats.values[my * stats.maskWidth + mx];
-                float alpha = smoothstep(0.18f, 0.82f, confidence);
-                int color = pixels[y * w + x];
-                int originalAlpha = (color >>> 24) & 0xff;
-                int a = Math.round(originalAlpha * alpha);
-                pixels[y * w + x] = (color & 0x00ffffff) | (a << 24);
+        int w=source.getWidth(),h=source.getHeight();
+        Bitmap out=Bitmap.createBitmap(w,h,Bitmap.Config.ARGB_8888);
+        int rows=Math.max(1,Math.min(64,65536/Math.max(1,w)));
+        int[] pixels=new int[w*rows];
+        for(int top=0;top<h;top+=rows){
+            if(Thread.currentThread().isInterrupted())throw new IllegalStateException("Portrait separation cancelled");
+            int count=Math.min(rows,h-top);
+            source.getPixels(pixels,0,w,0,top,w,count);
+            for(int localY=0;localY<count;localY++){
+                int y=top+localY;
+                int my=Math.min(stats.maskHeight-1,Math.max(0,
+                        Math.round(y*(stats.maskHeight-1f)/Math.max(1,h-1))));
+                for(int x=0;x<w;x++){
+                    int mx=Math.min(stats.maskWidth-1,Math.max(0,
+                            Math.round(x*(stats.maskWidth-1f)/Math.max(1,w-1))));
+                    float confidence=stats.values[my*stats.maskWidth+mx];
+                    float alpha=smoothstep(.18f,.82f,confidence);
+                    int index=localY*w+x,color=pixels[index],a=Color.alpha(color);
+                    pixels[index]=(color&0x00ffffff)|(Math.round(a*alpha)<<24);
+                }
             }
+            out.setPixels(pixels,0,w,0,top,w,count);
         }
-
-        Bitmap out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
-        out.setPixels(pixels, 0, w, 0, 0, w, h);
         return out;
     }
 
@@ -344,160 +352,124 @@ public final class NativePortraitMotionAnalyzer {
         }
     }
 
-    private SubjectParts buildSubjectParts(Bitmap foreground, MaskStats stats, Rect face) {
-        int w = foreground.getWidth();
-        int h = foreground.getHeight();
-        int[] source = new int[w * h];
-        foreground.getPixels(source, 0, w, 0, 0, w, h);
-
-        float subjectTop = (float) (stats.top * h);
-        float subjectBottom = (float) (stats.bottom * h);
-        float subjectHeight = Math.max(32f, subjectBottom - subjectTop);
-
-        float headSplit = subjectTop + subjectHeight * .31f;
-        if (face != null) {
-            headSplit = Math.max(headSplit, face.bottom + subjectHeight * .055f);
-            headSplit = Math.min(subjectTop + subjectHeight * .43f, headSplit);
+    /** Process one bounded tile at a time. Previous code held FOUR full-frame
+     * int[] arrays *plus* three ARGB output Bitmaps simultaneously. */
+    private SubjectParts buildSubjectParts(Bitmap foreground,MaskStats stats,Rect face){
+        int w=foreground.getWidth(),h=foreground.getHeight();
+        float subjectTop=(float)(stats.top*h);
+        float subjectBottom=(float)(stats.bottom*h);
+        float subjectHeight=Math.max(32f,subjectBottom-subjectTop);
+        float headSplit=subjectTop+subjectHeight*.31f;
+        if(face!=null){
+            headSplit=Math.max(headSplit,face.bottom+subjectHeight*.055f);
+            headSplit=Math.min(subjectTop+subjectHeight*.43f,headSplit);
         }
-        float torsoSplit = subjectTop + subjectHeight * .68f;
-        torsoSplit = Math.max(headSplit + subjectHeight * .18f, torsoSplit);
-        torsoSplit = Math.min(subjectBottom - subjectHeight * .10f, torsoSplit);
-
-        float headOverlap = Math.max(10f, subjectHeight * .055f);
-        float lowerOverlap = Math.max(12f, subjectHeight * .070f);
-
-        int[] head = new int[source.length];
-        int[] torso = new int[source.length];
-        int[] lower = new int[source.length];
-
-        for (int y = 0; y < h; y++) {
-            float headFade = 1f - smoothstep(headSplit - headOverlap, headSplit + headOverlap, y);
-            float torsoIn = smoothstep(headSplit - headOverlap, headSplit + headOverlap, y);
-            float torsoOut = 1f - smoothstep(torsoSplit - lowerOverlap, torsoSplit + lowerOverlap, y);
-            float torsoWeight = torsoIn * torsoOut;
-            float lowerWeight = smoothstep(torsoSplit - lowerOverlap, torsoSplit + lowerOverlap, y);
-
-            // Keep the three weights normalized around the overlap bands.
-            float sum = headFade + torsoWeight + lowerWeight;
-            if (sum < .0001f) sum = 1f;
-            headFade /= sum;
-            torsoWeight /= sum;
-            lowerWeight /= sum;
-
-            for (int x = 0; x < w; x++) {
-                int i = y * w + x;
-                int color = source[i];
-                int a = Color.alpha(color);
-                int rgb = color & 0x00ffffff;
-                head[i] = rgb | (Math.round(a * headFade) << 24);
-                torso[i] = rgb | (Math.round(a * torsoWeight) << 24);
-                lower[i] = rgb | (Math.round(a * lowerWeight) << 24);
+        float torsoSplit=subjectTop+subjectHeight*.68f;
+        torsoSplit=Math.max(headSplit+subjectHeight*.18f,torsoSplit);
+        torsoSplit=Math.min(subjectBottom-subjectHeight*.10f,torsoSplit);
+        float headOverlap=Math.max(10f,subjectHeight*.055f);
+        float lowerOverlap=Math.max(12f,subjectHeight*.070f);
+        Bitmap headBitmap=Bitmap.createBitmap(w,h,Bitmap.Config.ARGB_8888);
+        Bitmap torsoBitmap=Bitmap.createBitmap(w,h,Bitmap.Config.ARGB_8888);
+        Bitmap lowerBitmap=Bitmap.createBitmap(w,h,Bitmap.Config.ARGB_8888);
+        int rows=Math.max(1,Math.min(64,65536/Math.max(1,w)));
+        int[] source=new int[w*rows],head=new int[w*rows],
+                torso=new int[w*rows],lower=new int[w*rows];
+        for(int top=0;top<h;top+=rows){
+            if(Thread.currentThread().isInterrupted())throw new IllegalStateException("Portrait cutouts cancelled");
+            int count=Math.min(rows,h-top);
+            foreground.getPixels(source,0,w,0,top,w,count);
+            for(int localY=0;localY<count;localY++){
+                int y=top+localY;
+                float headFade=1f-smoothstep(headSplit-headOverlap,headSplit+headOverlap,y);
+                float torsoIn=smoothstep(headSplit-headOverlap,headSplit+headOverlap,y);
+                float torsoOut=1f-smoothstep(torsoSplit-lowerOverlap,torsoSplit+lowerOverlap,y);
+                float torsoWeight=torsoIn*torsoOut;
+                float lowerWeight=smoothstep(torsoSplit-lowerOverlap,torsoSplit+lowerOverlap,y);
+                float sum=headFade+torsoWeight+lowerWeight;
+                if(sum<.0001f)sum=1f;
+                headFade/=sum;torsoWeight/=sum;lowerWeight/=sum;
+                for(int x=0;x<w;x++){
+                    int i=localY*w+x,color=source[i],a=Color.alpha(color),rgb=color&0x00ffffff;
+                    head[i]=rgb|(Math.round(a*headFade)<<24);
+                    torso[i]=rgb|(Math.round(a*torsoWeight)<<24);
+                    lower[i]=rgb|(Math.round(a*lowerWeight)<<24);
+                }
             }
+            headBitmap.setPixels(head,0,w,0,top,w,count);
+            torsoBitmap.setPixels(torso,0,w,0,top,w,count);
+            lowerBitmap.setPixels(lower,0,w,0,top,w,count);
         }
-
-        Bitmap headBitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
-        Bitmap torsoBitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
-        Bitmap lowerBitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
-        headBitmap.setPixels(head, 0, w, 0, 0, w, h);
-        torsoBitmap.setPixels(torso, 0, w, 0, 0, w, h);
-        lowerBitmap.setPixels(lower, 0, w, 0, 0, w, h);
-
-        return new SubjectParts(
-                headBitmap,
-                torsoBitmap,
-                lowerBitmap,
-                clamp01(headSplit / Math.max(1f, h)),
-                clamp01(torsoSplit / Math.max(1f, h))
-        );
+        return new SubjectParts(headBitmap,torsoBitmap,lowerBitmap,
+                clamp01(headSplit/Math.max(1f,h)),clamp01(torsoSplit/Math.max(1f,h)));
     }
 
-    private Bitmap buildReconstructedBackground(Bitmap source, MaskStats stats) {
-        int w = source.getWidth(), h = source.getHeight();
-
-        // Build a broad low-frequency plate used only to fill the area hidden
-        // behind the extracted person. The original environment stays sharp.
-        int sw = Math.max(10, w / 30);
-        int sh = Math.max(10, h / 30);
-        Bitmap tiny = Bitmap.createScaledBitmap(source, sw, sh, true);
-        Bitmap blurred = Bitmap.createScaledBitmap(tiny, w, h, true);
+    /** Preserve original background fill pixels, but use a 64-row working set.
+     * Retaining the source array is necessary for random subject-edge sampling.
+     * Soft/output arrays are now tiles rather than two entire 1440px plates. */
+    private Bitmap buildReconstructedBackground(Bitmap source,MaskStats stats){
+        int w=source.getWidth(),h=source.getHeight();
+        int sw=Math.max(10,w/30),sh=Math.max(10,h/30);
+        Bitmap tiny=Bitmap.createScaledBitmap(source,sw,sh,true);
+        Bitmap blurred=Bitmap.createScaledBitmap(tiny,w,h,true);
         tiny.recycle();
+        int[] original=new int[w*h];
+        source.getPixels(original,0,w,0,0,w,h);
 
-        int[] original = new int[w * h];
-        int[] soft = new int[w * h];
-        int[] output = new int[w * h];
-        source.getPixels(original, 0, w, 0, 0, w, h);
-        blurred.getPixels(soft, 0, w, 0, 0, w, h);
-        blurred.recycle();
-
-        int left = Math.max(0, Math.min(w - 1, (int) Math.floor(stats.left * (w - 1))));
-        int top = Math.max(0, Math.min(h - 1, (int) Math.floor(stats.top * (h - 1))));
-        int right = Math.max(left, Math.min(w - 1, (int) Math.ceil(stats.right * (w - 1))));
-        int bottom = Math.max(top, Math.min(h - 1, (int) Math.ceil(stats.bottom * (h - 1))));
-        int marginX = Math.max(8, (right - left) / 16);
-        int marginY = Math.max(8, (bottom - top) / 18);
-
-        for (int y = 0; y < h; y++) {
-            int my = maskY(y, h, stats.maskHeight);
-            for (int x = 0; x < w; x++) {
-                int mx = maskX(x, w, stats.maskWidth);
-                float confidence = dilatedConfidence(stats, mx, my);
-                float replace = smoothstep(0.08f, 0.70f, confidence);
-                int index = y * w + x;
-
-                if (replace <= .001f) {
-                    output[index] = original[index];
-                    continue;
+        int left=Math.max(0,Math.min(w-1,(int)Math.floor(stats.left*(w-1))));
+        int top=Math.max(0,Math.min(h-1,(int)Math.floor(stats.top*(h-1))));
+        int right=Math.max(left,Math.min(w-1,(int)Math.ceil(stats.right*(w-1))));
+        int bottom=Math.max(top,Math.min(h-1,(int)Math.ceil(stats.bottom*(h-1))));
+        int marginX=Math.max(8,(right-left)/16);
+        int marginY=Math.max(8,(bottom-top)/18);
+        int rows=Math.max(1,Math.min(64,65536/Math.max(1,w)));
+        int[] soft=new int[w*rows],output=new int[w*rows];
+        Bitmap reconstructed=Bitmap.createBitmap(w,h,Bitmap.Config.ARGB_8888);
+        try{
+            for(int rowStart=0;rowStart<h;rowStart+=rows){
+                if(Thread.currentThread().isInterrupted())throw new IllegalStateException("Portrait background cancelled");
+                int count=Math.min(rows,h-rowStart);
+                blurred.getPixels(soft,0,w,0,rowStart,w,count);
+                for(int localY=0;localY<count;localY++){
+                    int y=rowStart+localY,my=maskY(y,h,stats.maskHeight);
+                    for(int x=0;x<w;x++){
+                        int mx=maskX(x,w,stats.maskWidth);
+                        float confidence=dilatedConfidence(stats,mx,my);
+                        float replace=smoothstep(.08f,.70f,confidence);
+                        int i=y*w+x,tileIndex=localY*w+x;
+                        if(replace<=.001f){output[tileIndex]=original[i];continue;}
+                        int dl=Math.abs(x-left),dr=Math.abs(right-x),
+                                dt=Math.abs(y-top),db=Math.abs(bottom-y);
+                        int sx=x,sy=y;
+                        int nearest=Math.min(Math.min(dl,dr),Math.min(dt,db));
+                        if(nearest==dl)sx=Math.max(0,left-marginX);
+                        else if(nearest==dr)sx=Math.min(w-1,right+marginX);
+                        else if(nearest==dt)sy=Math.max(0,top-marginY);
+                        else sy=Math.min(h-1,bottom+marginY);
+                        int edge=original[sy*w+sx],broad=soft[tileIndex];
+                        int fill=mixColor(edge,broad,.42f);
+                        float interior=smoothstep(.28f,.78f,confidence);
+                        float alpha=Math.max(replace*.82f,interior);
+                        output[tileIndex]=mixColor(original[i],fill,alpha);
+                    }
                 }
-
-                // Pull real environment color from the nearest side of the
-                // subject bounds, then mix it with the broad blurred plate.
-                // This is intentionally conservative: parallax only needs a
-                // plausible hidden plate, while visible rocks/water remain the
-                // untouched original pixels.
-                int dl = Math.abs(x - left);
-                int dr = Math.abs(right - x);
-                int dt = Math.abs(y - top);
-                int db = Math.abs(bottom - y);
-                int sx = x;
-                int sy = y;
-                int nearest = Math.min(Math.min(dl, dr), Math.min(dt, db));
-                if (nearest == dl) sx = Math.max(0, left - marginX);
-                else if (nearest == dr) sx = Math.min(w - 1, right + marginX);
-                else if (nearest == dt) sy = Math.max(0, top - marginY);
-                else sy = Math.min(h - 1, bottom + marginY);
-
-                int edge = original[sy * w + sx];
-                int broad = soft[index];
-                int fill = mixColor(edge, broad, .42f);
-
-                // Preserve a little original texture near the matte boundary,
-                // but fully replace the deep subject interior to suppress
-                // ghost silhouettes when foreground parallax exposes it.
-                float interior = smoothstep(0.28f, 0.78f, confidence);
-                float alpha = Math.max(replace * .82f, interior);
-                output[index] = mixColor(original[index], fill, alpha);
+                reconstructed.setPixels(output,0,w,0,rowStart,w,count);
             }
-        }
-
-        Bitmap reconstructed = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
-        reconstructed.setPixels(output, 0, w, 0, 0, w, h);
-
-        // A very mild grade separates the background spatially without
-        // sacrificing the river/rock detail outside the reconstructed hole.
-        Bitmap graded = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
-        Canvas canvas = new Canvas(graded);
-        Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
-        ColorMatrix matrix = new ColorMatrix();
-        matrix.setSaturation(0.95f);
-        ColorMatrix exposure = new ColorMatrix(new float[]{
-                0.97f,0,0,0,-2,
-                0,0.97f,0,0,-2,
-                0,0,0.97f,0,-2,
+        }finally{blurred.recycle();}
+        Bitmap graded=Bitmap.createBitmap(w,h,Bitmap.Config.ARGB_8888);
+        Canvas canvas=new Canvas(graded);
+        Paint paint=new Paint(Paint.ANTI_ALIAS_FLAG|Paint.FILTER_BITMAP_FLAG);
+        ColorMatrix matrix=new ColorMatrix();
+        matrix.setSaturation(.95f);
+        ColorMatrix exposure=new ColorMatrix(new float[]{
+                .97f,0,0,0,-2,
+                0,.97f,0,0,-2,
+                0,0,.97f,0,-2,
                 0,0,0,1,0
         });
         matrix.postConcat(exposure);
         paint.setColorFilter(new ColorMatrixColorFilter(matrix));
-        canvas.drawBitmap(reconstructed, 0, 0, paint);
+        canvas.drawBitmap(reconstructed,0,0,paint);
         reconstructed.recycle();
         return graded;
     }

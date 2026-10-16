@@ -43,6 +43,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     public static final String ACTION_PAUSE = "com.rezoxnemesis.videostudio.PAUSE_CONTROL";
     public static final String ACTION_RESUME = "com.rezoxnemesis.videostudio.RESUME_CONTROL";
     public static final String ACTION_RECONNECT = "com.rezoxnemesis.videostudio.RECONNECT";
+    public static final String ACTION_RETRY_RECOVERY = "com.rezoxnemesis.videostudio.RETRY_HELD_RECOVERY";
     public static final String ACTION_SYNC = "com.rezoxnemesis.videostudio.SYNC_STATE";
     public static final String ACTION_LOCAL_ANIMATE = "com.rezoxnemesis.videostudio.LOCAL_ANIMATE_IMAGES";
     public static final String ACTION_LOCAL_ANIMATION_STUDIO = "com.rezoxnemesis.videostudio.LOCAL_ANIMATION_STUDIO";
@@ -104,12 +105,24 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     private final ExecutorService pipelineExecutor=Executors.newSingleThreadExecutor();
     private final Set<String> watchedCommands = ConcurrentHashMap.newKeySet();
     private volatile boolean serviceAlive;
+    private NativeStartupGuard startupGuard;
+    private final android.os.Handler bootstrapHandler =
+            new android.os.Handler(android.os.Looper.getMainLooper());
+    private Runnable deferredRecovery;
 
     @Override
     public void onCreate() {
         super.onCreate();
+        NativeJavaCrashJournal.install(this);
         serviceAlive = true;
         prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
+        String lastServiceVersion=prefs.getString("control_service_app_version","");
+        startupGuard=new NativeStartupGuard(this);
+        NativeStartupGuard.Start boot=startupGuard.start(
+                System.currentTimeMillis(),AppProtocol.APP_VERSION,lastServiceVersion);
+        // Foreground promotion precedes SQLite, journal and model preparation.
+        createChannel();
+        startForeground(NOTIFICATION_ID,notification("VideoStudio starting safely"));
         migrateAutonomyDefaultOnce();
         commandJournal = new CommandJournal(this);
         store = new ProjectStore(this);
@@ -126,6 +139,8 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         creativeWorkspace = new CreativeWorkspace(this);
         motionScriptCompiler = new MotionScriptCompiler();
         recoveryPlans = new RecoveryPlanStore(this);
+        startupGuard.holdInterruptedUpgrade(recoveryPlans.pendingForAutoResume(),boot.upgraded);
+        startupGuard.holdInterruptedUpgrade(commandJournal.pendingForStartupSafety(160),boot.upgraded);
         capabilityRegistry = new CapabilityRegistry(this);
         modelPackManager = new ModelPackManager(this);
         computeProfile = new DeviceComputeProfile(this);
@@ -134,8 +149,9 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         renderCritic = new NativeRenderCritic(this);
         builtInCreativeRuntime = new CreativeBuiltInRuntime(portraitMotionAnalyzer, renderCritic, creativeNodeStore);
         driveWorkspace = new DriveWorkspaceProvider(this);
-        createChannel();
-        startForeground(NOTIFICATION_ID, notification("VideoStudio stable MCP starting"));
+        updateNotification(startupGuard.held()
+                ?"Native control ready; interrupted rendering held for safety"
+                :"Native control starting; recovery deferred until UI is responsive");
         syncProtocolState();
         markService(false, "VideoStudio stable MCP Native Agent starting");
         protocol.start();
@@ -153,8 +169,8 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 "Stable MCP compatibility endpoint • app " + AppProtocol.APP_VERSION
                         + " • generation " + protocol.appGeneration(),
                 "success", null, null, null);
-        recoverDurablePlans();
-        reattachInflightCommandWatchers();
+        // Heavy portrait/Media3 resume must never run in Service.onCreate().
+        scheduleDeferredRecovery(12_000L);
         NativeAgentWatchdog.scheduleHealthy(this, "service_created");
     }
 
@@ -192,6 +208,13 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             protocol.registerNow();
             NativeAgentWatchdog.scheduleHealthy(this, "control_resumed");
             updateNotification("Stable MCP control ready");
+        } else if (ACTION_RETRY_RECOVERY.equals(action)) {
+            if(startupGuard!=null)startupGuard.userRetry();
+            ActivityLog.add(this,"user","Retrying held native recovery",
+                    "Owner approved one retry of saved work; no project data removed",
+                    "info",null,null,null);
+            scheduleDeferredRecovery(4_000L);
+            updateNotification("Native recovery retry requested");
         } else if (ACTION_RECONNECT.equals(action)) {
             syncProtocolState();
             protocol.forceReconnect();
@@ -488,6 +511,8 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     @Override
     public void onDestroy() {
         serviceAlive = false;
+        if(deferredRecovery!=null)bootstrapHandler.removeCallbacks(deferredRecovery);
+        if(startupGuard!=null)startupGuard.cleanStop();
         ActivityLog.add(this, "transport", "VideoStudio control stopped", "Background controller stopped", "info", null, null, null);
         markService(false, "Control service stopped");
         boolean paused = protocol != null && protocol.isControlPaused();
@@ -593,6 +618,17 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             return;
         }
 
+        if(startupGuard!=null&&startupGuard.held()&&NativeStartupGuard.heavy(action)){
+            JSONObject refused=new JSONObject();
+            try{
+                refused.put("ok",false).put("code","NATIVE_RECOVERY_HELD");
+                refused.put("error","Previous render interrupted startup; project preserved. Retry only after the app opens safely.");
+                refused.put("projectId",projectId);
+            }catch(Exception ignored){}
+            commandJournal.finish(command,refused,"failed");
+            acknowledge(command,refused,"failed");
+            return;
+        }
         JSONObject inflight = commandJournal.inflight(commandId);
         if (inflight != null) {
             watchDeferredCommand(command, inflight.optJSONObject("queuedResult"));
@@ -1938,10 +1974,35 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         return job;
     }
 
+    /** Bootstrap must be responsive before any heavyweight recovered work begins. */
+    private void scheduleDeferredRecovery(long delayMs){
+        if(deferredRecovery!=null)bootstrapHandler.removeCallbacks(deferredRecovery);
+        deferredRecovery=()->{
+            if(!serviceAlive||startupGuard==null||startupGuard.held())return;
+            try{
+                directorSetupExecutor.execute(()->{
+                    if(!serviceAlive||startupGuard.held())return;
+                    try{
+                        recoverDurablePlans();
+                        if(serviceAlive&&!startupGuard.held())reattachInflightCommandWatchers();
+                    }catch(Exception failure){
+                        startupGuard.hold("Interrupted native recovery was unsafe; retry after checking the app");
+                        ActivityLog.add(this,"system","Native recovery deferred",
+                                "Saved work retained for explicit owner retry",
+                                "info",null,null,null);
+                    }
+                });
+            }catch(java.util.concurrent.RejectedExecutionException ignored){}
+        };
+        bootstrapHandler.postDelayed(deferredRecovery,Math.max(1000L,delayMs));
+    }
+
     private void recoverDurablePlans() {
         if (recoveryPlans == null || protocol == null || protocol.isControlPaused()) return;
         JSONArray pending = recoveryPlans.pendingForAutoResume();
         for (int i = 0; i < pending.length(); i++) {
+            if(!serviceAlive||Thread.currentThread().isInterrupted()||
+                    startupGuard!=null&&startupGuard.held())return;
             JSONObject plan = pending.optJSONObject(i);
             if (plan == null) continue;
             String planId = plan.optString("id", "");
@@ -1978,6 +2039,15 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 }
             }
 
+            // Completed artifacts are recovered before counting a retry;
+            // only genuinely interrupted heavy operations consume admission.
+            if(startupGuard!=null&&!startupGuard.mayAutoResume(
+                    planId,action,System.currentTimeMillis())){
+                ActivityLog.add(this,"system","Heavy recovery held",
+                        "Saved native work awaits explicit retry",
+                        "info",null,null,projectId);
+                continue;
+            }
             JSONObject parameters = plan.optJSONObject("parameters");
             if (parameters == null) parameters = new JSONObject();
             try {
@@ -3061,7 +3131,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             jobs.awaitSafeCheckpoint(state,"sketch_prepare");
             SketchNativeExport.Progress captureProgress=(frame,count)->{
                 if(frame%4==0||frame==count-1){
-                    checkpoint(state,"Sketch frame capture",(frame+1)+"/"+count+" authored frames",2+(int)(65d*frame/Math.max(1,count)),outputId);
+                    checkpoint(state,"Sketch frame capture",(frame+1)+"/"+count+" authored frames",2+(int)(65d*(frame+1)/Math.max(1,count)),outputId);
                     jobs.awaitSafeCheckpoint(state,"sketch_frame_"+frame);
                 }
             };
@@ -3069,7 +3139,24 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             if(!outputId.equals(prepared.project.id))throw new IllegalStateException("Sketch output identity changed");
             JSONObject metadata;
             if(prepared.completed)metadata=new JSONObject(prepared.metadata.toString());
-            else{
+            else if(SketchFrameStreamEncoder.recommended(
+                    prepared.metadata.getInt("width"),prepared.metadata.getInt("height"),
+                    prepared.metadata.getInt("frameCount"))){
+                // Sketch Studio documents up to 2048x2048 cannot be fed directly into
+                // Media3's bounded source: WxH composition. More importantly, hundreds
+                // of PNGs are frames of ONE film, not independent 42-ms photo clips.
+                // Stream one verified private PNG at a time into native MediaCodec.
+                jobs.awaitSafeCheckpoint(state,"sketch_stream_prepare");
+                checkpoint(state,"Sketch encoding","Starting native streaming H.264 encoder",68,outputId);
+                JSONObject encoded=SketchFrameStreamEncoder.encode(prepared,(frame,total,detail)->{
+                    if(frame%4==0||frame==total){
+                        checkpoint(state,"Sketch encoding",detail,
+                                68+Math.min(25,(int)(25L*frame/Math.max(1,total))),outputId);
+                        jobs.awaitSafeCheckpoint(state,"sketch_encode_frame_"+frame);
+                    }
+                });
+                metadata=SketchNativeExport.complete(this,prepared,encoded);
+            } else{
                 jobs.awaitSafeCheckpoint(state,"sketch_encode");
                 final CountDownLatch done=new CountDownLatch(1);
                 final AtomicReference<JSONObject> encoder=new AtomicReference<>();
@@ -4794,6 +4881,8 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         try {
             out.put("deviceId", protocol.deviceId());
             out.put("appVersion", AppProtocol.APP_VERSION);
+            if(startupGuard!=null)out.put("startupRecovery",startupGuard.status());
+            out.put("recentOwnProcessExit",NativeProcessExitDiagnostics.recent(this));
             out.put("protocolVersion", protocol.protocolVersion());
             out.put("mcpEndpointVersion", "v3-stable");
             out.put("stableMcpEndpoint", true);

@@ -113,39 +113,73 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
     private long studioPlayheadMs=0;
     private boolean studioShowMedia=false;
     private String currentScreen = "home";
+    private NativeEditorStartupGuard editorStartupGuard;
+    private Runnable markLaunchHealthy;
+    private boolean editorBootstrapReady;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        NativeJavaCrashJournal.install(this);
+        editorStartupGuard=new NativeEditorStartupGuard(this);
+        NativeEditorStartupGuard.Admission boot=editorStartupGuard.begin(System.currentTimeMillis());
+        if(boot.rescueMode){
+            showSafeStartScreen(null);
+            return;
+        }
         Window window = getWindow();
         window.setStatusBarColor(C_BG);
         window.setNavigationBarColor(C_BG);
         window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
 
+        try {
         prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
         migrateAutonomyDefaultOnce();
+        editorStartupGuard.stage("loading_project_store");
         store = new ProjectStore(this);
         // UI/local proxy work must never rewrite the native MCP job journal.
         jobs = new JobManager(this,"videostudio_editor_local_jobs_v2");
         studioThumbs = new StudioThumbnailLoader(this);
-        studioAudioWaveforms=new StudioAudioWaveforms(this);
-        studioAudioPreview=new StudioAudioPreviewEngine(this);
+        // Construct Media3 audio components only when the human opens the editor.
+        // Instantiating ExoPlayer/AudioTrack during splash consumed scarce native
+        // decoder memory while the agent might also be recovering a render.
+        editorStartupGuard.stage("creating_media_factories");
         renderEngine = new NativeRenderEngine(this);
         promptVideoEngine = new PromptVideoEngine(this);
         mediaAnalyzer = new NativeMediaAnalyzer(this);
         driveWorkspace = new DriveWorkspaceProvider(this);
         previewSnapshots = new PreviewSnapshotStore(this);
         proxyManager = new ProxyManager(this, store, jobs);
-        livePlayer = new LiveEditPlayer(this);
+        // ExoPlayer is heavyweight; lazy startup leaves media codecs untouched
+        // until a preview or editor playback is explicitly requested.
+        editorStartupGuard.stage("loading_active_project");
         activeProject = store.active();
+        editorStartupGuard.stage("creating_native_protocol");
         protocol = new AppProtocol(this, this);
-        syncProtocolState();
+        // Update the local protocol snapshot without starting the foreground
+        // service during our first activity frame. The explicit delayed launch
+        // below starts it only after Home is constructed and touch responsive.
+        protocol.setLocalState(permissionMode(),store.summaries());
 
+        editorStartupGuard.stage("building_home");
         setContentView(buildShell());
         showHome();
+        editorBootstrapReady=true;
+        editorStartupGuard.stage("home_shown");
         handleMcpRebindIntent(getIntent());
-        requestServiceSync();
-        startServiceWatchdog();
+        // The home screen becomes responsive before expensive native recovery.
+        ui.postDelayed(this::requestServiceSync,750L);
+        ui.postDelayed(this::startServiceWatchdog,1200L);
+        markLaunchHealthy=()->{
+            if(editorBootstrapReady&&editorStartupGuard!=null)
+                editorStartupGuard.success();
+        };
+        ui.postDelayed(markLaunchHealthy,5000L);
+        }catch(RuntimeException|LinkageError startupFailure){
+            editorBootstrapReady=false;
+            if(editorStartupGuard!=null)editorStartupGuard.failed(startupFailure);
+            showSafeStartScreen(startupFailure);
+        }
     }
 
     @Override
@@ -185,11 +219,75 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         if(studioAudioPreview!=null)studioAudioPreview.release();
         if (activityRefresh != null) ui.removeCallbacks(activityRefresh);
         if (serviceWatchdog != null) ui.removeCallbacks(serviceWatchdog);
+        if(markLaunchHealthy!=null)ui.removeCallbacks(markLaunchHealthy);
+        if(editorBootstrapReady&&editorStartupGuard!=null)editorStartupGuard.success();
         if (livePlayer != null) livePlayer.release();
         if (activeRenderHandle != null) activeRenderHandle.cancel();
         if (protocol != null) protocol.stop();
         if (jobs != null) jobs.shutdown();
         super.onDestroy();
+    }
+
+    /** Last-resort landing page for failures in project/editor preparation.
+     * No database deletion, preference reset or Gallery access is attempted. */
+    private void showSafeStartScreen(Throwable failure){
+        LinearLayout root=new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setPadding(dp(22),dp(45),dp(22),dp(20));
+        root.setBackgroundColor(C_BG);
+        TextView heading=new TextView(this);
+        heading.setText("VideoStudio safe startup");
+        heading.setTextSize(24);heading.setTextColor(C_TEXT);
+        root.addView(heading);
+        TextView detail=new TextView(this);
+        detail.setText("The editing workspace could not initialize. Your saved projects and imported files have NOT been deleted. "+
+                "Please keep the app installed and share the startup diagnostic.");
+        detail.setTextSize(15);detail.setTextColor(C_MUTED);
+        detail.setPadding(0,dp(14),0,dp(14));
+        root.addView(detail);
+        JSONObject checkpoint=editorStartupGuard==null?new JSONObject():editorStartupGuard.status();
+        String summary="VideoStudio "+AppProtocol.APP_VERSION+" safe startup; "+
+                "previousInterruptedStage="+checkpoint.optString("previousInterruptedStage","unknown")+
+                "; lastAppFrame="+checkpoint.optString("lastAppFrame","unknown")+
+                "; lastStage="+checkpoint.optString("lastStage","unknown")+
+                "; lastJavaFailure="+checkpoint.optString("lastJavaFailure","unknown")+
+                "; rapidFailures="+checkpoint.optInt("rapidFailures",0)+
+                "; projectDataCleared=false; galleryBrowsed=false";
+        detail.setText("VideoStudio stopped during startup. Your source projects and "+
+                "imported files are preserved. No native media render was started "+
+                "by this recovery screen.\n\nLast stage: "+
+                checkpoint.optString("previousInterruptedStage",checkpoint.optString("lastStage","unknown"))+
+                "\nJava error type: "+checkpoint.optString("lastJavaFailure","unknown")+
+                "\nLast app code frame: "+checkpoint.optString("lastAppFrame","not_available")+
+                "\nNative SIGKILL or OOM may not produce a Java trace.");
+        String note=summary;
+        Button copy=new Button(this);
+        copy.setText("Copy safe diagnostic");
+        copy.setOnClickListener(v->{
+            android.content.ClipboardManager clipboard=
+                    (android.content.ClipboardManager)getSystemService(CLIPBOARD_SERVICE);
+            if(clipboard!=null)clipboard.setPrimaryClip(ClipData.newPlainText("VideoStudio startup",note));
+            Toast.makeText(this,"Startup diagnostic copied",Toast.LENGTH_SHORT).show();
+        });
+        root.addView(copy);
+        Button retry=new Button(this);
+        retry.setText("Retry safe launch");
+        retry.setOnClickListener(v->{
+            if(editorStartupGuard!=null)editorStartupGuard.allowNormalOnce();
+            recreate();
+        });
+        root.addView(retry);
+        setContentView(root);
+    }
+
+    private LiveEditPlayer player(){
+        if(livePlayer==null)livePlayer=new LiveEditPlayer(this);
+        return livePlayer;
+    }
+
+    private void ensureEditorMedia(){
+        if(studioAudioWaveforms==null)studioAudioWaveforms=new StudioAudioWaveforms(this);
+        if(studioAudioPreview==null)studioAudioPreview=new StudioAudioPreviewEngine(this);
     }
 
     private View buildShell() {
@@ -270,6 +368,49 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                     jobName+"  "+nativeWork.optInt("jobProgress",0)+"%"));
         }else nativeStrip.addView(body("Manage your connection and background work."));
         box.addView(nativeStrip,margins(-1,-2,dp(4),0,0,0));
+        NativeStartupGuard nativeRecovery=new NativeStartupGuard(this);
+        if(nativeRecovery.held()){
+            LinearLayout recoveryCard=card(false);
+            recoveryCard.addView(title("Interrupted render safely paused",17));
+            recoveryCard.addView(body(
+                    "A previous rendering task could not finish. VideoStudio has preserved "+
+                    "the source, saved projects and native job checkpoints. "+
+                    "Automatic heavy recovery is held to prevent another startup crash."));
+            recoveryCard.addView(body(nativeRecovery.reason()));
+            Button retry=studioButton("Retry saved render (optional)",()->{
+                new AlertDialog.Builder(this)
+                        .setTitle("Retry interrupted native render?")
+                        .setMessage("Only retry after confirming the app opens and its "+
+                                "projects load normally. The saved render might still "+
+                                "exceed your device's memory or fail. No Gallery access is used.")
+                        .setNegativeButton("Keep paused",null)
+                        .setPositiveButton("Retry once",(d,w)->{
+                            try{
+                                startForegroundService(new Intent(this,ControlService.class)
+                                        .setAction(ControlService.ACTION_RETRY_RECOVERY));
+                                Toast.makeText(this,"Retry requested; track status in Activity",
+                                        Toast.LENGTH_LONG).show();
+                            }catch(Exception err){
+                                Toast.makeText(this,"Retry not started: "+err.getClass().getSimpleName(),
+                                        Toast.LENGTH_LONG).show();
+                            }
+                        }).show();
+            });
+            recoveryCard.addView(retry,margins(-1,dp(46),dp(8),0,0,0));
+            box.addView(recoveryCard,margins(-1,-2,dp(9),0,0,0));
+        }
+        NativeStartupGuard launchGuard=new NativeStartupGuard(this);
+        if(launchGuard.held()){
+            LinearLayout safety=card(false);
+            safety.addView(title("Safe startup • previous render paused",17));
+            safety.addView(body("The native renderer may have interrupted the last session. "+
+                    "VideoStudio has kept the project's source, imported assets and recovery record. "+
+                    "Heavy jobs will not restart automatically while recovery is held."));
+            safety.addView(body(launchGuard.reason()));
+            Button retry=studioButton("Retry interrupted work (optional)",this::retryHeldRecovery);
+            safety.addView(retry,margins(-1,dp(48),dp(10),0,0,0));
+            box.addView(safety,margins(-1,-2,dp(10),0,0,0));
+        }
 
         LinearLayout projectsTop=new LinearLayout(this);
         projectsTop.setGravity(Gravity.CENTER_VERTICAL);
@@ -277,7 +418,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         projectsTop.addView(studioButton("View All ›",this::showStudioProjectLibrary),
                 new LinearLayout.LayoutParams(dp(107),dp(44)));
         box.addView(projectsTop,margins(-1,-2,dp(16),dp(6),0,0));
-        List<ProjectStore.Project> projects=store.list();
+        List<ProjectStore.Project> projects=store.listRecent(8);
         if(projects.isEmpty())box.addView(body("No projects yet. Create one and import your clips."));
         else for(int i=0;i<Math.min(8,projects.size());i++)
             box.addView(projectRow(projects.get(i)),margins(-1,-2,0,dp(6),0,0));
@@ -300,6 +441,26 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         creative.addView(authoring,margins(-1,dp(46),dp(7),0,0,0));
         box.addView(creative,margins(-1,-2,dp(16),0,0,0));
         setScreen(scroll,"home");
+    }
+
+    private void retryHeldRecovery(){
+        new AlertDialog.Builder(this).setTitle("Retry interrupted native work?")
+                .setMessage("The previous media render may have caused the app to restart. "+
+                        "Your projects remain safe while it is paused. "+
+                        "Retry only after VideoStudio has remained open normally; another render may use significant RAM.")
+                .setNegativeButton("Keep paused",null)
+                .setPositiveButton("Retry once",(d,w)->{
+                    try{
+                        Intent request=new Intent(this,ControlService.class)
+                                .setAction(ControlService.ACTION_RETRY_RECOVERY);
+                        startForegroundService(request);
+                        Toast.makeText(this,"Retry requested; source projects preserved",
+                                Toast.LENGTH_LONG).show();
+                    }catch(Exception failure){
+                        Toast.makeText(this,"Retry unavailable: "+failure.getClass().getSimpleName(),
+                                Toast.LENGTH_LONG).show();
+                    }
+                }).show();
     }
 
     /** Both delivery routes use the existing device-owned Android identity. */
@@ -551,6 +712,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
      * searchable categories instead of an unstructured 24-button wall.
      */
     private void showEditor() {
+        ensureEditorMedia();
         final int previousScroll="editor".equals(currentScreen)&&content!=null&&content.getChildCount()>0&&content.getChildAt(0) instanceof ScrollView
                 ?content.getChildAt(0).getScrollY():0;
         if(studioCaptionClock!=null){
@@ -602,7 +764,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         previewCard.addView(caption);
         studioPreviewFrame=new FrameLayout(this);
         studioPreviewFrame.setBackground(rounded(Color.BLACK,0,dp(12)));
-        livePlayer.attach(studioPreviewFrame);
+        player().attach(studioPreviewFrame);
         studioStillPreview=new ImageView(this);
         studioStillPreview.setBackgroundColor(Color.BLACK);
         studioStillPreview.setScaleType(ImageView.ScaleType.FIT_CENTER);
@@ -928,8 +1090,8 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                     }
                     if(studioStillPreview!=null)
                         studioStillPreview.setVisibility(View.GONE);
-                    livePlayer.setContextIds("final:"+System.currentTimeMillis(),"");
-                    livePlayer.play(Uri.parse(uris.get(index)),0L);
+                    player().setContextIds("final:"+System.currentTimeMillis(),"");
+                    player().play(Uri.parse(uris.get(index)),0L);
                 })
                 .setNegativeButton("Close",null).show();
     }
@@ -943,9 +1105,9 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         }
         if(studioStillPreview!=null)studioStillPreview.setVisibility(View.GONE);
         try{
-            livePlayer.setContextIds("final:"+activeProject.latestExportAt,"");
-            livePlayer.setVolume(1f);
-            livePlayer.play(Uri.parse(activeProject.latestExportUri),0L);
+            player().setContextIds("final:"+activeProject.latestExportAt,"");
+            player().setVolume(1f);
+            player().play(Uri.parse(activeProject.latestExportUri),0L);
         }catch(Exception error){
             Toast.makeText(this,"Latest MP4 could not open. Try All Renders.",
                     Toast.LENGTH_LONG).show();
@@ -992,8 +1154,8 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         try{
             if(studioStillPreview!=null)studioStillPreview.setVisibility(View.GONE);
             if(studioCaptionPreview!=null)studioCaptionPreview.setVisibility(View.GONE);
-            livePlayer.setContextIds("",selectedClip==null?"":selectedClip.id);
-            livePlayer.playEdit(activeProject,renderEngine,"9:16","720p",studioPlayheadMs,play,
+            player().setContextIds("",selectedClip==null?"":selectedClip.id);
+            player().playEdit(activeProject,renderEngine,"9:16","720p",studioPlayheadMs,play,
                     ()->{timelinePreviewRunning=false;studioPlayheadMs=activeProject.outputDurationMs();},
                     error->{timelinePreviewRunning=false;
                         Toast.makeText(this,error,Toast.LENGTH_LONG).show();});
@@ -1009,8 +1171,8 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         if(studioCaptionClock!=null)ui.removeCallbacks(studioCaptionClock);
         studioCaptionClock=new Runnable(){
             @Override public void run(){
-                if(!"editor".equals(currentScreen)||activeProject==null||!livePlayer.isEditedPreview())return;
-                studioPlayheadMs=Math.min(activeProject.outputDurationMs(),livePlayer.currentPositionMs());
+                if(!"editor".equals(currentScreen)||activeProject==null||!player().isEditedPreview())return;
+                studioPlayheadMs=Math.min(activeProject.outputDurationMs(),player().currentPositionMs());
                 if(studioTimeLabel!=null)studioTimeLabel.setText(StudioEditCursor.timecode(studioPlayheadMs)+" / "+StudioEditCursor.timecode(activeProject.outputDurationMs()));
                 if(studioSeek!=null&&!studioSeek.isPressed())studioSeek.setProgress((int)Math.round(studioPlayheadMs*studioSeek.getMax()/(double)Math.max(1,activeProject.outputDurationMs())));
                 if(studioTracks!=null)studioTracks.setPlayhead(studioPlayheadMs);
@@ -1089,16 +1251,16 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         if(asset==null){playStudioFrom(index+1);return;}
         if(asset.mime!=null&&asset.mime.startsWith("video/")){
             if(studioStillPreview!=null)studioStillPreview.setVisibility(View.GONE);
-            livePlayer.setContextIds("",clip.id);
-            livePlayer.setVolume(clip.volume);
-            livePlayer.playClip(Uri.parse(ProxyManager.previewUri(activeProject,asset)),
+            player().setContextIds("",clip.id);
+            player().setVolume(clip.volume);
+            player().playClip(Uri.parse(ProxyManager.previewUri(activeProject,asset)),
                     Math.min(Math.max(clip.inMs,clip.outMs-1),
                             clip.inMs+Math.round(actualOffset*clip.speed)),
                     clip.outMs,clip.speed,()->{
                         if(timelinePreviewRunning)playStudioFrom(index+1);
                     });
         }else if(asset.mime!=null&&asset.mime.startsWith("image/")){
-            livePlayer.pause();
+            player().pause();
             if(studioStillPreview!=null){
                 studioStillPreview.setVisibility(View.VISIBLE);
                 studioThumbs.bindPreview(studioStillPreview,asset);
@@ -1114,7 +1276,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
 
     private void stopStillSequenceOnly(){
         timelinePreviewRunning=false;
-        if(livePlayer!=null&&livePlayer.isEditedPreview())livePlayer.pause();
+        if(livePlayer!=null&&player().isEditedPreview())player().pause();
         if(stillTimelineNext!=null){
             ui.removeCallbacks(stillTimelineNext);
             stillTimelineNext=null;
@@ -1158,10 +1320,10 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                     editStudioAudio(null,asset.id);
                 }else if(asset.mime!=null&&asset.mime.startsWith("video/")){
                     studioStillPreview.setVisibility(View.GONE);
-                    livePlayer.setContextIds("asset:"+asset.id,"");
-                    livePlayer.play(Uri.parse(ProxyManager.previewUri(activeProject,asset)),0L);
+                    player().setContextIds("asset:"+asset.id,"");
+                    player().play(Uri.parse(ProxyManager.previewUri(activeProject,asset)),0L);
                 }else if(asset.mime!=null&&asset.mime.startsWith("image/")){
-                    livePlayer.pause();
+                    player().pause();
                     studioStillPreview.setVisibility(View.VISIBLE);
                     studioThumbs.bindPreview(studioStillPreview,asset);
                 }
@@ -1780,7 +1942,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
 
     private void updateStudioCaptionAt(long globalTimeMs){
         if(studioCaptionPreview==null||activeProject==null)return;
-        if(livePlayer.isEditedPreview()){
+        if(player().isEditedPreview()){
             studioCaptionPreview.setText("");studioCaptionPreview.setVisibility(View.GONE);return;
         }
         List<StudioLayer> active=StudioTrackLayout.activeAt(
@@ -1827,7 +1989,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                 ProjectStore.Asset source=activeProject.asset(clip.assetId);
                 long elapsed;
                 if(source!=null&&source.mime!=null&&source.mime.startsWith("video/")){
-                    elapsed=(long)((livePlayer.currentPositionMs()-clip.inMs)/
+                    elapsed=(long)((player().currentPositionMs()-clip.inMs)/
                             Math.max(.1f,clip.speed));
                 }else elapsed=initialOffsetMs+
                         android.os.SystemClock.elapsedRealtime()-systemStart;
@@ -2160,12 +2322,12 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         FrameLayout viewer = new FrameLayout(this);
         viewer.setBackground(rounded(Color.BLACK, Color.rgb(37, 51, 83), dp(18)));
         viewer.setMinimumHeight(dp(280));
-        livePlayer.attach(viewer);
+        player().attach(viewer);
         TextView hint = body(activeProject.assets.isEmpty()
                 ? "No source media yet. Import a file, or ask ChatGPT to create a prompt video."
                 : "Select a clip below");
         hint.setGravity(Gravity.CENTER);
-        if (livePlayer.hasMedia()) hint.setVisibility(View.GONE);
+        if (player().hasMedia()) hint.setVisibility(View.GONE);
         viewer.addView(hint, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(280)));
         box.addView(viewer, margins(-1, dp(280), 0, 0, 0, 0));
 
@@ -2206,12 +2368,12 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         LinearLayout liveActions = new LinearLayout(this);
         liveActions.setGravity(Gravity.CENTER_VERTICAL);
         PreviewSnapshotStore.Snapshot latestPreview = previewSnapshots.latest(activeProject.id);
-        LivePlaybackState playbackState = livePlayer.snapshotState();
+        LivePlaybackState playbackState = player().snapshotState();
         if (latestPreview != null && !latestPreview.id.equals(playbackState.snapshotId)) {
             Button playNew = compactButton("Play new result");
             playNew.setOnClickListener(v -> {
-                livePlayer.setContextIds(latestPreview.id, "");
-                livePlayer.play(Uri.parse(latestPreview.uri), 0L);
+                player().setContextIds(latestPreview.id, "");
+                player().play(Uri.parse(latestPreview.uri), 0L);
                 Toast.makeText(this, "Playing latest " + latestPreview.qualityTier + " result", Toast.LENGTH_SHORT).show();
             });
             liveActions.addView(playNew);
@@ -2258,8 +2420,8 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                 previewAsset.setOnClickListener(v -> {
                     try {
                         hint.setVisibility(View.GONE);
-                        livePlayer.setContextIds("", "");
-                        livePlayer.play(Uri.parse(ProxyManager.previewUri(activeProject, asset)), 0L);
+                        player().setContextIds("", "");
+                        player().play(Uri.parse(ProxyManager.previewUri(activeProject, asset)), 0L);
                     } catch (Exception error) {
                         Toast.makeText(this, "Could not preview media", Toast.LENGTH_SHORT).show();
                     }
@@ -2387,7 +2549,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                 ? null
                 : previewSnapshots.latest(activeProject.id);
         if (latest != null) {
-            LivePlaybackState playing = livePlayer == null ? null : livePlayer.snapshotState();
+            LivePlaybackState playing = livePlayer == null ? null : player().snapshotState();
             boolean alreadyPlaying = playing != null
                     && (latest.id.equals(playing.snapshotId) || latest.uri.equals(playing.mediaUri));
             card.addView(accent(
@@ -2399,8 +2561,8 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                 Button playNew = neonButton("Play new result", C_CYAN);
                 playNew.setTextColor(Color.BLACK);
                 playNew.setOnClickListener(v -> {
-                    livePlayer.setContextIds(latest.id, "");
-                    livePlayer.play(Uri.parse(latest.uri), 0L);
+                    player().setContextIds(latest.id, "");
+                    player().play(Uri.parse(latest.uri), 0L);
                     showEditor();
                 });
                 card.addView(playNew, margins(-1, dp(46), dp(8), 0, 0, 0));
@@ -3448,8 +3610,8 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         if (!hasVideoClip) {
             if (activeProject.latestExportUri != null && !activeProject.latestExportUri.isEmpty()) {
                 timelinePreviewRunning = false;
-                livePlayer.setContextIds("final:" + activeProject.latestExportAt, "");
-                livePlayer.play(Uri.parse(activeProject.latestExportUri), 0L);
+                player().setContextIds("final:" + activeProject.latestExportAt, "");
+                player().play(Uri.parse(activeProject.latestExportUri), 0L);
             } else {
                 Toast.makeText(this, "Render the animated image timeline first", Toast.LENGTH_SHORT).show();
             }
@@ -3478,8 +3640,8 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         if (activeProject == null || livePlayer == null || clip == null) return;
         ProjectStore.Asset asset = activeProject.asset(clip.assetId);
         if (asset == null) return;
-        livePlayer.setContextIds("", clip.id);
-        livePlayer.playClip(
+        player().setContextIds("", clip.id);
+        player().playClip(
                 Uri.parse(ProxyManager.previewUri(activeProject, asset)),
                 clip.inMs,
                 clip.outMs,
@@ -3526,7 +3688,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
 
     private void splitClip() {
         if(selectedClip==null||activeProject==null)return;
-        if(livePlayer.isEditedPreview()&&timelinePreviewRunning)studioPlayheadMs=livePlayer.currentPositionMs();
+        if(player().isEditedPreview()&&timelinePreviewRunning)studioPlayheadMs=player().currentPositionMs();
         if(!canSplitStudioAtCursor()){
             Toast.makeText(this,"Move the playhead inside the selected clip, leaving at least 0.1 seconds on each side",Toast.LENGTH_LONG).show();
             return;
@@ -3548,7 +3710,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         if(activeProject==null||selectedClip==null)return;
         long previous=studioPlayheadMs;
         try{
-            if(livePlayer.isEditedPreview()&&timelinePreviewRunning)studioPlayheadMs=livePlayer.currentPositionMs();
+            if(player().isEditedPreview()&&timelinePreviewRunning)studioPlayheadMs=player().currentPositionMs();
             long start=StudioTimelineEditOps.startOf(activeProject.clips,selectedClip.id);
             long source=StudioEditCursor.sourceAt(selectedClip.inMs,selectedClip.outMs,selectedClip.speed,start,studioPlayheadMs);
             long minimum=Math.max(100,(long)Math.ceil(100*selectedClip.speed));
