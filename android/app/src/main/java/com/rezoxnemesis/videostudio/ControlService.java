@@ -2005,13 +2005,6 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             if (plan == null) continue;
             String planId = plan.optString("id", "");
             String action = plan.optString("action", "");
-            if(startupGuard!=null&&!startupGuard.mayAutoResume(
-                    planId,action,System.currentTimeMillis())){
-                ActivityLog.add(this,"system","Heavy recovery held",
-                        "Saved native work awaits explicit retry",
-                        "info",null,null,plan.optString("projectId",""));
-                continue;
-            }
             String projectId = plan.optString("projectId", "");
             String outputUri = plan.optString("outputUri", "");
 
@@ -2044,6 +2037,15 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 }
             }
 
+            // Completed artifacts are recovered before counting a retry;
+            // only genuinely interrupted heavy operations consume admission.
+            if(startupGuard!=null&&!startupGuard.mayAutoResume(
+                    planId,action,System.currentTimeMillis())){
+                ActivityLog.add(this,"system","Heavy recovery held",
+                        "Saved native work awaits explicit retry",
+                        "info",null,null,projectId);
+                continue;
+            }
             JSONObject parameters = plan.optJSONObject("parameters");
             if (parameters == null) parameters = new JSONObject();
             try {
