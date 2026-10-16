@@ -39,6 +39,14 @@ public final class NativeCommandExecutionPolicyTest {
         assertTrue(NativeCommandExecutionPolicy.requiresBackgroundThread("get_native_result_page"));
         assertTrue(NativeCommandExecutionPolicy.requiresBackgroundThread("sketch_import_drawing_asset"));
     }
+    @Test public void qualityAuditAndVisualReviewMustNeverRunOnAndroidUiThread() {
+        assertTrue("Native quality audit renders many Canvas frames; keep it off UI",
+                NativeCommandExecutionPolicy.requiresBackgroundThread("sketch_quality_audit"));
+        assertTrue("Private native alias must also be dispatched to the background worker",
+                NativeCommandExecutionPolicy.requiresBackgroundThread("studio_sketch_quality_audit"));
+        assertTrue("Native frame review must retain its non-UI routing",
+                NativeCommandExecutionPolicy.requiresBackgroundThread("sketch_review"));
+    }
     @Test public void nullAndUnknownActionsAreNotAutomaticallyOffloaded() {
         assertFalse(NativeCommandExecutionPolicy.requiresBackgroundThread(null));
         assertFalse(NativeCommandExecutionPolicy.requiresBackgroundThread("unknown_action"));
