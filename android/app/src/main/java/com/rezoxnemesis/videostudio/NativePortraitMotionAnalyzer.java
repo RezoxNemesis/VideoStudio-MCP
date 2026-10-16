@@ -400,93 +400,72 @@ public final class NativePortraitMotionAnalyzer {
                 clamp01(headSplit/Math.max(1f,h)),clamp01(torsoSplit/Math.max(1f,h)));
     }
 
-    private Bitmap buildReconstructedBackground(Bitmap source, MaskStats stats) {
-        int w = source.getWidth(), h = source.getHeight();
-
-        // Build a broad low-frequency plate used only to fill the area hidden
-        // behind the extracted person. The original environment stays sharp.
-        int sw = Math.max(10, w / 30);
-        int sh = Math.max(10, h / 30);
-        Bitmap tiny = Bitmap.createScaledBitmap(source, sw, sh, true);
-        Bitmap blurred = Bitmap.createScaledBitmap(tiny, w, h, true);
+    /** Preserve original background fill pixels, but use a 64-row working set.
+     * Retaining the source array is necessary for random subject-edge sampling.
+     * Soft/output arrays are now tiles rather than two entire 1440px plates. */
+    private Bitmap buildReconstructedBackground(Bitmap source,MaskStats stats){
+        int w=source.getWidth(),h=source.getHeight();
+        int sw=Math.max(10,w/30),sh=Math.max(10,h/30);
+        Bitmap tiny=Bitmap.createScaledBitmap(source,sw,sh,true);
+        Bitmap blurred=Bitmap.createScaledBitmap(tiny,w,h,true);
         tiny.recycle();
+        int[] original=new int[w*h];
+        source.getPixels(original,0,w,0,0,w,h);
 
-        int[] original = new int[w * h];
-        int[] soft = new int[w * h];
-        int[] output = new int[w * h];
-        source.getPixels(original, 0, w, 0, 0, w, h);
-        blurred.getPixels(soft, 0, w, 0, 0, w, h);
-        blurred.recycle();
-
-        int left = Math.max(0, Math.min(w - 1, (int) Math.floor(stats.left * (w - 1))));
-        int top = Math.max(0, Math.min(h - 1, (int) Math.floor(stats.top * (h - 1))));
-        int right = Math.max(left, Math.min(w - 1, (int) Math.ceil(stats.right * (w - 1))));
-        int bottom = Math.max(top, Math.min(h - 1, (int) Math.ceil(stats.bottom * (h - 1))));
-        int marginX = Math.max(8, (right - left) / 16);
-        int marginY = Math.max(8, (bottom - top) / 18);
-
-        for (int y = 0; y < h; y++) {
-            int my = maskY(y, h, stats.maskHeight);
-            for (int x = 0; x < w; x++) {
-                int mx = maskX(x, w, stats.maskWidth);
-                float confidence = dilatedConfidence(stats, mx, my);
-                float replace = smoothstep(0.08f, 0.70f, confidence);
-                int index = y * w + x;
-
-                if (replace <= .001f) {
-                    output[index] = original[index];
-                    continue;
+        int left=Math.max(0,Math.min(w-1,(int)Math.floor(stats.left*(w-1))));
+        int top=Math.max(0,Math.min(h-1,(int)Math.floor(stats.top*(h-1))));
+        int right=Math.max(left,Math.min(w-1,(int)Math.ceil(stats.right*(w-1))));
+        int bottom=Math.max(top,Math.min(h-1,(int)Math.ceil(stats.bottom*(h-1))));
+        int marginX=Math.max(8,(right-left)/16);
+        int marginY=Math.max(8,(bottom-top)/18);
+        int rows=Math.max(1,Math.min(64,65536/Math.max(1,w)));
+        int[] soft=new int[w*rows],output=new int[w*rows];
+        Bitmap reconstructed=Bitmap.createBitmap(w,h,Bitmap.Config.ARGB_8888);
+        try{
+            for(int rowStart=0;rowStart<h;rowStart+=rows){
+                if(Thread.currentThread().isInterrupted())throw new IllegalStateException("Portrait background cancelled");
+                int count=Math.min(rows,h-rowStart);
+                blurred.getPixels(soft,0,w,0,rowStart,w,count);
+                for(int localY=0;localY<count;localY++){
+                    int y=rowStart+localY,my=maskY(y,h,stats.maskHeight);
+                    for(int x=0;x<w;x++){
+                        int mx=maskX(x,w,stats.maskWidth);
+                        float confidence=dilatedConfidence(stats,mx,my);
+                        float replace=smoothstep(.08f,.70f,confidence);
+                        int i=y*w+x,tileIndex=localY*w+x;
+                        if(replace<=.001f){output[tileIndex]=original[i];continue;}
+                        int dl=Math.abs(x-left),dr=Math.abs(right-x),
+                                dt=Math.abs(y-top),db=Math.abs(bottom-y);
+                        int sx=x,sy=y;
+                        int nearest=Math.min(Math.min(dl,dr),Math.min(dt,db));
+                        if(nearest==dl)sx=Math.max(0,left-marginX);
+                        else if(nearest==dr)sx=Math.min(w-1,right+marginX);
+                        else if(nearest==dt)sy=Math.max(0,top-marginY);
+                        else sy=Math.min(h-1,bottom+marginY);
+                        int edge=original[sy*w+sx],broad=soft[tileIndex];
+                        int fill=mixColor(edge,broad,.42f);
+                        float interior=smoothstep(.28f,.78f,confidence);
+                        float alpha=Math.max(replace*.82f,interior);
+                        output[tileIndex]=mixColor(original[i],fill,alpha);
+                    }
                 }
-
-                // Pull real environment color from the nearest side of the
-                // subject bounds, then mix it with the broad blurred plate.
-                // This is intentionally conservative: parallax only needs a
-                // plausible hidden plate, while visible rocks/water remain the
-                // untouched original pixels.
-                int dl = Math.abs(x - left);
-                int dr = Math.abs(right - x);
-                int dt = Math.abs(y - top);
-                int db = Math.abs(bottom - y);
-                int sx = x;
-                int sy = y;
-                int nearest = Math.min(Math.min(dl, dr), Math.min(dt, db));
-                if (nearest == dl) sx = Math.max(0, left - marginX);
-                else if (nearest == dr) sx = Math.min(w - 1, right + marginX);
-                else if (nearest == dt) sy = Math.max(0, top - marginY);
-                else sy = Math.min(h - 1, bottom + marginY);
-
-                int edge = original[sy * w + sx];
-                int broad = soft[index];
-                int fill = mixColor(edge, broad, .42f);
-
-                // Preserve a little original texture near the matte boundary,
-                // but fully replace the deep subject interior to suppress
-                // ghost silhouettes when foreground parallax exposes it.
-                float interior = smoothstep(0.28f, 0.78f, confidence);
-                float alpha = Math.max(replace * .82f, interior);
-                output[index] = mixColor(original[index], fill, alpha);
+                reconstructed.setPixels(output,0,w,0,rowStart,w,count);
             }
-        }
-
-        Bitmap reconstructed = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
-        reconstructed.setPixels(output, 0, w, 0, 0, w, h);
-
-        // A very mild grade separates the background spatially without
-        // sacrificing the river/rock detail outside the reconstructed hole.
-        Bitmap graded = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
-        Canvas canvas = new Canvas(graded);
-        Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
-        ColorMatrix matrix = new ColorMatrix();
-        matrix.setSaturation(0.95f);
-        ColorMatrix exposure = new ColorMatrix(new float[]{
-                0.97f,0,0,0,-2,
-                0,0.97f,0,0,-2,
-                0,0,0.97f,0,-2,
+        }finally{blurred.recycle();}
+        Bitmap graded=Bitmap.createBitmap(w,h,Bitmap.Config.ARGB_8888);
+        Canvas canvas=new Canvas(graded);
+        Paint paint=new Paint(Paint.ANTI_ALIAS_FLAG|Paint.FILTER_BITMAP_FLAG);
+        ColorMatrix matrix=new ColorMatrix();
+        matrix.setSaturation(.95f);
+        ColorMatrix exposure=new ColorMatrix(new float[]{
+                .97f,0,0,0,-2,
+                0,.97f,0,0,-2,
+                0,0,.97f,0,-2,
                 0,0,0,1,0
         });
         matrix.postConcat(exposure);
         paint.setColorFilter(new ColorMatrixColorFilter(matrix));
-        canvas.drawBitmap(reconstructed, 0, 0, paint);
+        canvas.drawBitmap(reconstructed,0,0,paint);
         reconstructed.recycle();
         return graded;
     }
