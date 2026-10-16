@@ -36,6 +36,7 @@ public final class SketchFrameRenderer implements AutoCloseable {
     private long imageBytes;
     private final Map<String,Path> geometryCache=new java.util.HashMap<>();
     private final Map<String,java.util.BitSet[]> exposures=new java.util.HashMap<>();
+    private Map<String,Integer> linkedColors=java.util.Collections.emptyMap();
     private void indexExposures() throws Exception {
         exposures.clear();geometryCache.clear();int frames=document.getInt("frameCount");JSONArray layers=document.getJSONArray("layers");
         for(int n=0;n<layers.length();n++){JSONObject layer=layers.getJSONObject(n);java.util.BitSet[] index=new java.util.BitSet[frames];JSONArray objects=layer.getJSONArray("objects");for(int k=0;k<objects.length();k++){JSONObject object=objects.getJSONObject(k);int start=object.getInt("frame"),end=start+object.getInt("exposure");for(int f=start;f<end;f++){if(index[f]==null)index[f]=new java.util.BitSet(objects.length());index[f].set(k);}}exposures.put(layer.getString("id"),index);}
@@ -74,6 +75,7 @@ public final class SketchFrameRenderer implements AutoCloseable {
     /** Immutable export generations may resolve dependencies from a checked owned assets root. */
     public SketchFrameRenderer(Context context, JSONObject document,File ownedDependencyRoot) throws Exception {
         SketchDocument.validate(document); this.document = SketchDocument.copy(document);
+        linkedColors=SketchPaletteStyles.indexed(this.document);
         this.context=context.getApplicationContext();this.ownedDependencyRoot=ownedDependencyRoot;
         SketchProjectStore store=null;try {
             JSONArray layers = document.getJSONArray("layers");
@@ -191,7 +193,7 @@ public final class SketchFrameRenderer implements AutoCloseable {
                 }
             }
         }finally{if(store!=null)store.close();}
-        document=copy;indexExposures();clearPaintCache();preparedDimension=0;appendPresentationObject=null;appendBaselinePoints=0;
+        document=copy;linkedColors=SketchPaletteStyles.indexed(copy);indexExposures();clearPaintCache();preparedDimension=0;appendPresentationObject=null;appendBaselinePoints=0;
     }
     public void draw(Canvas canvas, int frame, boolean background) throws Exception {
         draw(canvas, frame, background, null, null);
@@ -233,7 +235,7 @@ public final class SketchFrameRenderer implements AutoCloseable {
         boolean partial=object.getString("id").equals(presentationObject)&&presentationFraction<1;
         boolean append=appendBaselinePoints>0&&object.getString("id").equals(appendPresentationObject)&&("stroke".equals(kind)||"eraser".equals(kind));
         if(partial&&presentationFraction<=0&&!append)return;Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
-        int color = SketchDocument.color(object.getString("color")); paint.setColor(color);
+        int color = SketchPaletteStyles.resolvedColor(object,linkedColors); paint.setColor(color);
         paint.setAlpha((int) Math.round(((color >>> 24) & 255) * alpha));
         paint.setStrokeJoin(Paint.Join.ROUND); paint.setStrokeCap(Paint.Cap.ROUND);
         float width = (float) object.getDouble("width") * Math.min(w, h); paint.setStrokeWidth(width);
