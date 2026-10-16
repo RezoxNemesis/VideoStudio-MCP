@@ -48,6 +48,9 @@ final class SketchVisualReview {
         String focus=args.optString("focus","overview").trim();
         if(focus.isEmpty()||focus.getBytes(StandardCharsets.UTF_8).length>MAX_FOCUS_BYTES)
             throw SketchDocument.bad("A visual-review focus must contain 1..64 UTF-8 bytes");
+        String detail=args.optString("detail","thumbnail");
+        if(!"thumbnail".equals(detail)&&!"high".equals(detail))
+            throw SketchDocument.bad("Use visual review detail thumbnail or high");
         long revision=source.getLong("revision");
         if(args.has("expectedRevision")&&
                 SketchDocument.integer(args,"expectedRevision",1,Long.MAX_VALUE-1)!=revision)
@@ -69,7 +72,7 @@ final class SketchVisualReview {
                 .put("width",1).put("height",1):SketchDocument.copy(crop);
         Bitmap frameBitmap=null;
         try(SketchFrameRenderer renderer=new SketchFrameRenderer(context,source)){
-            frameBitmap=renderer.render(frame,true,RENDER_EDGE,crop);
+            frameBitmap=renderer.render(frame,true,"high".equals(detail)?768:RENDER_EDGE,crop);
             int sampledColors=colors(frameBitmap);
             JSONObject metadata=new JSONObject()
                     .put("sketchId",sketchId)
@@ -81,6 +84,12 @@ final class SketchVisualReview {
                     .put("referencePhotoReceived",false)
                     .put("referenceLikenessVerified",false)
                     .put("requiresChatVisualComparison",true);
+            if("high".equals(detail)){
+                // Full-resolution decision evidence is intentionally paged by the
+                // private native result relay. A 2 KiB direct preview cannot
+                // reveal missing fingers, malformed roses or weak linework.
+                return detailedReview(frameBitmap,metadata);
+            }
             // Work from a single bounded 256-pixel Android Canvas proof.
             // Selecting the smallest-fitting JPEG does not render fake artwork.
             int baseWidth=frameBitmap.getWidth(),baseHeight=frameBitmap.getHeight();
@@ -120,6 +129,47 @@ final class SketchVisualReview {
         }finally{
             if(frameBitmap!=null)frameBitmap.recycle();
         }
+    }
+    /** A bounded, revision-pinned, high-resolution crop delivered via private result pages. */
+    private static JSONObject detailedReview(Bitmap source,JSONObject metadata)throws Exception{
+        final int[] edges={768,640,512,448,384};
+        final int[] qualities={85,76,66};
+        int originalW=source.getWidth(),originalH=source.getHeight();
+        for(int edge:edges){
+            if(Thread.currentThread().isInterrupted())
+                throw new InterruptedException("High-resolution sketch review cancelled");
+            double scale=Math.min(1,edge/(double)Math.max(originalW,originalH));
+            int width=Math.max(1,(int)Math.round(originalW*scale)),
+                    height=Math.max(1,(int)Math.round(originalH*scale));
+            Bitmap candidate=width==originalW&&height==originalH?source:
+                    Bitmap.createScaledBitmap(source,width,height,true);
+            try{
+                for(int quality:qualities){
+                    ByteArrayOutputStream stream=new ByteArrayOutputStream(48*1024);
+                    if(!candidate.compress(Bitmap.CompressFormat.JPEG,quality,stream))
+                        throw new IllegalStateException("High-resolution sketch JPEG encoding failed");
+                    byte[] jpeg=stream.toByteArray();
+                    // The native command/result-store limit is 512 KiB.
+                    // Keep base64, metadata and page framing under 300 KiB.
+                    if(jpeg.length>220*1024)continue;
+                    JSONObject proof=SketchDocument.copy(metadata)
+                            .put("sketchPreviewImage",new JSONObject()
+                                    .put("mimeType","image/jpeg")
+                                    .put("base64",Base64.encodeToString(jpeg,Base64.NO_WRAP))
+                                    .put("width",candidate.getWidth())
+                                    .put("height",candidate.getHeight())
+                                    .put("sha256",SketchDocument.sha256(jpeg)))
+                            .put("detail","high")
+                            .put("delivery","private_native_result_pages")
+                            .put("previewPixelEvidence",true)
+                            .put("artisticQualityVerified",false)
+                            .put("ok",true);
+                    if(proof.toString().getBytes(StandardCharsets.UTF_8).length<=300*1024)
+                        return proof;
+                }
+            }finally{if(candidate!=source)candidate.recycle();}
+        }
+        throw SketchDocument.bad("HIGH_RES_REVIEW_BUDGET: crop or reduce image size");
     }
     private static int colors(Bitmap bitmap){
         Set<Integer> groups=new HashSet<>();
