@@ -65,7 +65,7 @@ final class SketchLivePreparation {
         boolean paint="paint_stroke".equals(operation.optString("type"));
         JSONObject presented=paint?SketchDocument.copy(baseline):next;
         String objectId=operation.has("object")?operation.getJSONObject("object").optString("id",null):operation.optString("objectId",null);
-        int frame=operationFrame(paint?baseline:next,operation);
+        int frame=operationFrame(paint||"delete_object".equals(operation.optString("type"))?baseline:next,operation);
         SketchAgentHand.Track handTrack=SketchAgentHand.prepare(presented,operation,frame);
         SketchFrameRenderer renderer = new SketchFrameRenderer(context, presented);
         Prepared prepared=new Prepared(presented,next,renderer,frame,handTrack);
