@@ -367,8 +367,28 @@ public final class SketchAnimationActivity extends Activity {
     }
     private void dialogueList(){try{JSONArray lines=program.getJSONArray("dialogues");String[] labels=new String[lines.length()];for(int i=0;i<labels.length;i++){JSONObject value=lines.getJSONObject(i);labels[i]=(value.getInt("start")+1)+"–"+(value.getInt("end")+1)+": "+value.getString("text");}new AlertDialog.Builder(this).setTitle("Delete dialogue").setItems(labels,(d,index)->{JSONArray next=new JSONArray();for(int i=0;i<lines.length();i++)if(i!=index)next.put(lines.opt(i));try{program.put("dialogues",next);changed();}catch(Exception invalid){message(invalid.getMessage());}}).setNegativeButton("Close",null).show();}catch(Exception invalid){message(invalid.getMessage());}}
     private void example(){
-        if(loading||saving)return;stopPlayback();persistDraft();loading=true;status.setText("Preparing original Rooftop Relay example…");
-        io.execute(()->{try{JSONObject created=SketchAnimationExample.create(this);post(()->{animationId=created.optString("animationId");sketchId=created.optString("sketchId");selectedRig="";selectedJoint="";mapping=false;load();});}catch(Exception failure){post(()->{loading=false;status.setText("Example could not be prepared: "+failure.getMessage());message(failure.getMessage());});}});
+        if(loading||saving)return;
+        new AlertDialog.Builder(this).setTitle("Editable 2D film exercises")
+                .setItems(new String[]{"Rooftop Relay · single courier vs drone","Rooftop Standoff · two human actors / 3 camera views"},
+                        (d,index)->openExample(index==1))
+                .setNegativeButton("Cancel",null).show();
+    }
+    private void openExample(boolean dualActor){
+        if(loading||saving)return;
+        stopPlayback();persistDraft();loading=true;
+        status.setText(dualActor?"Preparing two independently animated character rigs and staged contact…":
+                "Preparing original Rooftop Relay exercise…");
+        io.execute(()->{
+            try{
+                JSONObject created=dualActor?SketchDuelAnimationExample.create(this):SketchAnimationExample.create(this);
+                post(()->{
+                    animationId=created.optString("animationId");sketchId=created.optString("sketchId");
+                    selectedRig="";selectedJoint="";mapping=false;load();
+                });
+            }catch(Exception failure){
+                post(()->{loading=false;status.setText("Example could not be prepared: "+failure.getMessage());message(failure.getMessage());});
+            }
+        });
     }
     private void openAnimation(){if(!ready())return;stopPlayback();status.setText("Loading saved animations…");io.execute(()->{try{JSONArray values=SketchAnimationOps.execute(this,"sketch_animation_list",new JSONObject()).getJSONArray("animations");String[] labels=new String[values.length()];for(int i=0;i<labels.length;i++){JSONObject item=values.getJSONObject(i);labels[i]=item.optString("animationId")+" · r"+item.optLong("revision");}post(()->{new AlertDialog.Builder(this).setTitle("Saved animation scenes").setItems(labels,(d,index)->{persistDraft();animationId=values.optJSONObject(index).optString("animationId");selectedRig="";selectedJoint="";load();}).setNegativeButton("Cancel",null).show();});}catch(Exception failure){post(()->message(failure.getMessage()));}});}
     private void productionCheck(){
@@ -416,7 +436,7 @@ public final class SketchAnimationActivity extends Activity {
     private final Runnable playTick=new Runnable(){public void run(){if(!playing||destroyed||program==null)return;int fps=program.optInt("fps");int next=playFirst+(int)((SystemClock.uptimeMillis()-playStarted)*fps/1000);if(next>=program.optInt("frameCount")){frame=program.optInt("frameCount")-1;stopPlayback();refreshFrame();requestPreview();return;}if(frame!=next){frame=next;refreshFrame();requestPreview();}main.postDelayed(this,Math.max(8,1000/fps));}};
     private void stopPlayback(){playing=false;main.removeCallbacks(playTick);if(play!=null)play.setText("Play");}
     private boolean ready(){if(loading||program==null){message("Open a prepared sketch first");return false;}return true;}
-    private void guide(){new AlertDialog.Builder(this).setTitle("Prepared sketches → 2D animation").setMessage("1. Prepare separate head, torso, arm, forearm, hand, thigh, shin and foot objects. Keep backgrounds on separate layers. A single photo does not contain hidden body parts.\n\n2. In Rig mode, drag the joints over the matching parts. Rig / bind assigns artwork to the selected joint. Add character makes another actor.\n\n3. Switch to Pose mode. Scrub to a frame, drag bone endpoints or set joint rotations, then save pose keys. Smooth timing eases between keys; linear timing moves at a steady rate; hold timing holds until the next key.\n\n4. Use Acting presets for walk/run, then Plant gait feet to calculate reachable IK and softened transitions; or add manual hip–knee–foot contacts. Add camera keys and timed dialogue. Play to inspect the actual artwork moving through the poses.\n\n5. Save scene preserves your rig and controls. Bake animation makes a NEW editable sketch; your source stays intact. Open it for cel refinements and use Export video.\n\nChatGPT uses sketch_animation_save, sketch_animation_get and sketch_animation_bake with the same native program. Saved scenes can be listed with sketch_animation_list. No Gallery access is used. Limits and contact errors are reported; a successful export does not establish artistic quality.").setPositiveButton("Got it",null).show();}
+    private void guide(){new AlertDialog.Builder(this).setTitle("Prepared sketches → 2D animation").setMessage("1. Prepare separate head, torso, arm, forearm, hand, thigh, shin and foot objects. Keep backgrounds on separate layers. A single photo does not contain hidden body parts.\n\n2. In Rig mode, drag the joints over the matching parts. Rig / bind assigns artwork to the selected joint. Add character makes another actor.\n\n3. Switch to Pose mode. Scrub to a frame, drag bone endpoints or set joint rotations, then save pose keys. Smooth timing eases between keys; linear timing moves at a steady rate; hold timing holds until the next key.\n\n4. Use Acting presets for walk/run, then Plant gait feet to calculate reachable IK and softened transitions; or add manual hip–knee–foot contacts. Add camera keys and timed dialogue. Play to inspect the actual artwork moving through the poses.\n\n5. Example → Rooftop Standoff demonstrates two human actors, differently prepared camera views, authored collision/reaction and separate dialogue. Review the actual rig and scene instead of treating the effect flash as contact proof. Save scene preserves your rig and controls. Bake animation makes a NEW editable sketch; your source stays intact. Open it for cel refinements and use Export video.\n\nChatGPT uses sketch_animation_save, sketch_animation_get and sketch_animation_bake with the same native program. Saved scenes can be listed with sketch_animation_list. No Gallery access is used. Limits and contact errors are reported; a successful export does not establish artistic quality.").setPositiveButton("Got it",null).show();}
     private void requestBack(){persistDraft();finish();}
     @Override public void onBackPressed(){requestBack();}
     @Override protected void onPause(){stopPlayback();++qualityRequest;if(qualityTask!=null)qualityTask.cancel(true);persistDraft();super.onPause();}
