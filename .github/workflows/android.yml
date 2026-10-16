@@ -14,7 +14,7 @@ on:
   push:
     branches: [ main ]
   pull_request:
-    branches: [ main ]
+    branches: [ main, ci/v453-two-human-cinematic-qa ]
 
 concurrency:
   group: videostudio-android-${{ github.ref }}
