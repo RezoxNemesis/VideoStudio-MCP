@@ -56,7 +56,7 @@ final class SketchStorySubjects {
             addAll(hero,tyre,rim,spokeA,spokeB,hub);
         }
         for(int n=0;n<6;n++){
-            double px=c-.253-n*.018,py=.8-(n%3)*.017;
+            double px=c-.22-n*.014,py=.8-(n%3)*.017;
             JSONObject streak=line("car_speed_trail_"+act+"_"+n,p.rain,start,span,px,py,px-.029,py+.007,.002);
             motion(streak,start,span,px,py,new double[]{0,-.02,-.05,-.09,-.14},
                     new double[]{0,.002,-.004,.007,0},new double[]{0,0,0,0,0});
