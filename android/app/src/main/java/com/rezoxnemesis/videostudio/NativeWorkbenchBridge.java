@@ -13,7 +13,7 @@ public final class NativeWorkbenchBridge {
     private static final int MAX_COMMAND_BYTES=2*1024*1024,MAX_DEPTH=64,MAX_VALUES=2*1024*1024;
     private static final Set<String> ACTIONS=Collections.unmodifiableSet(new LinkedHashSet<>(Arrays.asList(
             "precision_edit","apply_tool","set_studio_layers","import_mailbox_media","get_native_result_page","get_native_delivery_status","compact_native_delivery",
-            "sketch_create","sketch_list","sketch_get","sketch_inspect","sketch_review","sketch_edit","sketch_undo","sketch_redo",
+            "sketch_create","sketch_list","sketch_get","sketch_inspect","sketch_review","sketch_quality_audit","sketch_edit","sketch_undo","sketch_redo",
             "sketch_animation_save","sketch_animation_get","sketch_animation_list","sketch_animation_bake",
             "sketch_paint_journal","sketch_sample_color","sketch_archive","sketch_restore_archive",
             "sketch_import_reference","sketch_import_frame_manifest","sketch_import_drawing_manifest","sketch_import_drawing_asset","sketch_preview","sketch_render",
