@@ -75,7 +75,7 @@ public final class StudioAudioWaveforms {
             throw new IllegalArgumentException("Bounded, explicitly selected VideoStudio audio is required");
         if(Looper.myLooper()==Looper.getMainLooper())
             throw new IllegalStateException("Waveform decoding must not block the animation UI");
-        if(selectedProject.id==null||selectedAsset.id==null||selectedAsset.uri==null)
+        if(selectedProject.id==null||selectedAsset.id==null||selectedAsset.uri==null||selectedAsset.mime==null)
             throw new IllegalArgumentException("Project-owned audio identity is incomplete");
         ProjectStore.Project project=new ProjectStore(context).get(selectedProject.id);
         if(project==null)throw new IllegalArgumentException("The selected audio project no longer exists");
