@@ -137,7 +137,26 @@ public final class SketchAnimationCompiler {
 
     /** UI joint overlays and contact diagnostics use exactly the same solver as compilation. */
     public static JSONObject sample(JSONObject source,JSONObject program,int frame)throws Exception {
-        Model m=new Model(source,program);if(frame<0||frame>=m.frames)throw bad("Animation sample frame outside timeline");
+        return sample(new Model(source,program),frame);
+    }
+
+    /** Bounded frame sampling shares one validated immutable model across a whole gait or QA interval.
+     * This is substantially cheaper than reparsing large source documents for every output frame.
+     * No frame is published or modified; callers receive fresh snapshots. */
+    static JSONArray sampleFrames(JSONObject source,JSONObject program,int first,int last)throws Exception {
+        Model m=new Model(source,program);
+        if(first<0||last<first||last>=m.frames||last-first>=360)
+            throw bad("Animation sampling interval must contain 1..360 in-range frames");
+        JSONArray samples=new JSONArray();
+        for(int frame=first;frame<=last;frame++){
+            if(Thread.currentThread().isInterrupted())throw new InterruptedException("Animation frame sampling cancelled");
+            samples.put(sample(m,frame));
+        }
+        return samples;
+    }
+
+    private static JSONObject sample(Model m,int frame)throws Exception {
+        if(frame<0||frame>=m.frames)throw bad("Animation sample frame outside timeline");
         JSONArray joints=new JSONArray(),errors=new JSONArray();Camera camera=sampleCamera(m,frame);
         for(Rig rig:m.rigs) {
             Snapshot s=sampleRig(m,rig,frame);
@@ -181,7 +200,7 @@ public final class SketchAnimationCompiler {
                     .put("textAlign","center").put("transform",SketchDocument.transform()).put("keys",new JSONArray());
             SketchDocument.layer(out,cue.getString("layerId")).getJSONArray("objects").put(text);
         }
-        SketchDocument.validate(out);return new JSONObject().put("document",out).put("sample",sample(source,program,frame));
+        SketchDocument.validate(out);return new JSONObject().put("document",out).put("sample",sample(m,frame));
     }
 
     private static final class Joint {String id;int parent=-1;double x,y;}
