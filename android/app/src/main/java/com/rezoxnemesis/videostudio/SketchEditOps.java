@@ -23,7 +23,7 @@ public final class SketchEditOps {
         // A hidden guide is preparatory data, not a request to change the
         // foreground drawing. Actual edits and live sessions still follow.
         boolean hiddenGuideImport="sketch_import_reference".equals(action)&&!args.optBoolean("guideVisible",true);
-        if(result.has("sketchId")&&!hiddenGuideImport&&!java.util.Arrays.asList("sketch_get","sketch_preview","sketch_review","sketch_list","sketch_live_events","sketch_inspect","sketch_xsheet","sketch_paint_journal","sketch_sample_color").contains(action)){
+        if(result.has("sketchId")&&!hiddenGuideImport&&!java.util.Arrays.asList("sketch_get","sketch_preview","sketch_review","sketch_quality_audit","sketch_list","sketch_live_events","sketch_inspect","sketch_xsheet","sketch_paint_journal","sketch_sample_color").contains(action)){
             android.content.SharedPreferences.Editor signal=context.getSharedPreferences("sketch_live_workspace",Context.MODE_PRIVATE).edit().putString("sketchId",result.getString("sketchId")).putLong("signal",System.nanoTime());
             String priorBook=context.getSharedPreferences("sketch_live_workspace",Context.MODE_PRIVATE).getString("sketchId","").equals(result.getString("sketchId"))?context.getSharedPreferences("sketch_live_workspace",Context.MODE_PRIVATE).getString("bookId",""):"";signal.putString("bookId",action.equals("sketch_book_open_page")?args.getString("bookId"):priorBook);signal.putInt("page",args.optInt("page",0));signal.apply();
         }
@@ -41,6 +41,11 @@ public final class SketchEditOps {
             String id = SketchDocument.id(args, "sketchId");
             SketchDrawingPolicy.requireAction(store.activeDrawingSession(id),action,args);
             if("sketch_paint_journal".equals(action)||"sketch_sample_color".equals(action))return SketchPaintOps.query(context,store,action,args);
+            if("sketch_quality_audit".equals(action)){
+                SketchDocument.fields(args,"sketchId,expectedRevision,frameOffset,frameLimit,frameStep,regions,motionRequired,minChangedFraction,minNewCels");
+                JSONObject doc=store.get(id);
+                return SketchQualityAudit.inspect(context,doc,args);
+            }
             if("sketch_inspect".equals(action)){
                 SketchDocument.fields(args,"sketchId,expectedRevision,frameOffset,frameLimit,characterLayerIds");JSONObject doc=store.get(id);if(args.has("expectedRevision"))SketchProjectStore.requireRevision(doc,SketchDocument.integer(args,"expectedRevision",1,Long.MAX_VALUE-1));return SketchInspection.inspect(doc,args);
             }
@@ -131,7 +136,7 @@ public final class SketchEditOps {
                 return result;
             }
             if ("sketch_review".equals(action)){
-                SketchDocument.fields(args,"sketchId,expectedRevision,frameIndex,crop,focus");
+                SketchDocument.fields(args,"sketchId,expectedRevision,frameIndex,crop,focus,detail");
                 JSONObject doc=store.get(id);
                 if(args.has("expectedRevision"))SketchProjectStore.requireRevision(
                         doc,SketchDocument.integer(args,"expectedRevision",1,Long.MAX_VALUE-1));
