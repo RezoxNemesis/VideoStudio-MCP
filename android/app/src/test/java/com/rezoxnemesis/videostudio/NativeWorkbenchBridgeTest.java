@@ -11,7 +11,7 @@ import static org.junit.Assert.*;
 @RunWith(RobolectricTestRunner.class) @Config(sdk=33,manifest=Config.NONE)
 public class NativeWorkbenchBridgeTest {
     @Test public void onlyTheClosedKnownAliasesResolveToExistingActions()throws Exception {
-        JSONObject advertised=NativeWorkbenchBridge.capabilities();JSONArray actions=advertised.getJSONArray("canonicalActions");assertEquals(59,actions.length());assertEquals("app_execute",advertised.getString("tool"));assertEquals("3.9.0",advertised.getString("minimumNativeVersion"));assertEquals("4.1.0",advertised.getString("paintMinimumNativeVersion"));
+        JSONObject advertised=NativeWorkbenchBridge.capabilities();JSONArray actions=advertised.getJSONArray("canonicalActions");assertEquals(60,actions.length());assertEquals("sketch_review",NativeWorkbenchBridge.canonicalAction("studio_sketch_review"));assertEquals("app_execute",advertised.getString("tool"));assertEquals("3.9.0",advertised.getString("minimumNativeVersion"));assertEquals("4.1.0",advertised.getString("paintMinimumNativeVersion"));
         assertEquals("4.4.0",advertised.getString("characterAnimationMinimumNativeVersion"));
         assertEquals("cinematic_3d_edit_program",NativeWorkbenchBridge.canonicalAction("studio_cinematic_3d_edit_program"));
         assertTrue(NativeCommandExecutionPolicy.requiresBackgroundThread("studio_cinematic_3d_edit_program"));
