@@ -81,6 +81,7 @@ jobs:
       - name: Build debug APK
         env:
           VIDEOSTUDIO_STORY_FILM_PROOF: '1'
+          VIDEOSTUDIO_DUEL_FILM_PROOF: ${{ github.event_name == 'pull_request' && github.head_ref == 'feat/dual-actor-cinematic-proof-v453' && '1' || '0' }}
         working-directory: android
         run: |
           set -euo pipefail
@@ -96,6 +97,25 @@ jobs:
             sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq ffmpeg
           fi
           python3 scripts/encode-story-film-proof.py
+
+      - name: Encode native two-human 2D cinematic action proof
+        if: github.event_name == 'pull_request' && github.head_ref == 'feat/dual-actor-cinematic-proof-v453'
+        run: |
+          set -euo pipefail
+          if ! command -v ffmpeg >/dev/null || ! command -v ffprobe >/dev/null; then
+            sudo apt-get update -qq
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq ffmpeg
+          fi
+          python3 scripts/encode-duel-film-proof.py
+
+      - name: Upload original two-human cinematic frame and MP4 proof
+        if: always() && github.event_name == 'pull_request' && github.head_ref == 'feat/dual-actor-cinematic-proof-v453'
+        uses: actions/upload-artifact@v4
+        with:
+          name: VideoStudio-4.5.3-original-two-character-cinematic-film
+          path: android/app/build/sketch-duel-film-proof/
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Publish full story-film visual proof
         if: always()
