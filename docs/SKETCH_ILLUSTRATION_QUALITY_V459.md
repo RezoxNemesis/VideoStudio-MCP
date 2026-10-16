@@ -39,3 +39,12 @@ Suggested named focus crops at close framing: face (.31,.08,.44,.38), neck (.34,
 - No film export without a fresh explicit owner command.
 - Do not mark first-frame fidelity or artistic quality as proven by pixel metrics alone.
 - CI, signing continuity, Android install-over and real native frame inspection are independent acceptance checks.
+
+## 4.5.9: Watch the CURRENT native drawing, not an old finished sketch
+
+- Watch ChatGPT now follows the most recent active work, or briefly catches up on newly completed native work. The completed-session ledger remains available but is no longer automatically replayed oldest-first.
+- Native agent sketch_edit commands automatically wrap accepted operations in quiet durable drawing sessions. Each authored object and stroke replays from actual native journal operations. Explicit active original-strokes sessions are never replaced. Replayed artwork remains source-assisted when editing existing art.
+- File → Follow current work resumes current target selection; File → Replay last saved drawing explicitly selects a finished journal. A deliberately tapped Android notification remains pinned to its exact session until the user chooses to follow a new one.
+- Live operation replay navigates to the authored frame / keyed frame rather than showing the first cel repeatedly. Current revision updates with no authored live session are displayed as saved snapshots, not falsely described as individual live strokes.
+- The Sketch Studio Activity must be open to show the drawing, and a large accepted operation journal may be catching up after the native agent finishes a batch. Work on GitHub alone is not a Sketch Studio drawing.
+- Do not force old sessions into live status, create fake step-by-step drawing frames, or export the film during quality repair.
