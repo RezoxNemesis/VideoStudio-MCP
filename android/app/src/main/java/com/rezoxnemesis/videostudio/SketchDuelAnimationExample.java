@@ -49,9 +49,9 @@ final class SketchDuelAnimationExample {
         program.put("rigs",rigs);
         JSONObject wideArt=SketchDocument.layer(source,"wide_courier");
         JSONObject mediumArt=SketchDocument.layer(source,"medium_courier");
-        JSONObject rookWide=mirroredLayer(wideArt,"rook_wide","Rook · coloured wide 3/4","rook",0,36,WIDE_OFFSET,1,0,true);
-        JSONObject rookPov=mirroredLayer(mediumArt,"rook_pov","Rook · independently prepared POV bust","rook_pov",36,24,POV_OFFSET,.86,-.16,false);
-        JSONObject rookMedium=mirroredLayer(mediumArt,"rook_medium","Rook · medium counter-angle","rook_medium",60,40,MEDIUM_OFFSET,1,0,true);
+        JSONObject rookWide=mirroredLayer(wideArt,"rook_wide","Rook · coloured wide 3/4","rook_",0,36,WIDE_OFFSET,1,0,true);
+        JSONObject rookPov=mirroredLayer(mediumArt,"rook_pov","Rook · independently prepared POV bust","rook_pov_",36,24,POV_OFFSET,.86,-.16,false);
+        JSONObject rookMedium=mirroredLayer(mediumArt,"rook_medium","Rook · medium counter-angle","rook_",60,40,MEDIUM_OFFSET,1,0,true);
         // A recurring facial scar and gold band make the second character
         // consistently identifiable in all three artwork views.
         scar(rookWide,"rook_wide_scar","rook_wide_band",.662,.464,0,36);
