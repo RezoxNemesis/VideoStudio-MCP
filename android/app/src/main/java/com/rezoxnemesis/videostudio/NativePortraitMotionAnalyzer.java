@@ -65,7 +65,7 @@ public final class NativePortraitMotionAnalyzer {
         }
     }
 
-    private static final int MAX_ANALYSIS_EDGE = 1440;
+    private static final int MAX_ANALYSIS_EDGE = 1200;
 
     private final Context context;
 
@@ -79,11 +79,16 @@ public final class NativePortraitMotionAnalyzer {
             throw new IllegalArgumentException("Portrait animation requires an image asset");
         }
 
-        Bitmap original = decode(asset.uri);
-        if (original == null) throw new IllegalStateException("Could not decode image");
-
-        Bitmap working = scaleForAnalysis(original);
-        if (working != original) original.recycle();
+        // The read-only original is decoded at an edge selected from actual
+        // Android memory pressure. All native bitmap allocations below are
+        // reclaimed even if segmentation, encoding or storage throws.
+        int edge=PortraitMemoryAdmission.edgeFor(context);
+        Bitmap original=null,working=null,foreground=null,background=null;
+        SubjectParts parts=null;
+        try{
+        original=decode(asset.uri,edge);
+        if(original==null)throw new IllegalStateException("PORTRAIT_DECODE_FAILED: source image could not be decoded");
+        working=scaleForAnalysis(original,edge);
 
         Segmenter segmenter = Segmentation.getClient(
                 new SelfieSegmenterOptions.Builder()
@@ -109,9 +114,9 @@ public final class NativePortraitMotionAnalyzer {
 
         MaskStats stats = readMask(mask, working.getWidth(), working.getHeight());
         Rect face = faces.isEmpty() ? null : largestFace(faces);
-        Bitmap foreground = buildForeground(working, stats);
-        SubjectParts parts = buildSubjectParts(foreground, stats, face);
-        Bitmap background = buildReconstructedBackground(working, stats);
+        foreground = buildForeground(working, stats);
+        parts = buildSubjectParts(foreground, stats, face);
+        background = buildReconstructedBackground(working, stats);
 
         CreativeWorkspace workspace = new CreativeWorkspace(context);
         File projectRoot = workspace.projectRoot(projectId);
@@ -131,6 +136,8 @@ public final class NativePortraitMotionAnalyzer {
 
         JSONObject analysis = new JSONObject();
         analysis.put("engine", "bundled-on-device-portrait-ai");
+        analysis.put("memoryBoundedDecode",true);
+        analysis.put("analysisEdgeLimit",edge);
         analysis.put("backgroundReconstruction", "mask-aware-edge-fill-v1");
         analysis.put("articulatedLayering", "head-torso-lower-v1");
         analysis.put("articulatedParts", true);
@@ -181,13 +188,6 @@ public final class NativePortraitMotionAnalyzer {
             out.getFD().sync();
         }
 
-        foreground.recycle();
-        parts.head.recycle();
-        parts.torso.recycle();
-        parts.lower.recycle();
-        background.recycle();
-        working.recycle();
-
         return new Result(
                 Uri.fromFile(fgFile),
                 Uri.fromFile(headFile),
@@ -198,9 +198,13 @@ public final class NativePortraitMotionAnalyzer {
                 mask.getWidth(),
                 mask.getHeight()
         );
+        }finally{
+            if(parts!=null)PortraitMemoryAdmission.recycle(parts.head,parts.torso,parts.lower);
+            PortraitMemoryAdmission.recycle(foreground,background,working,original);
+        }
     }
 
-    private Bitmap decode(String uriString) throws Exception {
+    private Bitmap decode(String uriString,int limit) throws Exception {
         Uri uri = Uri.parse(uriString);
         BitmapFactory.Options bounds = new BitmapFactory.Options();
         bounds.inJustDecodeBounds = true;
@@ -211,7 +215,7 @@ public final class NativePortraitMotionAnalyzer {
         if (bounds.outWidth <= 0 || bounds.outHeight <= 0) throw new IllegalArgumentException("Unsupported portrait image");
         BitmapFactory.Options options = new BitmapFactory.Options();
         options.inSampleSize = 1;
-        while (Math.max(bounds.outWidth, bounds.outHeight) / options.inSampleSize > MAX_ANALYSIS_EDGE)
+        while (Math.max(bounds.outWidth, bounds.outHeight) / options.inSampleSize > limit)
             options.inSampleSize *= 2;
         options.inPreferredConfig = Bitmap.Config.ARGB_8888;
         // Subsample at decode time: never allocate the full camera image merely to shrink it.
@@ -221,12 +225,12 @@ public final class NativePortraitMotionAnalyzer {
         }
     }
 
-    private Bitmap scaleForAnalysis(Bitmap source) {
+    private Bitmap scaleForAnalysis(Bitmap source,int limit) {
         int w = source.getWidth();
         int h = source.getHeight();
         int max = Math.max(w, h);
-        if (max <= MAX_ANALYSIS_EDGE) return source;
-        float scale = MAX_ANALYSIS_EDGE / (float) max;
+        if (max <= limit) return source;
+        float scale = limit / (float) max;
         return Bitmap.createScaledBitmap(source, Math.max(2, Math.round(w * scale)), Math.max(2, Math.round(h * scale)), true);
     }
 
