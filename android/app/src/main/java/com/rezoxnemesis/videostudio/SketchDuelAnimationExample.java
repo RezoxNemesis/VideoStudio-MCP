@@ -298,11 +298,14 @@ final class SketchDuelAnimationExample {
             j.put("x",mapX(j.getDouble("x"),xOffset))
                     .put("y",mapY(j.getDouble("y"),yScale,yOffset));
         }
-        JSONArray bindings=out.getJSONArray("bindings");
+        JSONArray bindings=out.getJSONArray("bindings"),preparedBindings=new JSONArray();
         for(int i=0;i<bindings.length();i++){
             JSONObject binding=bindings.getJSONObject(i);
+            if(kind==1&&binding.getString("objectId").contains("mouth"))continue;
             binding.put("objectId",prefix+binding.getString("objectId"));
+            preparedBindings.put(binding);
         }
+        out.put("bindings",preparedBindings);
         if(kind==1){ // independently drawn foreground POV reaction, not the wide picture magnified
             out.put("ik",new JSONArray());
             JSONArray poses=new JSONArray();
