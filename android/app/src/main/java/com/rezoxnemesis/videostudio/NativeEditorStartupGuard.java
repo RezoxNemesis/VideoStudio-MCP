@@ -47,6 +47,7 @@ final class NativeEditorStartupGuard {
                 .putInt("rapidFailures",failures)
                 .putLong("lastLaunchAt",now)
                 .putString("lastStage","creating_shell")
+                .putString("previousInterruptedStage",previousOpen?last:"")
                 .commit();
         return new Admission(failures>=2&&!bypass,failures,last);
     }
@@ -81,6 +82,8 @@ final class NativeEditorStartupGuard {
             out.put("safeLaunchAvailable",true)
                     .put("rapidFailures",settings.getInt("rapidFailures",0))
                     .put("lastStage",settings.getString("lastStage",""))
+                    .put("previousInterruptedStage",settings.getString("previousInterruptedStage",""))
+                    .put("lastAppFrame",settings.getString("lastAppFrame",""))
                     .put("lastJavaFailure",settings.getString("lastJavaFailure",""))
                     .put("sourceProjectDeleted",false)
                     .put("localProjectDataPreserved",true)
