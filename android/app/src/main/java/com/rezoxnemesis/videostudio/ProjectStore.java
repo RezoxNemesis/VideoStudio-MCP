@@ -278,7 +278,7 @@ public final class ProjectStore {
         ArrayList<Project> recent=new ArrayList<>();
         ArrayList<String> ids=new ArrayList<>();
         try(Cursor c=db.query("projects",new String[]{"id"},null,null,null,null,
-                "updated_at DESC",Integer.toString(limit))){
+                "updated_at DESC, rowid DESC",Integer.toString(limit))){
             while(c.moveToNext())ids.add(c.getString(0));
         }
         for(String id:ids){
