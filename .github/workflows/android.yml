@@ -14,7 +14,7 @@ on:
   push:
     branches: [ main ]
   pull_request:
-    branches: [ main ]
+    branches: [ main, ci/v451-animation-production-qa ]
 
 concurrency:
   group: videostudio-android-${{ github.ref }}
