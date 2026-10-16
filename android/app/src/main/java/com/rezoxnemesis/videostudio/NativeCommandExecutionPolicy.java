@@ -13,7 +13,7 @@ public final class NativeCommandExecutionPolicy {
             case "import_chat_file": case "import_attachment": case "import_url":
             case "precision_edit":
             case "apply_tool": case "set_studio_layers":
-            case "sketch_create": case "sketch_list": case "sketch_get": case "sketch_inspect": case "sketch_review": case "sketch_edit":
+            case "sketch_create": case "sketch_list": case "sketch_get": case "sketch_inspect": case "sketch_review": case "sketch_quality_audit": case "sketch_edit":
             case "sketch_animation_save": case "sketch_animation_get": case "sketch_animation_list": case "sketch_animation_bake":
             case "sketch_paint_journal": case "sketch_sample_color": case "sketch_archive": case "sketch_restore_archive":
             case "sketch_book_create": case "sketch_book_edit": case "sketch_book_list": case "sketch_book_get": case "sketch_book_open_page": case "sketch_book_render":
