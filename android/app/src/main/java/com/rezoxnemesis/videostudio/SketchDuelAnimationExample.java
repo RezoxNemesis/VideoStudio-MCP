@@ -92,8 +92,10 @@ final class SketchDuelAnimationExample {
             if("medium_courier".equals(id))layers.put(rookMedium);
         }
         source.put("layers",layers);
-        // Cloned camera layers follow the actual view camera path and native
-        // solver; caption layer stays independent of foreground camera motion.
+        // Preserve the original deliberate camera selection: only the
+        // environment layer is depth-transformed. Both human character layers
+        // remain in the same staging/world view or their baton contact would
+        // appear visually displaced even when rig-space joint checks pass.
         JSONArray cameraLayers=program.optJSONArray("cameraLayerIds");
         if(cameraLayers!=null){
             JSONArray next=new JSONArray();
@@ -101,7 +103,6 @@ final class SketchDuelAnimationExample {
                 String id=cameraLayers.getString(i);
                 if(!"drone".equals(id))next.put(id);
             }
-            next.put("rook_wide").put("rook_pov").put("rook_medium");
             program.put("cameraLayerIds",next);
         }
         rigs.put(mirrorRig(wide,"rook_wide_rig","rook_",WIDE_OFFSET,1,0,0));
