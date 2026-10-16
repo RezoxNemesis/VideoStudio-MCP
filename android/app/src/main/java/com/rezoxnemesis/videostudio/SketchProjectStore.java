@@ -76,13 +76,63 @@ public final class SketchProjectStore implements AutoCloseable {
     /** Ends protected agent authoring and snapshots the human's starting revision under one writer lock. */
     public JSONObject takeOverDrawing(String id)throws Exception{
         db.beginTransaction();try{JSONObject current=get(id),active=activeDrawingSession(id);
-            if(SketchDrawingPolicy.requiresOriginal(active)){ContentValues values=new ContentValues();values.put("end_sequence",latestSequence(id));values.put("ended",1);db.update("sketch_live_sessions",values,"sketch_id=? AND session_id=?",new String[]{id,active.getString("sessionId")});}
+            if(SketchDrawingPolicy.requiresOriginal(active)){ContentValues values=new ContentValues();values.put("end_sequence",latestSequence(id));values.put("ended",1);
+                JSONObject metadata=new JSONObject(active.toString());metadata.remove("endSequence");metadata.remove("sessionSequence");metadata.put("endedAtMs",System.currentTimeMillis());values.put("json",metadata.toString());
+                db.update("sketch_live_sessions",values,"sketch_id=? AND session_id=?",new String[]{id,active.getString("sessionId")});}
             db.setTransactionSuccessful();return current;
         }finally{db.endTransaction();}
     }
     public JSONObject liveSession(String id,String session) throws Exception {try(Cursor c=db.rawQuery("SELECT sequence,json,end_sequence,ended FROM sketch_live_sessions WHERE sketch_id=? AND session_id=?",new String[]{id,session})){if(!c.moveToFirst())throw SketchDocument.bad("Unknown live drawing session");JSONObject result=new JSONObject(c.getString(1));return result.put("sessionSequence",c.getLong(0)).put("endSequence",c.getLong(2)).put("ended",c.getInt(3)!=0);}}
+    /**
+     * Auto-watch current native work, not the oldest unplayed historical stream.
+     * The SQL cursor is monotonic; a completed session is eligible for a short
+     * catch-up window, while a still-active session remains followable.
+     * Legacy sessions with no timestamps are accessible only via explicit replay.
+     */
+    public JSONObject newestFollowSession(long after,long nowMs)throws Exception{
+        try(Cursor c=db.rawQuery("SELECT sketch_id,session_id FROM sketch_live_sessions "
+                +"WHERE sequence>? AND consumed=0 ORDER BY sequence DESC LIMIT 16",
+                new String[]{String.valueOf(after)})){
+            while(c.moveToNext()){
+                JSONObject candidate=liveSession(c.getString(0),c.getString(1));
+                if(!candidate.optBoolean("ended"))return candidate;
+                long endedAt=candidate.optLong("endedAtMs",0);
+                if(endedAt>=nowMs-90_000L && endedAt<=nowMs+10_000L
+                        && candidate.optLong("endSequence",0)>candidate.optLong("afterSequence",0))
+                    return candidate;
+            }
+            return null;
+        }
+    }
+    /** Old finished drawings only replay after an explicit user choice. */
+    public JSONObject latestCompletedLiveSession()throws Exception{
+        try(Cursor c=db.rawQuery("SELECT sketch_id,session_id FROM sketch_live_sessions "
+                +"WHERE ended=1 ORDER BY sequence DESC LIMIT 1",null)){
+            return c.moveToFirst()?liveSession(c.getString(0),c.getString(1)):null;
+        }
+    }
     public JSONObject nextLiveSession(long after) throws Exception {try(Cursor c=db.rawQuery("SELECT sketch_id,session_id FROM sketch_live_sessions WHERE sequence>? AND consumed=0 ORDER BY sequence LIMIT 1",new String[]{String.valueOf(after)})){return c.moveToFirst()?liveSession(c.getString(0),c.getString(1)):null;}}
-    public JSONObject endLiveSession(String id,String session,long revision) throws Exception {db.beginTransaction();try{requireRevision(get(id),revision);JSONObject state=liveSession(id,session);if(!state.getBoolean("ended")){ContentValues values=new ContentValues();values.put("end_sequence",latestSequence(id));values.put("ended",1);db.update("sketch_live_sessions",values,"sketch_id=? AND session_id=?",new String[]{id,session});}JSONObject result=liveSession(id,session);db.setTransactionSuccessful();return result;}finally{db.endTransaction();}}
+    public JSONObject endLiveSession(String id,String session,long revision) throws Exception {
+        db.beginTransaction();
+        try{
+            requireRevision(get(id),revision);
+            JSONObject state=liveSession(id,session);
+            if(!state.getBoolean("ended")){
+                ContentValues values=new ContentValues();
+                values.put("end_sequence",latestSequence(id));
+                values.put("ended",1);
+                JSONObject metadata=new JSONObject(state.toString());
+                metadata.remove("endSequence");metadata.remove("sessionSequence");
+                metadata.put("endedAtMs",System.currentTimeMillis());
+                values.put("json",metadata.toString());
+                db.update("sketch_live_sessions",values,"sketch_id=? AND session_id=?",
+                        new String[]{id,session});
+            }
+            JSONObject result=liveSession(id,session);
+            db.setTransactionSuccessful();
+            return result;
+        }finally{db.endTransaction();}
+    }
     public long latestSequence(String id){try(Cursor c=db.rawQuery("SELECT COALESCE(MAX(sequence),0) FROM sketch_live_events WHERE sketch_id=?",new String[]{id})){c.moveToFirst();return c.getLong(0);}}
     public JSONObject liveEvents(String id,long after,int limit) throws Exception {
         JSONArray events=new JSONArray();long oldest=0;try(Cursor c=db.rawQuery("SELECT COALESCE(MIN(sequence),0) FROM sketch_live_events WHERE sketch_id=?",new String[]{id})){c.moveToFirst();oldest=c.getLong(0);}

@@ -674,7 +674,8 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 case "precision_edit": complete(command,StudioPrecisionEdits.apply(this,store,p));syncProtocolState();return;
                 case "sketch_animation_save": case "sketch_animation_get": case "sketch_animation_list": case "sketch_animation_bake":
                     complete(command,SketchAnimationOps.execute(this,action,p));return;
-                case "sketch_create": case "sketch_list": case "sketch_get": case "sketch_inspect": case "sketch_review": case "sketch_edit":
+                case "sketch_edit": complete(command,SketchAgentLiveBridge.edit(this,p));return;
+                case "sketch_create": case "sketch_list": case "sketch_get": case "sketch_inspect": case "sketch_review": case "sketch_quality_audit":
                 case "sketch_paint_journal": case "sketch_sample_color":
                 case "sketch_undo": case "sketch_redo": case "sketch_import_reference":
                 case "sketch_book_create": case "sketch_book_edit": case "sketch_book_list": case "sketch_book_get": case "sketch_book_open_page": case "sketch_live_begin": case "sketch_live_events": case "sketch_live_end": case "sketch_capabilities":

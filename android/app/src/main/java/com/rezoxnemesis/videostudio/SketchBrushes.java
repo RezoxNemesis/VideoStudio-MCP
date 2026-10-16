@@ -6,7 +6,7 @@ import org.json.JSONObject;
 
 /** Deterministic pressure brushes shared by touch, agent preview and export. */
 public final class SketchBrushes {
-    public static final String[] PRESETS={"ink","pencil","marker","airbrush","charcoal","calligraphy"};
+    public static final String[] PRESETS={"ink","pencil","marker","airbrush","charcoal","calligraphy","hairline","engraving"};
     private SketchBrushes() {}
     public static JSONObject style(String preset,double opacity,double hardness,boolean pressure,double angle) throws Exception {
         JSONObject b=new JSONObject().put("preset",preset).put("opacity",opacity).put("hardness",hardness).put("pressure",pressure).put("angle",angle);validate(b);return b;
@@ -25,7 +25,9 @@ public final class SketchBrushes {
         Paint alpha=new Paint();alpha.setXfermode(source.getXfermode());p.setXfermode(null);alpha.setAlpha((int)Math.round(255*b.optDouble("opacity",1)));
         JSONArray first=points.getJSONArray(0);float fx=(float)first.getDouble(0)*w,fy=(float)first.getDouble(1)*h;RectF bounds=new RectF(fx,fy,fx,fy);for(int i=1;i<points.length();i++){JSONArray a=points.getJSONArray(i);float x=(float)a.getDouble(0)*w,y=(float)a.getDouble(1)*h;bounds.left=Math.min(bounds.left,x);bounds.right=Math.max(bounds.right,x);bounds.top=Math.min(bounds.top,y);bounds.bottom=Math.max(bounds.bottom,y);}bounds.inset(-width,-width);
         int save=c.saveLayer(bounds,alpha);boolean pressure=b.optBoolean("pressure",true);
-        if("ink".equals(preset)||"marker".equals(preset)) {
+        if("hairline".equals(preset)||"engraving".equals(preset)){
+            drawRefinedInk(c,points,w,h,width,p,pressure,"engraving".equals(preset));
+        }else if("ink".equals(preset)||"marker".equals(preset)) {
             JSONArray pp=points;if(!pressure||"marker".equals(preset)){pp=new JSONArray();for(int i=0;i<points.length();i++){JSONArray a=points.getJSONArray(i);pp.put(new JSONArray().put(a.getDouble(0)).put(a.getDouble(1)).put(1));}}
             SketchFrameRenderer.drawPressureStroke(c,pp,w,h,width,p);
         }else{
@@ -55,5 +57,54 @@ public final class SketchBrushes {
             }
         }
         c.restoreToCount(save);
+    }
+
+    /**
+     * Crisp pressure-tapered hair and fashion engraving with deterministic
+     * thin secondary incision. Real style is preserved in original editable
+     * strokes, not a decorative photo filter or imported bitmap.
+     */
+    private static void drawRefinedInk(Canvas canvas,JSONArray source,int w,int h,
+                                       float strokeWidth,Paint paint,boolean pressure,
+                                       boolean engraving)throws Exception{
+        if(source.length()==0)return;
+        JSONArray tapered=new JSONArray();
+        int last=source.length()-1;
+        for(int i=0;i<source.length();i++){
+            JSONArray point=source.getJSONArray(i);
+            double t=last==0?.5:i/(double)last;
+            double endTaper=.10+.90*Math.min(1,Math.min(t,1-t)*5.0);
+            double raw=pressure?point.getDouble(2):1;
+            double force=Math.max(.015,Math.min(1,raw*endTaper));
+            tapered.put(new JSONArray().put(point.getDouble(0))
+                    .put(point.getDouble(1)).put(force));
+        }
+        Paint primary=new Paint(paint);
+        primary.setShader(null);
+        primary.setStrokeCap(Paint.Cap.ROUND);
+        float base=strokeWidth*(engraving?.86f:.46f);
+        SketchFrameRenderer.drawPressureStroke(canvas,tapered,w,h,base,primary);
+        if(!engraving||source.length()<2)return;
+        Paint cut=new Paint(paint);
+        cut.setShader(null);
+        cut.setStyle(Paint.Style.STROKE);
+        cut.setStrokeCap(Paint.Cap.ROUND);
+        cut.setStrokeJoin(Paint.Join.ROUND);
+        cut.setStrokeWidth(Math.max(.25f,base*.105f));
+        cut.setAlpha(Math.max(1,Math.round(paint.getAlpha()*.47f)));
+        Path fine=new Path();
+        for(int i=0;i<source.length();i++){
+            JSONArray cur=source.getJSONArray(i);
+            JSONArray left=source.getJSONArray(Math.max(0,i-1));
+            JSONArray right=source.getJSONArray(Math.min(last,i+1));
+            float x=(float)cur.getDouble(0)*w,y=(float)cur.getDouble(1)*h;
+            float dx=(float)(right.getDouble(0)-left.getDouble(0))*w;
+            float dy=(float)(right.getDouble(1)-left.getDouble(1))*h;
+            float magnitude=(float)Math.hypot(dx,dy);
+            float offset=Math.min(2.2f,base*.32f);
+            if(magnitude>.00001f){x-=dy/magnitude*offset;y+=dx/magnitude*offset;}
+            if(i==0)fine.moveTo(x,y);else fine.lineTo(x,y);
+        }
+        canvas.drawPath(fine,cut);
     }
 }

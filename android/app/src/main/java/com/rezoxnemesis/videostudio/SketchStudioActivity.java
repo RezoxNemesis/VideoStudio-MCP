@@ -32,7 +32,7 @@ import java.util.UUID;
 public final class SketchStudioActivity extends Activity implements SketchCanvasView.Listener {
     private SketchLivePlayer livePlayer;private String liveSessionId="",liveDrawingObject,liveCaption;private long liveDisplayedRevision;
     private String notifiedSketchId,notifiedSessionId,liveMethod="";
-    private boolean notificationReplayPending;
+    private boolean notificationReplayPending,replaySelectedFromFile;
     private JSONObject document;
     private SketchEditorSession session;
     private final ExecutorService io=Executors.newSingleThreadExecutor();
@@ -134,7 +134,7 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
         if(intent==null||!SketchLiveNotification.ACTION_WATCH.equals(intent.getAction()))return false;
         try{JSONObject ids=new JSONObject().put("sketchId",intent.getStringExtra(SketchLiveNotification.EXTRA_SKETCH_ID)).put("sessionId",intent.getStringExtra(SketchLiveNotification.EXTRA_SESSION_ID));
             String target=SketchDocument.id(ids,"sketchId"),stream=SketchDocument.id(ids,"sessionId");
-            notifiedSketchId=target;notifiedSessionId=stream;notificationReplayPending=true;watching=true;
+            notifiedSketchId=target;notifiedSessionId=stream;notificationReplayPending=true;replaySelectedFromFile=false;watching=true;
             return true;
         }catch(Exception invalid){return false;}
     }
@@ -208,7 +208,7 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
     @Override public void onSelection(String id) { updateStatus(); }
     @Override public void onMessage(String message) { if (message != null) Toast.makeText(this, message, Toast.LENGTH_LONG).show(); }
     private void updateStatus() {
-        try { if (document != null) {status.setText((bookId==null?document.getString("name"):book.optString("name")+" · page "+(bookPage+1)+"/"+book.optInt("pageCount")) + " · r" + document.getLong("revision") + " · frame " + (canvas.getFrame() + 1) + "/" + document.getInt("frameCount") + " · " + (bookId==null?document.getInt("fps"):book.getInt("fps")) + " FPS" + (bookId==null?"":" · hold ×"+SketchTimelineTools.exposure(book.optJSONObject("exposures"),bookPage)) + (canvas.getSelectedId() == null ? "" : " · selected")+(session!=null&&session.pending()>0?" · saving":"")+(watching?" · live agent":""));filmstrip.setTimelineKey(bookId==null?"sketch:"+sketchId:"book:"+bookId);filmstrip.setExposures(bookId==null?null:book.optJSONObject("exposures"));filmstrip.setFrames(bookId==null?document.getInt("frameCount"):book.getInt("pageCount"),bookId==null?canvas.getFrame():bookPage);} }
+        try { if (document != null) {status.setText((bookId==null?document.getString("name"):book.optString("name")+" · page "+(bookPage+1)+"/"+book.optInt("pageCount")) + " · r" + document.getLong("revision") + " · frame " + (canvas.getFrame() + 1) + "/" + document.getInt("frameCount") + " · " + (bookId==null?document.getInt("fps"):book.getInt("fps")) + " FPS" + (bookId==null?"":" · hold ×"+SketchTimelineTools.exposure(book.optJSONObject("exposures"),bookPage)) + (canvas.getSelectedId() == null ? "" : " · selected")+(session!=null&&session.pending()>0?" · saving":"")+(watching?" · following current work":""));filmstrip.setTimelineKey(bookId==null?"sketch:"+sketchId:"book:"+bookId);filmstrip.setExposures(bookId==null?null:book.optJSONObject("exposures"));filmstrip.setFrames(bookId==null?document.getInt("frameCount"):book.getInt("pageCount"),bookId==null?canvas.getFrame():bookPage);} }
         catch (Exception ignored) {}
     }
     private void history(boolean redo) {stopPlayback();afterSaves(()->{SketchEditOps.execute(this,redo?"sketch_redo":"sketch_undo",request());postUi(this::reload);});}
@@ -470,6 +470,87 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
             afterSaves(()->{JSONObject report=SketchEditOps.execute(this,"sketch_inspect",args);StringBuilder message=new StringBuilder("Saved drawing: ").append(report.getInt("frameCount")).append(" frames · ").append(report.getJSONObject("usage").getInt("objects")).append(" objects\n");JSONArray rows=report.getJSONArray("frames");for(int n=0;n<rows.length();n++){JSONObject row=rows.getJSONObject(n);message.append("Frame ").append(row.getInt("frame")+1).append(": ").append(row.getInt("exposedObjects")).append(" exposed marks");if(!row.getBoolean("contentChanged"))message.append(" · same content");message.append('\n');}message.append("\nContent counts do not certify likeness or articulated motion.");postUi(()->new AlertDialog.Builder(this).setTitle("Drawing content audit").setMessage(message.toString()).setPositiveButton("OK",null).show());});
         }catch(Exception error){onMessage(error.getMessage());}
     }
+    /** Human-facing native audit: pixels and cels, not a false AI-anatomy verdict. */
+    private void qualityAuditDialog(){
+        if(document==null)return;
+        try{
+            String target=sketchId;
+            long revision=document.getLong("revision");
+            int current=canvas.getFrame();
+            int offset=Math.max(0,current-5);
+            int samples=Math.min(12,document.getInt("frameCount")-offset);
+            JSONObject args=new JSONObject().put("sketchId",target)
+                    .put("expectedRevision",revision)
+                    .put("frameOffset",offset)
+                    .put("frameLimit",samples)
+                    .put("frameStep",1)
+                    .put("motionRequired",document.getInt("frameCount")>1);
+            afterSaves(()->{
+                JSONObject report=SketchEditOps.execute(this,"sketch_quality_audit",args);
+                StringBuilder description=new StringBuilder("Revision "+revision
+                        +" · native Android Canvas\n");
+                description.append("Sampled frames: ").append(report.getInt("sampleCount"))
+                        .append(" · New cels: ").append(report.getInt("sampledNewCels"))
+                        .append(" · Possible issues: ").append(report.getInt("alertCount")).append("\n\n");
+                JSONArray frames=report.getJSONArray("samples");
+                for(int j=0;j<frames.length();j++){
+                    JSONObject row=frames.getJSONObject(j);
+                    description.append("Frame ").append(row.getInt("frame")+1).append(": ");
+                    double fraction=row.getDouble("changedPixelFraction");
+                    description.append(fraction<0?"first sample":String.format(java.util.Locale.ROOT,
+                            "%.2f%% pixel change",fraction*100));
+                    description.append(" · ").append(row.getInt("newCels")).append(" new marks\n");
+                }
+                description.append("\nPixels alone CANNOT certify hands, neck anatomy, "
+                        +"finger counts, rose botany or professional illustration quality. "
+                        +"Use detailed native crops to judge before accepting.");
+                postUi(()->new AlertDialog.Builder(this)
+                        .setTitle("Native visual-quality audit")
+                        .setMessage(description.toString())
+                        .setNeutralButton("Examine detail",(dialog,which)->qualityDetailPicker(target,revision,current))
+                        .setPositiveButton("Close",null).show());
+            });
+        }catch(Exception error){onMessage(error.getMessage());}
+    }
+
+    /** The high-detail image is rendered from the same native drawing and kept local. */
+    private void qualityDetailPicker(String target,long revision,int frame){
+        final String[] names={"Face and hair","Neck and collar","Glove and rose","Waist and costume","Full composition"};
+        final double[][] regions={{.31,.08,.44,.38},{.34,.33,.38,.31},{.12,.22,.43,.43},
+                {.22,.43,.63,.55},{0,0,1,1}};
+        new AlertDialog.Builder(this).setTitle("Inspect exact saved artwork")
+                .setItems(names,(dialog,which)->{
+                    double[] region=regions[which];
+                    try{
+                        JSONObject crop=new JSONObject().put("x",region[0]).put("y",region[1])
+                                .put("width",region[2]).put("height",region[3]);
+                        JSONObject request=new JSONObject().put("sketchId",target)
+                                .put("expectedRevision",revision).put("frameIndex",frame)
+                                .put("focus",names[which]).put("crop",crop).put("detail","high");
+                        afterSaves(()->{
+                            JSONObject review=SketchEditOps.execute(this,"sketch_review",request);
+                            JSONObject preview=review.getJSONObject("sketchPreviewImage");
+                            byte[] bytes=android.util.Base64.decode(preview.getString("base64"),
+                                    android.util.Base64.NO_WRAP);
+                            android.graphics.Bitmap image=android.graphics.BitmapFactory.decodeByteArray(
+                                    bytes,0,bytes.length);
+                            if(image==null)throw new IllegalStateException("Native detail preview cannot decode");
+                            postUi(()->{
+                                android.widget.ImageView detail=new android.widget.ImageView(this);
+                                detail.setAdjustViewBounds(true);
+                                detail.setImageBitmap(image);
+                                detail.setContentDescription(names[which]+" at native review resolution");
+                                android.widget.ScrollView scroll=new android.widget.ScrollView(this);
+                                scroll.addView(detail);
+                                new AlertDialog.Builder(this).setTitle(names[which]+" · frame "+(frame+1))
+                                        .setView(scroll).setPositiveButton("Close",null)
+                                        .setOnDismissListener(ignored->image.recycle()).show();
+                            });
+                        });
+                    }catch(Exception error){onMessage(error.getMessage());}
+                }).show();
+    }
+
     private void onionDialog(){
         LinearLayout form=column();CheckBox enabled=new CheckBox(this);enabled.setText("Show onion skin");enabled.setTextColor(StudioUi.TEXT);enabled.setChecked(onionEnabled);form.addView(enabled);
         EditText distance=input(bookId==null?"Frames on each side (1..3)":"Book shows the adjacent page on each side",String.valueOf(onionRange),true),opacity=input("Onion opacity (0..128)",String.valueOf(onionAlpha),true);distance.setEnabled(bookId==null);form.addView(distance);form.addView(opacity);
@@ -560,7 +641,7 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
     }
     private void showActualAgentTool(String label){int position=agentToolPosition(label);if(position>=0)showAgentToolPosition(position);}
     private void updateAgentToolIndicator(){if(status==null)return;boolean enabled=getPreferences(MODE_PRIVATE).getBoolean("agentHand",true);if(enabled&&agentGlobalTool){if(agentToolIndicator==null)agentToolIndicator=SketchAgentHand.toolIndicator(this,18);status.setCompoundDrawablePadding(dp(4));status.setCompoundDrawablesWithIntrinsicBounds(agentToolIndicator,null,null,null);}else status.setCompoundDrawables(null,null,null,null);}
-    private void updateLiveControl(){if(liveButton!=null){liveButton.setText(watching?"Draw myself":"Watch ChatGPT");liveButton.setContentDescription(watching?"Pause live drawing and draw yourself":"Resume watching every drawing step");}}
+    private void updateLiveControl(){if(liveButton!=null){liveButton.setText(watching?"Draw myself":"Watch ChatGPT");liveButton.setContentDescription(watching?"Leave latest native drawing follow mode and edit yourself":"Follow the most recent native sketch and replay newly authored steps");}}
     private void toggleLiveWatch(){
         if(watching){takeOverLive(null);return;}
         ++liveLoadGeneration;stopPlayback();watching=true;if(notifiedSessionId!=null)notificationReplayPending=true;getPreferences(MODE_PRIVATE).edit().putBoolean("watchLiveDrawing",true).apply();updateLiveControl();
@@ -596,20 +677,77 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
             if(!currentLive(generation,active)){image.close();return;}
             try{if(shownPaint!=prepared){canvas.setPreparedDocument(prepared);shownPaint=prepared;preparedShown=true;}paintShown=true;liveDrawingObject=objectId;liveCaption=caption;canvas.setFrame(prepared.frameIndex);canvas.setPaintPresentation(objectId,image);canvas.setPresentation(objectId,fraction);canvas.setEnabled(false);status.setText(caption);}catch(Exception error){image.close();failed(error.getMessage());}
         }
-        private void showDrawing(JSONObject drawing,SketchLivePreparation.Prepared prepared,String objectId,float fraction,String caption){if(!currentLive(generation,active))return;try{if(objectId==null||!objectId.equals(liveDrawingObject)||!caption.equals(liveCaption)){if(prepared==null)canvas.setDocument(drawing);else{canvas.setPreparedDocument(prepared);preparedShown=true;}liveDrawingObject=objectId;liveCaption=caption;}if(objectId!=null)canvas.setFrame(SketchDocument.object(drawing,objectId).getInt("frame"));canvas.setPresentation(objectId,fraction);canvas.setEnabled(false);status.setText(caption);}catch(Exception error){failed(error.getMessage());}}
+        private void showDrawing(JSONObject drawing,SketchLivePreparation.Prepared prepared,String objectId,float fraction,String caption){if(!currentLive(generation,active))return;try{if(objectId==null||!objectId.equals(liveDrawingObject)||!caption.equals(liveCaption)){if(prepared==null)canvas.setDocument(drawing);else{canvas.setPreparedDocument(prepared);preparedShown=true;}liveDrawingObject=objectId;liveCaption=caption;}if(prepared!=null)canvas.setFrame(prepared.frameIndex);
+            else if(objectId!=null)canvas.setFrame(SketchDocument.object(drawing,objectId).getInt("frame"));
+            canvas.setPresentation(objectId,fraction);canvas.setEnabled(false);status.setText(caption);}catch(Exception error){failed(error.getMessage());}}
         public void committed(JSONObject drawing){if(!currentLive(generation,active))return;try{if(session.adopt(drawing)){if(paintShown){canvas.setCommittedPaintDocument(session.document());presentMetadata(session.document());paintShown=false;}else if(preparedShown)presentMetadata(session.document());else present(session.document());canvas.setPresentation(null,1);liveDrawingObject=null;liveDisplayedRevision=drawing.optLong("revision");}}catch(Exception error){failed(error.getMessage());}}
-        public void finished(long cursor){if(!currentLive(generation,active))return;io.execute(()->{try(SketchProjectStore store=new SketchProjectStore(SketchStudioActivity.this)){store.consumeLiveSession(cursor);}});if(notifiedSessionId==null)getPreferences(MODE_PRIVATE).edit().putLong("lastLiveSequence",cursor).apply();stopLivePlayer();if(notifiedSessionId==null)reload();else status.setText(liveMethodLabel()+" · session replay complete · Draw myself to edit");}
-        public void idle(){if(!currentLive(generation,active))return;canvas.setPresentation(null,1);canvas.setEnabled(false);status.setText(liveMethodLabel()+" · live · waiting for drawing steps · Draw myself is available");}
+        public void finished(long cursor){
+            if(!currentLive(generation,active))return;
+            io.execute(()->{try(SketchProjectStore store=new SketchProjectStore(SketchStudioActivity.this)){
+                store.consumeLiveSession(cursor);
+            }});
+            boolean notificationPinned=notifiedSessionId!=null&&!replaySelectedFromFile;
+            if(notifiedSessionId==null)
+                getPreferences(MODE_PRIVATE).edit().putLong("lastLiveSequence",cursor).apply();
+            liveSessionId="";
+            stopLivePlayer();
+            if(notificationPinned){
+                // Tapping a precise notification must not be redirected to an
+                // unrelated sketch by later workspace signals.
+                status.setText(liveMethodLabel()+" · notified drawing complete · "
+                        +"File → Follow current work to switch");
+                return;
+            }
+            notifiedSessionId=null;notifiedSketchId=null;
+            notificationReplayPending=false;replaySelectedFromFile=false;
+            status.setText("Caught up with saved drawing · following newest work");
+            if(session!=null&&session.pending()==0)reload();
+        }
+        public void idle(){if(!currentLive(generation,active))return;canvas.setPresentation(null,1);canvas.setEnabled(false);status.setText(liveMethodLabel()+" · following active native sketch · waiting for next saved stroke");}
         public void failed(String error){if(!currentLive(generation,active))return;loadingDrawing=true;stopLivePlayer();status.setText(error);onMessage(error);}
     });livePlayer.start();}catch(Exception error){notificationReplayPending=false;onMessage(error.getMessage());}});}catch(Exception error){postUi(()->{watchInFlight=false;notificationReplayPending=false;onMessage(error.getMessage());});}});}
+    /**
+     * Only the automatic Follow Current mode can be preempted by newer native work.
+     * An intentionally tapped session notification or explicit saved replay stays
+     * pinned. No old journal is deleted: File -> Replay last saved drawing remains.
+     */
+    private boolean followNewerNativeWork(){
+        if(!resumed||!watching||loadingDrawing||playing||session==null
+                ||livePlayer==null||watchInFlight||session.pending()>0)
+            return false;
+        android.content.SharedPreferences signal=getSharedPreferences(
+                "sketch_live_workspace",MODE_PRIVATE);
+        String target=signal.getString("sketchId","");
+        String latestSession=signal.getString("streamSessionId","");
+        String streamOwner=signal.getString("streamSketchId","");
+        if(!SketchLiveFollowPolicy.shouldPreempt(sketchId,liveSessionId,
+                target,latestSession,streamOwner,
+                notifiedSessionId!=null&&!replaySelectedFromFile,replaySelectedFromFile))
+            return false;
+        ++liveLoadGeneration;
+        stopLivePlayer();
+        if(!target.equals(sketchId)){
+            status.setText("Current native drawing changed · opening latest sketch");
+            bookId=null;book=null;loadSketch(target,0);
+        }else if(!latestSession.isEmpty()&&target.equals(streamOwner)){
+            status.setText("New native strokes received · catching up with latest session");
+            startLivePlayer(latestSession);
+        }
+        return true;
+    }
+
     private final Runnable watchTick=new Runnable(){public void run(){
         if(destroyed)return;
+        if(followNewerNativeWork()){
+            handler.postDelayed(this,250);
+            return;
+        }
         if(resumed&&watching&&!loadingDrawing&&!playing&&livePlayer==null&&session!=null&&session.pending()==0&&session.error()==null&&!canvas.isDrawing()&&!watchInFlight){
             if(notificationReplayPending){startLivePlayer(notifiedSessionId);handler.postDelayed(this,250);return;}
             // An explicit invitation stays on its drawing, even while other books have pending sessions.
             if(notifiedSessionId!=null){handler.postDelayed(this,250);return;}
             watchInFlight=true;long cursor=getPreferences(MODE_PRIVATE).getLong("lastLiveSequence",0),revision=document.optLong("revision");String id=sketchId;SketchEditorSession active=session;
-            io.execute(()->{try{JSONObject next,changed=null;try(SketchProjectStore store=new SketchProjectStore(SketchStudioActivity.this)){next=store.nextLiveSession(cursor);if(next==null&&store.revision(id)!=revision)changed=store.get(id);}JSONObject pending=next,incoming=changed;
+            io.execute(()->{try{JSONObject next,changed=null;try(SketchProjectStore store=new SketchProjectStore(SketchStudioActivity.this)){next=store.newestFollowSession(cursor,System.currentTimeMillis());if(next==null&&store.revision(id)!=revision)changed=store.get(id);}JSONObject pending=next,incoming=changed;
                 postUi(()->{watchInFlight=false;if(destroyed||!resumed||!watching||active!=session||session.pending()>0||canvas.isDrawing())return;try{
                     if(pending!=null){String target=pending.getString("sketchId"),token=pending.getString("sessionId");if(!target.equals(sketchId)){if(pending.has("bookId"))openBookPage(pending.getString("bookId"),pending.getInt("page"));else{bookId=null;book=null;loadSketch(target,0);}}else startLivePlayer(token);return;}
                     android.content.SharedPreferences signal=getSharedPreferences("sketch_live_workspace",MODE_PRIVATE);String target=signal.getString("sketchId","");if(!target.isEmpty()&&!target.equals(sketchId)){String targetBook=signal.getString("bookId","");if(targetBook.isEmpty()){bookId=null;book=null;loadSketch(target,0);}else openBookPage(targetBook,signal.getInt("page",0));return;}
@@ -638,7 +776,7 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
     // Browsing a menu never takes ownership of an active drawing. Its chosen action
     // goes through the same loading, playback and live-takeover gate as the toolbar.
     private void runAction(String title,Runnable action){try{
-        boolean navigation=java.util.Arrays.asList("File","More","Brush / Text","Layers","Frames / Cels","Workspace","Canvas view","Drawing status","Drawing alerts","Colours","Select layer","Go to frame","Go","Exposure sheet","Onion skin","Onion settings","First","−100","+100","Last","On ones","On twos","On threes","Paint studio","Paint settings","Clone source","Xsheet (read-only)","Linked palette styles").contains(title);
+        boolean navigation=java.util.Arrays.asList("File","More","Brush / Text","Layers","Frames / Cels","Workspace","Canvas view","Drawing status","Drawing alerts","Colours","Select layer","Go to frame","Go","Exposure sheet","Onion skin","Onion settings","First","−100","+100","Last","On ones","On twos","On threes","Paint studio","Paint settings","Clone source","Xsheet (read-only)","Linked palette styles","Follow current work","Replay last saved drawing").contains(title);
         if(navigation){action.run();return;}
         if(loadingDrawing&&!java.util.Arrays.asList("New","Open","Sketch books","Draw myself").contains(title)){onMessage("Opening the selected drawing");return;}
         if(playing&&!title.equals("Play")&&!title.equals("Draw myself")){onMessage("Pause playback before changing artwork");return;}
@@ -646,8 +784,44 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
         action.run();
     }catch(Exception error){onMessage(error.getMessage());}}
     private void menu(String title,String[] labels,Runnable... actions){new AlertDialog.Builder(this).setTitle(title).setItems(labels,(d,index)->runAction(labels[index],actions[index])).show();}
-    private void fileMenu(){menu("Sketch files",new String[]{"New","Open","Sketch books","Export video","Archive sketch","Restore archive","Canvas view","Drawing status","Story → 2D film"},this::newDocument,this::openDocument,this::booksDialog,this::export,this::archiveSketch,this::restoreArchiveDialog,this::toggleCanvasFocus,()->new AlertDialog.Builder(this).setTitle("Drawing status").setMessage(status.getText()+"\n\n"+toolStatus.getText()).setPositiveButton("OK",null).show(),this::storyFilmDialog);}
-    private void moreMenu(){menu("Drawing tools",new String[]{"Layers","Frames / Cels","2D animation","Workspace","Drawing alerts","Story → 2D film"},this::layersMenu,this::framesMenu,this::openAnimationStudio,this::workspaceDialog,this::drawingAlerts,this::storyFilmDialog);}
+    private void fileMenu(){menu("Sketch files",new String[]{"New","Open","Sketch books","Follow current work","Replay last saved drawing","Export video","Archive sketch","Restore archive","Canvas view","Drawing status","Story → 2D film"},this::newDocument,this::openDocument,this::booksDialog,this::followCurrentDrawing,this::replayLastDrawing,this::export,this::archiveSketch,this::restoreArchiveDialog,this::toggleCanvasFocus,()->new AlertDialog.Builder(this).setTitle("Drawing status").setMessage(status.getText()+"\n\n"+toolStatus.getText()).setPositiveButton("OK",null).show(),this::storyFilmDialog);}
+    /** New native work takes priority; saved historical drawing is never auto-looped. */
+    private void followCurrentDrawing(){
+        notifiedSketchId=null;notifiedSessionId=null;notificationReplayPending=false;replaySelectedFromFile=false;
+        ++liveLoadGeneration;stopLivePlayer();stopPlayback();
+        watching=true;getPreferences(MODE_PRIVATE).edit()
+                .putBoolean("watchLiveDrawing",true).apply();
+        updateLiveControl();updateStatus();
+        status.setText("Following latest VideoStudio native work · waiting for saved strokes");
+    }
+    /** Completed journals are discoverable, but play only upon explicit request. */
+    private void replayLastDrawing(){
+        afterSaves(()->{
+            JSONObject latest;
+            try(SketchProjectStore store=new SketchProjectStore(this)){
+                latest=store.latestCompletedLiveSession();
+            }
+            if(latest==null){
+                postUi(()->onMessage("No saved drawing session to replay"));
+                return;
+            }
+            String target=latest.getString("sketchId"),stream=latest.getString("sessionId");
+            postUi(()->{
+                ++liveLoadGeneration;stopPlayback();stopLivePlayer();
+                notifiedSketchId=target;notifiedSessionId=stream;
+                notificationReplayPending=true;replaySelectedFromFile=true;
+                watching=true;getPreferences(MODE_PRIVATE).edit()
+                        .putBoolean("watchLiveDrawing",true).apply();
+                updateLiveControl();
+                if(!target.equals(sketchId)){bookId=null;book=null;loadSketch(target,0);}
+                else if(!loadingDrawing&&session!=null&&session.pending()==0)
+                    startLivePlayer(stream);
+                status.setText("Replay saved drawing · returning to current work afterwards");
+            });
+        });
+    }
+
+    private void moreMenu(){menu("Drawing tools",new String[]{"Layers","Frames / Cels","2D animation","Workspace","Drawing alerts","Visual QA / Detail","Story → 2D film"},this::layersMenu,this::framesMenu,this::openAnimationStudio,this::workspaceDialog,this::drawingAlerts,this::qualityAuditDialog,this::storyFilmDialog);}
     private void openAnimationStudio(){if(document==null)return;stopPlayback();afterSaves(()->postUi(()->startActivity(new Intent(this,SketchAnimationActivity.class).putExtra("sketchId",sketchId))));}
 
     /** Prompt-driven original storyboard; all created cels remain ordinary editable Sketch Studio parts. */

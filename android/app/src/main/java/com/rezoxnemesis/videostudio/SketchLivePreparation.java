@@ -65,7 +65,7 @@ final class SketchLivePreparation {
         boolean paint="paint_stroke".equals(operation.optString("type"));
         JSONObject presented=paint?SketchDocument.copy(baseline):next;
         String objectId=operation.has("object")?operation.getJSONObject("object").optString("id",null):operation.optString("objectId",null);
-        int frame=paint?operationFrame(baseline,operation):objectId==null?0:SketchDocument.object(next,objectId).getInt("frame");
+        int frame=operationFrame(paint||"delete_object".equals(operation.optString("type"))?baseline:next,operation);
         SketchAgentHand.Track handTrack=SketchAgentHand.prepare(presented,operation,frame);
         SketchFrameRenderer renderer = new SketchFrameRenderer(context, presented);
         Prepared prepared=new Prepared(presented,next,renderer,frame,handTrack);
@@ -87,11 +87,27 @@ final class SketchLivePreparation {
 
     /** Resolve the authored exposed frame from native journal pins on the reader worker. */
     static int operationFrame(JSONObject document,JSONObject operation)throws Exception{
-        requireWorker();JSONObject object=SketchDocument.object(document,operation.getString("objectId"));int frame=object.getInt("frame");
-        if("paint_stroke".equals(operation.optString("type"))){JSONObject request=operation.getJSONObject("stroke").getJSONObject("request");
-            if(request.has("frameIndex"))frame=(int)SketchDocument.integer(request,"frameIndex",0,document.getInt("frameCount")-1);
-            if(!SketchFrameRenderer.exposed(object,frame))throw SketchDocument.bad("Live paint frame must fall inside its cel exposure");
+        requireWorker();
+        int frame=0,maximum=document.getInt("frameCount")-1;
+        if(operation.has("objectId")){
+            JSONObject object=SketchDocument.object(document,operation.getString("objectId"));
+            frame=object.getInt("frame");
+            if("paint_stroke".equals(operation.optString("type"))){
+                JSONObject request=operation.getJSONObject("stroke").getJSONObject("request");
+                if(request.has("frameIndex"))
+                    frame=(int)SketchDocument.integer(request,"frameIndex",0,maximum);
+                if(!SketchFrameRenderer.exposed(object,frame))
+                    throw SketchDocument.bad("Live paint frame must fall inside its cel exposure");
+            }
+        }else if(operation.has("object")){
+            frame=operation.getJSONObject("object").optInt("frame",0);
         }
+        // Animation keyframes, individual cels and authored overlays can target
+        // another frame than their underlying object's first exposure.
+        if(operation.has("frame"))
+            frame=(int)SketchDocument.integer(operation,"frame",0,maximum);
+        if(frame<0||frame>maximum)
+            throw SketchDocument.bad("Live drawing operation frame is outside the sketch");
         return frame;
     }
 
