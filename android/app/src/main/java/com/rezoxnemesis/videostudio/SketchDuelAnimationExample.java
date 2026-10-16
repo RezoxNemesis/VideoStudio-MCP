@@ -35,6 +35,10 @@ final class SketchDuelAnimationExample {
         source.put("id","rooftop_duel_prepared").put("name","Rooftop Standoff · Vale and Rook")
                 .put("revision",1);
         program.put("name","Rooftop Standoff · two-character action with three views");
+        // A two-human scene would otherwise duplicate thousands of near-identical
+        // per-object affine keys. Bound interpolation error to 2 source pixels;
+        // the native report records measured maximum error for artistic review.
+        program.put("keyframeTolerancePixels",2.0);
         JSONArray original=source.getJSONArray("layers"),layers=new JSONArray();
         JSONArray oldRigs=program.getJSONArray("rigs"),rigs=new JSONArray();
         JSONObject wide=null,medium=null;
