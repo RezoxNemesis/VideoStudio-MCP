@@ -646,9 +646,61 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
         action.run();
     }catch(Exception error){onMessage(error.getMessage());}}
     private void menu(String title,String[] labels,Runnable... actions){new AlertDialog.Builder(this).setTitle(title).setItems(labels,(d,index)->runAction(labels[index],actions[index])).show();}
-    private void fileMenu(){menu("Sketch files",new String[]{"New","Open","Sketch books","Export video","Archive sketch","Restore archive","Canvas view","Drawing status"},this::newDocument,this::openDocument,this::booksDialog,this::export,this::archiveSketch,this::restoreArchiveDialog,this::toggleCanvasFocus,()->new AlertDialog.Builder(this).setTitle("Drawing status").setMessage(status.getText()+"\n\n"+toolStatus.getText()).setPositiveButton("OK",null).show());}
-    private void moreMenu(){menu("Drawing tools",new String[]{"Layers","Frames / Cels","2D animation","Workspace","Drawing alerts"},this::layersMenu,this::framesMenu,this::openAnimationStudio,this::workspaceDialog,this::drawingAlerts);}
+    private void fileMenu(){menu("Sketch files",new String[]{"New","Open","Sketch books","Export video","Archive sketch","Restore archive","Canvas view","Drawing status","Story → 2D film"},this::newDocument,this::openDocument,this::booksDialog,this::export,this::archiveSketch,this::restoreArchiveDialog,this::toggleCanvasFocus,()->new AlertDialog.Builder(this).setTitle("Drawing status").setMessage(status.getText()+"\n\n"+toolStatus.getText()).setPositiveButton("OK",null).show(),this::storyFilmDialog);}
+    private void moreMenu(){menu("Drawing tools",new String[]{"Layers","Frames / Cels","2D animation","Workspace","Drawing alerts","Story → 2D film"},this::layersMenu,this::framesMenu,this::openAnimationStudio,this::workspaceDialog,this::drawingAlerts,this::storyFilmDialog);}
     private void openAnimationStudio(){if(document==null)return;stopPlayback();afterSaves(()->postUi(()->startActivity(new Intent(this,SketchAnimationActivity.class).putExtra("sketchId",sketchId))));}
+
+    /** Prompt-driven original storyboard; all created cels remain ordinary editable Sketch Studio parts. */
+    private void storyFilmDialog(){
+        LinearLayout form=column();form.setPadding(dp(12),dp(8),dp(12),dp(8));
+        EditText story=new EditText(this);story.setTextColor(StudioUi.TEXT);story.setHintTextColor(StudioUi.MUTED);
+        story.setHint("Describe your character, struggle, action or journey…");
+        story.setContentDescription("Story for original vector animation");
+        story.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_FLAG_MULTI_LINE);
+        story.setMinLines(4);story.setText("The struggle of a man");
+        form.addView(story);
+        EditText duration=input("Duration in seconds (4–12)","10",true);form.addView(duration);
+        CheckBox watch=new CheckBox(this);watch.setText("Watch the actual vector drawing journal");
+        watch.setChecked(true);watch.setTextColor(StudioUi.TEXT);form.addView(watch);
+        TextView note=new TextView(this);note.setTextColor(StudioUi.MUTED);note.setTextSize(12);
+        note.setText("Creates three connected shots with separated character parts, timed poses, camera depth, full-colour environments and editable cels. The text engine stages an original animation draft; it does not infer unseen anatomy or produce neural image generation.");
+        form.addView(note);
+        ScrollView scroll=new ScrollView(this);scroll.addView(form);
+        new AlertDialog.Builder(this).setTitle("Story → 2D film")
+                .setView(scroll).setNegativeButton("Cancel",null)
+                .setPositiveButton("Create film",(d,w)->{
+                    final String narrative=story.getText().toString();
+                    final boolean liveStory=watch.isChecked();
+                    final int seconds;try{seconds=Integer.parseInt(duration.getText().toString().trim());}
+                    catch(NumberFormatException invalid){onMessage("Duration must be a whole number from 4 to 12");return;}
+                    stopPlayback();status.setText("Preparing original storyboard and keyframed character artwork…");
+                    // The transfer worker is separate from UI sketch loading, enabling a real live viewer.
+                    afterSaves(()->transfers.execute(()->{
+                        try{
+                            JSONObject receipt=SketchStoryFilmGenerator.create(this,narrative,seconds,24,liveStory,new SketchStoryFilmGenerator.Listener(){
+                                public void opened(String id,String stream){
+                                    postUi(()->{
+                                        watching=true;notifiedSketchId=id;notifiedSessionId=stream;notificationReplayPending=true;
+                                        getPreferences(MODE_PRIVATE).edit().putBoolean("watchLiveDrawing",true).apply();
+                                        updateLiveControl();bookId=null;book=null;loadSketch(id,0);
+                                    });
+                                }
+                                public void progress(int finished,int total){
+                                    postUi(()->{if(!destroyed&&finished<total)status.setText("Drawing story frames · "+finished+" / "+total+" parts · all original vector operations saved");});
+                                }
+                            });
+                            String created=receipt.getString("sketchId");
+                            postUi(()->{
+                                if(!receipt.optBoolean("live")){bookId=null;book=null;loadSketch(created,0);}
+                                onMessage("Story film saved · "+receipt.optInt("frameCount")+" frames, 24 FPS · Play or Export video");
+                            });
+                        }catch(Exception error){postUi(()->{
+                            status.setText("Story film retained where already saved · "+error.getMessage());
+                            onMessage(error.getMessage());
+                        });}
+                    }));
+                }).show();
+    }
     private void drawingAlerts(){
         JSONObject availability=SketchLiveNotification.status(this);boolean enabled=availability.optBoolean("available");
         new AlertDialog.Builder(this).setTitle("Drawing alerts").setMessage(enabled?
@@ -791,10 +843,65 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
     private void savePaletteColour(String colour)throws Exception{
         SketchDocument.color(colour);JSONArray saved=new JSONArray(getPreferences(MODE_PRIVATE).getString("savedPalette","[]"));for(int i=0;i<saved.length();i++)if(colour.equals(saved.getString(i)))return;if(saved.length()>=64)saved.remove(0);saved.put(colour);getPreferences(MODE_PRIVATE).edit().putString("savedPalette",saved.toString()).apply();
     }
-    private void paletteDialog(){LinearLayout palette=column();ArrayList<String> colours=new ArrayList<>(java.util.Arrays.asList("#FF161C2B","#FFFFFFFF","#FF756157","#FFECC6A8","#FFB87958","#FFE45468","#FFEF9B52","#FFF3DA77","#FF61B787","#FF63BADA","#FF4E77BF","#FF8E6CB7"));
-        try{JSONArray saved=new JSONArray(getPreferences(MODE_PRIVATE).getString("savedPalette","[]"));for(int i=0;i<saved.length();i++){String value=saved.getString(i);SketchDocument.color(value);if(!colours.contains(value))colours.add(value);}}catch(Exception ignored){}
-        ScrollView scroll=new ScrollView(this);scroll.addView(palette);AlertDialog dialog=new AlertDialog.Builder(this).setTitle("Colours").setView(scroll).setNegativeButton("Close",null).create();for(int i=0;i<colours.size();i+=3){LinearLayout line=row(palette);for(int n=i;n<Math.min(i+3,colours.size());n++){String colour=colours.get(n);Button swatch=button(line,"●",()->{brushColor=colour;updateBrush();dialog.dismiss();});swatch.setTextColor(SketchDocument.color(colour));swatch.setContentDescription("Colour "+colour);}}
-        LinearLayout actions=row(palette);button(actions,"Save current colour",()->{try{savePaletteColour(brushColor);dialog.dismiss();paletteDialog();}catch(Exception error){onMessage(error.getMessage());}});button(actions,"Full colour picker",()->{dialog.dismiss();paintSettings();});dialog.show();
+    /** Dense but touch-friendly colour library with exact ARGB entry and saved personal pigments. */
+    private void paletteDialog(){
+        LinearLayout form=column();form.setPadding(dp(12),dp(8),dp(12),dp(8));
+        java.util.ArrayList<String> categories=new java.util.ArrayList<>();
+        for(int i=0;i<SketchPaletteLibrary.groupCount();i++)categories.add(SketchPaletteLibrary.name(i));
+        categories.add("My saved colours");
+        Spinner picker=new Spinner(this);picker.setContentDescription("Palette category");
+        picker.setAdapter(new ArrayAdapter<>(this,android.R.layout.simple_spinner_dropdown_item,categories));
+        picker.setMinimumHeight(dp(48));form.addView(picker);
+        LinearLayout swatches=column();form.addView(swatches);
+        EditText exact=input("Exact colour #AARRGGBB",brushColor,false);
+        form.addView(exact);
+        LinearLayout buttons=row(form);
+        ScrollView scroll=new ScrollView(this);scroll.addView(form);
+        AlertDialog dialog=new AlertDialog.Builder(this).setTitle("Colour studio · 176 pigments")
+                .setView(scroll).setNegativeButton("Close",null).create();
+        Runnable refresh=()->{
+            swatches.removeAllViews();int group=picker.getSelectedItemPosition();
+            if(group<0)return;
+            String[] colours;
+            if(group==SketchPaletteLibrary.groupCount()){
+                java.util.ArrayList<String> saved=new java.util.ArrayList<>();
+                try{
+                    JSONArray stored=new JSONArray(getPreferences(MODE_PRIVATE).getString("savedPalette","[]"));
+                    for(int i=0;i<stored.length();i++){
+                        String colour=stored.getString(i);SketchDocument.color(colour);
+                        if(!saved.contains(colour))saved.add(colour);
+                    }
+                }catch(Exception invalid){onMessage("Some saved colours were invalid and were skipped");}
+                colours=saved.toArray(new String[0]);
+            }else colours=SketchPaletteLibrary.colors(group);
+            if(colours.length==0){
+                TextView empty=new TextView(this);empty.setText("No saved colours yet. Choose a pigment or enter an exact ARGB value.");
+                empty.setTextColor(StudioUi.MUTED);swatches.addView(empty);return;
+            }
+            for(int i=0;i<colours.length;i+=4){
+                LinearLayout line=row(swatches);
+                for(int n=i;n<Math.min(i+4,colours.length);n++){
+                    String pigment=colours[n];Button swatch=button(line,"●",()->{
+                        brushColor=pigment;updateBrush();dialog.dismiss();
+                    });
+                    swatch.setTextColor(SketchDocument.color(pigment));
+                    swatch.setContentDescription("Colour "+pigment);
+                    swatch.setMinHeight(dp(42));
+                }
+            }
+        };
+        picker.setOnItemSelectedListener(new SimpleSelection(){@Override public void selected(int index){refresh.run();}});
+        button(buttons,"Use exact colour",()->{
+            try{String next=exact.getText().toString().trim();SketchDocument.color(next);
+                brushColor=next;savePaletteColour(next);updateBrush();dialog.dismiss();
+            }catch(Exception error){onMessage(error.getMessage());}
+        });
+        button(buttons,"Save current",()->{
+            try{savePaletteColour(brushColor);picker.setSelection(SketchPaletteLibrary.groupCount());refresh.run();}
+            catch(Exception error){onMessage(error.getMessage());}
+        });
+        button(form,"Advanced HSV / opacity / brush settings",()->{dialog.dismiss();brushDialog();});
+        dialog.show();refresh.run();
     }
     private EditText input(String hint, String value, boolean number) { EditText input = new EditText(this); input.setHint(hint);input.setTextColor(StudioUi.TEXT);input.setHintTextColor(StudioUi.MUTED);input.setContentDescription(hint);input.setText(value); input.setSingleLine();input.setMinimumHeight(dp(48)); if (number) input.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL | InputType.TYPE_NUMBER_FLAG_SIGNED); return input; }
     private int dp(int pixels) { return StudioUi.dp(this,pixels); }
