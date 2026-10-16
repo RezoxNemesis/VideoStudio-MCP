@@ -127,10 +127,10 @@ public final class SketchAnimationCompiler {
             }
         }
         if(keyCount>SketchDocument.MAX_KEYS)
-            throw bad("ANIMATION_DOCUMENT_KEY_BUDGET: "+keyCount+" keys exceed "+
+            throw bad("Animation output key budget exceeded: "+keyCount+" keys exceed "+
                     SketchDocument.MAX_KEYS+"; increase program keyframeTolerancePixels (maximum 2.0) or shorten the shot");
         if(objectCount>SketchDocument.MAX_OBJECTS||pointCount>SketchDocument.MAX_POINTS)
-            throw bad("ANIMATION_DOCUMENT_GEOMETRY_BUDGET: "+objectCount+" objects, "+
+            throw bad("Animation output geometry budget exceeded: "+objectCount+" objects, "+
                     pointCount+" points; reduce deforming parts or shorten the shot");
         SketchDocument.validate(out);
         JSONObject contactEvidence=interactionEvidence(m);
