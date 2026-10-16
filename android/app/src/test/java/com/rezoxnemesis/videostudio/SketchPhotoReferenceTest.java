@@ -105,7 +105,7 @@ public final class SketchPhotoReferenceTest {
         Bitmap image=Bitmap.createBitmap(256,256,Bitmap.Config.ARGB_8888);image.eraseColor(Color.RED);Source source=source(image,false,1);image.recycle();String id=blank();
         try(ActivityController<SketchStudioActivity> controller=Robolectric.buildActivity(SketchStudioActivity.class,new Intent(context,SketchStudioActivity.class).putExtra("sketchId",id)).create().start().resume().visible()){
             SketchStudioActivity activity=controller.get();waitIo(activity);invoke(activity,"referenceDialog");choose(source.project.name+" / "+source.asset.name);waitIo(activity);waitIo(activity);invoke(activity,"referenceTools");AlertDialog dialog=ShadowAlertDialog.getLatestAlertDialog();assertNotNull("Hidden guides must remain reachable without tapping invisible pixels",edit(dialog.getWindow().getDecorView(),"Reference opacity 0..1"));
-            EditText opacity=edit(dialog.getWindow().getDecorView(),"Reference opacity 0..1");opacity.setText("1");dialog.getButton(AlertDialog.BUTTON_POSITIVE).performClick();((SketchEditorSession)field(activity,"session")).awaitIdle(10000);ShadowLooper.idleMainLooper();
+            EditText opacity=edit(dialog.getWindow().getDecorView(),"Reference opacity 0..1");opacity.setText("1");dialog.getButton(AlertDialog.BUTTON_POSITIVE).performClick();awaitGuideVisibilityCommit(activity,id);
             try(SketchProjectStore store=new SketchProjectStore(context);SketchFrameRenderer renderer=new SketchFrameRenderer(context,store.get(id))){Bitmap output=renderer.render(0);try{assertEquals(Color.RED,output.getPixel(128,128));}finally{output.recycle();}}
         }
     }
@@ -200,6 +200,32 @@ public final class SketchPhotoReferenceTest {
 
     private static Object field(Object instance,String name) throws Exception {Field field=instance.getClass().getDeclaredField(name);field.setAccessible(true);return field.get(instance);}
     private static void invoke(Object instance,String name) throws Exception {Method method=instance.getClass().getDeclaredMethod(name);method.setAccessible(true);method.invoke(instance);}
+    /** A reference opacity edit can cross UI -> IO -> main -> session writer lanes.
+     * A single awaitIdle before a posted callback has run is not a save barrier.
+     * Verify the actual persisted document, never accept a merely queued request. */
+    private void awaitGuideVisibilityCommit(SketchStudioActivity activity,String id)throws Exception {
+        double committed=0;
+        for(int attempt=0;attempt<10;attempt++){
+            ShadowLooper.idleMainLooper();
+            waitIo(activity);
+            SketchEditorSession session=(SketchEditorSession)field(activity,"session");
+            if(session!=null){
+                session.awaitIdle(10000);
+                if(session.error()!=null)throw new AssertionError("Reference edit save failed: "+session.error());
+            }
+            ShadowLooper.idleMainLooper();
+            try(SketchProjectStore store=new SketchProjectStore(context)){
+                JSONObject saved=store.get(id);
+                JSONArray objects=saved.getJSONArray("layers").getJSONObject(0).getJSONArray("objects");
+                assertEquals("Manual reference test expects one imported owned image",1,objects.length());
+                JSONObject importedImage=objects.getJSONObject(0);
+                assertEquals("image",importedImage.getString("kind"));
+                committed=importedImage.getJSONObject("transform").getDouble("opacity");
+                if(committed==1)return;
+            }
+        }
+        assertEquals("Explicit guide visibility must be durably committed after UI and IO settle",1d,committed,0d);
+    }
     private static void waitIo(SketchStudioActivity activity) throws Exception {((ExecutorService)field(activity,"io")).submit(()->{}).get(15,TimeUnit.SECONDS);ShadowLooper.idleMainLooper();}
     private static void choose(String text){AlertDialog dialog=ShadowAlertDialog.getLatestAlertDialog();ListView list=dialog.getListView();for(int n=0;n<list.getCount();n++)if(text.equals(String.valueOf(list.getAdapter().getItem(n)))){list.performItemClick(list.getAdapter().getView(n,null,list),n,n);return;}fail("Missing choice "+text);}
     private static EditText edit(View view,String hint){if(view instanceof EditText&&hint.contentEquals(((EditText)view).getHint()))return (EditText)view;if(view instanceof ViewGroup){ViewGroup group=(ViewGroup)view;for(int n=0;n<group.getChildCount();n++){EditText result=edit(group.getChildAt(n),hint);if(result!=null)return result;}}return null;}
