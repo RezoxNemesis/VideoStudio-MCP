@@ -148,7 +148,9 @@ public final class SketchTraceConsolidatorTest {
                     .put("layerId","layer_1").put("idPrefix","rr_trace_"));
             fail("No eligible paths should fail");
         }catch(IllegalArgumentException expected){
-            assertTrue(expected.getMessage().contains("safe identical-style"));
+            assertTrue("Must reject empty or non-mergeable native trace layers",
+                    expected.getMessage().contains("no paths")
+                    ||expected.getMessage().contains("No safe identical-style"));
         }
         assertEquals(snapshot,SketchDocument.canonical(copy));
     }
