@@ -61,6 +61,9 @@ public class NativeMediaRecoveryTest {
                     .putBoolean("chatgpt_control_paused",false).commit();
             set(jobs,"transferPool",transfers);
             set(jobs,"lightPool",light);
+            // This fixture invokes recovery explicitly without Service.onCreate().
+            // The new deferred bootstrap requires a live started service.
+            set(service,"serviceAlive",true);
             set(service,"store",store);
             set(service,"jobs",jobs);
             set(service,"protocol",protocol);
