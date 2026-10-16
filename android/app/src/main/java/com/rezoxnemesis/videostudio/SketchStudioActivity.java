@@ -706,8 +706,42 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
         public void idle(){if(!currentLive(generation,active))return;canvas.setPresentation(null,1);canvas.setEnabled(false);status.setText(liveMethodLabel()+" · following active native sketch · waiting for next saved stroke");}
         public void failed(String error){if(!currentLive(generation,active))return;loadingDrawing=true;stopLivePlayer();status.setText(error);onMessage(error);}
     });livePlayer.start();}catch(Exception error){notificationReplayPending=false;onMessage(error.getMessage());}});}catch(Exception error){postUi(()->{watchInFlight=false;notificationReplayPending=false;onMessage(error.getMessage());});}});}
+    /**
+     * Only the automatic Follow Current mode can be preempted by newer native work.
+     * An intentionally tapped session notification or explicit saved replay stays
+     * pinned. No old journal is deleted: File -> Replay last saved drawing remains.
+     */
+    private boolean followNewerNativeWork(){
+        if(!resumed||!watching||loadingDrawing||playing||session==null
+                ||livePlayer==null||watchInFlight||session.pending()>0)
+            return false;
+        android.content.SharedPreferences signal=getSharedPreferences(
+                "sketch_live_workspace",MODE_PRIVATE);
+        String target=signal.getString("sketchId","");
+        String latestSession=signal.getString("streamSessionId","");
+        String streamOwner=signal.getString("streamSketchId","");
+        if(!SketchLiveFollowPolicy.shouldPreempt(sketchId,liveSessionId,
+                target,latestSession,streamOwner,
+                notifiedSessionId!=null&&!replaySelectedFromFile,replaySelectedFromFile))
+            return false;
+        ++liveLoadGeneration;
+        stopLivePlayer();
+        if(!target.equals(sketchId)){
+            status.setText("Current native drawing changed · opening latest sketch");
+            bookId=null;book=null;loadSketch(target,0);
+        }else if(!latestSession.isEmpty()&&target.equals(streamOwner)){
+            status.setText("New native strokes received · catching up with latest session");
+            startLivePlayer(latestSession);
+        }
+        return true;
+    }
+
     private final Runnable watchTick=new Runnable(){public void run(){
         if(destroyed)return;
+        if(followNewerNativeWork()){
+            handler.postDelayed(this,250);
+            return;
+        }
         if(resumed&&watching&&!loadingDrawing&&!playing&&livePlayer==null&&session!=null&&session.pending()==0&&session.error()==null&&!canvas.isDrawing()&&!watchInFlight){
             if(notificationReplayPending){startLivePlayer(notifiedSessionId);handler.postDelayed(this,250);return;}
             // An explicit invitation stays on its drawing, even while other books have pending sessions.
