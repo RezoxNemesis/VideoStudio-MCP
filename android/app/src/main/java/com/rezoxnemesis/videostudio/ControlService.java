@@ -4861,6 +4861,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             out.put("deviceId", protocol.deviceId());
             out.put("appVersion", AppProtocol.APP_VERSION);
             if(startupGuard!=null)out.put("startupRecovery",startupGuard.status());
+            out.put("recentOwnProcessExit",NativeProcessExitDiagnostics.recent(this));
             out.put("protocolVersion", protocol.protocolVersion());
             out.put("mcpEndpointVersion", "v3-stable");
             out.put("stableMcpEndpoint", true);
