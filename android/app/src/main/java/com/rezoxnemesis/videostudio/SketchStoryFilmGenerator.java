@@ -26,7 +26,7 @@ public final class SketchStoryFilmGenerator {
     private static final String[] THEMES={"struggle","race","nature","connection","adventure"};
     private SketchStoryFilmGenerator(){}
 
-    private static final class Palette {
+    static final class Palette {
         final String sky, horizon, deep, far, city, ground, skin, skinShadow, coat, coatLight, ink, light, flare, rain;
         Palette(String... c) {
             sky=c[0];horizon=c[1];deep=c[2];far=c[3];city=c[4];ground=c[5];
@@ -50,13 +50,23 @@ public final class SketchStoryFilmGenerator {
     }
     static String classify(String story) {
         String s=story.toLowerCase(Locale.ROOT);
-        if(any(s,"race","car","bike","chase","speed","road"))return "race";
-        if(any(s,"jungle","forest","mountain","tree","river","nature","dragon"))return "nature";
-        if(any(s,"friend","love","family","heart","relation","mother","father"))return "connection";
+        if(any(s,"race","racing","racer","car","cars","drive","driver","bike","bicycle","chase","speed","road","motorcycle"))return "race";
+        if(any(s,"jungle","forest","mountain","tree","trees","river","nature","dragon","dragons","wyvern"))return "nature";
+        if(any(s,"friend","friends","love","family","heart","relation","relationship","mother","father"))return "connection";
         if(any(s,"fight","battle","war","sword","quest","kingdom","hero","adventure"))return "adventure";
         return "struggle";
     }
-    private static boolean any(String value,String... words){for(String word:words)if(value.contains(word))return true;return false;}
+    private static boolean any(String value,String... words){
+        String tokens=" "+value.toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9]+"," ").trim()+" ";
+        for(String word:words)if(tokens.contains(" "+word+" "))return true;
+        return false;
+    }
+    static String subject(String story){
+        String tokens=story.toLowerCase(Locale.ROOT);
+        if(any(tokens,"dragon","dragons","wyvern","wyverns"))return "dragon";
+        if(any(tokens,"car","cars","race","racing","racer","driver","vehicle","motorcar","automobile"))return "car";
+        return "person";
+    }
     private static String prompt(String value){
         if(value==null)throw SketchDocument.bad("Write a story or topic");
         String clean=value.replaceAll("[\\p{Cntrl}&&[^\\n]]"," ").trim().replaceAll("\\s+"," ");
@@ -68,7 +78,7 @@ public final class SketchStoryFilmGenerator {
         String narrative=prompt(story);
         if(seconds<4||seconds>12)throw SketchDocument.bad("Use a 4..12 second shot film");
         if(fps!=24&&fps!=30)throw SketchDocument.bad("Use 24 or 30 FPS");
-        String theme=classify(narrative);
+        String theme=classify(narrative),subject=subject(narrative);
         int total=seconds*fps;
         JSONObject document=SketchDocument.create(new JSONObject().put("sketchId",id)
                 .put("name",narrative.substring(0,Math.min(76,narrative.length())))
@@ -88,12 +98,14 @@ public final class SketchStoryFilmGenerator {
             JSONObject fx=layer("story_fx_"+act,"Shot "+(act+1)+" · effects and captions");
             layers.put(bg).put(city).put(hero).put(fx);
             scenery(bg,city,fx,start,span,act,seed,palette,theme);
-            character(hero,city,start,span,act,palette,theme);
+            if("car".equals(subject))SketchStorySubjects.vehicle(hero,city,start,span,act,palette);
+            else if("dragon".equals(subject))SketchStorySubjects.dragon(hero,city,start,span,act,palette);
+            else character(hero,city,start,span,act,palette,theme);
             lettering(fx,narrative,theme,start,span,act,palette);
             // Slight depth-specific, long-take camera travel, without moving the character as a flat card.
-            camera(bg,start,span,act==1?1.00:1.025,0);
-            camera(city,start,span,act==1?1.04:1.055,-.012);
-            camera(hero,start,span,act==1?1.02:1.04,.009);
+            camera(bg,start,span,act==1?1.018:1.025,0);
+            camera(city,start,span,act==1?1.07:1.055,-.012);
+            camera(hero,start,span,act==1?1.15:1.055,.009);
         }
         SketchDocument.validate(document);
         verifyCoverage(document);
@@ -118,13 +130,13 @@ public final class SketchStoryFilmGenerator {
     private static JSONObject bounds(double x,double y,double w,double h)throws Exception{
         return new JSONObject().put("x",x).put("y",y).put("width",w).put("height",h);
     }
-    private static JSONObject rect(String id,String c,int start,int span,double x,double y,double w,double h)throws Exception{
+    static JSONObject rect(String id,String c,int start,int span,double x,double y,double w,double h)throws Exception{
         return base(id,"rect",c,start,span,true).put("bounds",bounds(x,y,w,h));
     }
-    private static JSONObject oval(String id,String c,int start,int span,double x,double y,double w,double h)throws Exception{
+    static JSONObject oval(String id,String c,int start,int span,double x,double y,double w,double h)throws Exception{
         return base(id,"ellipse",c,start,span,true).put("bounds",bounds(x,y,w,h));
     }
-    private static JSONObject poly(String id,String c,int start,int span,double...xy)throws Exception{
+    static JSONObject poly(String id,String c,int start,int span,double...xy)throws Exception{
         if(xy.length<6||xy.length%2!=0)throw SketchDocument.bad("Polygon "+id+" needs at least three points");
         JSONArray points=new JSONArray();for(int n=0;n<xy.length;n+=2){
             if(!Double.isFinite(xy[n])||!Double.isFinite(xy[n+1])||xy[n]<0||xy[n]>1||xy[n+1]<0||xy[n+1]>1)
@@ -133,16 +145,16 @@ public final class SketchStoryFilmGenerator {
         }
         return base(id,"polygon",c,start,span,true).put("points",points);
     }
-    private static JSONObject line(String id,String c,int start,int span,double x0,double y0,double x1,double y1,double weight)throws Exception{
+    static JSONObject line(String id,String c,int start,int span,double x0,double y0,double x1,double y1,double weight)throws Exception{
         return base(id,"line",c,start,span,false).put("width",weight).put("points",new JSONArray()
                 .put(new JSONArray().put(x0).put(y0).put(1)).put(new JSONArray().put(x1).put(y1).put(1)));
     }
-    private static JSONObject gradient(JSONObject obj,String from,String to)throws Exception{
+    static JSONObject gradient(JSONObject obj,String from,String to)throws Exception{
         obj.put("gradient",new JSONObject().put("startColor",from).put("endColor",to)
                 .put("x0",.15).put("y0",.10).put("x1",.76).put("y1",.89));return obj;
     }
-    private static void add(JSONObject layer,JSONObject object)throws Exception{layer.getJSONArray("objects").put(object);}
-    private static void addAll(JSONObject layer,JSONObject...objects)throws Exception{for(JSONObject object:objects)add(layer,object);}
+    static void add(JSONObject layer,JSONObject object)throws Exception{layer.getJSONArray("objects").put(object);}
+    static void addAll(JSONObject layer,JSONObject...objects)throws Exception{for(JSONObject object:objects)add(layer,object);}
     private static int noise(int seed,int i){int v=seed^(i*0x9e3779b9);v^=v>>>16;v*=0x7feb352d;v^=v>>>15;v*=0x846ca68b;return (v^(v>>>16))&0x7fffffff;}
     private static void scenery(JSONObject sky,JSONObject city,JSONObject fx,int start,int span,int act,int seed,Palette p,String theme)throws Exception{
         add(sky,gradient(rect("sky_"+act,p.sky,start,span,0,0,1,1),p.sky,p.horizon));
@@ -150,9 +162,9 @@ public final class SketchStoryFilmGenerator {
         add(sky,oval("sun_"+act,p.light,start,span,act==2?.735:.795,act==2?.19:.235,.065,.105));
         for(int n=0;n<7;n++){
             int r=noise(seed+act*31,n);
-            double x=.03+(r%78)/100d,y=.12+((r/17)%35)/100d,w=.12+((r/33)%12)/100d;
+            double x=.03+(r%78)/100d,y=.055+((r/17)%15)/100d,w=.12+((r/33)%12)/100d;
             if(x+w>.98)w=.98-x;
-            add(sky,oval("cloud_"+act+"_"+n,n%2==0?p.deep:p.far,start,span,x,y,w,.038+((r/113)%5)/100d));
+            add(sky,oval("cloud_"+act+"_"+n,n%2==0?"#55465B79":"#665E7488",start,span,x,y,w,.027+((r/113)%5)/100d));
         }
         if("nature".equals(theme)){
             add(city,poly("hill_far_"+act,p.far,start,span,0,.7,.10,.55,.18,.61,.34,.38,.50,.63,.7,.44,.85,.59,1,.39,1,1,0,1));
@@ -195,7 +207,7 @@ public final class SketchStoryFilmGenerator {
         }
     }
     /** Three true inbetween poses per beat, eased without expanding the app's supported key schema. */
-    private static void motion(JSONObject object,int start,int span,double ax,double ay,double[] dx,double[] dy,double[] rotation)throws Exception{
+    static void motion(JSONObject object,int start,int span,double ax,double ay,double[] dx,double[] dy,double[] rotation)throws Exception{
         JSONObject base=object.getJSONObject("transform");base.put("anchorX",ax).put("anchorY",ay);
         JSONArray keys=new JSONArray();int last=-1;
         for(int i=0;i<4;i++){
@@ -223,10 +235,10 @@ public final class SketchStoryFilmGenerator {
         double[] travel=act==0?new double[]{-.07,-.045,-.012,.013,.037}:act==1?
                 new double[]{.026,.014,0,-.01,-.012}:new double[]{-.025,-.018,-.014,0,.025};
         double[] bob=act==0?new double[]{.005,-.007,.007,-.004,.003}:act==1?
-                new double[]{0,.013,.056,.08,.071}:new double[]{.07,.041,.024,.007,0};
+                new double[]{0,.019,.047,.096,.112}:new double[]{.106,.071,.035,.008,0};
         double[] still={0,0,0,0,0};
         double[] sway=act==0?new double[]{-1.5,3,-3,2,1}:act==1?
-                new double[]{-4,-12,-19,-17,-15}:new double[]{-11,-7,1,0,0};
+                new double[]{-4,-17,-29,-45,-39}:new double[]{-38,-24,-10,-3,0};
         add(ground,oval("shadow_"+act,p.deep,start,span,c-.075,.907,.19,.034));
         JSONObject leftLeg=gradient(poly("leg_left_"+act,p.coat,start,span,
                 c-.051,.745,c-.004,.745,c-.009,.925,c-.075,.929,c-.076,.904),p.coatLight,p.deep);
@@ -235,9 +247,9 @@ public final class SketchStoryFilmGenerator {
         JSONObject bootLeft=oval("boot_left_"+act,p.ink,start,span,c-.083,.902,.096,.045);
         JSONObject bootRight=oval("boot_right_"+act,p.ink,start,span,c+.009,.906,.094,.041);
         double[] front=act==0?new double[]{-18*walk,9*walk,-14*walk,14*walk,-8}:act==1?
-                new double[]{3,22,40,45,42}:new double[]{40,23,9,-7,3};
+                new double[]{3,28,46,62,57}:new double[]{55,31,13,-7,3};
         double[] back=act==0?new double[]{16*walk,-10*walk,13*walk,-11*walk,10}:act==1?
-                new double[]{-6,-28,-40,-45,-44}:new double[]{-40,-17,-10,10,-4};
+                new double[]{-6,-28,-48,-63,-58}:new double[]{-58,-26,-10,10,-4};
         motion(leftLeg,start,span,c-.04,hipY,travel,bob,front);
         motion(rightLeg,start,span,c+.025,hipY,travel,bob,back);
         motion(bootLeft,start,span,c-.04,hipY,travel,bob,front);
@@ -254,8 +266,8 @@ public final class SketchStoryFilmGenerator {
                 c-.063,.494,c-.084,.523,c-.129,.7,c-.083,.718,c-.029,.532),p.coatLight,p.coat);
         JSONObject rightArm=gradient(poly("arm_right_"+act,p.coat,start,span,
                 c+.057,.49,c+.092,.518,c+.129,.699,c+.085,.721,c+.031,.548),p.coatLight,p.deep);
-        double[] left=act==0?new double[]{12,-15,11,-19,9}:act==1?new double[]{4,-21,-52,-69,-60}:new double[]{-60,-35,-12,-5,3};
-        double[] right=act==0?new double[]{-16,16,-13,20,-10}:act==1?new double[]{-4,17,45,60,54}:new double[]{54,25,0,-13,-37};
+        double[] left=act==0?new double[]{12,-15,11,-19,9}:act==1?new double[]{4,-24,-63,-89,-76}:new double[]{-76,-45,-17,-5,3};
+        double[] right=act==0?new double[]{-16,16,-13,20,-10}:act==1?new double[]{-4,26,57,82,75}:new double[]{75,38,0,-13,-37};
         motion(leftArm,start,span,c-.068,shoulderY,travel,bob,left);
         motion(rightArm,start,span,c+.065,shoulderY,travel,bob,right);addAll(hero,leftArm,rightArm);
         JSONObject face=gradient(oval("face_"+act,p.skin,start,span,c-headW/2,headY,headW,headH),p.skin,p.skinShadow);
@@ -301,15 +313,15 @@ public final class SketchStoryFilmGenerator {
         else if("connection".equals(theme))line=act==0?"TWO DIFFERENT WORLDS":act==1?"THE DISTANCE":"A CHOICE TO CONNECT";
         else line=act==0?"THE CALL":act==1?"THE TRIAL":"THE NEXT CHAPTER";
         String small=act==0?story.substring(0,Math.min(64,story.length())):"CHAPTER "+(act+1)+" / 3";
-        add(layer,rect("caption_panel_"+act,"#B5131C2C",start,span,.055,.812,.69,.125));
+        add(layer,rect("caption_panel_"+act,"#D0162236",start,span,.052,.791,.79,.161));
         JSONObject caption=base("caption_"+act,"text",p.light,start,span,false)
-                .put("bounds",bounds(.084,.827,.63,.063)).put("text",line)
-                .put("fontFamily","sans-serif-condensed").put("fontStyle","bold").put("fontSize",.042);
+                .put("bounds",bounds(.093,.811,.70,.065)).put("text",line)
+                .put("fontFamily","sans-serif-condensed").put("fontStyle","bold").put("fontSize",.05);
         add(layer,caption);
         add(layer,base("caption_small_"+act,"text",p.rain,start,span,false)
-                .put("bounds",bounds(.086,.889,.61,.034)).put("text",small)
-                .put("fontFamily","sans-serif").put("fontStyle","normal").put("fontSize",.019));
-        add(layer,line("caption_bar_"+act,p.flare,start,span,.073,.84,.073,.93,.005));
+                .put("bounds",bounds(.093,.875,.66,.051)).put("text",small)
+                .put("fontFamily","sans-serif").put("fontStyle","normal").put("fontSize",.023));
+        add(layer,line("caption_bar_"+act,p.flare,start,span,.075,.804,.075,.938,.005));
     }
     private static void verifyCoverage(JSONObject doc)throws Exception{
         int frames=doc.getInt("frameCount");
