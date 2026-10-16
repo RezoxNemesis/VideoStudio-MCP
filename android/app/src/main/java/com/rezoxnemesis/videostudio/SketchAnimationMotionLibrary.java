@@ -41,7 +41,14 @@ final class SketchAnimationMotionLibrary {
                 throw SketchDocument.bad("Preset overlaps an authored pose at frame "+(current+1)+". Choose an empty interval");
         }
         JSONObject base=SketchAnimationUiModel.previousPose(rig,Math.max(0,start-1));
-        JSONObject neutral=base.getJSONObject("rotations");
+        // The shared UI sampler correctly reports an empty rotation map before the
+        // first authored pose. A preset must initialize every rest joint to zero.
+        JSONObject neutral=new JSONObject();
+        JSONObject authored=base.getJSONObject("rotations");
+        for(int i=0;i<rest.length();i++){
+            String id=rest.getJSONObject(i).getString("id");
+            neutral.put(id,authored.optDouble(id,0));
+        }
         double bx=base.optDouble("rootX"),by=base.optDouble("rootY");
         int keys="idle".equals(preset)?5:"strike".equals(preset)?7:9;
         for(int i=0;i<keys;i++){
