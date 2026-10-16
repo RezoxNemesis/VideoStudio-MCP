@@ -69,12 +69,26 @@ jobs:
             -alias androiddebugkey | grep -E "SHA256:|Valid from:"
 
       - name: Build debug APK
+        env:
+          VIDEOSTUDIO_STORY_FILM_PROOF: '1'
         working-directory: android
         run: |
           set -euo pipefail
           export VIDEOSTUDIO_SIGNING_KEYSTORE="$HOME/.android/debug.keystore"
           test -r "$VIDEOSTUDIO_SIGNING_KEYSTORE"
           gradle :app:testDebugUnitTest :app:assembleDebug --stacktrace
+
+      - name: Encode full native 10-second story-film proof
+        run: python3 scripts/encode-story-film-proof.py
+
+      - name: Publish full story-film visual proof
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: VideoStudio-4.5-10s-original-story-film
+          path: android/app/build/sketch-story-film-proof/
+          if-no-files-found: warn
+          retention-days: 7
 
       # Actual JNI/Canvas native artwork frames are rendered by Robolectric.
       # The QA sheet is intentionally synthetic test art, never the user's
