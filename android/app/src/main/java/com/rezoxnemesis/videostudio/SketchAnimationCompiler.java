@@ -124,13 +124,13 @@ public final class SketchAnimationCompiler {
                 .put("animatedJointCount",animatedJoints).put("articulatedMotionFrames",articulatedFrames)
                 .put("independentArticulation",articulatedFrames>0).put("motionMetric","exposed bindings with visible layers and nonzero transform opacity; no pixel-content or occlusion assessment").put("rootMotionFrames",rootFrames)
                 .put("contactCount",contacts).put("orientationContactCount",oriented).put("maxFootContactRotationErrorDegrees",maxContactRotationError).put("contactSampleCount",contactSamples).put("maxFootContactErrorPixels",maxContactError).put("contactCoordinateSpace","prepared_canvas_pixels_before_camera")
-                .put("dialogueCount",m.dialogues.length()).put("mouthCelCount",m.mouthCount).put("celRangeCount",m.celCount)
+                .put("dialogueCount",m.dialogues.length()).put("mouthCelCount",m.mouthCount).put("celRangeCount",m.celCount).put("hiddenArtworkCount",m.hiddenCount)
                 .put("cameraSampleCount",m.cameraLayers.isEmpty()?0:m.frames).put("outputObjectCount",objectCount).put("outputTransformKeys",keyCount)
                 .put("denseTransformSampleCount",denseKeys).put("keyframeTolerancePixels",KEYFRAME_TOLERANCE_PIXELS).put("maxBakedTransformApproximationPixels",maxApproximation)
                 .put("outputBytes",out.toString().getBytes(StandardCharsets.UTF_8).length).put("sourcePreserved",true)
                 .put("sourceSha256",hash(source)).put("programSha256",hash(program)).put("artisticQualityVerified",false)
                 .put("limitations",new JSONArray().put("Authored rig mapping is required; no anatomy or alternate-view inference")
-                        .put("Dialogue lettering and mouth-cel timing are authored cues; no synthesized voice or automatic lip synchronization")
+                        .put("Timed mouth cels may follow approximate text visemes; no recorded-audio alignment, synthesized speech, or verified lip synchronization")
                         .put("Motion metrics verify constraints, not cinematic or exact-reference quality"));
         return new JSONObject().put("document",out).put("report",report);
     }
@@ -198,14 +198,14 @@ public final class SketchAnimationCompiler {
         final Map<String,int[]> ranges=new HashMap<>();final Map<String,Binding> bindings=new HashMap<>();
         final Map<String,List<String>> celClones=new HashMap<>();final Map<String,List<int[]>> intervals=new HashMap<>();
         final List<Rig> rigs=new ArrayList<>();final Set<String> cameraLayers=new HashSet<>();final List<Camera> camera=new ArrayList<>();
-        final JSONArray dialogues;final Set<String> reservedIds=new HashSet<>();int mouthCount,celCount;
+        final JSONArray dialogues;final Set<String> reservedIds=new HashSet<>();int mouthCount,celCount,hiddenCount;
         Model(JSONObject source,JSONObject p)throws Exception {
             SketchDocument.validate(source);this.source=SketchDocument.copy(source);
-            SketchDocument.fields(p,"schema,name,frameCount,fps,rigs,camera,cameraLayerIds,dialogues,mouthCels,celRanges");
+            SketchDocument.fields(p,"schema,name,frameCount,fps,rigs,camera,cameraLayerIds,dialogues,mouthCels,celRanges,hiddenArtwork");
             if(p.has("name"))SketchDocument.text(p,"name",160);
             if(!SCHEMA.equals(p.getString("schema")))throw bad("Unknown animation program schema");
             if(p.toString().getBytes(StandardCharsets.UTF_8).length>MAX_PROGRAM_BYTES)throw bad("Animation program exceeds 512 KiB");
-            for(String key:new String[]{"rigs","camera","cameraLayerIds","dialogues","mouthCels","celRanges"})optionalArray(p,key);
+            for(String key:new String[]{"rigs","camera","cameraLayerIds","dialogues","mouthCels","celRanges","hiddenArtwork"})optionalArray(p,key);
             frames=(int)SketchDocument.integer(p,"frameCount",1,SketchDocument.MAX_FRAMES);
             fps=p.has("fps")?(int)SketchDocument.integer(p,"fps",24,60):source.getInt("fps");NativeFrameClock.requireFps(fps);
             sourceFrames=source.getInt("frameCount");single=sourceFrames==1;width=source.getInt("width");height=source.getInt("height");
@@ -215,6 +215,16 @@ public final class SketchAnimationCompiler {
                 for(int j=0;j<items.length();j++) {
                     JSONObject o=items.getJSONObject(j);String id=o.getString("id");objects.put(id,o);owners.put(id,layerId);reservedIds.add(id);
                     int start=single?0:o.getInt("frame"),end=single?frames-1:Math.min(frames-1,start+o.getInt("exposure")-1);if(start<frames)ranges.put(id,new int[]{start,end});
+                }
+            }
+            JSONArray hidden=p.optJSONArray("hiddenArtwork");
+            if(hidden!=null){
+                if(hidden.length()>128)throw bad("Use at most 128 selectively hidden artwork objects");
+                Set<String> seen=new HashSet<>();
+                for(int i=0;i<hidden.length();i++){
+                    String id=SketchDocument.id(new JSONObject().put("objectId",hidden.getString(i)),"objectId");
+                    if(!objects.containsKey(id)||!seen.add(id))throw bad("Hidden artwork must reference unique existing objects");
+                    ranges.remove(id);hiddenCount++;
                 }
             }
             Set<String> overridden=new HashSet<>();readRanges(p.optJSONArray("mouthCels"),overridden,true);readRanges(p.optJSONArray("celRanges"),overridden,false);
