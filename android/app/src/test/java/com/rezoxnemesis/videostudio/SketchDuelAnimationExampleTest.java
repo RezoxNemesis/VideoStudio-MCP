@@ -79,8 +79,8 @@ public final class SketchDuelAnimationExampleTest {
         }
         double distance=relative(frames.getJSONObject(16),"wide_rig","wrist","rook_wide_rig","wrist");
         assertTrue("The impact is physical wrist proximity, not only a particle effect",distance<80);
-        double rMotion=relative(frames.getJSONObject(11),"rook_wide_rig","front_fore","rook_wide_rig","wrist");
-        double rEnd=relative(frames.getJSONObject(25),"rook_wide_rig","front_fore","rook_wide_rig","wrist");
+        double rMotion=relative(frames.getJSONObject(11),"rook_wide_rig","chest","rook_wide_rig","wrist");
+        double rEnd=relative(frames.getJSONObject(25),"rook_wide_rig","chest","rook_wide_rig","wrist");
         assertTrue("Second actor has independently authored reaction/arm motion",Math.abs(rEnd-rMotion)>1);
         assertNotEquals("Rook acts independently from Vale after contact",
                 joint(frames.getJSONObject(25),"wide_rig","chest").getDouble("rotation"),
