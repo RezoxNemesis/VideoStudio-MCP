@@ -14,7 +14,7 @@ on:
   push:
     branches: [ main ]
   pull_request:
-    branches: [ main, ci/v453-two-human-cinematic-qa, ci/v454-owner-audio-waveform-qa, ci/v455-xsheet-linked-palette-qa, ci/v456-native-visual-review-qa ]
+    branches: [ main, ci/v453-two-human-cinematic-qa, ci/v454-owner-audio-waveform-qa, ci/v455-xsheet-linked-palette-qa, ci/v456-native-visual-review-qa, ci/v457-stability-startup-qa ]
 
 concurrency:
   group: videostudio-android-${{ github.ref }}
