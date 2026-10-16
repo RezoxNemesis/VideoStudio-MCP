@@ -113,6 +113,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     @Override
     public void onCreate() {
         super.onCreate();
+        NativeJavaCrashJournal.install(this);
         serviceAlive = true;
         prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
         String lastServiceVersion=prefs.getString("control_service_app_version","");
