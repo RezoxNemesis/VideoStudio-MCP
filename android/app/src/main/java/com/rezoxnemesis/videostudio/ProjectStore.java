@@ -271,6 +271,23 @@ public final class ProjectStore {
         return out;
     }
 
+    /** Cold-start dashboard only needs a bounded recent subset. Avoid parsing
+     * the entire project archive while displaying the splash/home screen. */
+    public synchronized List<Project> listRecent(int limit){
+        if(limit<1||limit>32)throw new IllegalArgumentException("Recent project limit must be 1..32");
+        ArrayList<Project> recent=new ArrayList<>();
+        ArrayList<String> ids=new ArrayList<>();
+        try(Cursor c=db.query("projects",new String[]{"id"},null,null,null,null,
+                "updated_at DESC",Integer.toString(limit))){
+            while(c.moveToNext())ids.add(c.getString(0));
+        }
+        for(String id:ids){
+            Project project=get(id);
+            if(project!=null)recent.add(project);
+        }
+        return recent;
+    }
+
     public synchronized Project get(String id) {
         if (id == null || id.isEmpty()) return null;
         try {String json=SQLiteLargeText.read(db,"SELECT json FROM projects WHERE id=?",id);if(json!=null)return Project.fromJson(new JSONObject(json));}
@@ -322,7 +339,7 @@ public final class ProjectStore {
         String id = getMeta(META_ACTIVE);
         Project p = id.isEmpty() ? null : get(id);
         if (p == null) {
-            List<Project> all = list();
+            List<Project> all = listRecent(1);
             if (!all.isEmpty()) p = all.get(0);
         }
         return p;
