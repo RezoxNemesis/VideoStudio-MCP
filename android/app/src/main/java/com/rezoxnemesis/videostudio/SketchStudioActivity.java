@@ -638,7 +638,7 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
     // Browsing a menu never takes ownership of an active drawing. Its chosen action
     // goes through the same loading, playback and live-takeover gate as the toolbar.
     private void runAction(String title,Runnable action){try{
-        boolean navigation=java.util.Arrays.asList("File","More","Brush / Text","Layers","Frames / Cels","Workspace","Canvas view","Drawing status","Drawing alerts","Colours","Select layer","Go to frame","Go","Exposure sheet","Onion skin","Onion settings","First","−100","+100","Last","On ones","On twos","On threes","Paint studio","Paint settings","Clone source").contains(title);
+        boolean navigation=java.util.Arrays.asList("File","More","Brush / Text","Layers","Frames / Cels","Workspace","Canvas view","Drawing status","Drawing alerts","Colours","Select layer","Go to frame","Go","Exposure sheet","Onion skin","Onion settings","First","−100","+100","Last","On ones","On twos","On threes","Paint studio","Paint settings","Clone source","Xsheet (read-only)","Linked palette styles").contains(title);
         if(navigation){action.run();return;}
         if(loadingDrawing&&!java.util.Arrays.asList("New","Open","Sketch books","Draw myself").contains(title)){onMessage("Opening the selected drawing");return;}
         if(playing&&!title.equals("Play")&&!title.equals("Draw myself")){onMessage("Pause playback before changing artwork");return;}
@@ -716,7 +716,7 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
                     try{startActivity(settings);}catch(android.content.ActivityNotFoundException unavailable){onMessage("Open Android app settings to allow drawing notifications");}
                 }).show();
     }
-    private void brushMenu(){menu("Brush / Text",new String[]{"Brush","Colours","Paint studio","Text","Finish path","Transform / key","Delete object","Reference image"},this::brushDialog,this::paletteDialog,this::paintMenu,this::textDialog,()->canvas.finishPolygon(),this::transformDialog,this::deleteObject,this::referenceDialog);}
+    private void brushMenu(){menu("Brush / Text",new String[]{"Brush","Colours","Linked palette styles","Paint studio","Text","Finish path","Transform / key","Delete object","Reference image"},this::brushDialog,this::paletteDialog,this::linkedPaletteDialog,this::paintMenu,this::textDialog,()->canvas.finishPolygon(),this::transformDialog,this::deleteObject,this::referenceDialog);}
     private void layersMenu(){menu("Layers",new String[]{"Select layer","+ Layer","Layer settings","Up","Down"},this::chooseLayer,this::addLayer,this::layerDialog,()->reorderLayer(1),()->reorderLayer(-1));}
     private void chooseLayer(){
         if(document==null)return;
@@ -737,7 +737,25 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
         }).show();
     }
     private boolean onionEnabled=true;private int onionRange=1,onionAlpha=48;
-    private void framesMenu(){menu("Frames / Cels",new String[]{"Go to frame","Timing / canvas","Exposure","Exposure sheet","Copy → next","Cel tools","Onion skin","Onion settings"},this::scrubDialog,this::timingDialog,this::exposureDialog,this::bookTimingDialog,this::duplicateCel,this::celDialog,()->{onionEnabled=!onionEnabled;canvas.setOnion(onionEnabled);saveOnionOptions();onMessage(onionEnabled?"Onion skin on":"Onion skin off");},this::onionDialog);}
+    private void framesMenu(){menu("Frames / Cels",new String[]{"Go to frame","Timing / canvas","Exposure","Exposure sheet","Xsheet (read-only)","Copy → next","Cel tools","Onion skin","Onion settings"},this::scrubDialog,this::timingDialog,this::exposureDialog,this::bookTimingDialog,this::xsheetDialog,this::duplicateCel,this::celDialog,()->{onionEnabled=!onionEnabled;canvas.setOnion(onionEnabled);saveOnionOptions();onMessage(onionEnabled?"Onion skin on":"Onion skin off");},this::onionDialog);}
+    private void xsheetDialog(){
+        if(document==null)return;
+        if(bookId!=null){onMessage("Xsheet currently shows the selected editable sketch page; open a standalone sketch to view its layer columns.");return;}
+        try{
+            final JSONObject opened=SketchDocument.copy(document);
+            final String owner=sketchId;final long revision=opened.getLong("revision");
+            SketchXsheetDialog.show(this,opened,canvas.getFrame(),0,(selected,level)->{
+                if(document==null||!owner.equals(sketchId)||document.optLong("revision")!=revision){
+                    onMessage("This Xsheet is an older revision. Reopen it before selecting frames.");return;
+                }
+                runAction("Select frame",()->{
+                    if(!owner.equals(sketchId)||document==null||document.optLong("revision")!=revision)return;
+                    if(layerIds.contains(level))canvas.setLayerId(level);
+                    selectFilmstrip(selected);
+                });
+            });
+        }catch(Exception failure){onMessage(failure.getMessage());}
+    }
     private boolean navigatorStillCurrent(String openedBook,String openedSketch){return document!=null&&java.util.Objects.equals(openedBook,bookId)&&(openedBook!=null||java.util.Objects.equals(openedSketch,sketchId));}
     private void scrubDialog(){
         if(document==null)return;final String openedBook=bookId,openedSketch=sketchId;final int count=bookId==null?document.optInt("frameCount"):book.optInt("pageCount"),current=bookId==null?canvas.getFrame():bookPage;
@@ -840,6 +858,143 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
             brushColor=nextColour;paintSize=nextSize;brushOpacity=nextOpacity;paintFlow=nextFlow;brushHardness=nextHardness;paintSpacing=nextSpacing;brushAngle=nextAngle;paintSeed=(int)nextSeed;paintPressure=pressure.isChecked();paintAlphaLock=alpha.isChecked();paintClipEnabled=clip.isChecked();paintClip=nextClip;paintTip=tip.getSelectedItem().toString();paintTexture=texture.getSelectedItem().toString();paintCloneSource=nextSource;updateBrush();dialog.dismiss();
         }catch(Exception error){onMessage(error.getMessage());}}));
     }
+    /** Linked styles affect editable flat-color vectors only. Raster/gradient images
+     * and old unlinked pigments are deliberately not changed by a style edit. */
+    private void linkedPaletteDialog(){
+        if(document==null)return;
+        menu("Linked palette · shared character colors",
+                new String[]{"Create or update a named style","Apply style to selected drawing",
+                        "Link all unlinked objects matching a color","Unlink selected drawing","Delete unused style"},
+                this::editLinkedPaletteStyle,()->assignLinkedPalette(false),
+                ()->assignLinkedPalette(true),this::unlinkLinkedPalette,this::deleteLinkedPaletteStyle);
+    }
+    private void editLinkedPaletteStyle(){
+        if(document==null)return;
+        try{
+            final String openedSketch=sketchId;
+            LinearLayout form=column();
+            JSONArray list=document.optJSONArray("paletteStyles");
+            ArrayList<String> entries=new ArrayList<>();
+            entries.add("Create a new style");
+            if(list!=null)for(int i=0;i<list.length();i++){
+                JSONObject entry=list.getJSONObject(i);
+                entries.add(entry.getString("id")+" · "+entry.getString("name"));
+            }
+            Spinner choices=new Spinner(this);
+            choices.setContentDescription("Existing linked style or new");
+            choices.setAdapter(new ArrayAdapter<>(this,android.R.layout.simple_spinner_dropdown_item,entries));
+            form.addView(choices);
+            EditText id=input("Style ID (e.g. jacket_ink)","jacket_ink",false),
+                    name=input("Style display name","Jacket",false),
+                    color=input("Style ARGB #AARRGGBB",brushColor,false);
+            for(EditText field:new EditText[]{id,name,color})form.addView(field);
+            JSONArray saved=list;
+            choices.setOnItemSelectedListener(new SimpleSelection(){@Override public void selected(int position){
+                if(position==0||saved==null)return;
+                JSONObject item=saved.optJSONObject(position-1);
+                if(item!=null){
+                    id.setText(item.optString("id"));name.setText(item.optString("name"));
+                    color.setText(item.optString("color"));id.setEnabled(false);
+                }
+            }});
+            choices.setOnTouchListener((v,e)->{if(choices.getSelectedItemPosition()==0)id.setEnabled(true);return false;});
+            form.addView(new android.widget.TextView(this){{
+                setText("Changing a style recolors every linked vector cel across layers; original bitmap and paint pixels stay unchanged. Other objects retain their exact RGBA fallback.");
+                setTextColor(StudioUi.MUTED);setTextSize(12);
+            }});
+            ScrollView scroll=new ScrollView(this);scroll.addView(form);
+            new AlertDialog.Builder(this).setTitle("Named palette styles")
+                    .setView(scroll).setNegativeButton("Cancel",null)
+                    .setPositiveButton("Save style",(d,w)->{
+                        try{
+                            if(!openedSketch.equals(sketchId)){onMessage("Sketch changed; reopen linked palette");return;}
+                            onOperation(new JSONObject().put("type","palette_upsert")
+                                    .put("styleId",id.getText().toString().trim())
+                                    .put("name",name.getText().toString().trim())
+                                    .put("color",color.getText().toString().trim()));
+                        }catch(Exception error){onMessage(error.getMessage());}
+                    }).show();
+        }catch(Exception error){onMessage(error.getMessage());}
+    }
+    private void assignLinkedPalette(boolean matching){
+        if(document==null)return;
+        try{
+            JSONArray linked=document.optJSONArray("paletteStyles");
+            if(linked==null||linked.length()==0){
+                onMessage("Create at least one named palette style first");return;
+            }
+            final String openedSketch=sketchId;
+            ArrayList<String> ids=new ArrayList<>(),labels=new ArrayList<>();
+            for(int i=0;i<linked.length();i++){
+                JSONObject entry=linked.getJSONObject(i);
+                ids.add(entry.getString("id"));
+                labels.add(entry.getString("name")+" · "+entry.getString("color"));
+            }
+            String selected=canvas.getSelectedId();
+            if(!matching&&(selected==null||selected.isEmpty())){
+                onMessage("Select an editable vector shape or text before linking a palette style");return;
+            }
+            final String target=selected;
+            if(!matching){
+                new AlertDialog.Builder(this).setTitle("Link selected vector color")
+                        .setItems(labels.toArray(new String[0]),(d,index)->{
+                            try{
+                                if(!openedSketch.equals(sketchId))throw SketchDocument.bad("Sketch changed while selecting palette");
+                                onOperation(new JSONObject().put("type","palette_assign")
+                                        .put("objectId",target).put("styleId",ids.get(index)));
+                            }catch(Exception error){onMessage(error.getMessage());}
+                        }).setNegativeButton("Cancel",null).show();
+                return;
+            }
+            LinearLayout form=column();
+            Spinner style=new Spinner(this);
+            style.setAdapter(new ArrayAdapter<>(this,android.R.layout.simple_spinner_dropdown_item,labels));
+            style.setContentDescription("Linked palette style");form.addView(style);
+            String original=selected==null?brushColor:SketchDocument.object(document,selected).getString("color");
+            EditText pigment=input("Original matching ARGB color",original,false);form.addView(pigment);
+            TextView instruction=new TextView(this);
+            instruction.setText("Link ALL unlinked flat-color vector and text objects with this exact pigment. Locked matching layers reject the operation; bitmap, gradient and paint cels never change.");
+            instruction.setTextColor(StudioUi.MUTED);form.addView(instruction);
+            new AlertDialog.Builder(this).setTitle("Link matching vector pigment")
+                    .setView(form).setNegativeButton("Cancel",null)
+                    .setPositiveButton("Link matching",(d,w)->{
+                        try{
+                            if(!openedSketch.equals(sketchId))throw SketchDocument.bad("Sketch changed while selecting palette");
+                            onOperation(new JSONObject().put("type","palette_link_matching")
+                                    .put("styleId",ids.get(style.getSelectedItemPosition()))
+                                    .put("originalColor",pigment.getText().toString().trim()));
+                        }catch(Exception error){onMessage(error.getMessage());}
+                    }).show();
+        }catch(Exception error){onMessage(error.getMessage());}
+    }
+    private void unlinkLinkedPalette(){
+        if(document==null)return;
+        try{
+            String selected=canvas.getSelectedId();
+            if(selected==null||selected.isEmpty())throw SketchDocument.bad("Select a linked vector drawing first");
+            onOperation(new JSONObject().put("type","palette_unlink").put("objectId",selected));
+        }catch(Exception error){onMessage(error.getMessage());}
+    }
+    private void deleteLinkedPaletteStyle(){
+        if(document==null)return;
+        try{
+            JSONArray list=document.optJSONArray("paletteStyles");
+            if(list==null||list.length()==0){onMessage("No named styles have been saved");return;}
+            String[] labels=new String[list.length()],ids=new String[list.length()];
+            for(int i=0;i<list.length();i++){
+                JSONObject item=list.getJSONObject(i);
+                ids[i]=item.getString("id");labels[i]=item.getString("name")+" ("+ids[i]+")";
+            }
+            String openedSketch=sketchId;
+            new AlertDialog.Builder(this).setTitle("Delete only an UNUSED style")
+                    .setItems(labels,(d,index)->{
+                        try{
+                            if(!openedSketch.equals(sketchId))throw SketchDocument.bad("Sketch changed while deleting a style");
+                            onOperation(new JSONObject().put("type","palette_delete").put("styleId",ids[index]));
+                        }catch(Exception error){onMessage(error.getMessage());}
+                    }).setNegativeButton("Cancel",null).show();
+        }catch(Exception error){onMessage(error.getMessage());}
+    }
     private void savePaletteColour(String colour)throws Exception{
         SketchDocument.color(colour);JSONArray saved=new JSONArray(getPreferences(MODE_PRIVATE).getString("savedPalette","[]"));for(int i=0;i<saved.length();i++)if(colour.equals(saved.getString(i)))return;if(saved.length()>=64)saved.remove(0);saved.put(colour);getPreferences(MODE_PRIVATE).edit().putString("savedPalette",saved.toString()).apply();
     }
@@ -900,6 +1055,7 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
             try{savePaletteColour(brushColor);picker.setSelection(SketchPaletteLibrary.groupCount());refresh.run();}
             catch(Exception error){onMessage(error.getMessage());}
         });
+        button(form,"Linked character palettes (update all assigned cels)",()->{dialog.dismiss();linkedPaletteDialog();});
         button(form,"Advanced HSV / opacity / brush settings",()->{dialog.dismiss();brushDialog();});
         dialog.show();refresh.run();
     }

@@ -39,7 +39,7 @@ public final class SketchDocument {
     public static JSONObject copy(JSONObject o) throws Exception { return new JSONObject(o.toString()); }
 
     public static void validate(JSONObject doc) throws Exception {
-        fields(doc, "schema,id,name,revision,width,height,fps,frameCount,background,layers");
+        fields(doc, "schema,id,name,revision,width,height,fps,frameCount,background,layers,paletteStyles");
         if (!SCHEMA.equals(doc.getString("schema"))) throw bad("Unknown sketch schema");
         id(doc, "id");
         text(doc, "name", 160);
@@ -50,6 +50,7 @@ public final class SketchDocument {
         NativeFrameClock.requireFps((int) integer(doc, "fps", 24, 60));
         int frames = (int) integer(doc, "frameCount", 1, MAX_FRAMES);
         color(doc.getString("background"));
+        java.util.Map<String,Integer> linkedStyles=SketchPaletteStyles.indexed(doc);
         JSONArray layers = doc.getJSONArray("layers");
         if (layers.length() < 1 || layers.length() > MAX_LAYERS) throw bad("Use 1..32 sketch layers");
         Set<String> ids = new HashSet<>();
@@ -65,14 +66,14 @@ public final class SketchDocument {
             JSONArray items = layer.getJSONArray("objects");
             for (int j = 0; j < items.length(); j++) {
                 JSONObject item = items.getJSONObject(j);
-                fields(item, "id,kind,frame,exposure,color,width,fill,points,bounds,reference,paint,transform,keys,brush,commands,gradient,referenceCrop,text,fontFamily,fontSize,fontStyle,textAlign,letterSpacing");
+                fields(item, "id,kind,frame,exposure,color,styleId,width,fill,points,bounds,reference,paint,transform,keys,brush,commands,gradient,referenceCrop,text,fontFamily,fontSize,fontStyle,textAlign,letterSpacing");
                 unique(ids, id(item, "id"));
                 String kind = item.getString("kind");
                 if (!java.util.Arrays.asList("stroke","eraser","line","rect","ellipse","polygon","image","paint","path","text").contains(kind))
                     throw bad("Unsupported sketch object kind");
                 int start = (int) integer(item, "frame", 0, frames - 1);
                 integer(item, "exposure", 1, frames - start);
-                color(item.getString("color")); number(item, "width", .0005, .2); bool(item, "fill");
+                color(item.getString("color")); SketchPaletteStyles.validateLink(item,linkedStyles); number(item, "width", .0005, .2); bool(item, "fill");
                 validateTransform(item.getJSONObject("transform"));
                 keys += validateKeys(item.getJSONArray("keys"), frames);
                 if(item.has("paint")&&!"paint".equals(kind))throw bad("Paint snapshots require a paint cel");
