@@ -156,7 +156,10 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         activeProject = store.active();
         editorStartupGuard.stage("creating_native_protocol");
         protocol = new AppProtocol(this, this);
-        syncProtocolState();
+        // Update the local protocol snapshot without starting the foreground
+        // service during our first activity frame. The explicit delayed launch
+        // below starts it only after Home is constructed and touch responsive.
+        protocol.setLocalState(permissionMode(),store.summaries());
 
         editorStartupGuard.stage("building_home");
         setContentView(buildShell());
