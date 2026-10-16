@@ -303,28 +303,32 @@ public final class NativePortraitMotionAnalyzer {
                 clamp01(l), clamp01(t), clamp01(r), clamp01(b));
     }
 
+    /** Memory-bounded foreground extraction: process 64-row tiles instead of
+     * a full second ARGB int[] while person segmentation and face mesh live in RAM. */
     private Bitmap buildForeground(Bitmap source, MaskStats stats) {
-        int w = source.getWidth(), h = source.getHeight();
-        int[] pixels = new int[w * h];
-        source.getPixels(pixels, 0, w, 0, 0, w, h);
-
-        for (int y = 0; y < h; y++) {
-            int my = Math.min(stats.maskHeight - 1,
-                    Math.max(0, Math.round(y * (stats.maskHeight - 1f) / Math.max(1, h - 1))));
-            for (int x = 0; x < w; x++) {
-                int mx = Math.min(stats.maskWidth - 1,
-                        Math.max(0, Math.round(x * (stats.maskWidth - 1f) / Math.max(1, w - 1))));
-                float confidence = stats.values[my * stats.maskWidth + mx];
-                float alpha = smoothstep(0.18f, 0.82f, confidence);
-                int color = pixels[y * w + x];
-                int originalAlpha = (color >>> 24) & 0xff;
-                int a = Math.round(originalAlpha * alpha);
-                pixels[y * w + x] = (color & 0x00ffffff) | (a << 24);
+        int w=source.getWidth(),h=source.getHeight();
+        Bitmap out=Bitmap.createBitmap(w,h,Bitmap.Config.ARGB_8888);
+        int rows=Math.max(1,Math.min(64,65536/Math.max(1,w)));
+        int[] pixels=new int[w*rows];
+        for(int top=0;top<h;top+=rows){
+            if(Thread.currentThread().isInterrupted())throw new IllegalStateException("Portrait separation cancelled");
+            int count=Math.min(rows,h-top);
+            source.getPixels(pixels,0,w,0,top,w,count);
+            for(int localY=0;localY<count;localY++){
+                int y=top+localY;
+                int my=Math.min(stats.maskHeight-1,Math.max(0,
+                        Math.round(y*(stats.maskHeight-1f)/Math.max(1,h-1))));
+                for(int x=0;x<w;x++){
+                    int mx=Math.min(stats.maskWidth-1,Math.max(0,
+                            Math.round(x*(stats.maskWidth-1f)/Math.max(1,w-1))));
+                    float confidence=stats.values[my*stats.maskWidth+mx];
+                    float alpha=smoothstep(.18f,.82f,confidence);
+                    int index=localY*w+x,color=pixels[index],a=Color.alpha(color);
+                    pixels[index]=(color&0x00ffffff)|(Math.round(a*alpha)<<24);
+                }
             }
+            out.setPixels(pixels,0,w,0,top,w,count);
         }
-
-        Bitmap out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
-        out.setPixels(pixels, 0, w, 0, 0, w, h);
         return out;
     }
 
@@ -344,71 +348,56 @@ public final class NativePortraitMotionAnalyzer {
         }
     }
 
-    private SubjectParts buildSubjectParts(Bitmap foreground, MaskStats stats, Rect face) {
-        int w = foreground.getWidth();
-        int h = foreground.getHeight();
-        int[] source = new int[w * h];
-        foreground.getPixels(source, 0, w, 0, 0, w, h);
-
-        float subjectTop = (float) (stats.top * h);
-        float subjectBottom = (float) (stats.bottom * h);
-        float subjectHeight = Math.max(32f, subjectBottom - subjectTop);
-
-        float headSplit = subjectTop + subjectHeight * .31f;
-        if (face != null) {
-            headSplit = Math.max(headSplit, face.bottom + subjectHeight * .055f);
-            headSplit = Math.min(subjectTop + subjectHeight * .43f, headSplit);
+    /** Process one bounded tile at a time. Previous code held FOUR full-frame
+     * int[] arrays *plus* three ARGB output Bitmaps simultaneously. */
+    private SubjectParts buildSubjectParts(Bitmap foreground,MaskStats stats,Rect face){
+        int w=foreground.getWidth(),h=foreground.getHeight();
+        float subjectTop=(float)(stats.top*h);
+        float subjectBottom=(float)(stats.bottom*h);
+        float subjectHeight=Math.max(32f,subjectBottom-subjectTop);
+        float headSplit=subjectTop+subjectHeight*.31f;
+        if(face!=null){
+            headSplit=Math.max(headSplit,face.bottom+subjectHeight*.055f);
+            headSplit=Math.min(subjectTop+subjectHeight*.43f,headSplit);
         }
-        float torsoSplit = subjectTop + subjectHeight * .68f;
-        torsoSplit = Math.max(headSplit + subjectHeight * .18f, torsoSplit);
-        torsoSplit = Math.min(subjectBottom - subjectHeight * .10f, torsoSplit);
-
-        float headOverlap = Math.max(10f, subjectHeight * .055f);
-        float lowerOverlap = Math.max(12f, subjectHeight * .070f);
-
-        int[] head = new int[source.length];
-        int[] torso = new int[source.length];
-        int[] lower = new int[source.length];
-
-        for (int y = 0; y < h; y++) {
-            float headFade = 1f - smoothstep(headSplit - headOverlap, headSplit + headOverlap, y);
-            float torsoIn = smoothstep(headSplit - headOverlap, headSplit + headOverlap, y);
-            float torsoOut = 1f - smoothstep(torsoSplit - lowerOverlap, torsoSplit + lowerOverlap, y);
-            float torsoWeight = torsoIn * torsoOut;
-            float lowerWeight = smoothstep(torsoSplit - lowerOverlap, torsoSplit + lowerOverlap, y);
-
-            // Keep the three weights normalized around the overlap bands.
-            float sum = headFade + torsoWeight + lowerWeight;
-            if (sum < .0001f) sum = 1f;
-            headFade /= sum;
-            torsoWeight /= sum;
-            lowerWeight /= sum;
-
-            for (int x = 0; x < w; x++) {
-                int i = y * w + x;
-                int color = source[i];
-                int a = Color.alpha(color);
-                int rgb = color & 0x00ffffff;
-                head[i] = rgb | (Math.round(a * headFade) << 24);
-                torso[i] = rgb | (Math.round(a * torsoWeight) << 24);
-                lower[i] = rgb | (Math.round(a * lowerWeight) << 24);
+        float torsoSplit=subjectTop+subjectHeight*.68f;
+        torsoSplit=Math.max(headSplit+subjectHeight*.18f,torsoSplit);
+        torsoSplit=Math.min(subjectBottom-subjectHeight*.10f,torsoSplit);
+        float headOverlap=Math.max(10f,subjectHeight*.055f);
+        float lowerOverlap=Math.max(12f,subjectHeight*.070f);
+        Bitmap headBitmap=Bitmap.createBitmap(w,h,Bitmap.Config.ARGB_8888);
+        Bitmap torsoBitmap=Bitmap.createBitmap(w,h,Bitmap.Config.ARGB_8888);
+        Bitmap lowerBitmap=Bitmap.createBitmap(w,h,Bitmap.Config.ARGB_8888);
+        int rows=Math.max(1,Math.min(64,65536/Math.max(1,w)));
+        int[] source=new int[w*rows],head=new int[w*rows],
+                torso=new int[w*rows],lower=new int[w*rows];
+        for(int top=0;top<h;top+=rows){
+            if(Thread.currentThread().isInterrupted())throw new IllegalStateException("Portrait cutouts cancelled");
+            int count=Math.min(rows,h-top);
+            foreground.getPixels(source,0,w,0,top,w,count);
+            for(int localY=0;localY<count;localY++){
+                int y=top+localY;
+                float headFade=1f-smoothstep(headSplit-headOverlap,headSplit+headOverlap,y);
+                float torsoIn=smoothstep(headSplit-headOverlap,headSplit+headOverlap,y);
+                float torsoOut=1f-smoothstep(torsoSplit-lowerOverlap,torsoSplit+lowerOverlap,y);
+                float torsoWeight=torsoIn*torsoOut;
+                float lowerWeight=smoothstep(torsoSplit-lowerOverlap,torsoSplit+lowerOverlap,y);
+                float sum=headFade+torsoWeight+lowerWeight;
+                if(sum<.0001f)sum=1f;
+                headFade/=sum;torsoWeight/=sum;lowerWeight/=sum;
+                for(int x=0;x<w;x++){
+                    int i=localY*w+x,color=source[i],a=Color.alpha(color),rgb=color&0x00ffffff;
+                    head[i]=rgb|(Math.round(a*headFade)<<24);
+                    torso[i]=rgb|(Math.round(a*torsoWeight)<<24);
+                    lower[i]=rgb|(Math.round(a*lowerWeight)<<24);
+                }
             }
+            headBitmap.setPixels(head,0,w,0,top,w,count);
+            torsoBitmap.setPixels(torso,0,w,0,top,w,count);
+            lowerBitmap.setPixels(lower,0,w,0,top,w,count);
         }
-
-        Bitmap headBitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
-        Bitmap torsoBitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
-        Bitmap lowerBitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
-        headBitmap.setPixels(head, 0, w, 0, 0, w, h);
-        torsoBitmap.setPixels(torso, 0, w, 0, 0, w, h);
-        lowerBitmap.setPixels(lower, 0, w, 0, 0, w, h);
-
-        return new SubjectParts(
-                headBitmap,
-                torsoBitmap,
-                lowerBitmap,
-                clamp01(headSplit / Math.max(1f, h)),
-                clamp01(torsoSplit / Math.max(1f, h))
-        );
+        return new SubjectParts(headBitmap,torsoBitmap,lowerBitmap,
+                clamp01(headSplit/Math.max(1f,h)),clamp01(torsoSplit/Math.max(1f,h)));
     }
 
     private Bitmap buildReconstructedBackground(Bitmap source, MaskStats stats) {
