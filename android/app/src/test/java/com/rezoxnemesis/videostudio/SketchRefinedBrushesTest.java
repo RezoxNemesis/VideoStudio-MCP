@@ -17,7 +17,7 @@ import static org.junit.Assert.*;
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk=33,manifest=Config.NONE)
 public final class SketchRefinedBrushesTest {
-    private static JSONArray points(){
+    private static JSONArray points() throws Exception {
         return new JSONArray()
                 .put(new JSONArray().put(.12).put(.42).put(.6))
                 .put(new JSONArray().put(.32).put(.29).put(.9))
