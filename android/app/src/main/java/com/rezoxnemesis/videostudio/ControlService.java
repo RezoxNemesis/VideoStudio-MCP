@@ -3131,7 +3131,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             jobs.awaitSafeCheckpoint(state,"sketch_prepare");
             SketchNativeExport.Progress captureProgress=(frame,count)->{
                 if(frame%4==0||frame==count-1){
-                    checkpoint(state,"Sketch frame capture",(frame+1)+"/"+count+" authored frames",2+(int)(65d*frame/Math.max(1,count)),outputId);
+                    checkpoint(state,"Sketch frame capture",(frame+1)+"/"+count+" authored frames",2+(int)(65d*(frame+1)/Math.max(1,count)),outputId);
                     jobs.awaitSafeCheckpoint(state,"sketch_frame_"+frame);
                 }
             };
@@ -3139,7 +3139,24 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             if(!outputId.equals(prepared.project.id))throw new IllegalStateException("Sketch output identity changed");
             JSONObject metadata;
             if(prepared.completed)metadata=new JSONObject(prepared.metadata.toString());
-            else{
+            else if(SketchFrameStreamEncoder.recommended(
+                    prepared.metadata.getInt("width"),prepared.metadata.getInt("height"),
+                    prepared.metadata.getInt("frameCount"))){
+                // Sketch Studio documents up to 2048x2048 cannot be fed directly into
+                // Media3's bounded source: WxH composition. More importantly, hundreds
+                // of PNGs are frames of ONE film, not independent 42-ms photo clips.
+                // Stream one verified private PNG at a time into native MediaCodec.
+                jobs.awaitSafeCheckpoint(state,"sketch_stream_prepare");
+                checkpoint(state,"Sketch encoding","Starting native streaming H.264 encoder",68,outputId);
+                JSONObject encoded=SketchFrameStreamEncoder.encode(prepared,(frame,total,detail)->{
+                    if(frame%4==0||frame==total){
+                        checkpoint(state,"Sketch encoding",detail,
+                                68+Math.min(25,(int)(25L*frame/Math.max(1,total))),outputId);
+                        jobs.awaitSafeCheckpoint(state,"sketch_encode_frame_"+frame);
+                    }
+                });
+                metadata=SketchNativeExport.complete(this,prepared,encoded);
+            } else{
                 jobs.awaitSafeCheckpoint(state,"sketch_encode");
                 final CountDownLatch done=new CountDownLatch(1);
                 final AtomicReference<JSONObject> encoder=new AtomicReference<>();
