@@ -159,6 +159,31 @@ public final class CommandJournal {
         return out;
     }
 
+    /**
+     * Startup safety needs *all* running commands, including an image render
+     * that crashed before JobManager could allocate or attach a job ID.
+     * This is intentionally separate from inflightEntries(), which is only
+     * for reconnecting watchers that already have a real native job.
+     *
+     * No image bytes, credentials, file URLs or command payloads are exposed.
+     */
+    public synchronized JSONArray pendingForStartupSafety(int limit){
+        JSONArray entries=read(),out=new JSONArray();
+        int max=Math.max(1,Math.min(MAX,limit));
+        for(int i=0;i<entries.length()&&out.length()<max;i++){
+            JSONObject item=entries.optJSONObject(i);
+            if(item==null||!"running".equals(item.optString("status","")))continue;
+            JSONObject summary=new JSONObject();
+            try{
+                summary.put("action",item.optString("action",""))
+                        .put("id",item.optString("id",""))
+                        .put("hasNativeJob",!item.optString("jobId","").isEmpty());
+            }catch(Exception ignored){}
+            out.put(summary);
+        }
+        return out;
+    }
+
     public synchronized void finish(JSONObject command, JSONObject result, String status) {
         if (command == null || "get_state".equals(command.optString("action")) || "ping".equals(command.optString("action"))) return;
         String id = command.optString("id");

@@ -84,10 +84,21 @@ public class CreativeRuntimeTest {
         Bitmap source=Bitmap.createBitmap(3000,2000,Bitmap.Config.ARGB_8888);
         try(java.io.FileOutputStream out=new java.io.FileOutputStream(file)){ source.compress(Bitmap.CompressFormat.PNG,100,out); }
         source.recycle();
-        java.lang.reflect.Method decode=NativePortraitMotionAnalyzer.class.getDeclaredMethod("decode",String.class);
+        // Native 4.5.7 explicitly requires a bounded analysis edge chosen from
+        // device memory. Exercise that decoder contract, not the removed
+        // pre-guard decode(String) signature.
+        int limitedEdge=960;
+        java.lang.reflect.Method decode=NativePortraitMotionAnalyzer.class
+                .getDeclaredMethod("decode",String.class,int.class);
         decode.setAccessible(true);
-        Bitmap sampled=(Bitmap)decode.invoke(new NativePortraitMotionAnalyzer(context),android.net.Uri.fromFile(file).toString());
-        try { assertTrue(Math.max(sampled.getWidth(),sampled.getHeight())<=1440);assertEquals(1.5,sampled.getWidth()/(double)sampled.getHeight(),.01); }
+        Bitmap sampled=(Bitmap)decode.invoke(new NativePortraitMotionAnalyzer(context),
+                android.net.Uri.fromFile(file).toString(),limitedEdge);
+        try {
+            assertNotNull("Portrait decoder returned no source frame",sampled);
+            assertTrue("Subsampling must occur before allocating a giant portrait",
+                    Math.max(sampled.getWidth(),sampled.getHeight())<=limitedEdge);
+            assertEquals(1.5,sampled.getWidth()/(double)sampled.getHeight(),.01);
+        }
         finally {sampled.recycle();file.delete();}
     }
 
