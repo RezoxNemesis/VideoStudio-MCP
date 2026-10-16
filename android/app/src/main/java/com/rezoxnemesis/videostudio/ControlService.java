@@ -616,6 +616,17 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             return;
         }
 
+        if(startupGuard!=null&&startupGuard.held()&&NativeStartupGuard.heavy(action)){
+            JSONObject refused=new JSONObject();
+            try{
+                refused.put("ok",false).put("code","NATIVE_RECOVERY_HELD");
+                refused.put("error","Previous render interrupted startup; project preserved. Retry only after the app opens safely.");
+                refused.put("projectId",projectId);
+            }catch(Exception ignored){}
+            commandJournal.finish(command,refused,"failed");
+            acknowledge(command,refused,"failed");
+            return;
+        }
         JSONObject inflight = commandJournal.inflight(commandId);
         if (inflight != null) {
             watchDeferredCommand(command, inflight.optJSONObject("queuedResult"));
@@ -1961,14 +1972,46 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         return job;
     }
 
+    /** Bootstrap must be responsive before any heavyweight recovered work begins. */
+    private void scheduleDeferredRecovery(long delayMs){
+        if(deferredRecovery!=null)bootstrapHandler.removeCallbacks(deferredRecovery);
+        deferredRecovery=()->{
+            if(!serviceAlive||startupGuard==null||startupGuard.held())return;
+            try{
+                directorSetupExecutor.execute(()->{
+                    if(!serviceAlive||startupGuard.held())return;
+                    try{
+                        recoverDurablePlans();
+                        if(serviceAlive&&!startupGuard.held())reattachInflightCommandWatchers();
+                    }catch(Exception failure){
+                        startupGuard.hold("Interrupted native recovery was unsafe; retry after checking the app");
+                        ActivityLog.add(this,"system","Native recovery deferred",
+                                "Saved work retained for explicit owner retry",
+                                "info",null,null,null);
+                    }
+                });
+            }catch(java.util.concurrent.RejectedExecutionException ignored){}
+        };
+        bootstrapHandler.postDelayed(deferredRecovery,Math.max(1000L,delayMs));
+    }
+
     private void recoverDurablePlans() {
         if (recoveryPlans == null || protocol == null || protocol.isControlPaused()) return;
         JSONArray pending = recoveryPlans.pendingForAutoResume();
         for (int i = 0; i < pending.length(); i++) {
+            if(!serviceAlive||Thread.currentThread().isInterrupted()||
+                    startupGuard!=null&&startupGuard.held())return;
             JSONObject plan = pending.optJSONObject(i);
             if (plan == null) continue;
             String planId = plan.optString("id", "");
             String action = plan.optString("action", "");
+            if(startupGuard!=null&&!startupGuard.mayAutoResume(
+                    planId,action,System.currentTimeMillis())){
+                ActivityLog.add(this,"system","Heavy recovery held",
+                        "Saved native work awaits explicit retry",
+                        "info",null,null,plan.optString("projectId",""));
+                continue;
+            }
             String projectId = plan.optString("projectId", "");
             String outputUri = plan.optString("outputUri", "");
 
@@ -4817,6 +4860,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         try {
             out.put("deviceId", protocol.deviceId());
             out.put("appVersion", AppProtocol.APP_VERSION);
+            if(startupGuard!=null)out.put("startupRecovery",startupGuard.status());
             out.put("protocolVersion", protocol.protocolVersion());
             out.put("mcpEndpointVersion", "v3-stable");
             out.put("stableMcpEndpoint", true);
