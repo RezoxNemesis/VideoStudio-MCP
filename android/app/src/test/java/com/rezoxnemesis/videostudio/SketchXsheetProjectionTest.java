@@ -49,7 +49,7 @@ public final class SketchXsheetProjectionTest {
         return doc;
     }
     @Test public void twentyLayerTwoHundredFortyFramePagesHaveExactHoldAndBlankParity()throws Exception {
-        JSONObject source=twentyLevels(),frozen=SketchDocument.canonical(source);
+        JSONObject source=twentyLevels();String frozen=SketchDocument.canonical(source);
         int exposed=0,blank=0,held=0,drawing=0;
         JSONArray layers=source.getJSONArray("layers");
         for(int offset=0;offset<240;offset+=48){
@@ -117,7 +117,7 @@ public final class SketchXsheetProjectionTest {
         assertEquals(20,sheet.getInt("dictionaryDrawings"));
     }
     @Test public void xsheetRejectsOutOfRangeAndOversizedPagesWithoutMutation()throws Exception {
-        JSONObject source=twentyLevels(),old=SketchDocument.canonical(source);
+        JSONObject source=twentyLevels();String old=SketchDocument.canonical(source);
         for(int[] invalid:new int[][]{{-1,3},{240,1},{0,0},{0,49}}){
             try{SketchXsheetProjection.project(source,invalid[0],invalid[1]);fail();}
             catch(IllegalArgumentException expected){assertTrue(expected.getMessage().contains("Xsheet"));}
