@@ -140,6 +140,12 @@ public final class SketchAnimationCompiler {
         return new JSONObject().put("document",out).put("report",report);
     }
 
+    /** Cheap standalone validation for the editor before it admits new contact markers.
+     * Unlike complete bake/compile, this only measures the sparse authored contacts. */
+    static JSONObject verifyInteractionCues(JSONObject source,JSONObject program)throws Exception {
+        return interactionEvidence(new Model(source,program));
+    }
+
     /** Validated authored action contact: use sampled real rig positions in prepared-canvas
      * pixels, not camera-relative screen pixels or a decorative spark. Never mutates rigs. */
     private static JSONObject interactionEvidence(Model m)throws Exception {
