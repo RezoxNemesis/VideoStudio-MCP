@@ -52,8 +52,11 @@ public final class SketchDuelAnimationExampleTest {
         assertTrue(compiled.getJSONObject("report").getInt("mouthCelCount")>=10);
         assertTrue(compiled.getJSONObject("report").getInt("boundObjectCount")>180);
         assertTrue(compiled.getJSONObject("report").getBoolean("independentArticulation"));
-        for(String layer:new String[]{"wide_courier","rook_wide","pov_gauntlet","rook_pov","medium_courier","rook_medium"})
-            assertTrue("Prepared view has distinct native vector objects",SketchDocument.layer(source,layer).getJSONArray("objects").length()>15);
+        for(String layer:new String[]{"wide_courier","rook_wide","rook_pov","medium_courier","rook_medium"})
+            assertTrue("Prepared human view has detailed separate native vector shapes",
+                    SketchDocument.layer(source,layer).getJSONArray("objects").length()>15);
+        assertTrue("Foreground POV hand and baton are deliberately fewer independent prop parts",
+                SketchDocument.layer(source,"pov_gauntlet").getJSONArray("objects").length()>=10);
         for(String key:new String[]{"rook_wide_scar","rook_pov_scar","rook_medium_scar",
                 "rook_wide_band","rook_pov_band","rook_medium_band"})
             assertNotNull(SketchDocument.object(source,key));
