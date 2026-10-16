@@ -32,7 +32,7 @@ import java.util.UUID;
 public final class SketchStudioActivity extends Activity implements SketchCanvasView.Listener {
     private SketchLivePlayer livePlayer;private String liveSessionId="",liveDrawingObject,liveCaption;private long liveDisplayedRevision;
     private String notifiedSketchId,notifiedSessionId,liveMethod="";
-    private boolean notificationReplayPending;
+    private boolean notificationReplayPending,replaySelectedFromFile;
     private JSONObject document;
     private SketchEditorSession session;
     private final ExecutorService io=Executors.newSingleThreadExecutor();
@@ -134,7 +134,7 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
         if(intent==null||!SketchLiveNotification.ACTION_WATCH.equals(intent.getAction()))return false;
         try{JSONObject ids=new JSONObject().put("sketchId",intent.getStringExtra(SketchLiveNotification.EXTRA_SKETCH_ID)).put("sessionId",intent.getStringExtra(SketchLiveNotification.EXTRA_SESSION_ID));
             String target=SketchDocument.id(ids,"sketchId"),stream=SketchDocument.id(ids,"sessionId");
-            notifiedSketchId=target;notifiedSessionId=stream;notificationReplayPending=true;watching=true;
+            notifiedSketchId=target;notifiedSessionId=stream;notificationReplayPending=true;replaySelectedFromFile=false;watching=true;
             return true;
         }catch(Exception invalid){return false;}
     }
@@ -641,7 +641,7 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
     }
     private void showActualAgentTool(String label){int position=agentToolPosition(label);if(position>=0)showAgentToolPosition(position);}
     private void updateAgentToolIndicator(){if(status==null)return;boolean enabled=getPreferences(MODE_PRIVATE).getBoolean("agentHand",true);if(enabled&&agentGlobalTool){if(agentToolIndicator==null)agentToolIndicator=SketchAgentHand.toolIndicator(this,18);status.setCompoundDrawablePadding(dp(4));status.setCompoundDrawablesWithIntrinsicBounds(agentToolIndicator,null,null,null);}else status.setCompoundDrawables(null,null,null,null);}
-    private void updateLiveControl(){if(liveButton!=null){liveButton.setText(watching?"Draw myself":"Follow current");liveButton.setContentDescription(watching?"Leave latest native drawing follow mode and edit yourself":"Follow the most recent native sketch and replay newly authored steps");}}
+    private void updateLiveControl(){if(liveButton!=null){liveButton.setText(watching?"Draw myself":"Watch ChatGPT");liveButton.setContentDescription(watching?"Leave latest native drawing follow mode and edit yourself":"Follow the most recent native sketch and replay newly authored steps");}}
     private void toggleLiveWatch(){
         if(watching){takeOverLive(null);return;}
         ++liveLoadGeneration;stopPlayback();watching=true;if(notifiedSessionId!=null)notificationReplayPending=true;getPreferences(MODE_PRIVATE).edit().putBoolean("watchLiveDrawing",true).apply();updateLiveControl();
@@ -686,13 +686,21 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
             io.execute(()->{try(SketchProjectStore store=new SketchProjectStore(SketchStudioActivity.this)){
                 store.consumeLiveSession(cursor);
             }});
-            boolean replayInvitation=notifiedSessionId!=null;
-            if(!replayInvitation)getPreferences(MODE_PRIVATE).edit().putLong("lastLiveSequence",cursor).apply();
-            notifiedSessionId=null;notifiedSketchId=null;notificationReplayPending=false;
+            boolean notificationPinned=notifiedSessionId!=null&&!replaySelectedFromFile;
+            if(notifiedSessionId==null)
+                getPreferences(MODE_PRIVATE).edit().putLong("lastLiveSequence",cursor).apply();
             liveSessionId="";
             stopLivePlayer();
-            status.setText(replayInvitation?"Finished replay · following newest work":
-                    "Caught up with native drawing · following newest work");
+            if(notificationPinned){
+                // Tapping a precise notification must not be redirected to an
+                // unrelated sketch by later workspace signals.
+                status.setText(liveMethodLabel()+" · notified drawing complete · "
+                        +"File → Follow current work to switch");
+                return;
+            }
+            notifiedSessionId=null;notifiedSketchId=null;
+            notificationReplayPending=false;replaySelectedFromFile=false;
+            status.setText("Caught up with saved drawing · following newest work");
             if(session!=null&&session.pending()==0)reload();
         }
         public void idle(){if(!currentLive(generation,active))return;canvas.setPresentation(null,1);canvas.setEnabled(false);status.setText(liveMethodLabel()+" · following active native sketch · waiting for next saved stroke");}
@@ -745,7 +753,7 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
     private void fileMenu(){menu("Sketch files",new String[]{"New","Open","Sketch books","Follow current work","Replay last saved drawing","Export video","Archive sketch","Restore archive","Canvas view","Drawing status","Story → 2D film"},this::newDocument,this::openDocument,this::booksDialog,this::followCurrentDrawing,this::replayLastDrawing,this::export,this::archiveSketch,this::restoreArchiveDialog,this::toggleCanvasFocus,()->new AlertDialog.Builder(this).setTitle("Drawing status").setMessage(status.getText()+"\n\n"+toolStatus.getText()).setPositiveButton("OK",null).show(),this::storyFilmDialog);}
     /** New native work takes priority; saved historical drawing is never auto-looped. */
     private void followCurrentDrawing(){
-        notifiedSketchId=null;notifiedSessionId=null;notificationReplayPending=false;
+        notifiedSketchId=null;notifiedSessionId=null;notificationReplayPending=false;replaySelectedFromFile=false;
         ++liveLoadGeneration;stopLivePlayer();stopPlayback();
         watching=true;getPreferences(MODE_PRIVATE).edit()
                 .putBoolean("watchLiveDrawing",true).apply();
@@ -767,7 +775,7 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
             postUi(()->{
                 ++liveLoadGeneration;stopPlayback();stopLivePlayer();
                 notifiedSketchId=target;notifiedSessionId=stream;
-                notificationReplayPending=true;
+                notificationReplayPending=true;replaySelectedFromFile=true;
                 watching=true;getPreferences(MODE_PRIVATE).edit()
                         .putBoolean("watchLiveDrawing",true).apply();
                 updateLiveControl();
