@@ -81,6 +81,7 @@ public final class SketchAnimationActivity extends Activity {
         selectionLabel=label("",12);controls.addView(selectionLabel);
         LinearLayout rig=row(controls);mode=button(rig,"Rig mode",()->{mapping=!mapping;mode.setText(mapping?"Rig mode":"Pose mode");requestPreview();refreshFrame();},false);button(rig,"Rig / bind",this::rigTools,false);button(rig,"Pose tools",this::poseTools,false);
         LinearLayout effects=row(controls);button(effects,"Foot contact",this::contacts,false);button(effects,"Camera",this::camera,false);button(effects,"Cels / dialogue",this::dialogueMenu,false);
+        LinearLayout production=row(controls);button(production,"Acting presets",this::motionPresets,false);button(production,"Mouth timing",this::autoMouthTiming,false);button(production,"Production QA",this::productionCheck,false);
         LinearLayout files=row(controls);button(files,"Example",this::example,false);button(files,"Open",this::openAnimation,false);button(files,"Save scene",this::saveScene,false);button(files,"Bake animation",this::bake,true);
         StudioUi.prepareTouchLayout(root);
     }
@@ -222,6 +223,24 @@ public final class SketchAnimationActivity extends Activity {
     }
     private void addRig(){LinearLayout form=column();EditText name=field(form,"Character name","character_"+(rigIds.size()+1),false);dialog("Add character rig",form,"Add",()->{String id=name.getText().toString().trim();SketchDocument.id(new JSONObject().put("id",id),"id");if(rigIds.contains(id))throw SketchDocument.bad("Character name already exists");program.getJSONArray("rigs").put(SketchAnimationUiModel.humanoid(id));selectedRig=id;selectedJoint="root";refreshPickers();changed();});}
     private void removeJoint(){try{JSONObject rig=SketchAnimationUiModel.rig(program,selectedRig);JSONArray values=rig.getJSONArray("joints"),next=new JSONArray();for(int i=0;i<values.length();i++){JSONObject joint=values.getJSONObject(i);if(selectedJoint.equals(joint.optString("parent")))throw SketchDocument.bad("Remove or reparent child joints before removing this joint");if(!selectedJoint.equals(joint.getString("id")))next.put(joint);}JSONArray bindings=rig.getJSONArray("bindings");for(int i=0;i<bindings.length();i++)if(selectedJoint.equals(bindings.getJSONObject(i).getString("jointId")))throw SketchDocument.bad("Unbind this joint's artwork first");JSONArray contacts=rig.getJSONArray("ik");for(int i=0;i<contacts.length();i++)for(String name:new String[]{"hip","knee","ankle"})if(selectedJoint.equals(contacts.getJSONObject(i).getString(name)))throw SketchDocument.bad("Remove this joint's foot contact first");for(int i=0;i<bindings.length();i++){JSONArray weights=bindings.getJSONObject(i).optJSONArray("weights");if(weights!=null)for(int n=0;n<weights.length();n++)if(weights.getJSONObject(n).has(selectedJoint))throw SketchDocument.bad("Remove this joint's skin influences first");}if(next.length()==0)throw SketchDocument.bad("Keep a root joint");rig.put("joints",next);JSONArray poses=rig.getJSONArray("poses");for(int i=0;i<poses.length();i++)poses.getJSONObject(i).getJSONObject("rotations").remove(selectedJoint);selectedJoint="";refreshPickers();changed();}catch(Exception invalid){message(invalid.getMessage());}}
+    private void motionPresets(){
+        if(!ready())return;
+        menu("Editable acting presets",new String[]{"Idle / breathing","Walk cycle","Run cycle","Anticipation → strike → recover"},
+                ()->applyMotionPreset("idle"),()->applyMotionPreset("walk"),()->applyMotionPreset("run"),()->applyMotionPreset("strike"));
+    }
+    private void applyMotionPreset(String style){
+        if(!ready())return;
+        LinearLayout form=column();
+        int remaining=program.optInt("frameCount")-frame;
+        EditText duration=field(form,"Duration in frames",String.valueOf(Math.min(remaining,48)),true);
+        form.addView(label("Adds independent, editable joint pose keys to the selected character starting at frame "+(frame+1)+". Bind individual body parts first. Existing keys are never overwritten. Walk/run cycles do not automatically plant feet; add IK foot contacts and review every step.",12));
+        dialog("Add "+style+" motion",form,"Add keys",()->{
+            int count=SketchAnimationUiModel.integer(duration.getText().toString(),9,360,"Preset duration");
+            JSONObject result=SketchAnimationMotionLibrary.insert(program,selectedRig,frame,count,style);
+            program=result;mapping=false;mode.setText("Pose mode");changed();
+            message("Editable "+style+" pose keys added. Review motion and planted feet.");
+        });
+    }
     private void poseTools(){if(!ready())return;menu("Pose at frame "+(frame+1),new String[]{"Joint rotation / root motion","Save pose key","Delete pose key","Smooth timing","Linear timing","Hold timing"},this::rotation,()->{try{SketchAnimationUiModel.pose(program,selectedRig,frame,interpolation);changed();}catch(Exception invalid){message(invalid.getMessage());}},this::deleteKey,()->setTiming("smooth"),()->setTiming("linear"),()->setTiming("hold"));}
     private void rotation(){
         try{JSONObject previous=SketchAnimationUiModel.previousPose(SketchAnimationUiModel.rig(program,selectedRig),frame);LinearLayout form=column();EditText rotation=field(form,"Joint rotation degrees",String.valueOf(previous.getJSONObject("rotations").optDouble(selectedJoint)),true),x=field(form,"Root motion X",String.valueOf(previous.optDouble("rootX")),true),y=field(form,"Root motion Y",String.valueOf(previous.optDouble("rootY")),true);
@@ -252,7 +271,49 @@ public final class SketchAnimationActivity extends Activity {
         }catch(Exception invalid){message(invalid.getMessage());}
     }
     private void cameraLayers(){try{JSONArray layers=source.getJSONArray("layers"),selected=program.getJSONArray("cameraLayerIds");String[] labels=new String[layers.length()];boolean[] chosen=new boolean[layers.length()];for(int i=0;i<layers.length();i++){labels[i]=layers.getJSONObject(i).getString("name");for(int j=0;j<selected.length();j++)if(selected.getString(j).equals(layers.getJSONObject(i).getString("id")))chosen[i]=true;}new AlertDialog.Builder(this).setTitle("Camera affects layers").setMultiChoiceItems(labels,chosen,(d,i,value)->chosen[i]=value).setPositiveButton("Apply",(d,w)->{try{JSONArray next=new JSONArray();for(int i=0;i<chosen.length;i++)if(chosen[i])next.put(layers.getJSONObject(i).getString("id"));program.put("cameraLayerIds",next);changed();}catch(Exception invalid){message(invalid.getMessage());}}).setNegativeButton("Cancel",null).show();}catch(Exception invalid){message(invalid.getMessage());}}
-    private void dialogueMenu(){if(!ready())return;menu("Dialogue and cel timing",new String[]{"Timed dialogue","Mouth cel range","Artwork visibility range","Existing cel ranges"},this::dialogue,()->celRange(true),()->celRange(false),this::celRangeList);}
+    private void dialogueMenu(){if(!ready())return;menu("Dialogue and cel timing",new String[]{"Timed dialogue","Automatic text mouth timing","Mouth cel range","Artwork visibility range","Existing cel ranges"},this::dialogue,this::autoMouthTiming,()->celRange(true),()->celRange(false),this::celRangeList);}
+    private void autoMouthTiming(){
+        if(!ready())return;
+        try{
+            JSONArray cues=program.optJSONArray("dialogues");
+            if(cues==null||cues.length()==0){message("Add a timed dialogue cue first; text timing needs a start and end frame.");return;}
+            ArrayList<String> ids=new ArrayList<>(),names=new ArrayList<>();
+            JSONArray layers=source.getJSONArray("layers");
+            for(int i=0;i<layers.length();i++){
+                JSONObject layer=layers.getJSONObject(i),objects=layer.getJSONArray("objects");
+                for(int j=0;j<objects.length();j++){
+                    JSONObject object=objects.getJSONObject(j);
+                    String kind=object.getString("kind");
+                    if("image".equals(kind)||"paint".equals(kind)||"text".equals(kind))continue;
+                    ids.add(object.getString("id"));
+                    names.add(layer.getString("name")+" / "+object.getString("id"));
+                }
+            }
+            if(ids.size()<4){message("Draw at least four different vector mouth shapes first: closed, open, round and teeth.");return;}
+            LinearLayout form=column();
+            ArrayList<String> cueLabels=new ArrayList<>();
+            for(int i=0;i<cues.length();i++){
+                JSONObject cue=cues.getJSONObject(i);cueLabels.add((cue.getInt("start")+1)+"–"+(cue.getInt("end")+1)+" · "+cue.getString("text"));
+            }
+            Spinner dialogue=picker("Existing dialogue");dialogue.setAdapter(adapter(cueLabels));form.addView(label("Timed dialogue",12));form.addView(dialogue);
+            String[] roles={"closed","open","round","teeth"};
+            Spinner[] selectors=new Spinner[roles.length];
+            for(int k=0;k<roles.length;k++){
+                selectors[k]=picker(roles[k]+" mouth");selectors[k].setAdapter(adapter(names));
+                int preferred=Math.min(k,ids.size()-1);
+                for(int j=0;j<ids.size();j++)if(ids.get(j).toLowerCase(java.util.Locale.ROOT).contains(roles[k])){preferred=j;break;}
+                selectors[k].setSelection(preferred);form.addView(label(roles[k]+" mouth drawing",12));form.addView(selectors[k]);
+            }
+            form.addView(label("Text letters approximate mouth shapes at frame accuracy. This is NOT alignment to recorded dialogue or generated speech. Prepared mouth drawings should overlap anatomically at the same location. Existing timed cels are not overwritten.",12));
+            dialog("Text → replacement mouth cels",form,"Generate timings",()->{
+                JSONObject result=SketchAnimationVisemeTiming.apply(source,program,dialogue.getSelectedItemPosition(),
+                        ids.get(selectors[0].getSelectedItemPosition()),ids.get(selectors[1].getSelectedItemPosition()),
+                        ids.get(selectors[2].getSelectedItemPosition()),ids.get(selectors[3].getSelectedItemPosition()));
+                program=result;mapping=false;mode.setText("Pose mode");changed();
+                message("Mouth replacement cels added. Adjust their timing against actual voice audio.");
+            });
+        }catch(Exception invalid){message(invalid.getMessage());}
+    }
     private void celRange(boolean mouth){
         try{LinearLayout form=column();ArrayList<String> ids=new ArrayList<>(),names=new ArrayList<>();JSONArray layers=source.getJSONArray("layers");for(int i=0;i<layers.length();i++){JSONObject layer=layers.getJSONObject(i);JSONArray objects=layer.getJSONArray("objects");for(int j=0;j<objects.length();j++){JSONObject object=objects.getJSONObject(j);ids.add(object.getString("id"));names.add(layer.getString("name")+" / "+object.getString("id"));}}
             if(ids.isEmpty()){message("Draw the mouth shapes or alternate-view cels in Sketch Studio first");return;}
@@ -272,6 +333,35 @@ public final class SketchAnimationActivity extends Activity {
         io.execute(()->{try{JSONObject created=SketchAnimationExample.create(this);post(()->{animationId=created.optString("animationId");sketchId=created.optString("sketchId");selectedRig="";selectedJoint="";mapping=false;load();});}catch(Exception failure){post(()->{loading=false;status.setText("Example could not be prepared: "+failure.getMessage());message(failure.getMessage());});}});
     }
     private void openAnimation(){if(!ready())return;stopPlayback();status.setText("Loading saved animations…");io.execute(()->{try{JSONArray values=SketchAnimationOps.execute(this,"sketch_animation_list",new JSONObject()).getJSONArray("animations");String[] labels=new String[values.length()];for(int i=0;i<labels.length;i++){JSONObject item=values.getJSONObject(i);labels[i]=item.optString("animationId")+" · r"+item.optLong("revision");}post(()->{new AlertDialog.Builder(this).setTitle("Saved animation scenes").setItems(labels,(d,index)->{persistDraft();animationId=values.optJSONObject(index).optString("animationId");selectedRig="";selectedJoint="";load();}).setNegativeButton("Cancel",null).show();});}catch(Exception failure){post(()->message(failure.getMessage()));}});}
+    private void productionCheck(){
+        if(!ready()||saving)return;
+        final int checkedGeneration=generation;
+        final JSONObject sourceSnapshot,programSnapshot;
+        try{sourceSnapshot=SketchDocument.copy(source);programSnapshot=SketchDocument.copy(program);}
+        catch(Exception failure){message(failure.getMessage());return;}
+        status.setText("Checking authored pose timing, bound parts, cels and camera…");
+        io.execute(()->{
+            try{
+                JSONObject proof=SketchAnimationProductionPreflight.inspect(sourceSnapshot,programSnapshot);
+                JSONArray notes=proof.getJSONArray("diagnostics");
+                StringBuilder message=new StringBuilder();
+                message.append("Native compiler: PASS\n");
+                message.append("Frames: ").append(proof.getInt("frameCount")).append(" · FPS: ").append(proof.getInt("fps")).append("\n");
+                JSONObject report=proof.getJSONObject("compiledReport");
+                message.append("Bound art: ").append(report.getInt("boundObjectCount"))
+                    .append(" · moving joints: ").append(report.getInt("animatedJointCount"))
+                    .append(" · articulated frames: ").append(report.getInt("articulatedMotionFrames")).append("\n");
+                message.append("Dialogue cues: ").append(report.getInt("dialogueCount"))
+                    .append(" · mouth cels: ").append(report.getInt("mouthCelCount")).append("\n\n");
+                for(int i=0;i<notes.length();i++)message.append("• ").append(notes.getString(i)).append("\n");
+                String summary=message.toString();
+                post(()->{if(checkedGeneration!=generation){status.setText("Scene changed during preflight; run Production QA again.");return;}
+                    status.setText("Animation structural preflight finished · artistic review still required");
+                    new AlertDialog.Builder(this).setTitle("2D production QA · source-verified").setMessage(summary).setPositiveButton("Close",null).show();
+                });
+            }catch(Exception failure){post(()->{status.setText("Production QA found a compilation problem");new AlertDialog.Builder(this).setTitle("2D production QA · fix before export").setMessage(failure.getMessage()).setPositiveButton("Close",null).show();});}
+        });
+    }
     private void saveScene(){if(!ready()||saving)return;stopPlayback();try{saveSnapshot(false);}catch(Exception invalid){message(invalid.getMessage());}}
     private void bake(){if(!ready()||saving)return;stopPlayback();try{int bound=0;JSONArray values=program.getJSONArray("rigs");for(int i=0;i<values.length();i++)bound+=values.getJSONObject(i).getJSONArray("bindings").length();if(bound==0)throw SketchDocument.bad("Bind prepared body parts to joints before baking articulated animation. Camera motion alone is not character animation.");saveSnapshot(true);}catch(Exception invalid){message(invalid.getMessage());}}
     private void saveSnapshot(boolean bake)throws Exception {
