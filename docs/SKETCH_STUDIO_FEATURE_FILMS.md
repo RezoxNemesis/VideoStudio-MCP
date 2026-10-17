@@ -40,6 +40,14 @@ signed in-place upgrade require the original signer and an accessible device.
   produces timed voice recordings and a master audio lane in a separate editable
   project copy. Saved MCP requests can be reopened manually. See
   [Character dialogue](CHARACTER_DIALOGUE.md) for setup, operation and limits.
+* **File → Original jungle film** authors or resumes the owner's complete
+  120-second dragon/cub benchmark as 2,148 editable vector cels. Its eight traveller
+  construction/acting studies are saved in the component library. The dialogue
+  form can load its Hindi or English script. This is a specific authored example,
+  not a new general-purpose drawing model. The workspace benchmark uses additional
+  voice-amplitude timing and native score composition through its private QA
+  orchestrator; those are not one-button phone controls. See
+  [Original jungle film](ORIGINAL_JUNGLE_FILM.md) for the workflow and limits.
 
 Native UI: **File → Sketch books**, **File → Import animation**, **File → Resume
 animation import**, **File → Component library**, and **Frames / Cels → Film
@@ -138,3 +146,7 @@ Use short representative shots to prove that provider. Keep separately authored
 turnaround cels for unseen angles. Coordinate interpolation and image deformation
 are useful controls, but cannot establish that a new anatomical drawing is correct.
 The earlier 20-second sword duel has **not** passed its cinematic motion/art gate.
+The new original jungle draft supplies a complete authored redraw set for that
+specific story, without image generation. Its flat vector artwork and partly
+mechanical movement remain below the professional references; the draft does not
+establish that this remaining art pipeline is solved for arbitrary stories.

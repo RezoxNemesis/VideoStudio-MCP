@@ -16,6 +16,7 @@ final class DialogueControlsView extends LinearLayout {
         duration=field(this,"Scene length in milliseconds","120000",true);rows=new LinearLayout(c);rows.setOrientation(VERTICAL);addView(rows);addLine();
         language.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener(){public void onNothingSelected(AdapterView<?> p){}public void onItemSelected(AdapterView<?> p,View v,int position,long id){for(Line line:lines)line.updateVoices();}});
         Button add=new Button(c);add.setText("Add dialogue line");add.setOnClickListener(v->{if(lines.size()<32)addLine();else Toast.makeText(c,"Create another dialogue request for more lines",Toast.LENGTH_SHORT).show();});addView(add);
+        Button story=new Button(c);story.setText("Use jungle film dialogue");story.setOnClickListener(v->{try{loadControls(SketchJungleFilm.dialogueControls(DialogueControls.LANGUAGES[language.getSelectedItemPosition()]));}catch(Exception error){Toast.makeText(c,error.getMessage(),Toast.LENGTH_LONG).show();}});addView(story);
     }
     private void label(LinearLayout parent,String text){TextView v=new TextView(getContext());v.setText(text);v.setPadding(0,10,0,4);parent.addView(v);}
     private EditText field(LinearLayout parent,String caption,String value,boolean number){label(parent,caption);EditText v=new EditText(getContext());v.setText(value);v.setSingleLine(number);v.setInputType(number?InputType.TYPE_CLASS_NUMBER|InputType.TYPE_NUMBER_FLAG_DECIMAL:InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_FLAG_MULTI_LINE);parent.addView(v);return v;}

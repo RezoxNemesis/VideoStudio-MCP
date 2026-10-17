@@ -3,10 +3,11 @@
 2026-10-17, workspace source candidate. No phone execution or live owner MCP
 endpoint was used for this verification.
 
-* Full Android unit run: **1,234 cases in 245 suites, zero failures/errors**.
-  1,231 passed; three existing opt-in film/bundle proof cases were skipped because
+* Full Android unit run: **1,239 cases in 246 suites, zero failures/errors**.
+  1,236 passed; three existing opt-in film/bundle proof cases were skipped because
   their external fixtures/environment flags were absent.
-* Full `npm test`: **272 tests plus 306 source smoke checks**, zero failures.
+* Prior full `npm test`: **272 tests plus 306 source smoke checks**, zero failures.
+  The Java-only jungle update reran all **306 source smoke checks**, zero failures.
 * Open pipeline Python suite: **25 tests**, zero failures/errors.
 * Real installed MCP SDK + local workerd: new tools discovered; native 4.6.2
   refused feature-length and dialogue requests before queue mutation; six requests
@@ -40,6 +41,21 @@ endpoint was used for this verification.
   Manual controls and reopening saved autonomous requests pass native UI tests.
   An actual model overrun failed with `DIALOGUE_EXCEEDS_SLOT` without publishing a
   result. Audible voice acting, pronunciation and final lip sync are unverified.
+
+* The original jungle benchmark renders all 2,880 output frames of the complete
+  120-second native book (22 shots, 2,148 editable cels per language), with no
+  image/paint references in any saved cel. Real English/Hindi Kokoro performances
+  use separate amplitude-timed mouth drawings. Native original PCM supplies the
+  score and effects. Final 1280×720/24 fps MP4s contain 120-second stereo audio;
+  cloud FFmpeg packages the native Canvas pixels and audio. Sampled cels, an
+  actual native-editor screenshot and an editable construction/component sheet
+  were inspected. Full playback/listening and professional-quality acceptance
+  are not claimed. See [Original jungle film](ORIGINAL_JUNGLE_FILM.md).
+* The new future-page regression first reproduced `SKETCH_ALREADY_EXISTS` when
+  navigation allocated a cel before the film authoring worker reached it. The
+  repaired range preserves opened blank pages and human drawings, then authors
+  later pages. Ordinary edited-cel resume, full-film exposure timing, model-sheet
+  geometry and actual PCM headroom checks also pass.
 
 Unverified: Android MediaCodec/MediaMuxer on the owner's device, native video
 sampling/orientation on that device, thermal/storage behavior of a real feature

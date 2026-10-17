@@ -904,7 +904,7 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
         action.run();
     }catch(Exception error){onMessage(error.getMessage());}}
     private void menu(String title,String[] labels,Runnable... actions){new AlertDialog.Builder(this).setTitle(title).setItems(labels,(d,index)->runAction(labels[index],actions[index])).show();}
-    private void fileMenu(){menu("Sketch files",new String[]{"New","Open","Sketch books","Follow current work","Replay last saved drawing","Export video","Archive sketch","Restore archive","Canvas view","Drawing status","Story → 2D film","Import animation","Resume animation import","Component library"},this::newDocument,this::openDocument,this::booksDialog,this::followCurrentDrawing,this::replayLastDrawing,this::export,this::archiveSketch,this::restoreArchiveDialog,this::toggleCanvasFocus,()->new AlertDialog.Builder(this).setTitle("Drawing status").setMessage(status.getText()+"\n\n"+toolStatus.getText()).setPositiveButton("OK",null).show(),this::storyFilmDialog,this::importAnimationDialog,this::resumeAnimationImport,this::componentLibraryDialog);}
+    private void fileMenu(){menu("Sketch files",new String[]{"New","Open","Sketch books","Follow current work","Replay last saved drawing","Export video","Archive sketch","Restore archive","Canvas view","Drawing status","Story → 2D film","Import animation","Resume animation import","Component library","Original jungle film"},this::newDocument,this::openDocument,this::booksDialog,this::followCurrentDrawing,this::replayLastDrawing,this::export,this::archiveSketch,this::restoreArchiveDialog,this::toggleCanvasFocus,()->new AlertDialog.Builder(this).setTitle("Drawing status").setMessage(status.getText()+"\n\n"+toolStatus.getText()).setPositiveButton("OK",null).show(),this::storyFilmDialog,this::importAnimationDialog,this::resumeAnimationImport,this::componentLibraryDialog,this::drawOriginalJungleFilm);}
     /** New native work takes priority; saved historical drawing is never auto-looped. */
     private void followCurrentDrawing(){
         notifiedSketchId=null;notifiedSessionId=null;notificationReplayPending=false;replaySelectedFromFile=false;
@@ -945,6 +945,13 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
     private void openAnimationStudio(){if(document==null)return;stopPlayback();afterSaves(()->postUi(()->startActivity(new Intent(this,SketchAnimationActivity.class).putExtra("sketchId",sketchId))));}
 
     /** Prompt-driven original storyboard; all created cels remain ordinary editable Sketch Studio parts. */
+    private volatile boolean drawingJungleFilm;
+    private void drawOriginalJungleFilm(){
+        if(drawingJungleFilm){onMessage("The original film is already being drawn. Saved cels remain editable.");return;}
+        stopPlayback();String retained=getPreferences(MODE_PRIVATE).getString("originalJungleBook",null);
+        final String target=retained==null?"canopy_"+java.util.UUID.randomUUID().toString().replace("-",""):retained;getPreferences(MODE_PRIVATE).edit().putString("originalJungleBook",target).apply();
+        afterSaves(()->{if(drawingJungleFilm)return;drawingJungleFilm=true;transfers.execute(()->{try{SketchJungleFilm.saveModelLibrary(this,target);int total=SketchJungleFilm.celStarts().length;for(int first=0;first<total;first+=64){SketchJungleFilm.populateRange(this,target,first,Math.min(64,total-first),null);final int saved=Math.min(total,first+64);postUi(()->{status.setText("Original jungle film · "+saved+" / "+total+" editable cels");if(saved==64)openBookPage(target,0);});}postUi(()->{openBookPage(target,0);onMessage("Original jungle film saved. All cels and layers are editable; existing pages and timing edits were retained. Export picture from this book; add dialogue, score and effects in the production workbench.");});}catch(Exception error){postUi(()->onMessage("Saved cels retained. Choose Original jungle film to resume: "+error.getMessage()));}finally{postUi(()->drawingJungleFilm=false);}});});
+    }
     private void storyFilmDialog(){
         LinearLayout form=column();form.setPadding(dp(12),dp(8),dp(12),dp(8));
         EditText story=new EditText(this);story.setTextColor(StudioUi.TEXT);story.setHintTextColor(StudioUi.MUTED);
