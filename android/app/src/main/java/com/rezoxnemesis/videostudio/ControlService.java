@@ -1144,38 +1144,12 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     }
 
     private JSONObject applyEditPlan(JSONObject p) throws Exception {
-        ProjectStore.Project project = resolveProject(p.optString("projectId", ""));
-        JSONArray clips = p.optJSONArray("clips");
-        if (clips == null || clips.length() == 0) throw new IllegalArgumentException("clips are required");
-        ArrayList<ProjectStore.Clip> next = new ArrayList<>();
-        for (int i = 0; i < clips.length() && i < 120; i++) {
-            JSONObject raw = clips.optJSONObject(i);
-            if (raw == null) continue;
-            ProjectStore.Asset asset = project.asset(raw.optString("assetId"));
-            if (asset == null) throw new IllegalArgumentException("Unknown asset on clip " + i);
-            ProjectStore.Clip clip = new ProjectStore.Clip();
-            clip.id = UUID.randomUUID().toString();
-            clip.assetId = asset.id;
-            clip.inMs = raw.has("inMs") ? raw.optLong("inMs") : (long) (raw.optDouble("start", 0) * 1000);
-            clip.outMs = raw.has("outMs") ? raw.optLong("outMs") : (long) (raw.optDouble("end", asset.durationMs / 1000d) * 1000);
-            clip.inMs = Math.max(0, clip.inMs);
-            clip.outMs = Math.max(clip.inMs + 100, Math.min(asset.durationMs > 0 ? asset.durationMs : clip.outMs, clip.outMs));
-            clip.speed = (float) Math.max(.25, Math.min(4, raw.optDouble("speed", 1)));
-            clip.volume = (float) Math.max(0, Math.min(2, raw.optDouble("volume", 1)));
-            clip.transition = raw.optString("transition", "none");
-            clip.title = raw.optString("title", "");
-            JSONObject effects = raw.optJSONObject("effects");
-            clip.effects = effects == null ? new JSONObject() : effects;
-            next.add(clip);
-        }
-        project.clips.clear();
-        project.clips.addAll(next);
-        store.save(project);
-        JSONObject result = ok();
-        result.put("projectId", project.id);
-        result.put("clipCount", next.size());
-        result.put("durationMs", project.outputDurationMs());
-        return result;
+        String id=p.optString("projectId","");
+        ProjectStore.Project project=id.isEmpty()?store.active():store.get(id);
+        if(project==null)throw new IllegalArgumentException("Project not found for edit plan");
+        JSONObject request=new JSONObject(p.toString()).put("projectId",project.id);
+        if(!request.has("expectedUpdatedAt"))request.put("expectedUpdatedAt",project.updatedAt);
+        return StudioEditPlan.apply(store,request);
     }
 
     private JSONObject applyTool(JSONObject p) throws Exception {

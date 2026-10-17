@@ -48,6 +48,18 @@ try{
   await http('/api/v3/app/commands/'+queued.commandId+'/complete',{deviceId,appGeneration:generation,protocolVersion:3,status:'completed',result:{ok:true,syntheticNativeReply:true,phoneExecutionVerified:false}});
   console.log('PASS: '+action+' preserves exact authored fields through actual MCP SDK and durable native queue');
  }
+ const plan={projectId:'owned-project',expectedUpdatedAt:123456789,clips:[{clipId:'cut-a',assetId:'owned-source',start:0,end:2,speed:.25,volume:0,effects:{brightness:.2,keyframes:[{timeMs:0,x:0},{timeMs:8000,x:.4}]}}]};
+ assert.match(JSON.stringify(await call('app_apply_edit_plan',plan)),/4\.5\.12/);
+ assert.equal((await poll()).length,0,'Older installed versions must not silently ignore the revision guard');
+ await register('4.5.12');
+ for(const [name,action,args]of [['app_apply_edit_plan','apply_edit_plan',plan],['app_autonomous_edit','autonomous_edit',{...plan,render:false}]]){
+  const schema=listed.tools.find(tool=>tool.name===name).inputSchema;
+  assert(schema.properties.projectId&&schema.properties.expectedUpdatedAt);
+  const queued=parse(await call(name,args));assert.equal(queued.queued,true,JSON.stringify(queued));
+  const commands=await poll();assert.equal(commands.length,1);assert.equal(commands[0].action,action);assert.deepEqual(commands[0].parameters,args);
+  await http('/api/v3/app/commands/'+queued.commandId+'/complete',{deviceId,appGeneration:generation,protocolVersion:3,status:'completed',result:{ok:true,syntheticNativeReply:true,phoneExecutionVerified:false}});
+  console.log('PASS: '+name+' discovers and delivers the exact project revision, stable IDs, speed, audio and effect keys through the actual local MCP SDK');
+ }
  console.log('PASS: authoring transport checks use synthetic native replies; phone execution and artistic acceptance remain unverified');
 }finally{
  if(client)await client.close();

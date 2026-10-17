@@ -2,6 +2,16 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {nativeStudioParameters,requireStudioVersion} from '../src/studio-workbench-contract.js';
 
+test('revision-bound or stable-ID timeline plans require the native implementation that enforces them',()=>{
+ for(const action of ['apply_edit_plan','autonomous_edit']){
+  for(const parameters of [{expectedUpdatedAt:12,clips:[{assetId:'source'}]},{clips:[{assetId:'source',clipId:'cut-a'}]}]){
+   assert.throws(()=>requireStudioVersion({appVersion:'4.5.11'},action,parameters),/4\.5\.12/);
+   assert.doesNotThrow(()=>requireStudioVersion({appVersion:'4.5.12'},action,parameters));
+  }
+  assert.doesNotThrow(()=>requireStudioVersion({appVersion:'4.3.0'},action,{clips:[{assetId:'source'}]}));
+ }
+});
+
 test('encrypted media admission binds one project and immutable manifest with no supplied URL or credential',()=>{
  const parameters={projectId:'project',attachmentId:'12345678-1234-4234-8234-123456789abc',manifestSha256:'a'.repeat(64)};
  assert.deepEqual(nativeStudioParameters('import_mailbox_media',parameters),parameters);

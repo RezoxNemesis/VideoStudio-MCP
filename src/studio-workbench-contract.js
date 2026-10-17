@@ -282,6 +282,7 @@ const legacy3d=new Set(['STANDOFF','CHARGE','CLASH','BLADE_LOCK','FOLLOW_THROUGH
 const pixelFields=new Set(['keyframes','opacity','chromaKey','chromaColor','chromaTolerance','chromaFeather','maskShape','maskLeft','maskTop','maskRight','maskBottom','maskFeather','glowStrength','glowRadiusPx','glowThreshold']);
 export function requireStudioVersion(device,action,parameters={}){
  const alias=studioAliases.has(action);action=nativeStudioCanonicalAction(action);
+ if(['apply_edit_plan','autonomous_edit'].includes(action)&&(parameters.expectedUpdatedAt!==undefined||(parameters.clips||[]).some(clip=>clip?.clipId!==undefined||clip?.id!==undefined))&&!atLeast(device?.appVersion,'4.5.12'))throw new Error('NATIVE_APP_UPGRADE_REQUIRED: revision-bound timeline plans and stable clip IDs require VideoStudio 4.5.12 or newer');
  if(action.startsWith('sketch_animation_')&&!atLeast(device?.appVersion,'4.4.0'))throw new Error('NATIVE_APP_UPGRADE_REQUIRED: prepared-sketch character animation requires Video studio 4.4.0 or newer');
  if(['sketch_import_drawing_asset','get_native_result_page','get_native_delivery_status','compact_native_delivery'].includes(action)&&!atLeast(device?.appVersion,'4.3.1'))throw new Error('NATIVE_APP_UPGRADE_REQUIRED: registered drawing imports and durable native result delivery require Video studio 4.3.1 or newer');
  const needs430=action==='cinematic_3d_edit_program'||action==='precision_edit'&&(parameters.operations||[]).some(op=>op.keyframeEdits!==undefined||op.set?.audioPan!==undefined||op.set?.audioMono!==undefined)
