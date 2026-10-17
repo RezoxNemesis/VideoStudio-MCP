@@ -431,6 +431,15 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         Button directAnimation = neonButton("Animation Director • Make a Real Sequence", C_CYAN);
         directAnimation.setOnClickListener(v -> animationDirectorDialog());
         box.addView(directAnimation,margins(-1,dp(47),0,0,0,dp(12)));
+        Button model3D=neonButton("Real 3D GLB Model • Skinned Motion Preview",C_CYAN);
+        model3D.setOnClickListener(v -> open3DModelViewer());
+        box.addView(model3D,margins(-1,dp(48),0,0,0,dp(10)));
+        Button render3D=neonButton("Export Real 3D Sword Fight • GLB",C_MAGENTA);
+        render3D.setOnClickListener(v -> choose3DCombatActors());
+        box.addView(render3D,margins(-1,dp(48),0,0,0,dp(10)));
+        Button rigEditor=neonButton("Character Rig Builder • Tap Bones + Trace Body",C_CYAN);
+        rigEditor.setOnClickListener(v -> open2DRigEditor());
+        box.addView(rigEditor,margins(-1,dp(48),0,0,0,dp(10)));
         Button benchmark=compactButton("True Combat Rig Test");
         benchmark.setOnClickListener(v -> combatRigBenchmarkDialog());
         box.addView(benchmark,margins(-1,dp(44),0,0,0,dp(10)));
@@ -753,6 +762,137 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         ui.postDelayed(activityRefresh, 1500);
     }
 
+    private void choose3DCombatActors() {
+        if(activeProject==null) {
+            Toast.makeText(this,"Open an imported VideoStudio project first",
+                    Toast.LENGTH_LONG).show();
+            return;
+        }
+        final ArrayList<ProjectStore.Asset> models=new ArrayList<>();
+        for(ProjectStore.Asset a:activeProject.assets){
+            if("model/gltf-binary".equals(a.mime))models.add(a);
+        }
+        if(models.size()<2){
+            new AlertDialog.Builder(this)
+                    .setTitle("Two real 3D fighters required")
+                    .setMessage("Import TWO rigged GLB models with their own animation clips "+
+                            "using the VideoStudio 3D Model viewer. One screenshot cannot "+
+                            "supply hidden 3D surfaces. No Gallery search is performed.")
+                    .setPositiveButton("Import GLB",(d,w)->open3DModelViewer())
+                    .setNegativeButton("Later",null).show();
+            return;
+        }
+        final String projectId=activeProject.id;
+        String[] names=new String[models.size()];
+        for(int i=0;i<models.size();i++)names[i]=models.get(i).name;
+        new AlertDialog.Builder(this)
+                .setTitle("Choose the BLACK 3D fighter")
+                .setItems(names,(dialog,blackIndex)->{
+                    final ProjectStore.Asset black=models.get(blackIndex);
+                    final ArrayList<ProjectStore.Asset> remaining=new ArrayList<>(models);
+                    remaining.remove(blackIndex);
+                    String[] options=new String[remaining.size()];
+                    for(int j=0;j<remaining.size();j++)options[j]=remaining.get(j).name;
+                    new AlertDialog.Builder(this)
+                            .setTitle("Choose the WHITE 3D fighter")
+                            .setItems(options,(whiteDialog,whiteIndex)->{
+                                ProjectStore.Asset white=remaining.get(whiteIndex);
+                                new AlertDialog.Builder(this)
+                                        .setTitle("Render actual 3D combat")
+                                        .setMessage("VideoStudio will sample both GLB skeletal "+
+                                                "animations into new 3D frames, position the "+
+                                                "two independent models on one combat stage, "+
+                                                "and render a native 24 FPS MP4. The models "+
+                                                "must contain genuine animation clips. This "+
+                                                "development mode does not simulate precise "+
+                                                "blade-mesh collision or reconstruct 3D from a photo.")
+                                        .setPositiveButton("Generate + Export",(confirm,which)->{
+                                            Intent job=new Intent(this,ControlService.class)
+                                                    .setAction(ControlService.ACTION_LOCAL_GLTF_COMBAT)
+                                                    .putExtra("projectId",projectId)
+                                                    .putExtra("blackAssetId",black.id)
+                                                    .putExtra("whiteAssetId",white.id)
+                                                    .putExtra("durationSeconds",3.2)
+                                                    .putExtra("fps",24)
+                                                    .putExtra("width",320)
+                                                    .putExtra("height",576);
+                                            startForegroundService(job);
+                                            Toast.makeText(this,"3D render queued on the native engine",
+                                                    Toast.LENGTH_LONG).show();
+                                            showActivity();
+                                        }).setNegativeButton("Cancel",null).show();
+                            }).setNegativeButton("Cancel",null).show();
+                }).setNegativeButton("Cancel",null).show();
+    }
+
+    private void open3DModelViewer(){
+        if(activeProject==null){
+            Toast.makeText(this,"Open a VideoStudio project first",Toast.LENGTH_SHORT).show();
+            return;
+        }
+        Intent viewer=new Intent(this,FilamentGlbActivity.class);
+        viewer.putExtra("projectId",activeProject.id);
+        startActivity(viewer);
+    }
+
+    private void open2DRigEditor() {
+        if(activeProject==null){
+            Toast.makeText(this,"Open an imported image project first",Toast.LENGTH_LONG).show();
+            return;
+        }
+        String imageId="";
+        if(selectedClip!=null){
+            ProjectStore.Asset selected=activeProject.asset(selectedClip.assetId);
+            if(selected!=null&&selected.mime!=null&&selected.mime.startsWith("image/"))
+                imageId=selected.id;
+        }
+        if(imageId.isEmpty()){
+            for(ProjectStore.Asset a:activeProject.assets){
+                if(a.mime!=null&&a.mime.startsWith("image/")){imageId=a.id;break;}
+            }
+        }
+        if(imageId.isEmpty()){
+            Toast.makeText(this,"Import an image using VideoStudio first",Toast.LENGTH_LONG).show();
+            return;
+        }
+        Intent editor=new Intent(this,RigEditorActivity.class);
+        editor.putExtra("projectId",activeProject.id);
+        editor.putExtra("assetId",imageId);
+        startActivity(editor);
+    }
+
+    private void queueUserRiggedDuel(){
+        if(activeProject==null)return;
+        Rig2DProjectStore rigs=new Rig2DProjectStore(this,store);
+        Rig2DProfile black=null,white=null;
+        for(Rig2DProfile rig:rigs.list(activeProject.id)){
+            if(rig.black)black=rig;else white=rig;
+        }
+        if(black==null||white==null){
+            new AlertDialog.Builder(this).setTitle("Rig your actual fighters first")
+                .setMessage("VideoStudio needs one traced actor and sixteen joints for "+
+                        "each black and white character before it can produce real "+
+                        "source-textured skeletal movement. No more generic replacement figures.")
+                .setPositiveButton("Open Rig Builder",(dialog,which)->open2DRigEditor())
+                .setNegativeButton("Cancel",null).show();
+            return;
+        }
+        Intent render=new Intent(this,ControlService.class)
+                .setAction(ControlService.ACTION_LOCAL_RIGGED_2D)
+                .putExtra("projectId",activeProject.id)
+                .putExtra("blackRigId",black.id)
+                .putExtra("whiteRigId",white.id)
+                .putExtra("backgroundMode","procedural")
+                .putExtra("durationSeconds",4.6)
+                .putExtra("fps",24)
+                .putExtra("width",432)
+                .putExtra("height",768);
+        startForegroundService(render);
+        Toast.makeText(this,"Source-textured 2D animation queued in native VideoStudio",
+                Toast.LENGTH_LONG).show();
+        showActivity();
+    }
+
     private void showTools() {
         ScrollView scroll = baseScroll();
         LinearLayout box = column();
@@ -792,6 +932,27 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         directorButton.setOnClickListener(v -> animationDirectorDialog());
         directorCard.addView(directorButton,margins(-1,dp(52),dp(12),0,0,0));
         box.addView(directorCard,margins(-1,-2,dp(10),0,0,0));
+
+        LinearLayout modelCard=card(true);
+        modelCard.addView(title("Real 3D Animation • GLB Skeletal Models",22));
+        modelCard.addView(body("Load a user-selected glTF 2.0 GLB model with actual mesh geometry, material texture, bones, authored motion clips, directional light, perspective and camera orbit. Purely local GPU rendering; unlike a flat image, the model must already include true 3D surfaces and animation."));
+        Button modelButton=neonButton("Open Real 3D Animation Studio",C_CYAN);
+        modelButton.setOnClickListener(v -> open3DModelViewer());
+        modelCard.addView(modelButton,margins(-1,dp(52),dp(12),0,0,0));
+        Button export3D=neonButton("Render 3D Fight → Native MP4",C_MAGENTA);
+        export3D.setOnClickListener(v -> choose3DCombatActors());
+        modelCard.addView(export3D,margins(-1,dp(52),dp(12),0,0,0));
+        box.addView(modelCard,margins(-1,-2,dp(10),0,0,0));
+        LinearLayout sourcedRigCard=card(true);
+        sourcedRigCard.addView(title("Real 2D Character Rigging • Original Artwork",22));
+        sourcedRigCard.addView(body("Draw a source character outline and mark joints ONCE, then animate that same textured character with native IK and attached swords. Mark black and white actors separately; these are re-usable project-private rigs, not image morphing. 3D hidden anatomy is not generated."));
+        Button sourceRig=neonButton("Rig My Black & White Fighters",C_CYAN);
+        sourceRig.setOnClickListener(v -> open2DRigEditor());
+        sourcedRigCard.addView(sourceRig,margins(-1,dp(52),dp(12),0,0,0));
+        Button createRigged=neonButton("Render Source-Rigged 2D Duel",C_MAGENTA);
+        createRigged.setOnClickListener(v -> queueUserRiggedDuel());
+        sourcedRigCard.addView(createRigged,margins(-1,dp(52),dp(12),0,0,0));
+        box.addView(sourcedRigCard,margins(-1,-2,dp(10),0,0,0));
 
         LinearLayout physicsCard=card(true);
         physicsCard.addView(title("True Combat Rig • Movement Benchmark",22));
