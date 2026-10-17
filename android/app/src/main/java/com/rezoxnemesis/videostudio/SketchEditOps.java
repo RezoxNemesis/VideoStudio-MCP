@@ -311,7 +311,9 @@ public final class SketchEditOps {
                 JSONObject target=SketchDocument.object(doc,id);
                 // An explicit direct recolor is a deliberate opt-out of the linked palette.
                 if(patch.has("color")&&!patch.has("styleId"))target.remove("styleId");
-                merge(target, patch); break;
+                merge(target, patch);
+                if(patch.has("gradient")&&patch.isNull("gradient"))target.remove("gradient");
+                break;
             }
             case "palette_upsert": {
                 SketchDocument.fields(op,"type,styleId,name,color");
@@ -374,7 +376,7 @@ public final class SketchEditOps {
                 break;
             }
             case "set_keyframe": {
-                SketchDocument.fields(op, "type,layerId,objectId,frame,transform,interpolation,remove"); JSONObject item = target(doc, op);
+                SketchDocument.fields(op, "type,layerId,objectId,frame,transform,interpolation,curve,remove"); JSONObject item = target(doc, op);
                 int frame = (int) SketchDocument.integer(op, "frame", 0, doc.getInt("frameCount") - 1);
                 boolean delete = op.has("remove") && op.getBoolean("remove"); JSONArray existing = item.getJSONArray("keys"), out = new JSONArray();
                 JSONObject key = null;
@@ -383,6 +385,7 @@ public final class SketchEditOps {
                     SketchDocument.fields(op.getJSONObject("transform"), "x,y,scaleX,scaleY,rotation,anchorX,anchorY,opacity");
                     merge(transform, op.getJSONObject("transform"));
                     key = new JSONObject().put("frame", frame).put("transform", transform).put("interpolation", op.optString("interpolation", "linear"));
+                    if(op.has("curve"))key.put("curve",new JSONArray(op.getJSONArray("curve").toString()));
                 }
                 boolean inserted = false;
                 for (int i = 0; i < existing.length(); i++) {

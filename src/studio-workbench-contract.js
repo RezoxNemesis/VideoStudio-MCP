@@ -12,7 +12,10 @@ const dimensions={width:integer(256,2048).refine(v=>v%2===0),height:integer(256,
 const sketchTransformShape={x:finite.min(-4).max(4),y:finite.min(-4).max(4),scaleX:finite.min(.01).max(8),scaleY:finite.min(.01).max(8),rotation:finite.min(-3600).max(3600),anchorX:finite.min(0).max(1),anchorY:finite.min(0).max(1),opacity:finite.min(0).max(1)};
 const fullTransform=z.object(sketchTransformShape).strict();
 const transformPatch=z.object(Object.fromEntries(Object.entries(sketchTransformShape).map(([key,value])=>[key,value.optional()]))).strict();
-const sketchKeys=z.array(z.object({frame,transform:fullTransform,interpolation:z.enum(['linear','hold'])}).strict()).max(4096)
+const drawingInterpolation=z.enum(['linear','hold','smooth','ease_in','ease_out','ease_in_out','bezier']);
+const timingCurve=z.tuple([finite.min(0).max(1),finite.min(0).max(1),finite.min(0).max(1),finite.min(0).max(1)]);
+const timingValid=value=>(value.interpolation==='bezier')===(value.curve!==undefined);
+const sketchKeys=z.array(z.object({frame,transform:fullTransform,interpolation:drawingInterpolation,curve:timingCurve.optional()}).strict().refine(timingValid,'Bezier timing requires explicit controls; other modes omit them')).max(4096)
  .refine(keys=>keys.every((key,i)=>i===0||key.frame>keys[i-1].frame),'Transform key frames must strictly increase');
 const points=z.array(z.tuple([finite.min(0).max(1),finite.min(0).max(1),finite.min(0).max(1)])).min(1).max(131072);
 const bounds=z.object({x:finite.min(0).max(1),y:finite.min(0).max(1),width:finite.min(.0001).max(1),height:finite.min(.0001).max(1)}).strict()
@@ -29,7 +32,10 @@ const affineMap=z.tuple([finite.min(-8).max(8),finite.min(-8).max(8),finite.min(
 const cloneSource=z.object({objectId:id,sha256:sha,offsetX:finite.min(-1).max(1).optional(),offsetY:finite.min(-1).max(1).optional(),scale:finite.min(.01).max(8).optional(),rotation:finite.min(-180).max(180).optional(),mapping:affineMap.optional()}).strict()
  .refine(v=>v.mapping===undefined||['offsetX','offsetY','scale','rotation'].every(k=>v[k]===undefined),'Choose affine mapping or offset/scale/rotation');
 const commands=z.array(z.union([z.tuple([z.literal('M'),coordinate,coordinate]),z.tuple([z.literal('L'),coordinate,coordinate]),z.tuple([z.literal('Q'),coordinate,coordinate,coordinate,coordinate]),z.tuple([z.literal('C'),coordinate,coordinate,coordinate,coordinate,coordinate,coordinate]),z.tuple([z.literal('Z')])])).min(2).max(4096).refine(v=>v[0][0]==='M','Path must start with M');
-const gradient=z.object({startColor:color,endColor:color,x0:coordinate,y0:coordinate,x1:coordinate,y1:coordinate}).strict().refine(v=>v.x0!==v.x1||v.y0!==v.y1,'Gradient endpoints must differ');
+const legacyGradient=z.object({startColor:color,endColor:color,x0:coordinate,y0:coordinate,x1:coordinate,y1:coordinate}).strict().refine(v=>v.x0!==v.x1||v.y0!==v.y1,'Gradient endpoints must differ');
+const radialGradient=z.object({type:z.literal('radial'),cx:coordinate,cy:coordinate,radius:finite.min(.0001).max(2),colors:z.array(color).min(2).max(16),stops:z.array(coordinate).min(2).max(16).optional()}).strict()
+ .refine(v=>!v.stops||v.stops.length===v.colors.length&&v.stops[0]===0&&v.stops.at(-1)===1&&v.stops.every((stop,i)=>i===0||stop>v.stops[i-1]),'Each color needs a matching strictly increasing stop from 0 to 1');
+const gradient=z.union([legacyGradient,radialGradient]);
 const blendMode=z.enum(['normal','multiply','screen','add']);
 const sketchObjectShape={id,frame:frame.optional(),exposure:integer(1,1200).optional(),color:color.optional(),width:finite.min(.0005).max(.2).optional(),fill:z.boolean().optional(),transform:fullTransform.optional(),keys:sketchKeys.optional()};
 function objectUnion(complete=false){
@@ -62,7 +68,7 @@ const operation=z.discriminatedUnion('type',[
  z.object({type:z.literal('delete_layer'),layerId:id}).strict(),
  z.object({type:z.literal('reorder_layer'),layerId:id,index:integer(0,31)}).strict(),
  z.object({type:z.literal('add_object'),layerId:id,object:sketchObject}).strict(),
- z.object({type:z.literal('update_object'),objectId:id,patch:z.object({color:color.optional(),width:finite.min(.0005).max(.2).optional(),fill:z.boolean().optional(),text:text(4096).optional(),fontFamily:z.enum(['sans-serif','sans-serif-condensed','serif','monospace','cursive']).optional(),fontSize:finite.min(.005).max(.3).optional(),fontStyle:z.enum(['normal','bold','italic','bold_italic']).optional(),textAlign:z.enum(['left','center','right']).optional(),letterSpacing:finite.min(-.1).max(.5).optional(),brush:brush.optional(),commands:commands.optional(),gradient:gradient.optional(),referenceCrop:bounds.optional(),points:points.optional(),bounds:bounds.optional(),frame:frame.optional(),exposure:integer(1,1200).optional()}).strict()}).strict(),
+ z.object({type:z.literal('update_object'),objectId:id,patch:z.object({color:color.optional(),width:finite.min(.0005).max(.2).optional(),fill:z.boolean().optional(),text:text(4096).optional(),fontFamily:z.enum(['sans-serif','sans-serif-condensed','serif','monospace','cursive']).optional(),fontSize:finite.min(.005).max(.3).optional(),fontStyle:z.enum(['normal','bold','italic','bold_italic']).optional(),textAlign:z.enum(['left','center','right']).optional(),letterSpacing:finite.min(-.1).max(.5).optional(),brush:brush.optional(),commands:commands.optional(),gradient:gradient.nullable().optional(),referenceCrop:bounds.optional(),points:points.optional(),bounds:bounds.optional(),frame:frame.optional(),exposure:integer(1,1200).optional()}).strict()}).strict(),
  z.object({type:z.literal('append_points'),objectId:id,points:points.max(2048)}).strict(),
  z.object({type:z.literal('duplicate_cel'),layerId:id,fromFrame:frame,toFrame:frame,idPrefix:id.max(72)}).strict(),
  z.object({type:z.literal('clear_cel'),layerId:id,frame}).strict(),
@@ -75,7 +81,7 @@ const operation=z.discriminatedUnion('type',[
  z.object({type:z.literal('set_timing'),fps:fps.optional(),frameCount:integer(1,1200).optional()}).strict(),
  z.object({type:z.literal('set_exposure'),objectId:id,frame,exposure:integer(1,1200)}).strict(),
  z.object({type:z.literal('set_transform'),...target,transform:transformPatch}).strict(),
- z.object({type:z.literal('set_keyframe'),...target,frame,transform:transformPatch.optional(),interpolation:z.enum(['linear','hold']).optional(),remove:z.boolean().optional()}).strict()
+ z.object({type:z.literal('set_keyframe'),...target,frame,transform:transformPatch.optional(),interpolation:drawingInterpolation.optional(),curve:timingCurve.optional(),remove:z.boolean().optional()}).strict().refine(timingValid,'Bezier timing requires explicit controls; other modes omit them')
 ]).superRefine((value,ctx)=>{
  const fail=message=>ctx.addIssue({code:z.ZodIssueCode.custom,message});
  if(['set_transform','set_keyframe'].includes(value.type)&&Number(value.layerId!==undefined)+Number(value.objectId!==undefined)!==1)fail('Choose exactly one layerId or objectId');
@@ -141,19 +147,19 @@ const endpoint=text(1024).refine(value=>{
 },'Use your own HTTPS runner without embedded credentials, query or fragment');
 const sketchIdentity={sketchId:id},mutation={...sketchIdentity,operationId:id,expectedRevision:revision};
 const requestIdentity={requestId:id};
-const animationInterpolation=z.enum(['linear','smooth','hold']);
+const animationInterpolation=drawingInterpolation;
 const orderedFrames=keys=>keys.every((key,i)=>i===0||key.frame>keys[i-1].frame);
 const animationRange={start:frame,end:frame};
 const animationVisibility=z.object({objectId:id,...animationRange}).strict().refine(v=>v.end>=v.start,'Cel end must follow start');
 const animationRig=z.object({id,
  joints:z.array(z.object({id,parent:id.optional(),x:coordinate,y:coordinate}).strict()).min(1).max(64),
  bindings:z.array(z.object({objectId:id,jointId:id,weights:z.array(z.record(id,coordinate)).max(131072).optional()}).strict()).max(4096),
- poses:z.array(z.object({frame,interpolation:animationInterpolation.optional(),rootX:finite.min(-4).max(4).optional(),rootY:finite.min(-4).max(4).optional(),rotations:z.record(id,finite.min(-3600).max(3600)).optional()}).strict()).max(1200).refine(orderedFrames,'Pose frames must strictly increase').optional(),
+ poses:z.array(z.object({frame,interpolation:animationInterpolation.optional(),curve:timingCurve.optional(),rootX:finite.min(-4).max(4).optional(),rootY:finite.min(-4).max(4).optional(),rotations:z.record(id,finite.min(-3600).max(3600)).optional()}).strict().refine(timingValid,'Invalid pose timing curve')).max(1200).refine(orderedFrames,'Pose frames must strictly increase').optional(),
  ik:z.array(z.object({hip:id,knee:id,ankle:id,...animationRange,x:coordinate,y:coordinate,bend:z.union([z.literal(-1),z.literal(1)]).optional(),rotation:finite.min(-3600).max(3600).optional()}).strict().refine(v=>v.end>=v.start,'Contact end must follow start')).max(256).optional()
 }).strict();
 export const sketchAnimationProgramSchema=z.object({schema:z.literal('videostudio.sketch-animation.v1'),name:text(160).optional(),frameCount:integer(1,1200),fps:fps.optional(),
  rigs:z.array(animationRig).max(16),
- camera:z.array(z.object({frame,x:finite.min(-4).max(4).optional(),y:finite.min(-4).max(4).optional(),zoom:finite.min(.01).max(8).optional(),rotation:finite.min(-3600).max(3600).optional(),interpolation:animationInterpolation.optional()}).strict()).max(1200).refine(orderedFrames,'Camera frames must strictly increase').optional(),
+ camera:z.array(z.object({frame,x:finite.min(-4).max(4).optional(),y:finite.min(-4).max(4).optional(),zoom:finite.min(.01).max(8).optional(),rotation:finite.min(-3600).max(3600).optional(),interpolation:animationInterpolation.optional(),curve:timingCurve.optional()}).strict().refine(timingValid,'Invalid camera timing curve')).max(1200).refine(orderedFrames,'Camera frames must strictly increase').optional(),
  cameraLayerIds:z.array(id).max(32).optional(),
  dialogues:z.array(z.object({...animationRange,text:text(4096),layerId:id,bounds,color:color.optional(),fontSize:finite.min(.005).max(.3).optional()}).strict().refine(v=>v.end>=v.start,'Dialogue end must follow start')).max(256).optional(),
  mouthCels:z.array(animationVisibility).max(4096).optional(),celRanges:z.array(animationVisibility).max(4096).optional()
@@ -282,6 +288,12 @@ const legacy3d=new Set(['STANDOFF','CHARGE','CLASH','BLADE_LOCK','FOLLOW_THROUGH
 const pixelFields=new Set(['keyframes','opacity','chromaKey','chromaColor','chromaTolerance','chromaFeather','maskShape','maskLeft','maskTop','maskRight','maskBottom','maskFeather','glowStrength','glowRadiusPx','glowThreshold']);
 export function requireStudioVersion(device,action,parameters={}){
  const alias=studioAliases.has(action);action=nativeStudioCanonicalAction(action);
+ const advanced=key=>key?.curve!==undefined||['ease_in','ease_out','ease_in_out','bezier'].includes(key?.interpolation);
+ const drawingKey=key=>advanced(key)||key?.interpolation==='smooth';
+ const artwork=object=>object?.gradient?.type==='radial'||(object?.keys||[]).some(drawingKey);
+ const quality=action==='sketch_edit'&&(parameters.operations||[]).some(op=>op.type==='set_keyframe'&&drawingKey(op)||op.type==='update_object'&&op.patch?.gradient===null||artwork(op.object)||artwork(op.patch)||(op.layer?.keys||[]).some(drawingKey)||(op.layer?.objects||[]).some(artwork))
+  ||action==='sketch_animation_save'&&((parameters.program?.camera||[]).some(advanced)||(parameters.program?.rigs||[]).some(rig=>(rig.poses||[]).some(advanced)));
+ if(quality&&!atLeast(device?.appVersion,'4.6.0'))throw new Error('NATIVE_APP_UPGRADE_REQUIRED: radial material shading and editable animation timing curves require VideoStudio 4.6.0 or newer');
  if(['apply_edit_plan','autonomous_edit'].includes(action)&&(parameters.expectedUpdatedAt!==undefined||(parameters.clips||[]).some(clip=>clip?.clipId!==undefined||clip?.id!==undefined))&&!atLeast(device?.appVersion,'4.5.12'))throw new Error('NATIVE_APP_UPGRADE_REQUIRED: revision-bound timeline plans and stable clip IDs require VideoStudio 4.5.12 or newer');
  if(action.startsWith('sketch_animation_')&&!atLeast(device?.appVersion,'4.4.0'))throw new Error('NATIVE_APP_UPGRADE_REQUIRED: prepared-sketch character animation requires Video studio 4.4.0 or newer');
  if(['sketch_import_drawing_asset','get_native_result_page','get_native_delivery_status','compact_native_delivery'].includes(action)&&!atLeast(device?.appVersion,'4.3.1'))throw new Error('NATIVE_APP_UPGRADE_REQUIRED: registered drawing imports and durable native result delivery require Video studio 4.3.1 or newer');

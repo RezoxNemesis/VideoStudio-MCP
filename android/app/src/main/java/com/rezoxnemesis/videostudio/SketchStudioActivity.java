@@ -290,15 +290,60 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
             for (int i = 0; i < keys.length; i++) { double value = current.getDouble(keys[i]); if (i == 0) value *= document.getInt("width"); if (i == 1) value *= document.getInt("height"); values[i] = input(labels[i], String.valueOf(value), true); form.addView(values[i]); }
             CheckBox key = new CheckBox(this); key.setText("Set a transform key at current frame"); key.setChecked(item.getJSONArray("keys").length() > 0); form.addView(key);
             CheckBox hold = new CheckBox(this); hold.setText("Hold until next key"); form.addView(hold);
+            String[] modes={"linear","smooth","ease_in","ease_out","ease_in_out","bezier"};
+            String[] timingNames={"Linear","Smooth","Ease in","Ease out","Ease in/out","Bezier"};
+            JSONObject authored=null;JSONArray authoredKeys=item.getJSONArray("keys");
+            for(int n=0;n<authoredKeys.length();n++)if(authoredKeys.getJSONObject(n).getInt("frame")==canvas.getFrame())authored=authoredKeys.getJSONObject(n);
+            String mode=authored==null?"linear":authored.getString("interpolation");hold.setChecked("hold".equals(mode));
+            Spinner timing=new Spinner(this);timing.setContentDescription("Animation timing");timing.setAdapter(new ArrayAdapter<>(this,android.R.layout.simple_spinner_dropdown_item,timingNames));
+            timing.setSelection(Math.max(0,java.util.Arrays.asList(modes).indexOf(mode)));form.addView(timing);
+            String controlValues=authored!=null&&authored.has("curve")?commaValues(authored.getJSONArray("curve")):"0.42, 0, 1, 1";
+            EditText curve=input("Bezier timing: x1, y1, x2, y2",controlValues,false);form.addView(curve);
+            curve.setVisibility("bezier".equals(mode)?View.VISIBLE:View.GONE);
+            timing.setOnItemSelectedListener(new SimpleSelection(){@Override public void selected(int position){curve.setVisibility(position==5?View.VISIBLE:View.GONE);}});
             new AlertDialog.Builder(this).setTitle(objectId == null ? "Layer transform" : "Object transform").setView(form).setNegativeButton("Cancel", null)
                     .setNeutralButton("Remove key", (d,w) -> { try { onOperation(targetOperation("set_keyframe", objectId).put("frame", canvas.getFrame()).put("remove", true)); } catch (Exception e) { onMessage(e.getMessage()); } })
                     .setPositiveButton("Apply", (d,w) -> { try { JSONObject transform = new JSONObject(); for (int i = 0; i < keys.length; i++) { double value = Double.parseDouble(values[i].getText().toString()); if (i == 0) value /= document.getInt("width"); if (i == 1) value /= document.getInt("height"); transform.put(keys[i], value); }
                         JSONObject operation = targetOperation(key.isChecked() ? "set_keyframe" : "set_transform", objectId).put("transform", transform);
-                        if (key.isChecked()) operation.put("frame", canvas.getFrame()).put("interpolation", hold.isChecked() ? "hold" : "linear"); onOperation(operation);
+                        if (key.isChecked()) {
+                            String selected=hold.isChecked()?"hold":modes[timing.getSelectedItemPosition()];
+                            operation.put("frame",canvas.getFrame()).put("interpolation",selected);
+                            if("bezier".equals(selected))operation.put("curve",new JSONArray("["+curve.getText().toString()+"]"));
+                        }
+                        onOperation(operation);
                     } catch (Exception e) { onMessage(e.getMessage()); } }).show();
         } catch (Exception e) { onMessage(e.getMessage()); }
     }
     private JSONObject targetOperation(String type, String objectId) throws Exception { return new JSONObject().put("type", type).put(objectId == null ? "layerId" : "objectId", objectId == null ? canvas.getLayerId() : objectId); }
+    private static String commaValues(JSONArray values)throws Exception {
+        StringBuilder out=new StringBuilder();for(int i=0;i<values.length();i++){if(i>0)out.append(", ");out.append(values.get(i));}return out.toString();
+    }
+    private void materialShadingDialog(){
+        if(document==null||canvas==null||canvas.getSelectedId()==null){onMessage("Select an editable filled shape first");return;}
+        try{
+            String id=canvas.getSelectedId();JSONObject object=SketchDocument.object(document,id);
+            if(!java.util.Arrays.asList("path","polygon","rect","ellipse").contains(object.getString("kind"))){onMessage("Material shading supports paths, polygons, rectangles and ellipses");return;}
+            JSONObject gradient=object.optJSONObject("gradient");boolean radial=gradient!=null&&"radial".equals(gradient.optString("type"));
+            LinearLayout form=column();int width=document.getInt("width"),height=document.getInt("height");
+            EditText colors=input("Colours (#AARRGGBB, comma separated)",radial?commaValues(gradient.getJSONArray("colors")):"#FFFFFFFF, #FF768BC0, #FF172034",false);
+            EditText stops=input("Stop positions from 0 to 1 (optional)",radial&&gradient.has("stops")?commaValues(gradient.getJSONArray("stops")):"",false);
+            EditText cx=input("Light centre X in pixels",String.valueOf((radial?gradient.getDouble("cx"):.5)*width),true);
+            EditText cy=input("Light centre Y in pixels",String.valueOf((radial?gradient.getDouble("cy"):.5)*height),true);
+            EditText radius=input("Shading radius in pixels",String.valueOf((radial?gradient.getDouble("radius"):.3)*Math.min(width,height)),true);
+            form.addView(colors);form.addView(stops);form.addView(cx);form.addView(cy);form.addView(radius);
+            new AlertDialog.Builder(this).setTitle("Radial material shading").setView(form).setNegativeButton("Cancel",null)
+                .setNeutralButton("Flat colour",(d,w)->{try{onOperation(new JSONObject().put("type","update_object").put("objectId",id).put("patch",new JSONObject().put("gradient",JSONObject.NULL)));}catch(Exception e){onMessage(e.getMessage());}})
+                .setPositiveButton("Apply",(d,w)->{try{
+                    JSONArray pigments=new JSONArray();for(String c:colors.getText().toString().split(","))pigments.put(c.trim());
+                    JSONObject next=new JSONObject().put("type","radial").put("colors",pigments)
+                        .put("cx",Double.parseDouble(cx.getText().toString())/width).put("cy",Double.parseDouble(cy.getText().toString())/height)
+                        .put("radius",Double.parseDouble(radius.getText().toString())/Math.min(width,height));
+                    if(!stops.getText().toString().trim().isEmpty())next.put("stops",new JSONArray("["+stops.getText().toString()+"]"));
+                    SketchGradients.validate(next);
+                    onOperation(new JSONObject().put("type","update_object").put("objectId",id).put("patch",new JSONObject().put("gradient",next)));
+                }catch(Exception e){onMessage(e.getMessage());}}).show();
+        }catch(Exception e){onMessage(e.getMessage());}
+    }
     private void textDialog(){
         if(document==null||canvas==null)return;
         try{String selected=canvas.getSelectedId();JSONObject existing=selected==null?null:SketchDocument.object(document,selected);boolean edit=existing!=null&&"text".equals(existing.getString("kind"));
@@ -890,7 +935,7 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
                     try{startActivity(settings);}catch(android.content.ActivityNotFoundException unavailable){onMessage("Open Android app settings to allow drawing notifications");}
                 }).show();
     }
-    private void brushMenu(){menu("Brush / Text",new String[]{"Brush","Colours","Linked palette styles","Paint studio","Text","Finish path","Transform / key","Delete object","Reference image"},this::brushDialog,this::paletteDialog,this::linkedPaletteDialog,this::paintMenu,this::textDialog,()->canvas.finishPolygon(),this::transformDialog,this::deleteObject,this::referenceDialog);}
+    private void brushMenu(){menu("Brush / Text",new String[]{"Brush","Colours","Material shading","Linked palette styles","Paint studio","Text","Finish path","Transform / key","Delete object","Reference image"},this::brushDialog,this::paletteDialog,this::materialShadingDialog,this::linkedPaletteDialog,this::paintMenu,this::textDialog,()->canvas.finishPolygon(),this::transformDialog,this::deleteObject,this::referenceDialog);}
     private void layersMenu(){menu("Layers",new String[]{"Select layer","+ Layer","Layer settings","Up","Down"},this::chooseLayer,this::addLayer,this::layerDialog,()->reorderLayer(1),()->reorderLayer(-1));}
     private void chooseLayer(){
         if(document==null)return;

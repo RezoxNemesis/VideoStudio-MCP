@@ -10,8 +10,6 @@ import android.graphics.Path;
 import android.graphics.PorterDuff;
 import android.graphics.PorterDuffXfermode;
 import android.graphics.RectF;
-import android.graphics.LinearGradient;
-import android.graphics.Shader;
 import android.graphics.Rect;
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -247,7 +245,7 @@ public final class SketchFrameRenderer implements AutoCloseable {
         }
         paint.setStyle(object.getBoolean("fill") ? Paint.Style.FILL : Paint.Style.STROKE);
         JSONObject gradient=object.optJSONObject("gradient");
-        if(gradient!=null)paint.setShader(new LinearGradient((float)gradient.getDouble("x0")*w,(float)gradient.getDouble("y0")*h,(float)gradient.getDouble("x1")*w,(float)gradient.getDouble("y1")*h,SketchDocument.color(gradient.getString("startColor")),SketchDocument.color(gradient.getString("endColor")),Shader.TileMode.CLAMP));
+        if(gradient!=null)paint.setShader(SketchGradients.shader(gradient,w,h));
         if("path".equals(kind)){Path shape=geometry(object,kind,w,h);if(partial)shape=partialPath(shape,presentationFraction,paint);canvas.drawPath(shape,paint);return;}
         if ("line".equals(kind)) {
             JSONArray pp = object.getJSONArray("points"), a = pp.getJSONArray(0), b = pp.getJSONArray(1);

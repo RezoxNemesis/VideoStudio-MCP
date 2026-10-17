@@ -16,6 +16,7 @@ import android.text.InputType;
 import android.util.AtomicFile;
 import android.view.MotionEvent;
 import android.view.View;
+import android.widget.AdapterView;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.CheckBox;
@@ -278,7 +279,7 @@ public final class SketchAnimationActivity extends Activity {
             });
         });
     }
-    private void poseTools(){if(!ready())return;menu("Pose at frame "+(frame+1),new String[]{"Joint rotation / root motion","Save pose key","Delete pose key","Smooth timing","Linear timing","Hold timing","Action contact markers"},this::rotation,()->{try{SketchAnimationUiModel.pose(program,selectedRig,frame,interpolation);changed();}catch(Exception invalid){message(invalid.getMessage());}},this::deleteKey,()->setTiming("smooth"),()->setTiming("linear"),()->setTiming("hold"),this::interactionMenu);}
+    private void poseTools(){if(!ready())return;menu("Pose at frame "+(frame+1),new String[]{"Joint rotation / root motion","Save pose key","Delete pose key","Smooth timing","Linear timing","Hold timing","Timing curve…","Action contact markers"},this::rotation,()->{try{SketchAnimationUiModel.poseKeepingTiming(program,selectedRig,frame,interpolation);changed();}catch(Exception invalid){message(invalid.getMessage());}},this::deleteKey,()->setTiming("smooth"),()->setTiming("linear"),()->setTiming("hold"),this::poseTimingCurve,this::interactionMenu);}
     private void interactionMenu(){
         if(!ready())return;
         menu("Physical choreography contacts",
@@ -389,7 +390,42 @@ public final class SketchAnimationActivity extends Activity {
     private void rotation(){
         try{JSONObject previous=SketchAnimationUiModel.previousPose(SketchAnimationUiModel.rig(program,selectedRig),frame);LinearLayout form=column();EditText rotation=field(form,"Joint rotation degrees",String.valueOf(previous.getJSONObject("rotations").optDouble(selectedJoint)),true),x=field(form,"Root motion X",String.valueOf(previous.optDouble("rootX")),true),y=field(form,"Root motion Y",String.valueOf(previous.optDouble("rootY")),true);
             LinearLayout nudge=row(form);button(nudge,"−5°",()->{try{rotation.setText(String.valueOf(number(rotation,-3600,3600)-5));}catch(Exception invalid){message(invalid.getMessage());}},false);button(nudge,"+5°",()->{try{rotation.setText(String.valueOf(number(rotation,-3600,3600)+5));}catch(Exception invalid){message(invalid.getMessage());}},false);
-            dialog("Pose "+selectedJoint,form,"Set key",()->{double degrees=number(rotation,-3600,3600),xx=number(x,-4,4),yy=number(y,-4,4);SketchAnimationUiModel.setRotation(program,selectedRig,frame,selectedJoint,degrees,interpolation);SketchAnimationUiModel.pose(program,selectedRig,frame,interpolation).put("rootX",xx).put("rootY",yy);mapping=false;mode.setText("Pose mode");changed();});
+            dialog("Pose "+selectedJoint,form,"Set key",()->{double degrees=number(rotation,-3600,3600),xx=number(x,-4,4),yy=number(y,-4,4);SketchAnimationUiModel.setRotation(program,selectedRig,frame,selectedJoint,degrees,interpolation);SketchAnimationUiModel.poseKeepingTiming(program,selectedRig,frame,interpolation).put("rootX",xx).put("rootY",yy);mapping=false;mode.setText("Pose mode");changed();});
+        }catch(Exception invalid){message(invalid.getMessage());}
+    }
+    private final class TimingInputs {
+        final String[] modes={"linear","smooth","hold","ease_in","ease_out","ease_in_out","bezier"};
+        final Spinner selected;final EditText controls;
+        TimingInputs(LinearLayout form,JSONObject prior)throws Exception {
+            selected=picker("Animation timing");selected.setAdapter(new ArrayAdapter<>(SketchAnimationActivity.this,android.R.layout.simple_spinner_dropdown_item,
+                    new String[]{"Linear","Smooth","Hold","Ease in","Ease out","Ease in/out","Bezier"}));
+            selected.setSelection(Math.max(0,java.util.Arrays.asList(modes).indexOf(prior.optString("interpolation",interpolation))));
+            form.addView(label("Animation timing",12));form.addView(selected);
+            String values="0.42, 0, 1, 1";
+            if(prior.has("curve")){JSONArray c=prior.getJSONArray("curve");values=c.get(0)+", "+c.get(1)+", "+c.get(2)+", "+c.get(3);}
+            controls=field(form,"Bezier timing: x1, y1, x2, y2",values,false);
+            controls.setVisibility(selected.getSelectedItemPosition()==6?View.VISIBLE:View.GONE);
+            selected.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener(){
+                public void onNothingSelected(AdapterView<?> parent){}
+                public void onItemSelected(AdapterView<?> parent,View view,int position,long id){controls.setVisibility(position==6?View.VISIBLE:View.GONE);}
+            });
+        }
+        void apply(JSONObject target)throws Exception {
+            String mode=modes[selected.getSelectedItemPosition()];
+            SketchAnimationUiModel.timing(target,mode,"bezier".equals(mode)?new JSONArray("["+controls.getText().toString()+"]"):null);
+        }
+    }
+    private void poseTimingCurve(){
+        if(!ready())return;
+        try{
+            JSONObject prior=SketchAnimationUiModel.previousPose(SketchAnimationUiModel.rig(program,selectedRig),frame);
+            LinearLayout form=column();TimingInputs timing=new TimingInputs(form,prior);
+            dialog("Pose timing",form,"Set timing",()->{
+                JSONObject accepted=new JSONObject();timing.apply(accepted);
+                JSONObject key=SketchAnimationUiModel.poseKeepingTiming(program,selectedRig,frame,interpolation);
+                SketchAnimationUiModel.timing(key,accepted.getString("interpolation"),accepted.optJSONArray("curve"));
+                interpolation=accepted.getString("interpolation");changed();
+            });
         }catch(Exception invalid){message(invalid.getMessage());}
     }
     private void setTiming(String value){interpolation=value;try{SketchAnimationUiModel.pose(program,selectedRig,frame,value);changed();message("Segment timing: "+value);}catch(Exception invalid){message(invalid.getMessage());}}
@@ -410,8 +446,8 @@ public final class SketchAnimationActivity extends Activity {
     private int index(EditText field)throws Exception {return SketchAnimationUiModel.integer(field.getText().toString(),1,program.getInt("frameCount"),String.valueOf(field.getContentDescription()))-1;}
     private void camera(){
         if(!ready())return;try{JSONObject prior=new JSONObject().put("x",0).put("y",0).put("zoom",1).put("rotation",0);JSONArray values=program.getJSONArray("camera");for(int i=0;i<values.length();i++)if(values.getJSONObject(i).getInt("frame")==frame)prior=values.getJSONObject(i);
-            LinearLayout form=column();EditText x=field(form,"Camera X",String.valueOf(prior.optDouble("x")),true),y=field(form,"Camera Y",String.valueOf(prior.optDouble("y")),true),zoom=field(form,"Camera zoom",String.valueOf(prior.optDouble("zoom",1)),true),rotation=field(form,"Camera rotation degrees",String.valueOf(prior.optDouble("rotation")),true);form.addView(label("The camera transforms the artwork layers you select; dialogue remains readable when placed on a separate unselected layer. Use two camera keys for a continuous pan or zoom; a hold key creates a shot cut.",12));button(form,"Choose camera layers",this::cameraLayers,false);button(form,"Delete camera key here",()->{try{program.put("camera",SketchAnimationUiModel.withoutFrame(program.getJSONArray("camera"),frame));changed();message("Camera key removed");}catch(Exception invalid){message(invalid.getMessage());}},false);
-            dialog("Camera key · frame "+(frame+1),form,"Set key",()->{JSONObject key=new JSONObject().put("frame",frame).put("x",number(x,-4,4)).put("y",number(y,-4,4)).put("zoom",number(zoom,.01,8)).put("rotation",number(rotation,-3600,3600)).put("interpolation",interpolation);JSONArray keys=SketchAnimationUiModel.withoutFrame(program.getJSONArray("camera"),frame);keys.put(key);program.put("camera",SketchAnimationUiModel.sortedFrames(keys));changed();});
+            LinearLayout form=column();EditText x=field(form,"Camera X",String.valueOf(prior.optDouble("x")),true),y=field(form,"Camera Y",String.valueOf(prior.optDouble("y")),true),zoom=field(form,"Camera zoom",String.valueOf(prior.optDouble("zoom",1)),true),rotation=field(form,"Camera rotation degrees",String.valueOf(prior.optDouble("rotation")),true);form.addView(label("The camera transforms the artwork layers you select; dialogue remains readable when placed on a separate unselected layer. Use two camera keys for a continuous pan or zoom; a hold key creates a shot cut.",12));TimingInputs timing=new TimingInputs(form,prior);button(form,"Choose camera layers",this::cameraLayers,false);button(form,"Delete camera key here",()->{try{program.put("camera",SketchAnimationUiModel.withoutFrame(program.getJSONArray("camera"),frame));changed();message("Camera key removed");}catch(Exception invalid){message(invalid.getMessage());}},false);
+            dialog("Camera key · frame "+(frame+1),form,"Set key",()->{JSONObject key=new JSONObject().put("frame",frame).put("x",number(x,-4,4)).put("y",number(y,-4,4)).put("zoom",number(zoom,.01,8)).put("rotation",number(rotation,-3600,3600));timing.apply(key);JSONArray keys=SketchAnimationUiModel.withoutFrame(program.getJSONArray("camera"),frame);keys.put(key);program.put("camera",SketchAnimationUiModel.sortedFrames(keys));changed();});
         }catch(Exception invalid){message(invalid.getMessage());}
     }
     private void cameraLayers(){try{JSONArray layers=source.getJSONArray("layers"),selected=program.getJSONArray("cameraLayerIds");String[] labels=new String[layers.length()];boolean[] chosen=new boolean[layers.length()];for(int i=0;i<layers.length();i++){labels[i]=layers.getJSONObject(i).getString("name");for(int j=0;j<selected.length();j++)if(selected.getString(j).equals(layers.getJSONObject(i).getString("id")))chosen[i]=true;}new AlertDialog.Builder(this).setTitle("Camera affects layers").setMultiChoiceItems(labels,chosen,(d,i,value)->chosen[i]=value).setPositiveButton("Apply",(d,w)->{try{JSONArray next=new JSONArray();for(int i=0;i<chosen.length;i++)if(chosen[i])next.put(layers.getJSONObject(i).getString("id"));program.put("cameraLayerIds",next);changed();}catch(Exception invalid){message(invalid.getMessage());}}).setNegativeButton("Cancel",null).show();}catch(Exception invalid){message(invalid.getMessage());}}
@@ -702,7 +738,7 @@ public final class SketchAnimationActivity extends Activity {
                 if((event.getActionMasked()==MotionEvent.ACTION_MOVE||event.getActionMasked()==MotionEvent.ACTION_UP)&&!dragged.isEmpty()){
                     JSONObject joint=SketchAnimationUiModel.joint(rig,dragged);
                     if(mapping){joint.put("x",Math.max(0,Math.min(1,x))).put("y",Math.max(0,Math.min(1,y)));}
-                    else if(joint.optString("parent").isEmpty()){SketchAnimationUiModel.pose(program,selectedRig,frame,interpolation).put("rootX",Math.max(-4,Math.min(4,rootX+x-downX))).put("rootY",Math.max(-4,Math.min(4,rootY+y-downY)));}
+                    else if(joint.optString("parent").isEmpty()){SketchAnimationUiModel.poseKeepingTiming(program,selectedRig,frame,interpolation).put("rootX",Math.max(-4,Math.min(4,rootX+x-downX))).put("rootY",Math.max(-4,Math.min(4,rootY+y-downY)));}
                     else{
                         String parentId=joint.getString("parent");JSONObject parent=SketchAnimationUiModel.joint(rig,parentId),parentWorld=worldPosition(parent);String grandId=parent.optString("parent");double grandRotation=grandId.isEmpty()?0:worldPosition(SketchAnimationUiModel.joint(rig,grandId)).optDouble("rotation");
                         double rest=Math.atan2((joint.getDouble("y")-parent.getDouble("y"))*source.getDouble("height"),(joint.getDouble("x")-parent.getDouble("x"))*source.getDouble("width"));

@@ -60,6 +60,17 @@ try{
   await http('/api/v3/app/commands/'+queued.commandId+'/complete',{deviceId,appGeneration:generation,protocolVersion:3,status:'completed',result:{ok:true,syntheticNativeReply:true,phoneExecutionVerified:false}});
   console.log('PASS: '+name+' discovers and delivers the exact project revision, stable IDs, speed, audio and effect keys through the actual local MCP SDK');
  }
+ const quality={sketchId:'owned-sketch',expectedRevision:1,operationId:'quality-tools',operations:[
+  {type:'update_object',objectId:'iris',patch:{gradient:{type:'radial',cx:.5,cy:.5,radius:.3,colors:['#FFFFFFFF','#FF8060B0','#FF182030'],stops:[0,.5,1]}}},
+  {type:'set_keyframe',objectId:'iris',frame:0,transform:{x:0},interpolation:'bezier',curve:[.42,0,1,1]}
+ ]};
+ const qualityCall={action:'studio_sketch_edit',parameters:quality};
+ assert.match(JSON.stringify(await call('app_execute',qualityCall)),/4\.6\.0/);assert.equal((await poll()).length,0);
+ await register('4.6.0');
+ const queuedQuality=parse(await call('app_execute',qualityCall));assert.equal(queuedQuality.queued,true,JSON.stringify(queuedQuality));
+ const qualityCommands=await poll();assert.equal(qualityCommands.length,1);assert.deepEqual(qualityCommands[0].parameters,quality);
+ await http('/api/v3/app/commands/'+queuedQuality.commandId+'/complete',{deviceId,appGeneration:generation,protocolVersion:3,status:'completed',result:{ok:true,syntheticNativeReply:true,phoneExecutionVerified:false}});
+ console.log('PASS: new material shading and Bezier controls pass actual MCP transport unchanged and refuse older native runtimes');
  console.log('PASS: authoring transport checks use synthetic native replies; phone execution and artistic acceptance remain unverified');
 }finally{
  if(client)await client.close();

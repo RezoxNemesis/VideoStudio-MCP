@@ -142,9 +142,7 @@ public final class SketchDocument {
         }return points;
     }
     static void validateGradient(JSONObject g) throws Exception {
-        fields(g,"startColor,endColor,x0,y0,x1,y1");color(g.getString("startColor"));color(g.getString("endColor"));
-        for(String key:new String[]{"x0","y0","x1","y1"})number(g,key,0,1);
-        if(g.getDouble("x0")==g.getDouble("x1")&&g.getDouble("y0")==g.getDouble("y1"))throw bad("Gradient endpoints must differ");
+        SketchGradients.validate(g);
     }
 
     public static void validateTransform(JSONObject t) throws Exception {
@@ -158,13 +156,12 @@ public final class SketchDocument {
         int previous = -1;
         for (int i = 0; i < keys.length(); i++) {
             JSONObject key = keys.getJSONObject(i);
-            fields(key, "frame,transform,interpolation");
+            fields(key, "frame,transform,interpolation,curve");
             int frame = (int) integer(key, "frame", 0, frames - 1);
             if (frame <= previous) throw bad("Transform keys require unique ascending frames");
             previous = frame;
             validateTransform(key.getJSONObject("transform"));
-            String interpolation = key.getString("interpolation");
-            if (!"linear".equals(interpolation) && !"hold".equals(interpolation)) throw bad("Use linear or hold key interpolation");
+            key.getString("interpolation");SketchEasing.validate(key);
         }
         return keys.length();
     }
@@ -182,6 +179,7 @@ public final class SketchDocument {
         if (right == null || "hold".equals(left.getString("interpolation"))) return copy(a);
         JSONObject b = right.getJSONObject("transform");
         double f = (frame - left.getInt("frame")) / (double) (right.getInt("frame") - left.getInt("frame"));
+        f=SketchEasing.sample(left.getString("interpolation"),left.optJSONArray("curve"),f);
         JSONObject out = new JSONObject();
         for (String key : new String[]{"x","y","scaleX","scaleY","rotation","anchorX","anchorY","opacity"})
             out.put(key, a.getDouble(key) + (b.getDouble(key) - a.getDouble(key)) * f);

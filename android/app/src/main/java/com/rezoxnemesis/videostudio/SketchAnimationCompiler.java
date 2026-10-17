@@ -267,12 +267,12 @@ public final class SketchAnimationCompiler {
     }
 
     private static final class Joint {String id;int parent=-1;double x,y;}
-    private static final class Pose {int frame;String interpolation;double rootX,rootY;double[] rotations;}
+    private static final class Pose {int frame;String interpolation;JSONArray curve;double rootX,rootY;double[] rotations;}
     private static final class Contact {int hip,knee,ankle,start,end,bend,blendIn,blendOut;double x,y,rotation;boolean hasRotation;}
     private static final class Binding {String objectId;int joint;List<Map<Integer,Double>> weights;}
     private static final class Rig {String id;boolean cameraAffected;List<Joint> joints=new ArrayList<>();List<Pose> poses=new ArrayList<>();List<Contact> contacts=new ArrayList<>();List<Binding> bindings=new ArrayList<>();Map<String,Integer> index=new LinkedHashMap<>();}
     private static final class Snapshot {double[] x,y,angle,local;double rootX,rootY;JSONArray contactErrors=new JSONArray();Snapshot(int n){x=new double[n];y=new double[n];angle=new double[n];local=new double[n];}}
-    private static final class Camera {int frame;String interpolation="linear";double x,y,zoom=1,rotation;}
+    private static final class Camera {int frame;String interpolation="linear";JSONArray curve;double x,y,zoom=1,rotation;}
 
     private static final class Model {
         final JSONObject source;final int frames,fps,sourceFrames,width,height;final boolean single;final double keyTolerancePixels;
@@ -358,7 +358,7 @@ public final class SketchAnimationCompiler {
             for(int i=0;i<jj.length();i++){JSONObject j=jj.getJSONObject(i);SketchDocument.fields(j,"id,parent,x,y");Joint v=new Joint();v.id=SketchDocument.id(j,"id");if(r.index.put(v.id,i)!=null)throw bad("Duplicate joint ID");v.x=SketchDocument.number(j,"x",0,1)*width;v.y=SketchDocument.number(j,"y",0,1)*height;r.joints.add(v);}
             for(int i=0;i<jj.length();i++){JSONObject j=jj.getJSONObject(i);if(j.has("parent")&&!j.isNull("parent")&&!j.optString("parent").isEmpty()){String parent=j.getString("parent");if(!r.index.containsKey(parent))throw bad("Unknown parent joint");r.joints.get(i).parent=r.index.get(parent);}}
             for(int i=0;i<r.joints.size();i++){Set<Integer> seen=new HashSet<>();int cursor=i;while(cursor>=0){if(!seen.add(cursor))throw bad("Joint hierarchy contains a cycle");cursor=r.joints.get(cursor).parent;}}
-            JSONArray pp=o.optJSONArray("poses");if(pp!=null){if(pp.length()>frames)throw bad("Too many rig poses");Pose before=null;for(int i=0;i<pp.length();i++){JSONObject p=pp.getJSONObject(i);SketchDocument.fields(p,"frame,interpolation,rootX,rootY,rotations");Pose v=new Pose();v.frame=(int)SketchDocument.integer(p,"frame",0,frames-1);if(before!=null&&v.frame<=before.frame)throw bad("Pose frames must be strictly ascending");v.interpolation=interpolation(p);v.rootX=p.has("rootX")?SketchDocument.number(p,"rootX",-4,4):before==null?0:before.rootX;v.rootY=p.has("rootY")?SketchDocument.number(p,"rootY",-4,4):before==null?0:before.rootY;v.rotations=before==null?new double[jj.length()]:before.rotations.clone();JSONObject rotations=p.optJSONObject("rotations");if(p.has("rotations")&&rotations==null)throw bad("Pose rotations require a joint map");if(rotations!=null){Iterator<String> ids=rotations.keys();while(ids.hasNext()){String id=ids.next();Integer index=r.index.get(id);if(index==null)throw bad("Unknown pose joint: "+id);v.rotations[index]=SketchDocument.scalar(rotations.get(id),-3600,3600,"Joint rotation");}}r.poses.add(v);before=v;}}
+            JSONArray pp=o.optJSONArray("poses");if(pp!=null){if(pp.length()>frames)throw bad("Too many rig poses");Pose before=null;for(int i=0;i<pp.length();i++){JSONObject p=pp.getJSONObject(i);SketchDocument.fields(p,"frame,interpolation,curve,rootX,rootY,rotations");Pose v=new Pose();v.frame=(int)SketchDocument.integer(p,"frame",0,frames-1);if(before!=null&&v.frame<=before.frame)throw bad("Pose frames must be strictly ascending");SketchEasing.validate(p);v.curve=p.optJSONArray("curve");v.interpolation=interpolation(p);v.rootX=p.has("rootX")?SketchDocument.number(p,"rootX",-4,4):before==null?0:before.rootX;v.rootY=p.has("rootY")?SketchDocument.number(p,"rootY",-4,4):before==null?0:before.rootY;v.rotations=before==null?new double[jj.length()]:before.rotations.clone();JSONObject rotations=p.optJSONObject("rotations");if(p.has("rotations")&&rotations==null)throw bad("Pose rotations require a joint map");if(rotations!=null){Iterator<String> ids=rotations.keys();while(ids.hasNext()){String id=ids.next();Integer index=r.index.get(id);if(index==null)throw bad("Unknown pose joint: "+id);v.rotations[index]=SketchDocument.scalar(rotations.get(id),-3600,3600,"Joint rotation");}}r.poses.add(v);before=v;}}
             JSONArray bb=o.optJSONArray("bindings");if(bb!=null)for(int i=0;i<bb.length();i++) {
                 JSONObject b=bb.getJSONObject(i);SketchDocument.fields(b,"objectId,jointId,weights");Binding v=new Binding();v.objectId=SketchDocument.id(b,"objectId");JSONObject object=objects.get(v.objectId);if(object==null)throw bad("Unknown sketch object: "+v.objectId);
                 if(bindings.containsKey(v.objectId))throw bad("A sketch object is bound more than once");v.joint=jointIndex(r,b.getString("jointId"));
@@ -376,14 +376,14 @@ public final class SketchAnimationCompiler {
         }
         private void readCamera(JSONArray cc)throws Exception {
             if(cc.length()>frames)throw bad("Too many camera keys");Camera previous=null;
-            for(int i=0;i<cc.length();i++){JSONObject c=cc.getJSONObject(i);SketchDocument.fields(c,"frame,x,y,zoom,rotation,interpolation");Camera v=new Camera();v.frame=(int)SketchDocument.integer(c,"frame",0,frames-1);if(previous!=null&&v.frame<=previous.frame)throw bad("Camera frames must be strictly ascending");v.interpolation=interpolation(c);v.x=c.has("x")?SketchDocument.number(c,"x",-4,4):previous==null?0:previous.x;v.y=c.has("y")?SketchDocument.number(c,"y",-4,4):previous==null?0:previous.y;v.zoom=c.has("zoom")?SketchDocument.number(c,"zoom",.01,8):previous==null?1:previous.zoom;v.rotation=c.has("rotation")?SketchDocument.number(c,"rotation",-3600,3600):previous==null?0:previous.rotation;camera.add(v);previous=v;}
+            for(int i=0;i<cc.length();i++){JSONObject c=cc.getJSONObject(i);SketchDocument.fields(c,"frame,x,y,zoom,rotation,interpolation,curve");Camera v=new Camera();v.frame=(int)SketchDocument.integer(c,"frame",0,frames-1);if(previous!=null&&v.frame<=previous.frame)throw bad("Camera frames must be strictly ascending");SketchEasing.validate(c);v.curve=c.optJSONArray("curve");v.interpolation=interpolation(c);v.x=c.has("x")?SketchDocument.number(c,"x",-4,4):previous==null?0:previous.x;v.y=c.has("y")?SketchDocument.number(c,"y",-4,4):previous==null?0:previous.y;v.zoom=c.has("zoom")?SketchDocument.number(c,"zoom",.01,8):previous==null?1:previous.zoom;v.rotation=c.has("rotation")?SketchDocument.number(c,"rotation",-3600,3600):previous==null?0:previous.rotation;camera.add(v);previous=v;}
         }
     }
 
     private static Snapshot sampleRig(Model m,Rig r,int frame)throws Exception {
         Snapshot s=new Snapshot(r.joints.size());Pose left=null,right=null;
         for(Pose p:r.poses){if(p.frame<=frame)left=p;else{right=p;break;}}
-        if(left!=null){double f=right==null?0:fraction(left.interpolation,(frame-left.frame)/(double)(right.frame-left.frame));s.rootX=left.rootX+(right==null?0:(right.rootX-left.rootX)*f);s.rootY=left.rootY+(right==null?0:(right.rootY-left.rootY)*f);for(int i=0;i<s.local.length;i++)s.local[i]=left.rotations[i]+(right==null?0:(right.rotations[i]-left.rotations[i])*f);}
+        if(left!=null){double f=right==null?0:SketchEasing.sample(left.interpolation,left.curve,(frame-left.frame)/(double)(right.frame-left.frame));s.rootX=left.rootX+(right==null?0:(right.rootX-left.rootX)*f);s.rootY=left.rootY+(right==null?0:(right.rootY-left.rootY)*f);for(int i=0;i<s.local.length;i++)s.local[i]=left.rotations[i]+(right==null?0:(right.rotations[i]-left.rotations[i])*f);}
         forward(m,r,s);
         for(Contact contact:r.contacts) {
             boolean locked=frame>=contact.start&&frame<=contact.end;
@@ -463,9 +463,9 @@ public final class SketchAnimationCompiler {
         for(Map.Entry<Integer,Double> e:weights.entrySet()){int i=e.getKey();Joint j=rig.joints.get(i);double a=Math.toRadians(s.angle[i]),dx=point[0]-j.x,dy=point[1]-j.y;outX+=e.getValue()*(s.x[i]+Math.cos(a)*dx-Math.sin(a)*dy);outY+=e.getValue()*(s.y[i]+Math.sin(a)*dx+Math.cos(a)*dy);}
         double nx=outX/m.width,ny=outY/m.height;if(nx<0||nx>1||ny<0||ny>1)throw bad("Deformed vector geometry leaves normalized canvas; reframe the prepared rig");return new double[]{nx,ny};
     }
-    private static Camera sampleCamera(Model m,int frame) {
+    private static Camera sampleCamera(Model m,int frame)throws Exception {
         Camera left=null,right=null;for(Camera c:m.camera){if(c.frame<=frame)left=c;else{right=c;break;}}
-        Camera out=new Camera();if(left==null)return out;double f=right==null?0:fraction(left.interpolation,(frame-left.frame)/(double)(right.frame-left.frame));out.x=left.x+(right==null?0:(right.x-left.x)*f);out.y=left.y+(right==null?0:(right.y-left.y)*f);out.zoom=left.zoom+(right==null?0:(right.zoom-left.zoom)*f);out.rotation=left.rotation+(right==null?0:(right.rotation-left.rotation)*f);return out;
+        Camera out=new Camera();if(left==null)return out;double f=right==null?0:SketchEasing.sample(left.interpolation,left.curve,(frame-left.frame)/(double)(right.frame-left.frame));out.x=left.x+(right==null?0:(right.x-left.x)*f);out.y=left.y+(right==null?0:(right.y-left.y)*f);out.zoom=left.zoom+(right==null?0:(right.zoom-left.zoom)*f);out.rotation=left.rotation+(right==null?0:(right.rotation-left.rotation)*f);return out;
     }
     private static JSONObject cameraTransform(Model m,Camera c,JSONObject base)throws Exception {
         double ax=base.getDouble("anchorX")*m.width,ay=base.getDouble("anchorY")*m.height;
@@ -534,8 +534,7 @@ public final class SketchAnimationCompiler {
     private static boolean ancestor(Rig rig,int possible,int joint){for(int cursor=joint;cursor>=0;cursor=rig.joints.get(cursor).parent)if(cursor==possible)return true;return false;}
     private static void requireIdentityLayer(JSONObject t)throws Exception{if(Math.abs(t.getDouble("x"))>EPS||Math.abs(t.getDouble("y"))>EPS||Math.abs(t.getDouble("scaleX")-1)>EPS||Math.abs(t.getDouble("scaleY")-1)>EPS||Math.abs(t.getDouble("rotation"))>EPS)throw bad("Bound artwork requires identity prepared layer transforms; apply its layer transform to the artwork before rig mapping");}
     private static int jointIndex(Rig r,String id){Integer i=r.index.get(id);if(i==null)throw bad("Unknown joint: "+id);return i;}
-    private static String interpolation(JSONObject o)throws Exception{String mode=o.optString("interpolation","linear");if(!java.util.Arrays.asList("linear","smooth","hold").contains(mode))throw bad("Interpolation must be linear, smooth or hold");return mode;}
-    private static double fraction(String mode,double f){return "hold".equals(mode)?0:"smooth".equals(mode)?f*f*(3-2*f):f;}
+    private static String interpolation(JSONObject o)throws Exception{String mode=o.optString("interpolation","linear");if(!SketchEasing.MODES.contains(mode))throw bad("Unsupported animation timing curve");return mode;}
     private static double distance(Joint a,Joint b){return Math.hypot(a.x-b.x,a.y-b.y);}
     private static String hash(JSONObject o)throws Exception{return SketchDocument.sha256(SketchDocument.canonical(o).getBytes(StandardCharsets.UTF_8));}
     private static String truncate(String s,int n){return s.length()<=n?s:s.substring(0,n);}
