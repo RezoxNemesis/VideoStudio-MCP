@@ -278,6 +278,9 @@ def execute(config, request, source_root, work, checkpoint):
     output.mkdir()
     if backend == "cogvideox":
         outputs, proof = _cogvideox(config, controls, output, checkpoint, request["sources"], source_root)
+    elif backend == "kokoro":
+        from .speech import render
+        outputs, proof = render(config, controls, output, checkpoint)
     elif backend == "blender":
         from cinematic3d.pipeline import build
         timeline_path = work / "timeline.json"

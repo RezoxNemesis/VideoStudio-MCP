@@ -35,6 +35,11 @@ signed in-place upgrade require the original signer and an accessible device.
 * Optional manually authored `headOutline` masks preserve face/hair texture under
   rigid head motion in source-deformation rigs. This does not generate expressions,
   correct anatomy or previously unseen angles.
+* The Open Production Workbench now has manual Hindi/English character dialogue
+  controls matching the autonomous MCP contract. Real local Kokoro inference
+  produces timed voice recordings and a master audio lane in a separate editable
+  project copy. Saved MCP requests can be reopened manually. See
+  [Character dialogue](CHARACTER_DIALOGUE.md) for setup, operation and limits.
 
 Native UI: **File → Sketch books**, **File → Import animation**, **File → Resume
 animation import**, **File → Component library**, and **Frames / Cels → Film

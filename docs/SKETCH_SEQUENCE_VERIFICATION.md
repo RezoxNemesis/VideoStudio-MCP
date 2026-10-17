@@ -3,13 +3,14 @@
 2026-10-17, workspace source candidate. No phone execution or live owner MCP
 endpoint was used for this verification.
 
-* Full Android unit run: **1,228 cases in 244 suites, zero failures/errors**.
-  1,225 passed; three existing opt-in film/bundle proof cases were skipped because
+* Full Android unit run: **1,234 cases in 245 suites, zero failures/errors**.
+  1,231 passed; three existing opt-in film/bundle proof cases were skipped because
   their external fixtures/environment flags were absent.
-* Full `npm test`: **270 tests plus 306 source smoke checks**, zero failures.
+* Full `npm test`: **272 tests plus 306 source smoke checks**, zero failures.
+* Open pipeline Python suite: **25 tests**, zero failures/errors.
 * Real installed MCP SDK + local workerd: new tools discovered; native 4.6.2
-  refused a feature-length request before queue mutation; five requests retained
-  their exact parameters through the native queue. Replies were synthetic Android
+  refused feature-length and dialogue requests before queue mutation; six requests
+  retained their exact parameters through the native queue. Replies were synthetic Android
   acknowledgements, not device execution.
 * Worker dry-run bundle succeeded. No Worker deployment was performed here.
 * Native Skia tests read all 10,000 frozen frames, verified exact ordering and final
@@ -32,6 +33,13 @@ endpoint was used for this verification.
   page, and imported cel playback presents the new artwork on its first paint.
   Playback renders on a worker before adopting the next cel; cancelled or stale
   preview bitmaps are recycled. This does not establish device realtime speed.
+* Real local Kokoro CPU inference completed English and Hindi two-actor auditions
+  through native request export and native project import. The app verified WAV
+  sample clocks, hashes and pending dialogue text/cast/timing, retained individual
+  recordings and created an editable master lane in a separate project copy.
+  Manual controls and reopening saved autonomous requests pass native UI tests.
+  An actual model overrun failed with `DIALOGUE_EXCEEDS_SLOT` without publishing a
+  result. Audible voice acting, pronunciation and final lip sync are unverified.
 
 Unverified: Android MediaCodec/MediaMuxer on the owner's device, native video
 sampling/orientation on that device, thermal/storage behavior of a real feature

@@ -1841,7 +1841,7 @@ function serverForApp(env,ownerKey,protocolVersion=1){
         :action.startsWith('sketch_component_')?' Native 4.7.0: save, browse or place immutable artist-authored components as editable layers with owned dependencies. Copied artwork is rejected in original_strokes sessions.'
         :action==='sketch_book_create'?' Native 4.7.0 supports up to 1,000,000 lazy editable cels. One hour requires 86,400 frames at 24 fps or 216,000 at 60 fps.'
         :action==='sketch_book_render'?' Native 4.7.0 streams up to 1,000,000 exposed frames from frozen cels into MediaCodec. Use page ranges for scene exports, stable operationId for recovery, and job status for completion. Originals are preserved.'
-        :action.startsWith('open_pipeline_')?' Uses your own configured open-source runner or a hash-verified Drive artifact exchange. Submission is separate from inference completion. No commercial generation API.'
+        :action.startsWith('open_pipeline_')?' Uses your own configured open-source runner or a hash-verified Drive artifact exchange. Supports explicitly cast, timed Hindi/English Kokoro dialogue on native 4.7.0+. Submission is separate from inference completion. No commercial generation API.'
         :action==='precision_edit'?' Atomic stable-clip edits require the exact project revision. Flat keys, opacity, mask/chroma/glow share actual native preview/export.'
         :' Touch controls use the same native stored operations, revision checks and renderer.';
       s.registerTool('app_'+action,{description:'VideoStudio authoring: '+action.replaceAll('_',' ')+'. New features require native3.9.0+.'+detail,inputSchema,annotations:{readOnlyHint:readOnly}},async args=>queue(action,args));

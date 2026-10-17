@@ -145,7 +145,19 @@ const interpolationControls=z.object({inputFps:integer(1,60),outputFps:integer(1
  if(v.cuts?.some((cut,i,a)=>i>0&&cut<=a[i-1]))fail('Cuts must be ordered and unique');
  let end=-1;for(const range of v.hitStopRanges||[]){if(range[0]>=range[1]||range[0]<end)fail('Hold ranges must be ordered, nonoverlapping and end-exclusive');end=range[1];}
 });
-const backendControls={blender:blenderControls,cogvideox:cogControls,frame_sequence:sequenceControls,interpolation:interpolationControls};
+const dialogueLine=z.object({lineId:id,characterId:id,voice:z.enum(['af_heart','am_adam','hf_alpha','hm_omega']),text:text(240),startMs:integer(0,599999),slotMs:integer(100,60000),speed:finite.min(.75).max(1.25).optional()}).strict();
+const dialogueControls=z.object({language:z.enum(['en-US','hi-IN']),durationMs:integer(100,600000),lines:z.array(dialogueLine).min(1).max(32)}).strict().superRefine((v,ctx)=>{
+ const fail=message=>ctx.addIssue({code:z.ZodIssueCode.custom,message}),ids=new Set(),cast=new Map();let end=-1,total=0;
+ for(const line of v.lines){
+  if(ids.has(line.lineId))fail('Duplicate dialogue line');ids.add(line.lineId);
+  if(!(v.language==='en-US'?['af_heart','am_adam']:['hf_alpha','hm_omega']).includes(line.voice))fail('DIALOGUE_VOICE_LANGUAGE_MISMATCH');
+  if(cast.has(line.characterId)&&cast.get(line.characterId)!==line.voice)fail('CHARACTER_VOICE_CHANGED');cast.set(line.characterId,line.voice);
+  if(line.startMs<end||line.startMs+line.slotMs>v.durationMs)fail('Dialogue slots must be ordered, nonoverlapping and inside the scene');end=line.startMs+line.slotMs;
+  if(/[\u0000-\u0008\u000b-\u001f]/.test(line.text))fail('Invalid dialogue text');total+=line.text.length;
+ }
+ if(total>6000)fail('Dialogue text budget exceeded');
+});
+const backendControls={blender:blenderControls,cogvideox:cogControls,frame_sequence:sequenceControls,interpolation:interpolationControls,kokoro:dialogueControls};
 const sourceIds=z.array(id).max(64).refine(v=>new Set(v).size===v.length,'Source asset IDs must be ordered and unique');
 const endpoint=text(1024).refine(value=>{
  try{const u=new URL(value),authority=value.slice(value.indexOf('//')+2).split('/')[0];return /^https:\/\/[^\\\s]+$/i.test(value)&&!/[\u0080-\uffff]/.test(authority)&&value===value.trim()&&u.protocol==='https:'&&!!u.hostname&&!u.username&&!u.password&&!u.search&&!u.hash&&u.port!=='0'&&!/[?#]/.test(value);}catch{return false;}
@@ -219,7 +231,7 @@ export const studioToolSchemas={
  sketch_render:{...mutation,aspect:z.enum(['original','9:16','16:9','1:1']).optional(),quality:z.enum(['720p','1080p']).optional()},
  open_pipeline_configure:{endpoint,bearer:z.string().min(16).max(4096).regex(/^[A-Za-z0-9_.~+/-]+=*$/)},
  open_pipeline_capabilities:{},open_pipeline_list:{},
- open_pipeline_export_request:{projectId:id,sourceProjectUpdatedAt:updatedAt,requestId:id,backend:z.enum(['blender','cogvideox','frame_sequence','interpolation']),controls:z.union(Object.values(backendControls)),assetIds:sourceIds},
+ open_pipeline_export_request:{projectId:id,sourceProjectUpdatedAt:updatedAt,requestId:id,backend:z.enum(['blender','cogvideox','frame_sequence','interpolation','kokoro']),controls:z.union(Object.values(backendControls)),assetIds:sourceIds},
  open_pipeline_submit:requestIdentity,open_pipeline_status:requestIdentity,open_pipeline_cancel:requestIdentity,
  open_pipeline_download_result:requestIdentity,open_pipeline_import_result:requestIdentity,
  open_pipeline_archive_artifact:{...requestIdentity,kind:z.enum(['request','result'])},
@@ -282,6 +294,7 @@ export function nativeStudioParameters(action,parameters={}){
   backendControls[parsed.backend].parse(parsed.controls);
   if(new TextEncoder().encode(JSON.stringify(parsed.controls)).length>256*1024)throw new Error('Generation controls exceed 256 KiB metadata budget');
   const count=parsed.assetIds.length;
+  if(parsed.backend==='kokoro'&&count!==0)throw new Error('Speech uses explicitly cast local voices without source assets');
   if(parsed.backend==='cogvideox'){
    if(parsed.controls.mode==='video_to_video'&&count!==1)throw new Error('VIDEO_SOURCE_REQUIRED: video_to_video needs exactly one project-owned MP4 asset');
    if(parsed.controls.mode!=='video_to_video'&&count!==0)throw new Error('REFERENCE_CONDITIONING_UNAVAILABLE: text_to_video has no source assets');
@@ -299,6 +312,7 @@ const legacy3d=new Set(['STANDOFF','CHARGE','CLASH','BLADE_LOCK','FOLLOW_THROUGH
 const pixelFields=new Set(['keyframes','opacity','chromaKey','chromaColor','chromaTolerance','chromaFeather','maskShape','maskLeft','maskTop','maskRight','maskBottom','maskFeather','glowStrength','glowRadiusPx','glowThreshold']);
 export function requireStudioVersion(device,action,parameters={}){
  const alias=studioAliases.has(action);action=nativeStudioCanonicalAction(action);
+ if(action==='open_pipeline_export_request'&&parameters.backend==='kokoro'&&!atLeast(device?.appVersion,'4.7.0'))throw new Error('NATIVE_APP_UPGRADE_REQUIRED: timed Hindi/English character dialogue requires VideoStudio 4.7.0 or newer');
  const longSequence=action==='sketch_book_timeline'||action==='sketch_import_animation'||action.startsWith('sketch_component_')||action==='sketch_book_create'&&parameters.pageCount>10000||action==='sketch_book_render'&&(parameters.pageCount>1200||parameters.pageStart>=10000)||action==='sketch_book_open_page'&&parameters.page>=10000||action==='sketch_book_get'&&parameters.pageOffset>10000||action==='sketch_book_edit'&&(parameters.cues!==undefined||(parameters.exposures||[]).some(e=>e.page>=10000));
  if(longSequence&&!atLeast(device?.appVersion,'4.7.0'))throw new Error('NATIVE_APP_UPGRADE_REQUIRED: feature-length Sketch Studio sequences, animation imports and reusable components require VideoStudio 4.7.0 or newer');
  const shaped=object=>object?.shapeKeys!==undefined;
