@@ -1,0 +1,20 @@
+{
+  "story": {
+    "schema": "omega.motion-shot-plan.v1",
+    "note": "Approximate HUMAN-assigned subject-interest boxes from original story contact sheet; not segmentation or actor detection",
+    "shots": [
+      {"id":"rain_intro","start":0,"end":59,"regions":[[0.27,0.12,0.34,0.79]]},
+      {"id":"fall","start":60,"end":143,"regions":[[0.25,0.14,0.38,0.79]]},
+      {"id":"recovery","start":144,"end":239,"regions":[[0.26,0.13,0.40,0.82]]}
+    ]
+  },
+  "duel": {
+    "schema":"omega.motion-shot-plan.v1",
+    "note":"Approximate HUMAN-assigned character/foreground boxes from original Rooftop Standoff contact sheet; not silhouette masks",
+    "shots": [
+      {"id":"wide_contact","start":0,"end":35,"regions":[[0.24,0.26,0.57,0.69]]},
+      {"id":"foreground_pov","start":36,"end":59,"regions":[[0.09,0.64,0.24,0.32],[0.45,0.16,0.43,0.71]]},
+      {"id":"recovery","start":60,"end":99,"regions":[[0.28,0.36,0.54,0.61]]}
+    ]
+  }
+}

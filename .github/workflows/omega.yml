@@ -1,4 +1,4 @@
-name: OMEGA CinemaBench and Native Film Evidence
+name: OMEGA CinemaBench, Native Film and Motion DNA
 
 on:
   pull_request:
@@ -27,20 +27,23 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Verify CinemaBench M0 and native-film adapter M1
-        run: node --test scripts/omega-cinemabench-test.mjs scripts/omega-native-proof-test.mjs
+      - name: Verify M0 CinemaBench, M1 native-film adapter and M2 Motion DNA
+        run: node --test scripts/omega-cinemabench-test.mjs scripts/omega-native-proof-test.mjs scripts/omega-motion-dna-test.mjs
       - name: Syntax checks
         run: |
           node --check src/omega/cinemabench.js
           node --check scripts/omega-cinemabench.mjs
           node --check scripts/omega-native-proof.mjs
           node --check scripts/omega-native-proof-test.mjs
+          node --check src/omega/motion-dna.js
+          node --check scripts/omega-motion-dna.mjs
+          node --check scripts/omega-motion-dna-test.mjs
           python3 -m py_compile scripts/encode-story-film-proof.py scripts/encode-duel-film-proof.py
 
   native-film-proof:
-    # Run one expensive, targeted Android Canvas proof only for the M1 review PR.
+    # Run one targeted Android Canvas proof for M1/M2 review PRs; no APK build.
     # No APK signing, release/deploy, or private device command is performed.
-    if: github.event_name == 'pull_request' && github.base_ref == 'feat/project-omega-cinemabench-m0'
+    if: github.event_name == 'pull_request' && (github.base_ref == 'feat/project-omega-cinemabench-m0' || github.base_ref == 'feat/project-omega-native-film-m1')
     needs: cinemabench
     runs-on: ubuntu-latest
     timeout-minutes: 35
@@ -101,19 +104,44 @@ jobs:
             console.log(`${kind}: ${expected} native hashes and encoded MP4 verified; artistic/phone review still required`);
           }
           NODE
+      - name: Confirm M2 decoded motion evidence and manual-review boundary
+        if: github.base_ref == 'feat/project-omega-native-film-m1'
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import { readFileSync } from 'node:fs';
+          for (const [kind,folder,count] of [
+            ['story','sketch-story-film-proof',60],['duel','sketch-duel-film-proof',25]
+          ]) {
+            const report=JSON.parse(readFileSync(`android/app/build/${folder}/omega-motion-dna.json`,'utf8'));
+            if (report.status !== 'MEASURED' || report.kind !== kind ||
+                report.qualityDecision !== 'MANUAL_REVIEW_REQUIRED' ||
+                report.measured.decodedSampleCount !== count ||
+                report.measured.evaluatedPairs < 12 ||
+                report.ownerPhonePlaybackVerified !== false ||
+                report.semanticActingQualityVerified !== false) {
+              throw new Error(`Motion DNA native-film diagnostic invalid for ${kind}`);
+            }
+            console.log(`${kind}: ${report.measured.evaluatedPairs} sampled pair diagnostics; `+
+              `${report.measured.localizedMotionCandidatePairs} localized pixel-change candidates; `+
+              `human/phone acceptance still required`);
+          }
+          NODE
       - name: Keep audit reports, reproducible provenance, native samples and videos
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: OMEGA-M1-native-film-proof
+          name: OMEGA-M1-M2-native-film-proof
           retention-days: 7
           if-no-files-found: warn
           path: |
+            android/app/build/sketch-story-film-proof/omega-motion-dna.json
             android/app/build/sketch-story-film-proof/omega-native-report.json
             android/app/build/sketch-story-film-proof/omega-frame-manifest.json
             android/app/build/sketch-story-film-proof/mp4-verified.json
             android/app/build/sketch-story-film-proof/*.mp4
             android/app/build/sketch-story-film-proof/contact-sheet.png
+            android/app/build/sketch-duel-film-proof/omega-motion-dna.json
             android/app/build/sketch-duel-film-proof/omega-native-report.json
             android/app/build/sketch-duel-film-proof/omega-frame-manifest.json
             android/app/build/sketch-duel-film-proof/mp4-verified.json
