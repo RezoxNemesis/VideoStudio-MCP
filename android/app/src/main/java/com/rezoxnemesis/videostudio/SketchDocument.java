@@ -66,7 +66,7 @@ public final class SketchDocument {
             JSONArray items = layer.getJSONArray("objects");
             for (int j = 0; j < items.length(); j++) {
                 JSONObject item = items.getJSONObject(j);
-                fields(item, "id,kind,frame,exposure,color,styleId,width,fill,points,bounds,reference,paint,transform,keys,brush,commands,gradient,referenceCrop,text,fontFamily,fontSize,fontStyle,textAlign,letterSpacing");
+                fields(item, "id,kind,frame,exposure,color,styleId,width,fill,points,bounds,reference,paint,transform,keys,brush,commands,shapeKeys,gradient,referenceCrop,text,fontFamily,fontSize,fontStyle,textAlign,letterSpacing");
                 unique(ids, id(item, "id"));
                 String kind = item.getString("kind");
                 if (!java.util.Arrays.asList("stroke","eraser","line","rect","ellipse","polygon","image","paint","path","text").contains(kind))
@@ -76,6 +76,7 @@ public final class SketchDocument {
                 color(item.getString("color")); SketchPaletteStyles.validateLink(item,linkedStyles); number(item, "width", .0005, .2); bool(item, "fill");
                 validateTransform(item.getJSONObject("transform"));
                 keys += validateKeys(item.getJSONArray("keys"), frames);
+                int[] shapeBudget=SketchShapeKeys.validate(item,frames);keys+=shapeBudget[0];points+=shapeBudget[1];
                 if(item.has("paint")&&!"paint".equals(kind))throw bad("Paint snapshots require a paint cel");
                 if("paint".equals(kind))fields(item,"id,kind,frame,exposure,color,width,fill,bounds,paint,transform,keys");
                 if (item.has("brush")) { if (!"stroke".equals(kind) && !"eraser".equals(kind)) throw bad("Brush requires stroke/eraser"); SketchBrushes.validate(item.getJSONObject("brush")); }

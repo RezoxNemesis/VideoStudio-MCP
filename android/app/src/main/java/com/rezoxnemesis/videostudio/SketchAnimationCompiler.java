@@ -42,6 +42,11 @@ public final class SketchAnimationCompiler {
             for(int oi=0;oi<sourceItems.length();oi++) {
                 JSONObject object=sourceItems.getJSONObject(oi);int[] range=m.ranges.get(object.getString("id"));if(range==null)continue;
                 Binding binding=m.bindings.get(object.getString("id"));int duration=range[1]-range[0]+1;
+                if((binding==null||binding.weights==null)&&SketchShapeKeys.animated(object)){
+                    JSONArray shapeKeys=object.getJSONArray("shapeKeys");
+                    if(shapeKeys.getJSONObject(shapeKeys.length()-1).getInt("frame")>=m.frames)
+                        throw bad("Animation duration cannot truncate retained shape keys; move or remove the later keys first");
+                }
                 int count=binding!=null&&binding.weights!=null?duration:1;expectedObjects+=count;
                 expectedPoints+=geometryPoints(object)*count;
                 if(binding!=null&&binding.weights==null)expectedKeys+=duration;
@@ -250,6 +255,7 @@ public final class SketchAnimationCompiler {
             for(int oi=0;oi<originalItems.length();oi++){
                 JSONObject object=originalItems.getJSONObject(oi);String id=object.getString("id");int[] range=m.ranges.get(id);if(range==null||frame<range[0]||frame>range[1])continue;
                 Binding binding=m.bindings.get(id);JSONObject prepared=m.objects.get(id);
+                if("path".equals(object.getString("kind")))object=SketchShapeKeys.sampled(object,Math.min(frame,m.sourceFrames-1));
                 if(binding==null)object.put("transform",SketchDocument.transformAt(prepared,Math.min(frame,m.sourceFrames-1)));
                 else{Rig rig=bindingRigs.get(id);if(binding.weights!=null)object=deform(m,rig,snapshots.get(rig.id),binding,prepared,frame);else object.put("transform",jointTransform(m,rig,snapshots.get(rig.id),binding.joint,SketchDocument.transformAt(prepared,Math.min(frame,m.sourceFrames-1))));}
                 visible.put(object.put("frame",0).put("exposure",1).put("keys",new JSONArray()));
@@ -448,7 +454,7 @@ public final class SketchAnimationCompiler {
         SketchDocument.validateTransform(out);return out;
     }
     private static JSONObject deform(Model m,Rig rig,Snapshot s,Binding binding,JSONObject source,int frame)throws Exception {
-        JSONObject cel=SketchDocument.copy(source).put("id","deform_"+SketchDocument.sha256(binding.objectId.getBytes(StandardCharsets.UTF_8)).substring(0,16)+"_"+frame)
+        JSONObject cel=SketchShapeKeys.sampled(source,Math.min(frame,m.sourceFrames-1)).put("id","deform_"+SketchDocument.sha256(binding.objectId.getBytes(StandardCharsets.UTF_8)).substring(0,16)+"_"+frame)
                 .put("frame",frame).put("exposure",1).put("transform",SketchDocument.transform()).put("keys",new JSONArray());
         JSONObject base=SketchDocument.transformAt(source,Math.min(frame,m.sourceFrames-1));cel.getJSONObject("transform").put("opacity",base.getDouble("opacity"));int vertex=0;
         if("path".equals(source.getString("kind"))) {

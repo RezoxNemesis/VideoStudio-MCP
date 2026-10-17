@@ -64,7 +64,7 @@ public class SketchMaterialQualityProofTest {
         JSONObject k=new JSONObject().put("frame",frame).put("transform",SketchDocument.transform().put("x",x).put("rotation",rotation)).put("interpolation",mode);
         if("bezier".equals(mode))k.put("curve",new JSONArray().put(.22).put(0).put(.18).put(1));return k;
     }
-    private static JSONObject eye()throws Exception {
+    static JSONObject eye()throws Exception {
         JSONObject d=document("editable_iris_quality_study",1280,720);
         JSONObject skinLayer=layer(d,"skin_and_socket");
         add(skinLayer,rect("skin","#FFFFFFFF",0,0,1,1).put("gradient",skin()));

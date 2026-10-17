@@ -318,6 +318,33 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
     private static String commaValues(JSONArray values)throws Exception {
         StringBuilder out=new StringBuilder();for(int i=0;i<values.length();i++){if(i>0)out.append(", ");out.append(values.get(i));}return out.toString();
     }
+    private void shapeAnimationDialog(){
+        if(document==null||canvas==null||canvas.getSelectedId()==null){onMessage("Select an editable curve first");return;}
+        try{
+            String id=canvas.getSelectedId();JSONObject object=SketchDocument.object(document,id);
+            if(!"path".equals(object.getString("kind"))){onMessage("Shape animation uses editable Bezier paths. Select a curve and its nodes.");return;}
+            int frame=canvas.getFrame();JSONObject prior=null;JSONArray keys=object.optJSONArray("shapeKeys");
+            if(keys!=null)for(int i=0;i<keys.length();i++){JSONObject key=keys.getJSONObject(i);if(key.getInt("frame")>frame)break;prior=key;}
+            final String[] modes={"linear","smooth","hold","ease_in","ease_out","ease_in_out","bezier"};
+            LinearLayout form=column();TextView help=new TextView(this);help.setTextColor(StudioUi.TEXT);
+            help.setText("Set a shape key, move to another frame, then drag curve nodes. Each key keeps the same curve structure. Timing controls the segment starting at this key.");form.addView(help);
+            Spinner timing=new Spinner(this);timing.setContentDescription("Shape timing");timing.setAdapter(new ArrayAdapter<>(this,android.R.layout.simple_spinner_dropdown_item,
+                    new String[]{"Linear","Smooth","Hold","Ease in","Ease out","Ease in/out","Bezier"}));
+            timing.setSelection(prior==null?0:Math.max(0,java.util.Arrays.asList(modes).indexOf(prior.getString("interpolation"))));form.addView(timing);
+            EditText curve=input("Bezier timing: x1, y1, x2, y2",prior!=null&&prior.has("curve")?commaValues(prior.getJSONArray("curve")):"0.42, 0, 1, 1",false);form.addView(curve);
+            curve.setVisibility(timing.getSelectedItemPosition()==6?View.VISIBLE:View.GONE);
+            timing.setOnItemSelectedListener(new SimpleSelection(){@Override public void selected(int index){curve.setVisibility(index==6?View.VISIBLE:View.GONE);}});
+            button(row(form),"Clear shape animation",()->{try{onOperation(new JSONObject().put("type","update_object").put("objectId",id).put("patch",new JSONObject().put("shapeKeys",new JSONArray())));}catch(Exception failure){onMessage(failure.getMessage());}});
+            new AlertDialog.Builder(this).setTitle("Shape key · frame "+(frame+1)).setView(form).setNegativeButton("Cancel",null)
+                .setNeutralButton("Remove key",(dialog,which)->{try{onOperation(new JSONObject().put("type","set_shape_key").put("objectId",id).put("frame",frame).put("remove",true));}catch(Exception failure){onMessage(failure.getMessage());}})
+                .setPositiveButton("Set key",(dialog,which)->{try{
+                    String mode=modes[timing.getSelectedItemPosition()];JSONObject operation=new JSONObject().put("type","set_shape_key").put("objectId",id).put("frame",frame)
+                        .put("commands",SketchShapeKeys.commandsAt(object,frame)).put("interpolation",mode);
+                    if("bezier".equals(mode))operation.put("curve",new JSONArray("["+curve.getText().toString()+"]"));
+                    SketchEasing.validate(operation);onOperation(operation);
+                }catch(Exception failure){onMessage(failure.getMessage());}}).show();
+        }catch(Exception failure){onMessage(failure.getMessage());}
+    }
     private void materialShadingDialog(){
         if(document==null||canvas==null||canvas.getSelectedId()==null){onMessage("Select an editable filled shape first");return;}
         try{
@@ -935,7 +962,7 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
                     try{startActivity(settings);}catch(android.content.ActivityNotFoundException unavailable){onMessage("Open Android app settings to allow drawing notifications");}
                 }).show();
     }
-    private void brushMenu(){menu("Brush / Text",new String[]{"Brush","Colours","Material shading","Linked palette styles","Paint studio","Text","Finish path","Transform / key","Delete object","Reference image"},this::brushDialog,this::paletteDialog,this::materialShadingDialog,this::linkedPaletteDialog,this::paintMenu,this::textDialog,()->canvas.finishPolygon(),this::transformDialog,this::deleteObject,this::referenceDialog);}
+    private void brushMenu(){menu("Brush / Text",new String[]{"Brush","Colours","Material shading","Shape animation","Linked palette styles","Paint studio","Text","Finish path","Transform / key","Delete object","Reference image"},this::brushDialog,this::paletteDialog,this::materialShadingDialog,this::shapeAnimationDialog,this::linkedPaletteDialog,this::paintMenu,this::textDialog,()->canvas.finishPolygon(),this::transformDialog,this::deleteObject,this::referenceDialog);}
     private void layersMenu(){menu("Layers",new String[]{"Select layer","+ Layer","Layer settings","Up","Down"},this::chooseLayer,this::addLayer,this::layerDialog,()->reorderLayer(1),()->reorderLayer(-1));}
     private void chooseLayer(){
         if(document==null)return;

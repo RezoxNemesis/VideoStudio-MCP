@@ -32,6 +32,9 @@ const affineMap=z.tuple([finite.min(-8).max(8),finite.min(-8).max(8),finite.min(
 const cloneSource=z.object({objectId:id,sha256:sha,offsetX:finite.min(-1).max(1).optional(),offsetY:finite.min(-1).max(1).optional(),scale:finite.min(.01).max(8).optional(),rotation:finite.min(-180).max(180).optional(),mapping:affineMap.optional()}).strict()
  .refine(v=>v.mapping===undefined||['offsetX','offsetY','scale','rotation'].every(k=>v[k]===undefined),'Choose affine mapping or offset/scale/rotation');
 const commands=z.array(z.union([z.tuple([z.literal('M'),coordinate,coordinate]),z.tuple([z.literal('L'),coordinate,coordinate]),z.tuple([z.literal('Q'),coordinate,coordinate,coordinate,coordinate]),z.tuple([z.literal('C'),coordinate,coordinate,coordinate,coordinate,coordinate,coordinate]),z.tuple([z.literal('Z')])])).min(2).max(4096).refine(v=>v[0][0]==='M','Path must start with M');
+const shapeKeys=z.array(z.object({frame,commands,interpolation:drawingInterpolation,curve:timingCurve.optional()}).strict().refine(timingValid,'Invalid shape timing curve')).max(240)
+ .refine(keys=>keys.every((key,index)=>index===0||key.frame>keys[index-1].frame),'Shape key frames must strictly increase');
+const shapeTopology=object=>!object.shapeKeys||object.shapeKeys.every(key=>key.commands.length===object.commands.length&&key.commands.every((command,index)=>command[0]===object.commands[index][0]&&command.length===object.commands[index].length));
 const legacyGradient=z.object({startColor:color,endColor:color,x0:coordinate,y0:coordinate,x1:coordinate,y1:coordinate}).strict().refine(v=>v.x0!==v.x1||v.y0!==v.y1,'Gradient endpoints must differ');
 const radialGradient=z.object({type:z.literal('radial'),cx:coordinate,cy:coordinate,radius:finite.min(.0001).max(2),colors:z.array(color).min(2).max(16),stops:z.array(coordinate).min(2).max(16).optional()}).strict()
  .refine(v=>!v.stops||v.stops.length===v.colors.length&&v.stops[0]===0&&v.stops.at(-1)===1&&v.stops.every((stop,i)=>i===0||stop>v.stops[i-1]),'Each color needs a matching strictly increasing stop from 0 to 1');
@@ -47,7 +50,7 @@ function objectUnion(complete=false){
   z.object({...base,kind:z.literal('polygon'),points:points.min(3),gradient:gradient.optional()}).strict(),
   z.object({...base,kind:z.literal('rect'),bounds,gradient:gradient.optional()}).strict(),
   z.object({...base,kind:z.literal('ellipse'),bounds,gradient:gradient.optional()}).strict(),
-  z.object({...base,kind:z.literal('path'),commands,gradient:gradient.optional()}).strict(),
+  z.object({...base,kind:z.literal('path'),commands,shapeKeys:shapeKeys.optional(),gradient:gradient.optional()}).strict().refine(shapeTopology,'Shape keys must preserve the base path topology'),
   z.object({...base,kind:z.literal('image'),bounds,reference,referenceCrop:bounds.optional()}).strict(),
   z.object({...base,kind:z.literal('text'),bounds,text:text(4096),fontFamily:z.enum(['sans-serif','sans-serif-condensed','serif','monospace','cursive']).optional(),fontSize:finite.min(.005).max(.3).optional(),fontStyle:z.enum(['normal','bold','italic','bold_italic']).optional(),textAlign:z.enum(['left','center','right']).optional(),letterSpacing:finite.min(-.1).max(.5).optional()}).strict()
  ]).refine(v=>(v.frame??0)+(v.exposure??1)<=1200,'Exposure exceeds the bounded frame domain');
@@ -68,7 +71,7 @@ const operation=z.discriminatedUnion('type',[
  z.object({type:z.literal('delete_layer'),layerId:id}).strict(),
  z.object({type:z.literal('reorder_layer'),layerId:id,index:integer(0,31)}).strict(),
  z.object({type:z.literal('add_object'),layerId:id,object:sketchObject}).strict(),
- z.object({type:z.literal('update_object'),objectId:id,patch:z.object({color:color.optional(),width:finite.min(.0005).max(.2).optional(),fill:z.boolean().optional(),text:text(4096).optional(),fontFamily:z.enum(['sans-serif','sans-serif-condensed','serif','monospace','cursive']).optional(),fontSize:finite.min(.005).max(.3).optional(),fontStyle:z.enum(['normal','bold','italic','bold_italic']).optional(),textAlign:z.enum(['left','center','right']).optional(),letterSpacing:finite.min(-.1).max(.5).optional(),brush:brush.optional(),commands:commands.optional(),gradient:gradient.nullable().optional(),referenceCrop:bounds.optional(),points:points.optional(),bounds:bounds.optional(),frame:frame.optional(),exposure:integer(1,1200).optional()}).strict()}).strict(),
+ z.object({type:z.literal('update_object'),objectId:id,patch:z.object({color:color.optional(),width:finite.min(.0005).max(.2).optional(),fill:z.boolean().optional(),text:text(4096).optional(),fontFamily:z.enum(['sans-serif','sans-serif-condensed','serif','monospace','cursive']).optional(),fontSize:finite.min(.005).max(.3).optional(),fontStyle:z.enum(['normal','bold','italic','bold_italic']).optional(),textAlign:z.enum(['left','center','right']).optional(),letterSpacing:finite.min(-.1).max(.5).optional(),brush:brush.optional(),commands:commands.optional(),shapeKeys:shapeKeys.optional(),gradient:gradient.nullable().optional(),referenceCrop:bounds.optional(),points:points.optional(),bounds:bounds.optional(),frame:frame.optional(),exposure:integer(1,1200).optional()}).strict()}).strict(),
  z.object({type:z.literal('append_points'),objectId:id,points:points.max(2048)}).strict(),
  z.object({type:z.literal('duplicate_cel'),layerId:id,fromFrame:frame,toFrame:frame,idPrefix:id.max(72)}).strict(),
  z.object({type:z.literal('clear_cel'),layerId:id,frame}).strict(),
@@ -81,7 +84,9 @@ const operation=z.discriminatedUnion('type',[
  z.object({type:z.literal('set_timing'),fps:fps.optional(),frameCount:integer(1,1200).optional()}).strict(),
  z.object({type:z.literal('set_exposure'),objectId:id,frame,exposure:integer(1,1200)}).strict(),
  z.object({type:z.literal('set_transform'),...target,transform:transformPatch}).strict(),
- z.object({type:z.literal('set_keyframe'),...target,frame,transform:transformPatch.optional(),interpolation:drawingInterpolation.optional(),curve:timingCurve.optional(),remove:z.boolean().optional()}).strict().refine(timingValid,'Bezier timing requires explicit controls; other modes omit them')
+ z.object({type:z.literal('set_keyframe'),...target,frame,transform:transformPatch.optional(),interpolation:drawingInterpolation.optional(),curve:timingCurve.optional(),remove:z.boolean().optional()}).strict().refine(timingValid,'Bezier timing requires explicit controls; other modes omit them'),
+ z.object({type:z.literal('set_shape_key'),objectId:id,frame,commands:commands.optional(),interpolation:drawingInterpolation.optional(),curve:timingCurve.optional(),remove:z.boolean().optional()}).strict()
+  .refine(v=>v.remove===true||v.commands!==undefined,'A shape key requires curve geometry').refine(timingValid,'Invalid shape timing curve')
 ]).superRefine((value,ctx)=>{
  const fail=message=>ctx.addIssue({code:z.ZodIssueCode.custom,message});
  if(['set_transform','set_keyframe'].includes(value.type)&&Number(value.layerId!==undefined)+Number(value.objectId!==undefined)!==1)fail('Choose exactly one layerId or objectId');
@@ -196,7 +201,7 @@ export const studioToolSchemas={
  sketch_book_list:{},sketch_book_get:{bookId:id,pageOffset:integer(0,10000).optional(),pageLimit:integer(1,128).optional()},sketch_book_open_page:{bookId:id,page:integer(0,9999)},
  sketch_create:{...sketchIdentity,operationId:id,name:text(160).optional(),width:dimensions.width.optional(),height:dimensions.height.optional(),fps:fps.optional(),frameCount:integer(1,1200).optional(),background:color.optional()},
  sketch_list:{},
- sketch_get:{...sketchIdentity,expectedRevision:revision.optional(),layerId:id.optional(),objectId:id.optional(),pointOffset:integer(0,131072).optional(),pointLimit:integer(1,512).optional(),commandOffset:integer(0,4096).optional(),commandLimit:integer(1,512).optional(),objectOffset:integer(0,4096).optional(),objectLimit:integer(1,128).optional()},
+ sketch_get:{...sketchIdentity,shapeFrame:frame.optional(),expectedRevision:revision.optional(),layerId:id.optional(),objectId:id.optional(),pointOffset:integer(0,131072).optional(),pointLimit:integer(1,512).optional(),commandOffset:integer(0,4096).optional(),commandLimit:integer(1,512).optional(),objectOffset:integer(0,4096).optional(),objectLimit:integer(1,128).optional()},
  sketch_edit:{...mutation,operations:z.array(operation).min(1).max(64)},sketch_undo:mutation,sketch_redo:mutation,
  sketch_import_reference:{...mutation,projectId:id,sourceProjectUpdatedAt:updatedAt,assetId:id,layerId:id,objectId:id,frame:frame.optional(),exposure:integer(1,1200).optional(),bounds:bounds.optional(),guideVisible:z.boolean().optional()},
  sketch_import_frame_manifest:{sketchId:id,manifestName:z.string().min(1).max(120).regex(/^[A-Za-z0-9_.-]+\.jsonl(?:\.gz)?$/).refine(v=>!v.includes('..')),videoName:z.string().min(1).max(120).regex(/^[A-Za-z0-9_.-]+\.mp4$/).refine(v=>!v.includes('..')),expectedSourceSha256:sha,expectedFrameCount:integer(1,1200)},
@@ -259,6 +264,7 @@ export function nativeStudioParameters(action,parameters={}){
  if(!parameters||typeof parameters!=='object'||Array.isArray(parameters))throw new Error('Studio parameters must be an object');
  boundedJson(parameters);
  const parsed=z.object(studioToolSchemas[action]).strict().parse(parameters);
+ if(action==='sketch_get'&&parsed.shapeFrame!==undefined&&parsed.objectId===undefined)throw new Error('Choose an object for sampled shape geometry');
  if(['sketch_create','sketch_book_create'].includes(action)&&(parsed.width??720)*(parsed.height??1280)>2048*2048)throw new Error('Sketch raster exceeds 2048² pixels');
  if(action==='sketch_sample_color'){
   if(parsed.source==='composite'&&(parsed.objectId!==undefined||parsed.sha256!==undefined)||parsed.source!=='composite'&&parsed.objectId===undefined||parsed.source==='reference'&&parsed.sha256===undefined||parsed.source==='paint'&&parsed.sha256!==undefined)throw new Error('Colour sample must identify exactly its selected source');
@@ -288,6 +294,9 @@ const legacy3d=new Set(['STANDOFF','CHARGE','CLASH','BLADE_LOCK','FOLLOW_THROUGH
 const pixelFields=new Set(['keyframes','opacity','chromaKey','chromaColor','chromaTolerance','chromaFeather','maskShape','maskLeft','maskTop','maskRight','maskBottom','maskFeather','glowStrength','glowRadiusPx','glowThreshold']);
 export function requireStudioVersion(device,action,parameters={}){
  const alias=studioAliases.has(action);action=nativeStudioCanonicalAction(action);
+ const shaped=object=>object?.shapeKeys!==undefined;
+ const shapes=action==='sketch_get'&&parameters.shapeFrame!==undefined||action==='sketch_edit'&&(parameters.operations||[]).some(op=>op.type==='set_shape_key'||shaped(op.object)||shaped(op.patch)||(op.layer?.objects||[]).some(shaped));
+ if(shapes&&!atLeast(device?.appVersion,'4.6.1'))throw new Error('NATIVE_APP_UPGRADE_REQUIRED: editable path shape animation requires VideoStudio 4.6.1 or newer');
  const advanced=key=>key?.curve!==undefined||['ease_in','ease_out','ease_in_out','bezier'].includes(key?.interpolation);
  const drawingKey=key=>advanced(key)||key?.interpolation==='smooth';
  const artwork=object=>object?.gradient?.type==='radial'||(object?.keys||[]).some(drawingKey);

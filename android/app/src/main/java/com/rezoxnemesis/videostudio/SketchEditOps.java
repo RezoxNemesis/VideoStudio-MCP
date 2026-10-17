@@ -92,12 +92,19 @@ public final class SketchEditOps {
                 return batch;
             }
             if ("sketch_get".equals(action)) {
-                SketchDocument.fields(args, "sketchId,expectedRevision,layerId,objectId,pointOffset,pointLimit,commandOffset,commandLimit,objectOffset,objectLimit"); JSONObject doc = store.get(id);
+                SketchDocument.fields(args, "sketchId,expectedRevision,layerId,objectId,pointOffset,pointLimit,commandOffset,commandLimit,objectOffset,objectLimit,shapeFrame"); JSONObject doc = store.get(id);
+                if(args.has("shapeFrame")&&!args.has("objectId"))throw SketchDocument.bad("Choose an object for sampled shape geometry");
                 if (args.has("expectedRevision")) SketchProjectStore.requireRevision(doc, SketchDocument.integer(args, "expectedRevision", 1, Long.MAX_VALUE - 1));
                 JSONObject result = new JSONObject().put("sketchId", id).put("revision", doc.getLong("revision"))
                         .put("documentSha256", SketchDocument.sha256(SketchDocument.canonical(doc).getBytes(StandardCharsets.UTF_8)));
                 if (args.has("objectId")) {
                     JSONObject object = SketchDocument.copy(SketchDocument.object(doc, SketchDocument.id(args, "objectId")));
+                    if(args.has("shapeFrame")){
+                        if(!"path".equals(object.getString("kind")))throw SketchDocument.bad("Sampled shape geometry requires a path");
+                        int shapeFrame=(int)SketchDocument.integer(args,"shapeFrame",0,doc.getInt("frameCount")-1);
+                        object.put("commands",SketchShapeKeys.commandsAt(object,shapeFrame));result.put("shapeFrame",shapeFrame);
+                    }
+                    if(object.has("shapeKeys"))object.put("shapeKeys",SketchShapeKeys.metadata(object));
                     if (args.has("layerId") && !SketchDocument.owner(doc, object.getString("id")).getString("id").equals(SketchDocument.id(args, "layerId")))
                         throw SketchDocument.bad("Object is not owned by the selected layer");
                     result.put("layerId", SketchDocument.owner(doc, object.getString("id")).getString("id"));
@@ -307,11 +314,12 @@ public final class SketchEditOps {
             }
             case "update_object": {
                 SketchDocument.fields(op, "type,objectId,patch"); String id = SketchDocument.id(op, "objectId"); requireUnlocked(SketchDocument.owner(doc, id));
-                JSONObject patch = op.getJSONObject("patch"); SketchDocument.fields(patch, "color,styleId,width,fill,points,bounds,frame,exposure,brush,commands,gradient,referenceCrop,text,fontFamily,fontSize,fontStyle,textAlign,letterSpacing");
+                JSONObject patch = op.getJSONObject("patch"); SketchDocument.fields(patch, "color,styleId,width,fill,points,bounds,frame,exposure,brush,commands,shapeKeys,gradient,referenceCrop,text,fontFamily,fontSize,fontStyle,textAlign,letterSpacing");
                 JSONObject target=SketchDocument.object(doc,id);
                 // An explicit direct recolor is a deliberate opt-out of the linked palette.
                 if(patch.has("color")&&!patch.has("styleId"))target.remove("styleId");
                 merge(target, patch);
+                if(patch.has("shapeKeys"))target.put("shapeKeys",new JSONArray(patch.getJSONArray("shapeKeys").toString()));
                 if(patch.has("gradient")&&patch.isNull("gradient"))target.remove("gradient");
                 break;
             }
@@ -374,6 +382,9 @@ public final class SketchEditOps {
                 referenceOpacity(reference.getJSONObject("transform"),visible);
                 JSONArray keys=reference.getJSONArray("keys");for(int n=0;n<keys.length();n++)referenceOpacity(keys.getJSONObject(n).getJSONObject("transform"),visible);
                 break;
+            }
+            case "set_shape_key": {
+                JSONObject item=target(doc,op);SketchShapeKeys.apply(item,op,doc.getInt("frameCount"));break;
             }
             case "set_keyframe": {
                 SketchDocument.fields(op, "type,layerId,objectId,frame,transform,interpolation,curve,remove"); JSONObject item = target(doc, op);

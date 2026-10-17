@@ -46,6 +46,10 @@ public final class SketchFrameRenderer implements AutoCloseable {
         if(!preview)geometryCache.put(id,shape);return shape;
     }
     private JSONObject geometryPreview;public void setGeometryPreview(JSONObject object){geometryPreview=object;}
+    private Path geometryAt(JSONObject object,String kind,int width,int height,int frame)throws Exception {
+        if("path".equals(kind)&&SketchShapeKeys.animated(object))return path(SketchShapeKeys.commandsAt(object,frame),width,height);
+        return geometry(object,kind,width,height);
+    }
     /** Live snapshots warm vector paths before ownership transfers to the UI. */
     void prepareVectorGeometry() throws Exception {
         if(android.os.Looper.myLooper()==android.os.Looper.getMainLooper())
@@ -57,7 +61,7 @@ public final class SketchFrameRenderer implements AutoCloseable {
             for(int j=0;j<objects.length();j++){
                 if(Thread.currentThread().isInterrupted())throw new InterruptedException("Vector preparation cancelled");
                 JSONObject object=objects.getJSONObject(j);String kind=object.getString("kind");
-                if("path".equals(kind)||"polygon".equals(kind)||"rect".equals(kind)||"ellipse".equals(kind))
+                if(!SketchShapeKeys.animated(object)&&("path".equals(kind)||"polygon".equals(kind)||"rect".equals(kind)||"ellipse".equals(kind)))
                     geometry(object,kind,w,h);
             }
         }
@@ -220,14 +224,14 @@ public final class SketchFrameRenderer implements AutoCloseable {
                 int objectSave = canvas.save(); JSONObject objectTransform = previewTransform != null && object.getString("id").equals(previewObjectId) ? previewTransform : SketchDocument.transformAt(object, frame);
                 if(objectTransform.getDouble("opacity")<=0){canvas.restoreToCount(objectSave);continue;}
                 canvas.concat(matrix(objectTransform, w, h));
-                drawObject(canvas, object, w, h, objectTransform.getDouble("opacity"));
+                drawObject(canvas, object, w, h, objectTransform.getDouble("opacity"),frame);
                 canvas.restoreToCount(objectSave);
             }
             canvas.restoreToCount(save);
         }
     }
 
-    private void drawObject(Canvas canvas, JSONObject object, int w, int h, double alpha) throws Exception {
+    private void drawObject(Canvas canvas, JSONObject object, int w, int h, double alpha,int frame) throws Exception {
         String kind = object.getString("kind");
         if("paint".equals(kind)){drawPaint(canvas,object,w,h,alpha);return;}
         boolean partial=object.getString("id").equals(presentationObject)&&presentationFraction<1;
@@ -246,7 +250,7 @@ public final class SketchFrameRenderer implements AutoCloseable {
         paint.setStyle(object.getBoolean("fill") ? Paint.Style.FILL : Paint.Style.STROKE);
         JSONObject gradient=object.optJSONObject("gradient");
         if(gradient!=null)paint.setShader(SketchGradients.shader(gradient,w,h));
-        if("path".equals(kind)){Path shape=geometry(object,kind,w,h);if(partial)shape=partialPath(shape,presentationFraction,paint);canvas.drawPath(shape,paint);return;}
+        if("path".equals(kind)){Path shape=geometryAt(object,kind,w,h,frame);if(partial)shape=partialPath(shape,presentationFraction,paint);canvas.drawPath(shape,paint);return;}
         if ("line".equals(kind)) {
             JSONArray pp = object.getJSONArray("points"), a = pp.getJSONArray(0), b = pp.getJSONArray(1);
             paint.setStyle(Paint.Style.STROKE); float f=partial?presentationFraction:1;canvas.drawLine((float)a.getDouble(0)*w,(float)a.getDouble(1)*h,(float)(a.getDouble(0)+(b.getDouble(0)-a.getDouble(0))*f)*w,(float)(a.getDouble(1)+(b.getDouble(1)-a.getDouble(1))*f)*h,paint);
@@ -372,7 +376,7 @@ public final class SketchFrameRenderer implements AutoCloseable {
                                 Math.min(Math.min(Math.abs(p[0] - bounds.left), Math.abs(p[0] - bounds.right)), Math.min(Math.abs(p[1] - bounds.top), Math.abs(p[1] - bounds.bottom))) <= t)) return object.getString("id");
                     }
                 } else {
-                    JSONArray points = "path".equals(kind)?pathPoints(object.getJSONArray("commands")):object.getJSONArray("points"); Path polygon = new Path();
+                    JSONArray points = "path".equals(kind)?pathPoints(SketchShapeKeys.commandsAt(object,frame)):object.getJSONArray("points"); Path polygon = new Path();
                     for (int k = 0; k < points.length(); k++) {
                         JSONArray point = points.getJSONArray(k); float bx = (float) point.getDouble(0) * w, by = (float) point.getDouble(1) * h;
                         if (Math.hypot(p[0] - bx, p[1] - by) <= t) return object.getString("id");

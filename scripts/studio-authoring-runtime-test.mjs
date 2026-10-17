@@ -71,6 +71,14 @@ try{
  const qualityCommands=await poll();assert.equal(qualityCommands.length,1);assert.deepEqual(qualityCommands[0].parameters,quality);
  await http('/api/v3/app/commands/'+queuedQuality.commandId+'/complete',{deviceId,appGeneration:generation,protocolVersion:3,status:'completed',result:{ok:true,syntheticNativeReply:true,phoneExecutionVerified:false}});
  console.log('PASS: new material shading and Bezier controls pass actual MCP transport unchanged and refuse older native runtimes');
+ const shapeEdit={sketchId:'owned-sketch',expectedRevision:2,operationId:'curve-shape',operations:[{type:'set_shape_key',objectId:'lid',frame:24,
+  commands:[['M',.2,.4],['C',.3,.2,.7,.2,.8,.4],['L',.2,.4],['Z']],interpolation:'bezier',curve:[.42,0,1,1]}]};
+ assert.match(JSON.stringify(await call('app_execute',{action:'studio_sketch_edit',parameters:shapeEdit})),/4\.6\.1/);assert.equal((await poll()).length,0);
+ await register('4.6.1');
+ const queuedShape=parse(await call('app_execute',{action:'studio_sketch_edit',parameters:shapeEdit}));assert.equal(queuedShape.queued,true,JSON.stringify(queuedShape));
+ const shapeCommands=await poll();assert.equal(shapeCommands.length,1);assert.deepEqual(shapeCommands[0].parameters,shapeEdit);
+ await http('/api/v3/app/commands/'+queuedShape.commandId+'/complete',{deviceId,appGeneration:generation,protocolVersion:3,status:'completed',result:{ok:true,syntheticNativeReply:true,phoneExecutionVerified:false}});
+ console.log('PASS: editable curved-shape keys pass actual MCP transport unchanged and refuse older native runtimes');
  console.log('PASS: authoring transport checks use synthetic native replies; phone execution and artistic acceptance remain unverified');
 }finally{
  if(client)await client.close();

@@ -74,7 +74,7 @@ final class SketchTraceConsolidator {
         if(!object.getString("id").startsWith(prefix)
                 ||!"path".equals(object.optString("kind"))
                 ||!object.optBoolean("fill")
-                ||object.has("gradient")||object.has("styleId")
+                ||object.has("gradient")||object.has("styleId")||SketchShapeKeys.animated(object)
                 ||object.has("brush")||object.has("referenceCrop")
                 ||object.optJSONArray("keys")==null
                 ||object.getJSONArray("keys").length()>0)return null;

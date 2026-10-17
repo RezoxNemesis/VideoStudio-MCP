@@ -189,7 +189,7 @@ public final class SketchCanvasView extends View {
     public void resetView(){zoom=1;panX=panY=0;invalidate();}
     public void focusSelection() throws Exception {
         if(document==null||selectedId==null)throw SketchDocument.bad("Select an object to focus");
-        JSONObject object=SketchDocument.object(document,selectedId),layer=SketchDocument.owner(document,selectedId);int w=document.getInt("width"),h=document.getInt("height");RectF bounds;
+        JSONObject object=SketchShapeKeys.sampled(SketchDocument.object(document,selectedId),frame),layer=SketchDocument.owner(document,selectedId);int w=document.getInt("width"),h=document.getInt("height");RectF bounds;
         if(object.has("bounds"))bounds=SketchFrameRenderer.bounds(object.getJSONObject("bounds"),w,h);
         else if(object.has("commands")){bounds=new RectF();SketchFrameRenderer.path(object.getJSONArray("commands"),w,h).computeBounds(bounds,true);}
         else{bounds=new RectF(Float.MAX_VALUE,Float.MAX_VALUE,-Float.MAX_VALUE,-Float.MAX_VALUE);JSONArray points=object.getJSONArray("points");for(int n=0;n<points.length();n++){JSONArray p=points.getJSONArray(n);float x=(float)p.getDouble(0)*w,y=(float)p.getDouble(1)*h;bounds.left=Math.min(bounds.left,x);bounds.right=Math.max(bounds.right,x);bounds.top=Math.min(bounds.top,y);bounds.bottom=Math.max(bounds.bottom,y);}}
@@ -218,7 +218,7 @@ public final class SketchCanvasView extends View {
                 if(disposed||generation!=requestedRasterGeneration)return;
                 JSONObject renderDocument=SketchDocument.copy(source);
                 if(previewId!=null&&previewTransform!=null)SketchDocument.object(renderDocument,previewId).put("transform",SketchDocument.copy(previewTransform)).put("keys",new JSONArray());
-                if(previewGeometry!=null){JSONObject target=SketchDocument.object(renderDocument,previewGeometry.getString("id"));String geometryField=previewGeometry.has("commands")?"commands":"points";target.put(geometryField,previewGeometry.get(geometryField));}
+                if(previewGeometry!=null){JSONObject target=SketchDocument.object(renderDocument,previewGeometry.getString("id"));String geometryField=previewGeometry.has("commands")?"commands":"points";target.put(geometryField,previewGeometry.get(geometryField));target.remove("shapeKeys");}
                 ready=new SketchFrameRenderer(getContext(),renderDocument);
                 ready.prepareVectorGeometry();
                 JSONObject[] neighbors={previous,next};
@@ -324,7 +324,7 @@ public final class SketchCanvasView extends View {
         canvas.drawCircle(cx,cy,4/viewScale,paint);canvas.restoreToCount(save);
     }
     private void drawSelection(Canvas canvas, int w, int h) throws Exception {
-        JSONObject object = SketchDocument.object(document, selectedId), layer = SketchDocument.owner(document, selectedId);
+        JSONObject object = SketchShapeKeys.sampled(SketchDocument.object(document, selectedId),frame), layer = SketchDocument.owner(document, selectedId);
         if (!SketchFrameRenderer.exposed(object, frame)) return;
         RectF bounds;
         if (object.has("bounds")) bounds = SketchFrameRenderer.bounds(object.getJSONObject("bounds"), w, h);
@@ -382,7 +382,13 @@ public final class SketchCanvasView extends View {
                 pointerDown=false;
                 performClick(); getParent().requestDisallowInterceptTouchEvent(false);
                 if("pan".equals(tool)||"eyedropper".equals(tool))return true;
-                if("nodes".equals(tool)){if(nodePreview!=null){JSONObject patch=new JSONObject();String field=nodePreview.has("commands")?"commands":"points";patch.put(field,nodePreview.get(field));listener.onOperation(new JSONObject().put("type","update_object").put("objectId",selectedId).put("patch",patch));}nodePreview=null;if(renderer!=null)renderer.setGeometryPreview(null);invalidate();return true;}
+                if("nodes".equals(tool)){
+                    if(nodePreview!=null){
+                        if(nodePreview.has("commands"))listener.onOperation(SketchShapeKeys.editOperation(SketchDocument.object(document,selectedId),frame,nodePreview.getJSONArray("commands")));
+                        else listener.onOperation(new JSONObject().put("type","update_object").put("objectId",selectedId).put("patch",new JSONObject().put("points",nodePreview.getJSONArray("points"))));
+                    }
+                    nodePreview=null;if(renderer!=null)renderer.setGeometryPreview(null);invalidate();return true;
+                }
                 if ("select".equals(tool)) {
                     if (selectedId != null && dragTransform != null && Math.hypot(x - downX, y - downY) > .002) {
                         JSONObject object = SketchDocument.object(document, selectedId);
@@ -405,7 +411,7 @@ public final class SketchCanvasView extends View {
     }
 
     private Matrix objectInverse() throws Exception {int w=document.getInt("width"),h=document.getInt("height");Matrix world=new Matrix();world.setConcat(SketchFrameRenderer.matrix(SketchDocument.transformAt(SketchDocument.layer(document,layerId),frame),w,h),SketchFrameRenderer.matrix(SketchDocument.transformAt(SketchDocument.object(document,selectedId),frame),w,h));Matrix inverse=new Matrix();if(!world.invert(inverse))throw SketchDocument.bad("Object transform cannot be inverted");return inverse;}
-    private void chooseNode(float x,float y) throws Exception {JSONObject object=SketchDocument.object(document,selectedId);nodeCommand=-1;nodePreview=null;if(!object.has("points")&&!object.has("commands"))return;float[] p={x*document.getInt("width"),y*document.getInt("height")};objectInverse().mapPoints(p);double nearest=.06;JSONArray geometry=object.has("commands")?object.getJSONArray("commands"):object.getJSONArray("points");for(int i=0;i<geometry.length();i++){JSONArray command=geometry.getJSONArray(i);int start=object.has("commands")?1:0,stop=object.has("commands")?command.length():2;for(int k=start;k<stop;k+=2){double distance=Math.hypot(command.getDouble(k)-p[0]/document.getDouble("width"),command.getDouble(k+1)-p[1]/document.getDouble("height"));if(distance<nearest){nearest=distance;nodeCommand=i;nodeOffset=k;}}}if(nodeCommand>=0)nodePreview=SketchDocument.copy(object);}
+    private void chooseNode(float x,float y) throws Exception {JSONObject object=SketchShapeKeys.sampled(SketchDocument.object(document,selectedId),frame);nodeCommand=-1;nodePreview=null;if(!object.has("points")&&!object.has("commands"))return;float[] p={x*document.getInt("width"),y*document.getInt("height")};objectInverse().mapPoints(p);double nearest=.06;JSONArray geometry=object.has("commands")?object.getJSONArray("commands"):object.getJSONArray("points");for(int i=0;i<geometry.length();i++){JSONArray command=geometry.getJSONArray(i);int start=object.has("commands")?1:0,stop=object.has("commands")?command.length():2;for(int k=start;k<stop;k+=2){double distance=Math.hypot(command.getDouble(k)-p[0]/document.getDouble("width"),command.getDouble(k+1)-p[1]/document.getDouble("height"));if(distance<nearest){nearest=distance;nodeCommand=i;nodeOffset=k;}}}if(nodeCommand>=0)nodePreview=SketchDocument.copy(object);}
     private void moveNode(float x,float y) throws Exception {if(nodePreview==null)return;float[] p={x*document.getInt("width"),y*document.getInt("height")};objectInverse().mapPoints(p);JSONArray geometry=nodePreview.has("commands")?nodePreview.getJSONArray("commands"):nodePreview.getJSONArray("points");geometry.getJSONArray(nodeCommand).put(nodeOffset,Math.max(0,Math.min(1,p[0]/document.getDouble("width")))).put(nodeOffset+1,Math.max(0,Math.min(1,p[1]/document.getDouble("height"))));if(renderer!=null)renderer.setGeometryPreview(nodePreview);}
     private void addPoint(float screenX, float screenY, float pressure) throws Exception {
         if (gesture.length() >= 8192) throw SketchDocument.bad("Touch stroke reaches 8192 points; lift to continue");

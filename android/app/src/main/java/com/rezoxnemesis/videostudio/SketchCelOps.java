@@ -14,7 +14,7 @@ public final class SketchCelOps {
             int from=(int)SketchDocument.integer(op,"fromFrame",0,doc.getInt("frameCount")-1),to=(int)SketchDocument.integer(op,"toFrame",0,SketchDocument.MAX_FRAMES-1);
             if(from==to)throw SketchDocument.bad("Choose a different destination cel");String prefix=SketchDocument.id(op,"idPrefix");if(prefix.length()>72)throw SketchDocument.bad("Cel ID prefix too long");
             JSONObject layer=SketchDocument.layer(doc,SketchDocument.id(op,"layerId"));SketchEditOps.requireUnlocked(layer);JSONArray copies=new JSONArray(),objects=layer.getJSONArray("objects");
-            for(int i=0;i<objects.length();i++){JSONObject original=objects.getJSONObject(i);if(!SketchFrameRenderer.exposed(original,from))continue;copies.put(SketchDocument.copy(original).put("id",prefix+"_"+copies.length()).put("frame",to).put("exposure",1).put("keys",new JSONArray()).put("transform",SketchDocument.transformAt(original,from)));}
+            for(int i=0;i<objects.length();i++){JSONObject original=objects.getJSONObject(i);if(!SketchFrameRenderer.exposed(original,from))continue;copies.put(SketchShapeKeys.sampled(original,from).put("id",prefix+"_"+copies.length()).put("frame",to).put("exposure",1).put("keys",new JSONArray()).put("transform",SketchDocument.transformAt(original,from)));}
             doc.put("frameCount",Math.max(doc.getInt("frameCount"),to+1));clear(layer,to);
             for(int i=0;i<copies.length();i++)layer.getJSONArray("objects").put(copies.getJSONObject(i));
         }else if("clear_cel".equals(type)) {
@@ -36,7 +36,10 @@ public final class SketchCelOps {
         }
     }
     private static void shiftKeys(JSONObject item,int frame,boolean insert) throws Exception {
-        JSONArray keys=item.getJSONArray("keys");for(int i=keys.length()-1;i>=0;i--){JSONObject key=keys.getJSONObject(i);int time=key.getInt("frame");if(!insert&&time==frame)keys.remove(i);else if(time>=frame)key.put("frame",time+(insert?1:-1));}
+        for(String field:new String[]{"keys","shapeKeys"}){
+            JSONArray keys=item.optJSONArray(field);if(keys==null)continue;
+            for(int i=keys.length()-1;i>=0;i--){JSONObject key=keys.getJSONObject(i);int time=key.getInt("frame");if(!insert&&time==frame)keys.remove(i);else if(time>=frame)key.put("frame",time+(insert?1:-1));}
+        }
     }
     private static void clear(JSONObject layer,int frame) throws Exception {
         JSONArray objects=layer.getJSONArray("objects");for(int i=objects.length()-1;i>=0;i--){JSONObject o=objects.getJSONObject(i);if(!SketchFrameRenderer.exposed(o,frame))continue;int start=o.getInt("frame"),end=start+o.getInt("exposure");
