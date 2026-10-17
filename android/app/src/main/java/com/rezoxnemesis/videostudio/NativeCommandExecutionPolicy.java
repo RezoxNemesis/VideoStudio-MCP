@@ -16,10 +16,10 @@ public final class NativeCommandExecutionPolicy {
             case "sketch_create": case "sketch_list": case "sketch_get": case "sketch_inspect": case "sketch_review": case "sketch_quality_audit": case "sketch_edit":
             case "sketch_animation_save": case "sketch_animation_get": case "sketch_animation_list": case "sketch_animation_bake":
             case "sketch_paint_journal": case "sketch_sample_color": case "sketch_archive": case "sketch_restore_archive":
-            case "sketch_book_create": case "sketch_book_edit": case "sketch_book_list": case "sketch_book_get": case "sketch_book_open_page": case "sketch_book_render":
-            case "sketch_live_begin": case "sketch_live_events": case "sketch_live_end": case "sketch_capabilities":
+            case "sketch_book_create": case "sketch_book_edit": case "sketch_book_list": case "sketch_book_get": case "sketch_book_open_page": case "sketch_book_timeline": case "sketch_book_render":
+            case "sketch_live_begin": case "sketch_live_events": case "sketch_live_end": case "sketch_capabilities": case "sketch_component_save": case "sketch_component_list": case "sketch_component_apply":
             case "sketch_undo": case "sketch_redo": case "sketch_import_reference": case "sketch_preview": case "sketch_render":
-            case "sketch_import_frame_manifest": case "sketch_import_drawing_manifest": case "sketch_import_drawing_asset":
+            case "sketch_import_frame_manifest": case "sketch_import_drawing_manifest": case "sketch_import_drawing_asset": case "sketch_import_animation":
             case "open_pipeline_configure": case "open_pipeline_capabilities": case "open_pipeline_list":
             case "open_pipeline_export_request": case "open_pipeline_submit": case "open_pipeline_status": case "open_pipeline_cancel":
             case "open_pipeline_download_result": case "open_pipeline_import_result": case "open_pipeline_archive_artifact": case "open_pipeline_restore_artifact":

@@ -44,7 +44,7 @@ public final class NativeRigAuthoring {
                 .put("outline", outline);
         if(request.has("transparentSource")&&!(request.opt("transparentSource") instanceof Boolean))
             throw new IllegalArgumentException("transparentSource must be boolean");
-        for(String field:new String[]{"swordTip","swordHilt","swordOutline","sourceSha256"})
+        for(String field:new String[]{"swordTip","swordHilt","swordOutline","headOutline","sourceSha256"})
             if(request.has(field))record.put(field,request.get(field));
         // Existing profile constructor checks IDs, coordinate ranges,
         // nonzero bones and nondegenerate polygons, including traversal IDs.

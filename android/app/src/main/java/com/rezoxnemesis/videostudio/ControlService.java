@@ -463,6 +463,8 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                         error.getMessage() == null ? "Could not queue prompt video" : error.getMessage(),
                         "failed", null, null, null);
             }
+        } else if ("com.rezoxnemesis.videostudio.LOCAL_SKETCH_ANIMATION_IMPORT".equals(action)) {
+            final String request=intent.getStringExtra("requestJson");authoringExecutor.execute(()->{try{JSONObject queued=queueSketchAnimationImport(new JSONObject(request));ActivityLog.add(this,"user","Animation import queued","Import progress is available in Activity; open the new animation in Sketch books","queued",0,null,queued.optString("projectId",""));}catch(Exception error){ActivityLog.add(this,"user","Animation import failed",error.getMessage(),"failed",null,null,null);}});
         } else if (ACTION_LOCAL_SKETCH_EXPORT.equals(action)||"com.rezoxnemesis.videostudio.LOCAL_SKETCH_BOOK_EXPORT".equals(action)) {
             final String request=intent.getStringExtra("requestJson");
             authoringExecutor.execute(()->{
@@ -678,7 +680,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 case "sketch_create": case "sketch_list": case "sketch_get": case "sketch_inspect": case "sketch_review": case "sketch_quality_audit":
                 case "sketch_paint_journal": case "sketch_sample_color":
                 case "sketch_undo": case "sketch_redo": case "sketch_import_reference":
-                case "sketch_book_create": case "sketch_book_edit": case "sketch_book_list": case "sketch_book_get": case "sketch_book_open_page": case "sketch_live_begin": case "sketch_live_events": case "sketch_live_end": case "sketch_capabilities":
+                case "sketch_book_create": case "sketch_book_edit": case "sketch_book_list": case "sketch_book_get": case "sketch_book_open_page": case "sketch_book_timeline": case "sketch_live_begin": case "sketch_live_events": case "sketch_live_end": case "sketch_capabilities": case "sketch_component_save": case "sketch_component_list": case "sketch_component_apply":
                     complete(command,SketchEditOps.execute(this,action,p));return;
                 case "sketch_archive": complete(command,SketchPaintArchive.archive(this,p));return;
                 case "sketch_restore_archive": complete(command,SketchPaintArchive.restore(this,p));return;
@@ -692,6 +694,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 case "sketch_render": case "sketch_book_render": complete(command,queueSketchRender(p));return;
                 case "sketch_import_frame_manifest": complete(command,queueSketchFrameManifest(p));return;
                 case "sketch_import_drawing_manifest": complete(command,queueSketchDrawingManifest(p));return;
+                case "sketch_import_animation": complete(command,queueSketchAnimationImport(p));return;
                 case "sketch_import_drawing_asset": complete(command,queueSketchDrawingAsset(p));return;
                 case "open_pipeline_configure": case "open_pipeline_capabilities": case "open_pipeline_list":
                 case "open_pipeline_status": case "open_pipeline_cancel":
@@ -2039,6 +2042,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                     case "sketch_import_frame_manifest":
                         parameters.remove("projectId");
                         queued=queueSketchFrameManifest(parameters);break;
+                    case "sketch_import_animation":queued=queueSketchAnimationImport(parameters);break;
                     case "sketch_import_drawing_asset":queued=queueSketchDrawingAsset(parameters);break;
                     case "open_pipeline_export_request": case "open_pipeline_submit": case "open_pipeline_download_result":
                     case "open_pipeline_import_result": case "open_pipeline_archive_artifact": case "open_pipeline_restore_artifact":
@@ -3028,6 +3032,16 @@ public final class ControlService extends Service implements AppProtocol.Callbac
      * public URL or enormous MCP payload. The import uses normal Sketch Studio
      * revision-bound vector edits and resumes after a process restart.
      */
+    private JSONObject queueSketchAnimationImport(JSONObject input)throws Exception {
+        JSONObject request=publicOperationParameters(input);SketchDocument.fields(request,"projectId,sourceProjectUpdatedAt,assetId,expectedSha256,bookId,operationId,name,fps,frameStart,frameCount,width,height");String projectId=SketchDocument.id(request,"projectId"),bookId=SketchDocument.id(request,"bookId");SketchDocument.id(request,"operationId");
+        JSONObject durable=new JSONObject(request.toString());if(input.has("_recoveryPlanId"))durable.put("_recoveryPlanId",input.get("_recoveryPlanId"));if(input.has("_mcpCommandId"))durable.put("_mcpCommandId",input.get("_mcpCommandId"));
+        JobManager.Job job=submitRecoverableHeavy("sketch_import_animation",durable,projectId,"Sketch Studio • Import animation",state->{
+            checkpoint(state,"Animation import","Verifying source animation",2,projectId);
+            JSONObject result=SketchAnimationImporter.importAnimation(this,store,request,(frames,total)->{if(frames%8==0||frames==total){checkpoint(state,"Animation cels",frames+"/"+total+" frames imported",5+(int)(90L*frames/Math.max(1,total)),projectId);jobs.awaitSafeCheckpoint(state,"animation_cel_"+frames);}});
+            state.setResult(result);checkpoint(state,"Sketch Studio","Animation imported as owned raster cels",100,projectId);
+        });
+        return ok().put("queued",true).put("jobId",job.id).put("bookId",bookId).put("projectId",projectId).put("durableRecovery",true).put("galleryAccess",false);
+    }
     private JSONObject queueSketchDrawingAsset(JSONObject input) throws Exception {
         final JSONObject request=publicOperationParameters(input);
         SketchDocument.fields(request,"projectId,sourceProjectUpdatedAt,sketchId,manifestAssetId,expectedManifestSha256,sourceAssetId,expectedSourceSha256,expectedFrameCount,drawingMethod");
@@ -4805,6 +4819,10 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             out.put("sourceArtworkInspectionReady", true);
             out.put("sourceRigPoseDiagnosticReady", true);
             out.put("sourceRigBatchAuthoringReady", true);
+            out.put("sourceRigRigidHeadMasksReady", true);
+            out.put("sourceRigHeadMaskMaximumVertices", 64);
+            out.put("sketchSequenceMaximumFrames", SketchSequenceLimits.MAX_FRAMES);
+            out.put("sketchAnimationImportReady", true);
             out.put("sourceRigBatchProfileLimit", 8);
             out.put("sourceRigPreparationStatusReady", true);
             out.put("sourceRigWorkbenchMinimumVersion", "3.7.3");
@@ -5065,7 +5083,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         switch (action) {
             case "import_mailbox_media":
             case "sketch_render": case "sketch_book_render":
-            case "sketch_import_frame_manifest": case "sketch_import_drawing_manifest": case "sketch_import_drawing_asset":
+            case "sketch_import_frame_manifest": case "sketch_import_drawing_manifest": case "sketch_import_drawing_asset": case "sketch_import_animation":
             case "open_pipeline_export_request": case "open_pipeline_submit": case "open_pipeline_download_result":
             case "open_pipeline_import_result": case "open_pipeline_archive_artifact": case "open_pipeline_restore_artifact":
             case "prompt_video":
@@ -5419,7 +5437,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             case "sketch_get": case "sketch_list": return "Reading sketch geometry";
             case "sketch_preview": return "Rendering a sketch preview";
             case "sketch_import_reference": return "Importing an owned sketch reference";
-            case "sketch_import_frame_manifest": case "sketch_import_drawing_manifest": case "sketch_import_drawing_asset": return "Importing editable drawings in Sketch Studio";
+            case "sketch_import_frame_manifest": case "sketch_import_drawing_manifest": case "sketch_import_drawing_asset": case "sketch_import_animation": return "Importing editable drawings in Sketch Studio";
             case "sketch_render": return "Exporting sketch animation";
             case "open_pipeline_configure": return "Configuring the private open-source runner";
             case "open_pipeline_capabilities": return "Reading actual runner readiness";

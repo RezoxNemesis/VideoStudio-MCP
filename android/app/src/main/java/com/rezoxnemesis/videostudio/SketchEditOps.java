@@ -35,6 +35,7 @@ public final class SketchEditOps {
         if("sketch_capabilities".equals(action)){SketchDocument.fields(args,"");return SketchCapabilities.get();}
         if("sketch_live_begin".equals(action))return SketchLiveDrawing.begin(context,args);
         if("sketch_live_end".equals(action)){SketchDocument.fields(args,"sketchId,sessionId,expectedRevision");try(SketchProjectStore store=new SketchProjectStore(context)){return store.endLiveSession(SketchDocument.id(args,"sketchId"),SketchDocument.id(args,"sessionId"),SketchDocument.integer(args,"expectedRevision",1,Long.MAX_VALUE-1));}}
+        if(action.startsWith("sketch_component_"))return SketchComponentLibrary.execute(context,action,args);
         if(action.startsWith("sketch_book_"))return SketchBookStore.execute(context,action,args);
         try (SketchProjectStore store = new SketchProjectStore(context)) {
             if ("sketch_list".equals(action)) { SketchDocument.fields(args, ""); return new JSONObject().put("sketches", store.list()); }

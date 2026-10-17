@@ -16,8 +16,8 @@ public final class NativeWorkbenchBridge {
             "sketch_create","sketch_list","sketch_get","sketch_inspect","sketch_review","sketch_quality_audit","sketch_edit","sketch_undo","sketch_redo",
             "sketch_animation_save","sketch_animation_get","sketch_animation_list","sketch_animation_bake",
             "sketch_paint_journal","sketch_sample_color","sketch_archive","sketch_restore_archive",
-            "sketch_import_reference","sketch_import_frame_manifest","sketch_import_drawing_manifest","sketch_import_drawing_asset","sketch_preview","sketch_render",
-            "sketch_book_create","sketch_book_edit","sketch_book_list","sketch_book_get","sketch_book_open_page","sketch_book_render","sketch_live_begin","sketch_live_events","sketch_live_end","sketch_capabilities",
+            "sketch_import_reference","sketch_import_frame_manifest","sketch_import_drawing_manifest","sketch_import_drawing_asset","sketch_import_animation","sketch_preview","sketch_render",
+            "sketch_book_create","sketch_book_edit","sketch_book_list","sketch_book_get","sketch_book_open_page","sketch_book_timeline","sketch_book_render","sketch_live_begin","sketch_live_events","sketch_live_end","sketch_capabilities","sketch_component_save","sketch_component_list","sketch_component_apply",
             "open_pipeline_configure","open_pipeline_capabilities","open_pipeline_list",
             "open_pipeline_export_request","open_pipeline_submit","open_pipeline_status","open_pipeline_cancel",
             "open_pipeline_download_result","open_pipeline_import_result","open_pipeline_archive_artifact","open_pipeline_restore_artifact",
@@ -47,6 +47,7 @@ public final class NativeWorkbenchBridge {
         return new JSONObject().put("tool","app_execute").put("aliasPrefix",PREFIX)
                 .put("minimumNativeVersion",MINIMUM_NATIVE_VERSION).put("canonicalActions",actions).put("aliases",aliases)
                 .put("colourTraceMinimumNativeVersion","3.9.5").put("drawingManifestMinimumNativeVersion","3.9.5").put("advancedSketchMinimumNativeVersion","3.9.1").put("croppedSketchPreviewMinimumNativeVersion","3.9.3").put("flatParameters",true).put("permissionPolicy","existing-native-action-permissions-and-source-validation")
+                .put("featureLengthSketchMinimumNativeVersion","4.7.0").put("sketchSequenceMaximumFrames",SketchSequenceLimits.MAX_FRAMES)
                 .put("paintMinimumNativeVersion","4.1.0").put("editableArchiveMinimumNativeVersion","4.1.0")
                 .put("visualReviewMinimumNativeVersion","4.5.6").put("visualReviewAction","sketch_review")
                 .put("characterAnimationMinimumNativeVersion","4.4.0")

@@ -70,7 +70,8 @@ public final class SketchPaintStore implements AutoCloseable {
         if(!canonical.startsWith(files+"/")||!ownedDependencyRoot.isDirectory())throw bad("SKETCH_PAINT_OWNERSHIP: private archive owner required");
         String relative=canonical.substring(files.length()+1);
         if(!relative.matches("sketch_studio/[A-Za-z0-9_-]{1,96}/(exports|archives)/[A-Za-z0-9_-]{1,96}/assets")&&
-           !relative.matches("sketch_books/[A-Za-z0-9_-]{1,96}/exports/[A-Za-z0-9_-]{1,96}/pages/[0-9]{1,5}/assets")&&
+           !relative.matches("sketch_books/[A-Za-z0-9_-]{1,96}/exports/[A-Za-z0-9_-]{1,96}/pages/[0-9]{1,6}/assets")&&
+           !relative.matches("sketch_books/[A-Za-z0-9_-]{1,96}/exports/[A-Za-z0-9_-]{1,96}/cels/[0-9]{1,3}/[0-9]{1,6}/assets")&&
            !relative.matches("sketch_archive_staging/[A-Za-z0-9_-]{1,160}/assets"))
             throw bad("SKETCH_PAINT_OWNERSHIP: unsupported private archive scope");
         owner=ownedDependencyRoot.getCanonicalFile();root=new File(owner,"paint");rootPath=canonical+"/paint";

@@ -45,6 +45,8 @@ public final class Rig2DProfile {
     /** Original painted weapon attachment and mask; absent on readable legacy profiles. */
     public final float[] swordHilt;
     public final float[][] swordOutline;
+    /** Optional manually marked head artwork, attached rigidly to neck/head instead of the limb mesh. */
+    public final float[][] headOutline;
     /** Exact encoded image bytes used for authoring; absent legacy rigs are not cinematic providers. */
     public final String sourceSha256;
     public final int version;
@@ -69,6 +71,12 @@ public final class Rig2DProfile {
     public Rig2DProfile(String id,String projectId,String assetId,boolean black,
                         boolean transparentSource,float[][] joints,float[][] outline,
                         float[] swordTip,float[] swordHilt,float[][] swordOutline,String sourceSha256) {
+        this(id,projectId,assetId,black,transparentSource,joints,outline,swordTip,swordHilt,swordOutline,sourceSha256,null);
+    }
+
+    public Rig2DProfile(String id,String projectId,String assetId,boolean black,
+                        boolean transparentSource,float[][] joints,float[][] outline,
+                        float[] swordTip,float[] swordHilt,float[][] swordOutline,String sourceSha256,float[][] headOutline) {
         this.version=1;
         this.id=checkedId(id,"profile");
         this.projectId=checkedId(projectId,"project");
@@ -87,6 +95,8 @@ public final class Rig2DProfile {
         this.swordTip=optionalPoint(swordTip,"Sword tip");
         this.swordHilt=optionalPoint(swordHilt,"Sword hilt");
         this.swordOutline=swordOutline==null?new float[0][2]:polygonPoints(swordOutline,"sword outline");
+        this.headOutline=headOutline==null||headOutline.length==0?new float[0][2]:polygonPoints(headOutline,"head outline");
+        if(this.headOutline.length>0)validatePolygon(this.headOutline,"Head mask");
         if(this.swordHilt!=null&&this.swordTip!=null
                 &&this.swordHilt[0]==this.swordTip[0]&&this.swordHilt[1]==this.swordTip[1])
             throw new IllegalArgumentException("Sword hilt and tip must differ");
@@ -212,6 +222,7 @@ public final class Rig2DProfile {
         if(sourceSha256!=null)j.put("sourceSha256",sourceSha256);
         j.put("joints",toPairs(joints));
         j.put("outline",toPairs(outline));
+        if(headOutline.length>0)j.put("headOutline",toPairs(headOutline));
         if(swordTip!=null)j.put("swordTip",
                 new JSONArray().put(swordTip[0]).put(swordTip[1]));
         if(swordHilt!=null)j.put("swordHilt",floatPair(swordHilt));
@@ -252,7 +263,8 @@ public final class Rig2DProfile {
                 fromPairs(j.optJSONArray("outline"),64,"outline"),
                 optionalJsonPoint(j,"swordTip"),optionalJsonPoint(j,"swordHilt"),
                 j.has("swordOutline")?fromPairs(requiredArray(j,"swordOutline"),64,"sword outline"):null,
-                j.has("sourceSha256")?j.getString("sourceSha256"):null);
+                j.has("sourceSha256")?j.getString("sourceSha256"):null,
+                j.has("headOutline")?fromPairs(requiredArray(j,"headOutline"),64,"head outline"):null);
     }
 
     private static float[] optionalJsonPoint(JSONObject object,String name) throws Exception {

@@ -181,7 +181,7 @@ public final class SketchProjectStore implements AutoCloseable {
         JSONObject drawing=SketchDocument.copy(source);String id=SketchDocument.id(drawing,"id");SketchDocument.id(new JSONObject().put("id",operationId),"id");drawing.put("revision",1);SketchDocument.validate(drawing);
         String fingerprint=SketchDocument.sha256(("sketch_owned_import\n"+SketchDocument.canonical(drawing)).getBytes(StandardCharsets.UTF_8));JSONObject previous=receipt(id,operationId,fingerprint);if(previous!=null)return previous;
         verifyReferences(drawing);java.util.ArrayList<PaintIntent> seeds=paintIntents(drawing);db.beginTransaction();try{previous=receipt(id,operationId,fingerprint);if(previous!=null){db.setTransactionSuccessful();return previous;}
-            if(revision(id)>0)throw new IllegalStateException("SKETCH_ALREADY_EXISTS");try(Cursor count=db.rawQuery("SELECT COUNT(*) FROM sketches",null)){count.moveToFirst();if(count.getInt(0)>=10240)throw new IllegalStateException("SKETCH_STORAGE_BUDGET");}
+            if(revision(id)>0)throw new IllegalStateException("SKETCH_ALREADY_EXISTS");try(Cursor count=db.rawQuery("SELECT COUNT(*) FROM sketches",null)){count.moveToFirst();if(count.getInt(0)>=2000000)throw new IllegalStateException("SKETCH_STORAGE_BUDGET");}
             if(db.insert("sketches",null,values(id,drawing,0,1))<0)throw new IllegalStateException("SKETCH_ALREADY_EXISTS");history(id,0,drawing);seedPaintIntents(id,seeds);JSONObject result=result(drawing,false,false);saveReceipt(id,operationId,fingerprint,result);db.setTransactionSuccessful();return result;
         }finally{db.endTransaction();}
     }
@@ -195,7 +195,7 @@ public final class SketchProjectStore implements AutoCloseable {
             JSONObject previous = receipt(id, op, fingerprint);
             if (previous != null) { db.setTransactionSuccessful(); return previous; }
             try (Cursor c = db.rawQuery("SELECT COUNT(*) FROM sketches", null)) {
-                c.moveToFirst(); if (c.getInt(0) >= 10240) throw new IllegalStateException("SKETCH_STORAGE_BUDGET: at most 10240 sketch documents");
+                c.moveToFirst(); if (c.getInt(0) >= 2000000) throw new IllegalStateException("SKETCH_STORAGE_BUDGET: at most 2,000,000 sketch documents");
             }
             JSONObject doc = SketchDocument.create(args);
             ContentValues values = values(id, doc, 0, 1);

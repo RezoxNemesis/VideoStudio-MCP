@@ -28,6 +28,18 @@ import static org.junit.Assert.*;
 
 @RunWith(RobolectricTestRunner.class) @Config(sdk=33,manifest=Config.NONE) @GraphicsMode(GraphicsMode.Mode.NATIVE)
 public class SketchStudioTimelineTest {
+    @Test public void featureFilmNavigatorAndVirtualStripReachTheLastFrameAt60Fps() throws Exception {
+        Context context=RuntimeEnvironment.getApplication();String id="film_"+UUID.randomUUID();
+        SketchBookStore.execute(context,"sketch_book_create",new JSONObject().put("bookId",id).put("operationId","create").put("pageCount",216000).put("fps",60));
+        try(ActivityController<SketchStudioActivity> controller=open(context,id)){
+            SketchStudioActivity studio=controller.get();invoke(studio,"scrubDialog");AlertDialog dialog=ShadowAlertDialog.getLatestAlertDialog();
+            button(dialog.getWindow().getDecorView(),"Last").performClick();assertEquals("216000",edit(dialog,"Frame or page number").getText().toString());
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).performClick();settle(studio);
+            assertEquals(215999,field(studio,"bookPage"));
+            assertTrue(((SketchFilmstripView)field(studio,"filmstrip")).getContentDescription().toString().contains("216000 of 216000"));
+            assertEquals(2,SketchBookStore.execute(context,"sketch_book_get",new JSONObject().put("bookId",id)).getJSONObject("book").getInt("createdPages"));
+        }
+    }
     @Test public void exactNavigatorOpensPage10000WithoutAllocatingIntermediatePages() throws Exception {
         Context context=RuntimeEnvironment.getApplication();String id=createBook(context);
         try(ActivityController<SketchStudioActivity> controller=open(context,id)){
