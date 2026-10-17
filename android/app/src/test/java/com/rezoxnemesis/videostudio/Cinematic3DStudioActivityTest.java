@@ -34,6 +34,25 @@ import static org.robolectric.Shadows.shadowOf;
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk=33,manifest=Config.NONE)
 public class Cinematic3DStudioActivityTest {
+    @Test public void importedAuthoredCameraExplainsWhyItsKeysRequireARebuild() throws Exception {
+        Context context=RuntimeEnvironment.getApplication();
+        ProjectStore.Project project=new ProjectStore(context).create("Authored camera portrait");
+        Bundle initial=state(project.updatedAt);
+        JSONObject bundle=library();
+        bundle.getJSONObject("manifest").getJSONArray("scenes").getJSONObject(0).put("cameraReplay","authored");
+        initial.putString("editorBundle",bundle.toString());
+        ActivityController<Cinematic3DStudioActivity> controller=Robolectric.buildActivity(Cinematic3DStudioActivity.class,
+                new Intent(context,Cinematic3DStudioActivity.class).putExtra("projectId",project.id)).create(initial).start().resume().visible();
+        try {
+            Cinematic3DStudioActivity activity=controller.get();
+            String before=Cinematic3DTimeline.canonical(field(activity,"timeline"));
+            AlertDialog dialog=ShadowAlertDialog.getLatestAlertDialog();
+            findButton(activity.getWindow().getDecorView(),"Camera keys").performClick();
+            assertSame(dialog,ShadowAlertDialog.getLatestAlertDialog());
+            assertTrue(((android.widget.TextView)field(activity,"status")).getText().toString().contains("authored camera"));
+            assertEquals(before,Cinematic3DTimeline.canonical(field(activity,"timeline")));
+        } finally { controller.pause().stop().destroy(); }
+    }
     @Test public void cameraWorkerCannotOverwriteANewerDraftOrApplyAfterPause() throws Exception {
         for(boolean pause:new boolean[]{false,true}){
             Context context=RuntimeEnvironment.getApplication();ProjectStore store=new ProjectStore(context);ProjectStore.Project project=store.create("Pending camera draft");Bundle initial=state(project.updatedAt);initial.putInt("selectedShot",1);ActivityController<Cinematic3DStudioActivity> controller=Robolectric.buildActivity(Cinematic3DStudioActivity.class,new Intent(context,Cinematic3DStudioActivity.class).putExtra("projectId",project.id)).create(initial).start().resume().visible();CountDownLatch blocked=new CountDownLatch(1),release=new CountDownLatch(1);

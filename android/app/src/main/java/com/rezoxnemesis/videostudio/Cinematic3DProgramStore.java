@@ -109,6 +109,8 @@ public final class Cinematic3DProgramStore {
             if(scene==null&&library)for(int j=0;j<declared.length();j++){JSONObject candidate=declared.getJSONObject(j);if(action.equals(candidate.getString("action"))){scene=candidate;break;}}
             if(scene==null)throw new IllegalArgumentException("BAKED_POSE_REBUILD_REQUIRED: no exact declared scene/action");for(int j=0;j<base.length();j++)if(scene.getString("shotId").equals(base.getJSONObject(j).getString("id")))original=base.getJSONObject(j);
             if(original==null)throw new IllegalArgumentException("Bundle baked shot missing");for(String key:new String[]{"sourceAnchors","poseKeyframes","footContacts"}){Object actual=shot.has(key)?shot.get(key):new JSONArray(),expected=original.has(key)?original.get(key):new JSONArray();if(!canonical(actual).equals(canonical(expected)))throw new IllegalArgumentException("BAKED_POSE_REBUILD_REQUIRED: source/pose/contact edits need a rebuilt bundle");}
+            if("authored".equals(Cinematic3DSceneSampling.cameraReplay(scene))&&!canonical(shot.getJSONObject("camera")).equals(canonical(original.getJSONObject("camera"))))
+                throw new IllegalArgumentException("BAKED_CAMERA_REBUILD_REQUIRED: this scene retains its authored camera; rebuild the bundle to change framing");
             Object style=shot.has("motionStyle")?shot.get("motionStyle"):new JSONObject(),bakedStyle=original.has("motionStyle")?original.get("motionStyle"):new JSONObject();
             if(!canonical(style).equals(canonical(bakedStyle)))throw new IllegalArgumentException("BAKED_POSE_REBUILD_REQUIRED: motion-style changes need a rebuilt bundle");
             bound.put(copy(scene).put("shotId",id));

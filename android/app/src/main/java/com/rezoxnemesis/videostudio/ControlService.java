@@ -3012,6 +3012,8 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 .put("fps",new JSONArray().put(24).put(30).put(60)).put("maxShots",80).put("maxOutputFrames",12000)
                 .put("offlineActionLibrary",true).put("fullSceneGltfReplay",true).put("exactOutputFrameHitStops",true)
                 .put("cameraEditing",new JSONObject().put("action","cinematic_3d_edit_program").put("minimumNativeVersion","4.3.0").put("sourceRevisionAndProgramShaRequired",true).put("maximumOperations",128).put("outputFrameBasisPreflight",true))
+                .put("authoredSceneCamera",new JSONObject().put("minimumNativeVersion","4.6.2").put("sceneField","cameraReplay").put("values",new JSONArray().put("timeline").put("authored")).put("default","timeline").put("framingChangesRequireBundleRebuild",true))
+                .put("soloWeightedPortrait",new JSONObject().put("minimumNativeVersion","4.6.2").put("action","IDLE").put("minimumSkins",1))
                 .put("humanStudioActivity","Cinematic3DStudioActivity").put("cloudEngine","Blender/Rigify")
                 .put("neuralProviderInstalled",false).put("originalImageReconstruction",false)
                 .put("nativeExecutionVerified",false).put("cinematicAcceptance",false).put("bakedPoseChangesRequireRebuild",true);

@@ -79,6 +79,7 @@ public final class Cinematic3DSceneSampling {
         sample.put("cameraSeconds",shotFrame/(double)shot.getInt("durationFrames")*length);
         sample.put("animationName",scene.getString("animationName"));
         sample.put("cameraName",scene.getString("cameraName"));
+        sample.put("cameraReplay",cameraReplay(scene));
         sample.put("path",scene.getString("path"));
         sample.put("vfx",new JSONObject(shot.getJSONObject("vfx").toString()));
         JSONArray trailTimes=new JSONArray();
@@ -94,6 +95,28 @@ public final class Cinematic3DSceneSampling {
         }
         sample.put("trailClipSeconds",trailTimes);
         return sample;
+    }
+
+    /** Old bundles keep their editable timeline camera; opt-in scenes retain the artist camera. */
+    public static String cameraReplay(JSONObject scene) {
+        if(scene==null)throw new IllegalArgumentException("A scene camera policy is required");
+        if(!scene.has("cameraReplay"))return "timeline";
+        Object value=scene.opt("cameraReplay");
+        if(!(value instanceof String)||!("timeline".equals(value)||"authored".equals(value)))
+            throw new IllegalArgumentException("Camera replay must be timeline or authored");
+        return (String)value;
+    }
+
+    public static double[] authoredProjection(double[] projection,int width,int height) {
+        if(projection==null||projection.length!=16||width<=0||height<=0)
+            throw new IllegalArgumentException("An authored projection and positive output size are required");
+        for(double value:projection)if(!Double.isFinite(value))
+            throw new IllegalArgumentException("The authored projection must be finite");
+        if(projection[0]<=0||projection[5]<=0)
+            throw new IllegalArgumentException("The authored projection must have a positive lens scale");
+        double[] resized=projection.clone();
+        resized[0]=projection[5]*height/(double)width;
+        return resized;
     }
 
     private static double clipSeconds(double phase,double length,double impact) {
@@ -148,14 +171,22 @@ public final class Cinematic3DSceneSampling {
     }
 
     public static int requireAuthoredScene(FilamentAsset asset,Animator animator,JSONObject scene) throws Exception {
-        if(asset==null||asset.getInstance()==null||asset.getInstance().getSkinCount()<2)
-            throw new IllegalArgumentException("A cinematic scene requires both genuinely weighted actors");
+        if(asset==null||asset.getInstance()==null)
+            throw new IllegalArgumentException("A weighted authored scene is required");
+        requireSceneSkins(asset.getInstance().getSkinCount(),scene.getString("action"));
         if(animator==null)throw new IllegalArgumentException("The full scene has no authored animation");
         String[] names=new String[animator.getAnimationCount()];
         for(int i=0;i<names.length;i++)names[i]=animator.getAnimationName(i);
         int index=requireNamedIndex(names,scene.getString("animationName"));
         requireClipDuration(animator.getAnimationDuration(index),scene.getDouble("clipDurationSeconds"));
         return index;
+    }
+
+    public static void requireSceneSkins(int count,String action) {
+        // A portrait performance is an explicit non-action shot. Keep the
+        // existing two-skin admission for action scenes, including combat.
+        int minimum="IDLE".equals(action)?1:2;
+        if(count<minimum)throw new IllegalArgumentException("This scene requires "+minimum+" weighted skin(s)");
     }
 
     public static void apply(Engine engine,FilamentAsset asset,Animator animator,int animationIndex,
@@ -172,6 +203,14 @@ public final class Cinematic3DSceneSampling {
         setVisible(engine,asset,"C3D_Spark_",vfx.getBoolean("sparkBurst"));
         setVisible(engine,asset,"C3D_Rubble_",vfx.getBoolean("rubble"));
         if(vfx.getBoolean("slashTrail"))applyOutputTrails(engine,asset,animator,animationIndex,frame);
+        if("authored".equals(cameraReplay(frame))) {
+            // Animator already sampled the camera node's authored transform. Retain
+            // that transform and vertical lens, adapting only the output aspect ratio.
+            camera.setCustomProjection(authoredProjection(camera.getProjectionMatrix(new double[16]),width,height),
+                    authoredProjection(camera.getCullingProjectionMatrix(new double[16]),width,height),
+                    camera.getNear(),camera.getCullingFar());
+            return;
+        }
         JSONObject motion=frame.getJSONObject("camera");
         JSONArray position=motion.getJSONArray("position"),target=motion.getJSONArray("target");
         JSONArray up=motion.optJSONArray("up");
