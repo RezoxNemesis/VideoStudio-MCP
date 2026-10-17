@@ -82,6 +82,12 @@ proof=dict(schema="videostudio.story-proof.v1",
            sourcePngsVerified=EXPECTED,
            generatedImages=False,audio=False,physicalPhoneVerified=False)
 (ROOT/"mp4-verified.json").write_text(json.dumps(proof,indent=2)+"\n")
+# OMEGA M1 audits native PNG evidence and the verified MP4 *before* cleanup.
+# An audit failure preserves the original frames for diagnosis and fails CI closed.
+subprocess.run(["node", "scripts/omega-native-proof.mjs",
+                "--kind", "story", "--root", str(ROOT)],
+               check=True, stdin=subprocess.DEVNULL)
+
 shutil.rmtree(FRAMES)
 print(json.dumps({k:proof[k] for k in (
     "video","bytes","sha256","frameCount","fps","durationSeconds",

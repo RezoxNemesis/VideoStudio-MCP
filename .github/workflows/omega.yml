@@ -1,13 +1,16 @@
-name: OMEGA CinemaBench (lightweight)
+name: OMEGA CinemaBench and Native Film Evidence
 
 on:
   pull_request:
     branches:
       - main
       - feat/native-voice-waveform-visemes-v454
+      - 'feat/project-omega-*'
     paths:
       - 'src/omega/**'
       - 'scripts/omega-*'
+      - 'scripts/encode-story-film-proof.py'
+      - 'scripts/encode-duel-film-proof.py'
       - 'docs/PROJECT_OMEGA_*'
       - '.github/workflows/omega.yml'
   workflow_dispatch:
@@ -24,9 +27,96 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Verify isolated OMEGA unit tests
-        run: node --test scripts/omega-cinemabench-test.mjs
+      - name: Verify CinemaBench M0 and native-film adapter M1
+        run: node --test scripts/omega-cinemabench-test.mjs scripts/omega-native-proof-test.mjs
       - name: Syntax checks
         run: |
           node --check src/omega/cinemabench.js
           node --check scripts/omega-cinemabench.mjs
+          node --check scripts/omega-native-proof.mjs
+          node --check scripts/omega-native-proof-test.mjs
+          python3 -m py_compile scripts/encode-story-film-proof.py scripts/encode-duel-film-proof.py
+
+  native-film-proof:
+    # Run one expensive, targeted Android Canvas proof only for the M1 review PR.
+    # No APK signing, release/deploy, or private device command is performed.
+    if: github.event_name == 'pull_request' && github.base_ref == 'feat/project-omega-cinemabench-m0'
+    needs: cinemabench
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      VIDEOSTUDIO_STORY_FILM_PROOF: '1'
+      VIDEOSTUDIO_DUEL_FILM_PROOF: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Ensure Android SDK 36
+        run: |
+          set -euo pipefail
+          if [ ! -f "$ANDROID_HOME/platforms/android-36/package.xml" ]; then
+            timeout 240s bash -c 'yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;35.0.0" >/dev/null'
+          fi
+          test -f "$ANDROID_HOME/platforms/android-36/package.xml"
+      - name: Produce actual CI Android Canvas 240-frame story and 100-frame duel proofs
+        working-directory: android
+        run: |
+          gradle :app:testDebugUnitTest \
+            --tests com.rezoxnemesis.videostudio.SketchStoryFilmNativeProofTest \
+            --tests com.rezoxnemesis.videostudio.SketchDuelAnimationExampleTest \
+            --stacktrace
+      - name: Ensure FFmpeg and FFprobe
+        run: |
+          set -euo pipefail
+          if ! command -v ffmpeg >/dev/null || ! command -v ffprobe >/dev/null; then
+            sudo apt-get update -qq
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq ffmpeg
+          fi
+          command -v node && command -v ffmpeg && command -v ffprobe
+      - name: Encode genuine native PNGs then check OMEGA evidence before PNG cleanup
+        run: |
+          set -euo pipefail
+          python3 scripts/encode-story-film-proof.py
+          python3 scripts/encode-duel-film-proof.py
+          node --input-type=module <<'NODE'
+          import {readFileSync} from 'node:fs';
+          for (const [kind,dir,expected] of [
+            ['story','sketch-story-film-proof',240], ['duel','sketch-duel-film-proof',100]
+          ]) {
+            const file=`android/app/build/${dir}/omega-native-report.json`;
+            const proof=JSON.parse(readFileSync(file,'utf8'));
+            if (proof.gate!=='READY_FOR_VISUAL_REVIEW' || proof.releaseDecision!=='MANUAL_REVIEW_REQUIRED' ||
+                proof.frameAudit.frameEvidence!=='PNG_SHA256_VERIFIED' ||
+                proof.frameAudit.stats.verifiedFrameFiles!==expected ||
+                proof.movie.decodedFrames!==expected || proof.kind!==kind)
+              throw new Error(`OMEGA M1 evidence rejected: ${file}`);
+            console.log(`${kind}: ${expected} native hashes and encoded MP4 verified; artistic/phone review still required`);
+          }
+          NODE
+      - name: Keep audit reports, reproducible provenance, native samples and videos
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: OMEGA-M1-native-film-proof
+          retention-days: 7
+          if-no-files-found: warn
+          path: |
+            android/app/build/sketch-story-film-proof/omega-native-report.json
+            android/app/build/sketch-story-film-proof/omega-frame-manifest.json
+            android/app/build/sketch-story-film-proof/mp4-verified.json
+            android/app/build/sketch-story-film-proof/*.mp4
+            android/app/build/sketch-story-film-proof/contact-sheet.png
+            android/app/build/sketch-duel-film-proof/omega-native-report.json
+            android/app/build/sketch-duel-film-proof/omega-frame-manifest.json
+            android/app/build/sketch-duel-film-proof/mp4-verified.json
+            android/app/build/sketch-duel-film-proof/*.mp4
+            android/app/build/sketch-duel-film-proof/contact-sheet.png
+            android/app/build/test-results/testDebugUnitTest/
