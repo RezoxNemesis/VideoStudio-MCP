@@ -30,6 +30,14 @@ public final class NativeCombatRigComposer {
     public static ProjectStore.Project compose(Context context,ProjectStore store,
               ProjectStore.Project output,int width,int height,int fps,
               double durationSeconds,Bitmap sourceBackdrop,Progress progress) throws Exception {
+        return compose(context,store,output,width,height,fps,durationSeconds,
+                sourceBackdrop,false,progress);
+    }
+
+    public static ProjectStore.Project compose(Context context,ProjectStore store,
+              ProjectStore.Project output,int width,int height,int fps,
+              double durationSeconds,Bitmap sourceBackdrop,boolean storyboardMotion,
+              Progress progress) throws Exception {
         if(context==null||store==null||output==null)
             throw new IllegalArgumentException("A native output project is required");
         if(fps!=24&&fps!=30)
@@ -43,7 +51,7 @@ public final class NativeCombatRigComposer {
         if(total>150)throw new IllegalArgumentException("Combat benchmark exceeds 150 frames");
         if(!output.assets.isEmpty() && !output.sourcePrompt.startsWith("combat-rig:"))
             throw new IllegalArgumentException("Existing non-combat project cannot be overwritten");
-        String base="combat_rig/"+output.id+"/frames";
+        String base="creative_workspace/projects/"+output.id+"/generated/combat_rig";
         File frames=new File(context.getFilesDir(),base);
         if(!frames.exists()&&!frames.mkdirs())
             throw new IllegalStateException("Cannot prepare combat rig frame storage");
@@ -55,7 +63,9 @@ public final class NativeCombatRigComposer {
                 throw new IllegalStateException("Could not remove stale generated combat frame");
         output.assets.clear();
         output.clips.clear();
-        output.sourcePrompt="combat-rig: fully procedural articulated motion with static background";
+        output.sourcePrompt=storyboardMotion
+                ?"combat-rig: three-panel articulated knockback with locked background"
+                :"combat-rig: fully procedural articulated motion with static background";
         store.save(output);
         NativeCombatRigRenderer renderer=new NativeCombatRigRenderer(width,height,sourceBackdrop);
         long frameMs=Math.max(34,Math.round(1000.0/fps));
@@ -63,7 +73,8 @@ public final class NativeCombatRigComposer {
             for(int i=0;i<total;i++) {
                 if(Thread.currentThread().isInterrupted())throw new InterruptedException();
                 double seconds=i*durationSeconds/Math.max(1,total-1);
-                CombatRigSolver.Frame movement=CombatRigSolver.at(seconds,durationSeconds);
+                CombatRigSolver.Frame movement=CombatRigSolver.at(
+                        seconds,durationSeconds,storyboardMotion);
                 Bitmap result=renderer.render(movement,seconds,durationSeconds);
                 String name=String.format(Locale.US,"rig_%04d.jpg",i);
                 File dest=new File(frames,name);
@@ -90,6 +101,7 @@ public final class NativeCombatRigComposer {
                 asset.generationMetadata.put("engine","builtin.native-combat-rig-v1");
                 asset.generationMetadata.put("movingCharacterRig",true);
                 asset.generationMetadata.put("fixedEnvironment",true);
+                asset.generationMetadata.put("storyboardMotion",storyboardMotion);
                 asset.generationMetadata.put("backgroundMode",sourceBackdrop==null?"procedural":"source_median");
                 asset.generationMetadata.put("referenceArtReconstruction",false);
                 asset.generationMetadata.put("frameIndex",i);

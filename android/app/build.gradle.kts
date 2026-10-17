@@ -10,8 +10,8 @@ android {
         applicationId = "com.rezoxnemesis.videostudio"
         minSdk = 29
         targetSdk = 35
-        versionCode = 350
-        versionName = "3.5.0"
+        versionCode = 356
+        versionName = "3.5.6"
     }
 
     testOptions { unitTests.isIncludeAndroidResources = true }
@@ -31,6 +31,10 @@ android {
 dependencies {
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.robolectric:robolectric:4.14.1")
+    // Free, actual GPU skinned glTF 2.0 model runtime; NOT 2D image to 3D inference.
+    implementation("com.google.android.filament:filament-android:1.74.0")
+    implementation("com.google.android.filament:gltfio-android:1.74.0")
+    implementation("com.google.android.filament:filament-utils-android:1.74.0")
     implementation("androidx.media3:media3-exoplayer:1.11.1")
     implementation("androidx.media3:media3-ui:1.11.1")
     implementation("androidx.media3:media3-transformer:1.11.1")
