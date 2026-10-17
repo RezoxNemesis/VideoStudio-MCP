@@ -1,0 +1,32 @@
+name: OMEGA CinemaBench (lightweight)
+
+on:
+  pull_request:
+    branches:
+      - main
+      - feat/native-voice-waveform-visemes-v454
+    paths:
+      - 'src/omega/**'
+      - 'scripts/omega-*'
+      - 'docs/PROJECT_OMEGA_*'
+      - '.github/workflows/omega.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  cinemabench:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Verify isolated OMEGA unit tests
+        run: node --test scripts/omega-cinemabench-test.mjs
+      - name: Syntax checks
+        run: |
+          node --check src/omega/cinemabench.js
+          node --check scripts/omega-cinemabench.mjs
