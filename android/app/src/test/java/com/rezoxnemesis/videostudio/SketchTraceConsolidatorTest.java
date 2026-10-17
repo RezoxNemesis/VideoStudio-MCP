@@ -154,4 +154,65 @@ public final class SketchTraceConsolidatorTest {
         }
         assertEquals(snapshot,SketchDocument.canonical(copy));
     }
+
+    private static JSONObject paintOrderDocument()throws Exception {
+        return SketchDocument.create(new JSONObject()
+                .put("sketchId","paint_order_regression")
+                .put("name","Paint-order guard").put("width",320).put("height",400)
+                .put("fps",24).put("frameCount",12).put("background","#FF10192B"));
+    }
+
+    private static JSONObject tile(String id,String color,double x,double y,
+            double width,double height)throws Exception{
+        JSONArray commands=new JSONArray()
+                .put(new JSONArray().put("M").put(x).put(y))
+                .put(new JSONArray().put("L").put(x+width).put(y))
+                .put(new JSONArray().put("L").put(x+width).put(y+height))
+                .put(new JSONArray().put("L").put(x).put(y+height))
+                .put(new JSONArray().put("Z"));
+        return new JSONObject().put("id",id).put("kind","path")
+                .put("frame",0).put("exposure",12).put("color",color)
+                .put("width",.0006).put("fill",true)
+                .put("commands",commands)
+                .put("transform",SketchDocument.transform())
+                .put("keys",new JSONArray());
+    }
+
+    @Test public void overlappingLaterColourMustNotMoveUnderInterveningPaint()
+            throws Exception{
+        JSONObject doc=paintOrderDocument();
+        JSONArray objects=SketchDocument.layer(doc,"layer_1").getJSONArray("objects");
+        objects.put(tile("rr_trace_red_early","#FFEE1010",.05,.05,.1,.1));
+        objects.put(tile("rr_trace_blue_occluder","#FF1010EE",.45,.45,.25,.25));
+        objects.put(tile("rr_trace_red_foreground","#FFEE1010",.5,.5,.1,.1));
+        objects.put(tile("rr_trace_red_far","#FFEE1010",.8,.8,.06,.06));
+        SketchDocument.validate(doc);
+        JSONObject before=SketchDocument.copy(doc);
+        SketchTraceConsolidator.apply(doc,request(4,4)
+                .put("layerId","layer_1"));
+        SketchDocument.validate(doc);
+        JSONArray after=SketchDocument.layer(doc,"layer_1").getJSONArray("objects");
+        assertEquals("A far-away region may merge, but not an overlapping one",3,after.length());
+        assertEquals("rr_trace_blue_occluder",after.getJSONObject(1).getString("id"));
+        assertEquals("rr_trace_red_foreground",after.getJSONObject(2).getString("id"));
+        assertEquals(4,SketchDocument.layer(before,"layer_1").getJSONArray("objects").length());
+    }
+
+    @Test public void mergedIntermediateObjectsStillBlockUnsafeLaterReorder()
+            throws Exception{
+        JSONObject doc=paintOrderDocument();
+        JSONArray objects=SketchDocument.layer(doc,"layer_1").getJSONArray("objects");
+        objects.put(tile("rr_trace_red_early","#FFEE1010",.05,.05,.08,.08));
+        objects.put(tile("rr_trace_blue_early","#FF1010EE",.4,.4,.08,.08));
+        objects.put(tile("rr_trace_blue_middle","#FF1010EE",.2,.2,.15,.15));
+        objects.put(tile("rr_trace_red_last","#FFEE1010",.25,.25,.05,.05));
+        SketchDocument.validate(doc);
+        SketchTraceConsolidator.apply(doc,request(4,4)
+                .put("layerId","layer_1"));
+        SketchDocument.validate(doc);
+        JSONArray after=SketchDocument.layer(doc,"layer_1").getJSONArray("objects");
+        assertEquals(3,after.length());
+        assertEquals("rr_trace_blue_early",after.getJSONObject(1).getString("id"));
+        assertEquals("rr_trace_red_last",after.getJSONObject(2).getString("id"));
+    }
 }
