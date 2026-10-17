@@ -89,6 +89,12 @@ subprocess.run(["node", "scripts/omega-native-proof.mjs",
                 "--kind", "duel", "--root", str(ROOT)],
                check=True, stdin=subprocess.DEVNULL)
 
+# OMEGA M2 measures pixel motion from the verified owned MP4 before frame cleanup.
+# This is an advisory cinematic diagnostic; it never approves artwork or phone playback.
+subprocess.run(["node", "scripts/omega-motion-dna.mjs",
+                "--kind", "duel", "--root", str(ROOT)],
+               check=True, stdin=subprocess.DEVNULL)
+
 shutil.rmtree(FRAMES)
 print(json.dumps({k:summary[k] for k in ("video","sha256","fileBytes",
     "nativeFrameCount","fps","changedAdjacentFrames","distanceBetweenActorWristsPx")},indent=2))
