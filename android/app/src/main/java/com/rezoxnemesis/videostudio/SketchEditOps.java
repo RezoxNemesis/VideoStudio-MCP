@@ -25,7 +25,11 @@ public final class SketchEditOps {
         boolean hiddenGuideImport="sketch_import_reference".equals(action)&&!args.optBoolean("guideVisible",true);
         if(result.has("sketchId")&&!hiddenGuideImport&&!java.util.Arrays.asList("sketch_get","sketch_preview","sketch_review","sketch_quality_audit","sketch_list","sketch_live_events","sketch_inspect","sketch_xsheet","sketch_paint_journal","sketch_sample_color").contains(action)){
             android.content.SharedPreferences.Editor signal=context.getSharedPreferences("sketch_live_workspace",Context.MODE_PRIVATE).edit().putString("sketchId",result.getString("sketchId")).putLong("signal",System.nanoTime());
-            String priorBook=context.getSharedPreferences("sketch_live_workspace",Context.MODE_PRIVATE).getString("sketchId","").equals(result.getString("sketchId"))?context.getSharedPreferences("sketch_live_workspace",Context.MODE_PRIVATE).getString("bookId",""):"";signal.putString("bookId",action.equals("sketch_book_open_page")?args.getString("bookId"):priorBook);signal.putInt("page",args.optInt("page",0));signal.apply();
+            // Edits do not carry a page argument. Resolve the actual persisted
+            // membership so following a late cel never jumps back to page zero.
+            JSONObject membership;try(SketchBookStore books=new SketchBookStore(context)){membership=books.pageForSketch(result.getString("sketchId"));}
+            signal.putString("bookId",membership==null?"":membership.getString("bookId"));
+            signal.putInt("page",membership==null?0:membership.getInt("page"));signal.apply();
         }
         return result;
     }

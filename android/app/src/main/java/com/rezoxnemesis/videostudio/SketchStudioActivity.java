@@ -38,7 +38,9 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
     private final ExecutorService io=Executors.newSingleThreadExecutor();
     private final ExecutorService transfers=Executors.newSingleThreadExecutor();
     private boolean loadingDrawing;
-    private boolean destroyed,resumed,watching=true,watchInFlight,grid,symmetry;
+    private volatile boolean destroyed;
+    private boolean resumed,watching=true,watchInFlight,grid,symmetry;
+    private final java.util.concurrent.atomic.AtomicReference<android.graphics.Bitmap> pendingBookBitmap=new java.util.concurrent.atomic.AtomicReference<>();
     private JSONObject symmetrySettings;
     private String brushPreset="ink",bookId;
     private JSONObject book;
@@ -741,7 +743,15 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
         if(book==null)return;if(bookPlaybackInFlight){handler.postDelayed(playTick,16);return;}
         JSONObject playingBook=book;int fps=playingBook.optInt("fps"),count=playingBook.optInt("pageCount"),page=bookTimeline.page((int)((bookPlayFirst+(SystemClock.uptimeMillis()-playStarted)*fps/1000)%bookTimeline.frames())),generation=playbackGeneration,pageAtRequest=pageGeneration;if(page==bookPage){long elapsed=SystemClock.uptimeMillis()-playStarted,index=elapsed*fps/1000;handler.postDelayed(playTick,Math.max(1,((index+1)*1000+fps-1)/fps-elapsed));return;}String id=bookId;bookPlaybackInFlight=true;
         io.execute(()->{try{JSONObject loaded;String sketch=id+"_p"+page;try(SketchProjectStore store=new SketchProjectStore(this)){try{loaded=store.get(sketch);}catch(IllegalArgumentException unknown){if(!unknown.getMessage().startsWith("UNKNOWN_SKETCH"))throw unknown;loaded=SketchDocument.create(new JSONObject().put("sketchId",sketch).put("name",playingBook.optString("name")).put("width",playingBook.optInt("width")).put("height",playingBook.optInt("height")).put("fps",fps).put("frameCount",1).put("background",playingBook.optString("background")));}}
-            JSONObject drawing=loaded;postUi(()->{if(generation!=playbackGeneration)return;bookPlaybackInFlight=false;if(!playing||destroyed||pageAtRequest!=pageGeneration||!id.equals(bookId))return;try{bookPage=page;canvas.setDocument(drawing);frames.setProgress(page);updateStatus();handler.postDelayed(playTick,1);}catch(Exception error){stopPlayback();onMessage(error.getMessage());}});
+            JSONObject drawing=loaded;android.graphics.Bitmap ready;try(SketchFrameRenderer renderer=new SketchFrameRenderer(this,drawing)){ready=renderer.render(0,false,1024,null);}
+            android.graphics.Bitmap superseded=pendingBookBitmap.getAndSet(ready);if(superseded!=null)superseded.recycle();
+            if(destroyed){if(pendingBookBitmap.compareAndSet(ready,null))ready.recycle();return;}
+            handler.post(()->{
+                if(!pendingBookBitmap.compareAndSet(ready,null))return;boolean adopted=false;
+                try{if(generation!=playbackGeneration||destroyed)return;bookPlaybackInFlight=false;if(!playing||pageAtRequest!=pageGeneration||!id.equals(bookId))return;
+                    canvas.setBookPlaybackFrame(drawing,ready);adopted=true;bookPage=page;frames.setProgress(page);updateStatus();handler.postDelayed(playTick,1);
+                }catch(Exception error){stopPlayback();onMessage(error.getMessage());}finally{if(!adopted)ready.recycle();}
+            });
         }catch(Exception error){postUi(()->{if(generation!=playbackGeneration)return;bookPlaybackInFlight=false;stopPlayback();onMessage(error.getMessage());});}});
     }
     private void stopLivePlayer(){if(livePlayer!=null){livePlayer.close();livePlayer=null;}canvas.hideAgentHand();agentGlobalTool=false;if(status!=null)status.setCompoundDrawables(null,null,null,null);showAgentToolPosition(humanToolPosition);canvas.setPresentation(null,1);canvas.setEnabled(session!=null&&!loadingDrawing&&!playing&&!destroyed);liveDrawingObject=null;}
@@ -875,7 +885,7 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
         long index = elapsed * fps / 1000; int frame = (int) ((playFirst + index) % count); canvas.setFrame(frame); frames.setProgress(frame); updateStatus();
         long nextAt = NativeFrameClock.presentationTimeMs(index + 1, fps); handler.postDelayed(this, Math.max(1, nextAt - elapsed));
     } };
-    private void stopPlayback() { boolean wasPlaying=playing;playing = false;++playbackGeneration;bookPlaybackInFlight=false;if(wasPlaying&&bookId!=null&&session!=null&&!destroyed){openBookPage(bookId,bookPage);} handler.removeCallbacks(playTick); if(canvas!=null&&!destroyed)canvas.setEnabled(!loadingDrawing&&(!wasPlaying||bookId==null)&&session!=null&&livePlayer==null);if (playButton != null) playButton.setText("Play"); }
+    private void stopPlayback() { boolean wasPlaying=playing;playing = false;++playbackGeneration;bookPlaybackInFlight=false;android.graphics.Bitmap abandoned=pendingBookBitmap.getAndSet(null);if(abandoned!=null)abandoned.recycle();if(wasPlaying&&bookId!=null&&session!=null&&!destroyed){openBookPage(bookId,bookPage);} handler.removeCallbacks(playTick); if(canvas!=null&&!destroyed)canvas.setEnabled(!loadingDrawing&&(!wasPlaying||bookId==null)&&session!=null&&livePlayer==null);if (playButton != null) playButton.setText("Play"); }
     @Override protected void onPause() { resumed=false;++liveLoadGeneration;if(livePlayer!=null||watchInFlight){loadingDrawing=true;if(notifiedSessionId!=null)notificationReplayPending=true;}stopLivePlayer();stopPlayback();handler.removeCallbacks(watchTick);super.onPause(); }
     @Override protected void onResume() { super.onResume();resumed=true;liveSessionId="";if(loadingDrawing&&session!=null){if(session.pending()==0)reload();else afterSaves(()->postUi(this::reload));}handler.removeCallbacks(watchTick);handler.postDelayed(watchTick,250); }
     @Override protected void onDestroy() { destroyed=true;stopLivePlayer();stopPlayback();handler.removeCallbacksAndMessages(null);if(session!=null)session.close();io.shutdown();transfers.shutdown();if(canvas!=null)canvas.dispose();super.onDestroy(); }

@@ -11,6 +11,14 @@ import static org.junit.Assert.*;
 
 @RunWith(RobolectricTestRunner.class) @Config(sdk=33,manifest=Config.NONE)
 public class SketchFeatureFilmTest {
+    @Test public void editsOnLateFilmCelsSignalTheirRealBookPage()throws Exception {
+        Context c=RuntimeEnvironment.getApplication();String id=UUID.randomUUID().toString();
+        SketchEditOps.execute(c,"sketch_book_create",new JSONObject().put("bookId",id).put("operationId","new").put("pageCount",216000));
+        String cel=SketchEditOps.execute(c,"sketch_book_open_page",new JSONObject().put("bookId",id).put("page",215999)).getString("sketchId");
+        SketchEditOps.execute(c,"sketch_edit",new JSONObject().put("sketchId",cel).put("expectedRevision",1).put("operationId","draw").put("operations",new JSONArray().put(new JSONObject().put("type","add_object").put("layerId","layer_1").put("object",new JSONObject().put("id","line").put("kind","line").put("points",new JSONArray("[[0,0,1],[1,1,1]]"))))));
+        android.content.SharedPreferences signal=c.getSharedPreferences("sketch_live_workspace",Context.MODE_PRIVATE);
+        assertEquals(cel,signal.getString("sketchId",""));assertEquals(id,signal.getString("bookId",""));assertEquals(215999,signal.getInt("page",-1));
+    }
     @Test public void largeExposureMapsArePagedAtTheMcpBoundary()throws Exception {
         Context c=RuntimeEnvironment.getApplication();String id=UUID.randomUUID().toString();
         SketchEditOps.execute(c,"sketch_book_create",new JSONObject().put("bookId",id).put("operationId","new").put("pageCount",216000));

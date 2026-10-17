@@ -3,8 +3,8 @@
 2026-10-17, workspace source candidate. No phone execution or live owner MCP
 endpoint was used for this verification.
 
-* Full Android unit run: **1,226 cases in 244 suites, zero failures/errors**.
-  1,223 passed; three existing opt-in film/bundle proof cases were skipped because
+* Full Android unit run: **1,228 cases in 244 suites, zero failures/errors**.
+  1,225 passed; three existing opt-in film/bundle proof cases were skipped because
   their external fixtures/environment flags were absent.
 * Full `npm test`: **270 tests plus 306 source smoke checks**, zero failures.
 * Real installed MCP SDK + local workerd: new tools discovered; native 4.6.2
@@ -28,6 +28,10 @@ endpoint was used for this verification.
 * Optional rigid-head tests verified source-pixel placement, alpha, profile and
   native editor roundtrips. Source-deformation body quality remains below the
   cinematic gate.
+* Native editor regressions verify that late-cel edits signal their actual book
+  page, and imported cel playback presents the new artwork on its first paint.
+  Playback renders on a worker before adopting the next cel; cancelled or stale
+  preview bitmaps are recycled. This does not establish device realtime speed.
 
 Unverified: Android MediaCodec/MediaMuxer on the owner's device, native video
 sampling/orientation on that device, thermal/storage behavior of a real feature

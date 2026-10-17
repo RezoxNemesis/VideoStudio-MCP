@@ -28,6 +28,22 @@ import static org.junit.Assert.*;
 
 @RunWith(RobolectricTestRunner.class) @Config(sdk=33,manifest=Config.NONE) @GraphicsMode(GraphicsMode.Mode.NATIVE)
 public class SketchStudioTimelineTest {
+    @Test public void importedCelIsVisibleOnTheFirstPaintAfterPlaybackAdvances()throws Exception {
+        Context c=RuntimeEnvironment.getApplication();String id="film_"+UUID.randomUUID();
+        SketchBookStore.execute(c,"sketch_book_create",new JSONObject().put("bookId",id).put("operationId","new").put("pageCount",2).put("fps",30).put("width",256).put("height",256));
+        ProjectStore projects=new ProjectStore(c);ProjectStore.Project project=projects.create("Playback source");
+        for(int page=0;page<2;page++){
+            java.io.File directory=new java.io.File(c.getFilesDir(),"imports/"+id);directory.mkdirs();java.io.File png=new java.io.File(directory,"cel"+page+".png");android.graphics.Bitmap bitmap=android.graphics.Bitmap.createBitmap(256,256,android.graphics.Bitmap.Config.ARGB_8888);bitmap.eraseColor(page==0?android.graphics.Color.RED:android.graphics.Color.BLUE);
+            try(java.io.FileOutputStream output=new java.io.FileOutputStream(png)){assertTrue(bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG,100,output));}finally{bitmap.recycle();}
+            ProjectStore.Asset asset=projects.registerImportedAsset(project.id,android.net.Uri.fromFile(png),png.getName(),"image/png",0,png.length());String cel=SketchEditOps.execute(c,"sketch_book_open_page",new JSONObject().put("bookId",id).put("page",page)).getString("sketchId");
+            SketchEditOps.execute(c,"sketch_import_reference",new JSONObject().put("sketchId",cel).put("expectedRevision",1).put("operationId","source").put("projectId",project.id).put("sourceProjectUpdatedAt",projects.get(project.id).updatedAt).put("assetId",asset.id).put("layerId","layer_1").put("objectId","image"));
+        }
+        try(ActivityController<SketchStudioActivity> controller=open(c,id)){
+            SketchStudioActivity studio=controller.get();invoke(studio,"togglePlayback");org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(34));settle(studio);assertEquals(1,field(studio,"bookPage"));
+            SketchCanvasView canvas=(SketchCanvasView)field(studio,"canvas");canvas.measure(View.MeasureSpec.makeMeasureSpec(256,View.MeasureSpec.EXACTLY),View.MeasureSpec.makeMeasureSpec(256,View.MeasureSpec.EXACTLY));canvas.layout(0,0,256,256);
+            android.graphics.Bitmap observed=android.graphics.Bitmap.createBitmap(256,256,android.graphics.Bitmap.Config.ARGB_8888);try{canvas.draw(new android.graphics.Canvas(observed));assertEquals("The new cel must already be visible without another async viewport render",android.graphics.Color.BLUE,observed.getPixel(128,128));}finally{observed.recycle();}
+        }
+    }
     @Test public void featureFilmNavigatorAndVirtualStripReachTheLastFrameAt60Fps() throws Exception {
         Context context=RuntimeEnvironment.getApplication();String id="film_"+UUID.randomUUID();
         SketchBookStore.execute(context,"sketch_book_create",new JSONObject().put("bookId",id).put("operationId","create").put("pageCount",216000).put("fps",60));

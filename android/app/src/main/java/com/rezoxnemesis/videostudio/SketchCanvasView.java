@@ -85,7 +85,7 @@ public final class SketchCanvasView extends View {
     private final java.util.concurrent.ExecutorService rasterWorker=java.util.concurrent.Executors.newSingleThreadExecutor();
     private int rasterGeneration;
     private String rasterKey="";
-    private boolean disposed,smallVector;
+    private boolean disposed,smallVector,bookPlaybackReady;
     private JSONObject previousBookOnion,nextBookOnion;
     private volatile int requestedRasterGeneration;
     private long cacheBytes;
@@ -99,6 +99,7 @@ public final class SketchCanvasView extends View {
     }
     public void setListener(Listener listener) { this.listener = listener; }
     public void setDocument(JSONObject doc) throws Exception {
+        bookPlaybackReady=false;
         // Store/session documents are immutable snapshots. Image/paint preparation stays on the worker.
         boolean same=document!=null&&document.getString("id").equals(doc.getString("id"));
         boolean retainGesture=same&&pointerDown&&isPaintTool()&&paintCommitter!=null&&paintTarget!=null&&frame==gestureFrame;
@@ -110,7 +111,15 @@ public final class SketchCanvasView extends View {
         if(!same){zoom=1;panX=panY=0;pendingPaintPreviews.clear();previousBookOnion=null;nextBookOnion=null;}
         if(!same)clearFrameCache();restoreDocumentCursor(doc,retainGesture);if(retainGesture)requestTouchPreview();
     }
+    /** Adopts one already rendered worker bitmap; ownership transfers on success. */
+    void setBookPlaybackFrame(JSONObject doc,Bitmap bitmap)throws Exception {
+        if(bitmap==null||bitmap.isRecycled()||bitmap.getAllocationByteCount()>VIEWPORT_BYTES)
+            throw SketchDocument.bad("Invalid book playback preview");
+        setDocument(doc);clearFrameCache();frameCache.put(frame,new RasterFrame(bitmap,null));
+        cacheBytes=bitmap.getAllocationByteCount();bookPlaybackReady=true;invalidate();
+    }
     void setCommittedPaintDocument(JSONObject doc)throws Exception {
+        bookPlaybackReady=false;
         document=doc;++rasterGeneration;requestedRasterGeneration=rasterGeneration;rasterKey="";smallVector=false;clearFrameCache();restoreDocumentCursor(doc);
     }
     private static boolean isSmallVector(JSONObject doc)throws Exception{
@@ -122,6 +131,7 @@ public final class SketchCanvasView extends View {
     }
     /** A validated worker snapshot transfers ownership without UI parsing/indexing. */
     void setPreparedDocument(SketchLivePreparation.Prepared prepared) throws Exception {
+        bookPlaybackReady=false;
         if(android.os.Looper.myLooper()!=android.os.Looper.getMainLooper())
             throw new IllegalStateException("Canvas adoption requires the UI thread");
         boolean same=document!=null&&document.getString("id").equals(prepared.document.getString("id"));
@@ -255,14 +265,14 @@ public final class SketchCanvasView extends View {
             int w = document.getInt("width"), h = document.getInt("height");
             viewScale = Math.min(getWidth() / (float) w, getHeight() / (float) h)*zoom;
             left = (getWidth() - w * viewScale) / 2+panX; top = (getHeight() - h * viewScale) / 2+panY;
-            requestRaster();
+            if(!bookPlaybackReady)requestRaster();
             int save = canvas.save(); canvas.translate(left, top); canvas.scale(viewScale, viewScale); canvas.clipRect(0, 0, w, h);
             canvas.drawColor(SketchDocument.color(document.getString("background")));
-            if(onion&&liveObject==null){
+            if(onion&&liveObject==null&&!bookPlaybackReady){
                 Paint previousTint=new Paint(Paint.ANTI_ALIAS_FLAG|Paint.FILTER_BITMAP_FLAG);previousTint.setAlpha(onionAlpha);previousTint.setColorFilter(new PorterDuffColorFilter(0xffe27a83,PorterDuff.Mode.SRC_IN));drawRaster(canvas,frameCache.get(-1),w,h,previousTint);
                 Paint nextTint=new Paint(Paint.ANTI_ALIAS_FLAG|Paint.FILTER_BITMAP_FLAG);nextTint.setAlpha(onionAlpha);nextTint.setColorFilter(new PorterDuffColorFilter(0xff4cbbdb,PorterDuff.Mode.SRC_IN));drawRaster(canvas,frameCache.get(-2),w,h,nextTint);
             }
-            if(onion&&liveObject==null)for(int distance=onionRange;distance>=1;distance--)for(int offset:new int[]{-distance,distance}){
+            if(onion&&liveObject==null&&!bookPlaybackReady)for(int distance=onionRange;distance>=1;distance--)for(int offset:new int[]{-distance,distance}){
                 int ghost=frame+offset;if(ghost<0||ghost>=document.getInt("frameCount"))continue;Paint tint=new Paint(Paint.ANTI_ALIAS_FLAG|Paint.FILTER_BITMAP_FLAG);tint.setAlpha(onionAlpha/distance);tint.setColorFilter(new PorterDuffColorFilter(offset<0?0xffe27a83:0xff4cbbdb,PorterDuff.Mode.SRC_IN));drawRaster(canvas,frameCache.get(ghost),w,h,tint);
             }
             boolean actualTouch=touchComposite!=null&&touchCompositeFrame==frame&&document.getString("id").equals(touchCompositeDocument.optString("id"));
