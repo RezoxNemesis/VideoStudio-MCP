@@ -150,8 +150,11 @@ final class SketchTraceConsolidator {
             }
         }
         if(!Double.isFinite(left)||!Double.isFinite(right))return null;
-        // Conservative expansion accounts for native stroke widths / AA seams.
-        double margin=Math.max(.001,object.optDouble("width",.001));
+        // Filled native paths use Paint.Style.FILL: touching outlines do
+        // not change interior occlusion when combined (AA seams may differ).
+        // Actual stroked paths must include their stroke footprint.
+        double margin=object.optBoolean("fill")?0.0
+                :Math.max(.001,object.optDouble("width",.001));
         if(!Double.isFinite(margin)||margin<0)return null;
         return new Bounds(left-margin,top-margin,right+margin,bottom+margin);
     }
@@ -162,8 +165,10 @@ final class SketchTraceConsolidator {
             this.left=left;this.top=top;this.right=right;this.bottom=bottom;
         }
         boolean overlaps(Bounds other) {
-            return left<=other.right&&other.left<=right
-                    &&top<=other.bottom&&other.top<=bottom;
+            // Shared boundaries alone have zero covered area; they must
+            // not prevent compacting an otherwise safe mosaic of tiles.
+            return left<other.right-1e-9&&other.left<right-1e-9
+                    &&top<other.bottom-1e-9&&other.top<bottom-1e-9;
         }
     }
 
