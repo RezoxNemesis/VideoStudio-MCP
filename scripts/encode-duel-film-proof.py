@@ -107,6 +107,12 @@ subprocess.run(["node", "scripts/omega-physics-brain.mjs",
                 "--root", str(ROOT)],
                check=True, stdin=subprocess.DEVNULL)
 
+# OMEGA M3.1 independently measures grounded brace/recoil/settle from native
+# authored joints, before PNG cleanup. Failed QA retains frame evidence.
+subprocess.run(["node", "scripts/omega-impact-dynamics.mjs",
+                "--root", str(ROOT)],
+               check=True, stdin=subprocess.DEVNULL)
+
 shutil.rmtree(FRAMES)
 print(json.dumps({k:summary[k] for k in ("video","sha256","fileBytes",
     "nativeFrameCount","fps","changedAdjacentFrames","distanceBetweenActorWristsPx")},indent=2))

@@ -1,4 +1,4 @@
-name: OMEGA CinemaBench, Native Film, Motion and Skeleton DNA
+name: OMEGA CinemaBench and Native Impact Dynamics
 
 on:
   pull_request:
@@ -28,7 +28,7 @@ jobs:
         with:
           node-version: 22
       - name: Verify M0 CinemaBench, M1 native-film adapter and M2 Motion DNA
-        run: node --test scripts/omega-cinemabench-test.mjs scripts/omega-native-proof-test.mjs scripts/omega-motion-dna-test.mjs scripts/omega-skeleton-test.mjs scripts/omega-physics-brain-test.mjs
+        run: node --test scripts/omega-cinemabench-test.mjs scripts/omega-native-proof-test.mjs scripts/omega-motion-dna-test.mjs scripts/omega-skeleton-test.mjs scripts/omega-physics-brain-test.mjs scripts/omega-impact-dynamics-test.mjs
       - name: Syntax checks
         run: |
           node --check src/omega/cinemabench.js
@@ -44,12 +44,15 @@ jobs:
           node --check src/omega/physics-brain.js
           node --check scripts/omega-physics-brain.mjs
           node --check scripts/omega-physics-brain-test.mjs
+          node --check src/omega/impact-dynamics.js
+          node --check scripts/omega-impact-dynamics.mjs
+          node --check scripts/omega-impact-dynamics-test.mjs
           python3 -m py_compile scripts/encode-story-film-proof.py scripts/encode-duel-film-proof.py
 
   native-film-proof:
     # Run one targeted Android Canvas proof for M1/M2/M2.1 review PRs; no APK build.
     # No APK signing, release/deploy, or private device command is performed.
-    if: github.event_name == 'pull_request' && (github.base_ref == 'feat/project-omega-cinemabench-m0' || github.base_ref == 'feat/project-omega-native-film-m1' || github.base_ref == 'feat/project-omega-motion-dna-m2' || github.base_ref == 'feat/project-omega-skeleton-m21')
+    if: github.event_name == 'pull_request' && (github.base_ref == 'feat/project-omega-cinemabench-m0' || github.base_ref == 'feat/project-omega-native-film-m1' || github.base_ref == 'feat/project-omega-motion-dna-m2' || (github.base_ref == 'feat/project-omega-skeleton-m21' || github.base_ref == 'feat/project-omega-physicsbrain-m3'))
     needs: cinemabench
     runs-on: ubuntu-latest
     timeout-minutes: 35
@@ -82,6 +85,7 @@ jobs:
             --tests com.rezoxnemesis.videostudio.SketchStoryFilmNativeProofTest \
             --tests com.rezoxnemesis.videostudio.SketchDuelAnimationExampleTest \
             --tests com.rezoxnemesis.videostudio.SketchAnimationContactDirectorTest \
+            --tests com.rezoxnemesis.videostudio.SketchAnimationImpactDynamicsTest \
             --stacktrace
       - name: Ensure FFmpeg and FFprobe
         run: |
@@ -112,7 +116,7 @@ jobs:
           }
           NODE
       - name: Confirm M2 decoded motion evidence and manual-review boundary
-        if: github.base_ref == 'feat/project-omega-native-film-m1' || github.base_ref == 'feat/project-omega-motion-dna-m2' || github.base_ref == 'feat/project-omega-skeleton-m21'
+        if: github.base_ref == 'feat/project-omega-native-film-m1' || github.base_ref == 'feat/project-omega-motion-dna-m2' || (github.base_ref == 'feat/project-omega-skeleton-m21' || github.base_ref == 'feat/project-omega-physicsbrain-m3')
         run: |
           set -euo pipefail
           node --input-type=module <<'NODE'
@@ -135,7 +139,7 @@ jobs:
           }
           NODE
       - name: Confirm M2.1 native authored skeleton evidence
-        if: github.base_ref == 'feat/project-omega-motion-dna-m2' || github.base_ref == 'feat/project-omega-skeleton-m21'
+        if: github.base_ref == 'feat/project-omega-motion-dna-m2' || (github.base_ref == 'feat/project-omega-skeleton-m21' || github.base_ref == 'feat/project-omega-physicsbrain-m3')
         run: |
           set -euo pipefail
           node --input-type=module <<'NODE'
@@ -163,7 +167,7 @@ jobs:
           },null,2));
           NODE
       - name: Confirm M3 real hand contact and planted-foot preservation
-        if: github.base_ref == 'feat/project-omega-skeleton-m21'
+        if: (github.base_ref == 'feat/project-omega-skeleton-m21' || github.base_ref == 'feat/project-omega-physicsbrain-m3')
         run: |
           set -euo pipefail
           node --input-type=module <<'NODE'
@@ -178,11 +182,29 @@ jobs:
               throw new Error('M3 failed native authored-contact QA');
           console.log(JSON.stringify(physics.contact,null,2));
           NODE
+      - name: Verify M3.1 grounded impact acting with native proof
+        if: github.base_ref == 'feat/project-omega-physicsbrain-m3'
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import {readFileSync} from 'node:fs';
+          const root='android/app/build/sketch-duel-film-proof/';
+          const report=JSON.parse(readFileSync(root+'omega-impact-dynamics.json','utf8'));
+          if(report.status!=='MEASURED' || report.qualityDecision!=='MANUAL_REVIEW_REQUIRED' ||
+              report.measured.contactGapPx>6 || report.measured.verifiedMaxWristStepPx>55 ||
+              report.measured.reducedMaxWristStepPx<5 ||
+              report.measured.actualHardFootSamples!==104 ||
+              report.measured.maxFootErrorPx>.02 ||
+              report.professionalActingVerified!==false ||
+              report.physicalPhoneVerified!==false || report.automaticFilmReleaseApproved!==false)
+            throw new Error('M3.1 failed grounded native acting-quality gate');
+          console.log(JSON.stringify(report.measured,null,2));
+          NODE
       - name: Keep audit reports, reproducible provenance, native samples and videos
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: OMEGA-M1-M2-M21-M3-native-film-proof
+          name: OMEGA-M1-M2-M21-M3-M31-native-film-proof
           retention-days: 7
           if-no-files-found: warn
           path: |
@@ -195,6 +217,7 @@ jobs:
             android/app/build/sketch-duel-film-proof/omega-motion-dna.json
             android/app/build/sketch-duel-film-proof/omega-skeleton-dna.json
             android/app/build/sketch-duel-film-proof/omega-physics-brain.json
+            android/app/build/sketch-duel-film-proof/omega-impact-dynamics.json
             android/app/build/sketch-duel-film-proof/duel-stage-metrics.json
             android/app/build/sketch-duel-film-proof/native-rig-tracks.json
             android/app/build/sketch-duel-film-proof/native-duel-proof.json
