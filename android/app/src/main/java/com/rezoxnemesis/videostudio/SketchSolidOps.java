@@ -34,9 +34,13 @@ public final class SketchSolidOps {
             }
             if(!"box".equals(m.mesh.shape))for(double[] point:projected)for(int axis=0;axis<2;axis++)point[axis]=Math.rint(point[axis]*1e6)/1e6;
             if(m.ground){
-                double[] pose=m.pose(f);double w=m.distance+pose[2],cx=.5+m.focal*(pose[0]+pose[10])/w/doc.getDouble("width"),cy=m.horizon+m.focal*m.height/w/doc.getDouble("height"),rx=m.focal*m.size[0]*pose[6]*.7*(1+pose[1]/600)/w/doc.getDouble("width"),ry=rx*doc.getDouble("width")/doc.getDouble("height")*.22;
+                // Key elevation is clearance only at authored keys. Between them,
+                // rotation/scale changes support while the centre follows its own arc.
+                // Use the same ground-clamped geometry as the visible body.
+                double clearance=Double.POSITIVE_INFINITY;for(double[] vertex:vertices)clearance=Math.min(clearance,vertex[1]);clearance=Math.max(0,clearance);
+                double[] pose=m.pose(f);double w=m.distance+pose[2],cx=.5+m.focal*(pose[0]+pose[10])/w/doc.getDouble("width"),cy=m.horizon+m.focal*m.height/w/doc.getDouble("height"),rx=m.focal*m.size[0]*pose[6]*.7*(1+clearance/600)/w/doc.getDouble("width"),ry=rx*doc.getDouble("width")/doc.getDouble("height")*.22;
                 JSONArray shadow=new JSONArray();for(int n=0;n<24;n++){double angle=n*Math.PI/12;shadow.put(point(n==0?"M":"L",new double[]{Math.max(0,Math.min(1,cx+rx*Math.cos(angle))),Math.max(0,Math.min(1,cy+(m.softShadow?rx*doc.getDouble("width")/doc.getDouble("height"):ry)*Math.sin(angle)))}));}shadow.put(new JSONArray().put("Z"));
-                JSONObject object=path(prefix+"_f"+f+"_shadow",shadow,m.ink,true,f,prefix+"_ink",m.stroke/doc.getDouble("height"));object.getJSONObject("transform").put("opacity",.20/(1+pose[1]/500));
+                JSONObject object=path(prefix+"_f"+f+"_shadow",shadow,m.ink,true,f,prefix+"_ink",m.stroke/doc.getDouble("height"));object.getJSONObject("transform").put("opacity",.20/(1+clearance/500));
                 if(m.softShadow){object.remove("styleId");double sx=Math.max(0,Math.min(1,cx)),sy=Math.max(0,Math.min(1,cy));String clear="#00"+m.ink.substring(3);object.put("gradient",new JSONObject().put("type","radial").put("cx",sx).put("cy",sy).put("radius",Math.max(.0001,Math.min(2,rx*doc.getDouble("width")/Math.min(doc.getDouble("width"),doc.getDouble("height"))))).put("colors",new JSONArray().put(m.ink).put(clear)).put("stops",new JSONArray("[0,1]")));object.getJSONObject("transform").put("anchorX",sx).put("anchorY",sy).put("scaleY",.22);}
                 additions.put(object);
             }
