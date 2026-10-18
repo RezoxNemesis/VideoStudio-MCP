@@ -1,0 +1,9 @@
+{
+  "schema":"omega.skeleton-shot-plan.v1",
+  "note":"Human-confirmed visibility for the prepared three-shot Rooftop Standoff original vector source. Sample only these rigs per shot; unexposed rig positions must never count as visible acting.",
+  "shots":[
+    {"id":"wide_contact","start":0,"end":35,"activeRigs":["wide_rig","rook_wide_rig"]},
+    {"id":"foreground_pov","start":36,"end":59,"activeRigs":["pov_rig","pov_baton_rig","rook_pov_rig"]},
+    {"id":"recovery","start":60,"end":99,"activeRigs":["medium_rig","rook_medium_rig"]}
+  ]
+}

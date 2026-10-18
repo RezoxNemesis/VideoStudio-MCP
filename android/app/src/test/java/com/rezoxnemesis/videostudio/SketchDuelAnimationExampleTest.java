@@ -127,6 +127,20 @@ public final class SketchDuelAnimationExampleTest {
                 input.getJSONObject("report").toString(2).getBytes(StandardCharsets.UTF_8));
         Files.write(new File(PROOF,"duel-compiler-report.json").toPath(),
                 compiled.getJSONObject("report").toString(2).getBytes(StandardCharsets.UTF_8));
+        // M2.1: sample the ACTUAL compiled/IK rig solver for each original native
+        // film frame. This is a CI-only editable-source proof, not camera vision
+        // pose estimation or a device-owned project/media export.
+        File nativeRigTrace=new File(PROOF,"native-rig-tracks.json");
+        JSONArray nativeSamples=SketchAnimationCompiler.sampleFrames(source,program,0,99);
+        assertEquals(100,nativeSamples.length());
+        JSONObject sampledRigTrace=new JSONObject()
+                .put("schema","videostudio.native-rig-tracks.v1")
+                .put("frameCount",100).put("fps",24).put("width",1280).put("height",720)
+                .put("sourceSha256",SketchProjectStore.fileHash(new File(PROOF,"editable-duel-source.json")))
+                .put("programSha256",SketchProjectStore.fileHash(new File(PROOF,"editable-duel-program.json")))
+                .put("sampledWith","SketchAnimationCompiler.sampleFrames; native authored world-space joints, not phone")
+                .put("frames",nativeSamples);
+        Files.write(nativeRigTrace.toPath(),sampledRigTrace.toString(2).getBytes(StandardCharsets.UTF_8));
         JSONArray frameProof=new JSONArray();
         Bitmap sheet=Bitmap.createBitmap(1600,1050,Bitmap.Config.ARGB_8888);
         Canvas canvas=new Canvas(sheet);canvas.drawColor(0xff112335);
@@ -164,7 +178,8 @@ public final class SketchDuelAnimationExampleTest {
                 .put("changedAdjacentFrames",changed).put("separatelyDrawnCameraViews",3)
                 .put("twoDistinctCharacters",true).put("audioRecorded",false)
                 .put("phoneVerified",false).put("artisticQualityVerified",false)
-                .put("frames",frameProof);
+                .put("frames",frameProof)
+                .put("rigTracksSha256",SketchProjectStore.fileHash(nativeRigTrace));
         Files.write(new File(PROOF,"native-duel-proof.json").toPath(),metadata.toString(2).getBytes(StandardCharsets.UTF_8));
     }
 
