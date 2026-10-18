@@ -154,6 +154,11 @@ final class SketchDuelAnimationExample {
         program=contactCorrection.getJSONObject("program");
         program.getJSONArray("interactionCues").getJSONObject(0).put("maxGapPx",8.0);
 
+        // M3.1 edits five pre-existing brace/recoil/settle poses, preserving
+        // the exact frame-16 joint contact and all original source artwork.
+        JSONObject impactResponse=SketchAnimationImpactDynamics.shape(source,program);
+        program=impactResponse.getJSONObject("program");
+
         // Move the authored impact flash/rays to the exact midpoint of both
         // opposing baton wrists, rather than leaving an unrelated spark.
         JSONObject a=joint(SketchAnimationCompiler.sample(source,program,16),"wide_rig","wrist");
@@ -188,6 +193,7 @@ final class SketchDuelAnimationExample {
                         .put("heroRig","wide_rig").put("rivalRig","rook_wide_rig")
                         .put("batonWristDistancePx",distance).put("batonContactFrame",16)
                         .put("contactDirector",contactCorrection.getJSONObject("report"))
+                        .put("impactDynamics",impactResponse.getJSONObject("report"))
                         .put("contactMidpoint",new JSONArray().put(mx).put(my))
                         .put("frameCount",FRAMES).put("fps",FPS)
                         .put("independentArticulation",true)
