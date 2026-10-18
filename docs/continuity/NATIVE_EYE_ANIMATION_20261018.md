@@ -101,6 +101,23 @@ passed without deployment. Runtime Cloudflare account/token bindings were absent
 when checked (presence only, no credential values read). Live server rollout is
 not established by these source/schema/native-facade tests.
 
+Candidate [CI run 39130234737](https://github.com/RezoxNemesis/VideoStudio-MCP/actions/runs/39130234737)
+passed for application source `3e65a9b2ee448e1c112393e25f34faebec49077b`:
+1,307 Android tests, zero failures/errors, two optional proof skips. Version
+4.7.5/code478 was built using the retained original signing cache. Independent
+download verification matched source proof, package, version, pinned certificate
+and SHA-256 `fd2bb46c6a113847754a6ac9fb0e6e87e45711bf90e6a758fe82193775638fa4`.
+The downloaded DEX also contains the new eye operation and manual preview controls;
+the functional evidence comes from the native tests, not those strings alone.
+
+The candidate is private at
+`candidate-4.7.5/VideoStudio-4.7.5-Eye-Animation-Candidate.apk` below the evidence
+root. Final generation `v5` contains all 360 native PNGs, three separate review
+MP4s, editable archives and actual manual editor/preview captures. Pixel hashes
+include intentional gaze/blink holds: 37, 102 and 102 distinct rendered frames in
+the three 120-frame studies. Held frames are not unique drawings. No merge,
+stable release, Worker deployment or phone installation was performed.
+
 Technical checks are separate from artistic judgment. These are stylized isolated
 eye studies, not a finished facial performance, optical 3D eyeballs or a finished
 character film. Phone installation/playback and live ChatGPT/MCP execution need
