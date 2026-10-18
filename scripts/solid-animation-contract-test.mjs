@@ -3,6 +3,16 @@ import assert from 'node:assert/strict';
 import {nativeStudioParameters,requireStudioVersion} from '../src/studio-workbench-contract.js';
 const program={size:[140,140,140],camera:{focal:900,distance:1000,height:300,horizon:.2},keys:[{frame:0,x:0,elevation:0,depth:0,yaw:0},{frame:60,x:80,elevation:0,depth:150,yaw:360}]};
 const request={sketchId:'original',operationId:'solid_1',expectedRevision:1,operations:[{type:'add_solid',layerId:'layer_1',solidId:'crate',program}]};
+test('original cartoon and character native studies have strict requests and APK gating',()=>{
+ for(const study of ['cartoon_jump','walk_to_run']){
+  const r={...request,operations:[{type:'add_motion_study',layerId:'layer_1',sceneId:'new_scene',study,settings:{travel:.18,lift:.24}}]};
+  assert.deepEqual(nativeStudioParameters('studio_sketch_edit',r),r);
+  assert.throws(()=>requireStudioVersion({appVersion:'4.7.3'},'sketch_edit',r),/4\.7\.4/);
+  assert.doesNotThrow(()=>requireStudioVersion({appVersion:'4.7.4'},'sketch_edit',r));
+  for(const patch of [{study:'trace_reference'},{settings:{url:'https://example.test/reference.mp4'}},{settings:{travel:1}},{settings:{lift:0}}])
+   assert.throws(()=>nativeStudioParameters('sketch_edit',{...r,operations:[{...r.operations[0],...patch}]}));
+ }
+});
 test('MCP accepts native solid construction with bounded authored poses',()=>{
  assert.deepEqual(nativeStudioParameters('studio_sketch_edit',request),request);
  assert.throws(()=>nativeStudioParameters('sketch_edit',{...request,operations:[{...request.operations[0],program:{...program,url:'https://example.test/reference.mp4'}}]}));

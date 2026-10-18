@@ -1,5 +1,17 @@
 # VideoStudio current engineering priority
 
+## Native motion continuation — 2026-10-18
+
+The remote 4.7.3 baseline was recovered into `/workspace/VideoStudio-MCP`;
+the Reference-Rebuild checkout and uncommitted JBox2D prototype were absent.
+Continue on `feat/native-animation-continuation-20261018`, verifying current
+status before editing. See `docs/continuity/NATIVE_MOTION_STUDIES_20261018.md`.
+The 4.7.4 source adds native cartoon/character studies with manual/MCP controls,
+actual-clearance shadows, attached cutout torsos and bounded swing soles.
+The cartoon is a basic exercise; natural character locomotion/acting remains
+unfinished. Do not infer phone installation, native video encoding or live MCP
+execution from workspace output. Preserve all older studies and film goals.
+
 ## Complete native scenes — 2026-10-18
 
 The owner now requires harder complete-scene tests after the five primitive

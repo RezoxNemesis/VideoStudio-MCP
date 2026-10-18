@@ -311,6 +311,9 @@ public final class SketchEditOps {
             case "add_object": {
                 appendObject(doc,op);break;
             }
+            case "add_motion_study": {
+                SketchMotionStudies.apply(doc,op);break;
+            }
             case "add_solid_collision": {
                 SketchSolidCollision.apply(doc,op);break;
             }
