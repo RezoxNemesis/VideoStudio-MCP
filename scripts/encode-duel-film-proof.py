@@ -39,7 +39,7 @@ require((native.get("width"),native.get("height"),native.get("fps"),native.get("
         "The native film metadata does not match the requested 1280x720/24fps/100 frames")
 require(native.get("changedAdjacentFrames",0) >= 65, "Insufficient frame-to-frame original motion")
 require(metrics.get("actors") == ["Vale","Rook"], "Two independent humans not verified")
-require(metrics.get("batonWristDistancePx",999) <= 80, "The simulated physical contact is not close enough")
+require(metrics.get("batonWristDistancePx",999) <= 6, "The simulated physical contact is not close enough")
 require(metrics.get("preparedViews") and len(metrics["preparedViews"]) == 3, "Missing alternate-view artwork")
 paths = sorted(FRAMES.glob("frame-*.png"))
 require(len(paths) == COUNT and [p.name for p in paths] ==
@@ -99,6 +99,11 @@ subprocess.run(["node", "scripts/omega-motion-dna.mjs",
 # foot locks and proximity, bound to original M1/M2 video+source receipts.
 # A failed joint/receipt audit leaves all PNGs for diagnosis.
 subprocess.run(["node", "scripts/omega-skeleton.mjs",
+                "--root", str(ROOT)],
+               check=True, stdin=subprocess.DEVNULL)
+
+# OMEGA M3: independent real native wrist/foot quality gate before PNG cleanup.
+subprocess.run(["node", "scripts/omega-physics-brain.mjs",
                 "--root", str(ROOT)],
                check=True, stdin=subprocess.DEVNULL)
 

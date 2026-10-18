@@ -147,13 +147,20 @@ final class SketchDuelAnimationExample {
                 .put("rigB","rook_wide_rig").put("jointB","wrist")
                 .put("maxGapPx",80).put("description","Vale and Rook baton contact")));
 
+        // OMEGA M3: bounded arm targeting at the existing authored wrist cue.
+        // Native rig solver independently checks contact and planted feet.
+        JSONObject contactCorrection=SketchAnimationContactDirector.refinePairedWristCue(
+                source,program,16,"wide_rig","rook_wide_rig","wrist",6.0);
+        program=contactCorrection.getJSONObject("program");
+        program.getJSONArray("interactionCues").getJSONObject(0).put("maxGapPx",8.0);
+
         // Move the authored impact flash/rays to the exact midpoint of both
         // opposing baton wrists, rather than leaving an unrelated spark.
         JSONObject a=joint(SketchAnimationCompiler.sample(source,program,16),"wide_rig","wrist");
         JSONObject b=joint(SketchAnimationCompiler.sample(source,program,16),"rook_wide_rig","wrist");
         double ax=a.getDouble("x"),ay=a.getDouble("y"),bx=b.getDouble("x"),by=b.getDouble("y");
         double distance=Math.hypot((ax-bx)*WIDTH,(ay-by)*HEIGHT);
-        if(distance>80)throw SketchDocument.bad("Two-character baton collision misses by "+Math.round(distance)+" physical pixels");
+        if(distance>6.00001)throw SketchDocument.bad("Two-character authored wrist contact misses by "+Math.round(distance)+" physical pixels");
         double mx=(ax+bx)*.5,my=(ay+by)*.5;
         JSONObject effects=SketchDocument.layer(source,"drawn_action_effects");
         for(int n=0;n<effects.getJSONArray("objects").length();n++){
@@ -180,6 +187,7 @@ final class SketchDuelAnimationExample {
                         .put("preparedViews",new JSONArray().put("wide duel").put("foreground POV / Rook upper body").put("recovery counter-angle"))
                         .put("heroRig","wide_rig").put("rivalRig","rook_wide_rig")
                         .put("batonWristDistancePx",distance).put("batonContactFrame",16)
+                        .put("contactDirector",contactCorrection.getJSONObject("report"))
                         .put("contactMidpoint",new JSONArray().put(mx).put(my))
                         .put("frameCount",FRAMES).put("fps",FPS)
                         .put("independentArticulation",true)
