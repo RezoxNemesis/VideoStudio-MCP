@@ -113,6 +113,12 @@ subprocess.run(["node", "scripts/omega-impact-dynamics.mjs",
                 "--root", str(ROOT)],
                check=True, stdin=subprocess.DEVNULL)
 
+# M3.2: check actual editable shaft geometry, original native samples and
+# rendered MP4 *before* deleting native pixels. Invalid evidence blocks release.
+subprocess.run(["node", "scripts/omega-weapon-contact.mjs",
+                "--root", str(ROOT)],
+               check=True, stdin=subprocess.DEVNULL)
+
 shutil.rmtree(FRAMES)
 print(json.dumps({k:summary[k] for k in ("video","sha256","fileBytes",
     "nativeFrameCount","fps","changedAdjacentFrames","distanceBetweenActorWristsPx")},indent=2))

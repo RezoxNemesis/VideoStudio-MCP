@@ -141,6 +141,13 @@ public final class SketchDuelAnimationExampleTest {
                 .put("sampledWith","SketchAnimationCompiler.sampleFrames; native authored world-space joints, not phone")
                 .put("frames",nativeSamples);
         Files.write(nativeRigTrace.toPath(),sampledRigTrace.toString(2).getBytes(StandardCharsets.UTF_8));
+        // M3.2: original native-solver baton paths, strictly bound to the same
+        // source/program and rendered frames, independently rechecked in Node.
+        File nativeWeaponTrace=new File(PROOF,"native-weapon-tracks.json");
+        JSONObject originalWeaponTrace=SketchAnimationWeaponContact.trace(source,program,0,35)
+                .put("sourceSha256",SketchProjectStore.fileHash(new File(PROOF,"editable-duel-source.json")))
+                .put("programSha256",SketchProjectStore.fileHash(new File(PROOF,"editable-duel-program.json")));
+        Files.write(nativeWeaponTrace.toPath(),originalWeaponTrace.toString(2).getBytes(StandardCharsets.UTF_8));
         JSONArray frameProof=new JSONArray();
         Bitmap sheet=Bitmap.createBitmap(1600,1050,Bitmap.Config.ARGB_8888);
         Canvas canvas=new Canvas(sheet);canvas.drawColor(0xff112335);
@@ -179,7 +186,8 @@ public final class SketchDuelAnimationExampleTest {
                 .put("twoDistinctCharacters",true).put("audioRecorded",false)
                 .put("phoneVerified",false).put("artisticQualityVerified",false)
                 .put("frames",frameProof)
-                .put("rigTracksSha256",SketchProjectStore.fileHash(nativeRigTrace));
+                .put("rigTracksSha256",SketchProjectStore.fileHash(nativeRigTrace))
+                .put("weaponCoreTraceSha256",SketchProjectStore.fileHash(nativeWeaponTrace));
         Files.write(new File(PROOF,"native-duel-proof.json").toPath(),metadata.toString(2).getBytes(StandardCharsets.UTF_8));
     }
 
