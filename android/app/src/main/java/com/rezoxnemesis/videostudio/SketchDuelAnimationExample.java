@@ -164,8 +164,12 @@ final class SketchDuelAnimationExample {
         JSONObject weaponStage=SketchAnimationWeaponContact.aim(source,program);
         source=weaponStage.getJSONObject("source");
 
-        // Position the original drawn impact effects at the measured weapon
-        // core TIP intersection rather than at the two nearby wrist centers.
+        // New native source artwork pass: rotate the gripped batons at their
+        // painted hand-grip pivots, crossing the shafts inside both weapons.
+        JSONObject combatStage=SketchAnimationCombatStaging.cross(source,program);
+        source=combatStage.getJSONObject("source");
+
+        // Impact rays/flash must show the actual interior vector intersection.
         JSONObject a=joint(SketchAnimationCompiler.sample(source,program,16),"wide_rig","wrist");
         JSONObject b=joint(SketchAnimationCompiler.sample(source,program,16),"rook_wide_rig","wrist");
         double ax=a.getDouble("x"),ay=a.getDouble("y"),bx=b.getDouble("x"),by=b.getDouble("y");
@@ -173,7 +177,8 @@ final class SketchDuelAnimationExample {
         if(distance>6.00001)throw SketchDocument.bad("Two-character authored wrist contact misses by "+Math.round(distance)+" physical pixels");
         double wx=(ax+bx)*.5,wy=(ay+by)*.5;
         JSONObject weaponReport=weaponStage.getJSONObject("report");
-        double mx=weaponReport.getDouble("impactX"),my=weaponReport.getDouble("impactY");
+        JSONObject combatReport=combatStage.getJSONObject("report");
+        double mx=combatReport.getDouble("impactX"),my=combatReport.getDouble("impactY");
         JSONObject effects=SketchDocument.layer(source,"drawn_action_effects");
         for(int n=0;n<effects.getJSONArray("objects").length();n++){
             JSONObject effect=effects.getJSONArray("objects").getJSONObject(n);
@@ -188,9 +193,13 @@ final class SketchDuelAnimationExample {
         // The native compiler enforces all screen/rig/IK/budget contracts. Never
         // claim source-only geometry is a correctly renderable motion sequence.
         JSONObject compiled=SketchAnimationCompiler.compile(source,program,"duel_validation_only");
-        double drawnCoreGap=SketchAnimationWeaponContact.bakedTipGap(compiled.getJSONObject("document"),16);
-        if(drawnCoreGap>8.0)
-            throw SketchDocument.bad("Real compiled vector baton tips remain separated by "+drawnCoreGap+"px");
+        JSONObject baked=SketchAnimationCombatStaging.bakedCross(compiled.getJSONObject("document"),16);
+        if(baked.getDouble("shaftCrossAngleDeg")<35 ||
+                baked.getDouble("intersectionFractionA")<.33 ||
+                baked.getDouble("intersectionFractionB")<.33 ||
+                Math.hypot((baked.getDouble("impactX")-mx)*WIDTH,
+                           (baked.getDouble("impactY")-my)*HEIGHT)>7)
+            throw SketchDocument.bad("Compiled editable baton shafts lost the authored interior crossing");
         JSONObject report=compiled.getJSONObject("report");
         if(report.getInt("boundObjectCount")<180||report.getInt("animatedJointCount")<12)
             throw SketchDocument.bad("Duel lacks independently animated prepared character parts");
@@ -204,7 +213,8 @@ final class SketchDuelAnimationExample {
                         .put("batonWristDistancePx",distance).put("batonContactFrame",16)
                         .put("contactDirector",contactCorrection.getJSONObject("report"))
                         .put("impactDynamics",impactResponse.getJSONObject("report"))
-                        .put("weaponContact",weaponReport.put("compiledTipGapPx",drawnCoreGap))
+                        .put("weaponContact",weaponReport)
+                        .put("combatStaging",combatReport.put("compiled",baked))
                         .put("contactMidpoint",new JSONArray().put(wx).put(wy))
                         .put("weaponContactPoint",new JSONArray().put(mx).put(my))
                         .put("frameCount",FRAMES).put("fps",FPS)

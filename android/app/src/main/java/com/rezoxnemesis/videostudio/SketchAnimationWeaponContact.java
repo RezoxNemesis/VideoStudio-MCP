@@ -223,14 +223,24 @@ final class SketchAnimationWeaponContact {
         Point old = new Point(rest.getDouble("x") * w, rest.getDouble("y") * h);
         JSONArray commands = original.getJSONArray("commands");
         JSONObject offset = SketchDocument.transformAt(original, frame);
+        // Native jointTransform rotates the ARTIST-SELECTED local affine pivot
+        // (M3.2: wrist; M3.3: drawn baton grip) around the rest wrist. Rotating
+        // only the weapon relative to that pivot keeps it attached to the glove.
+        double jointAngle = Math.toRadians(curr.getDouble("rotation"));
+        double jCos = Math.cos(jointAngle), jSin = Math.sin(jointAngle);
+        Point originalPivot = new Point(offset.getDouble("anchorX")*w,
+                offset.getDouble("anchorY")*h);
+        double restDx = originalPivot.x-old.x, restDy=originalPivot.y-old.y;
+        Point worldPivot = new Point(now.x+jCos*restDx-jSin*restDy,
+                now.y+jSin*restDx+jCos*restDy);
         double theta = Math.toRadians(curr.getDouble("rotation") + offset.getDouble("rotation"));
         double cos = Math.cos(theta), sin = Math.sin(theta);
         double x = offset.getDouble("x") * w, y = offset.getDouble("y") * h;
         Point first = point(commands.getJSONArray(0), w, h), last = point(commands.getJSONArray(1), w, h);
-        Point a = new Point(now.x + cos * (first.x - old.x) - sin * (first.y - old.y) + x,
-                now.y + sin * (first.x - old.x) + cos * (first.y - old.y) + y);
-        Point b = new Point(now.x + cos * (last.x - old.x) - sin * (last.y - old.y) + x,
-                now.y + sin * (last.x - old.x) + cos * (last.y - old.y) + y);
+        Point a = new Point(worldPivot.x + cos * (first.x-originalPivot.x) - sin * (first.y-originalPivot.y) + x,
+                worldPivot.y + sin * (first.x-originalPivot.x) + cos * (first.y-originalPivot.y) + y);
+        Point b = new Point(worldPivot.x + cos * (last.x-originalPivot.x) - sin * (last.y-originalPivot.y) + x,
+                worldPivot.y + sin * (last.x-originalPivot.x) + cos * (last.y-originalPivot.y) + y);
         return new Weapon(now, a, b, distance(old, last), curr.getDouble("rotation"), old, last);
     }
 

@@ -33,7 +33,10 @@ public final class SketchAnimationWeaponContactTest {
                 reported.getDouble("impactX") > .35 && reported.getDouble("impactX") < .7);
         JSONArray frames = SketchAnimationWeaponContact.trace(source, program, 0, 35).getJSONArray("frames");
         assertEquals(36, frames.length());
-        assertTrue("Native weapon tip separation must meet at contact", frames.getJSONObject(16).getDouble("tipGapPx") < 6);
+        assertTrue("The final visible crossed batons have separated distal tips",
+                frames.getJSONObject(16).getDouble("tipGapPx") > 25);
+        assertEquals("Both native vector shafts really intersect",0,
+                frames.getJSONObject(16).getDouble("centerlineGapPx"),.1);
         for (int i = 0; i < 36; i++) {
             JSONObject row = frames.getJSONObject(i);
             assertEquals(i, row.getInt("frame"));
@@ -52,9 +55,10 @@ public final class SketchAnimationWeaponContactTest {
         JSONObject generated = SketchDuelAnimationExample.build(app);
         JSONObject compiled = SketchAnimationCompiler.compile(generated.getJSONObject("source"),
                 generated.getJSONObject("program"), "weapon_contact_visual_native").getJSONObject("document");
-        double actual = SketchAnimationWeaponContact.bakedTipGap(compiled, 16);
-        assertTrue("The Canvas-drawn baton cores must meet after native key reduction, measured gap=" + actual,
-                actual < 8);
+        JSONObject actual=SketchAnimationCombatStaging.bakedCross(compiled,16);
+        assertTrue("The Canvas drawn shafts must meet at a visibly crossed angle",
+                actual.getDouble("shaftCrossAngleDeg")>=35);
+        assertTrue("Painted baton grips must remain apart",actual.getDouble("gripSeparationPx")>=40);
         assertFalse(generated.getJSONObject("report").getBoolean("professionalArtQualityVerified"));
     }
 
