@@ -314,6 +314,12 @@ public final class SketchEditOps {
             case "add_eye_animation": {
                 SketchEyeAnimation.apply(doc,op);break;
             }
+            case "add_mouth_animation": {
+                SketchMouthAnimation.apply(doc,op);break;
+            }
+            case "add_face_animation": {
+                SketchFaceAnimation.apply(doc,op);break;
+            }
             case "add_motion_study": {
                 SketchMotionStudies.apply(doc,op);break;
             }

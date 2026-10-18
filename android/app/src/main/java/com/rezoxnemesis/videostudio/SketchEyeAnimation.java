@@ -14,6 +14,12 @@ final class SketchEyeAnimation {
                 .put("scleraColor","#FFFFFCF4").put("ink","#FF253444").put("outlinePx",3).put("tilt",0).put("gloss",true);
     }
     static void apply(JSONObject doc,JSONObject operation)throws Exception {
+        apply(doc,operation,false);
+    }
+    static void applyFace(JSONObject doc,JSONObject operation)throws Exception {
+        apply(doc,operation,true);
+    }
+    private static void apply(JSONObject doc,JSONObject operation,boolean compact)throws Exception {
         SketchDocument.fields(operation,"type,layerId,eyeId,settings,preset,poses");
         String id=SketchDocument.id(operation,"eyeId");if(id.length()>36)throw SketchDocument.bad("Eye ID must fit 36 characters");
         JSONObject layer=SketchDocument.layer(doc,SketchDocument.id(operation,"layerId"));if(layer.getBoolean("locked"))throw SketchDocument.bad("Layer is locked");
@@ -70,6 +76,7 @@ final class SketchEyeAnimation {
                 add(additions,prior,prefix+"_rim",aperture,false,settings.getString("ink"),settings,w,h,f,tilt);
             }
         }
+        if(compact){additions=SketchFacialCelSharing.eyes(additions,id);SketchDocument.layer(candidate,layer.getString("id")).put("objects",additions);}
         SketchDocument.validate(candidate);layer.put("objects",additions);
     }
     static JSONObject settings(JSONObject input)throws Exception {
@@ -91,13 +98,16 @@ final class SketchEyeAnimation {
         }
     }
     static double[] sample(JSONArray poses,int frame)throws Exception {
+        return sample(poses,(double)frame);
+    }
+    static double[] sample(JSONArray poses,double frame)throws Exception {
         double[] a={0,0,1,1,1,0},b=a.clone();JSONObject left=null,right=null;
         for(int i=0;i<poses.length();i++){
             JSONObject key=poses.getJSONObject(i);double[] resolved=a.clone();for(int c=0;c<CHANNELS.length;c++)if(key.has(CHANNELS[c]))resolved[c]=key.getDouble(CHANNELS[c]);
             if(key.getInt("frame")<=frame){left=key;a=resolved;}else{right=key;b=resolved;break;}
         }
         double time=right==null||left==null?0:SketchEasing.sample(left.optString("interpolation","smooth"),left.optJSONArray("curve"),(frame-left.getInt("frame"))/(double)(right.getInt("frame")-left.getInt("frame")));
-        for(int c=0;c<a.length;c++)a[c]+=time*(b[c]-a[c]);return a;
+        for(int c=0;c<a.length;c++){a[c]+=time*(b[c]-a[c]);if(a[c]==0)a[c]=0;}return a;
     }
     static JSONArray preset(JSONObject document,String preset)throws Exception {
         int frames=document.getInt("frameCount"),fps=document.getInt("fps");JSONArray keys=new JSONArray();

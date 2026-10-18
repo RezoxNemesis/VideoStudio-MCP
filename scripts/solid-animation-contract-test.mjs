@@ -1,8 +1,300 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import vm from 'node:vm';
+import {webcrypto} from 'node:crypto';
+import {queueBindings,memoryStorage} from './native-queue-fixture.mjs';
+import * as storyboardContract from '../src/storyboard-contract.js';
 import {nativeStudioParameters,requireStudioVersion} from '../src/studio-workbench-contract.js';
 const program={size:[140,140,140],camera:{focal:900,distance:1000,height:300,horizon:.2},keys:[{frame:0,x:0,elevation:0,depth:0,yaw:0},{frame:60,x:80,elevation:0,depth:150,yaw:360}]};
 const request={sketchId:'original',operationId:'solid_1',expectedRevision:1,operations:[{type:'add_solid',layerId:'layer_1',solidId:'crate',program}]};
+const mouth={type:'add_mouth_animation',layerId:'layer_1',mouthId:'mouth',settings:{}};
+const mouthRequest=(patch={})=>({...request,operationId:'mouth_1',operations:[{...mouth,...patch}]});
+const worker=fs.readFileSync(new URL('../src/index.js',import.meta.url),'utf8');
+const face={type:'add_face_animation',layerId:'layer_1',faceId:'face',settings:{}};
+const faceRequest=(patch={})=>({...request,operationId:'face_1',operations:[{...face,...patch}]});
+
+test('face animation accepts strict optional settings and presets through both edit names',()=>{
+ const settings={view:'left',shape:'angular',eyeStyle:'almond',mouthStyle:'fang',centerX:.5,centerY:.5,width:.4,height:.65,jawWidth:.7,noseWidth:.15,noseLength:.15,eyeSize:1,mouthSize:1,skinColor:'#FFCC9977',hairColor:'#FF332211',irisColor:'#ff668844',lipColor:'#FFAB4567',ink:'#FF211B24',outlinePx:3,tilt:-10,hair:true};
+ for(const action of ['sketch_edit','studio_sketch_edit']){
+  assert.deepEqual(nativeStudioParameters(action,faceRequest()),faceRequest());
+  for(const preset of ['reaction','playful','chew']){
+   const r=faceRequest({settings,preset});
+   assert.deepEqual(nativeStudioParameters(action,r),r);
+  }
+ }
+});
+
+test('face animation requires safe identities and rejects unknown fields at every level',()=>{
+ for(const patch of [{layerId:undefined},{faceId:undefined},{settings:undefined},{settings:null},{settings:[]},{faceId:''},{faceId:'f'.repeat(29)},{faceId:'../face'},{layerId:'with space'},{layerId:'l'.repeat(97)},{preset:'speech'},{preset:'articulation'},{preset:null},{url:'https://example.test/face.mp4'},{audioAssetId:'audio'},{mouthId:'mouth'},{settings:{unknown:true}},{poses:[{frame:0,phoneme:'aa'}]},{poses:[{frame:0,unknown:true}]}])
+  assert.throws(()=>nativeStudioParameters('sketch_edit',faceRequest(patch)),JSON.stringify(patch));
+ const r=faceRequest({faceId:'f'.repeat(28),layerId:'l'.repeat(96)});
+ assert.deepEqual(nativeStudioParameters('sketch_edit',r),r);
+});
+
+test('face settings accept only the six authored views and specified anatomy styles',()=>{
+ for(const action of ['sketch_edit','studio_sketch_edit']){
+  assert.deepEqual(nativeStudioParameters(action,faceRequest()).operations[0].settings,{});
+  for(const [field,values] of [['view',['front','left','right','back','high','low']],['shape',['oval','round','angular']],['eyeStyle',['round','almond','slit']],['mouthStyle',['soft','cartoon','fang']]]){
+   for(const value of values){
+    const r=faceRequest({settings:{[field]:value}});
+    assert.deepEqual(nativeStudioParameters(action,r),r);
+   }
+   for(const value of ['unknown','',null,0,true,[],{}])
+    assert.throws(()=>nativeStudioParameters(action,faceRequest({settings:{[field]:value}})));
+  }
+  for(const settings of [{view:'rear'},{view:'Front'},{view:' front'},{shape:'soft'},{eyeStyle:'oval'},{mouthStyle:'slit'},{style:'round'}])
+   assert.throws(()=>nativeStudioParameters(action,faceRequest({settings})));
+ }
+});
+
+for(const [field,min,max] of [['centerX',.15,.85],['centerY',.2,.75],['width',.28,.5],['height',.45,.85],['jawWidth',.45,.9],['noseWidth',.08,.25],['noseLength',.08,.22],['eyeSize',.8,1.2],['mouthSize',.8,1.2],['outlinePx',1,6],['tilt',-20,20]]){
+ test(`face setting ${field} accepts inclusive bounds and rejects invalid numbers`,()=>{
+  for(const value of [min,max]){
+   const r=faceRequest({settings:{[field]:value}});
+   assert.deepEqual(nativeStudioParameters('sketch_edit',r),r);
+  }
+  for(const value of [min-.001,max+.001,NaN,Infinity,-Infinity,'0.5',null])
+   assert.throws(()=>nativeStudioParameters('sketch_edit',faceRequest({settings:{[field]:value}})),`${field}: ${value}`);
+ });
+}
+
+test('face colors follow native color bounds and hair is strictly boolean',()=>{
+ for(const field of ['skinColor','hairColor','irisColor','lipColor','ink']){
+  for(const value of ['#00000000','#FfAa9876']){
+   const r=faceRequest({settings:{[field]:value}});
+   assert.deepEqual(nativeStudioParameters('sketch_edit',r),r);
+  }
+  for(const value of ['red','#FFFFFF','#GG000000',42,null])
+   assert.throws(()=>nativeStudioParameters('sketch_edit',faceRequest({settings:{[field]:value}})));
+ }
+ for(const hair of [true,false]){
+  const r=faceRequest({settings:{hair}});
+  assert.deepEqual(nativeStudioParameters('sketch_edit',r),r);
+ }
+ for(const hair of [0,1,'true',null,{}])assert.throws(()=>nativeStudioParameters('sketch_edit',faceRequest({settings:{hair}})));
+});
+
+for(const [field,min,max] of [['gazeX',-1,1],['gazeY',-1,1],['leftOpen',0,1],['rightOpen',0,1],['pupilScale',.5,1.5],['vergence',0,.5],['open',0,1],['wide',.5,1.5],['smile',-1,1],['jawX',-1,1],['tongue',0,1],['upperTeeth',0,1],['lowerTeeth',0,1],['roundness',0,1],['browRaise',-1,1],['browTilt',-1,1]]){
+ test(`face pose channel ${field} is optional and strictly bounded`,()=>{
+  const r=faceRequest({poses:[{frame:0,[field]:min},{frame:12,[field]:max},{frame:239}]});
+  assert.deepEqual(nativeStudioParameters('studio_sketch_edit',r),r);
+  for(const value of [min-.001,max+.001,NaN,Infinity,-Infinity,'0.5',null])
+   assert.throws(()=>nativeStudioParameters('sketch_edit',faceRequest({poses:[{frame:0,[field]:value}]})),`${field}: ${value}`);
+ });
+}
+
+test('face pose lists contain 1..240 integer frames starting at zero and strictly increasing',()=>{
+ for(const poses of [[{frame:0}],Array.from({length:240},(_,frame)=>({frame}))]){
+  const r=faceRequest({poses});
+  assert.deepEqual(nativeStudioParameters('sketch_edit',r),r);
+ }
+ for(const poses of [[],null,[{}],[{frame:1}],[{frame:-1}],[{frame:.5}],[{frame:'0'}],[{frame:0},{frame:240}],[{frame:0},{frame:0}],[{frame:0},{frame:20},{frame:10}],Array.from({length:241},(_,frame)=>({frame}))])
+  assert.throws(()=>nativeStudioParameters('sketch_edit',faceRequest({poses})),JSON.stringify(poses));
+});
+
+test('face poses preserve combined sparse eye mouth and brow channels with shared easing',()=>{
+ for(const interpolation of [undefined,'linear','hold','smooth','ease_in','ease_out','ease_in_out','bezier']){
+  const pose={frame:0,gazeX:.2,gazeY:-.1,leftOpen:.9,rightOpen:.4,pupilScale:1.1,vergence:.2,open:.3,wide:1.2,smile:-.2,jawX:.1,tongue:.4,upperTeeth:.5,lowerTeeth:.2,roundness:.7,browRaise:.5,browTilt:-.4};
+  if(interpolation!==undefined)pose.interpolation=interpolation;
+  if(interpolation==='bezier')pose.curve=[.42,0,.58,1];
+  const r=faceRequest({preset:'reaction',poses:[pose,{frame:20,browRaise:-1,tongue:1},{frame:239}]});
+  assert.deepEqual(nativeStudioParameters('sketch_edit',r),r);
+ }
+ for(const patch of [{interpolation:'bezier'},{curve:[0,0,1,1]},{interpolation:'hold',curve:[0,0,1,1]},{interpolation:'ease'},{interpolation:'bezier',curve:[0,0,1]},{interpolation:'bezier',curve:[-1,0,1,1]},{interpolation:'bezier',curve:[0,0,1,1.01]},{easing:'linear'}])
+  assert.throws(()=>nativeStudioParameters('sketch_edit',faceRequest({poses:[{frame:0,...patch}]})));
+});
+
+test('face animation requires native 4.7.6 on canonical alias and mixed edit routes',()=>{
+ for(const action of ['sketch_edit','studio_sketch_edit']){
+  for(const device of [undefined,{}, {appVersion:''},{appVersion:'unknown'},{appVersion:'4.7.5'},{appVersion:'4.7.4'}])
+   assert.throws(()=>requireStudioVersion(device,action,faceRequest()),/NATIVE_APP_UPGRADE_REQUIRED:.*face.*4\.7\.6/);
+  for(const appVersion of ['4.7.6','4.7.6-beta','4.7.10','4.8.0','5.0.0'])
+   assert.doesNotThrow(()=>requireStudioVersion({appVersion},action,faceRequest()));
+  const eyes={type:'add_eye_animation',layerId:'layer_1',eyeId:'eyes',settings:{}};
+  for(const operations of [[eyes,face],[face,eyes],[mouth,face],[face,mouth]]){
+   const r={...request,operations};
+   assert.throws(()=>requireStudioVersion({appVersion:'4.7.5'},action,r),/4\.7\.6/);
+   assert.doesNotThrow(()=>requireStudioVersion({appVersion:'4.7.6'},action,r));
+  }
+ }
+});
+
+test('real native relay rejects older APKs and malformed face operations before queue writes',async()=>{
+ const end=worker.indexOf('\n}\n',worker.indexOf('export class VideoStudioState'))+3;
+ const context={...storyboardContract,...queueBindings,crypto:webcrypto,TextEncoder,Response,Request,Headers,URL,setTimeout,DurableObject:class{constructor(ctx){this.ctx=ctx;}},Date};
+ vm.createContext(context);
+ vm.runInContext(worker.slice(worker.indexOf('const JH'),end).replace('export class VideoStudioState','globalThis.VideoStudioState = class VideoStudioState'),context);
+ for(const action of ['sketch_edit','studio_sketch_edit']){
+  const storage=memoryStorage(),relay=new context.VideoStudioState({storage},{}),key='f'.repeat(43),deviceId='face-device';
+  const register=appVersion=>relay.appRegister(deviceId,key,{appVersion,protocolVersion:3,appGeneration:1,permissionMode:'everything'});
+  await register('4.7.5');
+  let before=storage.writes();
+  await assert.rejects(relay.appEnqueueV3(key,action,faceRequest()),/NATIVE_APP_UPGRADE_REQUIRED:.*4\.7\.6/);
+  assert.equal(storage.writes(),before);
+  await register('4.7.6');
+  before=storage.writes();
+  for(const patch of [{settings:{view:'rear'}},{settings:{jawWidth:1}},{poses:[{frame:0,browRaise:2}]},{settings:{unknown:true}},{poses:[{frame:1}]}]){
+   await assert.rejects(relay.appEnqueueV3(key,action,faceRequest(patch)));
+   assert.equal(storage.writes(),before);
+  }
+  const r=faceRequest({settings:{view:'back'},preset:'playful',poses:[{frame:0,open:.5,browTilt:-1}]});
+  const admitted=await relay.appEnqueueV3(key,action,r);
+  assert.deepEqual(JSON.parse(JSON.stringify(admitted.parameters)),r);
+  assert.equal(admitted.seq,1);
+  assert.equal((await queueBindings.readCommandQueue(storage,'app-v3-cl:'+deviceId)).length,1);
+ }
+});
+
+test('MCP face description advertises authored 2D anatomy occlusion and bounded evidence',()=>{
+ const detail=worker.match(/:action==='sketch_edit'\?'([^']+)'/)[1];
+ assert.match(detail,/Native 4\.7\.6 adds add_face_animation/);
+ assert.match(detail,/sketch_capabilities\.faceAnimation/);
+ assert.match(detail,/reaction\/playful\/chew/);
+ assert.match(detail,/original authored 2D view-specific anatomy and occlusion/);
+ assert.match(detail,/not true 3D or proof of audio speaking/);
+});
+
+test('mouth animation accepts strict settings and optional articulated presets through both edit names',()=>{
+ for(const action of ['sketch_edit','studio_sketch_edit']){
+  const minimal=mouthRequest();
+  assert.deepEqual(nativeStudioParameters(action,minimal),minimal);
+  for(const style of ['soft','cartoon','fang'])for(const preset of ['articulation','tongue','chew']){
+   const r=mouthRequest({settings:{style,centerX:.5,centerY:.55,width:.35,height:.25,outlinePx:3,tilt:-10,lipColor:'#FFAB4567',cavityColor:'#FF220011',tongueColor:'#ffed7189',toothColor:'#FFFFFFFF',ink:'#FF211B24'},preset});
+   assert.deepEqual(nativeStudioParameters(action,r),r);
+  }
+ }
+});
+
+test('mouth animation requires safe bounded identities and a strict settings object',()=>{
+ for(const patch of [{layerId:undefined},{mouthId:undefined},{settings:undefined},{settings:null},{settings:[]},{mouthId:''},{mouthId:'a'.repeat(37)},{mouthId:'../mouth'},{layerId:'with space'},{preset:'speech'},{preset:'phoneme'},{preset:null},{url:'https://example.test/mouth.mp4'},{audioAssetId:'audio'},{settings:{unknown:true}},{settings:{style:'slit'}},{poses:[{frame:0,phoneme:'aa'}]}])
+  assert.throws(()=>nativeStudioParameters('sketch_edit',mouthRequest(patch)),JSON.stringify(patch));
+ const r=mouthRequest({mouthId:'a'.repeat(36),layerId:'l'.repeat(96)});
+ assert.deepEqual(nativeStudioParameters('sketch_edit',r),r);
+ assert.throws(()=>nativeStudioParameters('sketch_edit',mouthRequest({layerId:'l'.repeat(97)})));
+});
+
+test('mouth settings accept six strict views and preserve omission for the native front default',()=>{
+ for(const action of ['sketch_edit','studio_sketch_edit']){
+  const omitted=mouthRequest();
+  assert.deepEqual(nativeStudioParameters(action,omitted),omitted);
+  assert.equal(Object.hasOwn(nativeStudioParameters(action,omitted).operations[0].settings,'view'),false);
+  for(const view of ['front','left','right','back','high','low']){
+   const r=mouthRequest({settings:{view}});
+   assert.deepEqual(nativeStudioParameters(action,r),r);
+   assert.throws(()=>requireStudioVersion({appVersion:'4.7.5'},action,r),/4\.7\.6/);
+   assert.doesNotThrow(()=>requireStudioVersion({appVersion:'4.7.6'},action,r));
+  }
+  for(const view of ['rear','profile','Front',' front','front ','',null,0,true,[],{}])
+   assert.throws(()=>nativeStudioParameters(action,mouthRequest({settings:{view}})),JSON.stringify(view));
+  for(const patch of [{view:'front'},{settings:{view:'front',unknown:true}},{poses:[{frame:0,view:'front'}]}])
+   assert.throws(()=>nativeStudioParameters(action,mouthRequest(patch)));
+ }
+});
+
+test('MCP mouth description documents six settings views and the native front default',()=>{
+ const detail=worker.match(/:action==='sketch_edit'\?'([^']+)'/)[1];
+ assert.match(detail,/settings\.view.*front\/left\/right\/back\/high\/low/);
+ assert.match(detail,/defaults to front in native/);
+});
+
+for(const [field,min,max] of [['centerX',.05,.95],['centerY',.05,.95],['width',.08,.65],['height',.05,.6],['outlinePx',1,8],['tilt',-35,35]]){
+ test(`mouth setting ${field} accepts inclusive bounds and rejects invalid numbers`,()=>{
+  for(const value of [min,max]){
+   const r=mouthRequest({settings:{[field]:value}});
+   assert.deepEqual(nativeStudioParameters('sketch_edit',r),r);
+  }
+  for(const value of [min-.001,max+.001,NaN,Infinity,-Infinity,'0.5',null])
+   assert.throws(()=>nativeStudioParameters('sketch_edit',mouthRequest({settings:{[field]:value}})),`${field}: ${value}`);
+ });
+}
+
+test('mouth colors use the normal eight-digit native color contract',()=>{
+ for(const field of ['lipColor','cavityColor','tongueColor','toothColor','ink']){
+  for(const value of ['#00000000','#FfAa9876']){
+   const r=mouthRequest({settings:{[field]:value}});
+   assert.deepEqual(nativeStudioParameters('sketch_edit',r),r);
+  }
+  for(const value of ['red','#FFFFFF','#GG000000',42,null])
+   assert.throws(()=>nativeStudioParameters('sketch_edit',mouthRequest({settings:{[field]:value}})));
+ }
+});
+
+for(const [field,min,max] of [['open',0,1],['wide',.5,1.5],['smile',-1,1],['jawX',-1,1],['tongue',0,1],['upperTeeth',0,1],['lowerTeeth',0,1],['roundness',0,1]]){
+ test(`mouth pose channel ${field} is optional and strictly bounded`,()=>{
+  const poses=[{frame:0,[field]:min},{frame:12,[field]:max},{frame:239}];
+  const r=mouthRequest({poses});
+  assert.deepEqual(nativeStudioParameters('studio_sketch_edit',r),r);
+  for(const value of [min-.001,max+.001,NaN,Infinity,-Infinity,'0.5',null])
+   assert.throws(()=>nativeStudioParameters('sketch_edit',mouthRequest({poses:[{frame:0,[field]:value}]})),`${field}: ${value}`);
+ });
+}
+
+test('mouth pose lists contain 1..240 integer frames starting at zero and strictly increasing',()=>{
+ for(const poses of [[{frame:0}],Array.from({length:240},(_,frame)=>({frame}))]){
+  const r=mouthRequest({poses});
+  assert.deepEqual(nativeStudioParameters('sketch_edit',r),r);
+ }
+ for(const poses of [[],null,[{}],[{frame:1}],[{frame:-1}],[{frame:.5}],[{frame:'0'}],[{frame:0},{frame:240}],[{frame:0},{frame:0}],[{frame:0},{frame:20},{frame:10}],Array.from({length:241},(_,frame)=>({frame}))])
+  assert.throws(()=>nativeStudioParameters('sketch_edit',mouthRequest({poses})),JSON.stringify(poses));
+});
+
+test('mouth poses preserve sparse inherited channels and shared easing semantics',()=>{
+ for(const interpolation of [undefined,'linear','hold','smooth','ease_in','ease_out','ease_in_out','bezier']){
+  const pose={frame:0,open:.3,wide:1.2,smile:-.2,jawX:.1,tongue:.4,upperTeeth:.5,lowerTeeth:.2,roundness:.7};
+  if(interpolation!==undefined)pose.interpolation=interpolation;
+  if(interpolation==='bezier')pose.curve=[.42,0,.58,1];
+  const r=mouthRequest({preset:'chew',poses:[pose,{frame:20,tongue:1},{frame:239}]});
+  assert.deepEqual(nativeStudioParameters('sketch_edit',r),r);
+ }
+ for(const patch of [{interpolation:'bezier'},{curve:[0,0,1,1]},{interpolation:'hold',curve:[0,0,1,1]},{interpolation:'ease'},{interpolation:'bezier',curve:[0,0,1]},{interpolation:'bezier',curve:[-1,0,1,1]},{interpolation:'bezier',curve:[0,0,1,1.01]},{easing:'linear'},{extra:true}])
+  assert.throws(()=>nativeStudioParameters('sketch_edit',mouthRequest({poses:[{frame:0,...patch}]})));
+});
+
+test('mouth animation requires native 4.7.6 on canonical and alias routes without raising the eye minimum',()=>{
+ for(const action of ['sketch_edit','studio_sketch_edit']){
+  for(const device of [undefined,{}, {appVersion:''},{appVersion:'unknown'},{appVersion:'4.7.5'},{appVersion:'4.7.4'}])
+   assert.throws(()=>requireStudioVersion(device,action,mouthRequest()),/NATIVE_APP_UPGRADE_REQUIRED:.*mouth.*4\.7\.6/);
+  for(const appVersion of ['4.7.6','4.7.6-beta','4.7.10','4.8.0','5.0.0'])
+   assert.doesNotThrow(()=>requireStudioVersion({appVersion},action,mouthRequest()));
+  const eyes={type:'add_eye_animation',layerId:'layer_1',eyeId:'eyes',settings:{}};
+  assert.doesNotThrow(()=>requireStudioVersion({appVersion:'4.7.5'},action,{...request,operations:[eyes]}));
+  for(const operations of [[eyes,mouth],[mouth,eyes]])
+   assert.throws(()=>requireStudioVersion({appVersion:'4.7.5'},action,{...request,operations}),/4\.7\.6/);
+ }
+});
+
+test('real native relay rejects older APKs and malformed mouth operations before queue writes',async()=>{
+ const end=worker.indexOf('\n}\n',worker.indexOf('export class VideoStudioState'))+3;
+ const context={...storyboardContract,...queueBindings,crypto:webcrypto,TextEncoder,Response,Request,Headers,URL,setTimeout,DurableObject:class{constructor(ctx){this.ctx=ctx;}},Date};
+ vm.createContext(context);
+ vm.runInContext(worker.slice(worker.indexOf('const JH'),end).replace('export class VideoStudioState','globalThis.VideoStudioState = class VideoStudioState'),context);
+ for(const action of ['sketch_edit','studio_sketch_edit']){
+  const storage=memoryStorage(),relay=new context.VideoStudioState({storage},{}),key='m'.repeat(43),deviceId='mouth-device';
+  const register=appVersion=>relay.appRegister(deviceId,key,{appVersion,protocolVersion:3,appGeneration:1,permissionMode:'everything'});
+  await register('4.7.5');
+  let before=storage.writes();
+  await assert.rejects(relay.appEnqueueV3(key,action,mouthRequest()),/NATIVE_APP_UPGRADE_REQUIRED:.*4\.7\.6/);
+  assert.equal(storage.writes(),before);
+  await register('4.7.6');
+  before=storage.writes();
+  await assert.rejects(relay.appEnqueueV3(key,action,mouthRequest({poses:[{frame:0,open:2}]})));
+  assert.equal(storage.writes(),before);
+  const admitted=await relay.appEnqueueV3(key,action,mouthRequest());
+  assert.deepEqual(JSON.parse(JSON.stringify(admitted.parameters)),mouthRequest());
+  assert.equal(admitted.seq,1);
+  assert.equal((await queueBindings.readCommandQueue(storage,'app-v3-cl:'+deviceId)).length,1);
+ }
+});
+
+test('MCP edit description advertises native mouth capability with no speech recognition claim',()=>{
+ const detail=worker.match(/:action==='sketch_edit'\?'([^']+)'/)[1];
+ assert.match(detail,/Native 4\.7\.6 adds add_mouth_animation/);
+ assert.match(detail,/sketch_capabilities\.mouthAnimation/);
+ assert.match(detail,/articulation.*tongue.*chew/);
+ assert.match(detail,/not proof of audio speaking/);
+});
+
 test('eye animation has strict native pose/control schemas and rejects older APKs before admission',()=>{
  const op={type:'add_eye_animation',layerId:'layer_1',eyeId:'eyes',settings:{style:'almond',irisSize:.95},preset:'look_blink'};
  const r={...request,operations:[op]};assert.deepEqual(nativeStudioParameters('studio_sketch_edit',r),r);

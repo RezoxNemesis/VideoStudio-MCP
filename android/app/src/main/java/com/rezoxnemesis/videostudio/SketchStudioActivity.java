@@ -38,6 +38,8 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
     private final ExecutorService io=Executors.newSingleThreadExecutor();
     private final ExecutorService transfers=Executors.newSingleThreadExecutor();
     private boolean loadingDrawing;
+    // UI-thread counts scoped to the drawing load/page that owns each construction.
+    private final java.util.HashMap<String,Integer> activeConstructions=new java.util.HashMap<>();
     private volatile boolean destroyed;
     private boolean resumed,watching=true,watchInFlight,grid,symmetry;
     private final java.util.concurrent.atomic.AtomicReference<android.graphics.Bitmap> pendingBookBitmap=new java.util.concurrent.atomic.AtomicReference<>();
@@ -887,8 +889,8 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
     } };
     private void stopPlayback() { boolean wasPlaying=playing;playing = false;++playbackGeneration;bookPlaybackInFlight=false;android.graphics.Bitmap abandoned=pendingBookBitmap.getAndSet(null);if(abandoned!=null)abandoned.recycle();if(wasPlaying&&bookId!=null&&session!=null&&!destroyed){openBookPage(bookId,bookPage);} handler.removeCallbacks(playTick); if(canvas!=null&&!destroyed)canvas.setEnabled(!loadingDrawing&&(!wasPlaying||bookId==null)&&session!=null&&livePlayer==null);if (playButton != null) playButton.setText("Play"); }
     @Override protected void onPause() { resumed=false;++liveLoadGeneration;if(livePlayer!=null||watchInFlight){loadingDrawing=true;if(notifiedSessionId!=null)notificationReplayPending=true;}stopLivePlayer();stopPlayback();handler.removeCallbacks(watchTick);super.onPause(); }
-    @Override protected void onResume() { super.onResume();resumed=true;liveSessionId="";if(loadingDrawing&&session!=null){if(session.pending()==0)reload();else afterSaves(()->postUi(this::reload));}handler.removeCallbacks(watchTick);handler.postDelayed(watchTick,250); }
-    @Override protected void onDestroy() { destroyed=true;stopLivePlayer();stopPlayback();handler.removeCallbacksAndMessages(null);if(session!=null)session.close();io.shutdown();transfers.shutdown();if(canvas!=null)canvas.dispose();super.onDestroy(); }
+    @Override protected void onResume() { super.onResume();resumed=true;liveSessionId="";if(loadingDrawing&&session!=null&&!activeConstructions.containsKey(loadGeneration+":"+pageGeneration)){if(session.pending()==0)reload();else afterSaves(()->postUi(this::reload));}handler.removeCallbacks(watchTick);handler.postDelayed(watchTick,250); }
+    @Override protected void onDestroy() { destroyed=true;activeConstructions.clear();stopLivePlayer();stopPlayback();handler.removeCallbacksAndMessages(null);if(session!=null)session.close();io.shutdown();transfers.shutdown();if(canvas!=null)canvas.dispose();super.onDestroy(); }
     @Override protected void onSaveInstanceState(Bundle state) { state.putString("bookId",bookId);state.putInt("bookPage",bookPage);state.putString("sketchId", sketchId); state.putInt("frame", canvas.getFrame());state.putString("notifiedSketchId",notifiedSketchId);state.putString("notifiedSessionId",notifiedSessionId); super.onSaveInstanceState(state); }
     private LinearLayout column() { LinearLayout layout = new LinearLayout(this); layout.setOrientation(LinearLayout.VERTICAL);layout.setBackgroundColor(StudioUi.SURFACE);layout.setPadding(dp(6),dp(2),dp(6),dp(2));return layout; }
     private LinearLayout row(LinearLayout root) { LinearLayout layout = new LinearLayout(this); layout.setOrientation(LinearLayout.HORIZONTAL);root.addView(layout,new LinearLayout.LayoutParams(-1,-2));return layout; }
@@ -1019,23 +1021,33 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
                     try{startActivity(settings);}catch(android.content.ActivityNotFoundException unavailable){onMessage("Open Android app settings to allow drawing notifications");}
                 }).show();
     }
-    private void brushMenu(){menu("Brush / Text",new String[]{"Brush","Colours","Material shading","Shape animation","Linked palette styles","Paint studio","Text","Finish path","Transform / key","Delete object","Reference image","Solid construction","Ball and box impact","Motion studies","Eye animation"},this::brushDialog,this::paletteDialog,this::materialShadingDialog,this::shapeAnimationDialog,this::linkedPaletteDialog,this::paintMenu,this::textDialog,()->canvas.finishPolygon(),this::transformDialog,this::deleteObject,this::referenceDialog,this::solidConstruction,()->solidConstruction(true),()->construction(2),()->construction(3));}
+    private void brushMenu(){menu("Brush / Text",new String[]{"Brush","Colours","Material shading","Shape animation","Linked palette styles","Paint studio","Text","Finish path","Transform / key","Delete object","Reference image","Solid construction","Ball and box impact","Motion studies","Eye animation","Mouth animation","Face animation"},this::brushDialog,this::paletteDialog,this::materialShadingDialog,this::shapeAnimationDialog,this::linkedPaletteDialog,this::paintMenu,this::textDialog,()->canvas.finishPolygon(),this::transformDialog,this::deleteObject,this::referenceDialog,this::solidConstruction,()->solidConstruction(true),()->construction(2),()->construction(3),()->construction(4),()->construction(5));}
     private void solidConstruction(){solidConstruction(false);}
     private void solidConstruction(boolean collision){
         construction(collision?1:0);
     }
+    private void finishConstruction(String key){
+        Integer count=activeConstructions.get(key);if(count==null)return;
+        if(count==1)activeConstructions.remove(key);else activeConstructions.put(key,count-1);
+    }
     private void construction(int kind){
-        boolean collision=kind==1,study=kind==2,eyes=kind==3;
+        boolean collision=kind==1,study=kind==2,eyes=kind==3,mouth=kind==4,face=kind==5;
         if(document==null||session==null)return;
         try{String target=sketchId;SketchEditorSession origin=session;int generation=loadGeneration,page=pageGeneration;
-            java.util.function.Consumer<JSONObject> construction=request->{
-                if(session!=origin||generation!=loadGeneration||page!=pageGeneration){onMessage("The selected drawing changed. Open Solid construction on the current drawing.");return;}
-                stopPlayback();loadingDrawing=true;canvas.setEnabled(false);onMessage(eyes?"Creating editable eye animation…":study?"Creating motion study…":collision?"Constructing native impact scene…":"Constructing editable solid cels…");
-                io.execute(()->{try{origin.awaitIdle(15000);if(origin.error()!=null)throw new IllegalStateException(origin.error());JSONObject args=new JSONObject().put("sketchId",target).put("expectedRevision",origin.document().getLong("revision")).put("operationId",UUID.randomUUID().toString()).put("operations",request.getJSONArray("operations"));SketchEditOps.execute(this,"sketch_edit",args);
-                    postUi(()->{if(session!=origin||generation!=loadGeneration||page!=pageGeneration)return;loadSketch(target,0);onMessage(eyes?"Eye animation saved on a new layer. All curves remain editable.":study?"Motion study saved on a new layer. Drawings and motion keys remain editable.":"Solid saved as editable cels in a new layer. Colours, paths and timing remain editable.");});
-                }catch(Exception failure){postUi(()->{if(session!=origin||generation!=loadGeneration||page!=pageGeneration)return;loadingDrawing=false;canvas.setEnabled(true);onMessage("Solid not created: "+failure.getMessage());});}});
+            SketchConstructionSubmit submit=(request,completion)->{
+                if(session!=origin||generation!=loadGeneration||page!=pageGeneration){
+                    String message=face?"The selected drawing changed. Open Face animation on the current drawing.":mouth?"The selected drawing changed. Open Mouth animation on the current drawing.":"The selected drawing changed. Open Solid construction on the current drawing.";
+                    completion.accept(new IllegalStateException(message));onMessage(message);return;
+                }
+                stopPlayback();loadingDrawing=true;canvas.setEnabled(false);onMessage(face?"Creating editable face animation…":mouth?"Creating editable mouth animation…":eyes?"Creating editable eye animation…":study?"Creating motion study…":collision?"Constructing native impact scene…":"Constructing editable solid cels…");
+                String constructionKey=generation+":"+page;activeConstructions.merge(constructionKey,1,Integer::sum);
+                try{io.execute(()->{try{origin.awaitIdle(15000);if(origin.error()!=null)throw new IllegalStateException(origin.error());JSONObject args=new JSONObject().put("sketchId",target).put("expectedRevision",origin.document().getLong("revision")).put("operationId",UUID.randomUUID().toString()).put("operations",request.getJSONArray("operations"));SketchEditOps.execute(this,"sketch_edit",args);
+                    postUi(()->{finishConstruction(constructionKey);if(session==origin&&generation==loadGeneration&&page==pageGeneration)loadingDrawing=false;completion.accept(null);if(session!=origin||generation!=loadGeneration||page!=pageGeneration)return;loadSketch(target,0);onMessage(face?"Face animation saved on a new layer. All curves remain editable.":mouth?"Mouth animation saved on a new layer. All curves remain editable.":eyes?"Eye animation saved on a new layer. All curves remain editable.":study?"Motion study saved on a new layer. Drawings and motion keys remain editable.":"Solid saved as editable cels in a new layer. Colours, paths and timing remain editable.");});
+                }catch(Exception failure){postUi(()->{finishConstruction(constructionKey);if(session==origin&&generation==loadGeneration&&page==pageGeneration){loadingDrawing=false;canvas.setEnabled(!playing&&livePlayer==null);}completion.accept(failure);if(session!=origin||generation!=loadGeneration||page!=pageGeneration)return;onMessage((face?"Face not created: ":mouth?"Mouth not created: ":"Solid not created: ")+failure.getMessage());});}});
+                }catch(Exception failure){finishConstruction(constructionKey);loadingDrawing=false;canvas.setEnabled(!playing&&livePlayer==null);completion.accept(failure);onMessage((face?"Face not created: ":mouth?"Mouth not created: ":"Solid not created: ")+failure.getMessage());}
             };
-            if(eyes)SketchEyeDialog.show(this,SketchDocument.copy(document),construction);else if(study)SketchMotionStudyDialog.show(this,SketchDocument.copy(document),construction);else if(collision)SketchSolidCollisionDialog.show(this,SketchDocument.copy(document),construction);else SketchSolidDialog.show(this,SketchDocument.copy(document),construction);
+            java.util.function.Consumer<JSONObject> construction=request->submit.submit(request,error->{});
+            if(face)SketchFaceDialog.show(this,SketchDocument.copy(document),submit);else if(mouth)SketchMouthDialog.show(this,SketchDocument.copy(document),submit);else if(eyes)SketchEyeDialog.show(this,SketchDocument.copy(document),construction);else if(study)SketchMotionStudyDialog.show(this,SketchDocument.copy(document),construction);else if(collision)SketchSolidCollisionDialog.show(this,SketchDocument.copy(document),construction);else SketchSolidDialog.show(this,SketchDocument.copy(document),construction);
         }catch(Exception failure){onMessage(failure.getMessage());}
     }
     private void layersMenu(){menu("Layers",new String[]{"Select layer","+ Layer","Layer settings","Up","Down"},this::chooseLayer,this::addLayer,this::layerDialog,()->reorderLayer(1),()->reorderLayer(-1));}

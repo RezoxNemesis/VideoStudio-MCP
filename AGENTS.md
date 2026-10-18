@@ -1,5 +1,19 @@
 # VideoStudio current engineering priority
 
+## Owner's current mouth / face and viewpoint requirement
+
+Finish isolated mouth opening, lip shaping, tongue and chewing through native
+render/inspect/fix/retest before combining with eyes, nose and a structured face.
+All improvements need reusable manual and MCP controls. Current continuation:
+`feat/native-mouth-face-animation-20261018`; inspect state first and read
+`docs/continuity/NATIVE_MOUTH_FACE_ANIMATION_20261018.md`.
+
+For every future animation study cover front, left, right and rear views; add
+high and low views where meaningful. The current facial study should check all
+six, including correct hidden-feature occlusion. Distinct authored 2D views are
+not proof of genuine 3D, and mirroring/rotating a frontal image does not establish
+new anatomy. Preserve separate view evidence, screenshots, failures and retests.
+
 ## Owner's focused animation programme — eye study first
 
 Work through isolated subjects sequentially and refine each through native
