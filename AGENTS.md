@@ -1,5 +1,16 @@
 # VideoStudio current engineering priority
 
+## Complete native scenes — 2026-10-18
+
+The owner now requires harder complete-scene tests after the five primitive
+studies, with all runtime quality/controls in Android and manual/MCP parity.
+Current slice: native ball/box impact, fine sphere geometry, compact editable
+material contours and analytic stopping motion. Six native tests include
+30/60 FPS, sustained contact, fast impact and changed proportions. See
+`docs/continuity/NATIVE_IMPACT_SCENES_20261018.md`. Preserve the earlier film
+goals and do not infer phone/live connector execution from workspace tests.
+
+
 ## Five-study follow-up — 2026-10-18
 
 The owner requires at least five further original capability tests: improve the

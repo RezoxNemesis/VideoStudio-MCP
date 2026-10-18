@@ -21,7 +21,8 @@ final class SketchSolidMesh {
         for(int[] edge:map.values())if(edge[3]<0)throw new IllegalArgumentException("Open solid surface");
         edges.addAll(map.values());
     }
-    static SketchSolidMesh create(String shape){
+    static SketchSolidMesh create(String shape){return create(shape,false);}
+    static SketchSolidMesh create(String shape,boolean fineSphere){
         if("box".equals(shape))return new SketchSolidMesh(shape,new double[][]{{-.5,-.5,-.5},{.5,-.5,-.5},{.5,.5,-.5},{-.5,.5,-.5},{-.5,-.5,.5},{.5,-.5,.5},{.5,.5,.5},{-.5,.5,.5}},new int[][]{{0,3,2,1},{4,5,6,7},{0,4,7,3},{1,2,6,5},{3,7,6,2},{0,1,5,4}},new int[]{0,1,2,3,4,5});
         if("pyramid".equals(shape)){
             ArrayList<double[]> points=new ArrayList<>(Arrays.asList(new double[][]{{-.5,-.5,-.5},{.5,-.5,-.5},{.5,-.5,.5},{-.5,-.5,.5},{0,.5,0}}));ArrayList<int[]> faces=new ArrayList<>();ArrayList<Integer> materials=new ArrayList<>();add(points,faces,materials,new int[]{0,1,2,3},5);for(int n=0;n<4;n++)add(points,faces,materials,new int[]{n,4,(n+1)%4},n);return built(shape,points,faces,materials);
@@ -29,13 +30,13 @@ final class SketchSolidMesh {
         if("cone".equals(shape))return cone();
         if("cylinder".equals(shape))return cylinder();
         if(!"sphere".equals(shape))throw SketchDocument.bad("Unsupported native solid shape");
-        int segments=24,rings=10;ArrayList<double[]> points=new ArrayList<>();ArrayList<int[]> faces=new ArrayList<>();ArrayList<Integer> materials=new ArrayList<>();points.add(new double[]{0,.5,0});
+        int segments=fineSphere?48:24,rings=fineSphere?16:10;ArrayList<double[]> points=new ArrayList<>();ArrayList<int[]> faces=new ArrayList<>();ArrayList<Integer> materials=new ArrayList<>();points.add(new double[]{0,.5,0});
         for(int ring=1;ring<rings;ring++){double phi=Math.PI*ring/rings;for(int n=0;n<segments;n++){double theta=2*Math.PI*n/segments;points.add(new double[]{.5*Math.sin(phi)*Math.sin(theta),.5*Math.cos(phi),.5*Math.sin(phi)*Math.cos(theta)});}}
         int bottom=points.size();points.add(new double[]{0,-.5,0});
         for(int n=0;n<segments;n++){
-            int next=(n+1)%segments;add(points,faces,materials,new int[]{0,1+n,1+next},n/4);
-            for(int ring=0;ring<rings-2;ring++)add(points,faces,materials,new int[]{1+ring*segments+n,1+(ring+1)*segments+n,1+(ring+1)*segments+next,1+ring*segments+next},n/4);
-            add(points,faces,materials,new int[]{bottom,1+(rings-2)*segments+next,1+(rings-2)*segments+n},n/4);
+            int next=(n+1)%segments;add(points,faces,materials,new int[]{0,1+n,1+next},n/(segments/6));
+            for(int ring=0;ring<rings-2;ring++)add(points,faces,materials,new int[]{1+ring*segments+n,1+(ring+1)*segments+n,1+(ring+1)*segments+next,1+ring*segments+next},n/(segments/6));
+            add(points,faces,materials,new int[]{bottom,1+(rings-2)*segments+next,1+(rings-2)*segments+n},n/(segments/6));
         }
         return built(shape,points,faces,materials);
     }
@@ -48,7 +49,7 @@ final class SketchSolidMesh {
     private static SketchSolidMesh cylinder(){
         int segments=24;ArrayList<double[]> points=new ArrayList<>();ArrayList<int[]> faces=new ArrayList<>();ArrayList<Integer> materials=new ArrayList<>();
         for(int ring=0;ring<2;ring++)for(int n=0;n<segments;n++){double theta=2*Math.PI*n/segments;points.add(new double[]{.5*Math.sin(theta),ring==0?-.5:.5,.5*Math.cos(theta)});}points.add(new double[]{0,-.5,0});points.add(new double[]{0,.5,0});
-        for(int n=0;n<segments;n++){int next=(n+1)%segments;add(points,faces,materials,new int[]{n,next,segments+next,segments+n},n/4);add(points,faces,materials,new int[]{48,n,next},n<2?0:5);add(points,faces,materials,new int[]{49,segments+next,segments+n},n<2?0:4);}
+        for(int n=0;n<segments;n++){int next=(n+1)%segments;add(points,faces,materials,new int[]{n,next,segments+next,segments+n},n/(segments/6));add(points,faces,materials,new int[]{48,n,next},n<2?0:5);add(points,faces,materials,new int[]{49,segments+next,segments+n},n<2?0:4);}
         return built("cylinder",points,faces,materials);
     }
     private static void add(List<double[]> points,List<int[]> faces,List<Integer> materials,int[] face,int material){

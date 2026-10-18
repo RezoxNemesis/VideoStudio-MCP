@@ -38,3 +38,13 @@ test('cone and native world lighting are exposed with the same bounds',()=>{
 test('rocking constraints and held-cel optimization match native policy',()=>{
  const p={...program,shape:'pyramid',groundLock:true,rockingPivot:true,holdLast:true,mergeHolds:true};const r={...request,operations:[{...request.operations[0],program:p}]};assert.deepEqual(nativeStudioParameters('sketch_edit',r),r);for(const patch of [{groundLock:false},{rollingRadius:70},{shape:'sphere'}])assert.throws(()=>nativeStudioParameters('sketch_edit',{...r,operations:[{...r.operations[0],program:{...p,...patch}}]}));
 });
+
+test('two-body native scenes use strict app settings and a 4.7.3 gate',()=>{
+ const r={...request,operations:[{type:'add_solid_collision',layerId:'layer_1',sceneId:'impact',settings:{ballMass:1,boxMass:3,restitution:.7,friction:100}}]};
+ assert.deepEqual(nativeStudioParameters('studio_sketch_edit',r),r);assert.throws(()=>requireStudioVersion({appVersion:'4.7.2'},'sketch_edit',r),/4\.7\.3/);assert.doesNotThrow(()=>requireStudioVersion({appVersion:'4.7.3'},'sketch_edit',r));
+ for(const settings of [{url:'https://example.test/reference.mp4'},{boxMass:0},{restitution:1.1},{boxSize:[10,20,30]},{speed:0}])assert.throws(()=>nativeStudioParameters('sketch_edit',{...r,operations:[{...r.operations[0],settings}]}));
+});
+
+test('fine mesh quality is bounded and rejects APKs without its native implementation',()=>{
+ const r={...request,operations:[{...request.operations[0],program:{...program,shape:'sphere',meshDetail:'fine'}}]};assert.deepEqual(nativeStudioParameters('sketch_edit',r),r);assert.throws(()=>requireStudioVersion({appVersion:'4.7.2'},'sketch_edit',r),/4\.7\.3/);assert.doesNotThrow(()=>requireStudioVersion({appVersion:'4.7.3'},'sketch_edit',r));assert.throws(()=>nativeStudioParameters('sketch_edit',{...r,operations:[{...r.operations[0],program:{...r.operations[0].program,meshDetail:'unbounded'}}]}));
+});
