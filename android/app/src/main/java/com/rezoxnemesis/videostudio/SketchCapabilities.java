@@ -3,8 +3,27 @@ import org.json.*;
 /** Explicit agent instructions for original, prompt-first artwork and visible stroke authoring. */
 public final class SketchCapabilities {
     private SketchCapabilities(){}
+    /** Reusable metadata for the character constructor, independent of its runtime implementation. */
+    public static JSONObject characterPerformance() throws Exception {
+        return new JSONObject().put("minimumNativeVersion","4.7.8").put("action","sketch_edit").put("operation","add_character_animation")
+                .put("settings",new JSONObject().put("view","front").put("build","slender").put("material","wool").put("detail","tailored").put("gesture","pendant")
+                        .put("armLift",.8).put("headTilt",0).put("skinColor","#FFD6A078").put("hairColor","#FF252D3D").put("coatColor","#FF263847"))
+                .put("views",new JSONArray(new String[]{"front","left","right","back","high","low"}))
+                .put("builds",new JSONArray(new String[]{"slender","broad"})).put("materials",new JSONArray(new String[]{"wool","leather"}))
+                .put("details",new JSONArray(new String[]{"contour","tailored"})).put("gestures",new JSONArray(new String[]{"pendant","explain"}))
+                .put("settingLimits",new JSONObject().put("armLift",new JSONArray(new double[]{0,1})).put("headTilt",new JSONArray(new double[]{-12,12})).put("colors","Eight-digit #AARRGGBB"))
+                .put("manualControls","Sketch Studio > Brush / Text > Character performance; shared settings and optional speech, asynchronous native preview/save on a new layer with conflict/cancellation protection")
+                .put("limits","4..8 seconds; 24..240 frames; 24/30/60 FPS; characterId up to 20 characters; preserve document resolution/timing and existing point/object/byte budgets; out-of-bounds geometry rejects atomically")
+                .put("geometry","Six distinct authored 2D views of an original tailored travelling scholar bust; uniformly map 1280x720 design coordinates to the actual canvas without distorting anatomy; physical-time sampling")
+                .put("output","Ordinary editable native paths, gradient fills, transform keys and speech cels")
+                .put("speech","Optional shared speech contract: choose authored cues, an imported generated line by requestId/lineIndex, or original unaligned model duration predictions; see sketch_capabilities.speechAnimation")
+                .put("sourceLimits","Original authored artwork; reference portrait is a quality benchmark only, not tracing or source-image reconstruction; no Gallery or external drawing renderer; not a certification of painterly realism")
+                .put("audioWorkflow","Real Open Pipeline synthesis or owned imported audio belongs in the separate project editor audio lane; Sketch preview/export remains silent; this operation does not synthesize or mix audio")
+                .put("genuine3D",false).put("recognizesSpeech",false).put("forcedAlignmentVerified",false).put("creativeQualityCertified",false).put("phoneExecutionVerified",false);
+    }
     public static JSONObject get() throws Exception {
         return new JSONObject().put("minimumNativeVersion","3.9.1").put("promptFirstDrawing",true).put("referenceImageRequired",false).put("humanAndAgentShareOperations",true)
+                .put("characterPerformance",characterPerformance())
                 .put("speechAnimation",new JSONObject().put("minimumNativeVersion","4.7.7").put("action","sketch_edit")
                         .put("operations",new JSONArray(new String[]{"add_mouth_animation","add_face_animation"}))
                         .put("shapes",new JSONArray(SketchSpeechTiming.SHAPES)).put("maximumCues",240).put("maximumTransitionMs",200)

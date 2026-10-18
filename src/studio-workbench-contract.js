@@ -8,12 +8,26 @@ const text=(max,nonempty=true)=>z.string().max(max).refine(v=>!v.includes('\0')&
 const revision=integer(1,Number.MAX_SAFE_INTEGER),updatedAt=integer(0,Number.MAX_SAFE_INTEGER);
 const time=integer(0,86400000),frame=integer(0,1199),fps=z.union([z.literal(24),z.literal(30),z.literal(60)]);
 const color=z.string().regex(/^#[a-fA-F0-9]{8}$/);
+export const CHARACTER_PERFORMANCE_CAPABILITIES=Object.freeze({
+ minimumNativeVersion:'4.7.8',action:'sketch_edit',operation:'add_character_animation',
+ settings:{view:'front',build:'slender',material:'wool',detail:'tailored',gesture:'pendant',armLift:.8,headTilt:0,skinColor:'#FFD6A078',hairColor:'#FF252D3D',coatColor:'#FF263847'},
+ views:['front','left','right','back','high','low'],builds:['slender','broad'],materials:['wool','leather'],details:['contour','tailored'],gestures:['pendant','explain'],
+ settingLimits:{armLift:[0,1],headTilt:[-12,12],colors:'Eight-digit #AARRGGBB'},
+ manualControls:'Sketch Studio > Brush / Text > Character performance; shared settings and optional speech, asynchronous native preview/save on a new layer with conflict/cancellation protection',
+ limits:'4..8 seconds; 24..240 frames; 24/30/60 FPS; characterId up to 20 characters; preserve document resolution/timing and existing point/object/byte budgets; out-of-bounds geometry rejects atomically',
+ geometry:'Six distinct authored 2D views of an original tailored travelling scholar bust; uniformly map 1280x720 design coordinates to the actual canvas without distorting anatomy; physical-time sampling',
+ output:'Ordinary editable native paths, gradient fills, transform keys and speech cels',
+ speech:'Optional shared speech contract: choose authored cues, an imported generated line by requestId/lineIndex, or original unaligned model duration predictions; see sketch_capabilities.speechAnimation',
+ sourceLimits:'Original authored artwork; reference portrait is a quality benchmark only, not tracing or source-image reconstruction; no Gallery or external drawing renderer; not a certification of painterly realism',
+ audioWorkflow:'Real Open Pipeline synthesis or owned imported audio belongs in the separate project editor audio lane; Sketch preview/export remains silent; this operation does not synthesize or mix audio',
+ genuine3D:false,recognizesSpeech:false,forcedAlignmentVerified:false,creativeQualityCertified:false,phoneExecutionVerified:false
+});
 const dimensions={width:integer(256,2048).refine(v=>v%2===0),height:integer(256,2048).refine(v=>v%2===0)};
 const sketchTransformShape={x:finite.min(-4).max(4),y:finite.min(-4).max(4),scaleX:finite.min(.01).max(8),scaleY:finite.min(.01).max(8),rotation:finite.min(-3600).max(3600),anchorX:finite.min(0).max(1),anchorY:finite.min(0).max(1),opacity:finite.min(0).max(1)};
 const fullTransform=z.object(sketchTransformShape).strict();
 const transformPatch=z.object(Object.fromEntries(Object.entries(sketchTransformShape).map(([key,value])=>[key,value.optional()]))).strict();
 const drawingInterpolation=z.enum(['linear','hold','smooth','ease_in','ease_out','ease_in_out','bezier']);
-const speechSymbols='mbpoɔuʊʉɯwOUWieɪɛɨɘɜjyIAaɑɐəʌæɒhɦfvθðszʃʒʂʐtdnlɭɾɽrɹɻʁɡgkqxcɟŋɲɳʈɖʧʤɕʑçχʎɣβʋɥɬɮˈˌːˑ̃ʰ.,!?;:—-…';
+const speechSymbols='mbpoɔuʊʉɯwOUWieɪɛɨɘɜjyIAaɑɐəᵊʌæɒhɦfvθðszʃʒʂʐtdnlɭɾɽrɹɻʁɡgkqxcɟŋɲɳʈɖʧʤɕʑçχʎɣβʋɥɬɮˈˌːˑ̃ʰ.,!?;:—-…';
 const speechSegment=z.object({phonemes:text(480).refine(v=>[...v].length<=240&&[...v].every(c=>speechSymbols.includes(c)||/\s/u.test(c)),'Unsupported phoneme; use reviewed manual cues'),
  startSample:integer(0,240000),sampleCount:integer(1,240000),modelDurationUnits:z.array(integer(1,400)).min(3).max(242),
  unitsPerSecond:z.literal(40),forcedAlignmentVerified:z.literal(false)}).strict()
@@ -85,7 +99,9 @@ const mouthPose=z.object({frame:integer(0,239),open:coordinate.optional(),wide:f
 const mouthSettings=z.object({style:z.enum(['soft','cartoon','fang']).optional(),view:z.enum(['front','left','right','back','high','low']).optional(),centerX:finite.min(.05).max(.95).optional(),centerY:finite.min(.05).max(.95).optional(),width:finite.min(.08).max(.65).optional(),height:finite.min(.05).max(.6).optional(),outlinePx:finite.min(1).max(8).optional(),tilt:finite.min(-35).max(35).optional(),lipColor:color.optional(),cavityColor:color.optional(),tongueColor:color.optional(),toothColor:color.optional(),ink:color.optional()}).strict();
 const facePose=z.object({...eyePose.shape,...mouthPose.shape,browRaise:finite.min(-1).max(1).optional(),browTilt:finite.min(-1).max(1).optional()}).strict().refine(v=>timingValid({...v,interpolation:v.interpolation??'smooth'}),'Invalid face timing curve');
 const faceSettings=z.object({view:z.enum(['front','left','right','back','high','low']).optional(),shape:z.enum(['oval','round','angular']).optional(),eyeStyle:z.enum(['round','almond','slit']).optional(),mouthStyle:z.enum(['soft','cartoon','fang']).optional(),centerX:finite.min(.15).max(.85).optional(),centerY:finite.min(.2).max(.75).optional(),width:finite.min(.28).max(.5).optional(),height:finite.min(.45).max(.85).optional(),jawWidth:finite.min(.45).max(.9).optional(),noseWidth:finite.min(.08).max(.25).optional(),noseLength:finite.min(.08).max(.22).optional(),eyeSize:finite.min(.8).max(1.2).optional(),mouthSize:finite.min(.8).max(1.2).optional(),skinColor:color.optional(),hairColor:color.optional(),irisColor:color.optional(),lipColor:color.optional(),ink:color.optional(),outlinePx:finite.min(1).max(6).optional(),tilt:finite.min(-20).max(20).optional(),hair:z.boolean().optional()}).strict();
+const characterSettings=z.object({view:z.enum(CHARACTER_PERFORMANCE_CAPABILITIES.views).optional(),build:z.enum(CHARACTER_PERFORMANCE_CAPABILITIES.builds).optional(),material:z.enum(CHARACTER_PERFORMANCE_CAPABILITIES.materials).optional(),detail:z.enum(CHARACTER_PERFORMANCE_CAPABILITIES.details).optional(),gesture:z.enum(CHARACTER_PERFORMANCE_CAPABILITIES.gestures).optional(),armLift:coordinate.optional(),headTilt:finite.min(-12).max(12).optional(),skinColor:color.optional(),hairColor:color.optional(),coatColor:color.optional()}).strict();
 const operation=z.discriminatedUnion('type',[
+ z.object({type:z.literal('add_character_animation'),layerId:id,characterId:id.max(20),settings:characterSettings,speech:speechTiming.optional()}).strict(),
  z.object({type:z.literal('add_face_animation'),layerId:id,faceId:id.max(28),settings:faceSettings,speech:speechTiming.optional(),preset:z.enum(['reaction','playful','chew']).optional(),poses:z.array(facePose).min(1).max(240).refine(v=>v[0].frame===0&&v.every((p,i)=>i===0||p.frame>v[i-1].frame),'Face poses start at zero and strictly increase').optional()}).strict().refine(v=>!(v.speech!==undefined&&v.poses!==undefined),'Choose speech cues or pose keys'),
  z.object({type:z.literal('add_mouth_animation'),layerId:id,mouthId:id.max(36),settings:mouthSettings,speech:speechTiming.optional(),preset:z.enum(['articulation','tongue','chew']).optional(),poses:z.array(mouthPose).min(1).max(240).refine(v=>v[0].frame===0&&v.every((p,i)=>i===0||p.frame>v[i-1].frame),'Mouth poses start at zero and strictly increase').optional()}).strict().refine(v=>!(v.speech!==undefined&&v.poses!==undefined),'Choose speech cues or pose keys'),
  z.object({type:z.literal('add_eye_animation'),layerId:id,eyeId:id.max(36),settings:eyeSettings,preset:z.enum(['look_blink','tracking','double_blink']).optional(),poses:z.array(eyePose).min(1).max(240).refine(v=>v[0].frame===0&&v.every((p,i)=>i===0||p.frame>v[i-1].frame),'Eye poses start at zero and strictly increase').optional()}).strict(),
@@ -341,6 +357,7 @@ const legacy3d=new Set(['STANDOFF','CHARGE','CLASH','BLADE_LOCK','FOLLOW_THROUGH
 const pixelFields=new Set(['keyframes','opacity','chromaKey','chromaColor','chromaTolerance','chromaFeather','maskShape','maskLeft','maskTop','maskRight','maskBottom','maskFeather','glowStrength','glowRadiusPx','glowThreshold']);
 export function requireStudioVersion(device,action,parameters={}){
  const alias=studioAliases.has(action);action=nativeStudioCanonicalAction(action);
+ if(action==='sketch_edit'&&(parameters.operations||[]).some(op=>op.type==='add_character_animation')&&!atLeast(device?.appVersion,'4.7.8'))throw new Error('NATIVE_APP_UPGRADE_REQUIRED: native character performance requires VideoStudio 4.7.8 or newer');
  if(action==='sketch_edit'&&(parameters.operations||[]).some(op=>['add_face_animation','add_mouth_animation'].includes(op.type)&&op.speech!==undefined)&&!atLeast(device?.appVersion,'4.7.7'))throw new Error('NATIVE_APP_UPGRADE_REQUIRED: timed native speech cues require VideoStudio 4.7.7 or newer');
  if(action==='sketch_edit'&&(parameters.operations||[]).some(op=>op.type==='add_face_animation')&&!atLeast(device?.appVersion,'4.7.6'))throw new Error('NATIVE_APP_UPGRADE_REQUIRED: native face animation controls require VideoStudio 4.7.6 or newer');
  if(action==='sketch_edit'&&(parameters.operations||[]).some(op=>op.type==='add_mouth_animation')&&!atLeast(device?.appVersion,'4.7.6'))throw new Error('NATIVE_APP_UPGRADE_REQUIRED: native mouth animation controls require VideoStudio 4.7.6 or newer');

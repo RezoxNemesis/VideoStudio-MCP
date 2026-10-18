@@ -13,6 +13,14 @@ import static org.junit.Assert.*;
 @RunWith(RobolectricTestRunner.class) @Config(sdk=33,manifest=Config.NONE)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 public class SketchSpeechAnimationTest {
+    @Test public void realReducedSchwaTokenRetainsItsSampleClock()throws Exception {
+        JSONObject prediction=new JSONObject().put("startMs",100).put("segments",new JSONArray().put(new JSONObject()
+                .put("phonemes","ᵊ").put("startSample",0).put("sampleCount",1800).put("unitsPerSecond",40)
+                .put("forcedAlignmentVerified",false).put("modelDurationUnits",new JSONArray().put(1).put(1).put(1))));
+        JSONObject resolved=SketchSpeechTiming.resolve(new JSONObject().put("prediction",prediction),4000);
+        JSONArray cues=resolved.getJSONArray("cues");assertEquals(3,cues.length());assertEquals("open",cues.getJSONObject(1).getString("shape"));
+        assertEquals(125,cues.getJSONObject(1).getDouble("startMs"),0);assertEquals(150,cues.getJSONObject(1).getDouble("endMs"),0);
+    }
     static JSONObject cue(int start,int end,String shape)throws Exception {
         return new JSONObject().put("startMs",start).put("endMs",end).put("shape",shape);
     }

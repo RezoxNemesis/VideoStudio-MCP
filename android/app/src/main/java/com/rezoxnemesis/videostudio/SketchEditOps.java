@@ -320,6 +320,9 @@ public final class SketchEditOps {
             case "add_face_animation": {
                 SketchFaceAnimation.apply(doc,op);break;
             }
+            case "add_character_animation": {
+                SketchCharacterAnimation.apply(doc,op);break;
+            }
             case "add_motion_study": {
                 SketchMotionStudies.apply(doc,op);break;
             }

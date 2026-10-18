@@ -1,5 +1,19 @@
 # VideoStudio current engineering priority
 
+## Current detailed character continuation — 2026-10-18
+
+Branch `feat/native-character-performance-20261018` extends the verified speech
+baseline; inspect Git state and read
+`docs/continuity/NATIVE_CHARACTER_PERFORMANCE_20261018.md` before relying on notes.
+The owner wants harder anatomy, clothing/materials, poses, varied scenes and real
+audio, with reusable manual/MCP controls. The supplied portrait is a quality
+benchmark only; no tracing, reference-frame reuse, Gallery or external artwork
+renderer. New native scholar bust studies remain stylized, not painterly realism
+or genuine3D. Preserve every generation and show actual native screenshots.
+Retain all earlier goals and original signer/device identity. No merge/deploy or
+stable publication. Report phone, live MCP, listening and Android video encoding
+only with their own actual evidence.
+
 ## Current speech continuation — 2026-10-18
 
 Current branch: `feat/native-speech-animation-20261018`, continuing the verified

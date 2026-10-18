@@ -85,7 +85,7 @@ final class SketchSpeechTiming {
         if(cp=='m'||cp=='b'||cp=='p')return "closed";
         if("oɔuʊʉɯwOUW".indexOf(cp)>=0)return "round";
         if("ieɪɛɨɘɜjyIA".indexOf(cp)>=0)return "wide";
-        if("aɑɐəʌæɒhɦ".indexOf(cp)>=0)return "open";
+        if("aɑɐəᵊʌæɒhɦ".indexOf(cp)>=0)return "open";
         if("fvθðszʃʒʂʐtdnlɭɾɽrɹɻʁɡgkqxcɟŋɲɳʈɖʧʤɕʑçχʎɣβʋɥɬɮ".indexOf(cp)>=0)return "teeth";
         if(Character.isWhitespace(cp)||".,!?;:—-…".indexOf(cp)>=0)return "rest";
         throw SketchDocument.bad("Unsupported speech symbol U+"+Integer.toHexString(cp)+"; use reviewed manual cues");
