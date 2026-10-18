@@ -71,6 +71,7 @@ public final class EarthNativeProof {
         double radius=num(args,"earthRadius",8,1600);
         double longitude=num(args,"centralLongitude",-720,720);
         double tilt=num(args,"axisTilt",-90,90);
+        double pitch=numDefault(args,"cameraPitch",0,-30,30);
         double sx=num(args,"sunViewX",-1,1),sy=num(args,"sunViewY",-1,1),sz=num(args,"sunViewZ",-1,1);
         double cloudShift=numDefault(args,"cloudOffset",0,-15,15);
         double cloudOpacity=numDefault(args,"cloudOpacity",.72,0,1);
@@ -97,7 +98,7 @@ public final class EarthNativeProof {
             for(int y=0;y<height;y++){
                 for(int x=0;x<width;x++){
                     final double px=(x+.5)*scale, py=(y+.5)*scale;
-                    EarthSphereProjection.Point p=EarthSphereProjection.project(px,py,cx,cy,radius,tilt,longitude);
+                    EarthSphereProjection.Point p=EarthSphereProjection.project(px,py,cx,cy,radius,tilt,longitude,pitch);
                     if(!p.visible){output[y*width+x]=starfield(x,y);continue;}
                     double cosine=EarthSphereProjection.sunCosine(p,sx,sy,sz);
                     double lit=Math.max(0,cosine), daylight=EarthSphereProjection.daylight(cosine);
@@ -112,7 +113,7 @@ public final class EarthNativeProof {
                         if(nL>13){rr+=((n>>16)&255)*nightFactor*.9;gg+=((n>>8)&255)*nightFactor*.85;bb+=(n&255)*nightFactor*.8;}
                     }
                     if(weather!=null){
-                        EarthSphereProjection.Point w=EarthSphereProjection.project(px,py,cx,cy,radius*1.012,tilt,longitude+cloudShift);
+                        EarthSphereProjection.Point w=EarthSphereProjection.project(px,py,cx,cy,radius*1.012,tilt,longitude+cloudShift,pitch);
                         if(w.visible){
                             int wc=EarthSphereProjection.bilinear(weather,cloud.getWidth(),cloud.getHeight(),w.texU,w.texV);
                             int wr=(wc>>16)&255,wg=(wc>>8)&255,wb=wc&255;
