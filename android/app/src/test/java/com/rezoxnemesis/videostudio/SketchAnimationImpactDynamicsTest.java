@@ -73,7 +73,7 @@ public final class SketchAnimationImpactDynamicsTest {
         try{
             SketchAnimationImpactDynamics.shape(source,p);
             fail("M3.1 must not loosen an authorized tight impact cue");
-        }catch(IllegalArgumentException expected){assertTrue(expected.getMessage().contains("impact"));}
+        }catch(IllegalArgumentException expected){assertTrue(expected.getMessage().toLowerCase(java.util.Locale.ROOT).contains("impact"));}
         assertEquals(original,SketchDocument.canonical(p));
     }
     @Test public void missingExistingActingKeyCannotBeInvented()throws Exception{
