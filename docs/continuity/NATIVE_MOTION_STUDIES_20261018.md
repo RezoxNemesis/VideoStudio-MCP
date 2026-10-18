@@ -75,6 +75,18 @@ skipped optional film/bundle proofs; 306 smoke checks and 283 Node tests passed.
 Worker dry-run bundling passed without deployment. The final local source was
 compiled and exercised; this does not imply a signed or installed APK.
 
+Candidate CI run [39116987260](https://github.com/RezoxNemesis/VideoStudio-MCP/actions/runs/39116987260)
+then passed for application source `e6ec08a943109eb144a57a3cae31c8c2f49f8c53`:
+1,298 Android tests, zero failures/errors and two optional proof skips. The
+original persistent signing cache produced the 4.7.4/code477 candidate. The
+downloaded artifact was independently checked for package, version, original
+certificate, exact source proof and SHA-256:
+`fcb63c4c1f12efe51c46cbfe542e13c2e328ee2918061fa40211c23ecbbbf8fe`.
+It is retained privately as
+`candidate-4.7.4/VideoStudio-4.7.4-Candidate.apk` under the evidence root, with CI
+and independent build-proof JSON. No phone installation or in-place-update
+execution is implied. Later documentation commits do not change this APK's source.
+
 Private evidence is at
 `/workspace/engineering-review/animation-continuation-20261018`.
 Generations are retained: the original shadow error, detached character, torso
@@ -113,8 +125,8 @@ python /workspace/onboarding/videostudio-gradle.py \
 Use a new `VIDEOSTUDIO_GENERATION` under an owner-private
 `VIDEOSTUDIO_EVIDENCE_ROOT` for visual retests. Run `npm test` for server contracts.
 Do not deploy the worker until legacy queued-pointer hydration compatibility is
-verified. No worker deployment, merge, phone installation or new signed APK is
-part of this source checkpoint. Preserve the original signer and device identity.
+verified. The candidate build did not publish a stable release, deploy the worker,
+merge or install on a phone. Preserve the original signer and device identity.
 
 Next animation work should improve the character's cadence/stride transition and
 add a short facial-acting/cutout exercise, then continue the owner's varied
