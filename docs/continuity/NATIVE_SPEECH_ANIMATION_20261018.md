@@ -153,3 +153,35 @@ speech/import/PCM/manual regressions and the affected mouth/face native/UI tests
 No model inference or phone execution is substituted by these tests. Final full
 speech captures will be rerun from the committed application source while CI
 builds the original-signer4.7.7/code480 candidate.
+
+## Verified candidate and final evidence
+
+Application source: `e78ef4d0b8ae6c7e85ba1e1a0fbebbbd9d777eac`.
+[CI39143965356](https://github.com/RezoxNemesis/VideoStudio-MCP/actions/runs/39143965356)
+passed1377 Android tests with zero failures/errors and two optional skips. The
+downloaded APK independently matched package,4.7.7/code480, source proof and the
+original pinned signer. SHA-256:
+`96c5e7c7fea71d2dc0d7dced04ab62b09e4966baf40478349e5d76d0c87eead1`.
+Bytes:130857428. Original signing key remained in the existing CI cache.
+
+Private candidate below the evidence root:
+`candidate-4.7.7/VideoStudio-4.7.7-Speech-Candidate.apk`.
+`final-v4/review.html` contains all24 committed-source speaking studies:180frames
+at30FPS/1280×720/six seconds,4320 exact native-export PNGs and216 archive pixel
+comparisons. This final batch passed35 native tests with zero failures/errors/skips,
+and no source hashes changed while it ran. Compared with the preceding full
+generation,4303 native frame hashes stayed identical and17 changed under the final
+profile-contour repair. All earlier failures and generations remain retained.
+
+The source-review findings are verified fixed. New manual controls and strict MCP
+source/relay admission are tested; live ChatGPT/MCP and phone installation/playback
+remain unverified. The existing self-hosted speech runner generated real audio;
+Android system-TTS execution and native Android video encoding are not proven here.
+Model duration timing remains an estimate, with pronunciation/intelligibility and
+performance lip sync requiring listening review. Mechanical/anatomical visuals are
+acceptable stylized studies, not professional acting approval or genuine3D.
+
+`Final-Study-Index.json`, `Full-Verification.json`, per-scene assessments, source
+snapshots, original model/audio proofs and checksums retain the exact evidence.
+The complete review bundle is `VideoStudio-4.7.7-Speech-Evidence.zip`, with the APK
+linked separately. No main merge, stable publication or worker deployment occurred.
