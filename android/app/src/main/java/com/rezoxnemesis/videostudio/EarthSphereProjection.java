@@ -27,10 +27,17 @@ public final class EarthSphereProjection {
     public static Point project(double px, double py, double cx, double cy,
                                 double radius, double axisTiltDeg,
                                 double centerLongitudeDeg) {
+        return project(px,py,cx,cy,radius,axisTiltDeg,centerLongitudeDeg,0);
+    }
+
+    /** Optional camera pitch changes apparent geographic latitude, not sun direction. */
+    public static Point project(double px, double py, double cx, double cy,
+                                double radius, double axisTiltDeg,
+                                double centerLongitudeDeg, double cameraPitchDeg) {
         if (!(radius > 0) || !Double.isFinite(radius)
                 || !Double.isFinite(px) || !Double.isFinite(py)
                 || !Double.isFinite(centerLongitudeDeg)
-                || !Double.isFinite(axisTiltDeg)) {
+                || !Double.isFinite(axisTiltDeg) || !Double.isFinite(cameraPitchDeg)) {
             throw new IllegalArgumentException("Finite Earth projection parameters required");
         }
         final double vx = (px - cx) / radius;
@@ -38,14 +45,17 @@ public final class EarthSphereProjection {
         final double q = vx * vx + vy * vy;
         if (q > 1.0 + 1e-12) return new Point(false, vx, vy, 0, 0, 0, 0, 0);
         final double vz = Math.sqrt(Math.max(0, 1.0 - q));
+        // Reverse view pitch (about camera X), then the 23.44-degree screen roll.
+        final double pitch = Math.toRadians(cameraPitchDeg);
+        final double pyEarth = vy * Math.cos(pitch) + vz * Math.sin(pitch);
+        final double pzEarth = -vy * Math.sin(pitch) + vz * Math.cos(pitch);
         final double tilt = Math.toRadians(axisTiltDeg);
         final double c = Math.cos(tilt), s = Math.sin(tilt);
-        // Screen-space axial tilt inverted to recover Earth geographic axes.
-        final double ex = vx * c + vy * s;
-        final double ey = -vx * s + vy * c;
+        final double ex = vx * c + pyEarth * s;
+        final double ey = -vx * s + pyEarth * c;
         final double latitude = Math.toDegrees(Math.asin(clamp(ey, -1, 1)));
         final double longitude = wrapLongitude(centerLongitudeDeg
-                + Math.toDegrees(Math.atan2(ex, vz)));
+                + Math.toDegrees(Math.atan2(ex, pzEarth)));
         final double u = wrap01((longitude + 180.0) / 360.0);
         final double v = clamp((90.0 - latitude) / 180.0, 0.0, 1.0);
         return new Point(true, vx, vy, vz, latitude, longitude, u, v);
