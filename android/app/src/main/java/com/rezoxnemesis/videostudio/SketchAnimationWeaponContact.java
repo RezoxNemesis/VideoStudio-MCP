@@ -132,7 +132,7 @@ final class SketchAnimationWeaponContact {
                 ay + t.getDouble("y") * h + Math.sin(rotation) * dx + Math.cos(rotation) * dy);
     }
 
-    private static JSONArray points(Weapon weapon) {
+    private static JSONArray points(Weapon weapon) throws Exception {
         return new JSONArray().put(new JSONArray().put(weapon.grip.x).put(weapon.grip.y))
                 .put(new JSONArray().put(weapon.tip.x).put(weapon.tip.y));
     }
