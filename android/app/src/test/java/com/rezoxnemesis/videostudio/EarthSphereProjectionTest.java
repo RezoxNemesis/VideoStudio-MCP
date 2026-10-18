@@ -26,6 +26,14 @@ public final class EarthSphereProjectionTest {
         assertEquals(1.0/3.0, b-a, 1e-9);
     }
 
+    @Test public void cameraPitchChangesLatitudeWithoutBreakingPoleOrientation() {
+        EarthSphereProjection.Point a = EarthSphereProjection.project(200,100,200,100,90,23.44,25,0);
+        EarthSphereProjection.Point b = EarthSphereProjection.project(200,100,200,100,90,23.44,25,-3);
+        assertTrue(b.visible);
+        assertTrue(b.latitudeDeg < a.latitudeDeg);
+        assertTrue(b.texV > a.texV);
+    }
+
     @Test public void textureSeamWrapsWithoutBlackBorder() {
         int[] pixels = { 0xff000000,0xff808080,0xffffffff,0xffff0000,
                          0xff000000,0xff808080,0xffffffff,0xffff0000 };
