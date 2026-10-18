@@ -74,6 +74,15 @@ public class SketchShapeAuthoringTest {
     private static void event(SketchCanvasView canvas,int action,float x,float y){MotionEvent e=MotionEvent.obtain(1,2+action,action,x,y,0);canvas.onTouchEvent(e);e.recycle();}
     private static Object field(Object o,String name)throws Exception{Field f=o.getClass().getDeclaredField(name);f.setAccessible(true);return f.get(o);}
     private static void invoke(Object o,String name)throws Exception{Method m=o.getClass().getDeclaredMethod(name);m.setAccessible(true);m.invoke(o);}
-    private static void settle(Object o)throws Exception{for(int i=0;i<4;i++){((ExecutorService)field(o,"io")).submit(()->{}).get(10,TimeUnit.SECONDS);ShadowLooper.idleMainLooper();}}
+    private static void settle(Object o)throws Exception{
+        for(int i=0;i<4;i++){
+            ((ExecutorService)field(o,"io")).submit(()->{}).get(10,TimeUnit.SECONDS);ShadowLooper.idleMainLooper();
+            // Vector edits persist on the session writer, independently of the
+            // activity IO queue. Drain that actual save before reading the store.
+            SketchEditorSession session=(SketchEditorSession)field(o,"session");
+            if(session!=null){session.awaitIdle(10000);assertNull("Native save failed",session.error());assertEquals("Native save still pending",0,session.pending());}
+            ShadowLooper.idleMainLooper();
+        }
+    }
     private static View find(View v,String label){if(label.contentEquals(v.getContentDescription()==null?"":v.getContentDescription()))return v;if(v instanceof ViewGroup){ViewGroup g=(ViewGroup)v;for(int i=0;i<g.getChildCount();i++){View found=find(g.getChildAt(i),label);if(found!=null)return found;}}return null;}
 }
