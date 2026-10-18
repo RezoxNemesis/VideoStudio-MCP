@@ -11,10 +11,12 @@ public final class NativeCommandExecutionPolicy {
             case "get_state": case "ping": case "get_native_result_page": case "get_native_delivery_status": case "compact_native_delivery":
             case "import_mailbox_media": case "import_inline_base64": case "append_frame_chunk": case "finish_frame_transfer":
             case "import_chat_file": case "import_attachment": case "import_url":
+            case "project_asset_info": case "project_import_asset":
             case "precision_edit":
             case "apply_tool": case "set_studio_layers":
             case "sketch_create": case "sketch_list": case "sketch_get": case "sketch_inspect": case "sketch_review": case "sketch_quality_audit": case "sketch_edit":
-            case "sketch_animation_save": case "sketch_animation_get": case "sketch_animation_list": case "sketch_animation_bake":
+            case "sketch_animation_save": case "sketch_animation_get": case "sketch_animation_list": case "sketch_animation_bake": case "sketch_animation_place_in_book":
+            case "sketch_story_create": case "sketch_story_preview": case "sketch_story_audio_create": case "sketch_story_example":
             case "sketch_paint_journal": case "sketch_sample_color": case "sketch_archive": case "sketch_restore_archive":
             case "sketch_book_create": case "sketch_book_edit": case "sketch_book_list": case "sketch_book_get": case "sketch_book_open_page": case "sketch_book_timeline": case "sketch_book_render":
             case "sketch_live_begin": case "sketch_live_events": case "sketch_live_end": case "sketch_capabilities": case "sketch_component_save": case "sketch_component_list": case "sketch_component_apply":

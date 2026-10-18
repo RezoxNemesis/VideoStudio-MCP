@@ -323,6 +323,21 @@ public final class SketchEditOps {
             case "add_character_animation": {
                 SketchCharacterAnimation.apply(doc,op);break;
             }
+            case "add_story_stage": {
+                SketchStoryStage.apply(doc,op);break;
+            }
+            case "add_grip_link": {
+                SketchGripLink.apply(doc,op);break;
+            }
+            case "add_actor_prop": {
+                SketchActorProp.apply(doc,op);break;
+            }
+            case "add_human_animation": {
+                SketchHumanAnimation.apply(doc,op);break;
+            }
+            case "add_hand_animation": {
+                SketchHandAnimation.apply(doc,op);break;
+            }
             case "add_motion_study": {
                 SketchMotionStudies.apply(doc,op);break;
             }
@@ -340,11 +355,13 @@ public final class SketchEditOps {
             }
             case "update_object": {
                 SketchDocument.fields(op, "type,objectId,patch"); String id = SketchDocument.id(op, "objectId"); requireUnlocked(SketchDocument.owner(doc, id));
-                JSONObject patch = op.getJSONObject("patch"); SketchDocument.fields(patch, "color,styleId,width,fill,points,bounds,frame,exposure,brush,commands,shapeKeys,gradient,referenceCrop,text,fontFamily,fontSize,fontStyle,textAlign,letterSpacing");
+                JSONObject patch = op.getJSONObject("patch"); SketchDocument.fields(patch, "color,styleId,width,fill,points,bounds,frame,exposure,brush,commands,shapeKeys,gradient,referenceCrop,text,fontFamily,fontSize,fontStyle,textAlign,letterSpacing,hand,human");
                 JSONObject target=SketchDocument.object(doc,id);
                 // An explicit direct recolor is a deliberate opt-out of the linked palette.
                 if(patch.has("color")&&!patch.has("styleId"))target.remove("styleId");
                 merge(target, patch);
+                if("hand".equals(target.optString("kind")))SketchHandAnimation.refreshBounds(doc,target);
+                if("human".equals(target.optString("kind")))SketchHumanAnimation.refreshBounds(doc,target);
                 if(patch.has("shapeKeys"))target.put("shapeKeys",new JSONArray(patch.getJSONArray("shapeKeys").toString()));
                 if(patch.has("gradient")&&patch.isNull("gradient"))target.remove("gradient");
                 break;

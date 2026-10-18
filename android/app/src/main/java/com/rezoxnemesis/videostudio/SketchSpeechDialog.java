@@ -26,7 +26,7 @@ final class SketchSpeechDialog {
     private final LinearLayout form,faceControls;
     private final TextView status,previewContext;
     private final Spinner target,view,mouthStyle,headShape,eyeStyle,cuePicker,cueShape;
-    private final EditText transition,start,end,strength;
+    private final EditText transition,start,end,strength,shotStart;
     private final ImageView preview;
     private final ExecutorService worker=Executors.newSingleThreadExecutor();
     private JSONArray cues;
@@ -47,9 +47,10 @@ final class SketchSpeechDialog {
         if(frames<24||frames>240)throw SketchDocument.bad("Speech animation supports sketches with 24–240 frames; timing is preserved");
         form=new LinearLayout(activity);form.setOrientation(LinearLayout.VERTICAL);form.setPadding(20,12,20,12);
         status=new TextView(activity);status.setContentDescription("Speech animation status");status.setText("Authored demonstration ready. No audio is played by preview.");
+        shotStart=input("Shot start in master (ms)","0",false);
         button("Load generated dialogue",this::loadGenerated);
         TextView description=new TextView(activity);description.setContentDescription("Speech animation description");
-        description.setText("Author timed visemes (mouth shapes), with no speech recognition. Audio is not synthesized or mixed by this dialog. Use existing generated/imported audio in the main editor at the same timeline offset. The initial cues are an authored demonstration, not audio alignment. Create editable cels on a new layer.\nCurrent sketch: "+frames+" frames at "+document.getInt("fps")+" FPS ("+Math.round(durationMs())+" ms). Supports 24–240 frames without changing timing.");form.addView(description);
+        description.setText("Author timed visemes (mouth shapes), with no speech recognition. Audio is not synthesized or mixed by this dialog. Use existing generated/imported audio in the main editor at the same timeline offset. The initial cues are an authored demonstration, not audio alignment. Create editable cels on a new layer. For a short shot within a longer master, enter its global start in Shot start in master (ms); only fully contained lines load, without clipping or timewarp.\nCurrent sketch: "+frames+" frames at "+document.getInt("fps")+" FPS ("+Math.round(durationMs())+" ms). Supports 24–240 frames without changing timing.");form.addView(description);
         target=spinner(form,"Speech target",new String[]{"Isolated mouth","Complete face"});
         view=spinner(form,"Speech view",new String[]{"Front","Left","Right","Back (features hidden)","High","Low"});
         mouthStyle=spinner(form,"Mouth style",new String[]{"Soft lips","Cartoon","Fangs / creature"});
@@ -85,7 +86,7 @@ final class SketchSpeechDialog {
             public void onTextChanged(CharSequence s,int from,int before,int count){if(!binding&&!closed&&!submitting)clearPreview();}
             public void afterTextChanged(Editable value){}
         };
-        for(EditText control:new EditText[]{transition,start,end,strength})control.addTextChangedListener(edited);
+        for(EditText control:new EditText[]{transition,start,end,strength,shotStart})control.addTextChangedListener(edited);
         refresh();updatePreviewContext();
     }
 
@@ -112,7 +113,11 @@ final class SketchSpeechDialog {
 
     private double durationMs()throws Exception{return document.getInt("frameCount")*1000d/document.getInt("fps");}
 
-    private void loadGenerated(){
+    private void loadGenerated()throws Exception {
+        final long shotStartMs;
+        try{shotStartMs=Long.parseLong(shotStart.getText().toString().trim());}
+        catch(NumberFormatException error){throw SketchDocument.bad("Enter whole shot start milliseconds from 0 to 600000");}
+        if(shotStartMs<0||shotStartMs>600000)throw SketchDocument.bad("Shot start must be 0..600000 milliseconds in the master");
         clearPreview();setLoading(true);status.setText("Finding imported generated dialogue…");
         loadTask=worker.submit(()->{
             try{
@@ -125,12 +130,12 @@ final class SketchSpeechDialog {
                         JSONObject choice=choices.optJSONObject(index);status.setText("Checking the original dialogue and audio…");
                         loadTask=worker.submit(()->{
                             try{
-                                JSONObject loaded=SketchSpeechAssets.load(activity,choice.getString("requestId"),choice.getInt("lineIndex"),durationMs());
+                                JSONObject loaded=SketchSpeechAssets.load(activity,choice.getString("requestId"),choice.getInt("lineIndex"),durationMs(),shotStartMs);
                                 activity.runOnUiThread(()->{
                                     if(unavailable())return;
                                     try{JSONObject speech=loaded.getJSONObject("speech");cues=speech.getJSONArray("cues");selected=0;
                                         transition.setText(String.valueOf(speech.get("transitionMs")));refresh();setLoading(false);
-                                        status.setText("Loaded: "+loaded.getString("text")+"\nModel timing is an estimate. Edit cues against the original audio, which stays in the generated dialogue project's audio lane at the same timeline offset.");
+                                        status.setText("Loaded: "+loaded.getString("text")+"\nModel timing is an estimate. Edit cues against the unchanged master audio. Place this shot at "+loaded.getLong("audioTimelineOffsetMs")+" ms on the master timeline; keep the master audio at its original origin. No clipping or timewarp.");
                                     }catch(Exception error){loadFailed(error);}
                                 });
                             }catch(Exception error){activity.runOnUiThread(()->loadFailed(error));}

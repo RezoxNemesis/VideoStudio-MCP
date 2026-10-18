@@ -12,7 +12,7 @@
 Preserve source/history/projects/signing; no reference pixels, Gallery, external
 artwork renderer, deployment, merge or stable publication. Preserve exact FPS,
 resolution, frameCount and existing4MiB/4096object/131072point/4096key budgets.
-New native minimum4.7.9/code482. Six authored camera views of projected2D output.
+New native minimum4.8.0/code483. Six authored camera views of projected2D output.
 
 ## Review focus
 

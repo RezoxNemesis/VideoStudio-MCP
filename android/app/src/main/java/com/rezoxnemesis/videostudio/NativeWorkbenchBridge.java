@@ -12,9 +12,10 @@ public final class NativeWorkbenchBridge {
     public static final String PREFIX="studio_",MINIMUM_NATIVE_VERSION="3.9.0";
     private static final int MAX_COMMAND_BYTES=2*1024*1024,MAX_DEPTH=64,MAX_VALUES=2*1024*1024;
     private static final Set<String> ACTIONS=Collections.unmodifiableSet(new LinkedHashSet<>(Arrays.asList(
-            "precision_edit","apply_tool","set_studio_layers","import_mailbox_media","get_native_result_page","get_native_delivery_status","compact_native_delivery",
+            "precision_edit","apply_tool","set_studio_layers","import_mailbox_media","project_asset_info","project_import_asset","get_native_result_page","get_native_delivery_status","compact_native_delivery",
             "sketch_create","sketch_list","sketch_get","sketch_inspect","sketch_review","sketch_quality_audit","sketch_edit","sketch_undo","sketch_redo",
-            "sketch_animation_save","sketch_animation_get","sketch_animation_list","sketch_animation_bake",
+            "sketch_animation_save","sketch_animation_get","sketch_animation_list","sketch_animation_bake","sketch_animation_place_in_book",
+            "sketch_story_create","sketch_story_preview","sketch_story_audio_create","sketch_story_example",
             "sketch_paint_journal","sketch_sample_color","sketch_archive","sketch_restore_archive",
             "sketch_import_reference","sketch_import_frame_manifest","sketch_import_drawing_manifest","sketch_import_drawing_asset","sketch_import_animation","sketch_preview","sketch_render",
             "sketch_book_create","sketch_book_edit","sketch_book_list","sketch_book_get","sketch_book_open_page","sketch_book_timeline","sketch_book_render","sketch_live_begin","sketch_live_events","sketch_live_end","sketch_capabilities","sketch_component_save","sketch_component_list","sketch_component_apply",
@@ -50,7 +51,9 @@ public final class NativeWorkbenchBridge {
                 .put("featureLengthSketchMinimumNativeVersion","4.7.0").put("sketchSequenceMaximumFrames",SketchSequenceLimits.MAX_FRAMES)
                 .put("paintMinimumNativeVersion","4.1.0").put("editableArchiveMinimumNativeVersion","4.1.0")
                 .put("visualReviewMinimumNativeVersion","4.5.6").put("visualReviewAction","sketch_review")
-                .put("characterAnimationMinimumNativeVersion","4.4.0")
+                .put("characterAnimationMinimumNativeVersion","4.4.0").put("animationBookPlacementMinimumNativeVersion","4.8.0")
+                .put("storyPlanMinimumNativeVersion","4.8.0").put("storyAudioMinimumNativeVersion","4.8.0")
+                .put("projectAssetImport",ProjectAssetImport.capabilities())
                 .put("encryptedMediaImportMinimumNativeVersion","4.2.0").put("encryptedMediaImportMaximumBytes",256L*1024*1024)
                 .put("drawingAssetImportMinimumNativeVersion","4.3.1").put("nativeResultPageMinimumNativeVersion","4.3.1")
                 .put("incrementalKeyframeMinimumNativeVersion","4.3.0").put("cameraEditMinimumNativeVersion","4.3.0")

@@ -1,5 +1,25 @@
 # VideoStudio current engineering priority
 
+## Current human story continuation — 2026-10-18
+
+Continue `feat/native-articulated-hands-20261018`; inspect actual Git state and
+read `docs/continuity/NATIVE_HUMAN_STORY_20261018.md`. The owner requires native
+human animation, real dialogue and an original film of at least two minutes,
+200–500 distinct varied scenarios, and review against standard 2D drawing,
+acting, motion, contact, continuity and sound quality. Do not count frames,
+assertions or unchanged retries as additional creative cases. Technical PASS
+does not establish artistic acceptance. Keep manual and ordinary ChatGPT/MCP
+controls reusable; no Gallery, tracing, external artwork renderer or workspace-only
+authoring substitute. Workspace tooling may run the actual native app code.
+
+Source targets 4.8.0 / code 483. The 124-second g06 native working cut and earlier
+240-case matrix exist under `/workspace/engineering-review/human-story-20261018`;
+they remain historical evidence, with visual shortcomings retained. New g09
+story and a fresh matrix retest are in progress; verify receipts before calling
+them complete. Preserve every generation, exact source/diff, original signer,
+device identity and existing projects. No merge/deploy/stable publication or
+phone/live-MCP/Android-codec/audio-audition claim without its own evidence.
+
 ## Current detailed character continuation — 2026-10-18
 
 Branch `feat/native-character-performance-20261018` extends the verified speech

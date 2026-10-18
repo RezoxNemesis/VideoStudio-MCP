@@ -25,7 +25,7 @@ def validate_controls(value):
         raise ValueError("Dialogue needs 1..32 lines per request")
     ids, cast, text_count, previous = set(), {}, 0, -1
     for line in lines:
-        fields(line, ("lineId", "characterId", "voice", "text", "startMs", "slotMs"), ("speed",))
+        fields(line, ("lineId", "characterId", "voice", "text", "startMs", "slotMs"), ("speed", "phrases"))
         identifier(line["lineId"]); identifier(line["characterId"])
         if line["lineId"] in ids:
             raise ValueError("Duplicate dialogue line")
@@ -48,6 +48,22 @@ def validate_controls(value):
         speed = line.get("speed", 1)
         if type(speed) not in (float, int) or not math.isfinite(speed) or not .75 <= speed <= 1.25:
             raise ValueError("Dialogue speed must be 0.75..1.25")
+        if "phrases" in line:
+            phrases = line["phrases"]
+            if not isinstance(phrases, list) or not 1 <= len(phrases) <= 8:
+                raise ValueError("Dialogue needs 1..8 phrases per line")
+            for phrase in phrases:
+                fields(phrase, ("text",), ("speed", "pauseAfterMs"))
+                part = phrase["text"]
+                if (not isinstance(part, str) or not part.strip() or len(part) > 240
+                        or any(ord(c) < 32 and c not in "\n\t" for c in part)):
+                    raise ValueError("Dialogue phrases need 1..240 characters")
+                pace = phrase.get("speed", speed)
+                if type(pace) not in (float, int) or not math.isfinite(pace) or not .75 <= pace <= 1.25:
+                    raise ValueError("Dialogue phrase speed must be 0.75..1.25")
+                integer(phrase.get("pauseAfterMs", 0), 0, 1500, "phrase pauseAfterMs")
+            if " ".join(phrase["text"] for phrase in phrases) != text:
+                raise ValueError("DIALOGUE_PHRASE_TEXT_MISMATCH")
     return value
 
 
@@ -124,23 +140,30 @@ def render(config, controls, output, checkpoint):
         pack = torch.load(str(root / ("voices/" + line["voice"] + ".pt")), map_location="cpu", weights_only=True)
         parts, predicted, offset = [], [], 0
         with torch.inference_mode():
-            segments = list(pipeline(line["text"], split_pattern=None))
-            if not segments:
-                raise ValueError("SPEECH_PHONEMES_UNAVAILABLE")
-            for segment in segments:
-                phones = segment.phonemes
-                # Upstream may truncate at 510. Reject that boundary, never accept it.
-                if not phones or len(phones) >= 500:
-                    raise ValueError("SPEECH_LINE_TOO_LONG_FOR_MODEL")
-                result = KPipeline.infer(model, phones, pack, line.get("speed", 1))
-                samples = result.audio.numpy().astype(np.float32)
-                if not len(samples) or not np.isfinite(samples).all():
-                    raise ValueError("SPEECH_INVALID_SAMPLES")
-                durations = result.pred_dur.tolist() if result.pred_dur is not None else None
-                predicted.append({"phonemes": phones, "startSample": offset, "sampleCount": len(samples),
-                                  "modelDurationUnits": durations, "unitsPerSecond": 40,
-                                  "forcedAlignmentVerified": False})
-                parts.append(samples); offset += len(samples)
+            phrases = line.get("phrases", [{"text": line["text"]}])
+            for phrase in phrases:
+                segments = list(pipeline(phrase["text"], split_pattern=None))
+                if not segments:
+                    raise ValueError("SPEECH_PHONEMES_UNAVAILABLE")
+                if len(predicted) + len(segments) > 8:
+                    raise ValueError("SPEECH_TOO_MANY_SEGMENTS: use at most 8 per line")
+                for segment in segments:
+                    phones = segment.phonemes
+                    # Upstream may truncate at 510. Reject that boundary, never accept it.
+                    if not phones or len(phones) >= 500:
+                        raise ValueError("SPEECH_LINE_TOO_LONG_FOR_MODEL")
+                    result = KPipeline.infer(model, phones, pack, phrase.get("speed", line.get("speed", 1)))
+                    samples = result.audio.numpy().astype(np.float32)
+                    if not len(samples) or not np.isfinite(samples).all():
+                        raise ValueError("SPEECH_INVALID_SAMPLES")
+                    durations = result.pred_dur.tolist() if result.pred_dur is not None else None
+                    predicted.append({"phonemes": phones, "startSample": offset, "sampleCount": len(samples),
+                                      "modelDurationUnits": durations, "unitsPerSecond": 40,
+                                      "forcedAlignmentVerified": False})
+                    parts.append(samples); offset += len(samples)
+                pause = phrase.get("pauseAfterMs", 0) * SAMPLE_RATE // 1000
+                if pause:
+                    parts.append(np.zeros(pause, dtype=np.float32)); offset += pause
         samples = np.concatenate(parts)
         if len(samples) > line["slotMs"] * SAMPLE_RATE // 1000:
             raise ValueError("DIALOGUE_EXCEEDS_SLOT: " + line["lineId"])

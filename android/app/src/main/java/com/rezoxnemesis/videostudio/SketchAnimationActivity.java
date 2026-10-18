@@ -43,6 +43,10 @@ public final class SketchAnimationActivity extends Activity {
     private final ExecutorService io=Executors.newSingleThreadExecutor();
     private final ExecutorService quality=Executors.newSingleThreadExecutor();
     private Future<?> qualityTask;
+    private final java.util.concurrent.atomic.AtomicBoolean bookPlacementCancelled=new java.util.concurrent.atomic.AtomicBoolean();
+    private volatile Thread bookPlacementWorker;
+    private boolean placingInBook;
+    private AlertDialog bookPlacementDialog;
     private final Handler main=new Handler(Looper.getMainLooper());
     private JSONObject source,program,sampled=new JSONObject();
     private String sketchId,animationId,selectedRig="",selectedJoint="",interpolation="smooth";
@@ -87,6 +91,8 @@ public final class SketchAnimationActivity extends Activity {
         LinearLayout effects=row(controls);button(effects,"Foot contact",this::contacts,false);button(effects,"Camera",this::camera,false);button(effects,"Cels / dialogue",this::dialogueMenu,false);
         LinearLayout production=row(controls);button(production,"Acting presets",this::motionPresets,false);button(production,"Mouth timing",this::autoMouthTiming,false);button(production,"Production QA",this::productionCheck,false);
         LinearLayout files=row(controls);button(files,"Example",this::example,false);button(files,"Open",this::openAnimation,false);button(files,"Save scene",this::saveScene,false);button(files,"Bake animation",this::bake,true);
+        button(row(controls),"Place in book",this::placeInBook,false);
+        button(row(controls),"Story plan",()->{try{SketchStoryPlanDialog.show(this,id->startActivity(new Intent(this,SketchStudioActivity.class).putExtra("bookId",id)));}catch(Exception error){message(error.getMessage());}},false);
         StudioUi.prepareTouchLayout(root);
     }
     private void load(){
@@ -640,6 +646,87 @@ public final class SketchAnimationActivity extends Activity {
         });
     }
     private void openAnimation(){if(!ready())return;stopPlayback();status.setText("Loading saved animations…");io.execute(()->{try{JSONArray values=SketchAnimationOps.execute(this,"sketch_animation_list",new JSONObject()).getJSONArray("animations");String[] labels=new String[values.length()];for(int i=0;i<labels.length;i++){JSONObject item=values.getJSONObject(i);labels[i]=item.optString("animationId")+" · r"+item.optLong("revision");}post(()->{new AlertDialog.Builder(this).setTitle("Saved animation scenes").setItems(labels,(d,index)->{persistDraft();animationId=values.optJSONObject(index).optString("animationId");selectedRig="";selectedJoint="";load();}).setNegativeButton("Cancel",null).show();});}catch(Exception failure){post(()->message(failure.getMessage()));}});}
+    private void placeInBook(){
+        if(!ready()||saving||placingInBook)return;stopPlayback();
+        String pending=getPreferences(MODE_PRIVATE).getString("animationBookPlacementPending",null);
+        if(pending!=null){
+            new AlertDialog.Builder(this).setTitle("Retained book placement")
+                    .setMessage("Resume the original saved scene and page range. Existing pages and later edits are preserved.")
+                    .setPositiveButton("Resume",(d,w)->{try{startBookPlacement(new JSONObject(pending));}catch(Exception error){message(error.getMessage());}})
+                    .setNeutralButton("Another range",(d,w)->choosePlacementBook()).setNegativeButton("Close",null).show();
+        }else choosePlacementBook();
+    }
+    private void choosePlacementBook(){
+        if(revision<1||dirty){message("Save this scene before placing its frames in a book");return;}
+        final String selectedAnimation=animationId;final long selectedRevision=revision;
+        status.setText("Loading destination sketch books…");
+        io.execute(()->{try{
+            JSONArray books=SketchBookStore.execute(this,"sketch_book_list",new JSONObject()).getJSONArray("books");
+            ArrayList<JSONObject> compatible=new ArrayList<>();ArrayList<String> names=new ArrayList<>();
+            JSONObject saved=SketchAnimationOps.load(this,selectedAnimation);
+            if(saved.getLong("revision")!=selectedRevision)throw new IllegalStateException("Saved scene changed; reopen it before placement");
+            names.add("New 120-second book matching this scene");
+            for(int i=0;i<books.length();i++){
+                JSONObject book=books.getJSONObject(i);
+                if(book.getInt("width")==saved.getInt("width")&&book.getInt("height")==saved.getInt("height")&&book.getInt("fps")==saved.getInt("fps")){
+                    compatible.add(book);names.add(book.getString("name")+" · "+book.getInt("pageCount")+" pages · r"+book.getLong("revision"));
+                }
+            }
+            post(()->{
+                if(!selectedAnimation.equals(animationId)||selectedRevision!=revision||dirty){message("Scene changed; reopen Place in book");return;}
+                new AlertDialog.Builder(this).setTitle("Place saved scene · destination book").setItems(names.toArray(new String[0]),(d,index)->{
+                    try{
+                        if(index==0){
+                            if(saving||placingInBook)return;
+                            JSONObject create=new JSONObject().put("bookId",UUID.randomUUID().toString()).put("operationId",UUID.randomUUID().toString())
+                                    .put("name","Two-minute story").put("pageCount",120*saved.getInt("fps")).put("fps",saved.getInt("fps"))
+                                    .put("width",saved.getInt("width")).put("height",saved.getInt("height")).put("background",saved.getJSONObject("sourceDocument").getString("background"));
+                            saving=true;io.execute(()->{try{SketchBookStore.execute(this,"sketch_book_create",create);post(()->{saving=false;choosePlacementBook();});}
+                                catch(Exception error){post(()->{saving=false;message(error.getMessage());});}});return;
+                        }
+                        JSONObject book=compatible.get(index-1);LinearLayout form=column();
+                        form.addView(label("Copies 1–64 saved frames as editable cels. Choose unopened, one-frame pages. Export sound separately in the project editor.",12));
+                        EditText first=field(form,"First source frame (1 based)",String.valueOf(frame+1),true);
+                        EditText count=field(form,"Frames (1–64)",String.valueOf(Math.min(64,saved.getInt("frameCount")-frame)),true);
+                        EditText page=field(form,"First destination page (1 based)","1",true);
+                        dialog("Place in "+book.getString("name"),form,"Place frames",()->{
+                            if(placingInBook||saving)throw SketchDocument.bad("A placement or save is already running");
+                            if(!selectedAnimation.equals(animationId)||selectedRevision!=revision||dirty)throw SketchDocument.bad("Save changed scene and reopen Place in book");
+                            double firstNumber=number(first,1,saved.getInt("frameCount")),countNumber=number(count,1,64),pageNumber=number(page,1,book.getInt("pageCount"));
+                            if(firstNumber!=Math.rint(firstNumber)||countNumber!=Math.rint(countNumber)||pageNumber!=Math.rint(pageNumber))throw SketchDocument.bad("Use whole frame and page numbers");
+                            JSONObject request=new JSONObject().put("animationId",selectedAnimation).put("expectedAnimationRevision",selectedRevision)
+                                    .put("bookId",book.getString("bookId")).put("expectedBookRevision",book.getLong("revision"))
+                                    .put("sourceFrameStart",(int)firstNumber-1).put("frameCount",(int)countNumber)
+                                    .put("destinationPageStart",(int)pageNumber-1).put("operationId",UUID.randomUUID().toString());
+                            if(!getPreferences(MODE_PRIVATE).edit().putString("animationBookPlacementPending",request.toString()).commit())throw new IllegalStateException("Could not retain placement for retry");
+                            startBookPlacement(request);
+                        });
+                    }catch(Exception error){message(error.getMessage());}
+                }).setNegativeButton("Cancel",null).show();
+            });
+        }catch(Exception error){post(()->message(error.getMessage()));}});
+    }
+    private void cancelBookPlacement(){bookPlacementCancelled.set(true);Thread worker=bookPlacementWorker;if(worker!=null)worker.interrupt();}
+    private void startBookPlacement(JSONObject request)throws Exception {
+        if(placingInBook||saving)return;
+        placingInBook=true;saving=true;bookPlacementCancelled.set(false);
+        AlertDialog progress=new AlertDialog.Builder(this).setTitle("Placing saved animation")
+                .setMessage("Preparing the frozen frame batch. Cancelled work can be resumed with the same request.")
+                .setNegativeButton("Cancel",(d,w)->cancelBookPlacement()).create();
+        bookPlacementDialog=progress;progress.setOnCancelListener(d->cancelBookPlacement());progress.show();
+        io.execute(()->{bookPlacementWorker=Thread.currentThread();try{
+            if(bookPlacementCancelled.get())throw new InterruptedException("Placement cancelled before publication");
+            JSONObject result=SketchAnimationBookPlacement.place(this,request,(done,total)->{
+                if(bookPlacementCancelled.get())throw new InterruptedException("Placement cancelled; resume the retained request");
+                post(()->{progress.setMessage(done+" / "+total+" editable cels placed");status.setText("Book placement · "+done+" / "+total);});
+            });
+            // Clear only this exact completed request; keep any newer pending request intact.
+            if(request.toString().equals(getPreferences(MODE_PRIVATE).getString("animationBookPlacementPending",null)))
+                getPreferences(MODE_PRIVATE).edit().remove("animationBookPlacementPending").commit();
+            post(()->status.setText("Placed "+result.optInt("frameCount")+" editable cels · book r"+result.optLong("bookRevision")+" · review acting and add audio before export"));
+        }catch(Exception failure){post(()->{status.setText("Placement retained for resume · "+failure.getMessage());message(failure.getMessage());});}
+        finally{bookPlacementWorker=null;Thread.interrupted();post(()->{placingInBook=false;saving=false;progress.dismiss();if(bookPlacementDialog==progress)bookPlacementDialog=null;});}});
+    }
     private void productionCheck(){
         if(!ready()||saving)return;
         final int checkedGeneration=generation,request=++qualityRequest;
@@ -690,7 +777,7 @@ public final class SketchAnimationActivity extends Activity {
     @Override public void onBackPressed(){requestBack();}
     @Override protected void onPause(){stopPlayback();++qualityRequest;if(qualityTask!=null)qualityTask.cancel(true);persistDraft();super.onPause();}
     @Override protected void onSaveInstanceState(Bundle state){state.putString("sketchId",sketchId);state.putString("animationId",revision>0?animationId:null);state.putInt("frame",frame);state.putBoolean("mapping",mapping);state.putString("selectedRig",selectedRig);state.putString("selectedJoint",selectedJoint);persistDraft();super.onSaveInstanceState(state);}
-    @Override protected void onDestroy(){destroyed=true;stopPlayback();if(qualityTask!=null)qualityTask.cancel(true);quality.shutdownNow();main.removeCallbacksAndMessages(null);canvas.replace(null);io.execute(()->{if(renderer!=null){renderer.close();renderer=null;}});io.shutdown();super.onDestroy();}
+    @Override protected void onDestroy(){destroyed=true;cancelBookPlacement();if(bookPlacementDialog!=null)bookPlacementDialog.dismiss();stopPlayback();if(qualityTask!=null)qualityTask.cancel(true);quality.shutdownNow();main.removeCallbacksAndMessages(null);canvas.replace(null);io.execute(()->{if(renderer!=null){renderer.close();renderer=null;}});io.shutdown();super.onDestroy();}
     private void post(Runnable run){main.post(()->{if(!destroyed)run.run();});}
     private void message(String text){if(text!=null&&!destroyed)Toast.makeText(this,text,Toast.LENGTH_LONG).show();}
     private int dp(int value){return StudioUi.dp(this,value);}

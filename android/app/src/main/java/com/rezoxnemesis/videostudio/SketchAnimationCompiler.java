@@ -54,7 +54,9 @@ public final class SketchAnimationCompiler {
                 if(expectedObjects>SketchDocument.MAX_OBJECTS||expectedPoints>SketchDocument.MAX_POINTS||expectedKeys>MAX_SAMPLED_KEYS)
                     throw bad("Animation sampling budget exceeded before frame expansion (4096 objects, 131072 points, 32768 dense keys)");
                 if(binding!=null&&binding.weights!=null)continue;
+                SketchCelOps.retainSourceClock(object,range[0]);
                 object.put("frame",range[0]).put("exposure",duration).put("keys",binding==null?clippedKeys(object,m.frames):new JSONArray());
+                refreshRetainedBounds(out,object);
                 items.put(object);outputObjects.put(object.getString("id"),object);
             }
         }
@@ -241,35 +243,72 @@ public final class SketchAnimationCompiler {
 
     /** A worker-thread live preview samples one frame only and never saves or mutates artwork. */
     public static JSONObject preview(JSONObject source,JSONObject program,int frame,String outputId)throws Exception {
-        Model m=new Model(source,program);if(frame<0||frame>=m.frames)throw bad("Animation preview frame outside timeline");
+        return prepare(source,program).preview(frame,outputId);
+    }
+
+    /** Freeze both inputs and validate the source/programme model once for a bounded sampling job. */
+    public static Sampler prepare(JSONObject source,JSONObject program)throws Exception {
+        previewCancelled();
+        Model model=new Model(SketchDocument.copy(source),SketchDocument.copy(program));
+        previewCancelled();return new Sampler(model);
+    }
+
+    /** Owns its private frozen model; every result is detached and remains ordinarily editable. */
+    public static final class Sampler {
+        private final Model model;
+        private Sampler(Model model){this.model=model;}
+        public synchronized JSONObject preview(int frame,String outputId)throws Exception {
+            previewCancelled();JSONObject result=previewFrame(model,frame,outputId);previewCancelled();return result;
+        }
+    }
+
+    private static void previewCancelled()throws InterruptedException {
+        if(Thread.currentThread().isInterrupted())throw new InterruptedException("Animation preview cancelled");
+    }
+
+    private static JSONObject previewFrame(Model m,int frame,String outputId)throws Exception {
+        if(frame<0||frame>=m.frames)throw bad("Animation preview frame outside timeline");
         SketchDocument.id(new JSONObject().put("id",outputId),"id");
+        Set<String> frameIds=new HashSet<>(m.reservedIds);
         JSONObject out=SketchDocument.copy(m.source).put("id",outputId).put("revision",1).put("fps",m.fps).put("frameCount",1);
         Map<String,Snapshot> snapshots=new HashMap<>();Map<String,Rig> bindingRigs=new HashMap<>();
         for(Rig rig:m.rigs){snapshots.put(rig.id,sampleRig(m,rig,frame));for(Binding binding:rig.bindings)bindingRigs.put(binding.objectId,rig);}
         JSONArray layers=out.getJSONArray("layers");Camera camera=sampleCamera(m,frame);
         for(int li=0;li<layers.length();li++){
+            previewCancelled();
             JSONObject layer=layers.getJSONObject(li);JSONObject originalLayer=SketchDocument.layer(m.source,layer.getString("id"));
             JSONObject transform=SketchDocument.transformAt(originalLayer,Math.min(frame,m.sourceFrames-1));
             if(m.cameraLayers.contains(layer.getString("id")))transform=cameraTransform(m,camera,transform);
             layer.put("transform",transform).put("keys",new JSONArray());JSONArray originalItems=layer.getJSONArray("objects"),visible=new JSONArray();layer.put("objects",visible);
             for(int oi=0;oi<originalItems.length();oi++){
+                previewCancelled();
                 JSONObject object=originalItems.getJSONObject(oi);String id=object.getString("id");int[] range=m.ranges.get(id);if(range==null||frame<range[0]||frame>range[1])continue;
                 Binding binding=m.bindings.get(id);JSONObject prepared=m.objects.get(id);
+                if("human".equals(object.getString("kind")))object=SketchHumanAnimation.sampled(object,frame);
+                if("hand".equals(object.getString("kind")))object=SketchHandAnimation.sampled(object,frame);
                 if("path".equals(object.getString("kind")))object=SketchShapeKeys.sampled(object,Math.min(frame,m.sourceFrames-1));
                 if(binding==null)object.put("transform",SketchDocument.transformAt(prepared,Math.min(frame,m.sourceFrames-1)));
                 else{Rig rig=bindingRigs.get(id);if(binding.weights!=null)object=deform(m,rig,snapshots.get(rig.id),binding,prepared,frame);else object.put("transform",jointTransform(m,rig,snapshots.get(rig.id),binding.joint,SketchDocument.transformAt(prepared,Math.min(frame,m.sourceFrames-1))));}
-                visible.put(object.put("frame",0).put("exposure",1).put("keys",new JSONArray()));
+                object.put("frame",0).put("exposure",1).put("keys",new JSONArray());
+                refreshRetainedBounds(out,object);visible.put(object);
             }
         }
         for(int i=0;i<m.dialogues.length();i++){
+            previewCancelled();
             JSONObject cue=m.dialogues.getJSONObject(i);if(frame<cue.getInt("start")||frame>cue.getInt("end"))continue;
-            JSONObject text=new JSONObject().put("id",uniqueId(m,"dialogue_"+i)).put("kind","text").put("frame",0).put("exposure",1)
+            JSONObject text=new JSONObject().put("id",uniqueId(frameIds,"dialogue_"+i)).put("kind","text").put("frame",0).put("exposure",1)
                     .put("color",cue.optString("color","#FFFFFFFF")).put("width",.001).put("fill",true).put("bounds",SketchDocument.copy(cue.getJSONObject("bounds")))
                     .put("text",cue.getString("text")).put("fontFamily","sans-serif").put("fontStyle","bold").put("fontSize",cue.optDouble("fontSize",.035))
                     .put("textAlign","center").put("transform",SketchDocument.transform()).put("keys",new JSONArray());
             SketchDocument.layer(out,cue.getString("layerId")).getJSONArray("objects").put(text);
         }
         SketchDocument.validate(out);return new JSONObject().put("document",out).put("sample",sample(m,frame));
+    }
+
+    private static void refreshRetainedBounds(JSONObject doc,JSONObject object)throws Exception {
+        String kind=object.getString("kind");
+        if("hand".equals(kind))SketchHandAnimation.refreshBounds(doc,object);
+        else if("human".equals(kind))SketchHumanAnimation.refreshBounds(doc,object);
     }
 
     private static final class Joint {String id;int parent=-1;double x,y;}
@@ -530,7 +569,8 @@ public final class SketchAnimationCompiler {
     }
     private static JSONArray clippedKeys(JSONObject object,int frames)throws Exception{JSONArray out=new JSONArray(),keys=object.getJSONArray("keys");for(int i=0;i<keys.length();i++){JSONObject key=keys.getJSONObject(i);if(key.getInt("frame")<frames)out.put(SketchDocument.copy(key));}return out;}
     private static int geometryPoints(JSONObject object)throws Exception {String kind=object.getString("kind");if("path".equals(kind)){int points=0;JSONArray cc=object.getJSONArray("commands");for(int i=0;i<cc.length();i++)points+=(cc.getJSONArray(i).length()-1)/2;return points;}return object.has("points")?object.getJSONArray("points").length():0;}
-    private static String uniqueId(Model m,String base){String id=base;int suffix=0;while(!m.reservedIds.add(id))id=base+"_"+(++suffix);return id;}
+    private static String uniqueId(Model m,String base){return uniqueId(m.reservedIds,base);}
+    private static String uniqueId(Set<String> reservedIds,String base){String id=base;int suffix=0;while(!reservedIds.add(id))id=base+"_"+(++suffix);return id;}
     private static boolean explicitlyVisible(Model m,String objectId,int frame)throws Exception {
         JSONObject layer=SketchDocument.layer(m.source,m.owners.get(objectId));if(!layer.getBoolean("visible")||layer.getDouble("opacity")<=0)return false;
         int sourceFrame=Math.min(frame,m.sourceFrames-1);

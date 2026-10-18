@@ -1,0 +1,348 @@
+{
+  "musicGain": 0.022,
+  "ambienceGain": 0.006,
+  "dialogueGain": 1,
+  "tempo": 72,
+  "theme": "warm",
+  "ambience": "wind",
+  "seed": 13717,
+  "events": [
+    {
+      "id": "s01_arin_step_1",
+      "atMs": 875,
+      "type": "footstep",
+      "intensity": 0.22
+    },
+    {
+      "id": "s01_arin_step_2",
+      "atMs": 1750,
+      "type": "footstep",
+      "intensity": 0.22
+    },
+    {
+      "id": "s01_arin_step_3",
+      "atMs": 2583,
+      "type": "footstep",
+      "intensity": 0.22
+    },
+    {
+      "id": "s01_arin_step_4",
+      "atMs": 3458,
+      "type": "footstep",
+      "intensity": 0.22
+    },
+    {
+      "id": "s01_arin_step_5",
+      "atMs": 4292,
+      "type": "footstep",
+      "intensity": 0.22
+    },
+    {
+      "id": "s01_arin_step_6",
+      "atMs": 5167,
+      "type": "footstep",
+      "intensity": 0.22
+    },
+    {
+      "id": "s01_arin_step_7",
+      "atMs": 6000,
+      "type": "footstep",
+      "intensity": 0.22
+    },
+    {
+      "id": "s01_arin_step_8",
+      "atMs": 6875,
+      "type": "footstep",
+      "intensity": 0.22
+    },
+    {
+      "id": "coat_turn",
+      "atMs": 14700,
+      "type": "cloth",
+      "intensity": 0.22
+    },
+    {
+      "id": "loose_board",
+      "atMs": 19900,
+      "type": "wood",
+      "intensity": 0.28
+    },
+    {
+      "id": "board_shift",
+      "atMs": 35300,
+      "type": "wood",
+      "intensity": 0.32
+    },
+    {
+      "id": "lantern_rim",
+      "atMs": 40125,
+      "type": "metal",
+      "intensity": 0.25
+    },
+    {
+      "id": "kneeling_coat",
+      "atMs": 46700,
+      "type": "cloth",
+      "intensity": 0.16
+    },
+    {
+      "id": "small_light",
+      "atMs": 52700,
+      "type": "chime",
+      "intensity": 0.1
+    },
+    {
+      "id": "turn_to_keeper",
+      "atMs": 55800,
+      "type": "cloth",
+      "intensity": 0.18
+    },
+    {
+      "id": "rope_pass",
+      "atMs": 68800,
+      "type": "cloth",
+      "intensity": 0.28
+    },
+    {
+      "id": "brace_board",
+      "atMs": 71300,
+      "type": "wood",
+      "intensity": 0.24
+    },
+    {
+      "id": "fasten_ring",
+      "atMs": 73500,
+      "type": "metal",
+      "intensity": 0.18
+    },
+    {
+      "id": "test_board",
+      "atMs": 75600,
+      "type": "wood",
+      "intensity": 0.22
+    },
+    {
+      "id": "s11_leela_step_1",
+      "atMs": 78333,
+      "type": "footstep",
+      "intensity": 0.1
+    },
+    {
+      "id": "s11_leela_step_2",
+      "atMs": 79458,
+      "type": "footstep",
+      "intensity": 0.1
+    },
+    {
+      "id": "s11_leela_step_3",
+      "atMs": 80542,
+      "type": "footstep",
+      "intensity": 0.1
+    },
+    {
+      "id": "s11_leela_step_4",
+      "atMs": 81667,
+      "type": "footstep",
+      "intensity": 0.1
+    },
+    {
+      "id": "s11_leela_step_5",
+      "atMs": 82750,
+      "type": "footstep",
+      "intensity": 0.1
+    },
+    {
+      "id": "s11_leela_step_6",
+      "atMs": 83833,
+      "type": "footstep",
+      "intensity": 0.1
+    },
+    {
+      "id": "steady_hand",
+      "atMs": 84900,
+      "type": "cloth",
+      "intensity": 0.15
+    },
+    {
+      "id": "s11_leela_step_7",
+      "atMs": 84958,
+      "type": "footstep",
+      "intensity": 0.1
+    },
+    {
+      "id": "s13_leela_step_1",
+      "atMs": 93333,
+      "type": "footstep",
+      "intensity": 0.1
+    },
+    {
+      "id": "lantern_glow",
+      "atMs": 94100,
+      "type": "chime",
+      "intensity": 0.12
+    },
+    {
+      "id": "s13_arin_step_1",
+      "atMs": 94125,
+      "type": "footstep",
+      "intensity": 0.14
+    },
+    {
+      "id": "s13_leela_step_2",
+      "atMs": 94458,
+      "type": "footstep",
+      "intensity": 0.1
+    },
+    {
+      "id": "s13_arin_step_2",
+      "atMs": 95208,
+      "type": "footstep",
+      "intensity": 0.14
+    },
+    {
+      "id": "s13_leela_step_3",
+      "atMs": 95542,
+      "type": "footstep",
+      "intensity": 0.1
+    },
+    {
+      "id": "s13_arin_step_3",
+      "atMs": 96333,
+      "type": "footstep",
+      "intensity": 0.14
+    },
+    {
+      "id": "s13_leela_step_4",
+      "atMs": 96667,
+      "type": "footstep",
+      "intensity": 0.1
+    },
+    {
+      "id": "s13_arin_step_4",
+      "atMs": 97417,
+      "type": "footstep",
+      "intensity": 0.14
+    },
+    {
+      "id": "s13_leela_step_5",
+      "atMs": 97750,
+      "type": "footstep",
+      "intensity": 0.1
+    },
+    {
+      "id": "s13_arin_step_5",
+      "atMs": 98500,
+      "type": "footstep",
+      "intensity": 0.14
+    },
+    {
+      "id": "s13_leela_step_6",
+      "atMs": 98833,
+      "type": "footstep",
+      "intensity": 0.1
+    },
+    {
+      "id": "s13_arin_step_6",
+      "atMs": 99625,
+      "type": "footstep",
+      "intensity": 0.14
+    },
+    {
+      "id": "s13_leela_step_7",
+      "atMs": 99958,
+      "type": "footstep",
+      "intensity": 0.1
+    },
+    {
+      "id": "s13_arin_step_7",
+      "atMs": 100708,
+      "type": "footstep",
+      "intensity": 0.14
+    },
+    {
+      "id": "s13_leela_step_8",
+      "atMs": 101042,
+      "type": "footstep",
+      "intensity": 0.1
+    },
+    {
+      "id": "s13_arin_step_8",
+      "atMs": 101792,
+      "type": "footstep",
+      "intensity": 0.14
+    },
+    {
+      "id": "settle_coat",
+      "atMs": 102800,
+      "type": "cloth",
+      "intensity": 0.12
+    },
+    {
+      "id": "s16_leela_step_1",
+      "atMs": 118333,
+      "type": "footstep",
+      "intensity": 0.1
+    },
+    {
+      "id": "s16_arin_step_1",
+      "atMs": 119125,
+      "type": "footstep",
+      "intensity": 0.14
+    },
+    {
+      "id": "s16_leela_step_2",
+      "atMs": 119458,
+      "type": "footstep",
+      "intensity": 0.1
+    },
+    {
+      "id": "s16_arin_step_2",
+      "atMs": 120208,
+      "type": "footstep",
+      "intensity": 0.14
+    },
+    {
+      "id": "s16_leela_step_3",
+      "atMs": 120542,
+      "type": "footstep",
+      "intensity": 0.1
+    },
+    {
+      "id": "s16_arin_step_3",
+      "atMs": 121333,
+      "type": "footstep",
+      "intensity": 0.14
+    },
+    {
+      "id": "s16_leela_step_4",
+      "atMs": 121667,
+      "type": "footstep",
+      "intensity": 0.1
+    },
+    {
+      "id": "s16_arin_step_4",
+      "atMs": 122417,
+      "type": "footstep",
+      "intensity": 0.14
+    },
+    {
+      "id": "s16_leela_step_5",
+      "atMs": 122750,
+      "type": "footstep",
+      "intensity": 0.1
+    },
+    {
+      "id": "s16_arin_step_5",
+      "atMs": 123500,
+      "type": "footstep",
+      "intensity": 0.14
+    },
+    {
+      "id": "s16_leela_step_6",
+      "atMs": 123833,
+      "type": "footstep",
+      "intensity": 0.1,
+      "durationMs": 167
+    }
+  ]
+}

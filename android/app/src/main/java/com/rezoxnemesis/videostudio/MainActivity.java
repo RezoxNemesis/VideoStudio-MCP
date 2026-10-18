@@ -965,6 +965,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         Button add=studioButton("+ Import",this::pickMedia);
         mediaHead.addView(add,new LinearLayout.LayoutParams(dp(105),dp(43)));
         box.addView(mediaHead,margins(-1,-2,dp(8),dp(4),0,0));
+        box.addView(studioButton("Import from project",()->ProjectAssetImportDialog.show(this,activeProject.id)),margins(-1,dp(43),dp(8),0,0,dp(4)));
         if(studioShowMedia)renderStudioMediaBin(box);
 
         box.addView(title("Tools",18),margins(-1,-2,dp(10),dp(3),0,0));
@@ -1121,17 +1122,18 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                     Toast.LENGTH_LONG).show();
             return;
         }
-        String[] quality={"720p · faster mobile export","1080p · higher detail"};
-        new AlertDialog.Builder(this).setTitle("Export this timeline")
-                .setMessage("VideoStudio's native Media3 renderer applies supported effects. "+
-                        "The finished MP4 will appear in All Renders; the source project stays intact.")
-                .setItems(quality,(d,index)->{
+        final ProjectStore.Project project=activeProject;
+        StudioExportDialog.show(this,(aspect,quality)->{
+                    if(project.clips.isEmpty()){
+                        Toast.makeText(this,"Add clips to the timeline before exporting",Toast.LENGTH_LONG).show();
+                        return;
+                    }
                     try{
                         Intent request=new Intent(this,ControlService.class)
                                 .setAction(ControlService.ACTION_LOCAL_EXPORT)
-                                .putExtra("projectId",activeProject.id)
-                                .putExtra("aspect","9:16")
-                                .putExtra("quality",index==0?"720p":"1080p")
+                                .putExtra("projectId",project.id)
+                                .putExtra("aspect",aspect)
+                                .putExtra("quality",quality)
                                 .putExtra("fileName","VideoStudio_"+
                                         System.currentTimeMillis()+".mp4");
                         startForegroundService(request);
@@ -1142,7 +1144,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                         Toast.makeText(this,"Could not queue native export: "+e.getMessage(),
                                 Toast.LENGTH_LONG).show();
                     }
-                }).setNegativeButton("Cancel",null).show();
+                });
     }
 
     private void previewSelectedStudioClip(boolean startPlayback){
@@ -1425,6 +1427,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                 new LinearLayout.LayoutParams(dp(109),dp(44)));
         box.addView(header,margins(-1,-2,dp(10),dp(4),0,0));
         box.addView(studioButton("+ Image Overlay",this::chooseStudioImage),margins(-1,dp(43),0,dp(4),0,0));
+        box.addView(studioButton("Story audio",()->{if(activeProject!=null)SketchStoryAudioDialog.show(this,activeProject.id,result->Toast.makeText(this,"Story audio saved in a separate audio project",Toast.LENGTH_LONG).show());}),margins(-1,dp(43),0,dp(4),0,0));
 
         StudioTracksView bands=new StudioTracksView(this);
         studioTracks=bands;
@@ -2281,20 +2284,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         playButton.setOnClickListener(v -> previewTimeline());
         top.addView(playButton);
         Button exportButton = compactButton("Export");
-        exportButton.setOnClickListener(v -> {
-            if (activeProject == null || activeProject.clips.isEmpty()) {
-                Toast.makeText(this, "Timeline is empty", Toast.LENGTH_SHORT).show();
-                return;
-            }
-            Intent export = new Intent(this, ControlService.class)
-                    .setAction(ControlService.ACTION_LOCAL_EXPORT)
-                    .putExtra("projectId", activeProject.id)
-                    .putExtra("aspect", "9:16")
-                    .putExtra("quality", "1080p")
-                    .putExtra("fileName", "VideoStudio_" + System.currentTimeMillis() + ".mp4");
-            startForegroundService(export);
-            Toast.makeText(this, "Export queued in Native Agent • watch Autonomous work", Toast.LENGTH_LONG).show();
-        });
+        exportButton.setOnClickListener(v -> queueStudioExport());
         top.addView(exportButton);
         box.addView(top, margins(-1, -2, 0, dp(10), 0, 0));
         Button storyboard=neonButton("Storyboard → Scoped Motion Drafts",C_MAGENTA);

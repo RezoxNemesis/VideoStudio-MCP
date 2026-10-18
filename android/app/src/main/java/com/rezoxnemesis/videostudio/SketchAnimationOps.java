@@ -20,6 +20,7 @@ public final class SketchAnimationOps {
     /** Public commands return bounded metadata/programs, never a full source or compiled drawing in an ACK. */
     public static JSONObject execute(Context context,String action,JSONObject args)throws Exception {
         if(context==null||args==null)throw SketchDocument.bad("Animation context and arguments are required");
+        if("sketch_animation_place_in_book".equals(action))return SketchAnimationBookPlacement.place(context,args,null);
         synchronized(LOCK){try(Store store=new Store(context)){
             switch(action){
                 case "sketch_animation_save":return store.save(args);

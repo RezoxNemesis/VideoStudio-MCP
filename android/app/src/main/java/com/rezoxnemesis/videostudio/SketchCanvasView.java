@@ -126,7 +126,7 @@ public final class SketchCanvasView extends View {
         if(doc.getInt("width")>1280||doc.getInt("height")>1280)return false;
         int count=0,geometryCount=0;JSONArray layers=doc.getJSONArray("layers");
         for(int i=0;i<layers.length();i++){JSONArray objects=layers.getJSONObject(i).getJSONArray("objects");count+=objects.length();if(count>64)return false;
-            for(int j=0;j<objects.length();j++){JSONObject object=objects.getJSONObject(j);String kind=object.getString("kind");if("image".equals(kind)||"paint".equals(kind))return false;JSONArray points=object.optJSONArray("points"),commands=object.optJSONArray("commands");geometryCount+=(points==null?0:points.length())+(commands==null?0:commands.length());if(geometryCount>2048)return false;}}
+            for(int j=0;j<objects.length();j++){JSONObject object=objects.getJSONObject(j);String kind=object.getString("kind");if("image".equals(kind)||"paint".equals(kind)||"hand".equals(kind)||"human".equals(kind))return false;JSONArray points=object.optJSONArray("points"),commands=object.optJSONArray("commands");geometryCount+=(points==null?0:points.length())+(commands==null?0:commands.length());if(geometryCount>2048)return false;}}
         return true;
     }
     /** A validated worker snapshot transfers ownership without UI parsing/indexing. */

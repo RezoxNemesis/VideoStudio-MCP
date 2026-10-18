@@ -28,7 +28,7 @@ final class SketchCharacterDialog {
     private final Spinner view,build,material,detail,gesture,cuePicker,cueShape;
     private final CheckBox timedSpeech;
     private final EditText armLift,headTilt,skinColor,hairColor,coatColor,previewFrame;
-    private final EditText transition,start,end,strength;
+    private final EditText transition,start,end,strength,shotStart;
     private final ImageView preview;
     private final ExecutorService worker=Executors.newSingleThreadExecutor();
     private JSONArray cues;
@@ -52,7 +52,7 @@ final class SketchCharacterDialog {
         form=new LinearLayout(activity);form.setOrientation(LinearLayout.VERTICAL);form.setPadding(20,12,20,12);
         status=new TextView(activity);status.setContentDescription("Character performance status");status.setText("Character ready. Speech is optional; preview is silent.");
         TextView description=new TextView(activity);description.setContentDescription("Character performance description");
-        description.setText("Create an original travelling scholar on a new editable layer. Six authored 2D views; these are not a 3D model. Current sketch: "+frames+" frames at "+fps+" FPS. Timing and canvas stay unchanged.\nFor speech, generate English or Hindi in Open Pipeline, import the completed dialogue, then load its line below. Preview and Sketch export are silent. Align the animation with that project's original audio at the same timeline offset in the main editor. Model timing is an estimate; review and edit against the audio.");form.addView(description);
+        description.setText("Create an original travelling scholar on a new editable layer. Six authored 2D views; these are not a 3D model. Current sketch: "+frames+" frames at "+fps+" FPS. Timing and canvas stay unchanged.\nFor speech, generate English or Hindi in Open Pipeline, import the completed dialogue, then load its line below. Preview and Sketch export are silent. Align the animation with that project's original audio at the same timeline offset in the main editor. For short shots, enter the global Shot start in master (ms); only fully contained lines load, without clipping or timewarp. Model timing is an estimate; review and edit against the audio.");form.addView(description);
         view=spinner(form,"Character view",new String[]{"Front","Left","Right","Back (front features hidden)","High","Low"});
         build=spinner(form,"Character build",new String[]{"Slender","Broad"});
         material=spinner(form,"Coat material",new String[]{"Wool","Leather"});
@@ -63,6 +63,7 @@ final class SketchCharacterDialog {
         skinColor=colour("Skin colour (ARGB)","#FFD6A078");hairColor=colour("Hair colour (ARGB)","#FF252D3D");coatColor=colour("Coat colour (ARGB)","#FF263847");
         timedSpeech=new CheckBox(activity);timedSpeech.setText("Timed speech");timedSpeech.setContentDescription("Timed speech");form.addView(timedSpeech);
         speechControls=new LinearLayout(activity);speechControls.setOrientation(LinearLayout.VERTICAL);form.addView(speechControls);
+        shotStart=input(speechControls,"Shot start in master (ms)","0",false);
         button(speechControls,"Load generated dialogue",this::loadGenerated);
         TextView speechHelp=new TextView(activity);speechHelp.setText("Initial cues are an authored demonstration, not audio alignment. Loading a line replaces them with editable model timing; no speech recognition or synthesis happens here.");speechControls.addView(speechHelp);
         transition=input(speechControls,"Transition (ms)","60",true);
@@ -100,7 +101,7 @@ final class SketchCharacterDialog {
             public void onTextChanged(CharSequence s,int from,int before,int count){if(!binding&&!closed&&!submitting)clearPreview();}
             public void afterTextChanged(Editable value){}
         };
-        for(EditText control:new EditText[]{armLift,headTilt,skinColor,hairColor,coatColor,previewFrame,transition,start,end,strength})control.addTextChangedListener(edited);
+        for(EditText control:new EditText[]{armLift,headTilt,skinColor,hairColor,coatColor,previewFrame,transition,start,end,strength,shotStart})control.addTextChangedListener(edited);
         refresh();updatePreviewContext();
     }
 
@@ -127,7 +128,11 @@ final class SketchCharacterDialog {
 
     private double durationMs()throws Exception{return document.getInt("frameCount")*1000d/document.getInt("fps");}
 
-    private void loadGenerated(){
+    private void loadGenerated()throws Exception {
+        final long shotStartMs;
+        try{shotStartMs=Long.parseLong(shotStart.getText().toString().trim());}
+        catch(NumberFormatException error){throw SketchDocument.bad("Enter whole shot start milliseconds from 0 to 600000");}
+        if(shotStartMs<0||shotStartMs>600000)throw SketchDocument.bad("Shot start must be 0..600000 milliseconds in the master");
         clearPreview();setLoading(true);status.setText("Finding imported generated dialogue…");
         loadTask=worker.submit(()->{
             try{
@@ -140,12 +145,12 @@ final class SketchCharacterDialog {
                         JSONObject choice=choices.optJSONObject(index);status.setText("Checking the original dialogue and audio…");
                         loadTask=worker.submit(()->{
                             try{
-                                JSONObject loaded=SketchSpeechAssets.load(activity,choice.getString("requestId"),choice.getInt("lineIndex"),durationMs());
+                                JSONObject loaded=SketchSpeechAssets.load(activity,choice.getString("requestId"),choice.getInt("lineIndex"),durationMs(),shotStartMs);
                                 activity.runOnUiThread(()->{
                                     if(unavailable())return;
                                     try{JSONObject speech=loaded.getJSONObject("speech");cues=speech.getJSONArray("cues");selected=0;
                                         transition.setText(String.valueOf(speech.get("transitionMs")));refresh();setLoading(false);
-                                        status.setText("Loaded: "+loaded.getString("text")+"\nModel timing is an estimate. Edit cues against the original audio, which stays in the generated dialogue project's audio lane at the same timeline offset.");
+                                        status.setText("Loaded: "+loaded.getString("text")+"\nModel timing is an estimate. Edit cues against the unchanged master audio. Place this shot at "+loaded.getLong("audioTimelineOffsetMs")+" ms on the master timeline; keep the master audio at its original origin. No clipping or timewarp.");
                                     }catch(Exception error){loadFailed(error);}
                                 });
                             }catch(Exception error){activity.runOnUiThread(()->loadFailed(error));}

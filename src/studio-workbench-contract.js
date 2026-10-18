@@ -8,6 +8,172 @@ const text=(max,nonempty=true)=>z.string().max(max).refine(v=>!v.includes('\0')&
 const revision=integer(1,Number.MAX_SAFE_INTEGER),updatedAt=integer(0,Number.MAX_SAFE_INTEGER);
 const time=integer(0,86400000),frame=integer(0,1199),fps=z.union([z.literal(24),z.literal(30),z.literal(60)]);
 const color=z.string().regex(/^#[a-fA-F0-9]{8}$/);
+export const PROJECT_ASSET_IMPORT_CAPABILITIES=Object.freeze({
+ "minimumNativeVersion": "4.8.0",
+ "infoAction": "project_asset_info",
+ "importAction": "project_import_asset",
+ "maximumBytes": 268435456,
+ "appendDefault": false,
+ "source": "Explicit project ID, exact source revision and asset ID; only app-private regular video/image/audio files, no supplied paths, external providers, symlinks or Gallery enumeration",
+ "integrity": "project_asset_info returns bounded metadata and SHA-256. Import requires expectedSha256 plus exact source/destination revisions, streams a separate independent byte copy and verifies source/output hashes before publication. Original generation metadata and source provenance are retained.",
+ "retry": "Retry the same operation and request to reuse the verified owned result without duplicate assets/clips; later human edits and the existing audio lane are preserved. Changed requests or modified output bytes reject.",
+ "timeline": "Optional appendToTimeline defaults false; video/image appends one clip when true, while audio remains a media-bin asset for explicit lane editing. No new audio lane or master offset is inserted.",
+ "execution": "Import runs as a cancellable recoverable transfer JobManager job. Admission returns ok/queued/jobId; wait for actual jobResult. Stop All interrupts copying and identical retry safely resumes.",
+ "manualControls": "Editor > Media Bin > Import from project; explicit source project/asset selection, hash inspection and optional timeline append use the same ProjectAssetImport core",
+ "agentGuidance": "Ordinary ChatGPT calls app_status and gates native 4.8.0, reads projectAssetImport capabilities, obtains fresh revisions and project_asset_info, then project_import_asset. Book-render output can be copied into the Story Audio output project and appended at time zero before existing project preview/export. No Files picker or FFmpeg is needed for already-owned files.",
+ "galleryAccess": false,
+ "phoneExecutionVerified": false
+});
+export const DIALOGUE_PHRASE_CAPABILITIES=Object.freeze({
+ minimumNativeVersion:'4.8.0',action:'open_pipeline_export_request',backend:'kokoro',field:'controls.lines[].phrases',
+ maximumPhrases:8,maximumTextCharacters:240,speedRange:[.75,1.25],pauseAfterMsRange:[0,1500],maximumPredictionSegments:8,
+ engine:'Existing Kokoro model; per-phrase pacing through separate CPU inference for each phrase',
+ semantics:'Optional 1..8 phrases: join unmodified phrase text with single spaces to exactly equal the original line text. Omitted phrase speed inherits the line speed; omitted pauseAfterMs means zero. Every explicit pause, including the final phrase pause, contributes unchanged PCM silence. Fit speech and pauses inside the original slot; no audio rescale, clipping or timewarp.',
+ output:'Original model prediction segments use actual PCM sample offsets including pause gaps; at most eight segments per line. Keep original text, cast, slot and master clock; model durations are not forced alignment.',
+ manualControls:'Kokoro dialogue: Add phrase / Use whole line pacing; phrase text, optional speed (blank inherits line speed), and integer pause after each phrase including the final phrase',
+ legacyBehavior:'Omit phrases for the unchanged whole-line inference path. Retain legacy v1 jobs/results; use a fresh requestId for per-phrase paced v2 audio.',
+ agentGuidance:'For ordinary ChatGPT call app_status and require connected native appVersion 4.8.0 or newer before exporting any line containing phrases; read app_capabilities.dialoguePhrases. Import the completed hash-bound result before using generated speech references; review actual audio and sync.',
+ newModel:false,emotionalActingCertified:false,forcedAlignmentVerified:false,phoneExecutionVerified:false
+});
+export const STORY_PLAN_CAPABILITIES=Object.freeze({
+ minimumNativeVersion:'4.8.0',actions:['sketch_story_create','sketch_story_preview','sketch_story_example'],
+ examples:['last_lantern'],example:'sketch_story_example accepts only exampleId last_lantern and returns a fresh-ID editable plan plus full dialogueControls and native-validated bundled audioSettings, readOnly true, audioEmbedded false and dialogueGenerationNeedsConfiguredRunner true. Fetch through MCP; no client workspace or asset path is required. The shared manual helper reads bundled app assets without publishing stores or journals.',
+ maximumShots:64,maximumOperationsPerShot:128,shotFrames:[24,1200],fps:[24,30,60],maximumBookIdCharacters:48,maximumShotIdCharacters:20,
+ transport:{maximumParametersBytes:524288,nativePlanMaximumBytes:2097152,largePlans:'MCP parameters and encrypted mailbox commands remain limited to 512 KiB; chunked queue records and the native helper permit up to 2 MiB. No story archive or reference input route exists; keep the complete unchanged plan within the parameter budget.'},
+ plan:'Required bookId, operationId, name, width, height, fps and 1..64 shots. Each shot has shotId, frameCount, 1..128 strict native operations, optional camera keys and optional label. Shot IDs are unique; preserve the declared canvas and exact book clock.',
+ publication:'Recoverable owned native shot publication may retain partial output after cancellation or a late conflict; retry the identical plan and operationId to resume. A fresh bookId is required. All shots pass semantic preflight before any book/source/programme publication; exact replay preserves existing human cel edits.',
+ preview:'sketch_story_preview accepts plan, shotId and zero-based frame inside that shot; detached native frame sampling returns a bounded Android Canvas PNG with readOnly true, without publishing or returning the full source document',
+ execution:'Story creation uses a cancellable recoverable JobManager job: initial native admission returns ok/queued/jobId; wait for job completion and read the final jobResult for book/shot receipts. Stop All interrupts the worker and retains owned partial output. Retry the identical plan and operationId to resume. Example loading and preview remain read-only operations.',
+ output:'Editable native source sketches, retained saved animation programmes and sampled book pages; existing drawing, key, storage and exact-frame placement budgets remain unchanged',
+ audio:'Generated speech references retain owned imported master hashes and explicit shotStartMs. Sketch preview/export stays silent; sketch_story_audio_create creates a separate owned audio mix for the existing project audio lane.',
+ manualSource:'SketchStoryPlanOps.execute/preparePreview/preview/create is shared by manual story controls and MCP',
+ agentGuidance:'For ordinary ChatGPT call app_status first and require connected native appVersion 4.8.0 or newer; read sketch_capabilities.storyPlan, use fresh book and stable operation identities, preview chosen shot frames, then create. Keep the complete plan unchanged on recovery; inspect receipts and native frames before claiming story quality.',
+ creativeQualityCertified:false,phoneExecutionVerified:false
+});
+export const STORY_AUDIO_CAPABILITIES=Object.freeze({
+ minimumNativeVersion:'4.8.0',action:'sketch_story_audio_create',
+ settings:{musicGain:.035,ambienceGain:.008,dialogueGain:1,tempo:72,theme:'warm',ambience:'rain',seed:13717,events:[]},
+ settingLimits:{musicGain:[0,1],ambienceGain:[0,1],dialogueGain:[0,2],tempo:[30,180],seed:[0,2147483647]},
+ themes:['warm','calm','tense'],ambiences:['rain','wind','night','none'],maximumEvents:512,
+ eventTailMs:{footstep:180,wood:240,metal:600,cloth:350,chime:1200},
+ eventDurationControls:'Optional event durationMs is an integer from 1 through eventTailMs[type]: footstep 180, wood 240, metal 600, cloth 350, chime 1200 milliseconds. Omit it for the unchanged native full duration without injecting a field into legacy requests. The event envelope uses the chosen duration; source PCM and the film frame clock remain unchanged. For a 124000 ms film, a footstep at 123833 with durationMs 167 ends exactly at 124000. The chosen full event must fit the actual source PCM; no clipping or extension.',
+ request:'Required projectId, sourceProjectUpdatedAt, assetId, operationId and strict settings. IDs begin with an ASCII letter/digit and contain at most 96 letters/digits/underscores/hyphens. No name or external source URL field.',
+ events:'Optional 0..512 cues with unique id, integer atMs 0..599999, type footstep/wood/metal/cloth/chime and intensity 0..1, with optional integer durationMs 1..eventTailMs[type]. Omitted duration uses the original natural tail; the selected event length must fit the actual source PCM duration; native sorts cues without rescaling audio.',
+ source:'Explicit owned app-file-backed project audio asset: 24 kHz mono PCM16 WAV, 100..600000 ms and at most 32 MiB. Native verifies source project timestamp, file ownership and source hash; import through editor Files first.',
+ clock:'The unchanged source sample clock and duration determine the mix; original source remains intact. Native streams two bounded-buffer passes and applies shared headroom attenuation when necessary; no clipping, timewarp or speech inference.',
+ output:'A new audio-only project containing an app-owned WAV and audio lane at time zero; receipt includes source/result hashes and PCM proof. Separate deterministic native pad, ambience and event synthesis uses the existing dialogue master.',
+ recovery:'Reuse the identical request and operationId to replay or resume its owned result; changed identity/settings/hash reject. Use a fresh operationId for a new mix.',
+ execution:'Audio creation uses a cancellable recoverable JobManager job: initial native admission returns ok/queued/jobId; wait for job completion and read final jobResult for the output project, asset, source/result hashes and PCM proof. Stop All interrupts synthesis; an interrupted I/O exception is cancellation. Retry the identical request and operationId to resume or replay.',
+ manualControls:'Story audio controls select the imported dialogue asset, pad/ambience gains, dialogue gain, tempo, theme, ambience, seed, editable event cues and stable operation identity',
+ manualSource:'SketchStoryAudio.defaults/validateSettings/render/execute is shared by manual controls and MCP',
+ agentGuidance:'For ordinary ChatGPT call app_status first and require connected native appVersion 4.8.0 or newer; read sketch_capabilities.storyAudio. Select the explicit owned PCM asset and source project timestamp; preserve the master clock, inspect returned hashes/PCM and listen to the actual result. This operation does not synthesize dialogue or certify playback or acting.',
+ playbackVerified:false,listening:'UNREVIEWED',creativeQualityCertified:false,phoneExecutionVerified:false
+});
+export const STORY_STAGE_CAPABILITIES=Object.freeze({
+ minimumNativeVersion:'4.8.0',action:'sketch_edit',operation:'add_story_stage',
+ settings:{location:'forest_path',time:'dusk',weather:'clear',intensity:.6},
+ locations:['forest_path','bridge','shelter','village'],times:['dusk','night','dawn'],weather:['clear','wind','rain'],settingLimits:{intensity:[0,1]},
+ identities:'Required layerId and sceneId up to 20 characters; optional foregroundLayerId selects a separate existing foreground layer',
+ output:'Ordinary editable native paths, gradients and transform keys; original app-owned scenery without imported artwork or an external renderer',
+ motion:'Stage weather uses compact periodic keys: rain has a two-second cycle and wind a three-second cycle, with explicit wraps and the unchanged actual FPS/frame count; no timeline reduction',
+ placement:'Uniformly fit the native 1280x720 design to the existing canvas; preserve resolution, FPS and duration; native checks composed layer/object placement, locked layers, duplicate identities and budgets before publishing',
+ manualSource:'SketchStoryStage.defaults/settings/apply is the shared native source for manual scenery controls and MCP',
+ budgets:{maximumBytes:4194304,maximumObjects:4096,maximumPoints:131072,maximumKeys:4096},
+ agentGuidance:'For ordinary ChatGPT call app_status first and require connected native appVersion 4.8.0 or newer; read sketch_capabilities.storyStage, inspect target layer order and use a stable sceneId. Inspect native rendered frames; successful geometry does not certify story or visual quality.',
+ genuine3D:false,creativeQualityCertified:false,phoneExecutionVerified:false
+});
+export const ACTOR_PROP_CAPABILITIES=Object.freeze({
+ minimumNativeVersion:'4.8.0',action:'sketch_edit',operation:'add_actor_prop',
+ settings:{kind:'lantern',attachment:'near',scale:1,x:.5,y:.8},
+ kinds:['lantern','parcel','staff'],attachments:['near','far','floor'],settingLimits:{scale:[.4,1.5],x:[0,1],y:[0,1]},
+ identities:'Required layerId and propId up to 20 characters; actorId is required for near/far, including the default near attachment; floor requires no actor',
+ attachment:'Held near/far props require actorId selecting the retained human actorId_rig in the same actor layer and attach to its actual projected palm/pinch grip, including wrist rotation, hand openness and the actor object transform; the common layer/camera transform is inherited once. Actor must cover the complete unchanged frame clock and FPS.',
+ position:'x/y locate floor props in normalized canvas coordinates; held grip coordinates come from the native human joints. Scale multiplies actor size for held props. Lanterns hang world-down before the common layer/camera transform.',
+ motion:'Held props bake dense exact hand-position keys for every actual output frame; no resampling, frame reduction or retiming to fit budgets. Floor props use static placement.',
+ editing:'Baked prop curves and keys are independent; rebake after actor edits to restore the grip relationship and refresh any separate hand overlay',
+ output:'Ordinary editable native paths, gradients and transform keys; held props may retain a separate native human hand overlay. Original lantern/parcel/staff art without imported artwork or an external renderer',
+ occlusion:'Held props may hide the corresponding hand in the body programme and retain a separate hand-only human overlay so fingers draw after the handle',
+ maximumRetainedActors:16,
+ manualSource:'SketchActorProp.defaults/settings/apply is the shared native source for manual prop controls and MCP',
+ budgets:{maximumBytes:4194304,maximumObjects:4096,maximumPoints:131072,maximumKeys:4096},
+ limits:'Existing 4 MiB/4096 object/131072 point/4096 key budgets are unchanged. The global 16 retained hand/human actor cap includes hand overlay clones. Exact held-prop keys may exceed the budget; shorten the shot or use fewer props. Native rejects missing/cross-layer actors, locked layers, duplicate identity, composed out-of-bounds geometry and budget failures before publishing.',
+ agentGuidance:'For ordinary ChatGPT call app_status first and require connected native appVersion 4.8.0 or newer; read sketch_capabilities.actorProp. Create/select the native human first, target the same actor layer, and inspect actual grip across frames; floor props need no actor. Native numerical checks do not certify acting or visual quality.',
+ genuine3D:false,creativeQualityCertified:false,phoneExecutionVerified:false
+});
+export const GRIP_LINK_CAPABILITIES=Object.freeze({
+ minimumNativeVersion:'4.8.0',action:'sketch_edit',operation:'add_grip_link',
+ settings:{sagPx:12,widthPx:2.8,color:'#FF9D784F'},hands:['near','far'],
+ settingLimits:{sagPx:[0,64],widthPx:[.5,12],color:'Eight-digit #AARRGGBB'},maximumFrames:240,
+ identities:'Required layerId, linkId up to 20 characters, from/to endpoints each with actorId and hand near/far, and strict settings; endpoints may select different hands of the same actor or two actors',
+ placement:'Target layer must be behind both actor layers. Native checks retained human actors, matching FPS, complete shot exposure, distinct grip positions, invertible destination transform and in-canvas geometry before publishing.',
+ endpoints:'Native worldGrip resolves actual projected hand grips with world/layer/actor transforms at each frame, then maps endpoints and the sag control into the destination layer',
+ motion:'Exact native Bezier shapeKeys on every actual output frame, at most 240 frames; no resampling, timewarp, FPS or resolution reduction. sagPx and widthPx scale from the native 1280x720 design fit.',
+ output:'Ordinary editable native paths with shapeKeys; two rope ink paths with quadratic Bezier commands, without a new object kind or a retained link payload',
+ editing:'Baked link paths and shapeKeys are independent; rebake after actor or layer transform edits to restore endpoint contact',
+ manualControls:'Sketch Studio > Brush / Text > Human acting > Optional held prop: rope; creates the link layer behind the actor and uses the shared add_grip_link operation',
+ manualSource:'SketchGripLink.defaults/settings/apply/worldGrip is the shared native source for manual rope controls and MCP',
+ budgets:{maximumBytes:4194304,maximumObjects:4096,maximumPoints:131072,maximumKeys:4096},
+ limits:'Existing drawing budgets remain unchanged; exact per-frame shapeKeys count toward the global key budget. Native rejects unsupported clocks, layer order, geometry and budget failures rather than reducing output quality.',
+ agentGuidance:'For ordinary ChatGPT call app_status first and require connected native appVersion 4.8.0 or newer; read sketch_capabilities.gripLink. Create the human actors and a link layer behind both actor layers, preserve the unchanged shot clock and inspect endpoint contact on rendered frames. This is an editable sagging connector, not cloth physics or certified visual quality.',
+ clothPhysics:false,genuine3D:false,creativeQualityCertified:false,phoneExecutionVerified:false
+});
+const humanChannels=['rootX','rootY','rootZ','bodyLean','headTilt','gazeX','gazeY','mouth','mouthWide','mouthRound','mouthTeeth','mouthTongue','smile','brow','nearHandX','nearHandY','nearHandZ','farHandX','farHandY','farHandZ','hipX','hipY','hipZ','footLeftX','footLeftY','footLeftZ','footRightX','footRightY','footRightZ','blink','nearWrist','farWrist','handOpen','nearElbowSwivel','farElbowSwivel'];
+const humanChannelLimits=Object.fromEntries(humanChannels.map(channel=>[channel,channel==='bodyLean'?[-25,25]:channel==='headTilt'?[-20,20]:['gazeX','gazeY','smile','brow','mouthWide'].includes(channel)?[-1,1]:['mouth','mouthRound','mouthTeeth','mouthTongue','blink','handOpen'].includes(channel)?[0,1]:['nearWrist','farWrist','nearElbowSwivel','farElbowSwivel'].includes(channel)?[-180,180]:[-4096,4096]]));
+export const HUMAN_ANIMATION_CAPABILITIES=Object.freeze({
+ minimumNativeVersion:'4.8.0',action:'sketch_edit',operation:'add_human_animation',objectKind:'human',
+ settings:{view:'front',build:'slender',hairStyle:'short',skinColor:'#FFD6A078',hairColor:'#FF302D32',coatColor:'#FF526B78',trouserColor:'#FF343F50',x:.5,floorY:.88,size:1,faceStyle:'graphic',shading:'cel',lightAngle:135},
+ views:['front','left','right','back','high','low'],builds:['slender','broad'],hairStyles:['short','long'],
+ faceStyles:['graphic','angular','soft'],shadingStyles:['cel','soft'],
+ settingLimits:{x:[0,1],floorY:[0,1],size:[.1,2],lightAngle:[-180,180],colors:'Eight-digit #AARRGGBB'},
+ appearance:'Native faceStyle graphic is the default; shading cel is the default; lightAngle defaults to 135 degrees. Angular/soft faces use shared native facial construction and clipped irises. soft shading uses native gradients on body, skin and clothing, excludes eyes, mouth and ink, and preserves geometry. Legacy retained settings keep these three fields optional; no defaults are injected into old request fingerprints.',
+ presets:['listen','explain','reach','recoil','relief','bow','kneel','walk','run','point','offer','tie','inspect','surprise','anger','remorse','wave','look_up','look_down','stretch','step_back','balance','lift','greet'],defaultPreset:'listen',maximumPoses:240,
+ motionDefaults:{speed:1,travelScale:1,groundSlope:0,direction:1,strength:1,armSwing:1,groundSlopeX:0,phase:0},
+ motionLimits:{speed:[.5,1.5],travelScale:[0,1.5],groundSlope:[-.5,.5],direction:[-1,1],strength:[0,1],armSwing:[0,1],groundSlopeX:[-.5,.5],phase:[0,1]},
+ grounds:['forest_path','bridge','shelter','village'],
+ groundControls:'Optional constructor ground uses the shared native scene walkway and camera to derive settings floorY, motion groundSlopeX and groundSlope through the native ground helper. Reject ground with fit true or explicit poses; omit both motion groundSlope and groundSlopeX fields, even zero values. Other motion controls, strength, poseOverrides and speech may combine with ground. Native applies the ground plane after strength and poseOverrides; the retained programme stores actual editable poses with no unused ground field in the payload. Preserve size, resolution, FPS, frames and existing budgets.',
+ fitMinimumNativeVersion:'4.8.0',fitDefault:false,
+ fitControls:'Optional constructor fit boolean, default false. Native measures the full motion bounds and moves only settings x/floorY anchor coordinates; never reduces size, width, height, FPS or frames. If the motion cannot fit at the original size, reject. Keep fit false for authored stage/contact placement; manual solo framing defaults true unless scenery is chosen.',
+ blinkTrackMinimumNativeVersion:'4.8.0',
+ blinkTrackDefaults:{intervalMs:3600,phaseMs:1800,closeMs:70,holdMs:80,openMs:110,strength:1},
+ blinkTrackLimits:{intervalMs:[1000,30000],phaseMs:[0,30000],closeMs:[20,300],holdMs:[0,300],openMs:[20,400],strength:[0,1]},
+ blinkTrackControls:'Optional constructor blinkTrack is false or strict settings; omitted preset tracks use default settings, while explicit poses get no track unless provided. false disables the independent track. Timing fields use integer milliseconds; strength is a finite number 0..1. closeMs+holdMs+openMs must not exceed intervalMs. Native evaluates max(pose.blink,sample(track,localFrame*1000/fps)) on every actual output frame, independently of body pose key density. Retained human.blinkTrack contains normalized full settings only; sampled frozen cels remove the track. Omitted settings inherit native defaults; Node does not insert them or retime the programme.',
+ poseConvention:'For the left profile only, generated presets flip bodyLean/headTilt before explicit poseOverrides. Custom poses keep their raw clockwise convention; views and channel ranges are unchanged.',
+ motionControls:'Optional constructor motion selects the shared native preset generator and cannot combine with explicit poses. speed/travelScale/direction/armSwing control gait; direction is only -1 or 1, strength blends toward neutral. Optional phase is 0..1 with native default 0; it offsets the motion cycle clock while leaving root travel start unchanged, so separate cast members can use distinct phases. It may combine with ground and other preset controls, but not explicit poses. Node inserts no phase default into old input fingerprints. groundSlope is world-Y rise per world-Z travel; groundSlopeX is world-Y rise per world-X travel for inclined ground and fixed foot plants. Both slopes use -.5.. .5 and native default 0. Node inserts no motion defaults. Omit both slope fields when using ground. The generator retains actual editable poses with no unused motion field in the retained payload. Walk/run still require exact output poses at at most 240 frames; no resampling.',
+ poseOverrideControls:'Optional constructor poseOverrides is a strict subset of the 35 Figure pose channels using channelLimits; merge supplied constants over every generated preset pose. May combine with motion and speech, but cannot combine with explicit poses. No frame, interpolation or curve fields; no coercion or defaults inserted for omitted channels. The retained payload stores actual editable poses, without a poseOverrides field. Use shared native controls for held-hand position, eyeline and emotion during locomotion; speech still overlays mouth channels.',
+ locomotion:'walk/run generate one exact pose for every actual output frame, up to 240 frames; longer walk/run shots reject explicitly without resampling foot plants. Other actions use nine editable preset poses.',
+ manualControls:'Sketch Studio > Brush / Text > Human acting; all 35 pose channels, 24 presets, editable Motion controls JSON and Pose overrides JSON, fit checkbox, independent blink checkbox and settings JSON, Face structure and Surface shading dropdowns with numeric lightAngle, Follow scene ground checkbox shared with the scenery choice for preset actions (custom poses omit ground), native preview, generated speech loading with explicit shot start, and create on a new layer',
+ channels:humanChannels,channelLimits:humanChannelLimits,
+ parts:['all','without_near_hand','without_far_hand','near_hand','far_hand'],defaultParts:'all',maximumRetainedActors:16,
+ sourceFrameOffset:'Optional retained-payload integer -1200..1200, omitted means 0; renderFrame takes precedence. Otherwise native local time is frame minus object frame plus this offset, clamped to the programme duration. Preserve it when round-tripping edited native objects; constructor arguments are unchanged.',
+ poseControls:'Optional 1..240 integer-frame poses, first frame 0 and strictly increasing inside the unchanged timeline; omitted channels use native neutral defaults independently at each key. Standard linear/hold/smooth/ease_in/ease_out/ease_in_out/bezier interpolation; bezier alone requires four curve controls 0..1. Default interpolation is linear. nearWrist/farWrist/nearElbowSwivel/farElbowSwivel use -180..180 degrees; handOpen uses 0..1. Explicit poses may accompany speech; speech overlays mouth channels while body acting remains editable.',
+ retainedObject:'kind human with standard bounds/transform/keys and human payload: original required settings with optional faceStyle/shading/lightAngle for legacy round trips, 1..240 poses, durationFrames 24..1200, fps 24/30/60, optional renderFrame inside the programme, optional resolved speech cues and optional parts selecting all/without_near_hand/without_far_hand/near_hand/far_hand (omitted means all). Parts apply only to retained payloads; add_human_animation is unchanged. Human adds, full layer objects and human-field replacement patches require native 4.8.0.',
+ limits:'24..1200 frames; at most 40 seconds; 24/30/60 FPS; actorId up to 20 characters; preserve exact FPS/resolution and 4 MiB/4096 object/131072 point/4096 key budgets. The global 16 retained hand/human actor cap includes hand overlay clones. Reachability, duplicate identity, locked layers and base artwork bounds reject invalid construction.',
+ budgets:{maximumBytes:4194304,maximumObjects:4096,maximumPoints:131072,maximumKeys:4096},
+ geometry:'Original fixed-length native joint chains, two-bone IK, adult anatomy, clothing/hair and depth ordering in six projected2D camera views; Android Canvas artwork, no external artwork renderer or reference tracing',
+ bounds:'Authored camera and world transforms may intentionally crop the composition; constructor base artwork must remain inside the canvas.',
+ output:'Editable native human settings/pose/speech programme; native frame sampling for editable book cels',
+ speech:'Optional existing authored cues, original model predictions, or an owned imported generated line with requestId/lineIndex/shotStartMs. Retained human objects store resolved cues only. Master hashes/ownership and explicit shot rebasing are preserved; Sketch preview/export remains silent.',
+ agentGuidance:'For ordinary ChatGPT call app_status first, require a connected native appVersion 4.8.0 or newer, then read sketch_capabilities.humanAnimation. Use add_human_animation or edit retained human objects; preserve source timing. Inspect native frames and motion; numeric tests do not certify anatomy, acting, speech sync or story quality.',
+ genuine3D:false,creativeQualityCertified:false,phoneExecutionVerified:false,speechVerified:false
+});
+export const HAND_ANIMATION_CAPABILITIES=Object.freeze({
+ minimumNativeVersion:'4.8.0',action:'sketch_edit',operation:'add_hand_animation',
+ settings:{view:'front',handedness:'right',detail:'anatomical',skinColor:'#FFD6A078',nailColor:'#FFE5C1AC',centerX:.5,centerY:.55,size:1,motion:1,wristMotion:.6},
+ views:['front','left','right','back','high','low'],handedness:['right','left'],details:['anatomical','contour'],
+ settingLimits:{centerX:[.2,.8],centerY:[.2,.8],size:[.4,1.2],motion:[0,1],wristMotion:[0,1],colors:'Eight-digit #AARRGGBB'},
+ channels:['indexCurl','middleCurl','ringCurl','littleCurl','thumbCurl','thumbOpposition','spread','wristFlex','wristTurn'],
+ channelLimits:{indexCurl:[0,1],middleCurl:[0,1],ringCurl:[0,1],littleCurl:[0,1],thumbCurl:[0,1],thumbOpposition:[0,1],spread:[0,1],wristFlex:[-25,25],wristTurn:[-25,25]},
+ poseControls:'Optional 1..32 poses; integer frames 0..239, first frame 0, strictly increasing and inside the document timeline. Curl/opposition/spread 0..1; wristFlex/wristTurn -25..25 degrees. Omitted channels inherit neutral defaults, not the preceding pose. Optional interpolation: linear/hold/smooth/ease_in/ease_out/ease_in_out/bezier; bezier alone requires curve [x1,y1,x2,y2], each 0..1. Default interpolation is linear.',
+ budgets:{maximumBytes:4194304,maximumObjects:4096,maximumPoints:131072,maximumKeys:4096},
+ limits:'4..8 seconds; 24..240 frames; 24/30/60 FPS; 1..32 poses; unique handId up to 20 characters; preserve exact document resolution/timing and 4 MiB/4096 object/131072 point/4096 key budgets; invalid input, locked layers, duplicate identity, layer-transformed bounds and budget failures reject atomically',
+ geometry:'Native numeric joint chains and tapered surfaces yield six projected2D camera views with foreshortening and hidden-surface occlusion; five independent digits, coordinated thumb, palm pads, restrained shading and dorsal nails; uniform fit supports landscape/portrait/square',
+ semantics:'Fixed bone lengths and continuous joints; default motion is relaxed/preparation/curl/staggered unfurl/open hold/close/relaxed finish with small wrist preparation. When sampled to cels, identical adjacent frames share exposure and are not unique drawings. Construction checks cancellation.',
+ output:'Editable native hand settings/pose programme; sample to ordinary native path cels',
+ sourceFrameOffset:'Optional retained-payload integer -1200..1200, omitted means 0; renderFrame takes precedence. Otherwise native local time is frame minus object frame plus this offset, clamped to the programme duration. Preserve it when round-tripping edited native objects; constructor arguments are unchanged.',
+ manualControls:'Sketch Studio > Brush / Text > Hand animation; shared settings and pose channels, asynchronous native preview/create on a new layer with conflict/cancellation protection',
+ agentGuidance:'For ordinary ChatGPT, call app_status first and gate add_hand_animation on connected native appVersion 4.8.0 or newer; read sketch_capabilities.handAnimation before authoring. Native preview/export is silent; hand mechanics do not establish speech, phone execution, photorealism or genuine3D.',
+ genuine3D:false,photorealistic:false,phoneExecutionVerified:false,speechVerified:false,creativeQualityCertified:false
+});
 export const CHARACTER_PERFORMANCE_CAPABILITIES=Object.freeze({
  minimumNativeVersion:'4.7.8',action:'sketch_edit',operation:'add_character_animation',
  settings:{view:'front',build:'slender',material:'wool',detail:'tailored',gesture:'pendant',armLift:.8,headTilt:0,skinColor:'#FFD6A078',hairColor:'#FF252D3D',coatColor:'#FF263847'},
@@ -37,7 +203,7 @@ const speechTiming=z.object({transitionMs:finite.min(0).max(200).optional(),cues
  shape:z.enum(['rest','closed','open','wide','round','teeth','tongue']),strength:finite.min(0).max(1).optional()
 }).strict().refine(v=>v.endMs>v.startMs,'Speech cue end must follow its start')).min(1).max(240)
  .refine(v=>v.every((cue,i)=>i===0||cue.startMs>=v[i-1].endMs),'Speech cues must be ordered and nonoverlapping').optional(),
- generated:z.object({requestId:id,lineIndex:integer(0,31)}).strict().optional(),
+ generated:z.object({requestId:id,lineIndex:integer(0,31),shotStartMs:integer(0,600000).optional()}).strict().optional(),
  prediction:z.object({startMs:finite.min(0).max(10000),segments:z.array(speechSegment).min(1).max(8)
  .refine(v=>v.every((s,i)=>i===0||s.startSample>=v[i-1].startSample+v[i-1].sampleCount),'Predicted segments cannot overlap')}).strict().optional()
 }).strict().refine(v=>[v.cues,v.prediction,v.generated].filter(x=>x!==undefined).length===1,'Choose authored cues, predictions or an imported generated line');
@@ -69,6 +235,30 @@ const radialGradient=z.object({type:z.literal('radial'),cx:coordinate,cy:coordin
 const gradient=z.union([legacyGradient,radialGradient]);
 const blendMode=z.enum(['normal','multiply','screen','add']);
 const sketchObjectShape={id,frame:frame.optional(),exposure:integer(1,1200).optional(),color:color.optional(),width:finite.min(.0005).max(.2).optional(),fill:z.boolean().optional(),transform:fullTransform.optional(),keys:sketchKeys.optional()};
+const handSettings=z.object({view:z.enum(HAND_ANIMATION_CAPABILITIES.views).optional(),handedness:z.enum(HAND_ANIMATION_CAPABILITIES.handedness).optional(),detail:z.enum(HAND_ANIMATION_CAPABILITIES.details).optional(),skinColor:color.optional(),nailColor:color.optional(),centerX:finite.min(.2).max(.8).optional(),centerY:finite.min(.2).max(.8).optional(),size:finite.min(.4).max(1.2).optional(),motion:coordinate.optional(),wristMotion:coordinate.optional()}).strict();
+const handPose=z.object({frame:integer(0,239),indexCurl:coordinate.optional(),middleCurl:coordinate.optional(),ringCurl:coordinate.optional(),littleCurl:coordinate.optional(),thumbCurl:coordinate.optional(),thumbOpposition:coordinate.optional(),spread:coordinate.optional(),wristFlex:finite.min(-25).max(25).optional(),wristTurn:finite.min(-25).max(25).optional(),interpolation:drawingInterpolation.optional(),curve:timingCurve.optional()}).strict().refine(v=>timingValid({...v,interpolation:v.interpolation??'linear'}),'Invalid hand timing curve');
+const handPoses=z.array(handPose).min(1).max(32).refine(v=>v[0].frame===0&&v.every((p,i)=>i===0||p.frame>v[i-1].frame),'Hand poses start at zero and strictly increase');
+const handPayload=z.object({settings:handSettings.required(),poses:handPoses,durationFrames:integer(24,240),fps,renderFrame:integer(0,239).optional(),sourceFrameOffset:integer(-1200,1200).optional()}).strict()
+ .refine(v=>v.durationFrames/v.fps>=4&&v.durationFrames/v.fps<=8,'Retained hand clock must preserve 4..8 seconds')
+ .refine(v=>v.poses.every(p=>p.frame<v.durationFrames)&&(v.renderFrame===undefined||v.renderFrame<v.durationFrames),'Hand poses and sampled frame must fit the original programme duration');
+const humanAppearanceSettings={faceStyle:z.enum(HUMAN_ANIMATION_CAPABILITIES.faceStyles).optional(),shading:z.enum(HUMAN_ANIMATION_CAPABILITIES.shadingStyles).optional(),lightAngle:finite.min(-180).max(180).optional()};
+const humanSettings=z.object({view:z.enum(HUMAN_ANIMATION_CAPABILITIES.views).optional(),build:z.enum(HUMAN_ANIMATION_CAPABILITIES.builds).optional(),hairStyle:z.enum(HUMAN_ANIMATION_CAPABILITIES.hairStyles).optional(),skinColor:color.optional(),hairColor:color.optional(),coatColor:color.optional(),trouserColor:color.optional(),x:coordinate.optional(),floorY:coordinate.optional(),size:finite.min(.1).max(2).optional(),...humanAppearanceSettings}).strict();
+const humanMotion=z.object({speed:finite.min(.5).max(1.5).optional(),travelScale:finite.min(0).max(1.5).optional(),groundSlope:finite.min(-.5).max(.5).optional(),groundSlopeX:finite.min(-.5).max(.5).optional(),direction:z.union([z.literal(-1),z.literal(1)]).optional(),strength:coordinate.optional(),armSwing:coordinate.optional(),phase:coordinate.optional()}).strict();
+const humanBlinkSettings=z.object(Object.fromEntries(Object.entries(HUMAN_ANIMATION_CAPABILITIES.blinkTrackLimits).map(([field,[min,max]])=>[field,(field==='strength'?finite.min(min).max(max):integer(min,max)).optional()]))).strict();
+const validBlinkTiming=v=>(v.closeMs??70)+(v.holdMs??80)+(v.openMs??110)<=(v.intervalMs??3600);
+const humanBlinkTrack=humanBlinkSettings.refine(validBlinkTiming,'Blink close/hold/open duration must fit the interval');
+const humanNormalizedBlinkTrack=humanBlinkSettings.required().refine(validBlinkTiming,'Blink close/hold/open duration must fit the interval');
+const humanPoseOverrides=z.object(Object.fromEntries(Object.entries(humanChannelLimits).map(([channel,[min,max]])=>[channel,finite.min(min).max(max).optional()]))).strict();
+const humanPose=z.object({frame,...humanPoseOverrides.shape,interpolation:drawingInterpolation.optional(),curve:timingCurve.optional()}).strict().refine(v=>timingValid({...v,interpolation:v.interpolation??'linear'}),'Invalid human timing curve');
+const humanPoses=z.array(humanPose).min(1).max(240).refine(v=>v[0].frame===0&&v.every((p,i)=>i===0||p.frame>v[i-1].frame),'Human poses start at zero and strictly increase');
+const humanResolvedSpeech=z.object({transitionMs:finite.min(0).max(200).optional(),cues:z.array(z.object({startMs:finite.min(0).max(40000),endMs:finite.min(0).max(40000),shape:z.enum(['rest','closed','open','wide','round','teeth','tongue']),strength:coordinate.optional()}).strict().refine(v=>v.endMs>v.startMs,'Speech cue end must follow its start')).min(1).max(240).refine(v=>v.every((cue,i)=>i===0||cue.startMs>=v[i-1].endMs),'Resolved speech cues must be ordered and nonoverlapping')}).strict();
+const humanSpeechTiming=z.object({...speechTiming.shape,cues:humanResolvedSpeech.shape.cues.optional(),prediction:speechTiming.shape.prediction.unwrap().extend({startMs:finite.min(0).max(40000)}).optional()}).strict()
+ .refine(v=>[v.cues,v.prediction,v.generated].filter(value=>value!==undefined).length===1,'Choose authored cues, predictions or an imported generated line')
+ .refine(v=>!v.prediction||v.prediction.segments.every(segment=>v.prediction.startMs+(segment.startSample+segment.sampleCount)/24<=40000),'Human speech prediction exceeds the 40-second clock');
+const humanPayload=z.object({settings:humanSettings.required().extend(humanAppearanceSettings),poses:humanPoses,durationFrames:integer(24,1200),fps,renderFrame:frame.optional(),sourceFrameOffset:integer(-1200,1200).optional(),speech:humanResolvedSpeech.optional(),parts:z.enum(HUMAN_ANIMATION_CAPABILITIES.parts).optional(),blinkTrack:humanNormalizedBlinkTrack.optional()}).strict()
+ .refine(v=>v.durationFrames/v.fps<=40,'Human programme cannot exceed 40 seconds')
+ .refine(v=>v.poses.every(p=>p.frame<v.durationFrames)&&(v.renderFrame===undefined||v.renderFrame<v.durationFrames),'Human poses and sampled frame must fit the programme')
+ .refine(v=>!v.speech||v.speech.cues.every(cue=>cue.endMs<=v.durationFrames*1000/v.fps),'Resolved human speech must fit the unchanged programme clock');
 function objectUnion(complete=false){
  const base=complete?{...sketchObjectShape,frame,exposure:integer(1,1200),color,width:finite.min(.0005).max(.2),fill:z.boolean(),transform:fullTransform,keys:sketchKeys}:sketchObjectShape;
  return z.discriminatedUnion('kind',[
@@ -79,6 +269,8 @@ function objectUnion(complete=false){
   z.object({...base,kind:z.literal('rect'),bounds,gradient:gradient.optional()}).strict(),
   z.object({...base,kind:z.literal('ellipse'),bounds,gradient:gradient.optional()}).strict(),
   z.object({...base,kind:z.literal('path'),commands,shapeKeys:shapeKeys.optional(),gradient:gradient.optional()}).strict().refine(shapeTopology,'Shape keys must preserve the base path topology'),
+  z.object({...base,kind:z.literal('hand'),bounds,hand:handPayload}).strict(),
+  z.object({...base,kind:z.literal('human'),bounds,human:humanPayload}).strict(),
   z.object({...base,kind:z.literal('image'),bounds,reference,referenceCrop:bounds.optional()}).strict(),
   z.object({...base,kind:z.literal('text'),bounds,text:text(4096),fontFamily:z.enum(['sans-serif','sans-serif-condensed','serif','monospace','cursive']).optional(),fontSize:finite.min(.005).max(.3).optional(),fontStyle:z.enum(['normal','bold','italic','bold_italic']).optional(),textAlign:z.enum(['left','center','right']).optional(),letterSpacing:finite.min(-.1).max(.5).optional()}).strict()
  ]).refine(v=>(v.frame??0)+(v.exposure??1)<=1200,'Exposure exceeds the bounded frame domain');
@@ -100,7 +292,16 @@ const mouthSettings=z.object({style:z.enum(['soft','cartoon','fang']).optional()
 const facePose=z.object({...eyePose.shape,...mouthPose.shape,browRaise:finite.min(-1).max(1).optional(),browTilt:finite.min(-1).max(1).optional()}).strict().refine(v=>timingValid({...v,interpolation:v.interpolation??'smooth'}),'Invalid face timing curve');
 const faceSettings=z.object({view:z.enum(['front','left','right','back','high','low']).optional(),shape:z.enum(['oval','round','angular']).optional(),eyeStyle:z.enum(['round','almond','slit']).optional(),mouthStyle:z.enum(['soft','cartoon','fang']).optional(),centerX:finite.min(.15).max(.85).optional(),centerY:finite.min(.2).max(.75).optional(),width:finite.min(.28).max(.5).optional(),height:finite.min(.45).max(.85).optional(),jawWidth:finite.min(.45).max(.9).optional(),noseWidth:finite.min(.08).max(.25).optional(),noseLength:finite.min(.08).max(.22).optional(),eyeSize:finite.min(.8).max(1.2).optional(),mouthSize:finite.min(.8).max(1.2).optional(),skinColor:color.optional(),hairColor:color.optional(),irisColor:color.optional(),lipColor:color.optional(),ink:color.optional(),outlinePx:finite.min(1).max(6).optional(),tilt:finite.min(-20).max(20).optional(),hair:z.boolean().optional()}).strict();
 const characterSettings=z.object({view:z.enum(CHARACTER_PERFORMANCE_CAPABILITIES.views).optional(),build:z.enum(CHARACTER_PERFORMANCE_CAPABILITIES.builds).optional(),material:z.enum(CHARACTER_PERFORMANCE_CAPABILITIES.materials).optional(),detail:z.enum(CHARACTER_PERFORMANCE_CAPABILITIES.details).optional(),gesture:z.enum(CHARACTER_PERFORMANCE_CAPABILITIES.gestures).optional(),armLift:coordinate.optional(),headTilt:finite.min(-12).max(12).optional(),skinColor:color.optional(),hairColor:color.optional(),coatColor:color.optional()}).strict();
+const storyStageSettings=z.object({location:z.enum(STORY_STAGE_CAPABILITIES.locations).optional(),time:z.enum(STORY_STAGE_CAPABILITIES.times).optional(),weather:z.enum(STORY_STAGE_CAPABILITIES.weather).optional(),intensity:coordinate.optional()}).strict();
+const actorPropSettings=z.object({kind:z.enum(ACTOR_PROP_CAPABILITIES.kinds).optional(),attachment:z.enum(ACTOR_PROP_CAPABILITIES.attachments).optional(),scale:finite.min(.4).max(1.5).optional(),x:coordinate.optional(),y:coordinate.optional()}).strict();
+const gripLinkEndpoint=z.object({actorId:id,hand:z.enum(GRIP_LINK_CAPABILITIES.hands)}).strict();
+const gripLinkSettings=z.object({sagPx:finite.min(0).max(64).optional(),widthPx:finite.min(.5).max(12).optional(),color:color.optional()}).strict();
 const operation=z.discriminatedUnion('type',[
+ z.object({type:z.literal('add_grip_link'),layerId:id,linkId:id.max(20),from:gripLinkEndpoint,to:gripLinkEndpoint,settings:gripLinkSettings}).strict(),
+ z.object({type:z.literal('add_story_stage'),layerId:id,sceneId:id.max(20),foregroundLayerId:id.optional(),settings:storyStageSettings}).strict().refine(v=>v.foregroundLayerId===undefined||v.foregroundLayerId!==v.layerId,'Foreground and background layers must differ'),
+ z.object({type:z.literal('add_actor_prop'),layerId:id,propId:id.max(20),actorId:id.optional(),settings:actorPropSettings}).strict().refine(v=>(v.settings.attachment??'near')==='floor'||v.actorId!==undefined,'Held actor props require actorId; only floor attachment may omit it'),
+ z.object({type:z.literal('add_human_animation'),layerId:id,actorId:id.max(20),settings:humanSettings,preset:z.enum(HUMAN_ANIMATION_CAPABILITIES.presets).optional(),ground:z.enum(HUMAN_ANIMATION_CAPABILITIES.grounds).optional(),motion:humanMotion.optional(),poseOverrides:humanPoseOverrides.optional(),fit:z.boolean().optional(),blinkTrack:z.union([z.literal(false),humanBlinkTrack]).optional(),poses:humanPoses.optional(),speech:humanSpeechTiming.optional()}).strict().refine(v=>!(v.poses!==undefined&&(v.motion!==undefined||v.poseOverrides!==undefined)),'Choose preset motion/poseOverrides controls or explicit human poses').refine(v=>v.ground===undefined||(v.fit!==true&&v.poses===undefined&&v.motion?.groundSlope===undefined&&v.motion?.groundSlopeX===undefined),'Choose scene ground or explicit poses, motion slopes and solo framing'),
+ z.object({type:z.literal('add_hand_animation'),layerId:id,handId:id.max(20),settings:handSettings,poses:handPoses.optional()}).strict(),
  z.object({type:z.literal('add_character_animation'),layerId:id,characterId:id.max(20),settings:characterSettings,speech:speechTiming.optional()}).strict(),
  z.object({type:z.literal('add_face_animation'),layerId:id,faceId:id.max(28),settings:faceSettings,speech:speechTiming.optional(),preset:z.enum(['reaction','playful','chew']).optional(),poses:z.array(facePose).min(1).max(240).refine(v=>v[0].frame===0&&v.every((p,i)=>i===0||p.frame>v[i-1].frame),'Face poses start at zero and strictly increase').optional()}).strict().refine(v=>!(v.speech!==undefined&&v.poses!==undefined),'Choose speech cues or pose keys'),
  z.object({type:z.literal('add_mouth_animation'),layerId:id,mouthId:id.max(36),settings:mouthSettings,speech:speechTiming.optional(),preset:z.enum(['articulation','tongue','chew']).optional(),poses:z.array(mouthPose).min(1).max(240).refine(v=>v[0].frame===0&&v.every((p,i)=>i===0||p.frame>v[i-1].frame),'Mouth poses start at zero and strictly increase').optional()}).strict().refine(v=>!(v.speech!==undefined&&v.poses!==undefined),'Choose speech cues or pose keys'),
@@ -116,7 +317,7 @@ const operation=z.discriminatedUnion('type',[
  z.object({type:z.literal('delete_layer'),layerId:id}).strict(),
  z.object({type:z.literal('reorder_layer'),layerId:id,index:integer(0,31)}).strict(),
  z.object({type:z.literal('add_object'),layerId:id,object:sketchObject}).strict(),
- z.object({type:z.literal('update_object'),objectId:id,patch:z.object({color:color.optional(),width:finite.min(.0005).max(.2).optional(),fill:z.boolean().optional(),text:text(4096).optional(),fontFamily:z.enum(['sans-serif','sans-serif-condensed','serif','monospace','cursive']).optional(),fontSize:finite.min(.005).max(.3).optional(),fontStyle:z.enum(['normal','bold','italic','bold_italic']).optional(),textAlign:z.enum(['left','center','right']).optional(),letterSpacing:finite.min(-.1).max(.5).optional(),brush:brush.optional(),commands:commands.optional(),shapeKeys:shapeKeys.optional(),gradient:gradient.nullable().optional(),referenceCrop:bounds.optional(),points:points.optional(),bounds:bounds.optional(),frame:frame.optional(),exposure:integer(1,1200).optional()}).strict()}).strict(),
+ z.object({type:z.literal('update_object'),objectId:id,patch:z.object({human:humanPayload.optional(),hand:handPayload.optional(),color:color.optional(),width:finite.min(.0005).max(.2).optional(),fill:z.boolean().optional(),text:text(4096).optional(),fontFamily:z.enum(['sans-serif','sans-serif-condensed','serif','monospace','cursive']).optional(),fontSize:finite.min(.005).max(.3).optional(),fontStyle:z.enum(['normal','bold','italic','bold_italic']).optional(),textAlign:z.enum(['left','center','right']).optional(),letterSpacing:finite.min(-.1).max(.5).optional(),brush:brush.optional(),commands:commands.optional(),shapeKeys:shapeKeys.optional(),gradient:gradient.nullable().optional(),referenceCrop:bounds.optional(),points:points.optional(),bounds:bounds.optional(),frame:frame.optional(),exposure:integer(1,1200).optional()}).strict()}).strict(),
  z.object({type:z.literal('append_points'),objectId:id,points:points.max(2048)}).strict(),
  z.object({type:z.literal('duplicate_cel'),layerId:id,fromFrame:frame,toFrame:frame,idPrefix:id.max(72)}).strict(),
  z.object({type:z.literal('clear_cel'),layerId:id,frame}).strict(),
@@ -190,7 +391,9 @@ const interpolationControls=z.object({inputFps:integer(1,60),outputFps:integer(1
  if(v.cuts?.some((cut,i,a)=>i>0&&cut<=a[i-1]))fail('Cuts must be ordered and unique');
  let end=-1;for(const range of v.hitStopRanges||[]){if(range[0]>=range[1]||range[0]<end)fail('Hold ranges must be ordered, nonoverlapping and end-exclusive');end=range[1];}
 });
-const dialogueLine=z.object({lineId:id,characterId:id,voice:z.enum(['af_heart','am_adam','hf_alpha','hm_omega']),text:text(240),startMs:integer(0,599999),slotMs:integer(100,60000),speed:finite.min(.75).max(1.25).optional()}).strict();
+const dialoguePhrase=z.object({text:text(240),speed:finite.min(.75).max(1.25).optional(),pauseAfterMs:integer(0,1500).optional()}).strict();
+const dialogueLine=z.object({lineId:id,characterId:id,voice:z.enum(['af_heart','am_adam','hf_alpha','hm_omega']),text:text(240),startMs:integer(0,599999),slotMs:integer(100,60000),speed:finite.min(.75).max(1.25).optional(),phrases:z.array(dialoguePhrase).min(1).max(8).optional()}).strict()
+ .refine(v=>v.phrases===undefined||v.phrases.map(phrase=>phrase.text).join(' ')===v.text,'Phrase text joined with a single space must exactly equal the original line text');
 const dialogueControls=z.object({language:z.enum(['en-US','hi-IN']),durationMs:integer(100,600000),lines:z.array(dialogueLine).min(1).max(32)}).strict().superRefine((v,ctx)=>{
  const fail=message=>ctx.addIssue({code:z.ZodIssueCode.custom,message}),ids=new Set(),cast=new Map();let end=-1,total=0;
  for(const line of v.lines){
@@ -238,14 +441,32 @@ export const sketchAnimationProgramSchema=z.object({schema:z.literal('videostudi
  for(const cue of [...value.dialogues||[],...value.mouthCels||[],...value.celRanges||[]])if(cue.end>=value.frameCount)fail('Cue must fit the timeline');
  if(value.camera?.length&&!value.cameraLayerIds?.length)fail('Camera keys require explicit layer IDs');
 });
+const storyShot=z.object({shotId:id.max(20),frameCount:integer(24,1200),operations:z.array(operation).min(1).max(128),camera:sketchAnimationProgramSchema.shape.camera,label:text(512).optional()}).strict()
+ .refine(v=>(v.camera||[]).every(key=>key.frame<v.frameCount),'Story camera keys must fit their shot');
+const storyPlanShape={bookId:id.max(48),operationId:id,name:text(160),width:dimensions.width,height:dimensions.height,fps,
+ shots:z.array(storyShot).min(1).max(64).refine(v=>new Set(v.map(shot=>shot.shotId)).size===v.length,'Story shot IDs must be unique')};
+const storyAudioId=z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_-]{0,95}$/);
+const storyAudioEvent=z.object({id:storyAudioId,atMs:integer(0,599999),type:z.enum(['footstep','wood','metal','cloth','chime']),intensity:coordinate,durationMs:integer(1,1200).optional()}).strict()
+ .refine(v=>v.durationMs===undefined||v.durationMs<=STORY_AUDIO_CAPABILITIES.eventTailMs[v.type],'Event duration exceeds the native kind maximum')
+ .refine(v=>v.atMs+(v.durationMs??STORY_AUDIO_CAPABILITIES.eventTailMs[v.type])<=600000,'Audio event tail exceeds the maximum PCM clock');
+const storyAudioSettings=z.object({musicGain:coordinate.optional(),ambienceGain:coordinate.optional(),dialogueGain:finite.min(0).max(2).optional(),tempo:finite.min(30).max(180).optional(),
+ theme:z.enum(STORY_AUDIO_CAPABILITIES.themes).optional(),ambience:z.enum(STORY_AUDIO_CAPABILITIES.ambiences).optional(),seed:integer(0,2147483647).optional(),
+ events:z.array(storyAudioEvent).max(512).refine(v=>new Set(v.map(event=>event.id)).size===v.length,'Audio event IDs must be unique').optional()}).strict();
 export const studioToolSchemas={
+ project_asset_info:{projectId:id,expectedUpdatedAt:updatedAt,assetId:id},
+ project_import_asset:{projectId:id,expectedUpdatedAt:updatedAt,sourceProjectId:id,sourceProjectUpdatedAt:updatedAt,assetId:id,expectedSha256:sha,operationId:id,appendToTimeline:z.boolean().optional()},
  import_mailbox_media:{projectId:id,attachmentId:z.string().uuid(),manifestSha256:sha},
  precision_edit:{projectId:id,expectedUpdatedAt:updatedAt,operations:z.array(clipOperation).min(1).max(64)},
  set_studio_layers:{projectId:id,expectedUpdatedAt:updatedAt,studioLayers},
  sketch_capabilities:{},
+ sketch_story_example:{exampleId:z.literal('last_lantern')},
+ sketch_story_create:storyPlanShape,
+ sketch_story_preview:{plan:z.object(storyPlanShape).strict(),shotId:id.max(20),frame},
+ sketch_story_audio_create:{projectId:storyAudioId,sourceProjectUpdatedAt:updatedAt,assetId:storyAudioId,operationId:storyAudioId,settings:storyAudioSettings},
  sketch_animation_save:{animationId:id,sketchId:id,sourceRevision:revision,expectedRevision:integer(0,Number.MAX_SAFE_INTEGER-1),operationId:id,program:sketchAnimationProgramSchema},
  sketch_animation_get:{animationId:id},sketch_animation_list:{},
  sketch_animation_bake:{animationId:id,expectedRevision:revision,operationId:id,outputSketchId:id},
+ sketch_animation_place_in_book:{animationId:id,expectedAnimationRevision:revision,bookId:id.max(72),expectedBookRevision:revision,sourceFrameStart:frame,frameCount:integer(1,64),destinationPageStart:integer(0,999999),operationId:id},
  sketch_paint_journal:{sketchId:id,expectedRevision:revision,objectId:id,offset:integer(0,8192).optional(),limit:integer(1,128).optional()},
  sketch_sample_color:{sketchId:id,expectedRevision:revision,frameIndex:frame.optional(),x:coordinate,y:coordinate,source:z.enum(['paint','reference','composite']),objectId:id.optional(),sha256:sha.optional()},
  sketch_archive:{...mutation},
@@ -326,6 +547,12 @@ export function nativeStudioParameters(action,parameters={}){
  if(!parameters||typeof parameters!=='object'||Array.isArray(parameters))throw new Error('Studio parameters must be an object');
  boundedJson(parameters);
  const parsed=z.object(studioToolSchemas[action]).strict().parse(parameters);
+ if(action==='project_import_asset'&&parsed.projectId===parsed.sourceProjectId)throw new Error('Choose a different destination project');
+ if(action==='sketch_story_preview'){
+  const shot=parsed.plan.shots.find(shot=>shot.shotId===parsed.shotId);
+  if(!shot||parsed.frame>=shot.frameCount)throw new Error('Story preview must select an existing shot and frame inside its unchanged clock');
+ }
+ if(action==='sketch_animation_place_in_book'&&(parsed.sourceFrameStart+parsed.frameCount>1200||parsed.destinationPageStart+parsed.frameCount>1000000))throw new Error('Animation book placement range exceeds source/book frame domain');
  if(action==='sketch_get'&&parsed.shapeFrame!==undefined&&parsed.objectId===undefined)throw new Error('Choose an object for sampled shape geometry');
  if(['sketch_create','sketch_book_create'].includes(action)&&(parsed.width??720)*(parsed.height??1280)>2048*2048)throw new Error('Sketch raster exceeds 2048² pixels');
  if(action==='sketch_sample_color'){
@@ -357,6 +584,15 @@ const legacy3d=new Set(['STANDOFF','CHARGE','CLASH','BLADE_LOCK','FOLLOW_THROUGH
 const pixelFields=new Set(['keyframes','opacity','chromaKey','chromaColor','chromaTolerance','chromaFeather','maskShape','maskLeft','maskTop','maskRight','maskBottom','maskFeather','glowStrength','glowRadiusPx','glowThreshold']);
 export function requireStudioVersion(device,action,parameters={}){
  const alias=studioAliases.has(action);action=nativeStudioCanonicalAction(action);
+ if(['project_asset_info','project_import_asset'].includes(action)&&!atLeast(device?.appVersion,'4.8.0'))throw new Error('NATIVE_APP_UPGRADE_REQUIRED: owned project asset inspection and independent import require VideoStudio 4.8.0 or newer');
+ if(['sketch_story_create','sketch_story_preview','sketch_story_example','sketch_story_audio_create'].includes(action)&&!atLeast(device?.appVersion,'4.8.0'))throw new Error('NATIVE_APP_UPGRADE_REQUIRED: native story plans, examples, previews and story audio require VideoStudio 4.8.0 or newer');
+ if(action==='open_pipeline_export_request'&&parameters.backend==='kokoro'&&(parameters.controls?.lines||[]).some(line=>line.phrases!==undefined)&&!atLeast(device?.appVersion,'4.8.0'))throw new Error('NATIVE_APP_UPGRADE_REQUIRED: explicit generated dialogue phrases require VideoStudio 4.8.0 or newer');
+ if(action==='sketch_edit'&&(parameters.operations||[]).some(op=>op.type==='add_grip_link')&&!atLeast(device?.appVersion,'4.8.0'))throw new Error('NATIVE_APP_UPGRADE_REQUIRED: native grip links require VideoStudio 4.8.0 or newer');
+ if(action==='sketch_edit'&&(parameters.operations||[]).some(op=>['add_story_stage','add_actor_prop'].includes(op.type))&&!atLeast(device?.appVersion,'4.8.0'))throw new Error('NATIVE_APP_UPGRADE_REQUIRED: native story scenery and actor props require VideoStudio 4.8.0 or newer');
+ if(action==='sketch_animation_place_in_book'&&!atLeast(device?.appVersion,'4.8.0'))throw new Error('NATIVE_APP_UPGRADE_REQUIRED: saved animation placement in books requires VideoStudio 4.8.0 or newer');
+ if(action==='sketch_edit'&&(parameters.operations||[]).some(op=>op.type==='add_human_animation'||op.type==='add_object'&&op.object?.kind==='human'||op.type==='update_object'&&op.patch?.human!==undefined||op.type==='add_layer'&&(op.layer?.objects||[]).some(object=>object.kind==='human'))&&!atLeast(device?.appVersion,'4.8.0'))throw new Error('NATIVE_APP_UPGRADE_REQUIRED: native human animation and editable human objects require VideoStudio 4.8.0 or newer');
+ if(action==='sketch_edit'&&(parameters.operations||[]).some(op=>['add_human_animation','add_character_animation','add_face_animation','add_mouth_animation'].includes(op.type)&&op.speech?.generated?.shotStartMs!==undefined)&&!atLeast(device?.appVersion,'4.8.0'))throw new Error('NATIVE_APP_UPGRADE_REQUIRED: generated speech shot rebasing requires VideoStudio 4.8.0 or newer');
+ if(action==='sketch_edit'&&(parameters.operations||[]).some(op=>op.type==='add_hand_animation'||op.type==='add_object'&&op.object?.kind==='hand'||op.type==='update_object'&&op.patch?.hand!==undefined||op.type==='add_layer'&&(op.layer?.objects||[]).some(object=>object.kind==='hand'))&&!atLeast(device?.appVersion,'4.8.0'))throw new Error('NATIVE_APP_UPGRADE_REQUIRED: native articulated hand animation and editable hand objects require VideoStudio 4.8.0 or newer');
  if(action==='sketch_edit'&&(parameters.operations||[]).some(op=>op.type==='add_character_animation')&&!atLeast(device?.appVersion,'4.7.8'))throw new Error('NATIVE_APP_UPGRADE_REQUIRED: native character performance requires VideoStudio 4.7.8 or newer');
  if(action==='sketch_edit'&&(parameters.operations||[]).some(op=>['add_face_animation','add_mouth_animation'].includes(op.type)&&op.speech!==undefined)&&!atLeast(device?.appVersion,'4.7.7'))throw new Error('NATIVE_APP_UPGRADE_REQUIRED: timed native speech cues require VideoStudio 4.7.7 or newer');
  if(action==='sketch_edit'&&(parameters.operations||[]).some(op=>op.type==='add_face_animation')&&!atLeast(device?.appVersion,'4.7.6'))throw new Error('NATIVE_APP_UPGRADE_REQUIRED: native face animation controls require VideoStudio 4.7.6 or newer');

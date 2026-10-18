@@ -1,5 +1,13 @@
 import test from 'node:test';
 import './character-animation-contract-test.mjs';
+import './hand-animation-contract-test.mjs';
+import './speech-rebase-contract-test.mjs';
+import './human-animation-contract-test.mjs';
+import './animation-book-placement-contract-test.mjs';
+import './story-stage-prop-contract-test.mjs';
+import './grip-link-contract-test.mjs';
+import './story-actions-contract-test.mjs';
+import './feature-release-contract-test.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';

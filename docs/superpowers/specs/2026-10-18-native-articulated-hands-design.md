@@ -48,7 +48,7 @@ Manual: Brush/Text > Hand animation, all settings/pose channels, native async
 preview and create on new layer through existing SketchConstructionSubmit and
 CAS/lifecycle protection (construction kind8). Shared constructor is the source
 for preview/manual/MCP. Native capability handAnimation and strict Node schema
-minimum4.7.9. App version4.7.9/code482; preserve original signing cache.
+minimum4.8.0. App version4.8.0/code483; preserve original signing cache.
 
 ## Evidence
 

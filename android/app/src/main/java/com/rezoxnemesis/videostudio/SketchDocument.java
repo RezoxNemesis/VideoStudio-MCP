@@ -54,7 +54,8 @@ public final class SketchDocument {
         JSONArray layers = doc.getJSONArray("layers");
         if (layers.length() < 1 || layers.length() > MAX_LAYERS) throw bad("Use 1..32 sketch layers");
         Set<String> ids = new HashSet<>();
-        int objects = 0, points = 0, keys = 0, images = 0;
+        int objects = 0, points = 0, keys = 0, images = 0, proceduralActors=0;
+        int[] proceduralActorChanges=new int[frames+1];
         for (int i = 0; i < layers.length(); i++) {
             JSONObject layer = layers.getJSONObject(i);
             fields(layer, "id,name,visible,locked,opacity,transform,keys,objects,blendMode");
@@ -66,19 +67,24 @@ public final class SketchDocument {
             JSONArray items = layer.getJSONArray("objects");
             for (int j = 0; j < items.length(); j++) {
                 JSONObject item = items.getJSONObject(j);
-                fields(item, "id,kind,frame,exposure,color,styleId,width,fill,points,bounds,reference,paint,transform,keys,brush,commands,shapeKeys,gradient,referenceCrop,text,fontFamily,fontSize,fontStyle,textAlign,letterSpacing");
+                fields(item, "id,kind,frame,exposure,color,styleId,width,fill,points,bounds,reference,paint,transform,keys,brush,commands,shapeKeys,gradient,referenceCrop,text,fontFamily,fontSize,fontStyle,textAlign,letterSpacing,hand,human");
                 unique(ids, id(item, "id"));
                 String kind = item.getString("kind");
-                if (!java.util.Arrays.asList("stroke","eraser","line","rect","ellipse","polygon","image","paint","path","text").contains(kind))
+                if (!java.util.Arrays.asList("stroke","eraser","line","rect","ellipse","polygon","image","paint","path","text","hand","human").contains(kind))
                     throw bad("Unsupported sketch object kind");
                 int start = (int) integer(item, "frame", 0, frames - 1);
-                integer(item, "exposure", 1, frames - start);
+                int exposure=(int)integer(item, "exposure", 1, frames - start);
                 color(item.getString("color")); SketchPaletteStyles.validateLink(item,linkedStyles); number(item, "width", .0005, .2); bool(item, "fill");
                 validateTransform(item.getJSONObject("transform"));
                 keys += validateKeys(item.getJSONArray("keys"), frames);
                 int[] shapeBudget=SketchShapeKeys.validate(item,frames);keys+=shapeBudget[0];points+=shapeBudget[1];
                 if(item.has("paint")&&!"paint".equals(kind))throw bad("Paint snapshots require a paint cel");
                 if("paint".equals(kind))fields(item,"id,kind,frame,exposure,color,width,fill,bounds,paint,transform,keys");
+                if(item.has("hand")&&!"hand".equals(kind))throw bad("Hand programme requires a hand object");
+                if("hand".equals(kind)){SketchHandAnimation.validate(doc,item);keys+=item.getJSONObject("hand").getJSONArray("poses").length();}
+                if(item.has("human")&&!"human".equals(kind))throw bad("Human programme requires a human object");
+                if("human".equals(kind)){SketchHumanAnimation.validate(doc,item);keys+=item.getJSONObject("human").getJSONArray("poses").length();}
+                if("hand".equals(kind)||"human".equals(kind)){proceduralActorChanges[start]++;proceduralActorChanges[start+exposure]--;}
                 if (item.has("brush")) { if (!"stroke".equals(kind) && !"eraser".equals(kind)) throw bad("Brush requires stroke/eraser"); SketchBrushes.validate(item.getJSONObject("brush")); }
                 if (item.has("gradient")) validateGradient(item.getJSONObject("gradient"));
                 if (item.has("referenceCrop")) { if (!"image".equals(kind)) throw bad("Reference crop requires an image"); validateBounds(item.getJSONObject("referenceCrop")); }
@@ -125,6 +131,11 @@ public final class SketchDocument {
                 }
                 objects++;
             }
+        }
+        // Cel splits increase stored segments without increasing simultaneous rendering work.
+        for(int frame=0;frame<frames;frame++){
+            proceduralActors+=proceduralActorChanges[frame];
+            if(proceduralActors>16)throw bad("Use at most16 simultaneously exposed retained hand/human actors per frame");
         }
         if (objects > MAX_OBJECTS || points > MAX_POINTS || keys > MAX_KEYS || images > 16)
             throw bad("Sketch budget exceeded (4096 objects, 131072 points, 4096 keys, 16 images)");

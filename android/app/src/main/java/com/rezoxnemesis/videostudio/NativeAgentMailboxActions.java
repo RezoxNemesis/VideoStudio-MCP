@@ -4,11 +4,13 @@ import java.util.*;
 final class NativeAgentMailboxActions {
  private static final Set<String> ACTIONS=new HashSet<>(Arrays.asList(
   "precision_edit",
+  "project_asset_info","project_import_asset",
   "sketch_create",
   "sketch_animation_save",
   "sketch_animation_get",
   "sketch_animation_list",
-  "sketch_animation_bake",
+  "sketch_animation_bake","sketch_animation_place_in_book",
+  "sketch_story_create","sketch_story_preview","sketch_story_audio_create","sketch_story_example",
   "sketch_list",
   "sketch_get",
   "sketch_inspect",

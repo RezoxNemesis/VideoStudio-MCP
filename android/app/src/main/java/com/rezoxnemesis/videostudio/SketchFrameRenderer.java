@@ -233,6 +233,8 @@ public final class SketchFrameRenderer implements AutoCloseable {
 
     private void drawObject(Canvas canvas, JSONObject object, int w, int h, double alpha,int frame) throws Exception {
         String kind = object.getString("kind");
+        if("human".equals(kind)){SketchHumanAnimation.draw(context,canvas,object,w,h,frame,alpha);return;}
+        if("hand".equals(kind)){SketchHandAnimation.draw(canvas,object,w,h,frame,alpha);return;}
         if("paint".equals(kind)){drawPaint(canvas,object,w,h,alpha);return;}
         boolean partial=object.getString("id").equals(presentationObject)&&presentationFraction<1;
         boolean append=appendBaselinePoints>0&&object.getString("id").equals(appendPresentationObject)&&("stroke".equals(kind)||"eraser".equals(kind));
@@ -372,7 +374,7 @@ public final class SketchFrameRenderer implements AutoCloseable {
                         if (radius <= 1 + allowed && (object.getBoolean("fill") || Math.abs(radius - 1) <= allowed)) return object.getString("id");
                     } else {
                         RectF expanded = new RectF(bounds); expanded.inset(-t, -t);
-                        if (expanded.contains(p[0], p[1]) && ("image".equals(kind) || "paint".equals(kind) || "text".equals(kind) || object.getBoolean("fill") ||
+                        if (expanded.contains(p[0], p[1]) && ("image".equals(kind) || "paint".equals(kind) || "text".equals(kind) || "hand".equals(kind) || "human".equals(kind) || object.getBoolean("fill") ||
                                 Math.min(Math.min(Math.abs(p[0] - bounds.left), Math.abs(p[0] - bounds.right)), Math.min(Math.abs(p[1] - bounds.top), Math.abs(p[1] - bounds.bottom))) <= t)) return object.getString("id");
                     }
                 } else {

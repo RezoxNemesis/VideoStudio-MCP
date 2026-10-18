@@ -1,4 +1,5 @@
 import test from 'node:test';
+import './dialogue-phrases-contract-test.mjs';
 import assert from 'node:assert/strict';
 import {nativeStudioParameters,requireStudioVersion} from '../src/studio-workbench-contract.js';
 const request=()=>({projectId:'film',sourceProjectUpdatedAt:1,requestId:'dialogue',backend:'kokoro',assetIds:[],controls:{language:'hi-IN',durationMs:120000,lines:[{lineId:'one',characterId:'kael',voice:'hm_omega',text:'मैं लड़ना नहीं चाहता।',startMs:1000,slotMs:5000}]}});
