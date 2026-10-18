@@ -1,6 +1,7 @@
 package com.rezoxnemesis.videostudio;
 
 import android.content.Context;
+import android.content.res.AssetFileDescriptor;
 import android.media.AudioFormat;
 import android.media.MediaCodec;
 import android.media.MediaExtractor;
@@ -8,9 +9,13 @@ import android.media.MediaFormat;
 import android.net.Uri;
 import android.os.Handler;
 import android.os.Looper;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.IOException;
+import java.io.InterruptedIOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
-import java.util.Arrays;
+import java.nio.channels.FileChannel;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
@@ -84,7 +89,7 @@ public final class StudioAudioWaveforms {
                 !selectedAsset.mime.equals(owned.mime)||
                 !owned.mime.startsWith("audio/"))
             throw new IllegalArgumentException("Selected audio no longer matches an owned VideoStudio audio asset");
-        if(owned.durationMs>0&&sourceMs+durationMs>owned.durationMs+100)
+        if(owned.durationMs>0&&(sourceMs>owned.durationMs||durationMs-100>owned.durationMs-sourceMs))
             throw new IllegalArgumentException("The dialogue window extends beyond the selected recording");
         Uri uri=Uri.parse(owned.uri);
         String scheme=uri.getScheme();
@@ -111,11 +116,17 @@ public final class StudioAudioWaveforms {
     }
 
     private float[] decode(Uri uri,long sourceMs,long durationMs,int buckets) throws Exception{
-        if(uri==null||sourceMs<0||durationMs<100||buckets<1||buckets>MAX_DIALOGUE_BUCKETS)
+        if(uri==null||sourceMs<0||sourceMs>(Long.MAX_VALUE-MAX_WINDOW_US)/1000||
+                durationMs<100||buckets<1||buckets>MAX_DIALOGUE_BUCKETS)
             throw new IllegalArgumentException("Invalid audio waveform source");
         long from=sourceMs*1000L;
-        long visible=Math.min(durationMs*1000L,MAX_WINDOW_US);
+        long visible=Math.min(durationMs,MAX_WINDOW_US/1000)*1000L;
         long end=from+visible;
+        String scheme=uri.getScheme();
+        if(!"file".equals(scheme)&&!"content".equals(scheme))
+            throw new IllegalArgumentException("Only explicitly imported local content/file audio is supported");
+        float[] pcm=decodePcm(uri,sourceMs,visible/1000,buckets);
+        if(pcm!=null)return pcm;
         double[] power=new double[buckets];
         int[] counts=new int[buckets];
         MediaExtractor extractor=new MediaExtractor();
@@ -131,9 +142,9 @@ public final class StudioAudioWaveforms {
                     track=i;format=next;break;
                 }
             }
-            if(track<0||format==null)return new float[buckets];
+            if(track<0||format==null)throw new IllegalArgumentException("Selected recording has no audio track");
             String type=format.getString(MediaFormat.KEY_MIME);
-            if(type==null)return new float[buckets];
+            if(type==null)throw new IllegalArgumentException("Selected recording has no audio format");
             extractor.selectTrack(track);
             extractor.seekTo(from,MediaExtractor.SEEK_TO_PREVIOUS_SYNC);
             codec=MediaCodec.createDecoderByType(type);
@@ -220,6 +231,68 @@ public final class StudioAudioWaveforms {
                 try{codec.release();}catch(Exception ignored){}
             }
             try{extractor.release();}catch(Exception ignored){}
+        }
+        if(Thread.currentThread().isInterrupted())throw new InterruptedIOException("Audio analysis interrupted");
+        boolean sampled=false;for(int count:counts)if(count>0){sampled=true;break;}
+        if(!sampled)throw new IllegalArgumentException("No audio samples decoded in the selected window");
+        return normalize(power,counts);
+    }
+
+    /** Probe only the selected local descriptor. A null result explicitly delegates
+     * non-WAV/non-PCM inputs to the existing codec; invalid PCM errors propagate. */
+    private float[] decodePcm(Uri uri,long sourceMs,long durationMs,int buckets)throws Exception {
+        if("file".equals(uri.getScheme())){
+            String path=uri.getPath();if(path==null)throw new IllegalArgumentException("Selected audio file is missing");
+            try(FileInputStream stream=new FileInputStream(new File(path))){
+                FileChannel channel=stream.getChannel();
+                return samplePcm(channel,PcmWaveFile.readPcm16(channel,0,channel.size()),sourceMs,durationMs,buckets);
+            }
+        }
+        AssetFileDescriptor descriptor=context.getContentResolver().openAssetFileDescriptor(uri,"r");
+        if(descriptor==null)throw new IOException("Selected audio descriptor is missing");
+        FileInputStream opened;
+        try{opened=descriptor.createInputStream();}
+        catch(IOException|RuntimeException failure){descriptor.close();throw failure;}
+        // createInputStream owns/closes the ParcelFileDescriptor, including when
+        // the provider exposes a bounded slice of a larger backing file.
+        try(FileInputStream stream=opened){
+            FileChannel channel=stream.getChannel();
+            long size,offset=descriptor.getStartOffset(),length=descriptor.getDeclaredLength();
+            try{size=channel.size();}catch(IOException unseekable){return null;}
+            // Pipes cannot support this seek-based fast path. The existing
+            // codec retains responsibility for providers with streaming grants.
+            if(size==0)return null;
+            if(length==AssetFileDescriptor.UNKNOWN_LENGTH)length=size-offset;
+            return samplePcm(channel,PcmWaveFile.readPcm16(channel,offset,length),sourceMs,durationMs,buckets);
+        }
+    }
+
+    private static float[] samplePcm(FileChannel channel,PcmWaveFile.Layout pcm,long sourceMs,
+                                     long durationMs,int buckets)throws IOException {
+        if(pcm==null)return null;
+        // Rational comparisons avoid rounding the source clock to milliseconds
+        // or restarting it at each read buffer. Metadata cannot extend real PCM.
+        if(sourceMs>pcm.sampleFrames*1000/pcm.sampleRate||
+                (sourceMs+durationMs)*pcm.sampleRate>pcm.sampleFrames*1000)
+            throw new IllegalArgumentException("The dialogue window extends beyond the actual PCM recording");
+        long firstNumerator=sourceMs*pcm.sampleRate,windowNumerator=durationMs*pcm.sampleRate;
+        long firstFrame=(firstNumerator+999)/1000;
+        long lastFrame=(firstNumerator+windowNumerator+999)/1000;
+        if(firstFrame>=lastFrame)throw new IllegalArgumentException("No PCM samples in the selected window");
+        double[] power=new double[buckets];int[] counts=new int[buckets];
+        ByteBuffer block=ByteBuffer.allocate(8192).order(ByteOrder.LITTLE_ENDIAN);
+        for(long frame=firstFrame;frame<lastFrame;){
+            if(Thread.currentThread().isInterrupted())throw new InterruptedIOException("PCM analysis interrupted");
+            int frames=(int)Math.min(lastFrame-frame,block.capacity()/pcm.blockAlign);
+            block.clear();block.limit(frames*pcm.blockAlign);
+            PcmWaveFile.readFully(channel,block,pcm.dataOffset+frame*pcm.blockAlign);
+            for(int i=0;i<frames;i++,frame++){
+                double energy=0;
+                for(int c=0;c<pcm.channels;c++){double sample=block.getShort()/32768.;energy+=sample*sample;}
+                long position=frame*1000-firstNumerator;
+                int bucket=(int)(position*buckets/windowNumerator);
+                power[bucket]+=energy/pcm.channels;counts[bucket]++;
+            }
         }
         return normalize(power,counts);
     }

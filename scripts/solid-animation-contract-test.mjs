@@ -14,6 +14,61 @@ const worker=fs.readFileSync(new URL('../src/index.js',import.meta.url),'utf8');
 const face={type:'add_face_animation',layerId:'layer_1',faceId:'face',settings:{}};
 const faceRequest=(patch={})=>({...request,operationId:'face_1',operations:[{...face,...patch}]});
 
+test('timed speech uses strict native cues through both face and mouth routes',()=>{
+ const speech={transitionMs:60,cues:[{startMs:500,endMs:750,shape:'closed'},{startMs:750,endMs:1000,shape:'round',strength:.8}]};
+ for(const build of [faceRequest,mouthRequest])for(const action of ['sketch_edit','studio_sketch_edit']){
+  const r=build({speech});assert.deepEqual(nativeStudioParameters(action,r),r);
+  assert.throws(()=>requireStudioVersion({appVersion:'4.7.6'},action,r),/4\.7\.7/);
+  assert.doesNotThrow(()=>requireStudioVersion({appVersion:'4.7.7'},action,r));
+  for(const bad of [{...speech,cues:[]},{...speech,transitionMs:401},{...speech,cues:[{startMs:500,endMs:500,shape:'rest'}]},
+   {...speech,cues:[{startMs:500,endMs:800,shape:'open'},{startMs:700,endMs:900,shape:'wide'}]},
+   {...speech,cues:[{startMs:0,endMs:500,shape:'guess'}]}, {...speech,cues:[{startMs:0,endMs:500,shape:'rest',strength:NaN}]},
+   {...speech,url:'https://invalid.test/audio.wav'}])assert.throws(()=>nativeStudioParameters(action,build({speech:bad})));
+  assert.throws(()=>nativeStudioParameters(action,build({speech,poses:[{frame:0,open:0}]})));
+ }
+});
+
+test('speech duration predictions retain the actual token and PCM clocks',()=>{
+ const segment={phonemes:'mˈA bˈO',startSample:0,sampleCount:24000,modelDurationUnits:[4,4,2,6,4,4,2,10,4],unitsPerSecond:40,forcedAlignmentVerified:false};
+ const speech={transitionMs:60,prediction:{startMs:500,segments:[segment]}};
+ for(const build of [faceRequest,mouthRequest]){
+  const r=build({speech});assert.deepEqual(nativeStudioParameters('sketch_edit',r),r);
+  for(const patch of [{sampleCount:23999},{modelDurationUnits:[4,4,2]},{forcedAlignmentVerified:true},{unitsPerSecond:50},{phonemes:'m😃A bˈO'}])
+   assert.throws(()=>nativeStudioParameters('sketch_edit',build({speech:{...speech,prediction:{...speech.prediction,segments:[{...segment,...patch}]}}})));
+  assert.throws(()=>nativeStudioParameters('sketch_edit',build({speech:{...speech,cues:[{startMs:0,endMs:100,shape:'rest'}]}})));
+ }
+});
+
+test('speech may select an imported generated line by identity without exposing paths',()=>{
+ for(const build of [faceRequest,mouthRequest])for(const action of ['sketch_edit','studio_sketch_edit']){
+  const speech={transitionMs:60,generated:{requestId:'original_speech',lineIndex:0}},r=build({speech});
+  assert.deepEqual(nativeStudioParameters(action,r),r);
+  for(const generated of [{requestId:'../speech',lineIndex:0},{requestId:'original',lineIndex:-1},{requestId:'original',lineIndex:32},{requestId:'original',lineIndex:0,path:'/private/audio.wav'}])
+   assert.throws(()=>nativeStudioParameters(action,build({speech:{generated}})));
+  assert.throws(()=>nativeStudioParameters(action,build({speech:{...speech,cues:[{startMs:0,endMs:10,shape:'rest'}]}})));
+ }
+});
+
+test('source relay gates speech by APK version and validates before any queue write',async()=>{
+ const end=worker.indexOf('\n}\n',worker.indexOf('export class VideoStudioState'))+3;
+ const context={...storyboardContract,...queueBindings,crypto:webcrypto,TextEncoder,Response,Request,Headers,URL,setTimeout,DurableObject:class{constructor(ctx){this.ctx=ctx;}},Date};
+ vm.createContext(context);
+ vm.runInContext(worker.slice(worker.indexOf('const JH'),end).replace('export class VideoStudioState','globalThis.VideoStudioState = class VideoStudioState'),context);
+ for(const action of ['sketch_edit','studio_sketch_edit'])for(const build of [faceRequest,mouthRequest]){
+  const storage=memoryStorage(),relay=new context.VideoStudioState({storage},{}),key='s'.repeat(43),deviceId='speech-device';
+  const register=appVersion=>relay.appRegister(deviceId,key,{appVersion,protocolVersion:3,appGeneration:1,permissionMode:'everything'});
+  const speech={generated:{requestId:'original_speech',lineIndex:0}},r=build({speech});
+  await register('4.7.6');let before=storage.writes();
+  await assert.rejects(relay.appEnqueueV3(key,action,r),/NATIVE_APP_UPGRADE_REQUIRED:.*4\.7\.7/);assert.equal(storage.writes(),before);
+  await register('4.7.7');before=storage.writes();
+  for(const bad of [{...speech,transitionMs:201},{...speech,cues:[{startMs:0,endMs:10,shape:'rest'}]}]){
+   await assert.rejects(relay.appEnqueueV3(key,action,build({speech:bad})));assert.equal(storage.writes(),before);
+  }
+  const admitted=await relay.appEnqueueV3(key,action,r);assert.deepEqual(JSON.parse(JSON.stringify(admitted.parameters)),r);
+  assert.equal((await queueBindings.readCommandQueue(storage,'app-v3-cl:'+deviceId)).length,1);
+ }
+});
+
 test('face animation accepts strict optional settings and presets through both edit names',()=>{
  const settings={view:'left',shape:'angular',eyeStyle:'almond',mouthStyle:'fang',centerX:.5,centerY:.5,width:.4,height:.65,jawWidth:.7,noseWidth:.15,noseLength:.15,eyeSize:1,mouthSize:1,skinColor:'#FFCC9977',hairColor:'#FF332211',irisColor:'#ff668844',lipColor:'#FFAB4567',ink:'#FF211B24',outlinePx:3,tilt:-10,hair:true};
  for(const action of ['sketch_edit','studio_sketch_edit']){

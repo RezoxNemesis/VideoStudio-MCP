@@ -1021,7 +1021,7 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
                     try{startActivity(settings);}catch(android.content.ActivityNotFoundException unavailable){onMessage("Open Android app settings to allow drawing notifications");}
                 }).show();
     }
-    private void brushMenu(){menu("Brush / Text",new String[]{"Brush","Colours","Material shading","Shape animation","Linked palette styles","Paint studio","Text","Finish path","Transform / key","Delete object","Reference image","Solid construction","Ball and box impact","Motion studies","Eye animation","Mouth animation","Face animation"},this::brushDialog,this::paletteDialog,this::materialShadingDialog,this::shapeAnimationDialog,this::linkedPaletteDialog,this::paintMenu,this::textDialog,()->canvas.finishPolygon(),this::transformDialog,this::deleteObject,this::referenceDialog,this::solidConstruction,()->solidConstruction(true),()->construction(2),()->construction(3),()->construction(4),()->construction(5));}
+    private void brushMenu(){menu("Brush / Text",new String[]{"Brush","Colours","Material shading","Shape animation","Linked palette styles","Paint studio","Text","Finish path","Transform / key","Delete object","Reference image","Solid construction","Ball and box impact","Motion studies","Eye animation","Mouth animation","Face animation","Speech animation"},this::brushDialog,this::paletteDialog,this::materialShadingDialog,this::shapeAnimationDialog,this::linkedPaletteDialog,this::paintMenu,this::textDialog,()->canvas.finishPolygon(),this::transformDialog,this::deleteObject,this::referenceDialog,this::solidConstruction,()->solidConstruction(true),()->construction(2),()->construction(3),()->construction(4),()->construction(5),()->construction(6));}
     private void solidConstruction(){solidConstruction(false);}
     private void solidConstruction(boolean collision){
         construction(collision?1:0);
@@ -1031,24 +1031,35 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
         if(count==1)activeConstructions.remove(key);else activeConstructions.put(key,count-1);
     }
     private void construction(int kind){
-        boolean collision=kind==1,study=kind==2,eyes=kind==3,mouth=kind==4,face=kind==5;
+        boolean collision=kind==1,study=kind==2,eyes=kind==3,mouth=kind==4,face=kind==5,speech=kind==6;
         if(document==null||session==null)return;
         try{String target=sketchId;SketchEditorSession origin=session;int generation=loadGeneration,page=pageGeneration;
             SketchConstructionSubmit submit=(request,completion)->{
                 if(session!=origin||generation!=loadGeneration||page!=pageGeneration){
-                    String message=face?"The selected drawing changed. Open Face animation on the current drawing.":mouth?"The selected drawing changed. Open Mouth animation on the current drawing.":"The selected drawing changed. Open Solid construction on the current drawing.";
+                    String message=speech?"The selected drawing changed. Open Speech animation on the current drawing.":face?"The selected drawing changed. Open Face animation on the current drawing.":mouth?"The selected drawing changed. Open Mouth animation on the current drawing.":"The selected drawing changed. Open Solid construction on the current drawing.";
                     completion.accept(new IllegalStateException(message));onMessage(message);return;
                 }
-                stopPlayback();loadingDrawing=true;canvas.setEnabled(false);onMessage(face?"Creating editable face animation…":mouth?"Creating editable mouth animation…":eyes?"Creating editable eye animation…":study?"Creating motion study…":collision?"Constructing native impact scene…":"Constructing editable solid cels…");
+                stopPlayback();loadingDrawing=true;canvas.setEnabled(false);onMessage(speech?"Creating authored speech cels…":face?"Creating editable face animation…":mouth?"Creating editable mouth animation…":eyes?"Creating editable eye animation…":study?"Creating motion study…":collision?"Constructing native impact scene…":"Constructing editable solid cels…");
                 String constructionKey=generation+":"+page;activeConstructions.merge(constructionKey,1,Integer::sum);
                 try{io.execute(()->{try{origin.awaitIdle(15000);if(origin.error()!=null)throw new IllegalStateException(origin.error());JSONObject args=new JSONObject().put("sketchId",target).put("expectedRevision",origin.document().getLong("revision")).put("operationId",UUID.randomUUID().toString()).put("operations",request.getJSONArray("operations"));SketchEditOps.execute(this,"sketch_edit",args);
-                    postUi(()->{finishConstruction(constructionKey);if(session==origin&&generation==loadGeneration&&page==pageGeneration)loadingDrawing=false;completion.accept(null);if(session!=origin||generation!=loadGeneration||page!=pageGeneration)return;loadSketch(target,0);onMessage(face?"Face animation saved on a new layer. All curves remain editable.":mouth?"Mouth animation saved on a new layer. All curves remain editable.":eyes?"Eye animation saved on a new layer. All curves remain editable.":study?"Motion study saved on a new layer. Drawings and motion keys remain editable.":"Solid saved as editable cels in a new layer. Colours, paths and timing remain editable.");});
-                }catch(Exception failure){postUi(()->{finishConstruction(constructionKey);if(session==origin&&generation==loadGeneration&&page==pageGeneration){loadingDrawing=false;canvas.setEnabled(!playing&&livePlayer==null);}completion.accept(failure);if(session!=origin||generation!=loadGeneration||page!=pageGeneration)return;onMessage((face?"Face not created: ":mouth?"Mouth not created: ":"Solid not created: ")+failure.getMessage());});}});
-                }catch(Exception failure){finishConstruction(constructionKey);loadingDrawing=false;canvas.setEnabled(!playing&&livePlayer==null);completion.accept(failure);onMessage((face?"Face not created: ":mouth?"Mouth not created: ":"Solid not created: ")+failure.getMessage());}
+                    postUi(()->{finishConstruction(constructionKey);if(session==origin&&generation==loadGeneration&&page==pageGeneration)loadingDrawing=false;completion.accept(null);if(session!=origin||generation!=loadGeneration||page!=pageGeneration)return;loadSketch(target,0);onMessage(speech?"Authored speech cels saved on a new layer. All curves remain editable; align audio in the main editor.":face?"Face animation saved on a new layer. All curves remain editable.":mouth?"Mouth animation saved on a new layer. All curves remain editable.":eyes?"Eye animation saved on a new layer. All curves remain editable.":study?"Motion study saved on a new layer. Drawings and motion keys remain editable.":"Solid saved as editable cels in a new layer. Colours, paths and timing remain editable.");});
+                }catch(Exception failure){JSONObject refreshed=constructionConflictSnapshot(failure,origin,target);postUi(()->{finishConstruction(constructionKey);if(session==origin&&generation==loadGeneration&&page==pageGeneration){loadingDrawing=false;if(refreshed!=null)try{if(origin.adopt(refreshed))present(origin.document());}catch(Exception retained){onMessage("Drawing retained: "+retained.getMessage());}canvas.setEnabled(!playing&&livePlayer==null);}completion.accept(failure);if(session!=origin||generation!=loadGeneration||page!=pageGeneration)return;onMessage((speech?"Speech cels not created: ":face?"Face not created: ":mouth?"Mouth not created: ":"Solid not created: ")+failure.getMessage());});}});
+                }catch(Exception failure){finishConstruction(constructionKey);loadingDrawing=false;canvas.setEnabled(!playing&&livePlayer==null);completion.accept(failure);onMessage((speech?"Speech cels not created: ":face?"Face not created: ":mouth?"Mouth not created: ":"Solid not created: ")+failure.getMessage());}
             };
             java.util.function.Consumer<JSONObject> construction=request->submit.submit(request,error->{});
-            if(face)SketchFaceDialog.show(this,SketchDocument.copy(document),submit);else if(mouth)SketchMouthDialog.show(this,SketchDocument.copy(document),submit);else if(eyes)SketchEyeDialog.show(this,SketchDocument.copy(document),construction);else if(study)SketchMotionStudyDialog.show(this,SketchDocument.copy(document),construction);else if(collision)SketchSolidCollisionDialog.show(this,SketchDocument.copy(document),construction);else SketchSolidDialog.show(this,SketchDocument.copy(document),construction);
+            if(speech)SketchSpeechDialog.show(this,SketchDocument.copy(document),submit);else if(face)SketchFaceDialog.show(this,SketchDocument.copy(document),submit);else if(mouth)SketchMouthDialog.show(this,SketchDocument.copy(document),submit);else if(eyes)SketchEyeDialog.show(this,SketchDocument.copy(document),construction);else if(study)SketchMotionStudyDialog.show(this,SketchDocument.copy(document),construction);else if(collision)SketchSolidCollisionDialog.show(this,SketchDocument.copy(document),construction);else SketchSolidDialog.show(this,SketchDocument.copy(document),construction);
         }catch(Exception failure){onMessage(failure.getMessage());}
+    }
+    /** Refresh only a clean, compatible presentation after a real CAS conflict.
+     * Construction remains a new-layer operation; no pending artist draft is discarded.
+     * Geometry/timing changes require reopening controls on the changed document. */
+    private JSONObject constructionConflictSnapshot(Exception failure,SketchEditorSession origin,String target){
+        if(failure.getMessage()==null||!failure.getMessage().startsWith("SKETCH_REVISION_CONFLICT"))return null;
+        try(SketchProjectStore store=new SketchProjectStore(this)){
+            JSONObject current=store.get(target),previous=origin.document();
+            for(String key:new String[]{"width","height","fps","frameCount"})if(current.getInt(key)!=previous.getInt(key))return null;
+            return current;
+        }catch(Exception unavailable){return null;}
     }
     private void layersMenu(){menu("Layers",new String[]{"Select layer","+ Layer","Layer settings","Up","Down"},this::chooseLayer,this::addLayer,this::layerDialog,()->reorderLayer(1),()->reorderLayer(-1));}
     private void chooseLayer(){

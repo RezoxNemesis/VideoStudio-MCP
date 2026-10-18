@@ -1,5 +1,23 @@
 # VideoStudio current engineering priority
 
+## Current speech continuation — 2026-10-18
+
+Current branch: `feat/native-speech-animation-20261018`, continuing the verified
+4.7.6 mouth/face source without replacing previous work. Read
+`docs/continuity/NATIVE_SPEECH_ANIMATION_20261018.md` and inspect actual Git state.
+Test isolated audible English/Hindi mouth timing before composed faces, across
+front/left/right/rear/high/low. Keep every native render generation and actual
+screenshots. The optional existing self-hosted Kokoro runner produces real audio;
+this is distinct from Android system TTS and phone execution. Model duration
+predictions are not forced alignment or human approval of pronunciation/lip sync.
+
+Retain native timed cues, manual generated-line loading/editing/preview and strict
+MCP contracts. Actual PCM analysis uses only explicitly owned imported audio;
+never Gallery. Ordinary editable vector cels remain the saved output. Sketch
+preview/export is silent; the existing project editor owns the separate audio
+lane. FFmpeg review packaging does not prove Android video encoding. Preserve
+the original signer and device identity; no merge/deploy/stable publication.
+
 ## Owner's current mouth / face and viewpoint requirement
 
 Finish isolated mouth opening, lip shaping, tongue and chewing through native

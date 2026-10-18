@@ -45,15 +45,20 @@ final class SketchFaceAnimation {
             v[14]=Math.max(-1,Math.min(1,m[0]*.8-m[2]*.2));v[15]=-m[2]*.6;keys.put(pose(f,v).put("interpolation","linear"));}return keys;
     }
     static void apply(JSONObject doc,JSONObject operation)throws Exception {
-        SketchDocument.fields(operation,"type,layerId,faceId,settings,preset,poses");String id=SketchDocument.id(operation,"faceId");if(id.length()>28)throw SketchDocument.bad("Face ID must fit 28 characters");
+        SketchDocument.fields(operation,"type,layerId,faceId,settings,preset,poses,speech");String id=SketchDocument.id(operation,"faceId");if(id.length()>28)throw SketchDocument.bad("Face ID must fit 28 characters");
         JSONObject original=SketchDocument.layer(doc,SketchDocument.id(operation,"layerId"));if(original.getBoolean("locked"))throw SketchDocument.bad("Layer is locked");JSONArray layers=doc.getJSONArray("layers");
         for(int l=0;l<layers.length();l++){JSONArray objects=layers.getJSONObject(l).getJSONArray("objects");for(int n=0;n<objects.length();n++)if(objects.getJSONObject(n).getString("id").startsWith(id+"_"))throw SketchDocument.bad("Face identity already exists");}
         int frames=doc.getInt("frameCount");if(frames<24||frames>240)throw SketchDocument.bad("Face construction supports 24..240 frames without changing timing");JSONObject s=settings(operation.getJSONObject("settings"));
-        String name=operation.optString("preset","reaction");if(!Set.of("reaction","playful","chew").contains(name))throw SketchDocument.bad("Unknown facial motion preset");JSONArray keys=operation.has("poses")?operation.getJSONArray("poses"):preset(doc,name);validatePoses(keys,frames);
+        String name=operation.optString("preset","reaction");if(!Set.of("reaction","playful","chew").contains(name))throw SketchDocument.bad("Unknown facial motion preset");
+        if(operation.has("speech")&&operation.has("poses"))throw SketchDocument.bad("Choose speech cues or pose keys, not both");
+        JSONArray keys=operation.has("poses")?operation.getJSONArray("poses"):preset(doc,name);
+        if(operation.has("speech"))keys=SketchSpeechTiming.facePoses(doc,operation.getJSONObject("speech"),keys);validatePoses(keys,frames);
         JSONObject candidate=SketchDocument.copy(doc);String layerId=original.getString("id");JSONArray objects=SketchDocument.layer(candidate,layerId).getJSONArray("objects");int start=objects.length();
         double w=doc.getInt("width"),h=doc.getInt("height"),cx=s.getDouble("centerX")*w,cy=s.getDouble("centerY")*h,hw=s.getDouble("width")*w,hh=s.getDouble("height")*h;
         String view=s.getString("view");boolean profile=Set.of("left","right").contains(view),back="back".equals(view);double direction="left".equals(view)?-1:1;
         if("high".equals(view))hh*=.86;else if("low".equals(view))hh*=.91;
+        double mouthY=cy+hh*("high".equals(view)?.26:"low".equals(view)?.19:.22);
+        double[] leadingAnchors=profile?new double[frames]:null;
         Matrix identity=new Matrix();List<JSONObject> fixed=new ArrayList<>();
         Path neck=new Path();neck.moveTo((float)(cx-hw*.15),(float)(cy+hh*.34));neck.lineTo((float)(cx-hw*.17),(float)(cy+hh*.64));neck.quadTo((float)cx,(float)(cy+hh*.73),(float)(cx+hw*.17),(float)(cy+hh*.64));neck.lineTo((float)(cx+hw*.15),(float)(cy+hh*.34));neck.close();
         whole(objects,fixed,id+"_neck",neck,true,tone(s.getString("skinColor"),.82),s,w,h,frames);
@@ -66,8 +71,9 @@ final class SketchFaceAnimation {
         double[] prior=null;List<JSONObject> held=new ArrayList<>();
         for(int f=0;f<frames;f++){
             if(Thread.currentThread().isInterrupted())throw new InterruptedException("Face construction cancelled");double[] v=sample(keys,f),state={v[6],v[9]};
-            if(prior!=null&&Arrays.equals(prior,state)){for(JSONObject o:held)o.put("exposure",o.getInt("exposure")+1);continue;}prior=state;held=new ArrayList<>();
+            if(prior!=null&&Arrays.equals(prior,state)){for(JSONObject o:held)o.put("exposure",o.getInt("exposure")+1);if(profile)leadingAnchors[f]=leadingAnchors[f-1];continue;}prior=state;held=new ArrayList<>();
             Path head=profile?profileHead(cx,cy,hw,hh,state[0],state[1],direction,s):frontHead(cx,cy,hw,hh,state[0],state[1],s);
+            if(profile)leadingAnchors[f]=profileLipAnchor(head,mouthY-hh*.16*s.getDouble("mouthSize")*state[0]*.18,direction);
             JSONObject base=SketchMouthAnimation.add(objects,held,id+"_f"+f+"_head",head,true,s.getString("skinColor"),s,w,h,f,identity);
             if(base!=null)base.put("gradient",new JSONObject().put("startColor",tone(s.getString("skinColor"),1.12)).put("endColor",tone(s.getString("skinColor"),.88)).put("x0",(cx-hw*.4)/w).put("y0",(cy-hh*.3)/h).put("x1",(cx+hw*.45)/w).put("y1",(cy+hh*.3)/h));
             SketchMouthAnimation.add(objects,held,id+"_f"+f+"_head_rim",head,false,s.getString("ink"),s,w,h,f,identity);
@@ -79,7 +85,7 @@ final class SketchFaceAnimation {
         }
         // Heads are behind the same shared mouth/eye controllers, never flattened screenshots.
         JSONArray eyeKeys=split(keys,SketchEyeAnimation.CHANNELS),mouthKeys=split(keys,SketchMouthAnimation.CHANNELS);
-        double eyeY=cy-hh*("high".equals(view)?.045:"low".equals(view)?.16:.10),mouthY=cy+hh*("high".equals(view)?.26:"low".equals(view)?.19:.22);
+        double eyeY=cy-hh*("high".equals(view)?.045:"low".equals(view)?.16:.10);
         if(!back){
             if(profile)profileEyes(objects,id,s,keys,cx,eyeY,hw,hh,w,h,direction,frames);
             else {
@@ -88,7 +94,7 @@ final class SketchFaceAnimation {
             }
             JSONObject mouthSettings=new JSONObject().put("style",s.getString("mouthStyle")).put("view",view).put("centerX",(cx+(profile?direction*hw*.39:0))/w).put("centerY",mouthY/h)
                     .put("width",hw*.42*s.getDouble("mouthSize")/w).put("height",hh*.16*s.getDouble("mouthSize")/h).put("outlinePx",s.getDouble("outlinePx")).put("lipColor",s.getString("lipColor")).put("ink",s.getString("ink"));
-            SketchMouthAnimation.applyFace(candidate,new JSONObject().put("type","add_mouth_animation").put("layerId",layerId).put("mouthId",id+"_mouth").put("settings",mouthSettings).put("poses",mouthKeys));objects=SketchDocument.layer(candidate,layerId).getJSONArray("objects");
+            SketchMouthAnimation.applyFace(candidate,new JSONObject().put("type","add_mouth_animation").put("layerId",layerId).put("mouthId",id+"_mouth").put("settings",mouthSettings).put("poses",mouthKeys),leadingAnchors);objects=SketchDocument.layer(candidate,layerId).getJSONArray("objects");
             nose(objects,id,s,cx,cy,hw,hh,w,h,direction,profile,view,frames);
             brows(objects,id,s,keys,cx,eyeY,hw,hh,w,h,direction,profile,frames);
         }
@@ -99,6 +105,22 @@ final class SketchFaceAnimation {
         for(int i=start;i<objects.length();i++){JSONObject o=objects.getJSONObject(i);Path p=SketchFrameRenderer.path(o.getJSONArray("commands"),(int)w,(int)h);p.transform(tilt);RectF b=new RectF();p.computeBounds(b,true);
             if(b.left<0||b.top<0||b.right>w||b.bottom>h)throw SketchDocument.bad("Face roll leaves canvas; move or resize the face");o.put("transform",SketchDocument.transform().put("anchorX",cx/w).put("anchorY",cy/h).put("rotation",s.getDouble("tilt")));}
         SketchDocument.validate(candidate);original.put("objects",objects);
+    }
+    /** Follow the front of the actual head curve at upper-lip height. This also
+     * covers the quadratic above the straight lip segment for wide-open mouths,
+     * and automatically follows nose, jaw and head-shape changes. */
+    private static double profileLipAnchor(Path head,double y,double direction){
+        float[] edge=head.approximate(.025f);double leading=direction<0?Double.POSITIVE_INFINITY:Double.NEGATIVE_INFINITY;
+        for(int i=3;i<edge.length;i+=3){
+            double ax=edge[i-2],ay=edge[i-1],bx=edge[i+1],by=edge[i+2];
+            if(y<Math.min(ay,by)||y>Math.max(ay,by))continue;
+            double x;
+            if(Math.abs(by-ay)<.000001)x=direction<0?Math.min(ax,bx):Math.max(ax,bx);
+            else x=ax+(bx-ax)*(y-ay)/(by-ay);
+            leading=direction<0?Math.min(leading,x):Math.max(leading,x);
+        }
+        if(!Double.isFinite(leading))throw SketchDocument.bad("The profile lip height leaves the head contour");
+        return leading;
     }
     private static JSONArray split(JSONArray poses,String[] names)throws Exception {JSONArray out=new JSONArray();for(int n=0;n<poses.length();n++){JSONObject p=poses.getJSONObject(n),q=new JSONObject().put("frame",p.getInt("frame"));for(String channel:names)if(p.has(channel))q.put(channel,p.get(channel));if(p.has("interpolation"))q.put("interpolation",p.get("interpolation"));if(p.has("curve"))q.put("curve",p.get("curve"));out.put(q);}return out;}
     private static Path frontHead(double x,double y,double w,double h,double open,double jaw,JSONObject s)throws Exception {

@@ -28,15 +28,23 @@ final class SketchMouthAnimation {
     static void applyFace(JSONObject doc,JSONObject operation)throws Exception {
         apply(doc,operation,true);
     }
+    static void applyFace(JSONObject doc,JSONObject operation,double[] leadingAnchors)throws Exception {
+        apply(doc,operation,true,leadingAnchors);
+    }
     private static void apply(JSONObject doc,JSONObject operation,boolean facialPart)throws Exception {
-        SketchDocument.fields(operation,"type,layerId,mouthId,settings,preset,poses");String id=SketchDocument.id(operation,"mouthId");
+        apply(doc,operation,facialPart,null);
+    }
+    private static void apply(JSONObject doc,JSONObject operation,boolean facialPart,double[] leadingAnchors)throws Exception {
+        SketchDocument.fields(operation,"type,layerId,mouthId,settings,preset,poses,speech");String id=SketchDocument.id(operation,"mouthId");
         if(id.length()>36)throw SketchDocument.bad("Mouth ID must fit 36 characters");
         JSONObject layer=SketchDocument.layer(doc,SketchDocument.id(operation,"layerId"));if(layer.getBoolean("locked"))throw SketchDocument.bad("Layer is locked");
         JSONArray layers=doc.getJSONArray("layers");for(int l=0;l<layers.length();l++){JSONArray objects=layers.getJSONObject(l).getJSONArray("objects");for(int n=0;n<objects.length();n++)
             if(objects.getJSONObject(n).getString("id").startsWith(id+"_"))throw SketchDocument.bad("Mouth ID already exists; choose a new identity");}
         JSONObject s=settings(operation.getJSONObject("settings"),facialPart);int frames=doc.getInt("frameCount");if(frames<24||frames>240)throw SketchDocument.bad("Mouth construction needs 24..240 frames; existing timing is preserved");
+        if(leadingAnchors!=null&&(leadingAnchors.length!=frames||!Set.of("left","right").contains(s.getString("view"))))throw SketchDocument.bad("Profile lip anchors must match the unchanged frame clock");
         String preset=operation.optString("preset","articulation");if(!Set.of("articulation","tongue","chew").contains(preset))throw SketchDocument.bad("Unknown mouth preset");
-        JSONArray poses=operation.has("poses")?operation.getJSONArray("poses"):preset(doc,preset);validatePoses(poses,frames);
+        if(operation.has("speech")&&operation.has("poses"))throw SketchDocument.bad("Choose speech cues or pose keys, not both");
+        JSONArray poses=operation.has("speech")?SketchSpeechTiming.poses(doc,operation.getJSONObject("speech")):operation.has("poses")?operation.getJSONArray("poses"):preset(doc,preset);validatePoses(poses,frames);
         JSONObject candidate=SketchDocument.copy(doc);JSONArray objects=SketchDocument.layer(candidate,layer.getString("id")).getJSONArray("objects");
         double w=doc.getInt("width"),h=doc.getInt("height"),cx=s.getDouble("centerX")*w,cy=s.getDouble("centerY")*h;
         Matrix matrix=new Matrix();matrix.setRotate((float)s.getDouble("tilt"),(float)cx,(float)cy);
@@ -44,7 +52,13 @@ final class SketchMouthAnimation {
         for(int frame=0;frame<frames;frame++){
             if(Thread.currentThread().isInterrupted())throw new InterruptedException("Mouth construction cancelled");double[] state=sample(poses,frame);
             if(previous!=null&&Arrays.equals(previous,state)){for(JSONObject o:previousObjects)o.put("exposure",o.getInt("exposure")+1);continue;}
-            previous=state;previousObjects=new ArrayList<>();draw(objects,previousObjects,id+"_f"+frame,s,state,w,h,frame,matrix);
+            previous=state;previousObjects=new ArrayList<>();JSONObject frameSettings=s;
+            if(leadingAnchors!=null){
+                double direction="left".equals(s.getString("view"))?-1:1;
+                double mouthWidth=s.getDouble("width")*w*state[1]*(1-.36*state[7])*.62;
+                frameSettings=SketchDocument.copy(s).put("centerX",(leadingAnchors[frame]-direction*mouthWidth/2)/w);
+            }
+            draw(objects,previousObjects,id+"_f"+frame,frameSettings,state,w,h,frame,matrix);
         }
         SketchDocument.validate(candidate);layer.put("objects",objects);
     }
@@ -103,10 +117,35 @@ final class SketchMouthAnimation {
             p.cubicTo((float)(cx-d*mw*.10),(float)(top-height*.03*v[0]),(float)(cx+d*mw*.35),(float)(top-height*.08*v[0]),(float)(cx+d*mw*.5),(float)top);
             p.cubicTo((float)(cx+d*mw*.70+jaw),(float)(bottom-height*.08*v[0]),(float)(cx-d*mw*.10+jaw),(float)(bottom+height*.12*v[0]),(float)(cx-d*mw*.5),(float)corner);p.close();return p;
         }
+        if(v[7]>0)return roundedAperture(cx,mw,top,bottom,corner,jaw,v[7]);
         Path p=new Path();p.moveTo((float)(cx-mw/2),(float)corner);
         p.cubicTo((float)(cx-mw*.25),(float)(top+(top-corner)/3),(float)(cx+mw*.25),(float)(top+(top-corner)/3),(float)(cx+mw/2),(float)corner);
         p.cubicTo((float)(cx+mw*.36+jaw),(float)(bottom+(bottom-corner)/3),(float)(cx-mw*.36+jaw),(float)(bottom+(bottom-corner)/3),(float)(cx-mw/2),(float)corner);p.close();return p;
     }
+    /** Roundness changes the contour as well as width. Split the existing two
+     * cubics exactly, then blend toward four elliptical quarters. At zero the
+     * original authored curve is retained; intermediate values stay continuous.
+     * Profiles retain their separately authored leading lip/rear corner anatomy.
+     */
+    private static Path roundedAperture(double cx,double width,double top,double bottom,double corner,double jaw,double round){
+        double[] left={cx-width/2,corner},right={cx+width/2,corner};
+        double[][] upper=split(left,new double[]{cx-width*.25,top+(top-corner)/3},new double[]{cx+width*.25,top+(top-corner)/3},right);
+        double[][] lower=split(right,new double[]{cx+width*.36+jaw,bottom+(bottom-corner)/3},new double[]{cx-width*.36+jaw,bottom+(bottom-corner)/3},left);
+        double middle=(top+bottom)/2,rx=width/2,ry=(bottom-top)/2,k=.5522847498307936,bx=cx+jaw*.75;
+        double[][] oval={{cx-rx,middle},{cx-rx,middle-k*ry},{cx-k*rx,top},{cx,top},
+                {cx+k*rx,top},{cx+rx,middle-k*ry},{cx+rx,middle},
+                {cx+rx,middle+k*ry},{bx+k*rx,bottom},{bx,bottom},
+                {bx-k*rx,bottom},{cx-rx,middle+k*ry},{cx-rx,middle}};
+        double[][] points=new double[13][2];for(int i=0;i<13;i++){double[] base=i<=6?upper[i]:lower[i-6];
+            for(int axis=0;axis<2;axis++)points[i][axis]=base[axis]+round*(oval[i][axis]-base[axis]);}
+        Path p=new Path();p.moveTo((float)points[0][0],(float)points[0][1]);
+        for(int i=1;i<13;i+=3)p.cubicTo((float)points[i][0],(float)points[i][1],(float)points[i+1][0],(float)points[i+1][1],(float)points[i+2][0],(float)points[i+2][1]);p.close();return p;
+    }
+    private static double[][] split(double[] a,double[] b,double[] c,double[] d){
+        double[] ab=mid(a,b),bc=mid(b,c),cd=mid(c,d),abc=mid(ab,bc),bcd=mid(bc,cd);
+        return new double[][]{a,ab,abc,mid(abc,bcd),bcd,cd,d};
+    }
+    private static double[] mid(double[] a,double[] b){return new double[]{(a[0]+b[0])/2,(a[1]+b[1])/2};}
     private static void draw(JSONArray objects,List<JSONObject> current,String id,JSONObject s,double[] v,double w,double h,int frame,Matrix matrix)throws Exception {
         String view=s.getString("view");if("back".equals(view))return;
         double direction="left".equals(view)?-1:"right".equals(view)?1:0;

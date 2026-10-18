@@ -51,7 +51,8 @@ public final class SketchPaintOps {
                 }else if("symmetry_stroke".equals(type)){
                     JSONArray expanded=SketchSymmetry.apply(next,operation);for(int k=0;k<expanded.length();k++)visual.put(SketchDocument.copy(expanded.getJSONObject(k)));
                 }else{
-                    SketchEditOps.apply(next,operation);visual.put(SketchDocument.copy(operation));
+                    JSONObject resolved=SketchSpeechAssets.expand(context,next,operation);
+                    SketchEditOps.apply(next,resolved);visual.put(SketchDocument.copy(resolved));
                 }
             }
         }finally{if(assets!=null)assets.close();}

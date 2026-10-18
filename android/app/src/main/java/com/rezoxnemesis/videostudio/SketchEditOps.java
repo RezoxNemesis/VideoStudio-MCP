@@ -236,7 +236,7 @@ public final class SketchEditOps {
                             if(appendOnly){appendObject(doc,operation);visual.put(operation);continue;}
                             if("symmetry_stroke".equals(operation.optString("type"))){JSONArray expanded=SketchSymmetry.apply(doc,operation);for(int j=0;j<expanded.length();j++)visual.put(SketchDocument.copy(expanded.getJSONObject(j)));}
                             else if("trace_reference".equals(operation.optString("type"))){JSONObject layer=SketchDocument.layer(doc,operation.getString("layerId"));int before=layer.getJSONArray("objects").length();SketchReferenceTrace.apply(store,doc,operation);for(int j=before;j<layer.getJSONArray("objects").length();j++)visual.put(new JSONObject().put("type","add_object").put("layerId",layer.getString("id")).put("object",layer.getJSONArray("objects").getJSONObject(j)));}
-                            else{apply(doc,operation);visual.put(operation);}
+                            else{JSONObject resolved=SketchSpeechAssets.expand(context,doc,operation);apply(doc,resolved);visual.put(resolved);}
                         }
                         return doc;
                     },visual);

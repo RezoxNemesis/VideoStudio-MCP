@@ -20,6 +20,26 @@ final class DialogueOutput {
             if(expected.optDouble("speed",1)!=received.optDouble("speed",1)||!expected.getString("voice").equals(timing.getJSONObject("cast").getString(expected.getString("characterId"))))throw new IllegalArgumentException("Dialogue cast differs");
             String name=String.format(Locale.US,"line_%02d.wav",i);if(!name.equals(received.getString("path")))throw new IllegalArgumentException("Dialogue stem differs");JSONObject stem=PcmWaveFile.inspect(file(root,descriptors,name,"dialogue_stem","audio/wav"));
             if(stem.getInt("sampleRate")!=24000||stem.getInt("channels")!=1||stem.getLong("sampleFrames")>expected.getLong("slotMs")*24)throw new IllegalArgumentException("Dialogue exceeds its slot");
+            // Older audio-only results remain importable. When predictions exist,
+            // their clock must describe the actual unchanged PCM, not merely agree
+            // with another number in the same untrusted timing JSON.
+            if(received.has("timing")){
+                JSONArray segments=received.getJSONArray("timing");long cursor=0;
+                if(segments.length()<1||segments.length()>32)throw new IllegalArgumentException("Dialogue prediction segments unavailable");
+                for(int n=0;n<segments.length();n++){
+                    JSONObject segment=segments.getJSONObject(n);long start=OpenPipelineArtifacts.integer(segment,"startSample",0,stem.getLong("sampleFrames"));
+                    long count=OpenPipelineArtifacts.integer(segment,"sampleCount",1,stem.getLong("sampleFrames"));
+                    if(start!=cursor||count>stem.getLong("sampleFrames")-cursor||segment.getInt("unitsPerSecond")!=40)throw new IllegalArgumentException("Dialogue prediction clock differs from actual PCM stem");
+                    if(!segment.isNull("modelDurationUnits")){
+                        JSONArray units=segment.getJSONArray("modelDurationUnits");long total=0;
+                        if(units.length()<3||units.length()>512)throw new IllegalArgumentException("Dialogue token durations unavailable");
+                        for(int u=0;u<units.length();u++)total+=OpenPipelineArtifacts.integer(new JSONObject().put("duration",units.get(u)),"duration",1,2400);
+                        if(total*600!=count)throw new IllegalArgumentException("Dialogue token clock differs from actual PCM stem");
+                    }
+                    cursor+=count;
+                }
+                if(cursor!=stem.getLong("sampleFrames"))throw new IllegalArgumentException("Dialogue predicted duration differs from actual PCM stem");
+            }
         }
     }
     private static File file(File root,Map<String,JSONObject> descriptors,String name,String role,String mime)throws Exception {JSONObject d=descriptors.get(name);if(d==null||!role.equals(d.getString("role"))||!mime.equals(d.getString("mime")))throw new IllegalArgumentException("Missing dialogue artifact: "+name);return OpenPipelineArtifacts.target(root,d.getString("path"));}
