@@ -136,6 +136,7 @@ final class NativeStartupGuard {
             case "render_gltf_combat": case "cinematic_3d_render":
             case "run_creative_graph": case "prompt_video":
             case "export_project": case "sketch_render": case "sketch_book_render":
+            case "earth_projection_preview":
             case "generate_image": case "install_model_pack":
                 return true;
             default:return false;

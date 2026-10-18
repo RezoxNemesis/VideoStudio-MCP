@@ -293,6 +293,9 @@ public final class SketchEditOps {
                 for (int i = 0, j = 0; i <= layers.length(); i++) reordered.put(i == index ? selected : layers.getJSONObject(j++));
                 doc.put("layers", reordered); break;
             }
+            case "consolidate_path_runs": {
+                SketchTraceConsolidator.apply(doc,op);break;
+            }
             case "add_object": {
                 appendObject(doc,op);break;
             }

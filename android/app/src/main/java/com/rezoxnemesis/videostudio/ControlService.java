@@ -1078,6 +1078,11 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                     syncProtocolState();
                     return;
                 }
+                case "earth_assets_verify":
+                case "earth_projection_preview":
+                    complete(command, EarthNativeProof.execute(this, store, action, p));
+                    syncProtocolState();
+                    return;
                 case "import_url":
                     complete(command, queueUrlImport(p));
                     return;
