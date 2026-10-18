@@ -52,12 +52,21 @@ export function weaponCore(source,program,nativeFrame,id,{ignoreWeaponRotation=f
   const transform=lerpKey(obj,nativeFrame.frame);
   required(dict(transform)&&['x','y','rotation','anchorX','anchorY','scaleX','scaleY','opacity'].every(f=>finite(transform[f])),'missing vector affine transform');
   required(Math.abs(transform.x)<1e-8&&Math.abs(transform.y)<1e-8&&Math.abs(transform.scaleX-1)<1e-8&&Math.abs(transform.scaleY-1)<1e-8&&transform.opacity>0.99,'unexpected edited vector scale/translation/opacity');
+  // Native jointTransform rotates the prepared affine PIVOT around the rest
+  // wrist and rotates each path point around that pivot. In M3.2 the pivot is
+  // the wrist; M3.3 correctly pivots weapons around the original drawn grip.
+  const jointRadians=now.rotation*Math.PI/180;
+  const cj=Math.cos(jointRadians),sj=Math.sin(jointRadians);
+  const oldPivot=[transform.anchorX*w,transform.anchorY*h];
+  const pivotOffset=[oldPivot[0]-rest.x*w,oldPivot[1]-rest.y*h];
+  const newPivot=[now.x*w+cj*pivotOffset[0]-sj*pivotOffset[1],
+    now.y*h+sj*pivotOffset[0]+cj*pivotOffset[1]];
   const theta=(now.rotation+(ignoreWeaponRotation?0:transform.rotation))*Math.PI/180;
   const c=Math.cos(theta),s=Math.sin(theta);
   const point=cmd=>{
     required(cmd.length===3&&finite(cmd[1])&&finite(cmd[2]),'invalid authored M/L point');
-    const dx=(cmd[1]-rest.x)*w,dy=(cmd[2]-rest.y)*h;
-    return [now.x*w+c*dx-s*dy,now.y*h+s*dx+c*dy];
+    const dx=cmd[1]*w-oldPivot[0],dy=cmd[2]*h-oldPivot[1];
+    return [newPivot[0]+c*dx-s*dy,newPivot[1]+s*dx+c*dy];
   };
   return [point(obj.commands[0]),point(obj.commands[1])];
 }
@@ -73,6 +82,20 @@ export function segmentGap([a,b],[c,d]){
   const o1=cross(a,b,c),o2=cross(a,b,d),o3=cross(c,d,a),o4=cross(c,d,b);
   if(o1*o2<0&&o3*o4<0)return 0;
   return Math.min(pointLine(a,c,d),pointLine(b,c,d),pointLine(c,a,b),pointLine(d,a,b));
+}
+/** Interior intersection with normalized shaft parameters and the acute crossing angle. */
+export function interiorCrossing([a,b],[c,d]){
+  required([a,b,c,d].every(p=>Array.isArray(p)&&p.length===2&&p.every(finite)),
+    'invalid cross-shaft coordinates');
+  const rx=b[0]-a[0],ry=b[1]-a[1],sx=d[0]-c[0],sy=d[1]-c[1];
+  const den=rx*sy-ry*sx;
+  if(Math.abs(den)<1e-7)return null;
+  const dx=c[0]-a[0],dy=c[1]-a[1];
+  const t=(dx*sy-dy*sx)/den,u=(dx*ry-dy*rx)/den;
+  if(t<0||t>1||u<0||u>1)return null;
+  const cos=Math.min(1,Math.abs(rx*sx+ry*sy)/(Math.hypot(rx,ry)*Math.hypot(sx,sy)));
+  return {point:[a[0]+rx*t,a[1]+ry*t],fractionA:t,fractionB:u,
+    angleDeg:Math.acos(cos)*180/Math.PI};
 }
 function evidenceMatch(a,b,why){required(dist(a,b)<=.02,why);}
 /** Fails closed if any native weapon trace is inconsistent with source and 100 authored solver frames. */
@@ -95,7 +118,11 @@ export function auditWeaponGeometry({source,program,native,weaponTrace,stageMetr
       required(Array.isArray(sourcePath.keys)&&sourcePath.keys.length>=5,'weapon has no original editable pivot keys');
       required(sourcePath.keys.some(k=>k.frame===16),'impact lacks authored weapon key');
       const mid=lerpKey(sourcePath,16);
-      required(Math.abs(mid.anchorX-rest.x)<1e-6&&Math.abs(mid.anchorY-rest.y)<1e-6,'weapon rotation not pivoted on wrist');
+      const stagedPivot=stageMetrics.combatStaging?.schema==='videostudio.crossed-baton-staging.v1';
+      const sourceCore=object(source,ids[2]).commands[0];
+      const desiredX=stagedPivot?sourceCore[1]:rest.x,desiredY=stagedPivot?sourceCore[2]:rest.y;
+      required(Math.abs(mid.anchorX-desiredX)<1e-6&&Math.abs(mid.anchorY-desiredY)<1e-6,
+        stagedPivot?'weapon rotation is not held at drawn hand grip':'weapon rotation not pivoted on wrist');
       const signature=sourcePath.keys.map(k=>`${k.frame}:${cap(k.transform.rotation,6)}`).join('/');
       seen.add(signature);
     }
@@ -127,26 +154,74 @@ export function auditWeaponGeometry({source,program,native,weaponTrace,stageMetr
   const oldA=weaponCore(source,program,at,'wide_rig',{ignoreWeaponRotation:true});
   const oldB=weaponCore(source,program,at,'rook_wide_rig',{ignoreWeaponRotation:true});
   const originalTip=dist(oldA[1],oldB[1]),correctedTip=dist(a[1],b[1]),correctedCenter=segmentGap(a,b);
-  const point=[(a[1][0]+b[1][0])*.5,(a[1][1]+b[1][1])*.5];
+  const crossingStage=stageMetrics.combatStaging;
+  const staged=crossingStage?.schema==='videostudio.crossed-baton-staging.v1';
+  const cross=staged?interiorCrossing(a,b):null;
+  const point=staged?(cross?.point??[NaN,NaN]):[(a[1][0]+b[1][0])*.5,(a[1][1]+b[1][1])*.5];
   const visualFlash=object(source,'impact_flash');
   required(dict(visualFlash.bounds),'missing authored visible impact effect');
   const flashCenter=[(visualFlash.bounds.x+visualFlash.bounds.width/2)*source.width,(visualFlash.bounds.y+visualFlash.bounds.height/2)*source.height];
   const flashError=dist(point,flashCenter);
-  required(originalTip>=100&&correctedTip<=6&&correctedCenter<=6,'weapon shaft/tip contact has not been corrected');
-  required(flashError<=1,'impact flash is not aligned with actual drawn tip collision');
-  required(maximumTipStep<85,'unbounded one-frame weapon tip snap');
   const metrics=stageMetrics.weaponContact;
-  required(Math.abs(metrics.beforeTipGapPx-originalTip)<.1&&Math.abs(metrics.afterTipGapPx-correctedTip)<.1,'native tip-correction provenance differs from independently computed geometry');
-  required(Math.abs(metrics.afterCenterlineGapPx-correctedCenter)<.1,'native centre-line measurement inconsistent');
+  if(staged){
+    const gripSep=dist(a[0],b[0]);
+    required(cross&&cross.angleDeg>=35&&cross.angleDeg<=90&&
+      cross.fractionA>=.35&&cross.fractionA<=.75&&
+      cross.fractionB>=.35&&cross.fractionB<=.75,
+      'CROSSED_SHAFT_CONTACT requires a genuine non-parallel interior intersection');
+    required(gripSep>=40&&gripSep<=100&&correctedTip>=25&&correctedCenter<=.1,
+      'Actual sketched weapon grips/tips do not form a readable X');
+    // This mode intentionally supersedes M3.2 tip-to-tip proof. Original M3.2
+    // report remains as historical evidence, but cannot certify the NEW shot.
+    required(metrics.beforeTipGapPx>100&&metrics.afterTipGapPx<=6&&
+      metrics.releaseDecision==='MANUAL_REVIEW_REQUIRED',
+      'Missing prior M3.2 stage provenance');
+    required(crossingStage.frame===16&&crossingStage.sourceSpace==='native-canvas-pixels'&&
+      crossingStage.releaseDecision==='MANUAL_REVIEW_REQUIRED'&&
+      crossingStage.footContactsPreserved===true&&
+      crossingStage.realisticGloveDeformationVerified===false,
+      'Native M3.3 staging falsely asserts contact or artistic acceptance');
+    required(Math.abs(crossingStage.shaftCrossAngleDeg-cross.angleDeg)<.15&&
+      Math.abs(crossingStage.intersectionFractionA-cross.fractionA)<.01&&
+      Math.abs(crossingStage.intersectionFractionB-cross.fractionB)<.01&&
+      Math.abs(crossingStage.gripSeparationPx-gripSep)<.15&&
+      Math.abs(crossingStage.tipSeparationPx-correctedTip)<.15&&
+      Math.hypot((crossingStage.impactX*source.width)-point[0],
+        (crossingStage.impactY*source.height)-point[1])<.15,
+      'M3.3 scene metadata disagrees with independently rebuilt vector geometry');
+    for(const id of ['wide_rig','rook_wide_rig']){
+      const grip=object(source,groups[id][2]).commands[0];
+      for(const name of groups[id]){
+        const obj=object(source,name),t=lerpKey(obj,16);
+        required(Math.abs(t.anchorX-grip[1])<1e-6&&Math.abs(t.anchorY-grip[2])<1e-6,
+          'Baton does not pivot about its real drawn grip');
+      }
+    }
+  }else{
+    required(originalTip>=100&&correctedTip<=6&&correctedCenter<=6,
+      'weapon shaft/tip contact has not been corrected');
+    required(Math.abs(metrics.beforeTipGapPx-originalTip)<.1&&
+      Math.abs(metrics.afterTipGapPx-correctedTip)<.1,
+      'native tip-correction provenance differs from independently computed geometry');
+    required(Math.abs(metrics.afterCenterlineGapPx-correctedCenter)<.1,
+      'native centre-line measurement inconsistent');
+  }
+  required(flashError<=1,'impact flash is not aligned with measured original vector contact');
+  required(maximumTipStep<85,'unbounded one-frame weapon tip snap');
   required(metrics.hardFootContactsPreserved===true&&metrics.releaseDecision==='MANUAL_REVIEW_REQUIRED','weapon correction overstated acceptance');
   const planted=at.contactErrors||[];
   required(planted.length===4&&planted.every(f=>finite(f.errorPixels)&&f.errorPixels<.02),'real native planted feet missing/unstable');
   return {
-    schema:'omega.weapon-geometry.report.v0.3.2',status:'MEASURED',qualityDecision:'MANUAL_REVIEW_REQUIRED',
+    schema:staged?'omega.weapon-geometry.report.v0.3.3':'omega.weapon-geometry.report.v0.3.2',
+    status:'MEASURED',qualityDecision:'MANUAL_REVIEW_REQUIRED',
     measured:{nativeFrameCount:100,verifiedWideFrames:36,
+      contactMode:staged?'CROSSED_SHAFT_INTERIOR':'TIP_TO_TIP',
       originalTipSeparationPx:cap(originalTip),correctedTipSeparationPx:cap(correctedTip),
       correctedCenterlineGapPx:cap(correctedCenter),tipGapImprovementPx:cap(originalTip-correctedTip),
       effectToTipContactOffsetPx:cap(flashError),maximumWideShotTipStepPx:cap(maximumTipStep),
+      gripSeparationPx:staged?cap(dist(a[0],b[0])):null,
+      crossingAngleDeg:staged?cap(cross.angleDeg):null,
+      shaftFractions:staged?[cap(cross.fractionA),cap(cross.fractionB)]:null,
       nativePlantedFeetAtImpact:planted.length},
     impactPoint:{x:cap(point[0]),y:cap(point[1])},observedWideFrames:verifiedFrames,
     notVerified:['Complete weapon silhouette overlap, contact thickness and collision force',

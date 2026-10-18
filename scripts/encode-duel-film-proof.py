@@ -119,6 +119,11 @@ subprocess.run(["node", "scripts/omega-weapon-contact.mjs",
                 "--root", str(ROOT)],
                check=True, stdin=subprocess.DEVNULL)
 
+# M3.3: inspect real interior weapon crossing after native M1-M3.2 proofs.
+subprocess.run(["node", "scripts/omega-combat-staging.mjs",
+                "--root", str(ROOT)],
+               check=True, stdin=subprocess.DEVNULL)
+
 shutil.rmtree(FRAMES)
 print(json.dumps({k:summary[k] for k in ("video","sha256","fileBytes",
     "nativeFrameCount","fps","changedAdjacentFrames","distanceBetweenActorWristsPx")},indent=2))

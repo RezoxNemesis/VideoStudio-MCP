@@ -1,4 +1,4 @@
-name: OMEGA CinemaBench, Physics and Weapon Geometry
+name: OMEGA CinemaBench and Cinematic Combat Staging
 
 on:
   pull_request:
@@ -28,7 +28,7 @@ jobs:
         with:
           node-version: 22
       - name: Verify M0 CinemaBench, M1 native-film adapter and M2 Motion DNA
-        run: node --test scripts/omega-cinemabench-test.mjs scripts/omega-native-proof-test.mjs scripts/omega-motion-dna-test.mjs scripts/omega-skeleton-test.mjs scripts/omega-physics-brain-test.mjs scripts/omega-impact-dynamics-test.mjs scripts/omega-weapon-contact-test.mjs
+        run: node --test scripts/omega-cinemabench-test.mjs scripts/omega-native-proof-test.mjs scripts/omega-motion-dna-test.mjs scripts/omega-skeleton-test.mjs scripts/omega-physics-brain-test.mjs scripts/omega-impact-dynamics-test.mjs scripts/omega-weapon-contact-test.mjs scripts/omega-combat-staging-test.mjs
       - name: Syntax checks
         run: |
           node --check src/omega/cinemabench.js
@@ -50,12 +50,15 @@ jobs:
           node --check src/omega/weapon-geometry.js
           node --check scripts/omega-weapon-contact.mjs
           node --check scripts/omega-weapon-contact-test.mjs
+          node --check src/omega/combat-staging.js
+          node --check scripts/omega-combat-staging.mjs
+          node --check scripts/omega-combat-staging-test.mjs
           python3 -m py_compile scripts/encode-story-film-proof.py scripts/encode-duel-film-proof.py
 
   native-film-proof:
     # Run one targeted Android Canvas proof for M1/M2/M2.1 review PRs; no APK build.
     # No APK signing, release/deploy, or private device command is performed.
-    if: github.event_name == 'pull_request' && (github.base_ref == 'feat/project-omega-cinemabench-m0' || github.base_ref == 'feat/project-omega-native-film-m1' || github.base_ref == 'feat/project-omega-motion-dna-m2' || (github.base_ref == 'feat/project-omega-skeleton-m21' || (github.base_ref == 'feat/project-omega-physicsbrain-m3' || github.base_ref == 'feat/project-omega-impact-dynamics-m31')))
+    if: github.event_name == 'pull_request' && (github.base_ref == 'feat/project-omega-cinemabench-m0' || github.base_ref == 'feat/project-omega-native-film-m1' || github.base_ref == 'feat/project-omega-motion-dna-m2' || (github.base_ref == 'feat/project-omega-skeleton-m21' || (github.base_ref == 'feat/project-omega-physicsbrain-m3' || github.base_ref == 'feat/project-omega-impact-dynamics-m31' || github.base_ref == 'feat/project-omega-weapon-geometry-m32')))
     needs: cinemabench
     runs-on: ubuntu-latest
     timeout-minutes: 35
@@ -90,6 +93,7 @@ jobs:
             --tests com.rezoxnemesis.videostudio.SketchAnimationContactDirectorTest \
             --tests com.rezoxnemesis.videostudio.SketchAnimationImpactDynamicsTest \
             --tests com.rezoxnemesis.videostudio.SketchAnimationWeaponContactTest \
+            --tests com.rezoxnemesis.videostudio.SketchAnimationCombatStagingTest \
             --stacktrace
       - name: Ensure FFmpeg and FFprobe
         run: |
@@ -225,11 +229,32 @@ jobs:
             throw new Error('Native weapon collision geometry QA rejected M3.2');
           console.log(JSON.stringify(qa.measured,null,2));
           NODE
+      - name: Confirm M3.3 real-grip X-shaped vector shaft crossing
+        if: github.base_ref == 'feat/project-omega-weapon-geometry-m32'
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import {readFileSync} from 'node:fs';
+          const q=JSON.parse(readFileSync('android/app/build/sketch-duel-film-proof/omega-combat-staging.json','utf8'));
+          const m=q.measurable;
+          if(q.status!=='MEASURED' || q.qualityDecision!=='MANUAL_REVIEW_REQUIRED' ||
+             m.nativeFrameCount!==100 || m.wideFrames!==36 ||
+             m.weaponCrossingAngleDeg<35 || m.weaponCrossingAngleDeg>90 ||
+             m.gripSeparationPx<40 || m.distalTipSeparationPx<25 ||
+             m.contactFractions.some(x=>x<.35||x>.75) ||
+             m.oldToNewImpactDisplacementPx<35 ||
+             m.flashAlignmentErrorPx>1 || m.maximumWideShotTipStepPx>=85 ||
+             m.plantedFeetAtImpact!==4 ||
+             q.professionalAnimationVerified!==false ||
+             q.physicalPhoneVerified!==false || q.automaticFilmReleaseApproved!==false)
+            throw new Error('M3.3 native crossed-weapon staging evidence rejected');
+          console.log(JSON.stringify(m,null,2));
+          NODE
       - name: Keep audit reports, reproducible provenance, native samples and videos
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: OMEGA-M1-M2-M21-M3-M31-M32-native-film-proof
+          name: OMEGA-M1-M2-M21-M3-M31-M32-M33-native-film-proof
           retention-days: 7
           if-no-files-found: warn
           path: |
@@ -244,6 +269,7 @@ jobs:
             android/app/build/sketch-duel-film-proof/omega-physics-brain.json
             android/app/build/sketch-duel-film-proof/omega-impact-dynamics.json
             android/app/build/sketch-duel-film-proof/omega-weapon-contact.json
+            android/app/build/sketch-duel-film-proof/omega-combat-staging.json
             android/app/build/sketch-duel-film-proof/native-weapon-tracks.json
             android/app/build/sketch-duel-film-proof/duel-stage-metrics.json
             android/app/build/sketch-duel-film-proof/native-rig-tracks.json
