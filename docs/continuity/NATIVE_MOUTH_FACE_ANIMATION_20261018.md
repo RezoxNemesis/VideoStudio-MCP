@@ -131,3 +131,9 @@ are retested on the final source. All per-scene records keep their actual source
 generation; no earlier frames are relabelled as newly rendered.
 
 Fresh final local verification: 1,342 Android tests, zero failures/errors, three optional proof skips; 344 Node tests and306 smoke checks passed. Worker dry-run passed without deployment. All360 accepted eye-study PNG hashes matched the previous4.7.5 generation. Candidate signing/CI verification is recorded below when complete.
+
+## Verified signed candidate
+
+Application source `def08743637c2ff6f8e8c52e0d33726f84e77a79`; [CI run39136900186](https://github.com/RezoxNemesis/VideoStudio-MCP/actions/runs/39136900186) passed1,342 Android tests with zero failures/errors and two optional proof skips. Independent downloaded-APK verification matched package, version4.7.6/code479, source proof and original pinned signing certificate. APK SHA-256: `ea216ac14811355bd3efe5c985301f1cc777d6430690fe6af761862ffecea269`.
+
+Private candidate: `candidate-4.7.6/VideoStudio-4.7.6-Mouth-Face-Candidate.apk` below the evidence root. `review/review.html` selects the36 accepted studies, their native screenshots, full silent review clips and editable archives. `Final-Study-Index.json` preserves actual source generations; final-v2 replaces the three held rear jaws. Final-source non-rear checks matched141 native screenshot hashes from the complete earlier capture. The APK DEX contains the new operation/manual-control strings; functionality is established by native/manual tests, not those strings alone. No merge, stable publication, worker deployment, phone installation or live ChatGPT execution occurred.
