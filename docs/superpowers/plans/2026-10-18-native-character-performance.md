@@ -26,22 +26,22 @@ work. No Gallery, external animation author, worker deployment, main merge or st
 Files: SketchCharacterAnimation.java, SketchCharacterArt.java, SketchEditOps.java;
 tests SketchCharacterAnimationTest.java, SketchCharacterStudyTest.java.
 Interface: static void SketchCharacterAnimation.apply(JSONObject doc,JSONObject op).
-- [ ] Write native dispatch tests for retained anatomy, attachment, bounds and invalid input; run RED.
-- [ ] Implement strict settings, native artwork and physical-time transform keys; run GREEN.
-- [ ] Render 6-second studies in all six views with real product audio, preserve screenshots/archives.
-- [ ] Inspect, reproduce visual defects, repair in product, rerender affected studies.
+- [x] Write native dispatch tests for retained anatomy, attachment, bounds and invalid input; run RED.
+- [x] Implement strict settings, native artwork and physical-time transform keys; run GREEN.
+- [x] Render 6-second studies in all six views with real product audio, preserve screenshots/archives.
+- [x] Inspect, reproduce visual defects, repair in product, rerender affected studies.
 
 ### Task 2: Manual and MCP parity
 
 Files: SketchCharacterDialog.java, SketchStudioActivity.java, native capabilities,
 src/studio-workbench-contract.js, src/index.js, relevant Node/native UI tests.
 Consumes Task1 operation exactly as specified in the design; no private helper API.
-- [ ] Write/run failing strict contract and manual dispatch tests.
-- [ ] Implement numeric/style/view/gesture controls, native preview and async save.
-- [ ] Verify manual/MCP settings and source version admission.
+- [x] Write/run failing strict contract and manual dispatch tests.
+- [x] Implement numeric/style/view/gesture controls, native preview and async save.
+- [x] Verify manual/MCP settings and source version admission.
 
 ### Task 3: Verified update
 
-- [ ] Fresh code review and focused/full regressions with exact source evidence.
-- [ ] Version4.7.8/code481, commit/push feature branch and one original-key CI candidate.
-- [ ] Independently verify APK package/source/signer and retain evidence/manual recipe.
+- [x] Fresh code review and focused/full regressions with exact source evidence.
+- [x] Version4.7.8/code481, commit/push feature branch and one original-key CI candidate.
+- [x] Independently verify APK package/source/signer and retain evidence/manual recipe.

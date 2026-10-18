@@ -129,3 +129,45 @@ Final committed-source captures must be recorded as a new generation.
 Focused affected-path validation passed90Android tests, zero failures/errors/skips.
 360Node tests plus306smoke checks passed; worker dry-run passed without deployment.
 The full final-source CI and signed-candidate identity are pending at this checkpoint.
+
+## Verified candidate and final evidence
+
+Final application/test source: `a2b1154fa18e6befb467def65160bceebf024c08`.
+The character runtime was introduced at`fa835c1`; the follow-up changes only the
+existing shape-key test's durable-save wait. First CI39150136276 recorded1400tests,
+one shape-key test failure and two optional skips. Its evidence remains retained.
+The corrected test helper awaits the actual session writer, checks pending/error
+and drains the UI callback;17affected tests then passed without assertion removal.
+
+[CI39151059017](https://github.com/RezoxNemesis/VideoStudio-MCP/actions/runs/39151059017)
+passed1400Android tests across270suites: zero failures/errors, two optional skips.
+The independently checked4.7.8/code481APK matches package/source proof and the
+original signer. SHA-256:
+`6c0e9e24931b0e9fcd20eca598ab2a696af95efe2295ade3b5364b084d0191a3`.
+Bytes:130922964. Private key stayed in the existing CI cache. Candidate:
+`candidate-4.7.8/VideoStudio-4.7.8-Character-Candidate.apk` under the evidence root.
+
+`final-v6/review.html` contains all eight six-second180frame/30FPS/1280×720studies:
+front/left/right/rear/high/low plus two alternate-palette explaining gestures,
+using the two original English/Hindi speech masters. All1440native PNGs were
+captured through VideoStudio's native exporter.49selected native/editor tests
+passed with zero failures/errors/skips. All677source-file hashes stayed unchanged
+during capture;32sampled archive-restoration frames matched native pixels.
+All1440frame hashes also match the preceding successful visual generation, proving
+that the test-only follow-up left its runtime artwork unchanged. Compared with
+the earlier gradient-failure generation,1080frames are unchanged and360right-view
+frames reflect the corrected material gradients. Earlier generations remain intact.
+
+Visual acceptance is limited to a stylized vector anatomy/material/attachment
+study. Reference-level painterly realism, full-body acting, continuous perspective
+and genuine3D remain unfinished. The six authored views include high/low facial
+anatomy; they do not prove a complete perspective-consistent3Dbody turnaround.
+Native manual/generated-reference preview parity, settings and source MCP admission
+are verified. Live ordinary-ChatGPT/MCP, phone installation/playback, Android system
+TTS and Android video encoding remain unverified. Speech is genuine self-hosted
+Kokoro output, with model-estimated timing and no listening/forced-alignment claim.
+No worker deployment, main merge or stable publication occurred.
+
+`Full-Verification.json`, `Final-Study-Index.json`, source snapshots, JUnit/CI records,
+audio/model proofs and checksums retain exact evidence. The complete review ZIP
+links the APK separately; the source continuity guide provides the manual/MCP recipe.
