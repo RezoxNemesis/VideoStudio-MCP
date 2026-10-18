@@ -36,7 +36,7 @@ public final class EarthSphereProjection {
         final double vx = (px - cx) / radius;
         final double vy = (cy - py) / radius;
         final double q = vx * vx + vy * vy;
-        if (q > 1.0) return new Point(false, vx, vy, 0, 0, 0, 0, 0);
+        if (q > 1.0 + 1e-12) return new Point(false, vx, vy, 0, 0, 0, 0, 0);
         final double vz = Math.sqrt(Math.max(0, 1.0 - q));
         final double tilt = Math.toRadians(axisTiltDeg);
         final double c = Math.cos(tilt), s = Math.sin(tilt);
