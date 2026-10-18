@@ -1,5 +1,24 @@
 # VideoStudio current engineering priority
 
+## Owner's focused animation programme — eye study first
+
+Work through isolated subjects sequentially and refine each through native
+VideoStudio output, visual inspection, repository repairs and retesting. Current
+study: eyes (gaze, tracking, lids, blinks/winks, dilation, near focus), across
+cartoon, almond and creature anatomy. Next separate study: mouth opening/closing,
+tongue, chewing and then actual audio-driven speaking. Other body parts and varied
+objects/figures/creatures, atmospheres, motions and viewpoints follow separately.
+Do not combine everything into a film or claim silence as speech. Preserve all
+earlier animation work. Successful capabilities must live in Android, with manual
+controls and MCP access; workspace-only drawing/animation helpers do not count.
+Show actual native screenshots for visual tests/retests and keep generations.
+
+Eye source is on `feat/native-eye-animation-20261018`; inspect status/HEAD before
+continuing. Read `docs/continuity/NATIVE_EYE_ANIMATION_20261018.md`. The shared
+`add_eye_animation` operation emits editable native curves/cels. Manual users have
+the same pose controls plus a non-mutating native preview. An APK/source test
+does not prove phone installation or live ChatGPT/MCP execution.
+
 ## Native motion continuation — 2026-10-18
 
 The remote 4.7.3 baseline was recovered into `/workspace/VideoStudio-MCP`;

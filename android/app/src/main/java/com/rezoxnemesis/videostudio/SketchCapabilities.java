@@ -5,6 +5,15 @@ public final class SketchCapabilities {
     private SketchCapabilities(){}
     public static JSONObject get() throws Exception {
         return new JSONObject().put("minimumNativeVersion","3.9.1").put("promptFirstDrawing",true).put("referenceImageRequired",false).put("humanAndAgentShareOperations",true)
+                .put("eyeAnimation",new JSONObject().put("minimumNativeVersion","4.7.5").put("action","sketch_edit").put("operation","add_eye_animation")
+                        .put("settings",SketchEyeAnimation.defaults()).put("styles",new JSONArray().put("round").put("almond").put("slit"))
+                        .put("presets",new JSONArray().put("look_blink").put("tracking").put("double_blink"))
+                        .put("manualControls","Sketch Studio > Brush / Text > Eye animation; editable gaze, each eyelid, pupil dilation, near focus and pose frames")
+                        .put("studyCanvas",new JSONObject().put("width",1280).put("height",720).put("frameCount",120).put("fps",30))
+                        .put("poseControls","Optional poses: frame, gazeX/gazeY -1..1, leftOpen/rightOpen 0..1, pupilScale 0.5..1.5, vergence 0..0.5; first frame 0, strictly increasing; ordinary easing and Bezier timing supported")
+                        .put("limits","24..240 frames; 1..240 pose keys; normalized settings; native clipping bakes to editable vector cels under existing point/object/byte budgets")
+                        .put("semantics","Both eyes share gaze; near focus turns them inward. Lids occlude circular irises/pupils or creature slits rather than squashing them. No image, audio or workspace helper required.")
+                        .put("phoneExecutionVerified",false))
                 .put("motionStudies",new JSONObject().put("minimumNativeVersion","4.7.4").put("action","sketch_edit").put("operation","add_motion_study")
                         .put("studies",new JSONArray().put("cartoon_jump").put("walk_to_run")).put("settings",SketchMotionStudies.defaults())
                         .put("studyCanvas",new JSONObject().put("width",1280).put("height",720).put("frameCount",120).put("fps",30))
