@@ -1,5 +1,27 @@
 # VideoStudio current engineering priority
 
+## Latest owner clarification — 2026-10-18
+
+Animation references are capability benchmarks. Create fresh test scenes through
+VideoStudio's actual native authoring tools. Do not trace the reference's motion
+or geometry, reuse its background/audio, or present a reconstructed source video
+as evidence of independent animation capability. The earlier traced cube clip is
+not a passing capability test and must remain labelled as such.
+
+Inspect the actual output and independently decide when to retest, investigate
+repository shortcomings, and retain improvements. Every visual test update must
+include actual rendered/editor screenshots. Passing constraints or encoding does
+not certify artistic quality. Keep app, workspace and phone evidence distinct.
+
+Cloud tools may develop, build and inspect the app. Runtime drawing/animation
+features must be implemented in the repository and usable via VideoStudio's own
+manual controls and MCP, including normal ChatGPT without a cloud workspace.
+Useful libraries or engines may be integrated into the product; workspace-only
+helpers do not count as app capability. Preserve all earlier film work while
+prioritising this native capability/repair/retest loop. Work autonomously.
+
+## Earlier blueprint context (preserved)
+
 The latest owner request adds the three-page `Cinematic Animation System Blueprint.pdf`:
 implement its Blender/Rigify 3D production pipeline as an additional workflow, preserving
 all earlier work. Cloud Blender generation/rendering is explicitly authorized by that

@@ -1019,7 +1019,19 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
                     try{startActivity(settings);}catch(android.content.ActivityNotFoundException unavailable){onMessage("Open Android app settings to allow drawing notifications");}
                 }).show();
     }
-    private void brushMenu(){menu("Brush / Text",new String[]{"Brush","Colours","Material shading","Shape animation","Linked palette styles","Paint studio","Text","Finish path","Transform / key","Delete object","Reference image"},this::brushDialog,this::paletteDialog,this::materialShadingDialog,this::shapeAnimationDialog,this::linkedPaletteDialog,this::paintMenu,this::textDialog,()->canvas.finishPolygon(),this::transformDialog,this::deleteObject,this::referenceDialog);}
+    private void brushMenu(){menu("Brush / Text",new String[]{"Brush","Colours","Material shading","Shape animation","Linked palette styles","Paint studio","Text","Finish path","Transform / key","Delete object","Reference image","Solid construction"},this::brushDialog,this::paletteDialog,this::materialShadingDialog,this::shapeAnimationDialog,this::linkedPaletteDialog,this::paintMenu,this::textDialog,()->canvas.finishPolygon(),this::transformDialog,this::deleteObject,this::referenceDialog,this::solidConstruction);}
+    private void solidConstruction(){
+        if(document==null||session==null)return;
+        try{String target=sketchId;SketchEditorSession origin=session;int generation=loadGeneration,page=pageGeneration;
+            SketchSolidDialog.show(this,SketchDocument.copy(document),request->{
+                if(session!=origin||generation!=loadGeneration||page!=pageGeneration){onMessage("The selected drawing changed. Open Solid construction on the current drawing.");return;}
+                stopPlayback();loadingDrawing=true;canvas.setEnabled(false);onMessage("Constructing editable solid cels…");
+                io.execute(()->{try{origin.awaitIdle(15000);if(origin.error()!=null)throw new IllegalStateException(origin.error());JSONObject args=new JSONObject().put("sketchId",target).put("expectedRevision",origin.document().getLong("revision")).put("operationId",UUID.randomUUID().toString()).put("operations",request.getJSONArray("operations"));SketchEditOps.execute(this,"sketch_edit",args);
+                    postUi(()->{if(session!=origin||generation!=loadGeneration||page!=pageGeneration)return;loadSketch(target,0);onMessage("Solid saved as editable cels in a new layer. Colours, paths and timing remain editable.");});
+                }catch(Exception failure){postUi(()->{if(session!=origin||generation!=loadGeneration||page!=pageGeneration)return;loadingDrawing=false;canvas.setEnabled(true);onMessage("Solid not created: "+failure.getMessage());});}});
+            });
+        }catch(Exception failure){onMessage(failure.getMessage());}
+    }
     private void layersMenu(){menu("Layers",new String[]{"Select layer","+ Layer","Layer settings","Up","Down"},this::chooseLayer,this::addLayer,this::layerDialog,()->reorderLayer(1),()->reorderLayer(-1));}
     private void chooseLayer(){
         if(document==null)return;

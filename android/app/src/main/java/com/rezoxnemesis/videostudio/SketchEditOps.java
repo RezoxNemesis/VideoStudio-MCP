@@ -311,6 +311,9 @@ public final class SketchEditOps {
             case "add_object": {
                 appendObject(doc,op);break;
             }
+            case "add_solid": {
+                SketchSolidOps.apply(doc,op);break;
+            }
             case "symmetry_stroke": {
                 SketchSymmetry.apply(doc,op);break;
             }
