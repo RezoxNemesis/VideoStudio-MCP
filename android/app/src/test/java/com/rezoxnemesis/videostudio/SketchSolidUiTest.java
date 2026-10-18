@@ -15,6 +15,26 @@ import java.lang.reflect.*;
 import static org.junit.Assert.*;
 @RunWith(RobolectricTestRunner.class) @Config(sdk=33,manifest=Config.NONE) @GraphicsMode(GraphicsMode.Mode.NATIVE)
 public class SketchSolidUiTest {
+ @Test public void everyManualStudyConstructsNativeCelsWithTheDisplayedSettings()throws Exception{
+  for(int selected=0;selected<5;selected++)try(ActivityController<android.app.Activity> a=Robolectric.buildActivity(android.app.Activity.class).setup()){
+   JSONObject d=SketchDocument.create(new JSONObject().put("sketchId","manual_"+selected).put("width",1280).put("height",720).put("fps",30).put("frameCount",180));JSONObject[] result={null};SketchSolidDialog.show(a.get(),d,r->result[0]=r);AlertDialog dialog=ShadowAlertDialog.getLatestAlertDialog();((Spinner)description(dialog.getWindow().getDecorView(),"Solid shape")).setSelection(selected);ShadowLooper.idleMainLooper();button(dialog.getWindow().getDecorView(),"Load motion study").performClick();assertTrue(((CheckBox)description(dialog.getWindow().getDecorView(),"World lighting")).isChecked());assertTrue(((CheckBox)description(dialog.getWindow().getDecorView(),"Merge held cels")).isChecked());dialog.getButton(AlertDialog.BUTTON_POSITIVE).performClick();assertNotNull(result[0]);
+   JSONArray ops=result[0].getJSONArray("operations");for(int n=0;n<ops.length();n++)SketchEditOps.apply(d,ops.getJSONObject(n));SketchDocument.validate(d);assertEquals(2,d.getJSONArray("layers").length());assertEquals(0,d.getJSONArray("layers").getJSONObject(0).getJSONArray("objects").length());JSONObject faces=SketchDocument.copy(d);JSONArray source=faces.getJSONArray("layers").getJSONObject(1).getJSONArray("objects"),onlyFaces=new JSONArray();for(int n=0;n<source.length();n++){JSONObject object=source.getJSONObject(n);if(object.getBoolean("fill")&&!object.getString("id").endsWith("_shadow")&&!object.getString("id").endsWith("_body"))onlyFaces.put(object);}faces.getJSONArray("layers").getJSONObject(1).put("objects",onlyFaces);try(SketchFrameRenderer renderer=new SketchFrameRenderer(a.get(),faces)){android.graphics.Bitmap frame=renderer.render(90);try{int[] pixels=new int[1280*720];frame.getPixels(pixels,0,1280,0,0,1280,720);int changed=0;for(int pixel:pixels)if(pixel!=pixels[0])changed++;assertTrue("Manual study must render actual surface art, independently of guides or shadows",changed>2000);}finally{frame.recycle();}}
+  }
+ }
+ @Test public void manualShapeAndRollingStudyUseNativeSphereGeometry()throws Exception{
+  try(ActivityController<android.app.Activity> a=Robolectric.buildActivity(android.app.Activity.class).setup()){
+   JSONObject d=SketchDocument.create(new JSONObject().put("sketchId","sphere_controls").put("width",1280).put("height",720).put("frameCount",180));JSONObject[] result={null};SketchSolidDialog.show(a.get(),d,r->result[0]=r);AlertDialog dialog=ShadowAlertDialog.getLatestAlertDialog();Spinner shape=(Spinner)description(dialog.getWindow().getDecorView(),"Solid shape");assertNotNull("Manual shape selection",shape);shape.setSelection(1);ShadowLooper.idleMainLooper();button(dialog.getWindow().getDecorView(),"Load motion study").performClick();dialog.getButton(AlertDialog.BUTTON_POSITIVE).performClick();
+   JSONObject p=result[0].getJSONArray("operations").getJSONObject(1).getJSONObject("program");assertEquals("sphere",p.getString("shape"));assertEquals(80,p.getDouble("rollingRadius"),0);assertEquals(160,p.getJSONArray("size").getDouble(1),0);assertTrue(new SketchSolidOps.Model(d,p).vertices(0).length>100);
+  }
+ }
+ @Test public void manualFlightAndSquashControlsReachTheSameNativeProgram()throws Exception{
+  try(ActivityController<android.app.Activity> a=Robolectric.buildActivity(android.app.Activity.class).setup()){
+   JSONObject d=SketchDocument.create(new JSONObject().put("sketchId","flight_controls").put("width",1280).put("height",720).put("frameCount",61));JSONObject[] result={null};SketchSolidDialog.show(a.get(),d,r->result[0]=r);AlertDialog dialog=ShadowAlertDialog.getLatestAlertDialog();
+   CheckBox volume=(CheckBox)description(dialog.getWindow().getDecorView(),"Preserve squash volume");assertNotNull("Native volume control",volume);volume.setChecked(true);CheckBox world=(CheckBox)description(dialog.getWindow().getDecorView(),"Squash in world axes");assertNotNull(world);world.setChecked(true);
+   button(dialog.getWindow().getDecorView(),"Pose keys").performClick();choose("Pose 1 · frame 1");AlertDialog pose=ShadowAlertDialog.getLatestAlertDialog();EditText flight=(EditText)description(pose.getWindow().getDecorView(),"Pose flightHeight");assertNotNull("Native flight arc control",flight);flight.setText("120");assertNotNull(description(pose.getWindow().getDecorView(),"Scale timing"));pose.getButton(AlertDialog.BUTTON_POSITIVE).performClick();dialog.getButton(AlertDialog.BUTTON_POSITIVE).performClick();
+   JSONObject program=result[0].getJSONArray("operations").getJSONObject(1).getJSONObject("program");assertTrue(program.getBoolean("preserveVolume"));assertEquals("world",program.getString("scaleSpace"));assertEquals(120,program.getJSONArray("keys").getJSONObject(0).getDouble("flightHeight"),0);new SketchSolidOps.Model(d,program);
+  }
+ }
  @Test public void editingLastPosePreservesAuthoredTimingWithoutChangingSketchClock()throws Exception{
   try(ActivityController<android.app.Activity> a=Robolectric.buildActivity(android.app.Activity.class).setup()){
    JSONObject doc=SketchDocument.create(new JSONObject().put("sketchId","manual").put("width",1280).put("height",720).put("fps",24).put("frameCount",61));JSONObject[] result={null};
@@ -26,7 +46,7 @@ public class SketchSolidUiTest {
  @Test public void loadingStudyPreservesTheSelectedSketchClock()throws Exception{
   try(ActivityController<android.app.Activity> a=Robolectric.buildActivity(android.app.Activity.class).setup()){
    JSONObject doc=SketchDocument.create(new JSONObject().put("sketchId","study").put("width",1280).put("height",720).put("fps",24).put("frameCount",121));JSONObject[] result={null};
-   SketchSolidDialog.show(a.get(),doc,r->result[0]=r);AlertDialog dialog=ShadowAlertDialog.getLatestAlertDialog();button(dialog.getWindow().getDecorView(),"Load bounce study").performClick();
+   SketchSolidDialog.show(a.get(),doc,r->result[0]=r);AlertDialog dialog=ShadowAlertDialog.getLatestAlertDialog();button(dialog.getWindow().getDecorView(),"Load motion study").performClick();
    assertEquals("121",((EditText)description(dialog.getWindow().getDecorView(),"Animation frames")).getText().toString());assertEquals("24",((EditText)description(dialog.getWindow().getDecorView(),"Animation FPS")).getText().toString());
    dialog.getButton(AlertDialog.BUTTON_POSITIVE).performClick();assertNotNull(result[0]);assertEquals("add_layer",result[0].getJSONArray("operations").getJSONObject(0).getString("type"));
   }

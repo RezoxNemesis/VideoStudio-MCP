@@ -1,5 +1,16 @@
 # VideoStudio current engineering priority
 
+## Five-study follow-up — 2026-10-18
+
+The owner requires at least five further original capability tests: improve the
+cube and test four different objects. Retain each useful geometry, motion and
+control improvement inside Android with manual/MCP parity. Inspect every stage,
+share actual screenshots, and independently retest visual shortcomings. The
+current studies are cube, rolling ball, cylinder, spinning cone and rocking
+pyramid. See `docs/continuity/NATIVE_FIVE_STUDIES_20261018.md`. Workspace native
+execution does not establish phone or ChatGPT-host execution; preserve those
+evidence boundaries and the existing device-owned control plane.
+
 ## Latest owner clarification — 2026-10-18
 
 Animation references are capability benchmarks. Create fresh test scenes through

@@ -16,3 +16,25 @@ test('depth timing can be authored independently of rotation timing',()=>{
  const p={...program,keys:[{...program.keys[0],depthInterpolation:'smooth'},program.keys[1]]};
  assert.deepEqual(nativeStudioParameters('sketch_edit',{...request,operations:[{...request.operations[0],program:p}]}).operations[0].program,p);
 });
+
+test('native flight and impact controls are accepted only by compatible APKs',()=>{
+ const p={...program,preserveVolume:true,keys:[{...program.keys[0],flightHeight:200,scaleInterpolation:'smooth'},program.keys[1]]};const r={...request,operations:[{...request.operations[0],program:p}]};
+ assert.deepEqual(nativeStudioParameters('sketch_edit',r),r);assert.throws(()=>requireStudioVersion({appVersion:'4.7.1'},'sketch_edit',r),/4\.7\.2/);assert.doesNotThrow(()=>requireStudioVersion({appVersion:'4.7.2'},'sketch_edit',r));
+});
+test('native sphere and distance-driven rolling are strictly validated and version gated',()=>{
+ const p={...program,shape:'sphere',rollingRadius:80};const r={...request,operations:[{...request.operations[0],program:p}]};assert.deepEqual(nativeStudioParameters('sketch_edit',r),r);assert.throws(()=>requireStudioVersion({appVersion:'4.7.1'},'sketch_edit',r),/4\.7\.2/);
+ assert.throws(()=>nativeStudioParameters('sketch_edit',{...r,operations:[{...r.operations[0],program:{...p,shape:'external_mesh'}}]}));assert.throws(()=>nativeStudioParameters('sketch_edit',{...r,operations:[{...r.operations[0],program:{...p,rollingRadius:0}}]}));
+});
+
+test('ground contact accepts a native cylinder and rejects conflicting flight',()=>{
+ const p={...program,shape:'cylinder',groundLock:true,rollingRadius:70};const r={...request,operations:[{...request.operations[0],program:p}]};assert.deepEqual(nativeStudioParameters('sketch_edit',r),r);
+ assert.throws(()=>nativeStudioParameters('sketch_edit',{...r,operations:[{...r.operations[0],program:{...p,keys:[{...p.keys[0],flightHeight:10},p.keys[1]]}}]}));
+});
+
+test('cone and native world lighting are exposed with the same bounds',()=>{
+ const p={...program,shape:'cone',lighting:true};const r={...request,operations:[{...request.operations[0],program:p}]};assert.deepEqual(nativeStudioParameters('sketch_edit',r),r);assert.throws(()=>requireStudioVersion({appVersion:'4.7.1'},'sketch_edit',r),/4\.7\.2/);
+});
+
+test('rocking constraints and held-cel optimization match native policy',()=>{
+ const p={...program,shape:'pyramid',groundLock:true,rockingPivot:true,holdLast:true,mergeHolds:true};const r={...request,operations:[{...request.operations[0],program:p}]};assert.deepEqual(nativeStudioParameters('sketch_edit',r),r);for(const patch of [{groundLock:false},{rollingRadius:70},{shape:'sphere'}])assert.throws(()=>nativeStudioParameters('sketch_edit',{...r,operations:[{...r.operations[0],program:{...p,...patch}}]}));
+});

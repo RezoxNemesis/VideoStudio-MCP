@@ -10,6 +10,18 @@ import java.util.*;
 import static org.junit.Assert.*;
 @RunWith(RobolectricTestRunner.class) @Config(sdk=33,manifest=Config.NONE) @GraphicsMode(GraphicsMode.Mode.NATIVE)
 public class SketchSolidOpsTest {
+    @Test public void worldSquashStaysVerticalAfterQuarterTurn()throws Exception {
+        JSONObject p=program().put("scaleSpace","world");for(int n=0;n<2;n++)p.getJSONArray("keys").getJSONObject(n).put("pitch",90).put("yaw",0).put("scaleY",.5).put("scaleX",Math.sqrt(2)).put("scaleZ",Math.sqrt(2));
+        SketchSolidOps.Model m=new SketchSolidOps.Model(new JSONObject().put("frameCount",61),p);double lo=Double.POSITIVE_INFINITY,hi=-lo;for(double[] v:m.vertices(30)){lo=Math.min(lo,v[1]);hi=Math.max(hi,v[1]);}assertEquals(70,hi-lo,1e-9);assertEquals(0,lo,1e-9);
+    }
+    @Test public void flightHasParabolicAccelerationAndIndependentImpactSquash()throws Exception {
+        JSONObject p=program().put("preserveVolume",true);JSONObject a=p.getJSONArray("keys").getJSONObject(0),b=p.getJSONArray("keys").getJSONObject(1);
+        a.put("flightHeight",200).put("scaleY",.6).put("scaleX",1/Math.sqrt(.6)).put("scaleZ",1/Math.sqrt(.6)).put("scaleInterpolation","smooth");b.put("yaw",0).put("scaleY",1.2).put("scaleX",1/Math.sqrt(1.2)).put("scaleZ",1/Math.sqrt(1.2));
+        SketchSolidOps.Model m=new SketchSolidOps.Model(new JSONObject().put("frameCount",61),p);
+        double[] first=m.pose(0),q=m.pose(15),mid=m.pose(30),last=m.pose(60);assertEquals(150,q[1],1e-9);assertEquals(200,mid[1],1e-9);assertEquals(0,last[1],1e-9);
+        for(int f=0;f<=60;f++){double[] pose=m.pose(f);assertEquals("Squash must conserve volume between authored keys",1,pose[6]*pose[7]*pose[8],1e-9);}
+        assertEquals(.6+(1.2-.6)*.15625,q[7],1e-9);assertEquals(0,first[1],0);
+    }
     @Test public void shortestBounceStudyHasStrictlyIncreasingPoseFrames()throws Exception {
         JSONObject p=SketchSolidPrograms.bounce(48);new SketchSolidOps.Model(new JSONObject().put("frameCount",48),p);
     }
