@@ -95,7 +95,13 @@ public class SketchQualityControlsTest {
     }
     private static Object field(Object o,String name)throws Exception{Field f=o.getClass().getDeclaredField(name);f.setAccessible(true);return f.get(o);}
     private static void invoke(Object o,String name)throws Exception{Method m=o.getClass().getDeclaredMethod(name);m.setAccessible(true);m.invoke(o);}
-    private static void settle(Object a)throws Exception{for(int i=0;i<4;i++){((ExecutorService)field(a,"io")).submit(()->{}).get(10,TimeUnit.SECONDS);ShadowLooper.idleMainLooper();}}
+    private static void settle(Object a)throws Exception{for(int i=0;i<4;i++){
+        ((ExecutorService)field(a,"io")).submit(()->{}).get(10,TimeUnit.SECONDS);
+        // Vector edits persist on the session writer, independently of Activity.io.
+        // Wait for its receipt before reading SQLite or opening the next dialog.
+        if(a instanceof SketchStudioActivity){SketchEditorSession session=(SketchEditorSession)field(a,"session");if(session!=null){session.awaitIdle(10000);assertNull("Native save failed",session.error());}}
+        ShadowLooper.idleMainLooper();
+    }}
     private static EditText edit(AlertDialog d,String label){View v=find(d.getWindow().getDecorView(),label);assertNotNull(label,v);return (EditText)v;}
     private static View find(View v,String label){if(label.contentEquals(v.getContentDescription()==null?"":v.getContentDescription()))return v;if(v instanceof ViewGroup){ViewGroup g=(ViewGroup)v;for(int n=0;n<g.getChildCount();n++){View hit=find(g.getChildAt(n),label);if(hit!=null)return hit;}}return null;}
 }
