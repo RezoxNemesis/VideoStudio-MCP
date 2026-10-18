@@ -2,8 +2,12 @@ package com.rezoxnemesis.videostudio;
 
 /** Original emerald dragon anatomy, redrawn wing membranes, head turns and maternal acting. */
 final class JungleFilmDragon {
+    static void drawGuard(JungleCelInk world,double x,double floor,double size,double t,double clawX,double clawY)throws Exception {draw(world,x,floor,size,t,"watch",0,false,new double[]{(clawX-x)/size,(clawY-floor)/size});}
     private static final String INK="#0a2c30",GREEN="#53815b",LIGHT="#89a56a",DARK="#284f49",BELLY="#bfa875";
     static void draw(JungleCelInk world,double x,double floor,double size,double t,String action,double phase,boolean cubVisible)throws Exception {
+        draw(world,x,floor,size,t,action,phase,cubVisible,null);
+    }
+    private static void draw(JungleCelInk world,double x,double floor,double size,double t,String action,double phase,boolean cubVisible,double[] guard)throws Exception {
         JungleCelInk d=world.at(x,floor,size,0);double breath=3*Math.sin(t*1.9),bob=0,reach=0,wing=10*Math.sin(t*1.4),open=0;
         if(action.equals("lunge")){reach=-65*Math.sin(phase*Math.PI);bob=12*Math.sin(phase*Math.PI);open=.3+.5*Math.sin(phase*Math.PI);wing=-25*Math.sin(phase*Math.PI);}
         if(action.equals("breath")){reach=-30;bob=-6;open=.9;wing=-20;}
@@ -28,12 +32,20 @@ final class JungleFilmDragon {
         d.ink(BELLY,INK,1.3).m(hx+1,hy+22).c(hx+27,hy+66,-121,-18,-72,-43).l(-94,-67).c(-132,-55,hx+40,hy+53,hx-2,hy+13).z().end();
         for(int i=0;i<5;i++){double a=i/5d,px=hx+17+a*72,py=hy+34+a*(-54-hy);d.ink(null,"#8b865c",1.1).m(px-4,py+4).q(px+9,py,px+23,py-3).end();}
         for(int i=0;i<7;i++){double a=i/6d,px=-59-a*99+reach*a*.5,py=-142-a*46+bob*a*.6;d.poly("#c1b88a",INK,1.2,px-10,py+8,px-14,py-20,px+9,py-2);}
-        leg(d,66,-69,89,-39,76,2,GREEN,true);leg(d,-93,-81,-153,-38,-176,3,GREEN,true);
+        leg(d,66,-69,89,-39,76,2,GREEN,true);
+        if(guard==null)leg(d,-93,-81,-153,-38,-176,3,GREEN,true);else guardArm(d,guard[0],guard[1]);
         if(action.equals("lunge")){double claw=-190-68*Math.sin(phase*Math.PI);d.ink(GREEN,INK,2).m(-108,-93).q(claw+18,-166,claw,-142).l(claw-20,-100).q(claw+18,-111,-94,-60).z().end();claws(d,claw-11,-104,-1);}
         if(cubVisible){cub(d,-48,-3,.55,t,action.equals("nuzzle")?"happy":"afraid");}
         wing(d,29,-132,wing,false,t);
         head(d.at(hx,hy,1,action.equals("nuzzle")?-22:action.equals("shield")?13:-5),t,open,action.equals("nuzzle")?"soft":"watch");
         for(int row=0;row<3;row++)for(int i=0;i<7;i++){double px=-50+i*20+(row%2)*8,py=-118+row*18;d.ink(null,row==0?"#9bb679":"#376a51",1).m(px-5,py).q(px,py+8,px+5,py).end();}
+    }
+    private static void guardArm(JungleCelInk d,double tx,double ty)throws Exception {
+        d.ink(GREEN,INK,2).m(-105,-93).q(-148,-140,tx+58,ty-35).q(tx+44,ty-36,tx+30,ty-24).l(tx+8,ty-12).q(tx-3,ty-8,tx+6,ty+3).l(tx+21,ty+8).q(tx+32,ty+5,tx+41,ty-3).q(tx+75,ty+26,-92,-62).z().end();
+        d.ink(LIGHT,null,1).m(-108,-94).q(-148,-125,tx+57,ty-29).l(tx+28,ty-15).q(tx+61,ty-10,-108,-94).z().end();
+        int start=d.layer.getJSONArray("objects").length();d.ink("#e3d7b1",INK,.8).m(tx+12,ty-11).q(tx-3,ty-8,tx,ty).q(tx+11,ty+3,tx+18,ty-2).z().end();JungleActionDrawing.tag(d.layer,start,"guard_claw");
+        d.ink("#d0c7a0",INK,.7).m(tx+21,ty-5).q(tx+7,ty+5,tx+16,ty+10).q(tx+27,ty+7,tx+28,ty+1).z().end();
+        d.ink(null,DARK,1).m(tx+25,ty-16).q(tx+37,ty-20,tx+48,ty-20).end();
     }
     private static void wing(JungleCelInk d,double x,double y,double fold,boolean rear,double t)throws Exception {
         double f=Math.max(-45,Math.min(62,fold)),elbowX=x+61,elbowY=y-152+f*1.45,tipX=x-126+f*1.7,tipY=y-262+f*3.35;

@@ -7,7 +7,11 @@ public final class JungleFilmSoundtrack {
     private JungleFilmSoundtrack(){}
     private static final int RATE=24000;
     private static final double TAU=Math.PI*2;
+    public static JSONObject writeStudy(File file)throws Exception {return write(file,20,true);}
     public static JSONObject write(File file,int seconds)throws Exception {
+        return write(file,seconds,false);
+    }
+    private static JSONObject write(File file,int seconds,boolean study)throws Exception {
         if(seconds<1||seconds>120||file.exists())throw new IllegalArgumentException("Choose a new 1..120 second soundtrack file");
         File parent=file.getParentFile();if(parent!=null)parent.mkdirs();int samples=seconds*RATE;double peak=0,sum=0;
         try(BufferedOutputStream out=new BufferedOutputStream(new FileOutputStream(file),128*1024)){
@@ -16,8 +20,10 @@ public final class JungleFilmSoundtrack {
             for(int n=0;n<samples;n++){
                 if((n&65535)==0&&Thread.currentThread().isInterrupted())throw new InterruptedException("Soundtrack interrupted");
                 double t=n/(double)RATE;noise=(1664525*noise+1013904223)&0xffffffffL;double white=((noise>>>8)/(double)0x1000000)*2-1;
-                boolean battle=t>=20&&t<66;double ambience=.012*white+.007*Math.sin(TAU*2111*t)*Math.pow(.5+.5*Math.sin(TAU*7*t),9);
-                double harmony=music(t),effects=0,pan=0;
+                double story=study?(t<6?30+t:84+t-6):t;
+                double ambience=.012*white+.007*Math.sin(TAU*2111*t)*Math.pow(.5+.5*Math.sin(TAU*7*t),9);
+                double harmony=music(story)*(study?Math.min(1,Math.abs(t-6)/.12):1),effects=0,pan=0;
+                if(!study){
                 // Repeating footfall events follow the authored running sections.
                 if(t>6&&t<11||t>26&&t<30||t>44&&t<49||t>104&&t<111){double step=(t*(t>20?4.2:2.5))%1;effects+=Math.exp(-step*24)*(.024*white+.028*Math.sin(TAU*83*t));}
                 double[] hits={23.2,31.7,33.7,34.2,44.6,45.4,46.1,46.9,47.6,48.3,54.6,57.8,64.2,97.1};
@@ -29,14 +35,21 @@ public final class JungleFilmSoundtrack {
                 if(t>=39&&t<44){double a=(t-39)/5;effects+=white*.055*a*(.6+.4*Math.sin(TAU*13*t));}
                 if(t>=44&&t<49){double a=(t-44)*1.35%1;effects+=white*.055*Math.exp(-Math.pow((a-.45)*7,2));}
                 if(t>=57&&t<66){double a=(t-57)/9;effects+=white*.045*Math.sin(Math.PI*a)+.022*Math.sin(TAU*(120*t+30*Math.sin(t)));}
-                boolean speaking=false;for(int i=0;i<SketchJungleFilm.LINE_START.length;i++)if(t>=SketchJungleFilm.LINE_START[i]-.1&&t<SketchJungleFilm.LINE_START[i]+SketchJungleFilm.LINE_SLOTS[i])speaking=true;
+                }else{
+                    // Only the authored visible contact receives a metallic transient.
+                    double hit=t-43/24d;
+                    if(hit>=0&&hit<.65)effects+=Math.exp(-hit*13)*(.09*Math.sin(TAU*745*hit)+.045*Math.sin(TAU*1247*hit)+.025*Math.sin(TAU*2631*hit))+.08*white*Math.exp(-hit*35);
+                    effects+=.055*white*Math.exp(-Math.pow((t-1.52)/.22,2));
+                    effects+=.018*white*Math.exp(-Math.pow((t-2.23)/.32,2));
+                }
+                boolean speaking=false;for(int i=0;i<SketchJungleFilm.LINE_START.length;i++)if(story>=SketchJungleFilm.LINE_START[i]-.1&&story<SketchJungleFilm.LINE_START[i]+SketchJungleFilm.LINE_SLOTS[i])speaking=true;
                 double scoreGain=speaking?.3:1,fade=Math.min(1,t/1.5)*Math.min(1,(seconds-t)/1.8);
                 double common=(ambience+harmony*scoreGain+effects*(speaking?.7:1))*fade;
                 double left=soft(common*(1-pan*.3)+.002*Math.sin(TAU*137*t)),right=soft(common*(1+pan*.3)+.002*Math.sin(TAU*139*t));
                 peak=Math.max(peak,Math.max(Math.abs(left),Math.abs(right)));sum+=left*left+right*right;u16(out,(short)Math.round(left*32767));u16(out,(short)Math.round(right*32767));
             }
         }catch(Exception e){file.delete();throw e;}
-        return PcmWaveFile.inspect(file).put("provider","original native PCM composition").put("stockAudioUsed",false).put("peak",peak).put("rms",Math.sqrt(sum/(samples*2))).put("scoreAndEffects",true);
+        return PcmWaveFile.inspect(file).put("provider","original native PCM composition").put("stockAudioUsed",false).put("peak",peak).put("rms",Math.sqrt(sum/(samples*2))).put("scoreAndEffects",true).put("studyTimeline",study);
     }
     private static double music(double t){
         int[] roots={52,48,45,47};int root=roots[((int)(t/8))%4];if(t>=75)root=new int[]{45,48,52,55}[((int)((t-75)/8))%4];

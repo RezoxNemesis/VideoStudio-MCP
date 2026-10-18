@@ -904,7 +904,7 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
         action.run();
     }catch(Exception error){onMessage(error.getMessage());}}
     private void menu(String title,String[] labels,Runnable... actions){new AlertDialog.Builder(this).setTitle(title).setItems(labels,(d,index)->runAction(labels[index],actions[index])).show();}
-    private void fileMenu(){menu("Sketch files",new String[]{"New","Open","Sketch books","Follow current work","Replay last saved drawing","Export video","Archive sketch","Restore archive","Canvas view","Drawing status","Story → 2D film","Import animation","Resume animation import","Component library","Original jungle film"},this::newDocument,this::openDocument,this::booksDialog,this::followCurrentDrawing,this::replayLastDrawing,this::export,this::archiveSketch,this::restoreArchiveDialog,this::toggleCanvasFocus,()->new AlertDialog.Builder(this).setTitle("Drawing status").setMessage(status.getText()+"\n\n"+toolStatus.getText()).setPositiveButton("OK",null).show(),this::storyFilmDialog,this::importAnimationDialog,this::resumeAnimationImport,this::componentLibraryDialog,this::drawOriginalJungleFilm);}
+    private void fileMenu(){menu("Sketch files",new String[]{"New","Open","Sketch books","Follow current work","Replay last saved drawing","Export video","Archive sketch","Restore archive","Canvas view","Drawing status","Story → 2D film","Import animation","Resume animation import","Component library","Original jungle film","Drawing and acting study","Import editable animation"},this::newDocument,this::openDocument,this::booksDialog,this::followCurrentDrawing,this::replayLastDrawing,this::export,this::archiveSketch,this::restoreArchiveDialog,this::toggleCanvasFocus,()->new AlertDialog.Builder(this).setTitle("Drawing status").setMessage(status.getText()+"\n\n"+toolStatus.getText()).setPositiveButton("OK",null).show(),this::storyFilmDialog,this::importAnimationDialog,this::resumeAnimationImport,this::componentLibraryDialog,this::drawOriginalJungleFilm,this::drawJunglePerformanceStudy,this::chooseLocalEditableArchive);}
     /** New native work takes priority; saved historical drawing is never auto-looped. */
     private void followCurrentDrawing(){
         notifiedSketchId=null;notifiedSessionId=null;notificationReplayPending=false;replaySelectedFromFile=false;
@@ -946,11 +946,13 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
 
     /** Prompt-driven original storyboard; all created cels remain ordinary editable Sketch Studio parts. */
     private volatile boolean drawingJungleFilm;
-    private void drawOriginalJungleFilm(){
+    private void drawOriginalJungleFilm(){drawJungleBook(false);}
+    private void drawJunglePerformanceStudy(){drawJungleBook(true);}
+    private void drawJungleBook(boolean study){
         if(drawingJungleFilm){onMessage("The original film is already being drawn. Saved cels remain editable.");return;}
-        stopPlayback();String retained=getPreferences(MODE_PRIVATE).getString("originalJungleBook",null);
-        final String target=retained==null?"canopy_"+java.util.UUID.randomUUID().toString().replace("-",""):retained;getPreferences(MODE_PRIVATE).edit().putString("originalJungleBook",target).apply();
-        afterSaves(()->{if(drawingJungleFilm)return;drawingJungleFilm=true;transfers.execute(()->{try{SketchJungleFilm.saveModelLibrary(this,target);int total=SketchJungleFilm.celStarts().length;for(int first=0;first<total;first+=64){SketchJungleFilm.populateRange(this,target,first,Math.min(64,total-first),null);final int saved=Math.min(total,first+64);postUi(()->{status.setText("Original jungle film · "+saved+" / "+total+" editable cels");if(saved==64)openBookPage(target,0);});}postUi(()->{openBookPage(target,0);onMessage("Original jungle film saved. All cels and layers are editable; existing pages and timing edits were retained. Export picture from this book; add dialogue, score and effects in the production workbench.");});}catch(Exception error){postUi(()->onMessage("Saved cels retained. Choose Original jungle film to resume: "+error.getMessage()));}finally{postUi(()->drawingJungleFilm=false);}});});
+        stopPlayback();String preference=study?"junglePerformanceBookV2":"originalJungleBook";String retained=getPreferences(MODE_PRIVATE).getString(preference,null);
+        final String target=retained==null?(study?"acting_":"canopy_")+java.util.UUID.randomUUID().toString().replace("-",""):retained;getPreferences(MODE_PRIVATE).edit().putString(preference,target).apply();
+        afterSaves(()->{if(drawingJungleFilm)return;drawingJungleFilm=true;transfers.execute(()->{try{if(!study)SketchJungleFilm.saveModelLibrary(this,target);int total=study?JunglePerformanceStudy.FRAMES:SketchJungleFilm.celStarts().length;for(int first=0;first<total;first+=64){if(study)JunglePerformanceStudy.populateRange(this,target,first,Math.min(64,total-first),null);else SketchJungleFilm.populateRange(this,target,first,Math.min(64,total-first),null);final int saved=Math.min(total,first+64);postUi(()->{status.setText((study?"Drawing and acting study":"Original jungle film")+" · "+saved+" / "+total+" editable cels");if(saved==64)openBookPage(target,0);});}postUi(()->{openBookPage(target,0);onMessage((study?"Drawing and acting study saved. ":"Original jungle film saved. ")+"All cels and layers are editable; existing pages and timing edits were retained. Export picture from this book; add dialogue, score and effects in the production workbench.");});}catch(Exception error){postUi(()->onMessage("Saved cels retained. Choose "+(study?"Drawing and acting study":"Original jungle film")+" to resume: "+error.getMessage()));}finally{postUi(()->drawingJungleFilm=false);}});});
     }
     private void storyFilmDialog(){
         LinearLayout form=column();form.setPadding(dp(12),dp(8),dp(12),dp(8));
@@ -1093,6 +1095,24 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
             }
         }
         return archives;
+    }
+    private static final int LOCAL_EDITABLE_ARCHIVE=731;
+    private void chooseLocalEditableArchive(){
+        Intent pick=new Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*");
+        pick.putExtra(Intent.EXTRA_MIME_TYPES,new String[]{"application/octet-stream","application/zip","application/vnd.videostudio.sketch"});
+        pick.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);startActivityForResult(pick,LOCAL_EDITABLE_ARCHIVE);
+    }
+    @Override protected void onActivityResult(int requestCode,int resultCode,Intent data){
+        super.onActivityResult(requestCode,resultCode,data);
+        if(requestCode!=LOCAL_EDITABLE_ARCHIVE||resultCode!=RESULT_OK||data==null||data.getData()==null)return;
+        android.net.Uri uri=data.getData();String operation=UUID.randomUUID().toString();stopPlayback();
+        SketchEditorSession active=session;int generation=loadGeneration,page=pageGeneration;
+        afterSaves(()->transfers.execute(()->{
+            try{JSONObject restored=SketchLocalArchive.restore(this,uri,operation,null);String target=restored.getString("sketchId");
+                postUi(()->{if(session!=active||generation!=loadGeneration||page!=pageGeneration||active!=null&&active.pending()>0){onMessage("Editable animation imported as a new sketch. Find it in File → Open.");return;}
+                    bookId=null;book=null;loadSketch(target,0);onMessage("Editable animation imported with its layers, cels, colours and timing. Your previous work is preserved.");});
+            }catch(Exception failure){postUi(()->onMessage("Editable import failed: "+failure.getMessage()));}
+        }));
     }
     private void restoreArchiveDialog(){
         transfers.execute(()->{try{ArrayList<JSONObject> archives=knownEditableArchives();String[] labels=new String[archives.size()+1];for(int i=0;i<archives.size();i++){JSONObject archive=archives.get(i);labels[i]=archive.optString("displayName")+" · revision "+archive.optLong("sourceRevision");}labels[archives.size()]="Restore with archive details";
