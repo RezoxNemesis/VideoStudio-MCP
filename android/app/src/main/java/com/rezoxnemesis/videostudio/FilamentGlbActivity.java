@@ -4,6 +4,8 @@ import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.Intent;
 import android.graphics.Color;
+import android.graphics.Bitmap;
+import android.view.PixelCopy;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
@@ -83,6 +85,9 @@ public final class FilamentGlbActivity extends Activity
     private double cameraAngle=0;
     private double cameraPitch=0,cameraDistance=4;
     private String loadedModelId="",modelName="";
+    private String sketchCaptureTargetId="",sketchCaptureMode="colour_regions";
+    private int sketchCaptureFrame;
+    private boolean sketchCaptureBusy;
     private boolean renderUnavailable,restoringModel,modelLoading;
     private double restoredClipPosition;
     private int modelLoadGeneration;
@@ -106,6 +111,11 @@ public final class FilamentGlbActivity extends Activity
         getWindow().setStatusBarColor(0xff090d17);
         getWindow().setNavigationBarColor(0xff090d17);
         projectStore=new ProjectStore(this);
+        sketchCaptureTargetId=getIntent().getStringExtra("sketchCaptureTargetId");
+        if(sketchCaptureTargetId==null)sketchCaptureTargetId="";
+        sketchCaptureFrame=getIntent().getIntExtra("sketchCaptureFrame",0);
+        sketchCaptureMode=getIntent().getStringExtra("sketchCaptureMode");
+        if(sketchCaptureMode==null)sketchCaptureMode="colour_regions";
         cinematicProgramId=getIntent().getStringExtra("cinematicProgramId");
         cinematic=cinematicProgramId!=null&&!cinematicProgramId.isEmpty();
         if(cinematic)cinematicFrame=Math.max(0,getIntent().getIntExtra("previewStartFrame",0));
@@ -189,6 +199,11 @@ public final class FilamentGlbActivity extends Activity
         cameraTools.addView(action("Camera views",v->chooseCamera()),new LinearLayout.LayoutParams(0,dp(48),1));
         cameraTools.addView(action("Fit model",v->{cameraAngle=cameraPitch=0;cameraDistance=4;orbit=false;orbitButton.setText("Orbit: off");updateModelCamera();}),new LinearLayout.LayoutParams(0,dp(48),1));
         rateButton=action("Speed 1×",v->chooseRate());cameraTools.addView(rateButton,new LinearLayout.LayoutParams(0,dp(48),1));root.addView(cameraTools);
+        if(!sketchCaptureTargetId.isEmpty()){
+            Button capture=action("Capture this 3D pose → editable Sketch cel",v->capturePoseForSketch());
+            capture.setContentDescription("Capture the currently visible 3D pose and transfer it to the chosen Sketch Studio animation frame");
+            root.addView(capture,new LinearLayout.LayoutParams(-1,dp(50)));
+        }
         clipTime=new TextView(this);clipTime.setTextColor(0xffb9ccdf);clipTime.setPadding(dp(14),0,dp(14),0);clipTime.setText("Drag to orbit • pinch to zoom • select a clip to scrub");root.addView(clipTime);
         modelScrub=new SeekBar(this);modelScrub.setMax(1000);modelScrub.setEnabled(false);modelScrub.setContentDescription("3D animation clip time");
         modelScrub.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener(){
@@ -596,6 +611,78 @@ public final class FilamentGlbActivity extends Activity
             else if(action==MotionEvent.ACTION_UP||action==MotionEvent.ACTION_CANCEL){dragging[0]=false;if(action==MotionEvent.ACTION_UP)view.performClick();}return true;
         });
     }
+    /** Capture only the owner's currently visible 3D viewport; never access Gallery. */
+    private void capturePoseForSketch(){
+        if(sketchCaptureBusy)return;
+        if(cinematic||viewer==null||viewer.getAsset()==null||loadedModelId.isEmpty()||renderUnavailable){
+            status.setText("Load a real GLB model before capturing a 2D animation cel.");return;
+        }
+        if(sketchCaptureTargetId.isEmpty()){status.setText("Open this action from Sketch Studio first");return;}
+        if(!"colour_regions".equals(sketchCaptureMode)&&!"edges".equals(sketchCaptureMode)){
+            status.setText("Invalid 2D tracing mode");return;
+        }
+        final int[] dimensions;
+        try{dimensions=Sketch3DCelBridge.captureSize(surface.getWidth(),surface.getHeight(),Sketch3DCelBridge.MAX_CAPTURE_EDGE);}
+        catch(Exception error){status.setText("3D capture unavailable: "+error.getMessage());return;}
+        final Bitmap frame=Bitmap.createBitmap(dimensions[0],dimensions[1],Bitmap.Config.ARGB_8888);
+        final String modelId=loadedModelId,projectId=project.id,sketchId=sketchCaptureTargetId,traceMode=sketchCaptureMode;
+        final int sketchFrame=sketchCaptureFrame,generation=modelLoadGeneration,animation=animationIndex;
+        final double yaw=cameraAngle,pitch=cameraPitch,distance=cameraDistance,seconds=clipClock.position();
+        sketchCaptureBusy=true;paused=true;orbit=false;clipClock.suspend();
+        applyModelPose();updatePlaybackUi();
+        status.setText("Capturing visible GLB pose as an app-private 2D reference...");
+        try{PixelCopy.request(surface,frame,copyResult->{
+            if(copyResult!=PixelCopy.SUCCESS||destroyed||generation!=modelLoadGeneration){
+                frame.recycle();sketchCaptureBusy=false;
+                if(!destroyed)status.setText("3D capture was cancelled or GPU readback failed ("+copyResult+")");
+                return;
+            }
+            cinematicWorker.execute(()->{
+                File file=null;boolean registered=false;
+                try{
+                    File folder=new File(getFilesDir(),"creative_workspace/projects/"+projectId+"/pose_cels");
+                    if(!folder.isDirectory()&&!folder.mkdirs())throw new IllegalStateException("3D pose storage unavailable");
+                    file=new File(folder,UUID.randomUUID().toString()+".png");
+                    try(FileOutputStream output=new FileOutputStream(file)){
+                        if(!frame.compress(Bitmap.CompressFormat.PNG,100,output))throw new IllegalStateException("3D pose PNG encoding failed");
+                        output.getFD().sync();
+                    }
+                    if(file.length()<32||file.length()>8L*1024*1024)throw new IllegalStateException("3D pose exceeded the PNG storage budget");
+                    String hash=SketchProjectStore.fileHash(file);
+                    ProjectStore.Project fresh=projectStore.get(projectId);
+                    if(fresh==null||fresh.asset(modelId)==null)throw new IllegalStateException("Source GLB project changed during capture");
+                    ProjectStore.Asset asset=projectStore.registerGeneratedAsset(fresh,
+                            Uri.fromFile(file),"3D pose "+modelName+" f"+(sketchFrame+1)+".png","sketch_3d_pose",false);
+                    asset.generationMetadata=new JSONObject().put("sourceGlbAssetId",modelId)
+                            .put("captureSha256",hash).put("sketchId",sketchId)
+                            .put("frameIndex",sketchFrame).put("traceMode",traceMode)
+                            .put("cameraYawRadians",yaw).put("cameraPitchDegrees",pitch)
+                            .put("cameraDistance",distance).put("animationIndex",animation)
+                            .put("animationTimeSeconds",seconds)
+                            .put("captureWidth",dimensions[0]).put("captureHeight",dimensions[1]);
+                    projectStore.save(fresh);
+                    registered=true;
+                    String capturedAssetId=asset.id;
+                    main.post(()->{
+                        sketchCaptureBusy=false;
+                        if(destroyed)return;
+                        Intent result=new Intent().putExtra("sketchId",sketchId)
+                                .putExtra("projectId",projectId).putExtra("assetId",capturedAssetId)
+                                .putExtra("frameIndex",sketchFrame).putExtra("traceMode",traceMode);
+                        setResult(RESULT_OK,result);finish();
+                    });
+                }catch(Exception|OutOfMemoryError error){
+                    final String why=String.valueOf(error.getMessage());
+                    main.post(()->{sketchCaptureBusy=false;if(!destroyed)status.setText("3D pose retained only after verified registration: "+why);});
+                }finally{frame.recycle();if(!registered&&file!=null)file.delete();}
+            });
+        },main);}
+        catch(Exception|OutOfMemoryError error){
+            frame.recycle();sketchCaptureBusy=false;
+            status.setText("GPU 3D capture not available: "+error.getMessage());
+        }
+    }
+
     private static double finiteOr(double value,double fallback){return Double.isFinite(value)?value:fallback;}
     private void closeModelInput(){InputStream input=modelInput;modelInput=null;if(input!=null)try{input.close();}catch(Exception ignored){}}
     private void cancelModelLoad(){modelLoading=false;modelLoadGeneration++;if(modelTask!=null){modelTask.cancel(true);modelTask=null;}closeModelInput();}
