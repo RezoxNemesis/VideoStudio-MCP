@@ -61,7 +61,7 @@ Run the targeted Android tests:
 
 ```sh
 cd android
-./gradlew :app:testDebugUnitTest --tests com.rezoxnemesis.videostudio.SketchAnimateTimelineToolsTest
+gradle :app:testDebugUnitTest --tests com.rezoxnemesis.videostudio.SketchAnimateTimelineToolsTest
 ```
 
 Checks include easing mathematics, transform-key projection in Xsheet, layer vs object animation, source non-mutation, key collision refusal, exposure extension, locked layers, input bounds, idempotent public edits, and persisted undo. Existing Sketch/native animation tests should also pass. Then inspect a real animation export and validate frame-by-frame continuity, artifacts, input latency and memory on an Android device.
