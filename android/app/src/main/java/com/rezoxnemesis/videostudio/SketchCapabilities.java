@@ -349,6 +349,7 @@ public final class SketchCapabilities {
 
     public static JSONObject get() throws Exception {
         return new JSONObject().put("minimumNativeVersion","3.9.1").put("promptFirstDrawing",true).put("referenceImageRequired",false).put("humanAndAgentShareOperations",true)
+                .put("linkedMasters",SketchMasterAssets.capability())
                 .put("characterPerformance",characterPerformance())
                 .put("handAnimation",handAnimation())
                 .put("humanAnimation",humanAnimation())
