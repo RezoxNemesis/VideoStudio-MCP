@@ -54,6 +54,14 @@ Keep unselected pixels as background preserves the visible remainder. It does
 not create a clean background behind objects. Moving a cutout can expose missing
 art; author it explicitly with app drawing tools or supply owned hidden-view
 artwork. Parts are hard raster masks, not recovered vectors or production layers.
+Touch selection uses the final cutout's full-source alpha, including inherited
+holes and transparent padding. Immutable bit support is prepared on the raster
+worker, transferred with source-generation guards, and cleared on source changes
+or disposal. It uses at most8 MiB per support map; UI and in-flight worker maps
+may temporarily coexist. Touch handling does not decode PNGs or read files.
+Selection waits for preparation instead of selecting the wrong part. Existing
+unmasked image selection remains unchanged.
+
 Their full imported working raster is retained, without another extraction
 resolution reduction. Original source imports retain the existing2048-edge limit.
 
@@ -173,3 +181,14 @@ screenshots and a review MP4 packaged from unchanged app-rendered PNGs. Earlier
 failed/withdrawn generations and failed verification attempts remain retained.
 No APK/phone/live-MCP/actual3D GPU/native-codec pass is implied by these checks;
 final APK identity/signature and CI status are recorded after the build completes.
+
+A final source follow-up fixes manual selection of full-canvas cutouts. Rectangle
+picking first failed3 native cases; geometric-mask picking then failed the new
+inherited-hole case. The final implementation reads actual PNG alpha on the worker
+and transfers immutable bit support to Canvas. All19 native cases pass, including
+real touch gestures, unavailable-data gating, source reset, fractional source
+crop, animated matrices, legacy-image compatibility and ownership after bitmap
+release. The final affected official alpha/Canvas/renderer run passed96 checks;
+all96 animation PNG hashes remain identical to the reviewed final study. The full
+Node suite was rerun successfully. These checks overlap earlier counts. The first
+CI run was intentionally canceled to build the corrected source in a new full run.

@@ -36,6 +36,14 @@ final class SketchSourceMask {
     private static double dot(JSONArray a,JSONArray b,JSONArray c)throws Exception{return(b.getDouble(0)-a.getDouble(0))*(c.getDouble(0)-b.getDouble(0))+(b.getDouble(1)-a.getDouble(1))*(c.getDouble(1)-b.getDouble(1));}
     private static boolean on(JSONArray a,JSONArray b,JSONArray p)throws Exception{return Math.abs(cross(a,b,p))<=EPS&&p.getDouble(0)>=Math.min(a.getDouble(0),b.getDouble(0))-EPS&&p.getDouble(0)<=Math.max(a.getDouble(0),b.getDouble(0))+EPS&&p.getDouble(1)>=Math.min(a.getDouble(1),b.getDouble(1))-EPS&&p.getDouble(1)<=Math.max(a.getDouble(1),b.getDouble(1))+EPS;}
     private static boolean intersects(JSONArray a,JSONArray b,JSONArray c,JSONArray d)throws Exception{double x=cross(a,b,c),y=cross(a,b,d),z=cross(c,d,a),w=cross(c,d,b);return ((x>EPS&&y<-EPS||x<-EPS&&y>EPS)&&(z>EPS&&w<-EPS||z<-EPS&&w>EPS))||on(a,b,c)||on(a,b,d)||on(c,d,a)||on(c,d,b);}
+    /** The same native hard-mask geometry is used for extraction and touch selection. */
+    static android.graphics.Path path(JSONArray rings,int width,int height)throws Exception{
+        android.graphics.Path path=new android.graphics.Path();path.setFillType(android.graphics.Path.FillType.EVEN_ODD);
+        for(int r=0;r<rings.length();r++){JSONArray ring=rings.getJSONArray(r);for(int i=0;i<ring.length();i++){
+            JSONArray point=ring.getJSONArray(i);float x=(float)(point.getDouble(0)*width),y=(float)(point.getDouble(1)*height);
+            if(i==0)path.moveTo(x,y);else path.lineTo(x,y);
+        }path.close();}return path;
+    }
     static String hash(int width,int height,JSONArray rings,boolean complement)throws Exception{return SketchDocument.sha256(SketchDocument.canonical(new JSONObject().put("version",1).put("width",width).put("height",height).put("rings",new JSONArray(rings.toString())).put("complement",complement)).getBytes(StandardCharsets.UTF_8));}
     static String hashField(JSONObject o,String key)throws Exception{Object v=o.get(key);if(!(v instanceof String)||!((String)v).matches("[a-f0-9]{64}"))throw SketchDocument.bad("Invalid "+key);return(String)v;}
     static JSONObject metadata(JSONObject args,String maskId,JSONArray rings,boolean complement,int w,int h)throws Exception{return new JSONObject().put("version",1).put("method","source_assisted").put("sourceReferenceSha256",args.getString("expectedReferenceSha256")).put("sourceSha256",args.getString("expectedSourceSha256")).put("operationId",args.getString("operationId")).put("maskId",maskId).put("complement",complement).put("rings",new JSONArray(rings.toString())).put("maskSha256",hash(w,h,rings,complement));}

@@ -116,5 +116,50 @@ public class SketchReferenceLayersTest {
   SketchEditOps.execute(context,"sketch_live_begin",new JSONObject().put("sketchId",f.id).put("expectedRevision",4).put("operationId","original_after_undo").put("drawingMethod","original_strokes"));String before=SketchDocument.canonical(f.doc());
   assertEquals(SketchDocument.canonical(receipt),SketchDocument.canonical(call(f.request)));assertEquals(before,SketchDocument.canonical(f.doc()));return null;
  });}
+ @Test public void touchSelectionUsesNamedMasksAndHolesInsteadOfTransparentCanvasBounds()throws Exception{run(()->{
+  Fixture f=new Fixture(false);call(f.request);JSONObject d=f.doc();assertEquals("left_image",hit(d,0,.02,.5,0));assertEquals("right_image",hit(d,0,.75,.5,0));assertEquals("background_image",hit(d,0,.15,.15,0));assertEquals("right_image",hit(d,0,.5,.5,0));return null;
+ });}
+ @Test public void namedPartSelectionFollowsAnimatedObjectAndLayerMatrices()throws Exception{run(()->{
+  Fixture f=new Fixture(false);call(f.request);JSONObject d=f.doc();SketchDocument.layer(d,"right_layer").put("visible",false);SketchDocument.layer(d,"background_layer").put("visible",false);
+  for(int frame:new int[]{0,24}){
+   SketchEditOps.apply(d,new JSONObject().put("type","set_keyframe").put("objectId","left_image").put("frame",frame).put("transform",SketchDocument.transform().put("rotation",frame==0?15:90).put("x",frame==0?.1:-.1).put("scaleX",.7).put("scaleY",1.1).put("anchorX",.25)));
+   SketchEditOps.apply(d,new JSONObject().put("type","set_keyframe").put("layerId","left_layer").put("frame",frame).put("transform",SketchDocument.transform().put("rotation",frame==0?-20:35).put("scaleY",.8)));
+  }
+  for(int frame:new int[]{0,12,24}){Matrix combined=new Matrix();combined.setConcat(SketchFrameRenderer.matrix(SketchDocument.transformAt(SketchDocument.layer(d,"left_layer"),frame),256,256),SketchFrameRenderer.matrix(SketchDocument.transformAt(SketchDocument.object(d,"left_image"),frame),256,256));
+   float[] inside={.03f*256,.5f*256},outside={.75f*256,.5f*256};combined.mapPoints(inside);combined.mapPoints(outside);assertEquals("left_image",hit(d,frame,inside[0]/256d,inside[1]/256d,0));assertNull(hit(d,frame,outside[0]/256d,outside[1]/256d,0));
+  }return null;
+ });}
+ @Test public void namedPartSelectionUsesTheSameIntegerReferenceCropAsRendering()throws Exception{run(()->{
+  Fixture f=new Fixture(false);call(f.request);JSONObject d=f.doc();SketchDocument.layer(d,"right_layer").put("visible",false);SketchDocument.layer(d,"background_layer").put("visible",false);
+  SketchEditOps.apply(d,new JSONObject().put("type","update_object").put("objectId","left_image").put("patch",new JSONObject().put("bounds",bounds(.2,.2,.6,.6)).put("referenceCrop",bounds(.4979,.25,.003,.5))));
+  assertEquals("left_image",hit(d,0,.2+.2*.6,.5,0));assertNull(hit(d,0,.2+.6*.6,.5,0));assertNull(hit(d,0,.1,.5,0));return null;
+ });}
+ @Test public void legacyImagesKeepTheirExistingExpandedRectangleSelection()throws Exception{run(()->{
+  Fixture f=new Fixture(false);assertEquals("source",SketchFrameRenderer.hitTest(f.original,0,.75,.5,0));assertEquals("source",SketchFrameRenderer.hitTest(f.original,0,-.003,.5,.01));return null;
+ });}
+ @Test public void recuttingAReferenceKeepsInheritedTransparentHolesClickableThrough()throws Exception{run(()->{
+  Fixture f=new Fixture(false);call(f.request);JSONObject first=f.doc(),ref=SketchDocument.object(first,"left_image").getJSONObject("reference");JSONObject request=SketchDocument.copy(f.request).put("operationId","recut").put("expectedRevision",3).put("sourceObjectId","left_image").put("expectedReferenceSha256",ref.getString("sha256")).put("masks",new JSONArray().put(mask("recut",new JSONArray().put(ring(0,0,.5,1)))));request.remove("background");call(request);JSONObject d=f.doc();
+  assertEquals("background_image",hit(d,0,.15,.15,0));assertEquals("recut_image",hit(d,0,.02,.5,0));return null;
+ });}
+ private String hit(JSONObject d,int frame,double x,double y,double tolerance)throws Exception{try(SketchFrameRenderer renderer=new SketchFrameRenderer(context,d)){renderer.prepareRasterResources(128,frame);assertTrue(renderer.preparedSelectionBytes()<=8L*1024*1024);return SketchFrameRenderer.hitTest(d,frame,x,y,tolerance,renderer.imageSelections());}}
+ @Test public void alphaSelectionKeepsFullResolutionAndSurvivesBitmapCacheRelease()throws Exception{run(()->{
+  Fixture f=new Fixture(false);JSONObject d=f.doc(),reference=SketchDocument.copy(SketchDocument.object(d,"source").getJSONObject("reference"));JSONArray all=new JSONArray().put(ring(0,0,1,1));reference.put("sourceMask",SketchSourceMask.metadata(f.request,"whole",all,false,256,256));
+  SketchEditOps.apply(d,new JSONObject().put("type","add_layer").put("layer",new JSONObject().put("id","whole_layer").put("objects",new JSONArray().put(SketchEditOps.completeObject(new JSONObject().put("id","whole_image").put("kind","image").put("frame",0).put("exposure",96).put("bounds",bounds(0,0,1,1)).put("reference",reference))))));
+  java.util.Map<String,SketchFrameRenderer.ImageSelection> selections;try(SketchFrameRenderer renderer=new SketchFrameRenderer(context,d)){renderer.prepareRasterResources(128,0);selections=renderer.imageSelections();assertEquals(256,selections.get(reference.getString("sha256")).width);assertTrue(renderer.preparedSelectionBytes()<=8192);}
+  assertEquals("whole_image",SketchFrameRenderer.hitTest(d,0,.75,.5,0,selections));assertThrows(IllegalStateException.class,()->SketchFrameRenderer.hitTest(d,0,.75,.5,0));return null;
+ });}
+ @Test public void actualCanvasWaitsForWorkerAlphaAndSelectsVisiblePartsWithoutEditing()throws Exception{
+  JSONObject d=run(()->{Fixture f=new Fixture(false);call(f.request);return f.doc();});String before=SketchDocument.canonical(d);
+  android.widget.FrameLayout host=new android.widget.FrameLayout(context);SketchCanvasView canvas=new SketchCanvasView(context);host.addView(canvas,new android.widget.FrameLayout.LayoutParams(512,512));host.layout(0,0,512,512);canvas.layout(0,0,512,512);
+  java.util.List<String> picked=new java.util.ArrayList<>(),messages=new java.util.ArrayList<>();java.util.List<JSONObject> edits=new java.util.ArrayList<>();canvas.setListener(new SketchCanvasView.Listener(){public void onSelection(String id){picked.add(id);}public void onMessage(String message){messages.add(message);}public void onOperation(JSONObject operation){edits.add(operation);}});canvas.setDocument(d);canvas.setFrame(0);canvas.setTool("select");
+  java.lang.reflect.Field field=SketchCanvasView.class.getDeclaredField("rasterWorker");field.setAccessible(true);ExecutorService raster=(ExecutorService)field.get(canvas);CountDownLatch entered=new CountDownLatch(1),release=new CountDownLatch(1);raster.execute(()->{entered.countDown();try{release.await(30,TimeUnit.SECONDS);}catch(InterruptedException e){Thread.currentThread().interrupt();}});assertTrue(entered.await(10,TimeUnit.SECONDS));Bitmap viewport=Bitmap.createBitmap(512,512,Bitmap.Config.ARGB_8888);
+  try{
+   canvas.draw(new Canvas(viewport));tap(canvas,.02,.5);assertTrue(picked.isEmpty());assertTrue(messages.stream().anyMatch(m->m.contains("selection is preparing")));
+   release.countDown();raster.submit(()->{}).get(60,TimeUnit.SECONDS);org.robolectric.shadows.ShadowLooper.idleMainLooper();canvas.draw(new Canvas(viewport));
+   tap(canvas,.02,.5);assertEquals("left_image",canvas.getSelectedId());tap(canvas,.15,.15);assertEquals("background_image",canvas.getSelectedId());tap(canvas,.75,.5);assertEquals("right_image",canvas.getSelectedId());assertTrue(edits.isEmpty());assertEquals(before,SketchDocument.canonical(d));
+   java.lang.reflect.Field cache=SketchCanvasView.class.getDeclaredField("imageSelections");cache.setAccessible(true);assertFalse(((java.util.Map<?,?>)cache.get(canvas)).isEmpty());canvas.setDocument(SketchDocument.copy(d).put("revision",4));assertTrue("A changed source must discard old alpha publications",((java.util.Map<?,?>)cache.get(canvas)).isEmpty());
+  }finally{release.countDown();canvas.dispose();viewport.recycle();}
+ }
+ private static void tap(SketchCanvasView canvas,double x,double y){long now=android.os.SystemClock.uptimeMillis();android.view.MotionEvent down=android.view.MotionEvent.obtain(now,now,android.view.MotionEvent.ACTION_DOWN,(float)(x*512),(float)(y*512),0),up=android.view.MotionEvent.obtain(now,now+1,android.view.MotionEvent.ACTION_UP,(float)(x*512),(float)(y*512),0);try{canvas.onTouchEvent(down);canvas.onTouchEvent(up);}finally{down.recycle();up.recycle();}}
  private static int derived(JSONObject d)throws Exception{int count=0;JSONArray layers=d.getJSONArray("layers");for(int i=0;i<layers.length();i++){JSONArray objects=layers.getJSONObject(i).getJSONArray("objects");for(int j=0;j<objects.length();j++){JSONObject o=objects.getJSONObject(j);if(o.has("reference")&&o.getJSONObject("reference").has("sourceMask")){assertEquals("source_assisted",o.getJSONObject("reference").getJSONObject("sourceMask").getString("method"));count++;}}}return count;}
 }

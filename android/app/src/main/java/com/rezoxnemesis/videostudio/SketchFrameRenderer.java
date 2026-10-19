@@ -32,6 +32,24 @@ public final class SketchFrameRenderer implements AutoCloseable {
     private final Map<String, File> references = new java.util.HashMap<>();
     private final LinkedHashMap<String, Bitmap> imageCache = new LinkedHashMap<>(16, .75f, true);
     private long imageBytes;
+    private boolean prepareSelections;
+    private final Map<String,ImageSelection> imageSelections=new java.util.HashMap<>();
+    /** Immutable full-source alpha support; at most16×2048² bits (8 MiB). */
+    static final class ImageSelection {
+        final int width,height;private final long[] words;
+        ImageSelection(Bitmap image){width=image.getWidth();height=image.getHeight();java.util.BitSet bits=new java.util.BitSet(width*height);int[] row=new int[width];
+            for(int y=0;y<height;y++){image.getPixels(row,0,width,0,y,width,1);for(int x=0;x<width;x++)if((row[x]>>>24)!=0)bits.set(y*width+x);}words=bits.toLongArray();}
+        boolean contains(int x,int y){if(x<0||y<0||x>=width||y>=height)return false;int index=y*width+x,word=index>>>6;return word<words.length&&(words[word]&(1L<<(index&63)))!=0;}
+        long bytes(){return words.length*8L;}
+    }
+    void enableImageSelections(){requireRasterWorker();prepareSelections=true;}
+    Map<String,ImageSelection> imageSelections(){return java.util.Collections.unmodifiableMap(new java.util.HashMap<>(imageSelections));}
+    long preparedSelectionBytes(){long bytes=0;for(ImageSelection mask:imageSelections.values())bytes+=mask.bytes();return bytes;}
+    private void captureSelection(String hash,Bitmap image){
+        if(!prepareSelections||imageSelections.containsKey(hash))return;requireRasterWorker();
+        ImageSelection mask=new ImageSelection(image);if(imageSelections.size()>=16||preparedSelectionBytes()+mask.bytes()>8L*1024*1024)throw new IllegalStateException("Part selection exceeds its8 MiB bound");imageSelections.put(hash,mask);
+    }
+
     private final Map<String,Path> geometryCache=new java.util.HashMap<>();
     private final Map<String,java.util.BitSet[]> exposures=new java.util.HashMap<>();
     private Map<String,Integer> linkedColors=java.util.Collections.emptyMap();
@@ -93,6 +111,7 @@ public final class SketchFrameRenderer implements AutoCloseable {
                 }
             }
         } finally {if(store!=null)store.close();}
+        java.util.HashSet<String> selectionHashes=new java.util.HashSet<>();JSONArray selectionLayers=document.getJSONArray("layers");for(int i=0;i<selectionLayers.length();i++){JSONArray items=selectionLayers.getJSONObject(i).getJSONArray("objects");for(int j=0;j<items.length();j++){JSONObject item=items.getJSONObject(j);if("image".equals(item.optString("kind")))selectionHashes.add(item.getJSONObject("reference").getString("sha256"));}}imageSelections.keySet().retainAll(selectionHashes);
         indexExposures();
     }
 
@@ -117,7 +136,7 @@ public final class SketchFrameRenderer implements AutoCloseable {
     public void prepareRasterResources(int maxDimension,int frame)throws Exception {
         requireRasterWorker();
         if(maxDimension<128||maxDimension>1024)throw SketchDocument.bad("Raster preparation dimension must be 128..1024");
-        clearImageCache();clearPaintCache();preparedDimension=0;
+        clearImageCache();clearPaintCache();imageSelections.clear();prepareSelections=true;preparedDimension=0;
         java.util.ArrayList<JSONObject> visible=new java.util.ArrayList<>();
         java.util.HashSet<String> unique=new java.util.HashSet<>();
         JSONArray layers=document.getJSONArray("layers");
@@ -195,7 +214,7 @@ public final class SketchFrameRenderer implements AutoCloseable {
                 }
             }
         }finally{if(store!=null)store.close();}
-        document=copy;linkedColors=SketchPaletteStyles.indexed(copy);indexExposures();clearPaintCache();preparedDimension=0;appendPresentationObject=null;appendBaselinePoints=0;
+        document=copy;java.util.HashSet<String> keepSelectionHashes=new java.util.HashSet<>();for(int i=0;i<layers.length();i++){JSONArray items=layers.getJSONObject(i).getJSONArray("objects");for(int j=0;j<items.length();j++){JSONObject item=items.getJSONObject(j);if("image".equals(item.optString("kind")))keepSelectionHashes.add(item.getJSONObject("reference").getString("sha256"));}}imageSelections.keySet().retainAll(keepSelectionHashes);linkedColors=SketchPaletteStyles.indexed(copy);indexExposures();clearPaintCache();preparedDimension=0;appendPresentationObject=null;appendBaselinePoints=0;
     }
     public void draw(Canvas canvas, int frame, boolean background) throws Exception {
         draw(canvas, frame, background, null, null);
@@ -325,13 +344,17 @@ public final class SketchFrameRenderer implements AutoCloseable {
     }
 
     private Bitmap image(JSONObject reference) throws Exception {
-        String hash = reference.getString("sha256"); Bitmap cached = imageCache.get(hash); if (cached != null) return cached;
+        String hash = reference.getString("sha256"); Bitmap cached = imageCache.get(hash); if (cached != null){
+            if(prepareSelections&&!imageSelections.containsKey(hash)){requireRasterWorker();File owned=references.get(hash);if(owned==null)throw new IllegalStateException("SKETCH_REFERENCE_UNAVAILABLE");Bitmap full=BitmapFactory.decodeFile(owned.getPath());if(full==null)throw new IllegalStateException("Part selection source decode failed");try{if(full.getWidth()!=reference.getInt("width")||full.getHeight()!=reference.getInt("height"))throw new IllegalStateException("SKETCH_REFERENCE_CHANGED");captureSelection(hash,full);}finally{full.recycle();}}
+            return cached;
+        }
         if(android.os.Looper.myLooper()==android.os.Looper.getMainLooper()&&preparedDimension>0)throw new IllegalStateException("Reference must be prepared before UI drawing");
         File file = references.get(hash); if (file == null) throw new IllegalStateException("SKETCH_REFERENCE_UNAVAILABLE");
         BitmapFactory.Options options = new BitmapFactory.Options(); options.inPreferredConfig = Bitmap.Config.ARGB_8888;
         Bitmap image = BitmapFactory.decodeFile(file.getPath(), options);
         if (image == null) throw new IllegalStateException("Owned reference PNG decode failed");
         if (image.getWidth() != reference.getInt("width") || image.getHeight() != reference.getInt("height")) { image.recycle(); throw new IllegalStateException("SKETCH_REFERENCE_CHANGED"); }
+        captureSelection(hash,image);
         if(preparedDimension>0)image=fitCacheBitmap(image,preparedDimension);
         while (!imageCache.isEmpty() && imageBytes + image.getAllocationByteCount() > CACHE_BYTES) {
             Map.Entry<String, Bitmap> oldest = imageCache.entrySet().iterator().next(); Bitmap removed = oldest.getValue();
@@ -356,6 +379,9 @@ public final class SketchFrameRenderer implements AutoCloseable {
     }
     /** Select topmost exposed object using the same matrices and geometry as rasterization. */
     public static String hitTest(JSONObject document, int frame, double x, double y, double tolerance) throws Exception {
+        return hitTest(document,frame,x,y,tolerance,java.util.Collections.emptyMap());
+    }
+    static String hitTest(JSONObject document,int frame,double x,double y,double tolerance,Map<String,ImageSelection> selections)throws Exception {
         int w = document.getInt("width"), h = document.getInt("height"); JSONArray layers = document.getJSONArray("layers");
         for (int i = layers.length() - 1; i >= 0; i--) {
             JSONObject layer = layers.getJSONObject(i); if (!layer.getBoolean("visible") || layer.getBoolean("locked") || layer.getDouble("opacity") <= 0 || SketchDocument.transformAt(layer, frame).getDouble("opacity") <= 0) continue;
@@ -368,6 +394,19 @@ public final class SketchFrameRenderer implements AutoCloseable {
                 String kind = object.getString("kind");
                 if (object.has("bounds")) {
                     RectF bounds = bounds(object.getJSONObject("bounds"), w, h);
+                    if("image".equals(kind)&&object.getJSONObject("reference").has("sourceMask")){
+                        // A cutout retains the full reference canvas. Its transparent
+                        // padding must not intercept taps on another named part.
+                        if(!bounds.contains(p[0],p[1]))continue;
+                        JSONObject reference=object.getJSONObject("reference");int sourceWidth=reference.getInt("width"),sourceHeight=reference.getInt("height");
+                        Rect source=object.has("referenceCrop")?referencePixels(object.getJSONObject("referenceCrop"),sourceWidth,sourceHeight):new Rect(0,0,sourceWidth,sourceHeight);
+                        int sx=source.left+Math.min(source.width()-1,(int)Math.floor((p[0]-bounds.left)/bounds.width()*source.width()));
+                        int sy=source.top+Math.min(source.height()-1,(int)Math.floor((p[1]-bounds.top)/bounds.height()*source.height()));
+                        ImageSelection support=selections.get(reference.getString("sha256"));
+                        if(support==null||support.width!=sourceWidth||support.height!=sourceHeight)throw new IllegalStateException("Part selection is preparing. Wait for the preview, or use Refresh preview.");
+                        if(support.contains(sx,sy))return object.getString("id");
+                        continue;
+                    }
                     if ("ellipse".equals(kind)) {
                         double rx = bounds.width() / 2d, ry = bounds.height() / 2d, dx = (p[0] - bounds.centerX()) / rx, dy = (p[1] - bounds.centerY()) / ry;
                         double radius = Math.sqrt(dx * dx + dy * dy), allowed = t / Math.min(rx, ry);
@@ -408,5 +447,5 @@ public final class SketchFrameRenderer implements AutoCloseable {
     }
     private void clearPaintCache(){for(Bitmap bitmap:paintCache.values())bitmap.recycle();paintCache.clear();paintBytes=0;}
     private void clearImageCache(){for(Bitmap image:imageCache.values())image.recycle();imageCache.clear();imageBytes=0;}
-    @Override public void close() {clearImageCache();clearPaintCache();if(paintStore!=null){paintStore.close();paintStore=null;}paintPresentation=null;paintPresentationObject=null;geometryCache.clear();exposures.clear(); }
+    @Override public void close() {imageSelections.clear();clearImageCache();clearPaintCache();if(paintStore!=null){paintStore.close();paintStore=null;}paintPresentation=null;paintPresentationObject=null;geometryCache.clear();exposures.clear(); }
 }

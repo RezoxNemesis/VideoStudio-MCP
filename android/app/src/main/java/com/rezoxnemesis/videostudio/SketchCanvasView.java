@@ -33,6 +33,7 @@ public final class SketchCanvasView extends View {
     }
     private JSONObject document;
     private SketchFrameRenderer renderer;
+    private final java.util.Map<String,SketchFrameRenderer.ImageSelection> imageSelections=new java.util.HashMap<>();
     private Listener listener;
     private String tool = "stroke", layerId = "layer_1", selectedId, color = "#FF161C2B";
     private int frame;
@@ -143,7 +144,7 @@ public final class SketchCanvasView extends View {
         resetRasterSource();detachPaintPublication();++rasterGeneration;requestedRasterGeneration=rasterGeneration;rasterKey="";smallVector=false;
         invalidateTouchPreview(true);
         SketchFrameRenderer next=prepared.takeRenderer();
-        if(renderer!=null)renderer.close();renderer=next;document=prepared.document;
+        if(renderer!=null)renderer.close();renderer=next;document=prepared.document;imageSelections.putAll(next.imageSelections());
         if(!same){zoom=1;panX=panY=0;}clearFrameCache();restoreDocumentCursor(document);
     }
     private void restoreDocumentCursor(JSONObject doc)throws Exception{restoreDocumentCursor(doc,false);}
@@ -157,7 +158,7 @@ public final class SketchCanvasView extends View {
     /** Keep the source clock moving while a bounded preview worker renders.
      * A timeline tick does not invalidate already useful work from this source. */
     void setPlaybackPreview(boolean enabled){if(playbackPreview==enabled)return;playbackPreview=enabled;rasterKey="";++rasterGeneration;requestedRasterGeneration=rasterGeneration;invalidate();}
-    private void resetRasterSource(){previewError=null;previewLoading=false;rasterContextKey="";clearFrameCache();}
+    private void resetRasterSource(){imageSelections.clear();previewError=null;previewLoading=false;rasterContextKey="";clearFrameCache();}
     /** Retry is explicit: timeline ticks never restart a failed dependency. */
     void refreshPreview(){if(disposed||!previewActive)return;previewError=null;previewLoading=true;rasterKey="";++rasterGeneration;requestedRasterGeneration=rasterGeneration;publishPreviewStatus();invalidate();}
     boolean previewFailed(){return previewError!=null;}
@@ -266,7 +267,7 @@ public final class SketchCanvasView extends View {
                 if(previewId!=null&&previewTransform!=null)SketchDocument.object(renderDocument,previewId).put("transform",SketchDocument.copy(previewTransform)).put("keys",new JSONArray());
                 if(previewGeometry!=null){JSONObject target=SketchDocument.object(renderDocument,previewGeometry.getString("id"));String geometryField=previewGeometry.has("commands")?"commands":"points";target.put(geometryField,previewGeometry.get(geometryField));target.remove("shapeKeys");}
                 ready=new SketchFrameRenderer(getContext(),renderDocument);
-                ready.prepareVectorGeometry();
+                ready.prepareVectorGeometry();ready.enableImageSelections();
                 JSONObject[] neighbors={previous,next};
                 for(int side=0;side<neighbors.length;side++){
                     JSONObject neighbor=neighbors[side];if(neighbor==null)continue;
@@ -282,8 +283,8 @@ public final class SketchCanvasView extends View {
                     prepared.put(index,new RasterFrame(bitmap,crop));bytes+=bitmap.getAllocationByteCount();
                 }}
                 // Only the worker uses this renderer: immutable bounded publications are the UI contract.
-                ready.close();ready=null;long adoptedBytes=bytes;java.util.LinkedHashMap<Integer,RasterFrame> publication=prepared;
-                ui.post(()->{if(disposed||!previewActive||generation!=requestedRasterGeneration){for(RasterFrame image:publication.values())image.bitmap.recycle();return;}clearFrameCache();frameCache.putAll(publication);cacheBytes=adoptedBytes;lastRasterFrame=selectedFrame;lastRasterRevision=source.optLong("revision");previewLoading=false;publishPreviewStatus();if(touchComposite!=null&&!pointerDown&&!pendingPaintPreviews.containsKey(touchCompositeStroke))clearTouchComposite();if(paintPublication!=null){detachPaintPublication();if(renderer!=null){renderer.close();renderer=null;}}invalidate();});prepared=null;
+                java.util.Map<String,SketchFrameRenderer.ImageSelection> selectionPublication=ready.imageSelections();ready.close();ready=null;long adoptedBytes=bytes;java.util.LinkedHashMap<Integer,RasterFrame> publication=prepared;
+                ui.post(()->{if(disposed||!previewActive||generation!=requestedRasterGeneration){for(RasterFrame image:publication.values())image.bitmap.recycle();return;}clearFrameCache();imageSelections.putAll(selectionPublication);frameCache.putAll(publication);cacheBytes=adoptedBytes;lastRasterFrame=selectedFrame;lastRasterRevision=source.optLong("revision");previewLoading=false;publishPreviewStatus();if(touchComposite!=null&&!pointerDown&&!pendingPaintPreviews.containsKey(touchCompositeStroke))clearTouchComposite();if(paintPublication!=null){detachPaintPublication();if(renderer!=null){renderer.close();renderer=null;}}invalidate();});prepared=null;
             }catch(InterruptedException cancelled){}
             catch(Exception|OutOfMemoryError failed){ui.post(()->{if(!disposed&&previewActive&&generation==requestedRasterGeneration)previewFailed(failed);});}
             finally{if(ready!=null)ready.close();if(prepared!=null)for(RasterFrame image:prepared.values())image.bitmap.recycle();ui.post(()->{if(rasterInFlight==generation){rasterInFlight=-1;if(!disposed&&previewActive)invalidate();}});}
@@ -293,7 +294,7 @@ public final class SketchCanvasView extends View {
         if(image==null||image.bitmap.isRecycled())return;JSONObject c=image.crop;RectF target=c==null?new RectF(0,0,w,h):new RectF((float)c.getDouble("x")*w,(float)c.getDouble("y")*h,(float)(c.getDouble("x")+c.getDouble("width"))*w,(float)(c.getDouble("y")+c.getDouble("height"))*h);
         canvas.drawBitmap(image.bitmap,null,target,tint);
     }
-    public void dispose() { if(disposed)return;disposed=true;playbackPreview=false;previewActive=false;hideAgentHand();invalidateTouchPreview(true);++rasterGeneration;requestedRasterGeneration=rasterGeneration;rasterWorker.execute(()->{if(touchPaintCache!=null){touchPaintCache.close();touchPaintCache=null;touchPaintOwner=null;}});rasterWorker.shutdown();detachPaintPublication();clearFrameCache();if(renderer!=null){renderer.close();renderer=null;} }
+    public void dispose() { if(disposed)return;disposed=true;imageSelections.clear();playbackPreview=false;previewActive=false;hideAgentHand();invalidateTouchPreview(true);++rasterGeneration;requestedRasterGeneration=rasterGeneration;rasterWorker.execute(()->{if(touchPaintCache!=null){touchPaintCache.close();touchPaintCache=null;touchPaintOwner=null;}});rasterWorker.shutdown();detachPaintPublication();clearFrameCache();if(renderer!=null){renderer.close();renderer=null;} }
 
     @Override protected void onDraw(Canvas canvas) {
         super.onDraw(canvas); if (document == null||disposed) return;
@@ -400,9 +401,9 @@ public final class SketchCanvasView extends View {
                 getParent().requestDisallowInterceptTouchEvent(true); downX = x; downY = y;
                 if("eyedropper".equals(tool)){pointerDown=false;if(listener!=null)listener.onSampleRequested(x,y,frame);getParent().requestDisallowInterceptTouchEvent(false);return true;}
                 if("pan".equals(tool)){lastPanX=event.getX();lastPanY=event.getY();return true;}
-                if("nodes".equals(tool)){if(selectedId==null)selectedId=SketchFrameRenderer.hitTest(document,frame,x,y,.035);if(selectedId!=null){layerId=SketchDocument.owner(document,selectedId).getString("id");SketchEditOps.requireUnlocked(SketchDocument.layer(document,layerId));chooseNode(x,y);}invalidate();return true;}
+                if("nodes".equals(tool)){if(selectedId==null)selectedId=SketchFrameRenderer.hitTest(document,frame,x,y,.035,imageSelections);if(selectedId!=null){layerId=SketchDocument.owner(document,selectedId).getString("id");SketchEditOps.requireUnlocked(SketchDocument.layer(document,layerId));chooseNode(x,y);}invalidate();return true;}
                 if ("select".equals(tool)) {
-                    selectedId = SketchFrameRenderer.hitTest(document, frame, x, y, .018);
+                    selectedId = SketchFrameRenderer.hitTest(document, frame, x, y, .018,imageSelections);
                     dragBase = selectedId == null ? null : SketchDocument.transformAt(SketchDocument.object(document, selectedId), frame);
                     if (selectedId != null) layerId = SketchDocument.owner(document, selectedId).getString("id");
                     if (listener != null) listener.onSelection(selectedId); invalidate(); return true;
@@ -452,7 +453,7 @@ public final class SketchCanvasView extends View {
                 gesture = new JSONArray(); invalidate(); return true;
             }
             if (event.getActionMasked() == MotionEvent.ACTION_CANCEL) { invalidateTouchPreview(true);pointerDown=false;gesture = new JSONArray(); dragTransform = null;nodePreview=null;if(renderer!=null)renderer.setGeometryPreview(null); getParent().requestDisallowInterceptTouchEvent(false); invalidate(); return true; }
-        } catch (Exception e) {invalidateTouchPreview(true);pointerDown=false;paintCommitter=null;paintTarget=null; gesture = new JSONArray(); if (listener != null) listener.onMessage(e.getMessage()); }
+        } catch (Exception e) {invalidateTouchPreview(true);pointerDown=false;dragBase=null;dragTransform=null;if(getParent()!=null)getParent().requestDisallowInterceptTouchEvent(false);paintCommitter=null;paintTarget=null; gesture = new JSONArray(); if (listener != null) listener.onMessage(e.getMessage()); }
         return true;
     }
 

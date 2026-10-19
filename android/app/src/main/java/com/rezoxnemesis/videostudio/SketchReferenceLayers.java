@@ -128,7 +128,7 @@ final class SketchReferenceLayers {
         if(a.has("background")){Part bg=new Part();bg.descriptor=a.getJSONObject("background");bg.rings=allRings;bg.complement=true;bg.selected=new BitSet(p.pixels.length);for(int i=0;i<p.pixels.length;i++)if(!used.get(i))bg.selected.set(i);p.parts.add(0,bg);}
         return p;
     }
-    private static Path path(JSONArray rings,int w,int h)throws Exception{Path path=new Path();path.setFillType(Path.FillType.EVEN_ODD);for(int r=0;r<rings.length();r++){JSONArray ring=rings.getJSONArray(r);for(int i=0;i<ring.length();i++){JSONArray pt=ring.getJSONArray(i);float x=(float)(pt.getDouble(0)*w),y=(float)(pt.getDouble(1)*h);if(i==0)path.moveTo(x,y);else path.lineTo(x,y);}path.close();}return path;}
+    private static Path path(JSONArray rings,int w,int h)throws Exception{return SketchSourceMask.path(rings,w,h);}
     /** Local contrast assistance only. No object semantics or inferred hidden artwork. */
     private static int snap(JSONArray rings,int[] pixels,int w,int h,int radius)throws Exception{
         int changed=0;

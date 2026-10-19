@@ -26,6 +26,11 @@ all-frame attachment/framing checks, matching neutral endpoints and an editable
 native archive. V2/V3 narrow acceptance was withdrawn after an exposure mistake;
 all generations remain. Detailed human/acting/voice/long-film quality goals are
 unfinished. Two software-emulator boot attempts timed out; no APK was installed.
+Final cutout selection is full-source alpha-based (worker-prepared,8MiB permap),
+including inherited holes and transparent padding; no UI decoding. The19-case
+native selection suite and96-case official affected suite passed, and all96
+reviewed animation PNG hashes remain unchanged. A superseded CI run was canceled
+for this source follow-up; use the final committed SHA/run from external evidence.
 Original-signer candidate/fullCI results are written to the external evidence root
 when complete. Preserve the current frozen source during CI; no deploy/publish.
 
