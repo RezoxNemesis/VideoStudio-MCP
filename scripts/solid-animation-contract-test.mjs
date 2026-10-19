@@ -5,6 +5,8 @@ import './hand-cel-contract-test.mjs';
 import './speech-rebase-contract-test.mjs';
 import './human-animation-contract-test.mjs';
 import './human-clothing-contract-test.mjs';
+import './human-anatomy-contract-test.mjs';
+import './correction-workflow-contract-test.mjs';
 import './animation-book-placement-contract-test.mjs';
 import './story-stage-prop-contract-test.mjs';
 import './grip-link-contract-test.mjs';

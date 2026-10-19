@@ -16,6 +16,7 @@ public final class NativeWorkbenchBridge {
             "sketch_create","sketch_list","sketch_get","sketch_inspect","sketch_review","sketch_quality_audit","sketch_edit","sketch_undo","sketch_redo",
             "sketch_animation_save","sketch_animation_get","sketch_animation_list","sketch_animation_bake","sketch_animation_place_in_book",
             "sketch_story_create","sketch_story_preview","sketch_story_audio_create","sketch_story_example",
+            "sketch_correction_start","sketch_correction_get","sketch_correction_note","sketch_correction_propose","sketch_correction_preview","sketch_correction_apply","sketch_correction_options","sketch_correction_list",
             "sketch_paint_journal","sketch_sample_color","sketch_archive","sketch_restore_archive",
             "sketch_import_reference","sketch_import_frame_manifest","sketch_import_drawing_manifest","sketch_import_drawing_asset","sketch_import_animation","sketch_preview","sketch_render",
             "sketch_book_create","sketch_book_edit","sketch_book_list","sketch_book_get","sketch_book_open_page","sketch_book_timeline","sketch_book_render","sketch_live_begin","sketch_live_events","sketch_live_end","sketch_capabilities","sketch_component_save","sketch_component_list","sketch_component_apply",

@@ -16,6 +16,7 @@ public final class NativeCommandExecutionPolicy {
             case "apply_tool": case "set_studio_layers":
             case "sketch_create": case "sketch_list": case "sketch_get": case "sketch_inspect": case "sketch_review": case "sketch_quality_audit": case "sketch_edit":
             case "sketch_animation_save": case "sketch_animation_get": case "sketch_animation_list": case "sketch_animation_bake": case "sketch_animation_place_in_book":
+            case "sketch_correction_start": case "sketch_correction_get": case "sketch_correction_note": case "sketch_correction_propose": case "sketch_correction_preview": case "sketch_correction_apply": case "sketch_correction_options": case "sketch_correction_list":
             case "sketch_story_create": case "sketch_story_preview": case "sketch_story_audio_create": case "sketch_story_example":
             case "sketch_paint_journal": case "sketch_sample_color": case "sketch_archive": case "sketch_restore_archive":
             case "sketch_book_create": case "sketch_book_edit": case "sketch_book_list": case "sketch_book_get": case "sketch_book_open_page": case "sketch_book_timeline": case "sketch_book_render":

@@ -99,8 +99,8 @@ test('human clothing metadata matches native literals and gives ordinary ChatGPT
  const detail=worker.match(/:action==='sketch_edit'\?'([^']+)'/)[1];assert.match(detail,/clothingStyle.*legacy.*tailored.*4\.8\.2/);assert.match(detail,/Clothing.*dropdown/);
 });
 
-test('release is coherent at 4.8.2/code485 and existing hand/archive/action floors stay intact',()=>{
- assert.match(native('AppProtocol'),/APP_VERSION = "4\.8\.2"/);const build=fs.readFileSync(new URL('../android/app/build.gradle.kts',import.meta.url),'utf8');assert.match(build,/versionCode = 485/);assert.match(build,/versionName = "4\.8\.2"/);
- assert.equal(contract.STUDIO_NATIVE_ACTIONS.size,60);assert.equal(contract.STUDIO_ALIAS_ACTIONS.size,71);assert.equal(contract.HAND_ANIMATION_CAPABILITIES.renderStyleMinimumNativeVersion,'4.8.1');
+test('release is coherent at 4.8.4/code487 and existing hand/archive/action floors stay intact',()=>{
+ assert.match(native('AppProtocol'),/APP_VERSION = "4\.8\.4"/);const build=fs.readFileSync(new URL('../android/app/build.gradle.kts',import.meta.url),'utf8');assert.match(build,/versionCode = 487/);assert.match(build,/versionName = "4\.8\.4"/);
+ assert.equal(contract.STUDIO_NATIVE_ACTIONS.size,68);assert.equal(contract.STUDIO_ALIAS_ACTIONS.size,79);assert.equal(contract.HAND_ANIMATION_CAPABILITIES.renderStyleMinimumNativeVersion,'4.8.1');
  const archive={archiveProjectId:'archive',archiveName:'actor.vssketch',expectedSha256:'a'.repeat(64),operationId:'restore'};for(const action of names('sketch_restore_archive')){assert.deepEqual(contract.nativeStudioParameters(action,archive),archive);assert.doesNotThrow(()=>contract.requireStudioVersion({appVersion:'4.1.0'},action,archive));assert.throws(()=>contract.nativeStudioParameters(action,{...archive,clothingStyle:'tailored'}));}
 });

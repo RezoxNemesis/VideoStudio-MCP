@@ -21,9 +21,13 @@ async function fixture(){
 test('legacy queue admits concurrent distinct sequences and round-trips oversized request and receipt',async()=>{
   const f=await fixture(),parameters={program:'x'.repeat(180000)};
   const commands=await Promise.all([f.relay.appEnqueue(f.owner,'ping',parameters),f.relay.appEnqueue(f.owner,'ping',{})]);
-  assert.deepEqual(commands.map(row=>row.seq),[1,2]);
+  // Authentication/hash preparation can finish in either order before the
+  // serialized admission transaction assigns sequences. Promise.all retains
+  // launch order; the executor must deliver actual admission order.
+  assert.deepEqual(commands.map(row=>row.seq).sort((a,b)=>a-b),[1,2]);
+  const admissionOrder=[...commands].sort((a,b)=>a.seq-b.seq);
   const claimed=await f.relay.appCommands(f.deviceId,f.owner,999,0);
-  assert.deepEqual(Array.from(claimed,row=>row.id),commands.map(row=>row.id));
+  assert.deepEqual(Array.from(claimed,row=>row.id),admissionOrder.map(row=>row.id));
   const result={ok:true,text:'y'.repeat(200000)};
   await f.relay.appComplete(f.deviceId,f.owner,commands[0].id,result);
   const read=await f.relay.appCommand(f.owner,commands[0].id);

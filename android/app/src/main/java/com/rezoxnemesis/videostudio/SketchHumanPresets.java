@@ -67,7 +67,7 @@ final class SketchHumanPresets {
   }return out;
  }
  static JSONArray createForView(String name,int frames,int fps,JSONObject motion,String view)throws Exception {
-  if(!Set.of("front","left","right","back","high","low").contains(view))throw SketchDocument.bad("Unknown human view");JSONArray poses=create(name,frames,fps,motion);if(view.equals("left"))for(int i=0;i<poses.length();i++){JSONObject p=poses.getJSONObject(i);p.put("bodyLean",-p.getDouble("bodyLean")).put("headTilt",-p.getDouble("headTilt"));}return poses;
+  if(!Set.of("front","left","right","back","high","low","three_quarter_left","three_quarter_right").contains(view))throw SketchDocument.bad("Unknown human view");JSONArray poses=create(name,frames,fps,motion);if(view.equals("left"))for(int i=0;i<poses.length();i++){JSONObject p=poses.getJSONObject(i);p.put("bodyLean",-p.getDouble("bodyLean")).put("headTilt",-p.getDouble("headTilt"));}return poses;
  }
  private static void gait(JSONObject p,double t,boolean run,JSONObject motion)throws Exception {
   double frequency=(run?.8:.65)*motion.getDouble("speed"),travel=140*motion.getDouble("travelScale")*motion.getDouble("direction"),phaseOffset=motion.getDouble("phase"),clock=t*frequency+phaseOffset,root=t*frequency*travel;

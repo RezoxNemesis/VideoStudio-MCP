@@ -24,14 +24,18 @@ public final class SketchEditOps {
         // foreground drawing. Actual edits and live sessions still follow.
         boolean hiddenGuideImport="sketch_import_reference".equals(action)&&!args.optBoolean("guideVisible",true);
         if(result.has("sketchId")&&!hiddenGuideImport&&!java.util.Arrays.asList("sketch_get","sketch_preview","sketch_review","sketch_quality_audit","sketch_list","sketch_live_events","sketch_inspect","sketch_xsheet","sketch_paint_journal","sketch_sample_color").contains(action)){
+            signalChanged(context,action,result);
+        }
+        return result;
+    }
+    /** Shared refresh signal after an authoritative native transaction. */
+    static void signalChanged(Context context,String action,JSONObject result)throws Exception {
             android.content.SharedPreferences.Editor signal=context.getSharedPreferences("sketch_live_workspace",Context.MODE_PRIVATE).edit().putString("sketchId",result.getString("sketchId")).putLong("signal",System.nanoTime());
             // Edits do not carry a page argument. Resolve the actual persisted
             // membership so following a late cel never jumps back to page zero.
             JSONObject membership;try(SketchBookStore books=new SketchBookStore(context)){membership=books.pageForSketch(result.getString("sketchId"));}
             signal.putString("bookId",membership==null?"":membership.getString("bookId"));
             signal.putInt("page",membership==null?0:membership.getInt("page"));signal.apply();
-        }
-        return result;
     }
     private static JSONObject executeInternal(Context context, String action, JSONObject args,String expectedSessionId) throws Exception {
         if (args == null || args.toString().getBytes(StandardCharsets.UTF_8).length > 512 * 1024)

@@ -142,10 +142,16 @@ test('closed studio relay aliases enforce each native minimum and validate their
   const animation=alias.startsWith('studio_sketch_animation_');
   const placement=alias==='studio_sketch_animation_place_in_book';
   const story=alias.startsWith('studio_sketch_story_');
+  const correction=alias.startsWith('studio_sketch_correction_');
   const projectAsset=['studio_project_asset_info','studio_project_import_asset'].includes(alias);
   const sequence=alias==='studio_sketch_book_timeline'||alias==='studio_sketch_import_animation'||alias.startsWith('studio_sketch_component_');
   const repair=['studio_sketch_import_drawing_asset','studio_get_native_result_page','studio_get_native_delivery_status','studio_compact_native_delivery'].includes(alias);
-  assert.throws(()=>requireStoryboardNativeVersion({appVersion:'3.8.1'},alias),(story||projectAsset)?/4\.8\.0/:placement?/4\.8\.0/:sequence?/4\.7\.0/:animation?/4\.4\.0/:repair?/4\.3\.1/:cameraEdit?/4\.3\.0/:media?/4\.2\.0/:paint?/4\.1\.0/:/3\.9\.[01456]/);
+  assert.throws(()=>requireStoryboardNativeVersion({appVersion:'3.8.1'},alias),correction?/4\.8\.4/:(story||projectAsset)?/4\.8\.0/:placement?/4\.8\.0/:sequence?/4\.7\.0/:animation?/4\.4\.0/:repair?/4\.3\.1/:cameraEdit?/4\.3\.0/:media?/4\.2\.0/:paint?/4\.1\.0/:/3\.9\.[01456]/);
+  if(correction){
+   assert.throws(()=>requireStoryboardNativeVersion({appVersion:'4.8.3'},alias),/4\.8\.4/);
+   assert.doesNotThrow(()=>requireStoryboardNativeVersion({appVersion:'4.8.4'},alias));
+   continue;
+  }
   if(story||projectAsset){
    assert.throws(()=>requireStoryboardNativeVersion({appVersion:'4.7.9'},alias),/4\.8\.0/);
    assert.doesNotThrow(()=>requireStoryboardNativeVersion({appVersion:'4.8.0'},alias));

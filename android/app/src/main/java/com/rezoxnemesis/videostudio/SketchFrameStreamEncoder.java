@@ -92,7 +92,6 @@ final class SketchFrameStreamEncoder {
         Size preferred = boundedSize(sourceWidth, sourceHeight, quality);
         MediaCodecInfo[] installed = new MediaCodecList(MediaCodecList.REGULAR_CODECS).getCodecInfos();
         Selection best = null;
-        long bestPixels = -1;
         boolean bestHardware = false;
         for (MediaCodecInfo info : installed) {
             if (!info.isEncoder()) continue;
@@ -107,27 +106,18 @@ final class SketchFrameStreamEncoder {
                 }
             }
             if (!flexible || caps.getVideoCapabilities() == null) continue;
+            if (!caps.getVideoCapabilities().areSizeAndRateSupported(preferred.width, preferred.height, fps)) continue;
             boolean hardware = info.isHardwareAccelerated();
-            for (int w = preferred.width; w >= ALIGN * 16; w -= ALIGN) {
-                int h = ALIGN * (int) Math.round((double) w * sourceHeight / sourceWidth / ALIGN);
-                if (h > preferred.height || h < ALIGN * 16 ||
-                        (long) w * h > (long) preferred.width * preferred.height) continue;
-                double error = Math.abs((double) w / h - (double) sourceWidth / sourceHeight)
-                        / ((double) sourceWidth / sourceHeight);
-                if (error > .005) continue;
-                if (!caps.getVideoCapabilities().areSizeAndRateSupported(w, h, fps)) continue;
-                long pixels = (long) w * h;
-                if (best == null || hardware && !bestHardware ||
-                        hardware == bestHardware && pixels > bestPixels) {
-                    best = new Selection(info, new Size(w, h));
-                    bestHardware = hardware;
-                    bestPixels = pixels;
-                }
-                break;
+            // boundedSize owns the existing quality/alignment budget. Codec availability
+            // must not shrink that raster or exchange its detail for hardware acceleration.
+            if (best == null || hardware && !bestHardware) {
+                best = new Selection(info, preferred);
+                bestHardware = hardware;
             }
         }
         if (best == null) throw new IllegalStateException(
-                "SKETCH_CODEC_UNAVAILABLE: no Android H.264 encoder supports flexible YUV input");
+                "SKETCH_CODEC_UNAVAILABLE: no Android H.264 encoder supports exact "
+                        + preferred.width + "x" + preferred.height + " at " + fps + " FPS with flexible YUV input");
         return best;
     }
 

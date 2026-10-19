@@ -35,6 +35,7 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
     private boolean notificationReplayPending,replaySelectedFromFile;
     private JSONObject document;
     private SketchEditorSession session;
+    private SketchCorrectionDialog correctionDialog;
     private final ExecutorService io=Executors.newSingleThreadExecutor();
     private final ExecutorService transfers=Executors.newSingleThreadExecutor();
     private boolean loadingDrawing;
@@ -891,7 +892,7 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
     private void stopPlayback() { boolean wasPlaying=playing;playing = false;++playbackGeneration;bookPlaybackInFlight=false;android.graphics.Bitmap abandoned=pendingBookBitmap.getAndSet(null);if(abandoned!=null)abandoned.recycle();if(wasPlaying&&bookId!=null&&session!=null&&!destroyed){openBookPage(bookId,bookPage);} handler.removeCallbacks(playTick); if(canvas!=null&&!destroyed)canvas.setEnabled(!loadingDrawing&&(!wasPlaying||bookId==null)&&session!=null&&livePlayer==null);if (playButton != null) playButton.setText("Play"); }
     @Override protected void onPause() { resumed=false;++liveLoadGeneration;if(livePlayer!=null||watchInFlight){loadingDrawing=true;if(notifiedSessionId!=null)notificationReplayPending=true;}stopLivePlayer();stopPlayback();handler.removeCallbacks(watchTick);super.onPause(); }
     @Override protected void onResume() { super.onResume();resumed=true;liveSessionId="";if(loadingDrawing&&session!=null&&!activeConstructions.containsKey(loadGeneration+":"+pageGeneration)){if(session.pending()==0)reload();else afterSaves(()->postUi(this::reload));}handler.removeCallbacks(watchTick);handler.postDelayed(watchTick,250); }
-    @Override protected void onDestroy() { destroyed=true;activeConstructions.clear();stopLivePlayer();stopPlayback();handler.removeCallbacksAndMessages(null);if(session!=null)session.close();io.shutdown();transfers.shutdown();if(canvas!=null)canvas.dispose();super.onDestroy(); }
+    @Override protected void onDestroy() { destroyed=true;if(correctionDialog!=null)correctionDialog.close();activeConstructions.clear();stopLivePlayer();stopPlayback();handler.removeCallbacksAndMessages(null);if(session!=null)session.close();io.shutdown();transfers.shutdown();if(canvas!=null)canvas.dispose();super.onDestroy(); }
     @Override protected void onSaveInstanceState(Bundle state) { state.putString("bookId",bookId);state.putInt("bookPage",bookPage);state.putString("sketchId", sketchId); state.putInt("frame", canvas.getFrame());state.putString("notifiedSketchId",notifiedSketchId);state.putString("notifiedSessionId",notifiedSessionId); super.onSaveInstanceState(state); }
     private LinearLayout column() { LinearLayout layout = new LinearLayout(this); layout.setOrientation(LinearLayout.VERTICAL);layout.setBackgroundColor(StudioUi.SURFACE);layout.setPadding(dp(6),dp(2),dp(6),dp(2));return layout; }
     private LinearLayout row(LinearLayout root) { LinearLayout layout = new LinearLayout(this); layout.setOrientation(LinearLayout.HORIZONTAL);root.addView(layout,new LinearLayout.LayoutParams(-1,-2));return layout; }
@@ -944,7 +945,19 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
         });
     }
 
-    private void moreMenu(){menu("Drawing tools",new String[]{"Layers","Frames / Cels","2D animation","Workspace","Drawing alerts","Visual QA / Detail","Story → 2D film"},this::layersMenu,this::framesMenu,this::openAnimationStudio,this::workspaceDialog,this::drawingAlerts,this::qualityAuditDialog,this::storyFilmDialog);}
+    private void moreMenu(){menu("Drawing tools",new String[]{"Layers","Frames / Cels","2D animation","Workspace","Drawing alerts","Visual QA / Detail","Review & correct","Story → 2D film"},this::layersMenu,this::framesMenu,this::openAnimationStudio,this::workspaceDialog,this::drawingAlerts,this::qualityAuditDialog,this::reviewCorrectionDialog,this::storyFilmDialog);}
+    private void reviewCorrectionDialog(){
+        if(session==null||document==null)return;
+        stopPlayback();final SketchEditorSession origin=session;final String target=sketchId;
+        final int generation=loadGeneration,page=pageGeneration,frame=canvas.getFrame();
+        afterSaves(()->{JSONObject snapshot=SketchDocument.copy(origin.document());postUi(()->{
+            if(session!=origin||generation!=loadGeneration||page!=pageGeneration||!target.equals(sketchId)){onMessage("The selected drawing changed. Open Review & correct on the current drawing.");return;}
+            try{if(correctionDialog!=null)correctionDialog.close();correctionDialog=SketchCorrectionDialog.show(this,snapshot,frame,result->{
+                if(session!=origin||generation!=loadGeneration||page!=pageGeneration||!target.equals(sketchId)||destroyed)return;
+                loadSketch(target,frame);onMessage("Correction applied. Use the normal editor Undo to restore the previous drawing.");
+            });}catch(Exception error){onMessage(error.getMessage());}
+        });});
+    }
     private void openAnimationStudio(){if(document==null)return;stopPlayback();afterSaves(()->postUi(()->startActivity(new Intent(this,SketchAnimationActivity.class).putExtra("sketchId",sketchId))));}
 
     /** Prompt-driven original storyboard; all created cels remain ordinary editable Sketch Studio parts. */

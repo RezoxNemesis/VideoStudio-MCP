@@ -101,8 +101,8 @@ test('style metadata matches native defaults and advertises bounded native/manua
 });
 
 test('style adds no canonical actions and does not raise opaque legacy archive/component floors',()=>{
- assert.equal(contract.STUDIO_NATIVE_ACTIONS.size,60);assert.equal(contract.STUDIO_ALIAS_ACTIONS.size,71);
- const nativeActions=native('NativeWorkbenchBridge').match(/ACTIONS=[\s\S]*?Arrays\.asList\(([\s\S]*?)\)\)\)/)[1].match(/"[a-z0-9_]+"/g);assert.equal(nativeActions.length,73);
+ assert.equal(contract.STUDIO_NATIVE_ACTIONS.size,68);assert.equal(contract.STUDIO_ALIAS_ACTIONS.size,79);
+ const nativeActions=native('NativeWorkbenchBridge').match(/ACTIONS=[\s\S]*?Arrays\.asList\(([\s\S]*?)\)\)\)/)[1].match(/"[a-z0-9_]+"/g);assert.equal(nativeActions.length,81);
  const archive={archiveProjectId:'archive',archiveName:'hand.vssketch',expectedSha256:'a'.repeat(64),operationId:'restore'};
  for(const action of ['sketch_restore_archive','studio_sketch_restore_archive']){
   assert.deepEqual(contract.nativeStudioParameters(action,archive),archive);assert.doesNotThrow(()=>contract.requireStudioVersion({appVersion:'4.1.0'},action,archive));assert.throws(()=>contract.nativeStudioParameters(action,{...archive,renderStyle:'cel'}));

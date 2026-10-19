@@ -1,3 +1,75 @@
+# Active native correction workflow — 2026-10-19
+
+Current worktree /workspace/VideoStudio-Anatomy-Sketch, branch
+feat/native-anatomy-sketch-20261019, combined source target4.8.4/code487.
+Owner now prioritizes an explicitly operated app-owned review/correction system
+and versioned code/asset recipes with varied reusable options, shared by manual
+controls and ordinary ChatGPT/MCP. Preserve anatomy prototypes and all earlier
+films/matrices; no further figure-drawing iteration is the current task.
+Read docs/superpowers/specs/2026-10-19-native-correction-workflow.md.
+
+Eight sketch_correction_* actions use original native Sketch QA/preview/edit
+surfaces, durable source snapshots/notes, strict review/source CAS, detached
+candidates, native recipe operations, ordinary undo and exact receipt recovery.
+The bundled12 recipes are native logic, not ML training or a guarantee of art
+quality. Technical validation and explicit reviewer decisions remain separate.
+Production art/model improvement, original124s voiced-film completion and1000+
+varied-scenario programme remain unfinished goals.
+
+Evidence /workspace/engineering-review/correction-workflow-20261019 contains
+19 isolated native core/recipe tests,12 manual UI tests,638 Node tests+smoke,
+independent core findings/repairs, and one96-frame/24FPS native human before/
+after study (192PNGs, full clock and22 motion channels preserved, normal undo).
+These are bounded evidence, not a new APK/device/liveMCP/export claim.
+First anatomy generations and hand/body matrices stay under their earlier roots.
+Integrated official Gradle verification then passed60 focused tests with0failures,
+0errors and0skips, including current Android source/resources and export fixes.
+CI full-suite/signed candidate verification is the next checkpoint.
+
+The frozen Body hand48x96 matrix completed with stable source/HEAD receipts and
+4608 native PNGs. Parent now owns the single local Gradle process for integrated
+4.8.4 verification. Do not edit the Body tree. Recipe/UI/MCP sidecars are frozen.
+No Gallery, tracing, external animation authoring, replacement signer, identity
+reset, merge, deployment or stable publish. The three latest uploaded references
+are hash-bound in movement-capabilities-20261019; native host decoder failed and
+an explicit external read-only inspection exception is unanswered. Do not claim
+their visual contents were inspected or reuse their frames as authored output.
+
+# Active anatomy sketch library — 2026-10-19
+
+Work in `/workspace/VideoStudio-Anatomy-Sketch`, branch
+`feat/native-anatomy-sketch-20261019`, based on combined 4.8.2 `543982e`.
+Latest owner priority: FIRST DRAW a proper original whole figure using the new
+head/upper/lower-body sheets as anatomy/technique references. Preserve all prior
+work and continue background tests. Native figures must remain manually and
+MCP-authorable inside VideoStudio; no external/imagegen/trace artwork substitute.
+Private reference manifests: `/workspace/engineering-review/anatomy-sketch-20261019`.
+
+Parent owns HumanFigure settings/camera/integration, new SketchHumanAnatomy.java
+body drawing and first-figure native evidence. Sidecar assignments have disjoint
+file sets. Target new4.8.3/code486. Optional existing human settings:
+`figureStyle: legacy|anatomy_sketch`, `constructionGuides: boolean`.
+Omission preserves oldsettings/requestfingerprints/pixels; explicitnewfields
+(includinglegacy/false)require4.8.3. Add three_quarter_left/right views for
+anatomy_sketch only; newviewsrequire4.8.3. Existing sixviews keepoldbehavior.
+Anatomy sketch draws an original adult wearing neutralshorts with detailed
+structural linework and optionalguides; no traced referenceassetpixels/paths.
+
+First frontdrawing mustshow adultproportion, ribcage/pelvis rhythm, collarbone/
+shoulder/elbow landmarks, taperedlimbs, coherenthips/knees/ankles, visiblehand/
+footforms and a structuredoriginalface. Reviewactualnativescreenshots, repair,
+theninspectprofiles/back/threequarter/high/low beforeanimation. Don'thideanatomy
+undercoat or callblockyconstruction the finishedfigure. Constructionguidesare
+optionalteachingoverlays, not the finishedart. Keepfixedbones/grip/floorcontrols
+honest; oldretainedprogrammes remainunchanged. Nativefigureis2Dsketchoutput,
+notgenuine3D/painterlyphotorealism/device/MCPexecutionproof.
+
+NO LOCAL GRADLE untilparentallocatesit: BodyHand48x96matrix ownsoneprocess.
+Isolatedjavac/nativeproductexecutionallowed,labelaccurately. NevereditBody,
+Hand,StoryorExportworktreesfromhere. Source/body/head/UI ownershipmustnotclash.
+No Gallery/replacementkey/deviceidentityreset/merge/deploy/stablepublication.
+The original124svoicedfilm and1000+scenario goals persist; expansionfollowsquality.
+
 # Combined 4.8.2 verification — 2026-10-19
 
 Active worktree `/workspace/VideoStudio-Tailored-Body`, branch

@@ -20,14 +20,19 @@ final class SketchHumanFigure {
                 .put("coatColor","#FF526B78").put("trouserColor","#FF343F50").put("x",.5).put("floorY",.88).put("size",1).put("faceStyle","graphic").put("shading","cel").put("lightAngle",135);
     }
     static JSONObject settings(JSONObject input)throws Exception {
-        SketchDocument.fields(input,"view,build,hairStyle,skinColor,hairColor,coatColor,trouserColor,x,floorY,size,faceStyle,shading,lightAngle,clothingStyle");JSONObject s=defaults();
+        SketchDocument.fields(input,"view,build,hairStyle,skinColor,hairColor,coatColor,trouserColor,x,floorY,size,faceStyle,shading,lightAngle,clothingStyle,figureStyle,constructionGuides");JSONObject s=defaults();
         Iterator<String> keys=input.keys();while(keys.hasNext()){String key=keys.next();s.put(key,input.get(key));}
-        if(!(s.get("view") instanceof String)||!Set.of("front","left","right","back","high","low").contains(s.getString("view")))throw SketchDocument.bad("Unknown human view");
+        if(s.has("figureStyle")&&(!(s.get("figureStyle") instanceof String)||!Set.of("legacy","anatomy_sketch").contains(s.getString("figureStyle"))))throw SketchDocument.bad("Unknown human figure style");
+        if(s.has("constructionGuides"))SketchDocument.bool(s,"constructionGuides");
+        boolean anatomy=anatomy(s);
+        if(s.optBoolean("constructionGuides",false)&&!anatomy)throw SketchDocument.bad("Construction guides require anatomy sketch style");
+        if(!(s.get("view") instanceof String)||!(anatomy?Set.of("front","left","right","back","high","low","three_quarter_left","three_quarter_right"):Set.of("front","left","right","back","high","low")).contains(s.getString("view")))throw SketchDocument.bad("Unknown human view for figure style");
         if(!(s.get("build") instanceof String)||!Set.of("slender","broad").contains(s.getString("build")))throw SketchDocument.bad("Unknown adult build");
         if(!(s.get("hairStyle") instanceof String)||!Set.of("short","long").contains(s.getString("hairStyle")))throw SketchDocument.bad("Unknown hair style");
         if(!(s.get("faceStyle") instanceof String)||!Set.of("graphic","angular","soft").contains(s.getString("faceStyle")))throw SketchDocument.bad("Unknown face structure");
         if(!(s.get("shading") instanceof String)||!Set.of("cel","soft").contains(s.getString("shading")))throw SketchDocument.bad("Unknown human surface shading");SketchDocument.number(s,"lightAngle",-180,180);
         if(s.has("clothingStyle")&&(!(s.get("clothingStyle") instanceof String)||!Set.of("legacy","tailored").contains(s.getString("clothingStyle"))))throw SketchDocument.bad("Unknown human clothing style");
+        if(anatomy&&s.optString("clothingStyle","legacy").equals("tailored"))throw SketchDocument.bad("Anatomy sketch uses study shorts rather than tailored garments");
         for(String key:new String[]{"skinColor","hairColor","coatColor","trouserColor"}){
             if(!(s.get(key) instanceof String)||!s.getString(key).matches("#[a-fA-F0-9]{8}"))throw SketchDocument.bad("Human colours require #AARRGGBB");SketchDocument.color(s.getString(key));
         }
@@ -60,7 +65,7 @@ final class SketchHumanFigure {
         double lean,headTilt;JSONObject controls;Camera camera;
     }
     static Skeleton skeleton(JSONObject input,JSONObject pose)throws Exception {
-        JSONObject s=settings(input),p=validatePose(pose);Skeleton a=new Skeleton();a.controls=p;a.camera=new Camera(s.getString("view"));a.lean=p.getDouble("bodyLean");a.headTilt=p.getDouble("headTilt");
+        JSONObject s=settings(input),p=validatePose(pose);Skeleton a=new Skeleton();a.controls=p;a.camera=camera(s);a.lean=p.getDouble("bodyLean");a.headTilt=p.getDouble("headTilt");
         a.hip=v(p.getDouble("rootX")+p.getDouble("hipX"),p.getDouble("rootY")+p.getDouble("hipY"),p.getDouble("rootZ")+p.getDouble("hipZ"));
         double span=s.getString("build").equals("broad")?47:40,pelvis=s.getString("build").equals("broad")?23:18;
         a.shoulderCentre=body(a,0,-120,0);a.nearShoulder=body(a,span,-120,0);a.farShoulder=body(a,-span,-120,0);
@@ -71,7 +76,7 @@ final class SketchHumanFigure {
         a.leftFoot=v(p.getDouble("footLeftX"),p.getDouble("footLeftY"),p.getDouble("footLeftZ"));a.rightFoot=v(p.getDouble("footRightX"),p.getDouble("footRightY"),p.getDouble("footRightZ"));
         a.leftAnkle=add(a.leftFoot,v(0,-14,0));a.rightAnkle=add(a.rightFoot,v(0,-14,0));
         a.leftKnee=joint(a.leftHip,a.leftAnkle,90,86,v(0,0,1));a.rightKnee=joint(a.rightHip,a.rightAnkle,90,86,v(0,0,1));
-        a.neck=body(a,0,-156,0);a.head=add(a.neck,rotate(v(0,-24,0),a.camera.normal(),Math.toRadians(a.lean+a.headTilt)));return a;
+        a.neck=body(a,0,anatomy(s)?-141:-156,0);a.head=add(a.neck,rotate(v(0,-24,0),a.camera.normal(),Math.toRadians(a.lean+a.headTilt)));return a;
     }
     private static double[] body(Skeleton p,double x,double y,double z){return add(p.hip,rotate(v(x,y,z),p.camera.normal(),Math.toRadians(p.lean)));}
     private static double[] joint(double[] start,double[] end,double upper,double lower,double[] bend)throws Exception {
@@ -87,7 +92,7 @@ final class SketchHumanFigure {
     }
 
     /** Project local model coordinates; translation/size/canvas fit is applied only to emitted ink. */
-    static double[] project(JSONObject settings,double[] point)throws Exception {return new Camera(settings.getString("view")).point(point);}
+    static double[] project(JSONObject settings,double[] point)throws Exception {return camera(settings).point(point);}
 
     /** Actual palm/pinch contact in projected MODEL pixels, before x/floorY, size, uniform
      * canvas fit and human-object transforms. Closed fingers meet at hand-local (0,15);
@@ -95,7 +100,7 @@ final class SketchHumanFigure {
      * to the projected forearm; positive rotates clockwise. No wrist anchor is substituted.
      */
     static double[] grip(JSONObject input,JSONObject pose,boolean near)throws Exception {
-        JSONObject s=settings(input);Skeleton p=skeleton(s,pose);HandFrame hand=handFrame(new Camera(s.getString("view")),p,near);
+        JSONObject s=settings(input);Skeleton p=skeleton(s,pose);HandFrame hand=handFrame(camera(s),p,near);
         double x=2*hand.open,y=15+2*hand.open,c=Math.cos(hand.angle),n=Math.sin(hand.angle);
         return new double[]{hand.wrist[0]+x*c-y*n,hand.wrist[1]+x*n+y*c};
     }
@@ -105,9 +110,12 @@ final class SketchHumanFigure {
         hand.forearmAngle=Math.atan2(hand.wrist[1]-elbow[1],hand.wrist[0]-elbow[0])-Math.PI/2;
         hand.angle=hand.forearmAngle+Math.toRadians(p.controls.getDouble(near?"nearWrist":"farWrist"));hand.open=p.controls.getDouble("handOpen");return hand;
     }
+    static boolean anatomy(JSONObject s){return s.optString("figureStyle","legacy").equals("anatomy_sketch");}
+    private static Camera camera(JSONObject s)throws Exception{return new Camera(s.getString("view"),anatomy(s));}
     static final class Camera {
         final String view;final double yaw,pitch;final boolean profile,back;
-        Camera(String view){this.view=view;profile=view.equals("left")||view.equals("right");back=view.equals("back");yaw=view.equals("left")?-Math.PI/2:view.equals("right")?Math.PI/2:back?Math.PI:view.equals("high")?.20:view.equals("low")?-.16:0;pitch=view.equals("high")?.32:view.equals("low")?-.24:0;}
+        Camera(String view){this(view,false);}
+        Camera(String view,boolean anatomy){this.view=view;profile=view.equals("left")||view.equals("right");back=view.equals("back");yaw=view.equals("left")?-Math.PI/2:view.equals("right")?Math.PI/2:back?Math.PI:view.equals("three_quarter_left")?-Math.PI/4:view.equals("three_quarter_right")?Math.PI/4:view.equals("high")?.20:view.equals("low")?-.16:0;pitch=view.equals("high")?(anatomy?-.62:.32):view.equals("low")?(anatomy?.48:-.24):0;}
         double depth(double[] p){return -Math.sin(yaw)*p[0]+Math.cos(yaw)*p[2];}
         double clothDepth(double[] p){return Math.sin(pitch)*p[1]+Math.cos(pitch)*depth(p);}
         double[] point(double[] p){return new double[]{Math.cos(yaw)*p[0]+Math.sin(yaw)*p[2],Math.cos(pitch)*p[1]-Math.sin(pitch)*depth(p)};}
@@ -122,14 +130,16 @@ final class SketchHumanFigure {
         if(layer.getBoolean("locked"))throw SketchDocument.bad("Human drawing layer is locked");
         SketchDocument.id(new JSONObject().put("actor",actorId),"actor");if(actorId.length()>32)throw SketchDocument.bad("Human actor identity must fit 32 characters");
         JSONArray layers=doc.getJSONArray("layers");for(int l=0;l<layers.length();l++){JSONArray objects=layers.getJSONObject(l).getJSONArray("objects");for(int i=0;i<objects.length();i++)if(objects.getJSONObject(i).getString("id").startsWith(actorId+"_"))throw SketchDocument.bad("Human actor identity already exists");}
-        JSONObject stage=SketchDocument.copy(layer).put("objects",new JSONArray());Painter ink=new Painter(stage,actorId);Camera camera=new Camera(s.getString("view"));
+        JSONObject stage=SketchDocument.copy(layer).put("objects",new JSONArray());Painter ink=new Painter(stage,actorId);Camera camera=p.camera;
         ink.tailored=s.optString("clothingStyle","legacy").equals("tailored");ink.broad=s.getString("build").equals("broad");
         String skin=s.getString("skinColor"),coat=s.getString("coatColor"),trousers=s.getString("trouserColor");
         boolean leftNear=camera.depth(p.leftHip)>camera.depth(p.rightHip),plusNear=camera.depth(p.nearShoulder)>=camera.depth(p.farShoulder);
+        if(anatomy(s)){SketchHumanAnatomy.draw(stage,actorId,s,p);}else{
         rearHair(ink,camera,p,s);leg(ink,camera,p,!leftNear,trousers);arm(ink,camera,p,!plusNear,coat,skin);
         leg(ink,camera,p,leftNear,trousers);torso(ink,camera,p,s);head(ink,camera,p,s);
         arm(ink,camera,p,plusNear,coat,skin);
         if(ink.tailored)ink.order();
+        }
         JSONArray additions=stage.getJSONArray("objects");int width=doc.getInt("width"),height=doc.getInt("height");double fit=Math.min(width/1280d,height/720d),size=s.getDouble("size");
         for(int i=0;i<additions.length();i++){
             JSONObject o=additions.getJSONObject(i);JSONArray commands=new JSONArray(o.getJSONArray("commands").toString());o.put("commands",commands);
@@ -146,7 +156,7 @@ final class SketchHumanFigure {
             double pad=o.getBoolean("fill")?0:o.getDouble("width")*Math.min(width,height)/2;
             if(bounds.left-pad<0||bounds.top-pad<0||bounds.right+pad>width||bounds.bottom+pad>height)throw SketchDocument.bad("Human figure leaves its transformed destination canvas");
         }
-        if(s.getString("shading").equals("soft")){if(ink.tailored)tailoredMaterials(additions,width,height,s.getDouble("lightAngle"),actorId);else materials(additions,width,height,s.getDouble("lightAngle"));}
+        if(!anatomy(s)&&s.getString("shading").equals("soft")){if(ink.tailored)tailoredMaterials(additions,width,height,s.getDouble("lightAngle"),actorId);else materials(additions,width,height,s.getDouble("lightAngle"));}
         JSONObject candidate=SketchDocument.copy(doc);JSONArray result=SketchDocument.layer(candidate,layerId).getJSONArray("objects");for(int i=0;i<additions.length();i++)result.put(additions.getJSONObject(i));SketchDocument.validate(candidate);
         layer.put("objects",result);
     }
