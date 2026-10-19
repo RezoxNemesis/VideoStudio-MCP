@@ -53,6 +53,7 @@ public final class NativeTailoredBodyStudyTest {
     private Context context;
     private File root;
     private String mode,headAtStart,versionName;
+    private boolean allFrames;
     private int versionCode,caseFailures,legacyFailures,legacyAttempted,legacyPassed,archivePassed,renderedFrames;
 
     /**
@@ -61,6 +62,7 @@ public final class NativeTailoredBodyStudyTest {
      * VIDEOSTUDIO_TAILORED_BODY_EVIDENCE (fresh external generation directory).
      * MODE defaults to preview: four cases at seven probes, unchanged 96-frame source.
      * Optional VIDEOSTUDIO_TAILORED_BODY_PREVIEW_CASES is a comma-separated case-ID list.
+     * PREVIEW_ALL_FRAMES=true captures complete96-frame motion for selected previews.
      * MODE=matrix requires VIDEOSTUDIO_TAILORED_BODY_MATRIX_APPROVED=true AFTER preview review;
      * matrix always renders all 48 cases at all 96 frames, with no subset/quality switch.
      */
@@ -68,7 +70,11 @@ public final class NativeTailoredBodyStudyTest {
         String baselineEnv=env("BASELINE"),evidenceEnv=env("EVIDENCE");
         Assume.assumeTrue("Explicit roots and frozen product source are required",baselineEnv!=null&&evidenceEnv!=null&&"true".equals(env("READY")));
         mode=env("MODE")==null?"preview":env("MODE");assertTrue("MODE must be preview or matrix",mode.equals("preview")||mode.equals("matrix"));
+        String previewAll=env("PREVIEW_ALL_FRAMES");
+        assertTrue("PREVIEW_ALL_FRAMES must be true or false",previewAll==null||previewAll.equals("true")||previewAll.equals("false"));
+        allFrames=mode.equals("matrix")||"true".equals(previewAll);
         if(mode.equals("matrix")){
+            assertNull("Preview sampling controls do not apply to the complete matrix",previewAll);
             Assume.assumeTrue("Parent must explicitly authorize matrix after reviewing previews","true".equals(env("MATRIX_APPROVED")));
             assertNull("Matrix must not be reduced by a preview selection",env("PREVIEW_CASES"));
         }
@@ -106,13 +112,13 @@ public final class NativeTailoredBodyStudyTest {
                 JSONObject operation=new JSONObject().put("type","add_human_animation").put("layerId",original.getString("layerId")).put("actorId",original.getString("actorId")).put("preset",action).put("settings",settings).put("fit",original.getBoolean("fit"));
                 JSONObject expected=SketchDocument.copy(original);expected.getJSONObject("settings").put("build",build).put("clothingStyle","tailored");assertEquals(SketchDocument.canonical(expected),SketchDocument.canonical(operation));
                 String hash=hash(operation);assertTrue("Distinct parameter inputs",fingerprints.add(hash));boolean selected=mode.equals("matrix")||selection.contains(id);
-                planned.put(new JSONObject().put("caseId",id).put("preset",action).put("build",build).put("view",view).put("legacyCaseId",legacyId).put("operation",operation).put("operationSha256",hash).put("selected",selected).put("allFramesRequested",mode.equals("matrix")));
+                planned.put(new JSONObject().put("caseId",id).put("preset",action).put("build",build).put("view",view).put("legacyCaseId",legacyId).put("operation",operation).put("operationSha256",hash).put("selected",selected).put("allFramesRequested",allFrames));
                 if(selected)selectedLegacy.add(legacyId);
             }
         }
         assertEquals(48,planned.length());if(mode.equals("preview")){assertFalse("Select at least one preview",selection.isEmpty());assertTrue("Unknown preview case ID",valid.containsAll(selection));}
-        int expectedCases=mode.equals("matrix")?48:selection.size(),expectedFrames=expectedCases*(mode.equals("matrix")?96:PROBES.length),expectedLegacy=selectedLegacy.size()*PROBES.length;
-        write(new File(root,"Plan.json"),new JSONObject().put("schema","videostudio.native-tailored-body-study.v1").put("mode",mode).put("baselineRoot",baseline.toString()).put("baseCommit",BASE)
+        int expectedCases=mode.equals("matrix")?48:selection.size(),expectedFrames=expectedCases*(allFrames?96:PROBES.length),expectedLegacy=selectedLegacy.size()*PROBES.length;
+        write(new File(root,"Plan.json"),new JSONObject().put("schema","videostudio.native-tailored-body-study.v1").put("mode",mode).put("allFramesPerSelectedCase",allFrames).put("expectedNativeFrames",expectedFrames).put("baselineRoot",baseline.toString()).put("baseCommit",BASE)
                 .put("frameCount",96).put("fps",24).put("width",1280).put("height",720).put("probeFrames",new JSONArray(PROBES)).put("plannedDistinctParameterInputs",48).put("selectedParameterInputs",expectedCases).put("actionFamilies",new JSONArray(ACTIONS))
                 .put("expectedNativeFrames",expectedFrames).put("expectedLegacyPixelComparisons",expectedLegacy).put("uniqueLegacyDocuments",selectedLegacy.size()).put("expectedArchivePixelComparisons",expectedCases*2)
                 .put("authoringSource","Existing public native humanAnimation presets; historical operation framing/palette retained, only build and clothingStyle selected").put("framing","Original fit=true and size=1.25; native fit translates x/floorY only, never lowers size or changes the clock")
@@ -143,15 +149,15 @@ public final class NativeTailoredBodyStudyTest {
             JSONObject currentLegacy=SketchDocument.copy(document);human(currentLegacy).getJSONObject("human").getJSONObject("settings").remove("clothingStyle");int changedStyleProbes=0;
             // Diagnostic routing check only. Historical parity is runLegacy's ORIGINAL PNG comparison.
             try(SketchFrameRenderer renderer=new SketchFrameRenderer(context,document);SketchFrameRenderer reference=new SketchFrameRenderer(context,currentLegacy)){
-                for(int frame=0;frame<96;frame++)if(mode.equals("matrix")||probe(frame)){
-                    cancelled();Bitmap bitmap=renderer.render(frame);File png=new File(folder,String.format(Locale.ROOT,"frames/frame-%04d.png",frame));try{
+                for(int frame=0;frame<96;frame++)if(allFrames||probe(frame)){
+                    cancelled();record.put("renderingFrame",frame);Bitmap bitmap=renderer.render(frame);File png=new File(folder,String.format(Locale.ROOT,"frames/frame-%04d.png",frame));try{
                         if(probe(frame)){Bitmap old=reference.render(frame);try{if(!bitmap.sameAs(old))changedStyleProbes++;}finally{old.recycle();}}
                         png(png,bitmap);
                     }finally{bitmap.recycle();}
                     screenshots.put(new JSONObject().put("frame",frame).put("sha256",SketchProjectStore.fileHash(png)));renderedFrames++;
                 }
             }
-            assertEquals(mode.equals("matrix")?96:PROBES.length,screenshots.length());record.put("allFramesRendered",mode.equals("matrix")).put("styleRoutingChangedProbeCount",changedStyleProbes);
+            record.remove("renderingFrame");assertEquals(allFrames?96:PROBES.length,screenshots.length());record.put("allFramesRendered",allFrames&&screenshots.length()==96).put("styleRoutingChangedProbeCount",changedStyleProbes);
             if(changedStyleProbes==0)failure(errors,"style routing",new AssertionError("Tailored must change native pixels; this diagnostic is not historical compatibility or artistic acceptance"));
             SketchPaintArchive.Prepared archive=SketchPaintArchive.prepare(context,new JSONObject().put("sketchId",sketchId).put("expectedRevision",2).put("operationId","tailored_archive"));File saved=new File(folder,"editable.vssketch");Files.copy(archive.file.toPath(),saved.toPath());String archiveHash=SketchProjectStore.fileHash(saved);record.put("archiveSha256",archiveHash);write(new File(folder,"archive-metadata.json"),archive.metadata);
             JSONObject restored=SketchPaintArchive.restoreFile(context,saved,archiveHash,"tailored_restore_"+UUID.randomUUID().toString().replace("-",""),"Restored native tailored body");write(new File(folder,"archive-restore-receipt.json"),restored);
@@ -164,7 +170,7 @@ public final class NativeTailoredBodyStudyTest {
             write(new File(folder,"archive-pixel-comparisons.json"),new JSONObject().put("comparisons",comparisons).put("archiveSha256",archiveHash));assertEquals(before,SketchDocument.canonical(document));assertEquals(originalOperation,SketchDocument.canonical(operation));
             try(SketchProjectStore store=new SketchProjectStore(context)){assertEquals("Archive/render must not change the saved editable source",before,SketchDocument.canonical(store.get(sketchId)));}
             record.put("allFrameValidation","Native constructor/document reach/bounds validation plus unchanged skeleton/grip checks at all 96 frames; visual acceptance remains separate");
-        }catch(InterruptedException e){throw e;}catch(Exception|AssertionError e){failure(errors,"native preset author/render/archive",e);}
+        }catch(InterruptedException e){throw e;}catch(Exception|AssertionError e){failure(errors,record.has("renderingFrame")?"native render frame "+record.getInt("renderingFrame"):"native preset author/render/archive",e);}
         record.put("technical",errors.length()==0?"PASS":"FAIL").put("failures",errors);if(errors.length()>0)caseFailures++;
         write(new File(folder,"case-evidence.json"),record);writeIndex("RUNNING",false);System.out.println("TAILORED "+cases.length()+" "+id+" "+record.getString("technical"));
     }
@@ -207,7 +213,7 @@ public final class NativeTailoredBodyStudyTest {
         write(new File(root,"Source-Hashes.json"),hashRows(hashes));return hashes;
     }
     private static Set<Path> workingSources()throws Exception {Set<Path> files=new TreeSet<>();for(String name:git("ls-files","--cached","--others","--exclude-standard","-z").split("\\x00")){if(name.isEmpty())continue;Path relative=new File(name).toPath();boolean excluded=false;for(Path part:relative)if(Arrays.asList("build",".work",".gradle","node_modules",".git").contains(part.toString())){excluded=true;break;}Path file=REPO.toPath().resolve(relative);if(!excluded&&Files.isRegularFile(file))files.add(file);}return files;}
-    private void writeIndex(String status,boolean complete)throws Exception {write(new File(root,status.equals("RUNNING")?"Case-Index-in-progress.json":"Case-Index.json"),new JSONObject().put("schema","videostudio.native-tailored-body-study.v1").put("mode",mode).put("technical",status).put("captureComplete",complete).put("fullMatrixComplete",complete&&mode.equals("matrix")).put("cases",cases).put("legacyCases",legacyCases).put("distinctParameterInputsExecuted",cases.length()).put("plannedDistinctParameterInputs",48).put("creativeStoriesAdded",0).put("technicalFailures",caseFailures+legacyFailures).put("nativeFramesWritten",renderedFrames).put("legacyPixelComparisonsAttempted",legacyAttempted).put("legacyPixelComparisonsPassed",legacyPassed).put("archivePixelComparisonsPassed",archivePassed).put("visual","UNREVIEWED").put("motionReview","UNREVIEWED").put("liveManualMcpParity","UNVERIFIED").put("phoneExecution",false).put("professionalQualityCertified",false).put("renderer","Product Android Canvas / Robolectric SDK33 NATIVE").put("appVersion",AppProtocol.APP_VERSION).put("versionCode",versionCode));}
+    private void writeIndex(String status,boolean complete)throws Exception {write(new File(root,status.equals("RUNNING")?"Case-Index-in-progress.json":"Case-Index.json"),new JSONObject().put("schema","videostudio.native-tailored-body-study.v1").put("mode",mode).put("allFramesPerSelectedCase",allFrames).put("technical",status).put("captureComplete",complete).put("fullMatrixComplete",complete&&mode.equals("matrix")).put("cases",cases).put("legacyCases",legacyCases).put("distinctParameterInputsExecuted",cases.length()).put("plannedDistinctParameterInputs",48).put("creativeStoriesAdded",0).put("technicalFailures",caseFailures+legacyFailures).put("nativeFramesWritten",renderedFrames).put("legacyPixelComparisonsAttempted",legacyAttempted).put("legacyPixelComparisonsPassed",legacyPassed).put("archivePixelComparisonsPassed",archivePassed).put("visual","UNREVIEWED").put("motionReview","UNREVIEWED").put("liveManualMcpParity","UNVERIFIED").put("phoneExecution",false).put("professionalQualityCertified",false).put("renderer","Product Android Canvas / Robolectric SDK33 NATIVE").put("appVersion",AppProtocol.APP_VERSION).put("versionCode",versionCode));}
     private static Set<String> previewSelection(){String selected=env("PREVIEW_CASES");return new LinkedHashSet<>(Arrays.asList(selected==null?new String[]{"tailored_reach_slender_front","tailored_kneel_broad_right","tailored_balance_broad_back","tailored_lift_slender_high"}:selected.split(",")));}
     private static String env(String name){return System.getenv("VIDEOSTUDIO_TAILORED_BODY_"+name);}
     private static boolean contains(JSONArray values,String value)throws Exception{for(int i=0;i<values.length();i++)if(value.equals(values.getString(i)))return true;return false;}
