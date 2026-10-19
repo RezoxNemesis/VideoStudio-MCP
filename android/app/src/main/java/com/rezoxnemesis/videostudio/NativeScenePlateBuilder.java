@@ -33,8 +33,8 @@ public final class NativeScenePlateBuilder {
             ProjectStore.Asset a=source.asset(clip.assetId);
             if(a!=null&&a.mime!=null&&a.mime.startsWith("image/"))images.add(a);
         }
-        if(images.size()<5)
-            throw new IllegalArgumentException("At least 5 imported images are required for an estimated fixed backdrop");
+        if(images.size()<3)
+            throw new IllegalArgumentException("At least 3 imported storyboard images are required for a background estimate");
         int n=Math.min(MAX_SAMPLES,images.size());
         int[][] samples=new int[n][width*height];
         for(int i=0;i<n;i++){
@@ -45,7 +45,7 @@ public final class NativeScenePlateBuilder {
                 sourceBitmap.getPixels(samples[i],0,width,0,0,width,height);
             }finally{sourceBitmap.recycle();}
         }
-        return perChannelMedian(samples,width,height);
+        return suppressSubjectGhosts(samples,width,height);
     }
 
     public static Bitmap perChannelMedian(int[][] frames,int width,int height){
@@ -70,6 +70,58 @@ public final class NativeScenePlateBuilder {
         Bitmap bitmap=Bitmap.createBitmap(width,height,Bitmap.Config.ARGB_8888);
         bitmap.setPixels(out,0,width,0,0,width,height);
         return bitmap;
+    }
+
+    /**
+     * A temporal median can preserve a large black/white figure when it
+     * occupies the same region in MORE than half of the sampled poses.
+     *
+     * For the lower action stage only, replace persistently dark or bright
+     * silhouettes with a less-extreme REAL sampled pixel when a plausible
+     * alternate observation exists. A true static shadow/building has no
+     * alternate observation and remains untouched. This is a deterministic
+     * source-aware cleanup heuristic, not neural inpainting. Differently
+     * framed shots still need real camera/scene reconstruction.
+     */
+    static Bitmap suppressSubjectGhosts(int[][] frames,int width,int height){
+        Bitmap plate=perChannelMedian(frames,width,height);
+        int n=frames.length;
+        int[] pixels=new int[width*height];
+        plate.getPixels(pixels,0,width,0,0,width,height);
+        int[] luminance=new int[n],sampleIndex=new int[n];
+        int upper=(int)(height*.38),lower=(int)(height*.94);
+        for(int y=upper;y<lower;y++){
+            int row=y*width;
+            for(int x=0;x<width;x++){
+                int pos=row+x;
+                for(int i=0;i<n;i++){
+                    int color=frames[i][pos];
+                    luminance[i]=((color>>>16&255)*77+
+                            (color>>>8&255)*150+(color&255)*29)>>8;
+                    sampleIndex[i]=i;
+                }
+                // n<=11; a local insertion sort avoids boxing/allocations per pixel.
+                for(int i=1;i<n;i++){
+                    int value=sampleIndex[i],j=i-1;
+                    while(j>=0&&luminance[sampleIndex[j]]>luminance[value]){
+                        sampleIndex[j+1]=sampleIndex[j];j--;
+                    }
+                    sampleIndex[j+1]=value;
+                }
+                int median=luminance[sampleIndex[n/2]];
+                int brightIndex=sampleIndex[n-1-n/5],darkIndex=sampleIndex[n/5];
+                int bright=luminance[brightIndex],dark=luminance[darkIndex];
+                // Strong contrast + a plausible alternate in a different
+                // image is required. No invented colors or synthetic texture.
+                if(median<86 && bright-median>=55 && bright-dark>=75){
+                    pixels[pos]=frames[brightIndex][pos];
+                }else if(median>213 && median-dark>=55 && bright-dark>=75){
+                    pixels[pos]=frames[darkIndex][pos];
+                }
+            }
+        }
+        plate.setPixels(pixels,0,width,0,0,width,height);
+        return plate;
     }
 
     private static Bitmap read(Context ctx,Uri uri,int w,int h) throws Exception {

@@ -431,6 +431,9 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         Button directAnimation = neonButton("Animation Director • Make a Real Sequence", C_CYAN);
         directAnimation.setOnClickListener(v -> animationDirectorDialog());
         box.addView(directAnimation,margins(-1,dp(47),0,0,0,dp(12)));
+        Button rigEditor=neonButton("Character Rig Builder • Tap Bones + Trace Body",C_CYAN);
+        rigEditor.setOnClickListener(v -> open2DRigEditor());
+        box.addView(rigEditor,margins(-1,dp(48),0,0,0,dp(10)));
         Button benchmark=compactButton("True Combat Rig Test");
         benchmark.setOnClickListener(v -> combatRigBenchmarkDialog());
         box.addView(benchmark,margins(-1,dp(44),0,0,0,dp(10)));
@@ -753,6 +756,64 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         ui.postDelayed(activityRefresh, 1500);
     }
 
+    private void open2DRigEditor() {
+        if(activeProject==null){
+            Toast.makeText(this,"Open an imported image project first",Toast.LENGTH_LONG).show();
+            return;
+        }
+        String imageId="";
+        if(selectedClip!=null){
+            ProjectStore.Asset selected=activeProject.asset(selectedClip.assetId);
+            if(selected!=null&&selected.mime!=null&&selected.mime.startsWith("image/"))
+                imageId=selected.id;
+        }
+        if(imageId.isEmpty()){
+            for(ProjectStore.Asset a:activeProject.assets){
+                if(a.mime!=null&&a.mime.startsWith("image/")){imageId=a.id;break;}
+            }
+        }
+        if(imageId.isEmpty()){
+            Toast.makeText(this,"Import an image using VideoStudio first",Toast.LENGTH_LONG).show();
+            return;
+        }
+        Intent editor=new Intent(this,RigEditorActivity.class);
+        editor.putExtra("projectId",activeProject.id);
+        editor.putExtra("assetId",imageId);
+        startActivity(editor);
+    }
+
+    private void queueUserRiggedDuel(){
+        if(activeProject==null)return;
+        Rig2DProjectStore rigs=new Rig2DProjectStore(this,store);
+        Rig2DProfile black=null,white=null;
+        for(Rig2DProfile rig:rigs.list(activeProject.id)){
+            if(rig.black)black=rig;else white=rig;
+        }
+        if(black==null||white==null){
+            new AlertDialog.Builder(this).setTitle("Rig your actual fighters first")
+                .setMessage("VideoStudio needs one traced actor and sixteen joints for "+
+                        "each black and white character before it can produce real "+
+                        "source-textured skeletal movement. No more generic replacement figures.")
+                .setPositiveButton("Open Rig Builder",(dialog,which)->open2DRigEditor())
+                .setNegativeButton("Cancel",null).show();
+            return;
+        }
+        Intent render=new Intent(this,ControlService.class)
+                .setAction(ControlService.ACTION_LOCAL_RIGGED_2D)
+                .putExtra("projectId",activeProject.id)
+                .putExtra("blackRigId",black.id)
+                .putExtra("whiteRigId",white.id)
+                .putExtra("backgroundMode","procedural")
+                .putExtra("durationSeconds",4.6)
+                .putExtra("fps",24)
+                .putExtra("width",432)
+                .putExtra("height",768);
+        startForegroundService(render);
+        Toast.makeText(this,"Source-textured 2D animation queued in native VideoStudio",
+                Toast.LENGTH_LONG).show();
+        showActivity();
+    }
+
     private void showTools() {
         ScrollView scroll = baseScroll();
         LinearLayout box = column();
@@ -792,6 +853,17 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         directorButton.setOnClickListener(v -> animationDirectorDialog());
         directorCard.addView(directorButton,margins(-1,dp(52),dp(12),0,0,0));
         box.addView(directorCard,margins(-1,-2,dp(10),0,0,0));
+
+        LinearLayout sourcedRigCard=card(true);
+        sourcedRigCard.addView(title("Real 2D Character Rigging • Original Artwork",22));
+        sourcedRigCard.addView(body("Draw a source character outline and mark joints ONCE, then animate that same textured character with native IK and attached swords. Mark black and white actors separately; these are re-usable project-private rigs, not image morphing. 3D hidden anatomy is not generated."));
+        Button sourceRig=neonButton("Rig My Black & White Fighters",C_CYAN);
+        sourceRig.setOnClickListener(v -> open2DRigEditor());
+        sourcedRigCard.addView(sourceRig,margins(-1,dp(52),dp(12),0,0,0));
+        Button createRigged=neonButton("Render Source-Rigged 2D Duel",C_MAGENTA);
+        createRigged.setOnClickListener(v -> queueUserRiggedDuel());
+        sourcedRigCard.addView(createRigged,margins(-1,dp(52),dp(12),0,0,0));
+        box.addView(sourcedRigCard,margins(-1,-2,dp(10),0,0,0));
 
         LinearLayout physicsCard=card(true);
         physicsCard.addView(title("True Combat Rig • Movement Benchmark",22));
