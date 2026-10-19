@@ -1,0 +1,62 @@
+name: Sketch GLB to Cel Native QA
+
+on:
+  push:
+    branches: [feat/sketch-glb-to-cel-20261019]
+  pull_request:
+    branches: [feat/animate-style-native-timeline-20261019]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sketch-glb-cel-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  glb-sketch-bridge:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout exact bridge source
+        uses: actions/checkout@v4
+      - name: Use Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Setup Gradle 8.9
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+      - name: Verify Android API 36
+        run: |
+          set -euo pipefail
+          if [ ! -f "$ANDROID_HOME/platforms/android-36/package.xml" ]; then
+            timeout 240s bash -c 'yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" >/dev/null'
+          fi
+          test -f "$ANDROID_HOME/platforms/android-36/package.xml"
+      - name: Compile native app and run GLB to cel Robolectric tests
+        working-directory: android
+        env:
+          VIDEOSTUDIO_STORY_FILM_PROOF: '0'
+        run: |
+          set -euo pipefail
+          gradle :app:compileDebugJavaWithJavac :app:testDebugUnitTest \
+            --tests com.rezoxnemesis.videostudio.Sketch3DCelBridgeTest \
+            --stacktrace
+      - name: Preserve native JUnit reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sketch-glb-cel-junit
+          if-no-files-found: warn
+          retention-days: 7
+          path: |
+            android/app/build/test-results/testDebugUnitTest/
+            android/app/build/reports/tests/testDebugUnitTest/
+
+# No APK signing, installation, Gallery scan, 4.8.6 downgrade, Worker deployment,
+# release publishing or owner phone mutation. Real Filament PixelCopy remains a
+# separate device test after the exact installed 4.8.6 source is reconciled.
