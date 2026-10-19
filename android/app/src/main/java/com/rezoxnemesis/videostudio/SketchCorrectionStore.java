@@ -11,6 +11,9 @@ final class SketchCorrectionStore implements AutoCloseable {
     static final long MAX_STORAGE_BYTES=128L*1024*1024;
     // Durable OPEN status reserves bounded terminal metadata even across process loss.
     static final int FINALIZATION_RESERVE=2048;
+    // Closure releases an OPEN slot but retains space for acknowledgement of an
+    // artwork transaction committed before a process interruption and closure.
+    static final int CLOSED_RECEIPT_RESERVE=1024;
     final Db helper;final SQLiteDatabase db;private final long maximumBytes;
     private static final class Db extends SQLiteOpenHelper {
         Db(Context c){super(c,"sketch_corrections_v1.db",null,1);}
@@ -31,16 +34,16 @@ final class SketchCorrectionStore implements AutoCloseable {
         db.beginTransaction();try{
             String review=state.getString("reviewId"),sketch=state.getString("sketchId");
             if(exists(review)){if(!startHash(sketch,review).equals(hash))throw conflict("Review identity was already used for another request");db.setTransactionSuccessful();return;}
-            try(Cursor c=db.rawQuery("SELECT COUNT(*) FROM reviews WHERE status='OPEN'",null)){c.moveToFirst();if(c.getInt(0)>=MAX_REVIEWS)throw new IllegalStateException("CORRECTION_STORAGE_BUDGET: at most16 open reviews; completed reviews remain available");}
+            try(Cursor c=db.rawQuery("SELECT COUNT(*) FROM reviews WHERE status='OPEN'",null)){c.moveToFirst();if(c.getInt(0)>=MAX_REVIEWS)throw new IllegalStateException("CORRECTION_STORAGE_BUDGET: at most16 open reviews; close an unused review to keep its history and release a slot");}
             ContentValues v=new ContentValues();v.put("id",review);v.put("sketch_id",sketch);v.put("start_hash",hash);v.put("source",source.toString());v.put("state",state.toString());v.put("revision",1);v.put("status","OPEN");requireCapacity(source.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8).length+state.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8).length+FINALIZATION_RESERVE);db.insertOrThrow("reviews",null,v);db.setTransactionSuccessful();
         }finally{db.endTransaction();}
     }
     void write(String sketch,String review,long expected,JSONObject next)throws Exception{
         JSONObject prior=state(sketch,review);next.put("revision",Math.addExact(expected,1));
         long growth=Math.max(0,next.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8).length-prior.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8).length);
-        boolean finalizing=prior.getString("status").equals("OPEN")&&next.getString("status").equals("APPLIED");
-        if(finalizing&&growth>FINALIZATION_RESERVE)throw new IllegalStateException("CORRECTION_FINALIZATION_BUDGET: terminal metadata exceeds its reserved bytes");
-        requireCapacity(growth-(finalizing?FINALIZATION_RESERVE:0));ContentValues v=new ContentValues();v.put("revision",expected+1);v.put("state",next.toString());v.put("status",next.getString("status"));
+        long released=reservation(prior.getString("status"))-reservation(next.getString("status"));
+        if(released>0&&growth>released)throw new IllegalStateException("CORRECTION_FINALIZATION_BUDGET: terminal metadata exceeds its reserved bytes");
+        requireCapacity(growth-released);ContentValues v=new ContentValues();v.put("revision",expected+1);v.put("state",next.toString());v.put("status",next.getString("status"));
         if(db.update("reviews",v,"id=? AND sketch_id=? AND revision=?",new String[]{review,sketch,Long.toString(expected)})!=1)throw conflict("Review changed; refresh before editing");
     }
     JSONObject proposal(String sketch,String review,String proposal)throws Exception{
@@ -59,7 +62,8 @@ final class SketchCorrectionStore implements AutoCloseable {
             while(c.moveToNext()){if(items.length()==limit){more=true;break;}JSONObject s=state(sketch,c.getString(0));items.put(new JSONObject().put("reviewId",s.getString("reviewId")).put("target",s.getString("target")).put("status",s.getString("status")).put("revision",s.getLong("revision")).put("sourceRevision",s.getLong("sourceRevision")).put("noteCount",s.getJSONArray("notes").length()).put("proposalCount",s.getJSONArray("proposals").length()));}}
         return new JSONObject().put("ok",true).put("sketchId",sketch).put("reviews",items).put("offset",offset).put("more",more).put("sourceModified",false);
     }
-    private void requireCapacity(long additional){long total=0;for(String sql:new String[]{"SELECT COALESCE(SUM(length(CAST(source AS BLOB))+length(CAST(state AS BLOB))),0) FROM reviews","SELECT COALESCE(SUM(length(CAST(document AS BLOB))+length(CAST(operations AS BLOB))+length(CAST(metadata AS BLOB))),0) FROM proposals"})try(Cursor c=db.rawQuery(sql,null)){c.moveToFirst();total+=c.getLong(0);}try(Cursor c=db.rawQuery("SELECT COUNT(*) FROM reviews WHERE status='OPEN'",null)){c.moveToFirst();total+=c.getLong(0)*FINALIZATION_RESERVE;}if(total+additional>maximumBytes)throw new IllegalStateException("CORRECTION_STORAGE_BUDGET: retained review data exceeds128MiB; existing artwork and reviews were preserved");}
+    private static int reservation(String status){if(status.equals("OPEN"))return FINALIZATION_RESERVE;if(status.equals("CLOSED"))return CLOSED_RECEIPT_RESERVE;if(status.equals("APPLIED"))return 0;throw new IllegalStateException("Unknown correction review status");}
+    private void requireCapacity(long additional){long total=0;for(String sql:new String[]{"SELECT COALESCE(SUM(length(CAST(source AS BLOB))+length(CAST(state AS BLOB))),0) FROM reviews","SELECT COALESCE(SUM(length(CAST(document AS BLOB))+length(CAST(operations AS BLOB))+length(CAST(metadata AS BLOB))),0) FROM proposals"})try(Cursor c=db.rawQuery(sql,null)){c.moveToFirst();total+=c.getLong(0);}try(Cursor c=db.rawQuery("SELECT COALESCE(SUM(CASE WHEN status='OPEN' THEN "+FINALIZATION_RESERVE+" WHEN status='CLOSED' THEN "+CLOSED_RECEIPT_RESERVE+" ELSE 0 END),0) FROM reviews",null)){c.moveToFirst();total+=c.getLong(0);}if(total+additional>maximumBytes)throw new IllegalStateException("CORRECTION_STORAGE_BUDGET: retained review data exceeds128MiB; existing artwork and reviews were preserved");}
     static void requireRevision(JSONObject state,long expected)throws Exception{if(state.getLong("revision")!=expected)throw conflict("Review changed; refresh before editing");}
     static IllegalStateException conflict(String message){return new IllegalStateException("CORRECTION_REVIEW_CONFLICT: "+message);}
 }

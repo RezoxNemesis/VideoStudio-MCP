@@ -8,23 +8,28 @@ controls and ordinary ChatGPT/MCP. Preserve anatomy prototypes and all earlier
 films/matrices; no further figure-drawing iteration is the current task.
 Read docs/superpowers/specs/2026-10-19-native-correction-workflow.md.
 
-Eight sketch_correction_* actions use original native Sketch QA/preview/edit
+Nine sketch_correction_* actions use original native Sketch QA/preview/edit
 surfaces, durable source snapshots/notes, strict review/source CAS, detached
 candidates, native recipe operations, ordinary undo and exact receipt recovery.
+Close review retains history while releasing stale/unused OPEN slots. Exact
+close replay remains valid after late acknowledgement of an earlier apply.
+Durable reservations OPEN2048/CLOSED1024/APPLIED0 protect both transitions.
 The bundled12 recipes are native logic, not ML training or a guarantee of art
 quality. Technical validation and explicit reviewer decisions remain separate.
 Production art/model improvement, original124s voiced-film completion and1000+
 varied-scenario programme remain unfinished goals.
 
 Evidence /workspace/engineering-review/correction-workflow-20261019 contains
-19 isolated native core/recipe tests,12 manual UI tests,638 Node tests+smoke,
+22 isolated native core/recipe tests,13 manual UI tests,639 Node tests+smoke,
 independent core findings/repairs, and one96-frame/24FPS native human before/
 after study (192PNGs, full clock and22 motion channels preserved, normal undo).
 These are bounded evidence, not a new APK/device/liveMCP/export claim.
 First anatomy generations and hand/body matrices stay under their earlier roots.
-Integrated official Gradle verification then passed60 focused tests with0failures,
-0errors and0skips, including current Android source/resources and export fixes.
-CI full-suite/signed candidate verification is the next checkpoint.
+Integrated official Gradle verification then passed64 focused tests plus5 alias
+regression tests with0failures/errors/skips, including current Android resources.
+Initial full CI found only the obsolete known-alias count assertion (1826 tests,
+1failure,8skips); it is corrected with explicit9-action routing checks. Final CI
+full-suite/signed candidate verification is recorded separately when complete.
 
 The frozen Body hand48x96 matrix completed with stable source/HEAD receipts and
 4608 native PNGs. Parent now owns the single local Gradle process for integrated

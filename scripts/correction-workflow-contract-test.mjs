@@ -9,7 +9,7 @@ import {nativeCommandSummary,nativeResultPage} from '../src/native-result-pages.
 import * as storyboard from '../src/storyboard-contract.js';
 import * as contract from '../src/studio-workbench-contract.js';
 
-const actions=['start','get','note','propose','preview','apply','options','list'].map(s=>'sketch_correction_'+s);
+const actions=['start','get','note','propose','preview','apply','options','list','close'].map(s=>'sketch_correction_'+s);
 const names=action=>[action,'studio_'+action];
 const identity={sketchId:'original',reviewId:'review_1'};
 const line={id:'correction_ink',kind:'line',points:[[.2,.2,1],[.7,.7,1]]};
@@ -22,7 +22,8 @@ const fixtures={
  sketch_correction_preview:{...identity,side:'after',proposalId:'candidate_1',frameIndex:47,crop:{x:.1,y:.2,width:.3,height:.4}},
  sketch_correction_apply:{...identity,expectedReviewRevision:3,proposalId:'candidate_1',expectedRevision:3,operationId:'apply_1'},
  sketch_correction_options:{...identity,objectId:'actor'},
- sketch_correction_list:{sketchId:'original',offset:0,limit:16}
+ sketch_correction_list:{sketchId:'original',offset:0,limit:16},
+ sketch_correction_close:{...identity,expectedReviewRevision:3}
 };
 const worker=fs.readFileSync(new URL('../src/index.js',import.meta.url),'utf8');
 const native=name=>fs.readFileSync(new URL(`../android/app/src/main/java/com/rezoxnemesis/videostudio/${name}.java`,import.meta.url),'utf8');
@@ -32,7 +33,7 @@ const retainedSettings={view:'front',build:'slender',hairStyle:'short',skinColor
 const human={settings:retainedSettings,poses:[{frame:0},{frame:95,nearWrist:-6}],durationFrames:96,fps:24};
 const image={id:'image',kind:'image',bounds:{x:0,y:0,width:.4,height:.4},reference:{file:'a'.repeat(64)+'.png',sha256:'a'.repeat(64),width:128,height:128,sourceProjectId:'p',sourceAssetId:'a'}};
 
-test('all eight correction actions and aliases preserve exact requests and require4.8.4',async()=>{
+test('all nine correction actions and aliases preserve exact requests and require4.8.4',async()=>{
  for(const action of actions)for(const name of names(action)){
   assert.ok(contract.STUDIO_NATIVE_ACTIONS.has(action));assert.ok(contract.STUDIO_ALIAS_ACTIONS.has('studio_'+action));
   const args=fixtures[action],parsed=parse(name,args);assert.deepEqual(parsed,args);assert.equal(await queueBindings.canonicalCommandResultSha256(parsed),await queueBindings.canonicalCommandResultSha256(args));
@@ -58,6 +59,18 @@ test('list resumes app-owned reviews with optional bounded pagination and no rev
  assert.doesNotThrow(()=>parse(action,{...minimal,offset:1000000,limit:1}));
  for(const [field,values] of Object.entries({offset:[-1,1000001,1.5,'0',null],limit:[0,17,1.5,'16',null]}))for(const value of values)assert.throws(()=>parse(action,{...minimal,[field]:value}));
  assert.throws(()=>parse(action,{...minimal,reviewId:'review_1'}));
+});
+
+test('close preserves exact review CAS and rejects source mutations or caller-owned replay metadata',()=>{
+ const args=fixtures.sketch_correction_close;
+ for(const action of names('sketch_correction_close')){
+  assert.deepEqual(parse(action,args),args);
+  for(const field of ['operationId','expectedRevision','closeRequestHash','status','sourceModified','discardSnapshots','delete'])assert.throws(()=>parse(action,{...args,[field]:field==='status'?'CLOSED':true}));
+ }
+ assert.match(contract.CORRECTION_WORKFLOW_CAPABILITIES.close,/OPEN.*CLOSED/);
+ assert.match(contract.CORRECTION_WORKFLOW_CAPABILITIES.close,/APPLIED/);
+ assert.match(contract.CORRECTION_WORKFLOW_CAPABILITIES.close,/identical.*replay/i);
+ assert.match(contract.CORRECTION_WORKFLOW_CAPABILITIES.close,/retain/i);
 });
 
 test('start inherits bounded audit controls without inserting defaults',()=>{
@@ -148,7 +161,7 @@ test('native admission aliases and background policy include all correction call
  for(const action of actions){for(const name of ['NativeWorkbenchBridge','NativeAgentMailboxActions','NativeCommandExecutionPolicy'])assert.ok(native(name).includes('"'+action+'"'),name+': '+action);}
 });
 
-test('MCP registration exposes eight accurate effect hints and preserves the preview image channel',async()=>{
+test('MCP registration exposes nine accurate effect hints and preserves the preview image channel',async()=>{
  class McpServer{constructor(){this.tools=new Map();}registerTool(name,definition,handler){this.tools.set(name,{definition,handler});}}
  const context={...storyboard,...contract,...queueBindings,nativeCommandSummary,nativeResultPage,z,McpServer,crypto:webcrypto,TextEncoder,TextDecoder,Response,Request,Headers,URL,Date,setTimeout,clearTimeout,
   DurableObject:class{constructor(ctx){this.ctx=ctx;}},createMcpHandler:()=>()=>new Response(),APP_HTML:'',STUDIO_RUNTIME_JS:'',STUDIO_CINEMATIC_JS:'',STUDIO_NEURAL_JS:'',STUDIO_TEMPORAL_JS:'',STUDIO_CHARACTER_JS:'',STUDIO_ACTION_TIMELINE_JS:'',STUDIO_POSE_SEQUENCE_JS:'',LOCAL_VIDEO_DOWNLOAD_HTML:''};
@@ -192,7 +205,7 @@ test('capability literals expose fixed recipe checks and human judgment without 
 
 test('release is4.8.4/code487 and earlier anatomy/style/action floors are unchanged',()=>{
  assert.match(native('AppProtocol'),/APP_VERSION = "4\.8\.4"/);const build=fs.readFileSync(new URL('../android/app/build.gradle.kts',import.meta.url),'utf8');assert.match(build,/versionCode = 487/);assert.match(build,/versionName = "4\.8\.4"/);
- assert.equal(contract.STUDIO_NATIVE_ACTIONS.size,68);assert.equal(contract.STUDIO_ALIAS_ACTIONS.size,79);
+ assert.equal(contract.STUDIO_NATIVE_ACTIONS.size,69);assert.equal(contract.STUDIO_ALIAS_ACTIONS.size,80);
  const anatomy={sketchId:'original',expectedRevision:1,operationId:'anatomy',operations:[{type:'add_human_animation',layerId:'layer_1',actorId:'actor',settings:{figureStyle:'legacy',constructionGuides:false}}]};
  assert.doesNotThrow(()=>contract.requireStudioVersion({appVersion:'4.8.3'},'sketch_edit',anatomy));assert.throws(()=>contract.requireStudioVersion({appVersion:'4.8.2'},'sketch_edit',anatomy),/4\.8\.3/);
  assert.doesNotThrow(()=>contract.requireStudioVersion({appVersion:'4.1.0'},'sketch_restore_archive',{archiveProjectId:'p',archiveName:'a.vssketch',expectedSha256:'a'.repeat(64),operationId:'restore'}));

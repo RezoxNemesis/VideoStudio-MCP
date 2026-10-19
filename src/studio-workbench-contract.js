@@ -10,9 +10,10 @@ const time=integer(0,86400000),frame=integer(0,1199),fps=z.union([z.literal(24),
 const color=z.string().regex(/^#[a-fA-F0-9]{8}$/);
 export const CORRECTION_SUPPORTED_OPERATIONS=Object.freeze(['add_layer','update_layer','delete_layer','reorder_layer','add_object','update_object','delete_object','set_transform','set_keyframe','set_shape_key','set_exposure','append_points','add_human_animation','add_hand_animation','add_eye_animation','add_mouth_animation','add_face_animation','add_character_animation','add_motion_study','add_solid','add_solid_collision','add_story_stage','add_actor_prop','add_grip_link','symmetry_stroke']);
 export const CORRECTION_WORKFLOW_CAPABILITIES=Object.freeze({
- minimumNativeVersion:'4.8.4',actions:['sketch_correction_start','sketch_correction_get','sketch_correction_note','sketch_correction_propose','sketch_correction_preview','sketch_correction_apply','sketch_correction_options','sketch_correction_list'],
+ minimumNativeVersion:'4.8.4',actions:['sketch_correction_start','sketch_correction_get','sketch_correction_note','sketch_correction_propose','sketch_correction_preview','sketch_correction_apply','sketch_correction_options','sketch_correction_list','sketch_correction_close'],
  supportedOperations:CORRECTION_SUPPORTED_OPERATIONS,
  limits:{maximumOpenReviews:16,maximumStoredBytes:134217728,maximumProposals:4,maximumNotes:32,maximumNoteReferences:16,maximumOperations:64,maximumRecipes:32,maximumAuditFrames:24,maximumDocumentBytes:4194304},
+ close:'Close an abandoned or stale OPEN review as CLOSED using expectedReviewRevision without changing source art. Retain snapshots, notes and candidates; release the OPEN slot while retained data still counts toward128MiB. Only OPEN transitions to CLOSED; APPLIED remains unchanged. CLOSED keeps get/list/preview available and blocks new proposals or apply operations. An identical close request replays idempotently; changed request identity or review CAS rejects. Recovery may acknowledge an exact apply receipt committed before closure as APPLIED without another source edit.',
  list:'Read-only newest-first bounded review metadata for sketchId after session restart. Optional integer offset0..1000000 and limit1..16; no reviewId. Source geometry remains app-owned. At most16 OPEN reviews and128MiB total retained review data; completed reviews remain discoverable and no user work is automatically deleted.',
  start:'Capture an immutable app-private source revision/hash, target and existing native quality audit. Optional audit frameOffset/frameLimit/frameStep/motionRequired preserve the source clock; at most24 sampled frames and step1..16. Reuse reviewId only for the identical start request.',
  notes:'Immutable explicit reviewer outcomes ACCEPTABLE, NEEDS_REWORK or UNREVIEWED, note text and inclusive frame range, optionally bound to an object, normalized region or candidate proposal. These are human or ChatGPT observations after image inspection, never automatic quality certificates.',
@@ -513,6 +514,7 @@ export const studioToolSchemas={
  sketch_correction_apply:{sketchId:id,reviewId:id,expectedReviewRevision:revision,proposalId:id,expectedRevision:revision,operationId:id},
  sketch_correction_options:{sketchId:id,reviewId:id,objectId:id},
  sketch_correction_list:{sketchId:id,offset:integer(0,1000000).optional(),limit:integer(1,16).optional()},
+ sketch_correction_close:{sketchId:id,reviewId:id,expectedReviewRevision:revision},
  project_asset_info:{projectId:id,expectedUpdatedAt:updatedAt,assetId:id},
  project_import_asset:{projectId:id,expectedUpdatedAt:updatedAt,sourceProjectId:id,sourceProjectUpdatedAt:updatedAt,assetId:id,expectedSha256:sha,operationId:id,appendToTimeline:z.boolean().optional()},
  import_mailbox_media:{projectId:id,attachmentId:z.string().uuid(),manifestSha256:sha},

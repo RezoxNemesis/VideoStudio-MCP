@@ -93,6 +93,29 @@ public class SketchCorrectionOpsTest {
   start();call("sketch_correction_note",id().put("expectedReviewRevision",1).put("noteId","placement").put("outcome","NEEDS_REWORK").put("note","Inspect hidden guide policy").put("frameStart",0).put("frameEnd",23));
   JSONObject p=proposalArgs().put("operations",new JSONArray().put(new JSONObject().put("type","set_transform").put("objectId","guide").put("transform",new JSONObject().put("opacity",1))));assertThrows(IllegalStateException.class,()->call("sketch_correction_propose",p));assertEquals(0,call("sketch_correction_get",id()).getJSONObject("review").getJSONArray("proposals").length());assertEquals(0,SketchDocument.object(doc(),"guide").getJSONObject("transform").getDouble("opacity"),0);
  }
+ @Test public void closingStaleReviewReleasesOpenSlotAndRetainsItsArtworkNotesAndCandidates()throws Exception{
+  create();proposed();for(int i=1;i<16;i++)call("sketch_correction_start",startArgs().put("reviewId","review_"+i).put("frameLimit",1));
+  SketchEditOps.execute(RuntimeEnvironment.getApplication(),"sketch_edit",new JSONObject().put("sketchId","drawing").put("expectedRevision",2).put("operationId","manual_change").put("operations",new JSONArray().put(new JSONObject().put("type","update_object").put("objectId","figure").put("patch",new JSONObject().put("color","#FFAB3344")))));
+  String source=SketchDocument.canonical(doc());JSONObject next=startArgs().put("reviewId","next").put("expectedRevision",3).put("frameLimit",1);
+  assertThrows(IllegalStateException.class,()->call("sketch_correction_start",next));JSONObject close=id().put("expectedReviewRevision",3);
+  JSONObject closed=call("sketch_correction_close",close);assertEquals("CLOSED",closed.getJSONObject("review").getString("status"));assertFalse(closed.getBoolean("sourceModified"));assertEquals(4,closed.getJSONObject("review").getInt("revision"));
+  assertEquals(4,call("sketch_correction_close",close).getJSONObject("review").getInt("revision"));assertThrows(IllegalStateException.class,()->call("sketch_correction_close",id().put("expectedReviewRevision",4)));
+  assertEquals(1,closed.getJSONObject("review").getJSONArray("notes").length());assertEquals(1,closed.getJSONObject("review").getJSONArray("proposals").length());assertTrue(call("sketch_correction_preview",id().put("side","after").put("proposalId","move").put("frameIndex",0)).has("sketchPreviewImage"));
+  assertThrows(IllegalStateException.class,()->call("sketch_correction_apply",applyArgs().put("expectedReviewRevision",4)));
+  assertEquals("OPEN",call("sketch_correction_start",next).getJSONObject("review").getString("status"));assertEquals(source,SketchDocument.canonical(doc()));
+ }
+ @Test public void exactCommittedApplyReceiptStillRecoversIfReviewWasClosedAfterInterruption()throws Exception{
+  create();proposed();JSONObject prior=call("sketch_correction_get",id()).getJSONObject("review");call("sketch_correction_apply",applyArgs());String source=SketchDocument.canonical(doc());
+  try(SketchCorrectionStore s=new SketchCorrectionStore(RuntimeEnvironment.getApplication())){android.content.ContentValues v=new android.content.ContentValues();v.put("state",prior.toString());v.put("revision",3);v.put("status","OPEN");assertEquals(1,s.db.update("reviews",v,"id=?",new String[]{"review"}));}
+  JSONObject close=id().put("expectedReviewRevision",3);call("sketch_correction_close",close);JSONObject recovered=call("sketch_correction_apply",applyArgs());assertEquals("APPLIED",recovered.getJSONObject("review").getString("status"));assertEquals(source,SketchDocument.canonical(doc()));assertEquals(3,doc().getInt("revision"));
+  JSONObject replay=call("sketch_correction_close",close);assertEquals("APPLIED",replay.getJSONObject("review").getString("status"));assertEquals(5,replay.getJSONObject("review").getInt("revision"));assertEquals(source,SketchDocument.canonical(doc()));
+  assertThrows(IllegalStateException.class,()->call("sketch_correction_close",id().put("expectedReviewRevision",5)));
+ }
+ @Test public void closureAndLateReceiptRecoveryFitTheOriginalDurableQuotaReserve()throws Exception{
+  create();proposed();JSONObject state=call("sketch_correction_get",id()).getJSONObject("review");long used=0;
+  try(SketchCorrectionStore s=new SketchCorrectionStore(RuntimeEnvironment.getApplication())){for(String sql:new String[]{"SELECT COALESCE(SUM(length(CAST(source AS BLOB))+length(CAST(state AS BLOB))),0) FROM reviews","SELECT COALESCE(SUM(length(CAST(document AS BLOB))+length(CAST(operations AS BLOB))+length(CAST(metadata AS BLOB))),0) FROM proposals"})try(android.database.Cursor c=s.db.rawQuery(sql,null)){c.moveToFirst();used+=c.getLong(0);}}
+  try(SketchCorrectionStore s=new SketchCorrectionStore(RuntimeEnvironment.getApplication(),used+2048)){state.put("status","CLOSED").put("closeRequestHash",new String(new char[64]).replace('\0','a'));s.write("drawing","review",3,state);state.put("status","APPLIED").put("appliedProposalId","move").put("appliedOperationId","apply_move").put("appliedRevision",3);s.write("drawing","review",4,state);assertEquals("APPLIED",s.state("drawing","review").getString("status"));}
+ }
  @Test public void ownershipAndAfterPreviewRequirementsAreStrict()throws Exception{
   create();start();assertThrows(IllegalArgumentException.class,()->call("sketch_correction_get",id().put("sketchId","another")));assertThrows(IllegalArgumentException.class,()->call("sketch_correction_preview",id().put("side","after").put("frameIndex",0)));assertThrows(IllegalArgumentException.class,()->call("sketch_correction_preview",id().put("side","before").put("frameIndex",24)));
  }

@@ -44,3 +44,14 @@ The user additionally requests integrated code/assets which offer many repeatabl
 - Recipe selection data are versioned original app logic, not artificial intelligence inference, motion capture, hidden-side reconstruction or a guarantee of attractive artwork. New actions remain4.8.4.
 
 Resume requirement: add eighth action sketch_correction_list({sketchId,offset?:0..1000000,limit?:1..16}) read-only. Returns {ok,sketchId,reviews:[{reviewId,target,status,revision,sourceRevision,noteCount,proposalCount}],offset,more,sourceModified:false}, newest first. This lets another ChatGPT session discover saved tasks without requiring a remembered ID. Native action remains4.8.4. Manual Saved reviews picker uses it. Completed sessions do not consume the16 OPEN-session slots; all metadata/snapshots remain under an explicit128MiB total budget with no automatic deletion.
+
+Final review found that16 abandoned/stale OPEN reviews could exhaust the slots
+permanently. Add ninth action sketch_correction_close({sketchId,reviewId,
+expectedReviewRevision}), shared with **Close review (keep history)**. It may
+close stale reviews, preserves snapshots/notes/candidates and source artwork,
+uses review CAS and exact-request replay, and prevents new proposals/applications.
+CLOSED remains readable and discoverable. Existing already-committed apply
+receipts can still recover an interrupted acknowledgement without another edit.
+Durable reservations OPEN2048/CLOSED1024/APPLIED0 protect both closure and late
+receipt recovery at the storage quota. Closure frees a review slot, not retained
+snapshot storage. No automatic purge or storage offload is added in this version.

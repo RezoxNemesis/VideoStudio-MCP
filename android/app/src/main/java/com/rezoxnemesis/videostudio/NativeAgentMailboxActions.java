@@ -11,7 +11,7 @@ final class NativeAgentMailboxActions {
   "sketch_animation_list",
   "sketch_animation_bake","sketch_animation_place_in_book",
   "sketch_story_create","sketch_story_preview","sketch_story_audio_create","sketch_story_example",
-  "sketch_correction_start","sketch_correction_get","sketch_correction_note","sketch_correction_propose","sketch_correction_preview","sketch_correction_apply","sketch_correction_options","sketch_correction_list",
+  "sketch_correction_start","sketch_correction_get","sketch_correction_note","sketch_correction_propose","sketch_correction_preview","sketch_correction_apply","sketch_correction_options","sketch_correction_list","sketch_correction_close",
   "sketch_list",
   "sketch_get",
   "sketch_inspect",

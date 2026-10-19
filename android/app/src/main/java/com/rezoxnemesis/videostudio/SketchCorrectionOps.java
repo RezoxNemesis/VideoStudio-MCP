@@ -23,6 +23,7 @@ final class SketchCorrectionOps {
                 case "sketch_correction_get":SketchDocument.fields(args,"sketchId,reviewId");return response(context,state);
                 case "sketch_correction_options":SketchDocument.fields(args,"sketchId,reviewId,objectId");return SketchCorrectionRecipes.options(context,store.source(sketch,review),SketchDocument.id(args,"objectId")).put("reviewId",review).put("sourceRevision",state.getLong("sourceRevision")).put("sourceDocumentSha256",state.getString("sourceDocumentSha256")).put("sourceModified",false).put("ok",true);
                 case "sketch_correction_note":return note(context,store,state,args);
+                case "sketch_correction_close":return closeReview(context,store,state,args);
                 case "sketch_correction_propose":return propose(context,store,state,args);
                 case "sketch_correction_preview":return preview(context,store,state,args);
                 case "sketch_correction_apply":return apply(context,store,state,args);
@@ -43,7 +44,12 @@ final class SketchCorrectionOps {
         long live;try(SketchProjectStore sketches=new SketchProjectStore(c)){live=sketches.get(state.getString("sketchId")).getLong("revision");}
         return new JSONObject().put("ok",true).put("review",SketchDocument.copy(state)).put("currentSourceRevision",live).put("sourceMatches",live==state.getLong("sourceRevision")).put("sourceModified",false);
     }
-    private static void open(JSONObject s)throws Exception{if(!s.getString("status").equals("OPEN"))throw SketchCorrectionStore.conflict("This review already applied a correction; start another review for the new drawing");}
+    private static void open(JSONObject s)throws Exception{if(!s.getString("status").equals("OPEN"))throw SketchCorrectionStore.conflict("This review is "+s.getString("status")+"; start another review for the new drawing");}
+    private static JSONObject closeReview(Context c,SketchCorrectionStore store,JSONObject state,JSONObject a)throws Exception{
+        SketchDocument.fields(a,"sketchId,reviewId,expectedReviewRevision");long expected=revision(a);String requestHash=hash(a);
+        if(state.has("closeRequestHash")){if(!state.getString("closeRequestHash").equals(requestHash))throw SketchCorrectionStore.conflict("Review was closed with another request");return response(c,state);}
+        open(state);SketchCorrectionStore.requireRevision(state,expected);state.put("status","CLOSED").put("closeRequestHash",requestHash);store.write(state.getString("sketchId"),state.getString("reviewId"),expected,state);return response(c,state);
+    }
     private static JSONObject current(Context c,JSONObject s)throws Exception{
         try(SketchProjectStore sketches=new SketchProjectStore(c)){JSONObject source=sketches.get(s.getString("sketchId"));SketchProjectStore.requireRevision(source,s.getLong("sourceRevision"));if(!hash(source).equals(s.getString("sourceDocumentSha256")))throw new IllegalStateException("SKETCH_REVISION_CONFLICT: source hash changed");return source;}
     }

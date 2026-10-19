@@ -9,13 +9,15 @@ prototype, older projects, worktrees, generations and original signing identity.
 Manual entry: **Sketch Studio > More > Review & correct**. Start a review on the
 current source, record a note, select an object and compatible recipe, prepare a
 candidate, inspect before/after (crop or tap to inspect), then apply. Saved reviews
-resume earlier tasks. Advanced IDs/operations stay collapsed by default. Ordinary
+resume earlier tasks. **Close review (keep history)** releases an unused OPEN
+slot even when its captured source is stale; notes, snapshots and alternatives
+remain available. Advanced IDs/operations stay collapsed by default. Ordinary
 editor Undo restores an applied correction. Asynchronous operations retain error
 inputs and protect lifecycle, cancelled work and stale editor callbacks.
 
 For MCP call app_status and require native4.8.4, then read
-sketch_capabilities.correctionWorkflow. Eight shared actions:
-sketch_correction_start/get/list/note/options/propose/preview/apply.
+sketch_capabilities.correctionWorkflow. Nine shared actions:
+sketch_correction_start/get/list/note/options/propose/preview/apply/close.
 New actions preserve exact requests and are rejected before queue writes on older
 clients. Existing anatomy/style/tool version floors and legacy omission are
 unchanged. Preview uses the existing native image channel; no new model service,
@@ -42,6 +44,13 @@ identity collisions fail; exact receipt replay recovers a committed edit after
 interruption without a second mutation. OPEN reviews durably reserve terminal
 metadata capacity so quota cannot strand a committed edit. Storage admits16
 OPEN reviews and128MiB total metadata/snapshots, retaining completed work.
+Closing uses expectedReviewRevision and exact-request replay. CLOSED reviews
+reject new proposals and source edits; an exact receipt for artwork already
+committed before an interruption can still acknowledge that earlier edit.
+Durable reserves are2048 bytes while OPEN,1024 while CLOSED,0 after APPLIED,
+so closure and late receipt recovery fit the original reservation. Closing
+releases a review slot; retained history still counts toward the128MiB budget.
+This first version has no automatic purge or archive-storage offload.
 
 Targets and acceptance notes are reviewer statements. Native pixel metrics and
 mechanical checks do not certify anatomy, finger count, attractive drawing,
@@ -52,21 +61,25 @@ after current quality is accepted; assertions/frames/reruns are not new scenario
 
 ## Verification checkpoint
 
-- Official current-source Android Gradle:60 tests across7 focused classes,
+- Official current-source Android Gradle:64 tests across7 focused classes,
   zero failures/errors/skips; full product and test Java compiled, current
   resources/assets packaged. Includes correction core/recipes/UI, anatomy
-  head/body/manual controls and11 exact-raster export regressions. Full CI and
+  head/body/manual controls and11 exact-raster export regressions. A further5
+  official alias tests pass after full CI exposed an obsolete73-action count;
+  the test now checks82 actions and explicitly verifies all9 correction aliases,
+  mailbox admission and background lanes. The initial CI failure (1826 tests,
+  1failure,8skips) is retained. Full final CI and
   signed APK status are recorded separately; this check did not build an APK.
 
-- Isolated current-source javac/Robolectric native checks:12 core +7 recipe tests
+- Isolated current-source javac/Robolectric native checks:15 core +7 recipe tests
   pass. Covers durable SQLite, actual before/after pixels, source preservation,
   revision conflicts, exact replays, history undo/redo, interruption receipt
   recovery, original-drawing policy and quota reservation. Initial failures and
   independent review findings are preserved.
-- Manual native UI:12 tests pass, including actual recipe selection, before/after
+- Manual native UI:13 tests pass, including actual recipe selection, before/after
   previews, application and undo, stale/cancel/lifecycle behavior and collapsed
   advanced controls. Actual Android view renders are saved; not phone screenshots.
-- Node:638 tests and existing smoke checks pass;94 focused checks include15
+- Node:639 tests and306 smoke checks pass;95 focused checks include16
   correction tests. Native alias/mailbox/background admission compiled/exercised
   separately; no worker deployment or live ChatGPT/device execution is claimed.
 - One original human-motion scenario:96 frames/generation,24FPS,1280x720,4seconds;

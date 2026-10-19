@@ -29,11 +29,11 @@ final class SketchCorrectionDialog implements AutoCloseable {
     private interface Work { Result run()throws Exception; }
     private interface Action { void run()throws Exception; }
     private static final class Result {
-        JSONObject reply,state;Bitmap image;String side,message;boolean applied;
+        JSONObject reply,state,source;Bitmap image;String side,message;boolean applied;
         Result(JSONObject reply){this.reply=reply;}
     }
     private final Activity activity;
-    private final JSONObject opened;
+    private JSONObject opened;
     private final String sketchId;
     private final Consumer<JSONObject> onApplied;
     private final Backend backend;
@@ -46,7 +46,7 @@ final class SketchCorrectionDialog implements AutoCloseable {
     private final CheckBox motion;
     private final TextView status,history,recipeDetails,scope,technical;
     private final ImageView before,after;
-    private final Button start,resume,saved,record,loadOptions,relax,prepare,showBefore,showAfter,apply,cancel;
+    private final Button start,resume,saved,closeReview,record,loadOptions,relax,prepare,showBefore,showAfter,apply,cancel;
     private AlertDialog dialog,detailDialog,savedDialog;
     private String rememberedProposal="",noteChoice="";
     private ImageView detailImage;
@@ -69,12 +69,10 @@ final class SketchCorrectionDialog implements AutoCloseable {
         target=input("Review target","");
         first=input("First inspected frame (1 based)",String.valueOf(frame+1));last=input("Last inspected frame (1 based)",String.valueOf(Math.min(opened.getInt("frameCount"),frame+24)));
         motion=new CheckBox(a);motion.setText("Review requires motion");form.addView(motion);
-        objects=spinner("Target object",new String[]{"Whole drawing / no object"});objectIds.add("");
-        JSONArray layers=opened.getJSONArray("layers");List<String> labels=new ArrayList<>();labels.add("Whole drawing / no object");
-        for(int l=0;l<layers.length();l++){JSONArray items=layers.getJSONObject(l).getJSONArray("objects");for(int i=0;i<items.length();i++){JSONObject o=items.getJSONObject(i);objectIds.add(o.getString("id"));labels.add(o.getString("kind")+" · "+o.getString("id"));}}
-        objects.setAdapter(adapter(labels.toArray(new String[0])));if(objectIds.size()>1)objects.setSelection(1);
+        objects=spinner("Target object",new String[]{"Whole drawing / no object"});refreshObjects();
         start=button("Start review",this::start);saved=button("Saved reviews",()->savedReviews(0));
         button("New review",this::newReview);
+        closeReview=button("Close review (keep history)",this::closeReview);
         status=text("Start a review, or choose Saved reviews to continue.");status.setContentDescription("Correction status");
         history=text("");history.setContentDescription("Correction history");
         outcome=spinner("Visual outcome",new String[]{"Not reviewed","Needs rework","Acceptable"});
@@ -107,7 +105,20 @@ final class SketchCorrectionDialog implements AutoCloseable {
         dialog=new AlertDialog.Builder(activity).setTitle("Review & correct").setView(scroll).setNegativeButton("Close",null).create();
         dialog.setOnDismissListener(d->close());activity.getApplication().registerActivityLifecycleCallbacks(lifecycle);dialog.show();
     }
-    private void newReview()throws Exception{reviewId.setText(id("review"));pendingNote=null;pendingProposal=null;pendingApply=null;noteRefs.setText("");noteId.setText(id("note"));proposalId.setText(id("proposal"));status.setText("Enter a target and start a new review of this source.");saveDraft();}
+    private void newReview(){
+        submit("Loading the current drawing for a new review…",()->{try(SketchProjectStore store=new SketchProjectStore(activity)){Result result=new Result(new JSONObject());result.source=store.get(sketchId);result.side="new_review";result.message="Enter a target and start a new review of the current source.";return result;}});
+    }
+    private void resetReview(JSONObject source)throws Exception{
+        opened=SketchDocument.copy(source);refreshObjects();reviewId.setText(id("review"));pendingNote=null;pendingProposal=null;pendingApply=null;noteRefs.setText("");noteId.setText(id("note"));proposalId.setText(id("proposal"));first.setText("1");last.setText(String.valueOf(Math.min(24,opened.getInt("frameCount"))));previewFrame.setText("1");
+    }
+    private void refreshObjects()throws Exception{
+        String selected=objectId();objectIds.clear();objectIds.add("");List<String> labels=new ArrayList<>();labels.add("Whole drawing / no object");JSONArray layers=opened.getJSONArray("layers");
+        for(int l=0;l<layers.length();l++){JSONArray items=layers.getJSONObject(l).getJSONArray("objects");for(int i=0;i<items.length();i++){JSONObject o=items.getJSONObject(i);objectIds.add(o.getString("id"));labels.add(o.getString("kind")+" · "+o.getString("id"));}}
+        objects.setAdapter(adapter(labels.toArray(new String[0])));int n=objectIds.indexOf(selected);objects.setSelection(n>0?n:objectIds.size()>1?1:0);
+    }
+    private void closeReview()throws Exception{
+        JSONObject request=reviewed();submit("Closing the review; keeping its history…",()->mutate("sketch_correction_close",request,"Review closed. Notes, candidates and previews are kept; drawing unchanged."));
+    }
     private JSONObject base()throws Exception {return new JSONObject().put("sketchId",sketchId).put("reviewId",reviewId.getText().toString().trim());}
     private JSONObject reviewed()throws Exception {if(review==null)throw SketchDocument.bad("Start or resume this review first");return base().put("expectedReviewRevision",review.getLong("revision"));}
     private static String id(String prefix){return prefix+"_"+UUID.randomUUID().toString().replace("-","").substring(0,20);}
@@ -182,6 +193,7 @@ final class SketchCorrectionDialog implements AutoCloseable {
         try{task=worker.submit(()->{Result result=null;try{result=work.run();final Result done=result;activity.runOnUiThread(()->{
             if(unavailable()||request!=generation){if(done.image!=null)done.image.recycle();if(done.applied){pendingApply=null;saveDraft();if(!reportedApply&&!activity.isDestroyed()&&!activity.isFinishing()){reportedApply=true;onApplied.accept(done.reply);}if(dialog!=null)dialog.dismiss();}return;}
             busy=false;task=null;try{
+                if(done.source!=null)resetReview(done.source);
                 if(done.state!=null)adopt(done.state);
                 if("options".equals(done.side))adoptOptions(done.reply,done.message);
                 else if("list".equals(done.side))reviewPicker(done.reply);
@@ -200,7 +212,7 @@ final class SketchCorrectionDialog implements AutoCloseable {
         String selected=selectedProposal();if(selected.isEmpty())selected=rememberedProposal;JSONArray proposals=review.getJSONArray("proposals");proposalIds.clear();proposalIds.add("");List<String> names=new ArrayList<>();names.add("No candidate selected");
         for(int i=0;i<proposals.length();i++){JSONObject p=proposals.getJSONObject(i);String id=p.getString("proposalId");proposalIds.add(id);names.add(p.optString("summary","Candidate "+(i+1)));}
         binding=true;try{proposal.setAdapter(adapter(names.toArray(new String[0])));selectProposal(selected);}finally{binding=false;}
-        StringBuilder text=new StringBuilder(review.getString("status").equals("OPEN")?"Review open":"Correction applied");
+        String state=review.getString("status");StringBuilder text=new StringBuilder(state.equals("OPEN")?"Review open":state.equals("CLOSED")?"Review closed · history kept":"Correction applied");
         text.append(sourceMatches?"\nCaptured source is current.":"\nSource changed: this review cannot apply a new correction.");
         JSONObject audit=review.optJSONObject("audit");if(audit!=null)text.append("\nSource ").append(auditSummary(audit));
         JSONArray notes=review.getJSONArray("notes");for(int i=0;i<notes.length();i++){JSONObject n=notes.getJSONObject(i);text.append("\n").append(n.getString("outcome").replace('_',' ')).append(" · frames ").append(n.getInt("frameStart")+1).append("–").append(n.getInt("frameEnd")+1).append("\n").append(n.getString("note"));}
@@ -226,7 +238,7 @@ final class SketchCorrectionDialog implements AutoCloseable {
     private void sync(){
         enable(form,!busy&&!closed);cancel.setEnabled(busy&&!closed);
         boolean loaded=review!=null,open=loaded&&review.optString("status").equals("OPEN"),current=open&&sourceMatches;
-        record.setEnabled(!busy&&loaded);loadOptions.setEnabled(!busy&&current&&!objectId().isEmpty());relax.setEnabled(loadOptions.isEnabled());
+        closeReview.setEnabled(!busy&&open);record.setEnabled(!busy&&loaded&&!review.optString("status").equals("CLOSED"));loadOptions.setEnabled(!busy&&current&&!objectId().isEmpty());relax.setEnabled(loadOptions.isEnabled());
         boolean recipe=mode.getSelectedItemPosition()==0;recipes.setEnabled(!busy&&recipe&&current);operations.setEnabled(!busy&&!recipe&&current);
         JSONObject selected=selectedRecipe();prepare.setEnabled(!busy&&current&&(!recipe||selected!=null&&selected.optBoolean("available")));
         evidenceNotes.setEnabled(!busy&&loaded&&noteIds.size()>0);
