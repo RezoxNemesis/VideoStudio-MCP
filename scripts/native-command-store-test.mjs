@@ -15,7 +15,7 @@ const encoder=new TextEncoder(),VALUE_LIMIT=128*1024;
 // rollback. It never calls a Worker endpoint or represents native device QA.
 function fixture(initial=[]){
   const key='app-v3-cl:device',sequence='app-v3-seq:device';
-  let values=new Map([[key,structuredClone(initial)]]),tail=Promise.resolve(),fault=null,largestValue=0;
+  let values=new Map([[key,structuredClone(initial)]]),tail=Promise.resolve(),fault=null,largestValue=0;const reads=[];
   const valueBytes=value=>value instanceof ArrayBuffer?value.byteLength:ArrayBuffer.isView(value)?value.byteLength:encoder.encode(JSON.stringify(value)).byteLength;
   const put=(target,name,value)=>{
     const bytes=valueBytes(value);if(bytes>VALUE_LIMIT)throw new Error('Durable Object value exceeds 128 KiB');
@@ -24,7 +24,7 @@ function fixture(initial=[]){
   };
   if(valueBytes(initial)>VALUE_LIMIT)throw new Error('Legacy fixture must fit the existing Durable Object value');
   const reader=target=>({
-    async get(name){return structuredClone(target.get(name));},
+    async get(name){reads.push(name);return structuredClone(target.get(name));},
     async put(name,value){put(target,name,value);},async delete(name){return target.delete(name);},
     async list({prefix,limit}){return new Map([...target].filter(([name])=>name.startsWith(prefix)).slice(0,limit));}
   });
@@ -37,7 +37,7 @@ function fixture(initial=[]){
       try{const result=await callback(reader(draft));values=draft;return result;}finally{release();}
     }
   };
-  return {storage,key,sequence,state:()=>structuredClone(values),fail:predicate=>{fault=predicate;},largest:()=>largestValue};
+  return {storage,key,sequence,state:()=>structuredClone(values),fail:predicate=>{fault=predicate;},largest:()=>largestValue,reads:()=>[...reads]};
 }
 const row=(seq,status='queued',text='')=>({
   id:'command-'+seq,seq,protocolVersion:3,deviceId:'device',action:'storyboard_program_put',
@@ -258,4 +258,124 @@ test('native record byte, depth and exact identity bounds reject without replaci
   await assert.rejects(writeNativeDevice(f.storage,key,{...record,deviceId:'different-device'}),/storage identity/);
   let nested=true;for(let index=0;index<NATIVE_DEVICE_LIMITS.jsonDepth;index++)nested={child:nested};
   await assert.rejects(writeNativeDevice(f.storage,key,{...record,nested}),/nesting depth/);assert.deepEqual(f.state(),before);
+});
+
+// Exact producer format from 71d9502074d43e347612e3f7c5a49445e8e9057f,
+// src/native-payload-storage.js:21-31: JSON string sliced by 64000 UTF-16
+// code units, six-field reference, and app-v3-blob namespace. No live credentials.
+async function historicalField(f,command,field,value,originDeviceId='device'){
+  const encoded=JSON.stringify(value),parts=Math.ceil(encoded.length/64000);
+  for(let part=0;part<parts;part++)await f.storage.put(`app-v3-blob:${originDeviceId}:${command.id}:${field}:${part}`,encoded.slice(part*64000,(part+1)*64000));
+  return {__nativePayloadVersion:1,originDeviceId,commandId:command.id,field,parts,length:encoded.length};
+}
+const legacyError=/[Ll]egacy native|[Aa]rchived native|nesting depth|2 MiB|bounded.*budget/;
+
+test('historic UTF-16 pointers hydrate actual queued parameters and terminal results without changing stored proof',async()=>{
+  const f=fixture(),pending=row(1,'waiting_native'),done=row(2,'completed');
+  // Make a surrogate pair straddle the historical 64000-code-unit boundary.
+  pending.parameters={text:'x'.repeat(63990)+'🎨'.repeat(4000),sourceProjectId:'project-owned'};
+  done.result={ok:true,contactSheet:{base64:'archive-thumbnail'.repeat(12000)}};
+  done.resultSha256=await canonicalCommandResultSha256(done.result);
+  const packed=[{...pending,parameters:await historicalField(f,pending,'parameters',pending.parameters)},
+    {...done,result:await historicalField(f,done,'result',done.result)}];
+  await f.storage.put(f.key,packed);const before=f.state();
+  const actual=await readCommandQueue(f.storage,f.key);assert.deepEqual(actual,[pending,done]);assert.deepEqual(f.state(),before);
+  actual[0].parameters.text='caller mutation';assert.deepEqual(await readCommandQueue(f.storage,f.key),[pending,done]);
+});
+
+test('historic pointer claim and migration are atomic and current chunks contain hydrated data',async()=>{
+  for(const fail of [false,true]){
+    const f=fixture(),original=row(1,'queued','old-script-'.repeat(15000));
+    const packed={...original,parameters:await historicalField(f,original,'parameters',original.parameters)};
+    await f.storage.put(f.key,[packed]);await f.storage.put(f.sequence,1);const before=f.state();
+    if(fail)f.fail(name=>name.endsWith(':manifest:v1'));
+    const claim=()=>mutateCommandQueue(f.storage,f.key,async(rows,transaction)=>{
+      assert.deepEqual(rows,[original]);rows[0]={...rows[0],status:'claimed',leaseUntil:12345,claimCount:1};
+      await transaction.put(f.sequence,2);return {rows,result:rows[0]};
+    });
+    if(fail){await assert.rejects(claim(),/injected/);assert.deepEqual(f.state(),before);}
+    else {
+      assert.deepEqual((await claim()).parameters,original.parameters);assert.equal(await f.storage.get(f.key),undefined);
+      const migrated=(await readCommandQueue(f.storage,f.key))[0];assert.equal(migrated.id,original.id);assert.equal(migrated.seq,1);assert.deepEqual(migrated.parameters,original.parameters);
+      assert.equal(migrated.status,'claimed');assert.equal(await f.storage.get(f.sequence),2);
+      assert.equal([...f.state().keys()].some(key=>key.startsWith('app-v3-blob:')),true,'Old blob proof is retained, not blindly deleted');
+      await mutateCommandQueue(f.storage,f.key,async rows=>{rows[0]=await terminalCommandUpdate(rows[0],{ok:true},'completed');return {rows,result:null};});
+      assert.equal((await readCommandQueue(f.storage,f.key))[0].status,'completed');
+    }
+  }
+});
+
+test('historic pointers already copied into the current manifest format also hydrate',async()=>{
+  const f=fixture(),original=row(1,'queued','carried-pointer'.repeat(12000));
+  const packed={...original,parameters:await historicalField(f,original,'parameters',original.parameters)};
+  const bytes=encoder.encode(JSON.stringify([packed])),generation=crypto.randomUUID(),chunks=Math.ceil(bytes.length/COMMAND_QUEUE_LIMITS.chunkBytes);
+  for(let i=0;i<chunks;i++)await f.storage.put(`${f.key}:chunks:v1:${generation}:${i}`,bytes.slice(i*COMMAND_QUEUE_LIMITS.chunkBytes,(i+1)*COMMAND_QUEUE_LIMITS.chunkBytes));
+  await f.storage.put(f.key+':manifest:v1',{version:1,generation,bytes:bytes.length,chunks,count:1,sha256:createHash('sha256').update(bytes).digest('hex')});
+  await f.storage.put(f.key+':format',1);await f.storage.delete(f.key);
+  assert.deepEqual(await readCommandQueue(f.storage,f.key),[original]);await rewrite(f);assert.deepEqual(await readCommandQueue(f.storage,f.key),[original]);
+});
+
+test('historic untrusted pointers cannot cross device command field protocol or delimiter namespaces',async()=>{
+  const mutations=[
+    (c,p)=>{p.originDeviceId='foreign-device';},(c,p)=>{p.commandId='other-command';},(c,p)=>{p.field='result';},
+    (c,p)=>{c.deviceId='foreign-device';},(c,p)=>{c.protocolVersion=2;},(c,p)=>{p.originDeviceId='device:command-1';},
+    (c,p)=>{p.originDeviceId='foreign-device';c.migratedFromDeviceId='foreign-device';},
+    (c,p)=>{p.__nativePayloadVersion=2;},(c,p)=>{p.parts=1.5;},(c,p)=>{p.parts=512;},
+    (c,p)=>{p.length=COMMAND_QUEUE_LIMITS.commandBytes+1;},(c,p)=>{delete p.length;},(c,p)=>{p.extra='untrusted';}
+  ];
+  for(const mutate of mutations){
+    const f=fixture(),original=row(1),pointer=await historicalField(f,original,'parameters',{text:'x'.repeat(2000)}),command={...original,parameters:pointer};
+    mutate(command,pointer);await f.storage.put(f.key,[command]);const before=f.state();
+    await assert.rejects(readCommandQueue(f.storage,f.key),legacyError);assert.deepEqual(f.state(),before);
+    assert.equal(f.reads().some(key=>key.startsWith('app-v3-blob:')),false,'Reject untrusted pointer before reading any blob');
+  }
+  const f=fixture(),command=row(1);command.parameters=await historicalField(f,command,'parameters',{text:'x'.repeat(2000)});
+  await f.storage.put('app-cl:device',[command]);await assert.rejects(readCommandQueue(f.storage,'app-cl:device'),legacyError);
+});
+
+test('historic alias-carried pointers require registered ownership and supersession proof, not just row metadata',async()=>{
+  for(const damage of [null,'aliases','supersession','owner','origin-identity']){
+    const f=fixture(),original={...row(1),migratedFromDeviceId:'origin-device'},ownerHash='a'.repeat(64);
+    original.parameters={program:{text:'old-origin'.repeat(1000)}};
+    const packed={...original,parameters:await historicalField(f,original,'parameters',original.parameters,'origin-device')};
+    const origin={deviceId:'origin-device',ownerHash,supersededByDeviceId:'device'},canonical={deviceId:'device',ownerHash:'b'.repeat(64),ownerAliases:[ownerHash]};
+    if(damage==='aliases')canonical.ownerAliases=[];if(damage==='supersession')origin.supersededByDeviceId='other-device';if(damage==='owner')delete origin.ownerHash;if(damage==='origin-identity')origin.deviceId='wrong-origin';
+    await f.storage.put('app-device:origin-device',origin);await f.storage.put('app-device:device',canonical);await f.storage.put(f.key,[packed]);const before=f.state();
+    if(damage){await assert.rejects(readCommandQueue(f.storage,f.key),legacyError);assert.equal(f.reads().some(key=>key.startsWith('app-v3-blob:')),false);}
+    else assert.deepEqual(await readCommandQueue(f.storage,f.key),[original]);
+    assert.deepEqual(f.state(),before);
+  }
+});
+
+test('historic missing corrupt deep and UTF-8-oversize blobs reject without losing any queue bytes',async()=>{
+  for(const damage of ['missing','type','short','json','depth','utf8','nested-pointer']){
+    const f=fixture(),original=row(1);let value={text:'x'.repeat(2000)};
+    if(damage==='depth'){value=true;for(let i=0;i<COMMAND_QUEUE_LIMITS.jsonDepth+1;i++)value={child:value};}
+    if(damage==='nested-pointer')value={__nativePayloadVersion:1,originDeviceId:'foreign-device',commandId:'other',field:'parameters',parts:1,length:2000};
+    // UTF-8 exceeds 2 MiB although UTF-16 length fits; stored parts remain <128 KiB.
+    if(damage==='utf8')value={text:'🎨'.repeat(COMMAND_QUEUE_LIMITS.commandBytes/4+1)};
+    original.parameters=await historicalField(f,original,'parameters',value);const key='app-v3-blob:device:command-1:parameters:0';
+    if(damage==='missing')await f.storage.delete(key);if(damage==='type')await f.storage.put(key,{text:'not a string'});
+    if(damage==='short')await f.storage.put(key,'{}');if(damage==='json')await f.storage.put(key,'!'.repeat(original.parameters.length));
+    await f.storage.put(f.key,[original]);const before=f.state();
+    await assert.rejects(readCommandQueue(f.storage,f.key),legacyError);await assert.rejects(rewrite(f),legacyError);assert.deepEqual(f.state(),before);
+  }
+});
+
+test('historic hydration preserves the aggregate current queue budget and terminal result checksum',async()=>{
+  const f=fixture(),packed=[];
+  for(let n=1;n<=10;n++){const command=row(n,'queued','x'.repeat(1800000));packed.push({...command,parameters:await historicalField(f,command,'parameters',command.parameters)});}
+  await f.storage.put(f.key,packed);const before=f.state();await assert.rejects(readCommandQueue(f.storage,f.key),legacyError);assert.deepEqual(f.state(),before);
+  const g=fixture(),done=row(1,'completed');done.result={ok:true,text:'original-result'.repeat(1000)};done.resultSha256=await canonicalCommandResultSha256(done.result);
+  const stored={...done,result:await historicalField(g,done,'result',done.result)};await g.storage.put(g.key,[stored]);
+  const reloaded=(await readCommandQueue(g.storage,g.key))[0];assert.deepEqual(await terminalCommandUpdate(reloaded,done.result,'completed'),done);
+  await g.storage.put('app-v3-blob:device:command-1:result:0',JSON.stringify(done.result).replace('original','modified'));const damaged=g.state();
+  await assert.rejects(readCommandQueue(g.storage,g.key),/receipt checksum/);assert.deepEqual(g.state(),damaged);
+});
+
+test('current queue writes reject new legacy pointers while ordinary nested tag-shaped JSON remains data',async()=>{
+  const f=fixture(),command=row(1);command.parameters=await historicalField(f,command,'parameters',{text:'x'.repeat(2000)});const before=f.state();
+  assert.throws(()=>requireCommandQueueAdmission([],command),/Legacy native/);
+  await assert.rejects(f.storage.transaction(transaction=>writeCommandQueueInTransaction(transaction,f.key,[command])),/Legacy native/);assert.deepEqual(f.state(),before);
+  const ordinary=row(2);ordinary.parameters={metadata:{__nativePayloadVersion:1,originDeviceId:'not-a-pointer-at-field-root'}};await append(f,ordinary);assert.deepEqual((await readCommandQueue(f.storage,f.key))[0],ordinary);
 });

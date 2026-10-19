@@ -251,6 +251,80 @@ function validateRows(rows,maximum=COMMAND_QUEUE_LIMITS.legacyCommands){
   return rows;
 }
 
+const legacyPayloadTag="__nativePayloadVersion",legacyPartChars=64000;
+const hasLegacyPayloadTag=value=>value!==null&&typeof value==="object"&&Object.hasOwn(value,legacyPayloadTag);
+// Historical blob keys concatenate these identities with ':'. Reject ambiguous
+// components rather than allowing one identity to select another namespace.
+const legacyPayloadIdentity=value=>typeof value==="string"&&/^[A-Za-z0-9_.-]{1,128}$/.test(value);
+function rejectNewLegacyPayloadRefs(rows){
+  if(rows.some(row=>hasLegacyPayloadTag(row.parameters)||hasLegacyPayloadTag(row.result)))
+    throw new Error("Legacy native payload references must be hydrated before writing current command queues");
+}
+
+/** Read-only bridge for 71d9502's six-field refs and UTF-16 string chunks.
+ * New writes still use the checksummed queue generation, never this format.
+ */
+async function hydrateLegacyQueueFields(storage,key,rows){
+  const refs=[];
+  for(const row of rows)for(const field of ["parameters","result"]){
+    const ref=row[field];if(!hasLegacyPayloadTag(ref))continue;
+    const maximum=field==="parameters"?COMMAND_QUEUE_LIMITS.commandBytes:COMMAND_QUEUE_LIMITS.resultBytes;
+    const deviceId=typeof key==="string"&&key.startsWith("app-v3-cl:")?key.slice(10):null;
+    if(Array.isArray(ref)||Object.keys(ref).length!==6
+      ||Object.keys(ref).some(name=>![legacyPayloadTag,"originDeviceId","commandId","field","parts","length"].includes(name))
+      ||ref[legacyPayloadTag]!==1||!legacyPayloadIdentity(deviceId)||row.protocolVersion!==3||row.deviceId!==deviceId
+      ||!legacyPayloadIdentity(row.id)||ref.commandId!==row.id||ref.field!==field||!legacyPayloadIdentity(ref.originDeviceId)
+      ||!Number.isSafeInteger(ref.length)||ref.length<1||ref.length>maximum
+      ||!Number.isSafeInteger(ref.parts)||ref.parts!==Math.ceil(ref.length/legacyPartChars))
+      throw new Error("Legacy native payload reference identity, format or bounded size is invalid");
+    if(ref.originDeviceId!==deviceId&&row.migratedFromDeviceId!==ref.originDeviceId)
+      throw new Error("Legacy native payload origin differs from its queue device");
+    refs.push({row,field,ref,deviceId,maximum});
+  }
+  if(!refs.length)return rows;
+  // Validate every namespace before reading any blob. A migratedFrom label is
+  // not authorization: the old producer retained refs across proven aliases.
+  const origins=new Set();
+  for(const {ref,deviceId} of refs)if(ref.originDeviceId!==deviceId&&!origins.has(ref.originDeviceId)){
+    let origin,canonical;
+    try{
+      origin=await readNativeDeviceInTransaction(storage,"app-device:"+ref.originDeviceId);
+      canonical=await readNativeDeviceInTransaction(storage,"app-device:"+deviceId);
+    }catch{throw new Error("Legacy native payload origin registration proof is invalid");}
+    if(!origin||!canonical||origin.supersededByDeviceId!==deviceId||canonical.supersededByDeviceId
+      ||!validDigest(origin.ownerHash)||!validDigest(canonical.ownerHash)
+      ||!Array.isArray(canonical.ownerAliases)||!canonical.ownerAliases.includes(origin.ownerHash))
+      throw new Error("Legacy native payload origin lacks registered alias ownership proof");
+    origins.add(ref.originDeviceId);
+  }
+  let expandedBytes=bytesOf(rows).byteLength;
+  const resultRefs=new Set();
+  for(const {row,field,ref,maximum} of refs){
+    const pieces=[];
+    for(let part=0;part<ref.parts;part++){
+      const piece=await storage.get(`app-v3-blob:${ref.originDeviceId}:${row.id}:${field}:${part}`);
+      if(typeof piece!=="string"||piece.length!==Math.min(legacyPartChars,ref.length-part*legacyPartChars))
+        throw new Error("Archived native payload chunk is missing, truncated or corrupt; original queue is retained");
+      pieces.push(piece);
+    }
+    // The historical length counts UTF-16 code units, not UTF-8 bytes. Join
+    // before encoding so a split surrogate pair remains exact at the boundary.
+    const text=pieces.join("");
+    if(text.length!==ref.length||encoder.encode(text).byteLength>maximum)
+      throw new Error("Archived native payload exceeds its bounded 2 MiB UTF-8 budget");
+    let value;try{value=JSON.parse(text);}catch{throw new Error("Archived native payload JSON is corrupt; original queue is retained");}
+    requireBoundedJson(value);
+    if(hasLegacyPayloadTag(value))throw new Error("Archived native payload cannot redirect to another legacy pointer");
+    expandedBytes+=bytesOf(value).byteLength-bytesOf(ref).byteLength;
+    if(expandedBytes>COMMAND_QUEUE_LIMITS.totalBytes)
+      throw new Error("Archived native payload hydration exceeds the bounded queue budget; original queue is retained");
+    row[field]=value;if(field==="result")resultRefs.add(row);
+  }
+  validateRows(rows);
+  for(const row of resultRefs)if(row.resultSha256!==undefined)await retainedCommandResultSha256(row);
+  return rows;
+}
+
 /** Must run inside the caller's storage transaction when sharing multiple queues. */
 export async function readCommandQueueInTransaction(storage,key){
   const manifest=await storage.get(manifestKey(key)),legacy=await storage.get(key),format=await storage.get(formatKey(key));
@@ -268,7 +342,7 @@ export async function readCommandQueueInTransaction(storage,key){
     }
     const rows=validateRows(legacy);
     if(bytesOf(rows).byteLength>COMMAND_QUEUE_LIMITS.totalBytes)throw new Error("Legacy command queue exceeds its bounded storage budget");
-    return JSON.parse(jsonOf(rows)).sort((a,b)=>a.seq-b.seq||a.id.localeCompare(b.id));
+    return hydrateLegacyQueueFields(storage,key,JSON.parse(jsonOf(rows)).sort((a,b)=>a.seq-b.seq||a.id.localeCompare(b.id)));
   }
   if(format!==1)throw new Error("Command queue format proof is missing");
   if(manifest?.receiptVersion!==undefined&&manifest.receiptVersion!==1)throw new Error("Command queue receipt format proof is invalid");
@@ -290,12 +364,13 @@ export async function readCommandQueueInTransaction(storage,key){
   let rows;try{rows=JSON.parse(decoder.decode(bytes));}catch{throw new Error("Command queue JSON is corrupt");}
   validateRows(rows);
   if(rows.length!==manifest.count)throw new Error("Command queue count differs from its durable manifest");
-  return rows.sort((a,b)=>a.seq-b.seq||a.id.localeCompare(b.id));
+  return hydrateLegacyQueueFields(storage,key,rows.sort((a,b)=>a.seq-b.seq||a.id.localeCompare(b.id)));
 }
 
 /** Prunes terminal history only; accepted pending work is never truncated. */
 export async function writeCommandQueueInTransaction(storage,key,input,preserveIds=new Set()){
   validateRows(input,2*COMMAND_QUEUE_LIMITS.legacyCommands);
+  rejectNewLegacyPayloadRefs(input);
   const rows=validateRows(JSON.parse(jsonOf(input)),2*COMMAND_QUEUE_LIMITS.legacyCommands).sort((a,b)=>a.seq-b.seq);
   const ledger=await readTerminalLedger(storage,key),known=new Map(ledger.map(record=>[record.id,record])),pruned=[];
   for(const row of rows){
@@ -352,6 +427,7 @@ export function requireCommandQueueAdmission(rows,next){
   if(rows.filter(commandIsPending).length>=COMMAND_QUEUE_LIMITS.commands)throw new Error("Native command queue is full; drain accepted work before adding commands");
   if(next){
     validateRows([next]);
+    rejectNewLegacyPayloadRefs([next]);
     const active=rows.filter(commandIsPending);
     if(bytesOf([...active,next].map(immutableRequest)).byteLength>COMMAND_QUEUE_LIMITS.totalBytes-COMMAND_QUEUE_LIMITS.resultBytes-COMMAND_QUEUE_LIMITS.metadataBytes*COMMAND_QUEUE_LIMITS.commands)
       throw new Error("Native command queue is full; the result-reserved JSON byte budget would be exceeded");
