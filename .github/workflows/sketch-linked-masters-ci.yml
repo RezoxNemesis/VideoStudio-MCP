@@ -1,8 +1,5 @@
 name: Sketch Linked Masters Phase 1 QA
 on:
-  push:
-    branches:
-      - feat/video-studio-master-linked-artwork-p1-20261019
   pull_request:
     branches:
       - release/v486-source-base-20261019
