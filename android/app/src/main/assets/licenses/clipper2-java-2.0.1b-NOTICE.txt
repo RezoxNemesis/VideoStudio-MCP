@@ -1,0 +1,20 @@
+Clipper2-java 2.0.1b
+
+Java port by micycle1 of Clipper2 (Angus Johnson).
+Upstream: https://github.com/micycle1/Clipper2-java
+Source tag: 2.0.1b
+Source commit: 33f876605afc9021e11411cf1bbc17a4fccdee99
+License: Boost Software License 1.0 (full text alongside this notice).
+
+Public artifact: com.github.micycle1:Clipper2-java:2.0.1b
+Artifact URL: https://jitpack.io/com/github/micycle1/Clipper2-java/2.0.1b/Clipper2-java-2.0.1b.jar
+Vendored unchanged for offline builds: android/app/libs/clipper2-java-2.0.1b.jar
+Artifact SHA-256: a525004bae007dec9b2254ea690adbf7b235dda7fc2aa02b88cef5f349e357ac
+Artifact size: 120192 bytes
+Runtime classes: Java class version 52 (Java 8); no runtime dependencies.
+The multi-release archive also contains Java 9 module metadata (class version 53).
+Android SDK D8 conversion at minimum API 29 was verified separately.
+
+VideoStudio uses only vector polygon Boolean operations for cel hand ink.
+Native Android paths/Canvas remain the renderer. No external renderer, artwork
+or runtime network service is used. Legacy smooth rendering does not use it.

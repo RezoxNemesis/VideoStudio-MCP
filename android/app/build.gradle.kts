@@ -79,6 +79,7 @@ tasks.matching {
 
 dependencies {
     implementation("androidx.core:core:1.15.0")
+    implementation(files("libs/clipper2-java-2.0.1b.jar"))
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.robolectric:robolectric:4.14.1")
     // Free, actual GPU skinned glTF 2.0 model runtime; NOT 2D image to 3D inference.
