@@ -55,6 +55,10 @@ Validation rejects locked layers, out-of-range frames, invalid transforms and un
 
 Limits are inherited from native Sketch: up to 32 layers, 1,200 frames, 4,096 objects, 4,096 keys and 4 MiB per document. Larger film productions should use paged sequences, shot-based composition and the established export pipeline, not a single enormous editable document.
 
+## Version and signing compatibility
+
+The development base checked on October 19 declares `versionName = "4.8.4"` and `versionCode = 487`, while the owner reports running VideoStudio **4.8.6**. This feature branch is **not an installable upgrade**. Before packaging, reconcile with the authoritative 4.8.6 source and ensure a strictly increasing Android versionCode while retaining the pinned owner signing certificate and the existing applicationId. Do not install a downgrade or rotate keys simply to make an APK build green.
+
 ## QA and release gate
 
 Run the targeted Android tests:
