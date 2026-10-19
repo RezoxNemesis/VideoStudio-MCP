@@ -318,6 +318,69 @@ final class SketchHandGeometry {
     private static Path celInterior(Path skin,double guard)throws Exception {
         Paint edge=new Paint();edge.setStyle(Paint.Style.STROKE);edge.setStrokeWidth((float)(guard*2));edge.setStrokeJoin(Paint.Join.ROUND);Path border=new Path();edge.getFillPath(skin,border);Path inside=new Path(skin);celOp(inside,border,Path.Op.DIFFERENCE);return inside;
     }
+    private static final class SkinContour {
+        final Path path;final List<V> points=new ArrayList<>();final RectF box=new RectF();
+        final double area2,perimeter;double ulpX,ulpY;
+        SkinContour(Path path,double perimeter){
+            this.path=path;this.perimeter=perimeter;path.computeBounds(box,true);float[] a=path.approximate(.0001f);
+            for(int i=0;i<a.length;i+=3){V p=new V(a[i+1],a[i+2],0);if(points.isEmpty()||p.x!=points.get(points.size()-1).x||p.y!=points.get(points.size()-1).y)points.add(p);ulpX=Math.max(ulpX,Math.ulp(a[i+1]));ulpY=Math.max(ulpY,Math.ulp(a[i+2]));}
+            if(points.size()>1&&points.get(0).x==points.get(points.size()-1).x&&points.get(0).y==points.get(points.size()-1).y)points.remove(points.size()-1);
+            double sum=0;if(!points.isEmpty()){V origin=points.get(0);for(int i=1;i+1<points.size();i++)sum+=skinCross(origin,points.get(i),points.get(i+1));}area2=sum;
+        }
+    }
+    private static double skinCross(V a,V b,V c){return (b.x-a.x)*(c.y-a.y)-(b.y-a.y)*(c.x-a.x);}
+    /** Float projection can leave a sub-ULP closed gap along a shared skin
+     * edge. Its fill is negligible but stroking that hole draws a full dark
+     * line. Canonicalize only unresolved INTERNAL holes before any insets or
+     * detail clipping. Outer boundaries, open gaps and nested islands survive.
+     * Both average width and the entire convex-hull strip must fit within one
+     * directional float spacing plus the Boolean's one-micropixel grid, capped
+     * below the ordinary cel export approximation. No geometry is displaced. */
+    private static Path celSkinCoverage(Path source){
+        List<SkinContour> contours=new ArrayList<>();PathMeasure measure=new PathMeasure(source,false);
+        do{Path path=new Path();if(measure.getSegment(0,measure.getLength(),path,true)){path.close();contours.add(new SkinContour(path,measure.getLength()));}}while(measure.nextContour());
+        boolean[] remove=new boolean[contours.size()];boolean changed=false;
+        for(int i=0;i<contours.size();i++){
+            SkinContour candidate=contours.get(i);if(candidate.points.isEmpty()||candidate.perimeter==0||!skinUnresolvedStrip(candidate))continue;
+            int depth=0;double parentArea=Double.POSITIVE_INFINITY,parentSign=0;boolean protectedBoundary=false;
+            for(int j=0;j<contours.size();j++)if(i!=j){
+                SkinContour other=contours.get(j);if(other.points.isEmpty())continue;
+                if(candidate.box.right<other.box.left||candidate.box.left>other.box.right||candidate.box.bottom<other.box.top||candidate.box.top>other.box.bottom)continue;
+                // Touching/crossing contours are ambiguous, not closed holes.
+                for(int a=0;a<candidate.points.size()&&!protectedBoundary;a++)for(int b=0;b<other.points.size();b++)if(skinSegmentsMeet(candidate.points.get(a),candidate.points.get((a+1)%candidate.points.size()),other.points.get(b),other.points.get((b+1)%other.points.size()))){protectedBoundary=true;break;}
+                if(protectedBoundary)break;
+                // Any nested contour, including a minute skin island, protects
+                // its parent hole. Use exact segment/ray signs, no edge epsilon.
+                for(V p:other.points)if(skinLocation(candidate.points,p)!=0){protectedBoundary=true;break;}
+                if(protectedBoundary)break;
+                if(other.area2!=0&&skinLocation(other.points,candidate.points.get(0))==1){depth++;if(Math.abs(other.area2)<parentArea){parentArea=Math.abs(other.area2);parentSign=Math.signum(other.area2);}}
+            }
+            boolean holeWinding=source.getFillType()==Path.FillType.EVEN_ODD||candidate.area2==0||Math.signum(candidate.area2)!=parentSign;
+            if(!protectedBoundary&&(depth&1)==1&&holeWinding){remove[i]=true;changed=true;}
+        }
+        if(!changed)return source;Path result=new Path();result.setFillType(source.getFillType());for(int i=0;i<contours.size();i++)if(!remove[i])result.addPath(contours.get(i).path);return result;
+    }
+    private static boolean skinUnresolvedStrip(SkinContour contour){
+        if(Math.abs(contour.area2)/contour.perimeter>=.00025)return false;
+        List<V> sorted=new ArrayList<>(contour.points);sorted.sort((a,b)->a.x==b.x?Double.compare(a.y,b.y):Double.compare(a.x,b.x));List<V> hull=new ArrayList<>();
+        for(V p:sorted){while(hull.size()>1&&skinCross(hull.get(hull.size()-2),hull.get(hull.size()-1),p)<=0)hull.remove(hull.size()-1);hull.add(p);}int lower=hull.size();
+        for(int i=sorted.size()-2;i>=0;i--){V p=sorted.get(i);while(hull.size()>lower&&skinCross(hull.get(hull.size()-2),hull.get(hull.size()-1),p)<=0)hull.remove(hull.size()-1);hull.add(p);}if(hull.size()>1)hull.remove(hull.size()-1);
+        if(hull.size()<2)return true;double width=Double.POSITIVE_INFINITY,precision=0;
+        for(int i=0;i<hull.size();i++){V a=hull.get(i),b=hull.get((i+1)%hull.size());double dx=b.x-a.x,dy=b.y-a.y,length=Math.hypot(dx,dy);if(length==0)continue;double maximum=0;for(V p:hull)maximum=Math.max(maximum,Math.abs(skinCross(a,b,p))/length);
+            if(maximum<width){width=maximum;precision=Math.min(.00025,(Math.abs(dy)*contour.ulpX+Math.abs(dx)*contour.ulpY)/length+.000001);}
+        }
+        return width<=precision&&Math.abs(contour.area2)/contour.perimeter<=precision;
+    }
+    // 1 inside, 0 outside, -1 on the boundary. Float vertices are evaluated in
+    // local double differences; no global-coordinate near-edge probe is used.
+    private static int skinLocation(List<V> polygon,V p){boolean inside=false;for(int i=0,j=polygon.size()-1;i<polygon.size();j=i++){
+        V a=polygon.get(j),b=polygon.get(i);if(skinCross(a,b,p)==0&&p.x>=Math.min(a.x,b.x)&&p.x<=Math.max(a.x,b.x)&&p.y>=Math.min(a.y,b.y)&&p.y<=Math.max(a.y,b.y))return -1;
+        if((a.y>p.y)!=(b.y>p.y)&&p.x-a.x<(b.x-a.x)*(p.y-a.y)/(b.y-a.y))inside=!inside;
+    }return inside?1:0;}
+    private static boolean skinSegmentsMeet(V a,V b,V c,V d){
+        if(Math.max(a.x,b.x)<Math.min(c.x,d.x)||Math.min(a.x,b.x)>Math.max(c.x,d.x)||Math.max(a.y,b.y)<Math.min(c.y,d.y)||Math.min(a.y,b.y)>Math.max(c.y,d.y))return false;
+        double ac=skinCross(a,b,c),ad=skinCross(a,b,d),ca=skinCross(c,d,a),cb=skinCross(c,d,b);return (ac==0||ad==0||Math.signum(ac)!=Math.signum(ad))&&(ca==0||cb==0||Math.signum(ca)!=Math.signum(cb));
+    }
     /** Suppress only detached marks too small to read as a crease. This runs
      * after exact seating and depth clipping. Native difference preserves every
      * retained boundary/occluded gap; it never bridges or fills missing ink.
@@ -407,7 +470,11 @@ final class SketchHandGeometry {
         }
         // A tiny native vector inset prevents float-rounding remnants on shared
         // boundaries; at .03 reference pixels it stays beneath the contour ink.
-        double guard=.03*unit/112;Path interior=celInterior(skin,guard);for(int i=0;i<7;i++)owners[i]=celInterior(celUnion(ownerPieces.get(i)),guard);
+        // Resolve holes at each of the two float representations rather than
+        // increasing the tolerance to cover their accumulated rounding error.
+        // Both passes precede every inset, detail clip and visible outline.
+        skin=celSkinCoverage(celEditableCoordinates(celSkinCoverage(skin),width,height));
+        double guard=.03*unit/112;Path interior=celInterior(skin,guard);for(int i=0;i<7;i++)owners[i]=celInterior(celSkinCoverage(celEditableCoordinates(celSkinCoverage(celUnion(ownerPieces.get(i))),width,height)),guard);
         // Skin alone controls the contour/ownership. A crease or nail cannot
         // widen it, float beside a palm, or reappear over an occluding finger.
         List<CelTriangle> skinTriangles=new ArrayList<>();for(Face face:faces)if(face.material==0)for(int t=1;t<face.p.length-1;t++)skinTriangles.add(new CelTriangle(face.p[0],face.p[t],face.p[t+1]));
