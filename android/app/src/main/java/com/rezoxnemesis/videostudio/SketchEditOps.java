@@ -433,6 +433,21 @@ public final class SketchEditOps {
             case "set_shape_key": {
                 JSONObject item=target(doc,op);SketchShapeKeys.apply(item,op,doc.getInt("frameCount"));break;
             }
+            case "motion_tween": {
+                // Adobe Animate-style authored motion expressed as ordinary native key/exposure
+                // operations. The surrounding sketch_edit revision transaction remains atomic.
+                SketchDocument.fields(op,"type,layerId,objectId,startFrame,endFrame,destination,interpolation,extendExposure");
+                int first=(int)SketchDocument.integer(op,"startFrame",0,doc.getInt("frameCount")-1);
+                int last=(int)SketchDocument.integer(op,"endFrame",0,doc.getInt("frameCount")-1);
+                if(op.has("extendExposure"))SketchDocument.bool(op,"extendExposure");
+                JSONArray tween=SketchAnimateTimelineTools.motionTween(doc,
+                        op.has("layerId")?SketchDocument.id(op,"layerId"):null,
+                        op.has("objectId")?SketchDocument.id(op,"objectId"):null,
+                        first,last,op.getJSONObject("destination"),
+                        op.optString("interpolation","smooth"),op.optBoolean("extendExposure",false));
+                for(int i=0;i<tween.length();i++)apply(doc,tween.getJSONObject(i));
+                break;
+            }
             case "set_keyframe": {
                 SketchDocument.fields(op, "type,layerId,objectId,frame,transform,interpolation,curve,remove"); JSONObject item = target(doc, op);
                 int frame = (int) SketchDocument.integer(op, "frame", 0, doc.getInt("frameCount") - 1);
