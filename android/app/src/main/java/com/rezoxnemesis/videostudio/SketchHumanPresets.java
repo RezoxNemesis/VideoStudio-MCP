@@ -47,11 +47,18 @@ final class SketchHumanPresets {
     case "stretch":p.put("nearHandY",-166-205*a).put("farHandY",-166-205*a).put("nearHandX",58+4*a).put("farHandX",-58-4*a).put("headTilt",-8*a).put("hipY",-180+4*a);break;
     case "step_back":p.put("rootZ",-20*a).put("hipY",-180+5*a).put("footLeftZ",-9-25*a).put("footRightZ",9-10*a).put("bodyLean",-6*a);break;
     case "balance":p.put("nearHandX",58+74*a).put("nearHandY",-166-91*a).put("farHandX",-58-74*a).put("farHandY",-166-91*a).put("hipY",-180+5*a).put("headTilt",-6*a);break;
-    case "lift":p.put("nearHandX",58-30*a).put("farHandX",-58+30*a).put("nearHandY",-166-84*a).put("farHandY",-166-84*a).put("hipY",-180+12*a).put("bodyLean",6*a);break;
+    case "lift":
+     // Move both wrists forward as they rise; moderate elbow swivel lowers
+     // the elbows alongside the trunk without tie's inward chest crossing.
+     p.put("nearHandX",58-30*a).put("farHandX",-58+30*a).put("nearHandY",-166-84*a).put("farHandY",-166-84*a)
+      .put("nearHandZ",16+56*a).put("farHandZ",-16+88*a).put("nearElbowSwivel",45*a).put("farElbowSwivel",-45*a).put("hipY",-180+12*a).put("bodyLean",6*a);break;
     case "walk":case "run":gait(p,t,name.equals("run"),motion);break;
    }
    if(Set.of("explain","offer","inspect").contains(name))p.put("nearElbowSwivel",165*a).put("nearWrist",-65*a).put("handOpen",.8);
-   if(name.equals("tie")||name.equals("lift"))p.put("nearElbowSwivel",130*a).put("farElbowSwivel",-130*a).put("nearWrist",-35*a).put("farWrist",35*a).put("handOpen",.35);
+   if(name.equals("tie")||name.equals("lift")){
+    if(name.equals("tie"))p.put("nearElbowSwivel",130*a).put("farElbowSwivel",-130*a);
+    p.put("nearWrist",-35*a).put("farWrist",35*a).put("handOpen",.35);
+   }
    if(name.equals("point")||name.equals("reach"))p.put("nearWrist",-50*a).put("handOpen",.75);
    JSONObject rest=SketchHumanFigure.poseDefaults();for(String key:SketchHumanFigure.POSE_CHANNELS)p.put(key,rest.getDouble(key)+(p.getDouble(key)-rest.getDouble(key))*motion.getDouble("strength"));
    p=SketchHumanGround.applyPlane(p,motion.getDouble("groundSlopeX"),motion.getDouble("groundSlope"),name.equals("walk")||name.equals("run"));
