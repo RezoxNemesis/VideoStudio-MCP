@@ -2072,6 +2072,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         String fileName=sanitizeFileName(p.optString("fileName",
                 "VideoStudio_True_Combat_"+System.currentTimeMillis()+".mp4"));
         boolean render=p.optBoolean("render",true);
+        boolean storyboardMotion=p.optBoolean("storyboardMotion",false);
         String outputId=p.optString("outputProjectId","");
         ProjectStore.Project output;
         if(outputId.isEmpty()){
@@ -2088,6 +2089,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         final ProjectStore.Project target=output;
         final ProjectStore.Project reference=source;
         final String selectedBackground=backgroundMode;
+        final boolean useStoryboardMotion=storyboardMotion;
         final int outWidth=width,outHeight=height,frames=fps;
         final double seconds=duration;
         JSONObject durable=new JSONObject(p.toString());
@@ -2096,6 +2098,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         durable.put("sourceProjectId",sourceId);
         durable.put("fps",fps);
         durable.put("backgroundMode",backgroundMode);
+        durable.put("storyboardMotion",storyboardMotion);
         durable.put("width",width);
         durable.put("height",height);
         durable.put("durationSeconds",duration);
@@ -2118,7 +2121,8 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                         }
                         final android.graphics.Bitmap fixedBackdrop=plate;
                         NativeCombatRigComposer.compose(this,store,target,outWidth,outHeight,
-                                frames,seconds,fixedBackdrop,(current,total,time,impact)->{
+                                frames,seconds,fixedBackdrop,useStoryboardMotion,
+                                (current,total,time,impact)->{
                                     if(current%6==0||current==total||current==1){
                                         int progress=5+(int)(57.0*current/Math.max(1,total));
                                         checkpoint(state,"Combat rig",
@@ -2137,6 +2141,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                     details.put("footPlanting",true);
                     details.put("swordContact",true);
                     details.put("impactRetiming",true);
+                    details.put("storyboardMotion",useStoryboardMotion);
                     details.put("neuralVideoGenerator",false);
                     details.put("generatedFrames",target.clips.size());
                     details.put("backgroundMode",selectedBackground);
@@ -2162,6 +2167,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         result.put("expectedFrames",(int)Math.round(duration*fps));
         result.put("render",render);
         result.put("engine","articulated-two-bone-IK-v1");
+        result.put("storyboardMotion",storyboardMotion);
         result.put("background","source_median".equals(backgroundMode)
                 ?"fixed-estimated-source-scene":"fixed-procedural-city");
         result.put("backgroundMode",backgroundMode);
