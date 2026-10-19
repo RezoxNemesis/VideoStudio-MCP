@@ -51,7 +51,7 @@ public final class SketchDrawingPolicy {
         for (int i = 0; i < operations.length(); i++) {
             JSONObject operation = operations.getJSONObject(i);
             String type = operation.optString("type");
-            if ("trace_reference".equals(type) || "vectorize_reference".equals(type) || "duplicate_cel".equals(type))
+            if ("trace_reference".equals(type) || "vectorize_reference".equals(type) || "duplicate_cel".equals(type) || "master_instance".equals(type))
                 throw rejected("Use authored strokes and geometry instead of tracing or copying existing cel contents");
             if ("paint_stroke".equals(type)) {
                 JSONObject record = operation.optJSONObject("stroke");
