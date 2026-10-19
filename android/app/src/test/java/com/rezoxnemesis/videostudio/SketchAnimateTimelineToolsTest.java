@@ -1,6 +1,8 @@
 package com.rezoxnemesis.videostudio;
 
 import android.content.Context;
+import android.graphics.Bitmap;
+import android.graphics.Color;
 import org.json.JSONArray;
 import org.json.JSONObject;
 import org.junit.Test;
@@ -8,12 +10,14 @@ import org.junit.runner.RunWith;
 import org.robolectric.RobolectricTestRunner;
 import org.robolectric.RuntimeEnvironment;
 import org.robolectric.annotation.Config;
+import org.robolectric.annotation.GraphicsMode;
 import java.util.UUID;
 import static org.junit.Assert.*;
 
 /** Animate-style authored edits must remain native, persisted, undoable and artist-safe. */
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk=33, manifest=Config.NONE)
+@GraphicsMode(GraphicsMode.Mode.NATIVE)
 public final class SketchAnimateTimelineToolsTest {
     private static JSONObject sketch() throws Exception {
         JSONObject doc=SketchDocument.create(new JSONObject().put("sketchId","animate_timeline")
@@ -109,12 +113,41 @@ public final class SketchAnimateTimelineToolsTest {
         rejects(()->SketchEditOps.apply(source,tween("ball",0,20,.5,"smooth")));
     }
 
+    @Test public void changingOneTweenPropertyKeepsExistingDestinationRotation()throws Exception {
+        JSONObject drawing=sketch();
+        JSONObject endpoint=SketchAnimateTimelineTools.insertKey(drawing,null,"ball",20,"hold");
+        endpoint.getJSONObject("transform").put("rotation",33);
+        SketchEditOps.apply(drawing,endpoint);
+        SketchEditOps.apply(drawing,tween("ball",0,20,.5,"linear"));
+        JSONObject object=SketchDocument.object(drawing,"ball");
+        assertEquals(33,SketchDocument.transformAt(object,20).getDouble("rotation"),.00001);
+        assertEquals(.5,SketchDocument.transformAt(object,20).getDouble("x"),.00001);
+        assertEquals(16.5,SketchDocument.transformAt(object,10).getDouble("rotation"),.00001);
+    }
+
+    @Test public void nativeRenderedGeometryMovesThroughActualIntermediateFrames()throws Exception {
+        JSONObject drawing=sketch();
+        SketchEditOps.apply(drawing,tween("ball",0,20,.4,"linear"));
+        try(SketchFrameRenderer renderer=new SketchFrameRenderer(RuntimeEnvironment.getApplication(),drawing)){
+            Bitmap start=renderer.render(0),middle=renderer.render(10),end=renderer.render(20);
+            try{
+                int color=Color.rgb(52,149,176);
+                assertEquals(color,start.getPixel(35,35));
+                assertEquals(Color.WHITE,middle.getPixel(35,35));
+                assertEquals(color,middle.getPixel(86,35));
+                assertEquals(Color.WHITE,end.getPixel(86,35));
+                assertEquals(color,end.getPixel(136,35));
+            }finally{start.recycle();middle.recycle();end.recycle();}
+        }
+    }
+
     @Test public void keyInsertionAndRemovalUseOriginalNativeSchema()throws Exception {
         JSONObject drawing=sketch();
         SketchEditOps.apply(drawing,SketchAnimateTimelineTools.insertKey(drawing,null,"ball",6,"bezier"));
         JSONObject keyed=SketchAnimateTimelineTools.inspect(drawing,null,"ball",6);
         assertTrue(keyed.getBoolean("motionKey"));
         assertEquals("bezier",keyed.getString("interpolation"));
+        rejects(()->SketchAnimateTimelineTools.insertKey(drawing,null,"ball",6,"linear"));
         SketchEditOps.apply(drawing,SketchAnimateTimelineTools.removeKey(drawing,null,"ball",6));
         assertFalse(SketchAnimateTimelineTools.inspect(drawing,null,"ball",6).getBoolean("motionKey"));
         rejects(()->SketchAnimateTimelineTools.removeKey(drawing,null,"ball",6));
