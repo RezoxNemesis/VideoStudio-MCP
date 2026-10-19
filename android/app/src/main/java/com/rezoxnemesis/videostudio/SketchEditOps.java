@@ -23,7 +23,7 @@ public final class SketchEditOps {
         // A hidden guide is preparatory data, not a request to change the
         // foreground drawing. Actual edits and live sessions still follow.
         boolean hiddenGuideImport="sketch_import_reference".equals(action)&&!args.optBoolean("guideVisible",true);
-        if(result.has("sketchId")&&!hiddenGuideImport&&!java.util.Arrays.asList("sketch_get","sketch_reference_layers_preview","sketch_preview","sketch_review","sketch_quality_audit","sketch_list","sketch_live_events","sketch_inspect","sketch_xsheet","sketch_paint_journal","sketch_sample_color").contains(action)){
+        if(result.has("sketchId")&&!hiddenGuideImport&&!java.util.Arrays.asList("sketch_get","sketch_reference_layers_preview","sketch_preview","sketch_review","sketch_quality_audit","sketch_list","sketch_live_events","sketch_inspect","sketch_xsheet","sketch_paint_journal","sketch_sample_color","sketch_master_preview").contains(action)){
             signalChanged(context,action,result);
         }
         return result;
@@ -53,6 +53,7 @@ public final class SketchEditOps {
             if(!"sketch_import_reference_layers".equals(action))SketchDrawingPolicy.requireAction(store.activeDrawingSession(id),action,args);
             if("sketch_reference_layers_preview".equals(action))return SketchReferenceLayers.preview(context,store,args);
             if("sketch_paint_journal".equals(action)||"sketch_sample_color".equals(action))return SketchPaintOps.query(context,store,action,args);
+            if("sketch_master_preview".equals(action))return SketchMasterAssets.preview(store.get(id),args);
             if("sketch_quality_audit".equals(action)){
                 SketchDocument.fields(args,"sketchId,expectedRevision,frameOffset,frameLimit,frameStep,regions,motionRequired,minChangedFraction,minNewCels");
                 JSONObject doc=store.get(id);
@@ -230,7 +231,13 @@ public final class SketchEditOps {
                         if(expectedSessionId!=null)throw SketchDocument.bad("Session-bound drawing imports accept vector operations only");
                         return SketchPaintOps.executeEdit(context,store,id,op,revision,fingerprint,operations);
                     }
-                    JSONArray visual=new JSONArray();boolean additions=true;for(int n=0;n<operations.length();n++)if(!"add_object".equals(operations.getJSONObject(n).optString("type")))additions=false;final boolean appendOnly=additions;
+                    JSONArray visual=new JSONArray();boolean additions=true,masterInstances=true;
+                    for(int n=0;n<operations.length();n++){
+                        String kind=operations.getJSONObject(n).optString("type");
+                        if(!"add_object".equals(kind))additions=false;
+                        if(!"master_instance".equals(kind))masterInstances=false;
+                    }
+                    final boolean appendOnly=additions,appendOnlyMasters=masterInstances;
                     return store.mutate(id, op, revision, fingerprint, doc -> {
                         if(expectedSessionId!=null){
                             JSONObject active=store.activeDrawingSession(id);
@@ -242,6 +249,9 @@ public final class SketchEditOps {
                         // is valid. Store.mutate validates once before commit/history/live events.
                         for (int i=0;i<operations.length();i++){JSONObject operation=operations.getJSONObject(i);
                             if(appendOnly){appendObject(doc,operation);visual.put(operation);continue;}
+                            // All objects are new, canonical and separately named; final transaction validation
+                            // covers the entire growing subset. Avoid O(n^2) per-copy document rescans.
+                            if(appendOnlyMasters){SketchMasterAssets.apply(doc,operation);visual.put(operation);continue;}
                             if("symmetry_stroke".equals(operation.optString("type"))){JSONArray expanded=SketchSymmetry.apply(doc,operation);for(int j=0;j<expanded.length();j++)visual.put(SketchDocument.copy(expanded.getJSONObject(j)));}
                             else if("trace_reference".equals(operation.optString("type"))){JSONObject layer=SketchDocument.layer(doc,operation.getString("layerId"));int before=layer.getJSONArray("objects").length();SketchReferenceTrace.apply(store,doc,operation);for(int j=before;j<layer.getJSONArray("objects").length();j++)visual.put(new JSONObject().put("type","add_object").put("layerId",layer.getString("id")).put("object",layer.getJSONArray("objects").getJSONObject(j)));}
                             else{JSONObject resolved=SketchSpeechAssets.expand(context,doc,operation);apply(doc,resolved);visual.put(resolved);}
@@ -313,6 +323,10 @@ public final class SketchEditOps {
                 for (int i = 0, j = 0; i <= layers.length(); i++) reordered.put(i == index ? selected : layers.getJSONObject(j++));
                 doc.put("layers", reordered); break;
             }
+            case "master_create": case "master_instance": case "master_patch":
+            case "master_override": case "master_clear_override": case "master_detach": {
+                SketchMasterAssets.apply(doc,op);break;
+            }
             case "consolidate_path_runs": {
                 SketchTraceConsolidator.apply(doc,op);break;
             }
@@ -364,6 +378,9 @@ public final class SketchEditOps {
             case "update_object": {
                 SketchDocument.fields(op, "type,objectId,patch"); String id = SketchDocument.id(op, "objectId"); requireUnlocked(SketchDocument.owner(doc, id));
                 JSONObject patch = op.getJSONObject("patch"); SketchDocument.fields(patch, "color,styleId,width,fill,points,bounds,frame,exposure,brush,commands,shapeKeys,gradient,referenceCrop,text,fontFamily,fontSize,fontStyle,textAlign,letterSpacing,hand,human");
+                if(SketchDocument.object(doc,id).has("masterLink"))
+                    for(String field:new String[]{"color","styleId","width","fill","commands","shapeKeys","gradient","brush"})
+                        if(patch.has(field))throw SketchDocument.bad("Linked artwork appearance must be edited with master_patch, master_override or master_detach");
                 JSONObject target=SketchDocument.object(doc,id);
                 // An explicit direct recolor is a deliberate opt-out of the linked palette.
                 if(patch.has("color")&&!patch.has("styleId"))target.remove("styleId");
@@ -435,7 +452,7 @@ public final class SketchEditOps {
                 break;
             }
             case "set_shape_key": {
-                JSONObject item=target(doc,op);SketchShapeKeys.apply(item,op,doc.getInt("frameCount"));break;
+                JSONObject item=target(doc,op);if(item.has("masterLink"))throw SketchDocument.bad("Use master_patch for linked path geometry");SketchShapeKeys.apply(item,op,doc.getInt("frameCount"));break;
             }
             case "set_keyframe": {
                 SketchDocument.fields(op, "type,layerId,objectId,frame,transform,interpolation,curve,remove"); JSONObject item = target(doc, op);
