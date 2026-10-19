@@ -1099,7 +1099,45 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
         }).show();
     }
     private boolean onionEnabled=true;private int onionRange=1,onionAlpha=48;
-    private void framesMenu(){menu("Frames / Cels",new String[]{"Go to frame","Timing / canvas","Exposure","Exposure sheet","Xsheet (read-only)","Copy → next","Cel tools","Onion skin","Onion settings","Film direction"},this::scrubDialog,this::timingDialog,this::exposureDialog,this::bookTimingDialog,this::xsheetDialog,this::duplicateCel,this::celDialog,()->{onionEnabled=!onionEnabled;canvas.setOnion(onionEnabled);saveOnionOptions();onMessage(onionEnabled?"Onion skin on":"Onion skin off");},this::onionDialog,this::sequenceDirectionDialog);}
+    private void framesMenu(){menu("Frames / Cels",new String[]{"Go to frame","Timing / canvas","Exposure","Exposure sheet","Animate timeline ◆","Xsheet (read-only)","Copy → next","Cel tools","Onion skin","Onion settings","Film direction"},this::scrubDialog,this::timingDialog,this::exposureDialog,this::bookTimingDialog,this::animateStyleTimelineDialog,this::xsheetDialog,this::duplicateCel,this::celDialog,()->{onionEnabled=!onionEnabled;canvas.setOnion(onionEnabled);saveOnionOptions();onMessage(onionEnabled?"Onion skin on":"Onion skin off");},this::onionDialog,this::sequenceDirectionDialog);}
+    /** Author editable frame keys and motion tweens through the existing revisioned sketch engine. */
+    private void animateStyleTimelineDialog(){
+        if(document==null||canvas==null)return;
+        if(bookId!=null){onMessage("Open a standalone sketch to edit keyframes. Animation books use their paged cel timing.");return;}
+        try{
+            final JSONObject opened=SketchDocument.copy(document);
+            final String owner=sketchId;
+            final long openedRevision=opened.getLong("revision");
+            SketchAnimateTimelineDialog.show(this,opened,canvas.getFrame(),canvas.getLayerId(),
+                    canvas.getSelectedId(),new SketchAnimateTimelineDialog.Actions(){
+                private boolean fresh(){
+                    if(document!=null&&bookId==null&&owner.equals(sketchId)
+                            &&document.optLong("revision")==openedRevision)return true;
+                    onMessage("This timeline shows an older revision. Reopen Animate timeline to continue editing.");
+                    return false;
+                }
+                @Override public void edit(JSONArray operations,int seekFrame){
+                    if(!fresh())return;
+                    runAction("Timeline edit",()->{
+                        if(!fresh())return;
+                        apply(operations);
+                        if(document!=null&&owner.equals(sketchId))selectFilmstrip(Math.max(0,
+                                Math.min(document.optInt("frameCount")-1,seekFrame)));
+                    });
+                }
+                @Override public void seek(int frame,String layerId){
+                    if(!fresh())return;
+                    runAction("Select frame",()->{
+                        if(!fresh())return;
+                        if(layerIds.contains(layerId))canvas.setLayerId(layerId);
+                        selectFilmstrip(frame);
+                    });
+                }
+                @Override public void library(){if(fresh())runAction("Component library",SketchStudioActivity.this::componentLibraryDialog);}
+                @Override public void xsheet(){if(fresh())xsheetDialog();}
+            });
+        }catch(Exception failure){onMessage(failure.getMessage());}
+    }
     private void xsheetDialog(){
         if(document==null)return;
         if(bookId!=null){onMessage("Xsheet currently shows the selected editable sketch page; open a standalone sketch to view its layer columns.");return;}
