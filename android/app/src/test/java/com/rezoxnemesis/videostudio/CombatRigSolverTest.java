@@ -64,6 +64,37 @@ public class CombatRigSolverTest {
         assertEquals(.082,f.white.freeShoulder.distance(f.white.freeElbow),.00001);
     }
 
+    @Test public void storyboardKnockbackTravelsBeyondBaselineWithoutBreakingBladeContact() {
+        double duration=4.8;
+        CombatRigSolver.Frame contact=CombatRigSolver.at(duration*.53,duration,true);
+        CombatRigSolver.Frame late=CombatRigSolver.at(duration*.83,duration,true);
+        CombatRigSolver.Frame baseline=CombatRigSolver.at(duration*.83,duration);
+        assertTrue(contact.storyboardMotion);
+        assertTrue(contact.swordTipSeparation<.025);
+        assertTrue(contact.impactIntensity>.9);
+        assertTrue("White fighter must actually travel outward after impact",
+                late.white.pelvis.x>baseline.white.pelvis.x+.13);
+        assertTrue("White fighter must drop after impact instead of standing still",
+                late.white.pelvis.y>baseline.white.pelvis.y+.04);
+        assertFalse("Legacy benchmark must remain unchanged",baseline.storyboardMotion);
+    }
+
+    @Test public void storyboardChoreographyStillHasNoTeleportedJoints() {
+        double duration=5;
+        CombatRigSolver.Frame last=CombatRigSolver.at(0,duration,true);
+        for(int frame=1;frame<=250;frame++){
+            CombatRigSolver.Frame now=CombatRigSolver.at(
+                    duration*frame/250.0,duration,true);
+            assertTrue("Black head jump "+frame,
+                    now.black.head.distance(last.black.head)<.03);
+            assertTrue("White head jump "+frame,
+                    now.white.head.distance(last.white.head)<.055);
+            assertTrue("Blade must remain rigid in white hand",
+                    Math.abs(now.white.swordTip.distance(now.white.swordHand)-.145)<.000001);
+            last=now;
+        }
+    }
+
     @Test(expected=IllegalArgumentException.class)
     public void invalidTimelineIsNotExecuted(){CombatRigSolver.at(.2,0);}
 }
