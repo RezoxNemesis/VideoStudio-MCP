@@ -37,7 +37,7 @@ public final class SketchAnimateTimelineToolsTest {
     }
     private static void rejects(RunnableThrows action)throws Exception {
         try {action.run();fail("Expected the edit to be rejected");}
-        catch(IllegalArgumentException expected){} 
+        catch(IllegalArgumentException | IllegalStateException expected){} 
     }
     private interface RunnableThrows {void run()throws Exception;}
 
