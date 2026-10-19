@@ -5,6 +5,14 @@ plugins {
     id("com.android.application")
 }
 
+// Private proof fixtures/output directories are intentionally outside Git and
+// can change between visual generations without changing compiled test classes.
+tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
+    if (!System.getenv("VIDEOSTUDIO_REFERENCE_FIDELITY_FIXTURE").isNullOrBlank()) {
+        outputs.upToDateWhen { false }
+    }
+}
+
 android {
     namespace = "com.rezoxnemesis.videostudio"
     compileSdk = 36
