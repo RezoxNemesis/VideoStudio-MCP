@@ -242,7 +242,11 @@ public final class SketchProjectStore implements AutoCloseable {
             if(paintDetails!=null){SketchDocument.fields(paintDetails,"paintChanges");JSONArray changes=paintDetails.getJSONArray("paintChanges");if(changes.length()>64)throw SketchDocument.bad("At most 64 paint changes per receipt");result.put("paintChanges",new JSONArray(changes.toString()));}
             if(liveOperations!=null&&(liveOperations.length()>32768||liveOperations.toString().getBytes(StandardCharsets.UTF_8).length>8*1024*1024))throw new IllegalStateException("SKETCH_LIVE_EVENT_BUDGET: split generated tracing into smaller atomic batches");
             if(liveOperations!=null&&liveOperations.length()>0){if(context.getFilesDir().getUsableSpace()<16L*1024*1024+liveOperations.toString().getBytes(StandardCharsets.UTF_8).length*3L)throw new IllegalStateException("SKETCH_LIVE_STORAGE_FULL");ContentValues event=new ContentValues();event.put("sketch_id",id);event.put("base_revision",expectedRevision);event.put("revision",next.getLong("revision"));event.put("operations",liveOperations.toString());db.insertOrThrow("sketch_live_events",null,event);trimLiveEvents(id);}
-            saveReceipt(id, operationId, fingerprint, result); db.setTransactionSuccessful(); return result;
+            saveReceipt(id, operationId, fingerprint, result);
+            // Stop All can arrive after preparation, validation or history writes.
+            // Roll the entire uncommitted edit back; an existing receipt above still replays.
+            if(Thread.currentThread().isInterrupted())throw new java.io.InterruptedIOException("SKETCH_EDIT_CANCELLED: drawing change rolled back before commit; retry the operation ID to recover any committed receipt");
+            db.setTransactionSuccessful(); return result;
         } finally { db.endTransaction(); }
     }
     /** A short revision/receipt admission snapshot; expensive immutable painting follows outside SQLite. */

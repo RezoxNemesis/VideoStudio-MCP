@@ -3,6 +3,47 @@ import org.json.*;
 /** Explicit agent instructions for original, prompt-first artwork and visible stroke authoring. */
 public final class SketchCapabilities {
     private SketchCapabilities(){}
+    /** Shared manual/MCP source-assisted raster-part contract; native core owns validation. */
+    public static JSONObject referenceLayers() throws Exception {
+        return new JSONObject()
+                .put("minimumNativeVersion","4.8.5")
+                .put("action","sketch_import_reference_layers")
+                .put("previewAction","sketch_reference_layers_preview")
+                .put("previewReadOnly",true)
+                .put("localEdgeAssistance",true)
+                .put("fullPrecisionHardMasks",true)
+                .put("edgeSnapRadius",new JSONArray(new int[]{0,16}))
+                .put("edgeAssistance","Optional integer edgeSnapRadius 0..16 uses deterministic local source-pixel contrast near each polygon boundary. Omission means 0 and preserves exact coordinates without injecting a request default. Native validates actual accepted rings; ambiguous or invalid adjustments fail or explicitly retain original geometry. This is local edge assistance, not semantic AI recognition. Source pixels and production clock remain unchanged; extraction uses full-precision hard masks.")
+                .put("preview","sketch_reference_layers_preview takes identical import arguments including operationId and prospective output IDs. Read-only source/geometry/budget validation returns acceptedMasks, source/hash binding and a native sketchPreviewImage selection overlay. No files are published and no source artwork is written. A bounded preview never reduces final extraction resolution; sourceMask stores actual accepted rings and hashes.")
+                .put("limits",new JSONObject()
+                .put("maximumMasks",8)
+                .put("maximumRingsPerMask",8)
+                .put("maximumComplementRings",64)
+                .put("minimumPointsPerRing",3)
+                .put("maximumPointsPerRing",64)
+                .put("maximumLayers",32)
+                .put("maximumImageObjects",16)
+                .put("maximumDocumentBytes",4194304)
+                .put("maximumReferenceLongEdge",2048)
+                .put("maximumPngBytes",8388608)
+                .put("maximumRetainedReferenceBytes",134217728)
+                .put("maximumParametersBytes",524288))
+                .put("coordinates","Finite normalized 0..1 point pairs in the full imported EXIF-oriented working image; implicitly closed rings with even-odd fill. Native rejects duplicate, degenerate, self-intersecting or intersecting rings, empty visible parts and overlapping selected visible source pixels.")
+                .put("source","Existing verified owned image reference with mandatory sourceObjectId, expectedReferenceSha256 and expectedSourceSha256; exact expectedRevision and stable operationId. V1 requires an unlocked visible normal opaque layer containing only that image, identity geometric source/layer transforms, no transform keys or referenceCrop; image opacity 0/1 only. original_strokes policy rejects source copying.")
+                .put("output","Source-assisted raster cutouts preserve source pixels and alpha, original bounds, canvas, clock and exposure. Insert optional background then ordered part layers immediately above the source. hideSource is a required boolean; source bytes remain stored. Independent hash-owned PNG dependencies and provenance survive components, archives and ordinary Undo/Redo.")
+                .put("provenance","Optional strict reference.sourceMask: version 1, method source_assisted, sourceReferenceSha256, sourceSha256, operationId, maskId, complement, rings and maskSha256. Native binds canonical version/coordinates/working dimensions/complement to maskSha256 and verifies dependencies. Parts retain at most 8 rings; complement at most 64. Every explicit sourceMask input requires native 4.8.5; omission preserves legacy fingerprints and floors. Opaque component/archive parameters keep existing floors; use native 4.8.5 for provenance-bearing content.")
+                .put("background","Optional complement contains unselected source pixels. Moving parts can reveal transparent missing artwork; no clean plate or hidden-view reconstruction is generated.")
+                .put("recovery","Validate before publication; process parts sequentially with atomic hash-owned files and existing native transaction/history/live-event receipts. Identical operation replay returns its receipt; changed fingerprints or stale source/revision reject. Interruption before commit rejects; an already committed result is acknowledged.")
+                .put("manualControls","Sketch Studio > Separate reference into parts: source selection, named parts, precision tap/drag polygon editing, zoom/pan, point undo, ring holes, optional local edge assistance and read-only Preview before creation share SketchEditOps with MCP. Draft changes invalidate preview acceptance.")
+                .put("agentGuidance","Ordinary ChatGPT calls app_status, requires connected native 4.8.5 and reads sketch_capabilities.referenceLayers. Inspect the owned image and fresh sketch revision/source hashes, author explicit named masks and optionally edgeSnapRadius, then call sketch_reference_layers_preview with identical import arguments and stable prospective identities. Inspect the native overlay, acceptedMasks and source binding before sketch_import_reference_layers with the accepted request; both actions have explicit studio_ aliases. Preserve the accepted coordinates without applying edge assistance a second time; omit edgeSnapRadius or use 0 when submitting already accepted adjusted rings. Use existing transforms, rigs, component save/apply, native preview/export and Undo. This copies source-assisted raster artwork; it does not create original drawings, recovered production layers, vector artwork, semantic AI analysis or hidden views.")
+                .put("sourceArtworkWrite",true)
+                .put("automaticSemanticAnalysis",false)
+                .put("originalDrawingsGenerated",false)
+                .put("hiddenViewReconstruction",false)
+                .put("creativeQualityCertified",false)
+                .put("phoneExecutionVerified",false);
+    }
+
     /** Reusable metadata for the character constructor, independent of its runtime implementation. */
     public static JSONObject characterPerformance() throws Exception {
         return new JSONObject().put("minimumNativeVersion","4.7.8").put("action","sketch_edit").put("operation","add_character_animation")
@@ -446,6 +487,7 @@ public final class SketchCapabilities {
                 .put("preview",new JSONObject().put("action","sketch_preview").put("cropAvailable",true).put("cropMinimumNativeVersion","3.9.3").put("cropCoordinates","normalized-full-canvas").put("returnedCoordinateMap","sourcePixelBounds").put("revisionBound",true))
                 .put("lettering",new JSONObject().put("minimumNativeVersion","3.9.6").put("editable",true).put("nativeFontsOnly",true).put("wrapping",true).put("letterSpacing",true))
                 .put("contentInspection",new JSONObject().put("action","sketch_inspect").put("minimumNativeVersion","3.9.6").put("creativeAcceptance",false))
+                .put("referenceLayers",referenceLayers())
                 .put("referenceImport",new JSONObject().put("minimumNativeVersion","4.0.1").put("workingCopyMaximumLongEdge",2048).put("allExifOrientations",true).put("sourceProvenanceRecorded",true).put("hiddenImportOption","guideVisible: false").put("visibilityOperation","set_reference_visibility").put("visibilityIncludesTransformKeys",true))
                 .put("painting",new JSONObject().put("minimumNativeVersion","4.1.0").put("addCelOperation","add_paint_cel").put("strokeOperation","paint_stroke")
                         .put("modes",new JSONArray(new String[]{"paint","erase","clone"})).put("tips",new JSONArray(new String[]{"round","flat"}))

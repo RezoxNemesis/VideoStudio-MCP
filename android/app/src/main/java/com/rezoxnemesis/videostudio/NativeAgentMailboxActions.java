@@ -23,7 +23,7 @@ final class NativeAgentMailboxActions {
   "sketch_edit",
   "sketch_undo",
   "sketch_redo",
-  "sketch_import_reference",
+  "sketch_import_reference","sketch_import_reference_layers","sketch_reference_layers_preview",
   "sketch_book_create",
   "sketch_book_edit",
   "sketch_book_list",

@@ -1,3 +1,34 @@
+# Active native preview and reference layers — 2026-10-19
+
+Current branch feat/native-preview-layer-workflow-20261019 in
+/workspace/VideoStudio-Anatomy-Sketch, based on verified4.8.4 commit88748eb.
+Target4.8.5/code488. Preserve all earlier studies/source/history/worktrees.
+Owner prioritizes fixing black editor/Sketch/3D preview and an easier precise
+layer workflow in parallel, with manual and ordinaryChatGPT/MCP native parity.
+Read docs/superpowers/specs/2026-10-19-native-reference-layers-design.md and
+its matching implementation plan. Two source-bound actions create named hard
+raster cutouts or read-only preview; local contrast aid is optional, not semantic
+AI. Never claim inferred hidden surfaces, original drawing, genuine3D or visual
+quality from masking/CPU checks. The robot/rose boards are design references.
+Parent owns integrated testing and the sole localGradle process. Workers have
+disjoint files; confirm handoff before editing. NoGallery/externalartsubstitute,
+replacement signer/appidentityreset/merge/deploy/stablepublish. Existing1000+
+creative scenario and voicedlongfilm goals remain unfinished; acceptshorttests
+first. Evidence /workspace/engineering-review/preview-layer-workflow-20261019.
+
+Current implementation is frozen for4.8.5 verification: final103 affected official
+Android checks passed, Node652+306 smoke passed, worker dry-run passed. Source
+features and test evidence are described in
+`docs/continuity/NATIVE_PREVIEW_REFERENCE_LAYERS_20261019.md`.
+The real native4-second mechanical study has96frames at24FPS on512×512,95
+unique raster hashes (not drawings/scenarios), explicit96-frame shoulder bridges,
+all-frame attachment/framing checks, matching neutral endpoints and an editable
+native archive. V2/V3 narrow acceptance was withdrawn after an exposure mistake;
+all generations remain. Detailed human/acting/voice/long-film quality goals are
+unfinished. Two software-emulator boot attempts timed out; no APK was installed.
+Original-signer candidate/fullCI results are written to the external evidence root
+when complete. Preserve the current frozen source during CI; no deploy/publish.
+
 # Active native correction workflow — 2026-10-19
 
 Current worktree /workspace/VideoStudio-Anatomy-Sketch, branch

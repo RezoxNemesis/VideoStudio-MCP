@@ -8,6 +8,22 @@ const text=(max,nonempty=true)=>z.string().max(max).refine(v=>!v.includes('\0')&
 const revision=integer(1,Number.MAX_SAFE_INTEGER),updatedAt=integer(0,Number.MAX_SAFE_INTEGER);
 const time=integer(0,86400000),frame=integer(0,1199),fps=z.union([z.literal(24),z.literal(30),z.literal(60)]);
 const color=z.string().regex(/^#[a-fA-F0-9]{8}$/);
+export const REFERENCE_LAYERS_CAPABILITIES=Object.freeze({
+ minimumNativeVersion:'4.8.5',action:'sketch_import_reference_layers',previewAction:'sketch_reference_layers_preview',previewReadOnly:true,
+ localEdgeAssistance:true,fullPrecisionHardMasks:true,edgeSnapRadius:[0,16],
+ edgeAssistance:'Optional integer edgeSnapRadius 0..16 uses deterministic local source-pixel contrast near each polygon boundary. Omission means 0 and preserves exact coordinates without injecting a request default. Native validates actual accepted rings; ambiguous or invalid adjustments fail or explicitly retain original geometry. This is local edge assistance, not semantic AI recognition. Source pixels and production clock remain unchanged; extraction uses full-precision hard masks.',
+ preview:'sketch_reference_layers_preview takes identical import arguments including operationId and prospective output IDs. Read-only source/geometry/budget validation returns acceptedMasks, source/hash binding and a native sketchPreviewImage selection overlay. No files are published and no source artwork is written. A bounded preview never reduces final extraction resolution; sourceMask stores actual accepted rings and hashes.',
+ limits:{maximumMasks:8,maximumRingsPerMask:8,maximumComplementRings:64,minimumPointsPerRing:3,maximumPointsPerRing:64,maximumLayers:32,maximumImageObjects:16,maximumDocumentBytes:4194304,maximumReferenceLongEdge:2048,maximumPngBytes:8388608,maximumRetainedReferenceBytes:134217728,maximumParametersBytes:524288},
+ coordinates:'Finite normalized 0..1 point pairs in the full imported EXIF-oriented working image; implicitly closed rings with even-odd fill. Native rejects duplicate, degenerate, self-intersecting or intersecting rings, empty visible parts and overlapping selected visible source pixels.',
+ source:'Existing verified owned image reference with mandatory sourceObjectId, expectedReferenceSha256 and expectedSourceSha256; exact expectedRevision and stable operationId. V1 requires an unlocked visible normal opaque layer containing only that image, identity geometric source/layer transforms, no transform keys or referenceCrop; image opacity 0/1 only. original_strokes policy rejects source copying.',
+ output:'Source-assisted raster cutouts preserve source pixels and alpha, original bounds, canvas, clock and exposure. Insert optional background then ordered part layers immediately above the source. hideSource is a required boolean; source bytes remain stored. Independent hash-owned PNG dependencies and provenance survive components, archives and ordinary Undo/Redo.',
+ provenance:'Optional strict reference.sourceMask: version 1, method source_assisted, sourceReferenceSha256, sourceSha256, operationId, maskId, complement, rings and maskSha256. Native binds canonical version/coordinates/working dimensions/complement to maskSha256 and verifies dependencies. Parts retain at most 8 rings; complement at most 64. Every explicit sourceMask input requires native 4.8.5; omission preserves legacy fingerprints and floors. Opaque component/archive parameters keep existing floors; use native 4.8.5 for provenance-bearing content.',
+ background:'Optional complement contains unselected source pixels. Moving parts can reveal transparent missing artwork; no clean plate or hidden-view reconstruction is generated.',
+ recovery:'Validate before publication; process parts sequentially with atomic hash-owned files and existing native transaction/history/live-event receipts. Identical operation replay returns its receipt; changed fingerprints or stale source/revision reject. Interruption before commit rejects; an already committed result is acknowledged.',
+ manualControls:'Sketch Studio > Separate reference into parts: source selection, named parts, precision tap/drag polygon editing, zoom/pan, point undo, ring holes, optional local edge assistance and read-only Preview before creation share SketchEditOps with MCP. Draft changes invalidate preview acceptance.',
+ agentGuidance:'Ordinary ChatGPT calls app_status, requires connected native 4.8.5 and reads sketch_capabilities.referenceLayers. Inspect the owned image and fresh sketch revision/source hashes, author explicit named masks and optionally edgeSnapRadius, then call sketch_reference_layers_preview with identical import arguments and stable prospective identities. Inspect the native overlay, acceptedMasks and source binding before sketch_import_reference_layers with the accepted request; both actions have explicit studio_ aliases. Preserve the accepted coordinates without applying edge assistance a second time; omit edgeSnapRadius or use 0 when submitting already accepted adjusted rings. Use existing transforms, rigs, component save/apply, native preview/export and Undo. This copies source-assisted raster artwork; it does not create original drawings, recovered production layers, vector artwork, semantic AI analysis or hidden views.',
+ sourceArtworkWrite:true,automaticSemanticAnalysis:false,originalDrawingsGenerated:false,hiddenViewReconstruction:false,creativeQualityCertified:false,phoneExecutionVerified:false
+});
 export const CORRECTION_SUPPORTED_OPERATIONS=Object.freeze(['add_layer','update_layer','delete_layer','reorder_layer','add_object','update_object','delete_object','set_transform','set_keyframe','set_shape_key','set_exposure','append_points','add_human_animation','add_hand_animation','add_eye_animation','add_mouth_animation','add_face_animation','add_character_animation','add_motion_study','add_solid','add_solid_collision','add_story_stage','add_actor_prop','add_grip_link','symmetry_stroke']);
 export const CORRECTION_WORKFLOW_CAPABILITIES=Object.freeze({
  minimumNativeVersion:'4.8.4',actions:['sketch_correction_start','sketch_correction_get','sketch_correction_note','sketch_correction_propose','sketch_correction_preview','sketch_correction_apply','sketch_correction_options','sketch_correction_list','sketch_correction_close'],
@@ -252,9 +268,13 @@ const sketchKeys=z.array(z.object({frame,transform:fullTransform,interpolation:d
 const points=z.array(z.tuple([finite.min(0).max(1),finite.min(0).max(1),finite.min(0).max(1)])).min(1).max(131072);
 const bounds=z.object({x:finite.min(0).max(1),y:finite.min(0).max(1),width:finite.min(.0001).max(1),height:finite.min(.0001).max(1)}).strict()
  .refine(v=>v.x+v.width<=1.000001&&v.y+v.height<=1.000001,'Shape bounds must fit the normalized canvas');
+const maskRing=z.array(z.tuple([finite.min(0).max(1),finite.min(0).max(1)])).min(3).max(64);
+const sourceMask=z.object({version:z.literal(1),method:z.literal('source_assisted'),sourceReferenceSha256:sha,sourceSha256:sha,operationId:id,maskId:id,complement:z.boolean(),rings:z.array(maskRing).min(1).max(64),maskSha256:sha}).strict()
+ .refine(v=>v.complement||v.rings.length<=8,'Ordinary source-mask parts retain at most 8 rings');
 const reference=z.object({file:z.string().regex(/^[a-f0-9]{64}\.png$/),sha256:sha,width:integer(1,2048),height:integer(1,2048),sourceProjectId:id,sourceAssetId:id,
- sourceWidth:integer(1,64000000).optional(),sourceHeight:integer(1,64000000).optional(),sourceOrientation:integer(1,8).optional(),sourceSha256:sha.optional()}).strict()
+ sourceWidth:integer(1,64000000).optional(),sourceHeight:integer(1,64000000).optional(),sourceOrientation:integer(1,8).optional(),sourceSha256:sha.optional(),sourceMask:sourceMask.optional()}).strict()
  .refine(v=>v.file===v.sha256+'.png','Reference must use its owned hash-bound PNG filename')
+ .refine(v=>v.sourceMask===undefined||v.sourceMask.sourceSha256===v.sourceSha256,'Source-mask provenance must bind the original reference sourceSha256')
  .refine(v=>(v.sourceWidth===undefined)===(v.sourceHeight===undefined)&&((v.sourceWidth??1)*(v.sourceHeight??1)<=64000000),'Original source dimensions must be paired and within the decode budget');
 const brush=z.object({preset:z.enum(['ink','pencil','marker','airbrush','charcoal','calligraphy']),opacity:finite.min(0).max(1).optional(),hardness:finite.min(0).max(1).optional(),pressure:z.boolean().optional(),angle:finite.min(-180).max(180).optional()}).strict();
 const coordinate=finite.min(0).max(1);
@@ -505,7 +525,12 @@ const storyAudioEvent=z.object({id:storyAudioId,atMs:integer(0,599999),type:z.en
 const storyAudioSettings=z.object({musicGain:coordinate.optional(),ambienceGain:coordinate.optional(),dialogueGain:finite.min(0).max(2).optional(),tempo:finite.min(30).max(180).optional(),
  theme:z.enum(STORY_AUDIO_CAPABILITIES.themes).optional(),ambience:z.enum(STORY_AUDIO_CAPABILITIES.ambiences).optional(),seed:integer(0,2147483647).optional(),
  events:z.array(storyAudioEvent).max(512).refine(v=>new Set(v.map(event=>event.id)).size===v.length,'Audio event IDs must be unique').optional()}).strict();
+const referenceLayersShape={...mutation,sourceObjectId:id,expectedReferenceSha256:sha,expectedSourceSha256:sha,frame,exposure:integer(1,1200),hideSource:z.boolean(),edgeSnapRadius:integer(0,16).optional(),
+  masks:z.array(z.object({maskId:id,layerId:id,objectId:id,name:text(160),rings:z.array(maskRing).min(1).max(8)}).strict()).min(1).max(8),
+  background:z.object({layerId:id,objectId:id,name:text(160)}).strict().optional()};
 export const studioToolSchemas={
+ sketch_import_reference_layers:referenceLayersShape,
+ sketch_reference_layers_preview:referenceLayersShape,
  sketch_correction_start:{sketchId:id,reviewId:id,expectedRevision:revision,target:text(500),frameOffset:frame.optional(),frameLimit:integer(1,24).optional(),frameStep:integer(1,16).optional(),motionRequired:z.boolean().optional()},
  sketch_correction_get:{sketchId:id,reviewId:id},
  sketch_correction_note:{sketchId:id,reviewId:id,expectedReviewRevision:revision,noteId:id,outcome:z.enum(['ACCEPTABLE','NEEDS_REWORK','UNREVIEWED']),note:text(1000),frameStart:frame,frameEnd:frame,objectId:id.optional(),bounds:bounds.optional(),proposalId:id.optional()},
@@ -609,6 +634,11 @@ export function nativeStudioParameters(action,parameters={}){
  if(!parameters||typeof parameters!=='object'||Array.isArray(parameters))throw new Error('Studio parameters must be an object');
  boundedJson(parameters);
  const parsed=z.object(studioToolSchemas[action]).strict().parse(parameters);
+ if(action==='sketch_import_reference_layers'||action==='sketch_reference_layers_preview'){
+  if(parsed.frame+parsed.exposure>1200)throw new Error('Reference exposure exceeds the bounded frame domain');
+  const outputs=[...parsed.masks,...(parsed.background?[parsed.background]:[])];
+  if(new Set(parsed.masks.map(mask=>mask.maskId)).size!==parsed.masks.length||['layerId','objectId'].some(key=>new Set(outputs.map(output=>output[key])).size!==outputs.length)||outputs.some(output=>output.objectId===parsed.sourceObjectId))throw new Error('Reference mask/output IDs must be unique and cannot replace the source object');
+ }
  if(action==='sketch_correction_note'&&parsed.frameEnd<parsed.frameStart)throw new Error('Correction note frameEnd must not precede frameStart');
  if(action==='sketch_correction_propose'){
   const operations=parsed.operations!==undefined,recipe=parsed.recipeId!==undefined&&parsed.objectId!==undefined;
@@ -656,6 +686,8 @@ export function requireStudioVersion(device,action,parameters={}){
  const styledHandObject=object=>object?.kind==='hand'&&object.hand?.settings?.renderStyle!==undefined;
  const styledHandOperation=op=>op.type==='add_hand_animation'&&op.settings?.renderStyle!==undefined||op.type==='add_object'&&styledHandObject(op.object)||op.type==='update_object'&&op.patch?.hand?.settings?.renderStyle!==undefined||op.type==='add_layer'&&(op.layer?.objects||[]).some(styledHandObject);
  const authoringOperations=action==='sketch_edit'?(parameters.operations||[]):action==='sketch_story_create'?(parameters.shots||[]).flatMap(shot=>shot.operations||[]):action==='sketch_story_preview'?(parameters.plan?.shots||[]).flatMap(shot=>shot.operations||[]):[];
+ const maskedReference=object=>object?.reference?.sourceMask!==undefined;
+ if((['sketch_import_reference_layers','sketch_reference_layers_preview'].includes(action)||authoringOperations.some(op=>maskedReference(op.object)||maskedReference(op.patch)||(op.layer?.objects||[]).some(maskedReference)))&&!atLeast(device?.appVersion,'4.8.5'))throw new Error('NATIVE_APP_UPGRADE_REQUIRED: source-assisted reference layers, read-only mask preview and explicit sourceMask provenance require VideoStudio 4.8.5 or newer');
  const anatomySettings=settings=>settings&&(settings.figureStyle!==undefined||settings.constructionGuides!==undefined||['three_quarter_left','three_quarter_right'].includes(settings.view));
  const anatomyObject=object=>object?.kind==='human'&&anatomySettings(object.human?.settings);
  const anatomyOperation=op=>op.type==='add_human_animation'&&anatomySettings(op.settings)||op.type==='add_object'&&anatomyObject(op.object)||op.type==='update_object'&&anatomySettings(op.patch?.human?.settings)||op.type==='add_layer'&&(op.layer?.objects||[]).some(anatomyObject);

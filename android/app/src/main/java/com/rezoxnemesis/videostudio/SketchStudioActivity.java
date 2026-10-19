@@ -36,6 +36,7 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
     private JSONObject document;
     private SketchEditorSession session;
     private SketchCorrectionDialog correctionDialog;
+    private SketchReferenceLayersDialog referenceLayersDialog;
     private final ExecutorService io=Executors.newSingleThreadExecutor();
     private final ExecutorService transfers=Executors.newSingleThreadExecutor();
     private boolean loadingDrawing;
@@ -64,7 +65,7 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
     private final String[] toolValues={"stroke","eraser","line","rect","ellipse","polygon","select","eyedropper","pan","curve","nodes","paint","paint_erase","clone"};
     private String sketchId;
     private SketchCanvasView canvas;
-    private TextView status;
+    private TextView status,previewStatus;
     private SeekBar frames;
     private Spinner layers;
     private final ArrayList<String> layerIds = new ArrayList<>();
@@ -86,6 +87,7 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
         if(notifiedSessionId!=null)watching=true;
         LinearLayout root = column(); root.setPadding(dp(6), dp(2), dp(6), dp(2)); root.setBackgroundColor(StudioUi.BG);getWindow().setStatusBarColor(StudioUi.BG);getWindow().setNavigationBarColor(StudioUi.BG); setContentView(root);
         status = new TextView(this); status.setTextSize(12);status.setTextColor(StudioUi.MUTED);status.setSingleLine(true);status.setEllipsize(android.text.TextUtils.TruncateAt.END);status.setText("Sketch Studio · opening drawing…");root.addView(status);
+        previewStatus=new TextView(this);previewStatus.setTextSize(13);previewStatus.setMinLines(2);previewStatus.setMaxLines(2);previewStatus.setEllipsize(android.text.TextUtils.TruncateAt.END);previewStatus.setTextColor(StudioUi.TEXT);previewStatus.setPadding(dp(6),dp(4),dp(6),dp(4));previewStatus.setBackgroundColor(0xff223247);previewStatus.setText("Loading preview…");previewStatus.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
         LinearLayout projects = row(root);
         button(projects,"File",this::fileMenu);
         liveButton=button(projects,"Draw myself",this::toggleLiveWatch);liveButton.setLayoutParams(new LinearLayout.LayoutParams(0,-2,2));updateLiveControl();
@@ -98,7 +100,10 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
             canvas.setSymmetry(symmetrySettings);canvas.setGuides(grid,symmetry);
         }catch(Exception invalid){symmetry=false;grid=false;try{symmetrySettings=SketchSymmetry.configuration(new JSONObject().put("mode","vertical"));canvas.setSymmetry(null);}catch(Exception impossible){throw new IllegalStateException(impossible);}}
         onionEnabled=getPreferences(MODE_PRIVATE).getBoolean("onionEnabled",true);onionRange=getPreferences(MODE_PRIVATE).getInt("onionRange",1);onionAlpha=getPreferences(MODE_PRIVATE).getInt("onionAlpha",48);canvas.setOnion(onionEnabled);canvas.setOnionOptions(onionRange,onionAlpha);
-        root.addView(canvas, new LinearLayout.LayoutParams(-1, 0, 1));
+        android.widget.FrameLayout viewport=new android.widget.FrameLayout(this);
+        viewport.addView(canvas,new android.widget.FrameLayout.LayoutParams(-1,-1));
+        viewport.addView(previewStatus,new android.widget.FrameLayout.LayoutParams(-1,-2,android.view.Gravity.TOP));
+        root.addView(viewport,new LinearLayout.LayoutParams(-1,0,1));
         LinearLayout tools = row(root); Spinner tool = new Spinner(this);toolPicker=tool;
         String[] names = {"Pen", "Eraser", "Line", "Rectangle", "Ellipse", "Polygon", "Select / move", "Eyedropper", "Pan canvas", "Curve pen", "Edit curve nodes", "Paint brush", "Erase paint", "Clone brush"};
         tool.setAdapter(new ArrayAdapter<String>(this, android.R.layout.simple_spinner_dropdown_item, names){@Override public View getView(int position,View convert,android.view.ViewGroup parent){TextView view=(TextView)super.getView(position,convert,parent);view.setTextColor(StudioUi.TEXT);view.setTextSize(12);view.setSingleLine(true);view.setEllipsize(android.text.TextUtils.TruncateAt.END);return view;}});
@@ -149,7 +154,8 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
         super.onNewIntent(intent);if(intent==null||!SketchLiveNotification.ACTION_WATCH.equals(intent.getAction()))return;
         if(!readDrawingInvitation(intent))return;setIntent(intent);updateLiveControl();
         final String target=notifiedSketchId,stream=notifiedSessionId;SketchEditorSession active=session;
-        ++liveLoadGeneration;++pageGeneration;playing=false;handler.removeCallbacks(playTick);playButton.setText("Play");stopLivePlayer();loadingDrawing=true;
+        // The invitation replaces the book; stopping must not enqueue its old page again.
+        ++liveLoadGeneration;++pageGeneration;stopPlayback(false);stopLivePlayer();loadingDrawing=true;
         Runnable open=()->postUi(()->{if(destroyed||!target.equals(notifiedSketchId)||!stream.equals(notifiedSessionId))return;bookId=null;book=null;loadSketch(target,0);});
         if(active!=null&&active.pending()>0)afterSaves(()->open.run());else open.run();
     }
@@ -157,7 +163,7 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
 
     private void reload() { loadSketch(sketchId,canvas.getFrame()); }
     private void loadSketch(String id,int frame) {
-        if(destroyed)return;loadingDrawing=true;stopLivePlayer();
+        if(destroyed)return;stopPlayback();loadingDrawing=true;stopLivePlayer();
         if(notifiedSketchId!=null&&!notifiedSketchId.equals(id)){notifiedSketchId=null;notifiedSessionId=null;notificationReplayPending=false;}
         if(session!=null&&session.pending()>0){onMessage("Finishing the current drawing save");return;}
         if(session!=null){session.close();session=null;}canvas.setEnabled(false);
@@ -213,9 +219,11 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
     private void afterSaves(IoAction work){if(destroyed)return;SketchEditorSession active=session;io.execute(()->{try{if(active!=null){active.awaitIdle(15000);if(active.error()!=null)throw new IllegalStateException(active.error());}work.run();}catch(Exception error){postUi(()->onMessage(error.getMessage()));}});}
     private JSONObject request() throws Exception { return new JSONObject().put("sketchId", sketchId).put("operationId", UUID.randomUUID().toString()).put("expectedRevision", document.getLong("revision")); }
     @Override public void onSelection(String id) { updateStatus(); }
+    @Override public void onPreviewStatus(String value){if(destroyed||previewStatus==null)return;previewStatus.setText(value);previewStatus.setVisibility(value.isEmpty()?View.GONE:View.VISIBLE);previewStatus.setTextColor(canvas!=null&&canvas.previewFailed()?0xffffb4ab:StudioUi.TEXT);}
+    private void refreshPreview(){if(loadingDrawing||livePlayer!=null||watchInFlight)return;stopPlayback();canvas.refreshPreview();}
     @Override public void onMessage(String message) { if (message != null) Toast.makeText(this, message, Toast.LENGTH_LONG).show(); }
     private void updateStatus() {
-        try { if (document != null) {status.setText((bookId==null?document.getString("name"):book.optString("name")+" · page "+(bookPage+1)+"/"+book.optInt("pageCount")) + " · r" + document.getLong("revision") + " · frame " + (canvas.getFrame() + 1) + "/" + document.getInt("frameCount") + " · " + (bookId==null?document.getInt("fps"):book.getInt("fps")) + " FPS" + (bookId==null?"":" · hold ×"+SketchTimelineTools.exposure(book.optJSONObject("exposures"),bookPage)) + (canvas.getSelectedId() == null ? "" : " · selected")+(session!=null&&session.pending()>0?" · saving":"")+(watching?" · following current work":""));filmstrip.setTimelineKey(bookId==null?"sketch:"+sketchId:"book:"+bookId);filmstrip.setExposures(bookId==null?null:book.optJSONObject("exposures"));filmstrip.setFrames(bookId==null?document.getInt("frameCount"):book.getInt("pageCount"),bookId==null?canvas.getFrame():bookPage);} }
+        try { if (document != null) {status.setText((bookId==null?document.getString("name"):book.optString("name")+" · page "+(bookPage+1)+"/"+book.optInt("pageCount")) + " · r" + document.getLong("revision") + " · frame " + (canvas.getFrame() + 1) + "/" + document.getInt("frameCount") + " · " + (bookId==null?document.getInt("fps"):book.getInt("fps")) + " source FPS" + (bookId==null?"":" · hold ×"+SketchTimelineTools.exposure(book.optJSONObject("exposures"),bookPage)) + (canvas.getSelectedId() == null ? "" : " · selected")+(session!=null&&session.pending()>0?" · saving":"")+(watching?" · following current work":""));filmstrip.setTimelineKey(bookId==null?"sketch:"+sketchId:"book:"+bookId);filmstrip.setExposures(bookId==null?null:book.optJSONObject("exposures"));filmstrip.setFrames(bookId==null?document.getInt("frameCount"):book.getInt("pageCount"),bookId==null?canvas.getFrame():bookPage);} }
         catch (Exception ignored) {}
     }
     private void history(boolean redo) {stopPlayback();afterSaves(()->{SketchEditOps.execute(this,redo?"sketch_redo":"sketch_undo",request());postUi(this::reload);});}
@@ -658,6 +666,7 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
     }
 
     private void onionDialog(){
+        if(playing){onMessage("Onion skin is disabled during playback; your preference is retained");return;}
         LinearLayout form=column();CheckBox enabled=new CheckBox(this);enabled.setText("Show onion skin");enabled.setTextColor(StudioUi.TEXT);enabled.setChecked(onionEnabled);form.addView(enabled);
         EditText distance=input(bookId==null?"Frames on each side (1..3)":"Book shows the adjacent page on each side",String.valueOf(onionRange),true),opacity=input("Onion opacity (0..128)",String.valueOf(onionAlpha),true);distance.setEnabled(bookId==null);form.addView(distance);form.addView(opacity);
         AlertDialog dialog=new AlertDialog.Builder(this).setTitle("Red previous / blue next").setView(form).setPositiveButton("Apply",null).setNegativeButton("Cancel",null).create();dialog.show();dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{try{int range=Integer.parseInt(distance.getText().toString()),alpha=Integer.parseInt(opacity.getText().toString());if(range<1||range>3||alpha<0||alpha>128)throw new IllegalArgumentException("Choose 1..3 onion frames and opacity 0..128");onionEnabled=enabled.isChecked();onionRange=range;onionAlpha=alpha;canvas.setOnion(onionEnabled);canvas.setOnionOptions(range,alpha);saveOnionOptions();dialog.dismiss();}catch(Exception error){onMessage(error.getMessage());}});
@@ -883,16 +892,18 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
     }};
 
     private void setFrame(int index) { stopPlayback(); if (document == null) return; int next = Math.max(0, Math.min(document.optInt("frameCount") - 1, index)); canvas.setFrame(next); frames.setProgress(bookId==null?next:bookPage); updateStatus(); }
-    private void togglePlayback() { if (playing) { stopPlayback(); return; } if (document == null) return; playing = true;++playbackGeneration;bookPlaybackInFlight=false;canvas.setEnabled(false); playStarted = SystemClock.uptimeMillis(); playFirst = canvas.getFrame();if(bookId!=null&&session.pending()>0){playing=false;afterSaves(()->postUi(this::togglePlayback));return;} playButton.setText("Pause");if(bookId==null)postUi(playTick);else {if(bookTimeline==null){stopPlayback();return;}bookPlayFirst=bookTimeline.firstFrame(bookPage);handler.postDelayed(playTick,1);} }
+    private void togglePlayback() { if (playing) { stopPlayback(); return; } if (document == null) return; playing = true;++playbackGeneration;bookPlaybackInFlight=false;canvas.setEnabled(false); playStarted = SystemClock.uptimeMillis(); playFirst = canvas.getFrame();if(bookId!=null&&session.pending()>0){playing=false;afterSaves(()->postUi(this::togglePlayback));return;} canvas.setPlaybackPreview(true);playButton.setText("Pause");if(bookId==null)postUi(playTick);else {if(bookTimeline==null){stopPlayback();return;}bookPlayFirst=bookTimeline.firstFrame(bookPage);handler.postDelayed(playTick,1);} }
     private final Runnable playTick = new Runnable() { @Override public void run() {
         if (!playing || document == null) return; if(bookId!=null){playBookTick();return;}int fps = document.optInt("fps"), count = document.optInt("frameCount"); long elapsed = SystemClock.uptimeMillis() - playStarted;
         long index = elapsed * fps / 1000; int frame = (int) ((playFirst + index) % count); canvas.setFrame(frame); frames.setProgress(frame); updateStatus();
         long nextAt = NativeFrameClock.presentationTimeMs(index + 1, fps); handler.postDelayed(this, Math.max(1, nextAt - elapsed));
     } };
-    private void stopPlayback() { boolean wasPlaying=playing;playing = false;++playbackGeneration;bookPlaybackInFlight=false;android.graphics.Bitmap abandoned=pendingBookBitmap.getAndSet(null);if(abandoned!=null)abandoned.recycle();if(wasPlaying&&bookId!=null&&session!=null&&!destroyed){openBookPage(bookId,bookPage);} handler.removeCallbacks(playTick); if(canvas!=null&&!destroyed)canvas.setEnabled(!loadingDrawing&&(!wasPlaying||bookId==null)&&session!=null&&livePlayer==null);if (playButton != null) playButton.setText("Play"); }
-    @Override protected void onPause() { resumed=false;++liveLoadGeneration;if(livePlayer!=null||watchInFlight){loadingDrawing=true;if(notifiedSessionId!=null)notificationReplayPending=true;}stopLivePlayer();stopPlayback();handler.removeCallbacks(watchTick);super.onPause(); }
-    @Override protected void onResume() { super.onResume();resumed=true;liveSessionId="";if(loadingDrawing&&session!=null&&!activeConstructions.containsKey(loadGeneration+":"+pageGeneration)){if(session.pending()==0)reload();else afterSaves(()->postUi(this::reload));}handler.removeCallbacks(watchTick);handler.postDelayed(watchTick,250); }
-    @Override protected void onDestroy() { destroyed=true;if(correctionDialog!=null)correctionDialog.close();activeConstructions.clear();stopLivePlayer();stopPlayback();handler.removeCallbacksAndMessages(null);if(session!=null)session.close();io.shutdown();transfers.shutdown();if(canvas!=null)canvas.dispose();super.onDestroy(); }
+    private void stopPlayback(){stopPlayback(true);}
+    private void stopPlayback(boolean restoreBookPage) { boolean wasPlaying=playing;playing = false;++playbackGeneration;bookPlaybackInFlight=false;if(canvas!=null)canvas.setPlaybackPreview(false);android.graphics.Bitmap abandoned=pendingBookBitmap.getAndSet(null);if(abandoned!=null)abandoned.recycle();if(restoreBookPage&&wasPlaying&&bookId!=null&&session!=null&&!destroyed){openBookPage(bookId,bookPage);} handler.removeCallbacks(playTick); if(canvas!=null&&!destroyed)canvas.setEnabled(!loadingDrawing&&(!wasPlaying||bookId==null)&&session!=null&&livePlayer==null);if (playButton != null) playButton.setText("Play"); }
+    @Override protected void onPause() { resumed=false;++liveLoadGeneration;if(livePlayer!=null||watchInFlight){loadingDrawing=true;if(notifiedSessionId!=null)notificationReplayPending=true;}stopLivePlayer();stopPlayback();canvas.setPreviewActive(false);handler.removeCallbacks(watchTick);super.onPause(); }
+    @Override protected void onResume() { super.onResume();if(canvas!=null)canvas.setPreviewActive(true);resumed=true;liveSessionId="";if(loadingDrawing&&session!=null&&!activeConstructions.containsKey(loadGeneration+":"+pageGeneration)){if(session.pending()==0)reload();else afterSaves(()->postUi(this::reload));}handler.removeCallbacks(watchTick);handler.postDelayed(watchTick,250); }
+    @Override protected void onStop(){resumed=false;stopPlayback();if(canvas!=null)canvas.setPreviewActive(false);handler.removeCallbacks(watchTick);super.onStop();}
+    @Override protected void onDestroy() { destroyed=true;if(correctionDialog!=null)correctionDialog.close();if(referenceLayersDialog!=null)referenceLayersDialog.close();activeConstructions.clear();stopLivePlayer();stopPlayback();handler.removeCallbacksAndMessages(null);if(session!=null)session.close();io.shutdown();transfers.shutdown();if(canvas!=null)canvas.dispose();super.onDestroy(); }
     @Override protected void onSaveInstanceState(Bundle state) { state.putString("bookId",bookId);state.putInt("bookPage",bookPage);state.putString("sketchId", sketchId); state.putInt("frame", canvas.getFrame());state.putString("notifiedSketchId",notifiedSketchId);state.putString("notifiedSessionId",notifiedSessionId); super.onSaveInstanceState(state); }
     private LinearLayout column() { LinearLayout layout = new LinearLayout(this); layout.setOrientation(LinearLayout.VERTICAL);layout.setBackgroundColor(StudioUi.SURFACE);layout.setPadding(dp(6),dp(2),dp(6),dp(2));return layout; }
     private LinearLayout row(LinearLayout root) { LinearLayout layout = new LinearLayout(this); layout.setOrientation(LinearLayout.HORIZONTAL);root.addView(layout,new LinearLayout.LayoutParams(-1,-2));return layout; }
@@ -900,7 +911,7 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
     // Browsing a menu never takes ownership of an active drawing. Its chosen action
     // goes through the same loading, playback and live-takeover gate as the toolbar.
     private void runAction(String title,Runnable action){try{
-        boolean navigation=java.util.Arrays.asList("File","More","Brush / Text","Layers","Frames / Cels","Workspace","Canvas view","Drawing status","Drawing alerts","Colours","Select layer","Go to frame","Go","Exposure sheet","Onion skin","Onion settings","First","−100","+100","Last","On ones","On twos","On threes","Paint studio","Paint settings","Clone source","Xsheet (read-only)","Linked palette styles","Follow current work","Replay last saved drawing").contains(title);
+        boolean navigation=java.util.Arrays.asList("File","More","Refresh preview","Retry preview","Brush / Text","Layers","Frames / Cels","Workspace","Canvas view","Drawing status","Drawing alerts","Colours","Select layer","Go to frame","Go","Exposure sheet","Onion skin","Onion settings","First","−100","+100","Last","On ones","On twos","On threes","Paint studio","Paint settings","Clone source","Xsheet (read-only)","Linked palette styles","Follow current work","Replay last saved drawing").contains(title);
         if(navigation){action.run();return;}
         if(loadingDrawing&&!java.util.Arrays.asList("New","Open","Sketch books","Draw myself").contains(title)){onMessage("Opening the selected drawing");return;}
         if(playing&&!title.equals("Play")&&!title.equals("Draw myself")){onMessage("Pause playback before changing artwork");return;}
@@ -945,7 +956,19 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
         });
     }
 
-    private void moreMenu(){menu("Drawing tools",new String[]{"Layers","Frames / Cels","2D animation","Workspace","Drawing alerts","Visual QA / Detail","Review & correct","Story → 2D film"},this::layersMenu,this::framesMenu,this::openAnimationStudio,this::workspaceDialog,this::drawingAlerts,this::qualityAuditDialog,this::reviewCorrectionDialog,this::storyFilmDialog);}
+    private void moreMenu(){menu("Drawing tools",new String[]{"Layers","Separate reference into parts","Frames / Cels","2D animation","Workspace","Drawing alerts","Visual QA / Detail","Review & correct","Story → 2D film",canvas.previewFailed()?"Retry preview":"Refresh preview"},this::layersMenu,this::referenceLayersDialog,this::framesMenu,this::openAnimationStudio,this::workspaceDialog,this::drawingAlerts,this::qualityAuditDialog,this::reviewCorrectionDialog,this::storyFilmDialog,this::refreshPreview);}
+    private void referenceLayersDialog(){
+        if(session==null||document==null)return;
+        stopPlayback();final SketchEditorSession origin=session;final String target=sketchId;
+        final int generation=loadGeneration,page=pageGeneration,frame=canvas.getFrame();
+        afterSaves(()->{JSONObject snapshot=SketchDocument.copy(origin.document());postUi(()->{
+            if(session!=origin||generation!=loadGeneration||page!=pageGeneration||!target.equals(sketchId)||destroyed)return;
+            try{if(referenceLayersDialog!=null)referenceLayersDialog.close();referenceLayersDialog=SketchReferenceLayersDialog.show(this,snapshot,frame,result->{
+                if(session!=origin||generation!=loadGeneration||page!=pageGeneration||!target.equals(sketchId)||destroyed)return;
+                loadSketch(target,frame);onMessage("Reference parts created. Undo restores the previous drawing; background gaps need authored artwork.");
+            });}catch(Exception error){onMessage(error.getMessage());}
+        });});
+    }
     private void reviewCorrectionDialog(){
         if(session==null||document==null)return;
         stopPlayback();final SketchEditorSession origin=session;final String target=sketchId;
@@ -1099,7 +1122,7 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
         }).show();
     }
     private boolean onionEnabled=true;private int onionRange=1,onionAlpha=48;
-    private void framesMenu(){menu("Frames / Cels",new String[]{"Go to frame","Timing / canvas","Exposure","Exposure sheet","Xsheet (read-only)","Copy → next","Cel tools","Onion skin","Onion settings","Film direction"},this::scrubDialog,this::timingDialog,this::exposureDialog,this::bookTimingDialog,this::xsheetDialog,this::duplicateCel,this::celDialog,()->{onionEnabled=!onionEnabled;canvas.setOnion(onionEnabled);saveOnionOptions();onMessage(onionEnabled?"Onion skin on":"Onion skin off");},this::onionDialog,this::sequenceDirectionDialog);}
+    private void framesMenu(){menu("Frames / Cels",new String[]{"Go to frame","Timing / canvas","Exposure","Exposure sheet","Xsheet (read-only)","Copy → next","Cel tools","Onion skin","Onion settings","Film direction"},this::scrubDialog,this::timingDialog,this::exposureDialog,this::bookTimingDialog,this::xsheetDialog,this::duplicateCel,this::celDialog,()->{if(playing){onMessage("Onion skin is disabled during playback; your preference is retained");return;}onionEnabled=!onionEnabled;canvas.setOnion(onionEnabled);saveOnionOptions();onMessage(onionEnabled?"Onion skin on":"Onion skin off");},this::onionDialog,this::sequenceDirectionDialog);}
     private void xsheetDialog(){
         if(document==null)return;
         if(bookId!=null){onMessage("Xsheet currently shows the selected editable sketch page; open a standalone sketch to view its layer columns.");return;}

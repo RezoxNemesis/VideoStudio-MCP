@@ -693,11 +693,12 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 case "sketch_edit": complete(command,SketchAgentLiveBridge.edit(this,p));return;
                 case "sketch_create": case "sketch_list": case "sketch_get": case "sketch_inspect": case "sketch_review": case "sketch_quality_audit":
                 case "sketch_paint_journal": case "sketch_sample_color":
-                case "sketch_undo": case "sketch_redo": case "sketch_import_reference":
+                case "sketch_undo": case "sketch_redo": case "sketch_import_reference": case "sketch_import_reference_layers":
                 case "sketch_book_create": case "sketch_book_edit": case "sketch_book_list": case "sketch_book_get": case "sketch_book_open_page": case "sketch_book_timeline": case "sketch_live_begin": case "sketch_live_events": case "sketch_live_end": case "sketch_capabilities": case "sketch_component_save": case "sketch_component_list": case "sketch_component_apply":
                     complete(command,SketchEditOps.execute(this,action,p));return;
                 case "sketch_archive": complete(command,SketchPaintArchive.archive(this,p));return;
                 case "sketch_restore_archive": complete(command,SketchPaintArchive.restore(this,p));return;
+                case "sketch_reference_layers_preview":
                 case "sketch_preview":{
                     JSONObject preview=SketchEditOps.execute(this,action,p);
                     // Existing MCP v3 relays already deliver contactSheet as an
@@ -5562,7 +5563,9 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             case "sketch_story_audio_create": return "Mixing an owned story audio master into a new project";
             case "sketch_edit": case "sketch_undo": case "sketch_redo": return "Editing sketch layers and poses";
             case "sketch_get": case "sketch_list": return "Reading sketch geometry";
+            case "sketch_reference_layers_preview": return "Previewing source-bound reference masks without edits";
             case "sketch_preview": return "Rendering a sketch preview";
+            case "sketch_import_reference_layers": return "Separating owned reference into source-assisted parts";
             case "sketch_import_reference": return "Importing an owned sketch reference";
             case "sketch_import_frame_manifest": case "sketch_import_drawing_manifest": case "sketch_import_drawing_asset": case "sketch_import_animation": return "Importing editable drawings in Sketch Studio";
             case "sketch_render": return "Exporting sketch animation";

@@ -23,7 +23,7 @@ public final class SketchEditOps {
         // A hidden guide is preparatory data, not a request to change the
         // foreground drawing. Actual edits and live sessions still follow.
         boolean hiddenGuideImport="sketch_import_reference".equals(action)&&!args.optBoolean("guideVisible",true);
-        if(result.has("sketchId")&&!hiddenGuideImport&&!java.util.Arrays.asList("sketch_get","sketch_preview","sketch_review","sketch_quality_audit","sketch_list","sketch_live_events","sketch_inspect","sketch_xsheet","sketch_paint_journal","sketch_sample_color").contains(action)){
+        if(result.has("sketchId")&&!hiddenGuideImport&&!java.util.Arrays.asList("sketch_get","sketch_reference_layers_preview","sketch_preview","sketch_review","sketch_quality_audit","sketch_list","sketch_live_events","sketch_inspect","sketch_xsheet","sketch_paint_journal","sketch_sample_color").contains(action)){
             signalChanged(context,action,result);
         }
         return result;
@@ -48,7 +48,10 @@ public final class SketchEditOps {
         try (SketchProjectStore store = new SketchProjectStore(context)) {
             if ("sketch_list".equals(action)) { SketchDocument.fields(args, ""); return new JSONObject().put("sketches", store.list()); }
             String id = SketchDocument.id(args, "sketchId");
-            SketchDrawingPolicy.requireAction(store.activeDrawingSession(id),action,args);
+            // Named-part import recovers an existing receipt before its transactional
+            // policy check. Replaying committed work never copies pixels into a later session.
+            if(!"sketch_import_reference_layers".equals(action))SketchDrawingPolicy.requireAction(store.activeDrawingSession(id),action,args);
+            if("sketch_reference_layers_preview".equals(action))return SketchReferenceLayers.preview(context,store,args);
             if("sketch_paint_journal".equals(action)||"sketch_sample_color".equals(action))return SketchPaintOps.query(context,store,action,args);
             if("sketch_quality_audit".equals(action)){
                 SketchDocument.fields(args,"sketchId,expectedRevision,frameOffset,frameLimit,frameStep,regions,motionRequired,minChangedFraction,minNewCels");
@@ -217,6 +220,7 @@ public final class SketchEditOps {
             }
             long revision = SketchDocument.integer(args, "expectedRevision", 1, Long.MAX_VALUE - 2);
             switch (action) {
+                case "sketch_import_reference_layers": return SketchReferenceLayers.execute(context,store,args,fingerprint);
                 case "sketch_edit":
                     SketchDocument.fields(args, "sketchId,operationId,expectedRevision,operations");
                     JSONArray operations = args.getJSONArray("operations");

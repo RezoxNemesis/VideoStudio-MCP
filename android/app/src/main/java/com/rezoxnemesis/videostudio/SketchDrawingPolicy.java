@@ -35,6 +35,8 @@ public final class SketchDrawingPolicy {
     }
     public static void requireAction(JSONObject session, String action, JSONObject args) throws Exception {
         if (!requiresOriginal(session)) return;
+        if ("sketch_import_reference_layers".equals(action))
+            throw rejected("Named cutouts copy source pixels; use source_assisted outside original drawing");
         if ("sketch_undo".equals(action) || "sketch_redo".equals(action))
             throw rejected("End the original drawing session before using history; history replacement is not a recorded drawing step");
         if ("sketch_import_reference".equals(action) && args.optBoolean("guideVisible", true))

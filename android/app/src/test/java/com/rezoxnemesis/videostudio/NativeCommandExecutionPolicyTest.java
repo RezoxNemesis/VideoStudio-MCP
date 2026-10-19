@@ -38,6 +38,10 @@ public final class NativeCommandExecutionPolicyTest {
     @Test public void retainedResultsAndOwnedDrawingImportsCannotBlockTheUiLooper() {
         assertTrue(NativeCommandExecutionPolicy.requiresBackgroundThread("get_native_result_page"));
         assertTrue(NativeCommandExecutionPolicy.requiresBackgroundThread("sketch_import_drawing_asset"));
+        assertTrue(NativeCommandExecutionPolicy.requiresBackgroundThread("sketch_import_reference_layers"));
+        assertTrue(NativeCommandExecutionPolicy.requiresBackgroundThread("studio_sketch_import_reference_layers"));
+        assertTrue(NativeCommandExecutionPolicy.requiresBackgroundThread("sketch_reference_layers_preview"));
+        assertTrue(NativeCommandExecutionPolicy.requiresBackgroundThread("studio_sketch_reference_layers_preview"));
     }
     @Test public void qualityAuditAndVisualReviewMustNeverRunOnAndroidUiThread() {
         assertTrue("Native quality audit renders many Canvas frames; keep it off UI",

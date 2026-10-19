@@ -11,7 +11,7 @@ import static org.junit.Assert.*;
 @RunWith(RobolectricTestRunner.class) @Config(sdk=33,manifest=Config.NONE)
 public class NativeWorkbenchBridgeTest {
     @Test public void onlyTheClosedKnownAliasesResolveToExistingActions()throws Exception {
-        JSONObject advertised=NativeWorkbenchBridge.capabilities();JSONArray actions=advertised.getJSONArray("canonicalActions");assertEquals(82,actions.length());assertEquals("sketch_review",NativeWorkbenchBridge.canonicalAction("studio_sketch_review"));assertEquals("sketch_quality_audit",NativeWorkbenchBridge.canonicalAction("studio_sketch_quality_audit"));assertEquals("app_execute",advertised.getString("tool"));assertEquals("3.9.0",advertised.getString("minimumNativeVersion"));assertEquals("4.1.0",advertised.getString("paintMinimumNativeVersion"));
+        JSONObject advertised=NativeWorkbenchBridge.capabilities();JSONArray actions=advertised.getJSONArray("canonicalActions");assertEquals(84,actions.length());assertEquals("sketch_review",NativeWorkbenchBridge.canonicalAction("studio_sketch_review"));assertEquals("sketch_quality_audit",NativeWorkbenchBridge.canonicalAction("studio_sketch_quality_audit"));assertEquals("app_execute",advertised.getString("tool"));assertEquals("3.9.0",advertised.getString("minimumNativeVersion"));assertEquals("4.1.0",advertised.getString("paintMinimumNativeVersion"));
         assertEquals("4.4.0",advertised.getString("characterAnimationMinimumNativeVersion"));
         for(String action:new String[]{"sketch_book_timeline","sketch_import_animation","sketch_component_save","sketch_component_list","sketch_component_apply"}){assertEquals(action,NativeWorkbenchBridge.canonicalAction("studio_"+action));assertTrue(NativeCommandExecutionPolicy.requiresBackgroundThread("studio_"+action));}
         assertEquals("4.7.0",advertised.getString("featureLengthSketchMinimumNativeVersion"));
@@ -31,6 +31,24 @@ public class NativeWorkbenchBridgeTest {
         }
         for(int i=0;i<actions.length();i++){String action=actions.getString(i);assertEquals(action,NativeWorkbenchBridge.canonicalAction("studio_"+action));assertEquals(action,NativeWorkbenchBridge.canonicalAction(action));}
         for(String unknown:new String[]{"studio_gallery_list","studio_delete_project","studio_run_shell","studio_unknown_action","studio_studio_sketch_edit","studio_cinematic_3d_save_program/execute","Studio_sketch_edit","studio_"})assertEquals(unknown,NativeWorkbenchBridge.canonicalAction(unknown));assertNull(NativeWorkbenchBridge.canonicalAction(null));
+    }
+    @Test public void referenceLayersAliasUsesSharedMailboxAndBackgroundRoute()throws Exception {
+        String action="sketch_import_reference_layers";
+        assertEquals(action,NativeWorkbenchBridge.canonicalAction("studio_"+action));
+        assertTrue(NativeAgentMailboxActions.supports(action));
+        assertTrue(NativeCommandExecutionPolicy.requiresBackgroundThread(action));
+        assertTrue(NativeCommandExecutionPolicy.requiresBackgroundThread("studio_"+action));
+        assertEquals("4.8.5",NativeWorkbenchBridge.capabilities().getString("referenceLayersMinimumNativeVersion"));
+        assertEquals("4.8.5",NativeWorkbenchBridge.capabilities().getString("sourceMaskMinimumNativeVersion"));
+    }
+    @Test public void referencePreviewAliasIsExplicitAndRunsOnTheBackgroundLane()throws Exception {
+        String action="sketch_reference_layers_preview";
+        assertEquals(action,NativeWorkbenchBridge.canonicalAction("studio_"+action));
+        assertTrue(NativeAgentMailboxActions.supports(action));
+        assertTrue(NativeAgentMailboxActions.supports("studio_"+action));
+        assertTrue(NativeCommandExecutionPolicy.requiresBackgroundThread(action));
+        assertTrue(NativeCommandExecutionPolicy.requiresBackgroundThread("studio_"+action));
+        assertEquals("4.8.5",NativeWorkbenchBridge.capabilities().getString("referenceLayersPreviewMinimumNativeVersion"));
     }
     @Test public void flatParametersCredentialsAndPrivateBookkeepingStayExactAndIndependent()throws Exception {
         JSONObject parameters=new JSONObject().put("projectId","owned_source").put("sourceProjectUpdatedAt",9223372036854775800L).put("requestId","job_reference").put("bearer","private-token-in-memory-only").put("_mcpCommandId","command_1").put("_recoveryPlanId","recovery_1").put("assetIds",new JSONArray().put("source_b").put("source_a")).put("settings",new JSONObject().put("strength",.8));

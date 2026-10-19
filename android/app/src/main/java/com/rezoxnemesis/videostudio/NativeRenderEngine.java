@@ -330,8 +330,9 @@ public final class NativeRenderEngine {
                             .build())
                     .build();
             EditedMediaItem.Builder track=new EditedMediaItem.Builder(media)
-                    .setRemoveVideo(true)
-                    .setDurationUs(lane.durationMs*1000L);
+                    .setRemoveVideo(true);
+            // Media3 applies source clipping after durationUs, including sourceInMs.
+            if(asset.durationMs>0)track.setDurationUs(Math.multiplyExact(asset.durationMs,1000L));
             if(lane.gain<.999f){
                 List<AudioProcessor> processors=Collections.singletonList(
                         new GainProcessor(new DefaultGainProvider.Builder(lane.gain).build()));
@@ -567,6 +568,10 @@ public final class NativeRenderEngine {
         }
 
         EditedMediaItem.Builder edited = new EditedMediaItem.Builder(media.build());
+        // CompositionPlayer needs the full source clock before applying trim/speed.
+        // Unknown metadata stays unknown; the interactive player reports it explicitly.
+        if(!image&&asset.durationMs>0)
+            edited.setDurationUs(Math.multiplyExact(asset.durationMs,1000L));
         if (image) edited.setFrameRate(clip.effects != null && (clip.effects.optBoolean("poseInbetween", false)
                     || clip.effects.optBoolean("directorSequenceFrame", false))
                 ? poseFrameRate(clip) : 30);
