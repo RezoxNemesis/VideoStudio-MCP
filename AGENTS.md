@@ -1,3 +1,24 @@
+# Active tailored-body cycle — 2026-10-19
+
+Work only in `/workspace/VideoStudio-Tailored-Body`, branch
+`feat/native-tailored-body-20261019`, based on committed 4.8.1 source
+`fcbad2d952ad4ca449678f8762e636becf48b669`.
+The hand source worktree is FROZEN during its all-frame matrix; do not modify it.
+One local Gradle process at a time; that process currently belongs to the hand
+matrix. Isolated javac/native development is allowed with evidence kept outside
+source, but must not be described as an official Android Gradle check.
+
+Next optional capability: `settings.clothingStyle: legacy|tailored`, target
+4.8.2/code485. Read `docs/superpowers/specs/2026-10-19-native-tailored-body.md`.
+Preserve old settings omission, requests, joint/grip/sole anchors and pixels.
+Use native joint-aware continuous garment surfaces and compression folds;
+removing outlines or covering joints with disks alone is insufficient.
+Preserve every generation and review actual native screenshots/motion, including
+both builds and six views. No Gallery, external drawing renderer, imagegen,
+reference reuse, replacement signer, merge or deployment. Keep manual and MCP
+interfaces shared and strict. The original voiced >=120sec film remains
+NEEDS_REWORK; the expanded1000+scenario programme follows current quality.
+
 # VideoStudio current engineering priority
 
 ## Expanded owner test target — 2026-10-19

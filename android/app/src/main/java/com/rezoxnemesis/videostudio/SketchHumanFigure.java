@@ -20,13 +20,14 @@ final class SketchHumanFigure {
                 .put("coatColor","#FF526B78").put("trouserColor","#FF343F50").put("x",.5).put("floorY",.88).put("size",1).put("faceStyle","graphic").put("shading","cel").put("lightAngle",135);
     }
     static JSONObject settings(JSONObject input)throws Exception {
-        SketchDocument.fields(input,"view,build,hairStyle,skinColor,hairColor,coatColor,trouserColor,x,floorY,size,faceStyle,shading,lightAngle");JSONObject s=defaults();
+        SketchDocument.fields(input,"view,build,hairStyle,skinColor,hairColor,coatColor,trouserColor,x,floorY,size,faceStyle,shading,lightAngle,clothingStyle");JSONObject s=defaults();
         Iterator<String> keys=input.keys();while(keys.hasNext()){String key=keys.next();s.put(key,input.get(key));}
         if(!(s.get("view") instanceof String)||!Set.of("front","left","right","back","high","low").contains(s.getString("view")))throw SketchDocument.bad("Unknown human view");
         if(!(s.get("build") instanceof String)||!Set.of("slender","broad").contains(s.getString("build")))throw SketchDocument.bad("Unknown adult build");
         if(!(s.get("hairStyle") instanceof String)||!Set.of("short","long").contains(s.getString("hairStyle")))throw SketchDocument.bad("Unknown hair style");
         if(!(s.get("faceStyle") instanceof String)||!Set.of("graphic","angular","soft").contains(s.getString("faceStyle")))throw SketchDocument.bad("Unknown face structure");
         if(!(s.get("shading") instanceof String)||!Set.of("cel","soft").contains(s.getString("shading")))throw SketchDocument.bad("Unknown human surface shading");SketchDocument.number(s,"lightAngle",-180,180);
+        if(s.has("clothingStyle")&&(!(s.get("clothingStyle") instanceof String)||!Set.of("legacy","tailored").contains(s.getString("clothingStyle"))))throw SketchDocument.bad("Unknown human clothing style");
         for(String key:new String[]{"skinColor","hairColor","coatColor","trouserColor"}){
             if(!(s.get(key) instanceof String)||!s.getString(key).matches("#[a-fA-F0-9]{8}"))throw SketchDocument.bad("Human colours require #AARRGGBB");SketchDocument.color(s.getString(key));
         }
@@ -104,10 +105,11 @@ final class SketchHumanFigure {
         hand.forearmAngle=Math.atan2(hand.wrist[1]-elbow[1],hand.wrist[0]-elbow[0])-Math.PI/2;
         hand.angle=hand.forearmAngle+Math.toRadians(p.controls.getDouble(near?"nearWrist":"farWrist"));hand.open=p.controls.getDouble("handOpen");return hand;
     }
-    private static final class Camera {
+    static final class Camera {
         final String view;final double yaw,pitch;final boolean profile,back;
         Camera(String view){this.view=view;profile=view.equals("left")||view.equals("right");back=view.equals("back");yaw=view.equals("left")?-Math.PI/2:view.equals("right")?Math.PI/2:back?Math.PI:view.equals("high")?.20:view.equals("low")?-.16:0;pitch=view.equals("high")?.32:view.equals("low")?-.24:0;}
         double depth(double[] p){return -Math.sin(yaw)*p[0]+Math.cos(yaw)*p[2];}
+        double clothDepth(double[] p){return Math.sin(pitch)*p[1]+Math.cos(pitch)*depth(p);}
         double[] point(double[] p){return new double[]{Math.cos(yaw)*p[0]+Math.sin(yaw)*p[2],Math.cos(pitch)*p[1]-Math.sin(pitch)*depth(p)};}
         double[] normal(){return v(-Math.sin(yaw)*Math.cos(pitch),Math.sin(pitch),Math.cos(yaw)*Math.cos(pitch));}
     }
@@ -121,11 +123,13 @@ final class SketchHumanFigure {
         SketchDocument.id(new JSONObject().put("actor",actorId),"actor");if(actorId.length()>32)throw SketchDocument.bad("Human actor identity must fit 32 characters");
         JSONArray layers=doc.getJSONArray("layers");for(int l=0;l<layers.length();l++){JSONArray objects=layers.getJSONObject(l).getJSONArray("objects");for(int i=0;i<objects.length();i++)if(objects.getJSONObject(i).getString("id").startsWith(actorId+"_"))throw SketchDocument.bad("Human actor identity already exists");}
         JSONObject stage=SketchDocument.copy(layer).put("objects",new JSONArray());Painter ink=new Painter(stage,actorId);Camera camera=new Camera(s.getString("view"));
+        ink.tailored=s.optString("clothingStyle","legacy").equals("tailored");ink.broad=s.getString("build").equals("broad");
         String skin=s.getString("skinColor"),coat=s.getString("coatColor"),trousers=s.getString("trouserColor");
         boolean leftNear=camera.depth(p.leftHip)>camera.depth(p.rightHip),plusNear=camera.depth(p.nearShoulder)>=camera.depth(p.farShoulder);
         rearHair(ink,camera,p,s);leg(ink,camera,p,!leftNear,trousers);arm(ink,camera,p,!plusNear,coat,skin);
         leg(ink,camera,p,leftNear,trousers);torso(ink,camera,p,s);head(ink,camera,p,s);
         arm(ink,camera,p,plusNear,coat,skin);
+        if(ink.tailored)ink.order();
         JSONArray additions=stage.getJSONArray("objects");int width=doc.getInt("width"),height=doc.getInt("height");double fit=Math.min(width/1280d,height/720d),size=s.getDouble("size");
         for(int i=0;i<additions.length();i++){
             JSONObject o=additions.getJSONObject(i);JSONArray commands=new JSONArray(o.getJSONArray("commands").toString());o.put("commands",commands);
@@ -142,7 +146,7 @@ final class SketchHumanFigure {
             double pad=o.getBoolean("fill")?0:o.getDouble("width")*Math.min(width,height)/2;
             if(bounds.left-pad<0||bounds.top-pad<0||bounds.right+pad>width||bounds.bottom+pad>height)throw SketchDocument.bad("Human figure leaves its transformed destination canvas");
         }
-        if(s.getString("shading").equals("soft"))materials(additions,width,height,s.getDouble("lightAngle"));
+        if(s.getString("shading").equals("soft")){if(ink.tailored)tailoredMaterials(additions,width,height,s.getDouble("lightAngle"),actorId);else materials(additions,width,height,s.getDouble("lightAngle"));}
         JSONObject candidate=SketchDocument.copy(doc);JSONArray result=SketchDocument.layer(candidate,layerId).getJSONArray("objects");for(int i=0;i<additions.length();i++)result.put(additions.getJSONObject(i));SketchDocument.validate(candidate);
         layer.put("objects",result);
     }
@@ -163,15 +167,30 @@ final class SketchHumanFigure {
         ink.put("gradient",new JSONObject().put("startColor",tone(ink.getString("color"),.11)).put("endColor",tone(ink.getString("color"),-.16))
                 .put("x0",(bounds.centerX()-dx*distance)/width).put("y0",(bounds.centerY()-dy*distance)/height).put("x1",(bounds.centerX()+dx*distance)/width).put("y1",(bounds.centerY()+dy*distance)/height));
     }
+    private static String tailoredMaterial(JSONObject o,String actor)throws Exception{
+        if(!o.getBoolean("fill"))return null;String name=o.getString("id").substring(actor.length()+1);
+        if(name.matches("(near|far)_sleeve_(surface|front)_\\d+")||name.matches("coat_\\d+"))return "coat";
+        if(name.matches("(left|right)_trouser_(surface|panel)_\\d+"))return "trousers";
+        return MATERIAL_PART.matcher(o.getString("id")).matches()?"skin":null;
+    }
+    private static void tailoredMaterials(JSONArray objects,int width,int height,double angle,String actor)throws Exception{
+        Map<String,RectF> fields=new HashMap<>();
+        for(int i=0;i<objects.length();i++){JSONObject o=objects.getJSONObject(i);String role=tailoredMaterial(o,actor);if(role==null)continue;RectF b=new RectF();SketchFrameRenderer.path(o.getJSONArray("commands"),width,height).computeBounds(b,true);if(fields.containsKey(role))fields.get(role).union(b);else fields.put(role,b);}
+        double dx=Math.cos(Math.toRadians(angle)),dy=Math.sin(Math.toRadians(angle));
+        for(int i=0;i<objects.length();i++){JSONObject o=objects.getJSONObject(i);String role=tailoredMaterial(o,actor);if(role==null)continue;RectF b=fields.get(role);if(b.width()<.001||b.height()<.001)continue;double distance=Math.min(Math.abs(dx)<1e-9?Double.POSITIVE_INFINITY:b.width()/(2*Math.abs(dx)),Math.abs(dy)<1e-9?Double.POSITIVE_INFINITY:b.height()/(2*Math.abs(dy)));
+            o.put("gradient",new JSONObject().put("startColor",tone(o.getString("color"),.11)).put("endColor",tone(o.getString("color"),-.16)).put("x0",(b.centerX()-dx*distance)/width).put("y0",(b.centerY()-dy*distance)/height).put("x1",(b.centerX()+dx*distance)/width).put("y1",(b.centerY()+dy*distance)/height));}
+    }
     private interface Paint {void draw(JungleCelInk d)throws Exception;}
     private static final class Painter {
         final JSONObject layer;final String actor;final JungleCelInk drawing;final Map<String,Integer> serial=new HashMap<>();
+        final Map<String,Double> orders=new HashMap<>();boolean tailored,broad;double paintOrder;
         Painter(JSONObject layer,String actor){this.layer=layer;this.actor=actor;drawing=new JungleCelInk(layer).at(640,360,1/16d,0);}
         void part(String name,Paint action)throws Exception {part(name,drawing,action);}
         void part(String name,JungleCelInk drawing,Paint action)throws Exception {
             JSONArray objects=layer.getJSONArray("objects");int before=objects.length();action.draw(drawing);int next=serial.getOrDefault(name,0);
-            for(int i=before;i<objects.length();i++)objects.getJSONObject(i).put("id",actor+"_"+name+"_"+(next++));serial.put(name,next);
+            for(int i=before;i<objects.length();i++){JSONObject o=objects.getJSONObject(i);String id=actor+"_"+name+"_"+(next++);o.put("id",id);orders.put(id,paintOrder);}serial.put(name,next);
         }
+        void order()throws Exception{JSONArray original=layer.getJSONArray("objects");List<JSONObject> sorted=new ArrayList<>();for(int i=0;i<original.length();i++)sorted.add(original.getJSONObject(i));sorted.sort(Comparator.comparingDouble(o->orders.getOrDefault(o.optString("id"),20d)));JSONArray result=new JSONArray();for(JSONObject o:sorted)result.put(o);layer.put("objects",result);}
     }
     private static JungleCelInk.Shape pen(JungleCelInk d,String fill,String stroke,double weight){return d.ink(fill,stroke,weight*16);}
     private static void ellipse(JungleCelInk d,String fill,String stroke,double weight,double x,double y,double rx,double ry)throws Exception {d.ellipse(fill,stroke,weight*16,x,y,rx,ry);}
@@ -191,6 +210,12 @@ final class SketchHumanFigure {
     private static void arm(Painter ink,Camera camera,Skeleton p,boolean plus,String coat,String skin)throws Exception {
         String side=plus?"near":"far";double[] shoulder=plus?p.nearShoulder:p.farShoulder,elbow=plus?p.nearElbow:p.farElbow,wrist=plus?p.nearHand:p.farHand;
         double[] shoulderPoint=camera.point(shoulder),elbowPoint=camera.point(elbow);HandFrame hand=handFrame(camera,p,plus);double[] b=hand.wrist;double open=hand.open;
+        if(ink.tailored){
+            SketchHumanClothingGeometry.DepthPlane torso=new SketchHumanClothingGeometry.DepthPlane(camera,p.hip,p.shoulderCentre);
+            SketchHumanClothingGeometry.Limb cloth=SketchHumanClothingGeometry.limb(camera,shoulder,elbow,wrist,ink.broad?13:12,10.2,5.2,7.5,0,torso);
+            tailoredSleeve(ink,side,cloth,coat,torso.relative(elbow));
+            ink.paintOrder=(torso.relative(wrist)>=0?30:-10)+camera.clothDepth(wrist)*.0001;
+        }else{
         ink.part(side+"_shoulder",d->ellipse(d,coat,null,.8,shoulderPoint[0],shoulderPoint[1],8.3,8.3));
         ink.part(side+"_elbow",d->ellipse(d,coat,null,.75,elbowPoint[0],elbowPoint[1],10,10));
         // The sleeve's elbow allowance overlaps the upper-arm cap rather than sharing
@@ -201,6 +226,7 @@ final class SketchHumanFigure {
         sleeveContour(ink,side,shoulderPoint,camera.point(p.shoulderCentre));
         JungleCelInk fold=ink.drawing.at(elbowPoint[0],elbowPoint[1],1,Math.toDegrees(hand.forearmAngle));
         ink.part(side+"_sleeve_fold",fold,q->pen(q,null,tone(coat,-.28),.5).m(-4,-3).q(-1,-1,2,-2).end());
+        }
         ink.part(side+"_wrist",d->ellipse(d,skin,INK,.5,b[0],b[1],5.6,5.6));
         JungleCelInk cuff=ink.drawing.at(b[0],b[1],1,Math.toDegrees(hand.forearmAngle));
         ink.part(side+"_cuff",cuff,q->pen(q,tone(coat,.20),INK,.5).m(-5.8,-9).q(0,-10,5.8,-9).l(5.1,.5).q(0,2,-5.1,.5).z().end());
@@ -212,6 +238,17 @@ final class SketchHumanFigure {
         }
         ink.part(side+"_thumb",d,q->pen(q,skin,INK,.48).m(4,5).q(8,3,9,7).c(10+3*open,10,4+12*open,13,1+12*open,13.5).q(-2+12*open,13,-2+12*open,15).q(-1+12*open,18,1.5+12*open,17).l(6,13).z().end());
         ink.part(side+"_palm_crease",d,q->pen(q,null,tone(skin,-.35),.38).m(-3,9).q(1,6,5,9).m(-3,15).q(0,12,4,14).end());
+    }
+    private static void tailoredSleeve(Painter ink,String side,SketchHumanClothingGeometry.Limb cloth,String color,double elbowDepth)throws Exception{
+        ink.paintOrder=-10;ink.part(side+"_sleeve_surface",d->cloth.surface.fill(pen(d,color,null,1)));
+        ink.part(side+"_sleeve_tension",d->cloth.surface.band(.28).fill(pen(d,tone(color,-.12),null,1)));
+        for(SketchHumanClothingGeometry.Panel panel:cloth.panels){
+            ink.paintOrder=(panel.depth>=0?30:-10)+panel.depth*.0001;
+            if(panel.depth>=0){ink.part(side+"_sleeve_front",d->panel.fill(pen(d,color,null,1)));ink.part(side+"_sleeve_tension",d->panel.band(.28).fill(pen(d,tone(color,-.12),null,1)));}
+            ink.part(side+"_sleeve_edge",d->panel.edges(pen(d,null,INK,.8)));
+        }
+        ink.paintOrder=(elbowDepth>=0?30:-10)+elbowDepth*.0001+.00001;
+        for(SketchHumanClothingGeometry.Fold fold:cloth.folds)ink.part(side+"_sleeve_compression",d->fold.trace(pen(d,tone(color,-.25),null,1)));
     }
     /** One external sleeve edge; filled Bezier panels retain their own editable geometry.
      * Flatten only the edge union to 0.08 model pixels, avoiding coincident cubic seams. */
@@ -235,15 +272,26 @@ final class SketchHumanFigure {
     }
     private static void leg(Painter ink,Camera camera,Skeleton p,boolean left,String trousers)throws Exception {
         String side=left?"left":"right";double[] hip=left?p.leftHip:p.rightHip,knee=left?p.leftKnee:p.rightKnee,ankle=left?p.leftAnkle:p.rightAnkle,foot=left?p.leftFoot:p.rightFoot;
+        if(ink.tailored){
+            SketchHumanClothingGeometry.DepthPlane torso=new SketchHumanClothingGeometry.DepthPlane(camera,p.hip,p.shoulderCentre);
+            SketchHumanClothingGeometry.Limb cloth=SketchHumanClothingGeometry.limb(camera,hip,knee,ankle,ink.broad?14:13,9,6.5,0,4,torso);
+            ink.paintOrder=-21;ink.part(side+"_trouser_surface",d->cloth.surface.fill(pen(d,trousers,null,1)));ink.part(side+"_trouser_tension",d->cloth.surface.band(.28).fill(pen(d,tone(trousers,-.12),null,1)));
+            for(SketchHumanClothingGeometry.Panel panel:cloth.panels){ink.paintOrder=-20+panel.depth*.0001;ink.part(side+"_trouser_panel",d->panel.fill(pen(d,trousers,null,1)));ink.part(side+"_trouser_tension",d->panel.band(.28).fill(pen(d,tone(trousers,-.12),null,1)));ink.part(side+"_trouser_edge",d->panel.edges(pen(d,null,INK,.85)));}
+            ink.paintOrder=-20+torso.relative(knee)*.0001+.00001;
+            for(SketchHumanClothingGeometry.Fold fold:cloth.folds)ink.part(side+"_trouser_compression",d->fold.trace(pen(d,tone(trousers,-.22),null,1)));
+            ink.paintOrder=-20+torso.relative(ankle)*.0001+.00001;
+        }else{
         bone(ink,camera,side+"_thigh",hip,knee,13,10,trousers);bone(ink,camera,side+"_shin",knee,ankle,10,6.5,trousers);
+        }
         double[] k=camera.point(knee),a=camera.point(ankle),f=camera.point(foot);double dir=camera.profile?(camera.view.equals("left")?-1:1):(left?-1:1),dx=a[0]-f[0],dy=a[1]-f[1];
-        ink.part(side+"_trouser_fold",d->pen(d,null,tone(trousers,.25),.55).m(k[0]-5,k[1]-6).q(k[0]+2,k[1]-3,k[0]+6,k[1]-7).m(k[0]-3,k[1]+5).q(a[0]-6,a[1]-18,a[0]-3,a[1]-8).end());
+        if(!ink.tailored)ink.part(side+"_trouser_fold",d->pen(d,null,tone(trousers,.25),.55).m(k[0]-5,k[1]-6).q(k[0]+2,k[1]-3,k[0]+6,k[1]-7).m(k[0]-3,k[1]+5).q(a[0]-6,a[1]-18,a[0]-3,a[1]-8).end());
         JungleCelInk d=ink.drawing.at(f[0],f[1],1,0);
         ink.part(side+"_shoe",d,q->pen(q,tone(trousers,-.25),INK,.8).m(dx-6.5,dy-2).l(dx+6.5,dy-2).l(dx+7,-7).q(dir*18,-7,dir*23,-3).q(dir*25,0,dir*19,0).l(-dir*10,0).q(-dir*12,-4,dx-6.5,dy-2).z().end());
         ink.part(side+"_shoe_detail",d,q->pen(q,null,tone(trousers,.45),.5).m(-dir*9,-1.5).l(dir*20,-1.5).m(dx-4,dy+4).l(dx+4,dy+4).end());
     }
 
     private static void torso(Painter ink,Camera camera,Skeleton p,JSONObject s)throws Exception {
+        if(ink.tailored)ink.paintOrder=0;
         String coat=s.getString("coatColor"),skin=s.getString("skinColor");boolean broad=s.getString("build").equals("broad");
         double[] hip=camera.point(p.hip),shoulder=camera.point(p.shoulderCentre);double height=Math.hypot(shoulder[0]-hip[0],shoulder[1]-hip[1]),angle=Math.toDegrees(Math.atan2(shoulder[0]-hip[0],hip[1]-shoulder[1]));
         JungleCelInk d=ink.drawing.at(hip[0],hip[1],1,angle);double w=camera.profile?(broad?30:24):(broad?51:43),waist=camera.profile?w*.84:w*.79,top=-height;
@@ -251,7 +299,13 @@ final class SketchHumanFigure {
         // This changes garment ink only; graphic archives and every joint stay fixed.
         double lift=s.getString("faceStyle").equals("graphic")?0:12;
         bone(ink,camera,"neck",body(p,0,-125,0),p.neck,10,7.5,skin);
-        ink.part("coat",d,q->pen(q,coat,INK,1.05).m(-w,top-7).c(-w+4,top-9,-17,top-10-lift*2/3,-11,top-5-lift).q(0,top+5-lift,11,top-5-lift).c(24,top-9-lift*2/3,w-3,top-9,w,top-6).c(w+1,top+35,waist-2,-24,waist,2).q(waist+1,13,waist+5,20).q(0,28,-waist-5,20).q(-waist-1,12,-waist,2).c(-waist+2,-24,-w-1,top+35,-w,top-7).z().end());
+        if(ink.tailored){
+            double nearPull=SketchHumanClothingGeometry.armPull(p.nearShoulder,p.nearElbow),farPull=SketchHumanClothingGeometry.armPull(p.farShoulder,p.farElbow);
+            double right=camera.point(p.nearShoulder)[0]>=shoulder[0]?nearPull:farPull,left=camera.point(p.nearShoulder)[0]>=shoulder[0]?farPull:nearPull;
+            double compression=Math.max(0,(SketchHumanClothingGeometry.compression(p.leftHip,p.leftKnee,p.leftAnkle)+SketchHumanClothingGeometry.compression(p.rightHip,p.rightKnee,p.rightAnkle))*.5-.25);
+            ink.part("coat",d,q->pen(q,coat,INK,1.05).m(-w,top-7).c(-w+4,top-9,-17,top-10-lift*2/3,-11,top-5-lift).q(0,top+5-lift,11,top-5-lift).c(24,top-9-lift*2/3,w-3,top-9,w,top-6).c(w+1+right*2,top+35-right*8,waist-2-compression*3,-24-compression*7,waist,2).q(waist+1,13,waist+5,20).q(0,28,-waist-5,20).q(-waist-1,12,-waist,2).c(-waist+2+compression*3,-24-compression*7,-w-1-left*2,top+35-left*8,-w,top-7).z().end());
+            ink.part("coat_compression",d,q->pen(q,tone(coat,-.18),null,1).m(-waist+6,-22).c(-waist+12,-24-compression*5,-11,-21-compression*9,-5,-23).c(-13,-19-compression*5,-waist+9,-20,-waist+6,-22).z().end());
+        }else ink.part("coat",d,q->pen(q,coat,INK,1.05).m(-w,top-7).c(-w+4,top-9,-17,top-10-lift*2/3,-11,top-5-lift).q(0,top+5-lift,11,top-5-lift).c(24,top-9-lift*2/3,w-3,top-9,w,top-6).c(w+1,top+35,waist-2,-24,waist,2).q(waist+1,13,waist+5,20).q(0,28,-waist-5,20).q(-waist-1,12,-waist,2).c(-waist+2,-24,-w-1,top+35,-w,top-7).z().end());
         ink.part("coat_shade",d,q->pen(q,tone(coat,-.10),null,1).m(-w+3,top+6).q(-w+8,top+60,-waist+3,5).l(-waist-3,18).q(-12,21,-5,22).l(-10,top+20).z().end());
         if(camera.back){
             ink.part("back_seam",d,q->pen(q,null,tone(coat,.27),.6).m(0,top+15).q(-2,top+60,0,19).m(-w+7,top+22).q(0,top+9,w-7,top+22).end());
@@ -274,6 +328,7 @@ final class SketchHumanFigure {
 
     /** The rear hair mass is below torso, neck and head in the native painter order. */
     private static void rearHair(Painter ink,Camera camera,Skeleton p,JSONObject s)throws Exception {
+        if(ink.tailored)ink.paintOrder=-50;
         if(!s.getString("hairStyle").equals("long"))return;
         double[] centre=camera.point(p.head),neck=camera.point(p.neck);double angle=Math.toDegrees(Math.atan2(centre[0]-neck[0],neck[1]-centre[1]));
         JungleCelInk d=ink.drawing.at(centre[0],centre[1],1,angle);String hair=s.getString("hairColor");double direction=camera.profile?(camera.view.equals("left")?1:-1):1;
@@ -282,6 +337,7 @@ final class SketchHumanFigure {
     }
     /** A true side silhouette includes forehead, nose, lips and chin; rear hides facial features. */
     private static void head(Painter ink,Camera camera,Skeleton p,JSONObject s)throws Exception {
+        if(ink.tailored)ink.paintOrder=20;
         double[] centre=camera.point(p.head),neck=camera.point(p.neck);double angle=Math.toDegrees(Math.atan2(centre[0]-neck[0],neck[1]-centre[1]));
         JungleCelInk d=ink.drawing.at(centre[0],centre[1],1,angle);String skin=s.getString("skinColor"),hair=s.getString("hairColor");
         if(!s.getString("faceStyle").equals("graphic")){SketchHumanFace.draw(d,ink.layer,ink.actor,s,p.controls,camera.view,camera.view.equals("high")?.88:camera.view.equals("low")?1.03:1);return;}
