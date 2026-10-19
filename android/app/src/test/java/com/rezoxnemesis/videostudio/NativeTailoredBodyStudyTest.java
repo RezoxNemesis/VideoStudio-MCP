@@ -42,7 +42,7 @@ import static org.junit.Assert.*;
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 public final class NativeTailoredBodyStudyTest {
     private static final String BASE="fcbad2d952ad4ca449678f8762e636becf48b669";
-    private static final File REPO=new File("/workspace/VideoStudio-Tailored-Body");
+    private static File REPO;
     private static final String MATRIX_TEST="android/app/src/test/java/com/rezoxnemesis/videostudio/NativeHumanCapabilityMatrixTest.java";
     private static final String[] ACTIONS={"reach","kneel","balance","lift"};
     private static final String[] BUILDS={"slender","broad"};
@@ -69,6 +69,7 @@ public final class NativeTailoredBodyStudyTest {
     @Test public void nativePresetClothingStudyRetainsOriginalLegacyPixelsAndEditableArchives()throws Exception {
         String baselineEnv=env("BASELINE"),evidenceEnv=env("EVIDENCE");
         Assume.assumeTrue("Explicit roots and frozen product source are required",baselineEnv!=null&&evidenceEnv!=null&&"true".equals(env("READY")));
+        REPO=compiledRepository();
         mode=env("MODE")==null?"preview":env("MODE");assertTrue("MODE must be preview or matrix",mode.equals("preview")||mode.equals("matrix"));
         String previewAll=env("PREVIEW_ALL_FRAMES");
         assertTrue("PREVIEW_ALL_FRAMES must be true or false",previewAll==null||previewAll.equals("true")||previewAll.equals("false"));
@@ -90,7 +91,7 @@ public final class NativeTailoredBodyStudyTest {
         assertEquals("4.8.2",AppProtocol.APP_VERSION);assertEquals("4.8.2",versionName);assertEquals(485,versionCode);
         assertEquals("feat/native-tailored-body-20261019",git("branch","--show-current").trim());
         assertEquals("Do not change the historical matrix source","",git("diff",BASE,"--",MATRIX_TEST).trim());
-        headAtStart=git("rev-parse","HEAD").trim();Map<Path,String> sourceHashes=snapshotSources();
+        headAtStart=git("rev-parse","HEAD").trim();Map<Path,String> sourceHashes=snapshotSources();String compiledHash=productClassHash();
         JSONObject capabilities=SketchCapabilities.humanAnimation();write(new File(root,"Native-Human-Capabilities.json"),capabilities);
         for(String action:ACTIONS)assertTrue("Study must use a public app-owned preset",contains(capabilities.getJSONArray("presets"),action));
         for(String build:BUILDS)assertTrue(contains(capabilities.getJSONArray("builds"),build));
@@ -127,8 +128,9 @@ public final class NativeTailoredBodyStudyTest {
         write(new File(root,"Baseline-Input-Hashes.json"),hashRows(baselineHashes));writeIndex("RUNNING",false);
         for(String id:selectedLegacy){cancelled();runLegacy(baseline.resolve(id),id);}
         for(int i=0;i<planned.length();i++)if(planned.getJSONObject(i).getBoolean("selected")){cancelled();runCase(planned.getJSONObject(i));}
-        boolean sourceStable=unchanged(sourceHashes)&&sourceHashes.keySet().equals(workingSources())&&headAtStart.equals(git("rev-parse","HEAD").trim()),baselineStable=unchanged(baselineHashes);
-        write(new File(root,"Source-Stability.json"),new JSONObject().put("sourceHashesAndFileSetUnchanged",sourceStable).put("baselineInputsUnchanged",baselineStable).put("headAtEnd",git("rev-parse","HEAD").trim()).put("gitStatusAtEnd",git("status","--porcelain")));
+        boolean compiledStable=compiledHash.equals(productClassHash());
+        boolean sourceStable=unchanged(sourceHashes)&&sourceHashes.keySet().equals(workingSources())&&headAtStart.equals(git("rev-parse","HEAD").trim())&&compiledStable,baselineStable=unchanged(baselineHashes);
+        write(new File(root,"Source-Stability.json"),new JSONObject().put("sourceHashesAndFileSetUnchanged",sourceStable).put("compiledProductClassesUnchanged",compiledStable).put("baselineInputsUnchanged",baselineStable).put("headAtEnd",git("rev-parse","HEAD").trim()).put("gitStatusAtEnd",git("status","--porcelain")));
         boolean complete=caseFailures==0&&legacyFailures==0&&cases.length()==expectedCases&&legacyPassed==expectedLegacy&&legacyAttempted==expectedLegacy&&archivePassed==expectedCases*2&&renderedFrames==expectedFrames&&sourceStable&&baselineStable;
         writeIndex(complete?"PASS":"FAIL",complete);artifactHashes();
         assertTrue("Source changed; keep this generation and recapture frozen source",sourceStable);assertTrue("Original baseline changed",baselineStable);
@@ -206,8 +208,44 @@ public final class NativeTailoredBodyStudyTest {
     private static void assertLegacySettings(JSONObject document)throws Exception {assertFalse("Original retained settings must omit clothingStyle",human(document).getJSONObject("human").getJSONObject("settings").has("clothingStyle"));}
     private static JSONObject human(JSONObject document)throws Exception {JSONArray layers=document.getJSONArray("layers");for(int l=0;l<layers.length();l++){JSONArray objects=layers.getJSONObject(l).getJSONArray("objects");for(int i=0;i<objects.length();i++)if("human".equals(objects.getJSONObject(i).getString("kind")))return objects.getJSONObject(i);}throw new AssertionError("Missing retained human");}
 
+    private static File compiledRepository()throws Exception {
+        java.net.URL resource=SketchHumanFigure.class.getResource("/com/rezoxnemesis/videostudio/SketchHumanFigure.class");
+        assertNotNull("Native study requires the product class resource",resource);
+        // Robolectric defines instrumented classes without a CodeSource URL;
+        // its loader still resolves the original product bytes from this jar.
+        java.net.URL location="jar".equals(resource.getProtocol())?((java.net.JarURLConnection)resource.openConnection()).getJarFileURL():resource;
+        assertEquals("Native study requires a file-backed product artifact","file",location.getProtocol());
+        File artifact=new File(location.toURI()).getCanonicalFile();
+        for(File cursor=artifact.isDirectory()?artifact:artifact.getParentFile();cursor!=null;cursor=cursor.getParentFile()){
+            if(new File(cursor,".git").exists()){
+                assertTrue("Loaded product artifact must belong to this Android build",artifact.toPath().startsWith(new File(cursor,"android/app/build").getCanonicalFile().toPath()));
+                return cursor;
+            }
+        }
+        throw new AssertionError("Loaded native product artifact has no source repository: "+artifact);
+    }
+    @Test public void nativeProductArtifactDeterminesItsOwnSourceRepository()throws Exception {
+        File repo=compiledRepository();
+        assertTrue(new File(repo,"android/app/src/main/java/com/rezoxnemesis/videostudio/SketchHumanFigure.java").isFile());
+        Matcher version=Pattern.compile("(?m)^\\s*versionName\\s*=\\s*\"([^\"]+)\"").matcher(readText(new File(repo,"android/app/build.gradle.kts").toPath()));
+        assertTrue("Source must declare its app version",version.find());
+        assertEquals("Compiled product version must match its source repository",version.group(1),AppProtocol.APP_VERSION);
+        assertTrue("Compiled native class must have a complete SHA-256 identity",productClassHash().matches("[a-f0-9]{64}"));
+    }
+
+    private static String productClassHash()throws Exception {
+        ByteArrayOutputStream all=new ByteArrayOutputStream();
+        for(Class<?> type:new Class<?>[]{SketchHumanFigure.class,SketchHumanClothingGeometry.class,SketchHumanPresets.class}){
+            try(InputStream bytes=type.getResourceAsStream("/"+type.getName().replace('.','/')+".class")){
+                assertNotNull("Missing native product class bytes for "+type.getName(),bytes);
+                all.write(type.getName().getBytes(StandardCharsets.UTF_8));all.write(bytes.readAllBytes());
+            }
+        }
+        return SketchDocument.sha256(all.toByteArray());
+    }
+
     private Map<Path,String> snapshotSources()throws Exception {
-        write(new File(root,"Source-State.json"),new JSONObject().put("baseCommit",BASE).put("headAtStart",headAtStart).put("branch",git("branch","--show-current").trim()).put("gitStatusAtStart",git("status","--porcelain")).put("appVersion",AppProtocol.APP_VERSION).put("versionName",versionName).put("versionCode",versionCode).put("freezeSignal",env("READY")).put("matrixApprovedSignal",env("MATRIX_APPROVED")).put("sourceSelection","Tracked and nonignored untracked existing files, excluding build/.work/.gradle/node_modules/.git directories. Untracked contents are copied; final hashes, file set and HEAD are rechecked."));
+        write(new File(root,"Source-State.json"),new JSONObject().put("baseCommit",BASE).put("headAtStart",headAtStart).put("branch",git("branch","--show-current").trim()).put("gitStatusAtStart",git("status","--porcelain")).put("appVersion",AppProtocol.APP_VERSION).put("versionName",versionName).put("versionCode",versionCode).put("compiledProductClassesSha256",productClassHash()).put("productClassResource",String.valueOf(SketchHumanFigure.class.getResource("/com/rezoxnemesis/videostudio/SketchHumanFigure.class"))).put("freezeSignal",env("READY")).put("matrixApprovedSignal",env("MATRIX_APPROVED")).put("sourceSelection","Tracked and nonignored untracked existing files, excluding build/.work/.gradle/node_modules/.git directories. Untracked contents are copied; final hashes, file set and HEAD are rechecked."));
         Files.write(new File(root,"Source-Diff.patch").toPath(),git("diff","--binary",BASE,"--").getBytes(StandardCharsets.UTF_8));Map<Path,String> hashes=new LinkedHashMap<>();
         for(Path source:workingSources()){Path relative=REPO.toPath().relativize(source);File output=new File(root,"source-snapshot/"+relative);Files.createDirectories(output.toPath().getParent());String hash=SketchProjectStore.fileHash(source.toFile());Files.copy(source,output.toPath());assertEquals("Snapshot changed "+relative,hash,SketchProjectStore.fileHash(output));hashes.put(source,hash);}
         write(new File(root,"Source-Hashes.json"),hashRows(hashes));return hashes;

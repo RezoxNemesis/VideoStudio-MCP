@@ -74,6 +74,22 @@ test('actual relay source-gates hand style before queue writes and preserves aut
  }
 });
 
+test('latest cel motion repair advertises 4.8.2 without raising the existing hand/style input gates',()=>{
+ const m=contract.HAND_ANIMATION_CAPABILITIES;
+ assert.equal(m.celMotionQualityMinimumNativeVersion,'4.8.2');
+ assert.equal(m.minimumNativeVersion,'4.8.0');assert.equal(m.renderStyleMinimumNativeVersion,'4.8.1');
+ assert.match(m.agentGuidance,/app_status.*require.*4\.8\.2.*latest cel motion repair.*before authoring/i);
+ assert.match(m.agentGuidance,/guidance.*not a new.*gate/i);
+ const java=native('SketchCapabilities').match(/public static JSONObject handAnimation\(\) throws Exception \{([\s\S]*?)\n    \}/)[1];
+ assert.match(java,/\.put\("celMotionQualityMinimumNativeVersion","4\.8\.2"\)/);
+ assert.equal(JSON.parse(java.match(/\.put\("agentGuidance",("[^"]*")\)/)[1]),m.agentGuidance);
+ for(const action of routes)for(const [settings,version] of [[{},'4.8.0'],[{renderStyle:'smooth'},'4.8.1'],[{renderStyle:'cel'},'4.8.1']]){
+  const args=edit([{...hand,settings}]);assert.deepEqual(contract.nativeStudioParameters(action,args),args);
+  assert.doesNotThrow(()=>contract.requireStudioVersion({appVersion:version},action,args));
+ }
+ assert.equal(Object.hasOwn(m.settings,'celMotionQualityMinimumNativeVersion'),false);
+});
+
 test('style metadata matches native defaults and advertises bounded native/manual/archive compatibility',()=>{
  const metadata=contract.HAND_ANIMATION_CAPABILITIES;assert.equal(metadata.minimumNativeVersion,'4.8.0');assert.equal(metadata.renderStyleMinimumNativeVersion,'4.8.1');assert.deepEqual(metadata.renderStyles,['smooth','cel']);assert.equal(metadata.settings.renderStyle,'smooth');
  assert.match(metadata.renderStyleControls,/explicit.*smooth.*4\.8\.1/i);assert.match(metadata.renderStyleControls,/omit.*fingerprint/i);assert.match(metadata.renderStyleControls,/independent.*detail/i);

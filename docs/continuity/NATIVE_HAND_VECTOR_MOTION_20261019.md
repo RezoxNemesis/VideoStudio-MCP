@@ -98,9 +98,28 @@ counted by JUnit when output is disabled; the standalone enabled method counts
 above are separate evidence, not additional scenarios.
 
 Independent review accepted all 48 core images and four enlarged low-view
-retakes for the bounded simple cel target. Known front/high retake review is
-still pending. Read-only code review found no material correctness blocker.
+retakes for the bounded simple cel target. Independent front/high review
+inspected all 42 known-case pairs / 84 originals
+and accepted the bounded contour repair; short crease tails and faceted lighting
+remain drawing limitations. Read-only code review found no material
+correctness blocker.
 Hull and contour-edge scans are quadratic; cheap filters bound typical work,
 but matched performance measurements and complete motion remain pending.
 Selected retakes do not establish all 48 cases, professional hand drawing,
 phone playback or live MCP parity.
+
+
+## Combined 4.8.2 availability
+
+The robust backend and contour cleanup are integrated into the tailored-body
+4.8.2 / code 485 candidate. Native and Node hand capabilities expose
+`celMotionQualityMinimumNativeVersion: 4.8.2`; ordinary ChatGPT must call
+app_status and require that version for these repairs. Existing omitted-hand
+requests keep 4.8.0 and explicit renderStyle keeps its 4.8.1 field gate. No new
+request parameter or command alias was introduced. Forty-four focused Node
+contract tests passed, including a valid pre-metadata RED and final GREEN.
+Final combined full Node verification passed 306 smoke checks and 611 tests.
+Both compiled-artifact provenance checks passed in the official Android build.
+Manual Render style and app-owned study recipes still use the same native code.
+Complete matrices, final APK verification and overall film acceptance remain
+separate gates.

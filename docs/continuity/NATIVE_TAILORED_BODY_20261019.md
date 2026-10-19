@@ -133,8 +133,10 @@ assertions, archives and retakes add no creative scenarios. The owner increased
 the broader programme to 1,000 distinct scenarios and more if necessary after
 current quality passes.
 
-The separate hand motion repair is still pending; combine its verified source
-before a final 4.8.2 signed candidate and complete motion matrices. The original
+The verified hand vector backend and bounded contour cleanup are now integrated.
+Both study harnesses bind source provenance to the actual compiled native product
+artifact and recheck its bytes at completion, alongside source hashes/file sets
+and HEAD. Final 4.8.2 signing/CI and complete motion matrices remain pending. The original
 124-second voiced story remains NEEDS_REWORK for overall standard-2D quality.
 No stable release, deployment, phone/live-MCP parity, audio audition or native
 Android video-codec acceptance is claimed by these workspace checks.

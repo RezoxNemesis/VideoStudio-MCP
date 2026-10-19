@@ -1,3 +1,18 @@
+# Combined 4.8.2 verification — 2026-10-19
+
+Active worktree `/workspace/VideoStudio-Tailored-Body`, branch
+`feat/native-tailored-body-20261019`: tailored garments, fresh lift B45,
+robust cel-hand vector backend and bounded skin-contour repair are integrated.
+Keep 4.8.2/code485 and original signing identity. Existing feature-floor and
+saved-programme compatibility remain unchanged; see current continuity docs.
+The latest hand repair passed 39 official affected tests; Body lift passed 81;
+independent bounded reviews passed, but full 48×96 matrices and final CI remain
+pending. Parent allocates one local Gradle process at a time. Freeze this entire
+worktree/HEAD for each capture. Story acting development is isolated in
+`/workspace/VideoStudio-Story-Acting`; do not edit that agent-owned worktree.
+The original 124-second film remains NEEDS_REWORK; the 1000+ scenario expansion follows
+current quality. Earlier worktree/build ownership notes below are historical.
+
 # Active tailored-body cycle — 2026-10-19
 
 Work only in `/workspace/VideoStudio-Tailored-Body`, branch
