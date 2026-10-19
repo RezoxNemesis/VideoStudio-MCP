@@ -29,7 +29,7 @@ public class SketchMasterAssetsTest {
             .put(new JSONArray().put("Q").put(.72).put(.48).put(.52).put(.65))
             .put(new JSONArray().put("L").put(width).put(.76))
             .put(new JSONArray().put("Q").put(.27).put(.66).put(.20).put(.24))
-            .put(new JSONArray().put().put("Z"));
+            .put(new JSONArray().put("Z"));
     }
     private JSONObject run(String id,int revision,String op,JSONObject... changes)throws Exception{
         JSONArray a=new JSONArray();for(JSONObject change:changes)a.put(change);
