@@ -231,7 +231,13 @@ public final class SketchEditOps {
                         if(expectedSessionId!=null)throw SketchDocument.bad("Session-bound drawing imports accept vector operations only");
                         return SketchPaintOps.executeEdit(context,store,id,op,revision,fingerprint,operations);
                     }
-                    JSONArray visual=new JSONArray();boolean additions=true;for(int n=0;n<operations.length();n++)if(!"add_object".equals(operations.getJSONObject(n).optString("type")))additions=false;final boolean appendOnly=additions;
+                    JSONArray visual=new JSONArray();boolean additions=true,masterInstances=true;
+                    for(int n=0;n<operations.length();n++){
+                        String kind=operations.getJSONObject(n).optString("type");
+                        if(!"add_object".equals(kind))additions=false;
+                        if(!"master_instance".equals(kind))masterInstances=false;
+                    }
+                    final boolean appendOnly=additions,appendOnlyMasters=masterInstances;
                     return store.mutate(id, op, revision, fingerprint, doc -> {
                         if(expectedSessionId!=null){
                             JSONObject active=store.activeDrawingSession(id);
@@ -243,6 +249,9 @@ public final class SketchEditOps {
                         // is valid. Store.mutate validates once before commit/history/live events.
                         for (int i=0;i<operations.length();i++){JSONObject operation=operations.getJSONObject(i);
                             if(appendOnly){appendObject(doc,operation);visual.put(operation);continue;}
+                            // All objects are new, canonical and separately named; final transaction validation
+                            // covers the entire growing subset. Avoid O(n^2) per-copy document rescans.
+                            if(appendOnlyMasters){SketchMasterAssets.apply(doc,operation);visual.put(operation);continue;}
                             if("symmetry_stroke".equals(operation.optString("type"))){JSONArray expanded=SketchSymmetry.apply(doc,operation);for(int j=0;j<expanded.length();j++)visual.put(SketchDocument.copy(expanded.getJSONObject(j)));}
                             else if("trace_reference".equals(operation.optString("type"))){JSONObject layer=SketchDocument.layer(doc,operation.getString("layerId"));int before=layer.getJSONArray("objects").length();SketchReferenceTrace.apply(store,doc,operation);for(int j=before;j<layer.getJSONArray("objects").length();j++)visual.put(new JSONObject().put("type","add_object").put("layerId",layer.getString("id")).put("object",layer.getJSONArray("objects").getJSONObject(j)));}
                             else{JSONObject resolved=SketchSpeechAssets.expand(context,doc,operation);apply(doc,resolved);visual.put(resolved);}
