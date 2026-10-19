@@ -177,4 +177,55 @@ public class SketchMasterAssetsTest {
         assertFalse(pasted.has("masterLink"));
         assertEquals("path",pasted.getString("kind"));
     }
+    @Test public void oneMasterPatchUpdatesOneHundredPlacedCopiesAcrossDifferentFrames()throws Exception {
+        String id=drawing();begin(id);
+        for(int batch=0;batch<2;batch++){
+            JSONObject[] placements=new JSONObject[50];
+            for(int j=0;j<50;j++){
+                int i=batch*50+j,frame=(i*7)%150;
+                JSONObject placement=cloneAt(frame,"linked_"+i,((i%11)-5)*.025,null);
+                if(i%10==0) placement.put("keys",new JSONArray().put(
+                    new JSONObject().put("frame",frame).put("interpolation","smooth")
+                        .put("transform",SketchDocument.transform().put("x",((i%11)-5)*.025))));
+                placements[j]=placement;
+            }
+            run(id,3+batch,"bulk_place_"+batch,placements);
+        }
+        JSONObject impact=SketchEditOps.execute(context,"sketch_master_preview",
+            new JSONObject().put("sketchId",id).put("expectedRevision",5)
+                .put("masterId","coat_outline"));
+        assertEquals(101,impact.getInt("instanceCount"));
+        assertEquals(0,impact.getJSONArray("lockedLayerIds").length());
+        run(id,5,"one_mass_edit",op("master_patch").put("masterId","coat_outline")
+            .put("expectedVersion",1).put("patch",new JSONObject().put("commands",modified())
+                .put("color","#FF2E6399")));
+        JSONObject state=get(id);
+        assertEquals(6,state.getLong("revision"));
+        for(int i=0;i<100;i++){
+            JSONObject object=SketchDocument.object(state,"linked_"+i);
+            assertEquals("#FF2E6399",object.getString("color"));
+            assertEquals(SketchDocument.canonical(modified()),SketchDocument.canonical(object.getJSONArray("commands")));
+            assertEquals((i*7)%150,object.getInt("frame"));
+            assertEquals(180-(i*7)%150,object.getInt("exposure"));
+            assertEquals(i%10==0?1:0,object.getJSONArray("keys").length());
+        }
+        assertEquals(2,state.getJSONArray("masterAssets").getJSONObject(0).getLong("version"));
+    }
+
+    @Test public void oneInvalidInstanceRollsBackAnEntireOptimizedPlacementBatch()throws Exception {
+        String id=drawing();begin(id);
+        JSONObject valid=cloneAt(18,"good_if_committed",.02,null);
+        JSONObject invalid=cloneAt(18,"invalid_scale",.03,null);
+        invalid.put("transform",SketchDocument.transform().put("scaleX",0));
+        try {
+            run(id,3,"atomic_bad",valid,invalid);fail();
+        }catch(IllegalArgumentException expected){
+            assertTrue(expected.getMessage().contains("scaleX"));
+        }
+        JSONObject after=get(id);
+        assertEquals(3,after.getLong("revision"));
+        assertEquals(1,after.getJSONArray("layers").getJSONObject(0).getJSONArray("objects").length());
+        assertEquals(1,after.getJSONArray("masterAssets").getJSONObject(0).getLong("version"));
+    }
+
 }
