@@ -139,9 +139,8 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
     }
 
 
-    @Override protected void onActivityResult(int requestCode,int resultCode,Intent data){
-        super.onActivityResult(requestCode,resultCode,data);
-        if(requestCode!=REQUEST_3D_CEL||resultCode!=RESULT_OK||data==null)return;
+    private void handle3DPoseResult(int resultCode,Intent data){
+        if(resultCode!=RESULT_OK||data==null)return;
         final String target=data.getStringExtra("sketchId");
         final String projectId=data.getStringExtra("projectId");
         final String assetId=data.getStringExtra("assetId");
@@ -1281,6 +1280,7 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
     }
     @Override protected void onActivityResult(int requestCode,int resultCode,Intent data){
         super.onActivityResult(requestCode,resultCode,data);
+        if(requestCode==REQUEST_3D_CEL){handle3DPoseResult(resultCode,data);return;}
         if(requestCode!=LOCAL_EDITABLE_ARCHIVE||resultCode!=RESULT_OK||data==null||data.getData()==null)return;
         android.net.Uri uri=data.getData();String operation=UUID.randomUUID().toString();stopPlayback();
         SketchEditorSession active=session;int generation=loadGeneration,page=pageGeneration;
