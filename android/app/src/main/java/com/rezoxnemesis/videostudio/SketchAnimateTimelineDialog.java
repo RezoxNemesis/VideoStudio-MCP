@@ -194,8 +194,8 @@ final class SketchAnimateTimelineDialog {
                 dialog.dismiss();
                 actions.xsheet();
             });
-            label(owner, "Undo / Redo stays in Sketch Studio. Motion is evaluated by "
-                    + "the original vector renderer; no duplicated still-image slideshow.", 11);
+            layout.addView(label(owner, "Undo / Redo stays in Sketch Studio. Motion is evaluated by "
+                    + "the original vector renderer; no duplicated still-image slideshow.", 11));
             dialog.show();
         } catch (Exception failure) {
             toast(owner, "Timeline: " + failure.getMessage());
