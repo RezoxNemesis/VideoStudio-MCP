@@ -11,7 +11,7 @@ import java.util.Set;
 /** Bounded, normalized vector/cel document. All accepted edits are validated here. */
 public final class SketchDocument {
     public static final String SCHEMA = "videostudio.sketch.v1";
-    public static final int MAX_BYTES = 4 * 1024 * 1024, MAX_LAYERS = 32, MAX_OBJECTS = 4096;
+    public static final int MAX_BYTES = 4 * 1024 * 1024, MAX_LAYERS = 32, MAX_IMAGES = 32, MAX_OBJECTS = 4096;
     public static final int MAX_POINTS = 131072, MAX_FRAMES = 1200, MAX_KEYS = 4096;
     private SketchDocument() {}
 
@@ -138,8 +138,8 @@ public final class SketchDocument {
             proceduralActors+=proceduralActorChanges[frame];
             if(proceduralActors>16)throw bad("Use at most16 simultaneously exposed retained hand/human actors per frame");
         }
-        if (objects > MAX_OBJECTS || points > MAX_POINTS || keys > MAX_KEYS || images > 16)
-            throw bad("Sketch budget exceeded (4096 objects, 131072 points, 4096 keys, 16 images)");
+        if (objects > MAX_OBJECTS || points > MAX_POINTS || keys > MAX_KEYS || images > MAX_IMAGES)
+            throw bad("Sketch budget exceeded (4096 objects, 131072 points, 4096 keys, 32 images)");
         if (doc.toString().getBytes(StandardCharsets.UTF_8).length > MAX_BYTES) throw bad("Sketch document exceeds 4 MiB");
     }
 

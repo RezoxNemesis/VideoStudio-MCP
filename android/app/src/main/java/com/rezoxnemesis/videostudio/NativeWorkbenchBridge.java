@@ -50,6 +50,7 @@ public final class NativeWorkbenchBridge {
                 .put("minimumNativeVersion",MINIMUM_NATIVE_VERSION).put("canonicalActions",actions).put("aliases",aliases)
                 .put("colourTraceMinimumNativeVersion","3.9.5").put("drawingManifestMinimumNativeVersion","3.9.5").put("advancedSketchMinimumNativeVersion","3.9.1").put("croppedSketchPreviewMinimumNativeVersion","3.9.3").put("flatParameters",true).put("permissionPolicy","existing-native-action-permissions-and-source-validation")
                 .put("featureLengthSketchMinimumNativeVersion","4.7.0").put("sketchSequenceMaximumFrames",SketchSequenceLimits.MAX_FRAMES)
+                .put("expandedReferenceImageBudgetMinimumNativeVersion","4.8.6").put("sketchMaximumImageObjects",SketchDocument.MAX_IMAGES)
                 .put("referenceLayersPreviewMinimumNativeVersion","4.8.5").put("referenceLayersMinimumNativeVersion","4.8.5").put("sourceMaskMinimumNativeVersion","4.8.5")
                 .put("paintMinimumNativeVersion","4.1.0").put("editableArchiveMinimumNativeVersion","4.1.0")
                 .put("visualReviewMinimumNativeVersion","4.5.6").put("visualReviewAction","sketch_review")

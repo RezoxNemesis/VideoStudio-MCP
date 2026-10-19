@@ -1,3 +1,23 @@
+# Active detailed reference-layer test — 2026-10-19
+
+Branch `feat/native-detailed-reference-layers-20261019` extends verified 4.8.5
+`db383ac`; target 4.8.6/code489. The owner explicitly requests source-assisted
+copying of the supplied Temple Realm still using editable layers. Private source,
+mask fixtures and native evidence stay outside Git in
+`/workspace/engineering-review/temple-reference-layers-20261019`.
+Read `docs/continuity/NATIVE_DETAILED_REFERENCE_LAYERS_20261019.md`.
+A reproduced 16-image document budget blocked nested detailed separation after
+three pixel-perfect stages. Raise image count to32 while retaining 32layers,
+8MiB selection support, source/PNG/cache/storage ceilings and old request floors.
+Native/MCP capabilities identify 4.8.6 for projects with more than16 images.
+Verify pixel identity, actual Canvas selection, normal edits/undo and native archive
+restoration; inspect isolated edges independently. Do not claim source-assisted
+pixels as original drawings, clean plates, new views or completed animation.
+Preserve all earlier work and original signer; no Gallery, external artwork
+renderer, worker deployment, merge, stable publication or device identity reset.
+Parent owns the sole local Gradle process. Full CI/APK outcomes belong in external
+evidence after actual execution; pending checks are not successes.
+
 # Active native preview and reference layers — 2026-10-19
 
 Current branch feat/native-preview-layer-workflow-20261019 in

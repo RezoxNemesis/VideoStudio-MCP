@@ -124,6 +124,7 @@ test('registered MCP tool reports source writes, bounded source-assisted capabil
  const before=storage.writes(),result=JSON.parse((await tool.handler(request)).content[0].text);assert.equal(result.queued,false);assert.match(result.error,/4\.8\.5/);assert.equal(storage.writes(),before);
  const caps=JSON.parse((await server.tools.get('app_capabilities').handler({})).content[0].text);assert.deepEqual(caps.referenceLayers,contract.REFERENCE_LAYERS_CAPABILITIES);
  assert.equal(caps.referenceLayers.minimumNativeVersion,'4.8.5');assert.equal(caps.referenceLayers.automaticSemanticAnalysis,false);
+ assert.equal(caps.referenceLayers.expandedImageBudgetMinimumNativeVersion,'4.8.6');assert.equal(caps.referenceLayers.limits.maximumImageObjects,32);assert.equal(caps.referenceLayers.limits.legacyMaximumImageObjects,16);assert.equal(caps.referenceLayers.limits.maximumPreparedSelectionBytes,8388608);
 });
 
 test('read-only MCP mask preview gates old apps before queue writes and forwards accepted masks and native image',async()=>{
@@ -151,8 +152,8 @@ test('native admission and source-level dispatch route reference layers through 
  assert.match(native('ControlService'),/case "sketch_import_reference_layers":[\s\S]*?SketchEditOps\.execute\(this,action,p\)/);
  assert.match(native('ControlService'),/case "sketch_reference_layers_preview":\s*case "sketch_preview":\{\s*JSONObject preview=SketchEditOps\.execute\(this,action,p\)/);
  assert.match(native('SketchCapabilities'),/\.put\("referenceLayers",referenceLayers\(\)\)/);
- assert.match(native('AppProtocol'),/APP_VERSION = "4\.8\.5"/);
- const build=fs.readFileSync(new URL('../android/app/build.gradle.kts',import.meta.url),'utf8');assert.match(build,/versionCode = 488/);assert.match(build,/versionName = "4\.8\.5"/);
+ assert.match(native('AppProtocol'),/APP_VERSION = "4\.8\.6"/);
+ const build=fs.readFileSync(new URL('../android/app/build.gradle.kts',import.meta.url),'utf8');assert.match(build,/versionCode = 489/);assert.match(build,/versionName = "4\.8\.6"/);
 });
 
 test('native and MCP referenceLayers capability metadata match exactly',()=>{

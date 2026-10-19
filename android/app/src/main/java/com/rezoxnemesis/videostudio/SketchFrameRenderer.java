@@ -34,7 +34,7 @@ public final class SketchFrameRenderer implements AutoCloseable {
     private long imageBytes;
     private boolean prepareSelections;
     private final Map<String,ImageSelection> imageSelections=new java.util.HashMap<>();
-    /** Immutable full-source alpha support; at most16×2048² bits (8 MiB). */
+    /** Immutable full-source alpha support; up to32 images within a shared8 MiB budget. */
     static final class ImageSelection {
         final int width,height;private final long[] words;
         ImageSelection(Bitmap image){width=image.getWidth();height=image.getHeight();java.util.BitSet bits=new java.util.BitSet(width*height);int[] row=new int[width];
@@ -47,7 +47,7 @@ public final class SketchFrameRenderer implements AutoCloseable {
     long preparedSelectionBytes(){long bytes=0;for(ImageSelection mask:imageSelections.values())bytes+=mask.bytes();return bytes;}
     private void captureSelection(String hash,Bitmap image){
         if(!prepareSelections||imageSelections.containsKey(hash))return;requireRasterWorker();
-        ImageSelection mask=new ImageSelection(image);if(imageSelections.size()>=16||preparedSelectionBytes()+mask.bytes()>8L*1024*1024)throw new IllegalStateException("Part selection exceeds its8 MiB bound");imageSelections.put(hash,mask);
+        ImageSelection mask=new ImageSelection(image);if(imageSelections.size()>=SketchDocument.MAX_IMAGES||preparedSelectionBytes()+mask.bytes()>8L*1024*1024)throw new IllegalStateException("Part selection exceeds its8 MiB bound");imageSelections.put(hash,mask);
     }
 
     private final Map<String,Path> geometryCache=new java.util.HashMap<>();
