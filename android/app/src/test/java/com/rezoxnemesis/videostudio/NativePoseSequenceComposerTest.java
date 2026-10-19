@@ -54,6 +54,10 @@ public class NativePoseSequenceComposerTest {
                 (done,total,quality)->{updates[0]++;assertTrue(done<=total);});
         assertEquals(5,updates[0]);
         assertEquals(5,output.clips.size());
+        File archiveVisible = new File(context.getFilesDir(),
+                "creative_workspace/projects/"+output.id+"/generated/pose_sequence/pose_0000.png");
+        assertTrue("Generated pose frames must be inside the Drive archive root",
+                archiveVisible.isFile());
         assertEquals(5,output.assets.size());
         assertEquals(2,store.get(source.id).assets.size());
         assertEquals(0,store.get(source.id).clips.size());
