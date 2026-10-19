@@ -693,7 +693,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 case "sketch_edit": complete(command,SketchAgentLiveBridge.edit(this,p));return;
                 case "sketch_create": case "sketch_list": case "sketch_get": case "sketch_inspect": case "sketch_review": case "sketch_quality_audit":
                 case "sketch_paint_journal": case "sketch_sample_color":
-                case "sketch_undo": case "sketch_redo": case "sketch_import_reference": case "sketch_import_reference_layers":
+                case "sketch_undo": case "sketch_redo": case "sketch_import_reference": case "sketch_import_reference_layers": case "sketch_master_preview":
                 case "sketch_book_create": case "sketch_book_edit": case "sketch_book_list": case "sketch_book_get": case "sketch_book_open_page": case "sketch_book_timeline": case "sketch_live_begin": case "sketch_live_events": case "sketch_live_end": case "sketch_capabilities": case "sketch_component_save": case "sketch_component_list": case "sketch_component_apply":
                     complete(command,SketchEditOps.execute(this,action,p));return;
                 case "sketch_archive": complete(command,SketchPaintArchive.archive(this,p));return;
