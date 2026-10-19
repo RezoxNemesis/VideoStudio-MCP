@@ -75,7 +75,16 @@ final class SketchHandAnimation {
         for(SketchHandGeometry.Ink mark:ink(object,width,height,frame)){int color=Color.parseColor(mark.color);paint.setColor(color);paint.setAlpha((int)Math.round(Color.alpha(color)*alpha));paint.setStyle(mark.fill?Paint.Style.FILL:Paint.Style.STROKE);paint.setShader(mark.gradient==null?null:SketchGradients.shader(mark.gradient,width,height));canvas.drawPath(mark.path,paint);}
     }
     static JSONArray vectorFrame(JSONObject object,int width,int height,int frame)throws Exception {
-        JSONArray objects=new JSONArray();int ordinal=0;for(SketchHandGeometry.Ink mark:ink(object,width,height,frame)){JSONArray commands=commands(mark.path,width,height);if(commands.length()<2)continue;JSONObject path=SketchEditOps.completeObject(new JSONObject().put("id",object.getString("id")+"_ink"+ordinal++).put("kind","path").put("frame",0).put("exposure",1).put("commands",commands).put("fill",mark.fill).put("color",mark.color).put("width",object.getDouble("width")).put("transform",SketchDocument.transformAt(object,frame)));if(mark.gradient!=null)path.put("gradient",new JSONObject(mark.gradient.toString()));objects.put(path);}return objects;
+        JSONArray objects=new JSONArray();int ordinal=0;for(SketchHandGeometry.Ink mark:ink(object,width,height,frame)){JSONArray commands=object.getJSONObject("hand").getJSONObject("settings").optString("renderStyle","smooth").equals("cel")?celCommands(mark.path,width,height):commands(mark.path,width,height);if(commands.length()<2)continue;JSONObject path=SketchEditOps.completeObject(new JSONObject().put("id",object.getString("id")+"_ink"+ordinal++).put("kind","path").put("frame",0).put("exposure",1).put("commands",commands).put("fill",mark.fill).put("color",mark.color).put("width",object.getDouble("width")).put("transform",SketchDocument.transformAt(object,frame)));if(mark.gradient!=null)path.put("gradient",new JSONObject(mark.gradient.toString()));objects.put(path);}return objects;
+    }
+    /** Keep conditioned cel boundaries through ordinary editable path conversion.
+     * Legacy smooth command bytes continue through the existing encoder. */
+    private static JSONArray celCommands(Path path,int w,int h)throws Exception {
+        RectF bounds=new RectF();path.computeBounds(bounds,true);if(bounds.left<0||bounds.top<0||bounds.right>w||bounds.bottom>h)throw SketchDocument.bad("Hand leaves canvas; adjust position/size");
+        JSONArray commands=new JSONArray();PathMeasure measure=new PathMeasure(path,false);
+        do{Path contour=new Path();if(!measure.getSegment(0,measure.getLength(),contour,true))continue;contour.close();float[] points=contour.approximate(.00025f);
+            for(int i=0;i<points.length;i+=3)commands.put(new JSONArray().put(i==0?"M":"L").put((double)(points[i+1]/w)).put((double)(points[i+2]/h)));
+        }while(measure.nextContour());return commands;
     }
     private static JSONArray commands(Path path,int w,int h)throws Exception {
         RectF b=new RectF();path.computeBounds(b,true);if(b.left<0||b.top<0||b.right>w||b.bottom>h)throw SketchDocument.bad("Hand leaves canvas; adjust position/size");

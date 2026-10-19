@@ -1,6 +1,8 @@
 package com.rezoxnemesis.videostudio;
 
 import android.graphics.*;
+import com.github.micycle1.clipper2.core.*;
+import com.github.micycle1.clipper2.engine.Clipper64;
 import org.json.*;
 import java.util.*;
 
@@ -275,7 +277,38 @@ final class SketchHandGeometry {
     private static Path celPolygon(List<Lit> points){Path p=new Path();if(points.size()<3)return p;for(int i=0;i<points.size();i++){Lit v=points.get(i);if(i==0)p.moveTo((float)v.x,(float)v.y);else p.lineTo((float)v.x,(float)v.y);}p.close();return p;}
     private static Path celProjection(Face face,double unit,double cx,double cy){Path p=new Path();for(int i=0;i<face.p.length;i++){V v=face.p[i];if(i==0)p.moveTo((float)(cx+v.x*unit),(float)(cy+v.y*unit));else p.lineTo((float)(cx+v.x*unit),(float)(cy+v.y*unit));}p.close();return p;}
     private static boolean celFront(Face face){return face.p[1].sub(face.p[0]).cross(face.p[2].sub(face.p[0])).unit().z>.00001;}
-    private static void celOp(Path target,Path other,Path.Op op)throws Exception {if(!target.op(other,op))throw SketchDocument.bad("Native cel-hand path operation failed");}
+    /** Robust cel vector Booleans. Native curves are sampled below the existing
+     * .001px conversion tolerance; fixed micro-pixel integers preserve narrow
+     * guards and topology without depending on document-coordinate float ops. */
+    private static void celOp(Path target,Path other,Path.Op op)throws Exception {
+        Paths64 a=celPolygons(target),b=celPolygons(other),solution=new Paths64();
+        Clipper64 clipper=new Clipper64();boolean reverse=op==Path.Op.REVERSE_DIFFERENCE;
+        clipper.addSubject(reverse?b:a);clipper.addClip(reverse?a:b);
+        ClipType operation=op==Path.Op.UNION?ClipType.Union:op==Path.Op.INTERSECT?ClipType.Intersection:op==Path.Op.XOR?ClipType.Xor:ClipType.Difference;
+        if(!clipper.execute(operation,FillRule.NonZero,solution))throw SketchDocument.bad("Native cel-hand vector Boolean failed");
+        Path result=new Path();for(Path64 polygon:solution){if(polygon.size()<3)continue;for(int i=0;i<polygon.size();i++){Point64 point=polygon.get(i);if(i==0)result.moveTo((float)(point.x/1000000d),(float)(point.y/1000000d));else result.lineTo((float)(point.x/1000000d),(float)(point.y/1000000d));}result.close();}celBooleanBounds(target,other,result,op);target.set(result);
+    }
+    /** A successful operation may never expand beyond its mathematical bounds.
+     * Allow only one native float ULP plus integer-grid rounding, not art-scale
+     * slack. Independent appearance/ray tests also check missing coverage. */
+    private static void celBooleanBounds(Path a,Path b,Path result,Path.Op op)throws Exception {
+        if(result.isEmpty())return;RectF left=new RectF(),right=new RectF(),actual=new RectF();a.computeBounds(left,true);b.computeBounds(right,true);result.computeBounds(actual,true);
+        RectF expected=new RectF(op==Path.Op.REVERSE_DIFFERENCE?right:left);
+        if(op==Path.Op.INTERSECT&&!expected.intersect(right))throw SketchDocument.bad("Native cel-hand intersection exceeded its support");
+        if(op==Path.Op.UNION||op==Path.Op.XOR)expected.union(right);
+        float magnitude=Math.max(Math.max(Math.abs(expected.left),Math.abs(expected.right)),Math.max(Math.abs(expected.top),Math.abs(expected.bottom))),rounding=Math.ulp(magnitude)+.000001f;
+        if(actual.left<expected.left-rounding||actual.top<expected.top-rounding||actual.right>expected.right+rounding||actual.bottom>expected.bottom+rounding)throw SketchDocument.bad("Native cel-hand Boolean exceeded its support");
+    }
+    private static Paths64 celPolygons(Path source)throws Exception {
+        if(source.isInverseFillType())throw SketchDocument.bad("Inverse cel ink is unsupported");
+        Paths64 paths=new Paths64();PathMeasure measure=new PathMeasure(source,false);
+        do{Path contour=new Path();if(!measure.getSegment(0,measure.getLength(),contour,true))continue;contour.close();float[] points=contour.approximate(.0001f);Path64 polygon=new Path64();
+            for(int i=0;i<points.length;i+=3){long x=Math.round(points[i+1]*1000000d),y=Math.round(points[i+2]*1000000d);if(polygon.isEmpty()||polygon.get(polygon.size()-1).x!=x||polygon.get(polygon.size()-1).y!=y)polygon.add(new Point64(x,y));}
+            if(polygon.size()>1&&polygon.get(0).equals(polygon.get(polygon.size()-1)))polygon.remove(polygon.size()-1);if(polygon.size()>=3)paths.add(polygon);
+        }while(measure.nextContour());
+        if(source.getFillType()!=Path.FillType.EVEN_ODD)return paths;
+        Clipper64 normalize=new Clipper64();normalize.addSubject(paths);Paths64 winding=new Paths64();if(!normalize.execute(ClipType.Union,FillRule.EvenOdd,winding))throw SketchDocument.bad("Native cel-hand fill normalization failed");return winding;
+    }
     /** Pairwise unions avoid repeatedly intersecting a tiny sliver with a large
      * accumulated contour, and keep the new style practical for native preview. */
     private static Path celUnion(List<Path> paths)throws Exception {
@@ -290,6 +323,17 @@ final class SketchHandGeometry {
      * retained boundary/occluded gap; it never bridges or fills missing ink.
      * Thresholds are in model units, identical at preview and export sizes. */
     private static Path celCreasesWithoutSpecks(Path source,double unit)throws Exception {
+        // Subtracting a small boundary contour can disconnect another short
+        // branch. Revisit the native result until no eligible island remains;
+        // the span/perimeter limits and hole-preserving difference stay exact.
+        // Bound work by the source vertex budget and reject non-convergence.
+        Path current=source;
+        for(int budget=source.approximate(.001f).length;budget>0;budget--){
+            Path next=celCreasePass(current,unit);if(next==current)return current;current=next;
+        }
+        throw SketchDocument.bad("Native cel-hand crease cleanup did not converge");
+    }
+    private static Path celCreasePass(Path source,double unit)throws Exception {
         Path removed=new Path();PathMeasure measure=new PathMeasure(source,false);
         do{if(measure.getLength()>unit*.065)continue;Path part=new Path();measure.getSegment(0,measure.getLength(),part,true);part.close();RectF box=new RectF();part.computeBounds(box,true);
             if(Math.max(box.width(),box.height())>unit*.028)continue;
@@ -379,7 +423,13 @@ final class SketchHandGeometry {
         for(int band:new int[]{0,2})if(!tonePieces.get(band).isEmpty()){Path tone=celUnion(tonePieces.get(band));celOp(tone,interior,Path.Op.INTERSECT);out.add(new Ink(tone,SketchCharacterArt.tone(base,band==0?.83:1.07),true));}
         if(!nails.isEmpty()){celOp(nails,interior,Path.Op.INTERSECT);out.add(new Ink(nails,settings.getString("nailColor"),true));}
         if(!creases.isEmpty()){celOp(creases,interior,Path.Op.INTERSECT);creases=celCreasesWithoutSpecks(creases,unit);if(!creases.isEmpty())out.add(new Ink(creases,SketchCharacterArt.tone(base,.67),true));}
-        out.add(new Ink(new Path(skin),SketchCharacterArt.tone(base,.52),false));for(Ink mark:out)if(mark.fill)mark.path.set(celWinding(mark.path));return out;
+        out.add(new Ink(new Path(skin),SketchCharacterArt.tone(base,.52),false));for(Ink mark:out){if(mark.fill)mark.path.set(celWinding(mark.path));mark.path.set(celEditableCoordinates(mark.path,width,height));}return out;
+    }
+    /** The ordinary path reader multiplies normalized floats by canvas size.
+     * Use that same representable coordinate grid for retained cel ink too. */
+    private static Path celEditableCoordinates(Path source,int width,int height){
+        Path result=new Path();result.setFillType(source.getFillType());PathMeasure measure=new PathMeasure(source,false);
+        do{Path contour=new Path();if(!measure.getSegment(0,measure.getLength(),contour,true))continue;contour.close();float[] points=contour.approximate(.0001f);for(int i=0;i<points.length;i+=3){float x=points[i+1]/width*width,y=points[i+2]/height*height;if(i==0)result.moveTo(x,y);else result.lineTo(x,y);}result.close();}while(measure.nextContour());return result;
     }
     private static void smoothNormals(List<Face> faces){
         Map<V,V> sums=new IdentityHashMap<>();for(Face face:faces){V n=face.p[1].sub(face.p[0]).cross(face.p[2].sub(face.p[0]));for(V v:face.p)sums.put(v,sums.getOrDefault(v,new V(0,0,0)).add(n));}

@@ -56,6 +56,8 @@ public final class NativeHandCelStudyTest {
      * Required: VIDEOSTUDIO_HAND_CEL_READY=true, VIDEOSTUDIO_HAND_CEL_BASELINE,
      * VIDEOSTUDIO_HAND_CEL_EVIDENCE. READY is set only after settings/geometry freeze.
      * Optional VIDEOSTUDIO_HAND_CEL_MOTION_CASES lists baseline case IDs (or "all").
+     * EXPECTED_VERSION/CODE default to4.8.1/484; later combined candidates must
+     * explicitly select their exact source release. No clock or artwork changes.
      * Default full captures: hand_grasp_right_front and hand_grasp_right_right.
      * Each run needs an empty evidence root; retries are preserved as new generations.
      */
@@ -67,16 +69,17 @@ public final class NativeHandCelStudyTest {
         assertFalse("Do not place output above the original evidence",baseline.startsWith(root.toPath()));
         assertTrue("Use a fresh immutable generation",!root.exists()||root.isDirectory()&&root.list().length==0);
         Files.createDirectories(root.toPath());context=RuntimeEnvironment.getApplication();
-        File repo=new File("/workspace/VideoStudio-Hand-Cel-Polish");
+        File repo=compiledRepository();
         String gradle=readText(new File(repo,"android/app/build.gradle.kts").toPath());
         Matcher name=Pattern.compile("(?m)^\\s*versionName\\s*=\\s*\"([^\"]+)\"").matcher(gradle);
         Matcher code=Pattern.compile("(?m)^\\s*versionCode\\s*=\\s*(\\d+)\\s*$").matcher(gradle);
         assertTrue("Missing app versionName assignment",name.find());assertTrue("Missing app versionCode assignment",code.find());
         versionName=name.group(1);versionCode=Integer.parseInt(code.group(1));
-        assertEquals("4.8.1",AppProtocol.APP_VERSION);assertEquals("4.8.1",versionName);assertEquals(484,versionCode);
-        assertEquals("feat/native-hand-cel-polish-20261018",git(repo,"branch","--show-current").trim());
+        String expectedVersion=System.getenv().getOrDefault("VIDEOSTUDIO_HAND_CEL_EXPECTED_VERSION","4.8.1");
+        int expectedCode=Integer.parseInt(System.getenv().getOrDefault("VIDEOSTUDIO_HAND_CEL_EXPECTED_CODE","484"));
+        assertEquals(expectedVersion,AppProtocol.APP_VERSION);assertEquals(expectedVersion,versionName);assertEquals(expectedCode,versionCode);
         assertEquals("Keep the original 240-case matrix source unchanged","",git(repo,"diff",BASE,"--",MATRIX_TEST).trim());
-        Map<Path,String> sourceHashes=snapshotSources(repo);
+        String sourceHead=git(repo,"rev-parse","HEAD").trim();Map<Path,String> sourceHashes=snapshotSources(repo);String compiledProductHash=productClassHash();
         Set<String> motion=motionCases();JSONArray planned=new JSONArray();Set<String> distinctInputs=new HashSet<>();
         JSONArray productExamples=SketchCapabilities.handAnimation().getJSONArray("studyExamples");
         assertEquals("All four study recipes must be available without workspace files",4,productExamples.length());
@@ -107,8 +110,9 @@ public final class NativeHandCelStudyTest {
             if(Thread.currentThread().isInterrupted())throw new InterruptedException("Hand cel study cancelled");
             JSONObject item=planned.getJSONObject(i);runCase(baseline.resolve(item.getString("baselineCaseId")),item);
         }
-        boolean sourceStable=unchanged(sourceHashes)&&sourceHashes.keySet().equals(workingSources(repo)),baselineStable=unchanged(baselineHashes);
-        write(new File(root,"Source-Stability.json"),new JSONObject().put("sourceHashesUnchanged",sourceStable).put("baselineInputsUnchanged",baselineStable).put("headAtEnd",git(repo,"rev-parse","HEAD").trim()).put("gitStatusAtEnd",git(repo,"status","--porcelain")));
+        boolean compiledProductStable=compiledProductHash.equals(productClassHash()),headStable=sourceHead.equals(git(repo,"rev-parse","HEAD").trim());
+        boolean sourceStable=unchanged(sourceHashes)&&sourceHashes.keySet().equals(workingSources(repo))&&compiledProductStable&&headStable,baselineStable=unchanged(baselineHashes);
+        write(new File(root,"Source-Stability.json"),new JSONObject().put("sourceHashesUnchanged",sourceStable).put("compiledProductClassUnchanged",compiledProductStable).put("headUnchanged",headStable).put("baselineInputsUnchanged",baselineStable).put("headAtEnd",git(repo,"rev-parse","HEAD").trim()).put("gitStatusAtEnd",git(repo,"status","--porcelain")));
         boolean complete=records.length()==48&&failedCases==0&&legacyAttempted==336&&legacyPassed==336&&archiveCompared==96&&sourceStable&&baselineStable;
         writeIndex(complete?"PASS":"FAIL",complete);
         artifactHashes();
@@ -133,10 +137,10 @@ public final class NativeHandCelStudyTest {
             write(new File(folder,"request.json"),request);record.put("nativeRequestSha256",hash(request));SketchEditOps.execute(context,"sketch_edit",request);
             JSONObject document;try(SketchProjectStore store=new SketchProjectStore(context)){document=store.get(sketchId);}clock(document);assertEquals(2,document.getInt("revision"));
             SketchDocument.validate(document);JSONObject hand=hand(document);assertEquals("cel",hand.getJSONObject("settings").getString("renderStyle"));assertEquals(96,hand.getInt("durationFrames"));assertEquals(24,hand.getInt("fps"));
-            String before=SketchDocument.canonical(document);write(new File(folder,"document.json"),document);JSONArray screenshots=new JSONArray();int changedStyleProbes=0;
+            String before=SketchDocument.canonical(document);write(new File(folder,"document.json"),document);JSONArray screenshots=new JSONArray();record.put("screenshots",screenshots).put("allFramesRendered",false);int changedStyleProbes=0;
             boolean full=item.getBoolean("allFramesRequested");try(SketchFrameRenderer renderer=new SketchFrameRenderer(context,document)){
                 for(int frame=0;frame<96;frame++)if(full||probe(frame)){
-                    Bitmap bitmap=renderer.render(frame);File output=new File(folder,String.format(Locale.ROOT,"frames/frame-%04d.png",frame));try{
+                    record.put("renderingFrame",frame);Bitmap bitmap=renderer.render(frame);File output=new File(folder,String.format(Locale.ROOT,"frames/frame-%04d.png",frame));try{
                         if(probe(frame)){
                             BitmapFactory.Options options=new BitmapFactory.Options();options.inPreferredConfig=Bitmap.Config.ARGB_8888;
                             Bitmap original=BitmapFactory.decodeFile(baseline.resolve(String.format(Locale.ROOT,"frames/frame-%04d.png",frame)).toString(),options);assertNotNull(original);
@@ -147,7 +151,7 @@ public final class NativeHandCelStudyTest {
                     screenshots.put(new JSONObject().put("frame",frame).put("sha256",SketchProjectStore.fileHash(output)));
                 }
             }
-            record.put("screenshots",screenshots).put("allFramesRendered",full).put("nativeDocumentSha256",hash(document)).put("celStyleChangedProbeCount",changedStyleProbes)
+            record.remove("renderingFrame");record.put("screenshots",screenshots).put("allFramesRendered",full&&screenshots.length()==96).put("nativeDocumentSha256",hash(document)).put("celStyleChangedProbeCount",changedStyleProbes)
                     .put("allFrameValidation","Native sketch_edit constructor plus document validation checks all 96 unchanged frames, pose reach and actual ink bounds; sparse PNGs are probes, not complete motion review");
             if(changedStyleProbes==0)failure(errors,"cel style routing",new AssertionError("renderStyle=cel must affect actual native pixels; this is separate from legacy compatibility or artistic acceptance"));
             SketchPaintArchive.Prepared archive=SketchPaintArchive.prepare(context,new JSONObject().put("sketchId",sketchId).put("expectedRevision",2).put("operationId","cel_study_archive"));
@@ -161,7 +165,7 @@ public final class NativeHandCelStudyTest {
             }
             record.put("archiveSha256",archiveHash).put("archivePixelComparisons",comparisons.length()).put("archiveComparisonFrames",comparisons);write(new File(folder,"archive-pixel-comparisons.json"),new JSONObject().put("comparisons",comparisons).put("archiveSha256",archiveHash));
             assertEquals("Rendering must not mutate editable source",before,SketchDocument.canonical(document));assertEquals(originalOperation,SketchDocument.canonical(operation));
-        }catch(InterruptedException e){throw e;}catch(Exception|AssertionError e){failure(errors,"cel native author/render/archive",e);}
+        }catch(InterruptedException e){throw e;}catch(Exception|AssertionError e){failure(errors,record.has("renderingFrame")?"cel render frame "+record.getInt("renderingFrame"):"cel native author/render/archive",e);}
         record.put("failures",errors).put("technical",errors.length()==0?"PASS":"FAIL");if(errors.length()>0)failedCases++;
         write(new File(folder,"case-evidence.json"),record);writeIndex("RUNNING",false);System.out.println("HAND CEL "+records.length()+"/48 "+id+" "+record.getString("technical"));
     }
@@ -186,9 +190,41 @@ public final class NativeHandCelStudyTest {
         assertEquals("The old editable document must remain untouched",before,SketchDocument.canonical(document));
     }
 
+    /** Bind provenance to the ACTUAL loaded product classes, not a neighbouring checkout. */
+    private static File compiledRepository()throws Exception {
+        java.net.URL resource=SketchHandGeometry.class.getResource("/com/rezoxnemesis/videostudio/SketchHandGeometry.class");
+        assertNotNull("Native study requires the product class resource",resource);
+        // Robolectric defines instrumented classes without a CodeSource URL;
+        // its loader still resolves the original product bytes from this jar.
+        java.net.URL location="jar".equals(resource.getProtocol())?((java.net.JarURLConnection)resource.openConnection()).getJarFileURL():resource;
+        assertEquals("Native study requires a file-backed product artifact","file",location.getProtocol());
+        File artifact=new File(location.toURI()).getCanonicalFile();
+        for(File cursor=artifact.isDirectory()?artifact:artifact.getParentFile();cursor!=null;cursor=cursor.getParentFile()){
+            if(new File(cursor,".git").exists()){
+                assertTrue("Loaded product artifact must belong to this Android build",artifact.toPath().startsWith(new File(cursor,"android/app/build").getCanonicalFile().toPath()));
+                return cursor;
+            }
+        }
+        throw new AssertionError("Loaded native product artifact has no source repository: "+artifact);
+    }
+    @Test public void nativeProductArtifactDeterminesItsOwnSourceRepository()throws Exception {
+        File repo=compiledRepository();
+        assertTrue(new File(repo,"android/app/src/main/java/com/rezoxnemesis/videostudio/SketchHandGeometry.java").isFile());
+        Matcher version=Pattern.compile("(?m)^\\s*versionName\\s*=\\s*\"([^\"]+)\"").matcher(readText(new File(repo,"android/app/build.gradle.kts").toPath()));
+        assertTrue("Source must declare its app version",version.find());
+        assertEquals("Compiled product version must match its source repository",version.group(1),AppProtocol.APP_VERSION);
+        assertTrue("Compiled native class must have a complete SHA-256 identity",productClassHash().matches("[a-f0-9]{64}"));
+    }
+
+    private static String productClassHash()throws Exception {
+        try(java.io.InputStream bytes=SketchHandGeometry.class.getResourceAsStream("/com/rezoxnemesis/videostudio/SketchHandGeometry.class")){
+            assertNotNull("Missing native product class bytes",bytes);return SketchDocument.sha256(bytes.readAllBytes());
+        }
+    }
     private Map<Path,String> snapshotSources(File repo)throws Exception {
         JSONObject state=new JSONObject().put("baseCommit",BASE).put("headAtStart",git(repo,"rev-parse","HEAD").trim()).put("branch",git(repo,"branch","--show-current").trim()).put("gitStatusAtStart",git(repo,"status","--porcelain"))
                 .put("appVersion",AppProtocol.APP_VERSION).put("versionName",versionName).put("versionCode",versionCode).put("freezeSignal",System.getenv("VIDEOSTUDIO_HAND_CEL_READY"))
+                .put("compiledProductClassSha256",productClassHash()).put("productClassResource",String.valueOf(SketchHandGeometry.class.getResource("/com/rezoxnemesis/videostudio/SketchHandGeometry.class")))
                 .put("sourceSelection","git ls-files --cached --others --exclude-standard; existing files excluding build, .work, .gradle, node_modules and .git directories; untracked contents included in source-snapshot");
         write(new File(root,"Source-State.json"),state);Files.write(new File(root,"Source-Diff.patch").toPath(),git(repo,"diff","--binary",BASE,"--").getBytes(StandardCharsets.UTF_8));
         Map<Path,String> hashes=new LinkedHashMap<>();
@@ -236,7 +272,7 @@ public final class NativeHandCelStudyTest {
     private static boolean probe(int frame){for(int value:PROBES)if(value==frame)return true;return false;}
     private static void clock(JSONObject doc)throws Exception{assertEquals(96,doc.getInt("frameCount"));assertEquals(24,doc.getInt("fps"));assertEquals(1280,doc.getInt("width"));assertEquals(720,doc.getInt("height"));}
     private static JSONObject hand(JSONObject doc)throws Exception{JSONArray layers=doc.getJSONArray("layers");for(int l=0;l<layers.length();l++){JSONArray objects=layers.getJSONObject(l).getJSONArray("objects");for(int i=0;i<objects.length();i++)if("hand".equals(objects.getJSONObject(i).getString("kind")))return objects.getJSONObject(i).getJSONObject("hand");}throw new AssertionError("Missing native retained hand");}
-    private static void failure(JSONArray errors,String stage,Throwable error)throws Exception{errors.put(new JSONObject().put("stage",stage).put("type",error.getClass().getSimpleName()).put("message",String.valueOf(error.getMessage())));}
+    private static void failure(JSONArray errors,String stage,Throwable error)throws Exception{java.io.StringWriter trace=new java.io.StringWriter();error.printStackTrace(new java.io.PrintWriter(trace));errors.put(new JSONObject().put("stage",stage).put("type",error.getClass().getSimpleName()).put("message",String.valueOf(error.getMessage())).put("stackTrace",trace.toString()));}
     private static void png(File output,Bitmap bitmap)throws Exception{Files.createDirectories(output.toPath().getParent());try(FileOutputStream out=new FileOutputStream(output)){assertTrue("Native PNG encoding failed",bitmap.compress(Bitmap.CompressFormat.PNG,100,out));}}
     private static void write(File output,JSONObject json)throws Exception{Files.createDirectories(output.toPath().getParent());Files.write(output.toPath(),json.toString(2).getBytes(StandardCharsets.UTF_8));}
     private static String git(File repo,String... args)throws Exception{List<String> command=new ArrayList<>();command.add("git");command.addAll(Arrays.asList(args));Process process=new ProcessBuilder(command).directory(repo).redirectErrorStream(true).start();String result=new String(process.getInputStream().readAllBytes(),StandardCharsets.UTF_8);assertEquals("Git provenance command failed: "+command+"\n"+result,0,process.waitFor());return result;}
