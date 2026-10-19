@@ -1,0 +1,127 @@
+name: VideoStudio 4.8.7 GLB to Sketch signed candidate
+
+on:
+  push:
+    branches: [feat/sketch-3d-cel-v487-20261019]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: glb-sketch-v487-signed-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  signed-candidate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Checkout candidate source
+        uses: actions/checkout@v4
+      - name: Use Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+      - name: Ensure Android 36 build components
+        run: |
+          set -euo pipefail
+          if [ ! -f "$ANDROID_HOME/platforms/android-36/package.xml" ] || [ ! -x "$ANDROID_HOME/build-tools/35.0.0/apksigner" ]; then
+            timeout 240s bash -c 'yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;35.0.0" >/dev/null'
+          fi
+          test -f "$ANDROID_HOME/platforms/android-36/package.xml"
+          test -x "$ANDROID_HOME/build-tools/35.0.0/apksigner"
+      - name: Restore existing VideoStudio owner signing identity
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.android/debug.keystore
+          key: videostudio-android-debug-signing-v1
+      - name: Verify original signer is available and unchanged
+        run: |
+          set -euo pipefail
+          key="$HOME/.android/debug.keystore"
+          if [ ! -f "$key" ]; then
+            echo "::error::Original signing key cache is unavailable. Refusing to manufacture a replacement."
+            exit 1
+          fi
+          actual="$(keytool -list -v -keystore "$key" -storepass android -alias androiddebugkey | awk -F': ' '/SHA256:/{print $2;exit}' | tr -d ':[:space:]' | tr '[:upper:]' '[:lower:]')"
+          pinned="7e0187470356616be2a45bc7f41445894085185db110edfdc0cdfd232942a6dd"
+          if [ "$actual" != "$pinned" ]; then
+            echo "::error::Source signer is not the existing VideoStudio signer."
+            exit 1
+          fi
+          echo "Original VideoStudio signing certificate verified."
+      - name: Compile Android and run GLB-to-vector regression suite
+        working-directory: android
+        env:
+          VIDEOSTUDIO_STORY_FILM_PROOF: '0'
+        run: |
+          set -euo pipefail
+          gradle :app:compileDebugJavaWithJavac :app:testDebugUnitTest \
+            --tests com.rezoxnemesis.videostudio.Sketch3DCelBridgeTest --stacktrace
+      - name: Build app candidate with original owner signing identity
+        working-directory: android
+        env:
+          VIDEOSTUDIO_STORY_FILM_PROOF: '0'
+        run: |
+          set -euo pipefail
+          export VIDEOSTUDIO_SIGNING_KEYSTORE="$HOME/.android/debug.keystore"
+          gradle :app:assembleDebug --stacktrace
+      - name: Verify exact package, monotonic version, signer and hash
+        run: |
+          set -euo pipefail
+          apk="android/app/build/outputs/apk/debug/app-debug.apk"
+          test -s "$apk"
+          info="$("$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$apk" | head -n 1)"
+          echo "$info"
+          grep -F "name='com.rezoxnemesis.videostudio.next'" <<< "$info"
+          grep -F "versionCode='490'" <<< "$info"
+          grep -F "versionName='4.8.7'" <<< "$info"
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify "$apk"
+          certificate="$("$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --print-certs "$apk" | awk -F': ' '/Signer #1 certificate SHA-256 digest:/{print $2;exit}' | tr -d ':[:space:]' | tr '[:upper:]' '[:lower:]')"
+          test "$certificate" = "7e0187470356616be2a45bc7f41445894085185db110edfdc0cdfd232942a6dd"
+          sha256sum "$apk" > android/app/build/outputs/apk/debug/app-debug.apk.sha256
+          export VIDEOSTUDIO_SOURCE_HEAD_SHA="$GITHUB_SHA"
+          python3 scripts/verify-android-apk.py \
+            --apk "$apk" \
+            --aapt "$ANDROID_HOME/build-tools/35.0.0/aapt" \
+            --apksigner "$ANDROID_HOME/build-tools/35.0.0/apksigner"
+          python3 - <<'PY'
+          import json,os
+          root='android/app/build/outputs/apk/debug'
+          p={'version':'4.8.7','versionCode':490,'sourceCommit':os.environ['GITHUB_SHA'],
+             'base486':'340c17b443d8f3ca89d9827ef24f1ce6900303ce',
+             'packageName':'com.rezoxnemesis.videostudio.next',
+             'signerSha256':'7e0187470356616be2a45bc7f41445894085185db110edfdc0cdfd232942a6dd',
+             'previewOnly':True,'deviceGpuValidationPending':True}
+          with open(root+'/sketch-3d-cel-build-info.json','w') as f: json.dump(p,f,indent=2)
+          PY
+      - name: Upload signed 4.8.7 APK candidate and proof
+        uses: actions/upload-artifact@v4
+        with:
+          name: VideoStudio-4.8.7-GLB-to-Sketch-APK
+          path: |
+            android/app/build/outputs/apk/debug/app-debug.apk
+            android/app/build/outputs/apk/debug/app-debug.apk.sha256
+            android/app/build/outputs/apk/debug/VideoStudio-build-proof.json
+            android/app/build/outputs/apk/debug/sketch-3d-cel-build-info.json
+          if-no-files-found: error
+          retention-days: 14
+      - name: Keep test diagnostics if the build fails
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Sketch3D-4.8.7-native-test-diagnostics
+          path: |
+            android/app/build/test-results/testDebugUnitTest/
+            android/app/build/reports/tests/testDebugUnitTest/
+          if-no-files-found: warn
+          retention-days: 7
+
+# Deliberately no release, main merge, APK install, Gallery permission,
+# Cloudflare deployment or signing key creation.
