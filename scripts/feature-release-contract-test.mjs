@@ -4,7 +4,8 @@ import fs from 'node:fs';
 import * as contract from '../src/studio-workbench-contract.js';
 
 const edit=op=>({sketchId:'shot',operationId:'release_check',expectedRevision:1,operations:[op]});
-const hand={id:'hand_rig',kind:'hand',bounds:{x:.2,y:.1,width:.6,height:.8},hand:{settings:contract.HAND_ANIMATION_CAPABILITIES.settings,poses:[{frame:0}],durationFrames:120,fps:30,sourceFrameOffset:1}};
+const {renderStyle:omittedNewHandStyle,...legacyHandSettings}=contract.HAND_ANIMATION_CAPABILITIES.settings;
+const hand={id:'hand_rig',kind:'hand',bounds:{x:.2,y:.1,width:.6,height:.8},hand:{settings:legacyHandSettings,poses:[{frame:0}],durationFrames:120,fps:30,sourceFrameOffset:1}};
 const human={id:'human_rig',kind:'human',bounds:{x:.2,y:.1,width:.6,height:.8},human:{settings:contract.HUMAN_ANIMATION_CAPABILITIES.settings,poses:[{frame:0}],durationFrames:120,fps:30,sourceFrameOffset:-1}};
 const transform={x:0,y:0,scaleX:1,scaleY:1,rotation:0,anchorX:.5,anchorY:.5,opacity:1};
 const newOperations=[

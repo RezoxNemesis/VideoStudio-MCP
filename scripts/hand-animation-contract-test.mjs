@@ -136,7 +136,7 @@ test('hand metadata exposes native defaults, precise budgets and bounded project
  const metadata=contract.HAND_ANIMATION_CAPABILITIES;
  assert.ok(metadata,'hand metadata exported for reuse');
  assert.equal(metadata.minimumNativeVersion,'4.8.0');assert.equal(metadata.operation,hand.type);assert.equal(metadata.action,'sketch_edit');
- assert.deepEqual(metadata.settings,defaults);assert.deepEqual(metadata.views,views);
+ assert.deepEqual(metadata.settings,{...defaults,renderStyle:'smooth'});assert.deepEqual(metadata.views,views);
  assert.deepEqual(metadata.handedness,['right','left']);assert.deepEqual(metadata.details,['anatomical','contour']);
  assert.deepEqual(metadata.channels,channels);assert.deepEqual(metadata.channelLimits,channelLimits);
  assert.deepEqual(metadata.settingLimits,{...settingLimits,colors:'Eight-digit #AARRGGBB'});
@@ -150,6 +150,31 @@ test('hand metadata exposes native defaults, precise budgets and bounded project
  assert.match(metadata.semantics,/exposure.*unique drawings/);
  assert.match(metadata.manualControls,/Hand animation/);
  assert.match(metadata.agentGuidance,/ordinary ChatGPT.*app_status.*4\.8\.0/);
+ const review=metadata.reviewChecks;
+ assert.ok(review,'standard 2D review dimensions are available to ordinary capability consumers');
+ assert.deepEqual(review.requiredViews,views);assert.deepEqual(review.handedness,['right','left']);
+ assert.match(review.palmAndWrist,/coherent palm silhouette.*wrist join/i);
+ assert.match(review.fingertipCoverage,/every fingertip.*both hands.*six views/i);
+ assert.match(review.posesAndMotion,/readable poses.*motion timing.*volume/i);
+ assert.match(review.surfaceOcclusion,/nails.*creases.*occluded.*no floating marks/i);
+ assert.match(review.contact,/when applicable.*exact contact.*no hand\/prop penetration/i);
+ assert.match(review.motionCoverage,/full motion.*all six views.*still frames.*insufficient/i);
+ assert.match(review.technicalResult,/technical PASS.*does not.*visual/i);
+ assert.deepEqual(review.visualOutcomes,['ACCEPTABLE','NEEDS_REWORK','UNREVIEWED']);
+ assert.equal(review.automaticQualityCertification,false);
+ assert.match(metadata.agentGuidance,/reviewChecks.*full motion.*all six views.*no automatic quality certification/i);
+});
+
+test('hand study discovery exposes four product recipes without adding operation fields or actions',()=>{
+ const metadata=contract.HAND_ANIMATION_CAPABILITIES;
+ assert.deepEqual(metadata.studyPatterns,['open_close','grasp','finger_cascade','thumb_opposition']);
+ assert.match(metadata.studyExampleGuidance,/sketch_capabilities\.handAnimation\.studyExamples/);
+ assert.match(metadata.studyExampleGuidance,/1280.*720.*96.*24/);
+ assert.match(metadata.studyExampleGuidance,/fresh.*sketchId.*operationId.*handId/i);
+ assert.match(metadata.studyExampleGuidance,/Load study.*current.*clock.*settings/i);
+ for(const action of actions)assert.throws(()=>contract.nativeStudioParameters(action,request({pattern:'grasp'})));
+ const source=fs.readFileSync(new URL('../android/app/src/main/java/com/rezoxnemesis/videostudio/SketchCapabilities.java',import.meta.url),'utf8');
+ assert.match(source,/\.put\("studyExamples",SketchHandStudies\.examples\(\)\)/);
 });
 
 test('actual MCP app capabilities expose hand metadata only for the v3 agent',async()=>{
@@ -164,7 +189,7 @@ test('actual MCP app capabilities expose hand metadata only for the v3 agent',as
  assert.match(worker,/import \{[^}]*HAND_ANIMATION_CAPABILITIES[^}]*\} from '\.\/studio-workbench-contract\.js'/);
 });
 
-test('Java and Node hand capability literals match exactly without requiring Gradle',()=>{
+test('shared Java/Node hand metadata matches and native templates use the product helper without Gradle',()=>{
  const native=fs.readFileSync(new URL('../android/app/src/main/java/com/rezoxnemesis/videostudio/SketchCapabilities.java',import.meta.url),'utf8');
  assert.match(native,/\.put\("handAnimation",handAnimation\(\)\)/);
  const body=native.match(/public static JSONObject handAnimation\(\) throws Exception \{\s*return ([\s\S]*?);\s*\}/)?.[1];
@@ -173,8 +198,13 @@ test('Java and Node hand capability literals match exactly without requiring Gra
  // source parity check, not evidence of Java compilation or native rendering.
  class JSONObject {put(key,value){this[key]=value;return this;}}
  class JSONArray extends Array {constructor(values){super();this.push(...values);}}
- const expression=body.replace(/new (?:String|double|int)\[\]\{([^}]*)\}/g,'[$1]');
- const nativeMetadata=vm.runInNewContext(`(${expression})`,{JSONObject,JSONArray});
+ const studies=fs.readFileSync(new URL('../android/app/src/main/java/com/rezoxnemesis/videostudio/SketchHandStudies.java',import.meta.url),'utf8');
+ const patterns=JSON.parse('['+studies.match(/PATTERNS=\{([^}]*)\}/)[1]+']');
+ // Native dynamic examples are validated against the unchanged matrix and actual
+ // constructor by SketchHandStudiesTest; Node advertises where to retrieve them.
+ assert.match(body,/\.put\("studyExamples",SketchHandStudies\.examples\(\)\)/);
+ const expression=body.replace('.put("studyExamples",SketchHandStudies.examples())','').replace(/new (?:String|double|int)\[\]\{([^}]*)\}/g,'[$1]');
+ const nativeMetadata=vm.runInNewContext(`(${expression})`,{JSONObject,JSONArray,SketchHandStudies:{PATTERNS:patterns}});
  assert.deepEqual(JSON.parse(JSON.stringify(nativeMetadata)),contract.HAND_ANIMATION_CAPABILITIES);
 });
 
@@ -189,8 +219,8 @@ test('advertised defaults and channels match the shared native constructor sourc
  assert.ok(body,'shared native defaults are inspectable');
  class JSONObject {put(key,value){this[key]=value;return this;}}
  const settings=vm.runInNewContext(`(${body})`,{JSONObject});
- assert.deepEqual(JSON.parse(JSON.stringify(settings)),defaults);
- assert.deepEqual(contract.HAND_ANIMATION_CAPABILITIES.settings,defaults);
+ assert.deepEqual(JSON.parse(JSON.stringify(settings)),{...defaults,renderStyle:'smooth'});
+ assert.deepEqual(contract.HAND_ANIMATION_CAPABILITIES.settings,{...defaults,renderStyle:'smooth'});
  const nativeChannels=JSON.parse('['+native.match(/String\[\] CHANNELS=\{([^}]+)\}/)[1]+']');
  assert.deepEqual(contract.HAND_ANIMATION_CAPABILITIES.channels,nativeChannels);
  const interpolation=native.match(/left\.optString\("interpolation","([^"]+)"\)/)[1];
@@ -276,8 +306,8 @@ test('retained hand adds, hand patches and full layer imports all require native
  }
 });
 
-test('hand capability output describes retained editing and sampled native cels',()=>{
- const output='Editable native hand settings/pose programme; sample to ordinary native path cels';
+test('hand capability output describes retained book sampling without claiming public vector conversion',()=>{
+ const output='Editable retained native hand settings/pose programme; sampled book pages retain native hand state. Per-stroke vector conversion is internal and is not exposed by this feature.';
  assert.equal(contract.HAND_ANIMATION_CAPABILITIES.output,output);
  assert.ok(worker.includes(output));
 });

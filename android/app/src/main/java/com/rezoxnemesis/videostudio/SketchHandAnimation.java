@@ -9,12 +9,13 @@ final class SketchHandAnimation {
     static final String[] CHANNELS={"indexCurl","middleCurl","ringCurl","littleCurl","thumbCurl","thumbOpposition","spread","wristFlex","wristTurn"};
     private static final double[] NEUTRAL={.28,.34,.40,.46,.25,.25,.18,0,0};
     private SketchHandAnimation(){}
-    static JSONObject defaults()throws Exception {return new JSONObject().put("view","front").put("handedness","right").put("detail","anatomical").put("skinColor","#FFD6A078").put("nailColor","#FFE5C1AC").put("centerX",.5).put("centerY",.55).put("size",1).put("motion",1).put("wristMotion",.6);}
+    static JSONObject defaults()throws Exception {return new JSONObject().put("view","front").put("handedness","right").put("detail","anatomical").put("skinColor","#FFD6A078").put("nailColor","#FFE5C1AC").put("centerX",.5).put("centerY",.55).put("size",1).put("motion",1).put("wristMotion",.6).put("renderStyle","smooth");}
     static JSONObject settings(JSONObject in)throws Exception {
-        SketchDocument.fields(in,"view,handedness,detail,skinColor,nailColor,centerX,centerY,size,motion,wristMotion");JSONObject s=defaults();Iterator<String> keys=in.keys();while(keys.hasNext()){String k=keys.next();s.put(k,in.get(k));}
+        SketchDocument.fields(in,"view,handedness,detail,skinColor,nailColor,centerX,centerY,size,motion,wristMotion,renderStyle");JSONObject s=defaults();Iterator<String> keys=in.keys();while(keys.hasNext()){String k=keys.next();s.put(k,in.get(k));}
         if(!Set.of("front","left","right","back","high","low").contains(s.getString("view")))throw SketchDocument.bad("Unknown hand view");
         if(!Set.of("right","left").contains(s.getString("handedness")))throw SketchDocument.bad("Unknown handedness");
         if(!Set.of("anatomical","contour").contains(s.getString("detail")))throw SketchDocument.bad("Unknown hand detail");
+        if(!Set.of("smooth","cel").contains(s.getString("renderStyle")))throw SketchDocument.bad("Unknown hand render style");
         SketchDocument.color(s.getString("skinColor"));SketchDocument.color(s.getString("nailColor"));
         SketchDocument.number(s,"centerX",.2,.8);SketchDocument.number(s,"centerY",.2,.8);SketchDocument.number(s,"size",.4,1.2);SketchDocument.number(s,"motion",0,1);SketchDocument.number(s,"wristMotion",0,1);return s;
     }

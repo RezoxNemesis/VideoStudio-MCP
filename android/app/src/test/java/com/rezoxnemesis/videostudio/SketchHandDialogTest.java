@@ -52,7 +52,7 @@ public class SketchHandDialogTest {
             String[] names={"Centre X (0.2..0.8)","Centre Y (0.2..0.8)","Size (0.4..1.2)","Motion (0..1)","Wrist motion (0..1)"};
             double[] values={.42,.51,.7,.8,.3};for(int i=0;i<names.length;i++)edit(form,names[i]).setText(String.valueOf(values[i]));
             ShadowLooper.idleMainLooper();dialog().getButton(AlertDialog.BUTTON_POSITIVE).performClick();assertEquals(1,requests.size());
-            JSONObject settings=operation(requests.get(0)).getJSONObject("settings");assertEquals(10,settings.length());
+            JSONObject settings=operation(requests.get(0)).getJSONObject("settings");assertEquals(11,settings.length());assertEquals("smooth",settings.getString("renderStyle"));
             assertEquals("right",settings.getString("view"));assertEquals("left",settings.getString("handedness"));assertEquals("contour",settings.getString("detail"));
             assertEquals("#FFB78060",settings.getString("skinColor"));assertEquals("#FFE8CBB8",settings.getString("nailColor"));
             String[] keys={"centerX","centerY","size","motion","wristMotion"};for(int i=0;i<keys.length;i++)assertEquals(values[i],settings.getDouble(keys[i]),0);

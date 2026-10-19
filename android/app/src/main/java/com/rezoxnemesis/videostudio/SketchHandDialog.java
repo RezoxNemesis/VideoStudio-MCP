@@ -20,6 +20,8 @@ import java.util.function.Consumer;
 final class SketchHandDialog {
     private static final String[] VIEWS={"front","left","right","back","high","low"};
     private static final String[] HANDS={"right","left"},DETAILS={"anatomical","contour"};
+    private static final String[] RENDER_STYLES={"smooth","cel"};
+    private static final String[] STUDY_LABELS={"Open / close","Grasp","Finger cascade","Thumb opposition"};
     private static final String[] EASING={"Native default","linear","hold","smooth","ease_in","ease_out","ease_in_out","bezier"};
     private static final String[][] NUMBERS={{"centerX","Centre X (0.2..0.8)"},{"centerY","Centre Y (0.2..0.8)"},{"size","Size (0.4..1.2)"},{"motion","Motion (0..1)"},{"wristMotion","Wrist motion (0..1)"}};
     private final Activity activity;
@@ -27,7 +29,7 @@ final class SketchHandDialog {
     private final SketchConstructionSubmit create;
     private final LinearLayout form,poseControls;
     private final TextView status;
-    private final Spinner view,handedness,detail,posePicker,easing;
+    private final Spinner view,handedness,detail,renderStyle,study,posePicker,easing;
     private final CheckBox custom;
     private final EditText skin,nail,keyFrame,previewFrame;
     private final Map<String,EditText> settingsFields=new LinkedHashMap<>(),channels=new LinkedHashMap<>();
@@ -54,15 +56,18 @@ final class SketchHandDialog {
         form=new LinearLayout(activity);form.setOrientation(LinearLayout.VERTICAL);form.setPadding(20,12,20,12);
         status=new TextView(activity);status.setContentDescription("Hand animation status");status.setText("Hand ready. Preview uses the editable native joint programme.");
         TextView description=new TextView(activity);description.setContentDescription("Hand animation description");
-        description.setText("Create an articulated hand and forearm on a new editable layer. Editable native joint surfaces are projected into2D at each output frame. Current sketch: "+frames+" frames at "+fps+" FPS.\nWith Custom poses off, the native relaxed / curl / unfurl preset follows the current settings. Reset preset replaces custom keys using the current settings. Preview uses the existing sketch timeline.");form.addView(description);
+        description.setText("Create an animated hand and forearm on a new editable layer. Current sketch: "+frames+" frames at "+fps+" FPS.\nLoad study replaces custom pose keys while keeping your settings and timeline. Example setup: 1280 x 720, 96 frames / 24 FPS, Size 0.95, Render style cel. Use Timing / canvas before opening this dialog to change the timeline.\nOpen / close follows Motion and Wrist motion. Other studies load editable pose keys. Reset preset returns to the default motion.");form.addView(description);
         view=spinner(form,"Hand view",VIEWS);view.setSelection(Arrays.asList(VIEWS).indexOf(defaults.getString("view")));
         handedness=spinner(form,"Handedness",HANDS);handedness.setSelection(Arrays.asList(HANDS).indexOf(defaults.getString("handedness")));
         detail=spinner(form,"Hand detail",DETAILS);detail.setSelection(Arrays.asList(DETAILS).indexOf(defaults.getString("detail")));
+        renderStyle=spinner(form,"Render style",RENDER_STYLES);renderStyle.setSelection(Arrays.asList(RENDER_STYLES).indexOf(defaults.getString("renderStyle")));
         skin=input(form,"Skin colour (ARGB)",defaults.getString("skinColor"),true);skin.setInputType(InputType.TYPE_CLASS_TEXT);
         nail=input(form,"Nail colour (ARGB)",defaults.getString("nailColor"),true);nail.setInputType(InputType.TYPE_CLASS_TEXT);
         for(String[] field:NUMBERS)settingsFields.put(field[0],input(form,field[1],String.valueOf(defaults.get(field[0])),true));
         custom=new CheckBox(activity);custom.setText("Custom poses");custom.setContentDescription("Custom poses");form.addView(custom);
         button(form,"Reset preset",this::resetPreset);
+        study=spinner(form,"Study example",STUDY_LABELS);
+        button(form,"Load study",this::loadStudy);
         poseControls=new LinearLayout(activity);poseControls.setOrientation(LinearLayout.VERTICAL);form.addView(poseControls);
         TextView help=new TextView(activity);help.setText("Use 1–32 ordered keys. Frame 1 must remain the starting key. Select a key to edit; selection, Preview and Create apply pending edits. To add a key, enter a free frame and channel values, then Add pose. Duplicate frames are rejected. Blank channels use native neutral defaults for that key. Curl, opposition and spread: 0–1; wrist flex/turn: −25–25 degrees. Easing controls the interval after this key; Bezier needs four values from 0 to 1.");poseControls.addView(help);
         poses=SketchHandAnimation.preset(frames,fps,defaults);
@@ -85,7 +90,7 @@ final class SketchHandDialog {
             }
         });
         custom.setOnCheckedChangeListener((control,checked)->{if(binding||unavailable()||submitting)return;clearPreview();enable(poseControls,checked);status.setText(checked?"Custom keys enabled. Blank channels use native neutral defaults.":"Native preset enabled with the current settings. Custom keys are retained until Reset preset.");});
-        for(Spinner control:new Spinner[]{view,handedness,detail,easing})control.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener(){
+        for(Spinner control:new Spinner[]{view,handedness,detail,renderStyle,easing})control.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener(){
             public void onNothingSelected(AdapterView<?> parent){}
             public void onItemSelected(AdapterView<?> parent,View child,int position,long id){if(!binding&&!unavailable()&&!submitting)clearPreview();}
         });
@@ -119,7 +124,7 @@ final class SketchHandDialog {
 
     private JSONObject readSettings()throws Exception {
         JSONObject settings=new JSONObject().put("view",VIEWS[view.getSelectedItemPosition()]).put("handedness",HANDS[handedness.getSelectedItemPosition()])
-                .put("detail",DETAILS[detail.getSelectedItemPosition()]).put("skinColor",skin.getText().toString().trim()).put("nailColor",nail.getText().toString().trim());
+                .put("detail",DETAILS[detail.getSelectedItemPosition()]).put("renderStyle",RENDER_STYLES[renderStyle.getSelectedItemPosition()]).put("skinColor",skin.getText().toString().trim()).put("nailColor",nail.getText().toString().trim());
         for(Map.Entry<String,EditText> field:settingsFields.entrySet())settings.put(field.getKey(),number(field.getValue()));
         return SketchHandAnimation.settings(settings);
     }
@@ -156,6 +161,13 @@ final class SketchHandDialog {
         if(poses.getJSONObject(selected).getInt("frame")==0)throw SketchDocument.bad("Keep the frame-one starting pose");
         JSONArray candidate=new JSONArray();for(int i=0;i<poses.length();i++)if(i!=selected)candidate.put(poses.getJSONObject(i));
         SketchHandAnimation.validatePoses(candidate,document.getInt("frameCount"));poses=candidate;selected=Math.max(0,selected-1);refresh();status.setText("Pose deleted; remaining keys are retained.");
+    }
+
+    private void loadStudy()throws Exception {
+        String pattern=SketchHandStudies.PATTERNS[study.getSelectedItemPosition()];int frames=document.getInt("frameCount"),fps=document.getInt("fps");
+        JSONArray candidate=SketchHandStudies.poses(pattern,frames,fps,readSettings());
+        poses=candidate;selected=0;custom.setChecked(true);refresh();enable(poseControls,true);
+        status.setText("Loaded "+study.getSelectedItem()+" into Custom poses · "+frames+" frames / "+fps+" FPS. Settings, render style and canvas retained.");
     }
 
     private void resetPreset()throws Exception {

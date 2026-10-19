@@ -20,7 +20,7 @@ final class SketchHandGeometry {
     }
     static final class Ink {final Path path;final String color;final boolean fill;JSONObject gradient;
         Ink(Path p,String c,boolean f){path=p;color=c;fill=f;}}
-    static final class Face {final V[] p;final int material;V[] normals;Face(int m,V...p){this.p=p;material=m;}}
+    static final class Face {final V[] p;final int material;V[] normals;int owner=-1;Face(int m,V...p){this.p=p;material=m;}}
     private static List<Face> surfaces(JSONObject settings,double[] pose)throws Exception {
         List<Face> mesh=new ArrayList<>();V[][] joints=joints(pose);double[] radii={.155,.165,.15,.128,.19};
         // Wrist-to-forearm volume remains stationary; hand flexion is rooted at its socket.
@@ -67,6 +67,13 @@ final class SketchHandGeometry {
     private static void addBox(List<V> out,double x0,double y0,double z0,double x1,double y1,double z1){for(double x:new double[]{x0,x1})for(double y:new double[]{y0,y1})for(double z:new double[]{z0,z1})out.add(new V(x,y,z));}
     private static V viewPoint(V v,String view){return rotate(v,view.equals("high")?48:view.equals("low")?-48:0,view.equals("left")?-90:view.equals("right")?90:view.equals("back")?180:0);}
     static List<Ink> draw(JSONObject settings,double[] pose,int width,int height)throws Exception {
+        String style=settings.optString("renderStyle","smooth");
+        if(style.equals("cel"))return drawCel(settings,pose,width,height);
+        if(!style.equals("smooth"))throw SketchDocument.bad("Unknown hand render style");
+        return drawSmooth(settings,pose,width,height);
+    }
+    /** The original smooth algorithm is deliberately unchanged for saved artwork. */
+    private static List<Ink> drawSmooth(JSONObject settings,double[] pose,int width,int height)throws Exception {
         List<Face> transformed=surfaces(settings,pose);
         // Front-to-back coverage clipping preserves finger/palm occlusion before shade grouping.
         transformed.sort((a,b)->Double.compare(depth(b),depth(a)));List<Ink> surfaces=new ArrayList<>();Path covered=new Path();
@@ -92,6 +99,287 @@ final class SketchHandGeometry {
             if(!covered.op(shape,Path.Op.UNION))throw SketchDocument.bad("Native hand coverage failed");
         }
         List<Ink> out=new ArrayList<>();out.add(new Ink(covered,settings.getString("skinColor"),true));out.addAll(surfaces);out.add(new Ink(covered,SketchCharacterArt.tone(settings.getString("skinColor"),.52),false));return out;
+    }
+    /** Cel geometry keeps the exact joint chains/cameras. Owners are palm=0,
+     * fingers=1..5, forearm=6; detail masks use actual visible owner skin. */
+    private static List<Face> celSurfaces(JSONObject settings,double[] pose)throws Exception {
+        List<Face> arm=new ArrayList<>(),mesh=new ArrayList<>();V[][] chain=joints(pose);double[] radii={.155,.165,.15,.128,.19};
+        V[] armRings=new V[14];double[] armRadii=new double[14];armRings[0]=new V(0,2.08,-.03);armRadii[0]=.56;armRings[1]=new V(0,1.35,0);armRadii[1]=.47;
+        // Subdivide the existing straight root edges, without reshaping them:
+        // sparse long quads otherwise turn the field's fade into large diamonds.
+        for(int i=2;i<14;i++){double y=(13-i)*.10;armRings[i]=new V(0,y,0);armRadii[i]=y<=.4?.33+.01*y/.4:.34+.13*(y-.4)/.95;}
+        tube(arm,armRings,armRadii,0,.60);celOwner(arm,0,6);
+        palmSurface(mesh,new V[]{new V(0,.10,0),new V(0,-.25,0),new V(.02,-.70,0),new V(.02,-1.12,0),new V(.02,-1.31,0)},new double[]{.32,.48,.66,.65,.57});celKnuckleOverlap(mesh);celOwner(mesh,0,0);
+        int at=mesh.size();celPad(mesh,new V(-.37,-.43,.13),new V(.36,.55,.22));celPad(mesh,new V(.35,-.43,.07),new V(.27,.56,.19));celOwner(mesh,at,0);
+        for(int d=0;d<5;d++){
+            // Same shaft rings/lengths, followed by an elliptical terminal cap.
+            // More cap samples round the ink without moving any distal joint.
+            V[] centers=new V[14];double[] r=new double[14];centers[0]=chain[d][0].add(new V(0,.27,0));r[0]=radii[d]*1.12;centers[1]=chain[d][0];r[1]=radii[d];
+            // Bury the thumb's construction cap inside the wrist volume. Its
+            // old .213-radius cap projected beyond the heel as a flat ledge.
+            // All articulated joint centres and distal contact surfaces stay fixed.
+            if(d==4){centers[0]=chain[d][0].add(new V(.13,.26,-.08));r[0]=radii[d]*.78;}
+            for(int j=0;j<3;j++){centers[j*2+2]=chain[d][j].mul(.08).add(chain[d][j+1].mul(.92));centers[j*2+3]=chain[d][j+1];r[j*2+2]=radii[d]*(1-j*.16);r[j*2+3]=radii[d]*(j==2?.46:1.03-j*.17);}
+            V tangent=chain[d][3].sub(chain[d][2]).unit();
+            r[7]=radii[d]*.68;
+            for(int j=1;j<=6;j++){double angle=j*Math.PI/12;centers[7+j]=chain[d][3].add(tangent.mul(radii[d]*.50*Math.sin(angle)));r[7+j]=j==6?0:radii[d]*.68*Math.cos(angle);}
+            at=mesh.size();tube(mesh,centers,r,0,.82);celOwner(mesh,at,d+1);
+            if(settings.getString("detail").equals("anatomical")){
+                at=mesh.size();celNail(mesh,chain[d][2],chain[d][3],radii[d]);celOwner(mesh,at,d+1);
+                for(int j=1;j<3;j++){at=mesh.size();celCrease(mesh,chain[d][j],chain[d][j-1],chain[d][j+1],radii[d]*(1-(j-1)*.16));celOwner(mesh,at,d+1);}
+            }
+        }
+        if(settings.getString("detail").equals("anatomical")){
+            at=mesh.size();
+            celPalmLine(mesh,-.48,-.98,-.18,-.85,.30,-.86,false);
+            celPalmLine(mesh,.44,-.65,.06,-.53,-.30,-.34,false);
+            celPalmLine(mesh,-.43,-.94,-.17,-.53,-.24,-.14,false);
+            for(int d=0;d<3;d++)celPalmLine(mesh,chain[d][0].x,chain[d][0].y+.11,chain[d][0].x*.6,-.61,chain[d][0].x*.25,-.12,true);
+            celOwner(mesh,at,0);
+        }
+        arm=celPolygons(arm);mesh=celPolygons(mesh);smoothNormals(arm);smoothNormals(mesh);
+        List<Face> out=new ArrayList<>();
+        for(Face face:arm)out.add(celCamera(face,settings,pose,false,chain));
+        for(Face face:mesh)out.add(celCamera(face,settings,pose,true,chain));return out;
+    }
+    private static void celOwner(List<Face> faces,int start,int owner){for(int i=start;i<faces.size();i++){Face face=faces.get(i);face.owner=owner;face.normals=null;}}
+    /** Blend both sides of the distal palm into the thinner finger roots.
+     * Only y < -1 changes: central palm/pads, widths, joints and every finger
+     * contact surface remain fixed. This removes the exposed palmar cap shelf
+     * as well as its dorsal counterpart, without closing any finger gap. */
+    private static void celKnuckleOverlap(List<Face> palm){
+        Map<V,V> shared=new IdentityHashMap<>();for(Face face:palm)for(int i=0;i<face.p.length;i++){
+            V p=face.p[i],next=shared.get(p);if(next==null){double t=Math.max(0,Math.min(1,(-p.y-1.0)/.31));t=t*t*(3-2*t);next=t>0?new V(p.x,p.y,p.z*(1-.52*t)):p;shared.put(p,next);}face.p[i]=next;
+        }
+    }
+    /** Zero-radius rings contain repeated positions. Normalize them before
+     * camera handedness reversal, otherwise a valid cap can start with two
+     * identical vertices and be falsely culled as a degenerate polygon. */
+    private static List<Face> celPolygons(List<Face> input){
+        List<Face> out=new ArrayList<>();for(Face face:input){List<V> p=new ArrayList<>();for(V v:face.p)if(p.isEmpty()||v.sub(p.get(p.size()-1)).length()>1e-10)p.add(v);
+            if(p.size()>1&&p.get(0).sub(p.get(p.size()-1)).length()<=1e-10)p.remove(p.size()-1);if(p.size()<3)continue;
+            V area=new V(0,0,0);for(int t=1;t<p.size()-1;t++)area=area.add(p.get(t).sub(p.get(0)).cross(p.get(t+1).sub(p.get(0))));if(area.length()<1e-12)continue;
+            Face clean=new Face(face.material,p.toArray(new V[0]));clean.owner=face.owner;out.add(clean);
+        }return out;
+    }
+    private static double celSkinZ(List<Face> mesh,double x,double y,boolean back){
+        double best=back?Double.POSITIVE_INFINITY:Double.NEGATIVE_INFINITY;
+        for(Face face:mesh)if(face.material==0&&face.owner==0)for(int t=1;t<face.p.length-1;t++){
+            V a=face.p[0],b=face.p[t],c=face.p[t+1];double det=(b.y-c.y)*(a.x-c.x)+(c.x-b.x)*(a.y-c.y);if(Math.abs(det)<1e-12)continue;
+            double u=((b.y-c.y)*(x-c.x)+(c.x-b.x)*(y-c.y))/det,v=((c.y-a.y)*(x-c.x)+(a.x-c.x)*(y-c.y))/det;if(u>=0&&v>=0&&u+v<=1){double z=u*a.z+v*b.z+(1-u-v)*c.z;best=back?Math.min(best,z):Math.max(best,z);}
+        }return best;
+    }
+    /** Seat the whole strip on the visible piecewise-linear skin envelope.
+     * Lifting only its corners leaves a chord hovering over, or cutting through,
+     * pad/facet crossings. Each convex fragment now belongs to one actual skin
+     * triangle, including depth crossings between overlapping palm and pads. */
+    private static void celPalmLine(List<Face> mesh,double x0,double y0,double cx,double cy,double x1,double y1,boolean back){
+        List<CelTriangle> skin=new ArrayList<>();double sign=back?-1:1;
+        for(Face face:mesh)if(face.material==0&&face.owner==0)for(int t=1;t<face.p.length-1;t++){
+            CelTriangle tri=new CelTriangle(face.p[0],face.p[t],face.p[t+1]);
+            if(tri.b.sub(tri.a).cross(tri.c.sub(tri.a)).z*sign>1e-12)skin.add(tri);
+        }
+        V previous=null;for(int i=0;i<=32;i++){double t=i/32d,u=1-t;V point=new V(u*u*x0+2*u*t*cx+t*t*x1,u*u*y0+2*u*t*cy+t*t*y1,0);
+            if(previous!=null){V dir=point.sub(previous).unit(),offset=new V(-dir.y,dir.x,0).mul(back?.004:.003);
+                List<V> strip=Arrays.asList(previous.sub(offset),point.sub(offset),point.add(offset),previous.add(offset));
+                double left=Double.POSITIVE_INFINITY,right=-left,top=left,bottom=-left;for(V p:strip){left=Math.min(left,p.x);right=Math.max(right,p.x);top=Math.min(top,p.y);bottom=Math.max(bottom,p.y);}
+                List<CelTriangle> nearby=new ArrayList<>();for(CelTriangle tri:skin)if(tri.right>=left&&tri.left<=right&&tri.bottom>=top&&tri.top<=bottom)nearby.add(tri);
+                for(CelTriangle support:nearby){List<V> clipped=celClipTriangle(strip,support);if(clipped.size()<3)continue;List<List<V>> pieces=new ArrayList<>();pieces.add(clipped);double[] plane=celPlane(support);
+                    for(CelTriangle other:nearby)if(other!=support&&!pieces.isEmpty()){
+                        double[] above=celPlane(other);List<V> cutter=celClipXY(Arrays.asList(other.a,other.b,other.c),sign*(above[0]-plane[0]),sign*(above[1]-plane[1]),sign*(above[2]-plane[2])-1e-10);
+                        if(cutter.size()<3)continue;List<List<V>> remaining=new ArrayList<>();for(List<V> piece:pieces)remaining.addAll(celSubtractConvex(piece,cutter));pieces=remaining;
+                    }
+                    for(List<V> piece:pieces)if(Math.abs(celArea(piece))>1e-12){if((celArea(piece)>0)!=(!back))Collections.reverse(piece);V[] p=new V[piece.size()];for(int j=0;j<p.length;j++){V v=piece.get(j);p[j]=new V(v.x,v.y,plane[0]*v.x+plane[1]*v.y+plane[2]+sign*.004);}mesh.add(new Face(2,p));}
+                }
+            }previous=point;
+        }
+    }
+    private static double[] celPlane(CelTriangle tri){V n=tri.b.sub(tri.a).cross(tri.c.sub(tri.a));double x=-n.x/n.z,y=-n.y/n.z;return new double[]{x,y,tri.a.z-x*tri.a.x-y*tri.a.y};}
+    private static double celArea(List<V> p){double area=0;for(int i=0;i<p.size();i++){V a=p.get(i),b=p.get((i+1)%p.size());area+=a.x*b.y-b.x*a.y;}return area;}
+    private static List<V> celClipXY(List<V> p,double x,double y,double bias){
+        List<V> out=new ArrayList<>();if(p.isEmpty())return out;V a=p.get(p.size()-1);double da=x*a.x+y*a.y+bias;
+        for(V b:p){double db=x*b.x+y*b.y+bias;if((da>=0)!=(db>=0)){double t=da/(da-db);out.add(a.mul(1-t).add(b.mul(t)));}if(db>=0)out.add(b);a=b;da=db;}return out;
+    }
+    private static List<V> celClipTriangle(List<V> polygon,CelTriangle tri){
+        List<V> edge=Arrays.asList(tri.a,tri.b,tri.c);double sign=Math.signum(celArea(edge));List<V> out=polygon;
+        for(int i=0;i<3;i++){V a=edge.get(i),b=edge.get((i+1)%3);out=celClipXY(out,-sign*(b.y-a.y),sign*(b.x-a.x),sign*((b.y-a.y)*a.x-(b.x-a.x)*a.y));}return out;
+    }
+    private static List<List<V>> celSubtractConvex(List<V> polygon,List<V> cutter){
+        List<List<V>> out=new ArrayList<>();double sign=Math.signum(celArea(cutter));List<V> rest=polygon;
+        for(int i=0;i<cutter.size()&&!rest.isEmpty();i++){V a=cutter.get(i),b=cutter.get((i+1)%cutter.size());double x=-sign*(b.y-a.y),y=sign*(b.x-a.x),bias=-x*a.x-y*a.y;
+            List<V> outside=celClipXY(rest,-x,-y,-bias);if(outside.size()>=3&&Math.abs(celArea(outside))>1e-12)out.add(outside);rest=celClipXY(rest,x,y,bias);
+        }return out;
+    }
+    private static V celPalmNormal(V p){
+        // A continuous positional field, including z=0: component/cap normals
+        // must never choose the sign of a shared palm or wrist lighting region.
+        return new V(p.x/.70,(p.y+.6)*.02-.10,p.z/.26).unit();
+    }
+    private static Face celCamera(Face face,JSONObject settings,double[] pose,boolean hand,V[][] chain)throws Exception {
+        Face result=camera(face,settings,pose,hand);result.owner=face.owner;
+        if(face.material!=0)return result;
+        boolean mirrored=settings.getString("handedness").equals("left");
+        for(int i=0;i<face.p.length;i++){
+            V world=hand?rotate(face.p[i],pose[7],pose[8]):face.p[i];
+            // Arm geometry is fixed. Sample it in inverse wrist coordinates so
+            // intersecting arm/palm surfaces share one posed illustration field.
+            V local=rotate(rotate(world,0,-pose[8]),-pose[7],0);
+            V normal=rotate(celPalmNormal(local),pose[7],pose[8]);
+            if(mirrored)normal=new V(-normal.x,normal.y,normal.z);
+            normal=viewPoint(normal,settings.getString("view"));
+            // The thumb tube's buried root/cap overlaps the heel as well; its
+            // independent cap lighting otherwise leaves small closed shards.
+            double blend;
+            if(face.owner>=1&&face.owner<=4){int d=face.owner-1;double along=local.sub(chain[d][0]).dot(chain[d][1].sub(chain[d][0]).unit());
+                // The palmar transition reveals buried construction roots. Use
+                // the same positional field there, fading over only .28 model
+                // units of the proximal shaft; all further shaft ink stays exact.
+                blend=Math.max(0,Math.min(1,1-along/.28));
+            }else blend=face.owner==0?1:face.owner==5?Math.max(0,Math.min(1,(local.y+.70)/.40)):Math.max(0,Math.min(1,(1.10-world.y)/.60));
+            blend=blend*blend*(3-2*blend);if(blend==0)continue;
+            int index=mirrored?face.p.length-1-i:i;
+            result.normals[index]=result.normals[index].mul(1-blend).add(normal.mul(blend)).unit();
+        }return result;
+    }
+    private static void celPad(List<Face> mesh,V center,V radius){
+        V[] points=new V[25];double[] widths=new double[25];for(int i=0;i<points.length;i++){double a=-Math.PI/2+i*Math.PI/24;points[i]=center.add(new V(0,Math.sin(a)*radius.y,0));widths[i]=i==0||i==24?0:Math.cos(a)*radius.x;}tube(mesh,points,widths,0,radius.z/radius.x);
+    }
+    /** Rounded shield-shaped nail seated on the actual distal tube cross-section. */
+    private static void celNail(List<Face> mesh,V a,V b,double radius){
+        V tangent=b.sub(a).unit(),side=new V(1,0,0).sub(tangent.mul(tangent.x)).unit(),back=tangent.cross(side).unit().mul(-1);int count=24;
+        V[] edge=new V[count];for(int i=0;i<count;i++){double angle=2*Math.PI*i/count;edge[i]=celNailPoint(a,b,side,back,radius,.56+.30*Math.sin(angle),radius*.46*Math.cos(angle));}
+        V center=celNailPoint(a,b,side,back,radius,.56,0);
+        for(int i=0;i<count;i++){V p=edge[i],q=edge[(i+1)%count];if(p.sub(center).cross(q.sub(center)).dot(back)<0){V swap=p;p=q;q=swap;}mesh.add(new Face(1,center,p,q));}
+    }
+    private static V celNailPoint(V a,V b,V side,V back,double base,double u,double lateral){
+        double radius=base*(.86+(.68-.86)*Math.min(.92,u)/.92),height=radius*.82*Math.sqrt(Math.max(0,1-lateral*lateral/(radius*radius)))+.010;
+        return a.mul(1-u).add(b.mul(u)).add(side.mul(lateral)).add(back.mul(height));
+    }
+    private static void celCrease(List<Face> mesh,V center,V before,V after,double radius){
+        V tangent=after.sub(before).unit(),side=new V(1,0,0).sub(tangent.mul(tangent.x)).unit(),front=tangent.cross(side).unit(),previous=null;
+        for(int i=0;i<=12;i++){
+            double u=-.68+1.36*i/12;V point=center.add(side.mul(u*radius)).add(front.mul(radius*.84*Math.sqrt(1-u*u)+.006)).add(tangent.mul(radius*.03*(1-u*u)));
+            if(previous!=null){V offset=tangent.mul(.0045);V[] p={previous.sub(offset),point.sub(offset),point.add(offset),previous.add(offset)};if(p[1].sub(p[0]).cross(p[2].sub(p[0])).dot(front)<0){V swap=p[0];p[0]=p[3];p[3]=swap;swap=p[1];p[1]=p[2];p[2]=swap;}mesh.add(new Face(2,p));}previous=point;
+        }
+    }
+    private static final class Lit {
+        final double x,y,light;Lit(double x,double y,double light){this.x=x;this.y=y;this.light=light;}
+    }
+    private static List<Lit> celLevel(List<Lit> polygon,double level,boolean above){
+        List<Lit> out=new ArrayList<>();if(polygon.isEmpty())return out;Lit a=polygon.get(polygon.size()-1);boolean aIn=above?a.light>=level:a.light<=level;
+        for(Lit b:polygon){boolean bIn=above?b.light>=level:b.light<=level;
+            if(aIn!=bIn){double t=(level-a.light)/(b.light-a.light);out.add(new Lit(a.x+(b.x-a.x)*t,a.y+(b.y-a.y)*t,level));}
+            if(bIn)out.add(b);a=b;aIn=bIn;
+        }return out;
+    }
+    private static Path celPolygon(List<Lit> points){Path p=new Path();if(points.size()<3)return p;for(int i=0;i<points.size();i++){Lit v=points.get(i);if(i==0)p.moveTo((float)v.x,(float)v.y);else p.lineTo((float)v.x,(float)v.y);}p.close();return p;}
+    private static Path celProjection(Face face,double unit,double cx,double cy){Path p=new Path();for(int i=0;i<face.p.length;i++){V v=face.p[i];if(i==0)p.moveTo((float)(cx+v.x*unit),(float)(cy+v.y*unit));else p.lineTo((float)(cx+v.x*unit),(float)(cy+v.y*unit));}p.close();return p;}
+    private static boolean celFront(Face face){return face.p[1].sub(face.p[0]).cross(face.p[2].sub(face.p[0])).unit().z>.00001;}
+    private static void celOp(Path target,Path other,Path.Op op)throws Exception {if(!target.op(other,op))throw SketchDocument.bad("Native cel-hand path operation failed");}
+    /** Pairwise unions avoid repeatedly intersecting a tiny sliver with a large
+     * accumulated contour, and keep the new style practical for native preview. */
+    private static Path celUnion(List<Path> paths)throws Exception {
+        if(paths.isEmpty())return new Path();List<Path> current=paths;
+        while(current.size()>1){List<Path> next=new ArrayList<>();for(int i=0;i<current.size();i+=2){Path p=new Path(current.get(i));if(i+1<current.size())celOp(p,current.get(i+1),Path.Op.UNION);next.add(p);}current=next;}return current.get(0);
+    }
+    private static Path celInterior(Path skin,double guard)throws Exception {
+        Paint edge=new Paint();edge.setStyle(Paint.Style.STROKE);edge.setStrokeWidth((float)(guard*2));edge.setStrokeJoin(Paint.Join.ROUND);Path border=new Path();edge.getFillPath(skin,border);Path inside=new Path(skin);celOp(inside,border,Path.Op.DIFFERENCE);return inside;
+    }
+    /** Suppress only detached marks too small to read as a crease. This runs
+     * after exact seating and depth clipping. Native difference preserves every
+     * retained boundary/occluded gap; it never bridges or fills missing ink.
+     * Thresholds are in model units, identical at preview and export sizes. */
+    private static Path celCreasesWithoutSpecks(Path source,double unit)throws Exception {
+        Path removed=new Path();PathMeasure measure=new PathMeasure(source,false);
+        do{if(measure.getLength()>unit*.065)continue;Path part=new Path();measure.getSegment(0,measure.getLength(),part,true);part.close();RectF box=new RectF();part.computeBounds(box,true);
+            if(Math.max(box.width(),box.height())>unit*.028)continue;
+            // A tiny hole contour is not painted ink and must stay a hole.
+            celOp(part,source,Path.Op.INTERSECT);if(!part.isEmpty())celOp(removed,part,Path.Op.UNION);
+        }while(measure.nextContour());
+        if(removed.isEmpty())return source;Path result=new Path(source);celOp(result,removed,Path.Op.DIFFERENCE);return result;
+    }
+    /** Ordinary editable paths use winding fill. Path.op may return even-odd
+     * compound regions with equally directed inner contours; exporting those
+     * directly would paint over their cutouts. Orient only incompatible cel
+     * contours. The .001px native approximation retains polygon vertices and
+     * the tiny rounded numerical guards, rather than smoothing the silhouette. */
+    private static Path celWinding(Path source)throws Exception {
+        Path winding=new Path(source);winding.setFillType(Path.FillType.WINDING);Path difference=new Path(source);celOp(difference,winding,Path.Op.XOR);if(difference.isEmpty())return winding;
+        List<List<V>> contours=new ArrayList<>();List<V> contour=null;float[] a=source.approximate(.001f);
+        for(int i=0;i<a.length;i+=3){boolean start=i==0||a[i]==a[i-3]&&Math.hypot(a[i+1]-a[i-2],a[i+2]-a[i-1])>.0005;
+            if(start){contour=new ArrayList<>();contours.add(contour);}V p=new V(a[i+1],a[i+2],0);if(contour.isEmpty()||p.sub(contour.get(contour.size()-1)).length()>1e-9)contour.add(p);
+        }
+        for(List<V> p:contours)if(p.size()>1&&p.get(0).sub(p.get(p.size()-1)).length()<1e-9)p.remove(p.size()-1);
+        Path result=new Path();for(List<V> p:contours){if(p.size()<3)continue;double area=0,longest=-1;int edge=0;V origin=p.get(0);
+            for(int i=0;i<p.size();i++){V v=p.get(i),q=p.get((i+1)%p.size());area+=(v.x-origin.x)*(q.y-origin.y)-(q.x-origin.x)*(v.y-origin.y);double length=q.sub(v).length();if(length>longest){longest=length;edge=i;}}
+            if(Math.abs(area)<1e-10)continue;V v=p.get(edge),q=p.get((edge+1)%p.size());double sign=area>0?1:-1,epsilon=Math.min(.0001,longest*.001),x=(v.x+q.x)/2-sign*(q.y-v.y)/longest*epsilon,y=(v.y+q.y)/2+sign*(q.x-v.x)/longest*epsilon;int depth=0;
+            for(List<V> other:contours)if(other!=p&&celContains(other,x,y))depth++;
+            if((area>0)!=(depth%2==0))Collections.reverse(p);for(int i=0;i<p.size();i++){V point=p.get(i);if(i==0)result.moveTo((float)point.x,(float)point.y);else result.lineTo((float)point.x,(float)point.y);}result.close();
+        }return result;
+    }
+    private static boolean celContains(List<V> contour,double x,double y){
+        boolean inside=false;for(int i=0,j=contour.size()-1;i<contour.size();j=i++){V a=contour.get(i),b=contour.get(j);if((a.y>y)!=(b.y>y)&&x<(b.x-a.x)*(y-a.y)/(b.y-a.y)+a.x)inside=!inside;}return inside;
+    }
+    private static final class CelTriangle {
+        final V a,b,c;final double left,right,top,bottom,near,far;
+        CelTriangle(V a,V b,V c){this.a=a;this.b=b;this.c=c;left=Math.min(a.x,Math.min(b.x,c.x));right=Math.max(a.x,Math.max(b.x,c.x));top=Math.min(a.y,Math.min(b.y,c.y));bottom=Math.max(a.y,Math.max(b.y,c.y));near=Math.max(a.z,Math.max(b.z,c.z));far=Math.min(a.z,Math.min(b.z,c.z));}
+    }
+    /** Detail depth is compared at each projected position. Average face order
+     * alone both exposes folded nails and cuts holes into seated visible nails. */
+    private static Path celVisibleDetail(Face detail,List<CelTriangle> skin,double unit,double cx,double cy)throws Exception {
+        List<Path> pieces=new ArrayList<>();
+        for(int t=1;t<detail.p.length-1;t++){
+            CelTriangle d=new CelTriangle(detail.p[0],detail.p[t],detail.p[t+1]);V normal=d.b.sub(d.a).cross(d.c.sub(d.a));if(Math.abs(normal.z)<1e-10)continue;
+            double gx=-normal.x/normal.z,gy=-normal.y/normal.z;
+            Path visible=celPolygon(Arrays.asList(new Lit(cx+d.a.x*unit,cy+d.a.y*unit,0),new Lit(cx+d.b.x*unit,cy+d.b.y*unit,0),new Lit(cx+d.c.x*unit,cy+d.c.y*unit,0)));
+            for(CelTriangle s:skin){
+                if(s.right<d.left||s.left>d.right||s.bottom<d.top||s.top>d.bottom||s.near<=d.far+.00005)continue;
+                List<Lit> triangle=new ArrayList<>();for(V p:new V[]{s.a,s.b,s.c})triangle.add(new Lit(cx+p.x*unit,cy+p.y*unit,p.z-(d.a.z+gx*(p.x-d.a.x)+gy*(p.y-d.a.y))));
+                Path front=celPolygon(celLevel(triangle,.00005,true));if(front.isEmpty())continue;celOp(visible,front,Path.Op.DIFFERENCE);if(visible.isEmpty())break;
+            }
+            if(!visible.isEmpty())pieces.add(visible);
+        }return celUnion(pieces);
+    }
+    private static List<Ink> drawCel(JSONObject settings,double[] pose,int width,int height)throws Exception {
+        List<Face> faces=celSurfaces(settings,pose);faces.sort((a,b)->Double.compare(depth(b),depth(a)));
+        double unit=Math.min(width,height)/720d*112*settings.getDouble("size"),cx=width*settings.getDouble("centerX"),cy=height*settings.getDouble("centerY");
+        Path skin=new Path(),nails=new Path(),creases=new Path();Path[] owners=new Path[7];List<List<Path>> ownerPieces=new ArrayList<>(),tonePieces=new ArrayList<>();for(int i=0;i<7;i++)ownerPieces.add(new ArrayList<>());for(int i=0;i<3;i++)tonePieces.add(new ArrayList<>());V light=new V(-.45,-.55,1).unit();
+        for(Face face:faces){
+            if(face.material!=0||!celFront(face))continue;
+            Path shape=celProjection(face,unit,cx,cy),visible=new Path(shape);celOp(visible,skin,Path.Op.DIFFERENCE);
+            if(!visible.isEmpty()){
+                ownerPieces.get(face.owner).add(visible);
+                for(int t=1;t<face.p.length-1;t++){
+                    List<Lit> triangle=new ArrayList<>();for(int i:new int[]{0,t,t+1}){V v=face.p[i];triangle.add(new Lit(cx+v.x*unit,cy+v.y*unit,.64+.43*Math.max(0,face.normals[i].dot(light))));}
+                    // Interpolate the lighting contour within the triangle. Choosing
+                    // a bucket from its average would bake a checkerboard into ink.
+                    for(int band:new int[]{0,2}){
+                        List<Lit> fragment=triangle;if(band>0)fragment=celLevel(fragment,band==1?.84:.99,true);if(band<2)fragment=celLevel(fragment,band==0?.84:.99,false);
+                        Path p=celPolygon(fragment);if(p.isEmpty())continue;celOp(p,visible,Path.Op.INTERSECT);if(!p.isEmpty())tonePieces.get(band).add(p);
+                    }
+                }
+            }
+            celOp(skin,shape,Path.Op.UNION);
+        }
+        // A tiny native vector inset prevents float-rounding remnants on shared
+        // boundaries; at .03 reference pixels it stays beneath the contour ink.
+        double guard=.03*unit/112;Path interior=celInterior(skin,guard);for(int i=0;i<7;i++)owners[i]=celInterior(celUnion(ownerPieces.get(i)),guard);
+        // Skin alone controls the contour/ownership. A crease or nail cannot
+        // widen it, float beside a palm, or reappear over an occluding finger.
+        List<CelTriangle> skinTriangles=new ArrayList<>();for(Face face:faces)if(face.material==0)for(int t=1;t<face.p.length-1;t++)skinTriangles.add(new CelTriangle(face.p[0],face.p[t],face.p[t+1]));
+        for(Face face:faces)if(face.material!=0&&celFront(face)){
+            Path detail=celVisibleDetail(face,skinTriangles,unit,cx,cy);
+            // Palm strips were split onto actual support facets. Exact depth
+            // already establishes their visible support; an average-depth
+            // owner mask would reintroduce false holes at pad/finger overlaps.
+            // Nails and analytic finger creases keep their original owner mask.
+            celOp(detail,face.material==2&&face.owner==0?interior:owners[face.owner],Path.Op.INTERSECT);celOp(face.material==1?nails:creases,detail,Path.Op.UNION);
+        }
+        String base=settings.getString("skinColor");List<Ink> out=new ArrayList<>();out.add(new Ink(skin,base,true));
+        for(int band:new int[]{0,2})if(!tonePieces.get(band).isEmpty()){Path tone=celUnion(tonePieces.get(band));celOp(tone,interior,Path.Op.INTERSECT);out.add(new Ink(tone,SketchCharacterArt.tone(base,band==0?.83:1.07),true));}
+        if(!nails.isEmpty()){celOp(nails,interior,Path.Op.INTERSECT);out.add(new Ink(nails,settings.getString("nailColor"),true));}
+        if(!creases.isEmpty()){celOp(creases,interior,Path.Op.INTERSECT);creases=celCreasesWithoutSpecks(creases,unit);if(!creases.isEmpty())out.add(new Ink(creases,SketchCharacterArt.tone(base,.67),true));}
+        out.add(new Ink(new Path(skin),SketchCharacterArt.tone(base,.52),false));for(Ink mark:out)if(mark.fill)mark.path.set(celWinding(mark.path));return out;
     }
     private static void smoothNormals(List<Face> faces){
         Map<V,V> sums=new IdentityHashMap<>();for(Face face:faces){V n=face.p[1].sub(face.p[0]).cross(face.p[2].sub(face.p[0]));for(V v:face.p)sums.put(v,sums.getOrDefault(v,new V(0,0,0)).add(n));}

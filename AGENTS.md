@@ -1,5 +1,38 @@
 # VideoStudio current engineering priority
 
+## Expanded owner test target — 2026-10-19
+
+The owner increased the programme to 1,000 distinct animation test scenarios,
+and more if necessary. Expand after accepting the current result. Cover varied
+character types, animation styles, situations, environments, motion, viewpoints
+and audio. Report scenario families and view/style variations honestly; frames,
+assertions, retries and unchanged reruns do not add creative scenarios. Retain
+the original voiced two-minute human-animation goal and repair/retest cycle.
+Do not rush the current hand drawing to inflate the count.
+
+## Focused cel-hand quality cycle — 2026-10-18
+
+This linked worktree is `/workspace/VideoStudio-Hand-Cel-Polish`, branch
+`feat/native-hand-cel-polish-20261018`, based on `d76edec280cab5b222accc1002c28ee4729af9f0`.
+Keep `/workspace/VideoStudio-MCP` unchanged; its 4.8.0 CI candidate is verified.
+The 124-second g10 native review and 240-case technical matrix are preserved in
+`/workspace/engineering-review/human-story-20261018`; drawing/acting acceptance
+is separate. The prior isolated hand had visible mesh/pad seams and blocky nails; final v7
+static simple-cel review is accepted, with full-motion review still pending.
+Target a native optional `renderStyle: cel`, retaining `smooth` as the legacy
+default, exact joints/controls and old rendered pixels. Use broad continuous
+skin tones, a skin-only external contour, rounded inset nails/tips and restrained
+creases, with correct occlusion across six views and both hands. All authoring
+and drawing stay in VideoStudio native code, with manual controls and strict MCP.
+No outside drawing renderer, tracing, Gallery or image generation.
+
+Target 4.8.1 / code 484. Existing hand requests keep their 4.8.0 floor; an explicit
+new renderStyle field requires 4.8.1. Preserve old request fingerprints. Verify
+48 distinct new-style cases and legacy pixels against saved baseline artifacts;
+the earlier 240 cases plus 48 new style inputs total 288, not 288 reruns.
+Read `docs/superpowers/specs/2026-10-18-native-hand-cel-quality.md` and verify
+actual files before relying on progress notes. No merge/deploy/stable release.
+
 ## Current human story continuation — 2026-10-18
 
 Continue `feat/native-articulated-hands-20261018`; inspect actual Git state and

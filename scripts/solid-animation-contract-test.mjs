@@ -1,6 +1,7 @@
 import test from 'node:test';
 import './character-animation-contract-test.mjs';
 import './hand-animation-contract-test.mjs';
+import './hand-cel-contract-test.mjs';
 import './speech-rebase-contract-test.mjs';
 import './human-animation-contract-test.mjs';
 import './animation-book-placement-contract-test.mjs';
