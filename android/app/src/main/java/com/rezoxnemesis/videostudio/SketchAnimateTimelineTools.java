@@ -20,6 +20,10 @@ final class SketchAnimateTimelineTools {
     static JSONObject insertKey(JSONObject source, String layerId, String objectId,
                                 int frame, String easing) throws Exception {
         JSONObject selected = target(source, layerId, objectId, frame);
+        JSONArray keys = selected.getJSONArray("keys");
+        for (int i = 0; i < keys.length(); i++)
+            if (keys.getJSONObject(i).getInt("frame") == frame)
+                throw SketchDocument.bad("A motion key already exists here; edit its transform or easing instead");
         JSONObject operation = selector(layerId, objectId).put("type", "set_keyframe")
                 .put("frame", frame).put("transform", SketchDocument.transformAt(selected, frame))
                 .put("interpolation", easing);
@@ -77,7 +81,10 @@ final class SketchAnimateTimelineTools {
         }
 
         JSONObject current = SketchDocument.transformAt(selected, first);
-        JSONObject destinationTransform = SketchDocument.copy(current);
+        // Keep unspecified attributes from the sampled destination (including an
+        // existing destination key). A position-only tween must not erase the
+        // artist's previous rotation/scale/opacity there.
+        JSONObject destinationTransform = SketchDocument.transformAt(selected, last);
         java.util.Iterator<String> fields = destination.keys();
         while (fields.hasNext()) {
             String name = fields.next();
