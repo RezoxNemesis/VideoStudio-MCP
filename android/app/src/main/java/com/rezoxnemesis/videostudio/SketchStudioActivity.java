@@ -466,6 +466,140 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
     }
     private void applyCanvasFocus(){for(View view:drawingChrome)view.setVisibility(canvasFocus?View.GONE:View.VISIBLE);}
     private void toggleCanvasFocus(){canvasFocus=!canvasFocus;getPreferences(MODE_PRIVATE).edit().putBoolean("canvasFocus",canvasFocus).apply();applyCanvasFocus();}
+
+    /** Phase 1: native contour masters are shared inside this sketch, never by Gallery. */
+    private void linkedMasterMenu(){
+        if(document==null||bookId!=null){
+            onMessage("Open a standalone editable sketch for linked master artwork. Cross-book linking is not implemented yet.");
+            return;
+        }
+        menu("Linked master artwork · edit once, update copies",
+                new String[]{"Make master from selected Bezier path","Place linked copy",
+                        "Preview affected drawings","Change master color (all linked)",
+                        "Override selected copy color","Detach selected copy"},
+                this::createSelectedMaster,this::placeLinkedMaster,this::previewLinkedMaster,
+                this::recolorLinkedMaster,this::overrideLinkedColor,this::detachLinkedCopy);
+    }
+    private JSONArray masterChoices()throws Exception {
+        if(document==null)throw SketchDocument.bad("Open an editable sketch first");
+        JSONArray masters=document.optJSONArray("masterAssets");
+        if(masters==null||masters.length()==0)throw SketchDocument.bad("Create a master from an original curved path first");
+        return new JSONArray(masters.toString());
+    }
+    private void pickMaster(String title,java.util.function.Consumer<JSONObject> action){
+        try {
+            JSONArray entries=masterChoices();
+            String[] names=new String[entries.length()];
+            for(int i=0;i<entries.length();i++){
+                JSONObject master=entries.getJSONObject(i);
+                names[i]=master.getString("name")+" · v"+master.getLong("version");
+            }
+            new AlertDialog.Builder(this).setTitle(title).setItems(names,(dialog,index)->{
+                try{action.accept(entries.getJSONObject(index));}
+                catch(Exception error){onMessage(error.getMessage());}
+            }).setNegativeButton("Cancel",null).show();
+        }catch(Exception error){onMessage(error.getMessage());}
+    }
+    private void createSelectedMaster(){
+        try{
+            String selected=canvas.getSelectedId();
+            if(selected==null||!"path".equals(SketchDocument.object(document,selected).getString("kind")))
+                throw SketchDocument.bad("Select one original Bezier path, not a rectangle, bitmap or body rig");
+            EditText name=input("Reusable contour name","Master contour",false);
+            new AlertDialog.Builder(this).setTitle("Create linked master").setView(name)
+                .setMessage("This preserves your existing vector drawing. Linked copies stay editable through their own transform and timing keys.")
+                .setNegativeButton("Cancel",null).setPositiveButton("Create",(d,w)->{
+                    try{
+                        onOperation(new JSONObject().put("type","master_create")
+                            .put("sourceObjectId",selected)
+                            .put("masterId","master_"+UUID.randomUUID().toString().replace("-","").substring(0,20))
+                            .put("name",name.getText().toString().trim()));
+                    }catch(Exception error){onMessage(error.getMessage());}
+                }).show();
+        }catch(Exception error){onMessage(error.getMessage());}
+    }
+    private void placeLinkedMaster(){
+        pickMaster("Choose reusable contour",master->{
+            try{
+                int frame=canvas.getFrame();
+                onOperation(new JSONObject().put("type","master_instance")
+                    .put("masterId",master.getString("id"))
+                    .put("layerId",canvas.getLayerId())
+                    .put("objectId","inst_"+UUID.randomUUID().toString().replace("-","").substring(0,20))
+                    .put("frame",frame).put("exposure",document.getInt("frameCount")-frame));
+                onMessage("Linked contour placed. Use Select / move to position this copy independently.");
+            }catch(Exception error){onMessage(error.getMessage());}
+        });
+    }
+    private void previewLinkedMaster(){
+        pickMaster("Preview linked-change impact",master->{
+            try{
+                JSONObject request=new JSONObject().put("sketchId",sketchId)
+                    .put("expectedRevision",document.getLong("revision"))
+                    .put("masterId",master.getString("id"));
+                JSONObject impact=SketchMasterAssets.preview(document,request);
+                new AlertDialog.Builder(this).setTitle(master.getString("name")+" · edit impact")
+                    .setMessage(impact.getInt("instanceCount")+" linked copies across "+
+                        impact.getInt("instanceExposureFrames")+" frame exposures.\n"+
+                        impact.getJSONArray("localOverrideIds").length()+" copies with preserved local overrides.\n"+
+                        impact.getJSONArray("lockedLayerIds").length()+" locked layers.\n\n"+
+                        "Updating the master affects every linked instance inside this sketch. "+
+                        "Instance timing, transforms and local color overrides are retained. "+
+                        "Other sketches remain unchanged.")
+                    .setPositiveButton("Done",null).show();
+            }catch(Exception error){onMessage(error.getMessage());}
+        });
+    }
+    private void recolorLinkedMaster(){
+        pickMaster("Choose master to recolor",master->{
+            try{
+                EditText value=input("Color #AARRGGBB",master.getJSONObject("artwork").getString("color"),false);
+                new AlertDialog.Builder(this).setTitle("Update master color")
+                    .setMessage("All linked instances will update, except copies with an explicit local color override. Use Undo to reverse.")
+                    .setView(value).setNegativeButton("Cancel",null)
+                    .setPositiveButton("Apply",(d,w)->{
+                        try{
+                            String color=value.getText().toString().trim();
+                            SketchDocument.color(color);
+                            onOperation(new JSONObject().put("type","master_patch")
+                                .put("masterId",master.getString("id"))
+                                .put("expectedVersion",master.getLong("version"))
+                                .put("patch",new JSONObject().put("color",color)));
+                        }catch(Exception error){onMessage(error.getMessage());}
+                    }).show();
+            }catch(Exception error){onMessage(error.getMessage());}
+        });
+    }
+    private void overrideLinkedColor(){
+        try{
+            String selected=canvas.getSelectedId();
+            if(selected==null||!SketchDocument.object(document,selected).has("masterLink"))
+                throw SketchDocument.bad("Select a linked instance to create a local override");
+            EditText value=input("Local color #AARRGGBB",
+                    SketchDocument.object(document,selected).getString("color"),false);
+            new AlertDialog.Builder(this).setTitle("Recolor only this copy").setView(value)
+                .setNegativeButton("Cancel",null).setPositiveButton("Apply",(d,w)->{
+                    try{
+                        String color=value.getText().toString().trim();SketchDocument.color(color);
+                        onOperation(new JSONObject().put("type","master_override")
+                            .put("objectId",selected).put("patch",new JSONObject().put("color",color)));
+                    }catch(Exception error){onMessage(error.getMessage());}
+                }).show();
+        }catch(Exception error){onMessage(error.getMessage());}
+    }
+    private void detachLinkedCopy(){
+        try{
+            String selected=canvas.getSelectedId();
+            if(selected==null||!SketchDocument.object(document,selected).has("masterLink"))
+                throw SketchDocument.bad("Select a linked instance first");
+            new AlertDialog.Builder(this).setTitle("Detach only this copy?")
+                .setMessage("It keeps its current drawing and animation keys, but future master edits will not update it. Undo restores the link.")
+                .setNegativeButton("Cancel",null).setPositiveButton("Detach",(d,w)->{
+                    try{onOperation(new JSONObject().put("type","master_detach").put("objectId",selected));}
+                    catch(Exception error){onMessage(error.getMessage());}
+                }).show();
+        }catch(Exception error){onMessage(error.getMessage());}
+    }
     private void componentLibraryDialog(){menu("Artwork library",new String[]{"Save selected layer / cel","Place component"},this::saveComponentDialog,()->browseComponents(0));}
     private void saveComponentDialog(){
         if(document==null)return;final String source=sketchId;final int frame=canvas.getFrame();final String selected=layers.getSelectedItemPosition()>=0&&layers.getSelectedItemPosition()<layerIds.size()?layerIds.get(layers.getSelectedItemPosition()):null;
@@ -956,7 +1090,7 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
         });
     }
 
-    private void moreMenu(){menu("Drawing tools",new String[]{"Layers","Separate reference into parts","Frames / Cels","2D animation","Workspace","Drawing alerts","Visual QA / Detail","Review & correct","Story → 2D film",canvas.previewFailed()?"Retry preview":"Refresh preview"},this::layersMenu,this::referenceLayersDialog,this::framesMenu,this::openAnimationStudio,this::workspaceDialog,this::drawingAlerts,this::qualityAuditDialog,this::reviewCorrectionDialog,this::storyFilmDialog,this::refreshPreview);}
+    private void moreMenu(){menu("Drawing tools",new String[]{"Layers","Separate reference into parts","Frames / Cels","Linked master artwork","2D animation","Workspace","Drawing alerts","Visual QA / Detail","Review & correct","Story → 2D film",canvas.previewFailed()?"Retry preview":"Refresh preview"},this::layersMenu,this::referenceLayersDialog,this::framesMenu,this::linkedMasterMenu,this::openAnimationStudio,this::workspaceDialog,this::drawingAlerts,this::qualityAuditDialog,this::reviewCorrectionDialog,this::storyFilmDialog,this::refreshPreview);}
     private void referenceLayersDialog(){
         if(session==null||document==null)return;
         stopPlayback();final SketchEditorSession origin=session;final String target=sketchId;
