@@ -39,7 +39,7 @@ public final class SketchDocument {
     public static JSONObject copy(JSONObject o) throws Exception { return new JSONObject(o.toString()); }
 
     public static void validate(JSONObject doc) throws Exception {
-        fields(doc, "schema,id,name,revision,width,height,fps,frameCount,background,layers,paletteStyles");
+        fields(doc, "schema,id,name,revision,width,height,fps,frameCount,background,layers,paletteStyles,masterAssets");
         if (!SCHEMA.equals(doc.getString("schema"))) throw bad("Unknown sketch schema");
         id(doc, "id");
         text(doc, "name", 160);
@@ -51,10 +51,11 @@ public final class SketchDocument {
         int frames = (int) integer(doc, "frameCount", 1, MAX_FRAMES);
         color(doc.getString("background"));
         java.util.Map<String,Integer> linkedStyles=SketchPaletteStyles.indexed(doc);
+        java.util.Map<String,JSONObject> linkedMasters=SketchMasterAssets.indexed(doc);
         JSONArray layers = doc.getJSONArray("layers");
         if (layers.length() < 1 || layers.length() > MAX_LAYERS) throw bad("Use 1..32 sketch layers");
         Set<String> ids = new HashSet<>();
-        int objects = 0, points = 0, keys = 0, images = 0, proceduralActors=0;
+        int objects = 0, points = SketchMasterAssets.storedPoints(linkedMasters), keys = 0, images = 0, proceduralActors=0;
         int[] proceduralActorChanges=new int[frames+1];
         for (int i = 0; i < layers.length(); i++) {
             JSONObject layer = layers.getJSONObject(i);
@@ -67,7 +68,7 @@ public final class SketchDocument {
             JSONArray items = layer.getJSONArray("objects");
             for (int j = 0; j < items.length(); j++) {
                 JSONObject item = items.getJSONObject(j);
-                fields(item, "id,kind,frame,exposure,color,styleId,width,fill,points,bounds,reference,paint,transform,keys,brush,commands,shapeKeys,gradient,referenceCrop,text,fontFamily,fontSize,fontStyle,textAlign,letterSpacing,hand,human");
+                fields(item, "id,kind,frame,exposure,color,styleId,width,fill,points,bounds,reference,paint,transform,keys,brush,commands,shapeKeys,gradient,referenceCrop,text,fontFamily,fontSize,fontStyle,textAlign,letterSpacing,hand,human,masterLink");
                 unique(ids, id(item, "id"));
                 String kind = item.getString("kind");
                 if (!java.util.Arrays.asList("stroke","eraser","line","rect","ellipse","polygon","image","paint","path","text","hand","human").contains(kind))
@@ -89,6 +90,7 @@ public final class SketchDocument {
                 if (item.has("gradient")) validateGradient(item.getJSONObject("gradient"));
                 if (item.has("referenceCrop")) { if (!"image".equals(kind)) throw bad("Reference crop requires an image"); validateBounds(item.getJSONObject("referenceCrop")); }
                 if ("text".equals(kind)) SketchText.validate(item);
+                SketchMasterAssets.validateInstance(item,linkedMasters);
                 if ("path".equals(kind)) { points += validateCommands(item.getJSONArray("commands")); }
                 else if ("stroke".equals(kind) || "eraser".equals(kind) || "line".equals(kind) || "polygon".equals(kind)) {
                     JSONArray pp = item.getJSONArray("points");
