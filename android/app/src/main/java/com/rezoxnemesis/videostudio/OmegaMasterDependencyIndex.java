@@ -244,6 +244,7 @@ final class OmegaMasterDependencyIndex {
         final String compoundId, operationId, fingerprint;
         final CompoundPreview impact;
         private final Map<String, JSONObject> before, after;
+        private final int changedCount;
 
         PreparedBatch(CompoundPreview impact, Map<String, JSONObject> before,
                       Map<String, JSONObject> after) throws Exception {
@@ -253,6 +254,12 @@ final class OmegaMasterDependencyIndex {
             this.impact = impact;
             this.before = copied(before);
             this.after = copied(after);
+            int changes=0;
+            for(String sketchId:before.keySet()) {
+                if(!SketchDocument.canonical(before.get(sketchId))
+                    .equals(SketchDocument.canonical(after.get(sketchId)))) changes++;
+            }
+            this.changedCount=changes;
         }
         Map<String, JSONObject> originalDocuments() throws Exception {
             return copied(before);
@@ -260,7 +267,7 @@ final class OmegaMasterDependencyIndex {
         Map<String, JSONObject> nextDocuments() throws Exception {
             return copied(after);
         }
-        int changedSketches() { return after.size(); }
+        int changedSketches() { return changedCount; }
         private static Map<String, JSONObject> copied(Map<String, JSONObject> docs)
                 throws Exception {
             Map<String, JSONObject> result = new TreeMap<>();
@@ -462,6 +469,145 @@ final class OmegaMasterDependencyIndex {
 
     private static String digest(String canonicalText) throws Exception {
         return SketchDocument.sha256(canonicalText.getBytes(StandardCharsets.UTF_8));
+    }
+
+
+    /**
+     * Stages a *new* shot's placement of the compound without copying pixels or
+     * mutating any source document. The target receives matching, independently
+     * editable path masters and precisely positioned linked instances.
+     *
+     * This operation remains uncommitted until the native global store validates
+     * the existing membership ledger and atomically registers the new shot.
+     */
+    static PreparedBatch stageCompoundPlacement(CompoundRequest request,
+            Map<String,JSONObject> snapshots, String sourceSketchId, String targetSketchId,
+            String targetLayerId, Map<String,String> newObjectsByMaster,
+            int frame, int exposure, JSONObject transform, JSONArray keys) throws Exception {
+        if (request == null || snapshots == null || snapshots.size() < 2
+                || snapshots.size() > MAX_BATCH_SKETCHES)
+            throw new IllegalArgumentException("Placement requires source and target snapshots");
+        String sourceId=id(sourceSketchId), targetId=id(targetSketchId), layerId=id(targetLayerId);
+        if(sourceId.equals(targetId) || !snapshots.containsKey(sourceId)
+            || !snapshots.containsKey(targetId)
+            || !snapshots.keySet().equals(request.registeredSketchIds))
+            throw new IllegalArgumentException("Incomplete compound placement membership");
+        if(newObjectsByMaster==null || newObjectsByMaster.size()!=request.parts.size()
+                || transform==null || keys==null)
+            throw new IllegalArgumentException("Placement identity, keys or transform unavailable");
+        Set<String> uniqueObjectIds=new HashSet<>();
+        for(PartChange part:request.parts){
+            String objectId=id(newObjectsByMaster.get(part.masterId));
+            if(!uniqueObjectIds.add(objectId))
+                throw new IllegalArgumentException("Duplicate compound placement object ID");
+        }
+
+        Map<String,JSONObject> original=new TreeMap<>(), nextDocuments=new TreeMap<>();
+        for(Map.Entry<String,JSONObject> entry:snapshots.entrySet()) {
+            String key=id(entry.getKey());
+            JSONObject document=SketchDocument.copy(entry.getValue());
+            if(!key.equals(document.getString("id")))
+                throw new IllegalArgumentException("Sketch key/identity mismatch");
+            SketchDocument.validate(document);
+            original.put(key,document);
+            nextDocuments.put(key,SketchDocument.copy(document));
+        }
+        JSONObject source=original.get(sourceId), beforeTarget=original.get(targetId);
+        if(source.getInt("width")!=beforeTarget.getInt("width")
+            ||source.getInt("height")!=beforeTarget.getInt("height")
+            ||source.getInt("fps")!=beforeTarget.getInt("fps"))
+            throw new IllegalArgumentException("Compound shot geometry/frame clock mismatch");
+        if(frame<0||exposure<1||(long)frame+exposure>beforeTarget.getInt("frameCount"))
+            throw new IllegalArgumentException("Placement frame/exposure out of bounds");
+
+        Map<String,JSONObject> sourceMasters=SketchMasterAssets.indexed(source);
+        JSONObject target=nextDocuments.get(targetId);
+        JSONObject layer=SketchDocument.layer(target,layerId);
+        SketchEditOps.requireUnlocked(layer);
+        for(PartChange part:request.parts) {
+            JSONObject origin=sourceMasters.get(part.masterId);
+            if(origin==null || origin.getLong("version")!=part.expectedVersion
+                ||!digest(SketchDocument.canonical(origin.getJSONObject("artwork")))
+                    .equals(part.expectedArtworkSha256))
+                throw new IllegalStateException("COMPOUND_SOURCE_CHANGED:"+part.masterId);
+            JSONObject installed=SketchMasterAssets.indexed(target).get(part.masterId);
+            if(installed==null) {
+                JSONArray masters=target.optJSONArray("masterAssets");
+                if(masters==null){masters=new JSONArray();target.put("masterAssets",masters);}
+                if(masters.length()>=SketchMasterAssets.MAX_MASTERS)
+                    throw new IllegalArgumentException("Compound target master limit exceeded");
+                masters.put(SketchDocument.copy(origin));
+            } else if(installed.getLong("version")!=part.expectedVersion
+                || !digest(SketchDocument.canonical(installed.getJSONObject("artwork")))
+                    .equals(part.expectedArtworkSha256)) {
+                throw new IllegalStateException("COMPOUND_TARGET_MASTER_CONFLICT:"+part.masterId);
+            }
+            JSONObject place=new JSONObject().put("type","master_instance")
+                .put("masterId",part.masterId).put("layerId",layerId)
+                .put("objectId",newObjectsByMaster.get(part.masterId))
+                .put("frame",frame).put("exposure",exposure)
+                .put("transform",SketchDocument.copy(transform))
+                .put("keys",new JSONArray(keys.toString()));
+            SketchMasterAssets.apply(target,place);
+        }
+        target.put("revision",Math.addExact(beforeTarget.getLong("revision"),1L));
+        SketchDocument.validate(target);
+        requirePriorContentUntouched(beforeTarget,target);
+        CompoundPreview afterImpact=previewCompound(request,nextDocuments);
+        afterImpact.requireReady();
+
+        JSONArray members=new JSONArray(),parts=new JSONArray();
+        for(String sketchId:new TreeSet<>(original.keySet())){
+            members.put(new JSONObject().put("sketchId",sketchId)
+                .put("revision",original.get(sketchId).getLong("revision"))
+                .put("documentSha256",digest(SketchDocument.canonical(original.get(sketchId)))));
+        }
+        for(PartChange part:request.parts)parts.put(part.identity());
+        JSONObject newIds=new JSONObject();
+        for(PartChange part:request.parts)
+            newIds.put(part.masterId,newObjectsByMaster.get(part.masterId));
+        String fingerprint=digest(SketchDocument.canonical(new JSONObject()
+            .put("contract","omega-compound-placement-v1")
+            .put("compoundId",request.compoundId).put("projectId",request.projectId)
+            .put("operationId",request.operationId)
+            .put("sourceSketchId",sourceId).put("targetSketchId",targetId)
+            .put("targetLayerId",layerId).put("newObjectIds",newIds)
+            .put("frame",frame).put("exposure",exposure)
+            .put("transform",SketchDocument.copy(transform))
+            .put("keys",new JSONArray(keys.toString()))
+            .put("parts",parts).put("priorSnapshots",members)));
+        Map<String,Long> pinnedRevisions=new TreeMap<>();
+        Map<String,String> pinnedHashes=new TreeMap<>();
+        for(Map.Entry<String,JSONObject> entry:original.entrySet()){
+            pinnedRevisions.put(entry.getKey(),entry.getValue().getLong("revision"));
+            pinnedHashes.put(entry.getKey(),digest(SketchDocument.canonical(entry.getValue())));
+        }
+        CompoundPreview pinnedImpact=new CompoundPreview(
+            request.compoundId,request.operationId,fingerprint,afterImpact.affected,
+            afterImpact.blockers,afterImpact.localOverrideCount,
+            afterImpact.totalExposureFrames,pinnedRevisions,pinnedHashes);
+        return new PreparedBatch(pinnedImpact,original,nextDocuments);
+    }
+
+    /** Existing untouched objects must not be rewritten by compound placement. */
+    private static void requirePriorContentUntouched(JSONObject prior,JSONObject after)
+            throws Exception {
+        JSONArray beforeLayers=prior.getJSONArray("layers"),afterLayers=after.getJSONArray("layers");
+        if(beforeLayers.length()!=afterLayers.length())
+            throw new IllegalStateException("COMPOUND_PLACEMENT_LAYER_CHANGED");
+        for(int li=0;li<beforeLayers.length();li++){
+            JSONObject a=beforeLayers.getJSONObject(li),b=afterLayers.getJSONObject(li);
+            if(!sameWithoutObjects(a,b))
+                throw new IllegalStateException("COMPOUND_PLACEMENT_LAYER_CHANGED");
+            JSONArray originals=a.getJSONArray("objects"),updated=b.getJSONArray("objects");
+            if(originals.length()>updated.length())
+                throw new IllegalStateException("COMPOUND_PLACEMENT_REMOVED_OBJECTS");
+            for(int oi=0;oi<originals.length();oi++){
+                if(!SketchDocument.canonical(originals.getJSONObject(oi))
+                    .equals(SketchDocument.canonical(updated.getJSONObject(oi))))
+                    throw new IllegalStateException("COMPOUND_PLACEMENT_EDITED_EXISTING_ART");
+            }
+        }
     }
 
 }
