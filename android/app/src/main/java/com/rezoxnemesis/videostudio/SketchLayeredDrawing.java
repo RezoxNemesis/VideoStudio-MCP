@@ -107,6 +107,9 @@ public final class SketchLayeredDrawing {
         if("add_object".equals(type)){authored(op.getJSONObject("object"),false);layerId=op.getString("layerId");}
         else if("precision_contour".equals(type)){if(op.optBoolean("fill",false)||op.optBoolean("pressureOutline",false))throw denied("Use an unfilled precision pen contour");layerId=op.getString("layerId");}
         else if("add_paint_cel".equals(type))layerId=op.getString("layerId");
+        else if("paint_fill".equals(type)){
+            JSONObject record=op.optJSONObject("stroke"),request=record==null?op:record.getJSONObject("request");SketchContourPaint.request(request);String contour=request.getString("contourObjectId");layerId=SketchDocument.owner(doc,contour).getString("id");authored(SketchDocument.object(doc,contour),true);if(!contains(active,layerId))throw denied("Fill an authored contour on the active stage layer");try{String paintLayer=SketchDocument.owner(doc,request.getString("objectId")).getString("id");if(!layerId.equals(paintLayer))throw denied("Fill the native paint cel on the same authored layer");}catch(IllegalArgumentException absent){if(!absent.getMessage().contains("Unknown sketch object"))throw absent;}
+        }
         else if("paint_stroke".equals(type)){
             JSONObject record=op.optJSONObject("stroke"),request=record==null?op:record.getJSONObject("request");JSONObject brush=request.optJSONObject("brush");if(request.has("cloneSource")||record!=null&&record.has("source")||brush==null||!Arrays.asList("paint","erase").contains(brush.optString("mode")))throw denied("Only native paint and erase brushes are allowed; clone copies reference pixels");try{layerId=SketchDocument.owner(doc,op.getString("objectId")).getString("id");}catch(IllegalArgumentException absent){if(absent.getMessage().contains("Unknown sketch object"))return;throw absent;}
         }else if(Arrays.asList("append_points","update_object","delete_object","set_exposure").contains(type)){

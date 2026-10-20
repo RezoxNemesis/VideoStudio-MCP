@@ -11,7 +11,7 @@ import java.nio.charset.StandardCharsets;
 public final class SketchPaintOps {
     private SketchPaintOps() {}
     public static boolean containsPaint(JSONArray operations)throws Exception {
-        for(int i=0;i<operations.length();i++){String type=operations.getJSONObject(i).optString("type");if("add_paint_cel".equals(type)||"paint_stroke".equals(type))return true;}return false;
+        for(int i=0;i<operations.length();i++){String type=operations.getJSONObject(i).optString("type");if("add_paint_cel".equals(type)||"paint_stroke".equals(type)||"paint_fill".equals(type))return true;}return false;
     }
     public static boolean containsDependencyCopies(JSONArray operations)throws Exception {
         for(int i=0;i<operations.length();i++){String type=operations.getJSONObject(i).optString("type");if("duplicate_cel".equals(type)||"clear_cel".equals(type))return true;}return false;
@@ -42,6 +42,8 @@ public final class SketchPaintOps {
                     JSONObject cel=SketchEditOps.completeObject(new JSONObject().put("id",objectId).put("kind","paint").put("frame",frame).put("exposure",exposure).put("bounds",new JSONObject().put("x",0).put("y",0).put("width",1).put("height",1)).put("paint",placeholder));
                     layer.getJSONArray("objects").put(cel);SketchLayeredDrawing.afterOperation(next);SketchDocument.validate(next);if(assets==null)assets=new SketchPaintStore(context,id);JSONObject descriptor=assets.empty(next.getInt("width"),next.getInt("height"));cel.put("paint",SketchDocument.copy(descriptor));
                     visual.put(new JSONObject().put("type","add_object").put("layerId",layerId).put("object",SketchDocument.copy(cel)));changes.put(new JSONObject().put("objectId",objectId).put("snapshotSha256",descriptor.getString("sha256")).put("dirtyTileCount",0));
+                }else if("paint_fill".equals(type)){
+                    SketchContourPaint.request(operation);if(assets==null)assets=new SketchPaintStore(context,id);SketchPaintStore.PreparedChange prepared=assets.prepareFill(next,operation);applyPreparedStroke(next,prepared.visualOperation);SketchLayeredDrawing.afterOperation(next);SketchDocument.validate(next);visual.put(SketchDocument.copy(prepared.visualOperation));changes.put(new JSONObject().put("objectId",operation.getString("objectId")).put("snapshotSha256",prepared.descriptor.getString("sha256")).put("strokeSha256",prepared.strokeSha256).put("dirtyTileCount",prepared.dirtyTileCount));
                 }else if("paint_stroke".equals(type)){
                     // Public requests cannot inject native-owned source or snapshot pins.
                     SketchDocument.fields(operation,"type,objectId,strokeId,points,brush,frameIndex,alphaLock,clip,cloneSource");
@@ -77,6 +79,7 @@ public final class SketchPaintOps {
         if(!SketchDocument.canonical(before).equals(SketchDocument.canonical(object.getJSONObject("paint"))))throw new IllegalStateException("SKETCH_PAINT_SNAPSHOT_CONFLICT: prepared pixels belong to another snapshot");
         if(after.getInt("width")!=document.getInt("width")||after.getInt("height")!=document.getInt("height"))throw SketchDocument.bad("Prepared paint dimensions must match the canvas");
         if(!"videostudio.sketch.paint.stroke.v1".equals(record.optString("schema"))||!objectId.equals(record.optString("objectId"))||!strokeId.equals(record.optString("strokeId"))||!SketchDocument.canonical(before).equals(SketchDocument.canonical(record.getJSONObject("beforePaint"))))throw SketchDocument.bad("Prepared paint journal identity changed");
+        if("paint_fill".equals(event.getString("type")))SketchContourPaint.placeUnderInk(document,event);
         object.put("paint",SketchDocument.copy(after));
     }
 

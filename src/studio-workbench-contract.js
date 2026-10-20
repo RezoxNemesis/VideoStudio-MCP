@@ -9,7 +9,7 @@ const revision=integer(1,Number.MAX_SAFE_INTEGER),updatedAt=integer(0,Number.MAX
 const time=integer(0,86400000),frame=integer(0,1199),fps=z.union([z.literal(24),z.literal(30),z.literal(60)]);
 const color=z.string().regex(/^#[a-fA-F0-9]{8}$/);
 export const LAYERED_DRAWING_CAPABILITIES=Object.freeze({
- minimumNativeVersion:'4.9.2',stageOnlyPreviewMinimumNativeVersion:'4.9.3',cleanPartReorderMinimumNativeVersion:'4.9.3',precisionPenProgressiveReplayMinimumNativeVersion:'4.9.3',precisionPenMinimumNativeVersion:'4.9.1',
+ minimumNativeVersion:'4.9.2',stageOnlyPreviewMinimumNativeVersion:'4.9.3',cleanPartReorderMinimumNativeVersion:'4.9.3',precisionPenProgressiveReplayMinimumNativeVersion:'4.9.3',contourFillMinimumNativeVersion:'4.9.4',contourFillOperation:'paint_fill',contourFillSourceAction:'sketch_inspect',precisionPenMinimumNativeVersion:'4.9.1',
  action:'sketch_edit',previewAction:'sketch_layered_drawing_preview',previewReadOnly:true,
  operations:['layered_drawing_begin','layered_drawing_stage','layered_drawing_review','layered_drawing_finish'],
  stages:['construction','refinement','details','clean_line','separation'],
@@ -401,6 +401,7 @@ const operation=z.discriminatedUnion('type',[
  z.object({type:z.literal('add_solid'),layerId:id,solidId:id.max(48),program:solidProgram}).strict(),
  z.object({type:z.literal('symmetry_stroke'),layerId:id,object:symmetryObject,symmetry}).strict(),
  z.object({type:z.literal('add_paint_cel'),layerId:id,objectId:id,frame:frame.optional(),exposure:integer(1,1200).optional()}).strict(),
+ z.object({type:z.literal('paint_fill'),objectId:id,strokeId:id,contourObjectId:id,expectedContourSha256:sha,color,frameIndex:frame.optional()}).strict().refine(v=>parseInt(v.color.slice(1,3),16)>0,'Contour fill requires nontransparent paint'),
  z.object({type:z.literal('paint_stroke'),objectId:id,strokeId:id,frameIndex:frame.optional(),points:points.max(2048),brush:paintBrush,alphaLock:z.boolean().optional(),clip:bounds.optional(),cloneSource:cloneSource.optional()}).strict(),
  z.object({type:z.literal('add_layer'),layer}).strict(),
  z.object({type:z.literal('update_layer'),layerId:id,patch:z.object({name:text(160).optional(),visible:z.boolean().optional(),locked:z.boolean().optional(),blendMode:blendMode.optional(),opacity:finite.min(0).max(1).optional()}).strict()}).strict(),
@@ -522,7 +523,10 @@ export const sketchAnimationProgramSchema=z.object({schema:z.literal('videostudi
  camera:z.array(z.object({frame,x:finite.min(-4).max(4).optional(),y:finite.min(-4).max(4).optional(),zoom:finite.min(.01).max(8).optional(),rotation:finite.min(-3600).max(3600).optional(),interpolation:animationInterpolation.optional(),curve:timingCurve.optional()}).strict().refine(timingValid,'Invalid camera timing curve')).max(1200).refine(orderedFrames,'Camera frames must strictly increase').optional(),
  cameraLayerIds:z.array(id).max(32).optional(),
  dialogues:z.array(z.object({...animationRange,text:text(4096),layerId:id,bounds,color:color.optional(),fontSize:finite.min(.005).max(.3).optional()}).strict().refine(v=>v.end>=v.start,'Dialogue end must follow start')).max(256).optional(),
- mouthCels:z.array(animationVisibility).max(4096).optional(),celRanges:z.array(animationVisibility).max(4096).optional()
+ mouthCels:z.array(animationVisibility).max(4096).optional(),celRanges:z.array(animationVisibility).max(4096).optional(),
+ hiddenArtwork:z.array(id).max(128).refine(v=>new Set(v).size===v.length,'Hidden artwork IDs must be distinct').optional(),
+ interactionCues:z.array(z.object({frame,rigA:id,jointA:id,rigB:id,jointB:id,maxGapPx:finite.min(.1).max(512),description:text(120).optional()}).strict().refine(v=>v.rigA!==v.rigB,'Contact cues require distinct rigs')).max(64).optional(),
+ keyframeTolerancePixels:finite.min(.25).max(2).optional()
 }).strict().superRefine((value,ctx)=>{
  const fail=message=>ctx.addIssue({code:z.ZodIssueCode.custom,message});
  for(const rig of value.rigs){
@@ -532,6 +536,7 @@ export const sketchAnimationProgramSchema=z.object({schema:z.literal('videostudi
   for(const pose of rig.poses||[])if(pose.frame>=value.frameCount||Object.keys(pose.rotations||{}).some(id=>!ids.has(id)))fail('Pose must fit the timeline and name existing joints');
   for(const contact of rig.ik||[])if(contact.end>=value.frameCount||['hip','knee','ankle'].some(key=>!ids.has(contact[key])))fail('Contact must fit the timeline and name existing joints');
  }
+ const rigs=new Map(value.rigs.map(r=>[r.id,new Set(r.joints.map(j=>j.id))]));for(const cue of value.interactionCues||[])if(cue.frame>=value.frameCount||!rigs.get(cue.rigA)?.has(cue.jointA)||!rigs.get(cue.rigB)?.has(cue.jointB))fail('Contact cue must fit the timeline and name existing rigs and joints');
  for(const key of value.camera||[])if(key.frame>=value.frameCount)fail('Camera key must fit the timeline');
  for(const cue of [...value.dialogues||[],...value.mouthCels||[],...value.celRanges||[]])if(cue.end>=value.frameCount)fail('Cue must fit the timeline');
  if(value.camera?.length&&!value.cameraLayerIds?.length)fail('Camera keys require explicit layer IDs');
@@ -580,7 +585,7 @@ export const studioToolSchemas={
  sketch_sample_color:{sketchId:id,expectedRevision:revision,frameIndex:frame.optional(),x:coordinate,y:coordinate,source:z.enum(['paint','reference','composite']),objectId:id.optional(),sha256:sha.optional()},
  sketch_archive:{...mutation},
  sketch_restore_archive:{archiveProjectId:id,archiveName:z.string().max(120).regex(/^[A-Za-z0-9_-][A-Za-z0-9_.-]*\.vssketch$/).refine(v=>!v.includes('..')),expectedSha256:sha,operationId:id,name:text(160).optional()},
- sketch_inspect:{sketchId:id,expectedRevision:revision.optional(),frameOffset:frame.optional(),frameLimit:integer(1,64).optional(),characterLayerIds:z.array(id).max(8).optional()},
+ sketch_inspect:{sketchId:id,expectedRevision:revision.optional(),frameOffset:frame.optional(),frameLimit:integer(1,64).optional(),characterLayerIds:z.array(id).max(8).optional(),contourObjectIds:z.array(id).min(1).max(16).refine(v=>new Set(v).size===v.length,'Contour IDs must be distinct').optional()},
  sketch_live_begin:{...mutation,strokeDurationMs:integer(80,5000).optional(),drawingMethod:z.enum(['original_strokes','source_assisted']).optional()},sketch_live_end:{sketchId:id,sessionId:id,expectedRevision:revision},sketch_live_events:{sketchId:id,afterSequence:integer(0,Number.MAX_SAFE_INTEGER),limit:integer(1,8).optional(),operationOffset:integer(0,32768).optional(),operationLimit:integer(1,64).optional(),eventSequence:integer(1,Number.MAX_SAFE_INTEGER).optional()},
  sketch_book_edit:{bookId:id,operationId:id,expectedRevision:revision,name:text(160).optional(),fps:fps.optional(),exposures:z.array(z.object({page:integer(0,999999),frames:integer(1,600)}).strict()).max(128).optional(),cues:z.array(z.union([z.object({id,type:z.enum(['shot','pose','turn','expression','camera','contact','impact','sound']),startFrame:integer(0,999999),endFrame:integer(0,999999),label:text(512),actorId:id.optional(),targetId:id.optional()}).strict().refine(v=>v.endFrame>=v.startFrame),z.object({id,delete:z.literal(true)}).strict()])).max(128).optional()},
  sketch_book_create:{bookId:id.max(72),operationId:id,name:text(160).optional(),pageCount:integer(1,1000000).optional(),width:dimensions.width.optional(),height:dimensions.height.optional(),fps:fps.optional(),background:color.optional()},
@@ -657,6 +662,7 @@ export function nativeStudioParameters(action,parameters={}){
  if(!parameters||typeof parameters!=='object'||Array.isArray(parameters))throw new Error('Studio parameters must be an object');
  boundedJson(parameters);
  const parsed=z.object(studioToolSchemas[action]).strict().parse(parameters);
+ if(action==='sketch_inspect'&&parsed.contourObjectIds!==undefined&&parsed.expectedRevision===undefined)throw new Error('Contour source inspection requires expectedRevision');
  if(action==='sketch_import_reference_layers'||action==='sketch_reference_layers_preview'){
   if(parsed.frame+parsed.exposure>1200)throw new Error('Reference exposure exceeds the bounded frame domain');
   const outputs=[...parsed.masks,...(parsed.background?[parsed.background]:[])];
@@ -709,6 +715,7 @@ export function requireStudioVersion(device,action,parameters={}){
  const styledHandObject=object=>object?.kind==='hand'&&object.hand?.settings?.renderStyle!==undefined;
  const styledHandOperation=op=>op.type==='add_hand_animation'&&op.settings?.renderStyle!==undefined||op.type==='add_object'&&styledHandObject(op.object)||op.type==='update_object'&&op.patch?.hand?.settings?.renderStyle!==undefined||op.type==='add_layer'&&(op.layer?.objects||[]).some(styledHandObject);
  const authoringOperations=action==='sketch_edit'?(parameters.operations||[]):action==='sketch_story_create'?(parameters.shots||[]).flatMap(shot=>shot.operations||[]):action==='sketch_story_preview'?(parameters.plan?.shots||[]).flatMap(shot=>shot.operations||[]):[];
+ if((authoringOperations.some(op=>op.type==='paint_fill')||action==='sketch_inspect'&&parameters.contourObjectIds!==undefined)&&!atLeast(device?.appVersion,'4.9.4'))throw new Error('NATIVE_APP_UPGRADE_REQUIRED: native authored contour paint requires VideoStudio 4.9.4 or newer');
  if(action==='sketch_layered_drawing_preview'&&Object.hasOwn(parameters,'stageOnly')&&!atLeast(device?.appVersion,'4.9.3'))throw new Error('NATIVE_APP_UPGRADE_REQUIRED: stage-only drawing preview requires VideoStudio 4.9.3 or newer');
  if((action==='sketch_layered_drawing_preview'||authoringOperations.some(op=>LAYERED_DRAWING_CAPABILITIES.operations.includes(op.type)))&&!atLeast(device?.appVersion,'4.9.2'))throw new Error('NATIVE_APP_UPGRADE_REQUIRED: persistent authored layer workflow and reference comparison require VideoStudio 4.9.2 or newer');
  if(authoringOperations.some(op=>op.type==='precision_contour')&&!atLeast(device?.appVersion,'4.9.1'))throw new Error('NATIVE_APP_UPGRADE_REQUIRED: authored precision pen contours require VideoStudio 4.9.1 or newer');
@@ -753,6 +760,7 @@ export function requireStudioVersion(device,action,parameters={}){
   ||action==='sketch_animation_save'&&((parameters.program?.camera||[]).some(advanced)||(parameters.program?.rigs||[]).some(rig=>(rig.poses||[]).some(advanced)));
  if(quality&&!atLeast(device?.appVersion,'4.6.0'))throw new Error('NATIVE_APP_UPGRADE_REQUIRED: radial material shading and editable animation timing curves require VideoStudio 4.6.0 or newer');
  if(['apply_edit_plan','autonomous_edit'].includes(action)&&(parameters.expectedUpdatedAt!==undefined||(parameters.clips||[]).some(clip=>clip?.clipId!==undefined||clip?.id!==undefined))&&!atLeast(device?.appVersion,'4.5.12'))throw new Error('NATIVE_APP_UPGRADE_REQUIRED: revision-bound timeline plans and stable clip IDs require VideoStudio 4.5.12 or newer');
+ if(action==='sketch_animation_save'){for(const [field,minimum] of [['hiddenArtwork','4.5.0'],['interactionCues','4.5.2'],['keyframeTolerancePixels','4.5.3']])if(Object.hasOwn(parameters.program||{},field)&&!atLeast(device?.appVersion,minimum))throw new Error('NATIVE_APP_UPGRADE_REQUIRED: animation '+field+' requires VideoStudio '+minimum+' or newer');}
  if(action.startsWith('sketch_animation_')&&!atLeast(device?.appVersion,'4.4.0'))throw new Error('NATIVE_APP_UPGRADE_REQUIRED: prepared-sketch character animation requires Video studio 4.4.0 or newer');
  if(['sketch_import_drawing_asset','get_native_result_page','get_native_delivery_status','compact_native_delivery'].includes(action)&&!atLeast(device?.appVersion,'4.3.1'))throw new Error('NATIVE_APP_UPGRADE_REQUIRED: registered drawing imports and durable native result delivery require Video studio 4.3.1 or newer');
  const needs430=action==='cinematic_3d_edit_program'||action==='precision_edit'&&(parameters.operations||[]).some(op=>op.keyframeEdits!==undefined||op.set?.audioPan!==undefined||op.set?.audioMono!==undefined)

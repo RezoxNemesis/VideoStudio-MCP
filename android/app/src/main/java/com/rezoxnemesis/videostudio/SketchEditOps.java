@@ -61,7 +61,7 @@ public final class SketchEditOps {
                 return SketchQualityAudit.inspect(context,doc,args);
             }
             if("sketch_inspect".equals(action)){
-                SketchDocument.fields(args,"sketchId,expectedRevision,frameOffset,frameLimit,characterLayerIds");JSONObject doc=store.get(id);if(args.has("expectedRevision"))SketchProjectStore.requireRevision(doc,SketchDocument.integer(args,"expectedRevision",1,Long.MAX_VALUE-1));return SketchInspection.inspect(doc,args);
+                SketchDocument.fields(args,"sketchId,expectedRevision,frameOffset,frameLimit,characterLayerIds,contourObjectIds");JSONObject doc=store.get(id);if(args.has("expectedRevision"))SketchProjectStore.requireRevision(doc,SketchDocument.integer(args,"expectedRevision",1,Long.MAX_VALUE-1));return SketchInspection.inspect(doc,args);
             }
             if("sketch_xsheet".equals(action)){
                 SketchDocument.fields(args,"sketchId,expectedRevision,frameOffset,frameLimit");
@@ -383,7 +383,7 @@ public final class SketchEditOps {
             case "symmetry_stroke": {
                 SketchSymmetry.apply(doc,op);break;
             }
-            case "paint_stroke": {
+            case "paint_fill": case "paint_stroke": {
                 SketchPaintOps.applyPreparedStroke(doc,op);break;
             }
             case "update_object": {

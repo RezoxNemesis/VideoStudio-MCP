@@ -11,6 +11,14 @@ on:
         description: "Exact source SHA for the existing APK (required with artifact_run_id)"
         required: false
         default: ""
+      native_study_blob_sha:
+        description: "Optional Git blob containing a source-free, locally rendered native study ZIP"
+        required: false
+        default: ""
+      native_study_sha256:
+        description: "Exact SHA256 of that optional study ZIP; evidence transport only"
+        required: false
+        default: ""
   push:
     branches: [ main ]
   pull_request:
@@ -193,6 +201,23 @@ jobs:
             android/app/build/outputs/apk/debug/app-debug.apk.sha256
             android/app/build/outputs/apk/debug/VideoStudio-build-proof.json
           if-no-files-found: error
+
+      - name: Verify optional native study evidence
+        if: github.event_name == 'workflow_dispatch' && inputs.native_study_blob_sha != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NATIVE_STUDY_BLOB_SHA: ${{ inputs.native_study_blob_sha }}
+          NATIVE_STUDY_SHA256: ${{ inputs.native_study_sha256 }}
+        run: python3 scripts/receive-native-study-evidence.py
+
+      - name: Attach reviewed native study evidence
+        if: github.event_name == 'workflow_dispatch' && inputs.native_study_blob_sha != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: VideoStudio-native-authored-study
+          path: work/native-study-evidence/
+          if-no-files-found: error
+          retention-days: 30
 
       - name: Prepare stable direct-download APK
         if: github.event_name == 'push'

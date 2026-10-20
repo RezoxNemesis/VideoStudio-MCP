@@ -62,7 +62,7 @@ final class SketchLivePreparation {
     }
     static Prepared prepareDrawing(Context context,JSONObject baseline,JSONObject operation,SketchPaintReplay.Viewport viewport)throws Exception{
         JSONObject next = prepare(baseline, operation);
-        boolean paint="paint_stroke".equals(operation.optString("type"));
+        boolean paint=java.util.Arrays.asList("paint_stroke","paint_fill").contains(operation.optString("type"));
         JSONObject presented=paint?SketchDocument.copy(baseline):next;
         String objectId=operation.has("object")?operation.getJSONObject("object").optString("id",null):operation.optString("objectId",null);
         int frame=operationFrame(paint||"delete_object".equals(operation.optString("type"))?baseline:next,operation);
@@ -73,7 +73,7 @@ final class SketchLivePreparation {
             renderer.prepareVectorGeometry();
             renderer.prepareRasterResources(viewport.maxDimension,frame);
             if("append_points".equals(operation.optString("type")))renderer.setAppendPresentation(objectId,SketchDocument.object(baseline,objectId).getJSONArray("points").length());
-            if("paint_stroke".equals(operation.optString("type"))){
+            if(java.util.Arrays.asList("paint_stroke","paint_fill").contains(operation.optString("type"))){
                 JSONObject before=SketchDocument.object(baseline,operation.getString("objectId")).getJSONObject("paint");
                 if(!before.getString("sha256").equals(operation.getJSONObject("beforePaint").getString("sha256")))throw new IllegalStateException("LIVE_DRAWING_GAP: paint baseline differs from accepted native stroke");
                 prepared.paintReplay=new SketchPaintReplay(context,baseline.getString("id"),operation);
@@ -92,7 +92,7 @@ final class SketchLivePreparation {
         if(operation.has("objectId")){
             JSONObject object=SketchDocument.object(document,operation.getString("objectId"));
             frame=object.getInt("frame");
-            if("paint_stroke".equals(operation.optString("type"))){
+            if(java.util.Arrays.asList("paint_stroke","paint_fill").contains(operation.optString("type"))){
                 JSONObject request=operation.getJSONObject("stroke").getJSONObject("request");
                 if(request.has("frameIndex"))
                     frame=(int)SketchDocument.integer(request,"frameIndex",0,maximum);
