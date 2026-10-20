@@ -1,0 +1,170 @@
+name: VideoStudio OMEGA 4.8.9 Verified Large-Media APK Candidate
+on:
+  push:
+    branches: [candidate/omega-4.8.9-large-media-20261020]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: omega-v489-large-media-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  complete-android-regressions:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+      - name: Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Gradle 8.9
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+      - name: Android SDK 36
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${ANDROID_HOME:-}"
+          if [ ! -f "$ANDROID_HOME/platforms/android-36/package.xml" ] || [ ! -x "$ANDROID_HOME/build-tools/35.0.0/apksigner" ]; then
+            timeout 240s bash -c 'yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;35.0.0" >/dev/null'
+          fi
+          test -x "$ANDROID_HOME/build-tools/35.0.0/aapt"
+          test -x "$ANDROID_HOME/build-tools/35.0.0/apksigner"
+      - name: Verify OMEGA modules and 10 GiB streaming API
+        shell: bash
+        run: |
+          set -euo pipefail
+          for cls in OmegaMasterDependencyIndex OmegaReferenceGeometry OmegaBezierFitter OmegaTwoBoneIK OmegaMotionTimeline OmegaVisualAudit OmegaAudioTimeline OmegaRenderPlan; do
+            test -s "android/app/src/main/java/com/rezoxnemesis/videostudio/$cls.java"
+            test -s "android/app/src/test/java/com/rezoxnemesis/videostudio/${cls}Test.java"
+          done
+          for cls in NativeMediaWorkBudget NativeCommandResultPolicy; do
+            test -s "android/app/src/main/java/com/rezoxnemesis/videostudio/$cls.java"
+            test -s "android/app/src/test/java/com/rezoxnemesis/videostudio/${cls}Test.java"
+          done
+          test -s android/app/src/main/java/com/rezoxnemesis/videostudio/Sketch3DCelBridge.java
+          grep -F 'versionCode = 492' android/app/build.gradle.kts
+          grep -F 'versionName = "4.8.9"' android/app/build.gradle.kts
+          grep -F 'APP_VERSION = "4.8.9"' android/app/src/main/java/com/rezoxnemesis/videostudio/AppProtocol.java
+          grep -F 'this::linkedMasterMenu' android/app/src/main/java/com/rezoxnemesis/videostudio/SketchStudioActivity.java
+          grep -F 'this::choose3DPoseCel' android/app/src/main/java/com/rezoxnemesis/videostudio/SketchStudioActivity.java
+          grep -F 'MAX_BYTES=10L*1024*1024*1024' android/app/src/main/java/com/rezoxnemesis/videostudio/ProjectAssetImport.java
+      - name: Compile and run the ENTIRE Android unit regression suite
+        working-directory: android
+        shell: bash
+        run: |
+          set -euo pipefail
+          gradle :app:compileDebugJavaWithJavac :app:testDebugUnitTest --stacktrace
+      - name: Save complete Android JUnit results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: VideoStudio-4.8.9-all-Android-regressions
+          retention-days: 14
+          if-no-files-found: warn
+          path: |
+            android/app/build/test-results/testDebugUnitTest/
+            android/app/build/reports/tests/testDebugUnitTest/
+
+  original-owner-signed-apk:
+    needs: complete-android-regressions
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Gradle 8.9
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+      - name: Android SDK tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ ! -f "$ANDROID_HOME/platforms/android-36/package.xml" ] || [ ! -x "$ANDROID_HOME/build-tools/35.0.0/apksigner" ]; then
+            timeout 240s bash -c 'yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;35.0.0" >/dev/null'
+          fi
+          test -x "$ANDROID_HOME/build-tools/35.0.0/aapt"
+      - name: Restore ONLY original cached VideoStudio owner certificate
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.android/debug.keystore
+          key: videostudio-android-debug-signing-v1
+      - name: Verify pinned original certificate
+        shell: bash
+        run: |
+          set -euo pipefail
+          key="$HOME/.android/debug.keystore"
+          test -r "$key" || { echo "::error::Original signing material unavailable; do not generate a replacement."; exit 1; }
+          observed="$(keytool -list -v -keystore "$key" -storepass android -alias androiddebugkey | awk -F': ' '/SHA256:/{print $2;exit}' | tr -d ':[:space:]' | tr '[:upper:]' '[:lower:]')"
+          test "$observed" = "7e0187470356616be2a45bc7f41445894085185db110edfdc0cdfd232942a6dd" || { echo "::error::VideoStudio signature continuity violation"; exit 1; }
+      - name: Build original-owner-signed APK
+        working-directory: android
+        shell: bash
+        run: |
+          set -euo pipefail
+          export VIDEOSTUDIO_SIGNING_KEYSTORE="$HOME/.android/debug.keystore"
+          gradle :app:assembleDebug --stacktrace
+      - name: Verify exact 4.8.9 APK identity, signature, integrity
+        shell: bash
+        run: |
+          set -euo pipefail
+          file=android/app/build/outputs/apk/debug/app-debug.apk
+          test -s "$file"
+          badging="$("$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$file" | head -n 1)"
+          echo "$badging"
+          grep -F "name='com.rezoxnemesis.videostudio.next'" <<< "$badging"
+          grep -F "versionCode='492'" <<< "$badging"
+          grep -F "versionName='4.8.9'" <<< "$badging"
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose "$file"
+          cert="$("$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --print-certs "$file" | awk -F': ' '/Signer #1 certificate SHA-256 digest:/{print $2;exit}' | tr -d ':[:space:]' | tr '[:upper:]' '[:lower:]')"
+          test "$cert" = "7e0187470356616be2a45bc7f41445894085185db110edfdc0cdfd232942a6dd"
+          export VIDEOSTUDIO_SOURCE_HEAD_SHA="$GITHUB_SHA"
+          python3 scripts/verify-android-apk.py --apk "$file" --aapt "$ANDROID_HOME/build-tools/35.0.0/aapt" --apksigner "$ANDROID_HOME/build-tools/35.0.0/apksigner"
+          mkdir -p dist
+          cp "$file" dist/VideoStudio-OMEGA-4.8.9-LargeMedia-Candidate.apk
+          sha256sum dist/VideoStudio-OMEGA-4.8.9-LargeMedia-Candidate.apk > dist/VideoStudio-OMEGA-4.8.9-LargeMedia-Candidate.apk.sha256
+          python3 - <<'PY'
+          import json,os
+          report={
+              "artifact":"VideoStudio-OMEGA-4.8.9-LargeMedia-Candidate.apk",
+              "version":"4.8.9","versionCode":492,
+              "sourceCommit":os.environ["GITHUB_SHA"],
+              "originalOwnerSignerSha256":"7e0187470356616be2a45bc7f41445894085185db110edfdc0cdfd232942a6dd",
+              "videoAudioImportLimitBytes":10737418240,
+              "largeMediaImport": "10 GiB metadata/streaming kernels compiled and unit tested",
+              "largeMediaExport": "bounded adaptive timer; actual 10 GiB device media QA pending",
+              "encryptedMailboxLimitBytes":268435456,
+              "inlineCommandLimitBytes":12582912,
+              "fullOMEGANativeFeaturesReleased":False,
+              "onDeviceQualityVerified":False,
+              "installedOnOwnersPhone":False,
+              "releaseStatus":"owner-signed engineering candidate; do not claim all-phase feature completion"
+          }
+          with open("dist/VideoStudio-OMEGA-4.8.9-build-proof.json","w") as f:
+              json.dump(report,f,indent=2)
+          PY
+      - name: Upload signed APK, SHA-256 and proof report
+        uses: actions/upload-artifact@v4
+        with:
+          name: VideoStudio-OMEGA-4.8.9-LargeMedia-OwnerSigned
+          retention-days: 14
+          if-no-files-found: error
+          path: |
+            dist/VideoStudio-OMEGA-4.8.9-LargeMedia-Candidate.apk
+            dist/VideoStudio-OMEGA-4.8.9-LargeMedia-Candidate.apk.sha256
+            dist/VideoStudio-OMEGA-4.8.9-build-proof.json
+            android/app/build/outputs/apk/debug/VideoStudio-build-proof.json
+
+# Never create a new signer, bypass native recovery, install on phone,
+# enumerate Gallery, or claim 10 GiB device acceptance from CI alone.
