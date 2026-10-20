@@ -330,6 +330,9 @@ public final class SketchEditOps {
             case "consolidate_path_runs": {
                 SketchTraceConsolidator.apply(doc,op);break;
             }
+            case "precision_contour": {
+                SketchPrecisionContour.apply(doc,op);break;
+            }
             case "add_object": {
                 appendObject(doc,op);break;
             }
