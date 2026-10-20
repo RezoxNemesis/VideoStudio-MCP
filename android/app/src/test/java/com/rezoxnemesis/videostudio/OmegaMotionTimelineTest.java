@@ -180,6 +180,49 @@ public class OmegaMotionTimelineTest {
                 "foot", 10, 12, Double.NaN, .7, 0, .1, .2));
     }
 
+    @Test public void contactEntryAndExitAreEasedWhilePlantIsExact() {
+        OmegaMotionTimeline.Contact c = new OmegaMotionTimeline.Contact(
+                "left_sole", 16, 30, .25, .80, -.05, .25, 1.0, 4, 4);
+        OmegaMotionTimeline.ActingClip clip = new OmegaMotionTimeline.ActingClip(spec(30), c);
+        assertEquals(0, clip.sample(11).contacts.length);
+        assertEquals(0, clip.sample(35).contacts.length);
+        assertEquals(0, clip.sample(12).contacts[0].weight, TOL);
+        assertEquals(.5, clip.sample(14).contacts[0].weight, TOL);
+        assertEquals(1, clip.sample(16).contacts[0].weight, TOL);
+        assertTrue(clip.sample(16).contacts[0].planted);
+        assertEquals(.25, clip.sample(22).contacts[0].worldX, 1e-12);
+        assertEquals(.80, clip.sample(22).contacts[0].worldY, 1e-12);
+        assertTrue(clip.sample(30).contacts[0].planted);
+        assertFalse(clip.sample(32).contacts[0].planted);
+        assertEquals(.5, clip.sample(32).contacts[0].weight, TOL);
+        assertEquals(0, clip.sample(34).contacts[0].weight, TOL);
+        // Local IK target at the zero-weight release is exactly the rest joint.
+        assertEquals(-.05, clip.sample(34).contacts[0].localTargetX, 1e-12);
+        assertEquals(.25, clip.sample(34).contacts[0].localTargetY, 1e-12);
+        for (int f = 12; f <= 34; f++) {
+            OmegaMotionTimeline.Sample s = clip.sample(f);
+            OmegaMotionTimeline.ContactSample target = s.contacts[0];
+            double a = Math.toRadians(s.root.angle);
+            assertEquals(target.worldX, s.root.x + target.localTargetX * Math.cos(a)
+                    - target.localTargetY * Math.sin(a), 1e-12);
+            assertEquals(target.worldY, s.root.y + target.localTargetX * Math.sin(a)
+                    + target.localTargetY * Math.cos(a), 1e-12);
+        }
+    }
+
+    @Test public void contactReleaseWindowsOnSameJointMayNotOverlap() {
+        OmegaMotionTimeline.Contact a = new OmegaMotionTimeline.Contact(
+                "foot", 14, 22, .25, .80, -.05, .25, 1.0, 2, 3);
+        OmegaMotionTimeline.Contact b = new OmegaMotionTimeline.Contact(
+                "foot", 26, 35, .25, .80, -.05, .25, 1.0, 2, 3);
+        fails("overlapping", () -> new OmegaMotionTimeline.ActingClip(spec(30), a, b));
+        fails("outside", () -> new OmegaMotionTimeline.ActingClip(spec(30),
+                new OmegaMotionTimeline.Contact("foot", 11, 25, .25, .8, -.05,
+                        .25, 1.0, 2, 4)));
+        fails("contact", () -> new OmegaMotionTimeline.Contact("foot", 12, 25,
+                .25, .8, -.05, .25, 1.0, 25, 0));
+    }
+
     @Test public void presentationTimesUseNativeFrameClockAtAllSupportedRates() {
         for (int fps : new int[]{24, 30, 60}) {
             OmegaMotionTimeline.ActingClip clip = new OmegaMotionTimeline.ActingClip(spec(fps));
