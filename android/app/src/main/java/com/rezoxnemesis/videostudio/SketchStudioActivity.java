@@ -1167,7 +1167,69 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
         });
     }
 
-    private void moreMenu(){menu("Drawing tools",new String[]{"Layers","Separate reference into parts","Frames / Cels","Linked master artwork","2D animation","Workspace","Drawing alerts","Visual QA / Detail","Review & correct","Story → 2D film",canvas.previewFailed()?"Retry preview":"Refresh preview","3D pose → editable cel"},this::layersMenu,this::referenceLayersDialog,this::framesMenu,this::linkedMasterMenu,this::openAnimationStudio,this::workspaceDialog,this::drawingAlerts,this::qualityAuditDialog,this::reviewCorrectionDialog,this::storyFilmDialog,this::refreshPreview,this::choose3DPoseCel);}
+    private void moreMenu(){menu("Drawing tools",new String[]{"Layers","Separate reference into parts","Frames / Cels","Linked master artwork","Natural acting keys","2D animation","Workspace","Drawing alerts","Visual QA / Detail","Review & correct","Story → 2D film",canvas.previewFailed()?"Retry preview":"Refresh preview","3D pose → editable cel"},this::layersMenu,this::referenceLayersDialog,this::framesMenu,this::linkedMasterMenu,this::naturalActingDialog,this::openAnimationStudio,this::workspaceDialog,this::drawingAlerts,this::qualityAuditDialog,this::reviewCorrectionDialog,this::storyFilmDialog,this::refreshPreview,this::choose3DPoseCel);}
+    /** User-controlled anticipation → movement → recoil → recovery on a
+     * selected editable native sketch object; no pasted video motion. */
+    private void naturalActingDialog(){
+        if(document==null||session==null){onMessage("Open a Sketch first");return;}
+        try{
+            String chosen=canvas.getSelectedId();
+            if(chosen==null)throw SketchDocument.bad("Select an authored object or linked master instance first");
+            JSONObject object=SketchDocument.object(document,chosen);
+            int start=Math.max(canvas.getFrame(),object.getInt("frame"));
+            if(document.getInt("frameCount")-start<10)
+                throw SketchDocument.bad("Add at least ten remaining frames before animating");
+            JSONObject current=SketchDocument.transformAt(object,start);
+            LinearLayout form=column();
+            TextView help=new TextView(this);
+            help.setText("Move a real drawn subject, not just the camera. "
+                    +"OMEGA creates editable anticipation, drive, recoil and recovery keys. "
+                    +"Use separately drawn body parts/rigs for expressive joints.");
+            help.setTextColor(StudioUi.TEXT);help.setTextSize(13);form.addView(help);
+            EditText destX=input("Destination X (-4..4)",String.valueOf(
+                    Math.max(-4,Math.min(4,current.getDouble("x")+.22))),true);
+            EditText destY=input("Destination Y (-4..4)",String.valueOf(
+                    Math.max(-4,Math.min(4,current.getDouble("y")-.08))),true);
+            EditText destAngle=input("Destination rotation (-720..720)",
+                    String.valueOf(current.getDouble("rotation")+12),true);
+            EditText anticipation=input("Anticipation frames","8",true);
+            EditText drive=input("Action frames","12",true);
+            EditText recoil=input("Recoil frames","6",true);
+            EditText settle=input("Recovery frames","12",true);
+            form.addView(destX);form.addView(destY);form.addView(destAngle);
+            form.addView(anticipation);form.addView(drive);
+            form.addView(recoil);form.addView(settle);
+            android.widget.CheckBox extend=new android.widget.CheckBox(this);
+            extend.setText("Extend this object's exposure if needed");
+            extend.setChecked(true);extend.setTextColor(StudioUi.TEXT);form.addView(extend);
+            android.widget.CheckBox overwrite=new android.widget.CheckBox(this);
+            overwrite.setText("Replace keys inside this acting interval");
+            overwrite.setChecked(false);overwrite.setTextColor(StudioUi.TEXT);
+            form.addView(overwrite);
+            android.widget.ScrollView scroll=new android.widget.ScrollView(this);
+            scroll.addView(form);
+            new AlertDialog.Builder(this).setTitle("Natural 2D acting • OMEGA")
+                    .setView(scroll).setNegativeButton("Cancel",null)
+                    .setPositiveButton("Apply animated keyframes",(dialog,which)->{
+                        try{
+                            JSONObject operation=new JSONObject()
+                                    .put("type","apply_acting_motion")
+                                    .put("objectId",chosen).put("startFrame",start)
+                                    .put("x",Double.parseDouble(destX.getText().toString()))
+                                    .put("y",Double.parseDouble(destY.getText().toString()))
+                                    .put("rotation",Double.parseDouble(destAngle.getText().toString()))
+                                    .put("anticipationFrames",Integer.parseInt(anticipation.getText().toString()))
+                                    .put("driveFrames",Integer.parseInt(drive.getText().toString()))
+                                    .put("recoilFrames",Integer.parseInt(recoil.getText().toString()))
+                                    .put("recoveryFrames",Integer.parseInt(settle.getText().toString()))
+                                    .put("extendExposure",extend.isChecked())
+                                    .put("replaceExistingKeys",overwrite.isChecked());
+                            onOperation(operation);
+                        }catch(Exception error){onMessage(error.getMessage());}
+                    }).show();
+        }catch(Exception failure){onMessage(failure.getMessage());}
+    }
+
     private void referenceLayersDialog(){
         if(session==null||document==null)return;
         stopPlayback();final SketchEditorSession origin=session;final String target=sketchId;
