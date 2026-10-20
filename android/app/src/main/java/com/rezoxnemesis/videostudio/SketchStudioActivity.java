@@ -229,8 +229,35 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
     @Override public void onOperation(JSONObject operation) {
         try{apply(new JSONArray().put(operation));}catch(Exception error){onMessage(error.getMessage());}
     }
+    private static boolean needsPreparedWorker(JSONArray operations){
+        // A precision stroke can have 4096 points and run repeated fidelity
+        // refinement. Never fit on the Android touch/main thread.
+        if(operations!=null)for(int i=0;i<operations.length();i++){
+            JSONObject operation=operations.optJSONObject(i);
+            if(operation!=null&&("precision_contour".equals(operation.optString("type"))
+                    ||"apply_acting_motion".equals(operation.optString("type"))))
+                return true;
+        }
+        return false;
+    }
     private void apply(JSONArray operations) {
-        if(session==null||loadingDrawing)return;if(livePlayer!=null){onMessage("Tap Draw myself to pause live drawing before editing");return;}stopPlayback();try{if(SketchPaintOps.containsPaint(operations)||session.hasPreparedSaves()){session.submitPrepared(operations);updateStatus();}else{session.submit(operations);present(session.document());}}catch(Exception error){onMessage(error.getMessage());}
+        if(session==null||loadingDrawing)return;
+        if(livePlayer!=null){
+            onMessage("Tap Draw myself to pause live drawing before editing");return;
+        }
+        stopPlayback();
+        try{
+            if(SketchPaintOps.containsPaint(operations)||needsPreparedWorker(operations)
+                    ||session.hasPreparedSaves()){
+                // Durable intent + worker transaction; asynchronously publishes
+                // the resulting editable vector and real actor keyframes.
+                session.submitPrepared(operations);
+                updateStatus();
+            }else{
+                session.submit(operations);
+                present(session.document());
+            }
+        }catch(Exception error){onMessage(error.getMessage());}
     }
     @Override public void onColorPicked(String value){brushColor=value;if(toolPicker.getSelectedItemPosition()<11)toolPicker.setSelection(0);updateBrush();}
     @Override public SketchCanvasView.PaintCommitter beginPaintGesture(String id,long revision,int frame,String objectId){
