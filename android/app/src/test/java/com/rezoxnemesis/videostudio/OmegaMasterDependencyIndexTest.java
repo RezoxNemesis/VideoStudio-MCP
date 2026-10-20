@@ -2,6 +2,9 @@ package com.rezoxnemesis.videostudio;
 
 import java.util.Arrays;
 import org.json.JSONArray;
+import android.content.Context;
+import android.graphics.Bitmap;
+import org.robolectric.RuntimeEnvironment;
 import org.json.JSONObject;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -286,6 +289,42 @@ public class OmegaMasterDependencyIndexTest {
         catch(IllegalArgumentException expected){}
         try{new OmegaMasterDependencyIndex.PartChange("rose_petal",1,HASH,new JSONObject().put("frame",10));fail();}
         catch(Exception expected){}
+    }
+
+
+    @Test public void nativeVectorRendererSamplesEveryQuarterBeforeAndAfter() throws Exception {
+        // A pixel-level native renderer smoke test is NOT a phone/device visual acceptance.
+        Map<String,JSONObject> docs=threeShots();
+        OmegaMasterDependencyIndex.PreparedBatch staged=
+            OmegaMasterDependencyIndex.stageCompound(request(docs),docs);
+        Map<String,JSONObject> updated=staged.nextDocuments();
+        Context context=RuntimeEnvironment.getApplication();
+        int[] frames={0,45,90,135,179};
+        int changedPairs=0;
+        for(String sketchId:new String[]{"shotA","shotB","shotC"}){
+            try(SketchFrameRenderer original=new SketchFrameRenderer(context,docs.get(sketchId));
+                SketchFrameRenderer modified=new SketchFrameRenderer(context,updated.get(sketchId))){
+                for(int frame:frames){
+                    Bitmap before=original.render(frame),after=modified.render(frame);
+                    try{
+                        assertEquals(256,before.getWidth());
+                        assertEquals(256,after.getWidth());
+                        int[] oldPixels=new int[256*256],newPixels=new int[256*256];
+                        before.getPixels(oldPixels,0,256,0,0,256,256);
+                        after.getPixels(newPixels,0,256,0,0,256,256);
+                        int changes=0;
+                        for(int i=0;i<oldPixels.length;i++)
+                            if(oldPixels[i]!=newPixels[i])changes++;
+                        assertTrue("No authored geometry/color changed at "+sketchId+"/"+frame,
+                            changes>0);
+                        changedPairs++;
+                    }finally{
+                        before.recycle();after.recycle();
+                    }
+                }
+            }
+        }
+        assertEquals(15,changedPairs);
     }
 
 }
