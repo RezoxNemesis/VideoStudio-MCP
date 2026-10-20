@@ -16,6 +16,7 @@ import java.util.Set;
 import org.junit.runner.RunWith;
 import org.robolectric.RobolectricTestRunner;
 import org.robolectric.annotation.Config;
+import org.robolectric.annotation.GraphicsMode;
 import java.util.Collections;
 import org.junit.Test;
 import static org.junit.Assert.*;
@@ -292,6 +293,7 @@ public class OmegaMasterDependencyIndexTest {
     }
 
 
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
     @Test public void nativeVectorRendererSamplesEveryQuarterBeforeAndAfter() throws Exception {
         // A pixel-level native renderer smoke test is NOT a phone/device visual acceptance.
         Map<String,JSONObject> docs=threeShots();
