@@ -108,6 +108,7 @@ public final class FilamentGlbActivity extends Activity
     private boolean cinematicLoading,cinematicUnavailable;
     private int cinematicLoadGeneration,cinematicFrame,cinematicFrameCount,cinematicFps;
     private int cinematicShotIndex=-1,cinematicLastRenderedFrame=-1,cinematicPlayStartFrame,cinematicFallbackLight;
+    private int cinematicOutputWidth=720,cinematicOutputHeight=1280;
     private long cinematicPlayStartedAt;
     private String cinematicProgramId,cinematicProgramSha;
     private JSONObject cinematicProgram,cinematicBundle,cinematicTimeline,cinematicScene;
@@ -128,12 +129,28 @@ public final class FilamentGlbActivity extends Activity
         if(sketchCaptureMode==null)sketchCaptureMode="colour_regions";
         cinematicProgramId=getIntent().getStringExtra("cinematicProgramId");
         cinematic=cinematicProgramId!=null&&!cinematicProgramId.isEmpty();
+        if(cinematic){
+            int width=getIntent().getIntExtra("cinematicOutputWidth",720);
+            int height=getIntent().getIntExtra("cinematicOutputHeight",1280);
+            // Only the three declared native film frame shapes are accepted.
+            CinematicOutputFraming.matching(width,height);
+            cinematicOutputWidth=width;cinematicOutputHeight=height;
+        }
+
         if(cinematic)cinematicFrame=Math.max(0,getIntent().getIntExtra("previewStartFrame",0));
         cinematicProgramSha=getIntent().getStringExtra("expectedProgramSha256");
         String projectId=getIntent().getStringExtra("projectId");
         project=projectId==null?projectStore.active():projectStore.get(projectId);
         if(project==null){finish();return;}
         if(state!=null){
+            if(cinematic){
+                // Recreation follows the exact original owner-selected frame
+                // size; a stale/injected dimension cannot change the GPU budget.
+                int width=state.getInt("cinematicOutputWidth",cinematicOutputWidth);
+                int height=state.getInt("cinematicOutputHeight",cinematicOutputHeight);
+                CinematicOutputFraming.matching(width,height);
+                cinematicOutputWidth=width;cinematicOutputHeight=height;
+            }
             paused=state.getBoolean("paused",false);cinematicFrame=Math.max(0,state.getInt("cinematicFrame",0));
             loadedModelId=state.getString("modelId","");animationIndex=Math.max(0,state.getInt("animationIndex",0));
             restoredClipPosition=state.getDouble("clipPosition",0);restoringModel=!loadedModelId.isEmpty();
@@ -263,7 +280,7 @@ public final class FilamentGlbActivity extends Activity
         TextView title=new TextView(this);title.setText("VideoStudio • Cinematic 3D Preview");title.setTextColor(0xffe8f7ff);title.setTextSize(19);title.setPadding(14,18,14,9);root.addView(title);
         TextView description=new TextView(this);description.setText("Saved full-scene geometry, weighted actors, swords and effects. Authored world roots and exact clip/camera bindings match native export.");description.setTextColor(0xff9fb1c7);description.setTextSize(12);description.setPadding(14,0,14,10);root.addView(description);
         FrameLayout preview=new FrameLayout(this);root.addView(preview,new LinearLayout.LayoutParams(-1,0,1));surface=new CinematicSurfaceView(this);preview.addView(surface,new FrameLayout.LayoutParams(-1,-1,Gravity.CENTER));
-        preview.addOnLayoutChangeListener((view,left,top,right,bottom,oldLeft,oldTop,oldRight,oldBottom)->{int availableWidth=right-left,availableHeight=bottom-top;if(availableWidth<1||availableHeight<1)return;int width=availableWidth,height=Math.round(width*Cinematic3DStudioActivity.OUTPUT_HEIGHT/(float)Cinematic3DStudioActivity.OUTPUT_WIDTH);if(height>availableHeight){height=availableHeight;width=Math.round(height*Cinematic3DStudioActivity.OUTPUT_WIDTH/(float)Cinematic3DStudioActivity.OUTPUT_HEIGHT);}FrameLayout.LayoutParams layout=(FrameLayout.LayoutParams)surface.getLayoutParams();if(layout.width!=width||layout.height!=height){layout.width=width;layout.height=height;surface.setLayoutParams(layout);}});
+        preview.addOnLayoutChangeListener((view,left,top,right,bottom,oldLeft,oldTop,oldRight,oldBottom)->{int availableWidth=right-left,availableHeight=bottom-top;if(availableWidth<1||availableHeight<1)return;int width=availableWidth,height=Math.round(width*cinematicOutputHeight/(float)cinematicOutputWidth);if(height>availableHeight){height=availableHeight;width=Math.round(height*cinematicOutputWidth/(float)cinematicOutputHeight);}FrameLayout.LayoutParams layout=(FrameLayout.LayoutParams)surface.getLayoutParams();if(layout.width!=width||layout.height!=height){layout.width=width;layout.height=height;surface.setLayoutParams(layout);}});
         viewer=new ModelViewer(surface,engine,uiHelper,null);
         attachPreviewDriver();
         modelHint=new TextView(this);modelHint.setTextColor(0xffb9ccdf);modelHint.setTextSize(15);modelHint.setGravity(Gravity.CENTER);modelHint.setPadding(dp(24),dp(24),dp(24),dp(24));preview.addView(modelHint,new FrameLayout.LayoutParams(-1,-1));
@@ -409,7 +426,7 @@ public final class FilamentGlbActivity extends Activity
     private void applyCinematicFrame(JSONObject sampled) throws Exception {
         if(cinematicScene==null||cinematicCamera==null)return;
         JSONObject shot=sampled.getJSONObject("shot");JSONObject frame=Cinematic3DSceneSampling.frame(shot,sampled.getInt("shotFrame"),cinematicFps,cinematicScene);
-        Cinematic3DSceneSampling.apply(engine,viewer.getAsset(),viewer.getAnimator(),animationIndex,cinematicCamera,frame,Cinematic3DStudioActivity.OUTPUT_WIDTH,Cinematic3DStudioActivity.OUTPUT_HEIGHT);
+        Cinematic3DSceneSampling.apply(engine,viewer.getAsset(),viewer.getAnimator(),animationIndex,cinematicCamera,frame,cinematicOutputWidth,cinematicOutputHeight);
         cinematicScrub.setProgress(cinematicFrame);status.setText(cinematicTimeline.optString("name")+" • "+("procedural_mannequin".equals(cinematicTimeline.optString("motionProvider"))?"procedural mannequins":"authored 3D")+" • "+shot.getString("action")+" • frame "+(cinematicFrame+1)+"/"+cinematicFrameCount+(frame.getBoolean("hitStop")?" • impact hold":"")+(paused?" • paused":""));
     }
     private void cinematicFailure(Throwable error){previewFailure(error);}
@@ -874,6 +891,6 @@ public final class FilamentGlbActivity extends Activity
         state.putDouble("referenceCameraOriginAzimuth",referenceCameraOriginAzimuth);
         state.putDouble("referenceCameraOriginPitch",referenceCameraOriginPitch);
         state.putDouble("referenceCameraOriginDistance",referenceCameraOriginDistance);
-        state.putBoolean("studioLightingOn",studioLightingOn);
+        state.putBoolean("studioLightingOn",studioLightingOn);state.putInt("cinematicOutputWidth",cinematicOutputWidth);state.putInt("cinematicOutputHeight",cinematicOutputHeight);
     }
 }
