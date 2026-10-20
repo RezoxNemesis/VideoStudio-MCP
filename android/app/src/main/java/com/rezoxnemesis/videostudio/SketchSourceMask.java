@@ -44,17 +44,54 @@ final class SketchSourceMask {
             if(i==0)path.moveTo(x,y);else path.lineTo(x,y);
         }path.close();}return path;
     }
-    static String hash(int width,int height,JSONArray rings,boolean complement)throws Exception{return SketchDocument.sha256(SketchDocument.canonical(new JSONObject().put("version",1).put("width",width).put("height",height).put("rings",new JSONArray(rings.toString())).put("complement",complement)).getBytes(StandardCharsets.UTF_8));}
-    static String hashField(JSONObject o,String key)throws Exception{Object v=o.get(key);if(!(v instanceof String)||!((String)v).matches("[a-f0-9]{64}"))throw SketchDocument.bad("Invalid "+key);return(String)v;}
-    static JSONObject metadata(JSONObject args,String maskId,JSONArray rings,boolean complement,int w,int h)throws Exception{return new JSONObject().put("version",1).put("method","source_assisted").put("sourceReferenceSha256",args.getString("expectedReferenceSha256")).put("sourceSha256",args.getString("expectedSourceSha256")).put("operationId",args.getString("operationId")).put("maskId",maskId).put("complement",complement).put("rings",new JSONArray(rings.toString())).put("maskSha256",hash(w,h,rings,complement));}
+    static String hash(int width,int height,JSONArray rings,boolean complement)throws Exception{
+        return hash(width,height,rings,complement,0);
+    }
+    static String hash(int width,int height,JSONArray rings,boolean complement,int edgeExtendPx)
+            throws Exception{
+        if(edgeExtendPx<0||edgeExtendPx>SketchReferenceStructure.MAX_EDGE_EXTEND_PX
+                ||(!complement&&edgeExtendPx!=0))
+            throw SketchDocument.bad("Only a bounded background mask can extend occluded pixels");
+        JSONObject seed=new JSONObject().put("version",1)
+                .put("width",width).put("height",height)
+                .put("rings",new JSONArray(rings.toString())).put("complement",complement);
+        if(edgeExtendPx>0)seed.put("edgeExtendPx",edgeExtendPx);
+        return SketchDocument.sha256(SketchDocument.canonical(seed)
+                .getBytes(StandardCharsets.UTF_8));
+    }
+    static String hashField(JSONObject o,String key)throws Exception{
+        Object v=o.get(key);
+        if(!(v instanceof String)||!((String)v).matches("[a-f0-9]{64}"))
+            throw SketchDocument.bad("Invalid "+key);
+        return(String)v;
+    }
+    static JSONObject metadata(JSONObject args,String maskId,JSONArray rings,boolean complement,
+                               int w,int h)throws Exception{
+        int radius=complement?args.optInt("edgeExtendPx",0):0;
+        JSONObject metadata=new JSONObject().put("version",1)
+                .put("method","source_assisted")
+                .put("sourceReferenceSha256",args.getString("expectedReferenceSha256"))
+                .put("sourceSha256",args.getString("expectedSourceSha256"))
+                .put("operationId",args.getString("operationId"))
+                .put("maskId",maskId).put("complement",complement)
+                .put("rings",new JSONArray(rings.toString()))
+                .put("maskSha256",hash(w,h,rings,complement,radius));
+        if(radius>0)metadata.put("edgeExtendPx",radius);
+        return metadata;
+    }
     static void validate(JSONObject ref)throws Exception{
-        JSONObject m=ref.getJSONObject("sourceMask");SketchDocument.fields(m,"version,method,sourceReferenceSha256,sourceSha256,operationId,maskId,complement,rings,maskSha256");
+        JSONObject m=ref.getJSONObject("sourceMask");SketchDocument.fields(m,"version,method,sourceReferenceSha256,sourceSha256,operationId,maskId,complement,rings,maskSha256,edgeExtendPx");
         SketchDocument.integer(m,"version",1,1);if(!"source_assisted".equals(m.getString("method")))throw SketchDocument.bad("Source cutouts must retain source_assisted provenance");
         hashField(m,"sourceReferenceSha256");String source=hashField(m,"sourceSha256");SketchDocument.id(m,"operationId");SketchDocument.id(m,"maskId");SketchDocument.bool(m,"complement");
         JSONArray rr=m.getJSONArray("rings");boolean complement=m.getBoolean("complement");
         // A complement aggregates independent part rings, which may share edges.
-        if(complement){if(rr.length()<1||rr.length()>64)throw SketchDocument.bad("Complement rings exceed their budget");for(int i=0;i<rr.length();i++)rings(new JSONArray().put(rr.getJSONArray(i)),1);}else rings(rr,8);
+        if(complement){if(rr.length()<1||rr.length()>SketchReferenceStructure.MAX_RING_COUNT)throw SketchDocument.bad("Complement rings exceed their budget");for(int i=0;i<rr.length();i++)rings(new JSONArray().put(rr.getJSONArray(i)),1);}else rings(rr,8);
         if(!source.equals(ref.optString("sourceSha256")))throw SketchDocument.bad("Cutout source hash changed");
-        if(!hash(ref.getInt("width"),ref.getInt("height"),rr,complement).equals(hashField(m,"maskSha256")))throw SketchDocument.bad("Source mask geometry hash changed");
+        int radius=m.has("edgeExtendPx")?
+                (int)SketchDocument.integer(m,"edgeExtendPx",1,SketchReferenceStructure.MAX_EDGE_EXTEND_PX):0;
+        if(radius>0&&!complement)throw SketchDocument.bad("Only background parts may contain a synthetic edge underlay");
+        if(!hash(ref.getInt("width"),ref.getInt("height"),rr,complement,radius)
+                .equals(hashField(m,"maskSha256")))
+            throw SketchDocument.bad("Source mask geometry/provenance hash changed");
     }
 }
