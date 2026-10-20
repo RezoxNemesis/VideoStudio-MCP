@@ -28,9 +28,10 @@ public class SketchReferenceLayersTest {
  private static JSONObject drawing(String id,String color,JSONObject box)throws Exception{return new JSONObject().put("type","add_object").put("layerId","layer_1").put("object",new JSONObject().put("id",id).put("kind","rect").put("fill",true).put("color",color).put("bounds",box));}
  private final class Fixture{
   final String id="parts_"+UUID.randomUUID();final JSONObject request;final JSONObject original;
-  Fixture(boolean hidden)throws Exception{
+  Fixture(boolean hidden)throws Exception{this(hidden,false);}
+  Fixture(boolean hidden,boolean sourceOpaque)throws Exception{
    JSONObject art=SketchDocument.create(new JSONObject().put("sketchId","art_"+id).put("width",256).put("height",256).put("frameCount",1).put("background","#00000000"));
-   SketchEditOps.apply(art,drawing("red","#FFFF0000",bounds(0,0,.5,1)));SketchEditOps.apply(art,drawing("blue","#800000FF",bounds(.5,0,.5,1)));SketchEditOps.apply(art,drawing("green","#FF00FF00",bounds(.1,.1,.1,.1)));
+   SketchEditOps.apply(art,drawing("red","#FFFF0000",bounds(0,0,.5,1)));SketchEditOps.apply(art,drawing("blue",sourceOpaque?"#FF0000FF":"#800000FF",bounds(.5,0,.5,1)));SketchEditOps.apply(art,drawing("green","#FF00FF00",bounds(.1,.1,.1,.1)));
    File png=new File(context.getFilesDir(),id+"_native-source.png");try(SketchFrameRenderer renderer=new SketchFrameRenderer(context,art)){Bitmap b=renderer.render(0);try(FileOutputStream out=new FileOutputStream(png)){assertTrue(b.compress(Bitmap.CompressFormat.PNG,100,out));}finally{b.recycle();}}
    ProjectStore projects=new ProjectStore(context);ProjectStore.Project project=projects.create("Original native reference fixture");ProjectStore.Asset asset=projects.registerImportedAsset(project.id,Uri.fromFile(png),png.getName(),"image/png",0,png.length());
    SketchEditOps.execute(context,"sketch_create",new JSONObject().put("sketchId",id).put("operationId","new").put("width",256).put("height",256).put("fps",24).put("frameCount",96).put("background","#00000000"));
@@ -162,4 +163,103 @@ public class SketchReferenceLayersTest {
  }
  private static void tap(SketchCanvasView canvas,double x,double y){long now=android.os.SystemClock.uptimeMillis();android.view.MotionEvent down=android.view.MotionEvent.obtain(now,now,android.view.MotionEvent.ACTION_DOWN,(float)(x*512),(float)(y*512),0),up=android.view.MotionEvent.obtain(now,now+1,android.view.MotionEvent.ACTION_UP,(float)(x*512),(float)(y*512),0);try{canvas.onTouchEvent(down);canvas.onTouchEvent(up);}finally{down.recycle();up.recycle();}}
  private static int derived(JSONObject d)throws Exception{int count=0;JSONArray layers=d.getJSONArray("layers");for(int i=0;i<layers.length();i++){JSONArray objects=layers.getJSONObject(i).getJSONArray("objects");for(int j=0;j<objects.length();j++){JSONObject o=objects.getJSONObject(j);if(o.has("reference")&&o.getJSONObject("reference").has("sourceMask")){assertEquals("source_assisted",o.getJSONObject("reference").getJSONObject("sourceMask").getString("method"));count++;}}}return count;}
+
+ @Test public void referenceFirstEditableOutlinesAndOpaqueUnderlayPreserveOriginalPixels()
+        throws Exception{run(()->{
+  Fixture f=new Fixture(false,true);
+  JSONObject request=SketchDocument.copy(f.request)
+          .put("operationId","reference_first_structured")
+          .put("createEditableContours",true)
+          .put("edgeExtendPx",16);
+  JSONObject preview;try(SketchProjectStore store=new SketchProjectStore(context)){
+      preview=SketchReferenceLayers.preview(context,store,request);
+  }
+  assertTrue(preview.getBoolean("sourceAssisted"));
+  assertTrue(preview.getBoolean("editableContourGuides"));
+  assertEquals(16,preview.getInt("occludedBackgroundEdgeExtendPx"));
+  assertFalse(preview.getBoolean("fullVectorizationComplete"));
+  assertFalse(preview.getBoolean("hiddenSurfaceReconstruction"));
+  JSONObject receipt=call(request),after=f.doc();
+  assertEquals(3,after.getInt("revision"));
+  assertEquals(2,receipt.getInt("partCount"));
+  assertTrue(receipt.getBoolean("editableContourGuides"));
+  assertEquals(16,receipt.getInt("backgroundEdgeExtendPx"));
+  assertFalse(receipt.getBoolean("fullVectorizationComplete"));
+  assertEquals(4,after.getJSONArray("layers").length());
+  JSONObject left=SketchDocument.layer(after,"left_layer");
+  JSONObject right=SketchDocument.layer(after,"right_layer");
+  assertEquals(3,left.getJSONArray("objects").length()); // 2 rings + source pixels
+  assertEquals(2,right.getJSONArray("objects").length());
+  for(JSONObject part:new JSONObject[]{left,right})for(int n=1;
+      n<part.getJSONArray("objects").length();n++){
+      JSONObject contour=part.getJSONArray("objects").getJSONObject(n);
+      assertEquals("path",contour.getString("kind"));
+      assertEquals(0,contour.getJSONObject("transform").getDouble("opacity"),0);
+      assertTrue(contour.getJSONArray("commands").length()>2);
+  }
+  JSONObject bg=SketchDocument.object(after,"background_image").getJSONObject("reference");
+  JSONObject mask=bg.getJSONObject("sourceMask");
+  assertEquals(16,mask.getInt("edgeExtendPx"));
+  SketchSourceMask.validate(bg);
+  Bitmap underlay=f.pixels(after,"background_image");
+  Bitmap baseline=f.pixels(f.original,"source");
+  try{
+      assertNotEquals("Expanded backgrounds should cover pixels just outside the hole",
+              0,underlay.getPixel(23,36));
+      // Source pixels remain identical; the synthetic underlay stays hidden
+      // until a separated sprite actually moves.
+      assertEquals(baseline.getPixel(23,36),
+              f.pixels(after,"left_image").getPixel(23,36));
+  }finally{underlay.recycle();baseline.recycle();}
+  try(SketchFrameRenderer previous=new SketchFrameRenderer(context,f.original);
+      SketchFrameRenderer current=new SketchFrameRenderer(context,after)){
+      Bitmap a=previous.render(0),b=current.render(0);
+      try{assertTrue("Source-faithful still preview must be pixel-identical",a.sameAs(b));}
+      finally{a.recycle();b.recycle();}
+  }
+  assertThrows(IllegalStateException.class,()->call(SketchDocument.copy(request)
+          .put("edgeExtendPx",24))); // same operation ID must reject changed intent
+  return null;
+ });}
+
+ @Test public void twentyIndependentSourcePartsNoLongerHitEightPartCap()throws Exception{
+  run(()->{
+   Fixture f=new Fixture(false,true);
+   JSONArray masks=new JSONArray();
+   for(int index=0;index<20;index++){
+       double left=(index%5)*.19+.014,top=(index/5)*.23+.01;
+       masks.put(mask("piece_"+index,new JSONArray().put(
+               ring(left,top,left+.10,top+.11))));
+   }
+   JSONObject request=SketchDocument.copy(f.request)
+           .put("operationId","twenty_named_parts")
+           .put("masks",masks)
+           .put("createEditableContours",true);
+   JSONObject receipt=call(request),doc=f.doc();
+   assertEquals(20,receipt.getInt("partCount"));
+   assertEquals(22,doc.getJSONArray("layers").length());
+   assertEquals(20,doc.getJSONArray("layers").length()-2);
+   SketchDocument.validate(doc);
+   assertTrue(receipt.getBoolean("editableContourGuides"));
+   return null;
+  });
+ }
+
+ @Test public void invalidEdgeFillAndTransparentSourceCannotCommitPartialArt()
+        throws Exception{run(()->{
+  Fixture f=new Fixture(false);
+  JSONObject request=SketchDocument.copy(f.request)
+          .put("operationId","unsafe_edge_fill")
+          .put("edgeExtendPx",12)
+          .put("createEditableContours",true);
+  String before=SketchDocument.canonical(f.doc());
+  assertThrows(IllegalArgumentException.class,()->call(request));
+  assertEquals(before,SketchDocument.canonical(f.doc()));
+  assertThrows(IllegalArgumentException.class,()->call(
+          SketchDocument.copy(request).put("edgeExtendPx",49)
+                  .put("operationId","out_of_bounds_edge_fill")));
+  assertEquals(before,SketchDocument.canonical(f.doc()));
+  return null;
+ });}
+
 }
