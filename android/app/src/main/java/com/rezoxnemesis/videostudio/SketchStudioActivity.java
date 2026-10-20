@@ -63,7 +63,7 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
     private int humanToolPosition,pendingAgentToolSelection=-1;
     private boolean syncingAgentTool,agentGlobalTool;
     private android.graphics.drawable.Drawable agentToolIndicator;
-    private final String[] toolValues={"stroke","eraser","line","rect","ellipse","polygon","select","eyedropper","pan","curve","nodes","paint","paint_erase","clone"};
+    private final String[] toolValues={"stroke","eraser","line","rect","ellipse","polygon","select","eyedropper","pan","curve","nodes","paint","paint_erase","clone","precision"};
     private String sketchId;
     private SketchCanvasView canvas;
     private TextView status,previewStatus;
@@ -106,10 +106,10 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
         viewport.addView(previewStatus,new android.widget.FrameLayout.LayoutParams(-1,-2,android.view.Gravity.TOP));
         root.addView(viewport,new LinearLayout.LayoutParams(-1,0,1));
         LinearLayout tools = row(root); Spinner tool = new Spinner(this);toolPicker=tool;
-        String[] names = {"Pen", "Eraser", "Line", "Rectangle", "Ellipse", "Polygon", "Select / move", "Eyedropper", "Pan canvas", "Curve pen", "Edit curve nodes", "Paint brush", "Erase paint", "Clone brush"};
+        String[] names = {"Pen", "Eraser", "Line", "Rectangle", "Ellipse", "Polygon", "Select / move", "Eyedropper", "Pan canvas", "Curve pen", "Edit curve nodes", "Paint brush", "Erase paint", "Clone brush", "Precision Bézier pen"};
         tool.setAdapter(new ArrayAdapter<String>(this, android.R.layout.simple_spinner_dropdown_item, names){@Override public View getView(int position,View convert,android.view.ViewGroup parent){TextView view=(TextView)super.getView(position,convert,parent);view.setTextColor(StudioUi.TEXT);view.setTextSize(12);view.setSingleLine(true);view.setEllipsize(android.text.TextUtils.TruncateAt.END);return view;}});
         tool.setContentDescription("Drawing tool");tool.setMinimumHeight(dp(48));tools.addView(tool,new LinearLayout.LayoutParams(0,dp(48),1));
-        tool.setOnItemSelectedListener(new SimpleSelection() { @Override public void selected(int position) { if(canvas!=null){if(syncingAgentTool||position==pendingAgentToolSelection){pendingAgentToolSelection=-1;return;}humanToolPosition=position;if(position>=11)runAction("Choose paint tool",()->activatePaint(position==12?"erase":position==13?"clone":"paint"));else canvas.setTool(toolValues[position]);} } });
+        tool.setOnItemSelectedListener(new SimpleSelection() { @Override public void selected(int position) { if(canvas!=null){if(syncingAgentTool||position==pendingAgentToolSelection){pendingAgentToolSelection=-1;return;}humanToolPosition=position;if(position>=11&&position<=13)runAction("Choose paint tool",()->activatePaint(position==12?"erase":position==13?"clone":"paint"));else canvas.setTool(toolValues[position]);} } });
         button(tools,"Brush / Text",this::brushMenu);button(tools,"More",this::moreMenu);
         toolStatus=new TextView(this);toolStatus.setTextColor(StudioUi.MUTED);toolStatus.setTextSize(12);
         filmstrip=new SketchFilmstripView(this);filmstrip.setListener(index->runAction("Select frame",()->selectFilmstrip(index)));root.addView(filmstrip,new LinearLayout.LayoutParams(-1,dp(48)));
