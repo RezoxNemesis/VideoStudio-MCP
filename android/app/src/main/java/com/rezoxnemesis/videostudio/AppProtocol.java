@@ -444,6 +444,22 @@ public final class AppProtocol {
         meta.put("galleryAccess", false);
         meta.put("directAttachmentIngest", true);
         meta.put("encryptedMediaMailbox",new JSONObject().put("action","import_mailbox_media").put("minimumNativeVersion","4.2.0").put("maximumBytes",256L*1024*1024).put("hashVerified",true).put("publicPlaintext",false));
+        // Route gigabyte media to byte-streaming actions. The older encrypted
+        // 512-chunk mailbox and inline command payloads stay intentionally
+        // small; removing their limits would not create a working 10 GiB lane.
+        meta.put("largeMediaStreaming",new JSONObject()
+                .put("minimumNativeVersion","4.8.9")
+                .put("maximumVideoAudioBytes",ProjectAssetImport.MAX_BYTES)
+                .put("maximumImageBytes",ProjectAssetImport.MAX_IMAGE_BYTES)
+                .put("preferredResumableActions",new JSONArray(new String[]{
+                        "import_url","import_attachment","project_import_asset"}))
+                .put("httpsByteRangeResume",true)
+                .put("appOwnedPartialResume",true)
+                .put("privateOneTimeHandoffResumable",false)
+                .put("encryptedMailboxMaximumBytes",256L*1024L*1024L)
+                .put("inlineDecodedMaximumBytes",12L*1024L*1024L)
+                .put("requiredStorageReserveBytes",NativeMediaWorkBudget.RESERVED_FREE_BYTES)
+                .put("nativeRenderLargeFileAcceptance","pending-real-device-verification"));
         meta.put("localEngineOwnsProjects", true);
         meta.put("portraitAnimationEngine", "v3.2-articulated-parallax");
         meta.put("onDevicePortraitAi", true);
