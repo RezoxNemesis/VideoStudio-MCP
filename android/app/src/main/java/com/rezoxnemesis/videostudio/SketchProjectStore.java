@@ -226,7 +226,9 @@ public final class SketchProjectStore implements AutoCloseable {
             JSONObject next = mutation.apply(SketchDocument.copy(current));
             if(SketchDrawingPolicy.requiresOriginal(activeDrawingSession(id))&&(liveOperations==null||liveOperations.length()==0))throw new IllegalStateException("SKETCH_ORIGINAL_DRAWING_REQUIRED: every drawing change must have recorded operations");
             next.put("id", id).put("revision", Math.addExact(expectedRevision, 1));
+            SketchLayeredDrawing.requireTransition(current,next,liveOperations);
             SketchDocument.validate(next); verifyReferences(next);
+            SketchLayeredDrawing.requireReviewPixels(context,next,liveOperations);
             SketchDrawingPolicy.requireDocument(activeDrawingSession(id),current,next);
             recordPaintIntents(id,liveOperations);if(seeds!=null)seedPaintIntents(id,seeds);
             int position;
@@ -304,7 +306,6 @@ public final class SketchProjectStore implements AutoCloseable {
             if (previous != null) { db.setTransactionSuccessful(); return previous; }
             requireReceiptCapacity(id);
             JSONObject current = get(id); requireRevision(current, expectedRevision);
-            if(SketchDrawingPolicy.requiresOriginal(activeDrawingSession(id)))throw new IllegalStateException("SKETCH_ORIGINAL_STROKES_ONLY: end the drawing-only session before undo or redo");
             int position, nextPosition;
             try (Cursor c = db.rawQuery("SELECT position,next_position FROM sketches WHERE id=?", new String[]{id})) {
                 c.moveToFirst(); position = c.getInt(0); nextPosition = c.getInt(1);
@@ -316,7 +317,8 @@ public final class SketchProjectStore implements AutoCloseable {
                 target = c.getInt(0);
                 restored = new JSONObject(SQLiteLargeText.read(db, "SELECT json FROM sketch_history WHERE sketch_id=? AND position=?", id, Integer.toString(target)));
             }
-            restored.put("revision", Math.addExact(expectedRevision, 1)); SketchDocument.validate(restored); verifyReferences(restored);
+            if(!current.has("layeredDrawing")&&!restored.has("layeredDrawing"))SketchDrawingPolicy.requireAction(activeDrawingSession(id),redo?"sketch_redo":"sketch_undo",new JSONObject());
+            restored.put("revision", Math.addExact(expectedRevision, 1)); SketchLayeredDrawing.requireHistoryTransition(current,restored);SketchDocument.validate(restored); verifyReferences(restored);
             if (db.update("sketches", values(id, restored, target, nextPosition), "id=? AND revision=?", new String[]{id, Long.toString(expectedRevision)}) != 1)
                 throw new IllegalStateException("SKETCH_REVISION_CONFLICT");
             JSONObject result = result(restored, canMove(id, target, false), canMove(id, target, true));

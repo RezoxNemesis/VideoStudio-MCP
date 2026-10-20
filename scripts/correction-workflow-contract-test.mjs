@@ -203,9 +203,9 @@ test('capability literals expose fixed recipe checks and human judgment without 
  assert.match(worker,/correctionWorkflow:isV3.*CORRECTION_WORKFLOW_CAPABILITIES/);
 });
 
-test('release is4.8.6/code489 and earlier anatomy/style/action floors are unchanged',()=>{
- assert.match(native('AppProtocol'),/APP_VERSION = "4\.8\.6"/);const build=fs.readFileSync(new URL('../android/app/build.gradle.kts',import.meta.url),'utf8');assert.match(build,/versionCode = 489/);assert.match(build,/versionName = "4\.8\.6"/);
- assert.equal(contract.STUDIO_NATIVE_ACTIONS.size,71);assert.equal(contract.STUDIO_ALIAS_ACTIONS.size,82);
+test('release is4.9.2/code495 and earlier anatomy/style/action floors are unchanged',()=>{
+ assert.match(native('AppProtocol'),/APP_VERSION = "4\.9\.2"/);const build=fs.readFileSync(new URL('../android/app/build.gradle.kts',import.meta.url),'utf8');assert.match(build,/versionCode = 495/);assert.match(build,/versionName = "4\.9\.2"/);
+ assert.equal(contract.STUDIO_NATIVE_ACTIONS.size,Object.keys(contract.studioToolSchemas).length);assert(contract.STUDIO_ALIAS_ACTIONS.has("studio_sketch_layered_drawing_preview"));for(const action of contract.STUDIO_NATIVE_ACTIONS)assert(contract.STUDIO_ALIAS_ACTIONS.has("studio_"+action));
  const anatomy={sketchId:'original',expectedRevision:1,operationId:'anatomy',operations:[{type:'add_human_animation',layerId:'layer_1',actorId:'actor',settings:{figureStyle:'legacy',constructionGuides:false}}]};
  assert.doesNotThrow(()=>contract.requireStudioVersion({appVersion:'4.8.3'},'sketch_edit',anatomy));assert.throws(()=>contract.requireStudioVersion({appVersion:'4.8.2'},'sketch_edit',anatomy),/4\.8\.3/);
  assert.doesNotThrow(()=>contract.requireStudioVersion({appVersion:'4.1.0'},'sketch_restore_archive',{archiveProjectId:'p',archiveName:'a.vssketch',expectedSha256:'a'.repeat(64),operationId:'restore'}));

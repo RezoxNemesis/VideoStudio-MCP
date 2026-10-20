@@ -27,10 +27,10 @@ final class SketchAgentLiveBridge {
         if(edits.length()==0)return SketchEditOps.execute(context,"sketch_edit",input);
 
         boolean explicitSession=false;
-        boolean freshRevision;
+        boolean freshRevision,layered;
         try(SketchProjectStore store=new SketchProjectStore(context)){
             explicitSession=store.activeDrawingSession(id)!=null;
-            freshRevision=store.revision(id)==expected;
+            freshRevision=store.revision(id)==expected;layered=store.get(id).has("layeredDrawing");
         }
         // Existing live stream, duplicate queued command, or edit conflict.
         // The normal idempotent receipt/revision logic remains authoritative.
@@ -41,7 +41,7 @@ final class SketchAgentLiveBridge {
                 +id+"/"+operationId).getBytes(StandardCharsets.UTF_8)).toString();
         JSONObject begin=new JSONObject().put("sketchId",id).put("expectedRevision",expected)
                 .put("operationId",journalId).put("strokeDurationMs",80)
-                .put("drawingMethod",SketchDrawingPolicy.ASSISTED);
+                .put("drawingMethod",layered?SketchDrawingPolicy.ORIGINAL:SketchDrawingPolicy.ASSISTED);
         SketchLiveDrawing.beginQuietly(context,begin);
         JSONObject edited=null;
         Exception failure=null;
@@ -64,7 +64,7 @@ final class SketchAgentLiveBridge {
         if(failure!=null)throw failure;
         return edited.put("watchableNativeOperations",edits.length())
                 .put("watchSessionId",journalId)
-                .put("autoLiveMethod",SketchDrawingPolicy.ASSISTED)
+                .put("autoLiveMethod",layered?SketchDrawingPolicy.ORIGINAL:SketchDrawingPolicy.ASSISTED)
                 .put("deviceExecuted",true);
     }
 }

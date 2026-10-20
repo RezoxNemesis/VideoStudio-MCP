@@ -33,6 +33,16 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Use Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Verify ordinary MCP contracts
+        run: |
+          npm install --ignore-scripts --package-lock=false
+          npm test
+
       - name: Use Java 17
         uses: actions/setup-java@v4
         with:
@@ -81,6 +91,7 @@ jobs:
       - name: Build debug APK
         env:
           VIDEOSTUDIO_STORY_FILM_PROOF: '1'
+          VIDEOSTUDIO_LAYERED_DRAWING_EVIDENCE: ${{ github.workspace }}/android/app/build/sketch-layered-drawing
           VIDEOSTUDIO_DUEL_FILM_PROOF: ${{ github.event_name == 'pull_request' && github.head_ref == 'feat/dual-actor-cinematic-proof-v453' && '1' || '0' }}
         working-directory: android
         run: |
@@ -150,6 +161,7 @@ jobs:
             android/app/build/source-rig-workbench/
             android/app/build/sketch-action-film/
             android/app/build/sketch-animation-ui/
+            android/app/build/sketch-layered-drawing/
           if-no-files-found: warn
           retention-days: 7
 

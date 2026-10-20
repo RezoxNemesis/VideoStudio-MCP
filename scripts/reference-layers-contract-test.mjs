@@ -150,10 +150,10 @@ test('read-only MCP mask preview gates old apps before queue writes and forwards
 test('native admission and source-level dispatch route reference layers through shared background edit core',()=>{
  for(const name of ['NativeWorkbenchBridge','NativeAgentMailboxActions','NativeCommandExecutionPolicy'])for(const route of [action,previewAction])assert.ok(native(name).includes('"'+route+'"'),name+': '+route);
  assert.match(native('ControlService'),/case "sketch_import_reference_layers":[\s\S]*?SketchEditOps\.execute\(this,action,p\)/);
- assert.match(native('ControlService'),/case "sketch_reference_layers_preview":\s*case "sketch_preview":\{\s*JSONObject preview=SketchEditOps\.execute\(this,action,p\)/);
+ assert.match(native('ControlService'),/case "sketch_reference_layers_preview":\s*case "sketch_layered_drawing_preview":\s*case "sketch_preview":\{\s*JSONObject preview=SketchEditOps\.execute\(this,action,p\)/);
  assert.match(native('SketchCapabilities'),/\.put\("referenceLayers",referenceLayers\(\)\)/);
- assert.match(native('AppProtocol'),/APP_VERSION = "4\.8\.6"/);
- const build=fs.readFileSync(new URL('../android/app/build.gradle.kts',import.meta.url),'utf8');assert.match(build,/versionCode = 489/);assert.match(build,/versionName = "4\.8\.6"/);
+ assert.match(native('AppProtocol'),/APP_VERSION = "4\.9\.2"/);
+ const build=fs.readFileSync(new URL('../android/app/build.gradle.kts',import.meta.url),'utf8');assert.match(build,/versionCode = 495/);assert.match(build,/versionName = "4\.9\.2"/);
 });
 
 test('native and MCP referenceLayers capability metadata match exactly',()=>{

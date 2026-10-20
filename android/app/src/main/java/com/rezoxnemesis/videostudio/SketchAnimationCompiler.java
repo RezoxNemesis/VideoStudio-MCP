@@ -327,7 +327,7 @@ public final class SketchAnimationCompiler {
         final List<Rig> rigs=new ArrayList<>();final Set<String> cameraLayers=new HashSet<>();final List<Camera> camera=new ArrayList<>();
         final JSONArray dialogues,interactionCues;final Set<String> reservedIds=new HashSet<>();int mouthCount,celCount,hiddenCount;
         Model(JSONObject source,JSONObject p)throws Exception {
-            SketchDocument.validate(source);this.source=SketchDocument.copy(source);
+            SketchDocument.validate(source);source=SketchLayeredDrawing.animationSource(source);this.source=SketchDocument.copy(source);
             SketchDocument.fields(p,"schema,name,frameCount,fps,rigs,camera,cameraLayerIds,dialogues,mouthCels,celRanges,hiddenArtwork,interactionCues,keyframeTolerancePixels");
             if(p.has("name"))SketchDocument.text(p,"name",160);
             if(!SCHEMA.equals(p.getString("schema")))throw bad("Unknown animation program schema");

@@ -101,8 +101,8 @@ test('style metadata matches native defaults and advertises bounded native/manua
 });
 
 test('style adds no canonical actions and does not raise opaque legacy archive/component floors',()=>{
- assert.equal(contract.STUDIO_NATIVE_ACTIONS.size,71);assert.equal(contract.STUDIO_ALIAS_ACTIONS.size,82);
- const nativeActions=native('NativeWorkbenchBridge').match(/ACTIONS=[\s\S]*?Arrays\.asList\(([\s\S]*?)\)\)\)/)[1].match(/"[a-z0-9_]+"/g);assert.equal(nativeActions.length,84);
+ assert.equal(contract.STUDIO_NATIVE_ACTIONS.size,Object.keys(contract.studioToolSchemas).length);assert(contract.STUDIO_ALIAS_ACTIONS.has("studio_sketch_layered_drawing_preview"));for(const action of contract.STUDIO_NATIVE_ACTIONS)assert(contract.STUDIO_ALIAS_ACTIONS.has("studio_"+action));
+ const nativeActions=native('NativeWorkbenchBridge').match(/ACTIONS=[\s\S]*?Arrays\.asList\(([\s\S]*?)\)\)\)/)[1].match(/"[a-z0-9_]+"/g);assert.equal(new Set(nativeActions).size,nativeActions.length);assert(nativeActions.includes('"sketch_layered_drawing_preview"'));
  const archive={archiveProjectId:'archive',archiveName:'hand.vssketch',expectedSha256:'a'.repeat(64),operationId:'restore'};
  for(const action of ['sketch_restore_archive','studio_sketch_restore_archive']){
   assert.deepEqual(contract.nativeStudioParameters(action,archive),archive);assert.doesNotThrow(()=>contract.requireStudioVersion({appVersion:'4.1.0'},action,archive));assert.throws(()=>contract.nativeStudioParameters(action,{...archive,renderStyle:'cel'}));

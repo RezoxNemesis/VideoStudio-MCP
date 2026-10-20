@@ -38,6 +38,15 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
     private SketchEditorSession session;
     private SketchCorrectionDialog correctionDialog;
     private SketchReferenceLayersDialog referenceLayersDialog;
+    private SketchLayeredDrawingDialog layeredDrawingDialog;
+    private LinearLayout layeredToolbar,layeredReferencePanel;
+    private TextView layeredStageLabel;
+    private android.widget.ImageView layeredReferenceImage;
+    private android.graphics.Bitmap layeredReferenceBitmap;
+    private int layeredReferenceGeneration;
+    private String layeredReferenceKey="";
+    private boolean layeredReferenceVisible,layeredReferenceLoading;
+    private java.util.concurrent.Future<?> layeredReferenceTask;
     private final ExecutorService io=Executors.newSingleThreadExecutor();
     private final ExecutorService transfers=Executors.newSingleThreadExecutor();
     private boolean loadingDrawing;
@@ -94,6 +103,9 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
         liveButton=button(projects,"Draw myself",this::toggleLiveWatch);liveButton.setLayoutParams(new LinearLayout.LayoutParams(0,-2,2));updateLiveControl();
         LinearLayout history = row(root);
         button(history,"Undo",()->history(false));button(history,"Redo",()->history(true));button(history,"Export",this::export);
+        layeredToolbar=row(root);layeredToolbar.setVisibility(View.GONE);
+        layeredStageLabel=new TextView(this);layeredStageLabel.setTextColor(StudioUi.TEXT);layeredStageLabel.setContentDescription("Current drawing pass");layeredToolbar.addView(layeredStageLabel,new LinearLayout.LayoutParams(0,-2,1));
+        button(layeredToolbar,"Stages",this::layeredDrawingDialog);button(layeredToolbar,"Reference",this::toggleLayeredReference);
         canvas = new SketchCanvasView(this); canvas.setListener(this);canvas.setAgentHandEnabled(getPreferences(MODE_PRIVATE).getBoolean("agentHand",true));
         try{
             symmetrySettings=SketchSymmetry.configuration(new JSONObject(getPreferences(MODE_PRIVATE).getString("symmetrySettings","{\"mode\":\"vertical\"}")));
@@ -104,7 +116,11 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
         android.widget.FrameLayout viewport=new android.widget.FrameLayout(this);
         viewport.addView(canvas,new android.widget.FrameLayout.LayoutParams(-1,-1));
         viewport.addView(previewStatus,new android.widget.FrameLayout.LayoutParams(-1,-2,android.view.Gravity.TOP));
-        root.addView(viewport,new LinearLayout.LayoutParams(-1,0,1));
+        LinearLayout drawingArea=new LinearLayout(this);drawingArea.setOrientation(LinearLayout.HORIZONTAL);drawingArea.addView(viewport,new LinearLayout.LayoutParams(0,-1,2));
+        layeredReferencePanel=column();layeredReferencePanel.setBackgroundColor(0xff273345);layeredReferencePanel.setVisibility(View.GONE);drawingArea.addView(layeredReferencePanel,new LinearLayout.LayoutParams(0,-1,1));
+        TextView referenceTitle=new TextView(this);referenceTitle.setText("REFERENCE ONLY");referenceTitle.setTextColor(StudioUi.TEXT);referenceTitle.setTextSize(11);layeredReferencePanel.addView(referenceTitle);
+        layeredReferenceImage=new android.widget.ImageView(this);layeredReferenceImage.setContentDescription("Separate drawing reference");layeredReferenceImage.setScaleType(android.widget.ImageView.ScaleType.FIT_CENTER);layeredReferencePanel.addView(layeredReferenceImage,new LinearLayout.LayoutParams(-1,0,1));
+        root.addView(drawingArea,new LinearLayout.LayoutParams(-1,0,1));
         LinearLayout tools = row(root); Spinner tool = new Spinner(this);toolPicker=tool;
         String[] names = {"Pen", "Eraser", "Line", "Rectangle", "Ellipse", "Polygon", "Select / move", "Eyedropper", "Pan canvas", "Curve pen", "Edit curve nodes", "Paint brush", "Erase paint", "Clone brush", "Precision Bézier pen"};
         tool.setAdapter(new ArrayAdapter<String>(this, android.R.layout.simple_spinner_dropdown_item, names){@Override public View getView(int position,View convert,android.view.ViewGroup parent){TextView view=(TextView)super.getView(position,convert,parent);view.setTextColor(StudioUi.TEXT);view.setTextSize(12);view.setSingleLine(true);view.setEllipsize(android.text.TextUtils.TruncateAt.END);return view;}});
@@ -126,7 +142,7 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
         layers.setOnItemSelectedListener(new SimpleSelection() { @Override public void selected(int position) {
             if (!updating && position < layerIds.size()) { canvas.setLayerId(layerIds.get(position)); updateStatus(); }
         } });
-        drawingChrome.add(history);drawingChrome.add(tools);drawingChrome.add(filmstrip);drawingChrome.add(timing);
+        drawingChrome.add(history);drawingChrome.add(layeredToolbar);drawingChrome.add(tools);drawingChrome.add(filmstrip);drawingChrome.add(timing);
         canvasFocus=getPreferences(MODE_PRIVATE).getBoolean("canvasFocus",false);applyCanvasFocus();
         try {
             bookId=state==null?getPreferences(MODE_PRIVATE).getString("lastBookId",null):state.getString("bookId");bookPage=state==null?getPreferences(MODE_PRIVATE).getInt("lastBookPage",0):state.getInt("bookPage",0);
@@ -198,7 +214,7 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
 
     private void reload() { loadSketch(sketchId,canvas.getFrame()); }
     private void loadSketch(String id,int frame) {
-        if(destroyed)return;stopPlayback();loadingDrawing=true;stopLivePlayer();
+        if(destroyed)return;if(layeredDrawingDialog!=null)layeredDrawingDialog.close();clearLayeredReference();stopPlayback();loadingDrawing=true;stopLivePlayer();
         if(notifiedSketchId!=null&&!notifiedSketchId.equals(id)){notifiedSketchId=null;notifiedSessionId=null;notificationReplayPending=false;}
         if(session!=null&&session.pending()>0){onMessage("Finishing the current drawing save");return;}
         if(session!=null){session.close();session=null;}canvas.setEnabled(false);
@@ -224,7 +240,7 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
         document=value;updating=true;layerIds.clear();ArrayList<String> names=new ArrayList<>();JSONArray items=document.getJSONArray("layers");
         for(int i=0;i<items.length();i++){JSONObject layer=items.getJSONObject(i);layerIds.add(layer.getString("id"));names.add(layer.getString("name")+(layer.getBoolean("locked")?" 🔒":"")+(!layer.getBoolean("visible")?" (hidden)":""));}
         layers.setAdapter(new ArrayAdapter<>(this,android.R.layout.simple_spinner_dropdown_item,names));layers.setSelection(Math.max(0,layerIds.indexOf(canvas.getLayerId())));frames.setMax((bookId==null?document.getInt("frameCount"):book.getInt("pageCount"))-1);frames.setProgress(bookId==null?canvas.getFrame():bookPage);updating=false;
-        getPreferences(MODE_PRIVATE).edit().putString("lastSketchId",sketchId).putString("lastBookId",bookId).putInt("lastBookPage",bookPage).apply();updateBrush();updateStatus();
+        refreshLayeredDrawingControls();getPreferences(MODE_PRIVATE).edit().putString("lastSketchId",sketchId).putString("lastBookId",bookId).putInt("lastBookPage",bookPage).apply();updateBrush();updateStatus();
     }
     @Override public void onOperation(JSONObject operation) {
         try{apply(new JSONArray().put(operation));}catch(Exception error){onMessage(error.getMessage());}
@@ -568,7 +584,7 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
             }catch(Exception invalid){onMessage(invalid.getMessage());}});
         }catch(Exception invalid){onMessage(invalid.getMessage());}
     }
-    private void applyCanvasFocus(){for(View view:drawingChrome)view.setVisibility(canvasFocus?View.GONE:View.VISIBLE);}
+    private void applyCanvasFocus(){for(View view:drawingChrome)view.setVisibility(canvasFocus?View.GONE:View.VISIBLE);refreshLayeredDrawingControls();}
     private void toggleCanvasFocus(){canvasFocus=!canvasFocus;getPreferences(MODE_PRIVATE).edit().putBoolean("canvasFocus",canvasFocus).apply();applyCanvasFocus();}
 
     /** Phase 1: native contour masters are shared inside this sketch, never by Gallery. */
@@ -1141,7 +1157,7 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
     @Override protected void onPause() { resumed=false;++liveLoadGeneration;if(livePlayer!=null||watchInFlight){loadingDrawing=true;if(notifiedSessionId!=null)notificationReplayPending=true;}stopLivePlayer();stopPlayback();canvas.setPreviewActive(false);handler.removeCallbacks(watchTick);super.onPause(); }
     @Override protected void onResume() { super.onResume();if(canvas!=null)canvas.setPreviewActive(true);resumed=true;liveSessionId="";if(loadingDrawing&&session!=null&&!activeConstructions.containsKey(loadGeneration+":"+pageGeneration)){if(session.pending()==0)reload();else afterSaves(()->postUi(this::reload));}handler.removeCallbacks(watchTick);handler.postDelayed(watchTick,250); }
     @Override protected void onStop(){resumed=false;stopPlayback();if(canvas!=null)canvas.setPreviewActive(false);handler.removeCallbacks(watchTick);super.onStop();}
-    @Override protected void onDestroy() { destroyed=true;if(correctionDialog!=null)correctionDialog.close();if(referenceLayersDialog!=null)referenceLayersDialog.close();activeConstructions.clear();stopLivePlayer();stopPlayback();handler.removeCallbacksAndMessages(null);if(session!=null)session.close();io.shutdown();transfers.shutdown();if(canvas!=null)canvas.dispose();super.onDestroy(); }
+    @Override protected void onDestroy() { destroyed=true;if(correctionDialog!=null)correctionDialog.close();if(referenceLayersDialog!=null)referenceLayersDialog.close();if(layeredDrawingDialog!=null)layeredDrawingDialog.close();clearLayeredReference();activeConstructions.clear();stopLivePlayer();stopPlayback();handler.removeCallbacksAndMessages(null);if(session!=null)session.close();io.shutdown();transfers.shutdown();if(canvas!=null)canvas.dispose();super.onDestroy(); }
     @Override protected void onSaveInstanceState(Bundle state) { state.putString("bookId",bookId);state.putInt("bookPage",bookPage);state.putString("sketchId", sketchId); state.putInt("frame", canvas.getFrame());state.putString("notifiedSketchId",notifiedSketchId);state.putString("notifiedSessionId",notifiedSessionId); super.onSaveInstanceState(state); }
     private LinearLayout column() { LinearLayout layout = new LinearLayout(this); layout.setOrientation(LinearLayout.VERTICAL);layout.setBackgroundColor(StudioUi.SURFACE);layout.setPadding(dp(6),dp(2),dp(6),dp(2));return layout; }
     private LinearLayout row(LinearLayout root) { LinearLayout layout = new LinearLayout(this); layout.setOrientation(LinearLayout.HORIZONTAL);root.addView(layout,new LinearLayout.LayoutParams(-1,-2));return layout; }
@@ -1194,7 +1210,7 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
         });
     }
 
-    private void moreMenu(){menu("Drawing tools",new String[]{"Layers","Separate reference into parts","Frames / Cels","Linked master artwork","Natural acting keys","2D animation","Workspace","Drawing alerts","Visual QA / Detail","Review & correct","Story → 2D film",canvas.previewFailed()?"Retry preview":"Refresh preview","3D pose → editable cel"},this::layersMenu,this::referenceLayersDialog,this::framesMenu,this::linkedMasterMenu,this::naturalActingDialog,this::openAnimationStudio,this::workspaceDialog,this::drawingAlerts,this::qualityAuditDialog,this::reviewCorrectionDialog,this::storyFilmDialog,this::refreshPreview,this::choose3DPoseCel);}
+    private void moreMenu(){menu("Drawing tools",new String[]{"Layers","Layer-by-layer drawing","Separate reference into parts","Frames / Cels","Linked master artwork","Natural acting keys","2D animation","Workspace","Drawing alerts","Visual QA / Detail","Review & correct","Story → 2D film",canvas.previewFailed()?"Retry preview":"Refresh preview","3D pose → editable cel"},this::layersMenu,this::layeredDrawingDialog,this::referenceLayersDialog,this::framesMenu,this::linkedMasterMenu,this::naturalActingDialog,this::openAnimationStudio,this::workspaceDialog,this::drawingAlerts,this::qualityAuditDialog,this::reviewCorrectionDialog,this::storyFilmDialog,this::refreshPreview,this::choose3DPoseCel);}
     /** User-controlled anticipation → movement → recoil → recovery on a
      * selected editable native sketch object; no pasted video motion. */
     private void naturalActingDialog(){
@@ -1257,6 +1273,44 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
         }catch(Exception failure){onMessage(failure.getMessage());}
     }
 
+    private void layeredDrawingDialog(){
+        if(session==null||document==null)return;
+        watching=false;++liveLoadGeneration;getPreferences(MODE_PRIVATE).edit().putBoolean("watchLiveDrawing",false).apply();updateLiveControl();
+        stopPlayback();final SketchEditorSession origin=session;final String target=sketchId;final int generation=loadGeneration,page=pageGeneration,frame=canvas.getFrame();
+        afterSaves(()->{JSONObject snapshot=SketchDocument.copy(origin.document());postUi(()->{
+            if(session!=origin||generation!=loadGeneration||page!=pageGeneration||!target.equals(sketchId)||destroyed)return;
+            try{if(layeredDrawingDialog!=null)layeredDrawingDialog.close();layeredDrawingDialog=SketchLayeredDrawingDialog.show(this,snapshot,frame,loaded->{
+                if(session!=origin||generation!=loadGeneration||page!=pageGeneration||!target.equals(sketchId)||destroyed)return;
+                try{if(!origin.adopt(loaded))throw SketchDocument.bad("Finish the pending drawing save before refreshing the workflow");present(origin.document());JSONArray active=SketchLayeredDrawing.activeLayerIds(document);boolean selected=false;for(int i=0;i<active.length();i++)selected|=active.getString(i).equals(canvas.getLayerId());if(!selected&&active.length()>0){String layerId=active.getString(0);canvas.setLayerId(layerId);layers.setSelection(Math.max(0,layerIds.indexOf(layerId)));}}catch(Exception failure){onMessage(failure.getMessage());}
+            },(layerId,tool)->{
+                if(session!=origin||generation!=loadGeneration||page!=pageGeneration||!target.equals(sketchId)||destroyed)return;
+                runAction("Draw selected layer",()->{try{
+                    JSONObject selected=SketchDocument.layer(document,layerId);if(selected.getBoolean("locked"))throw SketchDocument.bad("This layer is locked");canvas.setLayerId(layerId);layers.setSelection(Math.max(0,layerIds.indexOf(layerId)));canvas.selectObject(null);
+                    watching=false;++liveLoadGeneration;getPreferences(MODE_PRIVATE).edit().putBoolean("watchLiveDrawing",false).apply();updateLiveControl();
+                    if("paint".equals(tool)){paintPressure=true;paintMode="paint";pendingAgentToolSelection=11;syncingAgentTool=true;try{toolPicker.setSelection(11);}finally{syncingAgentTool=false;}activatePaint("paint");}else{int position="precision".equals(tool)?14:0;toolPicker.setSelection(position);canvas.setTool(tool);updateBrush();}
+                    layeredReferenceVisible=true;refreshLayeredDrawingControls();onMessage("Draw on "+selected.getString("name")+". The reference stays separate; return to Stages to compare and review.");
+                }catch(Exception failure){onMessage(failure.getMessage());}});
+            });}catch(Exception failure){onMessage(failure.getMessage());}
+        });});
+    }
+    private void refreshLayeredDrawingControls(){
+        if(layeredToolbar==null||document==null)return;
+        try{JSONObject summary=SketchLayeredDrawing.summary(document);boolean enabled=summary.optBoolean("enabled");layeredToolbar.setVisibility(enabled&&!canvasFocus?View.VISIBLE:View.GONE);layeredReferencePanel.setVisibility(enabled&&layeredReferenceVisible?View.VISIBLE:View.GONE);
+            if(!enabled){clearLayeredReference();return;}String stage=summary.optString("stage").replace('_',' ');layeredStageLabel.setText(stage+" · authored layers");
+            if(layeredReferenceVisible)loadLayeredReference(summary);
+        }catch(Exception failure){onMessage(failure.getMessage());}
+    }
+    private void toggleLayeredReference(){layeredReferenceVisible=!layeredReferenceVisible;if(!layeredReferenceVisible)clearLayeredReference();refreshLayeredDrawingControls();}
+    private void loadLayeredReference(JSONObject summary)throws Exception {
+        final String key=document.getString("id")+"/"+summary.getString("referenceSha256")+"/"+canvas.getFrame();if(key.equals(layeredReferenceKey)&&(layeredReferenceBitmap!=null||layeredReferenceLoading))return;clearLayeredReference();layeredReferenceLoading=true;
+        final JSONObject snapshot=SketchDocument.copy(document);final SketchEditorSession origin=session;final int token=++layeredReferenceGeneration,page=pageGeneration;final String target=sketchId;final int frame=canvas.getFrame();layeredReferenceKey=key;
+        layeredReferenceTask=transfers.submit(()->{android.graphics.Bitmap image=null;try{
+            JSONObject reply=SketchLayeredDrawingPreview.inspect(this,snapshot,new JSONObject().put("view","reference").put("frameIndex",frame).put("maxDimension",640));
+            if(reply.getLong("sourceRevision")!=snapshot.getLong("revision")||!snapshot.getString("id").equals(reply.getString("sketchId"))||!snapshot.getJSONObject("layeredDrawing").getString("referenceSha256").equals(reply.getString("referenceSha256"))||!"reference".equals(reply.getString("view"))||reply.getInt("frameIndex")!=frame||reply.getBoolean("sourceModified"))throw SketchDocument.bad("Reference preview identity changed");image=SketchLayeredDrawingDialog.decodePreview(reply.getJSONObject("sketchPreviewImage"),640);final android.graphics.Bitmap shown=image;
+            runOnUiThread(()->{if(destroyed||token!=layeredReferenceGeneration||session!=origin||page!=pageGeneration||!target.equals(sketchId)){shown.recycle();return;}layeredReferenceImage.setImageBitmap(shown);if(layeredReferenceBitmap!=null)layeredReferenceBitmap.recycle();layeredReferenceBitmap=shown;layeredReferenceLoading=false;});
+        }catch(Exception|OutOfMemoryError failure){if(image!=null)image.recycle();postUi(()->{if(destroyed||token!=layeredReferenceGeneration)return;layeredReferenceLoading=false;layeredReferenceKey="";onMessage("Reference view unavailable: "+failure.getMessage());});}});
+    }
+    private void clearLayeredReference(){++layeredReferenceGeneration;if(layeredReferenceTask!=null){layeredReferenceTask.cancel(true);layeredReferenceTask=null;}layeredReferenceKey="";layeredReferenceLoading=false;if(layeredReferenceImage!=null)layeredReferenceImage.setImageDrawable(null);if(layeredReferenceBitmap!=null){layeredReferenceBitmap.recycle();layeredReferenceBitmap=null;}}
     private void referenceLayersDialog(){
         if(session==null||document==null)return;
         stopPlayback();final SketchEditorSession origin=session;final String target=sketchId;

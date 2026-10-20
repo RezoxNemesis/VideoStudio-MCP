@@ -492,6 +492,7 @@ public final class SketchCapabilities {
                 .put("lettering",new JSONObject().put("minimumNativeVersion","3.9.6").put("editable",true).put("nativeFontsOnly",true).put("wrapping",true).put("letterSpacing",true))
                 .put("contentInspection",new JSONObject().put("action","sketch_inspect").put("minimumNativeVersion","3.9.6").put("creativeAcceptance",false))
                 .put("referenceLayers",referenceLayers())
+                .put("layeredDrawing",SketchLayeredDrawingCapabilities.get())
                 .put("referenceImport",new JSONObject().put("minimumNativeVersion","4.0.1").put("workingCopyMaximumLongEdge",2048).put("allExifOrientations",true).put("sourceProvenanceRecorded",true).put("hiddenImportOption","guideVisible: false").put("visibilityOperation","set_reference_visibility").put("visibilityIncludesTransformKeys",true))
                 .put("painting",new JSONObject().put("minimumNativeVersion","4.1.0").put("addCelOperation","add_paint_cel").put("strokeOperation","paint_stroke")
                         .put("modes",new JSONArray(new String[]{"paint","erase","clone"})).put("tips",new JSONArray(new String[]{"round","flat"}))

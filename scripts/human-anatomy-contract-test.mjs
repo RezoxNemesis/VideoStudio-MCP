@@ -138,8 +138,8 @@ test('capabilities match native and advertise style-specific views, manual contr
  const detail=worker.match(/:action==='sketch_edit'\?'([^']+)'/)[1];assert.match(detail,/figureStyle.*constructionGuides.*4\.8\.3/);assert.match(detail,/three_quarter_left.*three_quarter_right/);
 });
 
-test('native release constants agree at4.8.6/code489 while earlier anatomy floors stay unchanged',()=>{
- assert.match(native('AppProtocol'),/APP_VERSION = "4\.8\.6"/);
- const build=fs.readFileSync(new URL('../android/app/build.gradle.kts',import.meta.url),'utf8');assert.match(build,/versionCode = 489/);assert.match(build,/versionName = "4\.8\.6"/);
- assert.equal(contract.STUDIO_NATIVE_ACTIONS.size,71);assert.equal(contract.STUDIO_ALIAS_ACTIONS.size,82);assert.equal(contract.HUMAN_ANIMATION_CAPABILITIES.minimumNativeVersion,'4.8.0');
+test('native release constants agree at4.9.2/code495 while earlier anatomy floors stay unchanged',()=>{
+ assert.match(native('AppProtocol'),/APP_VERSION = "4\.9\.2"/);
+ const build=fs.readFileSync(new URL('../android/app/build.gradle.kts',import.meta.url),'utf8');assert.match(build,/versionCode = 495/);assert.match(build,/versionName = "4\.9\.2"/);
+ assert.equal(contract.STUDIO_NATIVE_ACTIONS.size,Object.keys(contract.studioToolSchemas).length);assert(contract.STUDIO_ALIAS_ACTIONS.has("studio_sketch_layered_drawing_preview"));for(const action of contract.STUDIO_NATIVE_ACTIONS)assert(contract.STUDIO_ALIAS_ACTIONS.has("studio_"+action));assert.equal(contract.HUMAN_ANIMATION_CAPABILITIES.minimumNativeVersion,'4.8.0');
 });

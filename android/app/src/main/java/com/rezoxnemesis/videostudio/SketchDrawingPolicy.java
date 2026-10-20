@@ -22,6 +22,7 @@ public final class SketchDrawingPolicy {
     public static void requireBegin(JSONObject document, String method) throws Exception {
         requireMethod(method);
         if (!ORIGINAL.equals(method)) return;
+        if(document.has("layeredDrawing")){SketchLayeredDrawing.validate(document);return;}
         JSONArray layers = document.getJSONArray("layers");
         for (int i = 0; i < layers.length(); i++) {
             JSONArray objects = layers.getJSONObject(i).getJSONArray("objects");
@@ -83,6 +84,7 @@ public final class SketchDrawingPolicy {
     }
     /** Final-state guard catches image revelation through transforms, keys, timing or hidden layers. */
     public static void requireDocument(JSONObject session, JSONObject current, JSONObject next) throws Exception {
+        SketchLayeredDrawing.validate(next);
         if (!requiresOriginal(session)) return;
         JSONArray layers = next.getJSONArray("layers");
         for (int i = 0; i < layers.length(); i++) {

@@ -8,6 +8,19 @@ const text=(max,nonempty=true)=>z.string().max(max).refine(v=>!v.includes('\0')&
 const revision=integer(1,Number.MAX_SAFE_INTEGER),updatedAt=integer(0,Number.MAX_SAFE_INTEGER);
 const time=integer(0,86400000),frame=integer(0,1199),fps=z.union([z.literal(24),z.literal(30),z.literal(60)]);
 const color=z.string().regex(/^#[a-fA-F0-9]{8}$/);
+export const LAYERED_DRAWING_CAPABILITIES=Object.freeze({
+ minimumNativeVersion:'4.9.2',precisionPenMinimumNativeVersion:'4.9.1',
+ action:'sketch_edit',previewAction:'sketch_layered_drawing_preview',previewReadOnly:true,
+ operations:['layered_drawing_begin','layered_drawing_stage','layered_drawing_review','layered_drawing_finish'],
+ stages:['construction','refinement','details','clean_line','separation'],
+ referencePixelsInArtwork:false,referenceLockedAndHidden:true,persistentProtection:true,
+ authoredTools:['stroke','eraser','precision_contour','native paint','native erase'],
+ rejectedShortcuts:['image cutouts','clone brush','automatic image tracing','filled geometric substitutes','procedural character generators'],
+ reviews:'Explicit observer decisions bind stage content, reviewed revision and frame. Edits invalidate content-matching acceptance. Tests and object counts do not certify likeness or artistic quality.',
+ workflow:'Import the supplied image as a guide in a new reference-only sketch. Begin with named editable parts, inspect the separate reference/comparison preview, author construction strokes, refine anatomy, add detail, author clean linework and review separated parts. Advance after actual visual comparison. Reference source pixels are excluded from artwork and export.',
+ manualControls:'Sketch Studio > More > Layer-by-layer drawing; draw with the native pen/precision pen or paint/erase, view the separate reference, record review notes and keep normal Undo.',
+ automaticallyDrawsReference:false,recoversOriginalArtistStrokes:false,creativeQualityCertified:false,phoneExecutionVerified:false
+});
 export const REFERENCE_LAYERS_CAPABILITIES=Object.freeze({
  minimumNativeVersion:'4.8.5',expandedImageBudgetMinimumNativeVersion:'4.8.6',action:'sketch_import_reference_layers',previewAction:'sketch_reference_layers_preview',previewReadOnly:true,
  localEdgeAssistance:true,fullPrecisionHardMasks:true,edgeSnapRadius:[0,16],
@@ -49,10 +62,14 @@ export const PROJECT_ASSET_IMPORT_CAPABILITIES=Object.freeze({
  "minimumNativeVersion": "4.8.0",
  "infoAction": "project_asset_info",
  "importAction": "project_import_asset",
- "maximumBytes": 268435456,
+ "maximumBytes": 10737418240,
+ "maximumImageBytes": 268435456,
+ "streamingCopy": true,
+ "partialResume": true,
+ "storageReserveBytes": 536870912,
  "appendDefault": false,
  "source": "Explicit project ID, exact source revision and asset ID; only app-private regular video/image/audio files, no supplied paths, external providers, symlinks or Gallery enumeration",
- "integrity": "project_asset_info returns bounded metadata and SHA-256. Import requires expectedSha256 plus exact source/destination revisions, streams a separate independent byte copy and verifies source/output hashes before publication. Original generation metadata and source provenance are retained.",
+ "integrity": "project_asset_info returns bounded metadata and SHA-256. Import requires expectedSha256 plus exact source/destination revisions, streams a separate independent byte copy in bounded buffers, resumes a byte-verified partial after interruption and verifies source/output hashes before publication. Original generation metadata and source provenance are retained.",
  "retry": "Retry the same operation and request to reuse the verified owned result without duplicate assets/clips; later human edits and the existing audio lane are preserved. Changed requests or modified output bytes reject.",
  "timeline": "Optional appendToTimeline defaults false; video/image appends one clip when true, while audio remains a media-bin asset for explicit lane editing. No new audio lane or master offset is inserted.",
  "execution": "Import runs as a cancellable recoverable transfer JobManager job. Admission returns ok/queued/jobId; wait for actual jobResult. Stop All interrupts copying and identical retry safely resumes.",
@@ -365,6 +382,11 @@ const actorPropSettings=z.object({kind:z.enum(ACTOR_PROP_CAPABILITIES.kinds).opt
 const gripLinkEndpoint=z.object({actorId:id,hand:z.enum(GRIP_LINK_CAPABILITIES.hands)}).strict();
 const gripLinkSettings=z.object({sagPx:finite.min(0).max(64).optional(),widthPx:finite.min(.5).max(12).optional(),color:color.optional()}).strict();
 const operation=z.discriminatedUnion('type',[
+ z.object({type:z.literal('layered_drawing_begin'),referenceObjectId:id,prefix:id.max(32),parts:z.array(z.object({id:id.max(48),name:text(160)}).strict()).min(2).max(12).refine(v=>new Set(v.map(p=>p.id)).size===v.length,'Part IDs must be distinct')}).strict(),
+ z.object({type:z.literal('layered_drawing_stage'),stage:z.enum(LAYERED_DRAWING_CAPABILITIES.stages)}).strict(),
+ z.object({type:z.literal('layered_drawing_review'),stage:z.enum(LAYERED_DRAWING_CAPABILITIES.stages),reviewedRevision:revision,frameIndex:frame.optional(),status:z.enum(['ACCEPTABLE','NEEDS_REWORK']),note:text(1000)}).strict(),
+ z.object({type:z.literal('layered_drawing_finish')}).strict(),
+ z.object({type:z.literal('precision_contour'),layerId:id,objectId:id,points:z.array(z.union([z.tuple([finite.min(0).max(1),finite.min(0).max(1)]),z.tuple([finite.min(0).max(1),finite.min(0).max(1),finite.min(0).max(1)]),z.tuple([finite.min(0).max(1),finite.min(0).max(1),finite.min(0).max(1),z.boolean()])])).min(2).max(4096),closed:z.boolean().optional(),pressureOutline:z.boolean().optional(),tolerancePx:finite.min(.25).max(12).optional(),tension:finite.min(0).max(1).optional(),width:finite.min(.0005).max(.2).optional(),fill:z.boolean().optional(),color:color.optional(),frame:frame.optional(),exposure:integer(1,1200).optional()}).strict().refine(v=>!v.closed||v.points.length>=3,'Closed contours require at least three authored points').refine(v=>!(v.closed&&v.pressureOutline),'Pressure outline requires an open authored contour'),
  z.object({type:z.literal('add_grip_link'),layerId:id,linkId:id.max(20),from:gripLinkEndpoint,to:gripLinkEndpoint,settings:gripLinkSettings}).strict(),
  z.object({type:z.literal('add_story_stage'),layerId:id,sceneId:id.max(20),foregroundLayerId:id.optional(),settings:storyStageSettings}).strict().refine(v=>v.foregroundLayerId===undefined||v.foregroundLayerId!==v.layerId,'Foreground and background layers must differ'),
  z.object({type:z.literal('add_actor_prop'),layerId:id,propId:id.max(20),actorId:id.optional(),settings:actorPropSettings}).strict().refine(v=>(v.settings.attachment??'near')==='floor'||v.actorId!==undefined,'Held actor props require actorId; only floor attachment may omit it'),
@@ -581,6 +603,7 @@ export const studioToolSchemas={
  get_native_delivery_status:{limit:integer(1,4).optional()},
  compact_native_delivery:{commandId:id,expectedResultSha256:sha},
  sketch_preview:{...sketchIdentity,expectedRevision:revision.optional(),frameIndex:frame.optional(),maxDimension:integer(128,720).optional(),crop:bounds.optional()},
+ sketch_layered_drawing_preview:{...sketchIdentity,expectedRevision:revision,frameIndex:frame.optional(),view:z.enum(['reference','artwork','comparison']),maxDimension:integer(128,1024).optional(),crop:bounds.optional()},
  sketch_render:{...mutation,aspect:z.enum(['original','9:16','16:9','1:1']).optional(),quality:z.enum(['720p','1080p']).optional()},
  open_pipeline_configure:{endpoint,bearer:z.string().min(16).max(4096).regex(/^[A-Za-z0-9_.~+/-]+=*$/)},
  open_pipeline_capabilities:{},open_pipeline_list:{},
@@ -686,6 +709,8 @@ export function requireStudioVersion(device,action,parameters={}){
  const styledHandObject=object=>object?.kind==='hand'&&object.hand?.settings?.renderStyle!==undefined;
  const styledHandOperation=op=>op.type==='add_hand_animation'&&op.settings?.renderStyle!==undefined||op.type==='add_object'&&styledHandObject(op.object)||op.type==='update_object'&&op.patch?.hand?.settings?.renderStyle!==undefined||op.type==='add_layer'&&(op.layer?.objects||[]).some(styledHandObject);
  const authoringOperations=action==='sketch_edit'?(parameters.operations||[]):action==='sketch_story_create'?(parameters.shots||[]).flatMap(shot=>shot.operations||[]):action==='sketch_story_preview'?(parameters.plan?.shots||[]).flatMap(shot=>shot.operations||[]):[];
+ if((action==='sketch_layered_drawing_preview'||authoringOperations.some(op=>LAYERED_DRAWING_CAPABILITIES.operations.includes(op.type)))&&!atLeast(device?.appVersion,'4.9.2'))throw new Error('NATIVE_APP_UPGRADE_REQUIRED: persistent authored layer workflow and reference comparison require VideoStudio 4.9.2 or newer');
+ if(authoringOperations.some(op=>op.type==='precision_contour')&&!atLeast(device?.appVersion,'4.9.1'))throw new Error('NATIVE_APP_UPGRADE_REQUIRED: authored precision pen contours require VideoStudio 4.9.1 or newer');
  const maskedReference=object=>object?.reference?.sourceMask!==undefined;
  if((['sketch_import_reference_layers','sketch_reference_layers_preview'].includes(action)||authoringOperations.some(op=>maskedReference(op.object)||maskedReference(op.patch)||(op.layer?.objects||[]).some(maskedReference)))&&!atLeast(device?.appVersion,'4.8.5'))throw new Error('NATIVE_APP_UPGRADE_REQUIRED: source-assisted reference layers, read-only mask preview and explicit sourceMask provenance require VideoStudio 4.8.5 or newer');
  const anatomySettings=settings=>settings&&(settings.figureStyle!==undefined||settings.constructionGuides!==undefined||['three_quarter_left','three_quarter_right'].includes(settings.view));

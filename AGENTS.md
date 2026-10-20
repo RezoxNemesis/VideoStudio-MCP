@@ -1,3 +1,15 @@
+# Current owner priority — 2026-10-20
+
+Continue from installed4.9.1/code494 candidate a1a1176 in this separate worktree.
+The owner now rejects cutouts and simplified vector approximation for the
+requested layer-by-layer drawing technique. Implement the authored-stroke
+workflow in docs/LAYERED_DRAWING_WORKFLOW.md; target4.9.2/code495. Preserve all
+earlier work, including unverified4.8.8 in its original isolated worktree. The
+supplied screenshot is an authorized test reference, not finished new artwork.
+Use actual native rendering and shared manual/MCP authoring; stage/test counts
+do not certify artistic likeness. Work autonomously, one local Gradle process.
+No main merge, Worker deployment, stable release or signing identity change.
+
 # Active detailed reference-layer test — 2026-10-19
 
 Branch `feat/native-detailed-reference-layers-20261019` extends verified 4.8.5

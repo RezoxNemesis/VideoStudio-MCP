@@ -50,7 +50,8 @@ test('placement receipts explicitly succeed before ControlService classifies the
  const service=fs.readFileSync(new URL('../android/app/src/main/java/com/rezoxnemesis/videostudio/ControlService.java',import.meta.url),'utf8');
  assert.match(service,/state\.setResult\(result\.put\("ok",true\)\)/);
  assert.match(service,/ok\(\)\.put\("queued",true\)\.put\("jobId",job.id\)/);
- assert.match(service,/boolean ok = result\.optBoolean\("ok", false\)/);
+ assert.match(service,/boolean ok = NativeCommandResultPolicy\.successful\(action,result\)/);
+ assert.match(fs.readFileSync(new URL("../android/app/src/main/java/com/rezoxnemesis/videostudio/NativeCommandResultPolicy.java",import.meta.url),"utf8"),/if \(result\.has\("ok"\)\) return Boolean\.TRUE\.equals\(result\.opt\("ok"\)\)/);
 });
 test('native placement is dispatched off the Android main thread for canonical and aliased commands',()=>{
  const policy=fs.readFileSync(new URL('../android/app/src/main/java/com/rezoxnemesis/videostudio/NativeCommandExecutionPolicy.java',import.meta.url),'utf8');

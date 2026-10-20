@@ -54,7 +54,7 @@ test('actual relay refuses malformed and old-app imports without a queue write t
 });
 
 test('project copy metadata and all native admission paths expose real owned independent copy jobs',()=>{
- const metadata=contract.PROJECT_ASSET_IMPORT_CAPABILITIES;assert.equal(metadata.minimumNativeVersion,'4.8.0');assert.equal(metadata.maximumBytes,268435456);
+ const metadata=contract.PROJECT_ASSET_IMPORT_CAPABILITIES;assert.equal(metadata.minimumNativeVersion,'4.8.0');assert.equal(metadata.maximumBytes,10737418240);assert.equal(metadata.maximumImageBytes,268435456);
  for(const pattern of [/independent/i,/SHA-256/,/same operation/i,/audio lane/i])assert.match(JSON.stringify(metadata),pattern);
  for(const name of ['NativeWorkbenchBridge','NativeAgentMailboxActions','NativeCommandExecutionPolicy'])for(const action of ['project_asset_info','project_import_asset'])assert.match(native(name),new RegExp('"'+action+'"'));
  const service=native('ControlService');assert.match(service,/case "project_import_asset":.*queueProjectAssetImport/);assert.match(service,/submitRecoverableTransfer\("project_import_asset"/);
@@ -64,7 +64,7 @@ test('project copy metadata and all native admission paths expose real owned ind
 test('Java and actual MCP capability registration expose the same bounded copy metadata',async()=>{
  const expression=native('ProjectAssetImport').match(/public static JSONObject capabilities\(\)throws Exception \{\s*return ([\s\S]*?);\s*\}/)[1];
  class JSONObject{put(key,value){this[key]=value;return this;}}
- assert.deepEqual(JSON.parse(JSON.stringify(vm.runInNewContext('('+expression+')',{JSONObject}))),contract.PROJECT_ASSET_IMPORT_CAPABILITIES);
+ assert.deepEqual(JSON.parse(JSON.stringify(vm.runInNewContext('('+expression+')',{JSONObject,MAX_BYTES:10737418240,MAX_IMAGE_BYTES:268435456,STORAGE_RESERVE_BYTES:536870912}))),contract.PROJECT_ASSET_IMPORT_CAPABILITIES);
  const start=worker.indexOf('  s.registerTool("app_capabilities"'),end=worker.indexOf('  s.registerTool("app_catalog"',start);let handler;
  vm.runInNewContext(worker.slice(start,end),{s:{registerTool:(_name,_options,fn)=>{handler=fn;}},isV3:true,out:v=>v,relayRelease:()=>({}),CINEMATIC_BEATS:[],CHARACTER_PERFORMANCE_CAPABILITIES:contract.CHARACTER_PERFORMANCE_CAPABILITIES,PROJECT_ASSET_IMPORT_CAPABILITIES:contract.PROJECT_ASSET_IMPORT_CAPABILITIES});
  assert.deepEqual((await handler()).projectAssetImport,contract.PROJECT_ASSET_IMPORT_CAPABILITIES);

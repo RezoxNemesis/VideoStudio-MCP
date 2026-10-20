@@ -39,7 +39,7 @@ public final class SketchDocument {
     public static JSONObject copy(JSONObject o) throws Exception { return new JSONObject(o.toString()); }
 
     public static void validate(JSONObject doc) throws Exception {
-        fields(doc, "schema,id,name,revision,width,height,fps,frameCount,background,layers,paletteStyles,masterAssets");
+        fields(doc, "schema,id,name,revision,width,height,fps,frameCount,background,layers,paletteStyles,masterAssets,layeredDrawing");
         if (!SCHEMA.equals(doc.getString("schema"))) throw bad("Unknown sketch schema");
         id(doc, "id");
         text(doc, "name", 160);
@@ -142,6 +142,7 @@ public final class SketchDocument {
         }
         if (objects > MAX_OBJECTS || points > MAX_POINTS || keys > MAX_KEYS || images > MAX_IMAGES)
             throw bad("Sketch budget exceeded (4096 objects, 131072 points, 4096 keys, 32 images)");
+        SketchLayeredDrawing.validate(doc);
         if (doc.toString().getBytes(StandardCharsets.UTF_8).length > MAX_BYTES) throw bad("Sketch document exceeds 4 MiB");
     }
 
