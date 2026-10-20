@@ -333,6 +333,9 @@ public final class SketchEditOps {
             case "precision_contour": {
                 SketchPrecisionContour.apply(doc,op);break;
             }
+            case "apply_acting_motion": {
+                SketchNaturalMotionBridge.apply(doc,op);break;
+            }
             case "add_object": {
                 appendObject(doc,op);break;
             }
