@@ -610,4 +610,65 @@ final class OmegaMasterDependencyIndex {
         }
     }
 
+
+    /**
+     * Stages a **global** revert of the exact previously committed group.
+     * The native store MUST check the original group receipt, read all source
+     * documents under one writer lock and persist this inverse as one atomic
+     * undo. An unrelated intervening edit (even in one shot) fails closed.
+     *
+     * Reverting prior snapshots is different from detaching a master: master
+     * geometry, grouped links, overrides and per-shot keys return together.
+     * The revision is still monotonically incremented on each changed sketch.
+     */
+    static PreparedBatch stageCompoundUndo(PreparedBatch committed,
+            Map<String,JSONObject> currentDocuments, String undoOperationId)
+            throws Exception {
+        if(committed==null||currentDocuments==null
+            ||!currentDocuments.keySet().equals(committed.after.keySet()))
+            throw new IllegalArgumentException("Group undo requires exact staged membership");
+        String undoId=id(undoOperationId);
+        if(undoId.equals(committed.operationId))
+            throw new IllegalArgumentException("Undo requires a fresh global operation ID");
+        Map<String,JSONObject> current=new TreeMap<>(), restored=new TreeMap<>();
+        JSONArray pinned=new JSONArray();
+        for(String sketchId:new TreeSet<>(committed.after.keySet())){
+            JSONObject authoritative=currentDocuments.get(sketchId);
+            if(authoritative==null)throw new IllegalArgumentException("Missing group undo sketch");
+            SketchDocument.validate(authoritative);
+            String pinnedCurrent=SketchDocument.canonical(authoritative);
+            String accepted=SketchDocument.canonical(committed.after.get(sketchId));
+            if(!pinnedCurrent.equals(accepted))
+                throw new IllegalStateException("COMPOUND_UNDO_STALE_DOCUMENT:"+sketchId);
+            JSONObject before=SketchDocument.copy(authoritative);
+            JSONObject after=SketchDocument.copy(committed.before.get(sketchId));
+            if(!SketchDocument.canonical(committed.before.get(sketchId)).equals(accepted))
+                after.put("revision",Math.addExact(before.getLong("revision"),1L));
+            SketchDocument.validate(after);
+            current.put(sketchId,before);
+            restored.put(sketchId,after);
+            pinned.put(new JSONObject().put("sketchId",sketchId)
+                .put("revision",before.getLong("revision"))
+                .put("documentSha256",digest(pinnedCurrent)));
+        }
+        String fingerprint=digest(SketchDocument.canonical(new JSONObject()
+            .put("contract","omega-compound-undo-v1")
+            .put("compoundId",committed.compoundId)
+            .put("originalOperationId",committed.operationId)
+            .put("originalFingerprint",committed.fingerprint)
+            .put("undoOperationId",undoId)
+            .put("sourceSnapshots",pinned)));
+        Map<String,Long> revisions=new TreeMap<>();
+        Map<String,String> hashes=new TreeMap<>();
+        for(Map.Entry<String,JSONObject> entry:current.entrySet()){
+            revisions.put(entry.getKey(),entry.getValue().getLong("revision"));
+            hashes.put(entry.getKey(),digest(SketchDocument.canonical(entry.getValue())));
+        }
+        CompoundPreview preview=new CompoundPreview(committed.compoundId,undoId,
+            fingerprint,committed.impact.affected,Collections.emptyList(),
+            committed.impact.localOverrideCount,committed.impact.totalExposureFrames,
+            revisions,hashes);
+        return new PreparedBatch(preview,current,restored);
+    }
+
 }
