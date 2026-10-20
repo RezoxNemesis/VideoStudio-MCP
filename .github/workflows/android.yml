@@ -172,6 +172,7 @@ jobs:
             android/app/build/sketch-layered-drawing/
             android/app/build/native-paint-mesh-neutrality/
             android/app/build/native-multiply-alpha/
+            android/app/build/native-stage-reuse/
           if-no-files-found: warn
           retention-days: 7
 

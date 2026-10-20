@@ -33,14 +33,15 @@ final class SketchLayeredDrawingDialog implements AutoCloseable {
     private final Spinner reference,layer,tool;
     private final EditText names,note;
     private final TextView status,instructions,reviewState;
-    private final Button reload,begin,previewReference,previewArtwork,previewComparison,acceptable,rework,finish,drawLayer;
+    private final Button reload,begin,previewReference,previewArtwork,previewComparison,acceptable,rework,finish,drawLayer,reuse;
     private final ArrayList<Button> stageButtons=new ArrayList<>();
     private final ArrayList<String> referenceIds=new ArrayList<>(),activeIds=new ArrayList<>();
     private final ImageView previewImage;
     private final CheckBox stageOnly;
     private JSONObject document,pendingRequest;
     private Bitmap previewBitmap;
-    private AlertDialog dialog;
+    private AlertDialog dialog,reuseDialog;
+    private String preferredSource="";
     private boolean closed,busy,committing;
     private int generation,stageIndex=-1;
     private boolean nextAllowed,canFinish;
@@ -67,6 +68,7 @@ final class SketchLayeredDrawingDialog implements AutoCloseable {
         begin=button(start,"Begin layered drawing",this::begin);
         progress=column();form.addView(progress);instructions=text(progress,"");instructions.setContentDescription("Drawing stage instructions");reviewState=text(progress,"");reviewState.setContentDescription("Drawing stage reviews");
         for(int i=0;i<STAGES.length;i++){final String stage=STAGES[i];stageButtons.add(button(progress,TITLES[i],()->submit(new JSONObject().put("type","layered_drawing_stage").put("stage",stage))));}
+        reuse=button(progress,"Reuse own marks in clean parts",this::reuseOwnMarks);
         layer=picker(progress,"Draw on layer");tool=picker(progress,"Layer drawing tool");tool.setAdapter(adapter(Arrays.asList("Pen","Precision Bézier pen","Pressure paint")));
         drawLayer=button(progress,"Draw selected layer",()->{int at=layer.getSelectedItemPosition();if(at<0||at>=activeIds.size())throw SketchDocument.bad("Choose an authored layer");String id=activeIds.get(at),mode=tool.getSelectedItemPosition()==1?"precision":tool.getSelectedItemPosition()==2?"paint":"stroke";close();draw.open(id,mode);});
         text(progress,"Return here from More → Layer-by-layer drawing after drawing. Earlier stages stay available for corrections. The ordinary Undo button restores saved edits.");
@@ -85,6 +87,18 @@ final class SketchLayeredDrawingDialog implements AutoCloseable {
         int selected=reference.getSelectedItemPosition();if(selected<0||selected>=referenceIds.size())throw SketchDocument.bad("Import a reference image before starting the drawing");
         String[] lines=names.getText().toString().split("\\r?\\n");JSONArray parts=new JSONArray();for(String line:lines){String name=line.trim();if(name.isEmpty())continue;if(name.length()>160)throw SketchDocument.bad("Part names allow at most 160 characters");parts.put(new JSONObject().put("id","part_"+(parts.length()+1)).put("name",name));}if(parts.length()<2||parts.length()>12)throw SketchDocument.bad("Name 2–12 clean parts, one per line");
         submit(new JSONObject().put("type","layered_drawing_begin").put("referenceObjectId",referenceIds.get(selected)).put("prefix",prefix).put("parts",parts));
+    }
+    void preferSource(String objectId){preferredSource=objectId==null?"":objectId;}
+    private void reuseOwnMarks()throws Exception {
+        if(pendingRequest!=null&&SketchAuthoredStagePromotion.requested(pendingRequest.getJSONArray("operations").getJSONObject(0))){submit(SketchDocument.copy(pendingRequest.getJSONArray("operations").getJSONObject(0)));return;}
+        final long sourceRevision=document.getLong("revision");JSONObject workflow=document.getJSONObject("layeredDrawing");JSONArray parts=workflow.getJSONArray("parts");ArrayList<String> ids=new ArrayList<>(),labels=new ArrayList<>(),partIds=new ArrayList<>(),partNames=new ArrayList<>();
+        for(String stage:new String[]{"refinement","details"}){JSONArray layers=workflow.getJSONObject("stageLayers").getJSONArray(stage);for(int i=0;i<layers.length();i++){JSONArray objects=SketchDocument.layer(document,layers.getString(i)).getJSONArray("objects");for(int j=0;j<objects.length();j++){JSONObject object=objects.getJSONObject(j);ids.add(object.getString("id"));labels.add(stageTitle(stage)+" · "+object.getString("kind")+" · "+object.getString("id"));}}}
+        if(ids.isEmpty())throw SketchDocument.bad("Draw and review refinement or detail marks first");for(int i=0;i<parts.length();i++){partIds.add(parts.getJSONObject(i).getString("id"));partNames.add(parts.getJSONObject(i).getString("name"));}
+        LinearLayout content=column();text(content,"Keep the earlier pass and reuse selected own marks in one clean part. Review the source pass first. Reference images and clone-derived paint are excluded.");Spinner part=picker(content,"Clean part for reused marks");part.setAdapter(adapter(partNames));boolean[] chosen=new boolean[ids.size()];for(int i=0;i<chosen.length;i++)chosen[i]=preferredSource.equals(ids.get(i));
+        reuseDialog=new AlertDialog.Builder(activity).setTitle("Reuse own marks").setView(content).setMultiChoiceItems(labels.toArray(new String[0]),chosen,(d,index,checked)->chosen[index]=checked).setNegativeButton("Cancel",null).setPositiveButton("Reuse selected",null).create();reuseDialog.show();reuseDialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{try{
+            if(document.getLong("revision")!=sourceRevision)throw SketchDocument.bad("Drawing changed; reopen the source selection");JSONArray mappings=new JSONArray();for(int i=0;i<chosen.length;i++)if(chosen[i])mappings.put(new JSONObject().put("sourceObjectId",ids.get(i)).put("partId",partIds.get(part.getSelectedItemPosition())));if(mappings.length()<1||mappings.length()>64)throw SketchDocument.bad("Choose1–64 own marks for this part");
+            submit(new JSONObject().put("type","layered_drawing_stage").put("stage","clean_line").put("promote",mappings));reuseDialog.dismiss();
+        }catch(Exception failure){message(failure);}});
     }
     private void review(String decision)throws Exception {
         JSONObject summary=SketchLayeredDrawing.summary(document);if(comparedRevision!=document.getLong("revision")||!comparedStage.equals(summary.getString("stage")))throw SketchDocument.bad("Compare the current reference and artwork before reviewing this stage");
@@ -125,11 +139,11 @@ final class SketchLayeredDrawingDialog implements AutoCloseable {
     }
     private static String stageTitle(String stage){for(int i=0;i<STAGES.length;i++)if(STAGES[i].equals(stage))return TITLES[i];return stage;}
     private static String guidance(String stage){switch(stage){case "construction":return "Lay out the overall gesture, proportions and placement with loose native strokes.";case "refinement":return "Refine silhouettes and anatomy on the new layer; keep construction available underneath.";case "details":return "Draw hair, hands, expressions, fabric and other important details.";case "clean_line":return "Redraw the clean contours on the named part layers. Keep each intended part on its own layer.";default:return "Check the clean part layers independently. Repair joins, overlaps and missing authored lines before finishing.";}}
-    private void sync(){boolean edit=!closed&&!busy;reload.setEnabled(edit);begin.setEnabled(edit&&!referenceIds.isEmpty());reference.setEnabled(edit);names.setEnabled(edit);for(int i=0;i<stageButtons.size();i++)stageButtons.get(i).setEnabled(edit&&(i<stageIndex||i==stageIndex+1&&nextAllowed));layer.setEnabled(edit);tool.setEnabled(edit);drawLayer.setEnabled(edit&&!activeIds.isEmpty());stageOnly.setEnabled(edit);previewReference.setEnabled(edit);previewArtwork.setEnabled(edit);previewComparison.setEnabled(edit);note.setEnabled(edit);boolean reviewed=edit&&comparedRevision==document.optLong("revision");acceptable.setEnabled(reviewed);rework.setEnabled(reviewed);finish.setEnabled(edit&&stageIndex==4&&canFinish);}
+    private void sync(){boolean edit=!closed&&!busy;reload.setEnabled(edit);begin.setEnabled(edit&&!referenceIds.isEmpty());reference.setEnabled(edit);names.setEnabled(edit);reuse.setEnabled(edit&&stageIndex>=2&&(stageIndex!=2||nextAllowed));for(int i=0;i<stageButtons.size();i++)stageButtons.get(i).setEnabled(edit&&(i<stageIndex||i==stageIndex+1&&nextAllowed));layer.setEnabled(edit);tool.setEnabled(edit);drawLayer.setEnabled(edit&&!activeIds.isEmpty());stageOnly.setEnabled(edit);previewReference.setEnabled(edit);previewArtwork.setEnabled(edit);previewComparison.setEnabled(edit);note.setEnabled(edit);boolean reviewed=edit&&comparedRevision==document.optLong("revision");acceptable.setEnabled(reviewed);rework.setEnabled(reviewed);finish.setEnabled(edit&&stageIndex==4&&canFinish);}
     private void invalidatePreview(){comparedRevision=-1;comparedStage="";previewImage.setImageDrawable(null);previewImage.setVisibility(View.GONE);if(previewBitmap!=null){previewBitmap.recycle();previewBitmap=null;}}
     private boolean unavailable(){return closed||activity.isDestroyed()||activity.isFinishing();}
     private void message(Throwable failure){status.setText("Drawing retained: "+(failure.getMessage()==null?failure.getClass().getSimpleName():failure.getMessage()));}
-    @Override public void close(){if(closed)return;closed=true;++generation;invalidatePreview();if(committing)worker.shutdown();else worker.shutdownNow();activity.getApplication().unregisterActivityLifecycleCallbacks(lifecycle);if(dialog!=null&&dialog.isShowing())dialog.dismiss();}
+    @Override public void close(){if(closed)return;closed=true;++generation;invalidatePreview();if(committing)worker.shutdown();else worker.shutdownNow();activity.getApplication().unregisterActivityLifecycleCallbacks(lifecycle);if(reuseDialog!=null&&reuseDialog.isShowing())reuseDialog.dismiss();if(dialog!=null&&dialog.isShowing())dialog.dismiss();}
     private final Application.ActivityLifecycleCallbacks lifecycle=new Application.ActivityLifecycleCallbacks(){public void onActivityCreated(Activity a,Bundle b){}public void onActivityStarted(Activity a){}public void onActivityResumed(Activity a){}public void onActivityPaused(Activity a){}public void onActivityStopped(Activity a){}public void onActivitySaveInstanceState(Activity a,Bundle b){}public void onActivityDestroyed(Activity a){if(a==activity)close();}};
     private int dp(int value){return StudioUi.dp(activity,value);}
     private LinearLayout column(){LinearLayout view=new LinearLayout(activity);view.setOrientation(LinearLayout.VERTICAL);return view;}
