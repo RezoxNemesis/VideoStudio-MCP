@@ -2,6 +2,8 @@ name: VideoStudio OMEGA Large-Media Regression Gate
 on:
   push:
     branches: [feature/large-media-streaming-20261020]
+  pull_request:
+    branches: [candidate/omega-4.8.8-signed-20261020]
   workflow_dispatch:
 
 permissions:
