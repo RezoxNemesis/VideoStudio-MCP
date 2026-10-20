@@ -21,7 +21,7 @@ import java.util.Collections;
 import org.junit.Test;
 import static org.junit.Assert.*;
 
-@RunWith(RobolectricTestRunner.class) @Config(sdk=33, manifest=Config.NONE) @GraphicsMode(GraphicsMode.Mode.NATIVE)
+@RunWith(RobolectricTestRunner.class) @Config(sdk=33, manifest=Config.NONE)
 public class OmegaMasterDependencyIndexTest {
     private static final String HASH="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     private static OmegaMasterDependencyIndex.Link link(String sketch, String object, boolean locked, boolean override, long version) {
@@ -293,6 +293,7 @@ public class OmegaMasterDependencyIndexTest {
     }
 
 
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
     @Test public void nativeVectorRendererSamplesEveryQuarterBeforeAndAfter() throws Exception {
         // A pixel-level native renderer smoke test is NOT a phone/device visual acceptance.
         Map<String,JSONObject> docs=threeShots();
