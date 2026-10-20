@@ -139,27 +139,54 @@ public final class CinematicReferenceCameraPath {
         return keys;
     }
 
-    /** Native GLB preview uses the same 3D camera with its true model-space center. */
+    /**
+     * Preview-only camera choreography. Preserve the owner's initial yaw,
+     * pitch, distance and exact model focus at the FIRST rendered frame.
+     * A cinematic move must never teleport the camera on activation.
+     */
     static Pose model(String preset,double progress,double originalAzimuth,
                       double distance,double[]modelCenter) {
-        requireFinite(originalAzimuth,distance);
-        if(distance<2||distance>12)
-            throw new IllegalArgumentException("Model camera distance outside preview range");
-        Pose base=scene(preset,progress,modelCenter,
-                Math.max(1.8,Math.min(30,distance)),
+        // Compatibility for existing callers and tests.
+        return model(preset,progress,originalAzimuth,13,distance,modelCenter);
+    }
+
+    static Pose model(String preset,double progress,double originalAzimuth,
+                      double originalPitchDeg,double originalDistance,double[]modelCenter) {
+        requireFinite(originalAzimuth,originalPitchDeg,originalDistance);
+        if(originalDistance<2||originalDistance>12
+                ||originalPitchDeg < -80||originalPitchDeg>80)
+            throw new IllegalArgumentException("Original camera orientation is outside preview bounds");
+        Pose authored=scene(preset,progress,modelCenter,originalDistance,
                 CAR_TURNTABLE.equals(preset)?1:.85);
-        // For a turntable we must preserve the chosen starting angle.
-        if(!CAR_TURNTABLE.equals(preset))return base;
-        // The first frame is the exact owner-selected viewpoint; one complete
-        // revolution returns to it without a sudden -55 degree startup cut.
-        double adjusted=base.azimuthRad+originalAzimuth+Math.toRadians(55);
-        double inclination=Math.toRadians(base.pitchDeg);
-        double horizontal=base.distance*Math.cos(inclination);
+        final double yaw,pitch,dist;
+        double[] target=new double[3],up=new double[3];
+        if(CAR_TURNTABLE.equals(preset)){
+            // Exactly one revolution; identical camera frame at start and end.
+            yaw=originalAzimuth+2*Math.PI*smooth(progress);
+            pitch=originalPitchDeg+7*Math.sin(Math.PI*progress);
+            dist=originalDistance*(1-.08*Math.sin(Math.PI*progress));
+            System.arraycopy(modelCenter,0,target,0,3);
+            up[0]=0;up[1]=1;up[2]=0;
+        }else{
+            double enter=smooth(Math.min(1,progress/.15));
+            double difference=Math.atan2(
+                Math.sin(authored.azimuthRad-originalAzimuth),
+                Math.cos(authored.azimuthRad-originalAzimuth));
+            yaw=originalAzimuth+difference*enter;
+            pitch=lerp(originalPitchDeg,authored.pitchDeg,enter);
+            dist=lerp(originalDistance,authored.distance,enter);
+            for(int i=0;i<3;i++){
+                target[i]=lerp(modelCenter[i],authored.target[i],enter);
+                up[i]=lerp(i==1?1:0,authored.up[i],enter);
+            }
+        }
+        double incline=Math.toRadians(pitch);
+        double horizontal=dist*Math.cos(incline);
         double[] position={
-                base.target[0]+horizontal*Math.sin(adjusted),
-                base.target[1]+base.distance*Math.sin(inclination),
-                base.target[2]+horizontal*Math.cos(adjusted)
+                target[0]+horizontal*Math.sin(yaw),
+                target[1]+dist*Math.sin(incline),
+                target[2]+horizontal*Math.cos(yaw)
         };
-        return new Pose(position,base.target,base.up,adjusted,base.pitchDeg,base.distance);
+        return new Pose(position,target,up,yaw,pitch,dist);
     }
 }
