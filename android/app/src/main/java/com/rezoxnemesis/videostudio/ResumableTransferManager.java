@@ -27,7 +27,8 @@ public final class ResumableTransferManager {
             Pattern.compile("bytes\\s+(\\d+)-(\\d+)/(\\d+|\\*)", Pattern.CASE_INSENSITIVE);
 
     public interface ProgressListener {
-        void onProgress(long totalBytes);
+        /** A durable checkpoint may require fsync, which can fail with I/O. */
+        void onProgress(long totalBytes) throws Exception;
     }
 
     public interface DownloadProgress {
