@@ -78,12 +78,17 @@ public class ProjectAssetImportTest {
     @Test public void preInterruptedWorkPublishesNothingAndIdenticalRetrySucceeds()throws Exception {
         Fixture f=new Fixture();Thread.currentThread().interrupt();try{assertThrows(Exception.class,f::execute);}finally{Thread.interrupted();}assertEquals(1,f.output().assets.size());assertEquals(0,f.output().clips.size());assertTrue(f.execute().getBoolean("ok"));
     }
-    @Test public void interruptionDuringStreamingDeletesPartialBytesAndIdenticalRetryPublishesOnce()throws Exception {
+    @Test public void interruptedCopyRetainsVerifiedPartialAndIdenticalRetryPublishesOnce()throws Exception {
         Fixture f=new Fixture();f.request.put("appendToTimeline",true);AtomicBoolean copied=new AtomicBoolean();
         try{assertThrows(InterruptedException.class,()->ProjectAssetImport.execute(f.context,f.request,(n,total)->{if(n>0){copied.set(true);Thread.currentThread().interrupt();}}));}finally{Thread.interrupted();}
         assertTrue(copied.get());assertEquals(1,f.output().assets.size());assertEquals(0,f.output().clips.size());
-        try(java.util.stream.Stream<java.nio.file.Path> paths=Files.walk(new File(f.context.getFilesDir(),"project_asset_imports").toPath())){assertFalse(paths.anyMatch(p->p.toString().endsWith(".partial")));}
+        try(java.util.stream.Stream<java.nio.file.Path> paths=Files.walk(new File(f.context.getFilesDir(),"project_asset_imports").toPath())){
+            assertTrue("The interrupted copy must preserve a resumable private partial",paths.anyMatch(p->p.toString().endsWith(".partial")&&p.toFile().length()>0));
+        }
         assertTrue(f.execute().getBoolean("ok"));assertEquals(2,f.output().assets.size());assertEquals(1,f.output().clips.size());
+        try(java.util.stream.Stream<java.nio.file.Path> paths=Files.walk(new File(f.context.getFilesDir(),"project_asset_imports").toPath())){
+            assertFalse("The published copy must consume its staged partial",paths.anyMatch(p->p.toString().endsWith(".partial")));
+        }
     }
     @Test public void destinationEditDuringCopyRejectsStalePublicationAndPreservesTheHumanEdit()throws Exception {
         Fixture f=new Fixture();AtomicBoolean changed=new AtomicBoolean();
@@ -111,4 +116,46 @@ public class ProjectAssetImportTest {
         Thread waiter=new Thread(()->{waiting.countDown();try{second.execute();}catch(Throwable error){failure.set(error);}});
         holder.start();try{assertTrue(entered.await(10,java.util.concurrent.TimeUnit.SECONDS));waiter.start();assertTrue(waiting.await(10,java.util.concurrent.TimeUnit.SECONDS));waiter.interrupt();waiter.join(1000);assertFalse("Cancellation must not wait for the unrelated copy lock",waiter.isAlive());assertTrue(String.valueOf(failure.get()),failure.get() instanceof InterruptedException);assertEquals(1,second.output().assets.size());}finally{release.countDown();holder.join(10000);waiter.interrupt();waiter.join(10000);}
     }
+
+    @Test public void hugeVideoAndAudioLimitsAreLongSafeWithoutAllocatingTenGigabytes()throws Exception{
+        long gb=1024L*1024*1024;
+        assertEquals(10*gb,ProjectAssetImport.MAX_BYTES);
+        assertTrue(ProjectAssetImport.supportedSize("video/mp4",5*gb));
+        assertTrue(ProjectAssetImport.supportedSize("audio/wav",10*gb));
+        assertFalse(ProjectAssetImport.supportedSize("video/mp4",10*gb+1));
+        assertTrue(ProjectAssetImport.supportedSize("image/png",256L*1024*1024));
+        assertFalse(ProjectAssetImport.supportedSize("image/png",257L*1024*1024));
+        assertFalse(ProjectAssetImport.supportedSize("application/octet-stream",10));
+        JSONObject caps=ProjectAssetImport.capabilities();
+        assertEquals(10*gb,caps.getLong("maximumBytes"));
+        assertTrue(caps.getBoolean("partialResume"));
+        assertEquals(ProjectAssetImport.STORAGE_RESERVE_BYTES,caps.getLong("storageReserveBytes"));
+        StorageBudget.Check free=StorageBudget.checkTransfer(6*gb,10*gb,5*gb,ProjectAssetImport.STORAGE_RESERVE_BYTES);
+        assertTrue(free.allowed);
+        StorageBudget.Check blocked=StorageBudget.checkTransfer(1*gb,10*gb,5*gb,ProjectAssetImport.STORAGE_RESERVE_BYTES);
+        assertFalse(blocked.allowed);
+        assertEquals(5*gb+ProjectAssetImport.STORAGE_RESERVE_BYTES,blocked.requiredWithReserveBytes);
+    }
+
+    @Test public void tamperedResumablePrefixFailsWithoutPublishingOrOverwriting()throws Exception {
+        Fixture f=new Fixture();AtomicBoolean copied=new AtomicBoolean();
+        try{assertThrows(InterruptedException.class,()->ProjectAssetImport.execute(f.context,f.request,(n,total)->{
+            if(n>0){copied.set(true);Thread.currentThread().interrupt();}
+        }));}finally{Thread.interrupted();}
+        assertTrue(copied.get());
+        File root=new File(f.context.getFilesDir(),"project_asset_imports");
+        java.nio.file.Path[] parts;
+        try(java.util.stream.Stream<java.nio.file.Path> files=Files.walk(root)){
+            parts=files.filter(p->p.toString().endsWith(".partial")).toArray(java.nio.file.Path[]::new);
+        }
+        assertEquals(1,parts.length);
+        try(java.io.RandomAccessFile partial=new java.io.RandomAccessFile(parts[0].toFile(),"rw")){
+            partial.seek(5);partial.write(0);
+        }
+        Exception rejected=assertThrows(Exception.class,f::execute);
+        assertTrue(String.valueOf(rejected.getMessage()),rejected.getMessage().contains("PARTIAL_CHANGED"));
+        assertEquals(1,f.output().assets.size());
+        assertEquals(0,f.output().clips.size());
+    }
+
 }
