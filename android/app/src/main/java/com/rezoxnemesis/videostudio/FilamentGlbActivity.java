@@ -87,6 +87,7 @@ public final class FilamentGlbActivity extends Activity
     // A separate, opt-in 3D camera path: never changes GLB animation data.
     private String referenceCameraPreset="";
     private double referenceCameraPhase=0,referenceCameraOriginAzimuth=0,
+            referenceCameraOriginPitch=0,
             referenceCameraOriginDistance=4;
     private boolean studioLightingOn;
     private int[] studioLights=new int[0];
@@ -144,6 +145,8 @@ public final class FilamentGlbActivity extends Activity
                     state.getDouble("referenceCameraPhase",0),0)));
             referenceCameraOriginAzimuth=finiteOr(
                     state.getDouble("referenceCameraOriginAzimuth",0),0);
+            referenceCameraOriginPitch=Math.max(-80,Math.min(80,finiteOr(
+                    state.getDouble("referenceCameraOriginPitch",0),0)));
             referenceCameraOriginDistance=Math.max(2,Math.min(12,finiteOr(
                     state.getDouble("referenceCameraOriginDistance",4),4)));
             if(!java.util.Arrays.asList(CinematicReferenceCameraPath.presets())
@@ -678,6 +681,7 @@ public final class FilamentGlbActivity extends Activity
                     referenceCameraPreset=ids[index];
                     referenceCameraPhase=0;
                     referenceCameraOriginAzimuth=cameraAngle;
+                    referenceCameraOriginPitch=cameraPitch;
                     referenceCameraOriginDistance=cameraDistance;
                     orbit=false;orbitButton.setText("Orbit: off");
                     paused=false;
@@ -830,7 +834,8 @@ public final class FilamentGlbActivity extends Activity
                 referenceCameraPhase=Math.min(1,referenceCameraPhase+delta/duration);
                 CinematicReferenceCameraPath.Pose pose=CinematicReferenceCameraPath.model(
                         referenceCameraPreset,referenceCameraPhase,
-                        referenceCameraOriginAzimuth,referenceCameraOriginDistance,
+                        referenceCameraOriginAzimuth,referenceCameraOriginPitch,
+                        referenceCameraOriginDistance,
                         new double[]{0,0,-4});
                 Camera current=viewer.getCamera();
                 current.lookAt(pose.position[0],pose.position[1],pose.position[2],
@@ -867,6 +872,7 @@ public final class FilamentGlbActivity extends Activity
         state.putString("referenceCameraPreset",referenceCameraPreset);
         state.putDouble("referenceCameraPhase",referenceCameraPhase);
         state.putDouble("referenceCameraOriginAzimuth",referenceCameraOriginAzimuth);
+        state.putDouble("referenceCameraOriginPitch",referenceCameraOriginPitch);
         state.putDouble("referenceCameraOriginDistance",referenceCameraOriginDistance);
         state.putBoolean("studioLightingOn",studioLightingOn);
     }
