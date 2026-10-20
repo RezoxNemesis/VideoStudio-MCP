@@ -1,7 +1,7 @@
 name: VideoStudio OMEGA 4.9.0 Verified Cinematic Reference APK Candidate
 on:
   push:
-    branches: [candidate/omega-4.9.0-large-media-20261020]
+    branches: [candidate/omega-4.9.0-cinematic-reference-20261020]
   workflow_dispatch:
 
 permissions:
