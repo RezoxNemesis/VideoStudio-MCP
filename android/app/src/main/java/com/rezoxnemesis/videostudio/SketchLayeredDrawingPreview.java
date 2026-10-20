@@ -9,6 +9,7 @@ import android.graphics.RectF;
 import android.os.Looper;
 import android.util.Base64;
 import org.json.JSONObject;
+import org.json.JSONArray;
 import java.io.ByteArrayOutputStream;
 
 /** Read-only native comparison. Reference pixels never enter the authored document. */
@@ -17,7 +18,7 @@ final class SketchLayeredDrawingPreview {
 
     static JSONObject inspect(Context context,JSONObject source,JSONObject args)throws Exception {
         if(Looper.myLooper()==Looper.getMainLooper())throw new IllegalStateException("Layered drawing previews require a background worker");
-        SketchDocument.fields(args,"sketchId,expectedRevision,view,frameIndex,maxDimension,crop");
+        SketchDocument.fields(args,"sketchId,expectedRevision,view,frameIndex,maxDimension,crop,stageOnly");
         SketchLayeredDrawing.validate(source);
         if(!source.has("layeredDrawing"))throw SketchDocument.bad("Begin a layer-by-layer drawing before comparing it");
         if(args.has("sketchId")&&!source.getString("id").equals(SketchDocument.id(args,"sketchId")))throw SketchDocument.bad("Preview sketch identity differs");
@@ -25,6 +26,9 @@ final class SketchLayeredDrawingPreview {
         if(args.has("view")&&!(args.get("view") instanceof String))throw SketchDocument.bad("Preview view must be a string");
         String view=args.optString("view","comparison");
         if(!java.util.Arrays.asList("reference","artwork","comparison").contains(view))throw SketchDocument.bad("Choose reference, artwork or comparison preview");
+        if(args.has("stageOnly")&&!(args.get("stageOnly") instanceof Boolean))throw SketchDocument.bad("stageOnly must be a boolean");
+        boolean stageOnly=args.optBoolean("stageOnly",false);
+        if(stageOnly&&view.equals("reference"))throw SketchDocument.bad("Stage isolation applies to artwork or comparison");
         int frame=args.has("frameIndex")?(int)SketchDocument.integer(args,"frameIndex",0,source.getInt("frameCount")-1):0;
         int edge=args.has("maxDimension")?(int)SketchDocument.integer(args,"maxDimension",128,1024):720;
         JSONObject crop=args.has("crop")?args.getJSONObject("crop"):null;
@@ -35,7 +39,7 @@ final class SketchLayeredDrawingPreview {
         try {
             int panelEdge=view.equals("comparison")?Math.max(128,edge-28):edge;
             if(!view.equals("artwork"))reference=render(context,SketchLayeredDrawing.referenceDocument(source),frame,panelEdge,crop);
-            if(!view.equals("reference"))artwork=render(context,source,frame,panelEdge,crop);
+            if(!view.equals("reference"))artwork=render(context,stageOnly?stageDocument(source):source,frame,panelEdge,crop);
             if(view.equals("comparison")){
                 int gap=12,label=24;
                 int width=reference.getWidth()+artwork.getWidth()+gap,height=Math.max(reference.getHeight(),artwork.getHeight())+label;
@@ -55,7 +59,7 @@ final class SketchLayeredDrawingPreview {
             JSONObject image=new JSONObject().put("mimeType","image/png").put("width",output.getWidth()).put("height",output.getHeight())
                     .put("sizeBytes",png.length).put("sha256",SketchDocument.sha256(png)).put("base64",Base64.encodeToString(png,Base64.NO_WRAP));
             return new JSONObject().put("ok",true).put("sketchId",source.getString("id")).put("revision",source.getLong("revision"))
-                    .put("sourceRevision",source.getLong("revision")).put("view",view).put("frameIndex",frame)
+                    .put("stageOnly",stageOnly).put("sourceRevision",source.getLong("revision")).put("view",view).put("frameIndex",frame)
                     .put("referenceSha256",guide.getString("referenceSha256")).put("stage",guide.getString("stage"))
                     .put("sourceModified",false).put("reviewOnly",true).put("sourceAssistedReferenceOnly",view.equals("reference"))
                     .put("referencePixelsInArtwork",false).put("artworkDoesNotContainReferencePixels",true)
@@ -66,6 +70,11 @@ final class SketchLayeredDrawingPreview {
             if(reference!=null&&!reference.isRecycled())reference.recycle();
             if(artwork!=null&&!artwork.isRecycled())artwork.recycle();
         }
+    }
+    private static JSONObject stageDocument(JSONObject source)throws Exception {
+        JSONObject copy=SketchDocument.copy(source);JSONArray active=SketchLayeredDrawing.activeLayerIds(source),layers=new JSONArray(),ordered=source.getJSONArray("layers");
+        for(int i=0;i<ordered.length();i++){JSONObject layer=ordered.getJSONObject(i);for(int j=0;j<active.length();j++)if(layer.getString("id").equals(active.getString(j))){layers.put(SketchDocument.copy(layer));break;}}
+        copy.remove("layeredDrawing");copy.put("layers",layers);SketchDocument.validate(copy);return copy;
     }
     private static Bitmap render(Context context,JSONObject doc,int frame,int edge,JSONObject crop)throws Exception {
         if(Thread.currentThread().isInterrupted())throw new java.io.InterruptedIOException("Layered preview cancelled");

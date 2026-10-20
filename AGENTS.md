@@ -1,3 +1,18 @@
+# Latest owner priority — native authored film, 2026-10-20
+
+Continue actual layer-by-layer drawing and reviewed native animation in this
+worktree. The original manga asset is the authority; preserve all failed renders.
+The owner authorizes autonomous upgrades and workspace execution of the app,
+without waiting for phone installation. All art pixels and animation must come
+from VideoStudio's own authoring/rendering surfaces. No external art generator,
+cutout substitute or workspace-only drawing renderer. Focus on drawing, views,
+contacts, stationary-character camera studies and eventually a natural 240s film;
+engineering checks alone do not satisfy artistic acceptance. Leave the requested
+emotional male/female voice tab and direct project attachment until the final
+stage. No further Cloudflare work now. Preserve existing identity/projects and
+signer; no main merge or stable release. New drawing-preview/depth corrections
+currently target 4.9.3/code496. One local Gradle process, owned by root.
+
 # Current owner priority — 2026-10-20
 
 Continue from installed4.9.1/code494 candidate a1a1176 in this separate worktree.

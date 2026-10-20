@@ -33,7 +33,7 @@ public final class SketchLayeredDrawing {
     public static JSONArray activeLayerIds(JSONObject doc)throws Exception{return enabled(doc)?new JSONArray(meta(doc).getJSONObject("stageLayers").getJSONArray(meta(doc).getString("stage")).toString()):new JSONArray();}
     public static String stageContentSha256(JSONObject doc,String name)throws Exception{
         stage(name);JSONObject m=meta(doc);JSONArray ids=m.getJSONObject("stageLayers").getJSONArray(name),content=new JSONArray();
-        for(int i=0;i<ids.length();i++){JSONObject layer=SketchDocument.copy(SketchDocument.layer(doc,ids.getString(i)));layer.remove("visible");layer.remove("locked");layer.remove("name");content.put(layer);}
+        JSONArray ordered=doc.getJSONArray("layers");for(int i=0;i<ordered.length();i++){JSONObject row=ordered.getJSONObject(i);if(!contains(ids,row.getString("id")))continue;JSONObject layer=SketchDocument.copy(row);layer.remove("visible");layer.remove("locked");layer.remove("name");content.put(layer);}
         return hash(new JSONObject().put("stage",name).put("layers",content));
     }
     private static boolean accepted(JSONObject doc,String name)throws Exception{
@@ -49,7 +49,7 @@ public final class SketchLayeredDrawing {
     /** Detached animation input contains reviewed clean authored parts only; original checkpoints stay protected. */
     public static JSONObject animationSource(JSONObject doc)throws Exception{
         if(!enabled(doc))return SketchDocument.copy(doc);validate(doc);if(!reviewed(doc))throw denied("Finish every current stage review before animating clean parts");
-        JSONObject result=SketchDocument.copy(doc);result.remove("layeredDrawing");JSONArray layers=new JSONArray(),ids=meta(doc).getJSONObject("stageLayers").getJSONArray("clean_line");for(int i=0;i<ids.length();i++)layers.put(SketchDocument.copy(SketchDocument.layer(doc,ids.getString(i))));result.put("layers",layers);SketchDocument.validate(result);return result;
+        JSONObject result=SketchDocument.copy(doc);result.remove("layeredDrawing");JSONArray layers=new JSONArray(),ids=meta(doc).getJSONObject("stageLayers").getJSONArray("clean_line");JSONArray ordered=doc.getJSONArray("layers");for(int i=0;i<ordered.length();i++)if(contains(ids,ordered.getJSONObject(i).getString("id")))layers.put(SketchDocument.copy(ordered.getJSONObject(i)));result.put("layers",layers);SketchDocument.validate(result);return result;
     }
     public static JSONObject referenceDocument(JSONObject doc)throws Exception{
         if(!enabled(doc))throw denied("Begin a layered drawing first");validate(doc);JSONObject result=SketchDocument.copy(doc),m=meta(doc),layer=SketchDocument.copy(SketchDocument.layer(doc,m.getString("referenceLayerId")));result.remove("layeredDrawing");
@@ -62,7 +62,11 @@ public final class SketchLayeredDrawing {
         if("layered_drawing_stage".equals(type)){
             SketchDocument.fields(op,"type,stage");String next=op.getString("stage");int from=stage(m.getString("stage")),to=stage(next);
             if(to>from&&(to!=from+1||!accepted(doc,STAGES[from])))throw denied("Advance one stage after an explicit current ACCEPTABLE review");m.put("stage",next).put("status","IN_PROGRESS");
-            JSONArray ids=m.getJSONObject("stageLayers").getJSONArray(next);for(int i=0;i<ids.length();i++)SketchDocument.layer(doc,ids.getString(i)).put("visible",true).put("locked",false);return;
+            JSONArray ids=m.getJSONObject("stageLayers").getJSONArray(next);
+            // Keep the immediately preceding drawing for detail work, while hiding
+            // construction after refinement and every preliminary pass for clean parts.
+            for(int pass=0;pass<4;pass++){JSONArray passIds=m.getJSONObject("stageLayers").getJSONArray(STAGES[pass]);boolean visible=to<3?(pass==to||to>0&&pass==to-1):pass==3;for(int i=0;i<passIds.length();i++)SketchDocument.layer(doc,passIds.getString(i)).put("visible",visible);}
+            for(int i=0;i<ids.length();i++)SketchDocument.layer(doc,ids.getString(i)).put("locked",false);return;
         }
         if("layered_drawing_review".equals(type)){
             SketchDocument.fields(op,"type,stage,reviewedRevision,status,note,frameIndex");String name=op.getString("stage");stage(name);if(!name.equals(m.getString("stage")))throw denied("Review the active drawing stage");
@@ -109,6 +113,12 @@ public final class SketchLayeredDrawing {
             String id=op.getString("objectId");JSONObject object=SketchDocument.object(doc,id);layerId=SketchDocument.owner(doc,id).getString("id");authored(object,true);
             if("update_object".equals(type)){JSONObject candidate=SketchDocument.copy(object),patch=op.getJSONObject("patch");Iterator<String> keys=patch.keys();while(keys.hasNext()){String key=keys.next();candidate.put(key,patch.get(key));}authored(candidate,true);}
         }else if("set_transform".equals(type)||"set_keyframe".equals(type)){layerId=op.has("objectId")?SketchDocument.owner(doc,op.getString("objectId")).getString("id"):op.getString("layerId");}
+        else if("reorder_layer".equals(type)){
+            String current=meta(doc).getString("stage");if(!"clean_line".equals(current)&&!"separation".equals(current))throw denied("Reorder named clean parts during clean line or separation");
+            layerId=op.getString("layerId");JSONArray ordered=doc.getJSONArray("layers");int target=(int)SketchDocument.integer(op,"index",0,ordered.length()-1),first=-1,last=-1,count=0;
+            for(int i=0;i<ordered.length();i++)if(contains(active,ordered.getJSONObject(i).getString("id"))){if(first<0)first=i;last=i;count++;}
+            if(last-first+1!=count||target<first||target>last)throw denied("Keep clean parts within their own layer block; reference and preliminary layers stay protected");
+        }
         else if("update_layer".equals(type)){layerId=op.getString("layerId");JSONObject patch=op.getJSONObject("patch");Iterator<String> fields=patch.keys();while(fields.hasNext())if(!"name".equals(fields.next()))throw denied("Stage visibility and reference locks are managed by the workflow");}
         else throw denied("This persistent drawing accepts authored marks and explicit stage/review operations only: "+type);
         if(!contains(active,layerId))throw denied("Draw on an active stage layer; revisit earlier stages explicitly");

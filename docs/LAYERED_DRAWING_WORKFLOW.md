@@ -83,3 +83,43 @@ archived/restored with empty authored layers. That checkpoint is explicitly
 NOT DRAWN and cannot pass an empty drawing review. No completed matching scene,
 original artist stroke recovery, accepted animation, audible dialogue or film is
 claimed.
+
+
+## Drawing review and depth corrections (4.9.3)
+
+The optional strict boolean `stageOnly` on `sketch_layered_drawing_preview`
+limits the artwork pane to the active pass. It leaves the reference pane and
+saved document untouched. Explicit true or false requires 4.9.3; omission keeps
+the existing 4.9.2 request floor. True is rejected for reference-only previews.
+The manual dialog has the same checkbox; changing it clears the displayed
+comparison and disables acceptance until a fresh comparison is reviewed.
+
+Entering details hides construction and retains refinement under detail marks.
+Entering clean line or separation shows the clean parts without preliminary
+passes. Revisiting an earlier pass retains its content and review history.
+
+Ordinary layer Up/Down and MCP `reorder_layer` work within the contiguous named
+clean-part block during clean line/separation on 4.9.3. The reference/preliminary
+layers cannot be moved or crossed. Render order now binds stage acceptance and
+is retained in animation/component source copies; a changed order needs fresh
+clean/separation review. Unrelated legacy reorder request floors are unchanged.
+
+Current private manga studies remain unfinished drawing work. Actual outputs use
+native Canvas under Robolectric, not phone/GPU/codec execution. The authoring
+runner accepts ordinary app requests; literal authored pen/pressure-brush inputs
+are not an image tracer or outside artwork renderer. No creative test/scenario
+count is derived from batches, assertions, frames or reruns.
+
+The eventual voice tab is deferred until drawing/motion quality is established:
+paste dialogue and performance directions, choose distinct male/female voices,
+preview generated speech and attach it to an explicitly chosen project/shot.
+Natural emotional delivery must be auditioned; provider/model availability and
+speech synthesis will need their own evidence. It is not implemented by this
+preview/depth correction.
+
+Precision-pen saved-session replay is also corrected in 4.9.3. The previous
+player treated `precision_contour` as an instant control edit even though it
+creates an ordinary fitted native path. Watch ChatGPT and Replay last saved
+drawing now reveal the actual fitted curve progressively; the app pointer follows
+the same path prefix. Saved source operations and request fingerprints are
+unchanged. This does not recover the reference artist's stroke order.

@@ -139,7 +139,7 @@ test('capabilities match native and advertise style-specific views, manual contr
 });
 
 test('native release constants agree at4.9.2/code495 while earlier anatomy floors stay unchanged',()=>{
- assert.match(native('AppProtocol'),/APP_VERSION = "4\.9\.2"/);
- const build=fs.readFileSync(new URL('../android/app/build.gradle.kts',import.meta.url),'utf8');assert.match(build,/versionCode = 495/);assert.match(build,/versionName = "4\.9\.2"/);
+ assert.match(native('AppProtocol'),/APP_VERSION = "4\.9\.3"/);
+ const build=fs.readFileSync(new URL('../android/app/build.gradle.kts',import.meta.url),'utf8');assert.match(build,/versionCode = 496/);assert.match(build,/versionName = "4\.9\.3"/);
  assert.equal(contract.STUDIO_NATIVE_ACTIONS.size,Object.keys(contract.studioToolSchemas).length);assert(contract.STUDIO_ALIAS_ACTIONS.has("studio_sketch_layered_drawing_preview"));for(const action of contract.STUDIO_NATIVE_ACTIONS)assert(contract.STUDIO_ALIAS_ACTIONS.has("studio_"+action));assert.equal(contract.HUMAN_ANIMATION_CAPABILITIES.minimumNativeVersion,'4.8.0');
 });

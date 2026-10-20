@@ -57,6 +57,25 @@ public class SketchLayeredDrawingDialogTest {
         owner.close();String layer=SketchLayeredDrawing.activeLayerIds(document).getString(0);JSONObject stroke=SketchEditOps.completeObject(new JSONObject().put("id","authored_stroke").put("kind","stroke").put("frame",3).put("exposure",21).put("points",new JSONArray("[[0.15,0.8,1],[0.25,0.25,1],[0.5,0.12,1],[0.75,0.25,1],[0.85,0.8,1]]")).put("width",.012).put("color","#FF161C2B"));
         JSONObject request=new JSONObject().put("sketchId",id).put("operationId","author_native_stroke").put("expectedRevision",document.getLong("revision")).put("operations",new JSONArray().put(new JSONObject().put("type","add_object").put("layerId",layer).put("object",stroke)));ExecutorService writer=Executors.newSingleThreadExecutor();try{writer.submit(()->{try{return SketchEditOps.execute(activity,"sketch_edit",request);}catch(Exception error){throw new RuntimeException(error);}}).get(20,TimeUnit.SECONDS);}finally{writer.shutdownNow();}document=load();open();
     }
+    @Test public void stageOnlyPreviewIsReadOnlyStrictAndShowsOnlyCurrentNativeInk()throws Exception{
+        setup();begin();drawNativeStroke();JSONObject snapshot=SketchDocument.copy(document);
+        SketchEditOps.apply(snapshot,new JSONObject().put("type","layered_drawing_review").put("stage","construction").put("reviewedRevision",snapshot.getLong("revision")).put("frameIndex",3).put("status","ACCEPTABLE").put("note","Reviewed construction for preview isolation test."));
+        SketchEditOps.apply(snapshot,new JSONObject().put("type","layered_drawing_stage").put("stage","refinement"));
+        JSONObject mark=SketchLayeredDrawingTest.stroke(SketchLayeredDrawing.activeLayerIds(snapshot).getString(0),"red_refinement");mark.getJSONObject("object").put("color","#FFCC2222").put("width",.02).put("frame",3).put("exposure",21);SketchEditOps.apply(snapshot,mark);
+        String before=SketchDocument.canonical(snapshot);ExecutorService nativeWorker=Executors.newSingleThreadExecutor();try{nativeWorker.submit(()->{try{
+            JSONObject request=new JSONObject().put("view","artwork").put("frameIndex",3).put("maxDimension",320).put("stageOnly",true);
+            JSONObject isolated=SketchLayeredDrawingPreview.inspect(activity,snapshot,request);assertTrue(isolated.getBoolean("stageOnly"));
+            Bitmap pixels=SketchLayeredDrawingDialog.decodePreview(isolated.getJSONObject("sketchPreviewImage"),320);boolean oldInk=false,newInk=false;try{for(int y=0;y<pixels.getHeight();y++)for(int x=0;x<pixels.getWidth();x++){int c=pixels.getPixel(x,y);oldInk|=c==0xff161c2b;newInk|=c==0xffcc2222;}}finally{pixels.recycle();}assertFalse("Earlier construction must be excluded",oldInk);assertTrue("Current authored ink remains",newInk);
+            for(Object invalid:new Object[]{"true",1,JSONObject.NULL}){request.put("stageOnly",invalid);assertThrows(IllegalArgumentException.class,()->SketchLayeredDrawingPreview.inspect(activity,snapshot,request));}
+            request.put("stageOnly",true).put("view","reference");assertThrows(IllegalArgumentException.class,()->SketchLayeredDrawingPreview.inspect(activity,snapshot,request));
+            return null;
+        }catch(Exception failure){throw new RuntimeException(failure);}}).get(20,TimeUnit.SECONDS);}finally{nativeWorker.shutdownNow();}assertEquals(before,SketchDocument.canonical(snapshot));
+    }
+    @Test public void manualStageToggleInvalidatesComparedAcceptance()throws Exception{
+        setup();begin();drawNativeStroke();click("Compare reference and artwork");work();assertTrue(view("Accept reviewed stage").isEnabled());
+        ((CheckBox)view("Show current stage only")).setChecked(true);idle();assertFalse(view("Accept reviewed stage").isEnabled());click("Compare reference and artwork");work();assertTrue(previews.get(previews.size()-1).getBoolean("stageOnly"));assertTrue(view("Accept reviewed stage").isEnabled());
+        ((CheckBox)view("Show current stage only")).setChecked(false);idle();assertFalse(view("Accept reviewed stage").isEnabled());
+    }
     @Test public void beginUsesOrdinaryPersistenceAndRetryKeepsExactRequestThenNativeLayerToolIsChosen()throws Exception{
         setup();String initial=SketchDocument.canonical(document);text("Clean part names · one per line","Front figure\nRear figure");failEdits=1;click("Begin layered drawing");assertEquals(initial,SketchDocument.canonical(load()));work();assertTrue(status(),status().contains("Injected"));assertEquals(0,callbacks);click("Begin layered drawing");work();assertEquals(requests.get(0).toString(),requests.get(1).toString());assertEquals(1,callbacks);
         JSONObject summary=SketchLayeredDrawing.summary(document);assertTrue(summary.getBoolean("enabled"));assertEquals("construction",summary.getString("stage"));assertEquals(2,summary.getJSONArray("parts").length());JSONObject guide=SketchDocument.layer(document,summary.getString("referenceLayerId"));assertTrue(guide.getBoolean("locked"));assertFalse(guide.getBoolean("visible"));assertEquals(sourceHash,SketchDocument.object(document,"reference_image").getJSONObject("reference").getString("sha256"));

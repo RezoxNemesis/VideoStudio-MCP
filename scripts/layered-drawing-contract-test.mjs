@@ -53,3 +53,11 @@ test('native and Node authored workflow capabilities agree exactly',async()=>{
  const literal=java.match(/new JSONObject\(("(?:\\.|[^"\\])*")\)/)[1];
  assert.deepEqual(JSON.parse(JSON.parse(literal)),contract.LAYERED_DRAWING_CAPABILITIES);
 });
+
+test('stage-only preview is a strict opt-in with its own version floor',()=>{
+ const legacy={sketchId:'owned',expectedRevision:2,view:'comparison'};
+ assert.deepEqual(contract.nativeStudioParameters('sketch_layered_drawing_preview',legacy),legacy);
+ assert.doesNotThrow(()=>contract.requireStudioVersion({appVersion:'4.9.2'},'sketch_layered_drawing_preview',legacy));
+ for(const stageOnly of [false,true]){const args={...legacy,stageOnly};assert.deepEqual(contract.nativeStudioParameters('sketch_layered_drawing_preview',args),args);assert.throws(()=>contract.requireStudioVersion({appVersion:'4.9.2'},'sketch_layered_drawing_preview',args),/4\.9\.3/);assert.doesNotThrow(()=>contract.requireStudioVersion({appVersion:'4.9.3'},'sketch_layered_drawing_preview',args));}
+ for(const stageOnly of [null,0,'true'])assert.throws(()=>contract.nativeStudioParameters('sketch_layered_drawing_preview',{...legacy,stageOnly}));
+});

@@ -9,7 +9,7 @@ const revision=integer(1,Number.MAX_SAFE_INTEGER),updatedAt=integer(0,Number.MAX
 const time=integer(0,86400000),frame=integer(0,1199),fps=z.union([z.literal(24),z.literal(30),z.literal(60)]);
 const color=z.string().regex(/^#[a-fA-F0-9]{8}$/);
 export const LAYERED_DRAWING_CAPABILITIES=Object.freeze({
- minimumNativeVersion:'4.9.2',precisionPenMinimumNativeVersion:'4.9.1',
+ minimumNativeVersion:'4.9.2',stageOnlyPreviewMinimumNativeVersion:'4.9.3',cleanPartReorderMinimumNativeVersion:'4.9.3',precisionPenProgressiveReplayMinimumNativeVersion:'4.9.3',precisionPenMinimumNativeVersion:'4.9.1',
  action:'sketch_edit',previewAction:'sketch_layered_drawing_preview',previewReadOnly:true,
  operations:['layered_drawing_begin','layered_drawing_stage','layered_drawing_review','layered_drawing_finish'],
  stages:['construction','refinement','details','clean_line','separation'],
@@ -603,7 +603,7 @@ export const studioToolSchemas={
  get_native_delivery_status:{limit:integer(1,4).optional()},
  compact_native_delivery:{commandId:id,expectedResultSha256:sha},
  sketch_preview:{...sketchIdentity,expectedRevision:revision.optional(),frameIndex:frame.optional(),maxDimension:integer(128,720).optional(),crop:bounds.optional()},
- sketch_layered_drawing_preview:{...sketchIdentity,expectedRevision:revision,frameIndex:frame.optional(),view:z.enum(['reference','artwork','comparison']),maxDimension:integer(128,1024).optional(),crop:bounds.optional()},
+ sketch_layered_drawing_preview:{...sketchIdentity,expectedRevision:revision,frameIndex:frame.optional(),view:z.enum(['reference','artwork','comparison']),stageOnly:z.boolean().optional(),maxDimension:integer(128,1024).optional(),crop:bounds.optional()},
  sketch_render:{...mutation,aspect:z.enum(['original','9:16','16:9','1:1']).optional(),quality:z.enum(['720p','1080p']).optional()},
  open_pipeline_configure:{endpoint,bearer:z.string().min(16).max(4096).regex(/^[A-Za-z0-9_.~+/-]+=*$/)},
  open_pipeline_capabilities:{},open_pipeline_list:{},
@@ -709,6 +709,7 @@ export function requireStudioVersion(device,action,parameters={}){
  const styledHandObject=object=>object?.kind==='hand'&&object.hand?.settings?.renderStyle!==undefined;
  const styledHandOperation=op=>op.type==='add_hand_animation'&&op.settings?.renderStyle!==undefined||op.type==='add_object'&&styledHandObject(op.object)||op.type==='update_object'&&op.patch?.hand?.settings?.renderStyle!==undefined||op.type==='add_layer'&&(op.layer?.objects||[]).some(styledHandObject);
  const authoringOperations=action==='sketch_edit'?(parameters.operations||[]):action==='sketch_story_create'?(parameters.shots||[]).flatMap(shot=>shot.operations||[]):action==='sketch_story_preview'?(parameters.plan?.shots||[]).flatMap(shot=>shot.operations||[]):[];
+ if(action==='sketch_layered_drawing_preview'&&Object.hasOwn(parameters,'stageOnly')&&!atLeast(device?.appVersion,'4.9.3'))throw new Error('NATIVE_APP_UPGRADE_REQUIRED: stage-only drawing preview requires VideoStudio 4.9.3 or newer');
  if((action==='sketch_layered_drawing_preview'||authoringOperations.some(op=>LAYERED_DRAWING_CAPABILITIES.operations.includes(op.type)))&&!atLeast(device?.appVersion,'4.9.2'))throw new Error('NATIVE_APP_UPGRADE_REQUIRED: persistent authored layer workflow and reference comparison require VideoStudio 4.9.2 or newer');
  if(authoringOperations.some(op=>op.type==='precision_contour')&&!atLeast(device?.appVersion,'4.9.1'))throw new Error('NATIVE_APP_UPGRADE_REQUIRED: authored precision pen contours require VideoStudio 4.9.1 or newer');
  const maskedReference=object=>object?.reference?.sourceMask!==undefined;
