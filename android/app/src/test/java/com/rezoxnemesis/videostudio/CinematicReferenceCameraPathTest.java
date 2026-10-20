@@ -89,6 +89,29 @@ public final class CinematicReferenceCameraPathTest {
         assertEquals(1.1,b.target[1],1e-9);
     }
 
+    @Test public void eachGLBReferencePathStartsAtExactlyTheExistingCameraView(){
+        double[] focus={.15,.22,-4};
+        double yaw=1.12,pitch=-17.5,distance=6.7;
+        for(String preset:CinematicReferenceCameraPath.presets()){
+            CinematicReferenceCameraPath.Pose before=
+                    CinematicReferenceCameraPath.model(
+                        preset,0,yaw,pitch,distance,focus);
+            assertEquals(yaw,before.azimuthRad,1e-12);
+            assertEquals(pitch,before.pitchDeg,1e-12);
+            assertEquals(distance,before.distance,1e-12);
+            for(int axis=0;axis<3;axis++)assertEquals(focus[axis],before.target[axis],1e-12);
+            CinematicReferenceCameraPath.Pose after=
+                    CinematicReferenceCameraPath.model(
+                        preset,.45,yaw,pitch,distance,focus);
+            assertTrue(Math.abs(after.azimuthRad-yaw)>1e-4);
+        }
+        CinematicReferenceCameraPath.Pose finish=CinematicReferenceCameraPath.model(
+                CinematicReferenceCameraPath.CAR_TURNTABLE,1,yaw,pitch,distance,focus);
+        assertEquals(yaw+2*Math.PI,finish.azimuthRad,1e-10);
+        assertEquals(pitch,finish.pitchDeg,1e-10);
+        assertEquals(distance,finish.distance,1e-10);
+    }
+
     @Test public void malformedCameraPresetsCannotMutateSourceShot()throws Exception{
         JSONObject original=Cinematic3DStudioActivityTest.timeline();
         String before=Cinematic3DTimeline.canonical(original);
