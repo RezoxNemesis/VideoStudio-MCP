@@ -292,7 +292,9 @@ public final class SketchEditOps {
         }
     }
 
-    private static void appendObject(JSONObject doc,JSONObject op)throws Exception {
+    // Package-local so the native precision fitter reuses the same validation,
+    // layer lock and document object canonicalization path as ordinary drawing.
+    static void appendObject(JSONObject doc,JSONObject op)throws Exception {
         SketchDocument.fields(op,"type,layerId,object");JSONObject layer=SketchDocument.layer(doc,SketchDocument.id(op,"layerId"));requireUnlocked(layer);layer.getJSONArray("objects").put(completeObject(op.getJSONObject("object")));
     }
     static void apply(JSONObject doc, JSONObject op) throws Exception {
