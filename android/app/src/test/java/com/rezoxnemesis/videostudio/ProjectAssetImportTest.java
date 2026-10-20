@@ -145,7 +145,7 @@ public class ProjectAssetImportTest {
         assertTrue(copied.get());
         File root=new File(f.context.getFilesDir(),"project_asset_imports/"+f.destination.id);
         java.nio.file.Path[] parts;
-        try(java.util.stream.Stream<java.nio.file.Path> files=Files.walk(root)){
+        try(java.util.stream.Stream<java.nio.file.Path> files=Files.walk(root.toPath())){
             parts=files.filter(p->p.toString().endsWith(".partial")).toArray(java.nio.file.Path[]::new);
         }
         assertEquals(1,parts.length);
