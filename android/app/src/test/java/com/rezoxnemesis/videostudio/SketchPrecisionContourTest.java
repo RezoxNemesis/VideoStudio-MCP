@@ -111,7 +111,7 @@ public final class SketchPrecisionContourTest {
         try{SketchEditOps.apply(d,op(false));fail();}
         catch(IllegalStateException expected){}
         assertEquals(frozen,SketchDocument.canonical(d));
-        JSONArray bad=new JSONArray().put(new JSONArray().put(Double.NaN).put(.5))
+        JSONArray bad=new JSONArray().put(new JSONArray().put("NaN").put(.5))
                 .put(new JSONArray().put(.5).put(.6));
         try{SketchEditOps.apply(doc(),new JSONObject(op(false).toString()).put("points",bad));fail();}
         catch(Exception expected){}
