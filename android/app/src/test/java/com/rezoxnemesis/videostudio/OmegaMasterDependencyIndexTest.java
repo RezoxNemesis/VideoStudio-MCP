@@ -411,4 +411,48 @@ public class OmegaMasterDependencyIndexTest {
         catch(IllegalArgumentException expected){assertTrue(expected.getMessage().contains("geometry"));}
     }
 
+
+    @Test public void groupUndoRevertsAllShotsAtomicallyInStaging()throws Exception {
+        Map<String,JSONObject> docs=threeShots();
+        OmegaMasterDependencyIndex.PreparedBatch forward=
+            OmegaMasterDependencyIndex.stageCompound(request(docs),docs);
+        OmegaMasterDependencyIndex.PreparedBatch undo=
+            OmegaMasterDependencyIndex.stageCompoundUndo(forward,forward.nextDocuments(),"undo_group_01");
+        assertEquals(3,undo.changedSketches());
+        assertTrue(undo.impact.ready());
+        for(String sketchId:docs.keySet()){
+            JSONObject recovered=SketchDocument.copy(undo.nextDocuments().get(sketchId));
+            assertEquals(3,recovered.getLong("revision"));
+            recovered.put("revision",1L);
+            assertEquals(SketchDocument.canonical(docs.get(sketchId)),
+                SketchDocument.canonical(recovered));
+            assertEquals(1,SketchMasterAssets.indexed(recovered).get("rose_petal")
+                .getLong("version"));
+        }
+        try {
+            OmegaMasterDependencyIndex.stageCompoundUndo(forward,forward.nextDocuments(),
+                forward.operationId);
+            fail("Undo cannot reuse original operation identity");
+        }catch(IllegalArgumentException expected) {
+            assertTrue(expected.getMessage().contains("fresh"));
+        }
+    }
+
+    @Test public void globalUndoRejectsInterveningShotChangeWithoutTouchingOthers()
+            throws Exception {
+        Map<String,JSONObject> original=threeShots();
+        OmegaMasterDependencyIndex.PreparedBatch forward=
+            OmegaMasterDependencyIndex.stageCompound(request(original),original);
+        Map<String,JSONObject> current=new LinkedHashMap<>(forward.nextDocuments());
+        current.get("shotB").put("name","Human changed the second shot");
+        String unmodified=SketchDocument.canonical(current.get("shotA"));
+        try{
+            OmegaMasterDependencyIndex.stageCompoundUndo(forward,current,"undo_group_02");
+            fail("Must reject group-wide stale document");
+        }catch(IllegalStateException expected){
+            assertTrue(expected.getMessage().contains("COMPOUND_UNDO_STALE_DOCUMENT:shotB"));
+        }
+        assertEquals(unmodified,SketchDocument.canonical(current.get("shotA")));
+    }
+
 }
