@@ -161,7 +161,7 @@ public final class SketchLivePlayer implements AutoCloseable {
                 ready = SketchLivePreparation.prepareDrawing(context, baseline, operation,viewport);
                 String object = operation.has("object") ? operation.getJSONObject("object").optString("id",null)
                         : operation.optString("objectId",null);
-                boolean stroke = "add_object".equals(operation.optString("type")) ||
+                boolean stroke = "precision_contour".equals(operation.optString("type")) || "add_object".equals(operation.optString("type")) ||
                         "append_points".equals(operation.optString("type")) ||
                         "update_object".equals(operation.optString("type"));
                 if (stroke && object != null) SketchDocument.object(ready.document,object);

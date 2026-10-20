@@ -579,7 +579,7 @@ public final class SketchCanvasView extends View {
                     .put("frame",frame).put("exposure",1)
                     .put("color",color).put("width",brushWidth)
                     .put("tolerancePx",1.8).put("tension",.9)
-                    .put("closed",false).put("pressureOutline",true);
+                    .put("closed",false).put("pressureOutline",!document.has("layeredDrawing"));
             if(listener!=null)listener.onOperation(operation);
             return;
         }

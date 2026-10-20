@@ -23,7 +23,7 @@ public final class SketchEditOps {
         // A hidden guide is preparatory data, not a request to change the
         // foreground drawing. Actual edits and live sessions still follow.
         boolean hiddenGuideImport="sketch_import_reference".equals(action)&&!args.optBoolean("guideVisible",true);
-        if(result.has("sketchId")&&!hiddenGuideImport&&!java.util.Arrays.asList("sketch_get","sketch_reference_layers_preview","sketch_preview","sketch_review","sketch_quality_audit","sketch_list","sketch_live_events","sketch_inspect","sketch_xsheet","sketch_paint_journal","sketch_sample_color","sketch_master_preview").contains(action)){
+        if(result.has("sketchId")&&!hiddenGuideImport&&!java.util.Arrays.asList("sketch_get","sketch_layered_drawing_preview","sketch_reference_layers_preview","sketch_preview","sketch_review","sketch_quality_audit","sketch_list","sketch_live_events","sketch_inspect","sketch_xsheet","sketch_paint_journal","sketch_sample_color","sketch_master_preview").contains(action)){
             signalChanged(context,action,result);
         }
         return result;
@@ -50,7 +50,8 @@ public final class SketchEditOps {
             String id = SketchDocument.id(args, "sketchId");
             // Named-part import recovers an existing receipt before its transactional
             // policy check. Replaying committed work never copies pixels into a later session.
-            if(!"sketch_import_reference_layers".equals(action))SketchDrawingPolicy.requireAction(store.activeDrawingSession(id),action,args);
+            if(!"sketch_import_reference_layers".equals(action)&&!"sketch_undo".equals(action)&&!"sketch_redo".equals(action))SketchDrawingPolicy.requireAction(store.activeDrawingSession(id),action,args);
+            if("sketch_layered_drawing_preview".equals(action)){SketchDocument.fields(args,"sketchId,expectedRevision,view,frameIndex,maxDimension,crop,stageOnly");JSONObject document=store.get(id);SketchProjectStore.requireRevision(document,SketchDocument.integer(args,"expectedRevision",1,Long.MAX_VALUE-1));return SketchLayeredDrawingPreview.inspect(context,document,args);}
             if("sketch_reference_layers_preview".equals(action))return SketchReferenceLayers.preview(context,store,args);
             if("sketch_paint_journal".equals(action)||"sketch_sample_color".equals(action))return SketchPaintOps.query(context,store,action,args);
             if("sketch_master_preview".equals(action))return SketchMasterAssets.preview(store.get(id),args);
@@ -295,10 +296,12 @@ public final class SketchEditOps {
     // Package-local so the native precision fitter reuses the same validation,
     // layer lock and document object canonicalization path as ordinary drawing.
     static void appendObject(JSONObject doc,JSONObject op)throws Exception {
-        SketchDocument.fields(op,"type,layerId,object");JSONObject layer=SketchDocument.layer(doc,SketchDocument.id(op,"layerId"));requireUnlocked(layer);layer.getJSONArray("objects").put(completeObject(op.getJSONObject("object")));
+        SketchLayeredDrawing.requireOperation(doc,op);SketchDocument.fields(op,"type,layerId,object");JSONObject layer=SketchDocument.layer(doc,SketchDocument.id(op,"layerId"));requireUnlocked(layer);layer.getJSONArray("objects").put(completeObject(op.getJSONObject("object")));
     }
     static void apply(JSONObject doc, JSONObject op) throws Exception {
+        SketchLayeredDrawing.requireOperation(doc,op);
         String type = op.getString("type");
+        if(type.startsWith("layered_drawing_")){SketchLayeredDrawing.apply(doc,op);return;}
         switch (type) {
             case "add_layer": {
                 SketchDocument.fields(op, "type,layer"); JSONObject layer = SketchDocument.copy(op.getJSONObject("layer"));
@@ -486,6 +489,7 @@ public final class SketchEditOps {
             default: throw SketchDocument.bad("Unsupported sketch edit operation: " + type);
         }
         // Bound every intermediate state as well as the final batch, before persistence.
+        SketchLayeredDrawing.afterOperation(doc);
         SketchDocument.validate(doc);
     }
 

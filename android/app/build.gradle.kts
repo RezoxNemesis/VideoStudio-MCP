@@ -8,7 +8,8 @@ plugins {
 // Private proof fixtures/output directories are intentionally outside Git and
 // can change between visual generations without changing compiled test classes.
 tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
-    if (!System.getenv("VIDEOSTUDIO_REFERENCE_FIDELITY_FIXTURE").isNullOrBlank()) {
+    if (listOf("VIDEOSTUDIO_REFERENCE_FIDELITY_FIXTURE", "VIDEOSTUDIO_OWNER_DRAWING_ASSET",
+            "VIDEOSTUDIO_LAYERED_DRAWING_EVIDENCE", "VIDEOSTUDIO_AUTHORED_SCENE_MANIFEST").any { !System.getenv(it).isNullOrBlank() }) {
         outputs.upToDateWhen { false }
     }
 }
@@ -21,8 +22,8 @@ android {
         applicationId = "com.rezoxnemesis.videostudio.next"
         minSdk = 29
         targetSdk = 35
-        versionCode = 494
-        versionName = "4.9.1"
+        versionCode = 496
+        versionName = "4.9.3"
     }
 
     testOptions { unitTests.isIncludeAndroidResources = true }

@@ -182,7 +182,7 @@ public final class SketchAgentHand {
     }
 
     private static boolean supported(String type){
-        switch(type){case "add_object":case "paint_stroke":case "append_points":case "update_object":case "delete_object":
+        switch(type){case "precision_contour":case "add_object":case "paint_stroke":case "append_points":case "update_object":case "delete_object":
             case "add_layer":case "update_layer":case "delete_layer":case "reorder_layer":case "set_canvas":case "set_timing":
             case "set_transform":case "set_keyframe":case "set_exposure":case "set_reference_visibility":
             case "duplicate_cel":case "clear_cel":case "insert_frame":case "delete_frame":case "add_paint_cel":return true;
@@ -194,7 +194,7 @@ public final class SketchAgentHand {
                 "polygon".equals(kind)||"rect".equals(kind)||"ellipse".equals(kind);
     }
     private static boolean isDrawing(String type,JSONObject operation){
-        if("add_object".equals(type)||"append_points".equals(type))return true;
+        if("precision_contour".equals(type)||"add_object".equals(type)||"append_points".equals(type))return true;
         if(!"update_object".equals(type))return false;
         JSONObject patch=operation.optJSONObject("patch");
         return patch!=null&&(patch.has("points")||patch.has("commands")||patch.has("bounds"));
@@ -275,6 +275,7 @@ public final class SketchAgentHand {
     }
     private static String paintTool(String mode){return "erase".equals(mode)?"Eraser":"clone".equals(mode)?"Clone brush":"Brush";}
     private static String tool(String type,String kind,JSONObject object,JSONObject operation){
+        if("precision_contour".equals(type))return "Precision pen";
         if("paint_stroke".equals(type))return "Brush";
         if("set_reference_visibility".equals(type))return "Reference";
         if("set_transform".equals(type))return "Transform";
@@ -299,6 +300,7 @@ public final class SketchAgentHand {
     }
     private static String caption(String type,String tool,JSONObject operation){
         if("set_reference_visibility".equals(type))return operation.optBoolean("visible",true)?"Show reference":"Hide reference";
+        if("precision_contour".equals(type))return "Draw precision pen";
         if("add_object".equals(type))return "Reference".equals(tool)?"Place reference":"Text".equals(tool)?"Add text":"Draw "+tool.toLowerCase(Locale.ROOT);
         if("append_points".equals(type))return "Continue "+tool.toLowerCase(Locale.ROOT);
         if("set_transform".equals(type))return "Apply transform";

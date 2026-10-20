@@ -699,6 +699,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 case "sketch_archive": complete(command,SketchPaintArchive.archive(this,p));return;
                 case "sketch_restore_archive": complete(command,SketchPaintArchive.restore(this,p));return;
                 case "sketch_reference_layers_preview":
+                case "sketch_layered_drawing_preview":
                 case "sketch_preview":{
                     JSONObject preview=SketchEditOps.execute(this,action,p);
                     // Existing MCP v3 relays already deliver contactSheet as an
@@ -5612,6 +5613,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             case "sketch_edit": case "sketch_undo": case "sketch_redo": return "Editing sketch layers and poses";
             case "sketch_get": case "sketch_list": return "Reading sketch geometry";
             case "sketch_reference_layers_preview": return "Previewing source-bound reference masks without edits";
+            case "sketch_layered_drawing_preview": return "Comparing the locked reference with authored drawing layers";
             case "sketch_preview": return "Rendering a sketch preview";
             case "sketch_import_reference_layers": return "Separating owned reference into source-assisted parts";
             case "sketch_import_reference": return "Importing an owned sketch reference";

@@ -29,6 +29,7 @@ public final class SketchPaintOps {
     public static JSONObject executeEdit(Context context,SketchProjectStore sketches,String id,String operationId,long revision,String fingerprint,JSONArray operations)throws Exception {
         SketchDrawingPolicy.requireOperations(sketches.activeDrawingSession(id),operations);
         SketchProjectStore.MutationPreflight admitted=sketches.preflightMutation(id,operationId,revision,fingerprint,operations);if(admitted.receipt!=null)return admitted.receipt;
+        for(int i=0;i<operations.length();i++)SketchLayeredDrawing.requireOperation(admitted.document,operations.getJSONObject(i));
         JSONObject next=SketchDocument.copy(admitted.document);JSONArray visual=new JSONArray(),changes=new JSONArray();
         SketchPaintStore assets=null;try{
             for(int i=0;i<operations.length();i++){
@@ -39,15 +40,15 @@ public final class SketchPaintOps {
                     int exposure=operation.has("exposure")?(int)SketchDocument.integer(operation,"exposure",1,next.getInt("frameCount")-frame):1;
                     String zeros=new String(new char[64]).replace('\0','0');JSONObject placeholder=new JSONObject().put("file",zeros+".json").put("sha256",zeros).put("width",next.getInt("width")).put("height",next.getInt("height")).put("tileSize",SketchPaintStore.TILE_SIZE);
                     JSONObject cel=SketchEditOps.completeObject(new JSONObject().put("id",objectId).put("kind","paint").put("frame",frame).put("exposure",exposure).put("bounds",new JSONObject().put("x",0).put("y",0).put("width",1).put("height",1)).put("paint",placeholder));
-                    layer.getJSONArray("objects").put(cel);SketchDocument.validate(next);if(assets==null)assets=new SketchPaintStore(context,id);JSONObject descriptor=assets.empty(next.getInt("width"),next.getInt("height"));cel.put("paint",SketchDocument.copy(descriptor));
+                    layer.getJSONArray("objects").put(cel);SketchLayeredDrawing.afterOperation(next);SketchDocument.validate(next);if(assets==null)assets=new SketchPaintStore(context,id);JSONObject descriptor=assets.empty(next.getInt("width"),next.getInt("height"));cel.put("paint",SketchDocument.copy(descriptor));
                     visual.put(new JSONObject().put("type","add_object").put("layerId",layerId).put("object",SketchDocument.copy(cel)));changes.put(new JSONObject().put("objectId",objectId).put("snapshotSha256",descriptor.getString("sha256")).put("dirtyTileCount",0));
                 }else if("paint_stroke".equals(type)){
                     // Public requests cannot inject native-owned source or snapshot pins.
                     SketchDocument.fields(operation,"type,objectId,strokeId,points,brush,frameIndex,alphaLock,clip,cloneSource");
-                    if(assets==null)assets=new SketchPaintStore(context,id);SketchPaintStore.PreparedChange prepared=assets.prepare(next,operation);applyPreparedStroke(next,prepared.visualOperation);SketchDocument.validate(next);
+                    if(assets==null)assets=new SketchPaintStore(context,id);SketchPaintStore.PreparedChange prepared=assets.prepare(next,operation);applyPreparedStroke(next,prepared.visualOperation);SketchLayeredDrawing.afterOperation(next);SketchDocument.validate(next);
                     visual.put(SketchDocument.copy(prepared.visualOperation));changes.put(new JSONObject().put("objectId",SketchDocument.id(operation,"objectId")).put("snapshotSha256",prepared.descriptor.getString("sha256")).put("strokeSha256",prepared.strokeSha256).put("dirtyTileCount",prepared.dirtyTileCount));
                 }else if("trace_reference".equals(type)){
-                    JSONObject layer=SketchDocument.layer(next,operation.getString("layerId"));int before=layer.getJSONArray("objects").length();SketchReferenceTrace.apply(sketches,next,operation);SketchDocument.validate(next);for(int k=before;k<layer.getJSONArray("objects").length();k++)visual.put(new JSONObject().put("type","add_object").put("layerId",layer.getString("id")).put("object",SketchDocument.copy(layer.getJSONArray("objects").getJSONObject(k))));
+                    JSONObject layer=SketchDocument.layer(next,operation.getString("layerId"));int before=layer.getJSONArray("objects").length();SketchReferenceTrace.apply(sketches,next,operation);SketchLayeredDrawing.afterOperation(next);SketchDocument.validate(next);for(int k=before;k<layer.getJSONArray("objects").length();k++)visual.put(new JSONObject().put("type","add_object").put("layerId",layer.getString("id")).put("object",SketchDocument.copy(layer.getJSONArray("objects").getJSONObject(k))));
                 }else if("symmetry_stroke".equals(type)){
                     JSONArray expanded=SketchSymmetry.apply(next,operation);for(int k=0;k<expanded.length();k++)visual.put(SketchDocument.copy(expanded.getJSONObject(k)));
                 }else{
