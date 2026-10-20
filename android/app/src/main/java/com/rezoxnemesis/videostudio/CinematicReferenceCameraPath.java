@@ -30,9 +30,9 @@ public final class CinematicReferenceCameraPath {
             this.position=position.clone();this.target=target.clone();this.up=up.clone();
             this.azimuthRad=azimuthRad;this.pitchDeg=pitchDeg;this.distance=distance;
         }
-        JSONArray positionJson() { return vector(position); }
-        JSONArray targetJson() { return vector(target); }
-        JSONArray upJson() { return vector(up); }
+        JSONArray positionJson() throws Exception { return vector(position); }
+        JSONArray targetJson() throws Exception { return vector(target); }
+        JSONArray upJson() throws Exception { return vector(up); }
     }
 
     static String[] presets(){
@@ -47,7 +47,7 @@ public final class CinematicReferenceCameraPath {
         for(double v:values)if(!Double.isFinite(v))
             throw new IllegalArgumentException("Nonfinite camera choreography value");
     }
-    private static JSONArray vector(double[]v){
+    private static JSONArray vector(double[]v) throws Exception {
         JSONArray out=new JSONArray();for(double x:v)out.put(x);return out;
     }
     private static double smooth(double t){return t*t*(3-2*t);}
@@ -127,7 +127,7 @@ public final class CinematicReferenceCameraPath {
      * 25 samples keep the existing piecewise-linear timeline renderer visually
      * smooth without adding an incompatible schema or changing baked actors.
      */
-    static JSONArray shotKeys(String preset,double[]focus,double radius,double strength){
+    static JSONArray shotKeys(String preset,double[]focus,double radius,double strength) throws Exception {
         JSONArray keys=new JSONArray();
         for(int i=0;i<MAX_KEYS;i++){
             double phase=i/(double)(MAX_KEYS-1);
