@@ -468,10 +468,13 @@ public final class SketchAnimationCompiler {
             double originalHip=s.local[contact.hip],originalKnee=s.local[contact.knee],originalAnkle=s.local[contact.ankle];
             double cosine=Math.max(-1,Math.min(1,(upper*upper+distance*distance-lower*lower)/(2*upper*distance)));
             double worldUpper=Math.toDegrees(Math.atan2(dy,dx)+contact.bend*Math.acos(cosine)-Math.atan2(knee.y-hip.y,knee.x-hip.x));
-            s.local[contact.hip]=worldUpper-(hip.parent<0?0:s.angle[hip.parent]);forward(m,r,s);
+            // atan2 returns a wrapped orientation. Choose the equivalent local angle
+            // nearest the authored pose before easing, otherwise a small reach can
+            // swing almost a full turn through the actor. Authored turns remain the baseline.
+            s.local[contact.hip]=nearestEquivalent(worldUpper-(hip.parent<0?0:s.angle[hip.parent]),originalHip);forward(m,r,s);
             double targetX=s.x[contact.hip]+dx,targetY=s.y[contact.hip]+dy;
             double worldLower=Math.toDegrees(Math.atan2(targetY-s.y[contact.knee],targetX-s.x[contact.knee])-Math.atan2(ankle.y-knee.y,ankle.x-knee.x));
-            s.local[contact.knee]=worldLower-s.angle[contact.hip];forward(m,r,s);
+            s.local[contact.knee]=nearestEquivalent(worldLower-s.angle[contact.hip],originalKnee);forward(m,r,s);
             if(contact.hasRotation){s.local[contact.ankle]=contact.rotation-s.angle[contact.knee];forward(m,r,s);}
             if(strength<1-EPS){
                 s.local[contact.hip]=originalHip+(s.local[contact.hip]-originalHip)*strength;
@@ -487,6 +490,7 @@ public final class SketchAnimationCompiler {
         }
         return s;
     }
+    private static double nearestEquivalent(double solved,double authored){return authored+Math.IEEEremainder(solved-authored,360d);}
     private static void forward(Model m,Rig r,Snapshot s) {
         boolean[] done=new boolean[r.joints.size()];int remaining=done.length;
         while(remaining>0)for(int i=0;i<done.length;i++)if(!done[i]){Joint j=r.joints.get(i);if(j.parent>=0&&!done[j.parent])continue;
