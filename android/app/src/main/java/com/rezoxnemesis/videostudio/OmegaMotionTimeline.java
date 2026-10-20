@@ -168,8 +168,8 @@ final class OmegaMotionTimeline {
                 int blendInFrames, int blendOutFrames) {
             if (jointId == null || !jointId.matches("[A-Za-z0-9_./-]{1,64}")
                     || beginFrame < 0 || endFrame <= beginFrame || endFrame >= MAX_FRAMES
-                    || blendInFrames < 0 || blendInFrames > 24
-                    || blendOutFrames < 0 || blendOutFrames > 24
+                    || blendInFrames < 0 || blendInFrames > 12
+                    || blendOutFrames < 0 || blendOutFrames > 12
                     || beginFrame - blendInFrames < 0
                     || endFrame + blendOutFrames >= MAX_FRAMES
                     || !finite(anchorX, anchorY, restLocalX, restLocalY, maxCorrection)
