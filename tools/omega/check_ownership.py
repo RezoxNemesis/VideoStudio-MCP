@@ -39,9 +39,17 @@ def main():
     if args.branch not in BRANCHES:
         raise SystemExit("OMEGA_OWNERSHIP: unrecognized phase branch. Use an integration-owner PR.")
     number = BRANCHES[args.branch]
+    # Compare only work introduced by the phase branch. The integration
+    # branch may acquire shared CI/docs commits *after* a phase was forked;
+    # a two-dot diff would report those base-only paths as changed by the
+    # phase and falsely fail unrelated, correctly isolated agents.
+    merge_base = subprocess.check_output(
+        ["git", "merge-base", args.base, args.head], text=True
+    ).strip()
+    if not merge_base:
+        raise SystemExit("OMEGA_OWNERSHIP: missing common baseline")
     changed = subprocess.check_output(
-        ["git", "diff", "--name-only", args.base, args.head],
-        text=True
+        ["git", "diff", "--name-only", merge_base, args.head], text=True
     ).splitlines()
     if not changed:
         raise SystemExit("OMEGA_OWNERSHIP: empty phase PR")
