@@ -25,10 +25,20 @@ public final class Cinematic3DCameraEditOps {
                 case "upsert_camera_key":fields(operation,"type","shotId","phase","position","target","up");break;
                 case "remove_camera_key":fields(operation,"type","shotId","phase");break;
                 case "clear_camera_keys":fields(operation,"type","shotId");break;
+                case "reference_camera_path":fields(operation,"type","shotId","preset","target","radius","strength");break;
                 default:throw new IllegalArgumentException("Unknown cinematic camera edit operation");
             }
             String shotId=id(text(operation,"shotId",96));JSONObject shot=findShot(result,shotId),camera=shot.getJSONObject("camera");
             if("clear_camera_keys".equals(type)){camera.remove("keyframes");continue;}
+            if("reference_camera_path".equals(type)) {
+                JSONArray target=cameraVector(operation,"target");
+                double[] focus={target.getDouble(0),target.getDouble(1),target.getDouble(2)};
+                camera.put("keyframes",CinematicReferenceCameraPath.shotKeys(
+                        text(operation,"preset",32),focus,
+                        number(operation,"radius",1.8,30),
+                        number(operation,"strength",.1,1)));
+                continue;
+            }
             double phase=number(operation,"phase",0,1);JSONArray keys=camera.optJSONArray("keyframes"),next=new JSONArray();boolean found=false,inserted=false;
             JSONObject replacement=null;
             if("upsert_camera_key".equals(type)) {
