@@ -101,10 +101,11 @@ public final class CinematicOutputFramingTest {
                     CinematicOutputFraming.matching(
                         preview.getIntExtra("cinematicOutputWidth",0),
                         preview.getIntExtra("cinematicOutputHeight",0)));
+            Field draft=Cinematic3DStudioActivity.class.getDeclaredField("timeline");
+            draft.setAccessible(true);
             assertEquals("Changing output frame cannot alter actor source timeline",
                     Cinematic3DTimeline.canonical(example),
-                    Cinematic3DTimeline.canonical((JSONObject)Cinematic3DStudioActivityTest
-                        .class.getDeclaredMethod("timeline").invoke(null)));
+                    Cinematic3DTimeline.canonical((JSONObject)draft.get(studio)));
         }finally{activity.pause().stop().destroy();}
     }
 }
