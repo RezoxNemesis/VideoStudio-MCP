@@ -1,3 +1,22 @@
+# Active Graphite coverage repair — 2026-10-20
+
+Frozen pushed4.9.6/code499 source8cb77e5059db9e9d0314551c260fab505f159d3f
+passed CI39484715953, draftPR135:2133 Android/0failures/0errors/12skips;
+local2133/0/0/13skips and677 Node+306smoke pass. Downloaded APK package,
+version, original signer and SHA256155ec5db45ffa7674476571683a45565016a6902d4dbe3ce05bd639113474f25
+are independently verified. Publication skipped. Candidate/art evidence links
+are recorded in PR135; creative quality and the240s film remain unfinished.
+Native hand-proportion-v3 close-ups expose darker broad Graphite control-point
+caps. Target4.9.7/code500 on feat/native-graphite-coverage-v497: reproduce the
+coverage error, preserve failed evidence, union the new Graphite core in native
+Canvas before one alpha application, and keep the older brush paths unchanged.
+Verify pressure/eraser/replay/manual/MCP metadata, then rerender actual anatomy
+and motion. Continue rear/side authored views and240s film. Voice last.
+Fresh local4.9.7 checks:2134 Android tests/0failures/0errors/13skips and
+677 Node+306smoke pass. Actual unchanged hand rerender removes the dark cap
+spots. Native regression preserves the prior alpha1-to2 failure atx256.
+No Worker/main/stable/device identity/signing changes. One local Gradle.
+
 # Active authored stage reuse — 2026-10-20
 
 Signed4.9.5/code498 ca9ba04f876e837926faaa76a967b99cec008dcf is frozen.

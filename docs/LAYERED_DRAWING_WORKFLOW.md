@@ -236,3 +236,11 @@ use `preset:"graphite"` with the same native renderer. The explicit preset requi
 marks keep their rendering; switching them is an explicit Undoable brush edit.
 Graphite is an authored pressure brush, not a reference tracer, a bitmap filter
 or an automatic detailed redraw. Inspect the actual result at its intended size.
+
+From4.9.7 the native Graphite pressure core is filled as one coverage path.
+Segment/cap overlaps no longer compound alpha at authored control points. This
+repairs visible spots in broad low-opacity shading and also applies once when
+erasing. Fine grain remains deterministic; source points, brush settings, stored
+paint and the older brush renderers are unchanged. Separate authored strokes
+still build tone normally. Existing Graphite requests retain their4.9.6 floor;
+`continuousCoverageMinimumNativeVersion` identifies the rendering repair.
