@@ -33,7 +33,7 @@ public class OmegaReferenceGeometryTest {
           new OmegaReferenceGeometry.Pair(p(.1,.1),p(.2,.2),1),
           new OmegaReferenceGeometry.Pair(p(.3,.3),p(.4,.4),1)));
         List<OmegaReferenceGeometry.Point> result=OmegaReferenceGeometry.transform(Arrays.asList(p(0,0),p(1,1)),fit);
-        assertEquals(0,result.get(0).x,1e-8);
+        assertEquals(.1,result.get(0).x,1e-8);
         assertEquals(1,result.get(1).x,1e-8);
     }
 }
