@@ -5172,8 +5172,11 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     }
 
     private void complete(JSONObject command, JSONObject result) {
-        boolean ok = result.optBoolean("ok", false);
         String action = command.optString("action", "");
+        // Only structurally verified READ-ONLY capability lookups may infer 'ok'.
+        // Render/edit/import/cancel always need explicit native success receipts.
+        result = NativeCommandResultPolicy.normalizedResult(action,result);
+        boolean ok = NativeCommandResultPolicy.successful(action,result);
         JSONObject p = command.optJSONObject("parameters");
         String projectId = "animate_pose_sequence".equals(action)
                 ? result.optString("projectId", p == null ? "" : p.optString("projectId", ""))
