@@ -3,7 +3,7 @@ import { nativeCommandSummary, nativeResultPage } from "./native-result-pages.js
 import {receivePrivateBlob,privateBlobResponse,cleanupPrivateBlobs,deletePrivateBlob} from './private-blob-store.js';
 import { readCommandQueue, mutateCommandQueue, requireCommandQueueAdmission, terminalCommandUpdate, commandIsPending, readCommandReceipt, acknowledgePrunedCommand, readCommandQueueInTransaction, writeCommandQueueInTransaction, mergeCommandReceiptsInTransaction, readCommandReceiptsInTransaction, canonicalCommandResultSha256, readNativeDevice, readNativeDeviceInTransaction, writeNativeDevice, writeNativeDeviceInTransaction } from "./native-command-store.js";
 import { STORYBOARD_NATIVE_ACTIONS, CINEMATIC_BEATS, requireStoryboardNativeVersion, nativeStoryboardParameters, cinematic3dToolSchemas } from "./storyboard-contract.js";
-import { studioToolSchemas, nativeStudioCanonicalAction, CHARACTER_PERFORMANCE_CAPABILITIES, HAND_ANIMATION_CAPABILITIES, HUMAN_ANIMATION_CAPABILITIES, STORY_STAGE_CAPABILITIES, ACTOR_PROP_CAPABILITIES, DIALOGUE_PHRASE_CAPABILITIES, GRIP_LINK_CAPABILITIES, STORY_PLAN_CAPABILITIES, STORY_AUDIO_CAPABILITIES, PROJECT_ASSET_IMPORT_CAPABILITIES, CORRECTION_WORKFLOW_CAPABILITIES, REFERENCE_LAYERS_CAPABILITIES, LAYERED_DRAWING_CAPABILITIES } from './studio-workbench-contract.js';
+import { studioToolSchemas, nativeStudioCanonicalAction, CHARACTER_PERFORMANCE_CAPABILITIES, HAND_ANIMATION_CAPABILITIES, HUMAN_ANIMATION_CAPABILITIES, STORY_STAGE_CAPABILITIES, ACTOR_PROP_CAPABILITIES, DIALOGUE_PHRASE_CAPABILITIES, GRIP_LINK_CAPABILITIES, STORY_PLAN_CAPABILITIES, STORY_AUDIO_CAPABILITIES, PROJECT_ASSET_IMPORT_CAPABILITIES, CORRECTION_WORKFLOW_CAPABILITIES, REFERENCE_LAYERS_CAPABILITIES, LAYERED_DRAWING_CAPABILITIES, AUTHORED_DEFORMATION_CAPABILITIES } from './studio-workbench-contract.js';
 import { DurableObject } from "cloudflare:workers";
 import { McpServer } from "@modelcontextprotocol/server";
 import { createMcpHandler } from "agents/mcp/server";
@@ -1788,6 +1788,7 @@ function serverForApp(env,ownerKey,protocolVersion=1){
     humanAnimation:isV3&&typeof HUMAN_ANIMATION_CAPABILITIES!=='undefined'?HUMAN_ANIMATION_CAPABILITIES:undefined,
     referenceLayers:isV3&&typeof REFERENCE_LAYERS_CAPABILITIES!=='undefined'?REFERENCE_LAYERS_CAPABILITIES:undefined,
     layeredDrawing:isV3&&typeof LAYERED_DRAWING_CAPABILITIES!=='undefined'?LAYERED_DRAWING_CAPABILITIES:undefined,
+    authoredDeformation:isV3&&typeof AUTHORED_DEFORMATION_CAPABILITIES!=='undefined'?AUTHORED_DEFORMATION_CAPABILITIES:undefined,
     correctionWorkflow:isV3&&typeof CORRECTION_WORKFLOW_CAPABILITIES!=='undefined'?CORRECTION_WORKFLOW_CAPABILITIES:undefined,
     storyStage:isV3&&typeof STORY_STAGE_CAPABILITIES!=='undefined'?STORY_STAGE_CAPABILITIES:undefined,
     actorProp:isV3&&typeof ACTOR_PROP_CAPABILITIES!=='undefined'?ACTOR_PROP_CAPABILITIES:undefined,

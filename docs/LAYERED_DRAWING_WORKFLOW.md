@@ -123,3 +123,53 @@ creates an ordinary fitted native path. Watch ChatGPT and Replay last saved
 drawing now reveal the actual fitted curve progressively; the app pointer follows
 the same path prefix. Saved source operations and request fingerprints are
 unchanged. This does not recover the reference artist's stroke order.
+
+## Owned paint and pen deformation (4.9.5)
+
+Paint Studio > Paint deformation grid prepares a read-only grid on a worker,
+shows the actual retained paint over checkerboard/dark/light, and supports fit,
+zoom/pan, grid visibility, numeric/drag vertex editing and frame keys. Save and
+Remove grid use normal Undo. Preparation retains the immutable paint descriptor;
+full-resolution source decoding is separate from the 128..1024 viewport limit.
+A tall source is never silently reduced to fit the preview.
+
+Ordinary ChatGPT uses `sketch_inspect` with exact `expectedRevision` and
+`paintMeshPreparation: {objectId, columns, rows}`. Apply the returned normal
+`update_object` operation through `sketch_edit` against `sourceRevision`.
+Check `sourcePaintSha256`; the operation does not replace the paint snapshot.
+Explicit preparation/mesh fields require native4.9.5. Omission preserves older
+request floors and fingerprints. Removing a grid uses `paintMesh: null`.
+
+The grid has 1..16 cells per axis, exactly row-major vertices in -4..4 and up to
+1200 consistent-topology keys. Inverted, degenerate and between-key collapsing
+triangles reject. Aggregate document key/point limits still apply. Source pixels
+are bounded to1048576, raster caches together to12MiB and prepared full-source
+alpha support to8MiB. A regular undeformed grid takes the ordinary paint render
+path, preserving every transformed RGBA value, including cached previews.
+Selection uses source alpha and the actual deformed triangles; empty paint
+padding does not intercept another part. Source painting/fill rejects while a
+mesh is active; remove the grid before changing source pixels.
+
+Animation > Rig and artwork > Deform pen / paint shares the compiler's retained
+regional recipe. Choose the fixed and moving joints, source/world frame0 segment
+and pixel radius, or choose 1..4 explicit positive joint influences per vertex.
+Region and explicit weights are exclusive. The moving joint must match the
+binding and at least one vertex must have positive moving influence. The same
+helper drives preview and bake. Paint keys and regional pen shape keys remain
+editable; static cels/components freeze the selected pose and archives retain it.
+
+Brush / Text > Object order and `reorder_object {objectId,index}` change depth
+inside the owning unlocked layer through normal Undo. Source pixels stay intact.
+Protected reference/preliminary stages remain protected. Explicit object order
+requires4.9.5 in nested MCP/correction requests as well.
+
+Sparse multiply layers now use API29+ BlendMode.MULTIPLY with source-over alpha.
+An empty multiply layer cannot erase separated artwork. Existing unrelated
+blend modes retain their behavior. Animation preparation also keeps an authored
+multi-frame duration, including96 frames; only a one-frame drawing receives the
+legacy100-frame starting layout.
+
+These are reusable authoring controls, not an automatic detailed redraw or a
+3D orbit. Private profile and arm-bend studies must be visually inspected before
+further action shots. The separate older IMAGE mirror/trim alpha regression
+remains unresolved; paint-grid neutrality does not establish that repair.

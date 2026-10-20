@@ -1,3 +1,23 @@
+# Active authored deformation — 2026-10-20
+
+Work on feat/native-authored-deformation-v495, based on frozen signed4.9.4
+84f587cb87cc35329737ab390728ab7ba27302c4. Target4.9.5/code498 is IN PROGRESS,
+not integrated-verified or signed. Add native paintMesh and retained localized
+pen/paint rig regions so actual owned shading bends with linework. Shared manual
+and ordinary MCP controls, source hashes, normal Undo, archive/static/timeline
+preservation, bounded caches and full-source alpha picking are required. Keep
+4.9.4 candidate/evidence intact; do not alter its pushed feature branch.
+
+4.9.4 CI39454454867 passed2107 Android tests/0failures/0errors/12skips; APK
+package/signature/version independently verified. Native review study is one
+silent4s quiet reaction, with96PNGs, video packaging and editable source-free
+archive. It is NOT the240s film. Newly authored left-profile construction and
+refinement studies remain NEEDS_REWORK, not a 3D camera orbit or source-grounded
+unseen anatomy. All private art/evidence stays /workspace/work/native-authored-scene.
+Continue real limb-motion studies and newly drawn views after deformation checks.
+Voice tab last. No Worker/main/stable/signing/device-identity changes. One local
+Gradle owned by root. Existing isolated4.8.8 mirror/trim failure stays unresolved.
+
 # Active contour-paint repair — 2026-10-20
 
 Current branch feat/native-authored-paint-fill-v494 extends verified4.9.3

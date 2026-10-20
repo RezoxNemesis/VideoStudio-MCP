@@ -19,6 +19,7 @@ public final class SketchEditOps {
         return executeWithSession(context,"sketch_edit",args,expectedSessionId);
     }
     private static JSONObject executeWithSession(Context context,String action,JSONObject args,String expectedSessionId)throws Exception {
+        args=SketchPaintMesh.normalizeFeatureFields(args);
         JSONObject result=executeInternal(context,action,args,expectedSessionId);result.put("ok",true);
         // A hidden guide is preparatory data, not a request to change the
         // foreground drawing. Actual edits and live sessions still follow.
@@ -61,7 +62,7 @@ public final class SketchEditOps {
                 return SketchQualityAudit.inspect(context,doc,args);
             }
             if("sketch_inspect".equals(action)){
-                SketchDocument.fields(args,"sketchId,expectedRevision,frameOffset,frameLimit,characterLayerIds,contourObjectIds");JSONObject doc=store.get(id);if(args.has("expectedRevision"))SketchProjectStore.requireRevision(doc,SketchDocument.integer(args,"expectedRevision",1,Long.MAX_VALUE-1));return SketchInspection.inspect(doc,args);
+                SketchDocument.fields(args,"sketchId,expectedRevision,frameOffset,frameLimit,characterLayerIds,contourObjectIds,paintMeshPreparation");JSONObject doc=store.get(id);if(args.has("expectedRevision"))SketchProjectStore.requireRevision(doc,SketchDocument.integer(args,"expectedRevision",1,Long.MAX_VALUE-1));JSONObject result=SketchInspection.inspect(doc,args);if(args.has("paintMeshPreparation")){JSONObject prep=args.getJSONObject("paintMeshPreparation");SketchDocument.fields(prep,"objectId,columns,rows");JSONObject request=SketchDocument.copy(prep).put("sketchId",id).put("expectedRevision",SketchDocument.integer(args,"expectedRevision",1,Long.MAX_VALUE-1));result.put("paintMeshPreparation",SketchPaintMeshPrepare.prepare(context,request));}return result;
             }
             if("sketch_xsheet".equals(action)){
                 SketchDocument.fields(args,"sketchId,expectedRevision,frameOffset,frameLimit");
@@ -320,6 +321,9 @@ public final class SketchEditOps {
                 SketchDocument.fields(op, "type,layerId"); String id = SketchDocument.id(op, "layerId"); requireUnlocked(SketchDocument.layer(doc, id));
                 remove(doc.getJSONArray("layers"), id); break;
             }
+            case "reorder_object": {
+                SketchDocument.fields(op,"type,objectId,index");String id=SketchDocument.id(op,"objectId");JSONObject layer=SketchDocument.owner(doc,id);requireUnlocked(layer);JSONArray objects=layer.getJSONArray("objects"),ordered=new JSONArray();int targetIndex=(int)SketchDocument.integer(op,"index",0,objects.length()-1);JSONObject selected=SketchDocument.object(doc,id);java.util.ArrayList<JSONObject> remaining=new java.util.ArrayList<>();for(int i=0;i<objects.length();i++)if(!id.equals(objects.getJSONObject(i).getString("id")))remaining.add(objects.getJSONObject(i));for(int i=0,cursor=0;i<objects.length();i++)ordered.put(i==targetIndex?selected:remaining.get(cursor++));layer.put("objects",ordered);break;
+            }
             case "reorder_layer": {
                 SketchDocument.fields(op, "type,layerId,index"); JSONArray layers = doc.getJSONArray("layers");
                 int index = (int) SketchDocument.integer(op, "index", 0, layers.length() - 1);
@@ -388,14 +392,16 @@ public final class SketchEditOps {
             }
             case "update_object": {
                 SketchDocument.fields(op, "type,objectId,patch"); String id = SketchDocument.id(op, "objectId"); requireUnlocked(SketchDocument.owner(doc, id));
-                JSONObject patch = op.getJSONObject("patch"); SketchDocument.fields(patch, "color,styleId,width,fill,points,bounds,frame,exposure,brush,commands,shapeKeys,gradient,referenceCrop,text,fontFamily,fontSize,fontStyle,textAlign,letterSpacing,hand,human");
+                JSONObject patch = op.getJSONObject("patch"); SketchDocument.fields(patch, "color,styleId,width,fill,points,bounds,frame,exposure,brush,commands,shapeKeys,paintMesh,gradient,referenceCrop,text,fontFamily,fontSize,fontStyle,textAlign,letterSpacing,hand,human");
                 if(SketchDocument.object(doc,id).has("masterLink"))
                     for(String field:new String[]{"color","styleId","width","fill","commands","shapeKeys","gradient","brush"})
                         if(patch.has(field))throw SketchDocument.bad("Linked artwork appearance must be edited with master_patch, master_override or master_detach");
                 JSONObject target=SketchDocument.object(doc,id);
                 // An explicit direct recolor is a deliberate opt-out of the linked palette.
                 if(patch.has("color")&&!patch.has("styleId"))target.remove("styleId");
+                if(patch.has("paintMesh")&&!"paint".equals(target.getString("kind")))throw SketchDocument.bad("Paint mesh patches require a paint cel");
                 merge(target, patch);
+                if(patch.has("paintMesh")&&patch.isNull("paintMesh"))target.remove("paintMesh");
                 if("hand".equals(target.optString("kind")))SketchHandAnimation.refreshBounds(doc,target);
                 if("human".equals(target.optString("kind")))SketchHumanAnimation.refreshBounds(doc,target);
                 if(patch.has("shapeKeys"))target.put("shapeKeys",new JSONArray(patch.getJSONArray("shapeKeys").toString()));

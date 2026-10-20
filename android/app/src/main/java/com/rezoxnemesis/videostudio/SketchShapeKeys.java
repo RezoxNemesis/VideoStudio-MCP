@@ -55,7 +55,7 @@ final class SketchShapeKeys {
         while(fields.hasNext()){String field=fields.next();if(!"shapeKeys".equals(field))snapshot.put(field,object.get(field));}
         JSONObject result=SketchDocument.copy(snapshot);
         if("path".equals(object.getString("kind")))result.put("commands",commandsAt(object,frame));
-        result.remove("shapeKeys");return result;
+        result.remove("shapeKeys");return result.has("paintMesh")?SketchPaintMesh.sampled(result,frame):result;
     }
     static void apply(JSONObject object,JSONObject operation,int frames)throws Exception {
         SketchDocument.fields(operation,"type,objectId,frame,commands,interpolation,curve,remove");

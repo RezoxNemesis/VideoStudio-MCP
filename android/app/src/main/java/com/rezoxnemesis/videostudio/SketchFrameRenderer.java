@@ -26,6 +26,7 @@ public final class SketchFrameRenderer implements AutoCloseable {
     private SketchPaintStore paintStore;
     private final LinkedHashMap<String, Bitmap> paintCache = new LinkedHashMap<>(16,.75f,true);
     private long paintBytes;
+    private final LinkedHashMap<String,Bitmap> paintMeshCache=new LinkedHashMap<>(16,.75f,true);
     private int preparedDimension;
     private String paintPresentationObject;
     private SketchPaintReplay.Frame paintPresentation;
@@ -34,20 +35,24 @@ public final class SketchFrameRenderer implements AutoCloseable {
     private long imageBytes;
     private boolean prepareSelections;
     private final Map<String,ImageSelection> imageSelections=new java.util.HashMap<>();
-    /** Immutable full-source alpha support; up to32 images within a shared8 MiB budget. */
+    /** Immutable full-source image/paint alpha support within a shared8 MiB budget. */
     static final class ImageSelection {
         final int width,height;private final long[] words;
         ImageSelection(Bitmap image){width=image.getWidth();height=image.getHeight();java.util.BitSet bits=new java.util.BitSet(width*height);int[] row=new int[width];
-            for(int y=0;y<height;y++){image.getPixels(row,0,width,0,y,width,1);for(int x=0;x<width;x++)if((row[x]>>>24)!=0)bits.set(y*width+x);}words=bits.toLongArray();}
+            for(int y=0;y<height;y++){if(Thread.currentThread().isInterrupted())throw new IllegalStateException("Part selection cancelled");image.getPixels(row,0,width,0,y,width,1);for(int x=0;x<width;x++)if((row[x]>>>24)!=0)bits.set(y*width+x);}words=bits.toLongArray();}
         boolean contains(int x,int y){if(x<0||y<0||x>=width||y>=height)return false;int index=y*width+x,word=index>>>6;return word<words.length&&(words[word]&(1L<<(index&63)))!=0;}
         long bytes(){return words.length*8L;}
     }
     void enableImageSelections(){requireRasterWorker();prepareSelections=true;}
     Map<String,ImageSelection> imageSelections(){return java.util.Collections.unmodifiableMap(new java.util.HashMap<>(imageSelections));}
     long preparedSelectionBytes(){long bytes=0;for(ImageSelection mask:imageSelections.values())bytes+=mask.bytes();return bytes;}
+    /** Reuse only immutable, hash-matching full-source masks; never retain another frame's unbounded map. */
+    void reuseSelections(Map<String,ImageSelection> previous)throws Exception {
+        requireRasterWorker();java.util.HashMap<String,int[]> eligible=new java.util.HashMap<>();JSONArray layers=document.getJSONArray("layers");for(int i=0;i<layers.length();i++){JSONArray objects=layers.getJSONObject(i).getJSONArray("objects");for(int j=0;j<objects.length();j++){JSONObject object=objects.getJSONObject(j);if("paint".equals(object.getString("kind")))eligible.put("paint:"+object.getJSONObject("paint").getString("sha256"),new int[]{document.getInt("width"),document.getInt("height")});else if("image".equals(object.getString("kind"))){JSONObject ref=object.getJSONObject("reference");eligible.put(ref.getString("sha256"),new int[]{ref.getInt("width"),ref.getInt("height")});}}}for(Map.Entry<String,ImageSelection> entry:previous.entrySet()){int[] size=eligible.get(entry.getKey());ImageSelection value=entry.getValue();if(size!=null&&size[0]==value.width&&size[1]==value.height&&preparedSelectionBytes()+value.bytes()<=8L*1024*1024)imageSelections.put(entry.getKey(),value);}
+    }
     private void captureSelection(String hash,Bitmap image){
         if(!prepareSelections||imageSelections.containsKey(hash))return;requireRasterWorker();
-        ImageSelection mask=new ImageSelection(image);if(imageSelections.size()>=SketchDocument.MAX_IMAGES||preparedSelectionBytes()+mask.bytes()>8L*1024*1024)throw new IllegalStateException("Part selection exceeds its8 MiB bound");imageSelections.put(hash,mask);
+        ImageSelection mask=new ImageSelection(image);if(preparedSelectionBytes()+mask.bytes()>8L*1024*1024)throw new IllegalStateException("Part selection exceeds its8 MiB bound");imageSelections.put(hash,mask);
     }
 
     private final Map<String,Path> geometryCache=new java.util.HashMap<>();
@@ -159,7 +164,7 @@ public final class SketchFrameRenderer implements AutoCloseable {
             if(Thread.currentThread().isInterrupted())throw new InterruptedException("Raster preparation cancelled");
             if("image".equals(object.getString("kind"))){image(object.getJSONObject("reference"));continue;}
             JSONObject descriptor=object.getJSONObject("paint");String hash=descriptor.getString("sha256");
-            if(paintCache.containsKey(hash))continue;
+            ensurePaintSelection(descriptor);if(paintCache.containsKey(hash))continue;
             Bitmap bitmap=fitCacheBitmap(paints().render(descriptor,Math.max(128,edge),null),edge);
             paintCache.put(hash,bitmap);paintBytes+=bitmap.getAllocationByteCount();
         }
@@ -232,7 +237,8 @@ public final class SketchFrameRenderer implements AutoCloseable {
             Paint composite = new Paint(Paint.ANTI_ALIAS_FLAG);
             composite.setAlpha((int) Math.round(255 * layer.getDouble("opacity") * transform.getDouble("opacity")));
             String blend=layer.optString("blendMode","normal");
-            if(!"normal".equals(blend))composite.setXfermode(new PorterDuffXfermode("multiply".equals(blend)?PorterDuff.Mode.MULTIPLY:"screen".equals(blend)?PorterDuff.Mode.SCREEN:PorterDuff.Mode.ADD));
+            if("multiply".equals(blend))composite.setBlendMode(android.graphics.BlendMode.MULTIPLY);
+            else if(!"normal".equals(blend))composite.setXfermode(new PorterDuffXfermode("screen".equals(blend)?PorterDuff.Mode.SCREEN:PorterDuff.Mode.ADD));
             // Each layer is isolated: DST_OUT erases its pixels and reveals lower layers.
             int save = canvas.saveLayer(new RectF(0, 0, w, h), composite);
             canvas.concat(matrix(transform, w, h));
@@ -254,7 +260,7 @@ public final class SketchFrameRenderer implements AutoCloseable {
         String kind = object.getString("kind");
         if("human".equals(kind)){SketchHumanAnimation.draw(context,canvas,object,w,h,frame,alpha);return;}
         if("hand".equals(kind)){SketchHandAnimation.draw(canvas,object,w,h,frame,alpha);return;}
-        if("paint".equals(kind)){drawPaint(canvas,object,w,h,alpha);return;}
+        if("paint".equals(kind)){drawPaint(canvas,object,w,h,alpha,frame);return;}
         boolean partial=object.getString("id").equals(presentationObject)&&presentationFraction<1;
         boolean append=appendBaselinePoints>0&&object.getString("id").equals(appendPresentationObject)&&("stroke".equals(kind)||"eraser".equals(kind));
         if(partial&&presentationFraction<=0&&!append)return;Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
@@ -296,8 +302,13 @@ public final class SketchFrameRenderer implements AutoCloseable {
         JSONArray revealed=SketchStrokeProgress.prefix(travel,fraction);for(int i=1;i<revealed.length();i++)result.put(revealed.getJSONArray(i));return result;
     }
 
-    private void drawPaint(Canvas canvas,JSONObject object,int w,int h,double alpha)throws Exception{
+    private void drawPaint(Canvas canvas,JSONObject object,int w,int h,double alpha,int meshFrame)throws Exception{
         if(alpha<=0)return;Paint composite=new Paint(Paint.ANTI_ALIAS_FLAG|Paint.FILTER_BITMAP_FLAG);composite.setAlpha((int)Math.round(255*alpha));
+        ensurePaintSelection(object.getJSONObject("paint"));
+        if(object.has("paintMesh")&&!SketchPaintMesh.regularAt(object,meshFrame)){
+            Bitmap texture=android.os.Looper.myLooper()==android.os.Looper.getMainLooper()?paintCache.get(object.getJSONObject("paint").getString("sha256")):meshPaintTexture(object.getJSONObject("paint"));
+            if(texture==null)throw new IllegalStateException("Paint grid texture is preparing");JSONObject mesh=object.getJSONObject("paintMesh");composite.setStyle(Paint.Style.FILL);canvas.drawBitmapMesh(texture,mesh.getInt("columns"),mesh.getInt("rows"),SketchPaintMesh.vertices(object,meshFrame,w,h),0,null,0,composite);return;
+        }
         SketchPaintReplay.Frame frame=object.getString("id").equals(paintPresentationObject)?paintPresentation:null;
         if(frame!=null){if(frame.bitmap.isRecycled())throw new IllegalStateException("Paint publication was recycled before detachment");RectF region=frame.crop==null?new RectF(0,0,w,h):bounds(frame.crop,w,h);canvas.drawBitmap(frame.bitmap,null,region,composite);return;}
         JSONObject descriptor=object.getJSONObject("paint");
@@ -309,6 +320,17 @@ public final class SketchFrameRenderer implements AutoCloseable {
     }
 
     private static Path partialPath(Path full,float fraction,Paint paint){android.graphics.PathMeasure measure=new android.graphics.PathMeasure(full,false);float total=0;do{total+=measure.getLength();}while(measure.nextContour());measure.setPath(full,false);float remaining=total*fraction;Path result=new Path();do{float take=Math.min(remaining,measure.getLength());if(take>0)measure.getSegment(0,take,result,true);remaining-=take;}while(remaining>0&&measure.nextContour());paint.setStyle(Paint.Style.STROKE);return result;}
+    private void ensurePaintSelection(JSONObject descriptor)throws Exception {
+        String hash=descriptor.getString("sha256"),key="paint:"+hash;if(!prepareSelections||imageSelections.containsKey(key))return;requireRasterWorker();Bitmap source=paintMeshCache.get(hash);if(source!=null){captureSelection(key,source);return;}source=paints().renderSource(descriptor);try{captureSelection(key,source);}finally{source.recycle();}
+    }
+
+    private Bitmap meshPaintTexture(JSONObject descriptor)throws Exception {
+        requireRasterWorker();String hash=descriptor.getString("sha256");Bitmap cached=paintMeshCache.get(hash);if(cached!=null)return cached;
+        Bitmap image=paints().renderSource(descriptor);long bytes=image.getAllocationByteCount();
+        while(!paintMeshCache.isEmpty()&&paintBytes+imageBytes+bytes>CACHE_BYTES){Map.Entry<String,Bitmap> first=paintMeshCache.entrySet().iterator().next();paintBytes-=first.getValue().getAllocationByteCount();first.getValue().recycle();paintMeshCache.remove(first.getKey());}
+        if(paintBytes+imageBytes+bytes>CACHE_BYTES){image.recycle();throw SketchDocument.bad("Native paint mesh cache exceeds its12MiB bound");}paintMeshCache.put(hash,image);paintBytes+=bytes;return image;
+    }
+
     public static Path path(JSONArray commands,int w,int h) throws Exception {
         Path p=new Path();for(int i=0;i<commands.length();i++){JSONArray a=commands.getJSONArray(i);switch(a.getString(0)){
             case "M":p.moveTo((float)a.getDouble(1)*w,(float)a.getDouble(2)*h);break;
@@ -356,10 +378,11 @@ public final class SketchFrameRenderer implements AutoCloseable {
         if (image.getWidth() != reference.getInt("width") || image.getHeight() != reference.getInt("height")) { image.recycle(); throw new IllegalStateException("SKETCH_REFERENCE_CHANGED"); }
         captureSelection(hash,image);
         if(preparedDimension>0)image=fitCacheBitmap(image,preparedDimension);
-        while (!imageCache.isEmpty() && imageBytes + image.getAllocationByteCount() > CACHE_BYTES) {
+        while (!imageCache.isEmpty() && imageBytes + paintBytes + image.getAllocationByteCount() > CACHE_BYTES) {
             Map.Entry<String, Bitmap> oldest = imageCache.entrySet().iterator().next(); Bitmap removed = oldest.getValue();
             imageBytes -= removed.getAllocationByteCount(); imageCache.remove(oldest.getKey()); removed.recycle();
         }
+        if(imageBytes+paintBytes+image.getAllocationByteCount()>CACHE_BYTES){image.recycle();throw SketchDocument.bad("Combined native raster cache exceeds12MiB");}
         imageCache.put(hash, image); imageBytes += image.getAllocationByteCount(); return image;
     }
     public static boolean exposed(JSONObject object, int frame) throws Exception { int start = object.getInt("frame"); return frame >= start && frame < start + object.getInt("exposure"); }
@@ -379,9 +402,12 @@ public final class SketchFrameRenderer implements AutoCloseable {
     }
     /** Select topmost exposed object using the same matrices and geometry as rasterization. */
     public static String hitTest(JSONObject document, int frame, double x, double y, double tolerance) throws Exception {
-        return hitTest(document,frame,x,y,tolerance,java.util.Collections.emptyMap());
+        return hitTestInternal(document,frame,x,y,tolerance,java.util.Collections.emptyMap(),true);
     }
     static String hitTest(JSONObject document,int frame,double x,double y,double tolerance,Map<String,ImageSelection> selections)throws Exception {
+        return hitTestInternal(document,frame,x,y,tolerance,selections,false);
+    }
+    private static String hitTestInternal(JSONObject document,int frame,double x,double y,double tolerance,Map<String,ImageSelection> selections,boolean legacyBounds)throws Exception {
         int w = document.getInt("width"), h = document.getInt("height"); JSONArray layers = document.getJSONArray("layers");
         for (int i = layers.length() - 1; i >= 0; i--) {
             JSONObject layer = layers.getJSONObject(i); if (!layer.getBoolean("visible") || layer.getBoolean("locked") || layer.getDouble("opacity") <= 0 || SketchDocument.transformAt(layer, frame).getDouble("opacity") <= 0) continue;
@@ -394,7 +420,11 @@ public final class SketchFrameRenderer implements AutoCloseable {
                 String kind = object.getString("kind");
                 if (object.has("bounds")) {
                     RectF bounds = bounds(object.getJSONObject("bounds"), w, h);
-                    if("image".equals(kind)&&object.getJSONObject("reference").has("sourceMask")){
+                    if("paint".equals(kind)&&(!legacyBounds||object.has("paintMesh"))){
+                        double[] uv=object.has("paintMesh")?SketchPaintMesh.sourceAt(object,frame,p[0]/w,p[1]/h):new double[]{p[0]/w,p[1]/h};if(uv==null||uv[0]<0||uv[0]>=1||uv[1]<0||uv[1]>=1)continue;ImageSelection support=selections.get("paint:"+object.getJSONObject("paint").getString("sha256"));if(support==null||support.width!=w||support.height!=h)throw new IllegalStateException("Paint selection is preparing. Refresh preview before selecting.");
+                        int sx=(int)Math.floor(uv[0]*w),sy=(int)Math.floor(uv[1]*h);if(support.contains(sx,sy))return object.getString("id");continue;
+                    }
+                    if("image".equals(kind)&&(!legacyBounds||object.getJSONObject("reference").has("sourceMask"))){
                         // A cutout retains the full reference canvas. Its transparent
                         // padding must not intercept taps on another named part.
                         if(!bounds.contains(p[0],p[1]))continue;
@@ -445,7 +475,7 @@ public final class SketchFrameRenderer implements AutoCloseable {
         }
         return inside;
     }
-    private void clearPaintCache(){for(Bitmap bitmap:paintCache.values())bitmap.recycle();paintCache.clear();paintBytes=0;}
+    private void clearPaintCache(){for(Bitmap bitmap:paintCache.values())bitmap.recycle();paintCache.clear();for(Bitmap bitmap:paintMeshCache.values())bitmap.recycle();paintMeshCache.clear();paintBytes=0;}
     private void clearImageCache(){for(Bitmap image:imageCache.values())image.recycle();imageCache.clear();imageBytes=0;}
     @Override public void close() {imageSelections.clear();clearImageCache();clearPaintCache();if(paintStore!=null){paintStore.close();paintStore=null;}paintPresentation=null;paintPresentationObject=null;geometryCache.clear();exposures.clear(); }
 }

@@ -183,7 +183,7 @@ public final class SketchAgentHand {
 
     private static boolean supported(String type){
         switch(type){case "paint_fill":case "precision_contour":case "add_object":case "paint_stroke":case "append_points":case "update_object":case "delete_object":
-            case "add_layer":case "update_layer":case "delete_layer":case "reorder_layer":case "set_canvas":case "set_timing":
+            case "add_layer":case "update_layer":case "delete_layer":case "reorder_layer":case "reorder_object":case "set_canvas":case "set_timing":
             case "set_transform":case "set_keyframe":case "set_exposure":case "set_reference_visibility":
             case "duplicate_cel":case "clear_cel":case "insert_frame":case "delete_frame":case "add_paint_cel":return true;
             default:return false;}

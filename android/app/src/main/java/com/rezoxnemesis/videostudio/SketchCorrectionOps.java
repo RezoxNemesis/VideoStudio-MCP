@@ -8,7 +8,7 @@ import java.util.*;
 /** Explicitly operated review -> native proposal -> preview -> atomic apply coordinator.
  * Review decisions are authored observations; this class does not infer artistic quality. */
 final class SketchCorrectionOps {
-    static final Set<String> SUPPORTED=Set.of("add_layer","update_layer","delete_layer","reorder_layer","add_object","update_object","delete_object","set_transform","set_keyframe","set_shape_key","set_exposure","append_points","add_human_animation","add_hand_animation","add_eye_animation","add_mouth_animation","add_face_animation","add_character_animation","add_motion_study","add_solid","add_solid_collision","add_story_stage","add_actor_prop","add_grip_link","symmetry_stroke");
+    static final Set<String> SUPPORTED=Set.of("add_layer","update_layer","delete_layer","reorder_layer","reorder_object","add_object","update_object","delete_object","set_transform","set_keyframe","set_shape_key","set_exposure","append_points","add_human_animation","add_hand_animation","add_eye_animation","add_mouth_animation","add_face_animation","add_character_animation","add_motion_study","add_solid","add_solid_collision","add_story_stage","add_actor_prop","add_grip_link","symmetry_stroke");
     private SketchCorrectionOps(){}
     static synchronized JSONObject execute(Context context,String action,JSONObject args)throws Exception{
         if(args==null||args.toString().getBytes(StandardCharsets.UTF_8).length>512*1024)throw SketchDocument.bad("Correction request exceeds512KiB");

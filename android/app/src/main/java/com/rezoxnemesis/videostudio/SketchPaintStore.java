@@ -168,6 +168,13 @@ public final class SketchPaintStore implements AutoCloseable {
         catch(Exception|OutOfMemoryError error){output.recycle();throw error;}
     }
 
+    /** Exact full-canvas source for bounded deformation and alpha support, independent of viewport limits. */
+    Bitmap renderSource(JSONObject descriptor)throws Exception {
+        if(android.os.Looper.myLooper()==android.os.Looper.getMainLooper())throw new IllegalStateException("Full paint source requires a worker");
+        validateDescriptor(descriptor);interrupted();Bitmap image=Bitmap.createBitmap(descriptor.getInt("width"),descriptor.getInt("height"),Bitmap.Config.ARGB_8888);
+        try{draw(new Canvas(image),descriptor);interrupted();return image;}catch(Exception|OutOfMemoryError failure){image.recycle();throw failure;}
+    }
+
     /** Worker-only native resolution streaming into an existing export/viewport Canvas. */
     public void draw(Canvas canvas,JSONObject d)throws Exception {
         JSONObject m=manifest(d);int w=d.getInt("width"),h=d.getInt("height"),columns=(w+TILE_SIZE-1)/TILE_SIZE;
@@ -319,7 +326,7 @@ public final class SketchPaintStore implements AutoCloseable {
     private static final class Target {final JSONObject object,before;final SketchPaintBrush.Plan plan;final int frame;Target(JSONObject object,JSONObject before,SketchPaintBrush.Plan plan,int frame){this.object=object;this.before=before;this.plan=plan;this.frame=frame;}}
     private Target target(JSONObject document,JSONObject operation)throws Exception {
         if(!id.equals(document.getString("id")))throw bad("SKETCH_PAINT_OWNERSHIP: wrong sketch document");int width=integer(document,"width",256,2048),height=integer(document,"height",256,2048);dimensions(width,height);SketchPaintBrush.Plan plan=SketchPaintBrush.plan(operation,width,height);
-        String objectId=safeId(plan.stroke.getString("objectId"));JSONObject object=SketchDocument.object(document,objectId);if(!"paint".equals(object.getString("kind")))throw bad("Paint stroke requires a paint cel");SketchEditOps.requireUnlocked(SketchDocument.owner(document,objectId));
+        String objectId=safeId(plan.stroke.getString("objectId"));JSONObject object=SketchDocument.object(document,objectId);if(!"paint".equals(object.getString("kind")))throw bad("Paint stroke requires a paint cel");if(object.has("paintMesh"))throw bad("Remove the paint deformation grid before authoring source pixels");SketchEditOps.requireUnlocked(SketchDocument.owner(document,objectId));
         int frames=integer(document,"frameCount",1,1200),start=integer(object,"frame",0,frames-1),exposure=integer(object,"exposure",1,frames-start),frame=plan.stroke.has("frameIndex")?integer(plan.stroke,"frameIndex",0,frames-1):start;if(frame<start||frame>=start+exposure)throw bad("Paint stroke frame must be inside its target cel exposure");
         JSONObject bounds=object.getJSONObject("bounds");SketchDocument.validateBounds(bounds);if(bounds.getDouble("x")!=0||bounds.getDouble("y")!=0||bounds.getDouble("width")!=1||bounds.getDouble("height")!=1)throw bad("Paint cel bounds must cover its native canvas");
         JSONObject before=copy(object.getJSONObject("paint"));validateDescriptor(before);if(before.getInt("width")!=width||before.getInt("height")!=height)throw bad("Paint cel dimensions must match canvas");return new Target(object,before,plan,frame);

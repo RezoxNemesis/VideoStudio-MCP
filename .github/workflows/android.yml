@@ -170,6 +170,8 @@ jobs:
             android/app/build/sketch-action-film/
             android/app/build/sketch-animation-ui/
             android/app/build/sketch-layered-drawing/
+            android/app/build/native-paint-mesh-neutrality/
+            android/app/build/native-multiply-alpha/
           if-no-files-found: warn
           retention-days: 7
 
