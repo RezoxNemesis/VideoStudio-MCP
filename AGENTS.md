@@ -1,3 +1,15 @@
+# Active focused native paint grid — 2026-10-20
+
+Current feat/native-focused-paint-grid-v498 extends committed test-driver9c5d54a
+and signed product9682d9c (4.9.7/code500). Target4.9.8/code501 is IN PROGRESS.
+Read docs/continuity/NATIVE_FOCUSED_PAINT_GRID_498.md. Preserve all failed native
+90-degree and sampling generations. New sourceRect/focusToInk keep source paint
+identity and existing topology/cache/selection guards; manual and ordinary MCP
+must agree. Do not call focused grids a cure for anatomical bending: invalid
+focused90-degree recipes still reject. Continue separately authored articulated
+sleeve, hand contacts, coherent clothing and other views toward240s; voice last.
+One local Gradle owned by root. No Worker/main/stable/new signer/device reset.
+
 # Active real editor evidence — 2026-10-20
 
 Frozen4.9.7/code500 product source9682d9cd37249d38142b1f02db8c5c16c8703dbf
