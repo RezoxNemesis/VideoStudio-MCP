@@ -42,3 +42,5 @@ No native track is rendered or played by this pure module; it does not open medi
 - No edits to other phase modules, current production renderer, `SketchDocument`, `SketchEditOps`, `NativeSpeechEngine`, `NativeStartupGuard`, signing or recovery safety. No main merge or installation.
 
 **Gate:** engine prepared for integration review, not fully implemented or shipped.
+## Revalidation after integration ownership-gate correction
+The previous Phase 7 GitHub CI failure happened before Java compilation because the former two-dot ownership check attributed integration-only CI files to this branch. The integration owner fixed the checker to compare from the merge base without widening the Phase 7 allowlist. This documentation-only commit re-triggers the latest scoped CI. The waveform/viseme engine is still additive until native UI and audible MP4 verification exist.
