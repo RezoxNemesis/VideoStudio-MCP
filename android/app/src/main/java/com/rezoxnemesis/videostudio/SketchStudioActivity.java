@@ -30,6 +30,7 @@ import java.util.UUID;
 
 /** Real native vector/cel studio. Touch and numeric changes call the same facade as ChatGPT. */
 public final class SketchStudioActivity extends Activity implements SketchCanvasView.Listener {
+    private static final int REQUEST_3D_CEL = 5310;
     private SketchLivePlayer livePlayer;private String liveSessionId="",liveDrawingObject,liveCaption;private long liveDisplayedRevision;
     private String notifiedSketchId,notifiedSessionId,liveMethod="";
     private boolean notificationReplayPending,replaySelectedFromFile;
@@ -140,6 +141,40 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
             if (state != null&&document!=null) setFrame(state.getInt("frame", 0));
             handler.postDelayed(watchTick,250);
         } catch (Exception e) { onMessage(e.getMessage()); openDocument(); }
+    }
+
+    private void handle3DPoseResult(int resultCode,Intent data){
+        if(resultCode!=RESULT_OK||data==null)return;
+        final String target=data.getStringExtra("sketchId");
+        final String projectId=data.getStringExtra("projectId");
+        final String assetId=data.getStringExtra("assetId");
+        final String mode=data.getStringExtra("traceMode");
+        final int frame=data.getIntExtra("frameIndex",-1);
+        if(target==null||projectId==null||assetId==null||!target.equals(sketchId)){
+            onMessage("3D pose was saved in the project, but the active drawing changed. Reopen it before conversion.");
+            return;
+        }
+        stopPlayback();
+        final SketchEditorSession opened=session;
+        final int generation=loadGeneration,page=pageGeneration;
+        afterSaves(()->{
+            // Prevent inserting the captured pose into a different foreground
+            // sketch/page after a concurrent agent or human editor switch.
+            if(opened==null||session!=opened||generation!=loadGeneration
+                    ||page!=pageGeneration||!target.equals(sketchId))
+                throw new IllegalStateException("Drawing changed: 3D pose remains in the project media bin");
+            JSONObject result=Sketch3DCelBridge.importCapturedPose(this,target,projectId,assetId,frame,mode);
+            postUi(()->{
+                if(session!=opened||page!=pageGeneration||!target.equals(sketchId)){
+                    onMessage("Editable cel saved to its original drawing. Open it from Sketch files.");return;
+                }
+                loadSketch(target,frame);
+                String note=result.optString("notice","");
+                onMessage("3D pose → "+result.optInt("vectorObjects")+" editable vector objects on frame "+
+                        (frame+1)+("edges".equals(result.optString("traceMode"))?" (ink)":" (colour)")+
+                        (note.isEmpty()?"":"; "+note));
+            });
+        });
     }
 
     private boolean readDrawingInvitation(Intent intent){
@@ -417,6 +452,48 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
         int next=canvas.getFrame()+1;try{onOperation(new JSONObject().put("type","duplicate_cel").put("layerId",canvas.getLayerId()).put("fromFrame",canvas.getFrame()).put("toFrame",next).put("idPrefix",UUID.randomUUID().toString()));setFrame(next);}catch(Exception error){onMessage(error.getMessage());}
     }
     private void deleteObject() { try { if (canvas.getSelectedId() == null) throw SketchDocument.bad("Select an object first"); onOperation(new JSONObject().put("type", "delete_object").put("objectId", canvas.getSelectedId())); } catch (Exception e) { onMessage(e.getMessage()); } }
+    /** Existing project GLBs are reused; import is an explicit Android file choice. */
+    private void choose3DPoseCel(){
+        if(document==null||session==null){onMessage("Open a Sketch drawing first");return;}
+        stopPlayback();
+        final String target=sketchId;final int frame=canvas.getFrame();
+        afterSaves(()->{
+            ProjectStore projects=new ProjectStore(this);
+            ArrayList<ProjectStore.Project> candidates=new ArrayList<>();
+            ProjectStore.Project active=projects.active();
+            if(active!=null)candidates.add(active);
+            for(ProjectStore.Project project:projects.list()){
+                boolean hasGlb=false;
+                for(ProjectStore.Asset asset:project.assets)
+                    if("model/gltf-binary".equals(asset.mime)){hasGlb=true;break;}
+                if(hasGlb&&(active==null||!active.id.equals(project.id)))candidates.add(project);
+            }
+            postUi(()->{
+                if(!target.equals(sketchId)){onMessage("Open the original drawing to capture its 3D cel");return;}
+                if(candidates.isEmpty()){onMessage("Create a VideoStudio project before importing a 3D model");return;}
+                String[] names=new String[candidates.size()];
+                for(int i=0;i<candidates.size();i++){
+                    ProjectStore.Project project=candidates.get(i);int count=0;
+                    for(ProjectStore.Asset asset:project.assets)if("model/gltf-binary".equals(asset.mime))count++;
+                    names[i]=project.name+" • "+(count==0?"import a GLB":count+" GLB model(s)");
+                }
+                new AlertDialog.Builder(this).setTitle("3D model project")
+                    .setItems(names,(d,index)->{
+                        final ProjectStore.Project selected=candidates.get(index);
+                        new AlertDialog.Builder(this).setTitle("3D pose → editable 2D")
+                            .setItems(new String[]{"Coloured editable vector regions","Ink outlines (editable strokes)"},(m,mode)->{
+                                Intent intent=new Intent(this,FilamentGlbActivity.class)
+                                        .putExtra("projectId",selected.id)
+                                        .putExtra("sketchCaptureTargetId",target)
+                                        .putExtra("sketchCaptureFrame",frame)
+                                        .putExtra("sketchCaptureMode",mode==0?"colour_regions":"edges");
+                                startActivityForResult(intent,REQUEST_3D_CEL);
+                            }).setNegativeButton("Cancel",null).show();
+                    }).setNegativeButton("Cancel",null).show();
+            });
+        });
+    }
+
     private void referenceDialog() {
         if(document==null)return;
         try {
@@ -1053,7 +1130,7 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
         action.run();
     }catch(Exception error){onMessage(error.getMessage());}}
     private void menu(String title,String[] labels,Runnable... actions){new AlertDialog.Builder(this).setTitle(title).setItems(labels,(d,index)->runAction(labels[index],actions[index])).show();}
-    private void fileMenu(){menu("Sketch files",new String[]{"New","Open","Sketch books","Follow current work","Replay last saved drawing","Export video","Archive sketch","Restore archive","Canvas view","Drawing status","Story → 2D film","Import animation","Resume animation import","Component library","Original jungle film","Drawing and acting study","Import editable animation"},this::newDocument,this::openDocument,this::booksDialog,this::followCurrentDrawing,this::replayLastDrawing,this::export,this::archiveSketch,this::restoreArchiveDialog,this::toggleCanvasFocus,()->new AlertDialog.Builder(this).setTitle("Drawing status").setMessage(status.getText()+"\n\n"+toolStatus.getText()).setPositiveButton("OK",null).show(),this::storyFilmDialog,this::importAnimationDialog,this::resumeAnimationImport,this::componentLibraryDialog,this::drawOriginalJungleFilm,this::drawJunglePerformanceStudy,this::chooseLocalEditableArchive);}
+    private void fileMenu(){menu("Sketch files",new String[]{"New","Open","Sketch books","Follow current work","Replay last saved drawing","Export video","Archive sketch","Restore archive","Canvas view","Drawing status","Story → 2D film","Import animation","Resume animation import","Component library","Original jungle film","Drawing and acting study","Import editable animation","3D pose → editable cel"},this::newDocument,this::openDocument,this::booksDialog,this::followCurrentDrawing,this::replayLastDrawing,this::export,this::archiveSketch,this::restoreArchiveDialog,this::toggleCanvasFocus,()->new AlertDialog.Builder(this).setTitle("Drawing status").setMessage(status.getText()+"\n\n"+toolStatus.getText()).setPositiveButton("OK",null).show(),this::storyFilmDialog,this::importAnimationDialog,this::resumeAnimationImport,this::componentLibraryDialog,this::drawOriginalJungleFilm,this::drawJunglePerformanceStudy,this::chooseLocalEditableArchive,this::choose3DPoseCel);}
     /** New native work takes priority; saved historical drawing is never auto-looped. */
     private void followCurrentDrawing(){
         notifiedSketchId=null;notifiedSessionId=null;notificationReplayPending=false;replaySelectedFromFile=false;
@@ -1090,7 +1167,7 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
         });
     }
 
-    private void moreMenu(){menu("Drawing tools",new String[]{"Layers","Separate reference into parts","Frames / Cels","Linked master artwork","2D animation","Workspace","Drawing alerts","Visual QA / Detail","Review & correct","Story → 2D film",canvas.previewFailed()?"Retry preview":"Refresh preview"},this::layersMenu,this::referenceLayersDialog,this::framesMenu,this::linkedMasterMenu,this::openAnimationStudio,this::workspaceDialog,this::drawingAlerts,this::qualityAuditDialog,this::reviewCorrectionDialog,this::storyFilmDialog,this::refreshPreview);}
+    private void moreMenu(){menu("Drawing tools",new String[]{"Layers","Separate reference into parts","Frames / Cels","Linked master artwork","2D animation","Workspace","Drawing alerts","Visual QA / Detail","Review & correct","Story → 2D film",canvas.previewFailed()?"Retry preview":"Refresh preview","3D pose → editable cel"},this::layersMenu,this::referenceLayersDialog,this::framesMenu,this::linkedMasterMenu,this::openAnimationStudio,this::workspaceDialog,this::drawingAlerts,this::qualityAuditDialog,this::reviewCorrectionDialog,this::storyFilmDialog,this::refreshPreview,this::choose3DPoseCel);}
     private void referenceLayersDialog(){
         if(session==null||document==null)return;
         stopPlayback();final SketchEditorSession origin=session;final String target=sketchId;
@@ -1320,6 +1397,7 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
     }
     @Override protected void onActivityResult(int requestCode,int resultCode,Intent data){
         super.onActivityResult(requestCode,resultCode,data);
+        if(requestCode==REQUEST_3D_CEL){handle3DPoseResult(resultCode,data);return;}
         if(requestCode!=LOCAL_EDITABLE_ARCHIVE||resultCode!=RESULT_OK||data==null||data.getData()==null)return;
         android.net.Uri uri=data.getData();String operation=UUID.randomUUID().toString();stopPlayback();
         SketchEditorSession active=session;int generation=loadGeneration,page=pageGeneration;
