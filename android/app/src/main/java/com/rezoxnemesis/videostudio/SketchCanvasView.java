@@ -258,6 +258,7 @@ public final class SketchCanvasView extends View {
         if(rasterInFlight>=0)return;
         String key=context+"/"+frame+"/"+(onion&&!playbackPreview)+"/"+onionRange+"/"+onionAlpha+"/"+(previousBookOnion==null?"":previousBookOnion.optString("id")+":"+previousBookOnion.optLong("revision"))+"/"+(nextBookOnion==null?"":nextBookOnion.optString("id")+":"+nextBookOnion.optLong("revision"));
         if(key.equals(rasterKey))return;rasterKey=key;int generation=++rasterGeneration;requestedRasterGeneration=generation;rasterInFlight=generation;previewLoading=true;publishPreviewStatus();
+        java.util.Map<String,SketchFrameRenderer.ImageSelection> priorSelections=new java.util.HashMap<>(imageSelections);
         JSONObject source=document,previewTransform=dragTransform,previewGeometry=nodePreview,previous=onion&&!playbackPreview?previousBookOnion:null,next=onion&&!playbackPreview?nextBookOnion:null;String previewId=selectedId;int selectedFrame=frame,edge=viewportEdge(),range=onion&&!playbackPreview?onionRange:0;
         rasterWorker.execute(()->{
             java.util.LinkedHashMap<Integer,RasterFrame> prepared=new java.util.LinkedHashMap<>();SketchFrameRenderer ready=null;long bytes=0;
@@ -267,7 +268,7 @@ public final class SketchCanvasView extends View {
                 if(previewId!=null&&previewTransform!=null)SketchDocument.object(renderDocument,previewId).put("transform",SketchDocument.copy(previewTransform)).put("keys",new JSONArray());
                 if(previewGeometry!=null){JSONObject target=SketchDocument.object(renderDocument,previewGeometry.getString("id"));String geometryField=previewGeometry.has("commands")?"commands":"points";target.put(geometryField,previewGeometry.get(geometryField));target.remove("shapeKeys");}
                 ready=new SketchFrameRenderer(getContext(),renderDocument);
-                ready.prepareVectorGeometry();ready.enableImageSelections();
+                ready.prepareVectorGeometry();ready.reuseSelections(priorSelections);ready.enableImageSelections();
                 JSONObject[] neighbors={previous,next};
                 for(int side=0;side<neighbors.length;side++){
                     JSONObject neighbor=neighbors[side];if(neighbor==null)continue;
@@ -284,7 +285,7 @@ public final class SketchCanvasView extends View {
                 }}
                 // Only the worker uses this renderer: immutable bounded publications are the UI contract.
                 java.util.Map<String,SketchFrameRenderer.ImageSelection> selectionPublication=ready.imageSelections();ready.close();ready=null;long adoptedBytes=bytes;java.util.LinkedHashMap<Integer,RasterFrame> publication=prepared;
-                ui.post(()->{if(disposed||!previewActive||generation!=requestedRasterGeneration){for(RasterFrame image:publication.values())image.bitmap.recycle();return;}clearFrameCache();imageSelections.putAll(selectionPublication);frameCache.putAll(publication);cacheBytes=adoptedBytes;lastRasterFrame=selectedFrame;lastRasterRevision=source.optLong("revision");previewLoading=false;publishPreviewStatus();if(touchComposite!=null&&!pointerDown&&!pendingPaintPreviews.containsKey(touchCompositeStroke))clearTouchComposite();if(paintPublication!=null){detachPaintPublication();if(renderer!=null){renderer.close();renderer=null;}}invalidate();});prepared=null;
+                ui.post(()->{if(disposed||!previewActive||generation!=requestedRasterGeneration){for(RasterFrame image:publication.values())image.bitmap.recycle();return;}clearFrameCache();imageSelections.clear();imageSelections.putAll(selectionPublication);frameCache.putAll(publication);cacheBytes=adoptedBytes;lastRasterFrame=selectedFrame;lastRasterRevision=source.optLong("revision");previewLoading=false;publishPreviewStatus();if(touchComposite!=null&&!pointerDown&&!pendingPaintPreviews.containsKey(touchCompositeStroke))clearTouchComposite();if(paintPublication!=null){detachPaintPublication();if(renderer!=null){renderer.close();renderer=null;}}invalidate();});prepared=null;
             }catch(InterruptedException cancelled){}
             catch(Exception|OutOfMemoryError failed){ui.post(()->{if(!disposed&&previewActive&&generation==requestedRasterGeneration)previewFailed(failed);});}
             finally{if(ready!=null)ready.close();if(prepared!=null)for(RasterFrame image:prepared.values())image.bitmap.recycle();ui.post(()->{if(rasterInFlight==generation){rasterInFlight=-1;if(!disposed&&previewActive)invalidate();}});}

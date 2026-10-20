@@ -55,6 +55,7 @@ public final class SketchDocument {
         JSONArray layers = doc.getJSONArray("layers");
         if (layers.length() < 1 || layers.length() > MAX_LAYERS) throw bad("Use 1..32 sketch layers");
         Set<String> ids = new HashSet<>();
+        Set<String> meshedPaintSources=new HashSet<>();
         int objects = 0, points = SketchMasterAssets.storedPoints(linkedMasters), keys = 0, images = 0, proceduralActors=0;
         int[] proceduralActorChanges=new int[frames+1];
         for (int i = 0; i < layers.length(); i++) {
@@ -68,7 +69,7 @@ public final class SketchDocument {
             JSONArray items = layer.getJSONArray("objects");
             for (int j = 0; j < items.length(); j++) {
                 JSONObject item = items.getJSONObject(j);
-                fields(item, "id,kind,frame,exposure,color,styleId,width,fill,points,bounds,reference,paint,transform,keys,brush,commands,shapeKeys,gradient,referenceCrop,text,fontFamily,fontSize,fontStyle,textAlign,letterSpacing,hand,human,masterLink");
+                fields(item, "id,kind,frame,exposure,color,styleId,width,fill,points,bounds,reference,paint,transform,keys,brush,commands,shapeKeys,paintMesh,gradient,referenceCrop,text,fontFamily,fontSize,fontStyle,textAlign,letterSpacing,hand,human,masterLink");
                 unique(ids, id(item, "id"));
                 String kind = item.getString("kind");
                 if (!java.util.Arrays.asList("stroke","eraser","line","rect","ellipse","polygon","image","paint","path","text","hand","human").contains(kind))
@@ -79,8 +80,9 @@ public final class SketchDocument {
                 validateTransform(item.getJSONObject("transform"));
                 keys += validateKeys(item.getJSONArray("keys"), frames);
                 int[] shapeBudget=SketchShapeKeys.validate(item,frames);keys+=shapeBudget[0];points+=shapeBudget[1];
+                int[] meshBudget=SketchPaintMesh.validate(item,frames);keys+=meshBudget[0];points+=meshBudget[1];if(item.has("paintMesh")){meshedPaintSources.add(item.getJSONObject("paint").getString("sha256"));if(meshedPaintSources.size()>32||(long)width*height>1048576)throw bad("Use at most32 distinct meshed paint sources, each at most1048576 native pixels");}
                 if(item.has("paint")&&!"paint".equals(kind))throw bad("Paint snapshots require a paint cel");
-                if("paint".equals(kind))fields(item,"id,kind,frame,exposure,color,width,fill,bounds,paint,transform,keys");
+                if("paint".equals(kind))fields(item,"id,kind,frame,exposure,color,width,fill,bounds,paint,transform,keys,paintMesh");
                 if(item.has("hand")&&!"hand".equals(kind))throw bad("Hand programme requires a hand object");
                 if("hand".equals(kind)){SketchHandAnimation.validate(doc,item);keys+=item.getJSONObject("hand").getJSONArray("poses").length();}
                 if(item.has("human")&&!"human".equals(kind))throw bad("Human programme requires a human object");

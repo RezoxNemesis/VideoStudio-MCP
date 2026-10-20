@@ -80,6 +80,7 @@ public final class SketchCelOps {
         return result;
     }
     private static void shiftKeys(JSONObject item,int frame,boolean insert) throws Exception {
+        SketchPaintMesh.shiftKeys(item,frame,insert);
         for(String field:new String[]{"keys","shapeKeys"}){
             JSONArray keys=item.optJSONArray(field);if(keys==null)continue;
             for(int i=keys.length()-1;i>=0;i--){JSONObject key=keys.getJSONObject(i);int time=key.getInt("frame");if(!insert&&time==frame)keys.remove(i);else if(time>=frame)key.put("frame",time+(insert?1:-1));}

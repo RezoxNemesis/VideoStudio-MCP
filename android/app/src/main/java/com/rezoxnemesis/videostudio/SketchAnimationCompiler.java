@@ -47,8 +47,9 @@ public final class SketchAnimationCompiler {
                     if(shapeKeys.getJSONObject(shapeKeys.length()-1).getInt("frame")>=m.frames)
                         throw bad("Animation duration cannot truncate retained shape keys; move or remove the later keys first");
                 }
-                int count=binding!=null&&binding.weights!=null?duration:1;expectedObjects+=count;
-                expectedPoints+=geometryPoints(object)*count;
+                if(object.has("paintMesh")){JSONArray meshKeys=object.getJSONObject("paintMesh").optJSONArray("keys");if(meshKeys!=null&&meshKeys.length()>0&&meshKeys.getJSONObject(meshKeys.length()-1).getInt("frame")>=m.frames)throw bad("Animation duration cannot truncate retained paint grid keys");}
+                boolean compact=compactGeometry(binding,object,duration);int count=binding!=null&&binding.weights!=null&&!compact?duration:1;expectedObjects+=count;
+                expectedPoints+=geometryPoints(object)*(compact?duration+1:count);if(compact)expectedKeys+=duration;
                 if(binding!=null&&binding.weights==null)expectedKeys+=duration;
                 else if(binding==null)expectedKeys+=clippedKeys(object,m.frames).length();
                 if(expectedObjects>SketchDocument.MAX_OBJECTS||expectedPoints>SketchDocument.MAX_POINTS||expectedKeys>MAX_SAMPLED_KEYS)
@@ -107,7 +108,7 @@ public final class SketchAnimationCompiler {
         // Preserve authored compositing order when one weighted object expands into many cels.
         for(int li=0;li<layers.length();li++){
             JSONObject layer=layers.getJSONObject(li);JSONArray original=SketchDocument.layer(m.source,layer.getString("id")).getJSONArray("objects"),ordered=new JSONArray();
-            for(int oi=0;oi<original.length();oi++){String id=original.getJSONObject(oi).getString("id");JSONArray cels=deformedCels.get(id);if(cels!=null)for(int j=0;j<cels.length();j++)ordered.put(cels.getJSONObject(j));else if(outputObjects.containsKey(id))ordered.put(outputObjects.get(id));}
+            for(int oi=0;oi<original.length();oi++){String id=original.getJSONObject(oi).getString("id");JSONArray cels=deformedCels.get(id);if(cels!=null){if(compactGeometry(m.bindings.get(id),original.getJSONObject(oi),cels.length()))ordered.put(compactDeformed(id,cels));else for(int j=0;j<cels.length();j++)ordered.put(cels.getJSONObject(j));}else if(outputObjects.containsKey(id))ordered.put(outputObjects.get(id));}
             layer.put("objects",ordered);
         }
         for(int i=0;i<m.dialogues.length();i++) {
@@ -130,7 +131,8 @@ public final class SketchAnimationCompiler {
             for(int j=0;j<items.length();j++){
                 JSONObject object=items.getJSONObject(j);
                 keyCount+=object.getJSONArray("keys").length();
-                pointCount+=geometryPoints(object);
+                int[] shapeBudget=SketchShapeKeys.validate(object,m.frames);keyCount+=shapeBudget[0];
+                if(object.has("paintMesh")){int[] meshBudget=SketchPaintMesh.validate(object,m.frames);keyCount+=meshBudget[0];pointCount+=meshBudget[1];}else pointCount+=geometryPoints(object)+shapeBudget[1];
             }
         }
         if(keyCount>SketchDocument.MAX_KEYS)
@@ -139,7 +141,10 @@ public final class SketchAnimationCompiler {
         if(objectCount>SketchDocument.MAX_OBJECTS||pointCount>SketchDocument.MAX_POINTS)
             throw bad("Animation output geometry budget exceeded: "+objectCount+" objects, "+
                     pointCount+" points; reduce deforming parts or shorten the shot");
-        SketchDocument.validate(out);
+        out=SketchPaintMesh.normalizeFeatureFields(out);SketchDocument.validate(out);
+        // Hash the same numeric representation that immutable publication persists.
+        // This normalizes generated output only; source/program/request fingerprints stay unchanged.
+        out=SketchDocument.copy(out);
         JSONObject contactEvidence=interactionEvidence(m);
         animatedJoints=movingJoints.size();int weighted=0,contacts=0,oriented=0,blended=0;for(Rig r:m.rigs){contacts+=r.contacts.size();for(Contact c:r.contacts){if(c.hasRotation)oriented++;if(c.blendIn>0||c.blendOut>0)blended++;}for(Binding b:r.bindings)if(b.weights!=null)weighted++;}
         JSONObject report=new JSONObject().put("provider","authored_articulated_2d").put("schema",SCHEMA)
@@ -287,6 +292,7 @@ public final class SketchAnimationCompiler {
                 if("human".equals(object.getString("kind")))object=SketchHumanAnimation.sampled(object,frame);
                 if("hand".equals(object.getString("kind")))object=SketchHandAnimation.sampled(object,frame);
                 if("path".equals(object.getString("kind")))object=SketchShapeKeys.sampled(object,Math.min(frame,m.sourceFrames-1));
+                if(object.has("paintMesh"))object=SketchPaintMesh.sampled(object,Math.min(frame,m.sourceFrames-1));
                 if(binding==null)object.put("transform",SketchDocument.transformAt(prepared,Math.min(frame,m.sourceFrames-1)));
                 else{Rig rig=bindingRigs.get(id);if(binding.weights!=null)object=deform(m,rig,snapshots.get(rig.id),binding,prepared,frame);else object.put("transform",jointTransform(m,rig,snapshots.get(rig.id),binding.joint,SketchDocument.transformAt(prepared,Math.min(frame,m.sourceFrames-1))));}
                 object.put("frame",0).put("exposure",1).put("keys",new JSONArray());
@@ -302,7 +308,10 @@ public final class SketchAnimationCompiler {
                     .put("textAlign","center").put("transform",SketchDocument.transform()).put("keys",new JSONArray());
             SketchDocument.layer(out,cue.getString("layerId")).getJSONArray("objects").put(text);
         }
-        SketchDocument.validate(out);return new JSONObject().put("document",out).put("sample",sample(m,frame));
+        out=SketchPaintMesh.normalizeFeatureFields(out);SketchDocument.validate(out);
+        // Hash the same numeric representation that immutable publication persists.
+        // This normalizes generated output only; source/program/request fingerprints stay unchanged.
+        out=SketchDocument.copy(out);return new JSONObject().put("document",out).put("sample",sample(m,frame));
     }
 
     private static void refreshRetainedBounds(JSONObject doc,JSONObject object)throws Exception {
@@ -314,7 +323,7 @@ public final class SketchAnimationCompiler {
     private static final class Joint {String id;int parent=-1;double x,y;}
     private static final class Pose {int frame;String interpolation;JSONArray curve;double rootX,rootY;double[] rotations;}
     private static final class Contact {int hip,knee,ankle,start,end,bend,blendIn,blendOut;double x,y,rotation;boolean hasRotation;}
-    private static final class Binding {String objectId;int joint;List<Map<Integer,Double>> weights;}
+    private static final class Binding {String objectId;int joint;List<Map<Integer,Double>> weights;boolean region;}
     private static final class Rig {String id;boolean cameraAffected;List<Joint> joints=new ArrayList<>();List<Pose> poses=new ArrayList<>();List<Contact> contacts=new ArrayList<>();List<Binding> bindings=new ArrayList<>();Map<String,Integer> index=new LinkedHashMap<>();}
     private static final class Snapshot {double[] x,y,angle,local;double rootX,rootY;JSONArray contactErrors=new JSONArray();Snapshot(int n){x=new double[n];y=new double[n];angle=new double[n];local=new double[n];}}
     private static final class Camera {int frame;String interpolation="linear";JSONArray curve;double x,y,zoom=1,rotation;}
@@ -405,11 +414,12 @@ public final class SketchAnimationCompiler {
             for(int i=0;i<r.joints.size();i++){Set<Integer> seen=new HashSet<>();int cursor=i;while(cursor>=0){if(!seen.add(cursor))throw bad("Joint hierarchy contains a cycle");cursor=r.joints.get(cursor).parent;}}
             JSONArray pp=o.optJSONArray("poses");if(pp!=null){if(pp.length()>frames)throw bad("Too many rig poses");Pose before=null;for(int i=0;i<pp.length();i++){JSONObject p=pp.getJSONObject(i);SketchDocument.fields(p,"frame,interpolation,curve,rootX,rootY,rotations");Pose v=new Pose();v.frame=(int)SketchDocument.integer(p,"frame",0,frames-1);if(before!=null&&v.frame<=before.frame)throw bad("Pose frames must be strictly ascending");SketchEasing.validate(p);v.curve=p.optJSONArray("curve");v.interpolation=interpolation(p);v.rootX=p.has("rootX")?SketchDocument.number(p,"rootX",-4,4):before==null?0:before.rootX;v.rootY=p.has("rootY")?SketchDocument.number(p,"rootY",-4,4):before==null?0:before.rootY;v.rotations=before==null?new double[jj.length()]:before.rotations.clone();JSONObject rotations=p.optJSONObject("rotations");if(p.has("rotations")&&rotations==null)throw bad("Pose rotations require a joint map");if(rotations!=null){Iterator<String> ids=rotations.keys();while(ids.hasNext()){String id=ids.next();Integer index=r.index.get(id);if(index==null)throw bad("Unknown pose joint: "+id);v.rotations[index]=SketchDocument.scalar(rotations.get(id),-3600,3600,"Joint rotation");}}r.poses.add(v);before=v;}}
             JSONArray bb=o.optJSONArray("bindings");if(bb!=null)for(int i=0;i<bb.length();i++) {
-                JSONObject b=bb.getJSONObject(i);SketchDocument.fields(b,"objectId,jointId,weights");Binding v=new Binding();v.objectId=SketchDocument.id(b,"objectId");JSONObject object=objects.get(v.objectId);if(object==null)throw bad("Unknown sketch object: "+v.objectId);
+                JSONObject b=bb.getJSONObject(i);SketchDocument.fields(b,"objectId,jointId,weights,region");Binding v=new Binding();v.objectId=SketchDocument.id(b,"objectId");JSONObject object=objects.get(v.objectId);if(object==null)throw bad("Unknown sketch object: "+v.objectId);
                 if(bindings.containsKey(v.objectId))throw bad("A sketch object is bound more than once");v.joint=jointIndex(r,b.getString("jointId"));
-                if(b.has("weights")){if(object.has("gradient"))throw bad("Skin weights cannot deform gradient coordinates. Use rigid gradient artwork or flat-colour vector regions");String kind=object.getString("kind");if(!java.util.Arrays.asList("stroke","eraser","line","polygon","path").contains(kind))throw bad("Skin weights require vector point or path geometry");JSONArray weights=b.getJSONArray("weights");if(weights.length()!=geometryPoints(object))throw bad("Skin weights must match every geometry vertex");v.weights=new ArrayList<>();for(int j=0;j<weights.length();j++){JSONObject weight=weights.getJSONObject(j);if(weight.length()<1||weight.length()>4)throw bad("Use 1..4 joint influences per vertex");Map<Integer,Double> map=new LinkedHashMap<>();double sum=0;Iterator<String> ids=weight.keys();while(ids.hasNext()){String id=ids.next();double value=SketchDocument.scalar(weight.get(id),0,1,"Skin weight");if(value==0)throw bad("Skin weights must be positive");map.put(jointIndex(r,id),value);sum+=value;}if(Math.abs(sum-1)>1e-7)throw bad("Skin weights must sum to one");v.weights.add(map);}}
+                if(b.has("weights")&&b.has("region"))throw bad("Choose explicit vertex weights or a localized region");
+                if(b.has("weights")||b.has("region")){if(object.has("gradient"))throw bad("Skin weights cannot deform gradient coordinates. Use rigid gradient artwork or flat-colour vector regions");String kind=object.getString("kind");if(!java.util.Arrays.asList("stroke","eraser","line","polygon","path").contains(kind)&&!("paint".equals(kind)&&object.has("paintMesh")))throw bad("Skin weights require authored point/path geometry or a prepared paint grid");v.region=b.has("region");JSONArray weights=v.region?SketchRigRegion.weights(object,b.getJSONObject("region"),b.getString("jointId"),r.index.keySet(),width,height):b.getJSONArray("weights");if(weights.length()!=geometryPoints(object))throw bad("Skin weights must match every geometry vertex");v.weights=new ArrayList<>();for(int j=0;j<weights.length();j++){JSONObject weight=weights.getJSONObject(j);if(weight.length()<1||weight.length()>4)throw bad("Use 1..4 joint influences per vertex");Map<Integer,Double> map=new LinkedHashMap<>();double sum=0;Iterator<String> ids=weight.keys();while(ids.hasNext()){String id=ids.next();double value=SketchDocument.scalar(weight.get(id),0,1,"Skin weight");if(value==0)throw bad("Skin weights must be positive");map.put(jointIndex(r,id),value);sum+=value;}if(Math.abs(sum-1)>1e-7)throw bad("Skin weights must sum to one");v.weights.add(map);}}
                 bindings.put(v.objectId,v);r.bindings.add(v);
-                if(celClones.containsKey(v.objectId))for(String cloneId:celClones.get(v.objectId)){Binding clone=new Binding();clone.objectId=cloneId;clone.joint=v.joint;clone.weights=v.weights;bindings.put(cloneId,clone);r.bindings.add(clone);}
+                if(celClones.containsKey(v.objectId))for(String cloneId:celClones.get(v.objectId)){Binding clone=new Binding();clone.objectId=cloneId;clone.joint=v.joint;clone.weights=v.weights;clone.region=v.region;bindings.put(cloneId,clone);r.bindings.add(clone);}
             }
             JSONArray ii=o.optJSONArray("ik");if(ii!=null){if(ii.length()>256)throw bad("Use at most 256 IK contact intervals per rig");for(int i=0;i<ii.length();i++){JSONObject c=ii.getJSONObject(i);SketchDocument.fields(c,"hip,knee,ankle,start,end,x,y,bend,rotation,blendInFrames,blendOutFrames");Contact v=new Contact();v.hip=jointIndex(r,c.getString("hip"));v.knee=jointIndex(r,c.getString("knee"));v.ankle=jointIndex(r,c.getString("ankle"));if(r.joints.get(v.knee).parent!=v.hip||r.joints.get(v.ankle).parent!=v.knee)throw bad("IK requires a direct hip-knee-ankle chain");int[] range=range(c);v.start=range[0];v.end=range[1];
                 v.blendIn=c.has("blendInFrames")?(int)SketchDocument.integer(c,"blendInFrames",0,12):0;
@@ -492,11 +502,21 @@ public final class SketchAnimationCompiler {
                 .put("y",(s.y[index]+Math.sin(a)*dx+Math.cos(a)*dy-ay)/m.height).put("rotation",base.getDouble("rotation")+s.angle[index]);
         SketchDocument.validateTransform(out);return out;
     }
+    private static boolean compactGeometry(Binding binding,JSONObject object,int duration){return binding!=null&&binding.weights!=null&&(object.has("paintMesh")||binding.region&&"path".equals(object.optString("kind"))&&duration<=240);}
+    /** One owned texture/path with editable sampled keys, preserving its exact native frame poses. */
+    private static JSONObject compactDeformed(String id,JSONArray cels)throws Exception {
+        JSONObject first=cels.getJSONObject(0),result=SketchDocument.copy(first).put("id",id).put("exposure",cels.length());JSONArray geometry=new JSONArray(),opacity=new JSONArray();double previous=first.getJSONObject("transform").getDouble("opacity");
+        for(int i=0;i<cels.length();i++){JSONObject cel=cels.getJSONObject(i);int frame=cel.getInt("frame");JSONObject key=new JSONObject().put("frame",frame).put("interpolation","hold");if(result.has("paintMesh"))key.put("points",new JSONArray(cel.getJSONObject("paintMesh").getJSONArray("points").toString()));else key.put("commands",new JSONArray(cel.getJSONArray("commands").toString()));geometry.put(key);double alpha=cel.getJSONObject("transform").getDouble("opacity");if(alpha!=previous){opacity.put(new JSONObject().put("frame",frame).put("transform",SketchDocument.copy(cel.getJSONObject("transform"))).put("interpolation","hold"));previous=alpha;}}
+        if(opacity.length()>0){JSONArray all=new JSONArray().put(new JSONObject().put("frame",first.getInt("frame")).put("transform",SketchDocument.copy(first.getJSONObject("transform"))).put("interpolation","hold"));for(int i=0;i<opacity.length();i++)all.put(opacity.getJSONObject(i));opacity=all;}result.put("keys",opacity);if(result.has("paintMesh"))result.getJSONObject("paintMesh").put("keys",geometry);else result.put("shapeKeys",geometry);return result;
+    }
+
     private static JSONObject deform(Model m,Rig rig,Snapshot s,Binding binding,JSONObject source,int frame)throws Exception {
         JSONObject cel=SketchShapeKeys.sampled(source,Math.min(frame,m.sourceFrames-1)).put("id","deform_"+SketchDocument.sha256(binding.objectId.getBytes(StandardCharsets.UTF_8)).substring(0,16)+"_"+frame)
                 .put("frame",frame).put("exposure",1).put("transform",SketchDocument.transform()).put("keys",new JSONArray());
         JSONObject base=SketchDocument.transformAt(source,Math.min(frame,m.sourceFrames-1));cel.getJSONObject("transform").put("opacity",base.getDouble("opacity"));int vertex=0;
-        if("path".equals(source.getString("kind"))) {
+        if(source.has("paintMesh")){
+            JSONArray points=SketchPaintMesh.pointsAt(source,Math.min(frame,m.sourceFrames-1));for(int i=0;i<points.length();i++){JSONArray point=points.getJSONArray(i);double[] p=weighted(m,rig,s,base,point.getDouble(0),point.getDouble(1),binding.weights.get(vertex++),true);point.put(0,p[0]).put(1,p[1]);}cel.getJSONObject("paintMesh").put("points",points).put("keys",new JSONArray());
+        } else if("path".equals(source.getString("kind"))) {
             JSONArray commands=cel.getJSONArray("commands");for(int i=0;i<commands.length();i++){JSONArray command=commands.getJSONArray(i);for(int j=1;j<command.length();j+=2){double[] p=weighted(m,rig,s,base,command.getDouble(j),command.getDouble(j+1),binding.weights.get(vertex++));command.put(j,p[0]).put(j+1,p[1]);}}
         } else {
             JSONArray points=cel.getJSONArray("points");for(int i=0;i<points.length();i++){JSONArray point=points.getJSONArray(i);double[] p=weighted(m,rig,s,base,point.getDouble(0),point.getDouble(1),binding.weights.get(vertex++));point.put(0,p[0]).put(1,p[1]);}
@@ -504,9 +524,12 @@ public final class SketchAnimationCompiler {
         return cel;
     }
     private static double[] weighted(Model m,Rig rig,Snapshot s,JSONObject base,double x,double y,Map<Integer,Double> weights)throws Exception {
+        return weighted(m,rig,s,base,x,y,weights,false);
+    }
+    private static double[] weighted(Model m,Rig rig,Snapshot s,JSONObject base,double x,double y,Map<Integer,Double> weights,boolean texture)throws Exception {
         double[] point=applyTransform(base,x*m.width,y*m.height,m.width,m.height);double outX=0,outY=0;
         for(Map.Entry<Integer,Double> e:weights.entrySet()){int i=e.getKey();Joint j=rig.joints.get(i);double a=Math.toRadians(s.angle[i]),dx=point[0]-j.x,dy=point[1]-j.y;outX+=e.getValue()*(s.x[i]+Math.cos(a)*dx-Math.sin(a)*dy);outY+=e.getValue()*(s.y[i]+Math.sin(a)*dx+Math.cos(a)*dy);}
-        double nx=outX/m.width,ny=outY/m.height;if(nx<0||nx>1||ny<0||ny>1)throw bad("Deformed vector geometry leaves normalized canvas; reframe the prepared rig");return new double[]{nx,ny};
+        double nx=outX/m.width,ny=outY/m.height;if(nx<(texture?-4:0)||nx>(texture?4:1)||ny<(texture?-4:0)||ny>(texture?4:1))throw bad("Deformed geometry leaves its bounded normalized domain; reframe the prepared rig");return new double[]{nx,ny};
     }
     private static Camera sampleCamera(Model m,int frame)throws Exception {
         Camera left=null,right=null;for(Camera c:m.camera){if(c.frame<=frame)left=c;else{right=c;break;}}
@@ -556,6 +579,7 @@ public final class SketchAnimationCompiler {
         double max=0;for(int xi=0;xi<2;xi++)for(int yi=0;yi<2;yi++){double x=bounds[xi==0?0:2],y=bounds[yi==0?1:3];double[] expected=applyTransform(a,x,y,m.width,m.height),actual=applyTransform(b,x,y,m.width,m.height);max=Math.max(max,Math.hypot(expected[0]-actual[0],expected[1]-actual[1]));}return max;
     }
     private static double[] geometryBounds(Model m,JSONObject object)throws Exception {
+        if(object.has("paintMesh"))return new double[]{-4d*m.width,-4d*m.height,4d*m.width,4d*m.height};
         double minX=Double.POSITIVE_INFINITY,minY=Double.POSITIVE_INFINITY,maxX=Double.NEGATIVE_INFINITY,maxY=Double.NEGATIVE_INFINITY;
         String kind=object.getString("kind");
         if("path".equals(kind)){JSONArray commands=object.getJSONArray("commands");for(int i=0;i<commands.length();i++){JSONArray c=commands.getJSONArray(i);for(int j=1;j<c.length();j+=2){double x=c.getDouble(j)*m.width,y=c.getDouble(j+1)*m.height;minX=Math.min(minX,x);maxX=Math.max(maxX,x);minY=Math.min(minY,y);maxY=Math.max(maxY,y);}}}
@@ -568,7 +592,7 @@ public final class SketchAnimationCompiler {
         for(int frame=0;frame<m.frames;frame++){JSONObject transform=SketchDocument.transformAt(layer,Math.min(frame,m.sourceFrames-1));double scale=Math.max(transform.getDouble("scaleX"),transform.getDouble("scaleY"));if(m.cameraLayers.contains(layerId))scale*=sampleCamera(m,frame).zoom;max=Math.max(max,scale);}return max;
     }
     private static JSONArray clippedKeys(JSONObject object,int frames)throws Exception{JSONArray out=new JSONArray(),keys=object.getJSONArray("keys");for(int i=0;i<keys.length();i++){JSONObject key=keys.getJSONObject(i);if(key.getInt("frame")<frames)out.put(SketchDocument.copy(key));}return out;}
-    private static int geometryPoints(JSONObject object)throws Exception {String kind=object.getString("kind");if("path".equals(kind)){int points=0;JSONArray cc=object.getJSONArray("commands");for(int i=0;i<cc.length();i++)points+=(cc.getJSONArray(i).length()-1)/2;return points;}return object.has("points")?object.getJSONArray("points").length():0;}
+    private static int geometryPoints(JSONObject object)throws Exception {if(object.has("paintMesh"))return object.getJSONObject("paintMesh").getJSONArray("points").length();String kind=object.getString("kind");if("path".equals(kind)){int points=0;JSONArray cc=object.getJSONArray("commands");for(int i=0;i<cc.length();i++)points+=(cc.getJSONArray(i).length()-1)/2;return points;}return object.has("points")?object.getJSONArray("points").length():0;}
     private static String uniqueId(Model m,String base){return uniqueId(m.reservedIds,base);}
     private static String uniqueId(Set<String> reservedIds,String base){String id=base;int suffix=0;while(!reservedIds.add(id))id=base+"_"+(++suffix);return id;}
     private static boolean explicitlyVisible(Model m,String objectId,int frame)throws Exception {

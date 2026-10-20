@@ -13,7 +13,7 @@ final class SketchAnimationUiModel {
         JSONArray layerIds=new JSONArray(),layers=source.getJSONArray("layers");
         for(int i=0;i<layers.length();i++)layerIds.put(layers.getJSONObject(i).getString("id"));
         return new JSONObject().put("schema","videostudio.sketch-animation.v1")
-                .put("frameCount",Math.max(100,source.getInt("frameCount"))).put("fps",source.getInt("fps"))
+                .put("frameCount",source.getInt("frameCount")==1?100:source.getInt("frameCount")).put("fps",source.getInt("fps"))
                 .put("rigs",new JSONArray().put(humanoid("character_1")))
                 .put("camera",new JSONArray()).put("cameraLayerIds",layerIds)
                 .put("dialogues",new JSONArray()).put("mouthCels",new JSONArray()).put("interactionCues",new JSONArray());
@@ -91,7 +91,10 @@ final class SketchAnimationUiModel {
         JSONArray weights=binding.optJSONArray("weights");if(weights==null){weights=new JSONArray();for(int i=0;i<vertices;i++)weights.put(new JSONObject().put(binding.getString("jointId"),1));}
         if(weights.length()!=vertices)throw SketchDocument.bad("Weights must cover every vector vertex");
         JSONObject value=new JSONObject();if(first.equals(second))value.put(first,1);else {if(firstWeight>0)value.put(first,firstWeight);if(firstWeight<1)value.put(second,1-firstWeight);}
-        weights.put(vertex,value);binding.put("weights",weights);
+        weights.put(vertex,value);binding.put("weights",weights);binding.remove("region");
+    }
+    static void setVertexInfluences(JSONObject binding,int vertices,int vertex,JSONObject entry,java.util.Set<String> joints)throws Exception {
+        if(vertices<1||vertex<0||vertex>=vertices||entry.length()<1||entry.length()>4)throw SketchDocument.bad("Choose one vertex and1..4 joint influences");double sum=0;java.util.Iterator<String> names=entry.keys();while(names.hasNext()){String id=names.next();if(!joints.contains(id))throw SketchDocument.bad("Choose existing joints");double value=SketchDocument.scalar(entry.get(id),0,1,"Joint weight");if(value<=0)throw SketchDocument.bad("Weights must be positive");sum+=value;}if(Math.abs(sum-1)>1e-7)throw SketchDocument.bad("Joint weights must sum to one");JSONArray weights=binding.optJSONArray("weights");if(weights==null){weights=new JSONArray();for(int i=0;i<vertices;i++)weights.put(new JSONObject().put(binding.getString("jointId"),1));}if(weights.length()!=vertices)throw SketchDocument.bad("Weights must preserve every source vertex");weights.put(vertex,SketchDocument.copy(entry));binding.put("weights",weights);binding.remove("region");
     }
     static JSONArray sortedFrames(JSONArray values)throws Exception {ArrayList<JSONObject> list=new ArrayList<>();for(int i=0;i<values.length();i++)list.add(values.getJSONObject(i));list.sort(Comparator.comparingInt(p->p.optInt("frame")));JSONArray result=new JSONArray();for(JSONObject value:list)result.put(value);return result;}
 
