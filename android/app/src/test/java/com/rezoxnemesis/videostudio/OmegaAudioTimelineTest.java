@@ -339,6 +339,23 @@ public class OmegaAudioTimelineTest {
                 Collections.nCopies(241, cue(0, 1000, "open", OmegaAudioTimeline.CueOrigin.MANUAL_EDIT))));
     }
 
+    @Test public void canonicalSketchIdentifiersAcceptFullNinetySixCharacterBudget() {
+        String maxId = "a".repeat(96);
+        OmegaAudioTimeline.AudioClip longId = new OmegaAudioTimeline.AudioClip(
+                maxId, "asset_7", HASH, OmegaAudioTimeline.Kind.SFX,
+                48000, 1, 0, 48000, 0, 1, false);
+        OmegaAudioTimeline.ProjectAudio p = new OmegaAudioTimeline.ProjectAudio(
+                maxId, 5, 30, 30, List.of(longId));
+        assertEquals(maxId, p.sketchId);
+        assertSame(longId, p.clip(maxId));
+        assertThrows(IllegalArgumentException.class, () ->
+                new OmegaAudioTimeline.ProjectAudio("a".repeat(97), 5, 30, 30, List.of(longId)));
+        assertThrows(IllegalArgumentException.class, () ->
+                new OmegaAudioTimeline.ProjectAudio("sketch.bad", 5, 30, 30, List.of(longId)));
+        assertThrows(IllegalArgumentException.class, () ->
+                new OmegaAudioTimeline.ProjectAudio("bad/path", 5, 30, 30, List.of(longId)));
+    }
+
     private static OmegaAudioTimeline.ExportEvidence evidence(int audioTracks, long samples,
                                                                double peak, int frames,
                                                                long durationUs) {

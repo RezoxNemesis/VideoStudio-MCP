@@ -423,7 +423,7 @@ final class OmegaAudioTimeline {
     }
 
     private static String id(String candidate) {
-        if (candidate == null || !candidate.matches("[A-Za-z0-9][A-Za-z0-9_.-]{0,63}"))
+        if (candidate == null || !candidate.matches("[A-Za-z0-9_-]{1,96}"))
             throw new IllegalArgumentException("Invalid app-owned identifier");
         return candidate;
     }
