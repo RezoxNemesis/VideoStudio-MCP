@@ -113,7 +113,7 @@ public final class Cinematic3DStudioActivity extends Activity {
             @Override public void onNothingSelected(android.widget.AdapterView<?> parent){}
         });root.addView(shots,new LinearLayout.LayoutParams(-1,dp(52)));
         row(root,button("Move earlier",()->moveSelected(-1)),button("Move later",()->moveSelected(1)),button("Edit shot",this::editSelected));
-        row(root,button("Camera keys",this::editCameraKeys));
+        row(root,button("Camera keys",this::editCameraKeys),button("Reference camera paths",this::chooseReferenceCameraPath));
         addShotButton=button("Add shot",this::addShot);duplicateButton=button("Duplicate",this::duplicateShot);deleteShotButton=button("Delete shot",this::deleteShot);row(root,addShotButton,duplicateButton,deleteShotButton);
         root.addView(label("Edit shot order, duration, impact hold, camera and effects. Custom pose, root and foot-contact changes need a rebuilt Blender bundle.",12));
         row(root,button("Actor body / material",this::chooseActor),button("Motion style",this::editMotionStyle));
@@ -233,6 +233,66 @@ public final class Cinematic3DStudioActivity extends Activity {
     private EditText cameraNumber(LinearLayout form,String title,String value,String tag) {
         EditText input=numeric(form,title,value,true);input.setTag(tag);input.setContentDescription(title);return input;
     }
+    /**
+     * One-tap cinema choreography using existing native Filament/Y-up camera
+     * keyframes; real actor pose, 3D geometry and source assets are unchanged.
+     * The existing worker performs complete per-frame preflight before CAS
+     * applying the draft; nothing saves until Save timeline is selected.
+     */
+    private void chooseReferenceCameraPath(){if(!requireTimeline())return;try{
+        if(authoredCameraSelected()){
+            setStatus("This baked scene uses its authored 3D camera. Rebuild the bundle to change its framing.");
+            return;
+        }
+        JSONObject shot=timeline.getJSONArray("shots").getJSONObject(selectedShot);
+        String shotId=shot.getString("id");
+        JSONArray initial=Cinematic3DTimeline.sampleShot(shot,0,timeline.getInt("fps"))
+                .getJSONObject("camera").getJSONArray("target");
+        LinearLayout form=draftForm();
+        form.addView(label("Real perspective views, not fake zoom on still art. "
+                +"Creates editable keys for this shot only; your 3D asset, rig, source proof, "
+                +"other shots and lighting remain unchanged.",12));
+        String[] choices={"360° car / model turntable","Hero push-in / three-quarter",
+                "Follow an acting character","Anime action arc","Fine-detail reveal"};
+        String[] presets=CinematicReferenceCameraPath.presets();
+        Spinner picker=select(form,"Camera movement",choices,choices[0]);
+        EditText x=cameraNumber(form,"Look-at X (world metres)",
+                String.valueOf(initial.getDouble(0)),"reference_target_x");
+        EditText y=cameraNumber(form,"Look-at Y (world metres)",
+                String.valueOf(initial.getDouble(1)),"reference_target_y");
+        EditText z=cameraNumber(form,"Look-at Z (world metres)",
+                String.valueOf(initial.getDouble(2)),"reference_target_z");
+        EditText distance=cameraNumber(form,"Camera distance (1.8–30 m)","5.2","reference_radius");
+        EditText strength=cameraNumber(form,"Camera motion strength (0.1–1)","1","reference_strength");
+        TextView error=label("",12);error.setTextColor(0xffff8888);
+        form.addView(error);
+        AlertDialog dialog=new AlertDialog.Builder(this)
+                .setTitle("Reference camera • "+shot.getString("action"))
+                .setView(scrollForm(form))
+                .setPositiveButton("Preview and apply",null)
+                .setNegativeButton("Cancel",null).create();
+        dialog.setOnDismissListener(ignored->{
+            if(pendingCameraDialog==dialog)cancelCameraEdit();
+        });
+        dialog.show();
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{
+            try{
+                int selected=picker.getSelectedItemPosition();
+                if(selected<0||selected>=presets.length)
+                    throw new IllegalArgumentException("Select a camera movement");
+                JSONArray target=new JSONArray().put(Double.parseDouble(x.getText().toString()))
+                        .put(Double.parseDouble(y.getText().toString()))
+                        .put(Double.parseDouble(z.getText().toString()));
+                JSONObject operation=new JSONObject().put("type","reference_camera_path")
+                        .put("shotId",shotId).put("preset",presets[selected])
+                        .put("target",target)
+                        .put("radius",Double.parseDouble(distance.getText().toString()))
+                        .put("strength",Double.parseDouble(strength.getText().toString()));
+                acceptCameraOperations(new JSONArray().put(operation),dialog,error);
+            }catch(Exception invalid){error.setText(message(invalid));}
+        });
+    }catch(Exception error){setStatus(message(error));}}
+
     private void editCameraKeys(){if(!requireTimeline())return;try{
         if(authoredCameraSelected()){setStatus("This scene uses its authored camera. Rebuild the bundle to change its framing.");return;}
         JSONObject shot=timeline.getJSONArray("shots").getJSONObject(selectedShot),camera=shot.getJSONObject("camera");String shotId=shot.getString("id");JSONArray keys=camera.optJSONArray("keyframes");

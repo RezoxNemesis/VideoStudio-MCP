@@ -84,6 +84,16 @@ public final class FilamentGlbActivity extends Activity
     private int animationIndex=0;
     private double cameraAngle=0;
     private double cameraPitch=0,cameraDistance=4;
+    // A separate, opt-in 3D camera path: never changes GLB animation data.
+    private String referenceCameraPreset="";
+    private double referenceCameraPhase=0,referenceCameraOriginAzimuth=0,
+            referenceCameraOriginPitch=0,
+            referenceCameraOriginDistance=4;
+    private boolean studioLightingOn;
+    private int[] studioLights=new int[0];
+    private Button studioLightingButton;
+
+
     private String loadedModelId="",modelName="";
     private String sketchCaptureTargetId="",sketchCaptureMode="colour_regions";
     private int sketchCaptureFrame;
@@ -130,6 +140,19 @@ public final class FilamentGlbActivity extends Activity
             try{clipClock.rate(state.getDouble("playbackRate",1));}catch(IllegalArgumentException ignored){}
             cameraAngle=finiteOr(state.getDouble("cameraAngle",0),0);cameraPitch=Math.max(-80,Math.min(80,finiteOr(state.getDouble("cameraPitch",0),0)));
             cameraDistance=Math.max(2,Math.min(12,finiteOr(state.getDouble("cameraDistance",4),4)));
+            referenceCameraPreset=state.getString("referenceCameraPreset","");
+            referenceCameraPhase=Math.max(0,Math.min(1,finiteOr(
+                    state.getDouble("referenceCameraPhase",0),0)));
+            referenceCameraOriginAzimuth=finiteOr(
+                    state.getDouble("referenceCameraOriginAzimuth",0),0);
+            referenceCameraOriginPitch=Math.max(-80,Math.min(80,finiteOr(
+                    state.getDouble("referenceCameraOriginPitch",0),0)));
+            referenceCameraOriginDistance=Math.max(2,Math.min(12,finiteOr(
+                    state.getDouble("referenceCameraOriginDistance",4),4)));
+            if(!java.util.Arrays.asList(CinematicReferenceCameraPath.presets())
+                    .contains(referenceCameraPreset))referenceCameraPreset="";
+            studioLightingOn=state.getBoolean("studioLightingOn",false);
+
         }
         try{
             Native3DRuntime.initialize();
@@ -192,13 +215,26 @@ public final class FilamentGlbActivity extends Activity
                 new LinearLayout.LayoutParams(0,dp(50),1));
         second.addView(action("Choose motion",v->chooseAnimation()),
                 new LinearLayout.LayoutParams(0,dp(50),1));
-        orbitButton=action("Orbit: off",v->{orbit=!orbit;orbitButton.setText(orbit?"Orbit: on":"Orbit: off");});second.addView(orbitButton,
+        orbitButton=action("Orbit: off",v->{referenceCameraPreset="";orbit=!orbit;orbitButton.setText(orbit?"Orbit: on":"Orbit: off");});second.addView(orbitButton,
                 new LinearLayout.LayoutParams(0,dp(50),1));
         root.addView(second);
         LinearLayout cameraTools=new LinearLayout(this);
         cameraTools.addView(action("Camera views",v->chooseCamera()),new LinearLayout.LayoutParams(0,dp(48),1));
-        cameraTools.addView(action("Fit model",v->{cameraAngle=cameraPitch=0;cameraDistance=4;orbit=false;orbitButton.setText("Orbit: off");updateModelCamera();}),new LinearLayout.LayoutParams(0,dp(48),1));
+        cameraTools.addView(action("Fit model",v->{referenceCameraPreset="";cameraAngle=cameraPitch=0;cameraDistance=4;orbit=false;orbitButton.setText("Orbit: off");updateModelCamera();}),new LinearLayout.LayoutParams(0,dp(48),1));
         rateButton=action("Speed 1×",v->chooseRate());cameraTools.addView(rateButton,new LinearLayout.LayoutParams(0,dp(48),1));root.addView(cameraTools);
+        Button paths=action("Reference camera • 360° car / hero / acting / action / detail",
+                v->chooseReferenceCameraPath());
+        paths.setContentDescription("Use the existing real 3D GLB and its material textures "
+                +"with a cinematic moving perspective, without changing your source asset");
+        root.addView(paths,new LinearLayout.LayoutParams(-1,dp(50)));
+        studioLightingButton=action(
+                studioLightingOn?"3-point PBR studio lighting: on":"3-point PBR studio lighting: off",
+                v->toggleStudioLighting());
+        studioLightingButton.setContentDescription("Toggle real key fill and rim lighting "
+                +"on the imported GLB material surfaces. Does not edit UVs or artwork.");
+        root.addView(studioLightingButton,new LinearLayout.LayoutParams(-1,dp(46)));
+
+
         if(!sketchCaptureTargetId.isEmpty()){
             Button capture=action("Capture this 3D pose → editable Sketch cel",v->capturePoseForSketch());
             capture.setContentDescription("Capture the currently visible 3D pose and transfer it to the chosen Sketch Studio animation frame");
@@ -539,6 +575,15 @@ public final class FilamentGlbActivity extends Activity
             loadedModelId=asset.id;modelName=asset.name;animationIndex=Math.min(animationIndex,Math.max(0,count-1));
             clipClock.seek(restore&&Double.isFinite(restoredClipPosition)&&restoredClipPosition>=0?restoredClipPosition:0,clipDuration());
             applyModelPose();updateModelCamera();updatePlaybackUi();
+            if(studioLightingOn&&studioLights.length==0){
+                try{studioLights=CinematicStudioLighting.install(engine,viewer.getScene());}
+                catch(RuntimeException|LinkageError unavailable){
+                    studioLightingOn=false;
+                    if(studioLightingButton!=null)studioLightingButton.setText(
+                            "3-point PBR studio lighting: off");
+                }
+            }
+
             modelReadyMessage=asset.name+" • glTF model • frame submitted • "+count+
                     " embedded animation(s). "+(count==0
                     ?"No authored animation clips."
@@ -591,9 +636,63 @@ public final class FilamentGlbActivity extends Activity
         double[] rates={.25,.5,1,1.5,2};String[] names={"0.25× · inspect","0.5× · slow","1× · authored","1.5×","2×"};
         new AlertDialog.Builder(this).setTitle("Preview playback speed").setItems(names,(dialog,index)->{clipClock.rate(rates[index]);updatePlaybackUi();}).setNegativeButton("Cancel",null).show();
     }
+    private void toggleStudioLighting(){
+        if(viewer==null||engine==null||cinematic||renderUnavailable
+                ||viewer.getAsset()==null){
+            if(status!=null)status.setText("Open a 3D GLB model before applying studio lights");
+            return;
+        }
+        try{
+            if(studioLightingOn){
+                CinematicStudioLighting.remove(engine,viewer.getScene(),studioLights);
+                studioLights=new int[0];studioLightingOn=false;
+            }else{
+                studioLights=CinematicStudioLighting.install(engine,viewer.getScene());
+                studioLightingOn=true;
+            }
+            if(studioLightingButton!=null)studioLightingButton.setText(
+                    studioLightingOn?"3-point PBR studio lighting: on"
+                            :"3-point PBR studio lighting: off");
+            if(status!=null)status.setText(studioLightingOn
+                    ?"Real 3D material detail: key, fill, rim and actual shadow lighting"
+                    :"GLB original preview lighting restored");
+        }catch(Exception|LinkageError failed){
+            CinematicStudioLighting.remove(engine,viewer.getScene(),studioLights);
+            studioLights=new int[0];studioLightingOn=false;
+            if(studioLightingButton!=null)studioLightingButton.setText("3-point PBR studio lighting: off");
+            if(status!=null)status.setText("PBR lighting unavailable on this device: "
+                    +failed.getClass().getSimpleName());
+        }
+    }
+
+    private void chooseReferenceCameraPath(){
+        if(cinematic||viewer==null||viewer.getAsset()==null||renderUnavailable){
+            if(status!=null)status.setText("Load an existing VideoStudio GLB before choosing camera choreography");
+            return;
+        }
+        final String[] ids=CinematicReferenceCameraPath.presets();
+        String[] choices={"360° turntable • all sides",
+                "Hero push-in • moving three-quarter view",
+                "Follow character • lateral tracking",
+                "Anime action • impact arc and settle",
+                "Fine detail • elevated camera reveal"};
+        new AlertDialog.Builder(this).setTitle("Cinematic reference cameras")
+                .setItems(choices,(dialog,index)->{
+                    referenceCameraPreset=ids[index];
+                    referenceCameraPhase=0;
+                    referenceCameraOriginAzimuth=cameraAngle;
+                    referenceCameraOriginPitch=cameraPitch;
+                    referenceCameraOriginDistance=cameraDistance;
+                    orbit=false;orbitButton.setText("Orbit: off");
+                    paused=false;
+                    if(status!=null)status.setText("3D perspective motion: "+choices[index]
+                            +" • original GLB and its real materials retained");
+                }).setNegativeButton("Cancel",null).show();
+    }
+
     private void chooseCamera(){
         new AlertDialog.Builder(this).setTitle("Model camera view").setItems(new String[]{"Front","Right","Back","Left","Above","Three-quarter"},(dialog,index)->{
-            cameraAngle=new double[]{0,Math.PI/2,Math.PI,-Math.PI/2,0,Math.PI/4}[index];cameraPitch=index==4?75:index==5?20:0;cameraDistance=4;orbit=false;orbitButton.setText("Orbit: off");updateModelCamera();
+            referenceCameraPreset="";cameraAngle=new double[]{0,Math.PI/2,Math.PI,-Math.PI/2,0,Math.PI/4}[index];cameraPitch=index==4?75:index==5?20:0;cameraDistance=4;orbit=false;orbitButton.setText("Orbit: off");updateModelCamera();
         }).setNegativeButton("Cancel",null).show();
     }
     private void updateModelCamera(){
@@ -601,11 +700,11 @@ public final class FilamentGlbActivity extends Activity
         viewer.getCamera().lookAt(horizontal*Math.sin(cameraAngle),cameraDistance*Math.sin(pitch),-4+horizontal*Math.cos(cameraAngle),0,0,-4,0,1,0);
     }
     private void configureCameraGestures(){
-        ScaleGestureDetector scale=new ScaleGestureDetector(this,new ScaleGestureDetector.SimpleOnScaleGestureListener(){@Override public boolean onScale(ScaleGestureDetector detector){float factor=detector.getScaleFactor();if(Float.isFinite(factor)&&factor>0){cameraDistance=Math.max(2,Math.min(12,cameraDistance/factor));updateModelCamera();}return true;}});
+        ScaleGestureDetector scale=new ScaleGestureDetector(this,new ScaleGestureDetector.SimpleOnScaleGestureListener(){@Override public boolean onScale(ScaleGestureDetector detector){float factor=detector.getScaleFactor();if(Float.isFinite(factor)&&factor>0){referenceCameraPreset="";cameraDistance=Math.max(2,Math.min(12,cameraDistance/factor));updateModelCamera();}return true;}});
         float[] last={0,0};boolean[] dragging={false};surface.setContentDescription("3D model. Drag to orbit and pinch to zoom. Camera views and Fit model provide accessible alternatives.");
         surface.setOnTouchListener((view,event)->{
             for(int index=0;index<event.getPointerCount();index++)if(!Float.isFinite(event.getX(index))||!Float.isFinite(event.getY(index))){dragging[0]=false;return true;}scale.onTouchEvent(event);
-            int action=event.getActionMasked();if(action==MotionEvent.ACTION_DOWN){last[0]=event.getX();last[1]=event.getY();dragging[0]=true;}
+            int action=event.getActionMasked();if(action==MotionEvent.ACTION_DOWN){referenceCameraPreset="";last[0]=event.getX();last[1]=event.getY();dragging[0]=true;}
             else if(event.getPointerCount()>1){dragging[0]=false;}
             else if(action==MotionEvent.ACTION_MOVE&&dragging[0]&&!scale.isInProgress()){cameraAngle+=((double)event.getX()-last[0])*.008;cameraPitch=Math.max(-80,Math.min(80,cameraPitch+((double)event.getY()-last[1])*.25));last[0]=event.getX();last[1]=event.getY();updateModelCamera();}
             else if(action==MotionEvent.ACTION_UP||action==MotionEvent.ACTION_CANCEL){dragging[0]=false;if(action==MotionEvent.ACTION_UP)view.performClick();}return true;
@@ -726,8 +825,28 @@ public final class FilamentGlbActivity extends Activity
         if(frameTimeNanos-lastRenderedAt>=33_000_000L){
             long elapsed=lastRenderedAt==0?0:Math.max(0,frameTimeNanos-lastRenderedAt);
             lastRenderedAt=frameTimeNanos;
-            if(orbit&&previewReadiness.ready()) {
-                cameraAngle+=Math.min(.1,elapsed/1_000_000_000d)*.35;updateModelCamera();
+            if(!referenceCameraPreset.isEmpty()&&previewReadiness.ready()&&!paused) {
+                // Animates the actual Filament perspective camera, not the
+                // pixels of a pasted video frame. 30 fps GPU cap is unchanged.
+                double delta=Math.min(.1,elapsed/1_000_000_000d);
+                double duration=CinematicReferenceCameraPath.CAR_TURNTABLE
+                        .equals(referenceCameraPreset)?8:6;
+                referenceCameraPhase=Math.min(1,referenceCameraPhase+delta/duration);
+                CinematicReferenceCameraPath.Pose pose=CinematicReferenceCameraPath.model(
+                        referenceCameraPreset,referenceCameraPhase,
+                        referenceCameraOriginAzimuth,referenceCameraOriginPitch,
+                        referenceCameraOriginDistance,
+                        new double[]{0,0,-4});
+                Camera current=viewer.getCamera();
+                current.lookAt(pose.position[0],pose.position[1],pose.position[2],
+                        pose.target[0],pose.target[1],pose.target[2],
+                        pose.up[0],pose.up[1],pose.up[2]);
+                cameraAngle=pose.azimuthRad;cameraPitch=pose.pitchDeg;
+                cameraDistance=pose.distance;
+                if(referenceCameraPhase>=1)referenceCameraPreset="";
+            }else if(orbit&&previewReadiness.ready()) {
+                cameraAngle+=Math.min(.1,elapsed/1_000_000_000d)*.35;
+                updateModelCamera();
             }
             Animator animator=viewer==null?null:viewer.getAnimator();
             if(animator!=null&&animator.getAnimationCount()>0){
@@ -746,8 +865,15 @@ public final class FilamentGlbActivity extends Activity
     }
     private void destroyViewer(){
         previewDriver=null;
-        try{if(viewer!=null){ModelViewer owned=viewer;try{if(cinematic)releaseCinematicScene();}catch(Exception|LinkageError error){ActivityLog.add(this,"user","3D scene cleanup stopped",error.getClass().getSimpleName(),"failed",null,null,project==null?"":project.id);}finally{viewer=null;engine=null;uiHelper=null;owned.destroy();}}else{if(uiHelper!=null)uiHelper.detach();if(engine!=null)engine.destroy();engine=null;uiHelper=null;}}
+        try{if(viewer!=null){CinematicStudioLighting.remove(engine,viewer.getScene(),studioLights);studioLights=new int[0];ModelViewer owned=viewer;try{if(cinematic)releaseCinematicScene();}catch(Exception|LinkageError error){ActivityLog.add(this,"user","3D scene cleanup stopped",error.getClass().getSimpleName(),"failed",null,null,project==null?"":project.id);}finally{viewer=null;engine=null;uiHelper=null;owned.destroy();}}else{if(uiHelper!=null)uiHelper.detach();if(engine!=null)engine.destroy();engine=null;uiHelper=null;}}
         catch(Exception|LinkageError error){ActivityLog.add(this,"user","3D cleanup stopped",error.getClass().getSimpleName(),"failed",null,null,project==null?"":project.id);}
     }
-    @Override protected void onSaveInstanceState(Bundle state){super.onSaveInstanceState(state);state.putBoolean("paused",paused);state.putInt("cinematicFrame",cinematicFrame);state.putString("modelId",loadedModelId);state.putInt("animationIndex",animationIndex);state.putDouble("clipPosition",restoringModel?restoredClipPosition:clipClock.position());state.putDouble("playbackRate",clipClock.rate());state.putDouble("cameraAngle",cameraAngle);state.putDouble("cameraPitch",cameraPitch);state.putDouble("cameraDistance",cameraDistance);}
+    @Override protected void onSaveInstanceState(Bundle state){super.onSaveInstanceState(state);state.putBoolean("paused",paused);state.putInt("cinematicFrame",cinematicFrame);state.putString("modelId",loadedModelId);state.putInt("animationIndex",animationIndex);state.putDouble("clipPosition",restoringModel?restoredClipPosition:clipClock.position());state.putDouble("playbackRate",clipClock.rate());state.putDouble("cameraAngle",cameraAngle);state.putDouble("cameraPitch",cameraPitch);state.putDouble("cameraDistance",cameraDistance);
+        state.putString("referenceCameraPreset",referenceCameraPreset);
+        state.putDouble("referenceCameraPhase",referenceCameraPhase);
+        state.putDouble("referenceCameraOriginAzimuth",referenceCameraOriginAzimuth);
+        state.putDouble("referenceCameraOriginPitch",referenceCameraOriginPitch);
+        state.putDouble("referenceCameraOriginDistance",referenceCameraOriginDistance);
+        state.putBoolean("studioLightingOn",studioLightingOn);
+    }
 }

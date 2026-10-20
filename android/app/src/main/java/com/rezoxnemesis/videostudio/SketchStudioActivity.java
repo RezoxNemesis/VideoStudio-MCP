@@ -63,7 +63,7 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
     private int humanToolPosition,pendingAgentToolSelection=-1;
     private boolean syncingAgentTool,agentGlobalTool;
     private android.graphics.drawable.Drawable agentToolIndicator;
-    private final String[] toolValues={"stroke","eraser","line","rect","ellipse","polygon","select","eyedropper","pan","curve","nodes","paint","paint_erase","clone"};
+    private final String[] toolValues={"stroke","eraser","line","rect","ellipse","polygon","select","eyedropper","pan","curve","nodes","paint","paint_erase","clone","precision"};
     private String sketchId;
     private SketchCanvasView canvas;
     private TextView status,previewStatus;
@@ -106,10 +106,10 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
         viewport.addView(previewStatus,new android.widget.FrameLayout.LayoutParams(-1,-2,android.view.Gravity.TOP));
         root.addView(viewport,new LinearLayout.LayoutParams(-1,0,1));
         LinearLayout tools = row(root); Spinner tool = new Spinner(this);toolPicker=tool;
-        String[] names = {"Pen", "Eraser", "Line", "Rectangle", "Ellipse", "Polygon", "Select / move", "Eyedropper", "Pan canvas", "Curve pen", "Edit curve nodes", "Paint brush", "Erase paint", "Clone brush"};
+        String[] names = {"Pen", "Eraser", "Line", "Rectangle", "Ellipse", "Polygon", "Select / move", "Eyedropper", "Pan canvas", "Curve pen", "Edit curve nodes", "Paint brush", "Erase paint", "Clone brush", "Precision Bézier pen"};
         tool.setAdapter(new ArrayAdapter<String>(this, android.R.layout.simple_spinner_dropdown_item, names){@Override public View getView(int position,View convert,android.view.ViewGroup parent){TextView view=(TextView)super.getView(position,convert,parent);view.setTextColor(StudioUi.TEXT);view.setTextSize(12);view.setSingleLine(true);view.setEllipsize(android.text.TextUtils.TruncateAt.END);return view;}});
         tool.setContentDescription("Drawing tool");tool.setMinimumHeight(dp(48));tools.addView(tool,new LinearLayout.LayoutParams(0,dp(48),1));
-        tool.setOnItemSelectedListener(new SimpleSelection() { @Override public void selected(int position) { if(canvas!=null){if(syncingAgentTool||position==pendingAgentToolSelection){pendingAgentToolSelection=-1;return;}humanToolPosition=position;if(position>=11)runAction("Choose paint tool",()->activatePaint(position==12?"erase":position==13?"clone":"paint"));else canvas.setTool(toolValues[position]);} } });
+        tool.setOnItemSelectedListener(new SimpleSelection() { @Override public void selected(int position) { if(canvas!=null){if(syncingAgentTool||position==pendingAgentToolSelection){pendingAgentToolSelection=-1;return;}humanToolPosition=position;if(position>=11&&position<=13)runAction("Choose paint tool",()->activatePaint(position==12?"erase":position==13?"clone":"paint"));else canvas.setTool(toolValues[position]);} } });
         button(tools,"Brush / Text",this::brushMenu);button(tools,"More",this::moreMenu);
         toolStatus=new TextView(this);toolStatus.setTextColor(StudioUi.MUTED);toolStatus.setTextSize(12);
         filmstrip=new SketchFilmstripView(this);filmstrip.setListener(index->runAction("Select frame",()->selectFilmstrip(index)));root.addView(filmstrip,new LinearLayout.LayoutParams(-1,dp(48)));
@@ -229,8 +229,35 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
     @Override public void onOperation(JSONObject operation) {
         try{apply(new JSONArray().put(operation));}catch(Exception error){onMessage(error.getMessage());}
     }
+    private static boolean needsPreparedWorker(JSONArray operations){
+        // A precision stroke can have 4096 points and run repeated fidelity
+        // refinement. Never fit on the Android touch/main thread.
+        if(operations!=null)for(int i=0;i<operations.length();i++){
+            JSONObject operation=operations.optJSONObject(i);
+            if(operation!=null&&("precision_contour".equals(operation.optString("type"))
+                    ||"apply_acting_motion".equals(operation.optString("type"))))
+                return true;
+        }
+        return false;
+    }
     private void apply(JSONArray operations) {
-        if(session==null||loadingDrawing)return;if(livePlayer!=null){onMessage("Tap Draw myself to pause live drawing before editing");return;}stopPlayback();try{if(SketchPaintOps.containsPaint(operations)||session.hasPreparedSaves()){session.submitPrepared(operations);updateStatus();}else{session.submit(operations);present(session.document());}}catch(Exception error){onMessage(error.getMessage());}
+        if(session==null||loadingDrawing)return;
+        if(livePlayer!=null){
+            onMessage("Tap Draw myself to pause live drawing before editing");return;
+        }
+        stopPlayback();
+        try{
+            if(SketchPaintOps.containsPaint(operations)||needsPreparedWorker(operations)
+                    ||session.hasPreparedSaves()){
+                // Durable intent + worker transaction; asynchronously publishes
+                // the resulting editable vector and real actor keyframes.
+                session.submitPrepared(operations);
+                updateStatus();
+            }else{
+                session.submit(operations);
+                present(session.document());
+            }
+        }catch(Exception error){onMessage(error.getMessage());}
     }
     @Override public void onColorPicked(String value){brushColor=value;if(toolPicker.getSelectedItemPosition()<11)toolPicker.setSelection(0);updateBrush();}
     @Override public SketchCanvasView.PaintCommitter beginPaintGesture(String id,long revision,int frame,String objectId){
@@ -1167,7 +1194,69 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
         });
     }
 
-    private void moreMenu(){menu("Drawing tools",new String[]{"Layers","Separate reference into parts","Frames / Cels","Linked master artwork","2D animation","Workspace","Drawing alerts","Visual QA / Detail","Review & correct","Story → 2D film",canvas.previewFailed()?"Retry preview":"Refresh preview","3D pose → editable cel"},this::layersMenu,this::referenceLayersDialog,this::framesMenu,this::linkedMasterMenu,this::openAnimationStudio,this::workspaceDialog,this::drawingAlerts,this::qualityAuditDialog,this::reviewCorrectionDialog,this::storyFilmDialog,this::refreshPreview,this::choose3DPoseCel);}
+    private void moreMenu(){menu("Drawing tools",new String[]{"Layers","Separate reference into parts","Frames / Cels","Linked master artwork","Natural acting keys","2D animation","Workspace","Drawing alerts","Visual QA / Detail","Review & correct","Story → 2D film",canvas.previewFailed()?"Retry preview":"Refresh preview","3D pose → editable cel"},this::layersMenu,this::referenceLayersDialog,this::framesMenu,this::linkedMasterMenu,this::naturalActingDialog,this::openAnimationStudio,this::workspaceDialog,this::drawingAlerts,this::qualityAuditDialog,this::reviewCorrectionDialog,this::storyFilmDialog,this::refreshPreview,this::choose3DPoseCel);}
+    /** User-controlled anticipation → movement → recoil → recovery on a
+     * selected editable native sketch object; no pasted video motion. */
+    private void naturalActingDialog(){
+        if(document==null||session==null){onMessage("Open a Sketch first");return;}
+        try{
+            String chosen=canvas.getSelectedId();
+            if(chosen==null)throw SketchDocument.bad("Select an authored object or linked master instance first");
+            JSONObject object=SketchDocument.object(document,chosen);
+            int start=Math.max(canvas.getFrame(),object.getInt("frame"));
+            if(document.getInt("frameCount")-start<10)
+                throw SketchDocument.bad("Add at least ten remaining frames before animating");
+            JSONObject current=SketchDocument.transformAt(object,start);
+            LinearLayout form=column();
+            TextView help=new TextView(this);
+            help.setText("Move a real drawn subject, not just the camera. "
+                    +"OMEGA creates editable anticipation, drive, recoil and recovery keys. "
+                    +"Use separately drawn body parts/rigs for expressive joints.");
+            help.setTextColor(StudioUi.TEXT);help.setTextSize(13);form.addView(help);
+            EditText destX=input("Destination X (-4..4)",String.valueOf(
+                    Math.max(-4,Math.min(4,current.getDouble("x")+.22))),true);
+            EditText destY=input("Destination Y (-4..4)",String.valueOf(
+                    Math.max(-4,Math.min(4,current.getDouble("y")-.08))),true);
+            EditText destAngle=input("Destination rotation (-720..720)",
+                    String.valueOf(current.getDouble("rotation")+12),true);
+            EditText anticipation=input("Anticipation frames","8",true);
+            EditText drive=input("Action frames","12",true);
+            EditText recoil=input("Recoil frames","6",true);
+            EditText settle=input("Recovery frames","12",true);
+            form.addView(destX);form.addView(destY);form.addView(destAngle);
+            form.addView(anticipation);form.addView(drive);
+            form.addView(recoil);form.addView(settle);
+            android.widget.CheckBox extend=new android.widget.CheckBox(this);
+            extend.setText("Extend this object's exposure if needed");
+            extend.setChecked(true);extend.setTextColor(StudioUi.TEXT);form.addView(extend);
+            android.widget.CheckBox overwrite=new android.widget.CheckBox(this);
+            overwrite.setText("Replace keys inside this acting interval");
+            overwrite.setChecked(false);overwrite.setTextColor(StudioUi.TEXT);
+            form.addView(overwrite);
+            android.widget.ScrollView scroll=new android.widget.ScrollView(this);
+            scroll.addView(form);
+            new AlertDialog.Builder(this).setTitle("Natural 2D acting • OMEGA")
+                    .setView(scroll).setNegativeButton("Cancel",null)
+                    .setPositiveButton("Apply animated keyframes",(dialog,which)->{
+                        try{
+                            JSONObject operation=new JSONObject()
+                                    .put("type","apply_acting_motion")
+                                    .put("objectId",chosen).put("startFrame",start)
+                                    .put("x",Double.parseDouble(destX.getText().toString()))
+                                    .put("y",Double.parseDouble(destY.getText().toString()))
+                                    .put("rotation",Double.parseDouble(destAngle.getText().toString()))
+                                    .put("anticipationFrames",Integer.parseInt(anticipation.getText().toString()))
+                                    .put("driveFrames",Integer.parseInt(drive.getText().toString()))
+                                    .put("recoilFrames",Integer.parseInt(recoil.getText().toString()))
+                                    .put("recoveryFrames",Integer.parseInt(settle.getText().toString()))
+                                    .put("extendExposure",extend.isChecked())
+                                    .put("replaceExistingKeys",overwrite.isChecked());
+                            onOperation(operation);
+                        }catch(Exception error){onMessage(error.getMessage());}
+                    }).show();
+        }catch(Exception failure){onMessage(failure.getMessage());}
+    }
+
     private void referenceLayersDialog(){
         if(session==null||document==null)return;
         stopPlayback();final SketchEditorSession origin=session;final String target=sketchId;

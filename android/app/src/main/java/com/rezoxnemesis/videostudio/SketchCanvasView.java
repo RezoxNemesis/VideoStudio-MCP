@@ -332,9 +332,9 @@ public final class SketchCanvasView extends View {
         int save = canvas.save(); canvas.concat(SketchFrameRenderer.matrix(SketchDocument.transformAt(SketchDocument.layer(document, layerId), frame), w, h));
         paint.setColor("eraser".equals(tool) ? 0xAAE77989 : SketchDocument.color(color)); paint.setStrokeWidth(brushWidth * Math.min(w, h));
         paint.setStrokeJoin(Paint.Join.ROUND); paint.setStrokeCap(Paint.Cap.ROUND); paint.setStyle(fill ? Paint.Style.FILL : Paint.Style.STROKE);
-        if ("stroke".equals(tool) || "eraser".equals(tool)) {
+        if ("stroke".equals(tool) || "eraser".equals(tool) || "precision".equals(tool)) {
             JSONArray copies;
-            try{copies=symmetry?SketchSymmetry.copies(gesture,symmetryConfiguration,w,h):new JSONArray().put(gesture);}
+            try{copies=symmetry&&!"precision".equals(tool)?SketchSymmetry.copies(gesture,symmetryConfiguration,w,h):new JSONArray().put(gesture);}
             catch(IllegalArgumentException outside){
                 // Invalid previews stay visibly provisional; lifting reports the rejected complete gesture.
                 paint.setColor(0xAAE77989);copies=new JSONArray().put(gesture);
@@ -420,7 +420,7 @@ public final class SketchCanvasView extends View {
                     dragTransform = SketchDocument.copy(dragBase).put("x", Math.max(-4, Math.min(4, dragBase.getDouble("x") + (positions[2] - positions[0]) / document.getInt("width"))))
                             .put("y", Math.max(-4, Math.min(4, dragBase.getDouble("y") + (positions[3] - positions[1]) / document.getInt("height"))));
                 } else if (!"select".equals(tool) && gesture.length() > 0) {
-                    if ("stroke".equals(tool) || "eraser".equals(tool)||isPaintTool()) for (int i = 0; i < event.getHistorySize(); i++) addPoint(event.getHistoricalX(i), event.getHistoricalY(i), event.getToolType(0)==MotionEvent.TOOL_TYPE_STYLUS?event.getHistoricalPressure(i):1);
+                    if ("stroke".equals(tool) || "eraser".equals(tool) || "precision".equals(tool)||isPaintTool()) for (int i = 0; i < event.getHistorySize(); i++) addPoint(event.getHistoricalX(i), event.getHistoricalY(i), event.getToolType(0)==MotionEvent.TOOL_TYPE_STYLUS?event.getHistoricalPressure(i):1);
                     addPoint(event.getX(), event.getY(), event.getToolType(0)==MotionEvent.TOOL_TYPE_STYLUS?event.getPressure():1);
                 }
                 if(isPaintTool()&&gesture.length()>0)requestTouchPreview();invalidate(); return true;
@@ -461,14 +461,14 @@ public final class SketchCanvasView extends View {
     private void chooseNode(float x,float y) throws Exception {JSONObject object=SketchShapeKeys.sampled(SketchDocument.object(document,selectedId),frame);nodeCommand=-1;nodePreview=null;if(!object.has("points")&&!object.has("commands"))return;float[] p={x*document.getInt("width"),y*document.getInt("height")};objectInverse().mapPoints(p);double nearest=.06;JSONArray geometry=object.has("commands")?object.getJSONArray("commands"):object.getJSONArray("points");for(int i=0;i<geometry.length();i++){JSONArray command=geometry.getJSONArray(i);int start=object.has("commands")?1:0,stop=object.has("commands")?command.length():2;for(int k=start;k<stop;k+=2){double distance=Math.hypot(command.getDouble(k)-p[0]/document.getDouble("width"),command.getDouble(k+1)-p[1]/document.getDouble("height"));if(distance<nearest){nearest=distance;nodeCommand=i;nodeOffset=k;}}}if(nodeCommand>=0)nodePreview=SketchDocument.copy(object);}
     private void moveNode(float x,float y) throws Exception {if(nodePreview==null)return;float[] p={x*document.getInt("width"),y*document.getInt("height")};objectInverse().mapPoints(p);JSONArray geometry=nodePreview.has("commands")?nodePreview.getJSONArray("commands"):nodePreview.getJSONArray("points");geometry.getJSONArray(nodeCommand).put(nodeOffset,Math.max(0,Math.min(1,p[0]/document.getDouble("width")))).put(nodeOffset+1,Math.max(0,Math.min(1,p[1]/document.getDouble("height"))));if(renderer!=null)renderer.setGeometryPreview(nodePreview);}
     private void addPoint(float screenX, float screenY, float pressure) throws Exception {
-        if (gesture.length() >= 8192) throw SketchDocument.bad("Touch stroke reaches 8192 points; lift to continue");
+        if (gesture.length() >= ("precision".equals(tool)?OmegaBezierFitter.MAX_SAMPLES:8192)) throw SketchDocument.bad("Stroke point budget reached; lift the pen to continue");
         Matrix inverse = new Matrix();
         if(isPaintTool()&&paintTarget!=null){JSONObject object=SketchDocument.object(document,paintTarget);Matrix world=new Matrix();world.setConcat(SketchFrameRenderer.matrix(SketchDocument.transformAt(SketchDocument.layer(document,layerId),frame),document.getInt("width"),document.getInt("height")),SketchFrameRenderer.matrix(SketchDocument.transformAt(object,frame),document.getInt("width"),document.getInt("height")));if(!world.invert(inverse))throw SketchDocument.bad("Paint transform cannot be inverted");}
         else SketchFrameRenderer.matrix(SketchDocument.transformAt(SketchDocument.layer(document, layerId), frame), document.getInt("width"), document.getInt("height")).invert(inverse);
         float[] p = {(screenX - left) / viewScale, (screenY - top) / viewScale}; inverse.mapPoints(p);
         double x = Math.max(0, Math.min(1, p[0] / document.getInt("width"))), y = Math.max(0, Math.min(1, p[1] / document.getInt("height")));
         if (gesture.length() > 0) { JSONArray last = gesture.getJSONArray(gesture.length() - 1); if (Math.hypot(x - last.getDouble(0), y - last.getDouble(1)) < .0002 && Math.abs(pressure - last.getDouble(2)) < .01) return; }
-        if(gesture.length()>0&&("stroke".equals(tool)||"eraser".equals(tool))){double[] precise=SketchStrokePrecision.filter(gesture,x,y,stabilization,document.getInt("width"),document.getInt("height"));x=precise[0];y=precise[1];}
+        if(gesture.length()>0&&("stroke".equals(tool)||"eraser".equals(tool)||"precision".equals(tool))){double[] precise=SketchStrokePrecision.filter(gesture,x,y,stabilization,document.getInt("width"),document.getInt("height"));x=precise[0];y=precise[1];}
         if(isPaintTool())appendPaintPoint(x,y,Math.max(0,Math.min(1,pressure)));else gesture.put(new JSONArray().put(x).put(y).put(Math.max(0, Math.min(1, pressure))));
     }
     private boolean isPaintTool(){return "paint".equals(tool)||"paint_erase".equals(tool)||"clone".equals(tool);}
@@ -567,8 +567,24 @@ public final class SketchCanvasView extends View {
         Path path=new Path();JSONArray points=operation.getJSONArray("points");for(int i=0;i<points.length();i++){JSONArray point=points.getJSONArray(i);float x=(float)point.getDouble(0)*w,y=(float)point.getDouble(1)*h;if(i==0)path.moveTo(x,y);else path.lineTo(x,y);}if(points.length()==1){JSONArray point=points.getJSONArray(0);marker.setStyle(Paint.Style.FILL);canvas.drawCircle((float)point.getDouble(0)*w,(float)point.getDouble(1)*h,marker.getStrokeWidth()/2,marker);}else canvas.drawPath(path,marker);canvas.restoreToCount(save);
     }
     private void commitGesture() throws Exception {
-        if (gesture.length() == 0) return; JSONObject object = baseObject(tool);
-        if ("stroke".equals(tool) || "eraser".equals(tool)) object.put("points", gesture);
+        if(gesture.length()==0)return;
+        if("precision".equals(tool)){
+            if(gesture.length()<2)return;
+            // Fast UI admission only. The measured, pixel-tolerance-constrained
+            // path fitting executes through the existing sketch worker/undo
+            // transaction; never block touch by fitting 4096 samples here.
+            JSONObject operation=new JSONObject().put("type","precision_contour")
+                    .put("layerId",layerId).put("objectId",UUID.randomUUID().toString())
+                    .put("points",new JSONArray(gesture.toString()))
+                    .put("frame",frame).put("exposure",1)
+                    .put("color",color).put("width",brushWidth)
+                    .put("tolerancePx",1.8).put("tension",.9)
+                    .put("closed",false).put("pressureOutline",true);
+            if(listener!=null)listener.onOperation(operation);
+            return;
+        }
+        JSONObject object = baseObject(tool);
+        if ("stroke".equals(tool) || "eraser".equals(tool) || "precision".equals(tool)) object.put("points", gesture);
         else {
             JSONArray a = gesture.getJSONArray(0), b = gesture.getJSONArray(gesture.length() - 1);
             if ("line".equals(tool)) object.put("points", new JSONArray().put(a).put(b));
