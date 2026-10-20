@@ -5,6 +5,9 @@ import java.util.List;
 import org.junit.Test;
 import static org.junit.Assert.*;
 
+@org.junit.runner.RunWith(org.robolectric.RobolectricTestRunner.class)
+@org.robolectric.annotation.Config(sdk=33,manifest=org.robolectric.annotation.Config.NONE)
+@org.robolectric.annotation.GraphicsMode(org.robolectric.annotation.GraphicsMode.Mode.NATIVE)
 public class OmegaReferenceGeometryTest {
     private static OmegaReferenceGeometry.Point p(double x,double y){return new OmegaReferenceGeometry.Point(x,y);}
     @Test public void guideAlignmentFitsTranslationScaleAndRotation(){
@@ -183,6 +186,86 @@ public class OmegaReferenceGeometryTest {
         doc.put("revision",2);
         rejected(()->{try{OmegaReferenceGeometry.prepareEdit(doc,draft,"layer_1",0,1,"guide","#FF000000",.003,4,8);}
                 catch(IllegalArgumentException error){throw error;}catch(Exception error){throw new RuntimeException(error);}});
+    }
+
+
+    @Test public void nativeOwnedReferencePreviewCommitAndUndoPreserveSourcePixels() throws Exception {
+        java.util.concurrent.ExecutorService worker=java.util.concurrent.Executors.newSingleThreadExecutor();
+        try {
+            worker.submit(()->{
+                try {
+                    android.content.Context ctx=org.robolectric.RuntimeEnvironment.getApplication();
+                    String id="omega_ref_"+java.util.UUID.randomUUID().toString().replace("-","");
+                    android.graphics.Bitmap bitmap=android.graphics.Bitmap.createBitmap(256,256,
+                            android.graphics.Bitmap.Config.ARGB_8888);
+                    java.io.File png=new java.io.File(ctx.getFilesDir(),id+"_fixture.png");
+                    try{
+                        bitmap.eraseColor(0xffffffff);
+                        android.graphics.Canvas canvas=new android.graphics.Canvas(bitmap);
+                        android.graphics.Paint ink=new android.graphics.Paint();
+                        ink.setColor(0xff1166aa);
+                        canvas.drawCircle(128,128,70,ink);
+                        try(java.io.FileOutputStream out=new java.io.FileOutputStream(png)){
+                            assertTrue(bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG,100,out));
+                        }
+                    }finally{bitmap.recycle();}
+                    ProjectStore projects=new ProjectStore(ctx);
+                    ProjectStore.Project project=projects.create("OMEGA 2 owned Android Canvas fixture");
+                    ProjectStore.Asset asset=projects.registerImportedAsset(project.id,
+                            android.net.Uri.fromFile(png),png.getName(),"image/png",0,png.length());
+                    SketchEditOps.execute(ctx,"sketch_create",new org.json.JSONObject()
+                            .put("sketchId",id).put("operationId","create").put("width",256).put("height",256)
+                            .put("frameCount",24).put("fps",24).put("background","#FFFFFFFF"));
+                    SketchEditOps.execute(ctx,"sketch_import_reference",new org.json.JSONObject()
+                            .put("sketchId",id).put("operationId","import").put("expectedRevision",1)
+                            .put("projectId",project.id).put("sourceProjectUpdatedAt",projects.get(project.id).updatedAt)
+                            .put("assetId",asset.id).put("layerId","layer_1").put("objectId","source_image")
+                            .put("guideVisible",false));
+                    org.json.JSONObject before;
+                    String hash;
+                    try(SketchProjectStore store=new SketchProjectStore(ctx)){
+                        before=store.get(id);
+                        hash=SketchProjectStore.fileHash(store.referenceFile(id,
+                                SketchDocument.object(before,"source_image").getJSONObject("reference")));
+                    }
+                    OmegaReferenceGeometry.Source source=OmegaReferenceGeometry.captureNative(ctx,id,"source_image","front");
+                    OmegaReferenceGeometry.GuideDraft draft=corners(source).withContour("jaw",
+                            Arrays.asList(p(.1,.1),p(.3,.1),p(.3,.3),p(.1,.3)),true);
+                    org.json.JSONObject preview=OmegaReferenceGeometry.previewNative(ctx,draft,"layer_1",
+                            0,2,"guide","#FFCC1133",.01,4,8,512);
+                    assertFalse(preview.getBoolean("sourceModified"));
+                    assertEquals(hash,preview.getString("sourceReferenceSha256"));
+                    assertTrue(preview.getInt("changedPixels")>0);
+                    org.json.JSONObject screenshot=preview.getJSONObject("sketchPreviewImage");
+                    byte[] actual=android.util.Base64.decode(screenshot.getString("base64"),android.util.Base64.NO_WRAP);
+                    assertEquals(SketchDocument.sha256(actual),screenshot.getString("sha256"));
+                    try(SketchProjectStore store=new SketchProjectStore(ctx)){
+                        assertEquals(SketchDocument.canonical(before),SketchDocument.canonical(store.get(id)));
+                        assertEquals(hash,SketchProjectStore.fileHash(store.referenceFile(id,
+                                SketchDocument.object(before,"source_image").getJSONObject("reference"))));
+                    }
+                    OmegaReferenceGeometry.commitNative(ctx,draft,"layer_1",0,2,"guide",
+                            "#FFCC1133",.01,4,8,"commit_guides");
+                    try(SketchProjectStore store=new SketchProjectStore(ctx)){
+                        org.json.JSONObject committed=store.get(id);
+                        assertEquals(3,committed.getLong("revision"));
+                        assertEquals("polygon",SketchDocument.object(committed,"guide_jaw").getString("kind"));
+                        assertEquals(hash,SketchProjectStore.fileHash(store.referenceFile(id,
+                                SketchDocument.object(committed,"source_image").getJSONObject("reference"))));
+                    }
+                    SketchEditOps.execute(ctx,"sketch_undo",new org.json.JSONObject()
+                            .put("sketchId",id).put("expectedRevision",3).put("operationId","undo_guides"));
+                    try(SketchProjectStore store=new SketchProjectStore(ctx)){
+                        org.json.JSONObject restored=store.get(id);
+                        assertEquals(4,restored.getLong("revision"));
+                        assertEquals(1,restored.getJSONArray("layers").getJSONObject(0).getJSONArray("objects").length());
+                        assertEquals(hash,SketchProjectStore.fileHash(store.referenceFile(id,
+                                SketchDocument.object(restored,"source_image").getJSONObject("reference"))));
+                    }
+                    return null;
+                }catch(Exception e){throw new RuntimeException(e);}
+            }).get(120,java.util.concurrent.TimeUnit.SECONDS);
+        }finally{worker.shutdownNow();}
     }
 
 }
