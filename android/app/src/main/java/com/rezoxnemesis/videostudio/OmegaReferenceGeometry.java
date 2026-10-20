@@ -368,6 +368,86 @@ final class OmegaReferenceGeometry {
             return source;
         }
     }
+
+    /**
+     * Read-only native Android Canvas preview. Renders the real saved source
+     * and an independently validated candidate document, measures changed
+     * decoded pixels, and returns a bounded PNG plus exact owned-source hashes.
+     * A still-frame pixel delta is evidence of drawing, NOT anatomical accuracy.
+     */
+    static org.json.JSONObject previewNative(android.content.Context context,GuideDraft draft,
+                    String layerId,int frame,int exposure,String prefix,String color,
+                    double strokeWidth,double maxRms,double maxWorst,int maxDimension)throws Exception {
+        if(context==null||draft==null||maxDimension<128||maxDimension>720)
+            throw new IllegalArgumentException("Invalid native preview input");
+        try(SketchProjectStore store=new SketchProjectStore(context)) {
+            org.json.JSONObject original=store.get(draft.source.sketchId);
+            org.json.JSONObject ref=SketchDocument.object(original,draft.source.imageId)
+                    .getJSONObject("reference");
+            store.referenceFile(draft.source.sketchId,ref); // verifies SHA and owned canonical path
+            org.json.JSONArray ops=prepareEdit(original,draft,layerId,frame,exposure,
+                    prefix,color,strokeWidth,maxRms,maxWorst);
+            Projection projection=draft.project(Source.fromSketch(original,draft.source.imageId,
+                    draft.source.declaredView),maxRms,maxWorst);
+            org.json.JSONObject staged=SketchDocument.copy(original);
+            for(int i=0;i<ops.length();i++)SketchEditOps.apply(staged,ops.getJSONObject(i));
+            SketchDocument.validate(staged);
+            android.graphics.Bitmap before=null,after=null,scaled=null;
+            try(SketchFrameRenderer oldRenderer=new SketchFrameRenderer(context,original);
+                SketchFrameRenderer newRenderer=new SketchFrameRenderer(context,staged)) {
+                before=oldRenderer.render(frame);
+                after=newRenderer.render(frame);
+                if(before.getWidth()!=after.getWidth()||before.getHeight()!=after.getHeight())
+                    throw new IllegalStateException("Native preview dimensions changed");
+                int w=before.getWidth(),h=before.getHeight(),changed=0;
+                int[] basePixels=new int[w],guidePixels=new int[w];
+                for(int row=0;row<h;row++){
+                    before.getPixels(basePixels,0,w,0,row,w,1);
+                    after.getPixels(guidePixels,0,w,0,row,w,1);
+                    for(int x=0;x<w;x++)if(basePixels[x]!=guidePixels[x])changed++;
+                }
+                if(changed==0)throw new IllegalArgumentException(
+                        "Guide did not change any native pixels; inspect layer visibility and colour");
+                int dimension=maxDimension;byte[] png;
+                while(true){
+                    double factor=Math.min(1,dimension/(double)Math.max(w,h));
+                    int pw=Math.max(1,(int)Math.round(w*factor)),ph=Math.max(1,(int)Math.round(h*factor));
+                    scaled=android.graphics.Bitmap.createScaledBitmap(after,pw,ph,true);
+                    java.io.ByteArrayOutputStream out=new java.io.ByteArrayOutputStream();
+                    if(!scaled.compress(android.graphics.Bitmap.CompressFormat.PNG,100,out))
+                        throw new IllegalStateException("Native preview PNG encoding failed");
+                    png=out.toByteArray();
+                    if(png.length<=1024*1024)break;
+                    if(scaled!=after){scaled.recycle();scaled=null;}
+                    if(dimension<=128)throw new IllegalArgumentException("Native preview exceeds 1 MiB");
+                    dimension=Math.max(128,dimension*3/4);
+                }
+                return new org.json.JSONObject().put("sourceModified",false)
+                        .put("nativeRenderer","SketchFrameRenderer / Android Canvas")
+                        .put("sourceRevision",original.getLong("revision"))
+                        .put("sourceReferenceSha256",projection.reference.ownedSha256)
+                        .put("sourceSha256",projection.reference.originalSha256)
+                        .put("sourceView",projection.reference.declaredView)
+                        .put("frameIndex",frame).put("changedPixels",changed)
+                        .put("landmarkCount",draft.landmarks.size())
+                        .put("editableObjectCount",ops.length())
+                        .put("rmsLandmarkPixels",projection.rmsPixels)
+                        .put("maxLandmarkPixels",projection.maxPixels)
+                        .put("operations",ops)
+                        .put("sketchPreviewImage",new org.json.JSONObject()
+                                .put("mimeType","image/png")
+                                .put("width",scaled.getWidth()).put("height",scaled.getHeight())
+                                .put("sha256",SketchDocument.sha256(png))
+                                .put("base64",android.util.Base64.encodeToString(
+                                        png,android.util.Base64.NO_WRAP)));
+            }finally{
+                if(scaled!=null&&scaled!=after)scaled.recycle();
+                if(after!=null)after.recycle();
+                if(before!=null)before.recycle();
+            }
+        }
+    }
+
     /**
      * Explicit native transaction using existing project/history/revision/undo
      * and SketchDrawingPolicy. No new persistence store or bypass action.
