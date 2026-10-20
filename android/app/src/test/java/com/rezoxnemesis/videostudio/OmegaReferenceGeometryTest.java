@@ -189,6 +189,83 @@ public class OmegaReferenceGeometryTest {
     }
 
 
+
+    /** Keep synthetic *native* PNG/JSON proof with Gradle's uploaded JUnit reports. */
+    private static java.io.File phase2EvidenceDirectory() throws Exception {
+        java.io.File current=new java.io.File(System.getProperty("user.dir")).getCanonicalFile();
+        for(java.io.File root=current;root!=null;root=root.getParentFile()) {
+            java.io.File app=new java.io.File(root,"app/build.gradle.kts");
+            if(app.isFile()){
+                java.io.File dir=new java.io.File(root,"app/build/test-results/testDebugUnitTest/omega-phase2-native-evidence");
+                if(!dir.isDirectory()&&!dir.mkdirs())throw new java.io.IOException("No CI artifact directory");
+                return dir;
+            }
+            if(new java.io.File(root,"src/test/java").isDirectory()
+                    &&new java.io.File(root,"build.gradle.kts").isFile()) {
+                java.io.File dir=new java.io.File(root,"build/test-results/testDebugUnitTest/omega-phase2-native-evidence");
+                if(!dir.isDirectory()&&!dir.mkdirs())throw new java.io.IOException("No CI artifact directory");
+                return dir;
+            }
+        }
+        throw new java.io.IOException("Cannot resolve native test JUnit artifact directory");
+    }
+    private static void writeNativePng(android.graphics.Bitmap bitmap,java.io.File file) throws Exception {
+        try(java.io.FileOutputStream output=new java.io.FileOutputStream(file)){
+            assertTrue("Native Bitmap PNG output",bitmap.compress(
+                    android.graphics.Bitmap.CompressFormat.PNG,100,output));
+        }
+        assertTrue(file.isFile()&&file.length()>0);
+    }
+    private static void nativeEvidence(org.json.JSONObject original,byte[] candidatePng,
+                                       java.io.File ownedSource,String ownedHash,
+                                       org.json.JSONObject preview,android.content.Context context) throws Exception {
+        java.io.File root=phase2EvidenceDirectory();
+        android.graphics.Bitmap source=android.graphics.BitmapFactory.decodeFile(ownedSource.getPath());
+        android.graphics.Bitmap after=android.graphics.BitmapFactory.decodeByteArray(
+                candidatePng,0,candidatePng.length);
+        android.graphics.Bitmap before=null,triptych=null;
+        if(source==null||after==null)throw new java.io.IOException("Native proof bitmap decode failed");
+        try {
+            try(SketchFrameRenderer renderer=new SketchFrameRenderer(context,original)){
+                before=renderer.render(0);
+            }
+            assertEquals(before.getWidth(),after.getWidth());
+            assertEquals(before.getHeight(),after.getHeight());
+            assertEquals(source.getWidth(),before.getWidth());
+            assertEquals(source.getHeight(),before.getHeight());
+            writeNativePng(source,new java.io.File(root,"01-owned-reference-target.png"));
+            writeNativePng(before,new java.io.File(root,"02-native-before.png"));
+            writeNativePng(after,new java.io.File(root,"03-native-after.png"));
+            triptych=android.graphics.Bitmap.createBitmap(3*before.getWidth(),before.getHeight(),
+                    android.graphics.Bitmap.Config.ARGB_8888);
+            android.graphics.Canvas sheet=new android.graphics.Canvas(triptych);
+            sheet.drawBitmap(source,0,0,null);
+            sheet.drawBitmap(before,before.getWidth(),0,null);
+            sheet.drawBitmap(after,2*before.getWidth(),0,null);
+            writeNativePng(triptych,new java.io.File(root,"04-target-before-after-contact-sheet.png"));
+            org.json.JSONObject manifest=new org.json.JSONObject()
+                    .put("provenance","synthetic original Android Canvas PNG fixture (no Gallery, no personal data)")
+                    .put("rendering","SketchFrameRenderer SDK33 native Robolectric Canvas, NOT physical device")
+                    .put("frameIndex",0).put("referenceView","front")
+                    .put("ownedReferenceSha256",ownedHash)
+                    .put("originalSourceSha256",preview.getString("sourceSha256"))
+                    .put("previewPngSha256",SketchDocument.sha256(candidatePng))
+                    .put("changedPixels",preview.getInt("changedPixels"))
+                    .put("landmarkRmsPixels",preview.getDouble("rmsLandmarkPixels"))
+                    .put("landmarkWorstPixels",preview.getDouble("maxLandmarkPixels"))
+                    .put("nativeEditableObjects",preview.getInt("editableObjectCount"))
+                    .put("imageWidth",before.getWidth()).put("imageHeight",before.getHeight())
+                    .put("artistAccuracy","MANUAL_REVIEW_REQUIRED; synthetic fixture, not owner target");
+            java.nio.file.Files.writeString(
+                    new java.io.File(root,"05-native-evidence-manifest.json").toPath(),
+                    manifest.toString(2),java.nio.charset.StandardCharsets.UTF_8);
+        }finally {
+            if(triptych!=null)triptych.recycle();
+            if(before!=null)before.recycle();
+            after.recycle();source.recycle();
+        }
+    }
+
     @Test public void nativeOwnedReferencePreviewCommitAndUndoPreserveSourcePixels() throws Exception {
         java.util.concurrent.ExecutorService worker=java.util.concurrent.Executors.newSingleThreadExecutor();
         try {
@@ -223,14 +300,23 @@ public class OmegaReferenceGeometryTest {
                             .put("guideVisible",false));
                     org.json.JSONObject before;
                     String hash;
+                    java.io.File ownedSource;
                     try(SketchProjectStore store=new SketchProjectStore(ctx)){
                         before=store.get(id);
-                        hash=SketchProjectStore.fileHash(store.referenceFile(id,
-                                SketchDocument.object(before,"source_image").getJSONObject("reference")));
+                        ownedSource=store.referenceFile(id,
+                                SketchDocument.object(before,"source_image").getJSONObject("reference"));
+                        hash=SketchProjectStore.fileHash(ownedSource);
                     }
                     OmegaReferenceGeometry.Source source=OmegaReferenceGeometry.captureNative(ctx,id,"source_image","front");
-                    OmegaReferenceGeometry.GuideDraft draft=corners(source).withContour("jaw",
-                            Arrays.asList(p(.1,.1),p(.3,.1),p(.3,.3),p(.1,.3)),true);
+                    // A known, synthetic circle has manually specified reference contours;
+                    // this is an engineering fixture, NOT automatic recognition or art certification.
+                    List<OmegaReferenceGeometry.Point> contour=new java.util.ArrayList<>();
+                    for(int n=0;n<32;n++){
+                        double angle=2*Math.PI*n/32.0;
+                        contour.add(p(.5+(70.0/256)*Math.cos(angle),.5+(70.0/256)*Math.sin(angle)));
+                    }
+                    OmegaReferenceGeometry.GuideDraft draft=corners(source)
+                            .withContour("reference_outline",contour,true);
                     org.json.JSONObject preview=OmegaReferenceGeometry.previewNative(ctx,draft,"layer_1",
                             0,2,"guide","#FFCC1133",.01,4,8,512);
                     assertFalse(preview.getBoolean("sourceModified"));
@@ -239,6 +325,7 @@ public class OmegaReferenceGeometryTest {
                     org.json.JSONObject screenshot=preview.getJSONObject("sketchPreviewImage");
                     byte[] actual=android.util.Base64.decode(screenshot.getString("base64"),android.util.Base64.NO_WRAP);
                     assertEquals(SketchDocument.sha256(actual),screenshot.getString("sha256"));
+                    nativeEvidence(before,actual,ownedSource,hash,preview,ctx);
                     try(SketchProjectStore store=new SketchProjectStore(ctx)){
                         assertEquals(SketchDocument.canonical(before),SketchDocument.canonical(store.get(id)));
                         assertEquals(hash,SketchProjectStore.fileHash(store.referenceFile(id,
@@ -249,7 +336,7 @@ public class OmegaReferenceGeometryTest {
                     try(SketchProjectStore store=new SketchProjectStore(ctx)){
                         org.json.JSONObject committed=store.get(id);
                         assertEquals(3,committed.getLong("revision"));
-                        assertEquals("polygon",SketchDocument.object(committed,"guide_jaw").getString("kind"));
+                        assertEquals("polygon",SketchDocument.object(committed,"guide_reference_outline").getString("kind"));
                         assertEquals(hash,SketchProjectStore.fileHash(store.referenceFile(id,
                                 SketchDocument.object(committed,"source_image").getJSONObject("reference"))));
                     }
