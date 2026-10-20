@@ -1,3 +1,17 @@
+# Active contour-paint repair — 2026-10-20
+
+Current branch feat/native-authored-paint-fill-v494 extends verified4.9.3
+89e61b4. Target4.9.4/code497. Actual native separated artwork exposed gapped
+opaque brush bases. Implement shared contour paint from closed authored pen
+paths, preserving locked reference identity, native receipts/Undo and manual/MCP
+parity. No reference copying or geometric figure substitute. Native curve alpha
+regression found tile clipping changes RGBA; bounded whole-canvas rasterization
+plus raw pixel tile copies passed the unchanged exact pixel test. Preserve the
+failed evidence. This does not repair/verify the separate historical4.8.8 mirror
+trim regression. Continue actual drawing and short native motion, then the240s
+film; voice tab stays last. Native host execution requires no phone installation.
+No Worker deployment/main merge/stable release/new signer. One local Gradle.
+
 # Latest owner priority — native authored film, 2026-10-20
 
 Continue actual layer-by-layer drawing and reviewed native animation in this

@@ -44,6 +44,7 @@ test('actual relay rejects unsupported workflow before writes and queues exact n
  const before=storage.writes();await assert.rejects(relay.appEnqueueV3(key,'sketch_edit',edit([begin])),/4\.9\.2/);assert.equal(storage.writes(),before);
  await relay.appRegister(deviceId,key,{appVersion:'4.9.2',protocolVersion:3,appGeneration:1,permissionMode:'everything'});
  const queued=await relay.appEnqueueV3(key,'studio_sketch_edit',edit([begin]));assert.equal(contract.nativeStudioCanonicalAction(queued.action),'sketch_edit');assert.deepEqual(JSON.parse(JSON.stringify(queued.parameters)),edit([begin]));
+ const fill={type:'paint_fill',objectId:'base',strokeId:'fill',contourObjectId:'outline',expectedContourSha256:'a'.repeat(64),color:'#FFFFFFFF'};const beforeFill=storage.writes();await assert.rejects(relay.appEnqueueV3(key,'sketch_edit',edit([fill])),/4\.9\.4/);assert.equal(storage.writes(),beforeFill);await relay.appRegister(deviceId,key,{appVersion:'4.9.4',protocolVersion:3,appGeneration:1,permissionMode:'everything'});const filled=await relay.appEnqueueV3(key,'sketch_edit',edit([fill]));assert.deepEqual(JSON.parse(JSON.stringify(filled.parameters)),edit([fill]));
  const preview={sketchId:'owned',expectedRevision:2,view:'comparison',frameIndex:0};const comparison=await relay.appEnqueueV3(key,'studio_sketch_layered_drawing_preview',preview);assert.deepEqual(JSON.parse(JSON.stringify(comparison.parameters)),preview);
 });
 
@@ -60,4 +61,23 @@ test('stage-only preview is a strict opt-in with its own version floor',()=>{
  assert.doesNotThrow(()=>contract.requireStudioVersion({appVersion:'4.9.2'},'sketch_layered_drawing_preview',legacy));
  for(const stageOnly of [false,true]){const args={...legacy,stageOnly};assert.deepEqual(contract.nativeStudioParameters('sketch_layered_drawing_preview',args),args);assert.throws(()=>contract.requireStudioVersion({appVersion:'4.9.2'},'sketch_layered_drawing_preview',args),/4\.9\.3/);assert.doesNotThrow(()=>contract.requireStudioVersion({appVersion:'4.9.3'},'sketch_layered_drawing_preview',args));}
  for(const stageOnly of [null,0,'true'])assert.throws(()=>contract.nativeStudioParameters('sketch_layered_drawing_preview',{...legacy,stageOnly}));
+});
+
+test('owned contour fills and source inspection are strict and independently gated',()=>{
+ const fill={type:'paint_fill',objectId:'base',strokeId:'fill_1',contourObjectId:'closed_pen',expectedContourSha256:'a'.repeat(64),color:'#FFFFFFFF'};
+ for(const action of ['sketch_edit','studio_sketch_edit']){assert.deepEqual(contract.nativeStudioParameters(action,edit([fill])),edit([fill]));assert.throws(()=>contract.requireStudioVersion({appVersion:'4.9.3'},action,edit([fill])),/4\.9\.4/);assert.doesNotThrow(()=>contract.requireStudioVersion({appVersion:'4.9.4'},action,edit([fill])));}
+ for(const patch of [{color:1},{color:'#00FFFFFF'},{color:null},{expectedContourSha256:'bad'},{sourceImage:'guide'},{contour:{commands:[]}},{frameIndex:'0'}])assert.throws(()=>contract.nativeStudioParameters('sketch_edit',edit([{...fill,...patch}])));
+ const inspect={sketchId:'owned',expectedRevision:2,contourObjectIds:['closed_pen']};assert.deepEqual(contract.nativeStudioParameters('sketch_inspect',inspect),inspect);assert.throws(()=>contract.requireStudioVersion({appVersion:'4.9.3'},'sketch_inspect',inspect),/4\.9\.4/);assert.doesNotThrow(()=>contract.requireStudioVersion({appVersion:'4.9.4'},'sketch_inspect',inspect));
+ for(const patch of [{expectedRevision:undefined},{contourObjectIds:[]},{contourObjectIds:['same','same']},{contourObjectIds:[null]}])assert.throws(()=>contract.nativeStudioParameters('sketch_inspect',{...inspect,...patch}));
+ assert.throws(()=>contract.requireStudioVersion({appVersion:'3.9.5'},'sketch_inspect',{sketchId:'owned'}),/3\.9\.6/);assert.doesNotThrow(()=>contract.requireStudioVersion({appVersion:'3.9.6'},'sketch_inspect',{sketchId:'owned'}));
+ assert.throws(()=>contract.nativeStudioParameters('sketch_correction_propose',{reviewId:'review',expectedReviewRevision:1,operationId:'proposal',noteIds:['note'],operations:[fill]}));
+});
+
+test('ordinary animation schemas preserve native hidden artwork, contact cues and sampling tolerance',()=>{
+ const program={schema:'videostudio.sketch-animation.v1',frameCount:96,fps:24,rigs:[{id:'actor',joints:[{id:'hand',x:.3,y:.4}],bindings:[],poses:[{frame:0}]},{id:'prop',joints:[{id:'grip',x:.3,y:.4}],bindings:[],poses:[{frame:0}]}],hiddenArtwork:['annotations'],interactionCues:[{frame:95,rigA:'actor',jointA:'hand',rigB:'prop',jointB:'grip',maxGapPx:.1}],keyframeTolerancePixels:.25};
+ const request=p=>({animationId:'study',sketchId:'owned',sourceRevision:2,expectedRevision:0,operationId:'save',program:p});
+ for(const action of ['sketch_animation_save','studio_sketch_animation_save'])assert.deepEqual(contract.nativeStudioParameters(action,request(program)),request(program));
+ for(const patch of [{hiddenArtwork:['same','same']},{hiddenArtwork:null},{keyframeTolerancePixels:.24},{keyframeTolerancePixels:'0.25'},{interactionCues:[{...program.interactionCues[0],frame:96}]},{interactionCues:[{...program.interactionCues[0],jointA:'missing'}]},{interactionCues:[{...program.interactionCues[0],rigB:'actor'}]}])assert.throws(()=>contract.nativeStudioParameters('sketch_animation_save',request({...program,...patch})));
+ const bare={schema:program.schema,frameCount:96,rigs:[]};assert.doesNotThrow(()=>contract.requireStudioVersion({appVersion:'4.4.0'},'sketch_animation_save',request(bare)));
+ for(const [field,minimum,previous] of [['hiddenArtwork','4.5.0','4.4.9'],['interactionCues','4.5.2','4.5.1'],['keyframeTolerancePixels','4.5.3','4.5.2']]){const p={...bare,[field]:field==='keyframeTolerancePixels'?.25:[]};assert.throws(()=>contract.requireStudioVersion({appVersion:previous},'sketch_animation_save',request(p)),new RegExp(minimum.replaceAll('.','\\.')));assert.doesNotThrow(()=>contract.requireStudioVersion({appVersion:minimum},'sketch_animation_save',request(p)));}
 });

@@ -140,7 +140,7 @@ public final class SketchLivePlayer implements AutoCloseable {
         String objectId=operation.has("object")?operation.optJSONObject("object").optString("id",null):operation.optString("objectId",null);
         JSONObject baseline = document; preparing = true;
         pauseHand("Preparing next drawing step");
-        if("paint_stroke".equals(operation.optString("type"))){
+        if(java.util.Arrays.asList("paint_stroke","paint_fill").contains(operation.optString("type"))){
             // Resolve keyed poses on the reader, then ask the UI only for its visible viewport.
             reader.execute(()->{
                 try{

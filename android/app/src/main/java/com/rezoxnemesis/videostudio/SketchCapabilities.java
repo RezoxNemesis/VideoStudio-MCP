@@ -494,7 +494,7 @@ public final class SketchCapabilities {
                 .put("referenceLayers",referenceLayers())
                 .put("layeredDrawing",SketchLayeredDrawingCapabilities.get())
                 .put("referenceImport",new JSONObject().put("minimumNativeVersion","4.0.1").put("workingCopyMaximumLongEdge",2048).put("allExifOrientations",true).put("sourceProvenanceRecorded",true).put("hiddenImportOption","guideVisible: false").put("visibilityOperation","set_reference_visibility").put("visibilityIncludesTransformKeys",true))
-                .put("painting",new JSONObject().put("minimumNativeVersion","4.1.0").put("addCelOperation","add_paint_cel").put("strokeOperation","paint_stroke")
+                .put("painting",new JSONObject().put("minimumNativeVersion","4.1.0").put("addCelOperation","add_paint_cel").put("strokeOperation","paint_stroke").put("contourFillMinimumNativeVersion","4.9.4").put("contourFillOperation","paint_fill").put("contourFillSourceAction","sketch_inspect").put("contourFillMaximumPixels",1048576).put("contourFillRule","An existing closed source-free pen contour defines an even-odd native paint area. No reference pixels are read. A fresh base cel moves behind ink; existing nonempty cels must already be behind it. Identity transforms and an exact source hash are required.")
                         .put("modes",new JSONArray(new String[]{"paint","erase","clone"})).put("tips",new JSONArray(new String[]{"round","flat"}))
                         .put("controls",new JSONArray(new String[]{"sizePx","opacity","flow","hardness","spacing","pressure","texture","seed","angle","alphaLock","clip"}))
                         .put("ownedReferenceClone",true).put("cloneAffineMapping",true).put("sourceTextureSampledPerPixel",true)
