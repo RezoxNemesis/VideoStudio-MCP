@@ -1,3 +1,15 @@
+# Active native posed contact targets — 2026-10-20
+
+Current feat/native-posed-contact-targets-v499 extends frozen verified4.9.8
+0a6359d524c5935c90f294b5b794c1b1645a9e4f. Target4.9.9/code502 is IN PROGRESS.
+Read docs/continuity/NATIVE_POSED_CONTACT_TARGETS_499.md. Shared native pose reads
+and manual target copying must preserve frozen source, strict revision/camera
+semantics, cancellation and old request floors. Preserve failed UI generations.
+Continue actual owned far-arm/pinch/peeling studies and newly drawn views toward
+the240s film; engineering checks alone do not establish artistic acceptance.
+Voice last. One local Gradle owned by root. No Worker/main/stable/new signer,
+Gallery, external art generator, device reset or phone/codec claim.
+
 # Active focused native paint grid — 2026-10-20
 
 Current feat/native-focused-paint-grid-v498 extends committed test-driver9c5d54a
