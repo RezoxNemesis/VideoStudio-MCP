@@ -82,11 +82,11 @@ public class ProjectAssetImportTest {
         Fixture f=new Fixture();f.request.put("appendToTimeline",true);AtomicBoolean copied=new AtomicBoolean();
         try{assertThrows(InterruptedException.class,()->ProjectAssetImport.execute(f.context,f.request,(n,total)->{if(n>0){copied.set(true);Thread.currentThread().interrupt();}}));}finally{Thread.interrupted();}
         assertTrue(copied.get());assertEquals(1,f.output().assets.size());assertEquals(0,f.output().clips.size());
-        try(java.util.stream.Stream<java.nio.file.Path> paths=Files.walk(new File(f.context.getFilesDir(),"project_asset_imports").toPath())){
+        try(java.util.stream.Stream<java.nio.file.Path> paths=Files.walk(new File(f.context.getFilesDir(),"project_asset_imports/"+f.destination.id).toPath())){
             assertTrue("The interrupted copy must preserve a resumable private partial",paths.anyMatch(p->p.toString().endsWith(".partial")&&p.toFile().length()>0));
         }
         assertTrue(f.execute().getBoolean("ok"));assertEquals(2,f.output().assets.size());assertEquals(1,f.output().clips.size());
-        try(java.util.stream.Stream<java.nio.file.Path> paths=Files.walk(new File(f.context.getFilesDir(),"project_asset_imports").toPath())){
+        try(java.util.stream.Stream<java.nio.file.Path> paths=Files.walk(new File(f.context.getFilesDir(),"project_asset_imports/"+f.destination.id).toPath())){
             assertFalse("The published copy must consume its staged partial",paths.anyMatch(p->p.toString().endsWith(".partial")));
         }
     }
@@ -143,7 +143,7 @@ public class ProjectAssetImportTest {
             if(n>0){copied.set(true);Thread.currentThread().interrupt();}
         }));}finally{Thread.interrupted();}
         assertTrue(copied.get());
-        File root=new File(f.context.getFilesDir(),"project_asset_imports");
+        File root=new File(f.context.getFilesDir(),"project_asset_imports/"+f.destination.id);
         java.nio.file.Path[] parts;
         try(java.util.stream.Stream<java.nio.file.Path> files=Files.walk(root)){
             parts=files.filter(p->p.toString().endsWith(".partial")).toArray(java.nio.file.Path[]::new);
