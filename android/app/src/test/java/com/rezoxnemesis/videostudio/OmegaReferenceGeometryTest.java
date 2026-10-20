@@ -256,9 +256,9 @@ public class OmegaReferenceGeometryTest {
                     .put("nativeEditableObjects",preview.getInt("editableObjectCount"))
                     .put("imageWidth",before.getWidth()).put("imageHeight",before.getHeight())
                     .put("artistAccuracy","MANUAL_REVIEW_REQUIRED; synthetic fixture, not owner target");
-            java.nio.file.Files.writeString(
+            java.nio.file.Files.write(
                     new java.io.File(root,"05-native-evidence-manifest.json").toPath(),
-                    manifest.toString(2),java.nio.charset.StandardCharsets.UTF_8);
+                    manifest.toString(2).getBytes(java.nio.charset.StandardCharsets.UTF_8));
         }finally {
             if(triptych!=null)triptych.recycle();
             if(before!=null)before.recycle();
