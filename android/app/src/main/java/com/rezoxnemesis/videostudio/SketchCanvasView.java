@@ -334,7 +334,7 @@ public final class SketchCanvasView extends View {
         paint.setStrokeJoin(Paint.Join.ROUND); paint.setStrokeCap(Paint.Cap.ROUND); paint.setStyle(fill ? Paint.Style.FILL : Paint.Style.STROKE);
         if ("stroke".equals(tool) || "eraser".equals(tool) || "precision".equals(tool)) {
             JSONArray copies;
-            try{copies=symmetry?SketchSymmetry.copies(gesture,symmetryConfiguration,w,h):new JSONArray().put(gesture);}
+            try{copies=symmetry&&!"precision".equals(tool)?SketchSymmetry.copies(gesture,symmetryConfiguration,w,h):new JSONArray().put(gesture);}
             catch(IllegalArgumentException outside){
                 // Invalid previews stay visibly provisional; lifting reports the rejected complete gesture.
                 paint.setColor(0xAAE77989);copies=new JSONArray().put(gesture);
