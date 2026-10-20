@@ -1,0 +1,158 @@
+name: VideoStudio OMEGA 4.8.8 Signed Compatibility Candidate
+on:
+  push:
+    branches: [candidate/omega-4.8.8-signed-20261020]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: omega-v488-signed-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  android-compatibility-proof:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Gradle 8.9
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+      - name: Install Android SDK 36
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ ! -f "$ANDROID_HOME/platforms/android-36/package.xml" ] || [ ! -x "$ANDROID_HOME/build-tools/35.0.0/aapt" ]; then
+            timeout 240s bash -c 'yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;35.0.0" >/dev/null'
+          fi
+          test -f "$ANDROID_HOME/platforms/android-36/package.xml"
+          test -x "$ANDROID_HOME/build-tools/35.0.0/apksigner"
+      - name: Verify all OMEGA sources, preserved 4.8.7 GLB integration and version
+        shell: bash
+        run: |
+          set -euo pipefail
+          for cls in OmegaMasterDependencyIndex OmegaReferenceGeometry OmegaBezierFitter OmegaTwoBoneIK OmegaMotionTimeline OmegaVisualAudit OmegaAudioTimeline OmegaRenderPlan; do
+            test -s "android/app/src/main/java/com/rezoxnemesis/videostudio/$cls.java"
+            test -s "android/app/src/test/java/com/rezoxnemesis/videostudio/${cls}Test.java"
+          done
+          test -s android/app/src/main/java/com/rezoxnemesis/videostudio/Sketch3DCelBridge.java
+          grep -F 'this::linkedMasterMenu' android/app/src/main/java/com/rezoxnemesis/videostudio/SketchStudioActivity.java
+          grep -F 'this::choose3DPoseCel' android/app/src/main/java/com/rezoxnemesis/videostudio/SketchStudioActivity.java
+          grep -F 'versionName = "4.8.8"' android/app/build.gradle.kts
+          grep -F 'versionCode = 491' android/app/build.gradle.kts
+          grep -F 'APP_VERSION = "4.8.8"' android/app/src/main/java/com/rezoxnemesis/videostudio/AppProtocol.java
+      - name: Compile Android and pass every unit/regression test
+        working-directory: android
+        run: |
+          set -euo pipefail
+          gradle :app:compileDebugJavaWithJavac :app:testDebugUnitTest --stacktrace
+      - name: Save all test results, including failure diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: OMEGA-4.8.8-all-Android-test-results
+          path: |
+            android/app/build/test-results/testDebugUnitTest/
+            android/app/build/reports/tests/testDebugUnitTest/
+          retention-days: 14
+          if-no-files-found: warn
+
+  original-signer-candidate:
+    needs: android-compatibility-proof
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Gradle 8.9
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+      - name: Ensure Android SDK tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ ! -f "$ANDROID_HOME/platforms/android-36/package.xml" ] || [ ! -x "$ANDROID_HOME/build-tools/35.0.0/apksigner" ]; then
+            timeout 240s bash -c 'yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;35.0.0" >/dev/null'
+          fi
+          test -x "$ANDROID_HOME/build-tools/35.0.0/apksigner"
+      - name: Restore existing VideoStudio owner signing identity only
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.android/debug.keystore
+          key: videostudio-android-debug-signing-v1
+      - name: Reject missing or different owner certificate
+        shell: bash
+        run: |
+          set -euo pipefail
+          key="$HOME/.android/debug.keystore"
+          if [ ! -r "$key" ]; then
+            echo "::error::Original VideoStudio signing key not available; refusing key generation or incompatible APK."
+            exit 1
+          fi
+          actual="$(keytool -list -v -keystore "$key" -storepass android -alias androiddebugkey | awk -F': ' '/SHA256:/{print $2;exit}' | tr -d ':[:space:]' | tr '[:upper:]' '[:lower:]')"
+          test "$actual" = "7e0187470356616be2a45bc7f41445894085185db110edfdc0cdfd232942a6dd" || { echo "::error::Wrong signer"; exit 1; }
+      - name: Produce original-owner-signed APK candidate
+        working-directory: android
+        env:
+          VIDEOSTUDIO_SIGNING_KEYSTORE: ${{ github.workspace }}/.keep-this-unused
+        shell: bash
+        run: |
+          set -euo pipefail
+          export VIDEOSTUDIO_SIGNING_KEYSTORE="$HOME/.android/debug.keystore"
+          gradle :app:assembleDebug --stacktrace
+      - name: Verify APK package, signer, monotonic code and SHA-256
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_apk="android/app/build/outputs/apk/debug/app-debug.apk"
+          test -s "$source_apk"
+          identity="$("$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$source_apk" | head -n 1)"
+          echo "$identity"
+          grep -F "name='com.rezoxnemesis.videostudio.next'" <<< "$identity"
+          grep -F "versionCode='491'" <<< "$identity"
+          grep -F "versionName='4.8.8'" <<< "$identity"
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose "$source_apk"
+          cert="$("$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --print-certs "$source_apk" | awk -F': ' '/Signer #1 certificate SHA-256 digest:/{print $2;exit}' | tr -d ':[:space:]' | tr '[:upper:]' '[:lower:]')"
+          test "$cert" = "7e0187470356616be2a45bc7f41445894085185db110edfdc0cdfd232942a6dd"
+          export VIDEOSTUDIO_SOURCE_HEAD_SHA="$GITHUB_SHA"
+          python3 scripts/verify-android-apk.py --apk "$source_apk" --aapt "$ANDROID_HOME/build-tools/35.0.0/aapt" --apksigner "$ANDROID_HOME/build-tools/35.0.0/apksigner"
+          mkdir -p dist
+          cp "$source_apk" dist/VideoStudio-OMEGA-4.8.8-Candidate.apk
+          sha256sum dist/VideoStudio-OMEGA-4.8.8-Candidate.apk > dist/VideoStudio-OMEGA-4.8.8-Candidate.apk.sha256
+          python3 - <<'PY'
+          import json,os
+          p={'name':'VideoStudio OMEGA 4.8.8 Compatibility Candidate',
+             'status':'Engineering preview; not feature-complete; no installation performed',
+             'sourceCommit':os.environ['GITHUB_SHA'], 'version':'4.8.8','versionCode':491,
+             'preservesGLB487':True,'omegaModulesBuilt':8,
+             'nativeFullFeatureIntegrationVerified':False,'onDeviceQualityApproved':False,
+             'originalSignerSha256':'7e0187470356616be2a45bc7f41445894085185db110edfdc0cdfd232942a6dd'}
+          with open('dist/VideoStudio-OMEGA-4.8.8-Candidate-build-proof.json','w') as f:json.dump(p,f,indent=2)
+          PY
+      - name: Upload verified owner-signed engineering APK candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: VideoStudio-OMEGA-4.8.8-Owner-Signed-Candidate
+          path: |
+            dist/VideoStudio-OMEGA-4.8.8-Candidate.apk
+            dist/VideoStudio-OMEGA-4.8.8-Candidate.apk.sha256
+            dist/VideoStudio-OMEGA-4.8.8-Candidate-build-proof.json
+            android/app/build/outputs/apk/debug/VideoStudio-build-proof.json
+          retention-days: 14
+          if-no-files-found: error
+
+# No key generation, Gallery access, main merge, Cloudflare deployment,
+# installation, or skipping failing tests. Candidate remains review-only.
