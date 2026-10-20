@@ -72,8 +72,11 @@ public final class CinematicReferenceCameraPathTest {
             // Full scene invariants: actor motion and VFX are NOT rewritten.
             assertEquals(before.getJSONArray("shots").getJSONObject(1).getString("action"),
                     updated.getJSONArray("shots").getJSONObject(1).getString("action"));
-            assertEquals(before.getJSONArray("shots").getJSONObject(1).getJSONObject("vfx").toString(),
-                    updated.getJSONArray("shots").getJSONObject(1).getJSONObject("vfx").toString());
+            assertEquals("Camera edit must preserve every authored VFX field and value",
+                    Cinematic3DTimeline.canonical(before.getJSONArray("shots")
+                            .getJSONObject(1).getJSONObject("vfx")),
+                    Cinematic3DTimeline.canonical(updated.getJSONArray("shots")
+                            .getJSONObject(1).getJSONObject("vfx")));
         }
     }
 
