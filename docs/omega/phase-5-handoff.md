@@ -33,7 +33,7 @@ integration branch or other phase's owned files were changed.
    `authoredRootKeys()` exposes five editable knots.
 3. `Contact`: user-authored named joint, normalized world anchor, local-rest
    end-effector coordinate, maximum correction, full-plant frame window,
-   optional <=24-frame smooth acquire/release windows. A full-plant interval
+   optional <=12-frame smooth acquire/release windows (matching the current\n   native compiler limit). A full-plant interval
    preserves the anchor to numerical precision while the root moves/rotates.
    `ContactSample.localTargetX/Y` is the explicitly computed rig-local IK
    target; `worldX/Y` is the actual projected endpoint, `anchorX/Y` is its
@@ -85,7 +85,7 @@ owner should review and separately implement the following adapter:
    editable parts and approved source revision. Do not guess missing
    joints, hand outlines or unseen anatomical views.
 2. Map `ActingClip.authoredRootKeys()` and/or sampled `Sample.root` to
-   the current animation program's `poses[].frame/rootX/rootY/rotations`.
+   the current animation program's `poses[].frame/rootX/rootY/rotations`.\n   The five sparse knots alone do **not** retain the root lift arc; bake\n   additional explicit DRIVE midpoint/root samples within the original\n   4096-key document budget. `root.angle` needs an owner-selected bone\n   rotation channel; no undocumented whole-canvas angle.
    Map `Sample.followThroughAngle` to an **explicitly chosen** head/arm
    joint, never to the whole picture or camera. Blend only with the owner's
    approved authored pose interval; reject overlaps, locked layers, key/object
