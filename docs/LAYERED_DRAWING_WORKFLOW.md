@@ -173,3 +173,66 @@ These are reusable authoring controls, not an automatic detailed redraw or a
 3D orbit. Private profile and arm-bend studies must be visually inspected before
 further action shots. The separate older IMAGE mirror/trim alpha regression
 remains unresolved; paint-grid neutrality does not establish that repair.
+
+## Reuse the current authored drawing in clean parts (4.9.6)
+
+Layer-by-layer drawing > Reuse own marks in clean parts copies selected reviewed
+refinement/detail marks into a named clean part. Selecting a mark on the canvas
+preselects it in the picker. Keep separate paint cels for distinct parts during
+refinement. Reuse retains the earlier pass and its review, paint bytes/hash,
+object transforms, timing and editable geometry. Target layer style applies.
+Source order is preserved within each reuse step. Up to64 objects fit one step.
+
+Ordinary ChatGPT uses the existing `sketch_edit` action and stage operation:
+
+```json
+{
+  "sketchId": "actor",
+  "expectedRevision": 12,
+  "operationId": "reuse_head_v1",
+  "operations": [{
+    "type": "layered_drawing_stage",
+    "stage": "clean_line",
+    "promote": [{"sourceObjectId": "owned_head_paint", "partId": "head"}]
+  }]
+}
+```
+
+The app generates a stable readable object ID, or accepts an explicit new
+`objectId` in each mapping. The receipt's `authoredStagePromotions` identifies the
+new objects, source IDs, target parts/layers and unchanged paint hashes. Reuse
+must occupy its own edit. The current source pass needs an explicit ACCEPTABLE
+review, and entering clean line still requires the ordinary prior-stage review.
+Further steps may reuse additional marks while clean line is active.
+
+The original reference, construction placeholders, prefab objects and paint
+with clone/reference ancestry reject. Paint ancestry is checked on a worker,
+streaming up to8192 journal entries with cancellation checks. Source and target
+layer transforms/key sequences must match; unsafe coordinate reinterpretation
+rejects. Document, journal and history budgets remain unchanged. Native paint
+stroke IDs are inherited under each new object so an old stroke cannot silently
+be replayed as a new gesture. The original reference remains hidden and locked.
+
+A lost acknowledgement retries the same durable operation. Reload inspects the
+saved drawing. Stable generated IDs also prevent duplicating the same unchanged
+mark into the same part after reopening; inspect/edit that clean mark, or use a
+new explicit ID for an intentional additional copy. Normal Undo removes the
+reuse step and archives retain both the source pass and copied editable parts.
+
+Explicit `promote` requires4.9.6 throughout ordinary/aliased/nested MCP requests.
+Omitting it keeps the4.9.2 stage floor and original request fingerprints. No new
+canonical action is introduced. This reuses an existing app-authored drawing;
+it does not redraw a photograph, recover original artist strokes, segment a
+reference image or infer hidden views. Technical pixel identity does not certify
+final likeness, anatomy or motion quality.
+
+### Continuous Graphite shading (4.9.6)
+
+Brush / Text > Brush > graphite selects a continuous pressure core with fine,
+repeatable grain. Hardness controls core density and grain strength; opacity and
+pressure remain editable. Ordinary `add_object` and `update_object.patch.brush`
+use `preset:"graphite"` with the same native renderer. The explicit preset requires
+4.9.6, including nested story/correction/component requests. Existing Pencil
+marks keep their rendering; switching them is an explicit Undoable brush edit.
+Graphite is an authored pressure brush, not a reference tracer, a bitmap filter
+or an automatic detailed redraw. Inspect the actual result at its intended size.

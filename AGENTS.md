@@ -1,3 +1,25 @@
+# Active authored stage reuse — 2026-10-20
+
+Signed4.9.5/code498 ca9ba04f876e837926faaa76a967b99cec008dcf is frozen.
+CI39471981890 passed2125 Android tests/0failures/0errors/12skips; original
+signer/package/version/APK hash independently verified. PR134 is draft.
+Current branch feat/native-authored-stage-promotion-v496 targets4.9.6/code499.
+Actual native thin Pencil close-ups showed regular beading. Add optional Graphite
+continuous pressure core/fine deterministic grain, explicitly update study marks,
+keep older Pencil rendering unchanged and manual/MCP parity/version gates.
+Actual three-quarter studies exposed tedious repainting of already-authored
+paint during clean-part separation. Add bounded revision-bound reuse of current
+owned refinement/detail marks through existing layered_drawing_stage, preserving
+source passes and immutable paint identities. Reject reference/prefab/clone-derived
+sources and mismatched layer transforms. Normal Undo, retry, archive, manual and
+ordinary MCP parity remain required. Use the feature on the actual actor, then
+continue views/actions/240s film. Voice last. No Worker/main/stable/signing/device
+identity changes. One local Gradle. Private art stays outside Git.
+Fresh local4.9.6 checks:2133 Android tests/0failures/0errors/13skips;677 Node
+tests plus306 smoke checks pass. Candidate CI/signing remains pending. Native
+three-quarter elbow/wrist study exists, but detailed likeness/anatomy and the
+240s film remain NEEDS_REWORK. Do not equate these checks with artistic acceptance.
+
 # Active authored deformation — 2026-10-20
 
 Work on feat/native-authored-deformation-v495, based on frozen signed4.9.4

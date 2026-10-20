@@ -247,6 +247,19 @@ public final class SketchPaintStore implements AutoCloseable {
         }return result;
     }
 
+    /** Bounded, streaming ancestry check for reuse of current authored stage paint. */
+    void requireAuthoredStageSource(JSONObject descriptor)throws Exception {
+        if(android.os.Looper.myLooper()==android.os.Looper.getMainLooper())throw bad("Authored paint reuse requires a worker");verify(descriptor);JSONObject current=copy(descriptor);java.util.HashSet<String> seen=new java.util.HashSet<>();int count=0;
+        while(true){interrupted();if(!seen.add(current.getString("sha256")))throw bad("Authored paint ancestry is cyclic");JSONObject m=manifest(current);
+            if(count==0&&m.getJSONArray("tiles").length()==0)throw bad("Choose paint with retained authored pixels");
+            if(!m.has("strokeSha256")){if(m.getInt("strokeCount")!=0||m.getJSONArray("tiles").length()!=0)throw bad("Authored paint ancestry must begin with an empty native snapshot");return;}
+            if(++count>MAX_CHAIN)throw bad("Authored paint ancestry exceeds8192 steps");JSONObject record=stroke(m.getString("strokeSha256")),request=record.getJSONObject("request");
+            if(record.has("source")||request.has("cloneSource"))throw bad("Reference or clone-derived paint cannot become an authored clean part");
+            if(!"paint_fill".equals(request.optString("type"))){JSONObject brush=request.optJSONObject("brush");if(!"paint_stroke".equals(request.optString("type"))||brush==null||!java.util.Arrays.asList("paint","erase").contains(brush.optString("mode")))throw bad("Reuse only native authored paint/fill ancestry");}
+            current=parent(current,m,record);
+        }
+    }
+
     public LinkedHashMap<String,File> dependencies(JSONObject d)throws Exception {
         LinkedHashMap<String,File> result=new LinkedHashMap<>();JSONObject current=copy(d);java.util.HashSet<String> seen=new java.util.HashSet<>();int count=0;
         while(true){interrupted();String sha=current.getString("sha256");if(!seen.add(sha))throw bad("SKETCH_PAINT_JOURNAL_CHANGED: cyclic ancestry");JSONObject m=manifest(current);result.put("paint/"+sha+".json",owned("",sha,"json",MANIFEST_BYTES));

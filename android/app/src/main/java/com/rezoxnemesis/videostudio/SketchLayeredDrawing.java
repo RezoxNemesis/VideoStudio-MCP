@@ -40,6 +40,7 @@ public final class SketchLayeredDrawing {
         JSONArray reviews=meta(doc).getJSONArray("reviews");String digest=stageContentSha256(doc,name);
         for(int i=reviews.length()-1;i>=0;i--){JSONObject r=reviews.getJSONObject(i);if(name.equals(r.getString("stage")))return "ACCEPTABLE".equals(r.getString("status"))&&digest.equals(r.getString("contentSha256"));}return false;
     }
+    static boolean currentReviewAccepted(JSONObject doc,String stage)throws Exception{return accepted(doc,stage);}
     public static JSONObject summary(JSONObject doc)throws Exception{
         if(!enabled(doc))return new JSONObject().put("enabled",false);JSONObject m=meta(doc),out=SketchDocument.copy(m);JSONArray states=new JSONArray();
         for(String name:STAGES)states.put(new JSONObject().put("stage",name).put("contentSha256",stageContentSha256(doc,name)).put("acceptable",accepted(doc,name)));
@@ -60,13 +61,13 @@ public final class SketchLayeredDrawing {
         String type=op.getString("type");if("layered_drawing_begin".equals(type)){begin(doc,op);return;}
         if(!enabled(doc))throw denied("Begin a layered drawing before changing its stage");JSONObject m=meta(doc);
         if("layered_drawing_stage".equals(type)){
-            SketchDocument.fields(op,"type,stage");String next=op.getString("stage");int from=stage(m.getString("stage")),to=stage(next);
+            SketchDocument.fields(op,"type,stage,promote");String next=op.getString("stage");int from=stage(m.getString("stage")),to=stage(next);
             if(to>from&&(to!=from+1||!accepted(doc,STAGES[from])))throw denied("Advance one stage after an explicit current ACCEPTABLE review");m.put("stage",next).put("status","IN_PROGRESS");
             JSONArray ids=m.getJSONObject("stageLayers").getJSONArray(next);
             // Keep the immediately preceding drawing for detail work, while hiding
             // construction after refinement and every preliminary pass for clean parts.
             for(int pass=0;pass<4;pass++){JSONArray passIds=m.getJSONObject("stageLayers").getJSONArray(STAGES[pass]);boolean visible=to<3?(pass==to||to>0&&pass==to-1):pass==3;for(int i=0;i<passIds.length();i++)SketchDocument.layer(doc,passIds.getString(i)).put("visible",visible);}
-            for(int i=0;i<ids.length();i++)SketchDocument.layer(doc,ids.getString(i)).put("locked",false);return;
+            for(int i=0;i<ids.length();i++)SketchDocument.layer(doc,ids.getString(i)).put("locked",false);if(op.has("promote"))SketchAuthoredStagePromotion.apply(doc,op);return;
         }
         if("layered_drawing_review".equals(type)){
             SketchDocument.fields(op,"type,stage,reviewedRevision,status,note,frameIndex");String name=op.getString("stage");stage(name);if(!name.equals(m.getString("stage")))throw denied("Review the active drawing stage");
