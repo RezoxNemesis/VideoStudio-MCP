@@ -50,6 +50,7 @@ public final class Cinematic3DStudioActivity extends Activity {
     private ProjectStore.Project project;
     private JSONObject timeline,acceptedTimeline,editorBundle;
     private String bundleId="",programId="",expectedProgramSha256="",loadingProgramId="";
+    private String outputFraming=CinematicOutputFraming.PORTRAIT;
     private long expectedSourceUpdatedAt;
     private int selectedShot,operationGeneration;
     private boolean busy,dirty,savePending,pickerUpdating,bindingReady,sceneRebuildRequired;
@@ -73,6 +74,10 @@ public final class Cinematic3DStudioActivity extends Activity {
         projectStore=new ProjectStore(this);String id=getIntent().getStringExtra("projectId");
         project=id==null?projectStore.active():projectStore.get(id);if(project==null){finish();return;}
         try{Cinematic3DTimeline.id(project.id);}catch(IllegalArgumentException error){Toast.makeText(this,"This source project has an unsupported identity for cinematic bundles",Toast.LENGTH_LONG).show();finish();return;}
+        outputFraming=getPreferences(MODE_PRIVATE).getString(
+                "cinematicOutput."+project.id,CinematicOutputFraming.PORTRAIT);
+        try{CinematicOutputFraming.dimensions(outputFraming);}
+        catch(IllegalArgumentException invalid){outputFraming=CinematicOutputFraming.PORTRAIT;}
         expectedSourceUpdatedAt=project.updatedAt;buildUi();
         if(android.os.Build.VERSION.SDK_INT>=33){systemBackCallback=this::requestBack;getOnBackInvokedDispatcher().registerOnBackInvokedCallback(android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT,systemBackCallback);}
         if(state!=null){
@@ -121,6 +126,7 @@ public final class Cinematic3DStudioActivity extends Activity {
         root.addView(label("Body, material, motion style, local joint rotations and planted ankle anchors are cloud scene drafts. Rebuild in Blender and import the new scene before native preview or MP4. No live joint manipulation or original-image reconstruction is claimed.",12));
         row(root,button("Build updated scene",this::buildUpdatedScene),button("Export rebuild draft",this::exportRebuildDraft));
         row(root,button("Save timeline",this::saveTimeline),button("Restore saved",this::restoreAccepted));
+        row(root,button("Output framing",this::chooseOutputFraming));
         row(root,button("Live 3D preview",this::openPreview),button("Native MP4",this::renderNative));
         row(root,button("Preview selected shot",this::previewSelectedShot),button("Shot timing",this::showShotTiming));
         row(root,button("Export authoring request",this::exportAuthoringRequest),button("Return",()->discardGuard(this::finish)));
@@ -129,7 +135,7 @@ public final class Cinematic3DStudioActivity extends Activity {
 
     private void refresh(){
         if(binding==null)return;
-        binding.setText(project.name+" • "+(timeline==null?"no scene bundle":timeline.optString("name")+" • "+("procedural_mannequin".equals(timeline.optString("motionProvider"))?"procedural mannequins":"authored 3D"))+"\n"+(expectedProgramSha256.isEmpty()?"Timeline not saved":("Saved generation "+expectedProgramSha256.substring(0,Math.min(12,expectedProgramSha256.length()))))+(sceneRebuildRequired?" • REBUILD REQUIRED":dirty?" • unsaved edits":"")+(busy?" • working":""));
+        binding.setText(project.name+" • "+(timeline==null?"no scene bundle":timeline.optString("name")+" • "+("procedural_mannequin".equals(timeline.optString("motionProvider"))?"procedural mannequins":"authored 3D"))+"\n"+(expectedProgramSha256.isEmpty()?"Timeline not saved":("Saved generation "+expectedProgramSha256.substring(0,Math.min(12,expectedProgramSha256.length()))))+(sceneRebuildRequired?" • REBUILD REQUIRED":dirty?" • unsaved edits":"")+(busy?" • working":"")+"\n"+CinematicOutputFraming.label(outputFraming));
         for(Button control:controls)control.setEnabled(!busy);shots.setEnabled(!busy&&timeline!=null);
         int count=timeline==null?0:timeline.optJSONArray("shots").length();boolean library=isActionLibrary();addShotButton.setEnabled(!busy&&library&&count<80);duplicateButton.setEnabled(!busy&&library&&count>0&&count<80);deleteShotButton.setEnabled(!busy&&library&&count>1);
         java.util.List<String> labels=new java.util.ArrayList<>();if(timeline!=null){JSONArray entries=timeline.optJSONArray("shots");if(entries!=null)for(int i=0;i<entries.length();i++){JSONObject shot=entries.optJSONObject(i);if(shot!=null)labels.add((i+1)+". "+shot.optString("action")+" • "+shot.optInt("durationFrames")+" frames • "+shot.optString("id"));}}
@@ -390,14 +396,44 @@ public final class Cinematic3DStudioActivity extends Activity {
     }
     private void exportRebuildDraft(){if(!requireTimeline())return;try{exportedRequest=rebuildRequest().toString(2);startActivityForResult(new Intent(Intent.ACTION_CREATE_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("application/json").putExtra(Intent.EXTRA_TITLE,"cinematic3d-rebuild-template.json"),WRITE_REQUEST);}catch(Exception error){setStatus(message(error));}}
 
-    private void openPreview(){if(requireSaved())startActivity(previewIntent(this,project.id,programId,expectedProgramSha256));}
-    private void previewSelectedShot(){if(!requireSaved())return;try{JSONObject compiled=Cinematic3DTimeline.compile(timeline);int frame=compiled.getJSONArray("shots").getJSONObject(selectedShot).getInt("startFrame");startActivity(previewIntent(this,project.id,programId,expectedProgramSha256,frame));}catch(Exception error){setStatus(message(error));}}
+    private void chooseOutputFraming(){
+        final String[] names=CinematicOutputFraming.LABELS;
+        new AlertDialog.Builder(this).setTitle("Frame shape for 3D preview and MP4")
+                .setSingleChoiceItems(names,
+                        java.util.Arrays.asList(CinematicOutputFraming.MODES)
+                                .indexOf(outputFraming),
+                        (dialog,index)->{
+                            if(index<0||index>=CinematicOutputFraming.MODES.length)return;
+                            outputFraming=CinematicOutputFraming.MODES[index];
+                            getPreferences(MODE_PRIVATE).edit().putString(
+                                    "cinematicOutput."+project.id,outputFraming).apply();
+                            refresh();
+                            setStatus("3D preview and export: "+CinematicOutputFraming.label(outputFraming));
+                            dialog.dismiss();
+                        })
+                .setNegativeButton("Cancel",null).show();
+    }
+    private Intent framedPreview(Intent intent){
+        int[] wh=CinematicOutputFraming.dimensions(outputFraming);
+        return intent.putExtra("cinematicOutputWidth",wh[0])
+                .putExtra("cinematicOutputHeight",wh[1]);
+    }
+    private void openPreview(){if(requireSaved())startActivity(
+            framedPreview(previewIntent(this,project.id,programId,expectedProgramSha256)));}
+
+    private void previewSelectedShot(){if(!requireSaved())return;try{JSONObject compiled=Cinematic3DTimeline.compile(timeline);int frame=compiled.getJSONArray("shots").getJSONObject(selectedShot).getInt("startFrame");startActivity(framedPreview(previewIntent(
+                this,project.id,programId,expectedProgramSha256,frame)));}catch(Exception error){setStatus(message(error));}}
     private void showShotTiming(){if(!requireTimeline())return;try{
         JSONObject compiled=Cinematic3DTimeline.compile(timeline);JSONArray entries=compiled.getJSONArray("shots");int fps=compiled.getInt("fps");StringBuilder text=new StringBuilder();
         for(int index=0;index<entries.length();index++){JSONObject shot=entries.getJSONObject(index);text.append(index==selectedShot?"▶ ":"").append(index+1).append(". ").append(shot.getString("action")).append(String.format(java.util.Locale.US,"\n%.2f–%.2f s • frames %d–%d • hold %d\n\n",shot.getInt("startFrame")/(double)fps,shot.getInt("endFrame")/(double)fps,shot.getInt("startFrame")+1,shot.getInt("endFrame"),shot.getInt("hitStopFrames")));}
         new AlertDialog.Builder(this).setTitle(String.format(java.util.Locale.US,"%d shots • %.2f seconds",entries.length(),compiled.getInt("totalFrames")/(double)fps)).setMessage(text.toString()).setPositiveButton("Close",null).show();
     }catch(Exception error){setStatus(message(error));}}
-    private void renderNative(){if(!requireSaved())return;try{JSONObject request=getRequest(programId,expectedProgramSha256).put("width",OUTPUT_WIDTH).put("height",OUTPUT_HEIGHT).put("render",true).put("fileName","VideoStudio_Cinematic3D_"+System.currentTimeMillis()+".mp4");Intent intent=new Intent(this,ControlService.class).setAction(ControlService.ACTION_LOCAL_CINEMATIC_3D).putExtra("requestJson",request.toString());startForegroundService(intent);setStatus("Native 3D MP4 export queued. Progress and cancellation are available in VideoStudio jobs.");}catch(Exception error){setStatus("Cannot queue native export: "+message(error));}}
+    private void renderNative(){if(!requireSaved())return;try{
+        int[] size=CinematicOutputFraming.dimensions(outputFraming);
+        JSONObject request=getRequest(programId,expectedProgramSha256)
+                .put("width",size[0]).put("height",size[1])
+                .put("render",true)
+                .put("fileName","VideoStudio_Cinematic3D_"+System.currentTimeMillis()+".mp4");Intent intent=new Intent(this,ControlService.class).setAction(ControlService.ACTION_LOCAL_CINEMATIC_3D).putExtra("requestJson",request.toString());startForegroundService(intent);setStatus("Native 3D MP4 export queued. Progress and cancellation are available in VideoStudio jobs.");}catch(Exception error){setStatus("Cannot queue native export: "+message(error));}}
     private void exportAuthoringRequest(){if(!requireSaved())return;try{JSONObject request=getRequest(programId,expectedProgramSha256);perform("Preparing the Blender authoring request…",()->Cinematic3DProgramStore.exportRequest(getApplicationContext(),projectStore,request),receipt->{exportedRequest=receipt.getJSONObject("exportRequest").toString(2);Intent create=new Intent(Intent.ACTION_CREATE_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("application/json").putExtra(Intent.EXTRA_TITLE,"cinematic3d-authoring-request.json");startActivityForResult(create,WRITE_REQUEST);});}catch(Exception error){setStatus(message(error));}}
     private void pickBundle(){Intent pick=new Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*").putExtra(Intent.EXTRA_MIME_TYPES,new String[]{"application/zip","application/octet-stream"});startActivityForResult(pick,PICK_BUNDLE);}
     @Override protected void onActivityResult(int code,int result,Intent data){super.onActivityResult(code,result,data);if(result!=RESULT_OK||data==null||data.getData()==null||busy)return;Uri uri=data.getData();
