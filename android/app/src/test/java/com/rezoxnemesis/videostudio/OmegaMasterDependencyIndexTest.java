@@ -327,4 +327,88 @@ public class OmegaMasterDependencyIndexTest {
         assertEquals(15,changedPairs);
     }
 
+
+    @Test public void placingCompoundInNewShotCreatesNativeEditableLinks() throws Exception {
+        Map<String,JSONObject> docs=new LinkedHashMap<>();
+        docs.put("shotA",sampleShot("shotA",5));
+        docs.put("shotD",SketchDocument.create(new JSONObject()
+            .put("sketchId","shotD").put("name","New viewpoint")
+            .put("width",256).put("height",256).put("fps",30).put("frameCount",180)));
+        String untouched=SketchDocument.canonical(docs.get("shotA"));
+        OmegaMasterDependencyIndex.CompoundRequest req=request(docs);
+        Map<String,String> newIds=new LinkedHashMap<>();
+        newIds.put("rose_petal","new_petal");
+        newIds.put("rose_stem","new_stem");
+        JSONObject placement=SketchDocument.transform().put("x",.25)
+            .put("rotation",12);
+        JSONArray keys=new JSONArray()
+            .put(new JSONObject().put("frame",20)
+                .put("transform",SketchDocument.copy(placement))
+                .put("interpolation","smooth"))
+            .put(new JSONObject().put("frame",110)
+                .put("transform",SketchDocument.copy(placement).put("x",.32))
+                .put("interpolation","smooth"));
+        OmegaMasterDependencyIndex.PreparedBatch placementBatch=
+            OmegaMasterDependencyIndex.stageCompoundPlacement(req,docs,
+                "shotA","shotD","layer_1",newIds,20,100,placement,keys);
+        assertEquals(1,placementBatch.changedSketches());
+        assertEquals(untouched,SketchDocument.canonical(docs.get("shotA")));
+        assertEquals(0,docs.get("shotD").getJSONArray("layers")
+            .getJSONObject(0).getJSONArray("objects").length());
+        JSONObject placed=placementBatch.nextDocuments().get("shotD");
+        assertEquals(2,placed.getLong("revision"));
+        assertEquals(2,placed.getJSONArray("masterAssets").length());
+        assertEquals(2,placed.getJSONArray("layers")
+            .getJSONObject(0).getJSONArray("objects").length());
+        JSONObject petal=SketchDocument.object(placed,"new_petal");
+        assertEquals(20,petal.getInt("frame"));
+        assertEquals(100,petal.getInt("exposure"));
+        assertEquals(12,petal.getJSONObject("transform").getInt("rotation"));
+        assertEquals(2,petal.getJSONArray("keys").length());
+        assertEquals("rose_petal",petal.getJSONObject("masterLink").getString("id"));
+        assertEquals(SketchDocument.canonical(
+            SketchDocument.object(docs.get("shotA"),"petal_source").getJSONArray("commands")),
+            SketchDocument.canonical(petal.getJSONArray("commands")));
+        assertTrue(placementBatch.impact.ready());
+        assertTrue(placementBatch.impact.affected.size()>10);
+
+        // Having registered the new shot in the trusted transaction,
+        // changing its master later propagates without destroying its local keys.
+        OmegaMasterDependencyIndex.CompoundRequest revise=
+            new OmegaMasterDependencyIndex.CompoundRequest("rose_character",
+                "film_alpha","operation_02",req.parts,req.registeredSketchIds);
+        OmegaMasterDependencyIndex.PreparedBatch changed=
+            OmegaMasterDependencyIndex.stageCompound(revise,placementBatch.nextDocuments());
+        JSONObject after=SketchDocument.object(changed.nextDocuments().get("shotD"),"new_petal");
+        assertEquals("#FF9C588C",after.getString("color"));
+        assertEquals(12,after.getJSONObject("transform").getInt("rotation"));
+        assertEquals(2,after.getJSONArray("keys").length());
+    }
+
+    @Test public void newShotPlacementRejectsLockedLayersAndInconsistentGeometry()
+            throws Exception {
+        Map<String,JSONObject> docs=new LinkedHashMap<>();
+        docs.put("shotA",sampleShot("shotA",1));
+        docs.put("shotD",SketchDocument.create(new JSONObject()
+            .put("sketchId","shotD").put("name","New viewpoint")
+            .put("width",256).put("height",256).put("fps",30).put("frameCount",180)));
+        OmegaMasterDependencyIndex.CompoundRequest req=request(docs);
+        Map<String,String> newIds=new LinkedHashMap<>();
+        newIds.put("rose_petal","new_petal");
+        newIds.put("rose_stem","new_stem");
+        docs.get("shotD").getJSONArray("layers").getJSONObject(0).put("locked",true);
+        String pinned=SketchDocument.canonical(docs.get("shotD"));
+        try{OmegaMasterDependencyIndex.stageCompoundPlacement(req,docs,
+            "shotA","shotD","layer_1",newIds,15,60,
+            SketchDocument.transform(),new JSONArray());fail("Locked target");}
+        catch(IllegalStateException expected){assertTrue(expected.getMessage().contains("LOCKED"));}
+        assertEquals(pinned,SketchDocument.canonical(docs.get("shotD")));
+        docs.get("shotD").getJSONArray("layers").getJSONObject(0).put("locked",false);
+        docs.get("shotD").put("width",512);
+        try{OmegaMasterDependencyIndex.stageCompoundPlacement(req,docs,
+            "shotA","shotD","layer_1",newIds,15,60,
+            SketchDocument.transform(),new JSONArray());fail("Geometry mismatch");}
+        catch(IllegalArgumentException expected){assertTrue(expected.getMessage().contains("geometry"));}
+    }
+
 }
