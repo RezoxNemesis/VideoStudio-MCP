@@ -254,4 +254,32 @@ public final class OmegaTwoBoneIKTest {
         try{OmegaTwoBoneIK.previewNativeChanges(source,rig,pose(0,0,0));fail();}
         catch(IllegalArgumentException e){assertTrue(e.getMessage().contains("NATIVE_TRANSFORM"));}
     }
+
+    @Test public void realNativeCanvasRasterizesLocalDeformationWithoutRepaintingBackground()throws Exception{
+        JSONObject source=nativeSketch();OmegaTwoBoneIK.Rig rig=nativeRig(source,false);
+        OmegaTwoBoneIK.FrameRequest request=new OmegaTwoBoneIK.FrameRequest("front",20,7,p(0,0),
+                Collections.singletonMap("upper",30d));
+        JSONObject patch=OmegaTwoBoneIK.previewNativeChanges(source,rig,request)
+                .getJSONArray("patches").getJSONObject(0);
+        JSONObject candidate=SketchDocument.copy(source);
+        SketchDocument.object(candidate,"sleeve").put("points",patch.getJSONArray("points"));
+        android.graphics.Bitmap before=null,after=null;
+        try(SketchFrameRenderer original=new SketchFrameRenderer(org.robolectric.RuntimeEnvironment.getApplication(),source);
+            SketchFrameRenderer deformed=new SketchFrameRenderer(org.robolectric.RuntimeEnvironment.getApplication(),candidate)){
+            before=original.render(20);after=deformed.render(20);
+            int differences=0;
+            for(int y=0;y<before.getHeight();y++)for(int x=0;x<before.getWidth();x++)
+                if(before.getPixel(x,y)!=after.getPixel(x,y))differences++;
+            assertTrue("A valid native cel must change actual Canvas pixels",differences>5);
+            assertTrue("Local arm bend must not repaint the entire frame",differences<before.getWidth()*before.getHeight()/8);
+            assertEquals("Untouched corner remains visually identical",before.getPixel(4,4),after.getPixel(4,4));
+            assertEquals("Native frame size",320,after.getWidth());
+            assertEquals("Native frame size",480,after.getHeight());
+        }finally{
+            if(before!=null)before.recycle();
+            if(after!=null)after.recycle();
+        }
+    }
+
+
 }
