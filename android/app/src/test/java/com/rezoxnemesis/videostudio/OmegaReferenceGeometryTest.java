@@ -61,7 +61,8 @@ public class OmegaReferenceGeometryTest {
                 .withLandmark("right_eye",p(.3,.1),p(.3,.1),1)
                 .withLandmark("chin",p(.1,.3),p(.1,.3),1);
     }
-    private static void rejected(Runnable action) {
+    private interface ThrowingAction {void run() throws Exception;}
+    private static void rejected(ThrowingAction action) throws Exception {
         try{action.run();fail("Must fail closed");}
         catch(IllegalArgumentException expected){}
     }
