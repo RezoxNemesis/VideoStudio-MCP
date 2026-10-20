@@ -206,7 +206,7 @@ public class OmegaMotionTimelineTest {
         fails("increasing", () -> OmegaMotionTimeline.at(
                 key(10, 0, 0, 0, 0, 0, false),
                 key(10, .2, 0, 0, 0, 0, false), 10));
-        fails("invalid", () -> new OmegaMotionTimeline.ActingSpec(25, 10, 6, 10, 6, 10,
+        fails("Use 24", () -> new OmegaMotionTimeline.ActingSpec(25, 10, 6, 10, 6, 10,
                 new OmegaMotionTimeline.Pose(.3, .5, 0),
                 new OmegaMotionTimeline.Pose(.7, .5, 30),
                 .1, .1, .05, .07, 12, .1, .05));
