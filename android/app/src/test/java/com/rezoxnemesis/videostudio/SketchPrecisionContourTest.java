@@ -143,4 +143,48 @@ public final class SketchPrecisionContourTest {
             assertTrue("Native SVG-like ink must create actual pixels",changed>60);
         }
     }
+
+    @Test public void studioRoutesFittingAndNaturalActingToThePreparedWorker()
+            throws Exception {
+        java.lang.reflect.Method route=SketchStudioActivity.class.getDeclaredMethod(
+                "needsPreparedWorker",JSONArray.class);
+        route.setAccessible(true);
+        assertTrue((Boolean)route.invoke(null,new JSONArray().put(op(false))));
+        assertTrue((Boolean)route.invoke(null,new JSONArray().put(
+                new JSONObject().put("type","apply_acting_motion"))));
+        assertFalse((Boolean)route.invoke(null,new JSONArray().put(
+                new JSONObject().put("type","update_layer"))));
+    }
+
+    @Test public void preparedWorkerWritesNativeEditablePathsWithAtomicRevision()
+            throws Exception {
+        android.content.Context context=RuntimeEnvironment.getApplication();
+        String sketchId=java.util.UUID.randomUUID().toString();
+        SketchEditOps.execute(context,"sketch_create",
+                new JSONObject().put("sketchId",sketchId)
+                        .put("operationId","create_sketch")
+                        .put("name","Precision async worker integration")
+                        .put("width",512).put("height",512)
+                        .put("fps",24).put("frameCount",48));
+        JSONObject initial;
+        try(SketchProjectStore store=new SketchProjectStore(context)){
+            initial=store.get(sketchId);
+        }
+        assertEquals(1,initial.getLong("revision"));
+        try(SketchEditorSession session=new SketchEditorSession(context,initial)){
+            session.submitPrepared(new JSONArray().put(op(false)));
+            session.awaitIdle(20000);
+            assertNull("Prepared path must persist with a truthful receipt",session.error());
+            assertEquals(0,session.pending());
+        }
+        try(SketchProjectStore store=new SketchProjectStore(context)){
+            JSONObject persisted=store.get(sketchId);
+            SketchDocument.validate(persisted);
+            assertEquals(2,persisted.getLong("revision"));
+            JSONObject created=SketchDocument.object(persisted,"ink_bezier");
+            assertEquals("path",created.getString("kind"));
+            assertTrue(created.getJSONArray("commands").length()>1);
+            assertFalse(created.has("reference"));
+        }
+    }
 }
