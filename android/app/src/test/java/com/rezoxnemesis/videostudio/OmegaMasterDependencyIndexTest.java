@@ -16,11 +16,12 @@ import java.util.Set;
 import org.junit.runner.RunWith;
 import org.robolectric.RobolectricTestRunner;
 import org.robolectric.annotation.Config;
+import org.robolectric.annotation.GraphicsMode;
 import java.util.Collections;
 import org.junit.Test;
 import static org.junit.Assert.*;
 
-@RunWith(RobolectricTestRunner.class) @Config(sdk=33, manifest=Config.NONE)
+@RunWith(RobolectricTestRunner.class) @Config(sdk=33, manifest=Config.NONE) @GraphicsMode(GraphicsMode.Mode.NATIVE)
 public class OmegaMasterDependencyIndexTest {
     private static final String HASH="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     private static OmegaMasterDependencyIndex.Link link(String sketch, String object, boolean locked, boolean override, long version) {
