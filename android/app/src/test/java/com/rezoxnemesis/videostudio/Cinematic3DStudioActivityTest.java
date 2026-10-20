@@ -34,6 +34,32 @@ import static org.robolectric.Shadows.shadowOf;
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk=33,manifest=Config.NONE)
 public class Cinematic3DStudioActivityTest {
+    @Test public void referenceCameraButtonReallyOpensNativeCameraAuthoringWithoutRewritingScene()
+            throws Exception {
+        Context context=RuntimeEnvironment.getApplication();
+        ProjectStore.Project project=new ProjectStore(context)
+                .create("Cinematic camera reference UI");
+        ActivityController<Cinematic3DStudioActivity> controller=Robolectric.buildActivity(
+                Cinematic3DStudioActivity.class,
+                new Intent(context,Cinematic3DStudioActivity.class)
+                        .putExtra("projectId",project.id))
+                .create(state(project.updatedAt)).start().resume().visible();
+        try {
+            Cinematic3DStudioActivity activity=controller.get();
+            Button camera=findButton(activity.getWindow().getDecorView(),
+                    "Reference camera paths");
+            assertNotNull("Reference camera UI must actually be in native 3D Studio",camera);
+            String before=Cinematic3DTimeline.canonical(field(activity,"timeline"));
+            camera.performClick();
+            AlertDialog form=ShadowAlertDialog.getLatestAlertDialog();
+            assertNotNull(form);
+            assertTrue(form.isShowing());
+            assertEquals(before,Cinematic3DTimeline.canonical(field(activity,"timeline")));
+            form.getButton(AlertDialog.BUTTON_NEGATIVE).performClick();
+            assertEquals("Cancelling a reference path must leave the original film unchanged",
+                    before,Cinematic3DTimeline.canonical(field(activity,"timeline")));
+        }finally{controller.pause().stop().destroy();}
+    }
     @Test public void importedAuthoredCameraExplainsWhyItsKeysRequireARebuild() throws Exception {
         Context context=RuntimeEnvironment.getApplication();
         ProjectStore.Project project=new ProjectStore(context).create("Authored camera portrait");
