@@ -153,47 +153,79 @@ final class OmegaMotionTimeline {
      */
     static final class Contact {
         final String jointId;
-        final int beginFrame, endFrame;
+        final int beginFrame, endFrame, blendInFrames, blendOutFrames;
         final double anchorX, anchorY, restLocalX, restLocalY, maxCorrection;
 
         Contact(String jointId, int beginFrame, int endFrame, double anchorX, double anchorY,
                 double restLocalX, double restLocalY, double maxCorrection) {
+            this(jointId, beginFrame, endFrame, anchorX, anchorY, restLocalX, restLocalY,
+                    maxCorrection, 0, 0);
+        }
+
+        /** Entry/exit are unlocked easing windows; [beginFrame,endFrame] stays perfectly pinned. */
+        Contact(String jointId, int beginFrame, int endFrame, double anchorX, double anchorY,
+                double restLocalX, double restLocalY, double maxCorrection,
+                int blendInFrames, int blendOutFrames) {
             if (jointId == null || !jointId.matches("[A-Za-z0-9_./-]{1,64}")
                     || beginFrame < 0 || endFrame <= beginFrame || endFrame >= MAX_FRAMES
+                    || blendInFrames < 0 || blendInFrames > 24
+                    || blendOutFrames < 0 || blendOutFrames > 24
+                    || beginFrame - blendInFrames < 0
+                    || endFrame + blendOutFrames >= MAX_FRAMES
                     || !finite(anchorX, anchorY, restLocalX, restLocalY, maxCorrection)
                     || anchorX < 0 || anchorX > 1 || anchorY < 0 || anchorY > 1
                     || Math.abs(restLocalX) > 2 || Math.abs(restLocalY) > 2
                     || maxCorrection <= 0 || maxCorrection > 2)
                 throw new IllegalArgumentException("Invalid world-space contact");
             this.jointId = jointId; this.beginFrame = beginFrame; this.endFrame = endFrame;
+            this.blendInFrames = blendInFrames; this.blendOutFrames = blendOutFrames;
             this.anchorX = anchorX; this.anchorY = anchorY;
             this.restLocalX = restLocalX; this.restLocalY = restLocalY;
             this.maxCorrection = maxCorrection;
         }
 
-        ContactSample solve(Pose root) {
+        double weightAt(double frame) {
+            if (frame < beginFrame - blendInFrames || frame > endFrame + blendOutFrames)
+                return -1;
+            if (frame < beginFrame)
+                return smoothstep((frame - (beginFrame - blendInFrames)) / blendInFrames);
+            if (frame <= endFrame) return 1;
+            return 1 - smoothstep((frame - endFrame) / blendOutFrames);
+        }
+
+        ContactSample solve(Pose root, double weight, boolean planted) {
             double radians = Math.toRadians(root.angle);
             double c = Math.cos(radians), s = Math.sin(radians);
             // Inverse of the root's scene-space transform, for the IK end effector.
             double dx = anchorX - root.x, dy = anchorY - root.y;
-            double localX = c * dx + s * dy, localY = -s * dx + c * dy;
-            double correctionX = localX - restLocalX, correctionY = localY - restLocalY;
-            double needed = Math.hypot(correctionX, correctionY);
+            double pinLocalX = c * dx + s * dy, pinLocalY = -s * dx + c * dy;
+            double fullCorrectionX = pinLocalX - restLocalX;
+            double fullCorrectionY = pinLocalY - restLocalY;
+            double needed = Math.hypot(fullCorrectionX, fullCorrectionY);
             if (!Double.isFinite(needed) || needed > maxCorrection + EPS)
                 throw new IllegalArgumentException("Contact target unreachable for " + jointId);
-            return new ContactSample(jointId, anchorX, anchorY,
-                    localX, localY, correctionX, correctionY);
+            double correctionX = fullCorrectionX * weight, correctionY = fullCorrectionY * weight;
+            double localX = restLocalX + correctionX, localY = restLocalY + correctionY;
+            double worldX = root.x + c * localX - s * localY;
+            double worldY = root.y + s * localX + c * localY;
+            return new ContactSample(jointId, worldX, worldY, anchorX, anchorY,
+                    localX, localY, correctionX, correctionY, weight, planted);
         }
     }
 
     static final class ContactSample {
         final String jointId;
-        final double worldX, worldY, localTargetX, localTargetY, correctionX, correctionY;
-        ContactSample(String jointId, double worldX, double worldY, double localTargetX,
-                      double localTargetY, double correctionX, double correctionY) {
+        final double worldX, worldY, anchorX, anchorY;
+        final double localTargetX, localTargetY, correctionX, correctionY, weight;
+        final boolean planted;
+        ContactSample(String jointId, double worldX, double worldY, double anchorX,
+                      double anchorY, double localTargetX, double localTargetY,
+                      double correctionX, double correctionY, double weight, boolean planted) {
             this.jointId = jointId; this.worldX = worldX; this.worldY = worldY;
+            this.anchorX = anchorX; this.anchorY = anchorY;
             this.localTargetX = localTargetX; this.localTargetY = localTargetY;
             this.correctionX = correctionX; this.correctionY = correctionY;
+            this.weight = weight; this.planted = planted;
         }
     }
 
@@ -235,13 +267,16 @@ final class OmegaMotionTimeline {
             contacts = requested.clone();
             for (int i = 0; i < contacts.length; i++) {
                 Contact now = contacts[i];
-                if (now == null || now.beginFrame < spec.startFrame || now.endFrame > spec.endFrame)
+                if (now == null || now.beginFrame - now.blendInFrames < spec.startFrame
+                        || now.endFrame + now.blendOutFrames > spec.endFrame)
                     throw new IllegalArgumentException("Contact outside acting clip");
                 for (int j = 0; j < i; j++) {
                     Contact prior = contacts[j];
                     if (now.jointId.equals(prior.jointId)
-                            && now.beginFrame <= prior.endFrame
-                            && prior.beginFrame <= now.endFrame)
+                            && now.beginFrame - now.blendInFrames
+                                <= prior.endFrame + prior.blendOutFrames
+                            && prior.beginFrame - prior.blendInFrames
+                                <= now.endFrame + now.blendOutFrames)
                         throw new IllegalArgumentException("Overlapping contact on one joint");
                 }
             }
@@ -277,9 +312,12 @@ final class OmegaMotionTimeline {
             }
             ContactSample[] active = new ContactSample[contacts.length];
             int count = 0;
-            for (Contact c : contacts)
-                if (frame >= c.beginFrame && frame <= c.endFrame)
-                    active[count++] = c.solve(root);
+            for (Contact c : contacts) {
+                double weight = c.weightAt(frame);
+                if (weight >= 0)
+                    active[count++] = c.solve(root, weight,
+                            frame >= c.beginFrame && frame <= c.endFrame);
+            }
             return new Sample(root, phase, follow, Arrays.copyOf(active, count));
         }
 
