@@ -70,7 +70,7 @@ public final class SketchBrushes {
                     .put(point.getDouble(0)).put(point.getDouble(1)).put(1));}}
         Paint core=new Paint(source);core.setShader(null);
         core.setAlpha(Math.round(source.getAlpha()*(.30f+.45f*hardness)));
-        SketchFrameRenderer.drawPressureStroke(canvas,corePoints,w,h,width*.92f,core);
+        drawGraphiteCore(canvas,corePoints,w,h,width*.92f,core);
         Paint grain=new Paint(source);grain.setShader(null);grain.setStyle(Paint.Style.FILL);
         grain.setAlpha(Math.round(source.getAlpha()*(.08f+.12f*hardness)));
         float spacing=Math.max(.5f,width*.14f);int stamp=0;
@@ -92,6 +92,34 @@ public final class SketchBrushes {
                 }
             }
         }
+    }
+
+    private static void drawGraphiteCore(Canvas canvas,JSONArray points,int w,int h,
+                                         float width,Paint paint)throws Exception{
+        // Fill the whole core once. Separate segment/cap draws compound alpha at
+        // control points and leave visible dark beads in low-opacity shading.
+        Path coverage=new Path();coverage.setFillType(Path.FillType.WINDING);
+        for(int i=0;i<points.length();i++){
+            JSONArray point=points.getJSONArray(i);
+            float x=(float)point.getDouble(0)*w,y=(float)point.getDouble(1)*h;
+            float radius=width*(.15f+.85f*(float)point.getDouble(2))/2;
+            if(i>0){
+                JSONArray prior=points.getJSONArray(i-1);
+                float ax=(float)prior.getDouble(0)*w,ay=(float)prior.getDouble(1)*h;
+                float before=width*(.15f+.85f*(float)prior.getDouble(2))/2;
+                float dx=x-ax,dy=y-ay,length=(float)Math.hypot(dx,dy);
+                if(length>.0001f){
+                    float nx=-dy/length,ny=dx/length;
+                    coverage.moveTo(ax+nx*before,ay+ny*before);
+                    coverage.lineTo(x+nx*radius,y+ny*radius);
+                    coverage.lineTo(x-nx*radius,y-ny*radius);
+                    coverage.lineTo(ax-nx*before,ay-ny*before);coverage.close();
+                }
+            }
+            // Same winding as the segment quads prevents cancellation in overlaps.
+            coverage.addCircle(x,y,radius,Path.Direction.CCW);
+        }
+        paint.setStyle(Paint.Style.FILL);canvas.drawPath(coverage,paint);
     }
 
     /**

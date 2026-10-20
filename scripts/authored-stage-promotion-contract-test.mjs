@@ -19,7 +19,7 @@ test('optional Graphite keeps ordinary request bytes and gates every nested auth
   assert.doesNotThrow(()=>gate({appVersion:'4.9.6'},'sketch_edit',args));
   for(const action of ['sketch_story_create','sketch_story_preview','sketch_correction_propose','sketch_animation_save'])assert.throws(()=>gate({appVersion:'4.9.5'},action,{nested:{operations:[operation]}}),/4\.9\.6/);
  }
- assert.equal(caps.graphiteBrush.changesExistingPencil,false);
+ assert.equal(caps.graphiteBrush.changesExistingPencil,false);assert.equal(caps.graphiteBrush.minimumNativeVersion,'4.9.6');assert.equal(caps.graphiteBrush.continuousCoverageMinimumNativeVersion,'4.9.7');
  for(const preset of ['pencil','hairline','engraving']){const args={...edit(),operations:[{type:'add_object',layerId:'own',object:{...mark,brush:{...mark.brush,preset}}}]};assert.deepEqual(parse('sketch_edit',args),args);assert.doesNotThrow(()=>gate({appVersion:'4.9.5'},'sketch_edit',args));if(preset!=='pencil'){assert.doesNotThrow(()=>gate({appVersion:'4.5.8'},'sketch_edit',args));assert.throws(()=>gate({appVersion:'4.5.7'},'sketch_edit',args),/4\.5\.8/);}}
  assert.doesNotThrow(()=>gate({appVersion:'4.9.5'},'sketch_get',{palette:'graphite'}));
 });

@@ -47,4 +47,21 @@ public final class SketchGraphiteBrushTest {
                     java.util.Arrays.copyOf(SketchBrushes.PRESETS,8));
         }finally{a.recycle();b.recycle();erase.recycle();}
     }
+    @Test public void redundantCollinearControlPointCannotDoubleCoreDensityOrErasing()throws Exception{
+        // At this source alpha the fine grain rounds to zero. The native pressure
+        // core remains visible, exposing double application at segment/cap joins.
+        JSONArray points=new JSONArray("[[.125,.5,1],[.5,.5,1],[.875,.5,1]]");
+        for(boolean erase:new boolean[]{false,true}){
+            Bitmap bitmap=Bitmap.createBitmap(512,256,Bitmap.Config.ARGB_8888);
+            try{
+                if(erase)bitmap.eraseColor(Color.WHITE);
+                Paint paint=new Paint(Paint.ANTI_ALIAS_FLAG);paint.setColor(0x0246325A);
+                if(erase)paint.setXfermode(new PorterDuffXfermode(PorterDuff.Mode.DST_OUT));
+                SketchBrushes.draw(new Canvas(bitmap),points,512,256,32,paint,
+                        SketchBrushes.style("graphite",1,0,false,0));
+                for(int x=80;x<432;x++)assertEquals("Graphite coverage changed near a control point at "+x,
+                        erase?254:1,Color.alpha(bitmap.getPixel(x,128)));
+            }finally{bitmap.recycle();}
+        }
+    }
 }
