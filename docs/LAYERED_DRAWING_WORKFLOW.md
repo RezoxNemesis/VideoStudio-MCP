@@ -75,9 +75,11 @@ separately authorized compatible relay update; source parity is not proof of liv
 ChatGPT execution. The owner's phone remains4.9.1 until an APK is installed.
 
 This candidate does not automatically redraw a detailed reference. It supplies
-and protects the authored drawing process. The supplied manga screenshot has
-only been admitted as a hash-bound reference, focused using native referenceCrop,
-and archived/restored with empty authored layers. That checkpoint is explicitly
+and protects the authored drawing process. The earlier supplied app screenshot was identified by the owner as a cutout
+result and retired as an authoritative reference. Corrected original
+1000071275.jpg is admitted as a hash-bound whole working-source reference with
+its native dimensions, without reusing screenshot crop coordinates, and is
+archived/restored with empty authored layers. That checkpoint is explicitly
 NOT DRAWN and cannot pass an empty drawing review. No completed matching scene,
 original artist stroke recovery, accepted animation, audible dialogue or film is
 claimed.
