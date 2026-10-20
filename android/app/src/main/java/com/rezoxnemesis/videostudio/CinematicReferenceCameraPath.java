@@ -146,10 +146,13 @@ public final class CinematicReferenceCameraPath {
         if(distance<2||distance>12)
             throw new IllegalArgumentException("Model camera distance outside preview range");
         Pose base=scene(preset,progress,modelCenter,
-                Math.max(1.8,Math.min(30,distance)),.85);
+                Math.max(1.8,Math.min(30,distance)),
+                CAR_TURNTABLE.equals(preset)?1:.85);
         // For a turntable we must preserve the chosen starting angle.
         if(!CAR_TURNTABLE.equals(preset))return base;
-        double adjusted=base.azimuthRad+originalAzimuth;
+        // The first frame is the exact owner-selected viewpoint; one complete
+        // revolution returns to it without a sudden -55 degree startup cut.
+        double adjusted=base.azimuthRad+originalAzimuth+Math.toRadians(55);
         double inclination=Math.toRadians(base.pitchDeg);
         double horizontal=base.distance*Math.cos(inclination);
         double[] position={
