@@ -88,6 +88,10 @@ public final class FilamentGlbActivity extends Activity
     private String referenceCameraPreset="";
     private double referenceCameraPhase=0,referenceCameraOriginAzimuth=0,
             referenceCameraOriginDistance=4;
+    private boolean studioLightingOn;
+    private int[] studioLights=new int[0];
+    private Button studioLightingButton;
+
 
     private String loadedModelId="",modelName="";
     private String sketchCaptureTargetId="",sketchCaptureMode="colour_regions";
@@ -144,6 +148,7 @@ public final class FilamentGlbActivity extends Activity
                     state.getDouble("referenceCameraOriginDistance",4),4)));
             if(!java.util.Arrays.asList(CinematicReferenceCameraPath.presets())
                     .contains(referenceCameraPreset))referenceCameraPreset="";
+            studioLightingOn=state.getBoolean("studioLightingOn",false);
 
         }
         try{
@@ -219,6 +224,13 @@ public final class FilamentGlbActivity extends Activity
         paths.setContentDescription("Use the existing real 3D GLB and its material textures "
                 +"with a cinematic moving perspective, without changing your source asset");
         root.addView(paths,new LinearLayout.LayoutParams(-1,dp(50)));
+        studioLightingButton=action(
+                studioLightingOn?"3-point PBR studio lighting: on":"3-point PBR studio lighting: off",
+                v->toggleStudioLighting());
+        studioLightingButton.setContentDescription("Toggle real key fill and rim lighting "
+                +"on the imported GLB material surfaces. Does not edit UVs or artwork.");
+        root.addView(studioLightingButton,new LinearLayout.LayoutParams(-1,dp(46)));
+
 
         if(!sketchCaptureTargetId.isEmpty()){
             Button capture=action("Capture this 3D pose → editable Sketch cel",v->capturePoseForSketch());
@@ -560,6 +572,15 @@ public final class FilamentGlbActivity extends Activity
             loadedModelId=asset.id;modelName=asset.name;animationIndex=Math.min(animationIndex,Math.max(0,count-1));
             clipClock.seek(restore&&Double.isFinite(restoredClipPosition)&&restoredClipPosition>=0?restoredClipPosition:0,clipDuration());
             applyModelPose();updateModelCamera();updatePlaybackUi();
+            if(studioLightingOn&&studioLights.length==0){
+                try{studioLights=CinematicStudioLighting.install(engine,viewer.getScene());}
+                catch(RuntimeException|LinkageError unavailable){
+                    studioLightingOn=false;
+                    if(studioLightingButton!=null)studioLightingButton.setText(
+                            "3-point PBR studio lighting: off");
+                }
+            }
+
             modelReadyMessage=asset.name+" • glTF model • frame submitted • "+count+
                     " embedded animation(s). "+(count==0
                     ?"No authored animation clips."
@@ -612,6 +633,35 @@ public final class FilamentGlbActivity extends Activity
         double[] rates={.25,.5,1,1.5,2};String[] names={"0.25× · inspect","0.5× · slow","1× · authored","1.5×","2×"};
         new AlertDialog.Builder(this).setTitle("Preview playback speed").setItems(names,(dialog,index)->{clipClock.rate(rates[index]);updatePlaybackUi();}).setNegativeButton("Cancel",null).show();
     }
+    private void toggleStudioLighting(){
+        if(viewer==null||engine==null||cinematic||renderUnavailable
+                ||viewer.getAsset()==null){
+            if(status!=null)status.setText("Open a 3D GLB model before applying studio lights");
+            return;
+        }
+        try{
+            if(studioLightingOn){
+                CinematicStudioLighting.remove(engine,viewer.getScene(),studioLights);
+                studioLights=new int[0];studioLightingOn=false;
+            }else{
+                studioLights=CinematicStudioLighting.install(engine,viewer.getScene());
+                studioLightingOn=true;
+            }
+            if(studioLightingButton!=null)studioLightingButton.setText(
+                    studioLightingOn?"3-point PBR studio lighting: on"
+                            :"3-point PBR studio lighting: off");
+            if(status!=null)status.setText(studioLightingOn
+                    ?"Real 3D material detail: key, fill, rim and actual shadow lighting"
+                    :"GLB original preview lighting restored");
+        }catch(Exception|LinkageError failed){
+            CinematicStudioLighting.remove(engine,viewer.getScene(),studioLights);
+            studioLights=new int[0];studioLightingOn=false;
+            if(studioLightingButton!=null)studioLightingButton.setText("3-point PBR studio lighting: off");
+            if(status!=null)status.setText("PBR lighting unavailable on this device: "
+                    +failed.getClass().getSimpleName());
+        }
+    }
+
     private void chooseReferenceCameraPath(){
         if(cinematic||viewer==null||viewer.getAsset()==null||renderUnavailable){
             if(status!=null)status.setText("Load an existing VideoStudio GLB before choosing camera choreography");
@@ -810,7 +860,7 @@ public final class FilamentGlbActivity extends Activity
     }
     private void destroyViewer(){
         previewDriver=null;
-        try{if(viewer!=null){ModelViewer owned=viewer;try{if(cinematic)releaseCinematicScene();}catch(Exception|LinkageError error){ActivityLog.add(this,"user","3D scene cleanup stopped",error.getClass().getSimpleName(),"failed",null,null,project==null?"":project.id);}finally{viewer=null;engine=null;uiHelper=null;owned.destroy();}}else{if(uiHelper!=null)uiHelper.detach();if(engine!=null)engine.destroy();engine=null;uiHelper=null;}}
+        try{if(viewer!=null){CinematicStudioLighting.remove(engine,viewer.getScene(),studioLights);studioLights=new int[0];ModelViewer owned=viewer;try{if(cinematic)releaseCinematicScene();}catch(Exception|LinkageError error){ActivityLog.add(this,"user","3D scene cleanup stopped",error.getClass().getSimpleName(),"failed",null,null,project==null?"":project.id);}finally{viewer=null;engine=null;uiHelper=null;owned.destroy();}}else{if(uiHelper!=null)uiHelper.detach();if(engine!=null)engine.destroy();engine=null;uiHelper=null;}}
         catch(Exception|LinkageError error){ActivityLog.add(this,"user","3D cleanup stopped",error.getClass().getSimpleName(),"failed",null,null,project==null?"":project.id);}
     }
     @Override protected void onSaveInstanceState(Bundle state){super.onSaveInstanceState(state);state.putBoolean("paused",paused);state.putInt("cinematicFrame",cinematicFrame);state.putString("modelId",loadedModelId);state.putInt("animationIndex",animationIndex);state.putDouble("clipPosition",restoringModel?restoredClipPosition:clipClock.position());state.putDouble("playbackRate",clipClock.rate());state.putDouble("cameraAngle",cameraAngle);state.putDouble("cameraPitch",cameraPitch);state.putDouble("cameraDistance",cameraDistance);
@@ -818,5 +868,6 @@ public final class FilamentGlbActivity extends Activity
         state.putDouble("referenceCameraPhase",referenceCameraPhase);
         state.putDouble("referenceCameraOriginAzimuth",referenceCameraOriginAzimuth);
         state.putDouble("referenceCameraOriginDistance",referenceCameraOriginDistance);
+        state.putBoolean("studioLightingOn",studioLightingOn);
     }
 }
