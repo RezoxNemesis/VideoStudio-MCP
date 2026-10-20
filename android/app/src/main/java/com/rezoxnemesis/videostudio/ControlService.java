@@ -4207,8 +4207,16 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     private void runExportBlocking(ProjectStore.Project project, String aspect, String quality, String fileName, JobManager.Job state) throws Exception {
         ensureProjectWorkspaceHydrated(project, state);
         jobs.awaitSafeCheckpoint(state, "native_export_prepare");
-        File dir = new File(getCacheDir(), "native_exports");
+        // Long-form exports are too valuable to stage in Android's evictable cache.
+        // Keep the temporary output app-private and discard it only after a
+        // verified native publish; never browse device Gallery files.
+        File dir = new File(getFilesDir(), "native_exports_pending");
         if (!dir.exists() && !dir.mkdirs()) throw new IllegalStateException("Could not create export workspace");
+        StorageBudget.Check outputBudget=NativeMediaWorkBudget.outputPreflight(
+                dir.getUsableSpace(),256L*1024*1024);
+        if(!outputBudget.allowed)throw new IllegalStateException(
+                "EXPORT_WAITING_STORAGE: need "+outputBudget.requiredWithReserveBytes
+                +" bytes including free-space reserve; free "+outputBudget.freeBytes);
         File temp = new File(dir, "tmp_" + System.currentTimeMillis() + ".mp4");
         CountDownLatch latch = new CountDownLatch(1);
         AtomicReference<String> error = new AtomicReference<>();
@@ -4233,7 +4241,12 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         });
         if (ownedHandle == null) throw new IllegalStateException("Could not start native render");
         synchronized(this){activeRender=ownedHandle;activeRenderJobId=state.id;}
-        final long deadline=android.os.SystemClock.elapsedRealtime()+30*60*1000L;
+        long totalSourceBytes=0L;
+        for(ProjectStore.Asset asset:project.assets)if(asset!=null&&asset.sizeBytes>0)
+            totalSourceBytes=StorageBudget.saturatingAdd(totalSourceBytes,asset.sizeBytes);
+        final long allowedRenderMs=NativeMediaWorkBudget.renderDeadlineMs(
+                Math.max(0L,project.outputDurationMs()),totalSourceBytes);
+        final long deadline=android.os.SystemClock.elapsedRealtime()+allowedRenderMs;
         try {
 
         while (!latch.await(550, TimeUnit.MILLISECONDS)) {
@@ -4241,7 +4254,18 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 ownedHandle.cancel();
                 throw new InterruptedException();
             }
-            if(android.os.SystemClock.elapsedRealtime()>deadline){ownedHandle.cancel();throw new IllegalStateException("Native encoding exceeded its bounded 30 minute execution window");}
+            if(temp.isFile() && temp.length()>NativeMediaWorkBudget.MAX_LOCAL_MEDIA_BYTES){
+                ownedHandle.cancel();throw new IllegalStateException(
+                        "EXPORT_OUTPUT_TOO_LARGE: this profile supports at most 10 GiB per MP4");
+            }
+            if(dir.getUsableSpace()<NativeMediaWorkBudget.RESERVED_FREE_BYTES){
+                ownedHandle.cancel();throw new IllegalStateException(
+                        "EXPORT_WAITING_STORAGE: safe free-space reserve reached; "
+                        +"the project remains unchanged");
+            }
+            if(android.os.SystemClock.elapsedRealtime()>deadline){ownedHandle.cancel();
+                throw new IllegalStateException("Native encoding exceeded its adaptive "
+                        +(allowedRenderMs/60000L)+" minute media-work window");}
         }
         if("cancelled".equals(state.state)||Thread.currentThread().isInterrupted())throw new InterruptedException();
         if (error.get() != null) throw new IllegalStateException(error.get());
@@ -4563,23 +4587,44 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                                   String activity,
                                   String progressSuffix) throws Exception {
         long announced = expected > 0 ? expected : connection.getContentLengthLong();
+        if (announced > NativeMediaWorkBudget.MAX_LOCAL_MEDIA_BYTES)
+            throw new IllegalStateException("PRIVATE_MEDIA_TOO_LARGE: streamed file exceeds 10 GiB");
+        File parent = file.getParentFile();
+        long free = parent == null ? file.getUsableSpace() : parent.getUsableSpace();
+        StorageBudget.Check admission = StorageBudget.checkTransfer(
+                free, announced, 0, NativeMediaWorkBudget.RESERVED_FREE_BYTES);
+        if (!admission.allowed) throw new IllegalStateException(
+                "PRIVATE_MEDIA_WAITING_STORAGE: need " + admission.requiredWithReserveBytes
+                        + " bytes including reserve; free " + admission.freeBytes);
         try (InputStream in = connection.getInputStream(); FileOutputStream out = new FileOutputStream(file)) {
             byte[] buffer = new byte[256 * 1024];
-            long bytes = 0L;
+            long bytes = 0L, lastReport = 0L;
             int n;
             while ((n = in.read(buffer)) >= 0) {
                 if (Thread.currentThread().isInterrupted()) throw new InterruptedException();
                 if (n == 0) continue;
-                bytes += n;
-                out.write(buffer, 0, n);
-                int rawProgress = announced > 0
-                        ? ResumableTransferManager.progressPercent(bytes, announced)
-                        : -1;
-                int progress = rawProgress < 0 ? 50 : Math.min(97, 4 + (rawProgress * 93 / 100));
-                checkpoint(state, activity,
-                        (bytes / 1024L / 1024L) + " MB " + progressSuffix, progress, projectId);
+                if ((long)n > NativeMediaWorkBudget.MAX_LOCAL_MEDIA_BYTES - bytes)
+                    throw new IllegalStateException("PRIVATE_MEDIA_TOO_LARGE: streamed file exceeds 10 GiB");
+                out.write(buffer, 0, n);bytes += n;
+                if (bytes-lastReport >= 8L*1024L*1024L
+                        || (announced > 0 && bytes == announced)) {
+                    if (parent != null && parent.getUsableSpace()
+                            < NativeMediaWorkBudget.RESERVED_FREE_BYTES)
+                        throw new IllegalStateException("PRIVATE_MEDIA_WAITING_STORAGE: "
+                                + "512 MiB free-space reserve reached during transfer");
+                    int rawProgress = announced > 0
+                            ? ResumableTransferManager.progressPercent(bytes, announced)
+                            : -1;
+                    int progress = rawProgress < 0 ? 50 : Math.min(97, 4 + (rawProgress * 93 / 100));
+                    checkpoint(state, activity, (bytes / 1024L / 1024L) + " MiB "
+                            + progressSuffix, progress, projectId);
+                    lastReport = bytes;
+                }
             }
-            out.flush();
+            out.flush();out.getFD().sync();
+            if (announced > 0 && bytes != announced)
+                throw new IllegalStateException("PRIVATE_MEDIA_INCOMPLETE: received "
+                        + bytes + " of " + announced + " promised bytes");
         }
     }
 
