@@ -6,6 +6,7 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.robolectric.RobolectricTestRunner;
 import org.robolectric.annotation.Config;
+import org.robolectric.annotation.GraphicsMode;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -255,6 +256,7 @@ public final class OmegaTwoBoneIKTest {
         catch(IllegalArgumentException e){assertTrue(e.getMessage().contains("NATIVE_TRANSFORM"));}
     }
 
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
     @Test public void realNativeCanvasRasterizesLocalDeformationWithoutRepaintingBackground()throws Exception{
         JSONObject source=nativeSketch();OmegaTwoBoneIK.Rig rig=nativeRig(source,false);
         OmegaTwoBoneIK.FrameRequest request=new OmegaTwoBoneIK.FrameRequest("front",20,7,p(0,0),
