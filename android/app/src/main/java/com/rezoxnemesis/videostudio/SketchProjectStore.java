@@ -389,13 +389,14 @@ public final class SketchProjectStore implements AutoCloseable {
     }
     public void verifyReferences(JSONObject doc) throws Exception {
         java.util.HashSet<String> verified = new java.util.HashSet<>(); JSONArray layers = doc.getJSONArray("layers");
-        SketchPaintStore assets=null;try{for (int i = 0; i < layers.length(); i++) {
+        java.util.HashMap<String,JSONArray> support=new java.util.HashMap<>();SketchPaintStore assets=null;try{for (int i = 0; i < layers.length(); i++) {
             JSONArray objects = layers.getJSONObject(i).getJSONArray("objects");
             for (int j = 0; j < objects.length(); j++) {
                 JSONObject object = objects.getJSONObject(j);
                 if ("image".equals(object.getString("kind")) && verified.add(object.getJSONObject("reference").getString("sha256")))
                     referenceFile(doc.getString("id"), object.getJSONObject("reference"));
                 if("paint".equals(object.getString("kind"))&&verified.add("paint:"+object.getJSONObject("paint").getString("sha256"))){if(assets==null)assets=new SketchPaintStore(context,doc.getString("id"));assets.verify(object.getJSONObject("paint"));}
+                if("paint".equals(object.getString("kind"))&&object.has("paintMesh")&&object.getJSONObject("paintMesh").has("sourceRect")){String sha=object.getJSONObject("paint").getString("sha256");JSONArray required=support.get(sha);if(required==null){if(assets==null)assets=new SketchPaintStore(context,doc.getString("id"));Bitmap bitmap=assets.renderSource(object.getJSONObject("paint"));try{required=SketchPaintMeshPrepare.supportRectangle(bitmap);support.put(sha,required);}finally{bitmap.recycle();}}SketchPaintMeshPrepare.requireSupport(object,required);}
             }
         }}finally{if(assets!=null)assets.close();}
     }

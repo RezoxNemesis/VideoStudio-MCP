@@ -2,6 +2,7 @@ package com.rezoxnemesis.videostudio;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
+import android.graphics.*;
 
 /** Editable row-major texture grid. Coordinates are local to the paint cel's unchanged full-canvas source. */
 final class SketchPaintMesh {
@@ -15,12 +16,22 @@ final class SketchPaintMesh {
         for(int y=0;y<=rows;y++)for(int x=0;x<=columns;x++)points.put(new JSONArray().put(x/(double)columns).put(y/(double)rows));
         return new JSONObject(new JSONObject().put("columns",columns).put("rows",rows).put("points",points).put("keys",new JSONArray()).toString());
     }
+    /** Source rectangle is an integer UV interval, never a replacement/cropped source PNG. */
+    static JSONObject focused(int columns,int rows,JSONArray rectangle,int width,int height)throws Exception {
+        JSONObject mesh=regular(columns,rows).put("sourceRect",new JSONArray(rectangle.toString()));JSONArray points=mesh.getJSONArray("points");
+        double l=rectangle.getDouble(0)/width,t=rectangle.getDouble(1)/height,r=rectangle.getDouble(2)/width,b=rectangle.getDouble(3)/height;
+        for(int y=0;y<=rows;y++)for(int x=0;x<=columns;x++)points.put(y*(columns+1)+x,new JSONArray().put(l+(r-l)*x/columns).put(t+(b-t)*y/rows));return mesh;
+    }
+    static double[] sourceDomain(JSONObject object)throws Exception {
+        JSONObject mesh=object.getJSONObject("paintMesh");if(!mesh.has("sourceRect"))return new double[]{0,0,1,1};JSONArray r=mesh.getJSONArray("sourceRect");JSONObject source=object.getJSONObject("paint");return new double[]{r.getDouble(0)/source.getInt("width"),r.getDouble(1)/source.getInt("height"),r.getDouble(2)/source.getInt("width"),r.getDouble(3)/source.getInt("height")};
+    }
     /** Additional key and stored point counts, including the base grid. */
     static int[] validate(JSONObject item,int frames)throws Exception {
         if(!item.has("paintMesh"))return new int[]{0,0};
         if(!"paint".equals(item.getString("kind"))||!(item.get("paintMesh") instanceof JSONObject))throw SketchDocument.bad("Paint mesh requires owned paint");
         JSONObject bounds=item.getJSONObject("bounds");if(bounds.getDouble("x")!=0||bounds.getDouble("y")!=0||bounds.getDouble("width")!=1||bounds.getDouble("height")!=1)throw SketchDocument.bad("Paint mesh requires full-canvas paint bounds");
-        JSONObject mesh=item.getJSONObject("paintMesh");SketchDocument.fields(mesh,"columns,rows,points,keys");
+        JSONObject mesh=item.getJSONObject("paintMesh");SketchDocument.fields(mesh,"columns,rows,points,keys,sourceRect");
+        if(mesh.has("sourceRect")){JSONArray rect=mesh.getJSONArray("sourceRect");JSONObject source=item.getJSONObject("paint");if(rect.length()!=4)throw SketchDocument.bad("Paint source rectangle requires four integer pixels");for(int i=0;i<4;i++){Object value=rect.get(i);if(!(value instanceof Number)||!Double.isFinite(((Number)value).doubleValue())||((Number)value).doubleValue()!=Math.rint(((Number)value).doubleValue())||((Number)value).doubleValue()<0||((Number)value).doubleValue()>2048)throw SketchDocument.bad("Paint source rectangle requires integer pixels");}if(rect.getInt(0)<0||rect.getInt(1)<0||rect.getInt(2)>source.getInt("width")||rect.getInt(3)>source.getInt("height")||rect.getInt(0)>=rect.getInt(2)||rect.getInt(1)>=rect.getInt(3))throw SketchDocument.bad("Paint source rectangle is outside the unchanged source");}
         int columns=(int)SketchDocument.integer(mesh,"columns",1,MAX_AXIS),rows=(int)SketchDocument.integer(mesh,"rows",1,MAX_AXIS),count=(columns+1)*(rows+1);
         JSONArray base=mesh.getJSONArray("points");validatePoints(base,count,columns,rows);
         JSONArray keys=mesh.has("keys")?mesh.getJSONArray("keys"):new JSONArray();
@@ -69,16 +80,27 @@ final class SketchPaintMesh {
     }
 
     static boolean regularAt(JSONObject object,int frame)throws Exception {
-        JSONObject mesh=object.getJSONObject("paintMesh");int columns=mesh.getInt("columns"),rows=mesh.getInt("rows");JSONArray points=pointsAt(object,frame);for(int row=0;row<=rows;row++)for(int col=0;col<=columns;col++){JSONArray p=points.getJSONArray(row*(columns+1)+col);if(p.getDouble(0)!=col/(double)columns||p.getDouble(1)!=row/(double)rows)return false;}return true;
+        JSONObject mesh=object.getJSONObject("paintMesh");int columns=mesh.getInt("columns"),rows=mesh.getInt("rows");JSONArray points=pointsAt(object,frame);double[] uv=sourceDomain(object);for(int row=0;row<=rows;row++)for(int col=0;col<=columns;col++){JSONArray p=points.getJSONArray(row*(columns+1)+col);double x=uv[0]+(uv[2]-uv[0])*col/columns,y=uv[1]+(uv[3]-uv[1])*row/rows;if(p.getDouble(0)!=x||p.getDouble(1)!=y)return false;}return true;
     }
     static float[] vertices(JSONObject object,int frame,int width,int height)throws Exception {
         JSONArray points=pointsAt(object,frame);float[] result=new float[points.length()*2];for(int i=0;i<points.length();i++){result[2*i]=(float)(points.getJSONArray(i).getDouble(0)*width);result[2*i+1]=(float)(points.getJSONArray(i).getDouble(1)*height);}return result;
     }
     /** Invert the same two triangles per native grid cell to unchanged source UVs. */
     static double[] sourceAt(JSONObject object,int frame,double x,double y)throws Exception {
-        JSONObject mesh=object.getJSONObject("paintMesh");int columns=mesh.getInt("columns"),rows=mesh.getInt("rows");JSONArray p=pointsAt(object,frame);
-        for(int row=0;row<rows;row++)for(int col=0;col<columns;col++){int tl=row*(columns+1)+col,tr=tl+1,bl=tl+columns+1,br=bl+1;for(int[] triangle:new int[][]{{tl,tr,br},{tl,br,bl}}){double[] b=bary(p,triangle,x,y);if(b==null)continue;double u=0,v=0;for(int i=0;i<3;i++){u+=b[i]*(triangle[i]%(columns+1))/(double)columns;v+=b[i]*(triangle[i]/(columns+1))/(double)rows;}return new double[]{u,v};}}return null;
+        JSONObject mesh=object.getJSONObject("paintMesh");int columns=mesh.getInt("columns"),rows=mesh.getInt("rows");JSONArray p=pointsAt(object,frame);double[] domain=sourceDomain(object);
+        for(int row=0;row<rows;row++)for(int col=0;col<columns;col++){int tl=row*(columns+1)+col,tr=tl+1,bl=tl+columns+1,br=bl+1;for(int[] triangle:new int[][]{{tl,tr,br},{tl,br,bl}}){double[] b=bary(p,triangle,x,y);if(b==null)continue;double u=0,v=0;for(int i=0;i<3;i++){u+=b[i]*(triangle[i]%(columns+1))/(double)columns;v+=b[i]*(triangle[i]/(columns+1))/(double)rows;}return new double[]{domain[0]+u*(domain[2]-domain[0]),domain[1]+v*(domain[3]-domain[1])};}}return null;
     }
+    /** Exact uniform translation only. No tolerance hides an authored vertex edit. */
+    static double[] translationAt(JSONObject object,int frame)throws Exception {
+        JSONObject mesh=object.getJSONObject("paintMesh");if(!mesh.has("sourceRect"))return null;int columns=mesh.getInt("columns"),rows=mesh.getInt("rows");JSONArray points=pointsAt(object,frame);double[] domain=sourceDomain(object);double dx=points.getJSONArray(0).getDouble(0)-domain[0],dy=points.getJSONArray(0).getDouble(1)-domain[1];
+        for(int y=0;y<=rows;y++)for(int x=0;x<=columns;x++){JSONArray p=points.getJSONArray(y*(columns+1)+x);if(p.getDouble(0)-(domain[0]+(domain[2]-domain[0])*x/columns)!=dx||p.getDouble(1)-(domain[1]+(domain[3]-domain[1])*y/rows)!=dy)return null;}return new double[]{dx,dy};
+    }
+    /** Crop the exact integer interval before resizing a disposable texture, never source assets. */
+    static Bitmap focusedTexture(Bitmap full,JSONObject mesh,int edge)throws Exception {
+        SketchPaintMeshPrepare.worker();SketchPaintMeshPrepare.cancelled();JSONArray rect=mesh.getJSONArray("sourceRect");Bitmap texture=Bitmap.createBitmap(full,rect.getInt(0),rect.getInt(1),rect.getInt(2)-rect.getInt(0),rect.getInt(3)-rect.getInt(1));if(texture==full)texture=full.copy(Bitmap.Config.ARGB_8888,false);
+        try{if(edge>0&&Math.max(texture.getWidth(),texture.getHeight())>edge){double scale=edge/(double)Math.max(texture.getWidth(),texture.getHeight());Bitmap resized=Bitmap.createScaledBitmap(texture,Math.max(1,(int)Math.round(texture.getWidth()*scale)),Math.max(1,(int)Math.round(texture.getHeight()*scale)),true);if(resized!=texture)texture.recycle();texture=resized;}SketchPaintMeshPrepare.cancelled();return texture;}catch(Exception|Error failure){texture.recycle();throw failure;}
+    }
+    static void drawGrid(Canvas canvas,Bitmap texture,JSONObject mesh,float[] vertices,Paint paint)throws Exception {paint.setStyle(Paint.Style.FILL);canvas.drawBitmapMesh(texture,mesh.getInt("columns"),mesh.getInt("rows"),vertices,0,null,0,paint);}
     private static double[] bary(JSONArray p,int[] t,double x,double y)throws Exception {
         JSONArray a=p.getJSONArray(t[0]),b=p.getJSONArray(t[1]),c=p.getJSONArray(t[2]);double ax=a.getDouble(0),ay=a.getDouble(1),bx=b.getDouble(0)-ax,by=b.getDouble(1)-ay,cx=c.getDouble(0)-ax,cy=c.getDouble(1)-ay,det=bx*cy-by*cx;if(det<=MIN_AREA)return null;double u=((x-ax)*cy-(y-ay)*cx)/det,v=(bx*(y-ay)-by*(x-ax))/det;return u>=-1e-7&&v>=-1e-7&&u+v<=1+1e-7?new double[]{1-u-v,u,v}:null;
     }

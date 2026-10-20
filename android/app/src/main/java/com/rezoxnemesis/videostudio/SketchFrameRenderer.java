@@ -27,6 +27,7 @@ public final class SketchFrameRenderer implements AutoCloseable {
     private final LinkedHashMap<String, Bitmap> paintCache = new LinkedHashMap<>(16,.75f,true);
     private long paintBytes;
     private final LinkedHashMap<String,Bitmap> paintMeshCache=new LinkedHashMap<>(16,.75f,true);
+    private final Map<String,JSONArray> paintFocusSupport=new java.util.HashMap<>();
     private int preparedDimension;
     private String paintPresentationObject;
     private SketchPaintReplay.Frame paintPresentation;
@@ -155,7 +156,7 @@ public final class SketchFrameRenderer implements AutoCloseable {
                 if(!"paint".equals(kind)&&!"image".equals(kind))continue;
                 if(frame>=0&&(!exposed(object,frame)||SketchDocument.transformAt(object,frame).getDouble("opacity")<=0))continue;
                 String key=kind+":"+object.getJSONObject("paint".equals(kind)?"paint":"reference").getString("sha256");
-                unique.add(key);visible.add(object);
+                unique.add(key);if("paint".equals(kind)&&focusedBend(object,frame))unique.add(focusKey(object));visible.add(object);
             }
         }
         int edge=Math.min(maxDimension,Math.max(1,(int)Math.sqrt(CACHE_BYTES/(4d*Math.max(1,unique.size())))));
@@ -164,7 +165,7 @@ public final class SketchFrameRenderer implements AutoCloseable {
             if(Thread.currentThread().isInterrupted())throw new InterruptedException("Raster preparation cancelled");
             if("image".equals(object.getString("kind"))){image(object.getJSONObject("reference"));continue;}
             JSONObject descriptor=object.getJSONObject("paint");String hash=descriptor.getString("sha256");
-            ensurePaintSelection(descriptor);if(paintCache.containsKey(hash))continue;
+            ensurePaintSelection(descriptor);validatePaintFocus(object);if(focusedBend(object,frame))focusedPaintTexture(object,edge);if(paintCache.containsKey(hash))continue;
             Bitmap bitmap=fitCacheBitmap(paints().render(descriptor,Math.max(128,edge),null),edge);
             paintCache.put(hash,bitmap);paintBytes+=bitmap.getAllocationByteCount();
         }
@@ -304,11 +305,15 @@ public final class SketchFrameRenderer implements AutoCloseable {
 
     private void drawPaint(Canvas canvas,JSONObject object,int w,int h,double alpha,int meshFrame)throws Exception{
         if(alpha<=0)return;Paint composite=new Paint(Paint.ANTI_ALIAS_FLAG|Paint.FILTER_BITMAP_FLAG);composite.setAlpha((int)Math.round(255*alpha));
-        ensurePaintSelection(object.getJSONObject("paint"));
+        ensurePaintSelection(object.getJSONObject("paint"));validatePaintFocus(object);
+        if(object.has("paintMesh")&&object.getJSONObject("paintMesh").has("sourceRect")){double[] translation=SketchPaintMesh.translationAt(object,meshFrame);if(translation!=null){int save=canvas.save();try{canvas.translate((float)(translation[0]*w),(float)(translation[1]*h));drawUnmeshedPaint(canvas,object,w,h,composite);}finally{canvas.restoreToCount(save);}return;}}
         if(object.has("paintMesh")&&!SketchPaintMesh.regularAt(object,meshFrame)){
-            Bitmap texture=android.os.Looper.myLooper()==android.os.Looper.getMainLooper()?paintCache.get(object.getJSONObject("paint").getString("sha256")):meshPaintTexture(object.getJSONObject("paint"));
-            if(texture==null)throw new IllegalStateException("Paint grid texture is preparing");JSONObject mesh=object.getJSONObject("paintMesh");composite.setStyle(Paint.Style.FILL);canvas.drawBitmapMesh(texture,mesh.getInt("columns"),mesh.getInt("rows"),SketchPaintMesh.vertices(object,meshFrame,w,h),0,null,0,composite);return;
+            boolean focused=object.getJSONObject("paintMesh").has("sourceRect");Bitmap texture=focused?(android.os.Looper.myLooper()==android.os.Looper.getMainLooper()?paintMeshCache.get(focusKey(object)+":"+preparedDimension):focusedPaintTexture(object,0)):(android.os.Looper.myLooper()==android.os.Looper.getMainLooper()?paintCache.get(object.getJSONObject("paint").getString("sha256")):meshPaintTexture(object.getJSONObject("paint")));
+            if(texture==null)throw new IllegalStateException("Paint grid texture is preparing");composite.setStyle(Paint.Style.FILL);SketchPaintMesh.drawGrid(canvas,texture,object.getJSONObject("paintMesh"),SketchPaintMesh.vertices(object,meshFrame,w,h),composite);return;
         }
+        drawUnmeshedPaint(canvas,object,w,h,composite);
+    }
+    private void drawUnmeshedPaint(Canvas canvas,JSONObject object,int w,int h,Paint composite)throws Exception {
         SketchPaintReplay.Frame frame=object.getString("id").equals(paintPresentationObject)?paintPresentation:null;
         if(frame!=null){if(frame.bitmap.isRecycled())throw new IllegalStateException("Paint publication was recycled before detachment");RectF region=frame.crop==null?new RectF(0,0,w,h):bounds(frame.crop,w,h);canvas.drawBitmap(frame.bitmap,null,region,composite);return;}
         JSONObject descriptor=object.getJSONObject("paint");
@@ -323,7 +328,19 @@ public final class SketchFrameRenderer implements AutoCloseable {
     private void ensurePaintSelection(JSONObject descriptor)throws Exception {
         String hash=descriptor.getString("sha256"),key="paint:"+hash;if(!prepareSelections||imageSelections.containsKey(key))return;requireRasterWorker();Bitmap source=paintMeshCache.get(hash);if(source!=null){captureSelection(key,source);return;}source=paints().renderSource(descriptor);try{captureSelection(key,source);}finally{source.recycle();}
     }
+    private void validatePaintFocus(JSONObject object)throws Exception {
+        if(!object.has("paintMesh")||!object.getJSONObject("paintMesh").has("sourceRect"))return;JSONObject descriptor=object.getJSONObject("paint");String hash=descriptor.getString("sha256");JSONArray support=paintFocusSupport.get(hash);
+        if(support==null){requireRasterWorker();Bitmap bitmap=paints().renderSource(descriptor);try{support=SketchPaintMeshPrepare.supportRectangle(bitmap);paintFocusSupport.put(hash,support);}finally{bitmap.recycle();}}
+        SketchPaintMeshPrepare.requireSupport(object,support);
+    }
 
+    private static boolean focusedBend(JSONObject object,int frame)throws Exception {return object.has("paintMesh")&&object.getJSONObject("paintMesh").has("sourceRect")&&(frame<0||SketchPaintMesh.translationAt(object,frame)==null);}
+    private static String focusKey(JSONObject object)throws Exception{return "focus:"+object.getJSONObject("paint").getString("sha256")+":"+object.getJSONObject("paintMesh").getJSONArray("sourceRect").toString();}
+    private Bitmap focusedPaintTexture(JSONObject object,int edge)throws Exception {
+        requireRasterWorker();String key=focusKey(object)+":"+edge;Bitmap cached=paintMeshCache.get(key);if(cached!=null)return cached;Bitmap full=paints().renderSource(object.getJSONObject("paint")),texture;try{texture=SketchPaintMesh.focusedTexture(full,object.getJSONObject("paintMesh"),edge);}finally{full.recycle();}long bytes=texture.getAllocationByteCount();
+        while(!paintMeshCache.isEmpty()&&paintBytes+imageBytes+bytes>CACHE_BYTES){Map.Entry<String,Bitmap> first=paintMeshCache.entrySet().iterator().next();paintBytes-=first.getValue().getAllocationByteCount();first.getValue().recycle();paintMeshCache.remove(first.getKey());}
+        if(paintBytes+imageBytes+bytes>CACHE_BYTES){texture.recycle();throw SketchDocument.bad("Focused paint texture exceeds the shared12MiB raster cache");}paintMeshCache.put(key,texture);paintBytes+=bytes;return texture;
+    }
     private Bitmap meshPaintTexture(JSONObject descriptor)throws Exception {
         requireRasterWorker();String hash=descriptor.getString("sha256");Bitmap cached=paintMeshCache.get(hash);if(cached!=null)return cached;
         Bitmap image=paints().renderSource(descriptor);long bytes=image.getAllocationByteCount();
@@ -475,7 +492,7 @@ public final class SketchFrameRenderer implements AutoCloseable {
         }
         return inside;
     }
-    private void clearPaintCache(){for(Bitmap bitmap:paintCache.values())bitmap.recycle();paintCache.clear();for(Bitmap bitmap:paintMeshCache.values())bitmap.recycle();paintMeshCache.clear();paintBytes=0;}
+    private void clearPaintCache(){for(Bitmap bitmap:paintCache.values())bitmap.recycle();paintCache.clear();for(Bitmap bitmap:paintMeshCache.values())bitmap.recycle();paintMeshCache.clear();paintBytes=0;paintFocusSupport.clear();}
     private void clearImageCache(){for(Bitmap image:imageCache.values())image.recycle();imageCache.clear();imageBytes=0;}
     @Override public void close() {imageSelections.clear();clearImageCache();clearPaintCache();if(paintStore!=null){paintStore.close();paintStore=null;}paintPresentation=null;paintPresentationObject=null;geometryCache.clear();exposures.clear(); }
 }
