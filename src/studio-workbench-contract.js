@@ -3,7 +3,7 @@ import {z} from 'zod';
 import {cinematic3dTimelineSchema,CINEMATIC_3D_ACTIONS,EXACT_CAMERA_ORBIT_CAPABILITIES} from './cinematic3d-contract.js';
 export {EXACT_CAMERA_ORBIT_CAPABILITIES} from './cinematic3d-contract.js';
 
-export const LOCAL_DRAWING_CAPABILITIES=Object.freeze({"minimumNativeVersion":"4.10.2","actions":["local_drawing_models","local_drawing_install","local_drawing_generate","local_drawing_get"],"runtime":"onnxruntime-cpu","packId":"sd15_onnx_v1","hostedInference":false,"modelWeightsOptional":true,"modelDownloadRequiresNetwork":true,"inferenceRequiresNetwork":false,"input":"Explicit owned unmeshed/unflipped full image reference; sourceRect uses the full EXIF-oriented working PNG","output":"Reference-conditioned model-generated raster draft in a separate project","width":512,"height":512,"maxSteps":30,"maxPromptTokens":75,"requiredAvailableRamMb":6144,"requires64BitProcess":true,"recoversArtistLayers":false,"creativeQualityCertified":false,"sourceArtworkModified":false,"seedScope":"Added denoising noise; the model encoder posterior sample is checkpointed","manualControls":"Sketch Studio > More > Local AI drawing","limitations":"A raster draft does not recover hand-drawn strokes, semantic layers, correct anatomy, unseen views or consistent animation. Review actual output. Phone performance is not established by host inference.","defaultSettings":{"seed":41718,"steps":20,"strength":0.5,"guidance":7,"negativePrompt":"distorted anatomy, extra fingers, blurry, flat vector shapes"},"transparentOutput":false,"supportedGenerationModes":["reference_conditioned_raster"],"supports3dCameraOrbit":false});
+export const LOCAL_DRAWING_CAPABILITIES=Object.freeze({"minimumNativeVersion":"4.10.2","actions":["local_drawing_models","local_drawing_install","local_drawing_generate","local_drawing_get"],"runtime":"onnxruntime-cpu","packId":"sd15_onnx_v1","hostedInference":false,"modelWeightsOptional":true,"modelDownloadRequiresNetwork":true,"inferenceRequiresNetwork":false,"input":"Explicit owned unmeshed/unflipped full image reference; sourceRect uses the full EXIF-oriented working PNG","output":"Reference-conditioned model-generated raster draft in a separate project","width":512,"height":512,"maxSteps":30,"maxPromptTokens":75,"requiredAvailableRamMb":6144,"requires64BitProcess":true,"recoversArtistLayers":false,"creativeQualityCertified":false,"sourceArtworkModified":false,"seedScope":"Added denoising noise; the model encoder posterior sample is checkpointed","manualControls":"Sketch Studio > More > Local AI drawing","limitations":"A raster draft does not recover hand-drawn strokes, semantic layers, correct anatomy, unseen views or consistent animation. Review actual output. Phone performance is not established by host inference.","defaultSettings":{"seed":41718,"steps":20,"strength":0.5,"guidance":7,"negativePrompt":"distorted anatomy, extra fingers, blurry, flat vector shapes"},"transparentOutput":false,"supportedGenerationModes":["reference_conditioned_raster"],"supports3dCameraOrbit":false,"keyframePlacement":{"minimumNativeVersion":"4.10.5","action":"sketch_import_reference","bindingField":"localDrawing","bindingFields":["requestId","outputSha256"],"requiresExplicitFrameAndExposure":true,"undoable":true,"archiveRetainsRequestAndModel":true,"generatesInbetweens":false,"manualControls":"Local AI drawing > Place draft as an animation key","output":"An AI-generated opaque image cel, not recovered artist layers"}});
 const finite=z.number().finite(),integer=(min,max)=>finite.int().min(min).max(max);
 const id=z.string().regex(/^[A-Za-z0-9_-]{1,96}$/),sha=z.string().regex(/^[a-f0-9]{64}$/);
 const text=(max,nonempty=true)=>z.string().max(max).refine(v=>!v.includes('\0')&&(!nonempty||v.trim().length>0),'Bounded text is required');
@@ -295,8 +295,13 @@ const bounds=z.object({x:finite.min(0).max(1),y:finite.min(0).max(1),width:finit
 const maskRing=z.array(z.tuple([finite.min(0).max(1),finite.min(0).max(1)])).min(3).max(64);
 const sourceMask=z.object({version:z.literal(1),method:z.literal('source_assisted'),sourceReferenceSha256:sha,sourceSha256:sha,operationId:id,maskId:id,complement:z.boolean(),rings:z.array(maskRing).min(1).max(64),maskSha256:sha}).strict()
  .refine(v=>v.complement||v.rings.length<=8,'Ordinary source-mask parts retain at most 8 rings');
+const localDrawingRequest=z.object({requestId:id,sketchId:id,expectedRevision:revision,objectId:id,sourceSha256:sha,
+  sourceRect:z.object({x:finite.min(0).max(1),y:finite.min(0).max(1),width:finite.positive().max(1),height:finite.positive().max(1)}).strict().refine(v=>v.x+v.width<=1&&v.y+v.height<=1,'Source rectangle must fit the full oriented image').optional(),
+  settings:z.object({prompt:text(1200),negativePrompt:text(1200,false).optional(),seed:integer(0,2147483647),steps:integer(4,30),strength:finite.min(.1).max(1),guidance:finite.min(1).max(12)}).strict()}).strict();
+const localDrawingProvenance=z.object({version:z.literal(1),kind:z.literal('local_ai_raster'),request:localDrawingRequest,requestSha256:sha,modelIdentity:sha,outputSha256:sha}).strict();
 const reference=z.object({file:z.string().regex(/^[a-f0-9]{64}\.png$/),sha256:sha,width:integer(1,2048),height:integer(1,2048),sourceProjectId:id,sourceAssetId:id,
- sourceWidth:integer(1,64000000).optional(),sourceHeight:integer(1,64000000).optional(),sourceOrientation:integer(1,8).optional(),sourceSha256:sha.optional(),sourceMask:sourceMask.optional()}).strict()
+ sourceWidth:integer(1,64000000).optional(),sourceHeight:integer(1,64000000).optional(),sourceOrientation:integer(1,8).optional(),sourceSha256:sha.optional(),sourceMask:sourceMask.optional(),localDrawing:localDrawingProvenance.optional()}).strict()
+ .refine(v=>v.localDrawing===undefined||v.localDrawing.outputSha256===v.sourceSha256,'AI provenance must bind its generated source PNG')
  .refine(v=>v.file===v.sha256+'.png','Reference must use its owned hash-bound PNG filename')
  .refine(v=>v.sourceMask===undefined||v.sourceMask.sourceSha256===v.sourceSha256,'Source-mask provenance must bind the original reference sourceSha256')
  .refine(v=>(v.sourceWidth===undefined)===(v.sourceHeight===undefined)&&((v.sourceWidth??1)*(v.sourceHeight??1)<=64000000),'Original source dimensions must be paired and within the decode budget');
@@ -616,7 +621,7 @@ export const studioToolSchemas={
  sketch_list:{},
  sketch_get:{...sketchIdentity,shapeFrame:frame.optional(),expectedRevision:revision.optional(),layerId:id.optional(),objectId:id.optional(),pointOffset:integer(0,131072).optional(),pointLimit:integer(1,512).optional(),commandOffset:integer(0,4096).optional(),commandLimit:integer(1,512).optional(),objectOffset:integer(0,4096).optional(),objectLimit:integer(1,128).optional()},
  sketch_edit:{...mutation,operations:z.array(operation).min(1).max(64)},sketch_undo:mutation,sketch_redo:mutation,
- sketch_import_reference:{...mutation,projectId:id,sourceProjectUpdatedAt:updatedAt,assetId:id,layerId:id,objectId:id,frame:frame.optional(),exposure:integer(1,1200).optional(),bounds:bounds.optional(),guideVisible:z.boolean().optional()},
+ sketch_import_reference:{...mutation,projectId:id,sourceProjectUpdatedAt:updatedAt,assetId:id,layerId:id,objectId:id,frame:frame.optional(),exposure:integer(1,1200).optional(),bounds:bounds.optional(),guideVisible:z.boolean().optional(),localDrawing:z.object({requestId:id,outputSha256:sha}).strict().optional()},
  sketch_import_frame_manifest:{sketchId:id,manifestName:z.string().min(1).max(120).regex(/^[A-Za-z0-9_.-]+\.jsonl(?:\.gz)?$/).refine(v=>!v.includes('..')),videoName:z.string().min(1).max(120).regex(/^[A-Za-z0-9_.-]+\.mp4$/).refine(v=>!v.includes('..')),expectedSourceSha256:sha,expectedFrameCount:integer(1,1200)},
  sketch_import_drawing_manifest:{sketchId:id,manifestName:z.string().min(1).max(120).regex(/^[A-Za-z0-9_.-]+\.jsonl(?:\.gz)?$/).refine(v=>!v.includes('..')),sourceName:z.string().min(1).max(120).regex(/^[A-Za-z0-9_.-]+\.(mp4|png|jpg|jpeg|webp|txt)$/i).refine(v=>!v.includes('..')),expectedSourceSha256:sha,expectedFrameCount:integer(1,1200)},
  sketch_import_drawing_asset:{projectId:id,sourceProjectUpdatedAt:integer(1,Number.MAX_SAFE_INTEGER),sketchId:id,manifestAssetId:id,expectedManifestSha256:sha,sourceAssetId:id,expectedSourceSha256:sha,expectedFrameCount:integer(1,1200),drawingMethod:z.enum(['original_strokes','source_assisted'])},
@@ -629,9 +634,7 @@ export const studioToolSchemas={
  local_drawing_models:{},
  local_drawing_install:{packId:z.literal('sd15_onnx_v1')},
  local_drawing_get:{requestId:id,includePreview:z.boolean().optional()},
- local_drawing_generate:{requestId:id,sketchId:id,expectedRevision:revision,objectId:id,sourceSha256:sha,
-  sourceRect:z.object({x:finite.min(0).max(1),y:finite.min(0).max(1),width:finite.positive().max(1),height:finite.positive().max(1)}).strict().refine(v=>v.x+v.width<=1&&v.y+v.height<=1,'Source rectangle must fit the full oriented image').optional(),
-  settings:z.object({prompt:text(1200),negativePrompt:text(1200,false).optional(),seed:integer(0,2147483647),steps:integer(4,30),strength:finite.min(.1).max(1),guidance:finite.min(1).max(12)}).strict()},
+ local_drawing_generate:localDrawingRequest.shape,
  open_pipeline_configure:{endpoint,bearer:z.string().min(16).max(4096).regex(/^[A-Za-z0-9_.~+/-]+=*$/)},
  open_pipeline_capabilities:{},open_pipeline_list:{},
  open_pipeline_export_request:{projectId:id,sourceProjectUpdatedAt:updatedAt,requestId:id,backend:z.enum(['blender','cogvideox','frame_sequence','interpolation','kokoro']),controls:z.union(Object.values(backendControls)),assetIds:sourceIds},
@@ -729,6 +732,7 @@ export function nativeStudioParameters(action,parameters={}){
   }
  }
  if(action==='open_pipeline_restore_artifact'&&parsed.name!==parsed.requestId+'.vsresult')throw new Error('Restore only the pending request immutable result');
+ if(action==='sketch_import_reference'&&parsed.localDrawing!==undefined&&(parsed.frame===undefined||parsed.exposure===undefined))throw new Error('AI key placement requires explicit frame and exposure');
  return parsed;
 }
 
@@ -740,6 +744,8 @@ export function requireStudioVersion(device,action,parameters={}){
   ||action==='cinematic_3d_edit_program'&&(parameters.operations||[]).some(op=>['set_camera_orbit','clear_camera_orbit'].includes(op.type))
   ||action==='cinematic_3d_get_program'&&parameters.sampleFrame!==undefined;
  if(exactOrbit&&!atLeast(device?.appVersion,'4.10.3'))throw new Error('NATIVE_APP_UPGRADE_REQUIRED: exact degree camera orbits and source-bound camera samples require VideoStudio4.10.3 or newer');
+ const aiKey=value=>value&&typeof value==='object'&&(Object.hasOwn(value,'localDrawing')||Object.values(value).some(aiKey));
+ if(aiKey(parameters)&&!atLeast(device?.appVersion,'4.10.5'))throw new Error('NATIVE_APP_UPGRADE_REQUIRED: AI raster key placement and provenance require VideoStudio 4.10.5 or newer');
  if(LOCAL_DRAWING_CAPABILITIES.actions.includes(action)&&!atLeast(device?.appVersion,'4.10.2'))throw new Error('NATIVE_APP_UPGRADE_REQUIRED: offline neural drawing requires VideoStudio 4.10.2 or newer');
  if(CORRECTION_WORKFLOW_CAPABILITIES.actions.includes(action)&&!atLeast(device?.appVersion,'4.8.4'))throw new Error('NATIVE_APP_UPGRADE_REQUIRED: app-owned correction workflow and recipe options require VideoStudio 4.8.4 or newer');
  const styledHandObject=object=>object?.kind==='hand'&&object.hand?.settings?.renderStyle!==undefined;

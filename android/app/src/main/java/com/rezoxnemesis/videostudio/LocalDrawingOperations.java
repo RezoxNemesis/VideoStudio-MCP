@@ -29,6 +29,11 @@ final class LocalDrawingOperations {
    default:throw SketchDocument.bad("Unknown local drawing action");
   }
  }
+ static JSONObject completed(Context context,String id)throws Exception {
+  JSONObject record=read(new File(directory(context,id),"record.json"));
+  if(!"completed".equals(record.getString("state")))throw new IllegalStateException("LOCAL_DRAWING_KEY_NOT_COMPLETED: finish and review the draft first");
+  output(context,record);return SketchDocument.copy(record);
+ }
  private static JSONObject generate(Context context,JSONObject p,LocalDrawingEngine.Progress progress)throws Exception {
   if(Thread.currentThread().isInterrupted())throw new InterruptedException("Local drawing cancelled before preparation");
   LocalDrawingSource.validate(p);LocalDrawingModels models=new LocalDrawingModels(context);String id=p.getString("requestId");File dir=directory(context,id),recordFile=new File(dir,"record.json");

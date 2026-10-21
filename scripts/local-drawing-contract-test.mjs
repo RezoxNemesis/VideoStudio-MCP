@@ -49,3 +49,24 @@ test('existing MCP image channel preserves a native PNG MIME type and payload',(
  const context={};vm.createContext(context);vm.runInContext(worker.slice(start,end).replace('const nativeImageBlocks =','globalThis.nativeImageBlocks ='),context);
  const payload='aA==';const blocks=JSON.parse(JSON.stringify(context.nativeImageBlocks({result:{contactSheet:{mimeType:'image/png',base64:payload}}})));assert.deepEqual(blocks,[{type:'image',data:payload,mimeType:'image/png'}]);
 });
+
+test('AI key placement is explicit, strict and gated while ordinary imports retain their floor',()=>{
+ const p={sketchId:'animation',operationId:'place_key',expectedRevision:1,projectId:'draft',sourceProjectUpdatedAt:1,assetId:'asset',layerId:'layer_1',objectId:'key',frame:8,exposure:4,localDrawing:{requestId:'study',outputSha256:'a'.repeat(64)}};
+ for(const action of ['sketch_import_reference','studio_sketch_import_reference']){
+  assert.deepEqual(nativeStudioParameters(action,p),p);
+  assert.throws(()=>requireStudioVersion({appVersion:'4.10.4'},action,p),/4\.10\.5/);
+  assert.doesNotThrow(()=>requireStudioVersion({appVersion:'4.10.5'},action,p));
+ }
+ for(const patch of [{frame:undefined},{exposure:undefined},{localDrawing:null},{localDrawing:{...p.localDrawing,accepted:true}}])assert.throws(()=>nativeStudioParameters('sketch_import_reference',{...p,...patch}));
+ const ordinary={...p};delete ordinary.localDrawing;assert.deepEqual(nativeStudioParameters('sketch_import_reference',ordinary),ordinary);assert.doesNotThrow(()=>requireStudioVersion({appVersion:'4.10.2'},'sketch_import_reference',ordinary));
+});
+
+test('portable AI provenance is strict and carries its version floor through inline edits',()=>{
+ const provenance={version:1,kind:'local_ai_raster',request,requestSha256:'b'.repeat(64),modelIdentity:'c'.repeat(64),outputSha256:'d'.repeat(64)};
+ const ref={file:'e'.repeat(64)+'.png',sha256:'e'.repeat(64),width:512,height:512,sourceProjectId:'draft',sourceAssetId:'asset',sourceSha256:'d'.repeat(64),localDrawing:provenance};
+ const patch={sketchId:'animation',operationId:'restore_key',expectedRevision:2,operations:[{type:'add_object',layerId:'layer_1',object:{id:'key',kind:'image',bounds:{x:0,y:0,width:1,height:1},reference:ref}}]};
+ assert.deepEqual(nativeStudioParameters('sketch_edit',patch),patch);
+ assert.throws(()=>requireStudioVersion({appVersion:'4.10.4'},'sketch_edit',patch),/4\.10\.5/);
+ assert.doesNotThrow(()=>requireStudioVersion({appVersion:'4.10.5'},'sketch_edit',patch));
+ for(const mutate of [p=>p.operations[0].object.reference.localDrawing=null,p=>p.operations[0].object.reference.localDrawing.version='1',p=>p.operations[0].object.reference.localDrawing.request.settings.steps='4',p=>p.operations[0].object.reference.localDrawing.claim='original artist layers',p=>p.operations[0].object.reference.sourceSha256='a'.repeat(64)]){const p=structuredClone(patch);mutate(p);assert.throws(()=>nativeStudioParameters('sketch_edit',p));}
+});

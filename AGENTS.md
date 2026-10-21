@@ -1,3 +1,17 @@
+# Active native AI key drawings and one-character focus — 2026-10-21
+
+On feat/native-ai-keyframes-v4105, target4.10.5/code508, extend frozen signed
+33f0f1e. Read docs/continuity/NATIVE_AI_KEYFRAMES_4105.md. Owner now focuses on
+foreground long-haired young man in pencil reference; preserve older man/Temple
+separately. No generic template can establish matched character views. Optional
+localDrawing binding on ordinary reference import verifies completed native AI
+output and retains prompt/model/source provenance through history/components/
+archives. Manual controls share it; no new canonical action or Worker deployment.
+Keep old omitted behavior/floors/fingerprints. AI raster keys are not recovered
+artist layers, mastered360°, in-betweens or the240s film. Fresh combined local2227 Android/0failures/0errors/20skips and700 Node+306smoke
+pass. Candidate signing and real output review remain separate. One local Gradle, root only;
+no Gallery, hosted/external artwork, main/Worker/stable or identity/key/data reset.
+
 # Active native hand visibility and movement audit — 2026-10-21
 
 Owner requests hand/leg/jump/run/punch/chair/expression/sleep/speech studies and

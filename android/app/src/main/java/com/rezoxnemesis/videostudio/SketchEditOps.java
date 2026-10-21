@@ -264,8 +264,9 @@ public final class SketchEditOps {
                     SketchDocument.fields(args, "sketchId,operationId,expectedRevision");
                     return store.historyMove(id, op, revision, fingerprint, "sketch_redo".equals(action));
                 case "sketch_import_reference":
-                    SketchDocument.fields(args, "sketchId,operationId,expectedRevision,projectId,sourceProjectUpdatedAt,assetId,layerId,objectId,frame,exposure,bounds,guideVisible");
+                    SketchDocument.fields(args, "sketchId,operationId,expectedRevision,projectId,sourceProjectUpdatedAt,assetId,layerId,objectId,frame,exposure,bounds,guideVisible,localDrawing");
                     if(args.has("guideVisible"))SketchDocument.bool(args,"guideVisible");
+                    if(args.has("localDrawing")){SketchDocument.integer(args,"frame",0,1199);SketchDocument.integer(args,"exposure",1,1200);SketchDocument.fields(args.getJSONObject("localDrawing"),"requestId,outputSha256");}
                     ProjectStore projects = new ProjectStore(context);
                     JSONArray importedVisual=new JSONArray();
                     return projects.guardedProject(SketchDocument.id(args, "projectId"), SketchDocument.integer(args, "sourceProjectUpdatedAt", 0, Long.MAX_VALUE), project ->
@@ -273,6 +274,7 @@ public final class SketchEditOps {
                             SketchDrawingPolicy.requireAction(store.activeDrawingSession(id),action,args);
                             JSONObject layer = SketchDocument.layer(doc, SketchDocument.id(args, "layerId")); requireUnlocked(layer);
                             ProjectStore.Asset asset = project.asset(SketchDocument.id(args, "assetId"));
+                            JSONObject localDrawing=args.has("localDrawing")?LocalDrawingKeyframes.bind(context,args.getJSONObject("localDrawing"),project,asset):null;
                             // Validate the future image geometry and document before copying any bytes.
                             JSONObject referencePlaceholder = new JSONObject().put("sha256", new String(new char[64]).replace('\0', '0'))
                                     .put("file", new String(new char[64]).replace('\0', '0') + ".png").put("width", 1).put("height", 1)
@@ -284,7 +286,7 @@ public final class SketchEditOps {
                                     .put("transform",SketchDocument.transform().put("opacity",args.optBoolean("guideVisible",true)?1:0))
                                     .put("reference", referencePlaceholder));
                             layer.getJSONArray("objects").put(object); SketchDocument.validate(doc);
-                            JSONObject reference=store.importReference(id, project, asset);object.put("reference", reference);
+                            JSONObject reference=store.importReference(id, project, asset);if(localDrawing!=null){reference.put("localDrawing",localDrawing);LocalDrawingKeyframes.validate(reference);}object.put("reference", reference);
                             if(!args.has("bounds")){double imageRatio=reference.getDouble("width")/reference.getDouble("height"),canvasRatio=doc.getDouble("width")/doc.getDouble("height");double bw=imageRatio>canvasRatio?1:imageRatio/canvasRatio,bh=imageRatio>canvasRatio?canvasRatio/imageRatio:1;object.put("bounds",new JSONObject().put("x",(1-bw)/2).put("y",(1-bh)/2).put("width",bw).put("height",bh));}
                             importedVisual.put(new JSONObject().put("type","add_object").put("layerId",layer.getString("id")).put("object",SketchDocument.copy(object)));
                             return doc;
