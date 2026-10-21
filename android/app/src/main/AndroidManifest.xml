@@ -9,6 +9,7 @@
          No Gallery, file or broad package enumeration permission is requested. -->
     <queries>
         <package android:name="com.rezox.render" />
+        <package android:name="com.rezox.render.preview" />
     </queries>
     <application
         android:allowBackup="true"

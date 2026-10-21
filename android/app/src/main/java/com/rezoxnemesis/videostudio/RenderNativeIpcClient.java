@@ -26,6 +26,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  */
 public final class RenderNativeIpcClient {
     private static final String RENDER_PACKAGE = "com.rezox.render";
+    private static final String RENDER_PREVIEW_PACKAGE = "com.rezox.render.preview";
     private static final String RENDER_SERVICE =
             "com.rezox.render.agent.VideoStudioNativeBridgeService";
     private static final Set<String> ALLOWED = new HashSet<>(Arrays.asList(
@@ -39,6 +40,18 @@ public final class RenderNativeIpcClient {
             "blender.scene.render_still"));
 
     private RenderNativeIpcClient() {}
+    /** Prefer the new signed side-by-side Render preview only when installed.
+     * Normal Render package is left untouched. We query exact known packages,
+     * never other installed apps or the Gallery.
+     */
+    static String preferredRenderPackage(Context context) {
+        try {
+            context.getPackageManager().getPackageInfo(RENDER_PREVIEW_PACKAGE, 0);
+            return RENDER_PREVIEW_PACKAGE;
+        } catch (android.content.pm.PackageManager.NameNotFoundException ignored) {
+            return RENDER_PACKAGE;
+        }
+    }
 
     public interface Callback {
         void finished(JSONObject response);
@@ -136,7 +149,7 @@ public final class RenderNativeIpcClient {
         };
         try {
             Intent intent = new Intent();
-            intent.setComponent(new ComponentName(RENDER_PACKAGE, RENDER_SERVICE));
+            intent.setComponent(new ComponentName(preferredRenderPackage(app), RENDER_SERVICE));
             // The caller is VideoStudio's already user-visible foreground
             // Native Agent service. No implicit intent or broad package scan.
             boolean ok = app.bindService(intent, connection[0], Context.BIND_AUTO_CREATE);

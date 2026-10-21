@@ -28,3 +28,7 @@ public class RenderNativeIpcClientTest {
             assertFalse(RenderNativeIpcClient.supports(value));
     }
 }
+
+/* Side-by-side signed Render preview is explicitly discoverable without
+ * granting broad package enumeration. Its own data is isolated from old Render.
+ */
