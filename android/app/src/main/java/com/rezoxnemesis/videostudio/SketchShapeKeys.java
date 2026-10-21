@@ -14,6 +14,7 @@ final class SketchShapeKeys {
         if(!object.has("shapeKeys"))return new int[]{0,0};
         if(!"path".equals(object.getString("kind"))||!(object.opt("shapeKeys") instanceof JSONArray))
             throw SketchDocument.bad("Shape keys require an editable Bezier path");
+        if(object.has("clipOut")&&object.getJSONArray("shapeKeys").length()>0)throw SketchDocument.bad("Clear path clipping before shape deformation");
         JSONArray keys=object.getJSONArray("shapeKeys"),base=object.getJSONArray("commands");
         if(keys.length()>MAX_KEYS)throw SketchDocument.bad("Use at most 240 shape keys per path");
         int previous=-1,points=0;

@@ -346,7 +346,7 @@ final class OmegaTwoBoneIK {
             org.json.JSONObject object=SketchDocument.object(source,mesh.objectId);
             if(request.frame<object.getInt("frame") || request.frame>=object.getInt("frame")+object.getInt("exposure"))
                 throw bad("Mesh is not exposed at the pinned frame");
-            if(object.has("masterLink") || object.has("shapeKeys") || object.getJSONArray("keys").length()!=0
+            if(object.has("masterLink") || object.has("clipOut") || object.has("shapeKeys") || object.getJSONArray("keys").length()!=0
                     || owner.getJSONArray("keys").length()!=0
                     || !identity(object.getJSONObject("transform")) || !identity(owner.getJSONObject("transform")))
                 throw bad("NATIVE_TRANSFORM_OR_MASTER_REQUIRES_INTEGRATION_ADAPTER");

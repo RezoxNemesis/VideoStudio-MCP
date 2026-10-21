@@ -442,6 +442,18 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
                 }catch(Exception failure){onMessage(failure.getMessage());}}).show();
         }catch(Exception failure){onMessage(failure.getMessage());}
     }
+    private void pathClipDialog(){
+        if(document==null||canvas==null||canvas.getSelectedId()==null){onMessage("Select an editable path first");return;}
+        try{
+            String id=canvas.getSelectedId();JSONObject object=SketchDocument.object(document,id);
+            if(!"path".equals(object.getString("kind"))){onMessage("Path clipping uses editable pen paths");return;}
+            LinearLayout form=column();TextView help=new TextView(this);help.setText("Hide selected regions of this path while preserving the artwork underneath. Use normalized polygon coordinates from0 to1. Each region must be convex. Move the object to move its clipping with it.");form.addView(help);
+            EditText regions=input("Hidden path regions",object.has("clipOut")?object.getJSONArray("clipOut").toString():"[[[0.4,0.4],[0.6,0.4],[0.6,0.6],[0.4,0.6]]]",false);regions.setSingleLine(false);regions.setMinLines(3);form.addView(regions);
+            new AlertDialog.Builder(this).setTitle("Path clipping").setView(form).setNegativeButton("Cancel",null)
+                .setNeutralButton("Clear clipping",(d,w)->{try{onOperation(new JSONObject().put("type","update_object").put("objectId",id).put("patch",new JSONObject().put("clipOut",JSONObject.NULL)));}catch(Exception e){onMessage(e.getMessage());}})
+                .setPositiveButton("Apply",(d,w)->{try{String text=regions.getText().toString().trim();if(text.length()>196608)throw SketchDocument.bad("Clipping text exceeds its native limit");JSONArray rings=new JSONArray(text);SketchPathClip.validateRings(rings);onOperation(new JSONObject().put("type","update_object").put("objectId",id).put("patch",new JSONObject().put("clipOut",rings)));}catch(Exception e){onMessage(e.getMessage());}}).show();
+        }catch(Exception e){onMessage(e.getMessage());}
+    }
     private void materialShadingDialog(){
         if(document==null||canvas==null||canvas.getSelectedId()==null){onMessage("Select an editable filled shape first");return;}
         try{
@@ -1414,7 +1426,7 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
                     try{startActivity(settings);}catch(android.content.ActivityNotFoundException unavailable){onMessage("Open Android app settings to allow drawing notifications");}
                 }).show();
     }
-    private void brushMenu(){menu("Brush / Text",new String[]{"Brush","Colours","Material shading","Shape animation","Linked palette styles","Paint studio","Text","Finish path","Transform / key","Object order","Delete object","Reference image","Solid construction","Ball and box impact","Motion studies","Eye animation","Mouth animation","Face animation","Speech animation","Character performance","Hand animation","Human acting"},this::brushDialog,this::paletteDialog,this::materialShadingDialog,this::shapeAnimationDialog,this::linkedPaletteDialog,this::paintMenu,this::textDialog,()->canvas.finishPolygon(),this::transformDialog,this::objectOrderMenu,this::deleteObject,this::referenceDialog,this::solidConstruction,()->solidConstruction(true),()->construction(2),()->construction(3),()->construction(4),()->construction(5),()->construction(6),()->construction(7),()->construction(8),()->construction(9));}
+    private void brushMenu(){menu("Brush / Text",new String[]{"Brush","Colours","Material shading","Shape animation","Linked palette styles","Paint studio","Text","Finish path","Transform / key","Object order","Delete object","Reference image","Solid construction","Ball and box impact","Motion studies","Eye animation","Mouth animation","Face animation","Speech animation","Character performance","Hand animation","Human acting","Path clipping"},this::brushDialog,this::paletteDialog,this::materialShadingDialog,this::shapeAnimationDialog,this::linkedPaletteDialog,this::paintMenu,this::textDialog,()->canvas.finishPolygon(),this::transformDialog,this::objectOrderMenu,this::deleteObject,this::referenceDialog,this::solidConstruction,()->solidConstruction(true),()->construction(2),()->construction(3),()->construction(4),()->construction(5),()->construction(6),()->construction(7),()->construction(8),()->construction(9),this::pathClipDialog);}
     private void solidConstruction(){solidConstruction(false);}
     private void solidConstruction(boolean collision){
         construction(collision?1:0);
