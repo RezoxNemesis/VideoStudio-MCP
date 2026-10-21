@@ -9,6 +9,7 @@ function fakeState(){
     async delete(k){entries.delete(k)}
   };
   let parent={deviceId:"vs-original",protocolFamily:"videostudio-native",nativeAgent:"videostudio-v3"};
+  entries.set("app-device:vs-original",structuredClone(parent));
   return {
     ctx:{storage},
     async appV3Device(key){if(key!=="private-original-video-owner")throw Error("OWNER_REJECTED");return parent},
