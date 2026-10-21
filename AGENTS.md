@@ -1,3 +1,20 @@
+# Active native center-part construction guide —2026-10-21
+
+Isolated feature feat/native-center-part-fringe-v41010 follows the combined512
+source. Read docs/continuity/NATIVE_CENTER_PART_FRINGE_41010.md. Optional strict
+anatomy-only fringeStyle shares native/manual/MCP controls; explicit choices
+require4.10.10, omission retains earlier request bytes/floors. Root owns the
+integrated version/code513 bump. Root observed55focused native tests with zero
+failures/errors/skips, including one private owned FRONT archive roundtrip;
+the8view raw PNG study is separate. Preserve the private driver's default-view
+miscount and actual receipt. A fresh root run then passed2additional tests:
+center-part60input validation and a public-owned study with receipt-confirmed
+8views, each restored with2native frames exact. Final full Node773+306smoke passed with the clarified metadata. Full combined native/CI/signing pending.
+Actual fringe guides are generic, not accepted actor likeness or mastered
+unseen views. All failed native iterations and strict assertions are retained.
+ONE Gradle and all inference are root-owned. No hosted/external artwork, Gallery,
+main/Worker/stable publication, replacement signer or data/MCP/device reset.
+
 # Active combined animation-production candidate —2026-10-21
 
 Feature feat/native-animation-recipe-archive-v4109 targets4.10.9/code512 from

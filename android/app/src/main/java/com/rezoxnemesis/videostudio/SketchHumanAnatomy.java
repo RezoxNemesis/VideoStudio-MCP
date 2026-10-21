@@ -19,10 +19,14 @@ final class SketchHumanAnatomy {
         new SketchHumanAnatomy(layer,actor,s,p).draw();
     }
     private void draw()throws Exception{
+        // An authored rear curtain belongs behind the owner's front/side
+        // neck and shoulders. From behind it is the nearer hair volume.
+        boolean rearBehindOwner=!p.camera.back;
+        if(rearBehindOwner)SketchAnatomyHead.rearHair(layer,actor,s,p);
         boolean leftNear=p.camera.clothDepth(p.leftHip)>p.camera.clothDepth(p.rightHip);
         boolean near=p.camera.clothDepth(p.nearShoulder)>=p.camera.clothDepth(p.farShoulder);
         leg(!leftNear);arm(!near);leg(leftNear);torso();shorts();arm(near);skinRim();
-        SketchAnatomyHead.draw(layer,actor,s,p,neckOccluder);
+        SketchAnatomyHead.draw(layer,actor,s,p,neckOccluder,!rearBehindOwner);
         if(s.optBoolean("constructionGuides",false))guides();
     }
     private void begin(String name){part=name;serial=layer.optJSONArray("objects").length();}
@@ -198,7 +202,7 @@ final class SketchHumanAnatomy {
      * their covered skin boundary. Native Boolean failure aborts rather than emitting gaps. */
     private void skinRim()throws Exception{
         JSONArray objects=layer.getJSONArray("objects");Path skinPath=new Path(),shortsPath=new Path();boolean any=false;
-        for(int i=0;i<objects.length();i++){JSONObject o=objects.getJSONObject(i);if(!o.optBoolean("fill"))continue;
+        for(int i=0;i<objects.length();i++){JSONObject o=objects.getJSONObject(i);if(!o.optBoolean("fill")||o.getString("id").startsWith(actor+"_anatomy_rear_hair_"))continue;
             if(skin.equals(o.optString("color"))){Path path=modelPath(o);if(!any){skinPath.set(path);any=true;}else {
                 // Skia fails on the valid rear/high225° union. Preserve both
                 // original operands and retry only that failure with the same
