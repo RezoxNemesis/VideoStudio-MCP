@@ -284,6 +284,10 @@ final class SketchHandGeometry {
     private static Path celPolygon(List<Lit> points){Path p=new Path();if(points.size()<3)return p;for(int i=0;i<points.size();i++){Lit v=points.get(i);if(i==0)p.moveTo((float)v.x,(float)v.y);else p.lineTo((float)v.x,(float)v.y);}p.close();return p;}
     private static Path celProjection(Face face,double unit,double cx,double cy){Path p=new Path();for(int i=0;i<face.p.length;i++){V v=face.p[i];if(i==0)p.moveTo((float)(cx+v.x*unit),(float)(cy+v.y*unit));else p.lineTo((float)(cx+v.x*unit),(float)(cy+v.y*unit));}p.close();return p;}
     private static boolean celFront(Face face){return face.p[1].sub(face.p[0]).cross(face.p[2].sub(face.p[0])).unit().z>.00001;}
+    /** Failure-only reuse for other fixed, app-owned construction surfaces. Keep
+     * successful Skia paths intact; this bounded vector backend already preserves
+     * native hand intersections below the existing contour conversion tolerance. */
+    static void retryVectorBoolean(Path target,Path other,Path.Op op)throws Exception {celOp(target,other,op);}
     /** Robust cel vector Booleans. Native curves are sampled below the existing
      * .001px conversion tolerance; fixed micro-pixel integers preserve narrow
      * guards and topology without depending on document-coordinate float ops. */

@@ -1,3 +1,18 @@
+# Active combined animation-production candidate —2026-10-21
+
+Feature feat/native-animation-recipe-archive-v4109 targets4.10.9/code512 from
+verified signed511103d5e. Includes portable saved-scene archives, reusable path
+clipping and cranial construction-edge occlusion. Accepted-camera testing found
+three real geometry/budget failures; failure-only skin union and exact convex
+mask coalescing preserve limits, successful old paths and visible holes. Focused
+combined23/0/0/0 passes. Full512 Android/Node, CI and original signing are still
+PENDING; do not mistake old focused XML for the interrupted full run. That full
+run exhausted /tmp; preserve it. Root reruns Java temporary files on workspace
+disk, without bypassing production storage admission. Future513 fringe/rear-hair
+work remains isolated. Actor/blink/hidden views/240secondfilm remain NEEDS_REWORK.
+ONE local Gradle, root owns lane. No main/Worker/stable publication, hosted or
+external artwork, signer replacement, Gallery or device/data/MCP identity reset.
+
 # Combined animation production tools candidate —2026-10-21
 
 Current feat/native-animation-recipe-archive-v4109 is4.10.9/code512 and combines

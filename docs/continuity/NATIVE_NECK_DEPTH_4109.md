@@ -41,3 +41,22 @@ the long rear-hair curtain is emitted after the torso and can cover the neck lik
 a beard. That painter/depth-order defect remains NEEDS_REWORK and is reserved
 for the separate center-part/fringe513 work. Generic native guides, AI likeness,
 artistic accuracy and the240second animation film remain unfinished.
+
+
+## Accepted-camera failures found before integration
+
+Actual emitted/validated guides were checked across60 accepted yaw/pitch/tilt
+inputs. This is one static guide family, not60 animation scenarios or accepted
+character views. The first run failed three inputs: rear/high225degrees hit an
+existing Skia skin-union failure, and high360degrees with neutral/tilted heads
+exceeded the128-polygon neck-mask budget. The baseline without neck clipping
+reproduced the first failure; all failed inputs/logs remain private evidence.
+
+Skin union now preserves both operands, tries Skia on a copy, and uses the
+existing bounded native vector Boolean backend only on failure. Successful
+old paths are unchanged. Neck masks coalesce touching/overlapping pieces only
+when their exact union equals the convex hull area; concavities and holes stay
+separate. Caps remain128 rings/32 vertices/4096 points per object. New native
+union/hole tests and the previously failing camera inputs pass. The combined
+focused run has23tests, zero failures/errors/skips. Full integrated validation
+and signing remain separate gates.
