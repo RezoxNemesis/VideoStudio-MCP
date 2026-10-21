@@ -1,3 +1,4 @@
+export const PAINT_COVERAGE_CAPABILITIES=Object.freeze({"minimumNativeVersion":"4.10.11","operation":"paint_stroke","field":"brush.coverage","choices":["maximum","accumulate"],"omittedBehavior":"accumulate","modes":["paint","erase","clone"],"maximumSemantics":"Per-pixel maximum of native dab coverage multiplied by flow; whole-stroke opacity applies once against the pre-stroke pigment. Separate strokes still composite normally.","legacySemantics":"Accumulate dab flow within one stroke, with the existing whole-stroke opacity cap.","vectorPressureBrushesSupported":false,"automaticToneMatching":false,"healsSeams":false,"sourceProvenanceUnchanged":true,"manualControls":"Sketch Studio > Paint studio > Paint settings > Stroke coverage","limitsUnchanged":"Existing8192dab,32000000pixelvisit,2048point,clip,cancellation and tile limits apply; grain remains deterministic per dab."});
 // Inert application-v3 authoring contracts. Native facades own storage/rendering.
 import {z} from 'zod';
 import {cinematic3dTimelineSchema,CINEMATIC_3D_ACTIONS,EXACT_CAMERA_ORBIT_CAPABILITIES} from './cinematic3d-contract.js';
@@ -316,7 +317,7 @@ const reference=z.object({file:z.string().regex(/^[a-f0-9]{64}\.png$/),sha256:sh
  .refine(v=>(v.sourceWidth===undefined)===(v.sourceHeight===undefined)&&((v.sourceWidth??1)*(v.sourceHeight??1)<=64000000),'Original source dimensions must be paired and within the decode budget');
 const brush=z.object({preset:z.enum(['ink','pencil','marker','airbrush','charcoal','calligraphy','hairline','engraving','graphite']),opacity:finite.min(0).max(1).optional(),hardness:finite.min(0).max(1).optional(),pressure:z.boolean().optional(),angle:finite.min(-180).max(180).optional()}).strict();
 const coordinate=finite.min(0).max(1);
-const paintBrush=z.object({mode:z.enum(['paint','erase','clone']),color,sizePx:finite.min(.5).max(256),opacity:coordinate.optional(),flow:coordinate.optional(),hardness:coordinate.optional(),spacing:finite.min(.05).max(1).optional(),pressure:z.boolean().optional(),texture:z.enum(['smooth','grain']).optional(),seed:integer(0,2147483647).optional(),angle:finite.min(-180).max(180).optional(),tip:z.enum(['round','flat']).optional()}).strict();
+const paintBrush=z.object({mode:z.enum(['paint','erase','clone']),color,sizePx:finite.min(.5).max(256),opacity:coordinate.optional(),flow:coordinate.optional(),hardness:coordinate.optional(),spacing:finite.min(.05).max(1).optional(),pressure:z.boolean().optional(),texture:z.enum(['smooth','grain']).optional(),seed:integer(0,2147483647).optional(),angle:finite.min(-180).max(180).optional(),tip:z.enum(['round','flat']).optional(),coverage:z.enum(['maximum','accumulate']).optional()}).strict();
 const affineMap=z.tuple([finite.min(-8).max(8),finite.min(-8).max(8),finite.min(-8).max(8),finite.min(-8).max(8),finite.min(-4).max(4),finite.min(-4).max(4)])
  .refine(v=>Math.abs(v[0]*v[3]-v[1]*v[2])>1e-10,'Clone mapping must be invertible');
 const cloneSource=z.object({objectId:id,sha256:sha,offsetX:finite.min(-1).max(1).optional(),offsetY:finite.min(-1).max(1).optional(),scale:finite.min(.01).max(8).optional(),rotation:finite.min(-180).max(180).optional(),mapping:affineMap.optional()}).strict()
@@ -757,6 +758,8 @@ export function nativeStudioParameters(action,parameters={}){
 const legacy3d=new Set(['STANDOFF','CHARGE','CLASH','BLADE_LOCK','FOLLOW_THROUGH','KNOCKBACK','LANDING','RECOVERY','AERIAL_FLIP','TUMBLE','MACRO_CLASH']);
 const pixelFields=new Set(['keyframes','opacity','chromaKey','chromaColor','chromaTolerance','chromaFeather','maskShape','maskLeft','maskTop','maskRight','maskBottom','maskFeather','glowStrength','glowRadiusPx','glowThreshold']);
 export function requireStudioVersion(device,action,parameters={}){
+ const rasterCoverage=value=>value&&typeof value==='object'&&(value.type==='paint_stroke'&&value.brush&&Object.hasOwn(value.brush,'coverage')||Object.values(value).some(rasterCoverage));
+ if(rasterCoverage(parameters)&&!atLeast(device?.appVersion,'4.10.11'))throw new Error('NATIVE_APP_UPGRADE_REQUIRED: explicit raster brush coverage requires VideoStudio4.10.11 or newer');
  const fringe=value=>value&&typeof value==='object'&&(Object.hasOwn(value,'fringeStyle')||Object.values(value).some(fringe));
  if(fringe(parameters)&&!atLeast(device?.appVersion,'4.10.10'))throw new Error('NATIVE_APP_UPGRADE_REQUIRED: explicit anatomy fringe style requires VideoStudio4.10.10 or newer');
  const clipped=value=>value&&typeof value==='object'&&(Object.hasOwn(value,'clipOut')||Object.values(value).some(clipped));

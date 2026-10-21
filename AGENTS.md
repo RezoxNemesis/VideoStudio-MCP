@@ -1,3 +1,19 @@
+# Active native soft raster coverage —2026-10-21
+
+Isolated feat/native-soft-paint-coverage-v41011 extends frozen513source8ab009f.
+Read docs/continuity/NATIVE_SOFT_PAINT_COVERAGE_41011.md. Optional strict raster
+paint_stroke brush.coverage maximum/accumulate is shared by paint/erase/clone and
+manual Paint settings > Stroke coverage; explicit values require4.10.11. Omission
+preserves old pixels, normalized requests/fingerprints and floors. Fitted vector
+brushes reject this field. Root observed73focused native/0failures/0errors/0skips
+(11new+62existing); full777Node+306smoke pass. Preserve RED and both rawDouble/
+wireInt fixture-comparison failures plus their exact-byte correction evidence.
+Root owns integrated4.10.11/code514 bump/fullAndroid/CI/original signing. Actual
+upgraded blink and film remain UNACCEPTED/NEEDS_REWORK; maximum coverage is not
+tone matching, healing or supplied anatomy. ONE local Gradle, root only. No
+external/hosted art, Gallery, main/Worker/stable publication, signer replacement
+or device/data/MCP reset. Private actor artwork/recipes remain outside Git.
+
 # Active combined character-production candidate —2026-10-21
 
 Root integration feat/native-character-production-v41010 extends the CI-verified
