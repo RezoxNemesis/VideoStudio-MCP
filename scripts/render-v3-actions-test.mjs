@@ -2,12 +2,15 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {assertRenderAction,assertRenderRequestId,RENDER_NATIVE_ACTIONS,renderCommandStatus} from "../src/render-v3-actions.js";
 test("all supported Render actions are typed and available as capabilities",()=>{
-  assert.equal(Object.keys(RENDER_NATIVE_ACTIONS).length,10);
+  assert.equal(Object.keys(RENDER_NATIVE_ACTIONS).length,17);
   for(const action of Object.keys(RENDER_NATIVE_ACTIONS)) {
     const args=action==="projects.inspect"?{project_id:"a".repeat(64)}:
       action==="blender.scene.set_frame"?{frame:1}:
       action==="blender.object.set_transform"?{name:"Cube",location:[0,0,0]}:
-      action==="blender.object.keyframe"?{name:"Cube",data_path:"location",frame:3,value:[1,2,3]}:{};
+      action==="blender.object.keyframe"?{name:"Cube",data_path:"location",frame:3,value:[1,2,3]}:
+      action==="blender.object.modifier_add"?{name:"Cube",modifier_type:"BEVEL"}:
+      action==="blender.material.assign"?{name:"Cube"}:
+      action==="blender.scene.render_settings"?{resolution_x:640}:{};
     assert.deepEqual(assertRenderAction(action,args),{action,args});
   }
 });
