@@ -133,8 +133,10 @@ test('capabilities match native and advertise style-specific views, manual contr
  for(const field of ['figureStyle','constructionGuides'])assert.match(m.retainedObject,new RegExp(field));
  for(const key of ['genuine3D','creativeQualityCertified','phoneExecutionVerified','speechVerified'])assert.equal(m[key],false);
  class JSONObject{put(key,value){this[key]=value;return this;}}class JSONArray extends Array{constructor(values){super();this.push(...values);}}
+ const cameraLiteral=native('SketchHumanCameraGuide').match(/return new JSONObject\(("(?:\\.|[^"\\])*")\);/)[1];
+ const SketchHumanCameraGuide={capabilities:()=>JSON.parse(JSON.parse(cameraLiteral))};
  const body=native('SketchCapabilities').match(/public static JSONObject humanAnimation\(\) throws Exception \{\s*return ([\s\S]*?);\s*\}/)[1];
- assert.deepEqual(JSON.parse(JSON.stringify(vm.runInNewContext('('+body.replace(/new (?:String|double|int)\[\]\{([^}]*)\}/g,'[$1]')+')',{JSONObject,JSONArray}))),m);
+ assert.deepEqual(JSON.parse(JSON.stringify(vm.runInNewContext('('+body.replace(/new (?:String|double|int)\[\]\{([^}]*)\}/g,'[$1]')+')',{JSONObject,JSONArray,SketchHumanCameraGuide}))),m);
  const detail=worker.match(/:action==='sketch_edit'\?'([^']+)'/)[1];assert.match(detail,/figureStyle.*constructionGuides.*4\.8\.3/);assert.match(detail,/three_quarter_left.*three_quarter_right/);
 });
 
@@ -142,4 +144,13 @@ test('native release constants agree at4.9.9/code502 while earlier anatomy floor
  assert.match(native('AppProtocol'),/APP_VERSION = "4\.10\.5"/);
  const build=fs.readFileSync(new URL('../android/app/build.gradle.kts',import.meta.url),'utf8');assert.match(build,/versionCode = 508/);assert.match(build,/versionName = "4\.10\.5"/);
  assert.equal(contract.STUDIO_NATIVE_ACTIONS.size,Object.keys(contract.studioToolSchemas).length);assert(contract.STUDIO_ALIAS_ACTIONS.has("studio_sketch_layered_drawing_preview"));for(const action of contract.STUDIO_NATIVE_ACTIONS)assert(contract.STUDIO_ALIAS_ACTIONS.has("studio_"+action));assert.equal(contract.HUMAN_ANIMATION_CAPABILITIES.minimumNativeVersion,'4.8.0');
+});
+
+test('numeric construction views are strict anatomy-only controls and preserve omitted legacy requests',()=>{
+ const p={sketchId:'guide',operationId:'degrees',expectedRevision:1,operations:[{type:'add_human_animation',layerId:'layer_1',actorId:'actor',preset:'listen',settings:{figureStyle:'anatomy_sketch',viewYawDegrees:25,viewPitchDegrees:-30}}]};
+ assert.deepEqual(contract.nativeStudioParameters('sketch_edit',p),p);
+ assert.throws(()=>contract.requireStudioVersion({appVersion:'4.10.5'},'sketch_edit',p),/4\.10\.6/);
+ assert.doesNotThrow(()=>contract.requireStudioVersion({appVersion:'4.10.6'},'sketch_edit',p));
+ for(const bad of [{viewYawDegrees:'25'},{viewYawDegrees:null},{viewPitchDegrees:76},{viewYawDegrees:361},{figureStyle:'legacy'}]){const q=structuredClone(p);Object.assign(q.operations[0].settings,bad);assert.throws(()=>contract.nativeStudioParameters('sketch_edit',q));}
+ const old=structuredClone(p);delete old.operations[0].settings.viewYawDegrees;delete old.operations[0].settings.viewPitchDegrees;assert.doesNotThrow(()=>contract.requireStudioVersion({appVersion:'4.8.3'},'sketch_edit',old));assert.deepEqual(contract.nativeStudioParameters('sketch_edit',old),old);
 });

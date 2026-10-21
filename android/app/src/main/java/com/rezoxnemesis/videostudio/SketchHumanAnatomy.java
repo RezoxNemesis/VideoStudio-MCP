@@ -28,7 +28,7 @@ final class SketchHumanAnatomy {
     private void finish()throws Exception{JSONArray a=layer.getJSONArray("objects");for(int i=serial;i<a.length();i++)a.getJSONObject(i).put("id",actor+"_anatomy_"+part+"_"+(i-serial));}
     private double[] project(double x,double y,double z){return p.camera.point(new double[]{x,y,z});}
     private double[] body(double x,double y,double z){
-        double a=Math.toRadians(p.lean),c=Math.cos(a),n=Math.sin(a);double[] axis=p.camera.normal();double dot=axis[0]*x+axis[1]*y+axis[2]*z;
+        double a=Math.toRadians(p.lean),c=Math.cos(a),n=Math.sin(a);double[] axis=p.camera.poseAxis();double dot=axis[0]*x+axis[1]*y+axis[2]*z;
         return new double[]{p.hip[0]+x*c+(axis[1]*z-axis[2]*y)*n+axis[0]*dot*(1-c),p.hip[1]+y*c+(axis[2]*x-axis[0]*z)*n+axis[1]*dot*(1-c),p.hip[2]+z*c+(axis[0]*y-axis[1]*x)*n+axis[2]*dot*(1-c)};
     }
     private interface Coordinates{double[] at(double x,double y,double z);}

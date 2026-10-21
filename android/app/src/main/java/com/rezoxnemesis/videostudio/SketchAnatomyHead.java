@@ -45,10 +45,10 @@ final class SketchAnatomyHead {
             skin=settings.optString("skinColor","#FFF1EEE8");hair=settings.optString("hairColor","#FF555150");
             shade=tone(skin,INK,.13);soft=tone(skin,INK,.48);light=tone(hair,skin,.53);
             controls=p.controls==null?new JSONObject():p.controls;
-            axis=p.camera.normal();angle=Math.toRadians(p.lean+p.headTilt);
+            axis=p.camera.poseAxis();angle=Math.toRadians(p.lean+p.headTilt);
             // Lean/tilt uses the old head's screen-normal rotation convention.
             // Its inverse leaves the viewing normal itself invariant.
-            view=axis.clone();
+            view=p.camera.worldPose?rotate(p.camera.normal(),axis,-angle):axis.clone();
         }
         double control(String key){return controls.optDouble(key,0);}
         double[] world(double[] local){double[] r=rotate(local,axis,angle);return v(r[0]+p.head[0],r[1]+p.head[1],r[2]+p.head[2]);}

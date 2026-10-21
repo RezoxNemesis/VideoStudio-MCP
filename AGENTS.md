@@ -1,3 +1,17 @@
+# Active parallel one-character animation work — 2026-10-21
+
+Owner explicitly requests three parallel tracks: root character/motion/camera
+consistency; agent2 source-assisted cutouts; agent3 native local drawing controls.
+Current numeric-guide slice is on feat/native-character-guides-v4106; intended
+combined release4.10.6/code509 extends frozen signed8e5c362 (4.10.5/code508).
+Read docs/continuity/NATIVE_CHARACTER_GUIDES_4106.md. Numeric anatomy camera
+settings preserve world pose; they do not establish matched young-man views.
+Keep actual cutout/model generations and their failures. No count inflation:
+parameter combinations, assertions and frames are not distinct accepted actions.
+ONE local Gradle, root owns the lane. Agents must not run Gradle. Artwork and
+inference use app code only; no hosted inference, Gallery or external drawing.
+No main/Worker/stable publication, replacement signer or device/data/MCP reset.
+
 # Active native AI key drawings and one-character focus — 2026-10-21
 
 On feat/native-ai-keyframes-v4105, target4.10.5/code508, extend frozen signed

@@ -180,8 +180,9 @@ export const GRIP_LINK_CAPABILITIES=Object.freeze({
 });
 const humanChannels=['rootX','rootY','rootZ','bodyLean','headTilt','gazeX','gazeY','mouth','mouthWide','mouthRound','mouthTeeth','mouthTongue','smile','brow','nearHandX','nearHandY','nearHandZ','farHandX','farHandY','farHandZ','hipX','hipY','hipZ','footLeftX','footLeftY','footLeftZ','footRightX','footRightY','footRightZ','blink','nearWrist','farWrist','handOpen','nearElbowSwivel','farElbowSwivel'];
 const humanChannelLimits=Object.fromEntries(humanChannels.map(channel=>[channel,channel==='bodyLean'?[-25,25]:channel==='headTilt'?[-20,20]:['gazeX','gazeY','smile','brow','mouthWide'].includes(channel)?[-1,1]:['mouth','mouthRound','mouthTeeth','mouthTongue','blink','handOpen'].includes(channel)?[0,1]:['nearWrist','farWrist','nearElbowSwivel','farElbowSwivel'].includes(channel)?[-180,180]:[-4096,4096]]));
+export const HUMAN_CAMERA_GUIDE_CAPABILITIES=Object.freeze({"minimumNativeVersion":"4.10.6","fields":["viewYawDegrees","viewPitchDegrees"],"figureStyle":"anatomy_sketch","yawDegrees":[-360,360],"pitchDegrees":[-75,75],"negativePitch":"Look down from above","projection":"orthographic native construction guide","worldPoseFixed":true,"recoversUnseenCharacterViews":false,"creativeQualityCertified":false,"manualControls":"Natural acting > Figure style anatomy_sketch > Numeric camera guide","omittedBehavior":"Existing named views and screen-normal lean remain unchanged"});
 export const HUMAN_ANIMATION_CAPABILITIES=Object.freeze({
- minimumNativeVersion:'4.8.0',action:'sketch_edit',operation:'add_human_animation',objectKind:'human',
+ minimumNativeVersion:'4.8.0',action:'sketch_edit',operation:'add_human_animation',objectKind:'human',cameraGuideDegrees:HUMAN_CAMERA_GUIDE_CAPABILITIES,
  settings:{view:'front',build:'slender',hairStyle:'short',skinColor:'#FFD6A078',hairColor:'#FF302D32',coatColor:'#FF526B78',trouserColor:'#FF343F50',x:.5,floorY:.88,size:1,faceStyle:'graphic',shading:'cel',lightAngle:135},
  views:['front','left','right','back','high','low','three_quarter_left','three_quarter_right'],builds:['slender','broad'],hairStyles:['short','long'],
  viewsByFigureStyle:{legacy:['front','left','right','back','high','low'],anatomy_sketch:['front','left','right','back','high','low','three_quarter_left','three_quarter_right']},
@@ -337,10 +338,11 @@ const handPayload=z.object({settings:handSettings.required().extend({renderStyle
  .refine(v=>v.durationFrames/v.fps>=4&&v.durationFrames/v.fps<=8,'Retained hand clock must preserve 4..8 seconds')
  .refine(v=>v.poses.every(p=>p.frame<v.durationFrames)&&(v.renderFrame===undefined||v.renderFrame<v.durationFrames),'Hand poses and sampled frame must fit the original programme duration');
 const humanClothingStyle=z.enum(HUMAN_ANIMATION_CAPABILITIES.clothingStyles).optional();
-const humanFigureSettings={figureStyle:z.enum(HUMAN_ANIMATION_CAPABILITIES.figureStyles).optional(),constructionGuides:z.boolean().optional()};
+const humanFigureSettings={figureStyle:z.enum(HUMAN_ANIMATION_CAPABILITIES.figureStyles).optional(),constructionGuides:z.boolean().optional(),viewYawDegrees:finite.min(-360).max(360).optional(),viewPitchDegrees:finite.min(-75).max(75).optional()};
 const humanAppearanceSettings={faceStyle:z.enum(HUMAN_ANIMATION_CAPABILITIES.faceStyles).optional(),shading:z.enum(HUMAN_ANIMATION_CAPABILITIES.shadingStyles).optional(),lightAngle:finite.min(-180).max(180).optional()};
 const humanSettingsBase=z.object({clothingStyle:humanClothingStyle,...humanFigureSettings,view:z.enum(HUMAN_ANIMATION_CAPABILITIES.views).optional(),build:z.enum(HUMAN_ANIMATION_CAPABILITIES.builds).optional(),hairStyle:z.enum(HUMAN_ANIMATION_CAPABILITIES.hairStyles).optional(),skinColor:color.optional(),hairColor:color.optional(),coatColor:color.optional(),trouserColor:color.optional(),x:coordinate.optional(),floorY:coordinate.optional(),size:finite.min(.1).max(2).optional(),...humanAppearanceSettings}).strict();
 const humanFigureCompatibility=(value,ctx)=>{
+ if((value.viewYawDegrees!==undefined||value.viewPitchDegrees!==undefined)&&value.figureStyle!=='anatomy_sketch')ctx.addIssue({code:'custom',message:'Numeric camera guides require anatomy_sketch'});
  if(value.constructionGuides===true&&value.figureStyle!=='anatomy_sketch')ctx.addIssue({code:'custom',path:['constructionGuides'],message:'constructionGuides true requires figureStyle anatomy_sketch'});
  if(['three_quarter_left','three_quarter_right'].includes(value.view)&&value.figureStyle!=='anatomy_sketch')ctx.addIssue({code:'custom',path:['view'],message:'Three-quarter human views require figureStyle anatomy_sketch'});
  if(value.figureStyle==='anatomy_sketch'&&value.clothingStyle==='tailored')ctx.addIssue({code:'custom',path:['clothingStyle'],message:'anatomy_sketch cannot combine with tailored clothing'});
@@ -739,6 +741,8 @@ export function nativeStudioParameters(action,parameters={}){
 const legacy3d=new Set(['STANDOFF','CHARGE','CLASH','BLADE_LOCK','FOLLOW_THROUGH','KNOCKBACK','LANDING','RECOVERY','AERIAL_FLIP','TUMBLE','MACRO_CLASH']);
 const pixelFields=new Set(['keyframes','opacity','chromaKey','chromaColor','chromaTolerance','chromaFeather','maskShape','maskLeft','maskTop','maskRight','maskBottom','maskFeather','glowStrength','glowRadiusPx','glowThreshold']);
 export function requireStudioVersion(device,action,parameters={}){
+ const numericHumanCamera=value=>value&&typeof value==='object'&&(Object.hasOwn(value,'viewYawDegrees')||Object.hasOwn(value,'viewPitchDegrees')||Object.values(value).some(numericHumanCamera));
+ if(numericHumanCamera(parameters)&&!atLeast(device?.appVersion,'4.10.6'))throw new Error('NATIVE_APP_UPGRADE_REQUIRED: numeric anatomy camera guides require VideoStudio4.10.6 or newer');
  const degreeBridge=Object.hasOwn(EXACT_CAMERA_ORBIT_CAPABILITIES.compatibilityAliases,action);const alias=studioAliases.has(action);action=nativeStudioCanonicalAction(action);
  const exactOrbit=degreeBridge||action==='cinematic_3d_save_program'&&parameters.timeline?.shots?.some(shot=>shot?.camera&&Object.hasOwn(shot.camera,'orbit'))
   ||action==='cinematic_3d_edit_program'&&(parameters.operations||[]).some(op=>['set_camera_orbit','clear_camera_orbit'].includes(op.type))

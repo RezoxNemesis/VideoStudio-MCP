@@ -20,11 +20,12 @@ final class SketchHumanFigure {
                 .put("coatColor","#FF526B78").put("trouserColor","#FF343F50").put("x",.5).put("floorY",.88).put("size",1).put("faceStyle","graphic").put("shading","cel").put("lightAngle",135);
     }
     static JSONObject settings(JSONObject input)throws Exception {
-        SketchDocument.fields(input,"view,build,hairStyle,skinColor,hairColor,coatColor,trouserColor,x,floorY,size,faceStyle,shading,lightAngle,clothingStyle,figureStyle,constructionGuides");JSONObject s=defaults();
+        SketchDocument.fields(input,"view,build,hairStyle,skinColor,hairColor,coatColor,trouserColor,x,floorY,size,faceStyle,shading,lightAngle,clothingStyle,figureStyle,constructionGuides,viewYawDegrees,viewPitchDegrees");JSONObject s=defaults();
         Iterator<String> keys=input.keys();while(keys.hasNext()){String key=keys.next();s.put(key,input.get(key));}
         if(s.has("figureStyle")&&(!(s.get("figureStyle") instanceof String)||!Set.of("legacy","anatomy_sketch").contains(s.getString("figureStyle"))))throw SketchDocument.bad("Unknown human figure style");
         if(s.has("constructionGuides"))SketchDocument.bool(s,"constructionGuides");
         boolean anatomy=anatomy(s);
+        if(s.has("viewYawDegrees")||s.has("viewPitchDegrees")){if(!anatomy)throw SketchDocument.bad("Numeric camera guides require anatomy_sketch");if(s.has("viewYawDegrees"))SketchDocument.number(s,"viewYawDegrees",-360,360);if(s.has("viewPitchDegrees"))SketchDocument.number(s,"viewPitchDegrees",-75,75);}
         if(s.optBoolean("constructionGuides",false)&&!anatomy)throw SketchDocument.bad("Construction guides require anatomy sketch style");
         if(!(s.get("view") instanceof String)||!(anatomy?Set.of("front","left","right","back","high","low","three_quarter_left","three_quarter_right"):Set.of("front","left","right","back","high","low")).contains(s.getString("view")))throw SketchDocument.bad("Unknown human view for figure style");
         if(!(s.get("build") instanceof String)||!Set.of("slender","broad").contains(s.getString("build")))throw SketchDocument.bad("Unknown adult build");
@@ -76,9 +77,9 @@ final class SketchHumanFigure {
         a.leftFoot=v(p.getDouble("footLeftX"),p.getDouble("footLeftY"),p.getDouble("footLeftZ"));a.rightFoot=v(p.getDouble("footRightX"),p.getDouble("footRightY"),p.getDouble("footRightZ"));
         a.leftAnkle=add(a.leftFoot,v(0,-14,0));a.rightAnkle=add(a.rightFoot,v(0,-14,0));
         a.leftKnee=joint(a.leftHip,a.leftAnkle,90,86,v(0,0,1));a.rightKnee=joint(a.rightHip,a.rightAnkle,90,86,v(0,0,1));
-        a.neck=body(a,0,anatomy(s)?-141:-156,0);a.head=add(a.neck,rotate(v(0,-24,0),a.camera.normal(),Math.toRadians(a.lean+a.headTilt)));return a;
+        a.neck=body(a,0,anatomy(s)?-141:-156,0);a.head=add(a.neck,rotate(v(0,-24,0),a.camera.poseAxis(),Math.toRadians(a.lean+a.headTilt)));return a;
     }
-    private static double[] body(Skeleton p,double x,double y,double z){return add(p.hip,rotate(v(x,y,z),p.camera.normal(),Math.toRadians(p.lean)));}
+    private static double[] body(Skeleton p,double x,double y,double z){return add(p.hip,rotate(v(x,y,z),p.camera.poseAxis(),Math.toRadians(p.lean)));}
     private static double[] joint(double[] start,double[] end,double upper,double lower,double[] bend)throws Exception {
         return joint(start,end,upper,lower,bend,0);
     }
@@ -111,15 +112,26 @@ final class SketchHumanFigure {
         hand.angle=hand.forearmAngle+Math.toRadians(p.controls.getDouble(near?"nearWrist":"farWrist"));hand.open=p.controls.getDouble("handOpen");return hand;
     }
     static boolean anatomy(JSONObject s){return s.optString("figureStyle","legacy").equals("anatomy_sketch");}
-    private static Camera camera(JSONObject s)throws Exception{return new Camera(s.getString("view"),anatomy(s));}
+    private static Camera camera(JSONObject s)throws Exception{return new Camera(s.getString("view"),anatomy(s),s.has("viewYawDegrees")?s.getDouble("viewYawDegrees"):null,s.has("viewPitchDegrees")?s.getDouble("viewPitchDegrees"):null);}
     static final class Camera {
-        final String view;final double yaw,pitch;final boolean profile,back;
+        final String view;final double yaw,pitch;final boolean profile,back,worldPose;
         Camera(String view){this(view,false);}
-        Camera(String view,boolean anatomy){this.view=view;profile=view.equals("left")||view.equals("right");back=view.equals("back");yaw=view.equals("left")?-Math.PI/2:view.equals("right")?Math.PI/2:back?Math.PI:view.equals("three_quarter_left")?-Math.PI/4:view.equals("three_quarter_right")?Math.PI/4:view.equals("high")?.20:view.equals("low")?-.16:0;pitch=view.equals("high")?(anatomy?-.62:.32):view.equals("low")?(anatomy?.48:-.24):0;}
+        Camera(String view,boolean anatomy){this(view,anatomy,null,null);}
+        Camera(String view,boolean anatomy,Double degrees,Double elevation){
+            this.view=view;worldPose=degrees!=null||elevation!=null;
+            double namedYaw=view.equals("left")?-Math.PI/2:view.equals("right")?Math.PI/2:view.equals("back")?Math.PI:view.equals("three_quarter_left")?-Math.PI/4:view.equals("three_quarter_right")?Math.PI/4:view.equals("high")?.20:view.equals("low")?-.16:0;
+            double normalized=degrees==null?0:Math.IEEEremainder(degrees,360);
+            yaw=degrees==null?namedYaw:Math.toRadians(normalized==0?0:normalized);
+            double namedPitch=view.equals("high")?(anatomy?-.62:.32):view.equals("low")?(anatomy?.48:-.24):0;
+            pitch=elevation==null?namedPitch:Math.toRadians(elevation==0?0:elevation);
+            profile=worldPose?Math.abs(Math.cos(yaw))<1e-9:view.equals("left")||view.equals("right");back=worldPose?Math.cos(yaw)<-1e-9:view.equals("back");
+        }
         double depth(double[] p){return -Math.sin(yaw)*p[0]+Math.cos(yaw)*p[2];}
         double clothDepth(double[] p){return Math.sin(pitch)*p[1]+Math.cos(pitch)*depth(p);}
         double[] point(double[] p){return new double[]{Math.cos(yaw)*p[0]+Math.sin(yaw)*p[2],Math.cos(pitch)*p[1]-Math.sin(pitch)*depth(p)};}
         double[] normal(){return v(-Math.sin(yaw)*Math.cos(pitch),Math.sin(pitch),Math.cos(yaw)*Math.cos(pitch));}
+        // New degree cameras orbit a world-fixed pose; omitted legacy controls keep their screen-normal lean.
+        double[] poseAxis(){return worldPose?v(0,0,1):normal();}
     }
 
     static void draw(JSONObject doc,JSONObject layer,String actorId,JSONObject input,JSONObject pose,double seconds)throws Exception {

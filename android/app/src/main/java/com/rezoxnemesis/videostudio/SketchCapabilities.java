@@ -106,6 +106,7 @@ public final class SketchCapabilities {
     public static JSONObject humanAnimation() throws Exception {
         return new JSONObject()
                 .put("minimumNativeVersion","4.8.0")
+                .put("cameraGuideDegrees",SketchHumanCameraGuide.capabilities())
                 .put("action","sketch_edit")
                 .put("operation","add_human_animation")
                 .put("objectKind","human")
