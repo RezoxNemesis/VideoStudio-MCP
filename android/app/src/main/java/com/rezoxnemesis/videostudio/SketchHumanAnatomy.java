@@ -11,6 +11,7 @@ final class SketchHumanAnatomy {
     private static final String INK="#FF454449",DETAIL="#B05D5959",FAINT="#706F6865",SHADE="#FFDBD7D1";
     private final JSONObject layer,s;private final SketchHumanFigure.Skeleton p;private final JungleCelInk ink;
     private final String actor,skin;private String part;private int serial;
+    private SketchAnatomyHead.DepthOccluder neckOccluder;
     private SketchHumanAnatomy(JSONObject layer,String actor,JSONObject s,SketchHumanFigure.Skeleton p)throws Exception{
         this.layer=layer;this.actor=actor;this.s=s;this.p=p;skin=s.getString("skinColor");ink=new JungleCelInk(layer).at(640,360,1/16d,0);
     }
@@ -21,7 +22,7 @@ final class SketchHumanAnatomy {
         boolean leftNear=p.camera.clothDepth(p.leftHip)>p.camera.clothDepth(p.rightHip);
         boolean near=p.camera.clothDepth(p.nearShoulder)>=p.camera.clothDepth(p.farShoulder);
         leg(!leftNear);arm(!near);leg(leftNear);torso();shorts();arm(near);skinRim();
-        SketchAnatomyHead.draw(layer,actor,s,p);
+        SketchAnatomyHead.draw(layer,actor,s,p,neckOccluder);
         if(s.optBoolean("constructionGuides",false))guides();
     }
     private void begin(String name){part=name;serial=layer.optJSONArray("objects").length();}
@@ -175,6 +176,9 @@ final class SketchHumanAnatomy {
         for(int row=0;row<rows.length-1;row++)for(int j=0;j<n;j++){int a=1+row*n+j,b=1+row*n+(j+1)%n;triangles.add(new int[]{a,b,a+n});triangles.add(new int[]{b,b+n,a+n});}
         int end=points.size(),last=1+(rows.length-1)*n;points.add(coordinates.at(0,rows[rows.length-1][0],0));
         for(int j=0;j<n;j++)triangles.add(new int[]{last+j,last+(j+1)%n,end});
+        // Reuse the very same constructed torso surface for head/neck depth visibility.
+        // No second set of neck measurements or raster sampling is involved.
+        if("torso".equals(part))neckOccluder=new SketchAnatomyHead.DepthOccluder(points,triangles,p.camera);
         Map<Long,int[]>edges=new LinkedHashMap<>();double[]view=p.camera.normal();
         for(int[]t:triangles){double[]a=points.get(t[0]),b=minus(points.get(t[1]),a),c=minus(points.get(t[2]),a);double facing=(b[1]*c[2]-b[2]*c[1])*view[0]+(b[2]*c[0]-b[0]*c[2])*view[1]+(b[0]*c[1]-b[1]*c[0])*view[2];if(facing<=1e-9)continue;
             for(int j=0;j<3;j++){int u=t[j],v=t[(j+1)%3];long key=((long)Math.min(u,v)<<32)|Math.max(u,v);if(edges.containsKey(key))edges.remove(key);else edges.put(key,new int[]{u,v});}}

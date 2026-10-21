@@ -1,3 +1,15 @@
+# Active cranial-cap depth occlusion — 2026-10-21
+
+This dependent slice extends core path clipping f3a5aa2 for root4.10.9/code512.
+Read docs/continuity/NATIVE_NECK_DEPTH_4109.md. Root observed21focusednative/
+0failures/0errors/0skips and reviewed native guide heads. Preserve every failed
+iteration and unchanged strict head regression. Full integrated native/CI/signing
+remain PENDING/root-owned. The long rear-curtain painter-order bug is still
+NEEDS_REWORK and belongs to separate513; no accepted actor likeness or film.
+Only3native production files +strict regression/docs are in this dependent slice.
+Root owns ONE Gradle and actual inference. No hosted/Gallery/external art,
+main/Worker/stable publication, replacement signer or data/MCP/device reset.
+
 # Active reusable path clipping — 2026-10-21
 
 Branch feat/native-path-clipping-v4109 extends frozen103d5e6 (4.10.8/code511).

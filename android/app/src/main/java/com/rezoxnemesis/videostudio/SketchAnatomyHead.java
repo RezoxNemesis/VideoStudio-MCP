@@ -16,8 +16,11 @@ final class SketchAnatomyHead {
     private SketchAnatomyHead() {}
 
     static void draw(JSONObject layer,String actorId,JSONObject settings,SketchHumanFigure.Skeleton p)throws Exception {
+        draw(layer,actorId,settings,p,null);
+    }
+    static void draw(JSONObject layer,String actorId,JSONObject settings,SketchHumanFigure.Skeleton p,DepthOccluder neck)throws Exception {
         JSONArray objects=layer.getJSONArray("objects");int first=objects.length();
-        Head h=new Head(layer,settings,p);
+        Head h=new Head(layer,settings,p,neck);
         if(settings.optString("hairStyle","short").equals("long"))h.longHair();
         h.ear(-1);h.ear(1);
         h.cranium();
@@ -39,8 +42,9 @@ final class SketchAnatomyHead {
         final String skin,hair,shade,soft,light;
         final double[] axis,view;
         final double angle;
-        final JSONObject controls;
-        Head(JSONObject layer,JSONObject settings,SketchHumanFigure.Skeleton skeleton){
+        final JSONObject controls;final DepthOccluder neck;
+        Head(JSONObject layer,JSONObject settings,SketchHumanFigure.Skeleton skeleton,DepthOccluder occluder){
+            neck=occluder;
             p=skeleton;ink=new JungleCelInk(layer).at(640,360,1/16d,0);
             skin=settings.optString("skinColor","#FFF1EEE8");hair=settings.optString("hairColor","#FF555150");
             shade=tone(skin,INK,.13);soft=tone(skin,INK,.48);light=tone(hair,skin,.53);
@@ -85,7 +89,7 @@ final class SketchAnatomyHead {
             int end=mesh.vertices.size();mesh.vertices.add(v(0,25,10.5));
             int last=1+(rings.length-1)*n;
             for(int j=0;j<n;j++)mesh.triangle(last+j,last+(j+1)%n,end);
-            mesh.draw(this,skin,INK,.62);
+            mesh.draw(this,skin,INK,.62,true);
         }
 
         void ear(int s)throws Exception {
@@ -340,6 +344,86 @@ final class SketchAnatomyHead {
         void end()throws Exception{path.end();}
     }
 
+    /** Actual owner's projected torso triangles, shared from its surface construction.
+     * Coverage alone is insufficient: a frontal chin can be nearer than the neck.
+     */
+    static final class DepthOccluder {
+        final double[][] projected;final List<int[]> facing=new ArrayList<>();
+        DepthOccluder(List<double[]> world,List<int[]> triangles,SketchHumanFigure.Camera camera){
+            projected=new double[world.size()][];double[] normal=camera.normal();
+            for(int i=0;i<world.size();i++){double[] point=world.get(i),xy=camera.point(point);projected[i]=v(xy[0],xy[1],camera.clothDepth(point));}
+            for(int[] triangle:triangles){double[] a=world.get(triangle[0]),b=world.get(triangle[1]),c=world.get(triangle[2]);if(dot(cross(sub(b,a),sub(c,a)),normal)>1e-9)facing.add(triangle.clone());}
+        }
+        boolean occluded(double x,double y,double depth){return Mesh.occluded(x,y,depth,projected,facing);}
+        /** Exact visibility breakpoints: camera projection and every triangle's
+         * barycentric/depth tests are linear functions of a cubic's coordinates.
+         * Their sign can only change at the bounded cubic roots collected here.
+         */
+        List<double[]> visible(Head head,double[][] local){
+            double[][] curve=new double[4][];for(int i=0;i<4;i++){double[] xy=head.point(local[i]);curve[i]=v(xy[0],xy[1],head.depth(local[i]));}
+            List<Double> cuts=new ArrayList<>();cuts.add(0d);cuts.add(1d);
+            double minX=Double.POSITIVE_INFINITY,minY=minX,maxX=Double.NEGATIVE_INFINITY,maxY=maxX;
+            for(double[] q:curve){minX=Math.min(minX,q[0]);maxX=Math.max(maxX,q[0]);minY=Math.min(minY,q[1]);maxY=Math.max(maxY,q[1]);}
+            for(int[] triangle:facing){
+                double[] a=projected[triangle[0]],b=projected[triangle[1]],c=projected[triangle[2]];
+                if(Math.min(a[0],Math.min(b[0],c[0]))>maxX||Math.max(a[0],Math.max(b[0],c[0]))<minX||Math.min(a[1],Math.min(b[1],c[1]))>maxY||Math.max(a[1],Math.max(b[1],c[1]))<minY)continue;
+                double bx=b[0]-a[0],by=b[1]-a[1],cx=c[0]-a[0],cy=c[1]-a[1],den=bx*cy-by*cx;if(Math.abs(den)<1e-9)continue;
+                double[][] coefficients=new double[4][4];
+                for(int i=0;i<4;i++){double px=curve[i][0]-a[0],py=curve[i][1]-a[1],u=(px*cy-py*cx)/den,w=(bx*py-by*px)/den;coefficients[0][i]=u+.00001;coefficients[1][i]=w+.00001;coefficients[2][i]=1.00001-u-w;coefficients[3][i]=a[2]+u*(b[2]-a[2])+w*(c[2]-a[2])-curve[i][2]-.08;}
+                boolean impossible=false;for(double[] values:coefficients)if(Math.max(Math.max(values[0],values[1]),Math.max(values[2],values[3]))<0){impossible=true;break;}if(impossible)continue;
+                for(double[] values:coefficients)roots(values,cuts);
+            }
+            cuts.sort(Double::compare);List<Double> unique=new ArrayList<>();for(double cut:cuts)if(unique.isEmpty()||cut-unique.get(unique.size()-1)>1e-10)unique.add(cut);
+            List<double[]> result=new ArrayList<>();for(int i=0;i+1<unique.size();i++){double from=unique.get(i),to=unique.get(i+1);if(to-from<1e-10)continue;double[] q=evaluate(curve,(from+to)*.5);if(occluded(q[0],q[1],q[2]))continue;if(!result.isEmpty()&&Math.abs(result.get(result.size()-1)[1]-from)<1e-9)result.get(result.size()-1)[1]=to;else result.add(new double[]{from,to});}return result;
+        }
+        /** Bounded curve ribbons intersect actual torso triangles. End planes
+         * preserve exposed tips; clipping is object-local, never a skin repaint.
+         */
+        JSONArray mask(Head h,List<double[][]> curves,double weight)throws Exception {
+            List<List<double[]>> hidden=new ArrayList<>(),shown=new ArrayList<>();
+            for(double[][] local:curves){List<double[]> visible=visible(h,local);double from=0;for(int i=0;i<=visible.size();i++){double to=i==visible.size()?1:visible.get(i)[0];if(to-from>1e-9)hidden.addAll(ribbon(h,local,from,to,weight,true));if(i<visible.size()){double[] range=visible.get(i);shown.addAll(ribbon(h,local,range[0],range[1],weight,false));from=range[1];}}}
+            // Neighboring exposed strokes share endpoint coverage. A hidden
+            // curve must not mask that genuine nearer ink in the same Path.
+            for(List<double[]> visible:shown){List<List<double[]>> next=new ArrayList<>();for(List<double[]> candidate:hidden){if(disjoint(candidate,visible)){next.add(candidate);continue;}double orientation=area(visible)>=0?1:-1;List<double[]> intersection=candidate;for(int j=0;j<visible.size()&&!intersection.isEmpty();j++){double[] a=visible.get(j),b=visible.get((j+1)%visible.size());double dx=b[0]-a[0],dy=b[1]-a[1];intersection=half(intersection,-dy*orientation,dx*orientation,(dy*a[0]-dx*a[1])*orientation);}if(intersection.size()<3||Math.abs(area(intersection))<1e-4){next.add(candidate);continue;}List<double[]> rest=candidate;for(int j=0;j<visible.size()&&!rest.isEmpty();j++){double[] a=visible.get(j),b=visible.get((j+1)%visible.size());double dx=b[0]-a[0],dy=b[1]-a[1],aa=-dy*orientation,bb=dx*orientation,cc=(dy*a[0]-dx*a[1])*orientation;List<double[]> outside=half(rest,-aa,-bb,-cc);if(outside.size()>=3&&Math.abs(area(outside))>1e-4)next.add(outside);rest=half(rest,aa,bb,cc);}if(next.size()>4096)throw SketchDocument.bad("Native clipping partition exceeds its bounded scratch space");}hidden=next;}
+            JSONArray rings=new JSONArray();int vertices=0;for(List<double[]> polygon:hidden){if(polygon.size()<3||Math.abs(area(polygon))<1e-4)continue;if(rings.length()>=SketchPathClip.MAX_RINGS||polygon.size()>SketchPathClip.MAX_RING_POINTS||(vertices+=polygon.size())>SketchPathClip.MAX_POINTS)throw SketchDocument.bad("Native neck clipping exceeds its polygon budget");JSONArray ring=new JSONArray();for(double[] q:polygon)ring.put(new JSONArray().put(h.ink.x(q[0],q[1])).put(h.ink.y(q[0],q[1])));rings.put(ring);}return rings;
+        }
+        private static boolean disjoint(List<double[]> a,List<double[]> b){double ax=Double.POSITIVE_INFINITY,ay=ax,bx=ax,by=ax,ar=-ax,ab=-ax,br=-ax,bb=-ax;for(double[] p:a){ax=Math.min(ax,p[0]);ay=Math.min(ay,p[1]);ar=Math.max(ar,p[0]);ab=Math.max(ab,p[1]);}for(double[] p:b){bx=Math.min(bx,p[0]);by=Math.min(by,p[1]);br=Math.max(br,p[0]);bb=Math.max(bb,p[1]);}return ax>br||bx>ar||ay>bb||by>ab;}
+        private List<List<double[]>> ribbon(Head h,double[][] local,double from,double to,double weight,boolean hidden)throws Exception {
+            double[][] piece=section(local,from,to),curve=new double[4][];for(int i=0;i<4;i++)curve[i]=h.point(piece[i]);
+            // A visible stroke needs conservative coverage beyond its
+            // mathematical half-width: the octagonal hull's apothem and
+            // antialiased edge must not become a mask for a neighboring tip.
+            List<double[]> cloud=new ArrayList<>();double radius=weight*.5+(hidden?.14:.25);
+            for(double[] q:curve)for(int k=0;k<8;k++){double a=Math.PI*k/4;cloud.add(new double[]{q[0]+radius*Math.cos(a),q[1]+radius*Math.sin(a)});}
+            List<double[]> hull=hull(cloud);List<List<double[]>> result=new ArrayList<>();if(!hidden){result.add(hull);return result;}double[] first=curve[0],last=curve[3],start=sub2(curve[1],first),end=sub2(last,curve[2]);
+            if(Math.hypot(start[0],start[1])>1e-10)hull=half(hull,start[0],start[1],-start[0]*first[0]-start[1]*first[1]);
+            if(Math.hypot(end[0],end[1])>1e-10)hull=half(hull,-end[0],-end[1],end[0]*last[0]+end[1]*last[1]);
+            for(int[] face:facing){List<double[]> polygon=hull;double[] a=projected[face[0]],b=projected[face[1]],c=projected[face[2]];double orientation=cross2(sub2(b,a),sub2(c,a))>=0?1:-1;
+                for(int j=0;j<3&&!polygon.isEmpty();j++){double[] u=projected[face[j]],v=projected[face[(j+1)%3]];double dx=v[0]-u[0],dy=v[1]-u[1];polygon=half(polygon,-dy*orientation,dx*orientation,(dy*u[0]-dx*u[1])*orientation);}
+                if(polygon.size()>=3&&Math.abs(area(polygon))>=1e-4)result.add(polygon);
+            }return result;
+        }
+        private static double[] sub2(double[] a,double[] b){return new double[]{a[0]-b[0],a[1]-b[1]};}
+        private static double cross2(double[] a,double[] b){return a[0]*b[1]-a[1]*b[0];}
+        private static double area(List<double[]> p){double a=0;for(int i=0;i<p.size();i++){double[] u=p.get(i),v=p.get((i+1)%p.size());a+=u[0]*v[1]-u[1]*v[0];}return a;}
+        private static List<double[]> hull(List<double[]> cloud){cloud.sort((a,b)->a[0]==b[0]?Double.compare(a[1],b[1]):Double.compare(a[0],b[0]));List<double[]> p=new ArrayList<>();for(double[] q:cloud){while(p.size()>1&&cross2(sub2(p.get(p.size()-1),p.get(p.size()-2)),sub2(q,p.get(p.size()-1)))<=1e-12)p.remove(p.size()-1);p.add(q);}int lower=p.size();for(int i=cloud.size()-2;i>=0;i--){double[] q=cloud.get(i);while(p.size()>lower&&cross2(sub2(p.get(p.size()-1),p.get(p.size()-2)),sub2(q,p.get(p.size()-1)))<=1e-12)p.remove(p.size()-1);p.add(q);}if(!p.isEmpty())p.remove(p.size()-1);return p;}
+        private static List<double[]> half(List<double[]> input,double a,double b,double c){List<double[]> out=new ArrayList<>();if(input.isEmpty())return out;double[] before=input.get(input.size()-1);double previous=a*before[0]+b*before[1]+c;for(double[] q:input){double value=a*q[0]+b*q[1]+c;if((value>=0)!=(previous>=0)){double t=previous/(previous-value);append(out,new double[]{before[0]+(q[0]-before[0])*t,before[1]+(q[1]-before[1])*t});}if(value>=0)append(out,q);before=q;previous=value;}if(out.size()>1&&Math.hypot(out.get(0)[0]-out.get(out.size()-1)[0],out.get(0)[1]-out.get(out.size()-1)[1])<1e-7)out.remove(out.size()-1);return out;}
+        private static void append(List<double[]> out,double[] p){if(out.isEmpty()||Math.hypot(out.get(out.size()-1)[0]-p[0],out.get(out.size()-1)[1]-p[1])>1e-7)out.add(p);}
+        private static double[] evaluate(double[][] p,double t){double u=1-t;return v(u*u*u*p[0][0]+3*u*u*t*p[1][0]+3*u*t*t*p[2][0]+t*t*t*p[3][0],u*u*u*p[0][1]+3*u*u*t*p[1][1]+3*u*t*t*p[2][1]+t*t*t*p[3][1],u*u*u*p[0][2]+3*u*u*t*p[1][2]+3*u*t*t*p[2][2]+t*t*t*p[3][2]);}
+        private static double value(double[] p,double t){double u=1-t;return u*u*u*p[0]+3*u*u*t*p[1]+3*u*t*t*p[2]+t*t*t*p[3];}
+        private static void roots(double[] p,List<Double> out){
+            double min=Math.min(Math.min(p[0],p[1]),Math.min(p[2],p[3])),max=Math.max(Math.max(p[0],p[1]),Math.max(p[2],p[3]));if(min>0||max<0)return;
+            double a=-p[0]+3*p[1]-3*p[2]+p[3],b=3*p[0]-6*p[1]+3*p[2],c=-3*p[0]+3*p[1];List<Double> monotone=new ArrayList<>();monotone.add(0d);
+            if(Math.abs(a)<1e-12){if(Math.abs(b)>1e-12){double t=-c/(2*b);if(t>0&&t<1)monotone.add(t);}}
+            else{double disc=4*b*b-12*a*c;if(disc>=0){double root=Math.sqrt(disc),r1=(-2*b-root)/(6*a),r2=(-2*b+root)/(6*a);if(r1>0&&r1<1)monotone.add(r1);if(r2>0&&r2<1)monotone.add(r2);}}
+            monotone.add(1d);monotone.sort(Double::compare);
+            for(int i=0;i+1<monotone.size();i++){double lo=monotone.get(i),hi=monotone.get(i+1),left=value(p,lo),right=value(p,hi);if(Math.abs(left)<1e-11)out.add(lo);if(Math.abs(right)<1e-11)out.add(hi);if(left==0||right==0||Math.signum(left)==Math.signum(right))continue;for(int step=0;step<48;step++){double mid=(lo+hi)*.5,v=value(p,mid);if(Math.signum(v)==Math.signum(left)){lo=mid;left=v;}else hi=mid;}out.add((lo+hi)*.5);}
+        }
+        static double[][] section(double[][] p,double from,double to){if(from==0&&to==1)return p;double[][][] first=split(p,to);return from==0?first[0]:split(first[0],from/to)[1];}
+        private static double[][][] split(double[][] p,double t){double[] a=lerp(p[0],p[1],t),b=lerp(p[1],p[2],t),c=lerp(p[2],p[3],t),d=lerp(a,b,t),e=lerp(b,c,t),f=lerp(d,e,t);return new double[][][]{new double[][]{p[0],a,d,f},new double[][]{f,e,c,p[3]}};}
+        private static double[] lerp(double[] a,double[] b,double t){return v(a[0]+t*(b[0]-a[0]),a[1]+t*(b[1]-a[1]),a[2]+t*(b[2]-a[2]));}
+    }
+
     /** Extract the apparent contour of a small construction shell. No mesh/texture is
      * saved: the result is one native cubic outline and one native fill per contour.
      */
@@ -347,7 +431,8 @@ final class SketchAnatomyHead {
         final List<double[]> vertices=new ArrayList<>();
         final List<int[]> triangles=new ArrayList<>();
         void triangle(int a,int b,int c){triangles.add(new int[]{a,b,c});}
-        void draw(Head h,String fill,String stroke,double weight)throws Exception {
+        void draw(Head h,String fill,String stroke,double weight)throws Exception {draw(h,fill,stroke,weight,false);}
+        void draw(Head h,String fill,String stroke,double weight,boolean neckOcclusion)throws Exception {
             Map<Long,int[]> boundary=new LinkedHashMap<>();
             List<int[]> facing=new ArrayList<>();
             for(int[] t:triangles){
@@ -365,7 +450,7 @@ final class SketchAnatomyHead {
             for(int i=0;i<vertices.size();i++){
                 double[] q=h.point(vertices.get(i));projected[i]=v(q[0],q[1],h.depth(vertices.get(i)));
             }
-            Pen p=h.pen(fill,null,weight),outline=h.pen(null,stroke,weight);boolean drawn=false,outlined=false;
+            Pen p=h.pen(fill,null,weight),outline=h.pen(null,stroke,weight);boolean drawn=false,outlined=false;List<double[][]> outlineCurves=new ArrayList<>();
             while(!next.isEmpty()){
                 int start=next.keySet().iterator().next(),at=start;List<double[]> loop=new ArrayList<>();
                 do{
@@ -389,15 +474,19 @@ final class SketchAnatomyHead {
                     // sit slightly inside its own adjacent triangle without being hidden.
                     double[] mid=mul(add(b,c),.5),q=h.point(mid);
                     if(!occluded(q[0],q[1],h.depth(mid),projected,facing)){
+                        // Retain the complete original cubic. Native local clipping
+                        // removes only depth-hidden coverage without re-stroking a
+                        // numerically different tail or erasing the torso beneath it.
                         outline.m(b).c(c1,c2,c);outlined=true;
+                        if(neckOcclusion&&h.neck!=null)outlineCurves.add(new double[][]{b,c1,c2,c});
                     }
                 }
                 p.z();
             }
             if(drawn)p.end();
-            if(outlined)outline.end();
+            if(outlined){outline.end();JSONArray clipRings=neckOcclusion&&h.neck!=null?h.neck.mask(h,outlineCurves,weight):new JSONArray();if(clipRings.length()>0){JSONArray objects=h.ink.layer.getJSONArray("objects");objects.getJSONObject(objects.length()-1).put("clipOut",clipRings);}}
         }
-        boolean occluded(double x,double y,double depth,double[][] projected,List<int[]> facing){
+        static boolean occluded(double x,double y,double depth,double[][] projected,List<int[]> facing){
             for(int[] t:facing){
                 double[] a=projected[t[0]],b=projected[t[1]],c=projected[t[2]];
                 double bx=b[0]-a[0],by=b[1]-a[1],cx=c[0]-a[0],cy=c[1]-a[1],den=bx*cy-by*cx;
