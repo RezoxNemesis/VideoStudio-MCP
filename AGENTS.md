@@ -1,3 +1,19 @@
+# Active combined character drawing candidate — 2026-10-21
+
+Root feat/native-character-drawing-v41012 integrates verified brush sourcebdcf18c
+and structural-edge featureb860a50, preserving both published feature histories.
+Target4.10.12/code515 build/AppProtocol/release assertions agree. Focused9new native
+plus21existing and1actual-input probe pass; fresh full combined native/Node/CI/
+original signing and new-model artwork remain PENDING. CI51439667368696 succeeded
+at exactbdcf18c, independent APK download is queued behind disk-bounded inference.
+Actual native v9 blink reads as limited frontal motion; closeup finish and film
+remain NEEDS_REWORK. Combined cuff/blink one existing4s performance passed all96
+frame/contacts/source/provenance/portable rebake checks, not a new scenario count.
+A private source-free authored profile guide is a construction hypothesis only.
+Preserve all failed model/blink/UI generations and omitted legacy exactness. ONE
+local Gradle, root only. No hosted/external art, Gallery, main/Worker/stable release,
+replacement signer, device/data/MCP identity reset or completed-film/phone claim.
+
 # Active explicit native structural edges —2026-10-21
 
 Feature feat/native-structure-edge-thresholds-v41012 starts44e33a2. Read
