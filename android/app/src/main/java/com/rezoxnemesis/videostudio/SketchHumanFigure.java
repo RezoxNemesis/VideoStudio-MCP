@@ -163,6 +163,7 @@ final class SketchHumanFigure {
                 if(!Double.isFinite(x)||!Double.isFinite(y)||x<=0||x>=1||y<=0||y>=1)throw SketchDocument.bad("Human figure leaves canvas; adjust placement, size or anchors");
                 command.put(k,x);command.put(k+1,y);
             }}
+            if(o.has("clipOut")){JSONArray rings=o.getJSONArray("clipOut");for(int r=0;r<rings.length();r++){JSONArray ring=rings.getJSONArray(r);for(int j=0;j<ring.length();j++){JSONArray q=ring.getJSONArray(j);double x=s.getDouble("x")+(q.getDouble(0)*1280-640)*16*size*fit/width,y=s.getDouble("floorY")+(q.getDouble(1)*720-360)*16*size*fit/height;if(!Double.isFinite(x)||!Double.isFinite(y)||x<=0||x>=1||y<=0||y>=1)throw SketchDocument.bad("Human path clipping leaves canvas");q.put(0,x).put(1,y);}}}
             o.put("width",Math.max(.0005,Math.min(.2,o.getDouble("width")*size*fit*720/Math.min(width,height))));
             Path path=SketchFrameRenderer.path(commands,width,height);path.transform(SketchFrameRenderer.matrix(SketchDocument.transformAt(layer,0),width,height));RectF bounds=new RectF();path.computeBounds(bounds,true);
             double pad=o.getBoolean("fill")?0:o.getDouble("width")*Math.min(width,height)/2;
