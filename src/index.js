@@ -227,7 +227,8 @@ export class VideoStudioState extends DurableObject {
     const ra=(await this.ctx.storage.get("rcl:"+deviceId))||[]; return {connected:!!d,device:d,projectCount:ps.length,pendingCommands:a.filter(c=>c.status==="queued").length,pendingRuntimeCommands:ra.filter(c=>c.status==="queued").length,lastCommand:(ra[ra.length-1]||a[a.length-1]||null)};
   }
 
-  async appRenderLink(v,id,key,meta={}){return renderNative.link(this,v,id,key,meta);}
+  async appRenderChallenge(v){return renderNative.challenge(this,v);}
+  async appRenderLink(code,id,key,meta={}){return renderNative.link(this,code,id,key,meta);}
   async appRenderStatus(v){return renderNative.status(this,v);}
   async appRenderQueue(v,a,args={},rid=null){return renderNative.enqueue(this,v,a,args,rid);}
   async appRenderCommand(v,id){return renderNative.command(this,v,id);}
@@ -1479,6 +1480,10 @@ function serverFor(env,hybridKey=""){
         return out(await st.appConvergeOwnerAliases(primary,legacy,String(p.primaryDeviceId||"")));
       }
       const native=await st.appResolve(deviceId);
+      if(native&&action==="autonomous_request"&&p.nativeAction==="render.pair_code"){
+        const challenge=await st.appRenderChallenge(deviceId);
+        return out({ok:true,...challenge,origin:"existing-videostudio-mcp"});
+      }
       if(native&&action==="autonomous_request" &&
          typeof p.nativeAction==="string"&&p.nativeAction.startsWith("render.")){
         const actionName=p.nativeAction.slice(7);
@@ -1708,6 +1713,10 @@ function serverForApp(env,ownerKey,protocolVersion=1){
   };
 
   if(isV3){
+    s.registerTool("render_pair_code",{
+      description:"Create a one-use 10-minute code to link the Android Render native app to the existing VideoStudio MCP. The private VideoStudio owner key is never copied to Render.",
+      inputSchema:{}
+    },async()=>out(await st.appRenderChallenge(ownerKey)));
     s.registerTool("render_status",{
       description:"Status for Render Android using the existing VideoStudio MCP. Offline queue does not mean native execution.",
       inputSchema:{}
@@ -2138,7 +2147,7 @@ async function api(request,env){
       return reply({ok:true,service:"videostudio-render-mcp-v3",transportOnly:true,blenderExecutor:"android"});
     if(u.pathname==="/api/v3/render/link"&&request.method==="POST"){
       const b=await request.json();
-      return reply({ok:true,...await st.appRenderLink(b.videoStudioOwnerKey,b.renderDeviceId,b.renderOwnerKey,b.meta||{})});
+      return reply({ok:true,...await st.appRenderLink(b.pairingCode,b.renderDeviceId,b.renderOwnerKey,b.meta||{})});
     }
     if(u.pathname==="/api/v3/render/poll"&&request.method==="POST"){
       const b=await request.json(),key=bearer(request);
