@@ -48,9 +48,9 @@ jobs:
           mkdir render-native
           git -C render-native init -q
           git -C render-native remote add origin https://github.com/RezoxNemesis/Render.git
-          git -C render-native fetch --depth 1 --filter=blob:none origin 96ea0ffef154c497b9f84ea47615a0c3125cf28d
+          git -C render-native fetch --depth 1 --filter=blob:none origin 4fe7cfbc2c5252905d9bbc709b6f7d9ba4a522fe
           git -C render-native checkout -q --detach FETCH_HEAD
-          test "$(git -C render-native rev-parse HEAD)" = "96ea0ffef154c497b9f84ea47615a0c3125cf28d"
+          test "$(git -C render-native rev-parse HEAD)" = "4fe7cfbc2c5252905d9bbc709b6f7d9ba4a522fe"
           grep -Fq "versionCode 19" render-native/full-app/app/build.gradle
           grep -Fq "0.16.0-native-scene-creation-materials-render" render-native/full-app/app/build.gradle
       - name: Build native Render JNI and Android unit tests
