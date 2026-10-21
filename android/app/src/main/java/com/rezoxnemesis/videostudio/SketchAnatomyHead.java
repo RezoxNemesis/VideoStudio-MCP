@@ -19,11 +19,23 @@ final class SketchAnatomyHead {
         draw(layer,actorId,settings,p,null);
     }
     static void draw(JSONObject layer,String actorId,JSONObject settings,SketchHumanFigure.Skeleton p,DepthOccluder neck)throws Exception {
+        draw(layer,actorId,settings,p,neck,true);
+    }
+    static void rearHair(JSONObject layer,String actorId,JSONObject settings,SketchHumanFigure.Skeleton p)throws Exception {
+        if(!settings.optString("hairStyle","short").equals("long"))return;
+        JSONArray objects=layer.getJSONArray("objects");int first=objects.length();new Head(layer,settings,p,null).longHair();
+        for(int i=first;i<objects.length();i++)objects.getJSONObject(i).put("id",actorId+"_anatomy_rear_hair_"+(i-first));
+    }
+    static void draw(JSONObject layer,String actorId,JSONObject settings,SketchHumanFigure.Skeleton p,DepthOccluder neck,boolean includeRearHair)throws Exception {
         JSONArray objects=layer.getJSONArray("objects");int first=objects.length();
         Head h=new Head(layer,settings,p,neck);
-        if(settings.optString("hairStyle","short").equals("long"))h.longHair();
+        boolean rearHair=includeRearHair&&settings.optString("hairStyle","short").equals("long"),rearFacing=h.view[2]<-1e-9;
+        if(rearHair&&!rearFacing)h.longHair();
         h.ear(-1);h.ear(1);
         h.cranium();
+        // The rear curtain is nearer than the lower skull in the rear hemisphere.
+        // Front/profile composition and the separate scalp cap remain unchanged.
+        if(rearHair&&rearFacing)h.longHair();
         if(h.view[2]>-.08){
             h.planes();
             int far=h.view[0]>0?-1:1;
@@ -39,14 +51,14 @@ final class SketchAnatomyHead {
     private static final class Head {
         final JungleCelInk ink;
         final SketchHumanFigure.Skeleton p;
-        final String skin,hair,shade,soft,light;
+        final String skin,hair,shade,soft,light,fringeStyle;
         final double[] axis,view;
         final double angle;
         final JSONObject controls;final DepthOccluder neck;
         Head(JSONObject layer,JSONObject settings,SketchHumanFigure.Skeleton skeleton,DepthOccluder occluder){
             neck=occluder;
             p=skeleton;ink=new JungleCelInk(layer).at(640,360,1/16d,0);
-            skin=settings.optString("skinColor","#FFF1EEE8");hair=settings.optString("hairColor","#FF555150");
+            skin=settings.optString("skinColor","#FFF1EEE8");hair=settings.optString("hairColor","#FF555150");fringeStyle=settings.optString("fringeStyle","swept");
             shade=tone(skin,INK,.13);soft=tone(skin,INK,.48);light=tone(hair,skin,.53);
             controls=p.controls==null?new JSONObject():p.controls;
             axis=p.camera.poseAxis();angle=Math.toRadians(p.lean+p.headTilt);
@@ -250,7 +262,8 @@ final class SketchAnatomyHead {
                 int a=1+row*n+j,b=1+row*n+(j+1)%n;
                 mesh.triangle(a,b,a+n);mesh.triangle(b,b+n,a+n);
             }
-            mesh.draw(this,tone(hair,skin,.26),INK,.44);
+            mesh.draw(this,tone(hair,skin,fringeStyle.equals("center_part")?.10:.26),INK,.44);
+            if(fringeStyle.equals("center_part")){centerPartHair();return;}
             double[][] tufts={{-16,-20,5,-19,-23,7,-14,-22,6},
                 {-10,-25,7,-13,-28,8,-7,-25,9},{-2,-26,4,-1,-29,8,4,-25,9},
                 {8,-24,5,12,-27,5,14,-21,7},{16,-17,-2,22,-18,0,18,-12,3}};
@@ -298,6 +311,29 @@ final class SketchAnatomyHead {
                 pen(hair,null,.2).m(s*18,-10,4).q(s*20,-4,3,s*18.4,1,2)
                     .l(s*17.7,3,3).q(s*18,-5,7,s*16.8,-8,8).z().end();
             }
+        }
+        /** Crown-parted brow/temple locks are closed shallow volumes whose
+         * centreline follows the same cranial cap envelope in every camera.
+         * This is an original construction guide, not recovered actor artwork.
+         */
+        void centerPartHair()throws Exception {
+            double[][] locks={{.8,-24.5,5,-21,8,-9,3.8,1.5,2.7},{2,-24,12,-20,17,-7,12,3,3.2},{4,-23,18,-18,21,-3,17,12,3.0}};
+            // Flow starts at the part and follows the volume toward the sides
+            // and rear; the old short upward spikes are deliberately absent.
+            for(int j=0;j<18;j++){double a=2*Math.PI*j/18,t=.22,mid=.82;if(Math.sin(mid)*Math.sin(a)*view[0]-Math.cos(mid)*view[1]+Math.sin(mid)*Math.cos(a)*view[2]<.02)continue;double end=Math.cos(a)>0?1.03:1.73;pen(null,tone(hair,skin,.40),.18).m(hairPoint(a,t)).c(hairPoint(a+.05,.55),hairPoint(a+.08,1.02),hairPoint(a+.09,end)).end();}
+            for(int side:new int[]{-1,1}){
+                if(side*.72*view[0]+.7*view[2]>.08)for(double[] lock:locks)centerLock(side,lock);
+            }
+        }
+        double[] partCentre(int side,double[] lock,double t){double u=1-t,x=side*(u*u*u*lock[0]+3*u*u*t*lock[2]+3*u*t*t*lock[4]+t*t*t*lock[6]),y=u*u*u*lock[1]+3*u*u*t*lock[3]+3*u*t*t*lock[5]+t*t*t*lock[7];double radial=1-x*x/(19.8*19.8)-(y+5)*(y+5)/(22*22);return v(x,y,21*Math.sqrt(Math.max(0,radial))+.18+.75*Math.sin(Math.PI*t));}
+        void centerLock(int side,double[] lock)throws Exception {
+            Mesh strand=new Mesh();int rows=14,sides=10;double[][] centres=new double[rows][];
+            for(int row=0;row<rows;row++){double t=row/(double)(rows-1);double[] centre=partCentre(side,lock,t),before=partCentre(side,lock,Math.max(0,t-.001)),after=partCentre(side,lock,Math.min(1,t+.001)),tangent=unit(sub(after,before)),normal=unit(v(centre[0]/(19.8*19.8),(centre[1]+5)/(22*22),centre[2]/(21*21))),across=unit(cross(tangent,normal)),outward=unit(cross(across,tangent));centres[row]=centre;double width=(.7+lock[8]*Math.sin(Math.PI*t))*(1-.93*Math.pow(t,5)),depth=.22+.78*(1-t);
+                for(int j=0;j<sides;j++){double angle=2*Math.PI*j/sides;strand.vertices.add(add(centre,add(mul(across,width*Math.cos(angle)),mul(outward,depth*Math.sin(angle)))));}}
+            for(int row=0;row<rows-1;row++)for(int j=0;j<sides;j++){int a=row*sides+j,b=row*sides+(j+1)%sides;strand.triangle(a,a+sides,b);strand.triangle(b,a+sides,b+sides);}
+            int root=strand.vertices.size();strand.vertices.add(centres[0]);int tip=strand.vertices.size();strand.vertices.add(centres[rows-1]);for(int j=0;j<sides;j++){int next=(j+1)%sides;strand.triangle(root,j,next);strand.triangle(tip,(rows-1)*sides+next,(rows-1)*sides+j);}
+            strand.draw(this,tone(hair,skin,.09),hair,.27);
+            for(double offset:new double[]{-.32,.28}){double[] a=partCentre(side,lock,.06),b=partCentre(side,lock,.30),c=partCentre(side,lock,.62),d=partCentre(side,lock,.90);for(double[] q:new double[][]{a,b,c,d}){q[0]+=side*offset;q[2]+=.85;}pen(null,tone(hair,skin,.44),.17).m(a).c(b,c,d).end();}
         }
         double[] fringePoint(double x,double y){
             double radial=1-x*x/(21*21)-(y+5)*(y+5)/(24*24);
@@ -519,6 +555,7 @@ final class SketchAnatomyHead {
     private static double[] add(double[] a,double[] b){return v(a[0]+b[0],a[1]+b[1],a[2]+b[2]);}
     private static double[] sub(double[] a,double[] b){return v(a[0]-b[0],a[1]-b[1],a[2]-b[2]);}
     private static double[] mul(double[] a,double n){return v(a[0]*n,a[1]*n,a[2]*n);}
+    private static double[] unit(double[] a){double length=Math.sqrt(dot(a,a));if(!Double.isFinite(length)||length<1e-9)throw new IllegalArgumentException("Invalid native hair tangent");return mul(a,1/length);}
     private static double dot(double[] a,double[] b){return a[0]*b[0]+a[1]*b[1]+a[2]*b[2];}
     private static double[] cross(double[] a,double[] b){return v(a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]);}
     private static double[] rotate(double[] a,double[] axis,double angle){

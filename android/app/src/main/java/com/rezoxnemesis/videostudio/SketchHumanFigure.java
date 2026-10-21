@@ -20,11 +20,12 @@ final class SketchHumanFigure {
                 .put("coatColor","#FF526B78").put("trouserColor","#FF343F50").put("x",.5).put("floorY",.88).put("size",1).put("faceStyle","graphic").put("shading","cel").put("lightAngle",135);
     }
     static JSONObject settings(JSONObject input)throws Exception {
-        SketchDocument.fields(input,"view,build,hairStyle,skinColor,hairColor,coatColor,trouserColor,x,floorY,size,faceStyle,shading,lightAngle,clothingStyle,figureStyle,constructionGuides,viewYawDegrees,viewPitchDegrees");JSONObject s=defaults();
+        SketchDocument.fields(input,"view,build,hairStyle,skinColor,hairColor,coatColor,trouserColor,x,floorY,size,faceStyle,shading,lightAngle,clothingStyle,figureStyle,constructionGuides,viewYawDegrees,viewPitchDegrees,fringeStyle");JSONObject s=defaults();
         Iterator<String> keys=input.keys();while(keys.hasNext()){String key=keys.next();s.put(key,input.get(key));}
         if(s.has("figureStyle")&&(!(s.get("figureStyle") instanceof String)||!Set.of("legacy","anatomy_sketch").contains(s.getString("figureStyle"))))throw SketchDocument.bad("Unknown human figure style");
         if(s.has("constructionGuides"))SketchDocument.bool(s,"constructionGuides");
         boolean anatomy=anatomy(s);
+        if(s.has("fringeStyle")){if(!(s.get("fringeStyle") instanceof String)||!Set.of("swept","center_part").contains(s.getString("fringeStyle")))throw SketchDocument.bad("Unknown anatomy fringe style");if(!anatomy)throw SketchDocument.bad("Explicit fringe style requires anatomy_sketch");}
         if(s.has("viewYawDegrees")||s.has("viewPitchDegrees")){if(!anatomy)throw SketchDocument.bad("Numeric camera guides require anatomy_sketch");if(s.has("viewYawDegrees"))SketchDocument.number(s,"viewYawDegrees",-360,360);if(s.has("viewPitchDegrees"))SketchDocument.number(s,"viewPitchDegrees",-75,75);}
         if(s.optBoolean("constructionGuides",false)&&!anatomy)throw SketchDocument.bad("Construction guides require anatomy sketch style");
         if(!(s.get("view") instanceof String)||!(anatomy?Set.of("front","left","right","back","high","low","three_quarter_left","three_quarter_right"):Set.of("front","left","right","back","high","low")).contains(s.getString("view")))throw SketchDocument.bad("Unknown human view for figure style");

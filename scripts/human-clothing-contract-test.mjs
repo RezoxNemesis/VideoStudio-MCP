@@ -97,7 +97,9 @@ test('human clothing metadata matches native literals and gives ordinary ChatGPT
  class JSONObject{put(key,value){this[key]=value;return this;}}class JSONArray extends Array{constructor(values){super();this.push(...values);}}
  const cameraLiteral=native('SketchHumanCameraGuide').match(/return new JSONObject\(("(?:\\.|[^"\\])*")\);/)[1];
  const SketchHumanCameraGuide={capabilities:()=>JSON.parse(JSON.parse(cameraLiteral))};
- const body=native('SketchCapabilities').match(/public static JSONObject humanAnimation\(\) throws Exception \{\s*return ([\s\S]*?);\s*\}/)[1];const expression=body.replace(/new (?:String|double|int)\[\]\{([^}]*)\}/g,'[$1]');assert.deepEqual(JSON.parse(JSON.stringify(vm.runInNewContext('('+expression+')',{JSONObject,JSONArray,SketchHumanCameraGuide}))),m);
+ const fringeLiteral=native('SketchHumanFringeCapabilities').match(/new JSONObject\(("(?:\\.|[^"\\])*")\)/)[1];
+ const SketchHumanFringeCapabilities={get:()=>JSON.parse(JSON.parse(fringeLiteral))};
+ const body=native('SketchCapabilities').match(/public static JSONObject humanAnimation\(\) throws Exception \{\s*return ([\s\S]*?);\s*\}/)[1];const expression=body.replace(/new (?:String|double|int)\[\]\{([^}]*)\}/g,'[$1]');assert.deepEqual(JSON.parse(JSON.stringify(vm.runInNewContext('('+expression+')',{JSONObject,JSONArray,SketchHumanCameraGuide,SketchHumanFringeCapabilities}))),m);
  const detail=worker.match(/:action==='sketch_edit'\?'([^']+)'/)[1];assert.match(detail,/clothingStyle.*legacy.*tailored.*4\.8\.2/);assert.match(detail,/Clothing.*dropdown/);
 });
 

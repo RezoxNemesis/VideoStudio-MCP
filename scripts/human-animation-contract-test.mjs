@@ -532,10 +532,12 @@ test('human metadata matches native defaults, channel order, presets and source 
  assert.deepEqual(JSON.parse(JSON.stringify(vm.runInNewContext(`(${defaultsExpression})`,{JSONObject}))),defaults);
  const cameraLiteral=native('SketchHumanCameraGuide').match(/return new JSONObject\(("(?:\\.|[^"\\])*")\);/)[1];
  const SketchHumanCameraGuide={capabilities:()=>JSON.parse(JSON.parse(cameraLiteral))};
+ const fringeLiteral=native('SketchHumanFringeCapabilities').match(/new JSONObject\(("(?:\\.|[^"\\])*")\)/)[1];
+ const SketchHumanFringeCapabilities={get:()=>JSON.parse(JSON.parse(fringeLiteral))};
  const java=native('SketchCapabilities');assert.match(java,/\.put\("humanAnimation",humanAnimation\(\)\)/);
  const body=java.match(/public static JSONObject humanAnimation\(\) throws Exception \{\s*return ([\s\S]*?);\s*\}/)?.[1];assert.ok(body);
  const expression=body.replace(/new (?:String|double|int)\[\]\{([^}]*)\}/g,'[$1]');
- assert.deepEqual(JSON.parse(JSON.stringify(vm.runInNewContext(`(${expression})`,{JSONObject,JSONArray,SketchHumanCameraGuide}))),metadata);
+ assert.deepEqual(JSON.parse(JSON.stringify(vm.runInNewContext(`(${expression})`,{JSONObject,JSONArray,SketchHumanCameraGuide,SketchHumanFringeCapabilities}))),metadata);
  assert.equal(metadata.genuine3D,false);assert.equal(metadata.creativeQualityCertified,false);assert.equal(metadata.phoneExecutionVerified,false);
  assert.match(metadata.limits,/24\.\.1200 frames.*40 seconds/);assert.match(metadata.geometry,/projected2D/);
  assert.match(metadata.bounds,/camera.*world.*crop.*base artwork.*canvas/);
