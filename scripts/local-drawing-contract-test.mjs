@@ -70,3 +70,14 @@ test('portable AI provenance is strict and carries its version floor through inl
  assert.doesNotThrow(()=>requireStudioVersion({appVersion:'4.10.5'},'sketch_edit',patch));
  for(const mutate of [p=>p.operations[0].object.reference.localDrawing=null,p=>p.operations[0].object.reference.localDrawing.version='1',p=>p.operations[0].object.reference.localDrawing.request.settings.steps='4',p=>p.operations[0].object.reference.localDrawing.claim='original artist layers',p=>p.operations[0].object.reference.sourceSha256='a'.repeat(64)]){const p=structuredClone(patch);mutate(p);assert.throws(()=>nativeStudioParameters('sketch_edit',p));}
 });
+
+test('native sketch frame input is strict, explicit and retains the legacy image request',()=>{
+ const p={requestId:'posed',sketchId:'sketch',expectedRevision:4,frameSource:{frameIndex:6,documentSha256:'a'.repeat(64),layerIds:['body','face'],crop:{x:.2,y:.1,width:.5,height:.6}},settings:request.settings};
+ for(const action of ['local_drawing_generate','studio_local_drawing_generate']){assert.deepEqual(nativeStudioParameters(action,p),p);assert.throws(()=>requireStudioVersion({appVersion:'4.10.5'},action,p),/4\.10\.6/);assert.doesNotThrow(()=>requireStudioVersion({appVersion:'4.10.6'},action,p));}
+ for(const mutate of [v=>v.objectId='guide',v=>v.sourceSha256='b'.repeat(64),v=>v.sourceRect={x:0,y:0,width:1,height:1},v=>v.frameSource=null,v=>v.frameSource.frameIndex='6',v=>v.frameSource.layerIds=[],v=>v.frameSource.layerIds=['body','body'],v=>v.frameSource.extra=true,v=>v.frameSource.documentSha256='bad']){const v=structuredClone(p);mutate(v);assert.throws(()=>nativeStudioParameters('local_drawing_generate',v));}
+ assert.deepEqual(nativeStudioParameters('local_drawing_generate',request),request);assert.doesNotThrow(()=>requireStudioVersion({appVersion:'4.10.2'},'local_drawing_generate',request));
+});
+
+test('prepared native source preview is explicit and gated without changing old request parsing',()=>{
+ const p={...request,previewOnly:true};assert.deepEqual(nativeStudioParameters('local_drawing_generate',p),p);assert.throws(()=>requireStudioVersion({appVersion:'4.10.5'},'local_drawing_generate',p),/4\.10\.6/);assert.doesNotThrow(()=>requireStudioVersion({appVersion:'4.10.6'},'local_drawing_generate',p));for(const value of [null,'true',1])assert.throws(()=>nativeStudioParameters('local_drawing_generate',{...request,previewOnly:value}));
+});

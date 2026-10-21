@@ -15,7 +15,7 @@ final class LocalDrawingKeyframes {
  static void validate(JSONObject reference)throws Exception {
   JSONObject source=reference.getJSONObject("localDrawing");SketchDocument.fields(source,"version,kind,request,requestSha256,modelIdentity,outputSha256");
   SketchDocument.integer(source,"version",1,1);if(!"local_ai_raster".equals(source.get("kind")))throw SketchDocument.bad("Unknown local drawing provenance kind");
-  JSONObject request=source.getJSONObject("request");LocalDrawingSource.validate(request);String model=hash(source,"modelIdentity"),fingerprint=hash(source,"requestSha256"),output=hash(source,"outputSha256");
+  JSONObject request=source.getJSONObject("request");LocalDrawingSource.validateStored(request);String model=hash(source,"modelIdentity"),fingerprint=hash(source,"requestSha256"),output=hash(source,"outputSha256");
   if(!fingerprint.equals(SketchDocument.sha256((model+"\n"+SketchDocument.canonical(request)).getBytes(StandardCharsets.UTF_8)))||!output.equals(reference.optString("sourceSha256","")))throw SketchDocument.bad("Local AI provenance differs from its source identity");
  }
  private static String hash(JSONObject value,String field)throws Exception {Object v=value.get(field);if(!(v instanceof String)||!((String)v).matches("[a-f0-9]{64}"))throw SketchDocument.bad("Exact local drawing "+field+" required");return(String)v;}
