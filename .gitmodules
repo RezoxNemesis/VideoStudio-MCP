@@ -1,0 +1,3 @@
+[submodule "render-native"]
+	path = render-native
+	url = https://github.com/RezoxNemesis/Render.git
