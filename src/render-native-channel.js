@@ -72,13 +72,13 @@ export async function link(st,pairCode,renderId,renderKey,meta={}){
 export async function status(st,videoKey){
   const rec=await resolve(st,videoKey);
   if(!rec)return {linked:false,deviceOnline:false,executionAvailable:false,
-    reason:"Pair Render Android using the existing VideoStudio MCP URL."};
-  const d=rec.device,last=Date.parse(d.lastSeenAt||"")||0;
+    reason:"Obtain a one-use pairing code through the existing VideoStudio MCP and enter it in Render Android."};
+  const d=rec.device,last=Date.parse(d.lastRenderPollAt||"")||0;
   const online=last>0&&Date.now()-last<45000;
   const q=(await st.ctx.storage.get("app-v3-cl:"+d.deviceId))||[];
   return {linked:true,deviceId:d.deviceId,deviceOnline:online,
     executionAvailable:online&&!d.controlPaused,controlPaused:!!d.controlPaused,
-    appVersion:d.appVersion,lastSeenAt:d.lastSeenAt||null,
+    appVersion:d.appVersion,lastSeenAt:d.lastRenderPollAt||null,
     pendingCommands:q.filter(pending).length,transport:"videostudio-mcp-v3",
     galleryAccess:false,executor:"render-android-only"};
 }
@@ -98,7 +98,7 @@ export async function enqueue(st,videoKey,action,args={},requestId=null){
     return {...previous,duplicate:true};
   }
   if(list.filter(pending).length>=140)throw Error("RENDER_QUEUE_FULL");
-  const last=Date.parse(rec.device.lastSeenAt||"")||0;
+  const last=Date.parse(rec.device.lastRenderPollAt||"")||0;
   const fresh=last>0&&Date.now()-last<45000;
   const sk="app-v3-seq:"+id,seq=((await storage.get(sk))||0)+1;
   await storage.put(sk,seq);
@@ -142,7 +142,7 @@ async function child(st,deviceId,ownerKey){
 export async function poll(st,deviceId,ownerKey,enabled,activeJobId=null,capabilities=[]){
   if(typeof enabled!=="boolean")throw Error("RENDER_ENABLED_FLAG_REQUIRED");
   const d=await child(st,deviceId,ownerKey),storage=st.ctx.storage;
-  const nextDevice={...d,lastSeenAt:now(),controlPaused:!enabled,
+  const nextDevice={...d,lastSeenAt:now(),lastRenderPollAt:now(),controlPaused:!enabled,
     renderCapabilities:Array.isArray(capabilities)?capabilities.slice(0,128):[]};
   await storage.put("app-device:"+deviceId,nextDevice);
   const k="app-v3-cl:"+deviceId,q=(await storage.get(k))||[];
