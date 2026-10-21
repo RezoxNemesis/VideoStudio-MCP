@@ -158,3 +158,62 @@ outputs. A separate opt-in equivalence driver requires its frozen verification
 receipt, runs old/new sessions sequentially and archives actual returned noise
 buffers. Its predeclared FP16 limits remain maxAbs0.02/RMS0.003. Actual audit
 conversion and equivalence execution have not yet been completed at this commit.
+
+## Shared native Plus provider implementation (not yet artistic acceptance)
+
+Explicit optional `conditioning.adapter` chooses `plus_face` or `plus` through
+ordinary `local_drawing_generate`; omission retains the existing basic provider,
+its model catalogue, fingerprint and4.10.7 floor. Both explicit options select
+`sd15_ipadapter_plus_controlnet_v1` and require4.10.8 in ordinary/recursive MCP
+requests and portable inline provenance. Manual choices are Basic appearance,
+Face details and Overall appearance. The same no-model preview still returns the
+three actual prepared source/appearance/Canny PNGs without creating a study.
+
+The new catalogue pins every original source and every derived result. Normal
+`local_drawing_install` resumably downloads source graphs into its own private
+`.native_sources`, invokes the bounded Java converter, verifies final hashes,
+cleans only verified private source files and activates through ModelPackManager's
+normal license/checksum/transaction path. Failed/cancelled writers retain source
+checkpoints and previous target files. Private leftover sources are explicitly
+excluded from pack activation. No workspace-only conversion is required by the
+user. The existing base/basic catalogues are byte-unchanged. Optional Plus pack
+contains4,680,923,615model bytes and requires64-bit execution and8192MiB currently
+available RAM; host numerical probes do not establish phone performance.
+
+New LocalDrawingPlusEngine uses actual CLIP layer30 hidden states, the selected
+verified CPU PlusFace/Plus resampler,16K/V tensors in explicit down/up/mid order,
+and all13ControlNet residuals. Both CFG branches get their real image-conditioning
+head output; the unconditional branch is CLIP(all-zero NORMALIZED pixels) through
+the same head. Appearance strength multiplies the actual V tensors in all16
+layers, not embedding values or noise prediction differences. It therefore has
+different semantics from the preserved basic provider. It uses two UNet passes
+and at most two ControlNet passes per denoising step. CLIP/head sessions close
+before UNet/ControlNet loading, and these close before VAE decoding. Attention,
+text, VAE and denoising checkpoints bind the complete request/model identity.
+
+The same added-noise seed and three input PNGs do not alone produce a controlled
+provider-only comparison: the existing VAE encoder posterior is sampled and then
+checkpointed independently of that seed. Actual studies must identify this and
+retain checkpoint hashes where possible. Do not copy cross-request checkpoints
+or claim pixel identity/provider causality from superficially matched settings.
+
+Focused normal native surface tests passed via root: omission, explicit modes,
+preview/failed-model admission/retry conflicts, manual selector, source safety,
+archive/manual provenance and scoped numeric identity. Local drawing Node suite
+15/15 passes. Root then observed14/0failures/0errors/0skips across the five private-install,
+three Plus portable-provenance, five normal-provider tests and actual v4 audit
+verification. Corrected audit SHA89329b002191ac7f99e761ab4cdd803da9f96be7d0c2d07a8a64862dd69a41ee. Complete
+normal installed-model inference and output review remain pending.
+
+The first append-only old-KV runtime study exposed actual rank4 projections
+`[1,1,4,inner]`; its rank3 metadata/assertion failed before any numerical comparison.
+Both failed actual runtime and wrong-rank audit graphs remain preserved. The
+metadata and synthetic golden contract now explicitly retain that leading
+singleton axis; new discovery/verification use fresh output directories/pins.
+Numerical equivalence budgets remain maxAbs0.02/RMS0.003, unchanged.
+
+Actual equivalence v2 captured all rank4 old K/V tensors, then correctly rejected
+the converted graph path because the engineering storage relocation made it a
+symlink. It failed before numerical comparison. Preserve this failure; use the
+independently hash-verified regular target path for a new runtime trial without
+weakening the production anti-symlink policy.

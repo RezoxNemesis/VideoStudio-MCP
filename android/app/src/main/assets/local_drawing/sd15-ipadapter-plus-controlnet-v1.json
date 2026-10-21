@@ -1,0 +1,155 @@
+{
+  "id": "sd15_ipadapter_plus_controlnet_v1",
+  "version": "1",
+  "runtimeAdapter": "sd15_ipadapter_plus_controlnet_v1",
+  "license": "CreativeML OpenRAIL-M; Apache-2.0; MIT",
+  "sourceRepository": "sona-forge/sd15-ipadapter-fp16",
+  "sourceRevision": "05fa2599c72fd2c237280fe92b6be5ccdba0e26c",
+  "requiredAvailableRamMb": 8192,
+  "modelBytes": 4680923615,
+  "width": 512,
+  "height": 512,
+  "files": [
+    {
+      "path": "text_encoder/model.onnx",
+      "bytes": 492543235,
+      "sha256": "7c83ed133fd7a397ec1fd25eed7451936c066a9b5c2d06362a13e63ed4bddbf4",
+      "url": "https://huggingface.co/onnx-community/stable-diffusion-v1-5-ONNX/resolve/90ff1f14e325544b14919d1ee5abc99f19d4e647/text_encoder/model.onnx"
+    },
+    {
+      "path": "vae_encoder/model.onnx",
+      "bytes": 136760348,
+      "sha256": "313d56e981fdb5d731a3ba117e15b4cf15d86fd7ba4cc654f0fb2f24af5afdad",
+      "url": "https://huggingface.co/onnx-community/stable-diffusion-v1-5-ONNX/resolve/90ff1f14e325544b14919d1ee5abc99f19d4e647/vae_encoder/model.onnx"
+    },
+    {
+      "path": "vae_decoder/model.onnx",
+      "bytes": 198078223,
+      "sha256": "c4b6ca4aebff4a8850e7c92b8982c7afbcfc5c5cdd32ba66389988b92dabb300",
+      "url": "https://huggingface.co/onnx-community/stable-diffusion-v1-5-ONNX/resolve/90ff1f14e325544b14919d1ee5abc99f19d4e647/vae_decoder/model.onnx"
+    },
+    {
+      "path": "tokenizer/merges.txt",
+      "bytes": 573514,
+      "sha256": "0bc7695944744789d6fd6d0ab754bcbbb9e36f1c182df0a006d619ce70a1e052",
+      "url": "https://huggingface.co/onnx-community/stable-diffusion-v1-5-ONNX/resolve/90ff1f14e325544b14919d1ee5abc99f19d4e647/tokenizer/merges.txt"
+    },
+    {
+      "path": "tokenizer/vocab.json",
+      "bytes": 1109372,
+      "sha256": "fd67774a869730a6b27bf53d3e434e72054f2a825873c7af3bece183bb1f791e",
+      "url": "https://huggingface.co/onnx-community/stable-diffusion-v1-5-ONNX/resolve/90ff1f14e325544b14919d1ee5abc99f19d4e647/tokenizer/vocab.json"
+    },
+    {
+      "path": "tokenizer/tokenizer_config.json",
+      "bytes": 734,
+      "sha256": "2edbd316072af0382bb999f82b007ad8af159d6277648e29b7747d72c3add791",
+      "url": "https://huggingface.co/onnx-community/stable-diffusion-v1-5-ONNX/resolve/90ff1f14e325544b14919d1ee5abc99f19d4e647/tokenizer/tokenizer_config.json"
+    },
+    {
+      "path": "scheduler/scheduler_config.json",
+      "bytes": 389,
+      "sha256": "62e161758584fae790f53146009f63969b787501e5273ba3db7197af11ab748d",
+      "url": "https://huggingface.co/onnx-community/stable-diffusion-v1-5-ONNX/resolve/90ff1f14e325544b14919d1ee5abc99f19d4e647/scheduler/scheduler_config.json"
+    },
+    {
+      "path": "README.md",
+      "bytes": 314,
+      "sha256": "460161a006a072a3796638752e1ab74b816745bc55b4bfc1d42f8a18517480eb",
+      "url": "https://huggingface.co/onnx-community/stable-diffusion-v1-5-ONNX/resolve/90ff1f14e325544b14919d1ee5abc99f19d4e647/README.md"
+    },
+    {
+      "path": "image_encoder/model.onnx",
+      "derivedFrom": {
+        "bytes": 1264856075,
+        "sha256": "038078ba22b67e57ec2ca5b466e0699f30e14a9613054be8c7fb24e537987689",
+        "url": "https://huggingface.co/sona-forge/clip-vit-h-14-image-fp16/resolve/0f88973ddf2652f08e3b2cf83dd06448ecb5c7a3/model.onnx",
+        "recipe": "clip_penultimate_v1"
+      },
+      "bytes": 1264856252,
+      "sha256": "8f6c9781e0a6de096ac0e6160e067f8b94001dabef279f7fa70dff150e4e454a"
+    },
+    {
+      "path": "controlnet/model.onnx",
+      "bytes": 723055316,
+      "sha256": "399358929322eb5bb2f0e141e23486397a29ec871e4efa625c0f2ba4d418c698",
+      "url": "https://huggingface.co/sona-forge/sd15-controlnet-canny-fp16/resolve/b9688cefd7ebfd917edd81490d01dbbae6b4c0f1/model.onnx"
+    },
+    {
+      "path": "unet/model.onnx",
+      "derivedFrom": {
+        "bytes": 1764924739,
+        "sha256": "a0287f119d85b8028d9673850322247b5978ed9b504077bc04d433f4c9fadcb7",
+        "url": "https://huggingface.co/sona-forge/sd15-ipadapter-fp16/resolve/05fa2599c72fd2c237280fe92b6be5ccdba0e26c/model.onnx",
+        "recipe": "sd15_ipkv16_v1"
+      },
+      "bytes": 1764916898,
+      "sha256": "d53c027c7a0ea50f737fe57a2f68ab5f980b0c6199c4980cb96ff66de5da00f6"
+    },
+    {
+      "path": "ip_adapter/face.onnx",
+      "bytes": 49514510,
+      "sha256": "d30b57dfb4f90198486901143eae5ba8d8f2179b8677e475fcb225e696826c33",
+      "url": "https://huggingface.co/AbrahamPJ/nightmare-ip-adapter/resolve/a6a155398a39aa398677da3b9674d23b284082ad/ip_face_head_w8qdq.onnx"
+    },
+    {
+      "path": "ip_adapter/plus.onnx",
+      "bytes": 49514510,
+      "sha256": "52b2ef055e97b473ccb91dedf9e79af7783a4469793f6bcb51d22c3dfd5741c8",
+      "url": "https://huggingface.co/AbrahamPJ/nightmare-ip-adapter/resolve/a6a155398a39aa398677da3b9674d23b284082ad/ip_plus_head_w8qdq.onnx"
+    }
+  ],
+  "sourceRepositories": [
+    {
+      "repository": "onnx-community/stable-diffusion-v1-5-ONNX",
+      "revision": "90ff1f14e325544b14919d1ee5abc99f19d4e647",
+      "license": "CreativeML OpenRAIL-M"
+    },
+    {
+      "repository": "sona-forge/sd15-ipadapter-fp16",
+      "revision": "05fa2599c72fd2c237280fe92b6be5ccdba0e26c",
+      "license": "creativeml-openrail-m"
+    },
+    {
+      "repository": "sona-forge/clip-vit-h-14-image-fp16",
+      "revision": "0f88973ddf2652f08e3b2cf83dd06448ecb5c7a3",
+      "license": "mit"
+    },
+    {
+      "repository": "sona-forge/sd15-controlnet-canny-fp16",
+      "revision": "b9688cefd7ebfd917edd81490d01dbbae6b4c0f1",
+      "license": "openrail"
+    },
+    {
+      "repository": "AbrahamPJ/nightmare-ip-adapter",
+      "revision": "a6a155398a39aa398677da3b9674d23b284082ad",
+      "license": "apache-2.0"
+    }
+  ],
+  "preprocessing": {
+    "version": 1,
+    "appearance": "Native alpha-over-white Catmull-Rom bicubic shortest224 + center crop224",
+    "clipMean": [
+      0.48145466,
+      0.4578275,
+      0.40821073
+    ],
+    "clipStd": [
+      0.26862954,
+      0.26130258,
+      0.27577711
+    ],
+    "structure": "native_canny_binomial5_l2_v1",
+    "cannyLow": 100,
+    "cannyHigh": 200,
+    "hysteresisConnectivity": 8,
+    "appearanceStrength": "Scale all16 per-layer image-attention V tensors, not embeddings or output-prediction deltas",
+    "structureStrength": "Multiply all13 actual ControlNet output residuals",
+    "clipHiddenLayer": 30,
+    "appearanceTokens": 16,
+    "unconditionalAppearance": "CLIP of all-zero normalized pixel tensor through same selected head"
+  },
+  "minimumNativeVersion": "4.10.8",
+  "downloadBytes": 4680931279,
+  "nativeConversion": "Pinned deterministic bounded Java graph conversion at normal installation; source and result SHA256 verified"
+}

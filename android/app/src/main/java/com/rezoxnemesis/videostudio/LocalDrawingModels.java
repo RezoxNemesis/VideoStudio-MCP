@@ -9,22 +9,22 @@ import java.nio.file.Files;
 
 /** Explicit public-weight download and verified private activation; no inference network calls. */
 final class LocalDrawingModels {
- static final String ID="sd15_onnx_v1",PAIRED_ID="sd15_ipadapter_controlnet_v1";
+ static final String ID="sd15_onnx_v1",PAIRED_ID="sd15_ipadapter_controlnet_v1",PLUS_ID="sd15_ipadapter_plus_controlnet_v1";
  private final String packId;
- static String forRequest(JSONObject request){return request.has("appearanceSource")?PAIRED_ID:ID;}
- static String selected(JSONObject parameters)throws Exception{String id=parameters.has("packId")?parameters.getString("packId"):ID;if(!ID.equals(id)&&!PAIRED_ID.equals(id))throw SketchDocument.bad("Unknown local drawing model pack");return id;}
+ static String forRequest(JSONObject request){return request.has("appearanceSource")?(request.optJSONObject("conditioning")!=null&&request.optJSONObject("conditioning").has("adapter")?PLUS_ID:PAIRED_ID):ID;}
+ static String selected(JSONObject parameters)throws Exception{String id=parameters.has("packId")?parameters.getString("packId"):ID;if(!ID.equals(id)&&!PAIRED_ID.equals(id)&&!PLUS_ID.equals(id))throw SketchDocument.bad("Unknown local drawing model pack");return id;}
  private static final java.util.concurrent.Semaphore INSTALL=new java.util.concurrent.Semaphore(1,true);
  private final Context context;
  LocalDrawingModels(Context c){this(c,ID);}
- LocalDrawingModels(Context c,String id){if(!ID.equals(id)&&!PAIRED_ID.equals(id))throw new IllegalArgumentException("Unknown local drawing model pack");context=c.getApplicationContext();packId=id;}
+ LocalDrawingModels(Context c,String id){if(!ID.equals(id)&&!PAIRED_ID.equals(id)&&!PLUS_ID.equals(id))throw new IllegalArgumentException("Unknown local drawing model pack");context=c.getApplicationContext();packId=id;}
  JSONObject catalogue()throws Exception {
-  try(InputStream in=context.getAssets().open("local_drawing/"+(ID.equals(packId)?"sd15-onnx-v1.json":"sd15-ipadapter-controlnet-v1.json"));ByteArrayOutputStream bytes=new ByteArrayOutputStream()){byte[] buffer=new byte[8192];int n;while((n=in.read(buffer))!=-1){if(bytes.size()+n>64*1024)throw new IOException("Model catalogue exceeds bound");bytes.write(buffer,0,n);}return new JSONObject(bytes.toString("UTF-8"));}
+  try(InputStream in=context.getAssets().open("local_drawing/"+(ID.equals(packId)?"sd15-onnx-v1.json":PLUS_ID.equals(packId)?"sd15-ipadapter-plus-controlnet-v1.json":"sd15-ipadapter-controlnet-v1.json"));ByteArrayOutputStream bytes=new ByteArrayOutputStream()){byte[] buffer=new byte[8192];int n;while((n=in.read(buffer))!=-1){if(bytes.size()+n>64*1024)throw new IOException("Model catalogue exceeds bound");bytes.write(buffer,0,n);}return new JSONObject(bytes.toString("UTF-8"));}
  }
  String identity()throws Exception{return SketchDocument.sha256(SketchDocument.canonical(catalogue()).getBytes(StandardCharsets.UTF_8));}
  File directory(){return new File(context.getFilesDir(),"creative_workspace/models/installed/"+packId);}
  JSONObject status()throws Exception {
   JSONObject c=catalogue();boolean installed;try{installed=structurallyInstalled(c);}catch(Exception invalid){installed=false;}boolean bit64=android.os.Process.is64Bit();
-  return new JSONObject().put("packId",packId).put("minimumNativeVersion",ID.equals(packId)?"4.10.2":"4.10.7").put("runtimeAdapter",packId).put("runtimeIncluded",true).put("modelInstalled",installed).put("requires64BitProcess",true).put("process64Bit",bit64).put("runtimeAvailable",installed&&bit64)
+  return new JSONObject().put("packId",packId).put("minimumNativeVersion",ID.equals(packId)?"4.10.2":PLUS_ID.equals(packId)?"4.10.8":"4.10.7").put("runtimeAdapter",packId).put("runtimeIncluded",true).put("modelInstalled",installed).put("requires64BitProcess",true).put("process64Bit",bit64).put("runtimeAvailable",installed&&bit64)
    .put("modelIdentity",identity()).put("modelBytes",c.getLong("modelBytes")).put("requiredAvailableRamMb",c.getLong("requiredAvailableRamMb")).put("availableRamMb",availableRamMb())
    .put("inferenceVerified",identity().equals(context.getSharedPreferences("local_drawing",Context.MODE_PRIVATE).getString(ID.equals(packId)?"verifiedModel":"verifiedModel_"+packId,"")))
    .put("hostedInference",false).put("weightsDownloadedSeparately",true).put("width",512).put("height",512).put("outputKind","reference-conditioned model-generated raster draft").put("recoversArtistLayers",false).put("guaranteesAnatomyOrLikeness",false).put("license",c.getString("license")).put("sourceRepository",c.getString("sourceRepository")).put("sourceRevision",c.getString("sourceRevision"));
@@ -67,18 +67,23 @@ final class LocalDrawingModels {
   JSONArray files=c.getJSONArray("files");long done=0,total=c.getLong("modelBytes");
   for(int i=0;i<files.length();i++){
    if(Thread.currentThread().isInterrupted())throw new InterruptedException("Local model download cancelled");JSONObject item=files.getJSONObject(i);File target=new File(stage,item.getString("path"));if(!safe(stage,target))throw new IOException("Unsafe pinned model path");long prefix=done;
-   if(!target.isFile()||target.length()!=item.getLong("bytes")||!item.getString("sha256").equals(hash(target))){
-    new ResumableTransferManager(new TransferJournal(context)).download(new ResumableTransferManager.Request((ID.equals(packId)?"local_model_":"paired_model_")+i,item.has("url")?item.getString("url"):c.getString("baseUrl")+item.getString("path"),target,item.getLong("bytes"),item.getString("sha256")),LocalDrawingModels::open,(bytes,expected)->{
-     try{progress.report((int)Math.min(85,85d*(prefix+bytes)/total),"Downloading optional model weights; inference stays offline");}catch(Exception cancelled){if(cancelled instanceof InterruptedException)Thread.currentThread().interrupt();throw new ProgressFailure(cancelled);}
-    });
+   if(item.has("derivedFrom")||!target.isFile()||target.length()!=item.getLong("bytes")||!item.getString("sha256").equals(hash(target))){
+    if(item.has("derivedFrom")){
+     LocalDrawingModelFileInstall.prepare(stage,item,(source,destination)->downloadFile(source,destination,"plus_source_"+iKey(item),progress,prefix,total),(bytes)->{try{progress.report((int)Math.min(85,85d*(prefix+Math.min(bytes,item.getLong("bytes")))/total),"Preparing verified local attention model; source artwork stays private");}catch(Exception error){if(error instanceof InterruptedException)Thread.currentThread().interrupt();throw new ProgressFailure(error);}});
+    }else downloadFile(item,target,(ID.equals(packId)?"local_model_":PLUS_ID.equals(packId)?"plus_model_":"paired_model_")+i,progress,prefix,total);
    }
    done+=item.getLong("bytes");stage.setLastModified(System.currentTimeMillis());
   }
+  File privateSources=new File(stage,".native_sources");File[] pendingSources=privateSources.listFiles();if(pendingSources!=null&&pendingSources.length>0)throw new IOException("PLUS_INSTALL_PRIVATE_SOURCES_PENDING: checkpoints are preserved, not copied into published model packs");
   JSONObject hashes=new JSONObject();for(int i=0;i<files.length();i++)hashes.put(files.getJSONObject(i).getString("path"),files.getJSONObject(i).getString("sha256"));
-  try(InputStream license=context.getAssets().open(ID.equals(packId)?"local_drawing/LICENSE-OpenRAIL-M.txt":"local_drawing/LICENSE-Paired-Models.txt");ByteArrayOutputStream bytes=new ByteArrayOutputStream()){byte[] buffer=new byte[8192];int n;while((n=license.read(buffer))!=-1){if(bytes.size()+n>64*1024)throw new IOException("Model license exceeds bound");bytes.write(buffer,0,n);}byte[] text=bytes.toByteArray();OpenPipelineArtifacts.writeAtomic(new File(stage,"MODEL_LICENSE.txt"),text,64*1024);hashes.put("MODEL_LICENSE.txt",SketchDocument.sha256(text));}
+  try(InputStream license=context.getAssets().open(ID.equals(packId)?"local_drawing/LICENSE-OpenRAIL-M.txt":PLUS_ID.equals(packId)?"local_drawing/LICENSE-Plus-Models.txt":"local_drawing/LICENSE-Paired-Models.txt");ByteArrayOutputStream bytes=new ByteArrayOutputStream()){byte[] buffer=new byte[8192];int n;while((n=license.read(buffer))!=-1){if(bytes.size()+n>64*1024)throw new IOException("Model license exceeds bound");bytes.write(buffer,0,n);}byte[] text=bytes.toByteArray();OpenPipelineArtifacts.writeAtomic(new File(stage,"MODEL_LICENSE.txt"),text,64*1024);hashes.put("MODEL_LICENSE.txt",SketchDocument.sha256(text));}
   JSONObject manifest=new JSONObject().put("id",packId).put("version","1").put("license",c.getString("license")).put("capabilities",new JSONArray().put("image.generate.neural").put("image.refine.neural")).put("category","generation").put("backend","onnxruntime-cpu").put("runtimeAdapter",packId).put("pinnedCatalogueSha256",identity()).put("files",hashes).put("sourceRepository",c.getString("sourceRepository")).put("sourceRevision",c.getString("sourceRevision")).put("hostedInference",false);
   OpenPipelineArtifacts.writeAtomic(new File(stage,"manifest.json"),manifest.toString(2).getBytes(StandardCharsets.UTF_8),64*1024);
   manager.activateRestoredDirectory(stage,"pinned-public-model-download",(n,d)->progress.report(85+n*15/100,d));return status();
+ }
+ private static String iKey(JSONObject item)throws Exception{return SketchDocument.sha256(item.getString("path").getBytes(StandardCharsets.UTF_8)).substring(0,16);}
+ private void downloadFile(JSONObject item,File target,String id,LocalDrawingEngine.Progress progress,long prefix,long total)throws Exception {
+  new ResumableTransferManager(new TransferJournal(context)).download(new ResumableTransferManager.Request(id,item.has("url")?item.getString("url"):catalogue().getString("baseUrl")+item.getString("path"),target,item.getLong("bytes"),item.getString("sha256")),LocalDrawingModels::open,(bytes,expected)->{try{progress.report((int)Math.min(85,85d*(prefix+Math.min(bytes,item.getLong("bytes")))/total),"Downloading optional model weights; inference stays offline");}catch(Exception cancelled){if(cancelled instanceof InterruptedException)Thread.currentThread().interrupt();throw new ProgressFailure(cancelled);}});
  }
  void verified()throws Exception {if(!context.getSharedPreferences("local_drawing",Context.MODE_PRIVATE).edit().putString(ID.equals(packId)?"verifiedModel":"verifiedModel_"+packId,identity()).commit())throw new IOException("Cannot retain native inference receipt");}
  long availableRamMb(){ActivityManager manager=(ActivityManager)context.getSystemService(Context.ACTIVITY_SERVICE);if(manager==null)return 0;ActivityManager.MemoryInfo info=new ActivityManager.MemoryInfo();manager.getMemoryInfo(info);return info.availMem/(1024L*1024L);}

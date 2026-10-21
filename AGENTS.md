@@ -1,3 +1,16 @@
+# Active native Plus attention conditioning — 2026-10-21
+
+Provisional4.10.8/code511 extends frozen4.10.7/code510 source76fb9a0. Read
+docs/continuity/NATIVE_PLUS_GRAPH_CONVERSION_4108.md. Explicit conditioning.adapter
+plus_face/plus selects a separately pinned optional native16-token model pack;
+omission preserves the basic provider/floors/fingerprints. Normal install runs
+bounded native source-to-derived graph conversion and retains failed checkpoints.
+Fresh focused normal-provider/install/provenance tests pass; actual numeric graph
+routes pass, old-path equivalence and real installed-model art remain pending.
+No claim of likeness, hidden-view recovery, artist layers or completed film.
+One Gradle, root only. No hosted artwork, Gallery, Worker/main/stable publication,
+signer/device/data/MCP reset. Preserve actual failures and all existing models.
+
 # Active character structure integration — 2026-10-21
 
 Root integrates contour-hole/long-hair repairs, scoped numeric persistence and

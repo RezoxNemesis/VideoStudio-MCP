@@ -21,7 +21,7 @@ public class LocalDrawingPlusLegacyAuditGraphTest {
   assertArrayEquals(expected,Files.readAllBytes(target.toPath()));assertArrayEquals(original,Files.readAllBytes(source.toPath()));List<Part> sourceParts=parts(graph),afterParts=parts(preparedGraph);assertEquals(sourceParts.size()+32,afterParts.size());for(int i=0;i<sourceParts.size();i++)assertArrayEquals("All old nodes,weights,17inputs and noise output stay byte-identical",sourceParts.get(i).raw,afterParts.get(i).raw);assertEquals(17,sourceParts.stream().filter(p->p.tag==11).count());assertEquals(33,afterParts.stream().filter(p->p.tag==12).count());
  }
  static String output(int i,boolean key){return"/unet/"+LAYERS[i]+"/transformer_blocks.0/attn2/to_"+(key?"k":"v")+"_ip.0/MatMul_output_0";}
- private static byte[] value(String name,int inner)throws Exception {ByteArrayOutputStream dims=new ByteArrayOutputStream();for(long n:new long[]{1,4,inner})dims.write(field(1,number(1,n)));return join(text(1,name),field(2,field(1,join(number(1,10),field(2,dims.toByteArray())))));}
+ private static byte[] value(String name,int inner)throws Exception {ByteArrayOutputStream dims=new ByteArrayOutputStream();for(long n:new long[]{1,1,4,inner})dims.write(field(1,number(1,n)));return join(text(1,name),field(2,field(1,join(number(1,10),field(2,dims.toByteArray())))));}
  private static byte[] field(int tag,byte[] data)throws Exception{return join(varint(((long)tag<<3)|2),varint(data.length),data);}
  private static byte[] text(int tag,String text)throws Exception{return field(tag,text.getBytes(StandardCharsets.UTF_8));}
  private static byte[] number(int tag,long n)throws Exception{return join(varint((long)tag<<3),varint(n));}
