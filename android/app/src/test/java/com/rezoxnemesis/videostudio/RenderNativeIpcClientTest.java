@@ -6,7 +6,8 @@ import static org.junit.Assert.*;
 public class RenderNativeIpcClientTest {
     @Test public void supportsAllNativeRenderActions() {
         String[] actions = {
-            "engine.status", "gpu.info", "projects.list", "projects.inspect",
+            "engine.status", "agent.diagnostics", "agent.capabilities",
+            "gpu.info", "projects.list", "projects.inspect",
             "blender.scene.summary", "blender.object.add_cube",
             "blender.scene.set_frame", "blender.object.set_transform",
             "blender.object.keyframe", "blender.project.save_copy",
@@ -14,7 +15,8 @@ public class RenderNativeIpcClientTest {
             "blender.object.add_light", "blender.object.modifier_add",
             "blender.material.assign", "blender.scene.render_settings",
             "blender.scene.render_still", "blender.project.restore_scene",
-            "blender.scene.create_lively_project", "blender.scene.populate_lively",
+            "blender.scene.create_lively_project", "blender.scene.batch_assembly",
+            "blender.scene.visual_audit", "blender.scene.populate_lively",
             "blender.scene.render_video"
         };
         for (String name : actions)
@@ -29,6 +31,7 @@ public class RenderNativeIpcClientTest {
         assertEquals(1_980_000L,RenderNativeIpcClient.timeoutMillis("render.blender.scene.render_video"));
         assertEquals(150_000L,RenderNativeIpcClient.timeoutMillis("render.blender.scene.populate_lively"));
         assertEquals(150_000L,RenderNativeIpcClient.timeoutMillis("render.blender.scene.create_lively_project"));
+        assertEquals(150_000L,RenderNativeIpcClient.timeoutMillis("render.blender.scene.batch_assembly"));
         assertEquals(120_000L,RenderNativeIpcClient.timeoutMillis("render.blender.project.restore_scene"));
         assertEquals(40_000L,RenderNativeIpcClient.timeoutMillis("render.engine.status"));
     }
