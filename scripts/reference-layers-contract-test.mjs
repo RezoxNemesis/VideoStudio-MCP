@@ -162,3 +162,34 @@ test('native and MCP referenceLayers capability metadata match exactly',()=>{
  class JSONArray{constructor(values){return values;}}
  assert.deepEqual(JSON.parse(JSON.stringify(vm.runInNewContext('('+expression.replace(/new int\[\]\{([^}]*)\}/g,'[$1]')+')',{JSONObject,JSONArray}))),contract.REFERENCE_LAYERS_CAPABILITIES);
 });
+
+test('explicit source-coordinate cutout pivots are strict and keep older omitted floors',()=>{
+ const placed={...request,masks:[{...mask,pivot:[.25,.5]}]};
+ for(const name of names){
+  assert.deepEqual(contract.nativeStudioParameters(name,placed),placed);
+  assert.throws(()=>contract.requireStudioVersion({appVersion:'4.10.5'},name,placed),/4\.10\.6/);
+  assert.doesNotThrow(()=>contract.requireStudioVersion({appVersion:'4.10.6'},name,placed));
+  assert.deepEqual(contract.nativeStudioParameters(name,request),request);
+  assert.doesNotThrow(()=>contract.requireStudioVersion({appVersion:'4.8.5'},name,request));
+ }
+ for(const pivot of [null,[.5],['.5',.5],[-.01,.5],[1.01,.5],[.5,.5,0]])assert.throws(()=>contract.nativeStudioParameters(action,{...request,masks:[{...mask,pivot}]}));
+});
+
+
+test('explicit shared joint pixels preserve strict booleans and upgrade every inline provenance path',()=>{
+ for(const allowPartOverlap of [false,true]){
+  for(const name of names){const args={...request,allowPartOverlap};assert.deepEqual(contract.nativeStudioParameters(name,args),args);assert.throws(()=>contract.requireStudioVersion({appVersion:'4.10.5'},name,args),/4\.10\.6/);assert.doesNotThrow(()=>contract.requireStudioVersion({appVersion:'4.10.6'},name,args));}
+  const full={...image({...provenance,allowPartOverlap}),frame:0,exposure:1,color:'#FF000000',width:.001,fill:true,keys:[],transform:{x:0,y:0,scaleX:1,scaleY:1,rotation:0,anchorX:.5,anchorY:.5,opacity:1}};
+  for(const operations of [[{type:'add_object',layerId:'parts',object:image({...provenance,allowPartOverlap})}],[{type:'add_layer',layer:{id:'parts',objects:[full]}}]]){
+   const plan={bookId:'book',operationId:'story',name:'Story',width:720,height:1280,fps:24,shots:[{shotId:'shot',frameCount:96,operations}]};
+   for(const [name,args] of [['sketch_edit',{...edit(image(provenance)),operations}],['sketch_story_create',plan],['sketch_story_preview',{plan,shotId:'shot',frame:0}]])for(const prefix of ['','studio_']){assert.deepEqual(contract.nativeStudioParameters(prefix+name,args),args);assert.throws(()=>contract.requireStudioVersion({appVersion:'4.10.5'},prefix+name,args),/4\.10\.6/);assert.doesNotThrow(()=>contract.requireStudioVersion({appVersion:'4.10.6'},prefix+name,args));}
+  }
+ }
+ for(const value of [null,0,1,'true',{},[]]){assert.throws(()=>contract.nativeStudioParameters(action,{...request,allowPartOverlap:value}));assert.throws(()=>contract.nativeStudioParameters('sketch_edit',edit(image({...provenance,allowPartOverlap:value}))));}
+});
+
+
+test('MCP forwards bounded retained native previews through the image channel',async()=>{
+ const context=runtime(),storage=memoryStorage(),relay=new context.VideoStudioState({storage},{}),owner='q'.repeat(43),device='parts-retained-preview';await relay.appRegister(device,owner,{appVersion:'4.10.6',protocolVersion:3,protocolMin:3,protocolMax:3,permissionMode:'everything'});const server=context.nativeTools({VIDEO_STATE:{getByName:()=>relay}},owner,3),tool=server.tools.get('app_'+previewAction);assert.match(tool.definition.description,/retainedPreviewImage/);const args={...request,masks:[{...mask,pivot:[.25,.5]}],allowPartOverlap:true};const queued=JSON.parse((await tool.handler(args)).content[0].text);assert.equal(queued.queued,true);
+ const overlay=Buffer.from('synthetic overlay transport').toString('base64'),retained=Buffer.from('synthetic retained transparency transport').toString('base64');await relay.appCompleteV3(device,owner,queued.commandId,{ok:true,sourceModified:false,filesPublished:false,sourceRevision:1,acceptedMasks:args.masks,sharedSourcePixelCount:42,sketchPreviewImage:{mimeType:'image/png',base64:overlay},retainedPreviewImage:{mimeType:'image/png',base64:retained}},'completed');const result=await server.tools.get('app_get_command_result').handler({commandId:queued.commandId});assert.deepEqual(JSON.parse(JSON.stringify(result.content.filter(block=>block.type==='image'))),[{type:'image',data:overlay,mimeType:'image/png'},{type:'image',data:retained,mimeType:'image/png'}]);
+});

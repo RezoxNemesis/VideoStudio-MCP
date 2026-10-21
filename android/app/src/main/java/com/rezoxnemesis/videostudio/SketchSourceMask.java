@@ -44,17 +44,20 @@ final class SketchSourceMask {
             if(i==0)path.moveTo(x,y);else path.lineTo(x,y);
         }path.close();}return path;
     }
-    static String hash(int width,int height,JSONArray rings,boolean complement)throws Exception{return SketchDocument.sha256(SketchDocument.canonical(new JSONObject().put("version",1).put("width",width).put("height",height).put("rings",new JSONArray(rings.toString())).put("complement",complement)).getBytes(StandardCharsets.UTF_8));}
+    static String hash(int width,int height,JSONArray rings,boolean complement)throws Exception{return hash(width,height,rings,complement,null);}
+    private static String hash(int width,int height,JSONArray rings,boolean complement,Boolean overlap)throws Exception{JSONObject identity=new JSONObject().put("version",1).put("width",width).put("height",height).put("rings",new JSONArray(rings.toString())).put("complement",complement);if(overlap!=null)identity.put("allowPartOverlap",overlap);return SketchDocument.sha256(SketchDocument.canonical(identity).getBytes(StandardCharsets.UTF_8));}
+
     static String hashField(JSONObject o,String key)throws Exception{Object v=o.get(key);if(!(v instanceof String)||!((String)v).matches("[a-f0-9]{64}"))throw SketchDocument.bad("Invalid "+key);return(String)v;}
-    static JSONObject metadata(JSONObject args,String maskId,JSONArray rings,boolean complement,int w,int h)throws Exception{return new JSONObject().put("version",1).put("method","source_assisted").put("sourceReferenceSha256",args.getString("expectedReferenceSha256")).put("sourceSha256",args.getString("expectedSourceSha256")).put("operationId",args.getString("operationId")).put("maskId",maskId).put("complement",complement).put("rings",new JSONArray(rings.toString())).put("maskSha256",hash(w,h,rings,complement));}
+    static JSONObject metadata(JSONObject args,String maskId,JSONArray rings,boolean complement,int w,int h)throws Exception{Boolean overlap=args.has("allowPartOverlap")?args.getBoolean("allowPartOverlap"):null;JSONObject metadata=new JSONObject().put("version",1).put("method","source_assisted").put("sourceReferenceSha256",args.getString("expectedReferenceSha256")).put("sourceSha256",args.getString("expectedSourceSha256")).put("operationId",args.getString("operationId")).put("maskId",maskId).put("complement",complement).put("rings",new JSONArray(rings.toString())).put("maskSha256",hash(w,h,rings,complement,overlap));if(overlap!=null)metadata.put("allowPartOverlap",overlap);return metadata;}
     static void validate(JSONObject ref)throws Exception{
-        JSONObject m=ref.getJSONObject("sourceMask");SketchDocument.fields(m,"version,method,sourceReferenceSha256,sourceSha256,operationId,maskId,complement,rings,maskSha256");
+        JSONObject m=ref.getJSONObject("sourceMask");SketchDocument.fields(m,"version,method,sourceReferenceSha256,sourceSha256,operationId,maskId,complement,rings,maskSha256,allowPartOverlap");
         SketchDocument.integer(m,"version",1,1);if(!"source_assisted".equals(m.getString("method")))throw SketchDocument.bad("Source cutouts must retain source_assisted provenance");
         hashField(m,"sourceReferenceSha256");String source=hashField(m,"sourceSha256");SketchDocument.id(m,"operationId");SketchDocument.id(m,"maskId");SketchDocument.bool(m,"complement");
+        if(m.has("allowPartOverlap"))SketchDocument.bool(m,"allowPartOverlap");
         JSONArray rr=m.getJSONArray("rings");boolean complement=m.getBoolean("complement");
         // A complement aggregates independent part rings, which may share edges.
         if(complement){if(rr.length()<1||rr.length()>64)throw SketchDocument.bad("Complement rings exceed their budget");for(int i=0;i<rr.length();i++)rings(new JSONArray().put(rr.getJSONArray(i)),1);}else rings(rr,8);
         if(!source.equals(ref.optString("sourceSha256")))throw SketchDocument.bad("Cutout source hash changed");
-        if(!hash(ref.getInt("width"),ref.getInt("height"),rr,complement).equals(hashField(m,"maskSha256")))throw SketchDocument.bad("Source mask geometry hash changed");
+        if(!hash(ref.getInt("width"),ref.getInt("height"),rr,complement,m.has("allowPartOverlap")?m.getBoolean("allowPartOverlap"):null).equals(hashField(m,"maskSha256")))throw SketchDocument.bad("Source mask geometry hash changed");
     }
 }

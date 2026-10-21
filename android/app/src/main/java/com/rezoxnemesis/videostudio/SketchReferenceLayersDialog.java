@@ -38,7 +38,7 @@ final class SketchReferenceLayersDialog implements AutoCloseable {
         String backgroundLayer=id("background"),backgroundObject=id("background_image"),operationId=id("reference_parts");
         int selected,editing=-1;
         JSONArray pendingPoints=new JSONArray();
-        boolean background,hideSource=true;
+        boolean background,hideSource=true,allowPartOverlap;
         boolean snap;
         int radius;
         JSONObject pendingRequest;
@@ -57,13 +57,16 @@ final class SketchReferenceLayersDialog implements AutoCloseable {
     private final LinearLayout form;
     private final SketchReferenceMaskView maskView;
     private final Spinner sources,parts,rings;
-    private final EditText name;
-    private final CheckBox background,hideSource,snap,pan;
+    private final EditText name,pivotX,pivotY;
+    private final CheckBox pivotTap;
+    private final Button setPivot,clearPivot;
+    private boolean pivotPending;
+    private final CheckBox background,hideSource,snap,pan,allowPartOverlap;
     private final SeekBar snapRadius;
     private final TextView radiusLabel;
     private final TextView status;
     private final Button accept,newPart,newHole,create,preview,undo,clear,removePart,removeRing;
-    private final ImageView previewImage;
+    private final SketchPaintMeshViewport previewImage;
     private final List<JSONObject> sourceObjects=new ArrayList<>();
     private final Map<String,Draft> drafts=new LinkedHashMap<>();
     private AlertDialog dialog;
@@ -104,6 +107,13 @@ final class SketchReferenceLayersDialog implements AutoCloseable {
         pan=new CheckBox(activity);pan.setText("Pan image");pan.setContentDescription("Pan image");form.addView(pan);pan.setOnCheckedChangeListener((b,v)->maskView.setPanMode(v));
         text("Tap 3–64 points around a part, then Accept ring. Drag a draft point to adjust it. Zoom with the buttons or pinch; use Pan image or two fingers to move the view. Add holes inside the outline. Accepted parts have coloured outlines; Preview parts checks the boundaries before creation.");
         parts=spinner("Accepted parts");name=input("Part name");rings=spinner("Ring to edit");
+        text("Optional part pivot: use the neck, wrist, elbow or other visible joint. Coordinates address the full working source, not the mask bounding box. Omission preserves the canvas-center pivot.");
+        pivotX=input("Pivot X (source pixels)");pivotY=input("Pivot Y (source pixels)");
+        for(EditText coordinate:new EditText[]{pivotX,pivotY})coordinate.setInputType(android.text.InputType.TYPE_CLASS_NUMBER|android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL);
+        setPivot=button("Set part pivot",this::setNumericPivot);clearPivot=button("Use canvas center pivot",this::clearPivot);
+        pivotTap=new CheckBox(activity);pivotTap.setText("Tap image to set pivot");pivotTap.setContentDescription("Tap image to set pivot");form.addView(pivotTap);
+        pivotTap.setOnCheckedChangeListener((b,value)->maskView.setPointPicker(value?point->{try{setPivot(point[0],point[1]);}catch(Exception error){message(error);}}:null));
+
         status=text(sourceObjects.isEmpty()?"Import an owned reference image into Sketch first.":"Loading owned reference…");status.setContentDescription("Reference parts status");
         undo=button("Undo point",()->maskView.undoPoint());clear=button("Clear ring",()->{draft.editing=-1;maskView.clearRing();refreshRings();});
         accept=button("Accept ring",this::acceptRing);
@@ -111,6 +121,7 @@ final class SketchReferenceLayersDialog implements AutoCloseable {
         removeRing=button("Remove ring",this::removeRing);
         newPart=button("New part",this::newPart);removePart=button("Remove part",this::removePart);
         background=new CheckBox(activity);background.setText("Keep unselected pixels as background");background.setContentDescription("Keep unselected pixels as background");form.addView(background);
+        allowPartOverlap=new CheckBox(activity);allowPartOverlap.setText("Allow shared pixels at joints");allowPartOverlap.setContentDescription("Allow shared pixels at joints");form.addView(allowPartOverlap);text("Enable only for deliberate source-pixel padding around joints. Shared translucent pixels can darken when stacked; hidden artwork is not generated.");
         hideSource=new CheckBox(activity);hideSource.setText("Hide source image");hideSource.setContentDescription("Hide source image");hideSource.setChecked(true);form.addView(hideSource);
         snap=new CheckBox(activity);snap.setText("Snap to nearby edges");snap.setContentDescription("Snap to nearby edges");form.addView(snap);
         radiusLabel=text("Edge radius: 0 source pixels (exact coordinates)");
@@ -118,7 +129,11 @@ final class SketchReferenceLayersDialog implements AutoCloseable {
         text("Optional edge assistance follows nearby source-pixel contrast, not object recognition. Radius 0 keeps exact points. Inspect the native preview before creation; saved parts retain full source precision.");
         text("Moving parts can uncover transparent gaps; paint missing background in Sketch Studio.");
         preview=button("Preview parts",this::preview);
-        previewImage=new ImageView(activity);previewImage.setContentDescription("Native parts preview");previewImage.setAdjustViewBounds(true);previewImage.setScaleType(ImageView.ScaleType.FIT_CENTER);previewImage.setVisibility(View.GONE);form.addView(previewImage,new LinearLayout.LayoutParams(-1,-2));
+        previewImage=new SketchPaintMeshViewport(activity);previewImage.setContentDescription("Native parts preview");previewImage.setVisibility(View.GONE);form.addView(previewImage,new LinearLayout.LayoutParams(-1,dp(280)));
+        Spinner backdrop=spinner("Retained preview background");backdrop.setAdapter(adapter(java.util.Arrays.asList("Checkerboard","Dark","Light")));backdrop.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener(){public void onNothingSelected(AdapterView<?> p){}public void onItemSelected(AdapterView<?> p,View v,int at,long id){previewImage.setBackdrop(at);}});
+        LinearLayout previewNavigation=new LinearLayout(activity);form.addView(previewNavigation);previewNavigation.addView(navigationButton("Zoom retained preview in",previewImage::zoomIn));previewNavigation.addView(navigationButton("Zoom retained preview out",previewImage::zoomOut));previewNavigation.addView(navigationButton("Fit retained preview",previewImage::fit));
+        CheckBox previewPan=new CheckBox(activity);previewPan.setText("Pan retained preview");previewPan.setContentDescription("Pan retained preview");form.addView(previewPan);previewPan.setOnCheckedChangeListener((b,value)->previewImage.setPanMode(value));
+
         create=button("Create layers",this::apply);
         sources.setOnItemSelectedListener(selected(()->selectSource(sources.getSelectedItemPosition())));
         parts.setOnItemSelectedListener(selected(()->selectPart(parts.getSelectedItemPosition())));
@@ -128,7 +143,10 @@ final class SketchReferenceLayersDialog implements AutoCloseable {
             public void onTextChanged(CharSequence s,int start,int before,int count){if(!binding&&draft!=null){try{currentPart().put("name",s.toString());changed();}catch(Exception error){message(error);}}}
             public void afterTextChanged(Editable e){}
         });
+        TextWatcher pivotEdited=new TextWatcher(){public void beforeTextChanged(CharSequence s,int start,int count,int after){}public void afterTextChanged(Editable e){}public void onTextChanged(CharSequence s,int start,int before,int count){if(binding||draft==null)return;pivotPending=true;changed();status.setText("Set or clear the edited pivot coordinates before previewing parts.");}};
+        pivotX.addTextChangedListener(pivotEdited);pivotY.addTextChangedListener(pivotEdited);
         background.setOnCheckedChangeListener((b,value)->{if(!binding&&draft!=null){draft.background=value;changed();}});
+        allowPartOverlap.setOnCheckedChangeListener((b,value)->{if(!binding&&draft!=null){draft.allowPartOverlap=value;changed();}});
         hideSource.setOnCheckedChangeListener((b,value)->{if(!binding&&draft!=null){draft.hideSource=value;changed();}});
         snap.setOnCheckedChangeListener((b,value)->{if(!binding&&draft!=null){draft.snap=value;changed();}});
         snapRadius.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener(){
@@ -156,7 +174,7 @@ final class SketchReferenceLayersDialog implements AutoCloseable {
         draftWarning="";draft=drafts.get(sourceId);if(draft==null){draft=restoreDraft();drafts.put(sourceId,draft);}
         final String savedWarning=draftWarning;
         refreshParts();adoptPart();binding=true;
-        try{background.setChecked(draft.background);hideSource.setChecked(draft.hideSource);snap.setChecked(draft.snap);snapRadius.setProgress(draft.radius);}finally{binding=false;}
+        try{background.setChecked(draft.background);allowPartOverlap.setChecked(draft.allowPartOverlap);hideSource.setChecked(draft.hideSource);snap.setChecked(draft.snap);snapRadius.setProgress(draft.radius);}finally{binding=false;}
         draft.previewFingerprint=null;draft.previewMasks=null;
         refreshOutlines();
         status.setText("Loading and validating the owned source off the UI thread…");sync();
@@ -204,13 +222,26 @@ final class SketchReferenceLayersDialog implements AutoCloseable {
     }
     private void selectPart(int index)throws Exception {
         if(draft==null||index<0||index>=draft.parts.size()||index==draft.selected)return;
-        if(maskView.pointCount()>0){status.setText("Accept or clear this draft ring before selecting another part.");refreshParts();return;}
+        if(maskView.pointCount()>0||pivotPending){status.setText("Accept/clear the draft ring and set/clear edited pivot coordinates before selecting another part.");refreshParts();return;}
         draft.selected=index;draft.editing=-1;draft.pendingPoints=new JSONArray();adoptPart();
         saveDraft();
     }
     private void adoptPart()throws Exception {
-        binding=true;try{name.setText(currentPart().getString("name"));maskView.setRing(draft.pendingPoints);refreshRings();refreshOutlines();}finally{binding=false;}sync();
+        binding=true;try{name.setText(currentPart().getString("name"));showPivot();maskView.setRing(draft.pendingPoints);refreshRings();refreshOutlines();}finally{binding=false;}sync();
     }
+    private void showPivot()throws Exception {
+        JSONArray pivot=currentPart().optJSONArray("pivot");JSONObject ref=sourceObjects.get(sourceIndex).getJSONObject("reference");
+        pivotX.setText(pivot==null?"":coordinate(pivot.getDouble(0)*ref.getInt("width")));pivotY.setText(pivot==null?"":coordinate(pivot.getDouble(1)*ref.getInt("height")));pivotPending=false;
+    }
+    private static String coordinate(double value){return value==Math.rint(value)?String.valueOf((long)value):String.valueOf(value);}
+    private void setNumericPivot()throws Exception {
+        JSONObject ref=sourceObjects.get(sourceIndex).getJSONObject("reference");setPivot(Double.parseDouble(pivotX.getText().toString())/ref.getInt("width"),Double.parseDouble(pivotY.getText().toString())/ref.getInt("height"));
+    }
+    private void setPivot(double x,double y)throws Exception {
+        JSONObject candidate=new JSONObject().put("pivot",new JSONArray().put(x).put(y));SketchReferenceLayers.pivot(candidate);currentPart().put("pivot",candidate.getJSONArray("pivot"));
+        boolean was=binding;binding=true;try{showPivot();}finally{binding=was;}changed();status.setText("Part pivot saved in full source coordinates. Preview again before creation.");
+    }
+    private void clearPivot()throws Exception {currentPart().remove("pivot");boolean was=binding;binding=true;try{showPivot();}finally{binding=was;}changed();}
     private void refreshParts()throws Exception {
         boolean was=binding;binding=true;try{
             List<String> labels=new ArrayList<>();for(JSONObject p:draft.parts)labels.add(p.getString("name")+" · "+p.getJSONArray("rings").length()+" rings");
@@ -255,7 +286,7 @@ final class SketchReferenceLayersDialog implements AutoCloseable {
     }
     private JSONObject request()throws Exception {
         if(draft.pendingRequest!=null)return SketchDocument.copy(draft.pendingRequest);
-        if(maskView.pointCount()>0)throw SketchDocument.bad("Accept or clear the draft ring before creating parts");
+        if(maskView.pointCount()>0||pivotPending)throw SketchDocument.bad("Accept/clear the draft ring and set/clear edited pivot coordinates before creating parts");
         JSONArray masks=new JSONArray();for(JSONObject p:draft.parts){if(p.getJSONArray("rings").length()==0)throw SketchDocument.bad("Every part needs an accepted outer ring");masks.put(SketchDocument.copy(p));}
         JSONObject ref=sourceObjects.get(sourceIndex).getJSONObject("reference");
         JSONObject request=new JSONObject().put("sketchId",opened.getString("id")).put("expectedRevision",opened.getLong("revision")).put("operationId",draft.operationId)
@@ -263,6 +294,7 @@ final class SketchReferenceLayersDialog implements AutoCloseable {
             .put("frame",frame).put("exposure",opened.getInt("frameCount")-frame).put("hideSource",draft.hideSource).put("masks",masks);
         if(draft.background)request.put("background",new JSONObject().put("layerId",draft.backgroundLayer).put("objectId",draft.backgroundObject).put("name","Unselected background"));
         if(draft.snap)request.put("edgeSnapRadius",draft.radius);
+        if(draft.allowPartOverlap)request.put("allowPartOverlap",true);
         draft.pendingRequest=SketchDocument.copy(request);return request;
     }
     private static String fingerprint(JSONObject request)throws Exception {return SketchDocument.sha256(SketchDocument.canonical(request).getBytes(StandardCharsets.UTF_8));}
@@ -270,7 +302,7 @@ final class SketchReferenceLayersDialog implements AutoCloseable {
         if(draft==null)return;draft.operationId=id("reference_parts");draft.pendingRequest=null;draft.previewFingerprint=null;draft.previewMasks=null;draft.dirty=true;clearPreviewImage();
         try{refreshOutlines();}catch(Exception error){message(error);}sync();saveDraft();
     }
-    private void clearPreviewImage(){previewImage.setImageDrawable(null);previewImage.setVisibility(View.GONE);if(previewBitmap!=null&&!previewBitmap.isRecycled())previewBitmap.recycle();previewBitmap=null;}
+    private void clearPreviewImage(){previewImage.setBitmap(null);previewImage.setVisibility(View.GONE);if(previewBitmap!=null&&!previewBitmap.isRecycled())previewBitmap.recycle();previewBitmap=null;}
     private void preview()throws Exception {
         final JSONObject request=request();final String intent=fingerprint(request);final int generation=imageGeneration;
         draft.previewFingerprint=null;draft.previewMasks=null;clearPreviewImage();previewing=true;sync();status.setText("Checking masks and rendering the native source overlay…");
@@ -283,19 +315,20 @@ final class SketchReferenceLayersDialog implements AutoCloseable {
                     throw SketchDocument.bad("Preview source no longer matches this draft. Keep the draft and reopen the current source before creating layers.");
                 JSONArray accepted=reply.getJSONArray("acceptedMasks");if(accepted.length()!=request.getJSONArray("masks").length())throw SketchDocument.bad("Native preview returned a different part count");
                 for(int i=0;i<accepted.length();i++)if(!request.getJSONArray("masks").getJSONObject(i).getString("maskId").equals(accepted.getJSONObject(i).getString("maskId")))throw SketchDocument.bad("Native preview returned different part identities");
-                JSONObject encoded=reply.getJSONObject("sketchPreviewImage");String mime=encoded.getString("mimeType");
+                boolean retained=reply.has("retainedPreviewImage");JSONObject encoded=reply.getJSONObject(retained?"retainedPreviewImage":"sketchPreviewImage");String mime=encoded.getString("mimeType");
+                if(retained&&!"image/png".equals(mime))throw SketchDocument.bad("Retained artwork preview must be a transparent PNG");
                 if(!"image/png".equals(mime)&&!"image/jpeg".equals(mime))throw SketchDocument.bad("Unsupported native preview image format");
-                String base64=encoded.getString("base64");if(base64.length()>12*1024*1024)throw SketchDocument.bad("Native preview exceeds the image budget");
-                byte[] bytes=Base64.decode(base64,Base64.DEFAULT);if(bytes.length>8*1024*1024||!SketchDocument.sha256(bytes).equals(encoded.getString("sha256")))throw SketchDocument.bad("Native preview image hash changed");
+                String base64=encoded.getString("base64");if(base64.length()>(retained?1400*1024:12*1024*1024))throw SketchDocument.bad("Native preview exceeds the image budget");
+                byte[] bytes=Base64.decode(base64,Base64.DEFAULT);if(bytes.length>(retained?1024*1024:8*1024*1024)||retained&&encoded.has("bytes")&&bytes.length!=encoded.getInt("bytes")||!SketchDocument.sha256(bytes).equals(encoded.getString("sha256")))throw SketchDocument.bad("Native preview image hash changed");
                 BitmapFactory.Options bounds=new BitmapFactory.Options();bounds.inJustDecodeBounds=true;BitmapFactory.decodeByteArray(bytes,0,bytes.length,bounds);
-                if(bounds.outWidth<1||bounds.outHeight<1||bounds.outWidth>2048||bounds.outHeight>2048||bounds.outWidth!=encoded.getInt("width")||bounds.outHeight!=encoded.getInt("height"))throw SketchDocument.bad("Native preview dimensions rejected");
+                if(bounds.outWidth<1||bounds.outHeight<1||bounds.outWidth>(retained?360:2048)||bounds.outHeight>(retained?360:2048)||bounds.outWidth!=encoded.getInt("width")||bounds.outHeight!=encoded.getInt("height"))throw SketchDocument.bad("Native preview dimensions rejected");
                 image=BitmapFactory.decodeByteArray(bytes,0,bytes.length);if(image==null)throw SketchDocument.bad("Native preview could not be decoded");
                 final Bitmap done=image;activity.runOnUiThread(()->{
                     previewing=false;if(unavailable()||generation!=imageGeneration){done.recycle();return;}
                     try{
                         if(!intent.equals(fingerprint(request()))){done.recycle();status.setText("Draft changed; Preview parts again.");sync();return;}
-                        draft.previewFingerprint=intent;draft.previewMasks=new JSONArray(accepted.toString());previewBitmap=done;previewImage.setImageBitmap(done);previewImage.setVisibility(View.VISIBLE);refreshOutlines();
-                        status.setText("Native preview accepted · "+reply.optInt("edgeAdjustedPointCount")+" points adjusted near source edges. Inspect the overlay, then Create layers. Source unchanged.");sync();
+                        draft.previewFingerprint=intent;draft.previewMasks=new JSONArray(accepted.toString());previewBitmap=done;previewImage.setBitmap(done);previewImage.fit();previewImage.setVisibility(View.VISIBLE);refreshOutlines();
+                        status.setText("Native preview accepted · "+reply.optInt("edgeAdjustedPointCount")+" points adjusted near source edges. Inspect retained artwork over light/dark backdrops, then Create layers. Source unchanged.");sync();
                     }catch(Exception error){done.recycle();message(error);sync();}
                 });
             }catch(Exception|OutOfMemoryError error){if(image!=null)image.recycle();activity.runOnUiThread(()->{previewing=false;if(unavailable()||generation!=imageGeneration)return;message(error);sync();});}
@@ -328,12 +361,12 @@ final class SketchReferenceLayersDialog implements AutoCloseable {
     private void sync(){
         boolean edit=!closed&&!applying&&!previewing&&draft!=null&&ready;
         sources.setEnabled(!closed&&!applying&&!previewing&&!sourceObjects.isEmpty());
-        maskView.setEnabled(edit);parts.setEnabled(edit);rings.setEnabled(edit);name.setEnabled(edit);background.setEnabled(edit);hideSource.setEnabled(edit);snap.setEnabled(edit);snapRadius.setEnabled(edit&&draft.snap);pan.setEnabled(edit);
+        pivotX.setEnabled(edit);pivotY.setEnabled(edit);pivotTap.setEnabled(edit);setPivot.setEnabled(edit);clearPivot.setEnabled(edit);maskView.setEnabled(edit);parts.setEnabled(edit);rings.setEnabled(edit);name.setEnabled(edit);background.setEnabled(edit);allowPartOverlap.setEnabled(edit);hideSource.setEnabled(edit);snap.setEnabled(edit);snapRadius.setEnabled(edit&&draft.snap);pan.setEnabled(edit);
         int points=maskView.pointCount(),count=draft==null?0:currentPart().optJSONArray("rings").length();
         accept.setEnabled(edit&&points>=3&&points<=64&&!name.getText().toString().trim().isEmpty());undo.setEnabled(edit&&points>0);clear.setEnabled(edit&&points>0);
         newHole.setEnabled(edit&&points==0&&count>0&&count<8);newPart.setEnabled(edit&&points==0&&count>0&&draft.parts.size()<8);
         removePart.setEnabled(edit);removeRing.setEnabled(edit&&draft.editing>=0);
-        boolean complete=edit&&points==0; if(draft!=null)for(JSONObject p:draft.parts)complete&=p.optJSONArray("rings").length()>0;
+        boolean complete=edit&&points==0&&!pivotPending; if(draft!=null)for(JSONObject p:draft.parts)complete&=p.optJSONArray("rings").length()>0;
         preview.setEnabled(complete);boolean current=false;try{current=complete&&fingerprint(request()).equals(draft.previewFingerprint);}catch(Exception invalid){message(invalid);}create.setEnabled(current);
     }
     private void message(Throwable error){status.setText("Draft retained: "+(error.getMessage()==null?error.getClass().getSimpleName():error.getMessage()));}
@@ -365,7 +398,7 @@ final class SketchReferenceLayersDialog implements AutoCloseable {
         try{
             JSONArray masks=new JSONArray();for(JSONObject part:draft.parts)masks.put(SketchDocument.copy(part));
             JSONObject saved=new JSONObject().put("version",1).put("binding",sourceBinding()).put("masks",masks).put("selected",draft.selected).put("editing",draft.editing)
-                .put("points",draft.pendingPoints).put("background",draft.background).put("hideSource",draft.hideSource).put("snap",draft.snap).put("radius",draft.radius)
+                .put("points",draft.pendingPoints).put("allowPartOverlap",draft.allowPartOverlap).put("background",draft.background).put("hideSource",draft.hideSource).put("snap",draft.snap).put("radius",draft.radius)
                 .put("backgroundLayer",draft.backgroundLayer).put("backgroundObject",draft.backgroundObject).put("operationId",draft.operationId);
             storeDraft(draftKey(),saved.toString(),null,null);draftSaveFailed=false;
         }catch(Exception error){draftSaveFailed=true;status.setText("Draft remains in this dialog; local draft saving unavailable: "+error.getMessage());}
@@ -388,16 +421,17 @@ final class SketchReferenceLayersDialog implements AutoCloseable {
         }catch(Exception error){draftWarning="Saved draft could not be loaded: "+error.getMessage()+". Start a fresh draft; the source is unchanged.";return new Draft();}
     }
     private static Draft decodeDraft(JSONObject saved)throws Exception {
-            SketchDocument.fields(saved,"version,binding,masks,selected,editing,points,background,hideSource,snap,radius,backgroundLayer,backgroundObject,operationId");
+            SketchDocument.fields(saved,"version,binding,masks,selected,editing,points,background,hideSource,snap,radius,backgroundLayer,backgroundObject,operationId,allowPartOverlap");
             if(saved.getInt("version")!=1)throw SketchDocument.bad("Unsupported stored draft version");validateBinding(saved.getJSONObject("binding"));Draft restored=new Draft();
             JSONArray masks=saved.getJSONArray("masks");if(masks.length()<1||masks.length()>8)throw SketchDocument.bad("Stored draft part count rejected");restored.parts.clear();
             for(int i=0;i<masks.length();i++){
-                JSONObject part=SketchDocument.copy(masks.getJSONObject(i));SketchDocument.fields(part,"maskId,layerId,objectId,name,rings");
+                JSONObject part=SketchDocument.copy(masks.getJSONObject(i));SketchDocument.fields(part,"maskId,layerId,objectId,name,rings,pivot");SketchReferenceLayers.pivot(part);
                 for(String field:new String[]{"maskId","layerId","objectId"})SketchDocument.id(part,field);SketchDocument.text(part,"name",160);
                 JSONArray rings=part.getJSONArray("rings");if(rings.length()>8)throw SketchDocument.bad("Stored draft ring count rejected");for(int j=0;j<rings.length();j++)validateDraftPoints(rings.getJSONArray(j),3);restored.parts.add(part);
             }
             restored.selected=(int)SketchDocument.integer(saved,"selected",0,restored.parts.size()-1);restored.editing=(int)SketchDocument.integer(saved,"editing",-1,restored.parts.get(restored.selected).getJSONArray("rings").length()-1);
             restored.pendingPoints=new JSONArray(saved.getJSONArray("points").toString());validateDraftPoints(restored.pendingPoints,0);
+            if(saved.has("allowPartOverlap"))SketchDocument.bool(saved,"allowPartOverlap");restored.allowPartOverlap=saved.optBoolean("allowPartOverlap",false);
             restored.background=saved.getBoolean("background");restored.hideSource=saved.getBoolean("hideSource");restored.snap=saved.getBoolean("snap");restored.radius=(int)SketchDocument.integer(saved,"radius",0,16);
             restored.backgroundLayer=SketchDocument.id(saved,"backgroundLayer");restored.backgroundObject=SketchDocument.id(saved,"backgroundObject");restored.operationId=SketchDocument.id(saved,"operationId");restored.dirty=true;return restored;
     }

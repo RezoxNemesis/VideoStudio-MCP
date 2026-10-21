@@ -61,6 +61,23 @@ public class SketchReferenceLayersDialogTest {
         assertNotNull(dialogType().getDeclaredMethod("show",Activity.class,JSONObject.class,int.class,Consumer.class));
         assertNotNull(dialogType().getMethod("close"));
     }
+    @Test public void pivotNumericControlsRemainPerPartAndInvalidatePreviewAcceptance()throws Exception {
+        setup();finishWork();accept("Head",.05,.05,.4);
+        text("Pivot X (source pixels)","16");text("Pivot Y (source pixels)","12");click("Set part pivot");
+        click("New part");accept("Hand",.65,.1,.2);text("Pivot X (source pixels)","48");text("Pivot Y (source pixels)","8");click("Set part pivot");
+        ((Spinner)view("Accepted parts")).setSelection(0);idle();assertEquals("16",((EditText)view("Pivot X (source pixels)")).getText().toString());
+        preview();JSONObject request=previews.get(previews.size()-1);assertEquals("[0.25,0.375]",request.getJSONArray("masks").getJSONObject(0).getJSONArray("pivot").toString());assertEquals("[0.75,0.25]",request.getJSONArray("masks").getJSONObject(1).getJSONArray("pivot").toString());assertTrue(view("Create layers").isEnabled());
+        text("Pivot X (source pixels)","17");assertFalse(view("Create layers").isEnabled());assertFalse(view("Preview parts").isEnabled());click("Set part pivot");preview();
+        click("Use canvas center pivot");preview();assertFalse(previews.get(previews.size()-1).getJSONArray("masks").getJSONObject(0).has("pivot"));
+    }
+    @Test public void pivotTappingUsesSourceCoordinatesWithoutAddingRingVertices()throws Exception {
+        setup();finishWork();accept("Head",.05,.05,.4);((CheckBox)view("Tap image to set pivot")).setChecked(true);point(.25,.375);assertEquals("16",((EditText)view("Pivot X (source pixels)")).getText().toString());assertTrue(view("Preview parts").isEnabled());preview();assertEquals("[0.25,0.375]",previews.get(0).getJSONArray("masks").getJSONObject(0).getJSONArray("pivot").toString());
+    }
+    @Test public void retainedPreviewBackdropsChangeOnlyTransparentArtworkPixels()throws Exception {
+        setup();finishWork();accept("Head",.05,.05,.4);preview();View image=view("Native parts preview");image.layout(0,0,320,320);Spinner backdrop=(Spinner)view("Retained preview background");
+        backdrop.setSelection(1);idle();Bitmap dark=Bitmap.createBitmap(320,320,Bitmap.Config.ARGB_8888);image.draw(new Canvas(dark));
+        backdrop.setSelection(2);idle();Bitmap light=Bitmap.createBitmap(320,320,Bitmap.Config.ARGB_8888);image.draw(new Canvas(light));try{assertEquals(0xff20232b,dark.getPixel(240,160));assertEquals(0xfff5f5f5,light.getPixel(240,160));assertEquals(0xff33aadd,dark.getPixel(80,160));assertEquals(dark.getPixel(80,160),light.getPixel(80,160));}finally{dark.recycle();light.recycle();}assertTrue(view("Create layers").isEnabled());
+    }
     private JSONObject source(String id)throws Exception {
         return SketchEditOps.completeObject(new JSONObject().put("id",id).put("kind","image").put("frame",0).put("exposure",24)
             .put("bounds",new JSONObject().put("x",.1).put("y",.2).put("width",.8).put("height",.6))
@@ -85,7 +102,8 @@ public class SketchReferenceLayersDialogTest {
             if("sketch_reference_layers_preview".equals(a[1])){
                 previews.add(request);Bitmap overlay=Bitmap.createBitmap(64,32,Bitmap.Config.ARGB_8888);overlay.eraseColor(0xff33aadd);
                 ByteArrayOutputStream bytes=new ByteArrayOutputStream();overlay.compress(Bitmap.CompressFormat.PNG,100,bytes);overlay.recycle();
-                return new JSONObject().put("ok",true).put("sourceModified",false).put("sourceRevision",wrongPreviewSource?99:request.getLong("expectedRevision"))
+                Bitmap retained=Bitmap.createBitmap(64,32,Bitmap.Config.ARGB_8888);android.graphics.Paint fill=new android.graphics.Paint();fill.setColor(0xff33aadd);new Canvas(retained).drawRect(0,0,32,32,fill);ByteArrayOutputStream retainedBytes=new ByteArrayOutputStream();retained.compress(Bitmap.CompressFormat.PNG,100,retainedBytes);retained.recycle();
+                return new JSONObject().put("retainedPreviewImage",new JSONObject().put("mimeType","image/png").put("base64",Base64.encodeToString(retainedBytes.toByteArray(),Base64.NO_WRAP)).put("sha256",SketchDocument.sha256(retainedBytes.toByteArray())).put("width",64).put("height",32)).put("ok",true).put("sourceModified",false).put("sourceRevision",wrongPreviewSource?99:request.getLong("expectedRevision"))
                     .put("sourceReferenceSha256",WORKING).put("sourceSha256",ORIGINAL).put("acceptedMasks",request.getJSONArray("masks"))
                     .put("edgeAdjustedPointCount",0).put("sketchPreviewImage",new JSONObject().put("mimeType","image/png")
                         .put("base64",Base64.encodeToString(bytes.toByteArray(),Base64.NO_WRAP)).put("sha256",SketchDocument.sha256(bytes.toByteArray())).put("width",64).put("height",32));

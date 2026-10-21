@@ -11,7 +11,7 @@ import java.util.*;
 /** Source-bound hard raster parts. Shared by touch and MCP, never hidden-surface generation. */
 final class SketchReferenceLayers {
     private static final long MAX_PNG=8L*1024*1024,MAX_RETAINED=128L*1024*1024;
-    private static final String FIELDS="sketchId,expectedRevision,operationId,sourceObjectId,expectedReferenceSha256,expectedSourceSha256,frame,exposure,hideSource,masks,background,edgeSnapRadius";
+    private static final String FIELDS="sketchId,expectedRevision,operationId,sourceObjectId,expectedReferenceSha256,expectedSourceSha256,frame,exposure,hideSource,masks,background,edgeSnapRadius,allowPartOverlap";
     private SketchReferenceLayers() {}
     static JSONObject requireSource(JSONObject doc,String objectId,String working,String original)throws Exception{
         JSONObject object=SketchDocument.object(doc,objectId),layer=SketchDocument.owner(doc,objectId);
@@ -29,18 +29,24 @@ final class SketchReferenceLayers {
     private static void validateArgs(JSONObject a)throws Exception{
         SketchDocument.fields(a,FIELDS);SketchDocument.id(a,"sketchId");SketchDocument.id(a,"operationId");SketchDocument.id(a,"sourceObjectId");SketchDocument.integer(a,"expectedRevision",1,Long.MAX_VALUE-2);SketchSourceMask.hashField(a,"expectedReferenceSha256");SketchSourceMask.hashField(a,"expectedSourceSha256");SketchDocument.bool(a,"hideSource");
         if(a.has("edgeSnapRadius"))SketchDocument.integer(a,"edgeSnapRadius",0,16);
+        if(a.has("allowPartOverlap"))SketchDocument.bool(a,"allowPartOverlap");
         JSONArray masks=a.getJSONArray("masks");if(masks.length()<1||masks.length()>8)throw SketchDocument.bad("Use 1..8 named parts");Set<String> masksIds=new HashSet<>(),ids=new HashSet<>();
-        for(int i=0;i<masks.length();i++){JSONObject m=masks.getJSONObject(i);SketchDocument.fields(m,"maskId,layerId,objectId,name,rings");String id=SketchDocument.id(m,"maskId");if(!masksIds.add(id))throw SketchDocument.bad("Duplicate mask ID");descriptor(m,ids);SketchSourceMask.rings(m.getJSONArray("rings"),8);}
+        for(int i=0;i<masks.length();i++){JSONObject m=masks.getJSONObject(i);SketchDocument.fields(m,"maskId,layerId,objectId,name,rings,pivot");String id=SketchDocument.id(m,"maskId");if(!masksIds.add(id))throw SketchDocument.bad("Duplicate mask ID");descriptor(m,ids);SketchSourceMask.rings(m.getJSONArray("rings"),8);pivot(m);}
         if(a.has("background")){JSONObject bg=a.getJSONObject("background");SketchDocument.fields(bg,"layerId,objectId,name");descriptor(bg,ids);}
+    }
+    static void pivot(JSONObject mask)throws Exception {
+        if(!mask.has("pivot"))return;JSONArray point=mask.getJSONArray("pivot");if(point.length()!=2)throw SketchDocument.bad("Part pivot requires [x,y] in full source coordinates");
+        for(int i=0;i<2;i++)SketchDocument.scalar(point.get(i),0,1,"Part pivot coordinate");
     }
     private static void descriptor(JSONObject m,Set<String> ids)throws Exception{for(String f:new String[]{"layerId","objectId"})if(!ids.add(SketchDocument.id(m,f)))throw SketchDocument.bad("Duplicate target layer/object ID");SketchDocument.text(m,"name",160);}
     private static void worker(){if(Looper.myLooper()==Looper.getMainLooper())throw new IllegalStateException("SKETCH_REFERENCE_LAYERS_BACKGROUND_REQUIRED");}
     static JSONObject execute(Context context,SketchProjectStore store,JSONObject args,String fingerprint)throws Exception{
         worker();validateArgs(args);String id=args.getString("sketchId"),operation=args.getString("operationId");
         JSONObject replay=store.operationReceipt(id,operation,fingerprint);if(replay!=null)return receipt(replay,args);checkCancelled();
-        JSONArray visual=new JSONArray();JSONObject result=store.mutate(id,operation,args.getLong("expectedRevision"),fingerprint,doc->{
+        JSONArray visual=new JSONArray();JSONObject details=args.has("allowPartOverlap")?new JSONObject().put("paintChanges",new JSONArray()):null;SketchProjectStore.Mutation edit=doc->{
             SketchDrawingPolicy.requireAction(store.activeDrawingSession(id),"sketch_import_reference_layers",args);
             try(Prepared p=prepare(store,doc,args)){
+                if(details!=null)details.put("referenceLayers",new JSONObject().put("sharedSourcePixelCount",p.sharedPixels));
                 // Validate the complete prospective document before any file is published.
                 JSONObject next=assemble(doc,args,p,null,null);SketchDocument.validate(next);
                 List<File> temporary=new ArrayList<>();List<JSONObject> refs=new ArrayList<>();
@@ -66,24 +72,30 @@ final class SketchReferenceLayers {
                     checkCancelled();return next;
                 }finally{for(File temp:temporary)if(temp.exists()&&!temp.delete())temp.deleteOnExit();}
             }
-        },visual);return receipt(result,args);
+        };JSONObject result=details==null?store.mutate(id,operation,args.getLong("expectedRevision"),fingerprint,edit,visual):store.mutatePrepared(id,operation,args.getLong("expectedRevision"),fingerprint,edit,visual,details);return receipt(result,args);
     }
-    private static JSONObject receipt(JSONObject r,JSONObject a)throws Exception{return r.put("sourceAssisted",true).put("partCount",a.getJSONArray("masks").length()).put("backgroundIncluded",a.has("background"));}
+    private static JSONObject receipt(JSONObject r,JSONObject a)throws Exception{if(a.has("allowPartOverlap"))r.put("sharedSourcePixelCount",r.getJSONObject("referenceLayers").getInt("sharedSourcePixelCount"));return r.put("sourceAssisted",true).put("partCount",a.getJSONArray("masks").length()).put("backgroundIncluded",a.has("background"));}
     static JSONObject preview(Context context,SketchProjectStore store,JSONObject args)throws Exception{
         worker();checkCancelled();validateArgs(args);JSONObject doc=store.get(args.getString("sketchId"));SketchProjectStore.requireRevision(doc,args.getLong("expectedRevision"));
         try(Prepared p=prepare(store,doc,args)){
             SketchDocument.validate(assemble(doc,args,p,null,null));
             previewStorage(p,store.referenceFile(doc.getString("id"),p.ref).getParentFile());checkCancelled();
             int w=p.w,h=p.h;double scale=Math.min(1,720.0/Math.max(w,h));int rw=Math.max(1,(int)Math.round(w*scale)),rh=Math.max(1,(int)Math.round(h*scale));
-            Bitmap nativeImage=Bitmap.createBitmap(p.pixels,w,h,Bitmap.Config.ARGB_8888),overlay=Bitmap.createBitmap(rw,rh,Bitmap.Config.ARGB_8888);
+            Bitmap nativeImage=Bitmap.createBitmap(w,h,Bitmap.Config.ARGB_8888),overlay=Bitmap.createBitmap(rw,rh,Bitmap.Config.ARGB_8888);
             try{
-                Canvas canvas=new Canvas(overlay);canvas.drawColor(Color.rgb(36,39,47));canvas.scale((float)scale,(float)scale);Paint paint=new Paint(Paint.ANTI_ALIAS_FLAG);paint.setFilterBitmap(true);canvas.drawBitmap(nativeImage,0,0,paint);
+                nativeImage.setPixels(p.pixels,0,w,0,0,w,h);Canvas canvas=new Canvas(overlay);canvas.drawColor(Color.rgb(36,39,47));canvas.scale((float)scale,(float)scale);Paint paint=new Paint(Paint.ANTI_ALIAS_FLAG);paint.setFilterBitmap(true);canvas.drawBitmap(nativeImage,0,0,paint);
                 int[] colors={0xff42c9ff,0xffffb847,0xffd586ff,0xff5de2a0,0xffff7797,0xffd9e257,0xffd4d9e4,0xffdba77b};
                 for(int i=0;i<p.accepted.length();i++){JSONObject m=p.accepted.getJSONObject(i);Path path=path(m.getJSONArray("rings"),w,h);paint.setStyle(Paint.Style.FILL);paint.setColor((colors[i]&0xffffff)|0x50000000);canvas.drawPath(path,paint);paint.setStyle(Paint.Style.STROKE);paint.setStrokeWidth((float)(2/scale));paint.setColor(colors[i]);canvas.drawPath(path,paint);paint.setStyle(Paint.Style.FILL);}
                 ByteArrayOutputStream out=new ByteArrayOutputStream();if(!overlay.compress(Bitmap.CompressFormat.PNG,100,out))throw new IOException("Cannot encode mask preview");byte[] png=out.toByteArray();
-                return new JSONObject().put("sourceModified",false).put("sourceRevision",doc.getLong("revision")).put("sourceReferenceSha256",args.getString("expectedReferenceSha256")).put("sourceSha256",args.getString("expectedSourceSha256")).put("acceptedMasks",p.accepted).put("edgeAdjustedPointCount",p.adjusted).put("sourceAssisted",true).put("hiddenSurfaceReconstruction",false).put("sketchPreviewImage",new JSONObject().put("mimeType","image/png").put("base64",Base64.encodeToString(png,Base64.NO_WRAP)).put("sha256",SketchDocument.sha256(png)).put("width",rw).put("height",rh));
+                return new JSONObject().put("sourceModified",false).put("sourceRevision",doc.getLong("revision")).put("sourceReferenceSha256",args.getString("expectedReferenceSha256")).put("sourceSha256",args.getString("expectedSourceSha256")).put("acceptedMasks",p.accepted).put("edgeAdjustedPointCount",p.adjusted).put("sourceAssisted",true).put("hiddenSurfaceReconstruction",false).put("sharedSourcePixelCount",p.sharedPixels).put("retainedPreviewImage",retainedPreview(nativeImage,p)).put("retainedPreviewSource","named_parts_without_background").put("sketchPreviewImage",new JSONObject().put("mimeType","image/png").put("base64",Base64.encodeToString(png,Base64.NO_WRAP)).put("sha256",SketchDocument.sha256(png)).put("width",rw).put("height",rh));
             }finally{nativeImage.recycle();overlay.recycle();}
         }
+    }
+    /** Rewrite a private preview bitmap row-by-row before bounded filtering: excluded pixels cannot bleed into retained ink. */
+    private static JSONObject retainedPreview(Bitmap image,Prepared p)throws Exception {
+        int[] row=new int[p.w];for(int y=0;y<p.h;y++){checkCancelled();Arrays.fill(row,0);int offset=y*p.w;for(int x=0;x<p.w;x++)if(p.retained.get(offset+x))row[x]=p.pixels[offset+x];image.setPixels(row,0,p.w,0,y,p.w,1);}
+        double scale=Math.min(1,360d/Math.max(p.w,p.h));int w=Math.max(1,(int)Math.round(p.w*scale)),h=Math.max(1,(int)Math.round(p.h*scale));Bitmap bounded=Bitmap.createScaledBitmap(image,w,h,true);
+        try{ByteArrayOutputStream out=new ByteArrayOutputStream();if(!bounded.compress(Bitmap.CompressFormat.PNG,100,out))throw new IOException("Cannot encode retained artwork preview");byte[] png=out.toByteArray();if(png.length>1024*1024)throw SketchDocument.bad("Retained preview exceeds 1 MiB");return new JSONObject().put("mimeType","image/png").put("base64",Base64.encodeToString(png,Base64.NO_WRAP)).put("sha256",SketchDocument.sha256(png)).put("bytes",png.length).put("width",w).put("height",h);}finally{if(bounded!=image)bounded.recycle();}
     }
     private static void checkCancelled()throws InterruptedIOException{if(Thread.currentThread().isInterrupted())throw new InterruptedIOException("Reference separation cancelled before commit; retry the operation ID to recover any earlier committed receipt");}
     /** Identical conservative retained/output/free-space admission for preview and execution. */
@@ -111,20 +123,21 @@ final class SketchReferenceLayers {
         }
     }
     private static final class Part{JSONObject descriptor;JSONArray rings;boolean complement;BitSet selected;}
-    private static final class Prepared implements AutoCloseable{JSONObject source,ref;JSONArray accepted;int w,h,adjusted;int[] pixels;List<Part> parts=new ArrayList<>();public void close(){pixels=null;for(Part p:parts)p.selected=null;}}
+    private static final class Prepared implements AutoCloseable{JSONObject source,ref;JSONArray accepted;int w,h,adjusted,sharedPixels;int[] pixels;BitSet retained;List<Part> parts=new ArrayList<>();public void close(){pixels=null;retained=null;for(Part p:parts)p.selected=null;}}
     private static Prepared prepare(SketchProjectStore store,JSONObject doc,JSONObject a)throws Exception{
         int frame=(int)SketchDocument.integer(a,"frame",0,doc.getInt("frameCount")-1);SketchDocument.integer(a,"exposure",1,doc.getInt("frameCount")-frame);
         Prepared p=new Prepared();p.source=requireSource(doc,a.getString("sourceObjectId"),a.getString("expectedReferenceSha256"),a.getString("expectedSourceSha256"));p.ref=p.source.getJSONObject("reference");
         File file=store.referenceFile(doc.getString("id"),p.ref);BitmapFactory.Options size=new BitmapFactory.Options();size.inJustDecodeBounds=true;BitmapFactory.decodeFile(file.getPath(),size);p.w=p.ref.getInt("width");p.h=p.ref.getInt("height");
         if(size.outWidth!=p.w||size.outHeight!=p.h||p.w<1||p.h<1||p.w>2048||p.h>2048)throw SketchDocument.bad("Owned source dimensions changed");
         Bitmap bitmap=BitmapFactory.decodeFile(file.getPath());if(bitmap==null)throw SketchDocument.bad("Cannot decode owned source");try{p.pixels=new int[p.w*p.h];bitmap.getPixels(p.pixels,0,p.w,0,0,p.w,p.h);}finally{bitmap.recycle();}
-        p.accepted=new JSONArray(a.getJSONArray("masks").toString());int radius=a.optInt("edgeSnapRadius",0);BitSet used=new BitSet(p.pixels.length);JSONArray allRings=new JSONArray();
+        p.accepted=new JSONArray(a.getJSONArray("masks").toString());int radius=a.optInt("edgeSnapRadius",0);BitSet used=new BitSet(p.pixels.length),shared=new BitSet();boolean allowOverlap=a.optBoolean("allowPartOverlap",false);JSONArray allRings=new JSONArray();
         for(int i=0;i<p.accepted.length();i++){
             JSONObject mask=p.accepted.getJSONObject(i);JSONArray rr=mask.getJSONArray("rings");if(radius>0)p.adjusted+=snap(rr,p.pixels,p.w,p.h,radius);SketchSourceMask.rings(rr,8);
             Part part=new Part();part.descriptor=mask;part.rings=rr;part.selected=new BitSet(p.pixels.length);Region region=new Region();region.setPath(path(rr,p.w,p.h),new Region(0,0,p.w,p.h));RegionIterator it=new RegionIterator(region);Rect rect=new Rect();boolean visible=false;
-            while(it.next(rect))for(int y=rect.top;y<rect.bottom;y++)for(int x=rect.left;x<rect.right;x++){int n=y*p.w+x;if((p.pixels[n]>>>24)==0)continue;if(used.get(n))throw SketchDocument.bad("Named parts overlap visible source pixels; refine boundaries");part.selected.set(n);used.set(n);visible=true;}
+            while(it.next(rect))for(int y=rect.top;y<rect.bottom;y++)for(int x=rect.left;x<rect.right;x++){int n=y*p.w+x;if((p.pixels[n]>>>24)==0)continue;if(used.get(n)){if(!allowOverlap)throw SketchDocument.bad("Named parts overlap visible source pixels; refine boundaries or explicitly allow shared joint pixels");shared.set(n);}part.selected.set(n);used.set(n);visible=true;}
             if(!visible)throw SketchDocument.bad("Each named part must contain visible source pixels");p.parts.add(part);for(int r=0;r<rr.length();r++)allRings.put(rr.getJSONArray(r));
         }
+        p.retained=used;p.sharedPixels=shared.cardinality();if(a.has("background")&&p.sharedPixels>0)throw SketchDocument.bad("Shared joint pixels cannot be combined with v1 background complement; omit background or refine nonoverlapping boundaries");
         if(a.has("background")){Part bg=new Part();bg.descriptor=a.getJSONObject("background");bg.rings=allRings;bg.complement=true;bg.selected=new BitSet(p.pixels.length);for(int i=0;i<p.pixels.length;i++)if(!used.get(i))bg.selected.set(i);p.parts.add(0,bg);}
         return p;
     }
@@ -151,6 +164,7 @@ final class SketchReferenceLayers {
             for(int j=0;j<p.parts.size();j++){
                 Part part=p.parts.get(j);JSONObject descriptor=part.descriptor;String hash="0".repeat(64);JSONObject ref=references==null?reference(p,part,a,hash):references.get(j);
                 JSONObject image=SketchEditOps.completeObject(new JSONObject().put("id",descriptor.getString("objectId")).put("kind","image").put("frame",a.getInt("frame")).put("exposure",a.getInt("exposure")).put("bounds",SketchDocument.copy(p.source.getJSONObject("bounds"))).put("reference",ref));
+                if(descriptor.has("pivot")){JSONArray pivot=descriptor.getJSONArray("pivot");JSONObject bounds=p.source.getJSONObject("bounds");image.getJSONObject("transform").put("anchorX",bounds.getDouble("x")+pivot.getDouble(0)*bounds.getDouble("width")).put("anchorY",bounds.getDouble("y")+pivot.getDouble(1)*bounds.getDouble("height"));}
                 JSONObject derived=new JSONObject().put("id",descriptor.getString("layerId")).put("name",descriptor.getString("name")).put("visible",true).put("locked",false).put("opacity",1).put("transform",SketchDocument.transform()).put("keys",new JSONArray()).put("objects",new JSONArray().put(image));layers.put(derived);
                 if(visual!=null)visual.put(new JSONObject().put("type","add_layer").put("layer",SketchDocument.copy(derived)));
             }

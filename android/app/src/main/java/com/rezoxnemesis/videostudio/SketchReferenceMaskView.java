@@ -26,6 +26,7 @@ final class SketchReferenceMaskView extends View {
     private JSONArray accepted=new JSONArray();
     private Runnable onChanged=()->{};
     private Consumer<String> onMessage=s->{};
+    private Consumer<double[]> pointPicker;
     private int activePart,dragVertex=-1;
     private float downX,downY;
     private boolean touching,moved;
@@ -42,6 +43,7 @@ final class SketchReferenceMaskView extends View {
     }
     void setCallbacks(Runnable changed,Consumer<String> message){onChanged=changed;onMessage=message;}
     void setBitmap(Bitmap image){bitmap=image;touching=false;resetViewport();}
+    void setPointPicker(Consumer<double[]> picker){pointPicker=picker;touching=false;}
     void setPanMode(boolean value){panMode=value;touching=false;}
     void zoomIn(){scaleAt(2,getWidth()/2f,getHeight()/2f);}
     void zoomOut(){scaleAt(.5f,getWidth()/2f,getHeight()/2f);}
@@ -104,6 +106,7 @@ final class SketchReferenceMaskView extends View {
                 JSONObject mask=accepted.getJSONObject(i);Path outline=path(mask.getJSONArray("rings"));int colour=COLOURS[i%COLOURS.length];
                 ink.setStyle(Paint.Style.FILL);ink.setColor((colour&0x00ffffff)|0x33000000);canvas.drawPath(outline,ink);
                 ink.setStyle(Paint.Style.STROKE);ink.setStrokeWidth(dp(i==activePart?3:2));ink.setColor(colour);canvas.drawPath(outline,ink);
+                if(mask.has("pivot")){JSONArray pivot=mask.getJSONArray("pivot");float x=imageBounds.left+(float)pivot.getDouble(0)*imageBounds.width(),y=imageBounds.top+(float)pivot.getDouble(1)*imageBounds.height();ink.setStyle(Paint.Style.STROKE);ink.setStrokeWidth(dp(2));canvas.drawCircle(x,y,dp(6),ink);canvas.drawLine(x-dp(10),y,x+dp(10),y,ink);canvas.drawLine(x,y-dp(10),x,y+dp(10),ink);}
             }
             if(!points.isEmpty()){
                 Path draft=new Path();for(int i=0;i<points.size();i++){
@@ -141,14 +144,15 @@ final class SketchReferenceMaskView extends View {
                 if(!touching)return false;
                 if(panMode){panX+=x-lastX;panY+=y-lastY;lastX=x;lastY=y;invalidate();return true;}
                 if(Math.hypot(x-downX,y-downY)>dp(5))moved=true;
-                if(moved&&dragVertex>=0&&inside(x,y)){
+                if(pointPicker==null&&moved&&dragVertex>=0&&inside(x,y)){
                     points.set(dragVertex,new double[]{(x-imageBounds.left)/imageBounds.width(),(y-imageBounds.top)/imageBounds.height()});invalidate();onChanged.run();
                 }
                 return true;
             case MotionEvent.ACTION_UP:
                 if(!touching)return false;touching=false;
                 if(!panMode&&!moved&&inside(x,y)){
-                    if(points.size()>=64)onMessage.accept("A ring allows at most 64 points. Undo a point or clear this ring.");
+                    if(pointPicker!=null)pointPicker.accept(new double[]{(x-imageBounds.left)/imageBounds.width(),(y-imageBounds.top)/imageBounds.height()});
+                    else if(points.size()>=64)onMessage.accept("A ring allows at most 64 points. Undo a point or clear this ring.");
                     else{points.add(new double[]{(x-imageBounds.left)/imageBounds.width(),(y-imageBounds.top)/imageBounds.height()});invalidate();onChanged.run();}
                 }
                 if(getParent()!=null)getParent().requestDisallowInterceptTouchEvent(false);performClick();return true;
