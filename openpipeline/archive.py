@@ -147,7 +147,7 @@ def validate_request(value):
     identifier(value["requestId"]); identifier(value["projectId"])
     integer(value["sourceProjectUpdatedAt"], 0, (1 << 63) - 1)
     backend, controls, sources = value["backend"], value["controls"], value["sources"]
-    if backend not in ("blender", "cogvideox", "frame_sequence", "interpolation"):
+    if backend not in ("blender", "cogvideox", "frame_sequence", "interpolation", "kokoro"):
         raise ValueError("Unsupported open-source backend")
     if not isinstance(sources, list) or len(sources) > 64:
         raise ValueError("At most 64 ordered sources are admitted")
@@ -198,6 +198,11 @@ def validate_request(value):
                 raise ValueError("V2V_ZERO_DENOISING_STEPS")
             if len(sources) != 1 or sources[0]["mime"] != "video/mp4" or not sources[0]["path"].lower().endswith(".mp4"):
                 raise ValueError("VIDEO_SOURCE_REQUIRED")
+    elif backend == "kokoro":
+        from .speech import validate_controls
+        validate_controls(controls)
+        if sources:
+            raise ValueError("Speech uses explicitly cast local voices; source assets are not admitted")
     elif backend == "blender":
         from cinematic3d.timeline import validate_timeline
         fields(controls, ("timeline",), ("conditioningFrames", "renderFrames"))

@@ -65,7 +65,7 @@ public final class NativeRigBatchAuthoring {
         for(int index=0;index<profiles.length();index++) {
             JSONObject given=profiles.optJSONObject(index);
             fields(given,"sourceAssetId","rigId","black","transparentSource","joints","outline",
-                    "swordHilt","swordTip","swordOutline","sourceSha256","expectedRigSha256");
+                    "swordHilt","swordTip","swordOutline","headOutline","sourceSha256","expectedRigSha256");
             JSONObject frozen=new JSONObject(given.toString());String assetId=id(frozen,"sourceAssetId");
             ProjectStore.Asset asset=project.asset(assetId);
             if(!registered(asset))throw new IllegalArgumentException("Source must be an existing project-owned image");

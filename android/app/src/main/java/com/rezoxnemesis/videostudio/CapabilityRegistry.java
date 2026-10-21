@@ -23,9 +23,11 @@ import java.util.Locale;
 public final class CapabilityRegistry {
     private static final int MAX_MANIFEST_BYTES = 256 * 1024;
     private final File installedModelRoot;
+    private final Context context;
     private final boolean systemTtsAvailable;
 
     public CapabilityRegistry(Context context) {
+        this.context=context.getApplicationContext();
         File workspace = new File(context.getApplicationContext().getFilesDir(), "creative_workspace");
         installedModelRoot = new File(new File(workspace, "models"), "installed");
         if (!installedModelRoot.exists()) installedModelRoot.mkdirs();
@@ -228,6 +230,10 @@ public final class CapabilityRegistry {
                 if (id.isEmpty() || version.isEmpty() || capabilities == null || capabilities.length() == 0) continue;
 
                 JSONObject provider = new JSONObject(parsed.toString());
+                if(LocalDrawingModels.ID.equals(id)){
+                    provider.put("capabilities",new JSONArray().put("image.generate.neural").put("image.refine.neural"));
+                    provider.put("backend","onnxruntime-cpu").put("estimatedRamMb",6144).put("quality","neural-draft");
+                }
                 provider.put("builtIn", false);
                 provider.put("installed", true);
                 provider.put("enabled", parsed.optBoolean("enabled", true));
@@ -274,12 +280,13 @@ public final class CapabilityRegistry {
         return provider;
     }
 
-    private static boolean installedRuntimeAvailable(JSONObject manifest) {
+    private boolean installedRuntimeAvailable(JSONObject manifest) {
         // Optional model packs are deliberately registered before they are
         // executable. A backend becomes runtimeAvailable only when the APK has
         // an audited adapter for that backend. This prevents a manifest from
         // claiming executable capability that VideoStudio cannot actually run.
-        return false;
+        if(!LocalDrawingModels.ID.equals(manifest.optString("id"))||!LocalDrawingModels.ID.equals(manifest.optString("runtimeAdapter")))return false;
+        try{return new LocalDrawingModels(context).status().getBoolean("runtimeAvailable");}catch(Exception unavailable){return false;}
     }
 
     private static boolean supports(JSONObject provider, String capability) {

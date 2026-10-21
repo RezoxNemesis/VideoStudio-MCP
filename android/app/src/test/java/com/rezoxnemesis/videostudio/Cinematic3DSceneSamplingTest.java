@@ -77,6 +77,37 @@ public class Cinematic3DSceneSamplingTest {
         assertEquals(119/60.0,value.getDouble("seconds"),1e-12);
         assertEquals(119/120.0*10,value.getDouble("clipSeconds"),1e-12);
     }
+    @Test public void explicitAuthoredCameraSurvivesBindingAndFrameSampling() throws Exception {
+        JSONObject authored=scene().put("cameraReplay","authored");
+        JSONObject bundle=new JSONObject().put("scenes",new JSONArray().put(authored));
+        JSONObject bound=sceneForShot(bundle,shot(48,0));
+        assertEquals("authored",frame(shot(48,0),18,24,bound).getString("cameraReplay"));
+        assertEquals("timeline",frame(shot(48,0),18,24,scene()).getString("cameraReplay"));
+        // An unknown camera policy must never silently replace the artist's framing.
+        for(Object bad:new Object[]{"autored",true,JSONObject.NULL,3}) {
+            try { frame(shot(48,0),0,24,scene().put("cameraReplay",bad)); fail("Invalid camera policy accepted"); }
+            catch(IllegalArgumentException expected) { }
+        }
+    }
+    @Test public void outputAspectPreservesAuthoredVerticalLensOffsetsAndDepth() {
+        for(double perspective:new double[]{0,1}) {
+            double[] projection={1.3,0,0,0, 0,2.4,0,0, .12,-.08,-1,perspective==0?-1:0, 0,0,-.1,perspective};
+            double[] resized=Cinematic3DSceneSampling.authoredProjection(projection,720,960);
+            assertEquals(3.2,resized[0],1e-12);
+            assertEquals(1.3,projection[0],0);
+            for(int i=1;i<16;i++)assertEquals(projection[i],resized[i],0);
+        }
+        try { Cinematic3DSceneSampling.authoredProjection(new double[16],720,960); fail("Degenerate lens accepted"); }
+        catch(IllegalArgumentException expected) { }
+    }
+    @Test public void soloPortraitAllowsOneWeightedSkinWhileActionAdmissionRetainsTwo() {
+        Cinematic3DSceneSampling.requireSceneSkins(1,"IDLE");
+        Cinematic3DSceneSampling.requireSceneSkins(2,"CLASH");
+        for(String action:new String[]{"IDLE","CLASH","WAVE"}) {
+            try { Cinematic3DSceneSampling.requireSceneSkins("IDLE".equals(action)?0:1,action); fail("Missing skin admitted"); }
+            catch(IllegalArgumentException expected) { }
+        }
+    }
     @Test public void declaredImpactPhaseMapsHeldActorTimeToAuthoredContact() throws Exception {
         JSONObject shot=shot(48,3),scene=scene().put("impactPhase",0.3);
         JSONObject held=frame(shot,22,24,scene);

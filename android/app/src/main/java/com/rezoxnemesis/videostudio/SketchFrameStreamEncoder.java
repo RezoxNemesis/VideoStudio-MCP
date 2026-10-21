@@ -92,7 +92,6 @@ final class SketchFrameStreamEncoder {
         Size preferred = boundedSize(sourceWidth, sourceHeight, quality);
         MediaCodecInfo[] installed = new MediaCodecList(MediaCodecList.REGULAR_CODECS).getCodecInfos();
         Selection best = null;
-        long bestPixels = -1;
         boolean bestHardware = false;
         for (MediaCodecInfo info : installed) {
             if (!info.isEncoder()) continue;
@@ -107,27 +106,18 @@ final class SketchFrameStreamEncoder {
                 }
             }
             if (!flexible || caps.getVideoCapabilities() == null) continue;
+            if (!caps.getVideoCapabilities().areSizeAndRateSupported(preferred.width, preferred.height, fps)) continue;
             boolean hardware = info.isHardwareAccelerated();
-            for (int w = preferred.width; w >= ALIGN * 16; w -= ALIGN) {
-                int h = ALIGN * (int) Math.round((double) w * sourceHeight / sourceWidth / ALIGN);
-                if (h > preferred.height || h < ALIGN * 16 ||
-                        (long) w * h > (long) preferred.width * preferred.height) continue;
-                double error = Math.abs((double) w / h - (double) sourceWidth / sourceHeight)
-                        / ((double) sourceWidth / sourceHeight);
-                if (error > .005) continue;
-                if (!caps.getVideoCapabilities().areSizeAndRateSupported(w, h, fps)) continue;
-                long pixels = (long) w * h;
-                if (best == null || hardware && !bestHardware ||
-                        hardware == bestHardware && pixels > bestPixels) {
-                    best = new Selection(info, new Size(w, h));
-                    bestHardware = hardware;
-                    bestPixels = pixels;
-                }
-                break;
+            // boundedSize owns the existing quality/alignment budget. Codec availability
+            // must not shrink that raster or exchange its detail for hardware acceleration.
+            if (best == null || hardware && !bestHardware) {
+                best = new Selection(info, preferred);
+                bestHardware = hardware;
             }
         }
         if (best == null) throw new IllegalStateException(
-                "SKETCH_CODEC_UNAVAILABLE: no Android H.264 encoder supports flexible YUV input");
+                "SKETCH_CODEC_UNAVAILABLE: no Android H.264 encoder supports exact "
+                        + preferred.width + "x" + preferred.height + " at " + fps + " FPS with flexible YUV input");
         return best;
     }
 
@@ -136,9 +126,13 @@ final class SketchFrameStreamEncoder {
         int count = meta.getInt("frameCount");
         int fps = NativeFrameClock.requireFps(meta.getInt("fps"));
         int sourceWidth = meta.getInt("width"), sourceHeight = meta.getInt("height");
-        if (count < 1 || count > SketchDocument.MAX_FRAMES)
+        if (count < 1 || count > SketchSequenceLimits.MAX_FRAMES)
             throw new IllegalArgumentException("Invalid original sketch frame count");
-        Selection chosen = selectCodec(sourceWidth, sourceHeight, prepared.quality, fps);
+        int canvasWidth=sourceWidth,canvasHeight=sourceHeight;
+        if("16:9".equals(prepared.aspect)){canvasWidth=1920;canvasHeight=1080;}
+        else if("9:16".equals(prepared.aspect)){canvasWidth=1080;canvasHeight=1920;}
+        else if("1:1".equals(prepared.aspect)){canvasWidth=1080;canvasHeight=1080;}
+        Selection chosen = selectCodec(canvasWidth, canvasHeight, prepared.quality, fps);
         int width = chosen.size.width, height = chosen.size.height;
         File output = prepared.encodingFile;
         File directory = output.getCanonicalFile().getParentFile();
@@ -150,7 +144,7 @@ final class SketchFrameStreamEncoder {
         boolean started = false, muxerStarted = false, completed = false;
         int track = -1, written = 0;
         long startedAt = SystemClock.elapsedRealtime(), lastActivity = startedAt;
-        try {
+        try (SketchExportFrameSource frames=prepared.openFrames()) {
             codec = MediaCodec.createByCodecName(chosen.codec.getName());
             MediaFormat format = MediaFormat.createVideoFormat(
                     MediaFormat.MIMETYPE_VIDEO_AVC, width, height);
@@ -173,11 +167,13 @@ final class SketchFrameStreamEncoder {
                 if (Thread.currentThread().isInterrupted())
                     throw new InterruptedException("SKETCH_CODEC_CANCELLED");
                 long now = SystemClock.elapsedRealtime();
-                if (now - startedAt > MAX_ENCODE_TIME_MS)
-                    throw new IllegalStateException("SKETCH_CODEC_TIMEOUT: encode exceeded 20 minutes");
+                if (now - startedAt > Math.max(MAX_ENCODE_TIME_MS, count * 2000L))
+                    throw new IllegalStateException("SKETCH_CODEC_TIMEOUT: sequence encoding time budget exceeded");
                 if (now - lastActivity > MAX_IDLE_TIME_MS)
                     throw new IllegalStateException("SKETCH_CODEC_STALLED: encoder made no progress for 30 seconds");
 
+                if (directory.getUsableSpace()<SketchSequenceLimits.STORAGE_RESERVE)
+                    throw new IllegalStateException("SKETCH_CODEC_STORAGE: free space exhausted; use a scene range");
                 if (!eosSubmitted) {
                     int index = codec.dequeueInputBuffer(10_000);
                     if (index >= 0) {
@@ -187,14 +183,7 @@ final class SketchFrameStreamEncoder {
                                     MediaCodec.BUFFER_FLAG_END_OF_STREAM);
                             eosSubmitted = true;
                         } else {
-                            File frame = new File(directory,
-                                    String.format(Locale.ROOT, "frame_%04d.png", queued));
-                            // Paths are restricted to the existing app-private export directory.
-                            if (!frame.getCanonicalFile().getParentFile().equals(directory)
-                                    || !frame.isFile())
-                                throw new IllegalStateException(
-                                        "SKETCH_CODEC_FRAME_MISSING: frame " + queued);
-                            Bitmap bitmap = decodeFrame(frame, width, height);
+                            Bitmap bitmap = frames.render(queued, width, height);
                             try {
                                 Image image = codec.getInputImage(index);
                                 if (image == null) throw new IllegalStateException(
@@ -300,7 +289,7 @@ final class SketchFrameStreamEncoder {
         }
     }
 
-    private static Bitmap decodeFrame(File png, int width, int height) {
+    static Bitmap decodeFrame(File png, int width, int height) {
         BitmapFactory.Options options = new BitmapFactory.Options();
         options.inJustDecodeBounds = true;
         BitmapFactory.decodeFile(png.getAbsolutePath(), options);
@@ -316,9 +305,7 @@ final class SketchFrameStreamEncoder {
         if (decoded == null) throw new IllegalStateException(
                 "SKETCH_CODEC_PNG: cannot decode frame");
         if (decoded.getWidth() == width && decoded.getHeight() == height) return decoded;
-        try {
-            return Bitmap.createScaledBitmap(decoded, width, height, true);
-        } finally { decoded.recycle(); }
+        return SketchExportFrameSource.fit(decoded,width,height);
     }
 
     private static void fillYuv420(Bitmap bitmap, Image image, int[] first, int[] second) {

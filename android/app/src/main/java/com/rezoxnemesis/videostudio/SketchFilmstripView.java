@@ -12,7 +12,7 @@ import android.view.accessibility.AccessibilityNodeInfo;
 import android.widget.OverScroller;
 import org.json.JSONObject;
 
-/** Virtualized exposure strip: visible cells only, even for a 10000-page book. */
+/** Virtualized exposure strip: visible cells only, even for a feature-length book. */
 public final class SketchFilmstripView extends View {
     public interface Listener { void select(int index); }
     private int count = 1, current;
@@ -50,7 +50,7 @@ public final class SketchFilmstripView extends View {
     }
 
     public void setFrames(int total, int selected) {
-        int nextCount = Math.max(1, Math.min(10000, total));
+        int nextCount = Math.max(1, Math.min(SketchSequenceLimits.MAX_CELS, total));
         int nextCurrent = Math.max(0, Math.min(nextCount - 1, selected));
         boolean changed = current != nextCurrent || count != nextCount;
         count = nextCount;

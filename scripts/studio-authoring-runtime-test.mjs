@@ -48,6 +48,37 @@ try{
   await http('/api/v3/app/commands/'+queued.commandId+'/complete',{deviceId,appGeneration:generation,protocolVersion:3,status:'completed',result:{ok:true,syntheticNativeReply:true,phoneExecutionVerified:false}});
   console.log('PASS: '+action+' preserves exact authored fields through actual MCP SDK and durable native queue');
  }
+ const plan={projectId:'owned-project',expectedUpdatedAt:123456789,clips:[{clipId:'cut-a',assetId:'owned-source',start:0,end:2,speed:.25,volume:0,effects:{brightness:.2,keyframes:[{timeMs:0,x:0},{timeMs:8000,x:.4}]}}]};
+ assert.match(JSON.stringify(await call('app_apply_edit_plan',plan)),/4\.5\.12/);
+ assert.equal((await poll()).length,0,'Older installed versions must not silently ignore the revision guard');
+ await register('4.5.12');
+ for(const [name,action,args]of [['app_apply_edit_plan','apply_edit_plan',plan],['app_autonomous_edit','autonomous_edit',{...plan,render:false}]]){
+  const schema=listed.tools.find(tool=>tool.name===name).inputSchema;
+  assert(schema.properties.projectId&&schema.properties.expectedUpdatedAt);
+  const queued=parse(await call(name,args));assert.equal(queued.queued,true,JSON.stringify(queued));
+  const commands=await poll();assert.equal(commands.length,1);assert.equal(commands[0].action,action);assert.deepEqual(commands[0].parameters,args);
+  await http('/api/v3/app/commands/'+queued.commandId+'/complete',{deviceId,appGeneration:generation,protocolVersion:3,status:'completed',result:{ok:true,syntheticNativeReply:true,phoneExecutionVerified:false}});
+  console.log('PASS: '+name+' discovers and delivers the exact project revision, stable IDs, speed, audio and effect keys through the actual local MCP SDK');
+ }
+ const quality={sketchId:'owned-sketch',expectedRevision:1,operationId:'quality-tools',operations:[
+  {type:'update_object',objectId:'iris',patch:{gradient:{type:'radial',cx:.5,cy:.5,radius:.3,colors:['#FFFFFFFF','#FF8060B0','#FF182030'],stops:[0,.5,1]}}},
+  {type:'set_keyframe',objectId:'iris',frame:0,transform:{x:0},interpolation:'bezier',curve:[.42,0,1,1]}
+ ]};
+ const qualityCall={action:'studio_sketch_edit',parameters:quality};
+ assert.match(JSON.stringify(await call('app_execute',qualityCall)),/4\.6\.0/);assert.equal((await poll()).length,0);
+ await register('4.6.0');
+ const queuedQuality=parse(await call('app_execute',qualityCall));assert.equal(queuedQuality.queued,true,JSON.stringify(queuedQuality));
+ const qualityCommands=await poll();assert.equal(qualityCommands.length,1);assert.deepEqual(qualityCommands[0].parameters,quality);
+ await http('/api/v3/app/commands/'+queuedQuality.commandId+'/complete',{deviceId,appGeneration:generation,protocolVersion:3,status:'completed',result:{ok:true,syntheticNativeReply:true,phoneExecutionVerified:false}});
+ console.log('PASS: new material shading and Bezier controls pass actual MCP transport unchanged and refuse older native runtimes');
+ const shapeEdit={sketchId:'owned-sketch',expectedRevision:2,operationId:'curve-shape',operations:[{type:'set_shape_key',objectId:'lid',frame:24,
+  commands:[['M',.2,.4],['C',.3,.2,.7,.2,.8,.4],['L',.2,.4],['Z']],interpolation:'bezier',curve:[.42,0,1,1]}]};
+ assert.match(JSON.stringify(await call('app_execute',{action:'studio_sketch_edit',parameters:shapeEdit})),/4\.6\.1/);assert.equal((await poll()).length,0);
+ await register('4.6.1');
+ const queuedShape=parse(await call('app_execute',{action:'studio_sketch_edit',parameters:shapeEdit}));assert.equal(queuedShape.queued,true,JSON.stringify(queuedShape));
+ const shapeCommands=await poll();assert.equal(shapeCommands.length,1);assert.deepEqual(shapeCommands[0].parameters,shapeEdit);
+ await http('/api/v3/app/commands/'+queuedShape.commandId+'/complete',{deviceId,appGeneration:generation,protocolVersion:3,status:'completed',result:{ok:true,syntheticNativeReply:true,phoneExecutionVerified:false}});
+ console.log('PASS: editable curved-shape keys pass actual MCP transport unchanged and refuse older native runtimes');
  console.log('PASS: authoring transport checks use synthetic native replies; phone execution and artistic acceptance remain unverified');
 }finally{
  if(client)await client.close();

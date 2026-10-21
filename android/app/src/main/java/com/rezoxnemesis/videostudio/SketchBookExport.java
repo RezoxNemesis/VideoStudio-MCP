@@ -11,6 +11,14 @@ public final class SketchBookExport {
     private SketchBookExport(){}
     public static SketchNativeExport.Prepared prepare(Context context,JSONObject args,SketchNativeExport.Progress progress) throws Exception {
         SketchDocument.fields(args,"bookId,expectedRevision,operationId,pageStart,pageCount,aspect,quality");String id=SketchDocument.id(args,"bookId"),op=SketchDocument.id(args,"operationId");long revision=SketchDocument.integer(args,"expectedRevision",1,Long.MAX_VALUE-1);
+        File longSnapshot=new File(context.getFilesDir(),"sketch_books/"+id+"/exports/"+op+"/sequence.json");
+        if(longSnapshot.isFile())return SketchLongBookExport.prepare(context,args,progress);
+        if(!new File(context.getFilesDir(),"sketch_books/"+id+"/exports/"+op+"/snapshot.json").isFile()){
+            JSONObject probe;try(SketchBookStore books=new SketchBookStore(context)){probe=books.get(id);}
+            int begin=args.has("pageStart")?(int)SketchDocument.integer(args,"pageStart",0,probe.getInt("pageCount")-1):0;
+            int length=args.has("pageCount")?(int)SketchDocument.integer(args,"pageCount",1,SketchSequenceLimits.MAX_CELS):probe.getInt("pageCount")-begin;
+            if(new SketchSequenceTimeline(probe,begin,length).frames()>SketchSequenceLimits.LEGACY_EXPORT_FRAMES)return SketchLongBookExport.prepare(context,args,progress);
+        }
         String fingerprint=SketchDocument.sha256(SketchDocument.canonical(args).getBytes(StandardCharsets.UTF_8));File generation=new File(context.getFilesDir(),"sketch_books/"+id+"/exports/"+op);
         if(!generation.getCanonicalPath().equals(context.getFilesDir().getCanonicalPath()+"/sketch_books/"+id+"/exports/"+op))throw SketchDocument.bad("Owned book export directory rejected");
         synchronized(SketchNativeExport.class){

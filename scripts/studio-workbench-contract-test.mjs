@@ -1,4 +1,6 @@
 import test from 'node:test';
+import './project-asset-import-contract-test.mjs';
+import './reference-layers-contract-test.mjs';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import fs from 'node:fs';
@@ -139,8 +141,42 @@ test('closed studio relay aliases enforce each native minimum and validate their
   const media=alias==='studio_import_mailbox_media';
   const cameraEdit=alias==='studio_cinematic_3d_edit_program';
   const animation=alias.startsWith('studio_sketch_animation_');
+  const placement=alias==='studio_sketch_animation_place_in_book';
+  const story=alias.startsWith('studio_sketch_story_');
+  const correction=alias.startsWith('studio_sketch_correction_');
+  const referenceLayers=['studio_sketch_import_reference_layers','studio_sketch_reference_layers_preview'].includes(alias);
+  const projectAsset=['studio_project_asset_info','studio_project_import_asset'].includes(alias);
+  const sequence=alias==='studio_sketch_book_timeline'||alias==='studio_sketch_import_animation'||alias.startsWith('studio_sketch_component_');
   const repair=['studio_sketch_import_drawing_asset','studio_get_native_result_page','studio_get_native_delivery_status','studio_compact_native_delivery'].includes(alias);
-  assert.throws(()=>requireStoryboardNativeVersion({appVersion:'3.8.1'},alias),animation?/4\.4\.0/:repair?/4\.3\.1/:cameraEdit?/4\.3\.0/:media?/4\.2\.0/:paint?/4\.1\.0/:/3\.9\.[01456]/);
+  const localDrawing=alias.startsWith('studio_local_drawing_');
+  assert.throws(()=>requireStoryboardNativeVersion({appVersion:'3.8.1'},alias),localDrawing?/4\.10\.2/:alias==='studio_sketch_layered_drawing_preview'?/4\.9\.2/:referenceLayers?/4\.8\.5/:correction?/4\.8\.4/:(story||projectAsset)?/4\.8\.0/:placement?/4\.8\.0/:sequence?/4\.7\.0/:animation?/4\.4\.0/:repair?/4\.3\.1/:cameraEdit?/4\.3\.0/:media?/4\.2\.0/:paint?/4\.1\.0/:/3\.9\.[01456]/);
+  if(localDrawing){assert.throws(()=>requireStoryboardNativeVersion({appVersion:'4.10.1'},alias),/4\.10\.2/);assert.doesNotThrow(()=>requireStoryboardNativeVersion({appVersion:'4.10.2'},alias));continue;}
+  if(alias==='studio_sketch_layered_drawing_preview'){assert.doesNotThrow(()=>requireStoryboardNativeVersion({appVersion:'4.9.2'},alias));continue;}
+  if(referenceLayers){
+   assert.throws(()=>requireStoryboardNativeVersion({appVersion:'4.8.4'},alias),/4\.8\.5/);
+   assert.doesNotThrow(()=>requireStoryboardNativeVersion({appVersion:'4.8.5'},alias));
+   continue;
+  }
+  if(correction){
+   assert.throws(()=>requireStoryboardNativeVersion({appVersion:'4.8.3'},alias),/4\.8\.4/);
+   assert.doesNotThrow(()=>requireStoryboardNativeVersion({appVersion:'4.8.4'},alias));
+   continue;
+  }
+  if(story||projectAsset){
+   assert.throws(()=>requireStoryboardNativeVersion({appVersion:'4.7.9'},alias),/4\.8\.0/);
+   assert.doesNotThrow(()=>requireStoryboardNativeVersion({appVersion:'4.8.0'},alias));
+   continue;
+  }
+  if(placement){
+   assert.throws(()=>requireStoryboardNativeVersion({appVersion:'4.7.8'},alias),/4\.8\.0/);
+   assert.doesNotThrow(()=>requireStoryboardNativeVersion({appVersion:'4.8.0'},alias));
+   continue;
+  }
+  if(sequence){
+   assert.throws(()=>requireStoryboardNativeVersion({appVersion:'4.6.2'},alias),/4\.7\.0/);
+   assert.doesNotThrow(()=>requireStoryboardNativeVersion({appVersion:'4.7.0'},alias));
+   continue;
+  }
   if(animation){
    assert.throws(()=>requireStoryboardNativeVersion({appVersion:'4.3.1'},alias),/4\.4\.0/);
    assert.doesNotThrow(()=>requireStoryboardNativeVersion({appVersion:'4.4.0'},alias));

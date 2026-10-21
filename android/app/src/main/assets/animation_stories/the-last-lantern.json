@@ -1,0 +1,4426 @@
+{
+  "bookId": "last_lantern_g10",
+  "operationId": "author_g10",
+  "name": "The Last Lantern — native study generation 10",
+  "width": 1280,
+  "height": 720,
+  "fps": 24,
+  "shots": [
+    {
+      "shotId": "s01",
+      "label": "The storm crossing",
+      "frameCount": 168,
+      "operations": [
+        {
+          "type": "add_layer",
+          "layer": {
+            "id": "arin_layer",
+            "name": "Arin_Layer"
+          }
+        },
+        {
+          "type": "add_layer",
+          "layer": {
+            "id": "leela_layer",
+            "name": "Leela_Layer"
+          }
+        },
+        {
+          "type": "add_layer",
+          "layer": {
+            "id": "foreground",
+            "name": "Foreground"
+          }
+        },
+        {
+          "type": "add_story_stage",
+          "layerId": "layer_1",
+          "foregroundLayerId": "foreground",
+          "sceneId": "stage",
+          "settings": {
+            "location": "forest_path",
+            "time": "dusk",
+            "weather": "rain",
+            "intensity": 0.55
+          }
+        },
+        {
+          "type": "add_human_animation",
+          "layerId": "arin_layer",
+          "actorId": "arin",
+          "settings": {
+            "view": "right",
+            "build": "slender",
+            "hairStyle": "short",
+            "x": 0.41,
+            "floorY": 0.8611111111111112,
+            "size": 0.92,
+            "coatColor": "#FF324E65",
+            "hairColor": "#FF26303D",
+            "skinColor": "#FFD4A27F",
+            "trouserColor": "#FF303747",
+            "faceStyle": "angular",
+            "shading": "soft",
+            "lightAngle": 135
+          },
+          "preset": "walk",
+          "poseOverrides": {
+            "gazeX": 0.55,
+            "nearHandX": 65,
+            "nearHandY": -210,
+            "nearHandZ": 16,
+            "nearWrist": -25,
+            "nearElbowSwivel": 130,
+            "handOpen": 0.25
+          },
+          "motion": {
+            "speed": 0.9,
+            "travelScale": 0.8,
+            "armSwing": 0.35,
+            "phase": 0
+          },
+          "blinkTrack": {
+            "intervalMs": 3700,
+            "phaseMs": 1600
+          },
+          "ground": "forest_path"
+        },
+        {
+          "type": "add_actor_prop",
+          "layerId": "arin_layer",
+          "actorId": "arin",
+          "propId": "lamp",
+          "settings": {
+            "kind": "lantern",
+            "attachment": "near",
+            "scale": 0.8
+          }
+        },
+        {
+          "type": "add_human_animation",
+          "layerId": "leela_layer",
+          "actorId": "leela",
+          "settings": {
+            "view": "right",
+            "build": "broad",
+            "hairStyle": "long",
+            "x": 0.65,
+            "floorY": 0.8611111111111112,
+            "size": 0.92,
+            "coatColor": "#FF66544A",
+            "hairColor": "#FF332927",
+            "skinColor": "#FFB88768",
+            "trouserColor": "#FF3B3D39",
+            "faceStyle": "soft",
+            "shading": "soft",
+            "lightAngle": 135
+          },
+          "preset": "listen",
+          "poseOverrides": {
+            "gazeX": -0.55
+          },
+          "motion": {
+            "speed": 0.9,
+            "travelScale": 0.8,
+            "armSwing": 0.35
+          },
+          "blinkTrack": {
+            "intervalMs": 4400,
+            "phaseMs": 2500
+          },
+          "ground": "forest_path"
+        }
+      ],
+      "camera": [
+        {
+          "frame": 0,
+          "x": -0.01070000000000001,
+          "y": -0.0,
+          "zoom": 1.07,
+          "rotation": 0,
+          "interpolation": "smooth"
+        },
+        {
+          "frame": 167,
+          "x": -0.010967500000000008,
+          "y": -0.0,
+          "zoom": 1.09675,
+          "rotation": 0,
+          "interpolation": "smooth"
+        }
+      ]
+    },
+    {
+      "shotId": "s02",
+      "label": "A hurried promise",
+      "frameCount": 192,
+      "operations": [
+        {
+          "type": "add_layer",
+          "layer": {
+            "id": "arin_layer",
+            "name": "Arin_Layer"
+          }
+        },
+        {
+          "type": "add_layer",
+          "layer": {
+            "id": "leela_layer",
+            "name": "Leela_Layer"
+          }
+        },
+        {
+          "type": "add_layer",
+          "layer": {
+            "id": "foreground",
+            "name": "Foreground"
+          }
+        },
+        {
+          "type": "add_story_stage",
+          "layerId": "layer_1",
+          "foregroundLayerId": "foreground",
+          "sceneId": "stage",
+          "settings": {
+            "location": "bridge",
+            "time": "dusk",
+            "weather": "rain",
+            "intensity": 0.55
+          }
+        },
+        {
+          "type": "set_transform",
+          "objectId": "stage_bridge_plank_9_0",
+          "transform": {
+            "anchorX": 0.5046875,
+            "anchorY": 0.7489583333333333,
+            "rotation": 18
+          }
+        },
+        {
+          "type": "set_transform",
+          "objectId": "stage_bridge_plank_9_1",
+          "transform": {
+            "anchorX": 0.5046875,
+            "anchorY": 0.7489583333333333,
+            "rotation": 18
+          }
+        },
+        {
+          "type": "add_human_animation",
+          "layerId": "arin_layer",
+          "actorId": "arin",
+          "settings": {
+            "view": "front",
+            "build": "slender",
+            "hairStyle": "short",
+            "x": 0.41,
+            "floorY": 0.7619444444444444,
+            "size": 0.92,
+            "coatColor": "#FF324E65",
+            "hairColor": "#FF26303D",
+            "skinColor": "#FFD4A27F",
+            "trouserColor": "#FF303747",
+            "faceStyle": "angular",
+            "shading": "soft",
+            "lightAngle": 135
+          },
+          "preset": "explain",
+          "poseOverrides": {
+            "gazeX": 0.55,
+            "nearHandX": 65,
+            "nearHandY": -210,
+            "nearHandZ": 16,
+            "nearWrist": -25,
+            "nearElbowSwivel": 130,
+            "handOpen": 0.25
+          },
+          "motion": {
+            "speed": 0.9,
+            "travelScale": 0.8,
+            "armSwing": 0.35
+          },
+          "speech": {
+            "transitionMs": 60,
+            "prediction": {
+              "startMs": 1000,
+              "segments": [
+                {
+                  "forcedAlignmentVerified": false,
+                  "modelDurationUnits": [
+                    12,
+                    2,
+                    2,
+                    2,
+                    2,
+                    2,
+                    2,
+                    2,
+                    2,
+                    2,
+                    2,
+                    2,
+                    2,
+                    3,
+                    2,
+                    4,
+                    4,
+                    12,
+                    7
+                  ],
+                  "phonemes": "ˌI kæn stˈɪl ɡˈɛt",
+                  "sampleCount": 40800,
+                  "startSample": 0,
+                  "unitsPerSecond": 40
+                },
+                {
+                  "forcedAlignmentVerified": false,
+                  "modelDurationUnits": [
+                    13,
+                    2,
+                    2,
+                    2,
+                    2,
+                    3,
+                    2,
+                    2,
+                    2,
+                    2,
+                    2,
+                    2,
+                    2,
+                    3,
+                    3,
+                    2,
+                    5,
+                    4,
+                    17,
+                    8,
+                    1
+                  ],
+                  "phonemes": "ðə lˈæntəɹn əkɹˈɔs.",
+                  "sampleCount": 48600,
+                  "startSample": 45120,
+                  "unitsPerSecond": 40
+                }
+              ]
+            }
+          },
+          "blinkTrack": {
+            "intervalMs": 3700,
+            "phaseMs": 2630
+          },
+          "ground": "bridge"
+        },
+        {
+          "type": "add_actor_prop",
+          "layerId": "arin_layer",
+          "actorId": "arin",
+          "propId": "lamp",
+          "settings": {
+            "kind": "lantern",
+            "attachment": "near",
+            "scale": 0.8
+          }
+        },
+        {
+          "type": "add_human_animation",
+          "layerId": "leela_layer",
+          "actorId": "leela",
+          "settings": {
+            "view": "left",
+            "build": "broad",
+            "hairStyle": "long",
+            "x": 0.65,
+            "floorY": 0.7263888888888889,
+            "size": 0.92,
+            "coatColor": "#FF66544A",
+            "hairColor": "#FF332927",
+            "skinColor": "#FFB88768",
+            "trouserColor": "#FF3B3D39",
+            "faceStyle": "soft",
+            "shading": "soft",
+            "lightAngle": 135
+          },
+          "preset": "listen",
+          "poseOverrides": {
+            "gazeX": 0.55
+          },
+          "motion": {
+            "speed": 0.9,
+            "travelScale": 0.8,
+            "armSwing": 0.35
+          },
+          "blinkTrack": {
+            "intervalMs": 4400,
+            "phaseMs": 2500
+          },
+          "ground": "bridge"
+        },
+        {
+          "type": "set_transform",
+          "objectId": "stage_bridge_plank_9_2",
+          "transform": {
+            "anchorX": 0.5046875,
+            "anchorY": 0.7489583333333333,
+            "rotation": 18
+          }
+        }
+      ],
+      "camera": [
+        {
+          "frame": 0,
+          "x": 0.23850000000000005,
+          "y": 0.26499999999999996,
+          "zoom": 2.65,
+          "rotation": 0,
+          "interpolation": "smooth"
+        },
+        {
+          "frame": 191,
+          "x": 0.24300000000000008,
+          "y": 0.26999999999999996,
+          "zoom": 2.7,
+          "rotation": 0,
+          "interpolation": "smooth"
+        }
+      ]
+    },
+    {
+      "shotId": "s03",
+      "label": "The warning",
+      "frameCount": 144,
+      "operations": [
+        {
+          "type": "add_layer",
+          "layer": {
+            "id": "arin_layer",
+            "name": "Arin_Layer"
+          }
+        },
+        {
+          "type": "add_layer",
+          "layer": {
+            "id": "leela_layer",
+            "name": "Leela_Layer"
+          }
+        },
+        {
+          "type": "add_layer",
+          "layer": {
+            "id": "foreground",
+            "name": "Foreground"
+          }
+        },
+        {
+          "type": "add_story_stage",
+          "layerId": "layer_1",
+          "foregroundLayerId": "foreground",
+          "sceneId": "stage",
+          "settings": {
+            "location": "bridge",
+            "time": "dusk",
+            "weather": "rain",
+            "intensity": 0.55
+          }
+        },
+        {
+          "type": "set_transform",
+          "objectId": "stage_bridge_plank_9_0",
+          "transform": {
+            "anchorX": 0.5046875,
+            "anchorY": 0.7489583333333333,
+            "rotation": 18
+          }
+        },
+        {
+          "type": "set_transform",
+          "objectId": "stage_bridge_plank_9_1",
+          "transform": {
+            "anchorX": 0.5046875,
+            "anchorY": 0.7489583333333333,
+            "rotation": 18
+          }
+        },
+        {
+          "type": "add_human_animation",
+          "layerId": "arin_layer",
+          "actorId": "arin",
+          "settings": {
+            "view": "front",
+            "build": "slender",
+            "hairStyle": "short",
+            "x": 0.41,
+            "floorY": 0.7619444444444444,
+            "size": 0.92,
+            "coatColor": "#FF324E65",
+            "hairColor": "#FF26303D",
+            "skinColor": "#FFD4A27F",
+            "trouserColor": "#FF303747",
+            "faceStyle": "angular",
+            "shading": "soft",
+            "lightAngle": 135
+          },
+          "preset": "listen",
+          "poseOverrides": {
+            "gazeX": 0.55,
+            "nearHandX": 65,
+            "nearHandY": -210,
+            "nearHandZ": 16,
+            "nearWrist": -25,
+            "nearElbowSwivel": 130,
+            "handOpen": 0.25
+          },
+          "motion": {
+            "speed": 0.9,
+            "travelScale": 0.8,
+            "armSwing": 0.35
+          },
+          "blinkTrack": {
+            "intervalMs": 3700,
+            "phaseMs": 1600
+          },
+          "ground": "bridge"
+        },
+        {
+          "type": "add_actor_prop",
+          "layerId": "arin_layer",
+          "actorId": "arin",
+          "propId": "lamp",
+          "settings": {
+            "kind": "lantern",
+            "attachment": "near",
+            "scale": 0.8
+          }
+        },
+        {
+          "type": "add_human_animation",
+          "layerId": "leela_layer",
+          "actorId": "leela",
+          "settings": {
+            "view": "left",
+            "build": "broad",
+            "hairStyle": "long",
+            "x": 0.65,
+            "floorY": 0.7263888888888889,
+            "size": 0.92,
+            "coatColor": "#FF66544A",
+            "hairColor": "#FF332927",
+            "skinColor": "#FFB88768",
+            "trouserColor": "#FF3B3D39",
+            "faceStyle": "soft",
+            "shading": "soft",
+            "lightAngle": 135
+          },
+          "preset": "point",
+          "poseOverrides": {
+            "gazeX": 0.55,
+            "nearHandX": 40,
+            "nearHandY": -215,
+            "nearHandZ": 90,
+            "nearElbowSwivel": -65,
+            "nearWrist": -45,
+            "gazeY": 0.6,
+            "headTilt": -10
+          },
+          "motion": {
+            "speed": 0.9,
+            "travelScale": 0.8,
+            "armSwing": 0.35
+          },
+          "speech": {
+            "transitionMs": 60,
+            "prediction": {
+              "startMs": 1000,
+              "segments": [
+                {
+                  "forcedAlignmentVerified": false,
+                  "modelDurationUnits": [
+                    19,
+                    2,
+                    5,
+                    4,
+                    14,
+                    7,
+                    1
+                  ],
+                  "phonemes": "wˈAt.",
+                  "sampleCount": 31200,
+                  "startSample": 0,
+                  "unitsPerSecond": 40
+                },
+                {
+                  "forcedAlignmentVerified": false,
+                  "modelDurationUnits": [
+                    15,
+                    2,
+                    3,
+                    3,
+                    2,
+                    2,
+                    2,
+                    2,
+                    2,
+                    2,
+                    2,
+                    1,
+                    1,
+                    1,
+                    1,
+                    2,
+                    2,
+                    3,
+                    4,
+                    13,
+                    7,
+                    1
+                  ],
+                  "phonemes": "ðˌOz bˈɔɹdz ɑɹ lˈus.",
+                  "sampleCount": 43800,
+                  "startSample": 37200,
+                  "unitsPerSecond": 40
+                }
+              ]
+            }
+          },
+          "blinkTrack": {
+            "intervalMs": 4400,
+            "phaseMs": 2230
+          },
+          "ground": "bridge"
+        },
+        {
+          "type": "set_transform",
+          "objectId": "stage_bridge_plank_9_2",
+          "transform": {
+            "anchorX": 0.5046875,
+            "anchorY": 0.7489583333333333,
+            "rotation": 18
+          }
+        }
+      ],
+      "camera": [
+        {
+          "frame": 0,
+          "x": -0.3975,
+          "y": 0.26499999999999996,
+          "zoom": 2.65,
+          "rotation": 0,
+          "interpolation": "smooth"
+        },
+        {
+          "frame": 143,
+          "x": -0.4050000000000001,
+          "y": 0.26999999999999996,
+          "zoom": 2.7,
+          "rotation": 0,
+          "interpolation": "smooth"
+        }
+      ]
+    },
+    {
+      "shotId": "s04",
+      "label": "An impatient answer",
+      "frameCount": 216,
+      "operations": [
+        {
+          "type": "add_layer",
+          "layer": {
+            "id": "arin_layer",
+            "name": "Arin_Layer"
+          }
+        },
+        {
+          "type": "add_layer",
+          "layer": {
+            "id": "leela_layer",
+            "name": "Leela_Layer"
+          }
+        },
+        {
+          "type": "add_layer",
+          "layer": {
+            "id": "foreground",
+            "name": "Foreground"
+          }
+        },
+        {
+          "type": "add_story_stage",
+          "layerId": "layer_1",
+          "foregroundLayerId": "foreground",
+          "sceneId": "stage",
+          "settings": {
+            "location": "bridge",
+            "time": "dusk",
+            "weather": "rain",
+            "intensity": 0.55
+          }
+        },
+        {
+          "type": "set_transform",
+          "objectId": "stage_bridge_plank_9_0",
+          "transform": {
+            "anchorX": 0.5046875,
+            "anchorY": 0.7489583333333333,
+            "rotation": 18
+          }
+        },
+        {
+          "type": "set_transform",
+          "objectId": "stage_bridge_plank_9_1",
+          "transform": {
+            "anchorX": 0.5046875,
+            "anchorY": 0.7489583333333333,
+            "rotation": 18
+          }
+        },
+        {
+          "type": "add_human_animation",
+          "layerId": "arin_layer",
+          "actorId": "arin",
+          "settings": {
+            "view": "front",
+            "build": "slender",
+            "hairStyle": "short",
+            "x": 0.41,
+            "floorY": 0.7619444444444444,
+            "size": 0.92,
+            "coatColor": "#FF324E65",
+            "hairColor": "#FF26303D",
+            "skinColor": "#FFD4A27F",
+            "trouserColor": "#FF303747",
+            "faceStyle": "angular",
+            "shading": "soft",
+            "lightAngle": 135
+          },
+          "preset": "anger",
+          "poseOverrides": {
+            "gazeX": 0.55,
+            "nearHandX": 65,
+            "nearHandY": -210,
+            "nearHandZ": 16,
+            "nearWrist": -25,
+            "nearElbowSwivel": 130,
+            "handOpen": 0.25
+          },
+          "motion": {
+            "speed": 0.9,
+            "travelScale": 0.8,
+            "armSwing": 0.35
+          },
+          "speech": {
+            "transitionMs": 60,
+            "prediction": {
+              "startMs": 1000,
+              "segments": [
+                {
+                  "forcedAlignmentVerified": false,
+                  "modelDurationUnits": [
+                    12,
+                    2,
+                    2,
+                    2,
+                    2,
+                    2,
+                    3,
+                    3,
+                    2,
+                    2,
+                    2,
+                    2,
+                    3,
+                    2,
+                    2,
+                    4,
+                    4,
+                    15,
+                    7,
+                    1
+                  ],
+                  "phonemes": "ðˌA nˈid ðɪs lˈIt.",
+                  "sampleCount": 44400,
+                  "startSample": 0,
+                  "unitsPerSecond": 40
+                },
+                {
+                  "forcedAlignmentVerified": false,
+                  "modelDurationUnits": [
+                    12,
+                    2,
+                    2,
+                    2,
+                    2,
+                    2,
+                    1,
+                    1,
+                    1,
+                    2,
+                    1,
+                    1,
+                    1,
+                    1,
+                    1,
+                    2,
+                    2,
+                    2,
+                    4,
+                    2,
+                    1,
+                    1,
+                    2,
+                    1,
+                    2,
+                    3,
+                    16,
+                    8,
+                    1
+                  ],
+                  "phonemes": "ˌI kˈænt ʤˈʌst stˈænd hˈɪɹ.",
+                  "sampleCount": 47400,
+                  "startSample": 51600,
+                  "unitsPerSecond": 40
+                }
+              ]
+            }
+          },
+          "blinkTrack": {
+            "intervalMs": 3700,
+            "phaseMs": 2780
+          },
+          "ground": "bridge"
+        },
+        {
+          "type": "add_actor_prop",
+          "layerId": "arin_layer",
+          "actorId": "arin",
+          "propId": "lamp",
+          "settings": {
+            "kind": "lantern",
+            "attachment": "near",
+            "scale": 0.8
+          }
+        },
+        {
+          "type": "add_human_animation",
+          "layerId": "leela_layer",
+          "actorId": "leela",
+          "settings": {
+            "view": "left",
+            "build": "broad",
+            "hairStyle": "long",
+            "x": 0.65,
+            "floorY": 0.7263888888888889,
+            "size": 0.92,
+            "coatColor": "#FF66544A",
+            "hairColor": "#FF332927",
+            "skinColor": "#FFB88768",
+            "trouserColor": "#FF3B3D39",
+            "faceStyle": "soft",
+            "shading": "soft",
+            "lightAngle": 135
+          },
+          "preset": "listen",
+          "poseOverrides": {
+            "gazeX": 0.55
+          },
+          "motion": {
+            "speed": 0.9,
+            "travelScale": 0.8,
+            "armSwing": 0.35
+          },
+          "blinkTrack": {
+            "intervalMs": 4400,
+            "phaseMs": 2500
+          },
+          "ground": "bridge"
+        },
+        {
+          "type": "set_transform",
+          "objectId": "stage_bridge_plank_9_2",
+          "transform": {
+            "anchorX": 0.5046875,
+            "anchorY": 0.7489583333333333,
+            "rotation": 18
+          }
+        }
+      ],
+      "camera": [
+        {
+          "frame": 0,
+          "x": 0.23850000000000005,
+          "y": 0.26499999999999996,
+          "zoom": 2.65,
+          "rotation": 0,
+          "interpolation": "smooth"
+        },
+        {
+          "frame": 215,
+          "x": 0.24300000000000008,
+          "y": 0.26999999999999996,
+          "zoom": 2.7,
+          "rotation": 0,
+          "interpolation": "smooth"
+        }
+      ]
+    },
+    {
+      "shotId": "s05",
+      "label": "Look at the bridge",
+      "frameCount": 192,
+      "operations": [
+        {
+          "type": "add_layer",
+          "layer": {
+            "id": "arin_layer",
+            "name": "Arin_Layer"
+          }
+        },
+        {
+          "type": "add_layer",
+          "layer": {
+            "id": "leela_layer",
+            "name": "Leela_Layer"
+          }
+        },
+        {
+          "type": "add_layer",
+          "layer": {
+            "id": "foreground",
+            "name": "Foreground"
+          }
+        },
+        {
+          "type": "add_story_stage",
+          "layerId": "layer_1",
+          "foregroundLayerId": "foreground",
+          "sceneId": "stage",
+          "settings": {
+            "location": "bridge",
+            "time": "dusk",
+            "weather": "rain",
+            "intensity": 0.55
+          }
+        },
+        {
+          "type": "set_transform",
+          "objectId": "stage_bridge_plank_9_0",
+          "transform": {
+            "anchorX": 0.5046875,
+            "anchorY": 0.7489583333333333,
+            "rotation": 18
+          }
+        },
+        {
+          "type": "set_transform",
+          "objectId": "stage_bridge_plank_9_1",
+          "transform": {
+            "anchorX": 0.5046875,
+            "anchorY": 0.7489583333333333,
+            "rotation": 18
+          }
+        },
+        {
+          "type": "add_human_animation",
+          "layerId": "arin_layer",
+          "actorId": "arin",
+          "settings": {
+            "view": "front",
+            "build": "slender",
+            "hairStyle": "short",
+            "x": 0.41,
+            "floorY": 0.7619444444444444,
+            "size": 0.92,
+            "coatColor": "#FF324E65",
+            "hairColor": "#FF26303D",
+            "skinColor": "#FFD4A27F",
+            "trouserColor": "#FF303747",
+            "faceStyle": "angular",
+            "shading": "soft",
+            "lightAngle": 135
+          },
+          "preset": "look_down",
+          "poseOverrides": {
+            "gazeX": 0.55,
+            "gazeY": 0.7,
+            "nearHandX": 65,
+            "nearHandY": -210,
+            "nearHandZ": 16,
+            "nearWrist": -25,
+            "nearElbowSwivel": 130,
+            "handOpen": 0.25
+          },
+          "motion": {
+            "speed": 0.9,
+            "travelScale": 0.8,
+            "armSwing": 0.35
+          },
+          "blinkTrack": {
+            "intervalMs": 3700,
+            "phaseMs": 1600
+          },
+          "ground": "bridge"
+        },
+        {
+          "type": "add_actor_prop",
+          "layerId": "arin_layer",
+          "actorId": "arin",
+          "propId": "lamp",
+          "settings": {
+            "kind": "lantern",
+            "attachment": "near",
+            "scale": 0.8
+          }
+        },
+        {
+          "type": "add_human_animation",
+          "layerId": "leela_layer",
+          "actorId": "leela",
+          "settings": {
+            "view": "left",
+            "build": "broad",
+            "hairStyle": "long",
+            "x": 0.65,
+            "floorY": 0.7263888888888889,
+            "size": 0.92,
+            "coatColor": "#FF66544A",
+            "hairColor": "#FF332927",
+            "skinColor": "#FFB88768",
+            "trouserColor": "#FF3B3D39",
+            "faceStyle": "soft",
+            "shading": "soft",
+            "lightAngle": 135
+          },
+          "preset": "point",
+          "poseOverrides": {
+            "gazeX": 0.55,
+            "gazeY": 0.6,
+            "nearHandX": 40,
+            "nearHandY": -215,
+            "nearHandZ": 90,
+            "nearElbowSwivel": -65,
+            "nearWrist": -45,
+            "headTilt": -10
+          },
+          "motion": {
+            "speed": 0.9,
+            "travelScale": 0.8,
+            "armSwing": 0.35
+          },
+          "speech": {
+            "transitionMs": 60,
+            "prediction": {
+              "startMs": 1000,
+              "segments": [
+                {
+                  "forcedAlignmentVerified": false,
+                  "modelDurationUnits": [
+                    14,
+                    1,
+                    1,
+                    1,
+                    1,
+                    1,
+                    2,
+                    2,
+                    2,
+                    1,
+                    2,
+                    2,
+                    1,
+                    2,
+                    2,
+                    2,
+                    2,
+                    2,
+                    2,
+                    2,
+                    3,
+                    2,
+                    4,
+                    3,
+                    2,
+                    3,
+                    2,
+                    3,
+                    3,
+                    3,
+                    3,
+                    15,
+                    7,
+                    1
+                  ],
+                  "phonemes": "ˌænd ðA nˈid ju tʊ əɹˈIv sˈAfli.",
+                  "sampleCount": 59400,
+                  "startSample": 0,
+                  "unitsPerSecond": 40
+                },
+                {
+                  "forcedAlignmentVerified": false,
+                  "modelDurationUnits": [
+                    19,
+                    2,
+                    3,
+                    4,
+                    14,
+                    8,
+                    1
+                  ],
+                  "phonemes": "lˈʊk.",
+                  "sampleCount": 30600,
+                  "startSample": 66600,
+                  "unitsPerSecond": 40
+                }
+              ]
+            }
+          },
+          "blinkTrack": {
+            "intervalMs": 4400,
+            "phaseMs": 3405
+          },
+          "ground": "bridge"
+        },
+        {
+          "type": "set_keyframe",
+          "objectId": "stage_bridge_plank_9_0",
+          "frame": 0,
+          "interpolation": "hold",
+          "transform": {
+            "anchorX": 0.5046875,
+            "anchorY": 0.7489583333333333,
+            "rotation": 18
+          }
+        },
+        {
+          "type": "set_keyframe",
+          "objectId": "stage_bridge_plank_9_0",
+          "frame": 110,
+          "interpolation": "ease_in_out",
+          "transform": {
+            "anchorX": 0.5046875,
+            "anchorY": 0.7489583333333333,
+            "rotation": 18
+          }
+        },
+        {
+          "type": "set_keyframe",
+          "objectId": "stage_bridge_plank_9_0",
+          "frame": 127,
+          "interpolation": "ease_out",
+          "transform": {
+            "anchorX": 0.5046875,
+            "anchorY": 0.7489583333333333,
+            "rotation": 22
+          }
+        },
+        {
+          "type": "set_keyframe",
+          "objectId": "stage_bridge_plank_9_0",
+          "frame": 136,
+          "interpolation": "smooth",
+          "transform": {
+            "anchorX": 0.5046875,
+            "anchorY": 0.7489583333333333,
+            "rotation": 14
+          }
+        },
+        {
+          "type": "set_keyframe",
+          "objectId": "stage_bridge_plank_9_0",
+          "frame": 150,
+          "interpolation": "hold",
+          "transform": {
+            "anchorX": 0.5046875,
+            "anchorY": 0.7489583333333333,
+            "rotation": 18
+          }
+        },
+        {
+          "type": "set_keyframe",
+          "objectId": "stage_bridge_plank_9_1",
+          "frame": 0,
+          "interpolation": "hold",
+          "transform": {
+            "anchorX": 0.5046875,
+            "anchorY": 0.7489583333333333,
+            "rotation": 18
+          }
+        },
+        {
+          "type": "set_keyframe",
+          "objectId": "stage_bridge_plank_9_1",
+          "frame": 110,
+          "interpolation": "ease_in_out",
+          "transform": {
+            "anchorX": 0.5046875,
+            "anchorY": 0.7489583333333333,
+            "rotation": 18
+          }
+        },
+        {
+          "type": "set_keyframe",
+          "objectId": "stage_bridge_plank_9_1",
+          "frame": 127,
+          "interpolation": "ease_out",
+          "transform": {
+            "anchorX": 0.5046875,
+            "anchorY": 0.7489583333333333,
+            "rotation": 22
+          }
+        },
+        {
+          "type": "set_keyframe",
+          "objectId": "stage_bridge_plank_9_1",
+          "frame": 136,
+          "interpolation": "smooth",
+          "transform": {
+            "anchorX": 0.5046875,
+            "anchorY": 0.7489583333333333,
+            "rotation": 14
+          }
+        },
+        {
+          "type": "set_keyframe",
+          "objectId": "stage_bridge_plank_9_1",
+          "frame": 150,
+          "interpolation": "hold",
+          "transform": {
+            "anchorX": 0.5046875,
+            "anchorY": 0.7489583333333333,
+            "rotation": 18
+          }
+        },
+        {
+          "type": "set_transform",
+          "objectId": "stage_bridge_plank_9_2",
+          "transform": {
+            "anchorX": 0.5046875,
+            "anchorY": 0.7489583333333333,
+            "rotation": 18
+          }
+        },
+        {
+          "type": "set_keyframe",
+          "objectId": "stage_bridge_plank_9_2",
+          "frame": 0,
+          "interpolation": "hold",
+          "transform": {
+            "anchorX": 0.5046875,
+            "anchorY": 0.7489583333333333,
+            "rotation": 18
+          }
+        },
+        {
+          "type": "set_keyframe",
+          "objectId": "stage_bridge_plank_9_2",
+          "frame": 110,
+          "interpolation": "ease_in_out",
+          "transform": {
+            "anchorX": 0.5046875,
+            "anchorY": 0.7489583333333333,
+            "rotation": 18
+          }
+        },
+        {
+          "type": "set_keyframe",
+          "objectId": "stage_bridge_plank_9_2",
+          "frame": 127,
+          "interpolation": "ease_out",
+          "transform": {
+            "anchorX": 0.5046875,
+            "anchorY": 0.7489583333333333,
+            "rotation": 22
+          }
+        },
+        {
+          "type": "set_keyframe",
+          "objectId": "stage_bridge_plank_9_2",
+          "frame": 136,
+          "interpolation": "smooth",
+          "transform": {
+            "anchorX": 0.5046875,
+            "anchorY": 0.7489583333333333,
+            "rotation": 14
+          }
+        },
+        {
+          "type": "set_keyframe",
+          "objectId": "stage_bridge_plank_9_2",
+          "frame": 150,
+          "interpolation": "hold",
+          "transform": {
+            "anchorX": 0.5046875,
+            "anchorY": 0.7489583333333333,
+            "rotation": 18
+          }
+        }
+      ],
+      "camera": [
+        {
+          "frame": 0,
+          "x": -0.3975,
+          "y": 0.26499999999999996,
+          "zoom": 2.65,
+          "rotation": 0,
+          "interpolation": "smooth"
+        },
+        {
+          "frame": 90,
+          "x": -0.3975,
+          "y": 0.26499999999999996,
+          "zoom": 2.65,
+          "rotation": 0,
+          "interpolation": "smooth"
+        },
+        {
+          "frame": 140,
+          "x": 0,
+          "y": -0.5519999999999999,
+          "zoom": 2.3,
+          "rotation": 0,
+          "interpolation": "hold"
+        },
+        {
+          "frame": 191,
+          "x": 0,
+          "y": -0.5519999999999999,
+          "zoom": 2.3,
+          "rotation": 0,
+          "interpolation": "hold"
+        }
+      ]
+    },
+    {
+      "shotId": "s06",
+      "label": "The lantern falls",
+      "frameCount": 168,
+      "operations": [
+        {
+          "type": "add_layer",
+          "layer": {
+            "id": "arin_layer",
+            "name": "Arin_Layer"
+          }
+        },
+        {
+          "type": "add_layer",
+          "layer": {
+            "id": "leela_layer",
+            "name": "Leela_Layer"
+          }
+        },
+        {
+          "type": "add_layer",
+          "layer": {
+            "id": "foreground",
+            "name": "Foreground"
+          }
+        },
+        {
+          "type": "add_story_stage",
+          "layerId": "layer_1",
+          "foregroundLayerId": "foreground",
+          "sceneId": "stage",
+          "settings": {
+            "location": "bridge",
+            "time": "night",
+            "weather": "rain",
+            "intensity": 0.55
+          }
+        },
+        {
+          "type": "set_transform",
+          "objectId": "stage_bridge_plank_9_0",
+          "transform": {
+            "anchorX": 0.5046875,
+            "anchorY": 0.7489583333333333,
+            "rotation": 18
+          }
+        },
+        {
+          "type": "set_transform",
+          "objectId": "stage_bridge_plank_9_1",
+          "transform": {
+            "anchorX": 0.5046875,
+            "anchorY": 0.7489583333333333,
+            "rotation": 18
+          }
+        },
+        {
+          "type": "add_human_animation",
+          "layerId": "arin_layer",
+          "actorId": "arin",
+          "settings": {
+            "view": "front",
+            "build": "slender",
+            "hairStyle": "short",
+            "x": 0.41,
+            "floorY": 0.7619444444444444,
+            "size": 0.92,
+            "coatColor": "#FF324E65",
+            "hairColor": "#FF26303D",
+            "skinColor": "#FFD4A27F",
+            "trouserColor": "#FF303747",
+            "faceStyle": "angular",
+            "shading": "soft",
+            "lightAngle": 135
+          },
+          "preset": "surprise",
+          "speech": {
+            "transitionMs": 60,
+            "prediction": {
+              "startMs": 2000,
+              "segments": [
+                {
+                  "forcedAlignmentVerified": false,
+                  "modelDurationUnits": [
+                    12,
+                    2,
+                    2,
+                    2,
+                    2,
+                    3,
+                    2,
+                    3,
+                    2,
+                    2,
+                    3,
+                    15,
+                    8,
+                    1
+                  ],
+                  "phonemes": "ðə lˈæntəɹn!",
+                  "sampleCount": 35400,
+                  "startSample": 0,
+                  "unitsPerSecond": 40
+                }
+              ]
+            }
+          },
+          "poses": [
+            {
+              "frame": 0,
+              "interpolation": "smooth",
+              "gazeY": 0.7,
+              "nearHandX": 65,
+              "nearHandY": -210,
+              "nearHandZ": 16,
+              "nearWrist": -25,
+              "nearElbowSwivel": 130,
+              "handOpen": 0.25
+            },
+            {
+              "frame": 8,
+              "interpolation": "smooth",
+              "nearHandX": 65,
+              "nearHandY": -208,
+              "nearHandZ": 16,
+              "nearWrist": -15,
+              "nearElbowSwivel": 80,
+              "handOpen": 0.95,
+              "gazeY": 0.8
+            },
+            {
+              "frame": 38,
+              "interpolation": "ease_in",
+              "headTilt": -3,
+              "gazeY": 0.7,
+              "bodyLean": 2
+            },
+            {
+              "frame": 51,
+              "interpolation": "ease_out",
+              "bodyLean": -10,
+              "hipY": -174,
+              "nearHandX": 60,
+              "nearHandY": -250,
+              "nearHandZ": 35,
+              "farHandX": -60,
+              "farHandY": -240,
+              "farHandZ": -35,
+              "nearElbowSwivel": 40,
+              "farElbowSwivel": -40,
+              "brow": 0.9,
+              "gazeY": 0.8,
+              "mouth": 0.6
+            },
+            {
+              "frame": 58,
+              "interpolation": "smooth",
+              "bodyLean": -14,
+              "hipY": -172,
+              "nearHandX": 65,
+              "nearHandY": -245,
+              "nearHandZ": 35,
+              "farHandX": -65,
+              "farHandY": -235,
+              "farHandZ": -35,
+              "nearElbowSwivel": 40,
+              "farElbowSwivel": -40,
+              "brow": 0.8,
+              "gazeY": 0.8,
+              "mouth": 0.6
+            },
+            {
+              "frame": 118,
+              "interpolation": "smooth",
+              "bodyLean": -4,
+              "brow": 0.5,
+              "gazeY": 0.7,
+              "nearHandY": -205,
+              "farHandY": -200
+            },
+            {
+              "frame": 167,
+              "interpolation": "hold",
+              "headTilt": 10,
+              "brow": 0.5,
+              "gazeY": 0.7
+            }
+          ],
+          "blinkTrack": {
+            "intervalMs": 3700,
+            "phaseMs": 3405
+          }
+        },
+        {
+          "type": "add_human_animation",
+          "layerId": "leela_layer",
+          "actorId": "leela",
+          "settings": {
+            "view": "left",
+            "build": "broad",
+            "hairStyle": "long",
+            "x": 0.65,
+            "floorY": 0.7263888888888889,
+            "size": 0.92,
+            "coatColor": "#FF66544A",
+            "hairColor": "#FF332927",
+            "skinColor": "#FFB88768",
+            "trouserColor": "#FF3B3D39",
+            "faceStyle": "soft",
+            "shading": "soft",
+            "lightAngle": 135
+          },
+          "preset": "recoil",
+          "poseOverrides": {
+            "gazeX": 0.55,
+            "gazeY": 0.7
+          },
+          "motion": {
+            "speed": 0.9,
+            "travelScale": 0.8,
+            "armSwing": 0.35
+          },
+          "blinkTrack": {
+            "intervalMs": 4400,
+            "phaseMs": 2500
+          },
+          "ground": "bridge"
+        },
+        {
+          "type": "add_actor_prop",
+          "layerId": "layer_1",
+          "propId": "lamp",
+          "settings": {
+            "kind": "lantern",
+            "attachment": "floor",
+            "scale": 0.8,
+            "x": 0.49,
+            "y": 0.68
+          }
+        },
+        {
+          "type": "set_keyframe",
+          "objectId": "lamp_glow_0",
+          "frame": 0,
+          "interpolation": "ease_in",
+          "transform": {
+            "anchorX": 0.5,
+            "anchorY": 0.19444444444444445,
+            "x": -0.032394933700561526,
+            "y": 0.3034224616156684,
+            "rotation": 0
+          }
+        },
+        {
+          "type": "set_keyframe",
+          "objectId": "lamp_glow_0",
+          "frame": 40,
+          "interpolation": "linear",
+          "transform": {
+            "anchorX": 0.5,
+            "anchorY": 0.19444444444444445,
+            "x": -0.0140625,
+            "y": 0.4652777777777778,
+            "rotation": 55
+          }
+        },
+        {
+          "type": "set_keyframe",
+          "objectId": "lamp_glow_0",
+          "frame": 51,
+          "interpolation": "ease_out",
+          "transform": {
+            "anchorX": 0.5,
+            "anchorY": 0.19444444444444445,
+            "x": -0.01015625,
+            "y": 0.5388888888888889,
+            "rotation": 90
+          }
+        },
+        {
+          "type": "set_keyframe",
+          "objectId": "lamp_glow_0",
+          "frame": 59,
+          "interpolation": "ease_in",
+          "transform": {
+            "anchorX": 0.5,
+            "anchorY": 0.19444444444444445,
+            "x": -0.0046875,
+            "y": 0.5277777777777778,
+            "rotation": 105
+          }
+        },
+        {
+          "type": "set_keyframe",
+          "objectId": "lamp_glow_0",
+          "frame": 70,
+          "interpolation": "smooth",
+          "transform": {
+            "anchorX": 0.5,
+            "anchorY": 0.19444444444444445,
+            "x": -0.00234375,
+            "y": 0.5388888888888889,
+            "rotation": 90
+          }
+        },
+        {
+          "type": "set_keyframe",
+          "objectId": "lamp_glow_0",
+          "frame": 90,
+          "interpolation": "hold",
+          "transform": {
+            "anchorX": 0.5,
+            "anchorY": 0.19444444444444445,
+            "x": -0.00234375,
+            "y": 0.5388888888888889,
+            "rotation": 90
+          }
+        },
+        {
+          "type": "set_keyframe",
+          "objectId": "lamp_handle_0",
+          "frame": 0,
+          "interpolation": "ease_in",
+          "transform": {
+            "anchorX": 0.5,
+            "anchorY": 0.19444444444444445,
+            "x": -0.032394933700561526,
+            "y": 0.3034224616156684,
+            "rotation": 0
+          }
+        },
+        {
+          "type": "set_keyframe",
+          "objectId": "lamp_handle_0",
+          "frame": 40,
+          "interpolation": "linear",
+          "transform": {
+            "anchorX": 0.5,
+            "anchorY": 0.19444444444444445,
+            "x": -0.0140625,
+            "y": 0.4652777777777778,
+            "rotation": 55
+          }
+        },
+        {
+          "type": "set_keyframe",
+          "objectId": "lamp_handle_0",
+          "frame": 51,
+          "interpolation": "ease_out",
+          "transform": {
+            "anchorX": 0.5,
+            "anchorY": 0.19444444444444445,
+            "x": -0.01015625,
+            "y": 0.5388888888888889,
+            "rotation": 90
+          }
+        },
+        {
+          "type": "set_keyframe",
+          "objectId": "lamp_handle_0",
+          "frame": 59,
+          "interpolation": "ease_in",
+          "transform": {
+            "anchorX": 0.5,
+            "anchorY": 0.19444444444444445,
+            "x": -0.0046875,
+            "y": 0.5277777777777778,
+            "rotation": 105
+          }
+        },
+        {
+          "type": "set_keyframe",
+          "objectId": "lamp_handle_0",
+          "frame": 70,
+          "interpolation": "smooth",
+          "transform": {
+            "anchorX": 0.5,
+            "anchorY": 0.19444444444444445,
+            "x": -0.00234375,
+            "y": 0.5388888888888889,
+            "rotation": 90
+          }
+        },
+        {
+          "type": "set_keyframe",
+          "objectId": "lamp_handle_0",
+          "frame": 90,
+          "interpolation": "hold",
+          "transform": {
+            "anchorX": 0.5,
+            "anchorY": 0.19444444444444445,
+            "x": -0.00234375,
+            "y": 0.5388888888888889,
+            "rotation": 90
+          }
+        },
+        {
+          "type": "set_keyframe",
+          "objectId": "lamp_glass_0",
+          "frame": 0,
+          "interpolation": "ease_in",
+          "transform": {
+            "anchorX": 0.5,
+            "anchorY": 0.19444444444444445,
+            "x": -0.032394933700561526,
+            "y": 0.3034224616156684,
+            "rotation": 0
+          }
+        },
+        {
+          "type": "set_keyframe",
+          "objectId": "lamp_glass_0",
+          "frame": 40,
+          "interpolation": "linear",
+          "transform": {
+            "anchorX": 0.5,
+            "anchorY": 0.19444444444444445,
+            "x": -0.0140625,
+            "y": 0.4652777777777778,
+            "rotation": 55
+          }
+        },
+        {
+          "type": "set_keyframe",
+          "objectId": "lamp_glass_0",
+          "frame": 51,
+          "interpolation": "ease_out",
+          "transform": {
+            "anchorX": 0.5,
+            "anchorY": 0.19444444444444445,
+            "x": -0.01015625,
+            "y": 0.5388888888888889,
+            "rotation": 90
+          }
+        },
+        {
+          "type": "set_keyframe",
+          "objectId": "lamp_glass_0",
+          "frame": 59,
+          "interpolation": "ease_in",
+          "transform": {
+            "anchorX": 0.5,
+            "anchorY": 0.19444444444444445,
+            "x": -0.0046875,
+            "y": 0.5277777777777778,
+            "rotation": 105
+          }
+        },
+        {
+          "type": "set_keyframe",
+          "objectId": "lamp_glass_0",
+          "frame": 70,
+          "interpolation": "smooth",
+          "transform": {
+            "anchorX": 0.5,
+            "anchorY": 0.19444444444444445,
+            "x": -0.00234375,
+            "y": 0.5388888888888889,
+            "rotation": 90
+          }
+        },
+        {
+          "type": "set_keyframe",
+          "objectId": "lamp_glass_0",
+          "frame": 90,
+          "interpolation": "hold",
+          "transform": {
+            "anchorX": 0.5,
+            "anchorY": 0.19444444444444445,
+            "x": -0.00234375,
+            "y": 0.5388888888888889,
+            "rotation": 90
+          }
+        },
+        {
+          "type": "set_keyframe",
+          "objectId": "lamp_cage_caps_0",
+          "frame": 0,
+          "interpolation": "ease_in",
+          "transform": {
+            "anchorX": 0.5,
+            "anchorY": 0.19444444444444445,
+            "x": -0.032394933700561526,
+            "y": 0.3034224616156684,
+            "rotation": 0
+          }
+        },
+        {
+          "type": "set_keyframe",
+          "objectId": "lamp_cage_caps_0",
+          "frame": 40,
+          "interpolation": "linear",
+          "transform": {
+            "anchorX": 0.5,
+            "anchorY": 0.19444444444444445,
+            "x": -0.0140625,
+            "y": 0.4652777777777778,
+            "rotation": 55
+          }
+        },
+        {
+          "type": "set_keyframe",
+          "objectId": "lamp_cage_caps_0",
+          "frame": 51,
+          "interpolation": "ease_out",
+          "transform": {
+            "anchorX": 0.5,
+            "anchorY": 0.19444444444444445,
+            "x": -0.01015625,
+            "y": 0.5388888888888889,
+            "rotation": 90
+          }
+        },
+        {
+          "type": "set_keyframe",
+          "objectId": "lamp_cage_caps_0",
+          "frame": 59,
+          "interpolation": "ease_in",
+          "transform": {
+            "anchorX": 0.5,
+            "anchorY": 0.19444444444444445,
+            "x": -0.0046875,
+            "y": 0.5277777777777778,
+            "rotation": 105
+          }
+        },
+        {
+          "type": "set_keyframe",
+          "objectId": "lamp_cage_caps_0",
+          "frame": 70,
+          "interpolation": "smooth",
+          "transform": {
+            "anchorX": 0.5,
+            "anchorY": 0.19444444444444445,
+            "x": -0.00234375,
+            "y": 0.5388888888888889,
+            "rotation": 90
+          }
+        },
+        {
+          "type": "set_keyframe",
+          "objectId": "lamp_cage_caps_0",
+          "frame": 90,
+          "interpolation": "hold",
+          "transform": {
+            "anchorX": 0.5,
+            "anchorY": 0.19444444444444445,
+            "x": -0.00234375,
+            "y": 0.5388888888888889,
+            "rotation": 90
+          }
+        },
+        {
+          "type": "set_keyframe",
+          "objectId": "lamp_cage_caps_1",
+          "frame": 0,
+          "interpolation": "ease_in",
+          "transform": {
+            "anchorX": 0.5,
+            "anchorY": 0.19444444444444445,
+            "x": -0.032394933700561526,
+            "y": 0.3034224616156684,
+            "rotation": 0
+          }
+        },
+        {
+          "type": "set_keyframe",
+          "objectId": "lamp_cage_caps_1",
+          "frame": 40,
+          "interpolation": "linear",
+          "transform": {
+            "anchorX": 0.5,
+            "anchorY": 0.19444444444444445,
+            "x": -0.0140625,
+            "y": 0.4652777777777778,
+            "rotation": 55
+          }
+        },
+        {
+          "type": "set_keyframe",
+          "objectId": "lamp_cage_caps_1",
+          "frame": 51,
+          "interpolation": "ease_out",
+          "transform": {
+            "anchorX": 0.5,
+            "anchorY": 0.19444444444444445,
+            "x": -0.01015625,
+            "y": 0.5388888888888889,
+            "rotation": 90
+          }
+        },
+        {
+          "type": "set_keyframe",
+          "objectId": "lamp_cage_caps_1",
+          "frame": 59,
+          "interpolation": "ease_in",
+          "transform": {
+            "anchorX": 0.5,
+            "anchorY": 0.19444444444444445,
+            "x": -0.0046875,
+            "y": 0.5277777777777778,
+            "rotation": 105
+          }
+        },
+        {
+          "type": "set_keyframe",
+          "objectId": "lamp_cage_caps_1",
+          "frame": 70,
+          "interpolation": "smooth",
+          "transform": {
+            "anchorX": 0.5,
+            "anchorY": 0.19444444444444445,
+            "x": -0.00234375,
+            "y": 0.5388888888888889,
+            "rotation": 90
+          }
+        },
+        {
+          "type": "set_keyframe",
+          "objectId": "lamp_cage_caps_1",
+          "frame": 90,
+          "interpolation": "hold",
+          "transform": {
+            "anchorX": 0.5,
+            "anchorY": 0.19444444444444445,
+            "x": -0.00234375,
+            "y": 0.5388888888888889,
+            "rotation": 90
+          }
+        },
+        {
+          "type": "set_keyframe",
+          "objectId": "lamp_cage_0",
+          "frame": 0,
+          "interpolation": "ease_in",
+          "transform": {
+            "anchorX": 0.5,
+            "anchorY": 0.19444444444444445,
+            "x": -0.032394933700561526,
+            "y": 0.3034224616156684,
+            "rotation": 0
+          }
+        },
+        {
+          "type": "set_keyframe",
+          "objectId": "lamp_cage_0",
+          "frame": 40,
+          "interpolation": "linear",
+          "transform": {
+            "anchorX": 0.5,
+            "anchorY": 0.19444444444444445,
+            "x": -0.0140625,
+            "y": 0.4652777777777778,
+            "rotation": 55
+          }
+        },
+        {
+          "type": "set_keyframe",
+          "objectId": "lamp_cage_0",
+          "frame": 51,
+          "interpolation": "ease_out",
+          "transform": {
+            "anchorX": 0.5,
+            "anchorY": 0.19444444444444445,
+            "x": -0.01015625,
+            "y": 0.5388888888888889,
+            "rotation": 90
+          }
+        },
+        {
+          "type": "set_keyframe",
+          "objectId": "lamp_cage_0",
+          "frame": 59,
+          "interpolation": "ease_in",
+          "transform": {
+            "anchorX": 0.5,
+            "anchorY": 0.19444444444444445,
+            "x": -0.0046875,
+            "y": 0.5277777777777778,
+            "rotation": 105
+          }
+        },
+        {
+          "type": "set_keyframe",
+          "objectId": "lamp_cage_0",
+          "frame": 70,
+          "interpolation": "smooth",
+          "transform": {
+            "anchorX": 0.5,
+            "anchorY": 0.19444444444444445,
+            "x": -0.00234375,
+            "y": 0.5388888888888889,
+            "rotation": 90
+          }
+        },
+        {
+          "type": "set_keyframe",
+          "objectId": "lamp_cage_0",
+          "frame": 90,
+          "interpolation": "hold",
+          "transform": {
+            "anchorX": 0.5,
+            "anchorY": 0.19444444444444445,
+            "x": -0.00234375,
+            "y": 0.5388888888888889,
+            "rotation": 90
+          }
+        },
+        {
+          "type": "set_transform",
+          "objectId": "stage_bridge_plank_9_2",
+          "transform": {
+            "anchorX": 0.5046875,
+            "anchorY": 0.7489583333333333,
+            "rotation": 18
+          }
+        }
+      ],
+      "camera": [
+        {
+          "frame": 0,
+          "x": 0.03600000000000003,
+          "y": -0.16199999999999995,
+          "zoom": 1.8,
+          "rotation": 0,
+          "interpolation": "smooth"
+        },
+        {
+          "frame": 90,
+          "x": -0.0,
+          "y": -0.3360000000000001,
+          "zoom": 2.1,
+          "rotation": 0,
+          "interpolation": "hold"
+        }
+      ]
+    },
+    {
+      "shotId": "s07",
+      "label": "Protect the flame",
+      "frameCount": 240,
+      "operations": [
+        {
+          "type": "add_layer",
+          "layer": {
+            "id": "arin_layer",
+            "name": "Arin_Layer"
+          }
+        },
+        {
+          "type": "add_layer",
+          "layer": {
+            "id": "leela_layer",
+            "name": "Leela_Layer"
+          }
+        },
+        {
+          "type": "add_layer",
+          "layer": {
+            "id": "foreground",
+            "name": "Foreground"
+          }
+        },
+        {
+          "type": "add_story_stage",
+          "layerId": "layer_1",
+          "foregroundLayerId": "foreground",
+          "sceneId": "stage",
+          "settings": {
+            "location": "bridge",
+            "time": "night",
+            "weather": "rain",
+            "intensity": 0.55
+          }
+        },
+        {
+          "type": "set_transform",
+          "objectId": "stage_bridge_plank_9_0",
+          "transform": {
+            "anchorX": 0.5046875,
+            "anchorY": 0.7489583333333333,
+            "rotation": 18
+          }
+        },
+        {
+          "type": "set_transform",
+          "objectId": "stage_bridge_plank_9_1",
+          "transform": {
+            "anchorX": 0.5046875,
+            "anchorY": 0.7489583333333333,
+            "rotation": 18
+          }
+        },
+        {
+          "type": "add_human_animation",
+          "layerId": "arin_layer",
+          "actorId": "arin",
+          "settings": {
+            "view": "right",
+            "build": "slender",
+            "hairStyle": "short",
+            "x": 0.41,
+            "floorY": 0.7619444444444444,
+            "size": 0.92,
+            "coatColor": "#FF324E65",
+            "hairColor": "#FF26303D",
+            "skinColor": "#FFD4A27F",
+            "trouserColor": "#FF303747",
+            "faceStyle": "angular",
+            "shading": "soft",
+            "lightAngle": 135
+          },
+          "preset": "kneel",
+          "poseOverrides": {
+            "gazeX": 0.35,
+            "gazeY": 0.85,
+            "nearHandX": 58,
+            "nearHandY": -205,
+            "nearHandZ": 70,
+            "nearWrist": -30,
+            "nearElbowSwivel": 100,
+            "handOpen": 0.8,
+            "footLeftZ": 10
+          },
+          "motion": {
+            "speed": 0.9,
+            "travelScale": 0.8,
+            "armSwing": 0.35
+          },
+          "blinkTrack": {
+            "intervalMs": 3700,
+            "phaseMs": 1600
+          },
+          "ground": "bridge"
+        },
+        {
+          "type": "add_human_animation",
+          "layerId": "leela_layer",
+          "actorId": "leela",
+          "settings": {
+            "view": "left",
+            "build": "broad",
+            "hairStyle": "long",
+            "x": 0.65,
+            "floorY": 0.7263888888888889,
+            "size": 0.92,
+            "coatColor": "#FF66544A",
+            "hairColor": "#FF332927",
+            "skinColor": "#FFB88768",
+            "trouserColor": "#FF3B3D39",
+            "faceStyle": "soft",
+            "shading": "soft",
+            "lightAngle": 135
+          },
+          "preset": "inspect",
+          "poseOverrides": {
+            "gazeX": 0.55,
+            "gazeY": 0.7
+          },
+          "motion": {
+            "speed": 0.9,
+            "travelScale": 0.8,
+            "armSwing": 0.35
+          },
+          "speech": {
+            "transitionMs": 60,
+            "prediction": {
+              "startMs": 3000,
+              "segments": [
+                {
+                  "forcedAlignmentVerified": false,
+                  "modelDurationUnits": [
+                    16,
+                    1,
+                    2,
+                    2,
+                    2,
+                    2,
+                    3,
+                    3,
+                    2,
+                    1,
+                    2,
+                    1,
+                    3,
+                    3,
+                    2,
+                    4,
+                    4,
+                    14,
+                    7,
+                    1
+                  ],
+                  "phonemes": "ðə flˈAm ɪz smˈɔl.",
+                  "sampleCount": 45000,
+                  "startSample": 0,
+                  "unitsPerSecond": 40
+                },
+                {
+                  "forcedAlignmentVerified": false,
+                  "modelDurationUnits": [
+                    17,
+                    2,
+                    1,
+                    1,
+                    1,
+                    1,
+                    2,
+                    2,
+                    2,
+                    1,
+                    1,
+                    2,
+                    2,
+                    6,
+                    5,
+                    14,
+                    8,
+                    1
+                  ],
+                  "phonemes": "ˌɪt ˈɪzᵊnt ɡˈɔn.",
+                  "sampleCount": 41400,
+                  "startSample": 53400,
+                  "unitsPerSecond": 40
+                }
+              ]
+            }
+          },
+          "blinkTrack": {
+            "intervalMs": 4400,
+            "phaseMs": 4805
+          },
+          "ground": "bridge"
+        },
+        {
+          "type": "add_actor_prop",
+          "layerId": "layer_1",
+          "propId": "lamp",
+          "settings": {
+            "kind": "lantern",
+            "attachment": "floor",
+            "scale": 0.8,
+            "x": 0.49,
+            "y": 0.68
+          }
+        },
+        {
+          "type": "set_transform",
+          "objectId": "lamp_glow_0",
+          "transform": {
+            "anchorX": 0.5,
+            "anchorY": 0.19444444444444445,
+            "x": -0.00234375,
+            "y": 0.5388888888888889,
+            "rotation": 90
+          }
+        },
+        {
+          "type": "set_transform",
+          "objectId": "lamp_handle_0",
+          "transform": {
+            "anchorX": 0.5,
+            "anchorY": 0.19444444444444445,
+            "x": -0.00234375,
+            "y": 0.5388888888888889,
+            "rotation": 90
+          }
+        },
+        {
+          "type": "set_transform",
+          "objectId": "lamp_glass_0",
+          "transform": {
+            "anchorX": 0.5,
+            "anchorY": 0.19444444444444445,
+            "x": -0.00234375,
+            "y": 0.5388888888888889,
+            "rotation": 90
+          }
+        },
+        {
+          "type": "set_transform",
+          "objectId": "lamp_cage_caps_0",
+          "transform": {
+            "anchorX": 0.5,
+            "anchorY": 0.19444444444444445,
+            "x": -0.00234375,
+            "y": 0.5388888888888889,
+            "rotation": 90
+          }
+        },
+        {
+          "type": "set_transform",
+          "objectId": "lamp_cage_caps_1",
+          "transform": {
+            "anchorX": 0.5,
+            "anchorY": 0.19444444444444445,
+            "x": -0.00234375,
+            "y": 0.5388888888888889,
+            "rotation": 90
+          }
+        },
+        {
+          "type": "set_transform",
+          "objectId": "lamp_cage_0",
+          "transform": {
+            "anchorX": 0.5,
+            "anchorY": 0.19444444444444445,
+            "x": -0.00234375,
+            "y": 0.5388888888888889,
+            "rotation": 90
+          }
+        },
+        {
+          "type": "set_transform",
+          "objectId": "stage_bridge_plank_9_2",
+          "transform": {
+            "anchorX": 0.5046875,
+            "anchorY": 0.7489583333333333,
+            "rotation": 18
+          }
+        }
+      ],
+      "camera": [
+        {
+          "frame": 0,
+          "x": -0.04800000000000004,
+          "y": -0.06400000000000006,
+          "zoom": 1.6,
+          "rotation": 0,
+          "interpolation": "smooth"
+        },
+        {
+          "frame": 239,
+          "x": -0.04920000000000004,
+          "y": -0.06560000000000006,
+          "zoom": 1.64,
+          "rotation": 0,
+          "interpolation": "smooth"
+        }
+      ]
+    },
+    {
+      "shotId": "s08",
+      "label": "Learning to listen",
+      "frameCount": 192,
+      "operations": [
+        {
+          "type": "add_layer",
+          "layer": {
+            "id": "arin_layer",
+            "name": "Arin_Layer"
+          }
+        },
+        {
+          "type": "add_layer",
+          "layer": {
+            "id": "leela_layer",
+            "name": "Leela_Layer"
+          }
+        },
+        {
+          "type": "add_layer",
+          "layer": {
+            "id": "foreground",
+            "name": "Foreground"
+          }
+        },
+        {
+          "type": "add_story_stage",
+          "layerId": "layer_1",
+          "foregroundLayerId": "foreground",
+          "sceneId": "stage",
+          "settings": {
+            "location": "bridge",
+            "time": "night",
+            "weather": "wind",
+            "intensity": 0.25
+          }
+        },
+        {
+          "type": "set_transform",
+          "objectId": "stage_bridge_plank_9_0",
+          "transform": {
+            "anchorX": 0.5046875,
+            "anchorY": 0.7489583333333333,
+            "rotation": 18
+          }
+        },
+        {
+          "type": "set_transform",
+          "objectId": "stage_bridge_plank_9_1",
+          "transform": {
+            "anchorX": 0.5046875,
+            "anchorY": 0.7489583333333333,
+            "rotation": 18
+          }
+        },
+        {
+          "type": "add_human_animation",
+          "layerId": "arin_layer",
+          "actorId": "arin",
+          "settings": {
+            "view": "front",
+            "build": "slender",
+            "hairStyle": "short",
+            "x": 0.41,
+            "floorY": 0.7619444444444444,
+            "size": 0.92,
+            "coatColor": "#FF324E65",
+            "hairColor": "#FF26303D",
+            "skinColor": "#FFD4A27F",
+            "trouserColor": "#FF303747",
+            "faceStyle": "angular",
+            "shading": "soft",
+            "lightAngle": 135
+          },
+          "preset": "remorse",
+          "poseOverrides": {
+            "gazeX": 0.55,
+            "brow": -0.25,
+            "smile": -0.2,
+            "nearHandX": 65,
+            "nearHandY": -210,
+            "nearHandZ": 16,
+            "nearWrist": -25,
+            "nearElbowSwivel": 130,
+            "handOpen": 0.25
+          },
+          "motion": {
+            "speed": 0.9,
+            "travelScale": 0.8,
+            "armSwing": 0.35
+          },
+          "speech": {
+            "transitionMs": 60,
+            "prediction": {
+              "startMs": 2000,
+              "segments": [
+                {
+                  "forcedAlignmentVerified": false,
+                  "modelDurationUnits": [
+                    14,
+                    2,
+                    2,
+                    2,
+                    2,
+                    2,
+                    2,
+                    5,
+                    4,
+                    14,
+                    8,
+                    1
+                  ],
+                  "phonemes": "jˌʊɹ ɹˈIt.",
+                  "sampleCount": 34800,
+                  "startSample": 0,
+                  "unitsPerSecond": 40
+                },
+                {
+                  "forcedAlignmentVerified": false,
+                  "modelDurationUnits": [
+                    15,
+                    2,
+                    3,
+                    2,
+                    2,
+                    1,
+                    1,
+                    2,
+                    2,
+                    1,
+                    1,
+                    1,
+                    1,
+                    2,
+                    1,
+                    2,
+                    2,
+                    2,
+                    5,
+                    18,
+                    9,
+                    1
+                  ],
+                  "phonemes": "ʃˈO mˌi wˌʌt tə dˈu.",
+                  "sampleCount": 45600,
+                  "startSample": 42000,
+                  "unitsPerSecond": 40
+                }
+              ]
+            }
+          },
+          "blinkTrack": {
+            "intervalMs": 3700,
+            "phaseMs": 3380
+          },
+          "ground": "bridge"
+        },
+        {
+          "type": "add_actor_prop",
+          "layerId": "arin_layer",
+          "actorId": "arin",
+          "propId": "lamp",
+          "settings": {
+            "kind": "lantern",
+            "attachment": "near",
+            "scale": 0.8
+          }
+        },
+        {
+          "type": "add_human_animation",
+          "layerId": "leela_layer",
+          "actorId": "leela",
+          "settings": {
+            "view": "left",
+            "build": "broad",
+            "hairStyle": "long",
+            "x": 0.65,
+            "floorY": 0.7263888888888889,
+            "size": 0.92,
+            "coatColor": "#FF66544A",
+            "hairColor": "#FF332927",
+            "skinColor": "#FFB88768",
+            "trouserColor": "#FF3B3D39",
+            "faceStyle": "soft",
+            "shading": "soft",
+            "lightAngle": 135
+          },
+          "preset": "explain",
+          "poseOverrides": {
+            "gazeX": 0.55,
+            "brow": -0.25,
+            "smile": -0.2
+          },
+          "motion": {
+            "speed": 0.9,
+            "travelScale": 0.8,
+            "armSwing": 0.35
+          },
+          "blinkTrack": {
+            "intervalMs": 4400,
+            "phaseMs": 2500
+          },
+          "ground": "bridge"
+        },
+        {
+          "type": "set_transform",
+          "objectId": "stage_bridge_plank_9_2",
+          "transform": {
+            "anchorX": 0.5046875,
+            "anchorY": 0.7489583333333333,
+            "rotation": 18
+          }
+        }
+      ],
+      "camera": [
+        {
+          "frame": 0,
+          "x": 0.23850000000000005,
+          "y": 0.26499999999999996,
+          "zoom": 2.65,
+          "rotation": 0,
+          "interpolation": "smooth"
+        },
+        {
+          "frame": 191,
+          "x": 0.24300000000000008,
+          "y": 0.26999999999999996,
+          "zoom": 2.7,
+          "rotation": 0,
+          "interpolation": "smooth"
+        }
+      ]
+    },
+    {
+      "shotId": "s09",
+      "label": "Thread and hold",
+      "frameCount": 144,
+      "operations": [
+        {
+          "type": "add_layer",
+          "layer": {
+            "id": "rope",
+            "name": "Rope"
+          }
+        },
+        {
+          "type": "add_layer",
+          "layer": {
+            "id": "arin_layer",
+            "name": "Arin_Layer"
+          }
+        },
+        {
+          "type": "add_layer",
+          "layer": {
+            "id": "leela_layer",
+            "name": "Leela_Layer"
+          }
+        },
+        {
+          "type": "add_layer",
+          "layer": {
+            "id": "foreground",
+            "name": "Foreground"
+          }
+        },
+        {
+          "type": "add_story_stage",
+          "layerId": "layer_1",
+          "foregroundLayerId": "foreground",
+          "sceneId": "stage",
+          "settings": {
+            "location": "bridge",
+            "time": "night",
+            "weather": "wind",
+            "intensity": 0.25
+          }
+        },
+        {
+          "type": "set_transform",
+          "objectId": "stage_bridge_plank_9_0",
+          "transform": {
+            "anchorX": 0.5046875,
+            "anchorY": 0.7489583333333333,
+            "rotation": 18
+          }
+        },
+        {
+          "type": "set_transform",
+          "objectId": "stage_bridge_plank_9_1",
+          "transform": {
+            "anchorX": 0.5046875,
+            "anchorY": 0.7489583333333333,
+            "rotation": 18
+          }
+        },
+        {
+          "type": "add_human_animation",
+          "layerId": "arin_layer",
+          "actorId": "arin",
+          "settings": {
+            "view": "front",
+            "build": "slender",
+            "hairStyle": "short",
+            "x": 0.41,
+            "floorY": 0.7619444444444444,
+            "size": 0.92,
+            "coatColor": "#FF324E65",
+            "hairColor": "#FF26303D",
+            "skinColor": "#FFD4A27F",
+            "trouserColor": "#FF303747",
+            "faceStyle": "angular",
+            "shading": "soft",
+            "lightAngle": 135
+          },
+          "preset": "tie",
+          "poseOverrides": {
+            "gazeX": 0.55,
+            "gazeY": 0.7
+          },
+          "motion": {
+            "speed": 0.9,
+            "travelScale": 0.8,
+            "armSwing": 0.35
+          },
+          "blinkTrack": {
+            "intervalMs": 3700,
+            "phaseMs": 1600
+          },
+          "ground": "bridge"
+        },
+        {
+          "type": "add_human_animation",
+          "layerId": "leela_layer",
+          "actorId": "leela",
+          "settings": {
+            "view": "left",
+            "build": "broad",
+            "hairStyle": "long",
+            "x": 0.65,
+            "floorY": 0.7263888888888889,
+            "size": 0.92,
+            "coatColor": "#FF66544A",
+            "hairColor": "#FF332927",
+            "skinColor": "#FFB88768",
+            "trouserColor": "#FF3B3D39",
+            "faceStyle": "soft",
+            "shading": "soft",
+            "lightAngle": 135
+          },
+          "preset": "tie",
+          "poseOverrides": {
+            "gazeX": 0.55,
+            "gazeY": 0.7
+          },
+          "motion": {
+            "speed": 0.9,
+            "travelScale": 0.8,
+            "armSwing": 0.35
+          },
+          "speech": {
+            "transitionMs": 60,
+            "prediction": {
+              "startMs": 1000,
+              "segments": [
+                {
+                  "forcedAlignmentVerified": false,
+                  "modelDurationUnits": [
+                    14,
+                    2,
+                    3,
+                    2,
+                    2,
+                    1,
+                    1,
+                    1,
+                    1,
+                    2,
+                    2,
+                    2,
+                    2,
+                    3,
+                    2,
+                    2,
+                    4,
+                    13,
+                    7,
+                    1
+                  ],
+                  "phonemes": "pˈæs ðə ɹˈOp θɹˈu.",
+                  "sampleCount": 40200,
+                  "startSample": 0,
+                  "unitsPerSecond": 40
+                },
+                {
+                  "forcedAlignmentVerified": false,
+                  "modelDurationUnits": [
+                    15,
+                    2,
+                    3,
+                    2,
+                    2,
+                    1,
+                    2,
+                    2,
+                    2,
+                    1,
+                    1,
+                    1,
+                    1,
+                    2,
+                    2,
+                    2,
+                    2,
+                    2,
+                    3,
+                    14,
+                    7,
+                    1
+                  ],
+                  "phonemes": "nˈW hˈOld ɪt stˈɛdi.",
+                  "sampleCount": 42000,
+                  "startSample": 43800,
+                  "unitsPerSecond": 40
+                }
+              ]
+            }
+          },
+          "blinkTrack": {
+            "intervalMs": 4400,
+            "phaseMs": 2605
+          },
+          "ground": "bridge"
+        },
+        {
+          "type": "add_grip_link",
+          "layerId": "rope",
+          "linkId": "safety",
+          "from": {
+            "actorId": "arin",
+            "hand": "far"
+          },
+          "to": {
+            "actorId": "leela",
+            "hand": "near"
+          },
+          "settings": {
+            "sagPx": 18,
+            "widthPx": 3.2
+          }
+        },
+        {
+          "type": "add_actor_prop",
+          "layerId": "layer_1",
+          "propId": "lamp",
+          "settings": {
+            "kind": "lantern",
+            "attachment": "floor",
+            "scale": 0.8,
+            "x": 0.49,
+            "y": 0.68
+          }
+        },
+        {
+          "type": "set_transform",
+          "objectId": "lamp_glow_0",
+          "transform": {
+            "anchorX": 0.5,
+            "anchorY": 0.19444444444444445,
+            "x": -0.00234375,
+            "y": 0.5388888888888889,
+            "rotation": 90
+          }
+        },
+        {
+          "type": "set_transform",
+          "objectId": "lamp_handle_0",
+          "transform": {
+            "anchorX": 0.5,
+            "anchorY": 0.19444444444444445,
+            "x": -0.00234375,
+            "y": 0.5388888888888889,
+            "rotation": 90
+          }
+        },
+        {
+          "type": "set_transform",
+          "objectId": "lamp_glass_0",
+          "transform": {
+            "anchorX": 0.5,
+            "anchorY": 0.19444444444444445,
+            "x": -0.00234375,
+            "y": 0.5388888888888889,
+            "rotation": 90
+          }
+        },
+        {
+          "type": "set_transform",
+          "objectId": "lamp_cage_caps_0",
+          "transform": {
+            "anchorX": 0.5,
+            "anchorY": 0.19444444444444445,
+            "x": -0.00234375,
+            "y": 0.5388888888888889,
+            "rotation": 90
+          }
+        },
+        {
+          "type": "set_transform",
+          "objectId": "lamp_cage_caps_1",
+          "transform": {
+            "anchorX": 0.5,
+            "anchorY": 0.19444444444444445,
+            "x": -0.00234375,
+            "y": 0.5388888888888889,
+            "rotation": 90
+          }
+        },
+        {
+          "type": "set_transform",
+          "objectId": "lamp_cage_0",
+          "transform": {
+            "anchorX": 0.5,
+            "anchorY": 0.19444444444444445,
+            "x": -0.00234375,
+            "y": 0.5388888888888889,
+            "rotation": 90
+          }
+        },
+        {
+          "type": "set_transform",
+          "objectId": "stage_bridge_plank_9_2",
+          "transform": {
+            "anchorX": 0.5046875,
+            "anchorY": 0.7489583333333333,
+            "rotation": 18
+          }
+        }
+      ],
+      "camera": [
+        {
+          "frame": 0,
+          "x": -0.04800000000000004,
+          "y": -0.06400000000000006,
+          "zoom": 1.6,
+          "rotation": 0,
+          "interpolation": "smooth"
+        },
+        {
+          "frame": 143,
+          "x": -0.04920000000000004,
+          "y": -0.06560000000000006,
+          "zoom": 1.64,
+          "rotation": 0,
+          "interpolation": "smooth"
+        }
+      ]
+    },
+    {
+      "shotId": "s10",
+      "label": "Working together",
+      "frameCount": 216,
+      "operations": [
+        {
+          "type": "add_layer",
+          "layer": {
+            "id": "rope",
+            "name": "Rope"
+          }
+        },
+        {
+          "type": "add_layer",
+          "layer": {
+            "id": "arin_layer",
+            "name": "Arin_Layer"
+          }
+        },
+        {
+          "type": "add_layer",
+          "layer": {
+            "id": "leela_layer",
+            "name": "Leela_Layer"
+          }
+        },
+        {
+          "type": "add_layer",
+          "layer": {
+            "id": "foreground",
+            "name": "Foreground"
+          }
+        },
+        {
+          "type": "add_story_stage",
+          "layerId": "layer_1",
+          "foregroundLayerId": "foreground",
+          "sceneId": "stage",
+          "settings": {
+            "location": "bridge",
+            "time": "night",
+            "weather": "wind",
+            "intensity": 0.25
+          }
+        },
+        {
+          "type": "set_transform",
+          "objectId": "stage_bridge_plank_9_0",
+          "transform": {
+            "anchorX": 0.5046875,
+            "anchorY": 0.7489583333333333,
+            "rotation": 18
+          }
+        },
+        {
+          "type": "set_transform",
+          "objectId": "stage_bridge_plank_9_1",
+          "transform": {
+            "anchorX": 0.5046875,
+            "anchorY": 0.7489583333333333,
+            "rotation": 18
+          }
+        },
+        {
+          "type": "add_human_animation",
+          "layerId": "arin_layer",
+          "actorId": "arin",
+          "settings": {
+            "view": "front",
+            "build": "slender",
+            "hairStyle": "short",
+            "x": 0.41,
+            "floorY": 0.7619444444444444,
+            "size": 0.92,
+            "coatColor": "#FF324E65",
+            "hairColor": "#FF26303D",
+            "skinColor": "#FFD4A27F",
+            "trouserColor": "#FF303747",
+            "faceStyle": "angular",
+            "shading": "soft",
+            "lightAngle": 135
+          },
+          "preset": "tie",
+          "poseOverrides": {
+            "gazeX": 0.55,
+            "gazeY": 0.7
+          },
+          "motion": {
+            "speed": 0.9,
+            "travelScale": 0.8,
+            "armSwing": 0.35
+          },
+          "blinkTrack": {
+            "intervalMs": 3700,
+            "phaseMs": 1600
+          },
+          "ground": "bridge"
+        },
+        {
+          "type": "add_human_animation",
+          "layerId": "leela_layer",
+          "actorId": "leela",
+          "settings": {
+            "view": "left",
+            "build": "broad",
+            "hairStyle": "long",
+            "x": 0.65,
+            "floorY": 0.7263888888888889,
+            "size": 0.92,
+            "coatColor": "#FF66544A",
+            "hairColor": "#FF332927",
+            "skinColor": "#FFB88768",
+            "trouserColor": "#FF3B3D39",
+            "faceStyle": "soft",
+            "shading": "soft",
+            "lightAngle": 135
+          },
+          "preset": "tie",
+          "poseOverrides": {
+            "gazeX": 0.55,
+            "gazeY": 0.7
+          },
+          "motion": {
+            "speed": 0.9,
+            "travelScale": 0.8,
+            "armSwing": 0.35
+          },
+          "blinkTrack": {
+            "intervalMs": 4400,
+            "phaseMs": 2500
+          },
+          "ground": "bridge"
+        },
+        {
+          "type": "add_grip_link",
+          "layerId": "rope",
+          "linkId": "safety",
+          "from": {
+            "actorId": "arin",
+            "hand": "far"
+          },
+          "to": {
+            "actorId": "leela",
+            "hand": "near"
+          },
+          "settings": {
+            "sagPx": 18,
+            "widthPx": 3.2
+          }
+        },
+        {
+          "type": "add_actor_prop",
+          "layerId": "layer_1",
+          "propId": "lamp",
+          "settings": {
+            "kind": "lantern",
+            "attachment": "floor",
+            "scale": 0.8,
+            "x": 0.49,
+            "y": 0.68
+          }
+        },
+        {
+          "type": "set_transform",
+          "objectId": "lamp_glow_0",
+          "transform": {
+            "anchorX": 0.5,
+            "anchorY": 0.19444444444444445,
+            "x": -0.00234375,
+            "y": 0.5388888888888889,
+            "rotation": 90
+          }
+        },
+        {
+          "type": "set_transform",
+          "objectId": "lamp_handle_0",
+          "transform": {
+            "anchorX": 0.5,
+            "anchorY": 0.19444444444444445,
+            "x": -0.00234375,
+            "y": 0.5388888888888889,
+            "rotation": 90
+          }
+        },
+        {
+          "type": "set_transform",
+          "objectId": "lamp_glass_0",
+          "transform": {
+            "anchorX": 0.5,
+            "anchorY": 0.19444444444444445,
+            "x": -0.00234375,
+            "y": 0.5388888888888889,
+            "rotation": 90
+          }
+        },
+        {
+          "type": "set_transform",
+          "objectId": "lamp_cage_caps_0",
+          "transform": {
+            "anchorX": 0.5,
+            "anchorY": 0.19444444444444445,
+            "x": -0.00234375,
+            "y": 0.5388888888888889,
+            "rotation": 90
+          }
+        },
+        {
+          "type": "set_transform",
+          "objectId": "lamp_cage_caps_1",
+          "transform": {
+            "anchorX": 0.5,
+            "anchorY": 0.19444444444444445,
+            "x": -0.00234375,
+            "y": 0.5388888888888889,
+            "rotation": 90
+          }
+        },
+        {
+          "type": "set_transform",
+          "objectId": "lamp_cage_0",
+          "transform": {
+            "anchorX": 0.5,
+            "anchorY": 0.19444444444444445,
+            "x": -0.00234375,
+            "y": 0.5388888888888889,
+            "rotation": 90
+          }
+        },
+        {
+          "type": "set_transform",
+          "objectId": "stage_bridge_plank_9_2",
+          "transform": {
+            "anchorX": 0.5046875,
+            "anchorY": 0.7489583333333333,
+            "rotation": 18
+          }
+        }
+      ],
+      "camera": [
+        {
+          "frame": 0,
+          "x": -0.04800000000000004,
+          "y": -0.06400000000000006,
+          "zoom": 1.6,
+          "rotation": 0,
+          "interpolation": "smooth"
+        },
+        {
+          "frame": 215,
+          "x": -0.04920000000000004,
+          "y": -0.06560000000000006,
+          "zoom": 1.64,
+          "rotation": 0,
+          "interpolation": "smooth"
+        }
+      ]
+    },
+    {
+      "shotId": "s11",
+      "label": "A careful crossing",
+      "frameCount": 192,
+      "operations": [
+        {
+          "type": "add_layer",
+          "layer": {
+            "id": "rope",
+            "name": "Rope"
+          }
+        },
+        {
+          "type": "add_layer",
+          "layer": {
+            "id": "arin_layer",
+            "name": "Arin_Layer"
+          }
+        },
+        {
+          "type": "add_layer",
+          "layer": {
+            "id": "leela_layer",
+            "name": "Leela_Layer"
+          }
+        },
+        {
+          "type": "add_layer",
+          "layer": {
+            "id": "foreground",
+            "name": "Foreground"
+          }
+        },
+        {
+          "type": "add_story_stage",
+          "layerId": "layer_1",
+          "foregroundLayerId": "foreground",
+          "sceneId": "stage",
+          "settings": {
+            "location": "bridge",
+            "time": "night",
+            "weather": "wind",
+            "intensity": 0.25
+          }
+        },
+        {
+          "type": "set_transform",
+          "objectId": "stage_bridge_plank_9_0",
+          "transform": {
+            "anchorX": 0.5046875,
+            "anchorY": 0.7489583333333333,
+            "rotation": 18
+          }
+        },
+        {
+          "type": "set_transform",
+          "objectId": "stage_bridge_plank_9_1",
+          "transform": {
+            "anchorX": 0.5046875,
+            "anchorY": 0.7489583333333333,
+            "rotation": 18
+          }
+        },
+        {
+          "type": "add_human_animation",
+          "layerId": "arin_layer",
+          "actorId": "arin",
+          "settings": {
+            "view": "right",
+            "build": "slender",
+            "hairStyle": "short",
+            "x": 0.41,
+            "floorY": 0.7619444444444444,
+            "size": 0.92,
+            "coatColor": "#FF324E65",
+            "hairColor": "#FF26303D",
+            "skinColor": "#FFD4A27F",
+            "trouserColor": "#FF303747",
+            "faceStyle": "angular",
+            "shading": "soft",
+            "lightAngle": 135
+          },
+          "preset": "balance",
+          "poseOverrides": {
+            "gazeX": 0.55,
+            "nearHandX": 65,
+            "nearHandY": -210,
+            "nearHandZ": 16,
+            "nearWrist": -25,
+            "nearElbowSwivel": 130,
+            "handOpen": 0.25,
+            "farHandX": -58,
+            "farHandY": -225,
+            "farHandZ": 70,
+            "farWrist": 0,
+            "farElbowSwivel": 100
+          },
+          "motion": {
+            "speed": 0.7,
+            "travelScale": 0.55,
+            "armSwing": 0.35
+          },
+          "speech": {
+            "transitionMs": 60,
+            "prediction": {
+              "startMs": 2000,
+              "segments": [
+                {
+                  "forcedAlignmentVerified": false,
+                  "modelDurationUnits": [
+                    13,
+                    3,
+                    2,
+                    2,
+                    2,
+                    4,
+                    3,
+                    2,
+                    3,
+                    4,
+                    17,
+                    10,
+                    1
+                  ],
+                  "phonemes": "ˌIv ɡɑt ju.",
+                  "sampleCount": 39600,
+                  "startSample": 0,
+                  "unitsPerSecond": 40
+                },
+                {
+                  "forcedAlignmentVerified": false,
+                  "modelDurationUnits": [
+                    15,
+                    2,
+                    2,
+                    2,
+                    2,
+                    1,
+                    1,
+                    1,
+                    2,
+                    2,
+                    3,
+                    7,
+                    4,
+                    19,
+                    9,
+                    1
+                  ],
+                  "phonemes": "tˈAk jʊɹ tˈIm.",
+                  "sampleCount": 43800,
+                  "startSample": 46800,
+                  "unitsPerSecond": 40
+                }
+              ]
+            }
+          },
+          "blinkTrack": {
+            "intervalMs": 3700,
+            "phaseMs": 3580
+          },
+          "ground": "bridge"
+        },
+        {
+          "type": "add_actor_prop",
+          "layerId": "arin_layer",
+          "actorId": "arin",
+          "propId": "lamp",
+          "settings": {
+            "kind": "lantern",
+            "attachment": "near",
+            "scale": 0.8
+          }
+        },
+        {
+          "type": "add_human_animation",
+          "layerId": "leela_layer",
+          "actorId": "leela",
+          "settings": {
+            "view": "right",
+            "build": "broad",
+            "hairStyle": "long",
+            "x": 0.65,
+            "floorY": 0.7263888888888889,
+            "size": 0.92,
+            "coatColor": "#FF66544A",
+            "hairColor": "#FF332927",
+            "skinColor": "#FFB88768",
+            "trouserColor": "#FF3B3D39",
+            "faceStyle": "soft",
+            "shading": "soft",
+            "lightAngle": 135
+          },
+          "preset": "walk",
+          "poseOverrides": {
+            "gazeX": -0.55,
+            "nearHandX": 58,
+            "nearHandY": -210,
+            "nearHandZ": -50,
+            "nearWrist": 30,
+            "nearElbowSwivel": 100,
+            "handOpen": 0.2
+          },
+          "motion": {
+            "speed": 0.7,
+            "travelScale": 0.55,
+            "armSwing": 0.35,
+            "phase": 0.35
+          },
+          "blinkTrack": {
+            "intervalMs": 4400,
+            "phaseMs": 2500
+          },
+          "ground": "bridge"
+        },
+        {
+          "type": "add_grip_link",
+          "layerId": "rope",
+          "linkId": "safety",
+          "from": {
+            "actorId": "arin",
+            "hand": "far"
+          },
+          "to": {
+            "actorId": "leela",
+            "hand": "near"
+          },
+          "settings": {
+            "sagPx": 18,
+            "widthPx": 3.2
+          }
+        },
+        {
+          "type": "set_transform",
+          "objectId": "stage_bridge_plank_9_2",
+          "transform": {
+            "anchorX": 0.5046875,
+            "anchorY": 0.7489583333333333,
+            "rotation": 18
+          }
+        }
+      ],
+      "camera": [
+        {
+          "frame": 0,
+          "x": -0.01070000000000001,
+          "y": -0.0,
+          "zoom": 1.07,
+          "rotation": 0,
+          "interpolation": "smooth"
+        },
+        {
+          "frame": 191,
+          "x": -0.010967500000000008,
+          "y": -0.0,
+          "zoom": 1.09675,
+          "rotation": 0,
+          "interpolation": "smooth"
+        }
+      ]
+    },
+    {
+      "shotId": "s12",
+      "label": "Two hands",
+      "frameCount": 168,
+      "operations": [
+        {
+          "type": "add_layer",
+          "layer": {
+            "id": "arin_layer",
+            "name": "Arin_Layer"
+          }
+        },
+        {
+          "type": "add_layer",
+          "layer": {
+            "id": "leela_layer",
+            "name": "Leela_Layer"
+          }
+        },
+        {
+          "type": "add_layer",
+          "layer": {
+            "id": "foreground",
+            "name": "Foreground"
+          }
+        },
+        {
+          "type": "add_story_stage",
+          "layerId": "layer_1",
+          "foregroundLayerId": "foreground",
+          "sceneId": "stage",
+          "settings": {
+            "location": "bridge",
+            "time": "night",
+            "weather": "wind",
+            "intensity": 0.25
+          }
+        },
+        {
+          "type": "set_transform",
+          "objectId": "stage_bridge_plank_9_0",
+          "transform": {
+            "anchorX": 0.5046875,
+            "anchorY": 0.7489583333333333,
+            "rotation": 18
+          }
+        },
+        {
+          "type": "set_transform",
+          "objectId": "stage_bridge_plank_9_1",
+          "transform": {
+            "anchorX": 0.5046875,
+            "anchorY": 0.7489583333333333,
+            "rotation": 18
+          }
+        },
+        {
+          "type": "add_human_animation",
+          "layerId": "arin_layer",
+          "actorId": "arin",
+          "settings": {
+            "view": "front",
+            "build": "slender",
+            "hairStyle": "short",
+            "x": 0.41,
+            "floorY": 0.7619444444444444,
+            "size": 0.92,
+            "coatColor": "#FF324E65",
+            "hairColor": "#FF26303D",
+            "skinColor": "#FFD4A27F",
+            "trouserColor": "#FF303747",
+            "faceStyle": "angular",
+            "shading": "soft",
+            "lightAngle": 135
+          },
+          "preset": "relief",
+          "poseOverrides": {
+            "gazeX": 0.55,
+            "smile": 0.35,
+            "nearHandX": 65,
+            "nearHandY": -210,
+            "nearHandZ": 16,
+            "nearWrist": -25,
+            "nearElbowSwivel": 130,
+            "handOpen": 0.25
+          },
+          "motion": {
+            "speed": 0.7,
+            "travelScale": 0.55,
+            "armSwing": 0.35
+          },
+          "blinkTrack": {
+            "intervalMs": 3700,
+            "phaseMs": 1600
+          },
+          "ground": "bridge"
+        },
+        {
+          "type": "add_actor_prop",
+          "layerId": "arin_layer",
+          "actorId": "arin",
+          "propId": "lamp",
+          "settings": {
+            "kind": "lantern",
+            "attachment": "near",
+            "scale": 0.8
+          }
+        },
+        {
+          "type": "add_human_animation",
+          "layerId": "leela_layer",
+          "actorId": "leela",
+          "settings": {
+            "view": "left",
+            "build": "broad",
+            "hairStyle": "long",
+            "x": 0.65,
+            "floorY": 0.7263888888888889,
+            "size": 0.92,
+            "coatColor": "#FF66544A",
+            "hairColor": "#FF332927",
+            "skinColor": "#FFB88768",
+            "trouserColor": "#FF3B3D39",
+            "faceStyle": "soft",
+            "shading": "soft",
+            "lightAngle": 135
+          },
+          "preset": "explain",
+          "poseOverrides": {
+            "gazeX": 0.55,
+            "smile": 0.35
+          },
+          "motion": {
+            "speed": 0.7,
+            "travelScale": 0.55,
+            "armSwing": 0.35
+          },
+          "speech": {
+            "transitionMs": 60,
+            "prediction": {
+              "startMs": 2000,
+              "segments": [
+                {
+                  "forcedAlignmentVerified": false,
+                  "modelDurationUnits": [
+                    18,
+                    2,
+                    3,
+                    4,
+                    13,
+                    8,
+                    1
+                  ],
+                  "phonemes": "ðˈɛɹ.",
+                  "sampleCount": 29400,
+                  "startSample": 0,
+                  "unitsPerSecond": 40
+                },
+                {
+                  "forcedAlignmentVerified": false,
+                  "modelDurationUnits": [
+                    14,
+                    2,
+                    2,
+                    1,
+                    3,
+                    2,
+                    3,
+                    2,
+                    2,
+                    2,
+                    1,
+                    1,
+                    1,
+                    2,
+                    2,
+                    3,
+                    2,
+                    1,
+                    1,
+                    1,
+                    2,
+                    2,
+                    2,
+                    2,
+                    2,
+                    2,
+                    2,
+                    2,
+                    2,
+                    2,
+                    4,
+                    3,
+                    2,
+                    2,
+                    12,
+                    6,
+                    1
+                  ],
+                  "phonemes": "sˈʌmtˌImz ðə lˈIt nˈidz tˈu hˈændz.",
+                  "sampleCount": 58800,
+                  "startSample": 33720,
+                  "unitsPerSecond": 40
+                }
+              ]
+            }
+          },
+          "blinkTrack": {
+            "intervalMs": 4400,
+            "phaseMs": 3155
+          },
+          "ground": "bridge"
+        },
+        {
+          "type": "set_transform",
+          "objectId": "stage_bridge_plank_9_2",
+          "transform": {
+            "anchorX": 0.5046875,
+            "anchorY": 0.7489583333333333,
+            "rotation": 18
+          }
+        }
+      ],
+      "camera": [
+        {
+          "frame": 0,
+          "x": -0.3975,
+          "y": 0.26499999999999996,
+          "zoom": 2.65,
+          "rotation": 0,
+          "interpolation": "smooth"
+        },
+        {
+          "frame": 167,
+          "x": -0.4050000000000001,
+          "y": 0.26999999999999996,
+          "zoom": 2.7,
+          "rotation": 0,
+          "interpolation": "smooth"
+        }
+      ]
+    },
+    {
+      "shotId": "s13",
+      "label": "Light returns",
+      "frameCount": 216,
+      "operations": [
+        {
+          "type": "add_layer",
+          "layer": {
+            "id": "arin_layer",
+            "name": "Arin_Layer"
+          }
+        },
+        {
+          "type": "add_layer",
+          "layer": {
+            "id": "leela_layer",
+            "name": "Leela_Layer"
+          }
+        },
+        {
+          "type": "add_layer",
+          "layer": {
+            "id": "foreground",
+            "name": "Foreground"
+          }
+        },
+        {
+          "type": "add_story_stage",
+          "layerId": "layer_1",
+          "foregroundLayerId": "foreground",
+          "sceneId": "stage",
+          "settings": {
+            "location": "village",
+            "time": "dawn",
+            "weather": "clear",
+            "intensity": 0.25
+          }
+        },
+        {
+          "type": "add_human_animation",
+          "layerId": "arin_layer",
+          "actorId": "arin",
+          "settings": {
+            "view": "right",
+            "build": "slender",
+            "hairStyle": "short",
+            "x": 0.41,
+            "floorY": 0.8611111111111112,
+            "size": 0.87,
+            "coatColor": "#FF324E65",
+            "hairColor": "#FF26303D",
+            "skinColor": "#FFD4A27F",
+            "trouserColor": "#FF303747",
+            "faceStyle": "angular",
+            "shading": "soft",
+            "lightAngle": 135
+          },
+          "preset": "walk",
+          "poseOverrides": {
+            "gazeX": 0.55,
+            "smile": 0.35,
+            "nearHandX": 65,
+            "nearHandY": -210,
+            "nearHandZ": 16,
+            "nearWrist": -25,
+            "nearElbowSwivel": 130,
+            "handOpen": 0.25
+          },
+          "motion": {
+            "speed": 0.7,
+            "travelScale": 0.55,
+            "armSwing": 0.35,
+            "phase": 0
+          },
+          "blinkTrack": {
+            "intervalMs": 3700,
+            "phaseMs": 1600
+          },
+          "ground": "village"
+        },
+        {
+          "type": "add_actor_prop",
+          "layerId": "arin_layer",
+          "actorId": "arin",
+          "propId": "lamp",
+          "settings": {
+            "kind": "lantern",
+            "attachment": "near",
+            "scale": 0.8
+          }
+        },
+        {
+          "type": "add_human_animation",
+          "layerId": "leela_layer",
+          "actorId": "leela",
+          "settings": {
+            "view": "right",
+            "build": "broad",
+            "hairStyle": "long",
+            "x": 0.65,
+            "floorY": 0.8611111111111112,
+            "size": 0.87,
+            "coatColor": "#FF66544A",
+            "hairColor": "#FF332927",
+            "skinColor": "#FFB88768",
+            "trouserColor": "#FF3B3D39",
+            "faceStyle": "soft",
+            "shading": "soft",
+            "lightAngle": 135
+          },
+          "preset": "walk",
+          "poseOverrides": {
+            "gazeX": -0.55,
+            "smile": 0.35
+          },
+          "motion": {
+            "speed": 0.7,
+            "travelScale": 0.55,
+            "armSwing": 0.35,
+            "phase": 0.35
+          },
+          "blinkTrack": {
+            "intervalMs": 4400,
+            "phaseMs": 2500
+          },
+          "ground": "village"
+        }
+      ],
+      "camera": [
+        {
+          "frame": 0,
+          "x": -0.01070000000000001,
+          "y": -0.0,
+          "zoom": 1.07,
+          "rotation": 0,
+          "interpolation": "smooth"
+        },
+        {
+          "frame": 215,
+          "x": -0.010967500000000008,
+          "y": -0.0,
+          "zoom": 1.09675,
+          "rotation": 0,
+          "interpolation": "smooth"
+        }
+      ]
+    },
+    {
+      "shotId": "s14",
+      "label": "An honest admission",
+      "frameCount": 192,
+      "operations": [
+        {
+          "type": "add_layer",
+          "layer": {
+            "id": "arin_layer",
+            "name": "Arin_Layer"
+          }
+        },
+        {
+          "type": "add_layer",
+          "layer": {
+            "id": "leela_layer",
+            "name": "Leela_Layer"
+          }
+        },
+        {
+          "type": "add_layer",
+          "layer": {
+            "id": "foreground",
+            "name": "Foreground"
+          }
+        },
+        {
+          "type": "add_story_stage",
+          "layerId": "layer_1",
+          "foregroundLayerId": "foreground",
+          "sceneId": "stage",
+          "settings": {
+            "location": "village",
+            "time": "dawn",
+            "weather": "clear",
+            "intensity": 0.25
+          }
+        },
+        {
+          "type": "add_human_animation",
+          "layerId": "arin_layer",
+          "actorId": "arin",
+          "settings": {
+            "view": "front",
+            "build": "slender",
+            "hairStyle": "short",
+            "x": 0.41,
+            "floorY": 0.8611111111111112,
+            "size": 0.87,
+            "coatColor": "#FF324E65",
+            "hairColor": "#FF26303D",
+            "skinColor": "#FFD4A27F",
+            "trouserColor": "#FF303747",
+            "faceStyle": "angular",
+            "shading": "soft",
+            "lightAngle": 135
+          },
+          "preset": "remorse",
+          "poseOverrides": {
+            "gazeX": 0.55,
+            "brow": -0.25,
+            "smile": 0.35,
+            "nearHandX": 65,
+            "nearHandY": -210,
+            "nearHandZ": 16,
+            "nearWrist": -25,
+            "nearElbowSwivel": 130,
+            "handOpen": 0.25
+          },
+          "motion": {
+            "speed": 0.7,
+            "travelScale": 0.55,
+            "armSwing": 0.35
+          },
+          "speech": {
+            "transitionMs": 60,
+            "prediction": {
+              "startMs": 2000,
+              "segments": [
+                {
+                  "forcedAlignmentVerified": false,
+                  "modelDurationUnits": [
+                    13,
+                    2,
+                    2,
+                    2,
+                    2,
+                    3,
+                    2,
+                    1,
+                    2,
+                    1,
+                    2,
+                    2,
+                    2,
+                    2,
+                    3,
+                    2,
+                    2,
+                    2,
+                    3,
+                    11,
+                    11
+                  ],
+                  "phonemes": "ˌI θˈɔt bˈiɪŋ kwˈɪk",
+                  "sampleCount": 43200,
+                  "startSample": 0,
+                  "unitsPerSecond": 40
+                },
+                {
+                  "forcedAlignmentVerified": false,
+                  "modelDurationUnits": [
+                    15,
+                    2,
+                    2,
+                    1,
+                    2,
+                    2,
+                    2,
+                    1,
+                    2,
+                    3,
+                    2,
+                    2,
+                    2,
+                    2,
+                    2,
+                    3,
+                    4,
+                    3,
+                    3,
+                    19,
+                    8,
+                    1
+                  ],
+                  "phonemes": "mˈɛnt bˈiɪŋ jˈusfᵊl.",
+                  "sampleCount": 49800,
+                  "startSample": 48000,
+                  "unitsPerSecond": 40
+                }
+              ]
+            }
+          },
+          "blinkTrack": {
+            "intervalMs": 3700,
+            "phaseMs": 3730
+          },
+          "ground": "village"
+        },
+        {
+          "type": "add_actor_prop",
+          "layerId": "arin_layer",
+          "actorId": "arin",
+          "propId": "lamp",
+          "settings": {
+            "kind": "lantern",
+            "attachment": "near",
+            "scale": 0.8
+          }
+        },
+        {
+          "type": "add_human_animation",
+          "layerId": "leela_layer",
+          "actorId": "leela",
+          "settings": {
+            "view": "left",
+            "build": "broad",
+            "hairStyle": "long",
+            "x": 0.65,
+            "floorY": 0.8611111111111112,
+            "size": 0.87,
+            "coatColor": "#FF66544A",
+            "hairColor": "#FF332927",
+            "skinColor": "#FFB88768",
+            "trouserColor": "#FF3B3D39",
+            "faceStyle": "soft",
+            "shading": "soft",
+            "lightAngle": 135
+          },
+          "preset": "listen",
+          "poseOverrides": {
+            "gazeX": 0.55,
+            "brow": -0.25,
+            "smile": 0.35
+          },
+          "motion": {
+            "speed": 0.7,
+            "travelScale": 0.55,
+            "armSwing": 0.35
+          },
+          "blinkTrack": {
+            "intervalMs": 4400,
+            "phaseMs": 2500
+          },
+          "ground": "village"
+        }
+      ],
+      "camera": [
+        {
+          "frame": 0,
+          "x": 0.23850000000000005,
+          "y": 0.26499999999999996,
+          "zoom": 2.65,
+          "rotation": 0,
+          "interpolation": "smooth"
+        },
+        {
+          "frame": 191,
+          "x": 0.24300000000000008,
+          "y": 0.26999999999999996,
+          "zoom": 2.7,
+          "rotation": 0,
+          "interpolation": "smooth"
+        }
+      ]
+    },
+    {
+      "shotId": "s15",
+      "label": "A quiet answer",
+      "frameCount": 192,
+      "operations": [
+        {
+          "type": "add_layer",
+          "layer": {
+            "id": "arin_layer",
+            "name": "Arin_Layer"
+          }
+        },
+        {
+          "type": "add_layer",
+          "layer": {
+            "id": "leela_layer",
+            "name": "Leela_Layer"
+          }
+        },
+        {
+          "type": "add_layer",
+          "layer": {
+            "id": "foreground",
+            "name": "Foreground"
+          }
+        },
+        {
+          "type": "add_story_stage",
+          "layerId": "layer_1",
+          "foregroundLayerId": "foreground",
+          "sceneId": "stage",
+          "settings": {
+            "location": "village",
+            "time": "dawn",
+            "weather": "clear",
+            "intensity": 0.25
+          }
+        },
+        {
+          "type": "add_human_animation",
+          "layerId": "arin_layer",
+          "actorId": "arin",
+          "settings": {
+            "view": "front",
+            "build": "slender",
+            "hairStyle": "short",
+            "x": 0.41,
+            "floorY": 0.8611111111111112,
+            "size": 0.87,
+            "coatColor": "#FF324E65",
+            "hairColor": "#FF26303D",
+            "skinColor": "#FFD4A27F",
+            "trouserColor": "#FF303747",
+            "faceStyle": "angular",
+            "shading": "soft",
+            "lightAngle": 135
+          },
+          "preset": "listen",
+          "poseOverrides": {
+            "gazeX": 0.55,
+            "smile": 0.35,
+            "nearHandX": 65,
+            "nearHandY": -210,
+            "nearHandZ": 16,
+            "nearWrist": -25,
+            "nearElbowSwivel": 130,
+            "handOpen": 0.25
+          },
+          "motion": {
+            "speed": 0.7,
+            "travelScale": 0.55,
+            "armSwing": 0.35
+          },
+          "blinkTrack": {
+            "intervalMs": 3700,
+            "phaseMs": 1600
+          },
+          "ground": "village"
+        },
+        {
+          "type": "add_actor_prop",
+          "layerId": "arin_layer",
+          "actorId": "arin",
+          "propId": "lamp",
+          "settings": {
+            "kind": "lantern",
+            "attachment": "near",
+            "scale": 0.8
+          }
+        },
+        {
+          "type": "add_human_animation",
+          "layerId": "leela_layer",
+          "actorId": "leela",
+          "settings": {
+            "view": "left",
+            "build": "broad",
+            "hairStyle": "long",
+            "x": 0.65,
+            "floorY": 0.8611111111111112,
+            "size": 0.87,
+            "coatColor": "#FF66544A",
+            "hairColor": "#FF332927",
+            "skinColor": "#FFB88768",
+            "trouserColor": "#FF3B3D39",
+            "faceStyle": "soft",
+            "shading": "soft",
+            "lightAngle": 135
+          },
+          "preset": "relief",
+          "poseOverrides": {
+            "gazeX": 0.55,
+            "smile": 0.35
+          },
+          "motion": {
+            "speed": 0.7,
+            "travelScale": 0.55,
+            "armSwing": 0.35
+          },
+          "speech": {
+            "transitionMs": 60,
+            "prediction": {
+              "startMs": 2000,
+              "segments": [
+                {
+                  "forcedAlignmentVerified": false,
+                  "modelDurationUnits": [
+                    19,
+                    2,
+                    2,
+                    3,
+                    5,
+                    5,
+                    15,
+                    8,
+                    1
+                  ],
+                  "phonemes": "tənˈIt,",
+                  "sampleCount": 36000,
+                  "startSample": 0,
+                  "unitsPerSecond": 40
+                },
+                {
+                  "forcedAlignmentVerified": false,
+                  "modelDurationUnits": [
+                    16,
+                    2,
+                    2,
+                    3,
+                    2,
+                    2,
+                    3,
+                    2,
+                    5,
+                    2,
+                    1,
+                    1,
+                    1,
+                    1,
+                    2,
+                    2,
+                    1,
+                    2,
+                    2,
+                    4,
+                    4,
+                    14,
+                    7,
+                    1
+                  ],
+                  "phonemes": "bˈiɪŋ kˈInd wʌz ɪnˈʌf.",
+                  "sampleCount": 49200,
+                  "startSample": 42000,
+                  "unitsPerSecond": 40
+                }
+              ]
+            }
+          },
+          "blinkTrack": {
+            "intervalMs": 4400,
+            "phaseMs": 3430
+          },
+          "ground": "village"
+        }
+      ],
+      "camera": [
+        {
+          "frame": 0,
+          "x": -0.3975,
+          "y": 0.26499999999999996,
+          "zoom": 2.65,
+          "rotation": 0,
+          "interpolation": "smooth"
+        },
+        {
+          "frame": 191,
+          "x": -0.4050000000000001,
+          "y": 0.26999999999999996,
+          "zoom": 2.7,
+          "rotation": 0,
+          "interpolation": "smooth"
+        }
+      ]
+    },
+    {
+      "shotId": "s16",
+      "label": "Walk together",
+      "frameCount": 144,
+      "operations": [
+        {
+          "type": "add_layer",
+          "layer": {
+            "id": "arin_layer",
+            "name": "Arin_Layer"
+          }
+        },
+        {
+          "type": "add_layer",
+          "layer": {
+            "id": "leela_layer",
+            "name": "Leela_Layer"
+          }
+        },
+        {
+          "type": "add_layer",
+          "layer": {
+            "id": "foreground",
+            "name": "Foreground"
+          }
+        },
+        {
+          "type": "add_story_stage",
+          "layerId": "layer_1",
+          "foregroundLayerId": "foreground",
+          "sceneId": "stage",
+          "settings": {
+            "location": "village",
+            "time": "dawn",
+            "weather": "clear",
+            "intensity": 0.25
+          }
+        },
+        {
+          "type": "add_human_animation",
+          "layerId": "arin_layer",
+          "actorId": "arin",
+          "settings": {
+            "view": "right",
+            "build": "slender",
+            "hairStyle": "short",
+            "x": 0.41,
+            "floorY": 0.8611111111111112,
+            "size": 0.87,
+            "coatColor": "#FF324E65",
+            "hairColor": "#FF26303D",
+            "skinColor": "#FFD4A27F",
+            "trouserColor": "#FF303747",
+            "faceStyle": "angular",
+            "shading": "soft",
+            "lightAngle": 135
+          },
+          "preset": "walk",
+          "poseOverrides": {
+            "gazeX": 0.55,
+            "smile": 0.35,
+            "nearHandX": 65,
+            "nearHandY": -210,
+            "nearHandZ": 16,
+            "nearWrist": -25,
+            "nearElbowSwivel": 130,
+            "handOpen": 0.25
+          },
+          "motion": {
+            "speed": 0.7,
+            "travelScale": 0.55,
+            "armSwing": 0.35,
+            "phase": 0
+          },
+          "speech": {
+            "transitionMs": 60,
+            "prediction": {
+              "startMs": 1000,
+              "segments": [
+                {
+                  "forcedAlignmentVerified": false,
+                  "modelDurationUnits": [
+                    14,
+                    2,
+                    2,
+                    2,
+                    2,
+                    2,
+                    5,
+                    3,
+                    15,
+                    9,
+                    1
+                  ],
+                  "phonemes": "kˈʌm ˌɔn.",
+                  "sampleCount": 34200,
+                  "startSample": 0,
+                  "unitsPerSecond": 40
+                },
+                {
+                  "forcedAlignmentVerified": false,
+                  "modelDurationUnits": [
+                    14,
+                    2,
+                    2,
+                    2,
+                    2,
+                    2,
+                    2,
+                    2,
+                    3,
+                    2,
+                    2,
+                    2,
+                    1,
+                    2,
+                    2,
+                    2,
+                    2,
+                    2,
+                    3,
+                    17,
+                    9,
+                    1
+                  ],
+                  "phonemes": "lˈɛts wˈɔk təɡˈɛðəɹ.",
+                  "sampleCount": 46800,
+                  "startSample": 39480,
+                  "unitsPerSecond": 40
+                }
+              ]
+            }
+          },
+          "blinkTrack": {
+            "intervalMs": 3700,
+            "phaseMs": 2355
+          },
+          "ground": "village"
+        },
+        {
+          "type": "add_actor_prop",
+          "layerId": "arin_layer",
+          "actorId": "arin",
+          "propId": "lamp",
+          "settings": {
+            "kind": "lantern",
+            "attachment": "near",
+            "scale": 0.8
+          }
+        },
+        {
+          "type": "add_human_animation",
+          "layerId": "leela_layer",
+          "actorId": "leela",
+          "settings": {
+            "view": "right",
+            "build": "broad",
+            "hairStyle": "long",
+            "x": 0.65,
+            "floorY": 0.8611111111111112,
+            "size": 0.87,
+            "coatColor": "#FF66544A",
+            "hairColor": "#FF332927",
+            "skinColor": "#FFB88768",
+            "trouserColor": "#FF3B3D39",
+            "faceStyle": "soft",
+            "shading": "soft",
+            "lightAngle": 135
+          },
+          "preset": "walk",
+          "poseOverrides": {
+            "gazeX": -0.55,
+            "smile": 0.35
+          },
+          "motion": {
+            "speed": 0.7,
+            "travelScale": 0.55,
+            "armSwing": 0.35,
+            "phase": 0.35
+          },
+          "blinkTrack": {
+            "intervalMs": 4400,
+            "phaseMs": 2500
+          },
+          "ground": "village"
+        }
+      ],
+      "camera": [
+        {
+          "frame": 0,
+          "x": -0.01070000000000001,
+          "y": -0.0,
+          "zoom": 1.07,
+          "rotation": 0,
+          "interpolation": "smooth"
+        },
+        {
+          "frame": 143,
+          "x": -0.010967500000000008,
+          "y": -0.0,
+          "zoom": 1.09675,
+          "rotation": 0,
+          "interpolation": "smooth"
+        }
+      ]
+    }
+  ]
+}

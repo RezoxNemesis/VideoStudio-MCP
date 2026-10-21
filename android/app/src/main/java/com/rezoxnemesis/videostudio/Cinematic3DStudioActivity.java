@@ -50,6 +50,7 @@ public final class Cinematic3DStudioActivity extends Activity {
     private ProjectStore.Project project;
     private JSONObject timeline,acceptedTimeline,editorBundle;
     private String bundleId="",programId="",expectedProgramSha256="",loadingProgramId="";
+    private String outputFraming=CinematicOutputFraming.PORTRAIT;
     private long expectedSourceUpdatedAt;
     private int selectedShot,operationGeneration;
     private boolean busy,dirty,savePending,pickerUpdating,bindingReady,sceneRebuildRequired;
@@ -73,6 +74,10 @@ public final class Cinematic3DStudioActivity extends Activity {
         projectStore=new ProjectStore(this);String id=getIntent().getStringExtra("projectId");
         project=id==null?projectStore.active():projectStore.get(id);if(project==null){finish();return;}
         try{Cinematic3DTimeline.id(project.id);}catch(IllegalArgumentException error){Toast.makeText(this,"This source project has an unsupported identity for cinematic bundles",Toast.LENGTH_LONG).show();finish();return;}
+        outputFraming=getPreferences(MODE_PRIVATE).getString(
+                "cinematicOutput."+project.id,CinematicOutputFraming.PORTRAIT);
+        try{CinematicOutputFraming.dimensions(outputFraming);}
+        catch(IllegalArgumentException invalid){outputFraming=CinematicOutputFraming.PORTRAIT;}
         expectedSourceUpdatedAt=project.updatedAt;buildUi();
         if(android.os.Build.VERSION.SDK_INT>=33){systemBackCallback=this::requestBack;getOnBackInvokedDispatcher().registerOnBackInvokedCallback(android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT,systemBackCallback);}
         if(state!=null){
@@ -104,7 +109,7 @@ public final class Cinematic3DStudioActivity extends Activity {
     private void buildUi(){
         ScrollView scroll=new ScrollView(this);LinearLayout root=new LinearLayout(this);root.setOrientation(LinearLayout.VERTICAL);root.setBackgroundColor(BACKGROUND);scroll.addView(root);
         root.addView(label("Cinematic 3D Studio",22));
-        root.addView(label("Baked 3D scenes with two skinned actors, wrist-attached swords and authored effects. Procedural mannequins are an additional workflow; original-image reconstruction is not established.",12));
+        root.addView(label("Play authored character scenes or build a sequence with bundled actions. Import a scene bundle to keep its characters, costumes and performance.",12));
         row(root,button("Bundled scenes",()->discardGuard(this::installBuiltin)),button("Import bundle",()->discardGuard(this::pickBundle)),button("Saved timelines",()->discardGuard(this::chooseProgram)));
         binding=label("",12);binding.setTextColor(ACCENT);root.addView(binding);
         row(root,button("Timeline name",this::renameTimeline),button("Frame rate",this::changeFps));
@@ -113,7 +118,8 @@ public final class Cinematic3DStudioActivity extends Activity {
             @Override public void onNothingSelected(android.widget.AdapterView<?> parent){}
         });root.addView(shots,new LinearLayout.LayoutParams(-1,dp(52)));
         row(root,button("Move earlier",()->moveSelected(-1)),button("Move later",()->moveSelected(1)),button("Edit shot",this::editSelected));
-        row(root,button("Camera keys",this::editCameraKeys));
+        row(root,button("Camera keys",this::editCameraKeys),button("Reference camera paths",this::chooseReferenceCameraPath));
+        row(root,button("Exact camera angles",this::editExactOrbit));
         addShotButton=button("Add shot",this::addShot);duplicateButton=button("Duplicate",this::duplicateShot);deleteShotButton=button("Delete shot",this::deleteShot);row(root,addShotButton,duplicateButton,deleteShotButton);
         root.addView(label("Edit shot order, duration, impact hold, camera and effects. Custom pose, root and foot-contact changes need a rebuilt Blender bundle.",12));
         row(root,button("Actor body / material",this::chooseActor),button("Motion style",this::editMotionStyle));
@@ -121,6 +127,7 @@ public final class Cinematic3DStudioActivity extends Activity {
         root.addView(label("Body, material, motion style, local joint rotations and planted ankle anchors are cloud scene drafts. Rebuild in Blender and import the new scene before native preview or MP4. No live joint manipulation or original-image reconstruction is claimed.",12));
         row(root,button("Build updated scene",this::buildUpdatedScene),button("Export rebuild draft",this::exportRebuildDraft));
         row(root,button("Save timeline",this::saveTimeline),button("Restore saved",this::restoreAccepted));
+        row(root,button("Output framing",this::chooseOutputFraming));
         row(root,button("Live 3D preview",this::openPreview),button("Native MP4",this::renderNative));
         row(root,button("Preview selected shot",this::previewSelectedShot),button("Shot timing",this::showShotTiming));
         row(root,button("Export authoring request",this::exportAuthoringRequest),button("Return",()->discardGuard(this::finish)));
@@ -129,7 +136,7 @@ public final class Cinematic3DStudioActivity extends Activity {
 
     private void refresh(){
         if(binding==null)return;
-        binding.setText(project.name+" • "+(timeline==null?"no scene bundle":timeline.optString("name")+" • "+("procedural_mannequin".equals(timeline.optString("motionProvider"))?"procedural mannequins":"authored 3D"))+"\n"+(expectedProgramSha256.isEmpty()?"Timeline not saved":("Saved generation "+expectedProgramSha256.substring(0,Math.min(12,expectedProgramSha256.length()))))+(sceneRebuildRequired?" • REBUILD REQUIRED":dirty?" • unsaved edits":"")+(busy?" • working":""));
+        binding.setText(project.name+" • "+(timeline==null?"no scene bundle":timeline.optString("name")+" • "+("procedural_mannequin".equals(timeline.optString("motionProvider"))?"procedural mannequins":"authored 3D"))+"\n"+(expectedProgramSha256.isEmpty()?"Timeline not saved":("Saved generation "+expectedProgramSha256.substring(0,Math.min(12,expectedProgramSha256.length()))))+(sceneRebuildRequired?" • REBUILD REQUIRED":dirty?" • unsaved edits":"")+(busy?" • working":"")+"\n"+CinematicOutputFraming.label(outputFraming));
         for(Button control:controls)control.setEnabled(!busy);shots.setEnabled(!busy&&timeline!=null);
         int count=timeline==null?0:timeline.optJSONArray("shots").length();boolean library=isActionLibrary();addShotButton.setEnabled(!busy&&library&&count<80);duplicateButton.setEnabled(!busy&&library&&count>0&&count<80);deleteShotButton.setEnabled(!busy&&library&&count>1);
         java.util.List<String> labels=new java.util.ArrayList<>();if(timeline!=null){JSONArray entries=timeline.optJSONArray("shots");if(entries!=null)for(int i=0;i<entries.length();i++){JSONObject shot=entries.optJSONObject(i);if(shot!=null)labels.add((i+1)+". "+shot.optString("action")+" • "+shot.optInt("durationFrames")+" frames • "+shot.optString("id"));}}
@@ -190,6 +197,7 @@ public final class Cinematic3DStudioActivity extends Activity {
     private void renameTimeline(){if(!requireTimeline())return;EditText input=new EditText(this);input.setText(timeline.optString("name"));new AlertDialog.Builder(this).setTitle("Timeline name").setView(input).setPositiveButton("Apply",(d,w)->{try{JSONObject edited=copy(timeline);edited.put("name",input.getText().toString().trim());timeline=Cinematic3DTimeline.validate(edited);dirty=true;refresh();}catch(Exception error){setStatus(message(error));}}).setNegativeButton("Cancel",null).show();}
     private void changeFps(){if(!requireTimeline())return;String[] values={"24 FPS","30 FPS","60 FPS"};new AlertDialog.Builder(this).setTitle("Timeline frame rate").setItems(values,(d,index)->{try{JSONObject edited=copy(timeline);edited.put("fps",new int[]{24,30,60}[index]);timeline=Cinematic3DTimeline.validate(edited);dirty=true;refresh();}catch(Exception error){setStatus(message(error));}}).setNegativeButton("Cancel",null).show();}
     private void moveSelected(int direction){if(!requireTimeline())return;int next=selectedShot+direction;try{timeline=moveShot(timeline,selectedShot,next);selectedShot=next;dirty=true;refresh();}catch(Exception error){setStatus(message(error));}}
+    private boolean authoredCameraSelected() throws Exception {return editorBundle!=null&&"authored".equals(Cinematic3DSceneSampling.cameraReplay(Cinematic3DSceneSampling.sceneForShot(editorBundle,timeline.getJSONArray("shots").getJSONObject(selectedShot))));}
     private boolean isActionLibrary(){try{return editorBundle!=null&&editorBundle.getJSONObject("manifest").getJSONObject("generator").optBoolean("actionLibrary",false);}catch(Exception ignored){return false;}}
     private java.util.List<String> libraryActions() throws Exception {requireLibrary(editorBundle);java.util.List<String> actions=new java.util.ArrayList<>();JSONArray scenes=editorBundle.getJSONObject("manifest").getJSONArray("scenes");for(int i=0;i<scenes.length();i++){String action=scenes.getJSONObject(i).getString("action");if(!actions.contains(action)){libraryTemplate(editorBundle,action);actions.add(action);}}return actions;}
     private void addShot(){if(!requireTimeline())return;try{java.util.List<String> actions=libraryActions();new AlertDialog.Builder(this).setTitle("Add a declared library action").setItems(actions.toArray(new String[0]),(d,index)->{try{timeline=addLibraryShot(timeline,editorBundle,actions.get(index),UUID.randomUUID().toString());selectedShot=timeline.getJSONArray("shots").length()-1;dirty=true;refresh();}catch(Exception error){setStatus(message(error));}}).setNegativeButton("Cancel",null).show();}catch(Exception error){setStatus(message(error));}}
@@ -203,8 +211,9 @@ public final class Cinematic3DStudioActivity extends Activity {
         form.addView(label("Action",12));Spinner action=new Spinner(this);java.util.List<String> actionNames=isActionLibrary()?libraryActions():java.util.Collections.singletonList(shot.getString("action"));action.setAdapter(new ArrayAdapter<>(this,android.R.layout.simple_spinner_dropdown_item,actionNames));action.setSelection(actionNames.indexOf(shot.getString("action")));action.setEnabled(isActionLibrary());form.addView(action);if(!isActionLibrary())form.addView(label("Custom baked actions need a rebuilt bundle.",11));
         EditText duration=numeric(form,"Duration in frames (8–600)",String.valueOf(shot.getInt("durationFrames")),false),hold=numeric(form,"Impact hold (0 or 2–5 frames)",String.valueOf(shot.getInt("hitStopFrames")),false);
         form.addView(label("Camera",12));Spinner mode=new Spinner(this);String[] modes={"wide","orbit","macro","top_down"};mode.setAdapter(new ArrayAdapter<>(this,android.R.layout.simple_spinner_dropdown_item,modes));for(int i=0;i<modes.length;i++)if(modes[i].equals(camera.getString("mode")))mode.setSelection(i);form.addView(mode);
-        final int authoredMode=mode.getSelectedItemPosition();CheckBox authoredTrack=camera.has("keyframes")?check(form,"Use authored camera track",true):null;if(authoredTrack!=null){mode.setEnabled(false);authoredTrack.setOnCheckedChangeListener((control,checked)->{if(checked)mode.setSelection(authoredMode);mode.setEnabled(!checked);});form.addView(label("Uncheck to replace the camera path with a preset. Actor and weapon poses keep their baked motion.",11));}
+        final int authoredMode=mode.getSelectedItemPosition();CheckBox authoredTrack=camera.has("keyframes")||camera.has("orbit")?check(form,camera.has("orbit")?"Keep exact orbit":"Use authored camera track",true):null;if(authoredTrack!=null){mode.setEnabled(false);authoredTrack.setOnCheckedChangeListener((control,checked)->{if(checked)mode.setSelection(authoredMode);mode.setEnabled(!checked);});form.addView(label("Uncheck to replace the camera path with a preset. Actor and weapon poses keep their baked motion.",11));}
         EditText fov=numeric(form,"Field of view (35–100°)",String.valueOf(camera.getDouble("fovDegrees")),true),shake=numeric(form,"Camera shake (0–1)",String.valueOf(camera.getDouble("shakeIntensity")),true);
+        if(authoredCameraSelected()){mode.setEnabled(false);fov.setEnabled(false);shake.setEnabled(false);if(authoredTrack!=null)authoredTrack.setEnabled(false);form.addView(label("This scene keeps its authored camera. Rebuild the bundle to change framing.",11));}
         CheckBox spark=check(form,"Spark burst",vfx.getBoolean("sparkBurst")),trail=check(form,"Slash trail",vfx.getBoolean("slashTrail")),rubble=check(form,"Contact debris",vfx.getBoolean("rubble"));
         AlertDialog dialog=new AlertDialog.Builder(this).setTitle(shot.getString("action")+" • "+shot.getString("id")).setView(scroll).setPositiveButton("Apply",null).setNegativeButton("Cancel",null).create();dialog.setOnShowListener(d->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{try{String selectedAction=actionNames.get(action.getSelectedItemPosition());JSONObject edited=timeline;if(!selectedAction.equals(shot.getString("action")))edited=changeLibraryAction(timeline,editorBundle,shotIndex,selectedAction);if(authoredTrack!=null&&!authoredTrack.isChecked())edited=chooseCameraTrack(edited,shotIndex,false);int hitStop=Integer.parseInt(hold.getText().toString());if(!selectedAction.equals(shot.getString("action"))&&!isImpact(selectedAction))hitStop=0;edited=editShot(edited,shotIndex,Integer.parseInt(duration.getText().toString()),hitStop,modes[mode.getSelectedItemPosition()],Double.parseDouble(fov.getText().toString()),Double.parseDouble(shake.getText().toString()),spark.isChecked(),trail.isChecked(),rubble.isChecked());timeline=edited;dirty=true;refresh();dialog.dismiss();}catch(Exception error){Toast.makeText(this,message(error),Toast.LENGTH_LONG).show();}}));dialog.show();
     }catch(Exception error){setStatus(message(error));}}
@@ -231,8 +240,95 @@ public final class Cinematic3DStudioActivity extends Activity {
     private EditText cameraNumber(LinearLayout form,String title,String value,String tag) {
         EditText input=numeric(form,title,value,true);input.setTag(tag);input.setContentDescription(title);return input;
     }
+    /**
+     * One-tap cinema choreography using existing native Filament/Y-up camera
+     * keyframes; real actor pose, 3D geometry and source assets are unchanged.
+     * The existing worker performs complete per-frame preflight before CAS
+     * applying the draft; nothing saves until Save timeline is selected.
+     */
+    private void chooseReferenceCameraPath(){if(!requireTimeline())return;try{
+        if(authoredCameraSelected()){
+            setStatus("This baked scene uses its authored 3D camera. Rebuild the bundle to change its framing.");
+            return;
+        }
+        JSONObject shot=timeline.getJSONArray("shots").getJSONObject(selectedShot);
+        String shotId=shot.getString("id");
+        if(shot.getJSONObject("camera").has("orbit")){setStatus("Clear the exact orbit before replacing it with a keyframed camera path.");return;}
+        JSONArray initial=Cinematic3DTimeline.sampleShot(shot,0,timeline.getInt("fps"))
+                .getJSONObject("camera").getJSONArray("target");
+        LinearLayout form=draftForm();
+        form.addView(label("Real perspective views, not fake zoom on still art. "
+                +"Creates editable keys for this shot only; your 3D asset, rig, source proof, "
+                +"other shots and lighting remain unchanged.",12));
+        String[] choices={"360° car / model turntable","Hero push-in / three-quarter",
+                "Follow an acting character","Anime action arc","Fine-detail reveal"};
+        String[] presets=CinematicReferenceCameraPath.presets();
+        Spinner picker=select(form,"Camera movement",choices,choices[0]);
+        EditText x=cameraNumber(form,"Look-at X (world metres)",
+                String.valueOf(initial.getDouble(0)),"reference_target_x");
+        EditText y=cameraNumber(form,"Look-at Y (world metres)",
+                String.valueOf(initial.getDouble(1)),"reference_target_y");
+        EditText z=cameraNumber(form,"Look-at Z (world metres)",
+                String.valueOf(initial.getDouble(2)),"reference_target_z");
+        EditText distance=cameraNumber(form,"Camera distance (1.8–30 m)","5.2","reference_radius");
+        EditText strength=cameraNumber(form,"Camera motion strength (0.1–1)","1","reference_strength");
+        TextView error=label("",12);error.setTextColor(0xffff8888);
+        form.addView(error);
+        AlertDialog dialog=new AlertDialog.Builder(this)
+                .setTitle("Reference camera • "+shot.getString("action"))
+                .setView(scrollForm(form))
+                .setPositiveButton("Preview and apply",null)
+                .setNegativeButton("Cancel",null).create();
+        dialog.setOnDismissListener(ignored->{
+            if(pendingCameraDialog==dialog)cancelCameraEdit();
+        });
+        dialog.show();
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{
+            try{
+                int selected=picker.getSelectedItemPosition();
+                if(selected<0||selected>=presets.length)
+                    throw new IllegalArgumentException("Select a camera movement");
+                JSONArray target=new JSONArray().put(Double.parseDouble(x.getText().toString()))
+                        .put(Double.parseDouble(y.getText().toString()))
+                        .put(Double.parseDouble(z.getText().toString()));
+                JSONObject operation=new JSONObject().put("type","reference_camera_path")
+                        .put("shotId",shotId).put("preset",presets[selected])
+                        .put("target",target)
+                        .put("radius",Double.parseDouble(distance.getText().toString()))
+                        .put("strength",Double.parseDouble(strength.getText().toString()));
+                acceptCameraOperations(new JSONArray().put(operation),dialog,error);
+            }catch(Exception invalid){error.setText(message(invalid));}
+        });
+    }catch(Exception error){setStatus(message(error));}}
+
+    private void editExactOrbit(){if(!requireTimeline())return;try{
+        if(authoredCameraSelected()){setStatus("This scene keeps its authored camera. Its framing cannot be replaced by an orbit.");return;}
+        JSONObject shot=timeline.getJSONArray("shots").getJSONObject(selectedShot),camera=shot.getJSONObject("camera");
+        JSONObject existing=camera.optJSONObject("orbit"),initial=Cinematic3DTimeline.sampleShot(shot,0,timeline.getInt("fps")).getJSONObject("camera");
+        JSONArray target=initial.getJSONArray("target"),position=initial.getJSONArray("position");
+        double dx=position.getDouble(0)-target.getDouble(0),dy=position.getDouble(1)-target.getDouble(1),dz=position.getDouble(2)-target.getDouble(2);
+        double azimuth=Math.toDegrees(Math.atan2(dx,dz)),elevation=Math.toDegrees(Math.atan2(dy,Math.hypot(dx,dz)));
+        LinearLayout form=draftForm();form.addView(label("Orbit existing 3D geometry at a constant distance. 0° is world +Z, 90° is +X. Positive elevation looks from above. This does not draw unseen anatomy or reconstruct your reference.",12));
+        form.addView(label("Apply replaces this shot's XYZ camera keys and disables shake. The selected endpoints occupy its first and last frames; actor timing and source geometry stay unchanged. Equal start/end angles hold one exact view.",12));
+        EditText x=cameraNumber(form,"Target X (metres)",String.valueOf(target.getDouble(0)),"orbit_x"),y=cameraNumber(form,"Target Y (metres)",String.valueOf(target.getDouble(1)),"orbit_y"),z=cameraNumber(form,"Target Z (metres)",String.valueOf(target.getDouble(2)),"orbit_z");
+        EditText radius=cameraNumber(form,"Orbit radius (0.5–30 m)",String.valueOf(existing==null?Math.hypot(Math.hypot(dx,dy),dz):existing.getDouble("radius")),"orbit_radius");
+        EditText start=cameraNumber(form,"Start azimuth (degrees)",String.valueOf(existing==null?azimuth:existing.getDouble("startAzimuthDegrees")),"orbit_start_azimuth"),end=cameraNumber(form,"End azimuth (degrees)",String.valueOf(existing==null?azimuth+360:existing.getDouble("endAzimuthDegrees")),"orbit_end_azimuth");
+        EditText low=cameraNumber(form,"Start elevation (degrees)",String.valueOf(existing==null?elevation:existing.getDouble("startElevationDegrees")),"orbit_start_elevation"),high=cameraNumber(form,"End elevation (degrees)",String.valueOf(existing==null?elevation:existing.getDouble("endElevationDegrees")),"orbit_end_elevation");
+        TextView error=label("",12);error.setTextColor(0xffff8888);error.setTag("orbit_error");form.addView(error);
+        AlertDialog dialog=new AlertDialog.Builder(this).setTitle("Exact camera angles").setView(scrollForm(form)).setPositiveButton("Apply orbit",null).setNegativeButton("Cancel",null).create();
+        Button clear=button("Clear exact orbit",()->{try{acceptCameraOperations(new JSONArray().put(new JSONObject().put("type","clear_camera_orbit").put("shotId",shot.getString("id"))),dialog,error);}catch(Exception invalid){error.setText(message(invalid));}});form.addView(clear);
+        dialog.setOnDismissListener(ignored->{controls.remove(clear);if(pendingCameraDialog==dialog)cancelCameraEdit();});dialog.show();
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{try{
+            JSONObject orbit=new JSONObject().put("target",new JSONArray().put(Double.parseDouble(x.getText().toString())).put(Double.parseDouble(y.getText().toString())).put(Double.parseDouble(z.getText().toString())))
+                    .put("radius",Double.parseDouble(radius.getText().toString())).put("startAzimuthDegrees",Double.parseDouble(start.getText().toString())).put("endAzimuthDegrees",Double.parseDouble(end.getText().toString()))
+                    .put("startElevationDegrees",Double.parseDouble(low.getText().toString())).put("endElevationDegrees",Double.parseDouble(high.getText().toString()));
+            acceptCameraOperations(new JSONArray().put(new JSONObject().put("type","set_camera_orbit").put("shotId",shot.getString("id")).put("orbit",orbit)),dialog,error);
+        }catch(Exception invalid){error.setText(message(invalid));}});
+    }catch(Exception error){setStatus(message(error));}}
+
     private void editCameraKeys(){if(!requireTimeline())return;try{
-        JSONObject shot=timeline.getJSONArray("shots").getJSONObject(selectedShot),camera=shot.getJSONObject("camera");String shotId=shot.getString("id");JSONArray keys=camera.optJSONArray("keyframes");
+        if(authoredCameraSelected()){setStatus("This scene uses its authored camera. Rebuild the bundle to change its framing.");return;}
+        JSONObject shot=timeline.getJSONArray("shots").getJSONObject(selectedShot),camera=shot.getJSONObject("camera");String shotId=shot.getString("id");if(camera.has("orbit")){setStatus("Clear the exact orbit before editing XYZ camera keys.");return;}JSONArray keys=camera.optJSONArray("keyframes");
         LinearLayout form=draftForm();form.addView(label("Author a camera path in Y-up metres. Keys interpolate over shot time while actor impact holds keep their own clock.",12));
         java.util.List<String> names=new java.util.ArrayList<>();names.add("New key");for(int i=0;keys!=null&&i<keys.length();i++)names.add(String.format(java.util.Locale.US,"Key %d · phase %.6f",i+1,keys.getJSONObject(i).getDouble("phase")));
         Spinner picker=select(form,"Camera key",names.toArray(new String[0]),names.get(keys==null?0:1));
@@ -327,14 +423,44 @@ public final class Cinematic3DStudioActivity extends Activity {
     }
     private void exportRebuildDraft(){if(!requireTimeline())return;try{exportedRequest=rebuildRequest().toString(2);startActivityForResult(new Intent(Intent.ACTION_CREATE_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("application/json").putExtra(Intent.EXTRA_TITLE,"cinematic3d-rebuild-template.json"),WRITE_REQUEST);}catch(Exception error){setStatus(message(error));}}
 
-    private void openPreview(){if(requireSaved())startActivity(previewIntent(this,project.id,programId,expectedProgramSha256));}
-    private void previewSelectedShot(){if(!requireSaved())return;try{JSONObject compiled=Cinematic3DTimeline.compile(timeline);int frame=compiled.getJSONArray("shots").getJSONObject(selectedShot).getInt("startFrame");startActivity(previewIntent(this,project.id,programId,expectedProgramSha256,frame));}catch(Exception error){setStatus(message(error));}}
+    private void chooseOutputFraming(){
+        final String[] names=CinematicOutputFraming.LABELS;
+        new AlertDialog.Builder(this).setTitle("Frame shape for 3D preview and MP4")
+                .setSingleChoiceItems(names,
+                        java.util.Arrays.asList(CinematicOutputFraming.MODES)
+                                .indexOf(outputFraming),
+                        (dialog,index)->{
+                            if(index<0||index>=CinematicOutputFraming.MODES.length)return;
+                            outputFraming=CinematicOutputFraming.MODES[index];
+                            getPreferences(MODE_PRIVATE).edit().putString(
+                                    "cinematicOutput."+project.id,outputFraming).apply();
+                            refresh();
+                            setStatus("3D preview and export: "+CinematicOutputFraming.label(outputFraming));
+                            dialog.dismiss();
+                        })
+                .setNegativeButton("Cancel",null).show();
+    }
+    private Intent framedPreview(Intent intent){
+        int[] wh=CinematicOutputFraming.dimensions(outputFraming);
+        return intent.putExtra("cinematicOutputWidth",wh[0])
+                .putExtra("cinematicOutputHeight",wh[1]);
+    }
+    private void openPreview(){if(requireSaved())startActivity(
+            framedPreview(previewIntent(this,project.id,programId,expectedProgramSha256)));}
+
+    private void previewSelectedShot(){if(!requireSaved())return;try{JSONObject compiled=Cinematic3DTimeline.compile(timeline);int frame=compiled.getJSONArray("shots").getJSONObject(selectedShot).getInt("startFrame");startActivity(framedPreview(previewIntent(
+                this,project.id,programId,expectedProgramSha256,frame)));}catch(Exception error){setStatus(message(error));}}
     private void showShotTiming(){if(!requireTimeline())return;try{
         JSONObject compiled=Cinematic3DTimeline.compile(timeline);JSONArray entries=compiled.getJSONArray("shots");int fps=compiled.getInt("fps");StringBuilder text=new StringBuilder();
         for(int index=0;index<entries.length();index++){JSONObject shot=entries.getJSONObject(index);text.append(index==selectedShot?"▶ ":"").append(index+1).append(". ").append(shot.getString("action")).append(String.format(java.util.Locale.US,"\n%.2f–%.2f s • frames %d–%d • hold %d\n\n",shot.getInt("startFrame")/(double)fps,shot.getInt("endFrame")/(double)fps,shot.getInt("startFrame")+1,shot.getInt("endFrame"),shot.getInt("hitStopFrames")));}
         new AlertDialog.Builder(this).setTitle(String.format(java.util.Locale.US,"%d shots • %.2f seconds",entries.length(),compiled.getInt("totalFrames")/(double)fps)).setMessage(text.toString()).setPositiveButton("Close",null).show();
     }catch(Exception error){setStatus(message(error));}}
-    private void renderNative(){if(!requireSaved())return;try{JSONObject request=getRequest(programId,expectedProgramSha256).put("width",OUTPUT_WIDTH).put("height",OUTPUT_HEIGHT).put("render",true).put("fileName","VideoStudio_Cinematic3D_"+System.currentTimeMillis()+".mp4");Intent intent=new Intent(this,ControlService.class).setAction(ControlService.ACTION_LOCAL_CINEMATIC_3D).putExtra("requestJson",request.toString());startForegroundService(intent);setStatus("Native 3D MP4 export queued. Progress and cancellation are available in VideoStudio jobs.");}catch(Exception error){setStatus("Cannot queue native export: "+message(error));}}
+    private void renderNative(){if(!requireSaved())return;try{
+        int[] size=CinematicOutputFraming.dimensions(outputFraming);
+        JSONObject request=getRequest(programId,expectedProgramSha256)
+                .put("width",size[0]).put("height",size[1])
+                .put("render",true)
+                .put("fileName","VideoStudio_Cinematic3D_"+System.currentTimeMillis()+".mp4");Intent intent=new Intent(this,ControlService.class).setAction(ControlService.ACTION_LOCAL_CINEMATIC_3D).putExtra("requestJson",request.toString());startForegroundService(intent);setStatus("Native 3D MP4 export queued. Progress and cancellation are available in VideoStudio jobs.");}catch(Exception error){setStatus("Cannot queue native export: "+message(error));}}
     private void exportAuthoringRequest(){if(!requireSaved())return;try{JSONObject request=getRequest(programId,expectedProgramSha256);perform("Preparing the Blender authoring request…",()->Cinematic3DProgramStore.exportRequest(getApplicationContext(),projectStore,request),receipt->{exportedRequest=receipt.getJSONObject("exportRequest").toString(2);Intent create=new Intent(Intent.ACTION_CREATE_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("application/json").putExtra(Intent.EXTRA_TITLE,"cinematic3d-authoring-request.json");startActivityForResult(create,WRITE_REQUEST);});}catch(Exception error){setStatus(message(error));}}
     private void pickBundle(){Intent pick=new Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*").putExtra(Intent.EXTRA_MIME_TYPES,new String[]{"application/zip","application/octet-stream"});startActivityForResult(pick,PICK_BUNDLE);}
     @Override protected void onActivityResult(int code,int result,Intent data){super.onActivityResult(code,result,data);if(result!=RESULT_OK||data==null||data.getData()==null||busy)return;Uri uri=data.getData();
@@ -402,7 +528,7 @@ public final class Cinematic3DStudioActivity extends Activity {
     static JSONObject changeLibraryAction(JSONObject original,JSONObject library,int index,String action) throws Exception {JSONObject template=libraryTemplate(library,action),result=copy(original);JSONArray shots=result.getJSONArray("shots");if(index<0||index>=shots.length())throw new IllegalArgumentException("Select an existing shot to change");JSONObject shot=shots.getJSONObject(index).put("action",action);if(!isImpact(action))shot.put("hitStopFrames",0);for(String key:new String[]{"sourceAnchors","poseKeyframes","footContacts"}){shot.remove(key);if(template.has(key))shot.put(key,template.get(key));}return Cinematic3DTimeline.validate(result);}
     static JSONObject moveShot(JSONObject original,int from,int to) throws Exception {JSONObject result=copy(original);JSONArray entries=result.getJSONArray("shots");if(from<0||from>=entries.length()||to<0||to>=entries.length())throw new IllegalArgumentException("Shot is already at the timeline boundary");JSONObject selected=entries.getJSONObject(from);JSONArray ordered=new JSONArray();for(int i=0;i<entries.length();i++){int source=i;if(i==to){ordered.put(selected);continue;}if(from<to&&i>=from&&i<to)source=i+1;else if(from>to&&i>to&&i<=from)source=i-1;ordered.put(entries.getJSONObject(source));}result.put("shots",ordered);return Cinematic3DTimeline.validate(result);}
     static JSONObject editShot(JSONObject original,int index,int frames,int hold,String mode,double fov,double shake,boolean spark,boolean trail,boolean rubble) throws Exception {JSONObject result=copy(original);JSONObject shot=result.getJSONArray("shots").getJSONObject(index);shot.put("durationFrames",frames).put("hitStopFrames",hold);shot.getJSONObject("camera").put("mode",mode).put("fovDegrees",fov).put("shakeIntensity",shake);shot.put("vfx",new JSONObject().put("sparkBurst",spark).put("slashTrail",trail).put("rubble",rubble));return Cinematic3DTimeline.validate(result);}
-    static JSONObject chooseCameraTrack(JSONObject original,int index,boolean keepAuthoredTrack) throws Exception {JSONObject result=copy(original);JSONObject camera=result.getJSONArray("shots").getJSONObject(index).getJSONObject("camera");if(!keepAuthoredTrack)camera.remove("keyframes");return Cinematic3DTimeline.validate(result);}
+    static JSONObject chooseCameraTrack(JSONObject original,int index,boolean keepAuthoredTrack) throws Exception {JSONObject result=copy(original);JSONObject camera=result.getJSONArray("shots").getJSONObject(index).getJSONObject("camera");if(!keepAuthoredTrack){camera.remove("keyframes");camera.remove("orbit");}return Cinematic3DTimeline.validate(result);}
     static JSONObject saveRequest(String projectId,long revision,String bundleId,String programId,String sha,JSONObject timeline) throws Exception {JSONObject request=new JSONObject().put("projectId",projectId).put("sourceProjectUpdatedAt",revision).put("bundleId",bundleId).put("timeline",Cinematic3DTimeline.validate(timeline));if(programId!=null&&!programId.isEmpty())request.put("programId",programId);if(sha!=null&&!sha.isEmpty())request.put("expectedProgramSha256",sha);return request;}
     static JSONObject restoreTimeline(Bundle state,long revision) throws Exception {String value=state.getLong("sourceRevision",-1)==revision?state.getString("draft"):state.getString("acceptedTimeline");return value==null?null:Cinematic3DTimeline.validate(new JSONObject(value));}
     static Intent previewIntent(Context context,String projectId,String programId,String sha){return previewIntent(context,projectId,programId,sha,0);}

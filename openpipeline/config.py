@@ -16,7 +16,7 @@ _RUNTIME_CACHE = {}
 def load(path):
     path = Path(path).resolve(strict=True)
     value = read_json(path)
-    fields(value, ("schema", "root"), ("pythonExecutable", "blenderExecutable", "cogvideox", "interpolationConfig",
+    fields(value, ("schema", "root"), ("pythonExecutable", "blenderExecutable", "cogvideox", "kokoro", "interpolationConfig",
            "jobTimeoutSeconds", "queueLimit", "host", "port", "tokenEnv", "driveInbox", "driveResults"))
     if value["schema"] != SCHEMA:
         raise ValueError("Unknown runner configuration schema")
@@ -61,6 +61,15 @@ def load(path):
         for name, default, low, high in (("cpuThreads", 2, 1, 16), ("minAvailableRamGiB", 12, 1, 512),
             ("maxFrames", 49, 1, 241), ("maxWidth", 720, 16, 2048), ("maxHeight", 480, 16, 2048), ("maxInferenceSteps", 50, 1, 100)):
             integer(model.setdefault(name, default), low, high)
+    if "kokoro" in value:
+        speech = value["kokoro"]
+        fields(speech, ("modelPath", "manifestSha256", "revision"), ("cpuThreads",))
+        checksum(speech["manifestSha256"])
+        if not isinstance(speech["revision"], str) or len(speech["revision"]) != 40 or any(c not in "0123456789abcdef" for c in speech["revision"]):
+            raise ValueError("Speech model needs an exact revision")
+        candidate = Path(speech["modelPath"])
+        speech["modelPath"] = str((candidate if candidate.is_absolute() else path.parent / candidate).resolve())
+        integer(speech.setdefault("cpuThreads", 4), 1, 16)
     value["_configPath"] = str(path)
     return value
 
@@ -125,6 +134,18 @@ def admission(config, request):
     backend = request["backend"]
     if not shutil.which(config["pythonExecutable"]):
         return "waiting_compute", "PYTHON_RUNTIME_MISSING"
+    if backend == "kokoro":
+        from .speech import model_manifest as speech_manifest
+        try:
+            speech_manifest(config)
+        except (FileNotFoundError, ValueError, OSError) as error:
+            return "waiting_model", str(error)[:160]
+        try:
+            subprocess.run([config["pythonExecutable"], "-c", "import kokoro,torch,numpy,spacy.util; assert spacy.util.is_package('en_core_web_sm')"],
+                           capture_output=True, check=True, timeout=30)
+        except (OSError, subprocess.SubprocessError):
+            return "waiting_compute", "SPEECH_RUNTIME_OR_ENGLISH_G2P_MISSING"
+        return "queued", None
     if not shutil.which("ffmpeg") or not shutil.which("ffprobe"):
         return "waiting_compute", "FFMPEG_RUNTIME_MISSING"
     if backend == "blender" and not shutil.which(config["blenderExecutable"]):
@@ -178,12 +199,15 @@ def admission(config, request):
 
 def capabilities(config):
     backends = {}
-    for name in ("blender", "cogvideox", "frame_sequence", "interpolation"):
+    for name in ("blender", "cogvideox", "frame_sequence", "interpolation", "kokoro"):
         request = {"backend": name, "controls": {"width": 16, "height": 16, "numFrames": 1, "numInferenceSteps": 1}}
         state, code = admission(config, request)
         backends[name] = {"state": state, "available": state == "queued", "code": code,
                           "runtimeExecutionVerified": False, "modelBytesVerified": False}
     backends["cogvideox"]["configuredDevice"] = config.get("cogvideox", {}).get("device")
+    from .speech import VOICES
+    backends["kokoro"]["voices"] = VOICES
+    backends["kokoro"]["voiceActingAccepted"] = False
     return {"schema": "videostudio.openpipeline.capabilities.v1", "backends": backends,
             "maxArchiveBytes": 256 * 1024**2, "maxExpandedBytes": 512 * 1024**2,
             "maxSources": 64, "execution": "self_hosted_open_source", "nativeRendered": False,

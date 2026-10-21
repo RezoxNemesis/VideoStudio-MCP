@@ -463,6 +463,14 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                         error.getMessage() == null ? "Could not queue prompt video" : error.getMessage(),
                         "failed", null, null, null);
             }
+        } else if ("com.rezoxnemesis.videostudio.LOCAL_SKETCH_ANIMATION_IMPORT".equals(action)) {
+            final String request=intent.getStringExtra("requestJson");authoringExecutor.execute(()->{try{JSONObject queued=queueSketchAnimationImport(new JSONObject(request));ActivityLog.add(this,"user","Animation import queued","Import progress is available in Activity; open the new animation in Sketch books","queued",0,null,queued.optString("projectId",""));}catch(Exception error){ActivityLog.add(this,"user","Animation import failed",error.getMessage(),"failed",null,null,null);}});
+        } else if ("com.rezoxnemesis.videostudio.LOCAL_PROJECT_ASSET_IMPORT".equals(action)) {
+            final String request=intent.getStringExtra("requestJson");
+            authoringExecutor.execute(()->{try{
+                JSONObject queued=queueProjectAssetImport(new JSONObject(request));
+                ActivityLog.add(this,"user","Project media copy queued","Independent asset copy; see Jobs / Activity for completion","queued",0,null,queued.optString("projectId",""));
+            }catch(Exception failure){ActivityLog.add(this,"user","Project media copy failed",failure.getMessage(),"failed",null,null,null);}});
         } else if (ACTION_LOCAL_SKETCH_EXPORT.equals(action)||"com.rezoxnemesis.videostudio.LOCAL_SKETCH_BOOK_EXPORT".equals(action)) {
             final String request=intent.getStringExtra("requestJson");
             authoringExecutor.execute(()->{
@@ -674,14 +682,24 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 case "precision_edit": complete(command,StudioPrecisionEdits.apply(this,store,p));syncProtocolState();return;
                 case "sketch_animation_save": case "sketch_animation_get": case "sketch_animation_list": case "sketch_animation_bake":
                     complete(command,SketchAnimationOps.execute(this,action,p));return;
+                case "sketch_animation_place_in_book":
+                case "sketch_story_create": case "sketch_story_audio_create":
+                    complete(command,queueSketchStoryWork(action,p));return;
+                case "sketch_story_example":
+                    complete(command,SketchStoryPlanOps.execute(this,action,p).put("ok",true));return;
+                case "sketch_story_preview": complete(command,previewSketchStory(p));return;
+                case "sketch_correction_start": case "sketch_correction_get": case "sketch_correction_note": case "sketch_correction_propose": case "sketch_correction_preview": case "sketch_correction_apply": case "sketch_correction_options": case "sketch_correction_list": case "sketch_correction_close":
+                    complete(command,SketchCorrectionOps.execute(this,action,p));return;
                 case "sketch_edit": complete(command,SketchAgentLiveBridge.edit(this,p));return;
                 case "sketch_create": case "sketch_list": case "sketch_get": case "sketch_inspect": case "sketch_review": case "sketch_quality_audit":
                 case "sketch_paint_journal": case "sketch_sample_color":
-                case "sketch_undo": case "sketch_redo": case "sketch_import_reference":
-                case "sketch_book_create": case "sketch_book_edit": case "sketch_book_list": case "sketch_book_get": case "sketch_book_open_page": case "sketch_live_begin": case "sketch_live_events": case "sketch_live_end": case "sketch_capabilities":
+                case "sketch_undo": case "sketch_redo": case "sketch_import_reference": case "sketch_import_reference_layers": case "sketch_master_preview":
+                case "sketch_book_create": case "sketch_book_edit": case "sketch_book_list": case "sketch_book_get": case "sketch_book_open_page": case "sketch_book_timeline": case "sketch_live_begin": case "sketch_live_events": case "sketch_live_end": case "sketch_capabilities": case "sketch_component_save": case "sketch_component_list": case "sketch_component_apply":
                     complete(command,SketchEditOps.execute(this,action,p));return;
                 case "sketch_archive": complete(command,SketchPaintArchive.archive(this,p));return;
                 case "sketch_restore_archive": complete(command,SketchPaintArchive.restore(this,p));return;
+                case "sketch_reference_layers_preview":
+                case "sketch_layered_drawing_preview":
                 case "sketch_preview":{
                     JSONObject preview=SketchEditOps.execute(this,action,p);
                     // Existing MCP v3 relays already deliver contactSheet as an
@@ -692,7 +710,13 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 case "sketch_render": case "sketch_book_render": complete(command,queueSketchRender(p));return;
                 case "sketch_import_frame_manifest": complete(command,queueSketchFrameManifest(p));return;
                 case "sketch_import_drawing_manifest": complete(command,queueSketchDrawingManifest(p));return;
+                case "sketch_import_animation": complete(command,queueSketchAnimationImport(p));return;
                 case "sketch_import_drawing_asset": complete(command,queueSketchDrawingAsset(p));return;
+                case "local_drawing_models": case "local_drawing_get":{
+                    JSONObject result=LocalDrawingOperations.execute(this,action,p,null);Object image=result.remove("localDrawingPreviewImage");if(image!=null)result.put("contactSheet",image);complete(command,result);return;
+                }
+                case "local_drawing_install": case "local_drawing_generate":
+                    complete(command,queueLocalDrawing(action,p));return;
                 case "open_pipeline_configure": case "open_pipeline_capabilities": case "open_pipeline_list":
                 case "open_pipeline_status": case "open_pipeline_cancel":
                     complete(command,OpenPipelineOperations.execute(this,store,action,p,null));return;
@@ -891,10 +915,12 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                     result.put("compute", computeProfile.snapshot());
                     result.put("localSceneRenderer", "2d-vectors-and-perspective-3d-triangle-meshes");
                     result.put("stillImageMotion", "articulated-2.5d-portrait");
-                    result.put("neuralImageGeneration", false);
+                    JSONObject localDrawing=new LocalDrawingModels(this).status();
+                    result.put("localNeuralDrawing",localDrawing);
+                    result.put("neuralImageGeneration",localDrawing.getBoolean("runtimeAvailable"));
                     result.put("neuralVideoGeneration", false);
                     result.put("photorealisticHumanSynthesis", false);
-                    result.put("missingComponent", "executable-local-generative-model-adapter-and-compatible-model-pack");
+                    result.put("missingComponent",localDrawing.getBoolean("runtimeAvailable")?"neural-video-generation-provider":"installed-local-drawing-model-pack-or-64-bit-process");
                     result.put("paidInferenceRequired", false);
                     result.put("phoneValidationRequired", true);
                     complete(command, result);
@@ -1064,6 +1090,8 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                     complete(command, result);
                     return;
                 }
+                case "project_asset_info": complete(command,ProjectAssetImport.inspect(this,publicOperationParameters(p)));return;
+                case "project_import_asset": complete(command,queueProjectAssetImport(p));return;
                 case "insert_asset_timeline": {
                     ProjectStore.Project project = resolveProject(p.optString("projectId", ""));
                     String assetId = p.optString("assetId", "");
@@ -1144,38 +1172,12 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     }
 
     private JSONObject applyEditPlan(JSONObject p) throws Exception {
-        ProjectStore.Project project = resolveProject(p.optString("projectId", ""));
-        JSONArray clips = p.optJSONArray("clips");
-        if (clips == null || clips.length() == 0) throw new IllegalArgumentException("clips are required");
-        ArrayList<ProjectStore.Clip> next = new ArrayList<>();
-        for (int i = 0; i < clips.length() && i < 120; i++) {
-            JSONObject raw = clips.optJSONObject(i);
-            if (raw == null) continue;
-            ProjectStore.Asset asset = project.asset(raw.optString("assetId"));
-            if (asset == null) throw new IllegalArgumentException("Unknown asset on clip " + i);
-            ProjectStore.Clip clip = new ProjectStore.Clip();
-            clip.id = UUID.randomUUID().toString();
-            clip.assetId = asset.id;
-            clip.inMs = raw.has("inMs") ? raw.optLong("inMs") : (long) (raw.optDouble("start", 0) * 1000);
-            clip.outMs = raw.has("outMs") ? raw.optLong("outMs") : (long) (raw.optDouble("end", asset.durationMs / 1000d) * 1000);
-            clip.inMs = Math.max(0, clip.inMs);
-            clip.outMs = Math.max(clip.inMs + 100, Math.min(asset.durationMs > 0 ? asset.durationMs : clip.outMs, clip.outMs));
-            clip.speed = (float) Math.max(.25, Math.min(4, raw.optDouble("speed", 1)));
-            clip.volume = (float) Math.max(0, Math.min(2, raw.optDouble("volume", 1)));
-            clip.transition = raw.optString("transition", "none");
-            clip.title = raw.optString("title", "");
-            JSONObject effects = raw.optJSONObject("effects");
-            clip.effects = effects == null ? new JSONObject() : effects;
-            next.add(clip);
-        }
-        project.clips.clear();
-        project.clips.addAll(next);
-        store.save(project);
-        JSONObject result = ok();
-        result.put("projectId", project.id);
-        result.put("clipCount", next.size());
-        result.put("durationMs", project.outputDurationMs());
-        return result;
+        String id=p.optString("projectId","");
+        ProjectStore.Project project=id.isEmpty()?store.active():store.get(id);
+        if(project==null)throw new IllegalArgumentException("Project not found for edit plan");
+        JSONObject request=new JSONObject(p.toString()).put("projectId",project.id);
+        if(!request.has("expectedUpdatedAt"))request.put("expectedUpdatedAt",project.updatedAt);
+        return StudioEditPlan.apply(store,request);
     }
 
     private JSONObject applyTool(JSONObject p) throws Exception {
@@ -1964,10 +1966,16 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                         "Interrupted after checkpoint; safe to resume", true);
                 throw interrupted;
             } catch (Exception error) {
+                boolean interruptedIo=error instanceof java.io.InterruptedIOException&&Thread.currentThread().isInterrupted();
                 if (JobManager.STATE_CANCELLED.equals(state.state)) recoveryPlans.cancelByJob(state.id);
                 else recoveryPlans.failByJob(state.id,
                         error.getMessage() == null ? "Recoverable background job failure" : error.getMessage(),
                         true);
+                if(interruptedIo){
+                    Thread.currentThread().interrupt();
+                    InterruptedException interrupted=new InterruptedException("Native work interrupted; retry the identical operation to resume");
+                    interrupted.initCause(error);throw interrupted;
+                }
                 throw error;
             }
         });
@@ -2060,12 +2068,19 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 JSONObject queued;
                 switch (action) {
                     case "import_mailbox_media":queued=queueMailboxMediaImport(parameters);break;
+                    case "project_import_asset":queued=queueProjectAssetImport(parameters);break;
                     case "sketch_render": case "sketch_book_render":
                         parameters.remove("projectId");queued=queueSketchRender(parameters);break;
                     case "sketch_import_frame_manifest":
                         parameters.remove("projectId");
                         queued=queueSketchFrameManifest(parameters);break;
+                    case "sketch_import_animation":queued=queueSketchAnimationImport(parameters);break;
+                    case "sketch_story_create": case "sketch_animation_place_in_book":
+                        parameters.remove("projectId");queued=queueSketchStoryWork(action,parameters);break;
+                    case "sketch_story_audio_create":queued=queueSketchStoryWork(action,parameters);break;
                     case "sketch_import_drawing_asset":queued=queueSketchDrawingAsset(parameters);break;
+                    case "local_drawing_install": case "local_drawing_generate":
+                        parameters.remove("projectId");queued=queueLocalDrawing(action,parameters);break;
                     case "open_pipeline_export_request": case "open_pipeline_submit": case "open_pipeline_download_result":
                     case "open_pipeline_import_result": case "open_pipeline_archive_artifact": case "open_pipeline_restore_artifact":
                         if(!"open_pipeline_export_request".equals(action))parameters.remove("projectId");
@@ -3038,6 +3053,9 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 .put("fps",new JSONArray().put(24).put(30).put(60)).put("maxShots",80).put("maxOutputFrames",12000)
                 .put("offlineActionLibrary",true).put("fullSceneGltfReplay",true).put("exactOutputFrameHitStops",true)
                 .put("cameraEditing",new JSONObject().put("action","cinematic_3d_edit_program").put("minimumNativeVersion","4.3.0").put("sourceRevisionAndProgramShaRequired",true).put("maximumOperations",128).put("outputFrameBasisPreflight",true))
+                .put("exactCameraOrbit",CinematicCameraOrbit.capabilities())
+                .put("authoredSceneCamera",new JSONObject().put("minimumNativeVersion","4.6.2").put("sceneField","cameraReplay").put("values",new JSONArray().put("timeline").put("authored")).put("default","timeline").put("framingChangesRequireBundleRebuild",true))
+                .put("soloWeightedPortrait",new JSONObject().put("minimumNativeVersion","4.6.2").put("action","IDLE").put("minimumSkins",1))
                 .put("humanStudioActivity","Cinematic3DStudioActivity").put("cloudEngine","Blender/Rigify")
                 .put("neuralProviderInstalled",false).put("originalImageReconstruction",false)
                 .put("nativeExecutionVerified",false).put("cinematicAcceptance",false).put("bakedPoseChangesRequireRebuild",true);
@@ -3052,6 +3070,59 @@ public final class ControlService extends Service implements AppProtocol.Callbac
      * public URL or enormous MCP payload. The import uses normal Sketch Studio
      * revision-bound vector edits and resumes after a process restart.
      */
+    private JSONObject queueSketchStoryWork(String action,JSONObject input) throws Exception {
+        if(!"sketch_story_create".equals(action)&&!"sketch_story_audio_create".equals(action)&&!"sketch_animation_place_in_book".equals(action))
+            throw new IllegalArgumentException("Unknown native story write action");
+        final JSONObject request=publicOperationParameters(input);
+        final String projectId="sketch_story_audio_create".equals(action)?SketchDocument.id(request,"projectId"):"";
+        final String bookId="sketch_story_audio_create".equals(action)?"":SketchDocument.id(request,"bookId");
+        SketchDocument.id(request,"operationId");
+        JSONObject durable=new JSONObject(request.toString());
+        if(input.has("_recoveryPlanId"))durable.put("_recoveryPlanId",input.get("_recoveryPlanId"));
+        if(input.has("_mcpCommandId"))durable.put("_mcpCommandId",input.get("_mcpCommandId"));
+        JobManager.Job job=submitRecoverableHeavy(action,durable,projectId,friendlyAction(action),state->{
+            jobs.awaitSafeCheckpoint(state,"story_prepare");
+            JSONObject result;
+            if("sketch_story_create".equals(action)){
+                checkpoint(state,"Story preflight","Validating the unchanged story plan",2,projectId);
+                result=SketchStoryPlanOps.create(this,request,(done,total)->{
+                    if(done==1||done%16==0||done==total){
+                        checkpoint(state,"Story pages",done+"/"+total+" pages published",5+(int)(90L*done/Math.max(1,total)),projectId);
+                        jobs.awaitSafeCheckpoint(state,"story_page_"+done);
+                    }
+                });
+            }else if("sketch_animation_place_in_book".equals(action)){
+                checkpoint(state,"Book placement preflight","Verifying the frozen animation and destination book",2,projectId);
+                result=SketchAnimationBookPlacement.place(this,request,(done,total)->{
+                    if(done==1||done%16==0||done==total){
+                        checkpoint(state,"Book placement pages",done+"/"+total+" pages published",5+(int)(90L*done/Math.max(1,total)),projectId);
+                        jobs.awaitSafeCheckpoint(state,"book_page_"+done);
+                    }
+                });
+            }else{
+                checkpoint(state,"Story audio","Mixing the owned unchanged master",2,projectId);
+                result=SketchStoryAudio.execute(this,request);
+            }
+            if(Thread.currentThread().isInterrupted())throw new InterruptedException("Native story work cancelled; retry the identical operation to resume");
+            state.setResult(result.put("ok",true));
+            checkpoint(state,"Native story work","Owned result published",100,projectId);
+        });
+        JSONObject queued=ok().put("queued",true).put("jobId",job.id).put("durableRecovery",true);
+        if(!bookId.isEmpty())queued.put("bookId",bookId);
+        if(!projectId.isEmpty())queued.put("projectId",projectId);
+        return queued;
+    }
+
+    private JSONObject queueSketchAnimationImport(JSONObject input)throws Exception {
+        JSONObject request=publicOperationParameters(input);SketchDocument.fields(request,"projectId,sourceProjectUpdatedAt,assetId,expectedSha256,bookId,operationId,name,fps,frameStart,frameCount,width,height");String projectId=SketchDocument.id(request,"projectId"),bookId=SketchDocument.id(request,"bookId");SketchDocument.id(request,"operationId");
+        JSONObject durable=new JSONObject(request.toString());if(input.has("_recoveryPlanId"))durable.put("_recoveryPlanId",input.get("_recoveryPlanId"));if(input.has("_mcpCommandId"))durable.put("_mcpCommandId",input.get("_mcpCommandId"));
+        JobManager.Job job=submitRecoverableHeavy("sketch_import_animation",durable,projectId,"Sketch Studio • Import animation",state->{
+            checkpoint(state,"Animation import","Verifying source animation",2,projectId);
+            JSONObject result=SketchAnimationImporter.importAnimation(this,store,request,(frames,total)->{if(frames%8==0||frames==total){checkpoint(state,"Animation cels",frames+"/"+total+" frames imported",5+(int)(90L*frames/Math.max(1,total)),projectId);jobs.awaitSafeCheckpoint(state,"animation_cel_"+frames);}});
+            state.setResult(result);checkpoint(state,"Sketch Studio","Animation imported as owned raster cels",100,projectId);
+        });
+        return ok().put("queued",true).put("jobId",job.id).put("bookId",bookId).put("projectId",projectId).put("durableRecovery",true).put("galleryAccess",false);
+    }
     private JSONObject queueSketchDrawingAsset(JSONObject input) throws Exception {
         final JSONObject request=publicOperationParameters(input);
         SketchDocument.fields(request,"projectId,sourceProjectUpdatedAt,sketchId,manifestAssetId,expectedManifestSha256,sourceAssetId,expectedSourceSha256,expectedFrameCount,drawingMethod");
@@ -3111,6 +3182,30 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         return ok().put("queued",true).put("jobId",job.id)
                 .put("sketchId",sketchId).put("durableRecovery",true)
                 .put("sourceVideoUnchanged",true).put("galleryAccess",false);
+    }
+
+    private JSONObject queueProjectAssetImport(JSONObject input)throws Exception {
+        final JSONObject request=ProjectAssetImport.validate(publicOperationParameters(input));
+        final String projectId=request.getString("projectId");JSONObject durable=new JSONObject(request.toString());
+        if(input.has("_recoveryPlanId"))durable.put("_recoveryPlanId",input.get("_recoveryPlanId"));
+        if(input.has("_mcpCommandId"))durable.put("_mcpCommandId",input.get("_mcpCommandId"));
+        JobManager.Job job=submitRecoverableTransfer("project_import_asset",durable,projectId,"Import from project",state->{
+            checkpoint(state,"Project media copy","Verifying selected owned source and exact project revisions",2,projectId);
+            if(JobManager.STATE_CANCELLED.equals(state.state)||Thread.currentThread().isInterrupted())throw new InterruptedException("Project media copy cancelled");
+            jobs.awaitSafeCheckpoint(state,"project_asset_prepare");final long[] last={-1};
+            JSONObject result=ProjectAssetImport.execute(this,request,(copied,total)->{
+                if(copied==0||copied==total||copied-last[0]>=2L*1024*1024){
+                    checkpoint(state,"Project media copy",copied+" / "+total+" bytes copied",3+(int)(90L*copied/Math.max(1,total)),projectId);
+                    // Check durable state as well as the flag: checkpoint logging may perform
+                    // interruptible I/O before this callback resumes.
+                    if(JobManager.STATE_CANCELLED.equals(state.state)||Thread.currentThread().isInterrupted())throw new InterruptedException("Project media copy cancelled");
+                    jobs.awaitSafeCheckpoint(state,"project_asset_copy");last[0]=copied;
+                }
+            });
+            if(JobManager.STATE_CANCELLED.equals(state.state)||Thread.currentThread().isInterrupted())throw new InterruptedException("Project media copy cancelled");
+            state.setResult(result);checkpoint(state,"Project media copy","Independent owned asset is ready; audio lanes preserved",100,projectId);syncProtocolState();
+        });
+        return ok().put("queued",true).put("jobId",job.id).put("projectId",projectId).put("durableRecovery",true);
     }
 
     /** Complete admission precedes output creation, recovery work and GPU effects. */
@@ -3228,6 +3323,16 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         });
         return ok().put("queued",true).put("jobId",job.id).put("projectId",projectId).put("requestId",requestId)
                 .put("durableRecovery",true).put("nativeRendered",false);
+    }
+
+    private JSONObject queueLocalDrawing(String action,JSONObject input)throws Exception {
+        JSONObject request=new JSONObject(input.toString());JSONArray names=request.names();if(names!=null)for(int i=0;i<names.length();i++)if(names.getString(i).startsWith("_"))request.remove(names.getString(i));
+        if("local_drawing_generate".equals(action))LocalDrawingSource.validate(request);
+        else {SketchDocument.fields(request,"packId");if(!LocalDrawingModels.ID.equals(request.getString("packId")))throw new IllegalArgumentException("Unknown local drawing model");}
+        JSONObject durable=new JSONObject(request.toString());for(String key:new String[]{"_recoveryPlanId","_mcpCommandId"})if(input.has(key))durable.put(key,input.get(key));
+        JobManager.Work work=state->{JSONObject result=LocalDrawingOperations.execute(this,action,request,(n,stage)->{checkpoint(state,"Local AI drawing",stage,n,"");jobs.awaitSafeCheckpoint(state,"local_neural_drawing");});state.setResult(result.put("ok",true));syncProtocolState();};
+        JobManager.Job job="local_drawing_install".equals(action)?submitRecoverableTransfer(action,durable,"","Download optional local drawing model",work):submitRecoverableHeavy(action,durable,"","Local neural drawing",work);
+        return ok().put("queued",true).put("jobId",job.id).put("requestId",request.optString("requestId","")).put("durableRecovery",true).put("hostedInference",false);
     }
 
     private JSONObject queueCinematic3D(JSONObject input) throws Exception {
@@ -4123,8 +4228,16 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     private void runExportBlocking(ProjectStore.Project project, String aspect, String quality, String fileName, JobManager.Job state) throws Exception {
         ensureProjectWorkspaceHydrated(project, state);
         jobs.awaitSafeCheckpoint(state, "native_export_prepare");
-        File dir = new File(getCacheDir(), "native_exports");
+        // Long-form exports are too valuable to stage in Android's evictable cache.
+        // Keep the temporary output app-private and discard it only after a
+        // verified native publish; never browse device Gallery files.
+        File dir = new File(getFilesDir(), "native_exports_pending");
         if (!dir.exists() && !dir.mkdirs()) throw new IllegalStateException("Could not create export workspace");
+        StorageBudget.Check outputBudget=NativeMediaWorkBudget.outputPreflight(
+                dir.getUsableSpace(),256L*1024*1024);
+        if(!outputBudget.allowed)throw new IllegalStateException(
+                "EXPORT_WAITING_STORAGE: need "+outputBudget.requiredWithReserveBytes
+                +" bytes including free-space reserve; free "+outputBudget.freeBytes);
         File temp = new File(dir, "tmp_" + System.currentTimeMillis() + ".mp4");
         CountDownLatch latch = new CountDownLatch(1);
         AtomicReference<String> error = new AtomicReference<>();
@@ -4149,7 +4262,12 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         });
         if (ownedHandle == null) throw new IllegalStateException("Could not start native render");
         synchronized(this){activeRender=ownedHandle;activeRenderJobId=state.id;}
-        final long deadline=android.os.SystemClock.elapsedRealtime()+30*60*1000L;
+        long totalSourceBytes=0L;
+        for(ProjectStore.Asset asset:project.assets)if(asset!=null&&asset.sizeBytes>0)
+            totalSourceBytes=StorageBudget.saturatingAdd(totalSourceBytes,asset.sizeBytes);
+        final long allowedRenderMs=NativeMediaWorkBudget.renderDeadlineMs(
+                Math.max(0L,project.outputDurationMs()),totalSourceBytes);
+        final long deadline=android.os.SystemClock.elapsedRealtime()+allowedRenderMs;
         try {
 
         while (!latch.await(550, TimeUnit.MILLISECONDS)) {
@@ -4157,7 +4275,18 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 ownedHandle.cancel();
                 throw new InterruptedException();
             }
-            if(android.os.SystemClock.elapsedRealtime()>deadline){ownedHandle.cancel();throw new IllegalStateException("Native encoding exceeded its bounded 30 minute execution window");}
+            if(temp.isFile() && temp.length()>NativeMediaWorkBudget.MAX_LOCAL_MEDIA_BYTES){
+                ownedHandle.cancel();throw new IllegalStateException(
+                        "EXPORT_OUTPUT_TOO_LARGE: this profile supports at most 10 GiB per MP4");
+            }
+            if(dir.getUsableSpace()<NativeMediaWorkBudget.RESERVED_FREE_BYTES){
+                ownedHandle.cancel();throw new IllegalStateException(
+                        "EXPORT_WAITING_STORAGE: safe free-space reserve reached; "
+                        +"the project remains unchanged");
+            }
+            if(android.os.SystemClock.elapsedRealtime()>deadline){ownedHandle.cancel();
+                throw new IllegalStateException("Native encoding exceeded its adaptive "
+                        +(allowedRenderMs/60000L)+" minute media-work window");}
         }
         if("cancelled".equals(state.state)||Thread.currentThread().isInterrupted())throw new InterruptedException();
         if (error.get() != null) throw new IllegalStateException(error.get());
@@ -4479,23 +4608,44 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                                   String activity,
                                   String progressSuffix) throws Exception {
         long announced = expected > 0 ? expected : connection.getContentLengthLong();
+        if (announced > NativeMediaWorkBudget.MAX_LOCAL_MEDIA_BYTES)
+            throw new IllegalStateException("PRIVATE_MEDIA_TOO_LARGE: streamed file exceeds 10 GiB");
+        File parent = file.getParentFile();
+        long free = parent == null ? file.getUsableSpace() : parent.getUsableSpace();
+        StorageBudget.Check admission = StorageBudget.checkTransfer(
+                free, announced, 0, NativeMediaWorkBudget.RESERVED_FREE_BYTES);
+        if (!admission.allowed) throw new IllegalStateException(
+                "PRIVATE_MEDIA_WAITING_STORAGE: need " + admission.requiredWithReserveBytes
+                        + " bytes including reserve; free " + admission.freeBytes);
         try (InputStream in = connection.getInputStream(); FileOutputStream out = new FileOutputStream(file)) {
             byte[] buffer = new byte[256 * 1024];
-            long bytes = 0L;
+            long bytes = 0L, lastReport = 0L;
             int n;
             while ((n = in.read(buffer)) >= 0) {
                 if (Thread.currentThread().isInterrupted()) throw new InterruptedException();
                 if (n == 0) continue;
-                bytes += n;
-                out.write(buffer, 0, n);
-                int rawProgress = announced > 0
-                        ? ResumableTransferManager.progressPercent(bytes, announced)
-                        : -1;
-                int progress = rawProgress < 0 ? 50 : Math.min(97, 4 + (rawProgress * 93 / 100));
-                checkpoint(state, activity,
-                        (bytes / 1024L / 1024L) + " MB " + progressSuffix, progress, projectId);
+                if ((long)n > NativeMediaWorkBudget.MAX_LOCAL_MEDIA_BYTES - bytes)
+                    throw new IllegalStateException("PRIVATE_MEDIA_TOO_LARGE: streamed file exceeds 10 GiB");
+                out.write(buffer, 0, n);bytes += n;
+                if (bytes-lastReport >= 8L*1024L*1024L
+                        || (announced > 0 && bytes == announced)) {
+                    if (parent != null && parent.getUsableSpace()
+                            < NativeMediaWorkBudget.RESERVED_FREE_BYTES)
+                        throw new IllegalStateException("PRIVATE_MEDIA_WAITING_STORAGE: "
+                                + "512 MiB free-space reserve reached during transfer");
+                    int rawProgress = announced > 0
+                            ? ResumableTransferManager.progressPercent(bytes, announced)
+                            : -1;
+                    int progress = rawProgress < 0 ? 50 : Math.min(97, 4 + (rawProgress * 93 / 100));
+                    checkpoint(state, activity, (bytes / 1024L / 1024L) + " MiB "
+                            + progressSuffix, progress, projectId);
+                    lastReport = bytes;
+                }
             }
-            out.flush();
+            out.flush();out.getFD().sync();
+            if (announced > 0 && bytes != announced)
+                throw new IllegalStateException("PRIVATE_MEDIA_INCOMPLETE: received "
+                        + bytes + " of " + announced + " promised bytes");
         }
     }
 
@@ -4829,6 +4979,10 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             out.put("sourceArtworkInspectionReady", true);
             out.put("sourceRigPoseDiagnosticReady", true);
             out.put("sourceRigBatchAuthoringReady", true);
+            out.put("sourceRigRigidHeadMasksReady", true);
+            out.put("sourceRigHeadMaskMaximumVertices", 64);
+            out.put("sketchSequenceMaximumFrames", SketchSequenceLimits.MAX_FRAMES);
+            out.put("sketchAnimationImportReady", true);
             out.put("sourceRigBatchProfileLimit", 8);
             out.put("sourceRigPreparationStatusReady", true);
             out.put("sourceRigWorkbenchMinimumVersion", "3.7.3");
@@ -5035,6 +5189,34 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         }
     }
 
+    /** Detached story preview: bounded image readback, without publishing or returning source geometry. */
+    private JSONObject previewSketchStory(JSONObject args) throws Exception {
+        JSONObject result=SketchStoryPlanOps.execute(this,"sketch_story_preview",args);
+        JSONObject document=(JSONObject)result.remove("document");
+        int dimension=768;
+        try(SketchFrameRenderer renderer=new SketchFrameRenderer(this,document)){
+            android.graphics.Bitmap bitmap=renderer.render(0,true,dimension,null);
+            try{
+                byte[] bytes;
+                while(true){
+                    if(Thread.currentThread().isInterrupted())throw new InterruptedException("Story preview cancelled");
+                    java.io.ByteArrayOutputStream out=new java.io.ByteArrayOutputStream();
+                    if(!bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG,100,out))throw new IllegalStateException("Story preview encoding failed");
+                    bytes=out.toByteArray();if(bytes.length<=1024*1024)break;
+                    if(Math.max(bitmap.getWidth(),bitmap.getHeight())<=128)throw new IllegalStateException("STORY_PREVIEW_BUDGET: PNG exceeds 1 MiB");
+                    dimension=Math.max(128,dimension*3/4);
+                    double scale=dimension/(double)Math.max(bitmap.getWidth(),bitmap.getHeight());
+                    android.graphics.Bitmap scaled=android.graphics.Bitmap.createScaledBitmap(bitmap,Math.max(1,(int)Math.round(bitmap.getWidth()*scale)),Math.max(1,(int)Math.round(bitmap.getHeight()*scale)),true);
+                    if(scaled!=bitmap){bitmap.recycle();bitmap=scaled;}
+                }
+                return result.put("ok",true).put("renderer","android-bitmap-canvas")
+                        .put("canvasWidth",document.getInt("width")).put("canvasHeight",document.getInt("height"))
+                        .put("contactSheet",new JSONObject().put("mimeType","image/png").put("base64",android.util.Base64.encodeToString(bytes,android.util.Base64.NO_WRAP))
+                                .put("width",bitmap.getWidth()).put("height",bitmap.getHeight()).put("sha256",SketchDocument.sha256(bytes)));
+            }finally{bitmap.recycle();}
+        }
+    }
+
     private boolean mailboxCommandAllowed(JSONObject command) throws Exception {
         String action = NativeWorkbenchBridge.canonicalAction(command.getString("action"));
         if (!NativeAgentMailboxActions.supports(action)) return false;
@@ -5056,8 +5238,11 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     }
 
     private void complete(JSONObject command, JSONObject result) {
-        boolean ok = result.optBoolean("ok", false);
         String action = command.optString("action", "");
+        // Only structurally verified READ-ONLY capability lookups may infer 'ok'.
+        // Render/edit/import/cancel always need explicit native success receipts.
+        result = NativeCommandResultPolicy.normalizedResult(action,result);
+        boolean ok = NativeCommandResultPolicy.successful(action,result);
         JSONObject p = command.optJSONObject("parameters");
         String projectId = "animate_pose_sequence".equals(action)
                 ? result.optString("projectId", p == null ? "" : p.optString("projectId", ""))
@@ -5087,9 +5272,11 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     private boolean mayQueueBackgroundWork(String action) {
         if (action == null) return false;
         switch (action) {
-            case "import_mailbox_media":
+            case "import_mailbox_media": case "project_import_asset":
             case "sketch_render": case "sketch_book_render":
-            case "sketch_import_frame_manifest": case "sketch_import_drawing_manifest": case "sketch_import_drawing_asset":
+            case "sketch_story_create": case "sketch_story_audio_create": case "sketch_animation_place_in_book":
+            case "sketch_import_frame_manifest": case "sketch_import_drawing_manifest": case "sketch_import_drawing_asset": case "sketch_import_animation":
+            case "local_drawing_install": case "local_drawing_generate":
             case "open_pipeline_export_request": case "open_pipeline_submit": case "open_pipeline_download_result":
             case "open_pipeline_import_result": case "open_pipeline_archive_artifact": case "open_pipeline_restore_artifact":
             case "prompt_video":
@@ -5439,11 +5626,19 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             case "sketch_animation_save": return "Saving prepared-sketch animation";
             case "sketch_animation_get": case "sketch_animation_list": return "Reading sketch animation scenes";
             case "sketch_animation_bake": return "Baking editable character animation";
+            case "sketch_animation_place_in_book": return "Placing saved animation into editable book pages";
+            case "sketch_story_create": return "Creating editable native story shots and book pages";
+            case "sketch_story_example": return "Reading a bundled editable story example and dialogue controls";
+            case "sketch_story_preview": return "Previewing a native story shot";
+            case "sketch_story_audio_create": return "Mixing an owned story audio master into a new project";
             case "sketch_edit": case "sketch_undo": case "sketch_redo": return "Editing sketch layers and poses";
             case "sketch_get": case "sketch_list": return "Reading sketch geometry";
+            case "sketch_reference_layers_preview": return "Previewing source-bound reference masks without edits";
+            case "sketch_layered_drawing_preview": return "Comparing the locked reference with authored drawing layers";
             case "sketch_preview": return "Rendering a sketch preview";
+            case "sketch_import_reference_layers": return "Separating owned reference into source-assisted parts";
             case "sketch_import_reference": return "Importing an owned sketch reference";
-            case "sketch_import_frame_manifest": case "sketch_import_drawing_manifest": case "sketch_import_drawing_asset": return "Importing editable drawings in Sketch Studio";
+            case "sketch_import_frame_manifest": case "sketch_import_drawing_manifest": case "sketch_import_drawing_asset": case "sketch_import_animation": return "Importing editable drawings in Sketch Studio";
             case "sketch_render": return "Exporting sketch animation";
             case "open_pipeline_configure": return "Configuring the private open-source runner";
             case "open_pipeline_capabilities": return "Reading actual runner readiness";

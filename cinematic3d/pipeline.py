@@ -112,6 +112,8 @@ def verify_generation(folder: Path) -> tuple[dict,list[tuple[str,Path]]]:
     if not isinstance(scenes,list) or not 1<=len(scenes)<=80:raise ValueError('Invalid scene binding count')
     for scene in scenes:
         if scene.get('path') not in seen or not scene['path'].endswith('.glb'):raise ValueError('Scene is not a bound GLB')
+        if scene.get('cameraReplay','timeline') not in ('timeline','authored'):
+            raise ValueError('Camera replay must be timeline or authored')
     return manifest,accepted
 
 

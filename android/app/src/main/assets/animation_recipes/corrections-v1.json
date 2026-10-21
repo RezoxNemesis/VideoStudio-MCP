@@ -1,0 +1,109 @@
+{
+  "libraryVersion": 1,
+  "recipes": [
+    {
+      "id": "neutral_arms",
+      "label": "Relax arm bends and wrists",
+      "kind": "human",
+      "figureStyles": ["legacy", "anatomy_sketch"],
+      "posePatch": {"nearElbowSwivel": 90, "farElbowSwivel": -90, "nearWrist": -6, "farWrist": 6},
+      "expectedChange": "Sets elbow swivels to 90/-90 and wrists to -6/+6 on every existing human pose key. Wrist anchors, other channels, timing and speech stay authored; grip orientation may change.",
+      "checks": ["Inspect shoulder and elbow bends before and after.", "Inspect held objects, grips and hand contacts throughout the shot.", "Confirm pose key times and the source clock are unchanged."]
+    },
+    {
+      "id": "tailored_clothing",
+      "label": "Use tailored clothing",
+      "kind": "human",
+      "figureStyles": ["legacy"],
+      "settingsPatch": {"clothingStyle": "tailored"},
+      "expectedChange": "Uses the existing joint-aware tailored garment renderer. The anatomy study's shorts are not replaced.",
+      "checks": ["Inspect sleeve and trouser joints through the motion.", "Inspect garment overlap and folds in the selected view."]
+    },
+    {
+      "id": "angular_face",
+      "label": "Use angular face construction",
+      "kind": "human",
+      "figureStyles": ["legacy"],
+      "settingsPatch": {"faceStyle": "angular"},
+      "expectedChange": "Selects the existing angular native face while retaining gaze, expression and speech controls.",
+      "checks": ["Inspect jaw, cheeks and facial-feature visibility.", "Inspect gaze, blinks and speaking poses in native previews."]
+    },
+    {
+      "id": "soft_face",
+      "label": "Use soft face construction",
+      "kind": "human",
+      "figureStyles": ["legacy"],
+      "settingsPatch": {"faceStyle": "soft"},
+      "expectedChange": "Selects the existing soft native face without changing expression channels or dialogue timing.",
+      "checks": ["Inspect eyelids, nose, lips and jaw in the selected view.", "Inspect expressions and speaking poses before choosing this candidate."]
+    },
+    {
+      "id": "soft_shading",
+      "label": "Use soft surface shading",
+      "kind": "human",
+      "figureStyles": ["legacy"],
+      "settingsPatch": {"shading": "soft"},
+      "expectedChange": "Enables the existing native soft surface shading with the actor's current light angle and colors.",
+      "checks": ["Inspect native shading around joints and overlapping parts.", "Confirm facial features and garment contours remain readable."]
+    },
+    {
+      "id": "long_hair",
+      "label": "Use long hair",
+      "kind": "human",
+      "figureStyles": ["legacy", "anatomy_sketch"],
+      "settingsPatch": {"hairStyle": "long"},
+      "expectedChange": "Selects the existing long-hair geometry while preserving hair color, figure style, poses and speech.",
+      "checks": ["Inspect hair, ear and neck overlap in the selected view.", "Inspect shoulder clearance through head and body movement."]
+    },
+    {
+      "id": "natural_blinks",
+      "label": "Add a natural blink track",
+      "kind": "human",
+      "figureStyles": ["legacy", "anatomy_sketch"],
+      "blinkDefaults": true,
+      "expectedChange": "Adds the existing native default blink track only when no blink track is present. Body pose keys, authored blink channels and speech timing are preserved.",
+      "checks": ["Inspect eyelid closure and reopening over the shot.", "Inspect interaction with existing pose expressions and gaze.", "Confirm dialogue and body key timing are unchanged."]
+    },
+    {
+      "id": "graphite_palette",
+      "label": "Use pale graphite study colors",
+      "kind": "human",
+      "figureStyles": ["anatomy_sketch"],
+      "settingsPatch": {"skinColor": "#FFF1EEE8", "hairColor": "#FF555150", "trouserColor": "#FF7A7772"},
+      "expectedChange": "Sets pale skin, graphite hair and neutral gray shorts in the native anatomy study. Canvas background, geometry and animation stay unchanged.",
+      "checks": ["Inspect line and skin contrast against the current background.", "Inspect hair and shorts readability at the intended output size."]
+    },
+    {
+      "id": "cel_hands",
+      "label": "Use cel hand rendering",
+      "kind": "hand",
+      "settingsPatch": {"renderStyle": "cel"},
+      "expectedChange": "Selects the existing native cel hand surfaces and contours, retaining the hand's pose programme and colors.",
+      "checks": ["Inspect finger roots, nails and skin silhouette.", "Inspect curled and open poses for gaps and overlap errors."]
+    },
+    {
+      "id": "smooth_hands",
+      "label": "Use smooth hand rendering",
+      "kind": "hand",
+      "settingsPatch": {"renderStyle": "smooth"},
+      "expectedChange": "Selects the existing native smooth hand renderer without changing joint controls or timing.",
+      "checks": ["Inspect surface shading and finger joints.", "Inspect skin continuity through the complete pose programme."]
+    },
+    {
+      "id": "anatomical_hand_detail",
+      "label": "Show anatomical hand detail",
+      "kind": "hand",
+      "settingsPatch": {"detail": "anatomical"},
+      "expectedChange": "Uses the existing anatomical hand-detail setting; the selected surface renderer and animation are retained.",
+      "checks": ["Inspect palm creases, knuckles and nails.", "Inspect detail readability at the intended output size."]
+    },
+    {
+      "id": "contour_hand_detail",
+      "label": "Use contour hand detail",
+      "kind": "hand",
+      "settingsPatch": {"detail": "contour"},
+      "expectedChange": "Uses the existing contour hand-detail setting without replacing the hand's poses or surface style.",
+      "checks": ["Inspect finger silhouettes and palm readability.", "Inspect open and closed poses before accepting this candidate."]
+    }
+  ]
+}

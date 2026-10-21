@@ -1,0 +1,73 @@
+name: OMEGA Cinematic 3D and Precision 2D Integration Proof
+on:
+  push:
+    branches: [feature/reference-cinematic-camera-20261020]
+  pull_request:
+    branches: [candidate/omega-4.8.9-large-media-20261020]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: omega-reference-cinematic-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  android-native-cinematic-regressions:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+      - name: Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Gradle 8.9
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+      - name: Android SDK 36
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${ANDROID_HOME:-}"
+          if [ ! -f "$ANDROID_HOME/platforms/android-36/package.xml" ] || [ ! -x "$ANDROID_HOME/build-tools/35.0.0/aapt" ]; then
+            timeout 240s bash -c 'yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;35.0.0" >/dev/null'
+          fi
+          test -f "$ANDROID_HOME/platforms/android-36/package.xml"
+      - name: Verify actual native camera, geometry, motion and PBR entrypoints
+        shell: bash
+        run: |
+          set -euo pipefail
+          src=android/app/src/main/java/com/rezoxnemesis/videostudio
+          tests=android/app/src/test/java/com/rezoxnemesis/videostudio
+          for cls in CinematicReferenceCameraPath CinematicStudioLighting SketchPrecisionContour SketchNaturalMotionBridge; do
+            test -s "$src/$cls.java"
+            test -s "$tests/${cls}Test.java"
+          done
+          grep -F 'chooseReferenceCameraPath' "$src/FilamentGlbActivity.java"
+          grep -F 'chooseReferenceCameraPath' "$src/Cinematic3DStudioActivity.java"
+          grep -F 'toggleStudioLighting' "$src/FilamentGlbActivity.java"
+          grep -F '"precision_contour"' "$src/SketchEditOps.java"
+          grep -F '"apply_acting_motion"' "$src/SketchEditOps.java"
+          grep -F 'naturalActingDialog' "$src/SketchStudioActivity.java"
+      - name: Compile and run every Android unit regression
+        working-directory: android
+        shell: bash
+        run: |
+          set -euo pipefail
+          gradle :app:compileDebugJavaWithJavac :app:testDebugUnitTest --stacktrace
+      - name: Retain native renderer and unit test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: OMEGA-reference-cinematic-regressions
+          retention-days: 14
+          if-no-files-found: warn
+          path: |
+            android/app/build/test-results/testDebugUnitTest/
+            android/app/build/reports/tests/testDebugUnitTest/
+# No Gallery browsing, signing key creation, phone installation,
+# main merge or claims of hardware-GPU quality from Robolectric alone.

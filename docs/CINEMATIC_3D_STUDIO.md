@@ -1,4 +1,4 @@
-# Cinematic 3D Studio — VideoStudio 3.8.0
+# Cinematic 3D Studio
 
 The new workflow adds articulated 3D scenes alongside the original artwork editor.
 It preserves the existing Android package, signer, MCP v3 identity and project data.
@@ -21,6 +21,26 @@ controls can retime shots and change cameras/effects; changed character poses or
 foot-contact inputs require a rebuilt Blender bundle. Authored camera keys survive
 control edits until you explicitly switch to preset controls. Unsaved edits,
 pending saves and interrupted jobs have bounded private recovery state.
+
+### Authored character shots in source version 4.6.2
+
+An explicit non-action `IDLE` shot can replay a single weighted character rig.
+Other action scenes retain their existing minimum of two skins. Skin counts are
+resource admission checks; they do not establish independent actors or artistic quality.
+
+A scene binding may set `cameraReplay` to `authored` or `timeline`. Omission keeps
+the existing timeline camera. With `authored`, the shared preview/export sampler
+retains the animated GLB camera transform and its projection, adapting horizontal
+coverage to the output aspect while preserving vertical framing, lens shift and
+depth. Shot timing still samples the declared clip. Changing the placeholder
+timeline camera is refused with `BAKED_CAMERA_REBUILD_REQUIRED`; the studio explains
+the restriction and disables those camera fields. Rebuild that scene to change its
+authored framing. Imported facial morph animation remains part of the named clip.
+
+Cloud Blender depth of field, grading and denoising are not established as native
+Filament effects by this option. A cloud beauty render is separate from phone GPU
+playback and export acceptance. Version 4.6.2 is source-only until the original
+signer and an in-place phone update have been verified.
 
 ## Use it through MCP
 

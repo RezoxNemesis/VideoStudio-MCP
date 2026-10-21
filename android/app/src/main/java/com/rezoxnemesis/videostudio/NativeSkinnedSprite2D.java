@@ -20,6 +20,7 @@ public final class NativeSkinnedSprite2D implements AutoCloseable {
     private final Bitmap texture;
     private final Rig2DProfile profile;
     private final NativeSourceProp2D prop;
+    private final NativeRigidHead2D head;
     private final float sourceAspect;
     private long excludedOpaqueSourcePixels;
     private boolean rendered;
@@ -61,7 +62,7 @@ public final class NativeSkinnedSprite2D implements AutoCloseable {
         Bitmap input=sourceEntry!=null?NativeStoryboardSourceImage.readVerified(ctx,source,width,height,sourceEntry)
                 :expectedSha256!=null?NativeStoryboardSourceImage.readVerified(ctx,source,width,height,expectedSha256)
                 :NativeStoryboardSourceImage.read(ctx,source,width,height);
-        Bitmap actor=null;NativeSourceProp2D weapon=null;
+        Bitmap actor=null;NativeSourceProp2D weapon=null;NativeRigidHead2D headRegion=null;
         try {
             if(profile.outline.length==0&&!hasRealTransparency(input))
                 throw new IllegalArgumentException("A transparent cutout or manually drawn actor outline is required");
@@ -73,9 +74,10 @@ public final class NativeSkinnedSprite2D implements AutoCloseable {
             // The weapon has one source-material owner even when a body polygon overlaps it.
             if(hasProp)excludedOpaqueSourcePixels+=removeOutline(actor,this.profile.swordOutline);
             if(!hasAnyOpaquePixel(actor))throw new IllegalArgumentException("Actor mask has no visible source pixels");
-            texture=actor;prop=weapon;actor=null;weapon=null;
+            if(this.profile.headOutline.length>0){headRegion=new NativeRigidHead2D(actor,this.profile);removeOutline(actor,this.profile.headOutline);}
+            texture=actor;prop=weapon;head=headRegion;actor=null;weapon=null;headRegion=null;
         }finally{
-            input.recycle();if(actor!=null)actor.recycle();if(weapon!=null)weapon.close();
+            input.recycle();if(actor!=null)actor.recycle();if(weapon!=null)weapon.close();if(headRegion!=null)headRegion.close();
         }
     }
     static Bitmap applyOutline(Bitmap source,float[][] polygon) {
@@ -100,7 +102,7 @@ public final class NativeSkinnedSprite2D implements AutoCloseable {
         }
     }
 
-    private static int removeOutline(Bitmap actor,float[][] polygon){
+    static int removeOutline(Bitmap actor,float[][] polygon){
         boolean[] mask=StoryboardCleanPlate.mask(actor.getWidth(),actor.getHeight(),polygon);
         int[] row=new int[actor.getWidth()];int removed=0;
         for(int y=0;y<actor.getHeight();y++){
@@ -191,10 +193,11 @@ public final class NativeSkinnedSprite2D implements AutoCloseable {
         validatePose(target);
         if(profile==null||!Double.isFinite(aspect)||aspect<=0||aspect>8||!Float.isFinite(u)||!Float.isFinite(v))
             throw new IllegalArgumentException("Finite source geometry required");
-        int[] choices=new int[INFLUENCES];float[] weights=new float[INFLUENCES];
-        computeWeights(u,v,profile,(float)aspect,choices,weights);
         float[][] transforms=new float[Rig2DProfile.BONES.length][6];
         computeTransforms(profile,target,(float)aspect,transforms);
+        if(profile.headOutline.length>0&&NativeRigidHead2D.contains(profile.headOutline,u,v))return NativeRigidHead2D.point(profile,target,u,v,aspect);
+        int[] choices=new int[INFLUENCES];float[] weights=new float[INFLUENCES];
+        computeWeights(u,v,profile,(float)aspect,choices,weights);
         return weightedPoint(u,v,(float)aspect,choices,weights,transforms);
     }
 
@@ -270,7 +273,7 @@ public final class NativeSkinnedSprite2D implements AutoCloseable {
         // Canvas.drawBitmapMesh ignores Paint alpha on the native raster backend.
         // Apply opacity to the completed mesh layer, including its actual masked alpha.
         int saved=alpha==255?-1:canvas.saveLayerAlpha(0,0,canvas.getWidth(),canvas.getHeight(),alpha);
-        try{canvas.drawBitmapMesh(texture,MESH_W,MESH_H,mesh,0,null,0,paint);}
+        try{canvas.drawBitmapMesh(texture,MESH_W,MESH_H,mesh,0,null,0,paint);if(head!=null)head.render(canvas,targetPose);}
         finally{if(saved>=0)canvas.restoreToCount(saved);}
     }
 
@@ -298,8 +301,10 @@ public final class NativeSkinnedSprite2D implements AutoCloseable {
     public void excludeSourceProps(java.util.List<float[][]> masks){
         if(rendered)throw new IllegalStateException("Source weapon exclusions must be configured before rendering");
         if(masks==null||masks.size()>8)throw new IllegalArgumentException("Bounded source weapon exclusions required");
-        for(float[][] polygon:masks)if(polygon!=null&&polygon.length>=3)
+        for(float[][] polygon:masks)if(polygon!=null&&polygon.length>=3){
             excludedOpaqueSourcePixels+=removeOutline(texture,polygon);
+            if(head!=null)excludedOpaqueSourcePixels+=head.exclude(polygon);
+        }
     }
     public long excludedOpaqueSourcePixels(){return excludedOpaqueSourcePixels;}
     public double sourceAspect(){return sourceAspect;}
@@ -307,6 +312,10 @@ public final class NativeSkinnedSprite2D implements AutoCloseable {
     public float[] predictedMeshPoint(float[][] targetPose,float u,float v){
         if(!Float.isFinite(u)||!Float.isFinite(v)||u<0||u>1||v<0||v>1)
             throw new IllegalArgumentException("Mesh point must lie in source UV coordinates");
+        if(head!=null&&NativeRigidHead2D.contains(profile.headOutline,u,v)){
+            requireRenderablePose(profile,targetPose,texture.getWidth(),texture.getHeight());
+            return NativeRigidHead2D.point(profile,targetPose,u,v,sourceAspect);
+        }
         int width=texture.getWidth(),height=texture.getHeight();updateMesh(targetPose,width,height);
         float gx=u*MESH_W,gy=v*MESH_H;
         int x=Math.min(MESH_W-1,(int)gx),y=Math.min(MESH_H-1,(int)gy);
@@ -328,5 +337,5 @@ public final class NativeSkinnedSprite2D implements AutoCloseable {
     }
 
     public Bitmap getCutoutForTesting() {return texture.copy(Bitmap.Config.ARGB_8888,false);}
-    @Override public void close() {if(!texture.isRecycled())texture.recycle();if(prop!=null)prop.close();}
+    @Override public void close() {if(!texture.isRecycled())texture.recycle();if(prop!=null)prop.close();if(head!=null)head.close();}
 }

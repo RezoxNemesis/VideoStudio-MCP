@@ -1,0 +1,1462 @@
+{
+  "description": "Reproducible original four-second rigid mechanical cutout study. All source artwork uses native Sketch shapes/strokes; no reference-board pixels. Fill placeholders with fresh native values. Use fresh IDs on reruns.",
+  "requiresNativeVersion": "4.8.5",
+  "creativeScenarios": 1,
+  "steps": [
+    {
+      "action": "sketch_create",
+      "parameters": {
+        "sketchId": "lantern_robot_original",
+        "operationId": "original_create",
+        "width": 512,
+        "height": 512,
+        "frameCount": 1,
+        "background": "#00000000"
+      }
+    },
+    {
+      "action": "sketch_edit",
+      "parameters": {
+        "sketchId": "lantern_robot_original",
+        "expectedRevision": 1,
+        "operationId": "original_draw",
+        "operations": [
+          {
+            "type": "add_object",
+            "layerId": "layer_1",
+            "object": {
+              "id": "antenna",
+              "kind": "stroke",
+              "color": "#FF90B4BD",
+              "width": 0.012,
+              "points": [
+                [
+                  0.5,
+                  0.145,
+                  1
+                ],
+                [
+                  0.5,
+                  0.075,
+                  1
+                ]
+              ]
+            }
+          },
+          {
+            "type": "add_object",
+            "layerId": "layer_1",
+            "object": {
+              "id": "beacon",
+              "kind": "ellipse",
+              "color": "#FFFFD268",
+              "fill": true,
+              "bounds": {
+                "x": 0.478,
+                "y": 0.055,
+                "width": 0.044,
+                "height": 0.044
+              }
+            }
+          },
+          {
+            "type": "add_object",
+            "layerId": "layer_1",
+            "object": {
+              "id": "head_shadow",
+              "kind": "ellipse",
+              "color": "#FF573E32",
+              "fill": true,
+              "bounds": {
+                "x": 0.335,
+                "y": 0.135,
+                "width": 0.33,
+                "height": 0.255
+              }
+            }
+          },
+          {
+            "type": "add_object",
+            "layerId": "layer_1",
+            "object": {
+              "id": "head_shell",
+              "kind": "ellipse",
+              "color": "#FFC99B5C",
+              "fill": true,
+              "bounds": {
+                "x": 0.345,
+                "y": 0.125,
+                "width": 0.31,
+                "height": 0.25
+              }
+            }
+          },
+          {
+            "type": "add_object",
+            "layerId": "layer_1",
+            "object": {
+              "id": "head_inset",
+              "kind": "ellipse",
+              "color": "#FFE6C285",
+              "fill": true,
+              "bounds": {
+                "x": 0.36,
+                "y": 0.14,
+                "width": 0.28,
+                "height": 0.21
+              }
+            }
+          },
+          {
+            "type": "add_object",
+            "layerId": "layer_1",
+            "object": {
+              "id": "visor",
+              "kind": "rect",
+              "color": "#FF203841",
+              "fill": true,
+              "bounds": {
+                "x": 0.378,
+                "y": 0.21,
+                "width": 0.244,
+                "height": 0.07
+              }
+            }
+          },
+          {
+            "type": "add_object",
+            "layerId": "layer_1",
+            "object": {
+              "id": "eye_left",
+              "kind": "ellipse",
+              "color": "#FF56DACA",
+              "fill": true,
+              "bounds": {
+                "x": 0.397,
+                "y": 0.217,
+                "width": 0.055,
+                "height": 0.055
+              }
+            }
+          },
+          {
+            "type": "add_object",
+            "layerId": "layer_1",
+            "object": {
+              "id": "eye_right",
+              "kind": "ellipse",
+              "color": "#FF56DACA",
+              "fill": true,
+              "bounds": {
+                "x": 0.548,
+                "y": 0.217,
+                "width": 0.055,
+                "height": 0.055
+              }
+            }
+          },
+          {
+            "type": "add_object",
+            "layerId": "layer_1",
+            "object": {
+              "id": "pupil_left",
+              "kind": "ellipse",
+              "color": "#FFFCF8D6",
+              "fill": true,
+              "bounds": {
+                "x": 0.414,
+                "y": 0.23,
+                "width": 0.021,
+                "height": 0.024
+              }
+            }
+          },
+          {
+            "type": "add_object",
+            "layerId": "layer_1",
+            "object": {
+              "id": "pupil_right",
+              "kind": "ellipse",
+              "color": "#FFFCF8D6",
+              "fill": true,
+              "bounds": {
+                "x": 0.564,
+                "y": 0.23,
+                "width": 0.021,
+                "height": 0.024
+              }
+            }
+          },
+          {
+            "type": "add_object",
+            "layerId": "layer_1",
+            "object": {
+              "id": "mouth",
+              "kind": "stroke",
+              "color": "#FF62432F",
+              "width": 0.008,
+              "points": [
+                [
+                  0.46,
+                  0.312,
+                  1
+                ],
+                [
+                  0.5,
+                  0.322,
+                  1
+                ],
+                [
+                  0.54,
+                  0.312,
+                  1
+                ]
+              ]
+            }
+          },
+          {
+            "type": "add_object",
+            "layerId": "layer_1",
+            "object": {
+              "id": "forehead_seam",
+              "kind": "stroke",
+              "color": "#FF91673F",
+              "width": 0.006,
+              "points": [
+                [
+                  0.5,
+                  0.149,
+                  1
+                ],
+                [
+                  0.5,
+                  0.19,
+                  1
+                ]
+              ]
+            }
+          },
+          {
+            "type": "add_object",
+            "layerId": "layer_1",
+            "object": {
+              "id": "head_bolt_l",
+              "kind": "ellipse",
+              "color": "#FF805E43",
+              "fill": true,
+              "bounds": {
+                "x": 0.36,
+                "y": 0.257,
+                "width": 0.018,
+                "height": 0.018
+              }
+            }
+          },
+          {
+            "type": "add_object",
+            "layerId": "layer_1",
+            "object": {
+              "id": "head_bolt_r",
+              "kind": "ellipse",
+              "color": "#FF805E43",
+              "fill": true,
+              "bounds": {
+                "x": 0.622,
+                "y": 0.257,
+                "width": 0.018,
+                "height": 0.018
+              }
+            }
+          },
+          {
+            "type": "add_object",
+            "layerId": "layer_1",
+            "object": {
+              "id": "neck",
+              "kind": "rect",
+              "color": "#FF78979C",
+              "fill": true,
+              "bounds": {
+                "x": 0.46,
+                "y": 0.374,
+                "width": 0.08,
+                "height": 0.048
+              }
+            }
+          },
+          {
+            "type": "add_object",
+            "layerId": "layer_1",
+            "object": {
+              "id": "torso_back",
+              "kind": "ellipse",
+              "color": "#FF674B35",
+              "fill": true,
+              "bounds": {
+                "x": 0.346,
+                "y": 0.394,
+                "width": 0.308,
+                "height": 0.34
+              }
+            }
+          },
+          {
+            "type": "add_object",
+            "layerId": "layer_1",
+            "object": {
+              "id": "torso",
+              "kind": "ellipse",
+              "color": "#FFC49557",
+              "fill": true,
+              "bounds": {
+                "x": 0.36,
+                "y": 0.391,
+                "width": 0.28,
+                "height": 0.32
+              }
+            }
+          },
+          {
+            "type": "add_object",
+            "layerId": "layer_1",
+            "object": {
+              "id": "belly",
+              "kind": "ellipse",
+              "color": "#FF36565E",
+              "fill": true,
+              "bounds": {
+                "x": 0.395,
+                "y": 0.43,
+                "width": 0.21,
+                "height": 0.225
+              }
+            }
+          },
+          {
+            "type": "add_object",
+            "layerId": "layer_1",
+            "object": {
+              "id": "core",
+              "kind": "ellipse",
+              "color": "#FF85DBD0",
+              "fill": true,
+              "bounds": {
+                "x": 0.451,
+                "y": 0.49,
+                "width": 0.098,
+                "height": 0.098
+              }
+            }
+          },
+          {
+            "type": "add_object",
+            "layerId": "layer_1",
+            "object": {
+              "id": "core_inner",
+              "kind": "ellipse",
+              "color": "#FFD9F1D9",
+              "fill": true,
+              "bounds": {
+                "x": 0.477,
+                "y": 0.515,
+                "width": 0.046,
+                "height": 0.046
+              }
+            }
+          },
+          {
+            "type": "add_object",
+            "layerId": "layer_1",
+            "object": {
+              "id": "body_rib_l",
+              "kind": "stroke",
+              "color": "#FFE3BA77",
+              "width": 0.012,
+              "points": [
+                [
+                  0.378,
+                  0.48,
+                  1
+                ],
+                [
+                  0.37,
+                  0.56,
+                  1
+                ],
+                [
+                  0.387,
+                  0.63,
+                  1
+                ]
+              ]
+            }
+          },
+          {
+            "type": "add_object",
+            "layerId": "layer_1",
+            "object": {
+              "id": "body_rib_r",
+              "kind": "stroke",
+              "color": "#FF8D673D",
+              "width": 0.012,
+              "points": [
+                [
+                  0.622,
+                  0.48,
+                  1
+                ],
+                [
+                  0.63,
+                  0.56,
+                  1
+                ],
+                [
+                  0.613,
+                  0.63,
+                  1
+                ]
+              ]
+            }
+          },
+          {
+            "type": "add_object",
+            "layerId": "layer_1",
+            "object": {
+              "id": "vent_0",
+              "kind": "rect",
+              "color": "#FF634D38",
+              "fill": true,
+              "bounds": {
+                "x": 0.46,
+                "y": 0.66,
+                "width": 0.015,
+                "height": 0.024
+              }
+            }
+          },
+          {
+            "type": "add_object",
+            "layerId": "layer_1",
+            "object": {
+              "id": "vent_1",
+              "kind": "rect",
+              "color": "#FF634D38",
+              "fill": true,
+              "bounds": {
+                "x": 0.48600000000000004,
+                "y": 0.66,
+                "width": 0.015,
+                "height": 0.024
+              }
+            }
+          },
+          {
+            "type": "add_object",
+            "layerId": "layer_1",
+            "object": {
+              "id": "vent_2",
+              "kind": "rect",
+              "color": "#FF634D38",
+              "fill": true,
+              "bounds": {
+                "x": 0.512,
+                "y": 0.66,
+                "width": 0.015,
+                "height": 0.024
+              }
+            }
+          },
+          {
+            "type": "add_object",
+            "layerId": "layer_1",
+            "object": {
+              "id": "left_hip",
+              "kind": "ellipse",
+              "color": "#FF77949B",
+              "fill": true,
+              "bounds": {
+                "x": 0.39,
+                "y": 0.715,
+                "width": 0.075,
+                "height": 0.08
+              }
+            }
+          },
+          {
+            "type": "add_object",
+            "layerId": "layer_1",
+            "object": {
+              "id": "right_hip",
+              "kind": "ellipse",
+              "color": "#FF77949B",
+              "fill": true,
+              "bounds": {
+                "x": 0.535,
+                "y": 0.715,
+                "width": 0.075,
+                "height": 0.08
+              }
+            }
+          },
+          {
+            "type": "add_object",
+            "layerId": "layer_1",
+            "object": {
+              "id": "left_leg",
+              "kind": "rect",
+              "color": "#FFB28A53",
+              "fill": true,
+              "bounds": {
+                "x": 0.405,
+                "y": 0.765,
+                "width": 0.05,
+                "height": 0.08
+              }
+            }
+          },
+          {
+            "type": "add_object",
+            "layerId": "layer_1",
+            "object": {
+              "id": "right_leg",
+              "kind": "rect",
+              "color": "#FFB28A53",
+              "fill": true,
+              "bounds": {
+                "x": 0.545,
+                "y": 0.765,
+                "width": 0.05,
+                "height": 0.08
+              }
+            }
+          },
+          {
+            "type": "add_object",
+            "layerId": "layer_1",
+            "object": {
+              "id": "left_boot",
+              "kind": "ellipse",
+              "color": "#FF7E989C",
+              "fill": true,
+              "bounds": {
+                "x": 0.365,
+                "y": 0.824,
+                "width": 0.12,
+                "height": 0.06
+              }
+            }
+          },
+          {
+            "type": "add_object",
+            "layerId": "layer_1",
+            "object": {
+              "id": "right_boot",
+              "kind": "ellipse",
+              "color": "#FF7E989C",
+              "fill": true,
+              "bounds": {
+                "x": 0.515,
+                "y": 0.824,
+                "width": 0.12,
+                "height": 0.06
+              }
+            }
+          },
+          {
+            "type": "add_object",
+            "layerId": "layer_1",
+            "object": {
+              "id": "left_shoulder",
+              "kind": "ellipse",
+              "color": "#FF7A9B9F",
+              "fill": true,
+              "bounds": {
+                "x": 0.265,
+                "y": 0.406,
+                "width": 0.065,
+                "height": 0.065
+              }
+            }
+          },
+          {
+            "type": "add_object",
+            "layerId": "layer_1",
+            "object": {
+              "id": "left_upper",
+              "kind": "rect",
+              "color": "#FFBA935E",
+              "fill": true,
+              "bounds": {
+                "x": 0.255,
+                "y": 0.451,
+                "width": 0.057,
+                "height": 0.1
+              }
+            }
+          },
+          {
+            "type": "add_object",
+            "layerId": "layer_1",
+            "object": {
+              "id": "left_elbow",
+              "kind": "ellipse",
+              "color": "#FF47666F",
+              "fill": true,
+              "bounds": {
+                "x": 0.247,
+                "y": 0.535,
+                "width": 0.072,
+                "height": 0.072
+              }
+            }
+          },
+          {
+            "type": "add_object",
+            "layerId": "layer_1",
+            "object": {
+              "id": "left_forearm",
+              "kind": "rect",
+              "color": "#FFD2A76A",
+              "fill": true,
+              "bounds": {
+                "x": 0.257,
+                "y": 0.59,
+                "width": 0.055,
+                "height": 0.095
+              }
+            }
+          },
+          {
+            "type": "add_object",
+            "layerId": "layer_1",
+            "object": {
+              "id": "left_hand",
+              "kind": "ellipse",
+              "color": "#FF82A5A9",
+              "fill": true,
+              "bounds": {
+                "x": 0.24,
+                "y": 0.66,
+                "width": 0.087,
+                "height": 0.075
+              }
+            }
+          },
+          {
+            "type": "add_object",
+            "layerId": "layer_1",
+            "object": {
+              "id": "left_fingers",
+              "kind": "stroke",
+              "color": "#FF36555E",
+              "width": 0.007,
+              "points": [
+                [
+                  0.264,
+                  0.698,
+                  1
+                ],
+                [
+                  0.296,
+                  0.698,
+                  1
+                ]
+              ]
+            }
+          },
+          {
+            "type": "add_object",
+            "layerId": "layer_1",
+            "object": {
+              "id": "right_shoulder",
+              "kind": "ellipse",
+              "color": "#FF7A9B9F",
+              "fill": true,
+              "bounds": {
+                "x": 0.67,
+                "y": 0.406,
+                "width": 0.065,
+                "height": 0.065
+              }
+            }
+          },
+          {
+            "type": "add_object",
+            "layerId": "layer_1",
+            "object": {
+              "id": "right_upper",
+              "kind": "rect",
+              "color": "#FFBA935E",
+              "fill": true,
+              "bounds": {
+                "x": 0.688,
+                "y": 0.451,
+                "width": 0.057,
+                "height": 0.1
+              }
+            }
+          },
+          {
+            "type": "add_object",
+            "layerId": "layer_1",
+            "object": {
+              "id": "right_elbow",
+              "kind": "ellipse",
+              "color": "#FF47666F",
+              "fill": true,
+              "bounds": {
+                "x": 0.681,
+                "y": 0.535,
+                "width": 0.072,
+                "height": 0.072
+              }
+            }
+          },
+          {
+            "type": "add_object",
+            "layerId": "layer_1",
+            "object": {
+              "id": "right_forearm",
+              "kind": "rect",
+              "color": "#FFD2A76A",
+              "fill": true,
+              "bounds": {
+                "x": 0.688,
+                "y": 0.59,
+                "width": 0.055,
+                "height": 0.095
+              }
+            }
+          },
+          {
+            "type": "add_object",
+            "layerId": "layer_1",
+            "object": {
+              "id": "right_hand",
+              "kind": "ellipse",
+              "color": "#FF82A5A9",
+              "fill": true,
+              "bounds": {
+                "x": 0.673,
+                "y": 0.66,
+                "width": 0.087,
+                "height": 0.075
+              }
+            }
+          },
+          {
+            "type": "add_object",
+            "layerId": "layer_1",
+            "object": {
+              "id": "right_fingers",
+              "kind": "stroke",
+              "color": "#FF36555E",
+              "width": 0.007,
+              "points": [
+                [
+                  0.7,
+                  0.698,
+                  1
+                ],
+                [
+                  0.73,
+                  0.698,
+                  1
+                ]
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "action": "sketch_render",
+      "parameters": {
+        "sketchId": "lantern_robot_original",
+        "expectedRevision": 2,
+        "operationId": "original_frames",
+        "aspect": "original",
+        "quality": "720p"
+      },
+      "instructions": "On Android, wait for the final job result. Inspect its output project and owned generated PNG asset sketch_frame_0. Workspace evidence executed app export preparation only; it did not prove Android codec completion."
+    },
+    {
+      "action": "sketch_create",
+      "parameters": {
+        "sketchId": "lantern_robot_layers",
+        "operationId": "create",
+        "width": 512,
+        "height": 512,
+        "fps": 24,
+        "frameCount": 96,
+        "background": "#FF142C36"
+      }
+    },
+    {
+      "action": "sketch_import_reference",
+      "parameters": {
+        "sketchId": "lantern_robot_layers",
+        "expectedRevision": 1,
+        "operationId": "source",
+        "projectId": "<source export outputProjectId>",
+        "sourceProjectUpdatedAt": "<fresh project updatedAt integer>",
+        "assetId": "sketch_frame_0",
+        "layerId": "layer_1",
+        "objectId": "source_image",
+        "bounds": {
+          "x": 0.075,
+          "y": 0.045,
+          "width": 0.85,
+          "height": 0.85
+        }
+      }
+    },
+    {
+      "action": "sketch_get",
+      "parameters": {
+        "sketchId": "lantern_robot_layers",
+        "expectedRevision": 2,
+        "objectId": "source_image"
+      },
+      "instructions": "Read both real source hashes before preview/import."
+    },
+    {
+      "action": "sketch_reference_layers_preview",
+      "parameters": {
+        "sketchId": "lantern_robot_layers",
+        "expectedRevision": 2,
+        "operationId": "separate",
+        "sourceObjectId": "source_image",
+        "expectedReferenceSha256": "<fresh source image reference.sha256>",
+        "expectedSourceSha256": "<fresh source image reference.sourceSha256>",
+        "frame": 0,
+        "exposure": 96,
+        "hideSource": true,
+        "masks": [
+          {
+            "maskId": "head",
+            "layerId": "head_layer",
+            "objectId": "head_image",
+            "name": "Head and eyes",
+            "rings": [
+              [
+                [
+                  0.33,
+                  0.04
+                ],
+                [
+                  0.67,
+                  0.04
+                ],
+                [
+                  0.67,
+                  0.39
+                ],
+                [
+                  0.33,
+                  0.39
+                ]
+              ]
+            ]
+          },
+          {
+            "maskId": "left_arm",
+            "layerId": "left_arm_layer",
+            "objectId": "left_arm_image",
+            "name": "Left arm cutout",
+            "rings": [
+              [
+                [
+                  0.235,
+                  0.4
+                ],
+                [
+                  0.335,
+                  0.4
+                ],
+                [
+                  0.335,
+                  0.75
+                ],
+                [
+                  0.235,
+                  0.75
+                ]
+              ]
+            ]
+          },
+          {
+            "maskId": "right_arm",
+            "layerId": "right_arm_layer",
+            "objectId": "right_arm_image",
+            "name": "Right arm cutout",
+            "rings": [
+              [
+                [
+                  0.665,
+                  0.4
+                ],
+                [
+                  0.765,
+                  0.4
+                ],
+                [
+                  0.765,
+                  0.75
+                ],
+                [
+                  0.665,
+                  0.75
+                ]
+              ]
+            ]
+          }
+        ],
+        "background": {
+          "layerId": "body_layer",
+          "objectId": "body_image",
+          "name": "Fixed body and legs"
+        }
+      },
+      "instructions": "Inspect actual native overlay. No source writes."
+    },
+    {
+      "action": "sketch_import_reference_layers",
+      "parameters": {
+        "sketchId": "lantern_robot_layers",
+        "expectedRevision": 2,
+        "operationId": "separate",
+        "sourceObjectId": "source_image",
+        "expectedReferenceSha256": "<fresh source image reference.sha256>",
+        "expectedSourceSha256": "<fresh source image reference.sourceSha256>",
+        "frame": 0,
+        "exposure": 96,
+        "hideSource": true,
+        "masks": [
+          {
+            "maskId": "head",
+            "layerId": "head_layer",
+            "objectId": "head_image",
+            "name": "Head and eyes",
+            "rings": [
+              [
+                [
+                  0.33,
+                  0.04
+                ],
+                [
+                  0.67,
+                  0.04
+                ],
+                [
+                  0.67,
+                  0.39
+                ],
+                [
+                  0.33,
+                  0.39
+                ]
+              ]
+            ]
+          },
+          {
+            "maskId": "left_arm",
+            "layerId": "left_arm_layer",
+            "objectId": "left_arm_image",
+            "name": "Left arm cutout",
+            "rings": [
+              [
+                [
+                  0.235,
+                  0.4
+                ],
+                [
+                  0.335,
+                  0.4
+                ],
+                [
+                  0.335,
+                  0.75
+                ],
+                [
+                  0.235,
+                  0.75
+                ]
+              ]
+            ]
+          },
+          {
+            "maskId": "right_arm",
+            "layerId": "right_arm_layer",
+            "objectId": "right_arm_image",
+            "name": "Right arm cutout",
+            "rings": [
+              [
+                [
+                  0.665,
+                  0.4
+                ],
+                [
+                  0.765,
+                  0.4
+                ],
+                [
+                  0.765,
+                  0.75
+                ],
+                [
+                  0.665,
+                  0.75
+                ]
+              ]
+            ]
+          }
+        ],
+        "background": {
+          "layerId": "body_layer",
+          "objectId": "body_image",
+          "name": "Fixed body and legs"
+        }
+      }
+    },
+    {
+      "action": "sketch_edit",
+      "parameters": {
+        "sketchId": "lantern_robot_layers",
+        "expectedRevision": 3,
+        "operationId": "wave",
+        "operations": [
+          {
+            "type": "add_object",
+            "layerId": "body_layer",
+            "object": {
+              "id": "left_fixed_bridge",
+              "kind": "rect",
+              "frame": 0,
+              "exposure": 96,
+              "fill": true,
+              "color": "#FF526E76",
+              "bounds": {
+                "x": 0.32745,
+                "y": 0.40624999999999994,
+                "width": 0.1105,
+                "height": 0.022949999999999998
+              }
+            }
+          },
+          {
+            "type": "add_object",
+            "layerId": "body_layer",
+            "object": {
+              "id": "right_fixed_bridge",
+              "kind": "rect",
+              "frame": 0,
+              "exposure": 96,
+              "fill": true,
+              "color": "#FF526E76",
+              "bounds": {
+                "x": 0.5620499999999999,
+                "y": 0.40624999999999994,
+                "width": 0.1105,
+                "height": 0.022949999999999998
+              }
+            }
+          },
+          {
+            "type": "set_keyframe",
+            "objectId": "right_arm_image",
+            "frame": 0,
+            "interpolation": "ease_in_out",
+            "transform": {
+              "x": 0,
+              "y": 0,
+              "scaleX": 1,
+              "scaleY": 1,
+              "rotation": 0,
+              "anchorX": 0.6725499999999999,
+              "anchorY": 0.41729999999999995,
+              "opacity": 1
+            }
+          },
+          {
+            "type": "set_keyframe",
+            "objectId": "left_arm_image",
+            "frame": 0,
+            "interpolation": "ease_in_out",
+            "transform": {
+              "x": 0,
+              "y": 0,
+              "scaleX": 1,
+              "scaleY": 1,
+              "rotation": 0,
+              "anchorX": 0.32745,
+              "anchorY": 0.41729999999999995,
+              "opacity": 1
+            }
+          },
+          {
+            "type": "set_keyframe",
+            "objectId": "head_image",
+            "frame": 0,
+            "interpolation": "ease_in_out",
+            "transform": {
+              "x": 0,
+              "y": 0,
+              "scaleX": 1,
+              "scaleY": 1,
+              "rotation": 0,
+              "anchorX": 0.5,
+              "anchorY": 0.368,
+              "opacity": 1
+            }
+          },
+          {
+            "type": "set_keyframe",
+            "objectId": "right_arm_image",
+            "frame": 12,
+            "interpolation": "ease_in_out",
+            "transform": {
+              "x": 0,
+              "y": 0,
+              "scaleX": 1,
+              "scaleY": 1,
+              "rotation": 10,
+              "anchorX": 0.6725499999999999,
+              "anchorY": 0.41729999999999995,
+              "opacity": 1
+            }
+          },
+          {
+            "type": "set_keyframe",
+            "objectId": "left_arm_image",
+            "frame": 12,
+            "interpolation": "ease_in_out",
+            "transform": {
+              "x": 0,
+              "y": 0,
+              "scaleX": 1,
+              "scaleY": 1,
+              "rotation": -5,
+              "anchorX": 0.32745,
+              "anchorY": 0.41729999999999995,
+              "opacity": 1
+            }
+          },
+          {
+            "type": "set_keyframe",
+            "objectId": "head_image",
+            "frame": 12,
+            "interpolation": "ease_in_out",
+            "transform": {
+              "x": 0,
+              "y": 0,
+              "scaleX": 1,
+              "scaleY": 1,
+              "rotation": 0,
+              "anchorX": 0.5,
+              "anchorY": 0.368,
+              "opacity": 1
+            }
+          },
+          {
+            "type": "set_keyframe",
+            "objectId": "right_arm_image",
+            "frame": 30,
+            "interpolation": "ease_in_out",
+            "transform": {
+              "x": 0,
+              "y": 0,
+              "scaleX": 1,
+              "scaleY": 1,
+              "rotation": -85,
+              "anchorX": 0.6725499999999999,
+              "anchorY": 0.41729999999999995,
+              "opacity": 1
+            }
+          },
+          {
+            "type": "set_keyframe",
+            "objectId": "left_arm_image",
+            "frame": 30,
+            "interpolation": "ease_in_out",
+            "transform": {
+              "x": 0,
+              "y": 0,
+              "scaleX": 1,
+              "scaleY": 1,
+              "rotation": 8,
+              "anchorX": 0.32745,
+              "anchorY": 0.41729999999999995,
+              "opacity": 1
+            }
+          },
+          {
+            "type": "set_keyframe",
+            "objectId": "head_image",
+            "frame": 30,
+            "interpolation": "ease_in_out",
+            "transform": {
+              "x": 0,
+              "y": 0,
+              "scaleX": 1,
+              "scaleY": 1,
+              "rotation": -6,
+              "anchorX": 0.5,
+              "anchorY": 0.368,
+              "opacity": 1
+            }
+          },
+          {
+            "type": "set_keyframe",
+            "objectId": "right_arm_image",
+            "frame": 42,
+            "interpolation": "ease_in_out",
+            "transform": {
+              "x": 0,
+              "y": 0,
+              "scaleX": 1,
+              "scaleY": 1,
+              "rotation": -65,
+              "anchorX": 0.6725499999999999,
+              "anchorY": 0.41729999999999995,
+              "opacity": 1
+            }
+          },
+          {
+            "type": "set_keyframe",
+            "objectId": "left_arm_image",
+            "frame": 42,
+            "interpolation": "ease_in_out",
+            "transform": {
+              "x": 0,
+              "y": 0,
+              "scaleX": 1,
+              "scaleY": 1,
+              "rotation": 10,
+              "anchorX": 0.32745,
+              "anchorY": 0.41729999999999995,
+              "opacity": 1
+            }
+          },
+          {
+            "type": "set_keyframe",
+            "objectId": "head_image",
+            "frame": 42,
+            "interpolation": "ease_in_out",
+            "transform": {
+              "x": 0,
+              "y": 0,
+              "scaleX": 1,
+              "scaleY": 1,
+              "rotation": -6,
+              "anchorX": 0.5,
+              "anchorY": 0.368,
+              "opacity": 1
+            }
+          },
+          {
+            "type": "set_keyframe",
+            "objectId": "right_arm_image",
+            "frame": 54,
+            "interpolation": "ease_in_out",
+            "transform": {
+              "x": 0,
+              "y": 0,
+              "scaleX": 1,
+              "scaleY": 1,
+              "rotation": -95,
+              "anchorX": 0.6725499999999999,
+              "anchorY": 0.41729999999999995,
+              "opacity": 1
+            }
+          },
+          {
+            "type": "set_keyframe",
+            "objectId": "left_arm_image",
+            "frame": 54,
+            "interpolation": "ease_in_out",
+            "transform": {
+              "x": 0,
+              "y": 0,
+              "scaleX": 1,
+              "scaleY": 1,
+              "rotation": 10,
+              "anchorX": 0.32745,
+              "anchorY": 0.41729999999999995,
+              "opacity": 1
+            }
+          },
+          {
+            "type": "set_keyframe",
+            "objectId": "head_image",
+            "frame": 54,
+            "interpolation": "ease_in_out",
+            "transform": {
+              "x": 0,
+              "y": 0,
+              "scaleX": 1,
+              "scaleY": 1,
+              "rotation": -6,
+              "anchorX": 0.5,
+              "anchorY": 0.368,
+              "opacity": 1
+            }
+          },
+          {
+            "type": "set_keyframe",
+            "objectId": "right_arm_image",
+            "frame": 66,
+            "interpolation": "ease_in_out",
+            "transform": {
+              "x": 0,
+              "y": 0,
+              "scaleX": 1,
+              "scaleY": 1,
+              "rotation": -65,
+              "anchorX": 0.6725499999999999,
+              "anchorY": 0.41729999999999995,
+              "opacity": 1
+            }
+          },
+          {
+            "type": "set_keyframe",
+            "objectId": "left_arm_image",
+            "frame": 66,
+            "interpolation": "ease_in_out",
+            "transform": {
+              "x": 0,
+              "y": 0,
+              "scaleX": 1,
+              "scaleY": 1,
+              "rotation": 8,
+              "anchorX": 0.32745,
+              "anchorY": 0.41729999999999995,
+              "opacity": 1
+            }
+          },
+          {
+            "type": "set_keyframe",
+            "objectId": "head_image",
+            "frame": 66,
+            "interpolation": "ease_in_out",
+            "transform": {
+              "x": 0,
+              "y": 0,
+              "scaleX": 1,
+              "scaleY": 1,
+              "rotation": -3,
+              "anchorX": 0.5,
+              "anchorY": 0.368,
+              "opacity": 1
+            }
+          },
+          {
+            "type": "set_keyframe",
+            "objectId": "right_arm_image",
+            "frame": 80,
+            "interpolation": "ease_in_out",
+            "transform": {
+              "x": 0,
+              "y": 0,
+              "scaleX": 1,
+              "scaleY": 1,
+              "rotation": -15,
+              "anchorX": 0.6725499999999999,
+              "anchorY": 0.41729999999999995,
+              "opacity": 1
+            }
+          },
+          {
+            "type": "set_keyframe",
+            "objectId": "left_arm_image",
+            "frame": 80,
+            "interpolation": "ease_in_out",
+            "transform": {
+              "x": 0,
+              "y": 0,
+              "scaleX": 1,
+              "scaleY": 1,
+              "rotation": 2,
+              "anchorX": 0.32745,
+              "anchorY": 0.41729999999999995,
+              "opacity": 1
+            }
+          },
+          {
+            "type": "set_keyframe",
+            "objectId": "head_image",
+            "frame": 80,
+            "interpolation": "ease_in_out",
+            "transform": {
+              "x": 0,
+              "y": 0,
+              "scaleX": 1,
+              "scaleY": 1,
+              "rotation": 0,
+              "anchorX": 0.5,
+              "anchorY": 0.368,
+              "opacity": 1
+            }
+          },
+          {
+            "type": "set_keyframe",
+            "objectId": "right_arm_image",
+            "frame": 95,
+            "interpolation": "ease_in_out",
+            "transform": {
+              "x": 0,
+              "y": 0,
+              "scaleX": 1,
+              "scaleY": 1,
+              "rotation": 0,
+              "anchorX": 0.6725499999999999,
+              "anchorY": 0.41729999999999995,
+              "opacity": 1
+            }
+          },
+          {
+            "type": "set_keyframe",
+            "objectId": "left_arm_image",
+            "frame": 95,
+            "interpolation": "ease_in_out",
+            "transform": {
+              "x": 0,
+              "y": 0,
+              "scaleX": 1,
+              "scaleY": 1,
+              "rotation": 0,
+              "anchorX": 0.32745,
+              "anchorY": 0.41729999999999995,
+              "opacity": 1
+            }
+          },
+          {
+            "type": "set_keyframe",
+            "objectId": "head_image",
+            "frame": 95,
+            "interpolation": "ease_in_out",
+            "transform": {
+              "x": 0,
+              "y": 0,
+              "scaleX": 1,
+              "scaleY": 1,
+              "rotation": 0,
+              "anchorX": 0.5,
+              "anchorY": 0.368,
+              "opacity": 1
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "review": {
+    "fps": 24,
+    "frameCount": 96,
+    "width": 512,
+    "height": 512,
+    "audio": "silent",
+    "motion": "Whole-arm and head rigid transform keys; no elbow/finger deformation or new 3D view. Fixed bridges are new native authored rects.",
+    "quality": "Narrow mechanical study only; detailed human/production-animation target remains NEEDS_REWORK."
+  }
+}

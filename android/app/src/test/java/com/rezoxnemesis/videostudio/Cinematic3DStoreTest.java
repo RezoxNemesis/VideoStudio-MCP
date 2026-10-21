@@ -43,6 +43,23 @@ public class Cinematic3DStoreTest {
     @Test public void corruptHashTraversalExternalGlbAndForeignBundleAreRejectedBeforePublication()throws Exception {
         for(String failure:new String[]{"hash","traversal","external","foreign","symlink","bomb","magic","accessor"}){Fixture f=new Fixture(failure);try{f.install();fail("Malformed bundle admitted: "+failure);}catch(IllegalArgumentException expected){}}
     }
+    @Test public void authoredCameraPolicyPersistsThroughRealArchiveImportAndInvalidPolicyRejects()throws Exception {
+        Fixture f=new Fixture("authoredCamera");
+        JSONObject installed=f.install();
+        JSONObject bound=installed.getJSONObject("manifest").getJSONArray("scenes").getJSONObject(0);
+        assertEquals("authored",bound.getString("cameraReplay"));
+        JSONObject saved=invoke("Cinematic3DProgramStore","save",f.c,f.projects,f.saveRequest(installed));
+        JSONObject changed=new JSONObject(f.timeline.toString());
+        changed.getJSONArray("shots").getJSONObject(0).getJSONObject("camera").put("fovDegrees",70);
+        try { invoke("Cinematic3DProgramStore","save",f.c,f.projects,f.saveRequest(installed)
+                .put("programId",saved.getString("programId")).put("expectedProgramSha256",saved.getString("sha256")).put("timeline",changed));
+            fail("Ignored camera edit was published"); }
+        catch(IllegalArgumentException expected) { assertTrue(expected.getMessage().contains("BAKED_CAMERA_REBUILD_REQUIRED")); }
+        assertEquals(saved.getString("sha256"),invoke("Cinematic3DProgramStore","get",f.c,f.projects,
+                new JSONObject().put("projectId",f.project.id).put("programId",saved.getString("programId"))).getString("sha256"));
+        try { new Fixture("invalidCamera").install(); fail("Misspelled camera replay accepted"); }
+        catch(IllegalArgumentException expected) { assertTrue(expected.getMessage().contains("Camera replay")); }
+    }
     @Test public void staleSourceRevisionAndChangedInstalledSceneNeverAuthorizeRead()throws Exception {
         Fixture f=new Fixture();JSONObject receipt=f.install();long old=f.project.updatedAt;f.project.name="Source changed";f.projects.save(f.project);
         try{invoke("Cinematic3DProgramStore","save",f.c,f.projects,f.saveRequest(receipt).put("sourceProjectUpdatedAt",old));fail("Stale source admitted");}catch(IllegalStateException expected){assertTrue(expected.getMessage().contains("SOURCE_PROJECT_CHANGED"));}
@@ -99,6 +116,8 @@ public class Cinematic3DStoreTest {
                 .put("scenes",new JSONArray().put(new JSONObject().put("shotId","clash").put("action","CLASH").put("path","scene.glb").put("animationName","cinematic_clash").put("cameraName","CinematicCamera").put("clipDurationSeconds",1).put("impactPhase",.5)))
                 .put("generator",new JSONObject().put("name","synthetic_test")).put("evidence",new JSONObject().put("execution","fixture"));
             if("library".equals(failure))m.getJSONObject("generator").put("actionLibrary",true);
+            if("authoredCamera".equals(failure)||"invalidCamera".equals(failure))
+                m.getJSONArray("scenes").getJSONObject(0).put("cameraReplay","authoredCamera".equals(failure)?"authored":"autored");
             File zip=new File(c.getFilesDir(),UUID.randomUUID()+".vscinematic");try(ZipOutputStream out=new ZipOutputStream(new FileOutputStream(zip))){entry(out,"manifest.json",m.toString().getBytes(StandardCharsets.UTF_8));entry(out,"timeline.json",t);entry(out,"scene.glb",g);if("traversal".equals(failure))entry(out,"../escape",new byte[]{1});if("bomb".equals(failure))entry(out,"bomb.bin",new byte[2*1024*1024]);}
             if("symlink".equals(failure)){byte[] bytes=java.nio.file.Files.readAllBytes(zip.toPath());ByteBuffer b=ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN);for(int i=0;i<bytes.length-46;i++)if(b.getInt(i)==0x02014b50){b.putShort(i+4,(short)((3<<8)|20));b.putInt(i+38,0120777<<16);break;}java.nio.file.Files.write(zip.toPath(),bytes);}
             archive.id=UUID.randomUUID().toString();archive.uri=Uri.fromFile(zip).toString();archive.mime="application/zip";archive.name="Synthetic fixture";project.assets.add(archive);projects.save(project);

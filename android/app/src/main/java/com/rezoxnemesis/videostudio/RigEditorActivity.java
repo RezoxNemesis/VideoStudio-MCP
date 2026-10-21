@@ -37,7 +37,7 @@ import java.util.concurrent.Executors;
 /** Owner-only source annotation on already imported artwork. Draft handles never certify motion quality. */
 public final class RigEditorActivity extends Activity {
     private static final int BACKGROUND=0xff090d16,ACCENT=0xff58d9f2;
-    private enum Mode { JOINTS, BODY, HILT, TIP, BLADE }
+    private enum Mode { JOINTS, BODY, HEAD, HILT, TIP, BLADE }
     private ProjectStore projectStore;
     private Rig2DProjectStore rigStore;
     private ProjectStore.Project project;
@@ -59,7 +59,7 @@ public final class RigEditorActivity extends Activity {
     private final ExecutorService ownerWorker=Executors.newSingleThreadExecutor();
     private final Handler main=new Handler(Looper.getMainLooper());
     private long expectedSourceUpdatedAt;
-    private final List<float[]> joints=new ArrayList<>(),outline=new ArrayList<>(),swordOutline=new ArrayList<>();
+    private final List<float[]> joints=new ArrayList<>(),outline=new ArrayList<>(),swordOutline=new ArrayList<>(),headOutline=new ArrayList<>();
     private final ArrayDeque<String> undo=new ArrayDeque<>(),redo=new ArrayDeque<>();
 
     @Override protected void onCreate(Bundle state){
@@ -95,7 +95,7 @@ public final class RigEditorActivity extends Activity {
         for(Button button:new Button[]{button("Frame",this::chooseImage),button("Black",()->switchActor(true)),button("White",()->switchActor(false)),button("Profiles",this::chooseProfile),button("Fit",()->drawing.fit())})selectors.addView(button,new LinearLayout.LayoutParams(0,dp(38),1));
         root.addView(selectors);
         HorizontalScrollView tools=new HorizontalScrollView(this);tools.setHorizontalScrollBarEnabled(false);LinearLayout modes=new LinearLayout(this);
-        for(Mode choice:Mode.values())modes.addView(button(choice==Mode.BODY?"Body mask":choice==Mode.BLADE?"Sword mask":choice.name().toLowerCase(),()->{drawing.cancelGesture();mode=choice;selectedVertex=-1;insertVertex=false;updateUi();}),new LinearLayout.LayoutParams(-2,dp(36)));
+        for(Mode choice:Mode.values())modes.addView(button(choice==Mode.BODY?"Body mask":choice==Mode.HEAD?"Head mask":choice==Mode.BLADE?"Sword mask":choice.name().toLowerCase(),()->{drawing.cancelGesture();mode=choice;selectedVertex=-1;insertVertex=false;updateUi();}),new LinearLayout.LayoutParams(-2,dp(36)));
         tools.addView(modes);root.addView(tools);
         modes.addView(button("Review legacy source",this::reviewLegacySource),new LinearLayout.LayoutParams(-2,dp(36)));
         modes.addView(button("Pose diagnostic",this::poseDiagnostic),new LinearLayout.LayoutParams(-2,dp(36)));
@@ -107,7 +107,7 @@ public final class RigEditorActivity extends Activity {
         });root.addView(pointPicker,new LinearLayout.LayoutParams(-1,dp(34)));
         drawing=new RigCanvasView();root.addView(drawing,new LinearLayout.LayoutParams(-1,0,1));
         LinearLayout points=new LinearLayout(this);points.addView(button("Coordinates",this::coordinatesDialog),new LinearLayout.LayoutParams(0,dp(36),1));
-        points.addView(button("+ Vertex",()->{if(mode!=Mode.BODY&&mode!=Mode.BLADE){notice("Choose a body or sword polygon first");return;}insertVertex=true;updateInstruction();}),new LinearLayout.LayoutParams(0,dp(36),1));
+        points.addView(button("+ Vertex",()->{if(!polygonMode()){notice("Choose a body, head or sword polygon first");return;}insertVertex=true;updateInstruction();}),new LinearLayout.LayoutParams(0,dp(36),1));
         points.addView(button("Delete point",this::deletePoint),new LinearLayout.LayoutParams(0,dp(36),1));points.addView(button("Transparent PNG",()->changeDraft(()->transparent=!transparent)),new LinearLayout.LayoutParams(0,dp(36),1));root.addView(points);
         readiness=label("",10);readiness.setMaxLines(2);readiness.setTextColor(0xffadbacf);readiness.setOnClickListener(v->new AlertDialog.Builder(this).setTitle("Source annotation readiness").setMessage(readiness.getText()).setPositiveButton("Close",null).show());root.addView(readiness);
         LinearLayout actions=new LinearLayout(this);
@@ -139,7 +139,7 @@ public final class RigEditorActivity extends Activity {
             });if(!posted&&ready!=null&&!ready.isRecycled())ready.recycle();
         });
     }
-    private void newDraft(){rigId=UUID.randomUUID().toString();expectedRigSha256="";reconcilePendingSave=false;expectedSourceUpdatedAt=project.updatedAt;annotationSourceSha256=displayedSourceSha256;joints.clear();outline.clear();swordOutline.clear();swordHilt=swordTip=null;transparent=false;dirty=false;undo.clear();redo.clear();selectedJoint=0;selectedVertex=-1;mode=Mode.JOINTS;}
+    private void newDraft(){rigId=UUID.randomUUID().toString();expectedRigSha256="";reconcilePendingSave=false;expectedSourceUpdatedAt=project.updatedAt;annotationSourceSha256=displayedSourceSha256;joints.clear();outline.clear();swordOutline.clear();headOutline.clear();swordHilt=swordTip=null;transparent=false;dirty=false;undo.clear();redo.clear();selectedJoint=0;selectedVertex=-1;mode=Mode.JOINTS;}
     private List<Rig2DProfile> matchingProfiles(){ArrayList<Rig2DProfile> result=new ArrayList<>();for(Rig2DProfile rig:rigStore.list(project.id))if(selected.id.equals(rig.sourceAssetId)&&rig.black==black)result.add(rig);result.sort(Comparator.comparing(rig->rig.id));return result;}
     private void chooseUniqueProfile(){List<Rig2DProfile> profiles=matchingProfiles();try{if(profiles.size()==1)loadProfile(profiles.get(0).id);else if(profiles.size()>1)profileChoices(profiles);}catch(Exception error){notice(error.getMessage());}updateUi();}
     private void switchActor(boolean actor){if(black==actor)return;confirmDiscard(()->{drawing.cancelGesture();black=actor;newDraft();chooseUniqueProfile();});}
@@ -153,11 +153,12 @@ public final class RigEditorActivity extends Activity {
     }
     private void confirmDiscard(Runnable action){if(imageLoading||saving){notice("Wait for the accepted source operation");return;}if(!dirty){action.run();return;}new AlertDialog.Builder(this).setTitle("Leave this unsaved annotation draft?").setMessage("Saved profiles and original images remain unchanged. Save first to retain these edits.").setPositiveButton("Leave draft",(dialog,which)->action.run()).setNegativeButton("Keep editing",null).show();}
 
-    private List<float[]> polygon(){return mode==Mode.BLADE?swordOutline:outline;}
+    private boolean polygonMode(){return mode==Mode.BODY||mode==Mode.BLADE||mode==Mode.HEAD;}
+    private List<float[]> polygon(){return mode==Mode.BLADE?swordOutline:mode==Mode.HEAD?headOutline:outline;}
     private int markedJoints(){int count=0;for(float[] point:joints)if(point!=null)count++;return count;}
     private void updateUi(){if(sourceName==null)return;sourceName.setText((black?"BLACK":"WHITE")+" · "+selected.name+" · "+(expectedRigSha256.isEmpty()?"new profile":rigId)+" "+(dirty?"• unsaved":""));
         pickerUpdating=true;ArrayList<String> names=new ArrayList<>();if(mode==Mode.JOINTS)for(int index=0;index<Rig2DProfile.JOINTS.length;index++)names.add(Rig2DProfile.JOINTS[index]+(index<joints.size()&&joints.get(index)!=null?" ✓":" · missing"));
-        else if(mode==Mode.BODY||mode==Mode.BLADE)for(int index=0;index<polygon().size();index++)names.add("Vertex "+(index+1));
+        else if(polygonMode())for(int index=0;index<polygon().size();index++)names.add("Vertex "+(index+1));
         if(names.isEmpty())names.add(mode==Mode.HILT?"Sword hilt":mode==Mode.TIP?"Sword tip":"No polygon vertices");
         pointPicker.setAdapter(new ArrayAdapter<>(this,android.R.layout.simple_spinner_dropdown_item,names));pointPicker.setSelection(Math.max(0,Math.min(names.size()-1,mode==Mode.JOINTS?selectedJoint:selectedVertex)));pickerUpdating=false;
         updateInstruction();ArrayList<String> missing=new ArrayList<>();if(markedJoints()!=16)missing.add((16-markedJoints())+" source joints");if(outline.size()<3)missing.add("body polygon");if(swordHilt==null)missing.add("sword hilt");if(swordTip==null)missing.add("sword tip");if(swordOutline.size()<3)missing.add("original sword polygon");
@@ -167,16 +168,18 @@ public final class RigEditorActivity extends Activity {
     private void updateInstruction(){String text=(black?"BLACK":"WHITE")+" · "+markedJoints()+"/16 joints · ";
         if(mode==Mode.JOINTS)text+=Rig2DProfile.JOINTS[selectedJoint]+" · drag a handle, or tap to mark this missing joint.";
         else if(mode==Mode.HILT||mode==Mode.TIP)text+="tap/drag the real sword "+(mode==Mode.HILT?"hilt":"tip")+". Ownership: this actor's swordHand.";
-        else text+=(mode==Mode.BODY?"Body excludes the sword":"Original sword outline")+" · "+polygon().size()+"/64 vertices · "+(insertVertex?"tap to insert after the selected vertex.":"drag vertices; tap to append.");
+        else text+=(mode==Mode.BODY?"Body excludes the sword":mode==Mode.HEAD?"Optional head and hair; follows neck/head controls":"Original sword outline")+" · "+polygon().size()+"/64 vertices · "+(insertVertex?"tap to insert after the selected vertex.":"drag vertices; tap to append.");
         instructions.setText(text+" Two fingers pan/zoom; empty space pans when all joints are marked.");}
-    private String draft()throws Exception{JSONObject object=new JSONObject().put("rigId",rigId).put("black",black).put("transparentSource",transparent).put("joints",pairs(joints)).put("outline",pairs(outline)).put("swordOutline",pairs(swordOutline));if(!annotationSourceSha256.isEmpty())object.put("sourceSha256",annotationSourceSha256);if(swordHilt!=null)object.put("swordHilt",pair(swordHilt));if(swordTip!=null)object.put("swordTip",pair(swordTip));return object.toString();}
+    private String draft()throws Exception{JSONObject object=new JSONObject().put("rigId",rigId).put("black",black).put("transparentSource",transparent).put("joints",pairs(joints)).put("outline",pairs(outline)).put("swordOutline",pairs(swordOutline));if(!headOutline.isEmpty())object.put("headOutline",pairs(headOutline));if(!annotationSourceSha256.isEmpty())object.put("sourceSha256",annotationSourceSha256);if(swordHilt!=null)object.put("swordHilt",pair(swordHilt));if(swordTip!=null)object.put("swordTip",pair(swordTip));return object.toString();}
     private void applyDraft(String value)throws Exception{
-        JSONObject object=new JSONObject(value);ArrayList<float[]> acceptedJoints=new ArrayList<>(),acceptedOutline=new ArrayList<>(),acceptedSwordOutline=new ArrayList<>();
+        JSONObject object=new JSONObject(value);ArrayList<float[]> acceptedJoints=new ArrayList<>(),acceptedOutline=new ArrayList<>(),acceptedSwordOutline=new ArrayList<>(),acceptedHeadOutline=new ArrayList<>();
         readPairs(object.optJSONArray("joints"),acceptedJoints,true,16);readPairs(object.optJSONArray("outline"),acceptedOutline,false,64);readPairs(object.optJSONArray("swordOutline"),acceptedSwordOutline,false,64);
+        if(object.has("headOutline")&&object.optJSONArray("headOutline")==null)throw new IllegalArgumentException("Head mask must be source coordinate pairs");
+        readPairs(object.optJSONArray("headOutline"),acceptedHeadOutline,false,64);
         float[] acceptedHilt=readPair(object.optJSONArray("swordHilt")),acceptedTip=readPair(object.optJSONArray("swordTip"));
         // Reject the entire restore before changing its actor/source identity or any accepted points.
         rigId=object.optString("rigId",object.optString("id",rigId));black=object.optBoolean("black",black);annotationSourceSha256=object.optString("sourceSha256","");transparent=object.optBoolean("transparentSource",false);
-        joints.clear();joints.addAll(acceptedJoints);outline.clear();outline.addAll(acceptedOutline);swordOutline.clear();swordOutline.addAll(acceptedSwordOutline);swordHilt=acceptedHilt;swordTip=acceptedTip;
+        joints.clear();joints.addAll(acceptedJoints);outline.clear();outline.addAll(acceptedOutline);swordOutline.clear();swordOutline.addAll(acceptedSwordOutline);headOutline.clear();headOutline.addAll(acceptedHeadOutline);swordHilt=acceptedHilt;swordTip=acceptedTip;
     }
     private static void requireNormalized(float[] point){if(point==null||point.length!=2||!Float.isFinite(point[0])||!Float.isFinite(point[1])||point[0]<0||point[0]>1||point[1]<0||point[1]>1)throw new IllegalArgumentException("Both coordinates must be finite values in 0..1");}
     private static JSONArray pair(float[] point)throws Exception{requireNormalized(point);return new JSONArray().put(point[0]).put(point[1]);}
@@ -190,8 +193,8 @@ public final class RigEditorActivity extends Activity {
     private float[] selectedPoint(){if(mode==Mode.JOINTS)return selectedJoint<joints.size()?joints.get(selectedJoint):null;if(mode==Mode.HILT)return swordHilt;if(mode==Mode.TIP)return swordTip;return selectedVertex>=0&&selectedVertex<polygon().size()?polygon().get(selectedVertex):null;}
     private void assignSelected(float[] point){requireNormalized(point);if(mode==Mode.JOINTS)setJoint(selectedJoint,point);else if(mode==Mode.HILT)swordHilt=point;else if(mode==Mode.TIP)swordTip=point;else if(selectedVertex>=0&&selectedVertex<polygon().size())polygon().set(selectedVertex,point);}
     private void deletePoint(){changeDraft(()->{if(mode==Mode.JOINTS){if(selectedJoint<joints.size())joints.set(selectedJoint,null);}else if(mode==Mode.HILT)swordHilt=null;else if(mode==Mode.TIP)swordTip=null;else if(selectedVertex>=0&&selectedVertex<polygon().size()){polygon().remove(selectedVertex);selectedVertex=Math.min(selectedVertex,polygon().size()-1);}});}
-    private void coordinatesDialog(){drawing.cancelGesture();if((mode==Mode.BODY||mode==Mode.BLADE)&&selectedPoint()==null){notice("Select a polygon vertex first");return;}float[] point=selectedPoint();LinearLayout fields=new LinearLayout(this);fields.setOrientation(LinearLayout.VERTICAL);fields.setPadding(dp(16),dp(8),dp(16),dp(8));
-        String name=mode==Mode.JOINTS?Rig2DProfile.JOINTS[selectedJoint]:mode==Mode.HILT?"Sword hilt":mode==Mode.TIP?"Sword tip":(mode==Mode.BODY?"Body":"Sword")+" vertex "+(selectedVertex+1);
+    private void coordinatesDialog(){drawing.cancelGesture();if(polygonMode()&&selectedPoint()==null){notice("Select a polygon vertex first");return;}float[] point=selectedPoint();LinearLayout fields=new LinearLayout(this);fields.setOrientation(LinearLayout.VERTICAL);fields.setPadding(dp(16),dp(8),dp(16),dp(8));
+        String name=mode==Mode.JOINTS?Rig2DProfile.JOINTS[selectedJoint]:mode==Mode.HILT?"Sword hilt":mode==Mode.TIP?"Sword tip":(mode==Mode.BODY?"Body":mode==Mode.HEAD?"Head":"Sword")+" vertex "+(selectedVertex+1);
         fields.addView(label("Normalized source coordinates · 0 to 1. One pixel uses the original "+sourceWidth+" × "+sourceHeight+" image, at any zoom.",11));
         android.widget.EditText x=coordinate(point==null?.5f:point[0]),y=coordinate(point==null?.5f:point[1]);x.setTag("rig-coordinate-u");y.setTag("rig-coordinate-v");x.setContentDescription("Normalized source X, U, 0 to 1");y.setContentDescription("Normalized source Y, V, 0 to 1");fields.addView(label("X / U · left to right",11));fields.addView(x);fields.addView(label("Y / V · top to bottom",11));fields.addView(y);
         LinearLayout nudges=new LinearLayout(this);String[] titles={"X −1 px","X +1 px","Y −1 px","Y +1 px"};for(int index=0;index<titles.length;index++){final int direction=index;nudges.addView(button(titles[index],()->{try{float[] staged=coordinateValues(x,y);int dimension=direction<2?sourceWidth:sourceHeight;if(dimension<1)throw new IllegalArgumentException("Read the original image before nudging");int axis=direction<2?0:1;staged[axis]=(float)Math.max(0,Math.min(1,staged[axis]+(direction%2==0?-1d:1d)/dimension));x.setText(Float.toString(staged[0]));y.setText(Float.toString(staged[1]));}catch(Exception error){notice(error.getMessage());}}),new LinearLayout.LayoutParams(0,dp(44),1));}fields.addView(nudges);
@@ -259,7 +262,7 @@ public final class RigEditorActivity extends Activity {
         private void clampPan(){geometry();float maxX=Math.max(0,(dest.width()-getWidth())/2),maxY=Math.max(0,(dest.height()-getHeight())/2);panX=Math.max(-maxX,Math.min(maxX,panX));panY=Math.max(-maxY,Math.min(maxY,panY));geometry();}
         private float[] uv(float x,float y){return new float[]{Math.max(0,Math.min(1,(x-dest.left)/dest.width())),Math.max(0,Math.min(1,(y-dest.top)/dest.height()))};}
         private float px(float u){return dest.left+u*dest.width();}private float py(float v){return dest.top+v*dest.height();}
-        @Override protected void onDraw(Canvas canvas){canvas.drawColor(0xff080b12);if(picture==null)return;geometry();if(dest.isEmpty())return;canvas.drawBitmap(picture,null,dest,imagePaint);drawPolygon(canvas,outline,0xfffa9b64,mode==Mode.BODY);drawPolygon(canvas,swordOutline,0xffffdb77,mode==Mode.BLADE);
+        @Override protected void onDraw(Canvas canvas){canvas.drawColor(0xff080b12);if(picture==null)return;geometry();if(dest.isEmpty())return;canvas.drawBitmap(picture,null,dest,imagePaint);drawPolygon(canvas,outline,0xfffa9b64,mode==Mode.BODY);drawPolygon(canvas,swordOutline,0xffffdb77,mode==Mode.BLADE);drawPolygon(canvas,headOutline,0xffb1e19b,mode==Mode.HEAD);
             overlay.setColor(black?0xffffa665:0xff53d9ff);overlay.setStyle(Paint.Style.STROKE);overlay.setStrokeWidth(dp(1.4f));
             for(int[] bone:Rig2DProfile.BONES)if(bone[0]<joints.size()&&bone[1]<joints.size()&&joints.get(bone[0])!=null&&joints.get(bone[1])!=null){float[] a=joints.get(bone[0]),b=joints.get(bone[1]);canvas.drawLine(px(a[0]),py(a[1]),px(b[0]),py(b[1]),overlay);}
             overlay.setStyle(Paint.Style.FILL);overlay.setTextSize(dp(9));for(int index=0;index<joints.size();index++){float[] point=joints.get(index);if(point==null)continue;canvas.drawCircle(px(point[0]),py(point[1]),dp(index==selectedJoint&&mode==Mode.JOINTS?5:3.5f),overlay);canvas.drawText(String.valueOf(index+1),px(point[0])+dp(6),py(point[1])-dp(5),overlay);}

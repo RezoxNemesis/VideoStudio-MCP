@@ -7,14 +7,14 @@ import vm from 'node:vm';
 import {webcrypto} from 'node:crypto';
 import {z} from 'zod';
 import * as contract from '../src/storyboard-contract.js';
-import {studioToolSchemas} from '../src/studio-workbench-contract.js';
+import {studioToolSchemas,CHARACTER_PERFORMANCE_CAPABILITIES} from '../src/studio-workbench-contract.js';
 import {STUDIO_ALIAS_ACTIONS,nativeStudioCanonicalAction} from '../src/studio-workbench-contract.js';
 const source=fs.readFileSync(new URL('../src/index.js',import.meta.url),'utf8');
 async function fixture(version='3.7.2',mode='everything') {
   const rows=new Map();
   const storage=memoryStorage(rows,{maxValueBytes:128*1024});
   class McpServer { constructor(){this.tools=new Map();} registerTool(name,definition,handler){this.tools.set(name,{definition,handler});} }
-  const context={...contract,...queueBindings,studioToolSchemas,nativeStudioCanonicalAction,nativeCommandSummary,nativeResultPage,z,McpServer,crypto:webcrypto,TextEncoder,TextDecoder,Response,Request,Headers,URL,Date,setTimeout,clearTimeout,
+  const context={...contract,...queueBindings,studioToolSchemas,CHARACTER_PERFORMANCE_CAPABILITIES,nativeStudioCanonicalAction,nativeCommandSummary,nativeResultPage,z,McpServer,crypto:webcrypto,TextEncoder,TextDecoder,Response,Request,Headers,URL,Date,setTimeout,clearTimeout,
     DurableObject:class {constructor(ctx){this.ctx=ctx;}},createMcpHandler:()=>()=>new Response(),
     APP_HTML:'',STUDIO_RUNTIME_JS:'',STUDIO_CINEMATIC_JS:'',STUDIO_NEURAL_JS:'',STUDIO_TEMPORAL_JS:'',STUDIO_CHARACTER_JS:'',STUDIO_ACTION_TIMELINE_JS:'',STUDIO_POSE_SEQUENCE_JS:'',LOCAL_VIDEO_DOWNLOAD_HTML:''};
   vm.createContext(context);
@@ -299,7 +299,7 @@ test('studio relay alias generic execution keeps queued alias native-only when t
 });
 test('studio relay alias version and canonical parameter failures happen before queue writes',async()=>{
  const old=await fixture('3.8.1'),before=old.writes();
- for(const alias of STUDIO_ALIAS_ACTIONS){const paint=['studio_sketch_paint_journal','studio_sketch_sample_color','studio_sketch_archive','studio_sketch_restore_archive'].includes(alias);const repair=['studio_sketch_import_drawing_asset','studio_get_native_result_page','studio_get_native_delivery_status','studio_compact_native_delivery'].includes(alias);assert.throws(()=>contract.requireStoryboardNativeVersion({appVersion:'3.8.1'},alias),alias.startsWith('studio_sketch_animation_')?/4\.4\.0/:repair?/4\.3\.1/:alias==='studio_cinematic_3d_edit_program'?/4\.3\.0/:alias==='studio_import_mailbox_media'?/4\.2\.0/:paint?/4\.1\.0/:/3\.9\.[0156]/);}
+ for(const alias of STUDIO_ALIAS_ACTIONS){const paint=['studio_sketch_paint_journal','studio_sketch_sample_color','studio_sketch_archive','studio_sketch_restore_archive'].includes(alias);const repair=['studio_sketch_import_drawing_asset','studio_get_native_result_page','studio_get_native_delivery_status','studio_compact_native_delivery'].includes(alias);assert.throws(()=>contract.requireStoryboardNativeVersion({appVersion:'3.8.1'},alias),alias.startsWith('studio_local_drawing_')?/4\.10\.2/:alias==='studio_sketch_layered_drawing_preview'?/4\.9\.2/:['studio_sketch_import_reference_layers','studio_sketch_reference_layers_preview'].includes(alias)?/4\.8\.5/:alias.startsWith('studio_sketch_correction_')?/4\.8\.4/:(alias.startsWith('studio_sketch_story_')||['studio_project_asset_info','studio_project_import_asset'].includes(alias))?/4\.8\.0/:alias==='studio_sketch_animation_place_in_book'?/4\.8\.0/:alias==='studio_sketch_book_timeline'||alias==='studio_sketch_import_animation'||alias.startsWith('studio_sketch_component_')?/4\.7\.0/:alias.startsWith('studio_sketch_animation_')?/4\.4\.0/:repair?/4\.3\.1/:alias==='studio_cinematic_3d_edit_program'?/4\.3\.0/:alias==='studio_import_mailbox_media'?/4\.2\.0/:paint?/4\.1\.0/:/3\.9\.[0156]/);}
  await assert.rejects(old.relay.appEnqueueV3(old.owner,'studio_sketch_get',{sketchId:'s'}),/3\.9\.0/);assert.equal(old.writes(),before);
  const current=await fixture('3.9.0'),currentBefore=current.writes();
  await assert.rejects(current.relay.appEnqueueV3(current.owner,'studio_sketch_get',{sketchId:'s',uri:'content://foreign'}));

@@ -81,7 +81,8 @@ public final class NativeSourceRigPreview {
                         renderProfile=new Rig2DProfile(profile.id,profile.projectId,internalId,profile.black,profile.transparentSource,
                                 transform(profile.joints,scaleX,scaleY,offsetX,offsetY),transform(profile.outline,scaleX,scaleY,offsetX,offsetY),
                                 transform(profile.swordTip,scaleX,scaleY,offsetX,offsetY),transform(profile.swordHilt,scaleX,scaleY,offsetX,offsetY),
-                                transform(profile.swordOutline,scaleX,scaleY,offsetX,offsetY),internalSha);
+                                transform(profile.swordOutline,scaleX,scaleY,offsetX,offsetY),internalSha,
+                                transform(profile.headOutline,scaleX,scaleY,offsetX,offsetY));
                         renderTarget=transform(target,scaleX,scaleY,offsetX,offsetY);renderTip=transform(tip,scaleX,scaleY,offsetX,offsetY);
                         NativeSkinnedSprite2D.requireRenderablePose(renderProfile,renderTarget,width,height);
                         NativeSourceProp2D.requireSourceGeometry(renderProfile,width,height);

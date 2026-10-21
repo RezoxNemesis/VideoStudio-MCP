@@ -205,7 +205,7 @@ public final class NativeSourceArtworkInspector {
     }
     private static void drawOverlay(Canvas canvas,Rig2DProfile rig,double[] crop){
         Paint paint=new Paint(Paint.ANTI_ALIAS_FLAG);paint.setColor(rig.black?Color.YELLOW:Color.CYAN);paint.setStrokeWidth(2);paint.setStyle(Paint.Style.STROKE);
-        outline(canvas,rig.outline,crop,paint);outline(canvas,rig.swordOutline,crop,paint);
+        outline(canvas,rig.outline,crop,paint);outline(canvas,rig.swordOutline,crop,paint);outline(canvas,rig.headOutline,crop,paint);
         for(int[] bone:Rig2DProfile.BONES)canvas.drawLine(x(rig.joints[bone[0]][0],crop,canvas),y(rig.joints[bone[0]][1],crop,canvas),
                 x(rig.joints[bone[1]][0],crop,canvas),y(rig.joints[bone[1]][1],crop,canvas),paint);
         paint.setStyle(Paint.Style.FILL);for(float[] joint:rig.joints)canvas.drawCircle(x(joint[0],crop,canvas),y(joint[1],crop,canvas),3,paint);
