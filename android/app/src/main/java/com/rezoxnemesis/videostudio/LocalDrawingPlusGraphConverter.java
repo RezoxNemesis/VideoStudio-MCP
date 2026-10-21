@@ -21,16 +21,30 @@ final class LocalDrawingPlusGraphConverter {
  private static final long[][] RESIDUALS={{1,320,64,64},{1,320,64,64},{1,320,64,64},{1,320,32,32},{1,640,32,32},{1,640,32,32},{1,640,16,16},{1,1280,16,16},{1,1280,16,16},{1,1280,8,8},{1,1280,8,8},{1,1280,8,8},{1,1280,8,8}};
  private LocalDrawingPlusGraphConverter(){}
  static JSONObject convert(String recipe,File source,File target,String sourceSha,String resultSha,LongConsumer progress)throws Exception {
-  check();if(!Arrays.asList("clip_penultimate_v1","sd15_ipkv16_v1").contains(recipe)||sourceSha==null||resultSha==null||!sourceSha.matches("[a-f0-9]{64}")||!resultSha.matches("[a-f0-9]{64}"))throw new IOException("PLUS_CONVERSION_RECIPE_OR_PIN_INVALID");
+  check();if(!Arrays.asList("clip_penultimate_v1","sd15_ipkv16_v1","sd15_legacy_ipkv_probe_v1").contains(recipe)||sourceSha==null||resultSha==null||!sourceSha.matches("[a-f0-9]{64}")||!resultSha.matches("[a-f0-9]{64}"))throw new IOException("PLUS_CONVERSION_RECIPE_OR_PIN_INVALID");
   if(!source.isFile()||source.length()<1||source.length()>MAX_MODEL||Files.isSymbolicLink(source.toPath())||Files.isSymbolicLink(target.toPath())||source.getCanonicalFile().equals(target.getCanonicalFile()))throw new IOException("PLUS_CONVERSION_PATH_INVALID");
   if(!sourceSha.equals(LocalDrawingModels.hash(source)))throw new IOException("PLUS_CONVERSION_SOURCE_SHA_DIFFERS");
-  Plan plan;try(RandomAccessFile input=new RandomAccessFile(source,"r")){plan=plan(input,recipe);}
+  Plan plan;try(RandomAccessFile input=new RandomAccessFile(source,"r")){plan=recipe.equals("sd15_legacy_ipkv_probe_v1")?legacyAuditPlan(input):plan(input,recipe);}
   File parent=target.getAbsoluteFile().getParentFile();if(!parent.isDirectory()&&!parent.mkdirs())throw new IOException("Cannot create private model conversion directory");if(target.exists()&&!target.isFile())throw new IOException("PLUS_CONVERSION_TARGET_INVALID");File temporary=File.createTempFile(".plus_",".onnx",parent);boolean published=false;
   try{
    long written;try(RandomAccessFile input=new RandomAccessFile(source,"r");FileOutputStream output=new FileOutputStream(temporary)){Writer writer=new Writer(output,progress);long position=0;for(Edit edit:plan.edits){if(edit.start<position)throw new IOException("PLUS_CONVERSION_PATCH_OVERLAP");copy(input,writer,position,edit.start-position);writer.write(edit.bytes,0,edit.bytes.length);position=edit.end;}copy(input,writer,position,input.length()-position);output.getFD().sync();written=writer.written;}
    check();String actualSha=LocalDrawingModels.hash(temporary);if(!resultSha.equals(actualSha))throw new IOException("PLUS_CONVERSION_RESULT_SHA_DIFFERS: expected="+resultSha+" actual="+actualSha);check();Files.move(temporary.toPath(),target.toPath(),StandardCopyOption.ATOMIC_MOVE,StandardCopyOption.REPLACE_EXISTING);published=true;
    return new JSONObject().put("recipe",recipe).put("sourceSha256",sourceSha).put("resultSha256",resultSha).put("sourceBytes",source.length()).put("resultBytes",written).put("patchCount",plan.edits.size()).put("prunedNodes",plan.pruned).put("maxCopyChunkBytes",CHUNK).put("maxMetadataBytes",METADATA).put("inferenceExecuted",false);
   }finally{if(!published&&temporary.exists()&&!temporary.delete())temporary.deleteOnExit();}
+ }
+ /** Private engineering audit: append existing4-token projections as outputs only.
+  * It never becomes the installed generation UNet and never changes a source field.
+  */
+ private static Plan legacyAuditPlan(RandomAccessFile input)throws Exception {
+  Field graph=null;long end=input.length();while(input.getFilePointer()<end){check();Field field=field(input,end);if(field.tag==7&&field.wire==2){if(graph!=null)throw new IOException("PLUS_CONVERSION_MULTIPLE_GRAPHS");graph=field;}input.seek(field.end);}if(graph==null)throw new IOException("PLUS_CONVERSION_GRAPH_MISSING");
+  Map<String,Value> inputs=new LinkedHashMap<>();Set<String> oldOutputs=new HashSet<>();boolean[][] found=new boolean[16][2];input.seek(graph.payload);
+  while(input.getFilePointer()<graph.end){check();Field field=field(input,graph.end);if(field.tag==1&&field.wire==2){Node node=node(payload(input,field,METADATA));for(int i=0;i<16;i++)for(int site=0;site<2;site++){String name=prefix(i)+(site==0?"to_k_ip.0/MatMul":"to_v_ip.0/MatMul");if(!node.name.equals(name))continue;if(found[i][site]||!node.op.equals("MatMul")||!node.outputs.equals(Collections.singletonList(name+"_output_0")))throw new IOException("PLUS_LEGACY_KV_PROJECTION_DIFFERS");found[i][site]=true;}}
+   else if(field.tag==11&&field.wire==2){Value value=value(payload(input,field,65536));if(inputs.put(value.name,value)!=null)throw new IOException("PLUS_CONVERSION_DUPLICATE_INPUT");}
+   else if(field.tag==12&&field.wire==2){Value value=value(payload(input,field,65536));if(!oldOutputs.add(value.name))throw new IOException("PLUS_LEGACY_KV_OUTPUT_DIFFERS");}
+   else if(field.tag==5&&field.wire==2)tensorName(input,field);input.seek(field.end);
+  }
+  if(inputs.size()!=17||oldOutputs.size()!=1||!oldOutputs.contains("noise_pred"))throw new IOException("PLUS_LEGACY_KV_BASE_CONTRACT_DIFFERS");require(inputs,"sample",1,4,64,64);require(inputs,"timestep",1);require(inputs,"encoder_hidden_states",1,77,768);require(inputs,"image_embeds",1,1,1024);for(int i=0;i<13;i++)require(inputs,residual(i),RESIDUALS[i]);
+  ByteArrayOutputStream append=new ByteArrayOutputStream();for(int i=0;i<16;i++)for(int site=0;site<2;site++){if(!found[i][site])throw new IOException("PLUS_LEGACY_KV_PROJECTION_MISSING");append.write(wrap(12,value(prefix(i)+(site==0?"to_k_ip.0/MatMul_output_0":"to_v_ip.0/MatMul_output_0"),10,1,4,INNER[i])));}byte[] addition=append.toByteArray();Plan plan=new Plan();plan.edits.add(new Edit(graph.start,graph.payload,concat(varint(58),varint(graph.length+addition.length))));plan.edits.add(new Edit(graph.end,graph.end,addition));return plan;
  }
  private static Plan plan(RandomAccessFile input,String recipe)throws Exception {
   Field graph=null;long length=input.length();while(input.getFilePointer()<length){check();Field field=field(input,length);if(field.tag==7&&field.wire==2){if(graph!=null)throw new IOException("PLUS_CONVERSION_MULTIPLE_GRAPHS");graph=field;}input.seek(field.end);}if(graph==null)throw new IOException("PLUS_CONVERSION_GRAPH_MISSING");

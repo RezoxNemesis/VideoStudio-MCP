@@ -137,3 +137,24 @@ otherwise untouched original UNet in an app-native private audit recipe, capture
 its real outputs, close that session, repeat each token4times and compare the new
 16-token graph. BEFORE measuring, the FP16 budgets were frozen at maxAbs0.02 and
 RMS0.003. Nonzero results must be reported as tolerances, never pixel identity.
+
+## Append-only legacy audit graph
+
+A private sd15_legacy_ipkv_probe_v1 recipe now appends32typed FP16[1,4,inner]
+outputs for existing to_k_ip/to_v_ip MatMuls, in explicit down/up/mid head order.
+It verifies the original17typed ports and projection identities, and preserves
+EVERY old graph field unchanged. This is an engineering-only graph, never the
+installed generation UNet. It shares the mandatory source/derived hashes,
+64KiB copying, cancellation and atomic-publication protections.
+
+Root observed the new structural RED fail on the missing recipe, then6converter/
+audit tests pass with zero failures/errors/skips. Exact byte-golden tests cover
+all old fields, nodes/weights/inputs/noise output and the32append-only outputs.
+RED fixture/XML and GREEN XML remain under legacy-kv-red* /legacy-kv-green-junit.
+
+The opt-in conversion driver has a legacyAuditOnly discovery/verify mode, so it
+will produce a separately pinned graph without rewriting the frozen16-token
+outputs. A separate opt-in equivalence driver requires its frozen verification
+receipt, runs old/new sessions sequentially and archives actual returned noise
+buffers. Its predeclared FP16 limits remain maxAbs0.02/RMS0.003. Actual audit
+conversion and equivalence execution have not yet been completed at this commit.
