@@ -19,15 +19,18 @@ for root integration; no completed film/installed515/live-MCP claim.
 
 # Active combined character-shading candidate —2026-10-21
 
-Root feat/native-character-shading-v41011 extends fully locally verified513c78cd5b
-(CI39662879426 running), with raster coverage56cd05f(cherry0d46f56). Target
-4.10.11/code514 version/AppProtocol/release assertions aligned. Feature73native/
-0failures/errors/skips and777Node+306smoke pass. Rootfull514integrated checks,
-CI/original signing and actualblinkv7 visualreview remain PENDING. Newmaximum
-coverage is raster-only, not vectorfittedbrush, skin-tone healing or anatomy.
-Preserve omittedoldnormalization/pixels/fingerprints/floors. Keep all failed
-blink/model generations. One local Gradle, root only. No hosted/external artwork,
-Gallery, main/Worker/stable release, signer/device/data/MCPidentity reset.
+Root feat/native-character-shading-v41011 extends signed513c78cd5b (CI39662879426
+SUCCESS, original signer independently verified), with coverage56cd05f/cherry0d46f56.
+4.10.11/code514 build/AppProtocol/release assertions agree. Fresh full combined
+2351 Android tests/0failures/0errors/27skips across433suites and777Node plus306smoke
+pass. CI/original signing for514 remain PENDING. Actual nativeblinkv7 passed its
+source/coverage/persistence checks but VISUAL NEEDS_REWORK: oversized smooth lashes,
+pale patched skin and partial double-eye detail. Preserve every retake; current
+v8 uses existing paint cels and corrected partial mask edges, not another feature.
+Maximum coverage is raster-only, not vectorfittedbrush, tone matching or anatomy.
+Preserve omitted normalization/pixels/fingerprints/floors. One local Gradle, root
+only. No hosted/external art, Gallery, main/Worker/stable publication or replacement
+signer/device/data/MCP identity reset. Actor unseen views and240secondfilm unfinished.
 
 # Active native soft raster coverage —2026-10-21
 

@@ -64,3 +64,14 @@ art authoring and rendering belong to actual VideoStudio capabilities; no extern
 art generator, bitmap helper or Gallery is used. Do not claim unseen anatomy,
 independently drawn source pixels, phone execution, native video codec or artistic
 acceptance without the corresponding actual evidence.
+
+## Combined root verification
+
+Root4.10.11/code514 source44e33a2 passed fresh full combined2351Android tests,
+0failures/0errors/27skips across433suites and777Node tests plus306smoke checks.
+Version/AppProtocol/release assertions agree. Independent candidate CI/signing
+remains pending. Actual upgraded native blinkv7 has source/coverage/Undo/archive
+technicalPASS, but root visual review rejects oversized smooth lashes, pale skin
+patches and doubled detail in partial states. This is one blink retake, not a new
+scenario or accepted film. Private source/requests/nativePNGs/JUnit/failed earlier
+retakes remain outside Git. Brush correctness does not guarantee artistic quality.
