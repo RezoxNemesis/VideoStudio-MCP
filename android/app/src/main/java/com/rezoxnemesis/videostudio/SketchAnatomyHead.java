@@ -382,11 +382,27 @@ final class SketchAnatomyHead {
         JSONArray mask(Head h,List<double[][]> curves,double weight)throws Exception {
             List<List<double[]>> hidden=new ArrayList<>(),shown=new ArrayList<>();
             for(double[][] local:curves){List<double[]> visible=visible(h,local);double from=0;for(int i=0;i<=visible.size();i++){double to=i==visible.size()?1:visible.get(i)[0];if(to-from>1e-9)hidden.addAll(ribbon(h,local,from,to,weight,true));if(i<visible.size()){double[] range=visible.get(i);shown.addAll(ribbon(h,local,range[0],range[1],weight,false));from=range[1];}}}
+            hidden=coalesce(hidden);
             // Neighboring exposed strokes share endpoint coverage. A hidden
             // curve must not mask that genuine nearer ink in the same Path.
-            for(List<double[]> visible:shown){List<List<double[]>> next=new ArrayList<>();for(List<double[]> candidate:hidden){if(disjoint(candidate,visible)){next.add(candidate);continue;}double orientation=area(visible)>=0?1:-1;List<double[]> intersection=candidate;for(int j=0;j<visible.size()&&!intersection.isEmpty();j++){double[] a=visible.get(j),b=visible.get((j+1)%visible.size());double dx=b[0]-a[0],dy=b[1]-a[1];intersection=half(intersection,-dy*orientation,dx*orientation,(dy*a[0]-dx*a[1])*orientation);}if(intersection.size()<3||Math.abs(area(intersection))<1e-4){next.add(candidate);continue;}List<double[]> rest=candidate;for(int j=0;j<visible.size()&&!rest.isEmpty();j++){double[] a=visible.get(j),b=visible.get((j+1)%visible.size());double dx=b[0]-a[0],dy=b[1]-a[1],aa=-dy*orientation,bb=dx*orientation,cc=(dy*a[0]-dx*a[1])*orientation;List<double[]> outside=half(rest,-aa,-bb,-cc);if(outside.size()>=3&&Math.abs(area(outside))>1e-4)next.add(outside);rest=half(rest,aa,bb,cc);}if(next.size()>4096)throw SketchDocument.bad("Native clipping partition exceeds its bounded scratch space");}hidden=next;}
+            for(List<double[]> visible:shown){List<List<double[]>> next=new ArrayList<>();for(List<double[]> candidate:hidden){if(disjoint(candidate,visible)){next.add(candidate);continue;}double orientation=area(visible)>=0?1:-1;List<double[]> intersection=intersect(candidate,visible);if(intersection.size()<3||Math.abs(area(intersection))<1e-4){next.add(candidate);continue;}List<double[]> rest=candidate;for(int j=0;j<visible.size()&&!rest.isEmpty();j++){double[] a=visible.get(j),b=visible.get((j+1)%visible.size());double dx=b[0]-a[0],dy=b[1]-a[1],aa=-dy*orientation,bb=dx*orientation,cc=(dy*a[0]-dx*a[1])*orientation;List<double[]> outside=half(rest,-aa,-bb,-cc);if(outside.size()>=3&&Math.abs(area(outside))>1e-4)next.add(outside);rest=half(rest,aa,bb,cc);}if(next.size()>4096)throw SketchDocument.bad("Native clipping partition exceeds its bounded scratch space");}hidden=next;}
+            hidden=coalesce(hidden);
             JSONArray rings=new JSONArray();int vertices=0;for(List<double[]> polygon:hidden){if(polygon.size()<3||Math.abs(area(polygon))<1e-4)continue;if(rings.length()>=SketchPathClip.MAX_RINGS||polygon.size()>SketchPathClip.MAX_RING_POINTS||(vertices+=polygon.size())>SketchPathClip.MAX_POINTS)throw SketchDocument.bad("Native neck clipping exceeds its polygon budget");JSONArray ring=new JSONArray();for(double[] q:polygon)ring.put(new JSONArray().put(h.ink.x(q[0],q[1])).put(h.ink.y(q[0],q[1])));rings.put(ring);}return rings;
         }
+        /** Merge only an unchanged convex union, never a concavity or a
+         * protected visible hole. Triangulation boundaries are not artwork.
+         */
+        private static List<List<double[]>> coalesce(List<List<double[]>> source){
+            List<List<double[]>> result=new ArrayList<>(source);boolean changed;
+            do{changed=false;for(int i=0;i<result.size();i++)for(int j=i+1;j<result.size();j++){
+                List<double[]> a=result.get(i),b=result.get(j);if(disjoint(a,b))continue;
+                List<double[]> points=new ArrayList<>(a);points.addAll(b);List<double[]> combined=hull(points);if(combined.size()>SketchPathClip.MAX_RING_POINTS)continue;
+                double union=Math.abs(area(a))+Math.abs(area(b))-Math.abs(area(intersect(a,b))),covered=Math.abs(area(combined));
+                if(Math.abs(covered-union)>Math.max(1e-9,union*1e-10))continue;
+                result.set(i,combined);result.remove(j);changed=true;j=i;
+            }}while(changed);return result;
+        }
+        private static List<double[]> intersect(List<double[]> source,List<double[]> clip){List<double[]> result=source;double orientation=area(clip)>=0?1:-1;for(int j=0;j<clip.size()&&!result.isEmpty();j++){double[] a=clip.get(j),b=clip.get((j+1)%clip.size());double dx=b[0]-a[0],dy=b[1]-a[1];result=half(result,-dy*orientation,dx*orientation,(dy*a[0]-dx*a[1])*orientation);}return result;}
         private static boolean disjoint(List<double[]> a,List<double[]> b){double ax=Double.POSITIVE_INFINITY,ay=ax,bx=ax,by=ax,ar=-ax,ab=-ax,br=-ax,bb=-ax;for(double[] p:a){ax=Math.min(ax,p[0]);ay=Math.min(ay,p[1]);ar=Math.max(ar,p[0]);ab=Math.max(ab,p[1]);}for(double[] p:b){bx=Math.min(bx,p[0]);by=Math.min(by,p[1]);br=Math.max(br,p[0]);bb=Math.max(bb,p[1]);}return ax>br||bx>ar||ay>bb||by>ab;}
         private List<List<double[]>> ribbon(Head h,double[][] local,double from,double to,double weight,boolean hidden)throws Exception {
             double[][] piece=section(local,from,to),curve=new double[4][];for(int i=0;i<4;i++)curve[i]=h.point(piece[i]);
@@ -405,7 +421,7 @@ final class SketchAnatomyHead {
         }
         private static double[] sub2(double[] a,double[] b){return new double[]{a[0]-b[0],a[1]-b[1]};}
         private static double cross2(double[] a,double[] b){return a[0]*b[1]-a[1]*b[0];}
-        private static double area(List<double[]> p){double a=0;for(int i=0;i<p.size();i++){double[] u=p.get(i),v=p.get((i+1)%p.size());a+=u[0]*v[1]-u[1]*v[0];}return a;}
+        private static double area(List<double[]> p){if(p.size()<3)return 0;double a=0;double[] origin=p.get(0);for(int i=1;i+1<p.size();i++)a+=cross2(sub2(p.get(i),origin),sub2(p.get(i+1),origin));return a;}
         private static List<double[]> hull(List<double[]> cloud){cloud.sort((a,b)->a[0]==b[0]?Double.compare(a[1],b[1]):Double.compare(a[0],b[0]));List<double[]> p=new ArrayList<>();for(double[] q:cloud){while(p.size()>1&&cross2(sub2(p.get(p.size()-1),p.get(p.size()-2)),sub2(q,p.get(p.size()-1)))<=1e-12)p.remove(p.size()-1);p.add(q);}int lower=p.size();for(int i=cloud.size()-2;i>=0;i--){double[] q=cloud.get(i);while(p.size()>lower&&cross2(sub2(p.get(p.size()-1),p.get(p.size()-2)),sub2(q,p.get(p.size()-1)))<=1e-12)p.remove(p.size()-1);p.add(q);}if(!p.isEmpty())p.remove(p.size()-1);return p;}
         private static List<double[]> half(List<double[]> input,double a,double b,double c){List<double[]> out=new ArrayList<>();if(input.isEmpty())return out;double[] before=input.get(input.size()-1);double previous=a*before[0]+b*before[1]+c;for(double[] q:input){double value=a*q[0]+b*q[1]+c;if((value>=0)!=(previous>=0)){double t=previous/(previous-value);append(out,new double[]{before[0]+(q[0]-before[0])*t,before[1]+(q[1]-before[1])*t});}if(value>=0)append(out,q);before=q;previous=value;}if(out.size()>1&&Math.hypot(out.get(0)[0]-out.get(out.size()-1)[0],out.get(0)[1]-out.get(out.size()-1)[1])<1e-7)out.remove(out.size()-1);return out;}
         private static void append(List<double[]> out,double[] p){if(out.isEmpty()||Math.hypot(out.get(out.size()-1)[0]-p[0],out.get(out.size()-1)[1]-p[1])>1e-7)out.add(p);}
