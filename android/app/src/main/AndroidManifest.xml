@@ -5,6 +5,11 @@
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <!-- Android package visibility for the optional explicit Render Binder service.
+         No Gallery, file or broad package enumeration permission is requested. -->
+    <queries>
+        <package android:name="com.rezox.render" />
+    </queries>
     <application
         android:allowBackup="true"
         android:label="VideoStudio"
