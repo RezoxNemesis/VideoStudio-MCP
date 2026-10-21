@@ -41,6 +41,12 @@ test("link isolated Render identity without touching old VideoStudio queue",asyn
 });
 test("true queued native execution, authenticated completion and idempotency",async()=>{
   const st=fakeState();await R.link(st,video,device,key,{});
+  // Owner first enables Render on-phone; later it falls offline without
+  // disabling the user-authorized session. Queue must remain durable.
+  await R.poll(st,device,key,true,null);
+  const stale=await st.ctx.storage.get("app-device:"+device);
+  stale.lastSeenAt=new Date(Date.now()-120000).toISOString();
+  await st.ctx.storage.put("app-device:"+device,stale);
   const offline=await R.enqueue(st,video,"blender.scene.summary",{},"one");
   assert.equal(offline.status,"waiting_native");
   await R.poll(st,device,key,true,null);
