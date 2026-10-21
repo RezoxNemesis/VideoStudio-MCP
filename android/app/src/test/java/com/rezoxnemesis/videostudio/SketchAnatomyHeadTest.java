@@ -98,6 +98,33 @@ public class SketchAnatomyHeadTest {
         assertNotEquals(l.toString(),longHair.toString());
     }
 
+    @Test public void sideViewsKeepNearFringeLocksInsteadOfDroppingTheWholeForeheadFringe()throws Exception {
+        // Unique authored lock fill, distinct from cap/curtain/skin/eye fills.
+        // The reference problem was loss of geometry, not merely a changed PNG.
+        JSONObject monochrome=settings().put("skinColor","#FFFFFFFF").put("hairColor","#FF000000").put("hairStyle","long");
+        for(String view:new String[]{"left","right"}){
+            JSONObject actual=layer();draw(actual,"actor",monochrome,skeleton(view,new JSONObject()));
+            assertTrue("Near forehead locks must remain visible in "+view,fills(actual,"#FF333333")>0);
+        }
+        JSONObject rear=layer();draw(rear,"actor",monochrome,skeleton("back",new JSONObject()));
+        assertEquals("Rear view must not show the front locks through the skull",0,fills(rear,"#FF333333"));
+    }
+
+    @Test public void sideFringeHasCranialDepthRatherThanCollapsingIntoFlatStrips()throws Exception {
+        JSONObject monochrome=settings().put("skinColor","#FFFFFFFF").put("hairColor","#FF000000").put("hairStyle","long");
+        for(String view:new String[]{"left","right"}){
+            JSONObject actual=layer();draw(actual,"actor",monochrome,skeleton(view,new JSONObject()));
+            JSONArray paths=actual.getJSONArray("objects");int inspected=0;
+            for(int i=0;i<paths.length();i++){
+                JSONObject path=paths.getJSONObject(i);if(!path.getBoolean("fill")||!"#FF333333".equals(path.getString("color")))continue;
+                double left=Double.POSITIVE_INFINITY,right=Double.NEGATIVE_INFINITY;JSONArray commands=path.getJSONArray("commands");
+                for(int j=0;j<commands.length();j++){JSONArray c=commands.getJSONArray(j);for(int k=1;k<c.length();k+=2){left=Math.min(left,c.getDouble(k));right=Math.max(right,c.getDouble(k));}}
+                assertTrue("A curved forehead lock must span cranial depth in "+view,(right-left)*1280*16>5);inspected++;
+            }
+            assertTrue("Inspect real filled forehead locks",inspected>0);
+        }
+    }
+
     @Test public void translationIsAppliedExactlyOnceBeforeParentNormalization()throws Exception {
         SketchHumanFigure.Skeleton p=skeleton("front",new JSONObject());JSONObject a=layer(),b=layer();draw(a,"actor",settings(),p);
         p.head=new double[]{16,-313,0};draw(b,"actor",settings(),p);
