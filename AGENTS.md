@@ -4,8 +4,8 @@ Root integration feat/native-character-production-v41010 extends the CI-verified
 signed512source4270d90 with center-part78cbfec (cherry4016f34). Target4.10.10/
 code513, version/AppProtocol/release assertions aligned. Center-part guide and
 rear owner/skull ordering repairs have55focused native+2additional technical
-passes and773Node+306smoke in their feature slice. Rootfull513integrated checks,
-CI/original signing remain PENDING. Generic guide geometry is not the selected
+passes and773Node+306smoke in their feature slice. Fresh full513integrated2340Android/0failures/0errors/27skips across429suites
+and773Node+306smoke pass. CI/original signing remain PENDING. Generic guide geometry is not the selected
 actor's likeness or the240secondfilm. Blinkv5 is technicallypassing but visually
 NEEDS_REWORK; soft eyelid-plane shading is next. All failed generations remain.
 ONElocalGradle, root only. No main/Worker/stable publication, signer/device/data/

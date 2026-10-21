@@ -85,3 +85,6 @@ The construction guide is still **NEEDS_REWORK** as a likeness of the user's
 character. A camera/parameter matrix is not a count of distinct actions or
 mastered artistic angles. The full film remains unfinished. Root owns the
 single local Gradle lane, native inference and final signed candidate delivery.
+
+
+Root4.10.10/code513 integration from verified512source4270d90 passed2340 Android tests, zero failures/errors,27skips across429suites. Fresh773Node tests and306smoke checks pass. Source/manual/contract checks do not establish likeness or the240secondfilm. CI and original signing are separate pending gates.
