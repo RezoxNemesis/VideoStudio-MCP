@@ -22,9 +22,16 @@ public final class SketchNativeExport {
         public final JSONObject metadata;
         public final boolean completed;
         private final File generation;
+        private final SketchExportFrameSource.Factory frameFactory;
         Prepared(ProjectStore.Project project, File file, String aspect, String quality, JSONObject metadata, boolean completed, File generation) {
-            this.project = project; this.file = file; this.encodingFile = completed ? file : new File(generation,"sketch.encoding.mp4"); this.aspect = aspect; this.quality = quality; this.metadata = metadata; this.completed = completed; this.generation = generation;
+            this(project,file,aspect,quality,metadata,completed,generation,null);
         }
+        Prepared(ProjectStore.Project project, File file, String aspect, String quality, JSONObject metadata, boolean completed, File generation, SketchExportFrameSource.Factory frameFactory) {
+            this.project = project; this.file = file; this.encodingFile = completed ? file : new File(generation,"sketch.encoding.mp4"); this.aspect = aspect; this.quality = quality; this.metadata = metadata; this.completed = completed; this.generation = generation;
+            this.frameFactory=frameFactory;
+        }
+        SketchExportFrameSource openFrames() throws Exception {return frameFactory==null?SketchExportFrameSource.pngs(generation,metadata.getInt("frameCount")):frameFactory.open();}
+        boolean streamsPages(){return frameFactory!=null;}
     }
     private SketchNativeExport() {}
 

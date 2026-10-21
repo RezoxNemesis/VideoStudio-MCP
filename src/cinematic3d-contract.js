@@ -1,5 +1,6 @@
 // Inert full-scene data contracts. The phone executes every native action.
 import { z } from 'zod';
+export const EXACT_CAMERA_ORBIT_CAPABILITIES=Object.freeze({"minimumNativeVersion":"4.10.3","field":"camera.orbit","editAction":"cinematic_3d_edit_program","operations":["set_camera_orbit","clear_camera_orbit"],"sampleAction":"cinematic_3d_get_program","sampleField":"sampleFrame","sampleRequiresExpectedProgramSha256":true,"azimuthDegrees":[-3600,3600],"elevationDegrees":[-90,90],"radiusMetres":[0.5,30],"worldAxes":"Y up; azimuth0 at+Z,90 at+X; positive elevation above target","cameraClock":"frame/(shotFrameCount-1); selected endpoints included","actorClockChanged":false,"requiresZeroShake":true,"cartesianKeysMutuallyExclusive":true,"changesSceneGeometry":false,"hiddenViewsReconstructed":false,"drawingQualityCertified":false,"manualControls":"3D Studio > Exact camera angles","limitations":"Requires existing authored3D geometry. Camera mathematics does not create accurate hidden anatomy, detailed drawings or a consistent neural character. Native GPU/phone replay requires separate evidence.","compatibilityAliases":{"studio_cinematic_3d_edit_program_v4103":"cinematic_3d_edit_program","studio_cinematic_3d_get_program_v4103":"cinematic_3d_get_program"}});
 export const CINEMATIC_3D_ACTIONS = new Set(['cinematic_3d_capabilities','cinematic_3d_install_builtin','cinematic_3d_import_bundle','cinematic_3d_save_program','cinematic_3d_edit_program','cinematic_3d_get_program','cinematic_3d_list_programs','cinematic_3d_plan','cinematic_3d_render','cinematic_3d_export_request']);
 export const CINEMATIC_3D_BEATS = ['STANDOFF','CHARGE','CLASH','BLADE_LOCK','FOLLOW_THROUGH','KNOCKBACK','LANDING','RECOVERY','AERIAL_FLIP','TUMBLE','MACRO_CLASH','IDLE','WALK','RUN','JUMP','DODGE','DUCK','PUNCH','KICK','DANCE','WAVE'];
 const id=z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_-]{0,95}$/),hash=z.string().regex(/^[a-f0-9]{64}$/),number=z.number().finite();
@@ -12,9 +13,11 @@ const actor=z.object({root:vector,rotations:z.array(quaternion).length(16)}).str
 const pose=z.object({phase:number.min(0).max(1),actors:z.object({black:actor,white:actor}).strict()}).strict();
 const contact=z.object({actor:z.enum(['black','white']),foot:z.enum(['leading','trailing']),startPhase:number.min(0).max(1),endPhase:number.min(0).max(1),anchor:vector}).strict().refine(v=>v.startPhase<v.endPhase,'Contact interval must advance');
 const cameraVector=z.tuple([number.min(-10000).max(10000),number.min(-10000).max(10000),number.min(-10000).max(10000)]);
+const orbit=z.object({target:z.tuple([number.min(-9900).max(9900),number.min(-9900).max(9900),number.min(-9900).max(9900)]),radius:number.min(.5).max(30),startAzimuthDegrees:number.min(-3600).max(3600),endAzimuthDegrees:number.min(-3600).max(3600),startElevationDegrees:number.min(-90).max(90),endElevationDegrees:number.min(-90).max(90)}).strict();
 const cameraKey=z.object({phase:number.min(0).max(1),position:cameraVector,target:cameraVector,up:cameraVector.optional()}).strict();
-const camera=z.object({mode:z.enum(['wide','orbit','macro','top_down']),fovDegrees:number.min(35).max(100),shakeIntensity:number.min(0).max(1),keyframes:z.array(cameraKey).min(1).max(128).optional()}).strict().superRefine((value,ctx)=>{
+const camera=z.object({mode:z.enum(['wide','orbit','macro','top_down']),fovDegrees:number.min(35).max(100),shakeIntensity:number.min(0).max(1),keyframes:z.array(cameraKey).min(1).max(128).optional(),orbit:orbit.optional()}).strict().superRefine((value,ctx)=>{
  const fail=message=>ctx.addIssue({code:z.ZodIssueCode.custom,message});let phase=-1;
+ if(value.orbit&&(value.mode!=='orbit'||value.shakeIntensity!==0||value.keyframes!==undefined))fail('Exact orbit requires mode orbit, zero camera shake and no Cartesian keys');
  for(const key of value.keyframes||[]){
   if(key.phase<=phase)fail('Camera phases must increase');phase=key.phase;
   const direction=key.target.map((v,i)=>v-key.position[i]),up=key.up||(value.mode==='top_down'?[0,0,-1]:[0,1,0]);
@@ -41,7 +44,9 @@ const project={projectId:id},revision={...project,sourceProjectUpdatedAt:z.numbe
 const cameraEdit=z.discriminatedUnion('type',[
  z.object({type:z.literal('upsert_camera_key'),shotId:id,phase:number.min(0).max(1),position:cameraVector,target:cameraVector,up:cameraVector.optional()}).strict(),
  z.object({type:z.literal('remove_camera_key'),shotId:id,phase:number.min(0).max(1)}).strict(),
- z.object({type:z.literal('clear_camera_keys'),shotId:id}).strict()
+ z.object({type:z.literal('clear_camera_keys'),shotId:id}).strict(),
+ z.object({type:z.literal('set_camera_orbit'),shotId:id,orbit}).strict(),
+ z.object({type:z.literal('clear_camera_orbit'),shotId:id}).strict()
 ]).superRefine((v,ctx)=>{
  if(v.type!=='upsert_camera_key')return;
  const direction=v.target.map((x,i)=>x-v.position[i]),length=Math.hypot(...direction),scale=Math.max(1,...v.position.map(Math.abs),...v.target.map(Math.abs));
@@ -54,7 +59,7 @@ export const cinematic3dToolSchemas={
  cinematic_3d_capabilities:{},cinematic_3d_install_builtin:{...revision,pack:z.enum(['starter','extended']).optional()},cinematic_3d_import_bundle:{...revision,bundleAssetId:id},
  cinematic_3d_save_program:{...revision,programId:id.optional(),expectedProgramSha256:z.union([hash,z.literal('')]).optional(),bundleId:id,timeline:cinematic3dTimelineSchema},
  cinematic_3d_edit_program:{...revision,programId:id,expectedProgramSha256:hash,operations:z.array(cameraEdit).min(1).max(128)},
- cinematic_3d_get_program:{...program,editOnly:z.boolean().optional()},cinematic_3d_list_programs:project,cinematic_3d_plan:program,cinematic_3d_export_request:program,
+ cinematic_3d_get_program:{...program,editOnly:z.boolean().optional(),sampleFrame:z.number().int().min(0).max(11999).optional()},cinematic_3d_list_programs:project,cinematic_3d_plan:program,cinematic_3d_export_request:program,
  cinematic_3d_render:{...program,width:z.number().int().min(256).max(1280).optional(),height:z.number().int().min(256).max(1280).optional(),render:z.boolean().optional(),fileName:z.string().min(1).max(180).optional()}
 };
 export function nativeCinematic3dParameters(action,parameters){
@@ -65,5 +70,7 @@ export function nativeCinematic3dParameters(action,parameters){
  const visit=(v,depth)=>{if(++nodes>65536||depth>16)throw new Error('Cinematic JSON exceeds structural budget');if(v===null||typeof v==='string'||typeof v==='boolean')return;if(typeof v==='number'&&Number.isFinite(v))return;if(typeof v!=='object'||active.has(v))throw new Error('Cinematic parameters must be acyclic finite JSON');active.add(v);for(const child of Object.values(v))visit(child,depth+1);active.delete(v);};visit(safe,0);
  if(new TextEncoder().encode(JSON.stringify(safe)).length>512*1024)throw new Error('Cinematic request exceeds 512 KiB metadata budget');
  const known=cinematic3dToolSchemas[action];for(const key of Object.keys(safe))if(!Object.hasOwn(known,key))throw new Error('Unknown cinematic field; arbitrary URI access is unavailable');
- return z.object(known).strict().parse(safe);
+ const parsed=z.object(known).strict().parse(safe);
+ if(action==='cinematic_3d_get_program'&&parsed.sampleFrame!==undefined&&(!parsed.expectedProgramSha256||parsed.editOnly===true))throw new Error('Camera sampling requires exact expectedProgramSha256 and a verified source');
+ return parsed;
 }

@@ -40,7 +40,7 @@ public final class SketchPaintReplay implements AutoCloseable {
     private boolean closed,storeClosed;
     private int rendering;
     public SketchPaintReplay(Context context,String sketchId,JSONObject operation)throws Exception{
-        if(!"paint_stroke".equals(operation.optString("type")))throw SketchDocument.bad("Paint replay requires a native stroke event");
+        if(!java.util.Arrays.asList("paint_stroke","paint_fill").contains(operation.optString("type")))throw SketchDocument.bad("Paint replay requires a native stroke event");
         this.operation=SketchDocument.copy(operation);store=new SketchPaintStore(context,sketchId);
     }
     public Frame render(double fraction,Viewport viewport)throws Exception{

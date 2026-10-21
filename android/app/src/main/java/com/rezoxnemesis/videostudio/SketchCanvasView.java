@@ -24,6 +24,7 @@ public final class SketchCanvasView extends View {
         void onSelection(String objectId);
         void onMessage(String message);
         default void onColorPicked(String color) {}
+        default void onPreviewStatus(String status) {}
         default void onSampleRequested(double x,double y,int frame) {}
         default PaintCommitter beginPaintGesture(String sketchId,long revision,int frame,String objectId){return this::onOperation;}
     }
@@ -32,6 +33,7 @@ public final class SketchCanvasView extends View {
     }
     private JSONObject document;
     private SketchFrameRenderer renderer;
+    private final java.util.Map<String,SketchFrameRenderer.ImageSelection> imageSelections=new java.util.HashMap<>();
     private Listener listener;
     private String tool = "stroke", layerId = "layer_1", selectedId, color = "#FF161C2B";
     private int frame;
@@ -84,8 +86,12 @@ public final class SketchCanvasView extends View {
     private final android.os.Handler ui=new android.os.Handler(android.os.Looper.getMainLooper());
     private final java.util.concurrent.ExecutorService rasterWorker=java.util.concurrent.Executors.newSingleThreadExecutor();
     private int rasterGeneration;
-    private String rasterKey="";
-    private boolean disposed,smallVector;
+    private int rasterInFlight=-1,lastRasterFrame=-1;
+    private long lastRasterRevision=-1;
+    private boolean playbackPreview;
+    private String rasterKey="",rasterContextKey="",previewError,lastPreviewStatus="";
+    private boolean previewLoading,previewActive=true;
+    private boolean disposed,smallVector,bookPlaybackReady;
     private JSONObject previousBookOnion,nextBookOnion;
     private volatile int requestedRasterGeneration;
     private long cacheBytes;
@@ -99,36 +105,46 @@ public final class SketchCanvasView extends View {
     }
     public void setListener(Listener listener) { this.listener = listener; }
     public void setDocument(JSONObject doc) throws Exception {
+        bookPlaybackReady=false;
         // Store/session documents are immutable snapshots. Image/paint preparation stays on the worker.
         boolean same=document!=null&&document.getString("id").equals(doc.getString("id"));
         boolean retainGesture=same&&pointerDown&&isPaintTool()&&paintCommitter!=null&&paintTarget!=null&&frame==gestureFrame;
         if(retainGesture)try{JSONObject target=SketchDocument.object(doc,paintTarget);retainGesture="paint".equals(target.optString("kind"))&&SketchFrameRenderer.exposed(target,gestureFrame);}catch(Exception removed){retainGesture=false;}
-        document=doc;invalidateTouchPreview(!same);detachPaintPublication();++rasterGeneration;requestedRasterGeneration=rasterGeneration;rasterKey="";
+        resetRasterSource();document=doc;invalidateTouchPreview(!same);detachPaintPublication();++rasterGeneration;requestedRasterGeneration=rasterGeneration;rasterKey="";
         if(renderer!=null){renderer.close();renderer=null;}
         smallVector=isSmallVector(doc);
         if(smallVector)renderer=new SketchFrameRenderer(getContext(),doc);
         if(!same){zoom=1;panX=panY=0;pendingPaintPreviews.clear();previousBookOnion=null;nextBookOnion=null;}
         if(!same)clearFrameCache();restoreDocumentCursor(doc,retainGesture);if(retainGesture)requestTouchPreview();
     }
+    /** Adopts one already rendered worker bitmap; ownership transfers on success. */
+    void setBookPlaybackFrame(JSONObject doc,Bitmap bitmap)throws Exception {
+        if(bitmap==null||bitmap.isRecycled()||bitmap.getAllocationByteCount()>VIEWPORT_BYTES)
+            throw SketchDocument.bad("Invalid book playback preview");
+        setDocument(doc);clearFrameCache();frameCache.put(frame,new RasterFrame(bitmap,null));
+        cacheBytes=bitmap.getAllocationByteCount();lastRasterFrame=frame;lastRasterRevision=doc.optLong("revision");bookPlaybackReady=true;previewLoading=false;publishPreviewStatus();invalidate();
+    }
     void setCommittedPaintDocument(JSONObject doc)throws Exception {
-        document=doc;++rasterGeneration;requestedRasterGeneration=rasterGeneration;rasterKey="";smallVector=false;clearFrameCache();restoreDocumentCursor(doc);
+        bookPlaybackReady=false;
+        resetRasterSource();document=doc;++rasterGeneration;requestedRasterGeneration=rasterGeneration;rasterKey="";smallVector=false;clearFrameCache();restoreDocumentCursor(doc);
     }
     private static boolean isSmallVector(JSONObject doc)throws Exception{
         if(doc.getInt("width")>1280||doc.getInt("height")>1280)return false;
         int count=0,geometryCount=0;JSONArray layers=doc.getJSONArray("layers");
         for(int i=0;i<layers.length();i++){JSONArray objects=layers.getJSONObject(i).getJSONArray("objects");count+=objects.length();if(count>64)return false;
-            for(int j=0;j<objects.length();j++){JSONObject object=objects.getJSONObject(j);String kind=object.getString("kind");if("image".equals(kind)||"paint".equals(kind))return false;JSONArray points=object.optJSONArray("points"),commands=object.optJSONArray("commands");geometryCount+=(points==null?0:points.length())+(commands==null?0:commands.length());if(geometryCount>2048)return false;}}
+            for(int j=0;j<objects.length();j++){JSONObject object=objects.getJSONObject(j);String kind=object.getString("kind");if("image".equals(kind)||"paint".equals(kind)||"hand".equals(kind)||"human".equals(kind))return false;JSONArray points=object.optJSONArray("points"),commands=object.optJSONArray("commands");geometryCount+=(points==null?0:points.length())+(commands==null?0:commands.length());if(geometryCount>2048)return false;}}
         return true;
     }
     /** A validated worker snapshot transfers ownership without UI parsing/indexing. */
     void setPreparedDocument(SketchLivePreparation.Prepared prepared) throws Exception {
+        bookPlaybackReady=false;
         if(android.os.Looper.myLooper()!=android.os.Looper.getMainLooper())
             throw new IllegalStateException("Canvas adoption requires the UI thread");
         boolean same=document!=null&&document.getString("id").equals(prepared.document.getString("id"));
-        detachPaintPublication();++rasterGeneration;requestedRasterGeneration=rasterGeneration;rasterKey="";smallVector=false;
+        resetRasterSource();detachPaintPublication();++rasterGeneration;requestedRasterGeneration=rasterGeneration;rasterKey="";smallVector=false;
         invalidateTouchPreview(true);
         SketchFrameRenderer next=prepared.takeRenderer();
-        if(renderer!=null)renderer.close();renderer=next;document=prepared.document;
+        if(renderer!=null)renderer.close();renderer=next;document=prepared.document;imageSelections.putAll(next.imageSelections());
         if(!same){zoom=1;panX=panY=0;}clearFrameCache();restoreDocumentCursor(document);
     }
     private void restoreDocumentCursor(JSONObject doc)throws Exception{restoreDocumentCursor(doc,false);}
@@ -138,7 +154,26 @@ public final class SketchCanvasView extends View {
         if (selectedId != null) try { SketchDocument.object(document, selectedId); } catch (Exception missing) { selectedId = null; }
         dragTransform = null;if(!retainGesture){gesture=new JSONArray();pointerDown=false;paintCommitter=null;paintTarget=null;}invalidate();
     }
-    public void setFrame(int frame) { if(this.frame!=frame){invalidateTouchPreview(true);rasterKey="";++rasterGeneration;requestedRasterGeneration=rasterGeneration;}this.frame = frame; gesture = new JSONArray(); polygon = new JSONArray(); dragTransform = null; invalidate(); }
+    public void setFrame(int frame) { if(this.frame!=frame){invalidateTouchPreview(true);rasterKey="";if(!playbackPreview){++rasterGeneration;requestedRasterGeneration=rasterGeneration;}}this.frame = frame; gesture = new JSONArray(); polygon = new JSONArray(); dragTransform = null; invalidate(); }
+    /** Keep the source clock moving while a bounded preview worker renders.
+     * A timeline tick does not invalidate already useful work from this source. */
+    void setPlaybackPreview(boolean enabled){if(playbackPreview==enabled)return;playbackPreview=enabled;rasterKey="";++rasterGeneration;requestedRasterGeneration=rasterGeneration;invalidate();}
+    private void resetRasterSource(){imageSelections.clear();previewError=null;previewLoading=false;rasterContextKey="";clearFrameCache();}
+    /** Retry is explicit: timeline ticks never restart a failed dependency. */
+    void refreshPreview(){if(disposed||!previewActive)return;previewError=null;previewLoading=true;rasterKey="";++rasterGeneration;requestedRasterGeneration=rasterGeneration;publishPreviewStatus();invalidate();}
+    boolean previewFailed(){return previewError!=null;}
+    void setPreviewActive(boolean active){if(disposed||previewActive==active)return;previewActive=active;rasterKey="";++rasterGeneration;requestedRasterGeneration=rasterGeneration;previewLoading=false;publishPreviewStatus();if(active)invalidate();}
+    String previewStatus(){
+        if(previewError!=null)return "Preview unavailable · More → Retry preview\n"+previewError;
+        if(!previewActive)return "Preview paused";
+        if(document==null)return "";
+        boolean held=playbackPreview&&lastRasterFrame>=0&&lastRasterRevision==document.optLong("revision")&&frameCache.get(frame)==null;
+        if(held)return "Preview buffered · showing frame "+(lastRasterFrame+1)+" · clock frame "+(frame+1)+(previewLoading?" · loading":"");
+        if(previewLoading)return "Loading preview…";
+        return lastRasterFrame>=0||smallVector?"Preview ready · frame "+(frame+1):"Loading preview…";
+    }
+    private void publishPreviewStatus(){String next=previewStatus();if(!next.equals(lastPreviewStatus)){lastPreviewStatus=next;if(listener!=null)listener.onPreviewStatus(next);}}
+    private void previewFailed(Throwable error){previewLoading=false;previewError=error.getMessage()==null?error.getClass().getSimpleName():error.getMessage();publishPreviewStatus();invalidate();}
     public int getFrame() { return frame; }
     public String getLayerId() { return layerId; }
     public void setLayerId(String id) { layerId = id; selectedId = null; if (listener != null) listener.onSelection(null); invalidate(); }
@@ -189,7 +224,7 @@ public final class SketchCanvasView extends View {
     public void resetView(){zoom=1;panX=panY=0;invalidate();}
     public void focusSelection() throws Exception {
         if(document==null||selectedId==null)throw SketchDocument.bad("Select an object to focus");
-        JSONObject object=SketchDocument.object(document,selectedId),layer=SketchDocument.owner(document,selectedId);int w=document.getInt("width"),h=document.getInt("height");RectF bounds;
+        JSONObject object=SketchShapeKeys.sampled(SketchDocument.object(document,selectedId),frame),layer=SketchDocument.owner(document,selectedId);int w=document.getInt("width"),h=document.getInt("height");RectF bounds;
         if(object.has("bounds"))bounds=SketchFrameRenderer.bounds(object.getJSONObject("bounds"),w,h);
         else if(object.has("commands")){bounds=new RectF();SketchFrameRenderer.path(object.getJSONArray("commands"),w,h).computeBounds(bounds,true);}
         else{bounds=new RectF(Float.MAX_VALUE,Float.MAX_VALUE,-Float.MAX_VALUE,-Float.MAX_VALUE);JSONArray points=object.getJSONArray("points");for(int n=0;n<points.length();n++){JSONArray p=points.getJSONArray(n);float x=(float)p.getDouble(0)*w,y=(float)p.getDouble(1)*h;bounds.left=Math.min(bounds.left,x);bounds.right=Math.max(bounds.right,x);bounds.top=Math.min(bounds.top,y);bounds.bottom=Math.max(bounds.bottom,y);}}
@@ -199,7 +234,7 @@ public final class SketchCanvasView extends View {
     public boolean isDrawing(){return pointerDown||nodePreview!=null||gesture.length()>0||polygon.length()>0||dragTransform!=null||navigating;}
     public float getZoom(){return zoom;}
     public void selectObject(String id){selectedId=id;invalidate();}
-    private void clearFrameCache(){for(RasterFrame b:frameCache.values())b.bitmap.recycle();frameCache.clear();cacheBytes=0;}
+    private void clearFrameCache(){for(RasterFrame b:frameCache.values())b.bitmap.recycle();frameCache.clear();cacheBytes=0;lastRasterFrame=-1;lastRasterRevision=-1;}
     private int viewportEdge(){return Math.max(128,Math.min(1024,Math.max(getWidth(),getHeight())));}
     private JSONObject visibleCrop()throws Exception {
         if(document==null||viewScale<=0)return null;int w=document.getInt("width"),h=document.getInt("height");
@@ -208,19 +243,32 @@ public final class SketchCanvasView extends View {
         return new JSONObject().put("x",x).put("y",y).put("width",right-x).put("height",bottom-y);
     }
     private void requestRaster()throws Exception {
-        if(disposed||document==null||liveObject!=null||getWidth()<1||getHeight()<1)return;
-        JSONObject crop=visibleCrop();String key=document.getString("id")+"/"+document.getLong("revision")+"/"+frame+"/"+viewportEdge()+"/"+(crop==null?"full":crop.toString())+"/"+onion+"/"+onionRange+"/"+(previousBookOnion==null?"":previousBookOnion.optString("id")+":"+previousBookOnion.optLong("revision"))+"/"+(nextBookOnion==null?"":nextBookOnion.optString("id")+":"+nextBookOnion.optLong("revision"))+"/"+(dragTransform==null?"":dragTransform.toString())+"/"+(nodePreview==null?"":nodePreview.toString());
-        if(key.equals(rasterKey))return;rasterKey=key;int generation=++rasterGeneration;requestedRasterGeneration=generation;
-        JSONObject source=document,previewTransform=dragTransform,previewGeometry=nodePreview,previous=onion?previousBookOnion:null,next=onion?nextBookOnion:null;String previewId=selectedId;int selectedFrame=frame,edge=viewportEdge(),range=onion?onionRange:0;
+        if(disposed||!previewActive||document==null||liveObject!=null||getWidth()<1||getHeight()<1)return;
+        JSONObject crop=visibleCrop();
+        String context=document.getString("id")+"/"+document.getLong("revision")+"/"+viewportEdge()+"/"+(crop==null?"full":crop.toString())+"/"+(dragTransform==null?"":dragTransform.toString())+"/"+(nodePreview==null?"":nodePreview.toString());
+        // Viewport/source changes supersede work even while the clock is moving.
+        // Frame ticks alone keep the useful in-flight publication alive.
+        if(!context.equals(rasterContextKey)){
+            if(!rasterContextKey.isEmpty())clearFrameCache();
+            rasterContextKey=context;rasterKey="";previewError=null;previewLoading=false;
+            requestedRasterGeneration=++rasterGeneration;
+        }
+        if(previewError!=null)return;
+        // One running render and the latest desired UI state, including while scrubbing.
+        if(rasterInFlight>=0)return;
+        String key=context+"/"+frame+"/"+(onion&&!playbackPreview)+"/"+onionRange+"/"+onionAlpha+"/"+(previousBookOnion==null?"":previousBookOnion.optString("id")+":"+previousBookOnion.optLong("revision"))+"/"+(nextBookOnion==null?"":nextBookOnion.optString("id")+":"+nextBookOnion.optLong("revision"));
+        if(key.equals(rasterKey))return;rasterKey=key;int generation=++rasterGeneration;requestedRasterGeneration=generation;rasterInFlight=generation;previewLoading=true;publishPreviewStatus();
+        java.util.Map<String,SketchFrameRenderer.ImageSelection> priorSelections=new java.util.HashMap<>(imageSelections);
+        JSONObject source=document,previewTransform=dragTransform,previewGeometry=nodePreview,previous=onion&&!playbackPreview?previousBookOnion:null,next=onion&&!playbackPreview?nextBookOnion:null;String previewId=selectedId;int selectedFrame=frame,edge=viewportEdge(),range=onion&&!playbackPreview?onionRange:0;
         rasterWorker.execute(()->{
             java.util.LinkedHashMap<Integer,RasterFrame> prepared=new java.util.LinkedHashMap<>();SketchFrameRenderer ready=null;long bytes=0;
             try{
                 if(disposed||generation!=requestedRasterGeneration)return;
                 JSONObject renderDocument=SketchDocument.copy(source);
                 if(previewId!=null&&previewTransform!=null)SketchDocument.object(renderDocument,previewId).put("transform",SketchDocument.copy(previewTransform)).put("keys",new JSONArray());
-                if(previewGeometry!=null){JSONObject target=SketchDocument.object(renderDocument,previewGeometry.getString("id"));String geometryField=previewGeometry.has("commands")?"commands":"points";target.put(geometryField,previewGeometry.get(geometryField));}
+                if(previewGeometry!=null){JSONObject target=SketchDocument.object(renderDocument,previewGeometry.getString("id"));String geometryField=previewGeometry.has("commands")?"commands":"points";target.put(geometryField,previewGeometry.get(geometryField));target.remove("shapeKeys");}
                 ready=new SketchFrameRenderer(getContext(),renderDocument);
-                ready.prepareVectorGeometry();
+                ready.prepareVectorGeometry();ready.reuseSelections(priorSelections);ready.enableImageSelections();
                 JSONObject[] neighbors={previous,next};
                 for(int side=0;side<neighbors.length;side++){
                     JSONObject neighbor=neighbors[side];if(neighbor==null)continue;
@@ -236,40 +284,40 @@ public final class SketchCanvasView extends View {
                     prepared.put(index,new RasterFrame(bitmap,crop));bytes+=bitmap.getAllocationByteCount();
                 }}
                 // Only the worker uses this renderer: immutable bounded publications are the UI contract.
-                ready.close();ready=null;long adoptedBytes=bytes;java.util.LinkedHashMap<Integer,RasterFrame> publication=prepared;
-                ui.post(()->{if(disposed||generation!=requestedRasterGeneration){for(RasterFrame image:publication.values())image.bitmap.recycle();return;}clearFrameCache();frameCache.putAll(publication);cacheBytes=adoptedBytes;if(touchComposite!=null&&!pointerDown&&!pendingPaintPreviews.containsKey(touchCompositeStroke))clearTouchComposite();if(paintPublication!=null){detachPaintPublication();if(renderer!=null){renderer.close();renderer=null;}}invalidate();});prepared=null;
+                java.util.Map<String,SketchFrameRenderer.ImageSelection> selectionPublication=ready.imageSelections();ready.close();ready=null;long adoptedBytes=bytes;java.util.LinkedHashMap<Integer,RasterFrame> publication=prepared;
+                ui.post(()->{if(disposed||!previewActive||generation!=requestedRasterGeneration){for(RasterFrame image:publication.values())image.bitmap.recycle();return;}clearFrameCache();imageSelections.clear();imageSelections.putAll(selectionPublication);frameCache.putAll(publication);cacheBytes=adoptedBytes;lastRasterFrame=selectedFrame;lastRasterRevision=source.optLong("revision");previewLoading=false;publishPreviewStatus();if(touchComposite!=null&&!pointerDown&&!pendingPaintPreviews.containsKey(touchCompositeStroke))clearTouchComposite();if(paintPublication!=null){detachPaintPublication();if(renderer!=null){renderer.close();renderer=null;}}invalidate();});prepared=null;
             }catch(InterruptedException cancelled){}
-            catch(Exception|OutOfMemoryError failed){ui.post(()->{if(!disposed&&generation==requestedRasterGeneration&&listener!=null)listener.onMessage("Canvas preview: "+failed.getMessage());});}
-            finally{if(ready!=null)ready.close();if(prepared!=null)for(RasterFrame image:prepared.values())image.bitmap.recycle();}
+            catch(Exception|OutOfMemoryError failed){ui.post(()->{if(!disposed&&previewActive&&generation==requestedRasterGeneration)previewFailed(failed);});}
+            finally{if(ready!=null)ready.close();if(prepared!=null)for(RasterFrame image:prepared.values())image.bitmap.recycle();ui.post(()->{if(rasterInFlight==generation){rasterInFlight=-1;if(!disposed&&previewActive)invalidate();}});}
         });
     }
     private void drawRaster(Canvas canvas,RasterFrame image,int w,int h,Paint tint)throws Exception{
         if(image==null||image.bitmap.isRecycled())return;JSONObject c=image.crop;RectF target=c==null?new RectF(0,0,w,h):new RectF((float)c.getDouble("x")*w,(float)c.getDouble("y")*h,(float)(c.getDouble("x")+c.getDouble("width"))*w,(float)(c.getDouble("y")+c.getDouble("height"))*h);
         canvas.drawBitmap(image.bitmap,null,target,tint);
     }
-    public void dispose() { if(disposed)return;disposed=true;hideAgentHand();invalidateTouchPreview(true);++rasterGeneration;requestedRasterGeneration=rasterGeneration;rasterWorker.execute(()->{if(touchPaintCache!=null){touchPaintCache.close();touchPaintCache=null;touchPaintOwner=null;}});rasterWorker.shutdown();detachPaintPublication();clearFrameCache();if(renderer!=null){renderer.close();renderer=null;} }
+    public void dispose() { if(disposed)return;disposed=true;imageSelections.clear();playbackPreview=false;previewActive=false;hideAgentHand();invalidateTouchPreview(true);++rasterGeneration;requestedRasterGeneration=rasterGeneration;rasterWorker.execute(()->{if(touchPaintCache!=null){touchPaintCache.close();touchPaintCache=null;touchPaintOwner=null;}});rasterWorker.shutdown();detachPaintPublication();clearFrameCache();if(renderer!=null){renderer.close();renderer=null;} }
 
     @Override protected void onDraw(Canvas canvas) {
-        super.onDraw(canvas); if (document == null) return;
+        super.onDraw(canvas); if (document == null||disposed) return;
         try {
             int w = document.getInt("width"), h = document.getInt("height");
             viewScale = Math.min(getWidth() / (float) w, getHeight() / (float) h)*zoom;
             left = (getWidth() - w * viewScale) / 2+panX; top = (getHeight() - h * viewScale) / 2+panY;
-            requestRaster();
+            if(!bookPlaybackReady)requestRaster();publishPreviewStatus();
             int save = canvas.save(); canvas.translate(left, top); canvas.scale(viewScale, viewScale); canvas.clipRect(0, 0, w, h);
             canvas.drawColor(SketchDocument.color(document.getString("background")));
-            if(onion&&liveObject==null){
+            if(onion&&!playbackPreview&&liveObject==null&&!bookPlaybackReady){
                 Paint previousTint=new Paint(Paint.ANTI_ALIAS_FLAG|Paint.FILTER_BITMAP_FLAG);previousTint.setAlpha(onionAlpha);previousTint.setColorFilter(new PorterDuffColorFilter(0xffe27a83,PorterDuff.Mode.SRC_IN));drawRaster(canvas,frameCache.get(-1),w,h,previousTint);
                 Paint nextTint=new Paint(Paint.ANTI_ALIAS_FLAG|Paint.FILTER_BITMAP_FLAG);nextTint.setAlpha(onionAlpha);nextTint.setColorFilter(new PorterDuffColorFilter(0xff4cbbdb,PorterDuff.Mode.SRC_IN));drawRaster(canvas,frameCache.get(-2),w,h,nextTint);
             }
-            if(onion&&liveObject==null)for(int distance=onionRange;distance>=1;distance--)for(int offset:new int[]{-distance,distance}){
+            if(onion&&!playbackPreview&&liveObject==null&&!bookPlaybackReady)for(int distance=onionRange;distance>=1;distance--)for(int offset:new int[]{-distance,distance}){
                 int ghost=frame+offset;if(ghost<0||ghost>=document.getInt("frameCount"))continue;Paint tint=new Paint(Paint.ANTI_ALIAS_FLAG|Paint.FILTER_BITMAP_FLAG);tint.setAlpha(onionAlpha/distance);tint.setColorFilter(new PorterDuffColorFilter(offset<0?0xffe27a83:0xff4cbbdb,PorterDuff.Mode.SRC_IN));drawRaster(canvas,frameCache.get(ghost),w,h,tint);
             }
             boolean actualTouch=touchComposite!=null&&touchCompositeFrame==frame&&document.getString("id").equals(touchCompositeDocument.optString("id"));
             if(actualTouch)drawRaster(canvas,touchComposite,w,h,null);
             else if((liveObject!=null||paintPublication!=null)&&renderer!=null)renderer.draw(canvas,frame,false,selectedId,dragTransform);
             else if((smallVector&&(frameCache.get(frame)==null||dragTransform!=null||nodePreview!=null))&&renderer!=null)renderer.draw(canvas,frame,false,selectedId,dragTransform);
-            else drawRaster(canvas,frameCache.get(frame),w,h,null);
+            else {RasterFrame current=frameCache.get(frame);if(current==null&&playbackPreview&&lastRasterRevision==document.optLong("revision"))current=frameCache.get(lastRasterFrame);drawRaster(canvas,current,w,h,null);}
             for(JSONObject preview:pendingPaintPreviews.values())if(!actualTouch||!preview.optString("strokeId").equals(touchCompositeStroke))drawPaintPreview(canvas,preview,w,h);
             if(grid||symmetry){paint.setStyle(Paint.Style.STROKE);paint.setStrokeWidth(1/viewScale);paint.setColor(0x553fa4c9);if(grid){for(int i=1;i<10;i++){canvas.drawLine(w*i/10f,0,w*i/10f,h,paint);canvas.drawLine(0,h*i/10f,w,h*i/10f,paint);}}if(symmetry)drawSymmetryGuides(canvas,w,h);}
             if((gesture.length()>0||polygon.length()>0)&&(!actualTouch||!isPaintTool()||!java.util.Objects.equals(paintStrokeId,touchCompositeStroke)))drawGesture(canvas,w,h);
@@ -277,7 +325,7 @@ public final class SketchCanvasView extends View {
             canvas.restoreToCount(save);
             if(agentHandEnabled&&agentHand.visible&&agentHand.x>=0&&agentHand.x<=1&&agentHand.y>=0&&agentHand.y<=1)
                 SketchAgentHand.draw(canvas,agentHand,left+(float)agentHand.x*w*viewScale,top+(float)agentHand.y*h*viewScale,StudioUi.dp(getContext(),28));
-        } catch (Exception e) { if (listener != null) listener.onMessage(e.getMessage()); }
+        } catch (Exception e) { if(previewError==null&&!disposed&&previewActive)previewFailed(e); }
     }
 
     private void drawGesture(Canvas canvas, int w, int h) throws Exception {
@@ -285,9 +333,9 @@ public final class SketchCanvasView extends View {
         int save = canvas.save(); canvas.concat(SketchFrameRenderer.matrix(SketchDocument.transformAt(SketchDocument.layer(document, layerId), frame), w, h));
         paint.setColor("eraser".equals(tool) ? 0xAAE77989 : SketchDocument.color(color)); paint.setStrokeWidth(brushWidth * Math.min(w, h));
         paint.setStrokeJoin(Paint.Join.ROUND); paint.setStrokeCap(Paint.Cap.ROUND); paint.setStyle(fill ? Paint.Style.FILL : Paint.Style.STROKE);
-        if ("stroke".equals(tool) || "eraser".equals(tool)) {
+        if ("stroke".equals(tool) || "eraser".equals(tool) || isPrecisionTool()) {
             JSONArray copies;
-            try{copies=symmetry?SketchSymmetry.copies(gesture,symmetryConfiguration,w,h):new JSONArray().put(gesture);}
+            try{copies=symmetry&&!isPrecisionTool()?SketchSymmetry.copies(gesture,symmetryConfiguration,w,h):new JSONArray().put(gesture);}
             catch(IllegalArgumentException outside){
                 // Invalid previews stay visibly provisional; lifting reports the rejected complete gesture.
                 paint.setColor(0xAAE77989);copies=new JSONArray().put(gesture);
@@ -324,7 +372,7 @@ public final class SketchCanvasView extends View {
         canvas.drawCircle(cx,cy,4/viewScale,paint);canvas.restoreToCount(save);
     }
     private void drawSelection(Canvas canvas, int w, int h) throws Exception {
-        JSONObject object = SketchDocument.object(document, selectedId), layer = SketchDocument.owner(document, selectedId);
+        JSONObject object = SketchShapeKeys.sampled(SketchDocument.object(document, selectedId),frame), layer = SketchDocument.owner(document, selectedId);
         if (!SketchFrameRenderer.exposed(object, frame)) return;
         RectF bounds;
         if (object.has("bounds")) bounds = SketchFrameRenderer.bounds(object.getJSONObject("bounds"), w, h);
@@ -354,9 +402,9 @@ public final class SketchCanvasView extends View {
                 getParent().requestDisallowInterceptTouchEvent(true); downX = x; downY = y;
                 if("eyedropper".equals(tool)){pointerDown=false;if(listener!=null)listener.onSampleRequested(x,y,frame);getParent().requestDisallowInterceptTouchEvent(false);return true;}
                 if("pan".equals(tool)){lastPanX=event.getX();lastPanY=event.getY();return true;}
-                if("nodes".equals(tool)){if(selectedId==null)selectedId=SketchFrameRenderer.hitTest(document,frame,x,y,.035);if(selectedId!=null){layerId=SketchDocument.owner(document,selectedId).getString("id");SketchEditOps.requireUnlocked(SketchDocument.layer(document,layerId));chooseNode(x,y);}invalidate();return true;}
+                if("nodes".equals(tool)){if(selectedId==null)selectedId=SketchFrameRenderer.hitTest(document,frame,x,y,.035,imageSelections);if(selectedId!=null){layerId=SketchDocument.owner(document,selectedId).getString("id");SketchEditOps.requireUnlocked(SketchDocument.layer(document,layerId));chooseNode(x,y);}invalidate();return true;}
                 if ("select".equals(tool)) {
-                    selectedId = SketchFrameRenderer.hitTest(document, frame, x, y, .018);
+                    selectedId = SketchFrameRenderer.hitTest(document, frame, x, y, .018,imageSelections);
                     dragBase = selectedId == null ? null : SketchDocument.transformAt(SketchDocument.object(document, selectedId), frame);
                     if (selectedId != null) layerId = SketchDocument.owner(document, selectedId).getString("id");
                     if (listener != null) listener.onSelection(selectedId); invalidate(); return true;
@@ -373,7 +421,7 @@ public final class SketchCanvasView extends View {
                     dragTransform = SketchDocument.copy(dragBase).put("x", Math.max(-4, Math.min(4, dragBase.getDouble("x") + (positions[2] - positions[0]) / document.getInt("width"))))
                             .put("y", Math.max(-4, Math.min(4, dragBase.getDouble("y") + (positions[3] - positions[1]) / document.getInt("height"))));
                 } else if (!"select".equals(tool) && gesture.length() > 0) {
-                    if ("stroke".equals(tool) || "eraser".equals(tool)||isPaintTool()) for (int i = 0; i < event.getHistorySize(); i++) addPoint(event.getHistoricalX(i), event.getHistoricalY(i), event.getToolType(0)==MotionEvent.TOOL_TYPE_STYLUS?event.getHistoricalPressure(i):1);
+                    if ("stroke".equals(tool) || "eraser".equals(tool) || isPrecisionTool()||isPaintTool()) for (int i = 0; i < event.getHistorySize(); i++) addPoint(event.getHistoricalX(i), event.getHistoricalY(i), event.getToolType(0)==MotionEvent.TOOL_TYPE_STYLUS?event.getHistoricalPressure(i):1);
                     addPoint(event.getX(), event.getY(), event.getToolType(0)==MotionEvent.TOOL_TYPE_STYLUS?event.getPressure():1);
                 }
                 if(isPaintTool()&&gesture.length()>0)requestTouchPreview();invalidate(); return true;
@@ -382,7 +430,13 @@ public final class SketchCanvasView extends View {
                 pointerDown=false;
                 performClick(); getParent().requestDisallowInterceptTouchEvent(false);
                 if("pan".equals(tool)||"eyedropper".equals(tool))return true;
-                if("nodes".equals(tool)){if(nodePreview!=null){JSONObject patch=new JSONObject();String field=nodePreview.has("commands")?"commands":"points";patch.put(field,nodePreview.get(field));listener.onOperation(new JSONObject().put("type","update_object").put("objectId",selectedId).put("patch",patch));}nodePreview=null;if(renderer!=null)renderer.setGeometryPreview(null);invalidate();return true;}
+                if("nodes".equals(tool)){
+                    if(nodePreview!=null){
+                        if(nodePreview.has("commands"))listener.onOperation(SketchShapeKeys.editOperation(SketchDocument.object(document,selectedId),frame,nodePreview.getJSONArray("commands")));
+                        else listener.onOperation(new JSONObject().put("type","update_object").put("objectId",selectedId).put("patch",new JSONObject().put("points",nodePreview.getJSONArray("points"))));
+                    }
+                    nodePreview=null;if(renderer!=null)renderer.setGeometryPreview(null);invalidate();return true;
+                }
                 if ("select".equals(tool)) {
                     if (selectedId != null && dragTransform != null && Math.hypot(x - downX, y - downY) > .002) {
                         JSONObject object = SketchDocument.object(document, selectedId);
@@ -400,24 +454,25 @@ public final class SketchCanvasView extends View {
                 gesture = new JSONArray(); invalidate(); return true;
             }
             if (event.getActionMasked() == MotionEvent.ACTION_CANCEL) { invalidateTouchPreview(true);pointerDown=false;gesture = new JSONArray(); dragTransform = null;nodePreview=null;if(renderer!=null)renderer.setGeometryPreview(null); getParent().requestDisallowInterceptTouchEvent(false); invalidate(); return true; }
-        } catch (Exception e) {invalidateTouchPreview(true);pointerDown=false;paintCommitter=null;paintTarget=null; gesture = new JSONArray(); if (listener != null) listener.onMessage(e.getMessage()); }
+        } catch (Exception e) {invalidateTouchPreview(true);pointerDown=false;dragBase=null;dragTransform=null;if(getParent()!=null)getParent().requestDisallowInterceptTouchEvent(false);paintCommitter=null;paintTarget=null; gesture = new JSONArray(); if (listener != null) listener.onMessage(e.getMessage()); }
         return true;
     }
 
     private Matrix objectInverse() throws Exception {int w=document.getInt("width"),h=document.getInt("height");Matrix world=new Matrix();world.setConcat(SketchFrameRenderer.matrix(SketchDocument.transformAt(SketchDocument.layer(document,layerId),frame),w,h),SketchFrameRenderer.matrix(SketchDocument.transformAt(SketchDocument.object(document,selectedId),frame),w,h));Matrix inverse=new Matrix();if(!world.invert(inverse))throw SketchDocument.bad("Object transform cannot be inverted");return inverse;}
-    private void chooseNode(float x,float y) throws Exception {JSONObject object=SketchDocument.object(document,selectedId);nodeCommand=-1;nodePreview=null;if(!object.has("points")&&!object.has("commands"))return;float[] p={x*document.getInt("width"),y*document.getInt("height")};objectInverse().mapPoints(p);double nearest=.06;JSONArray geometry=object.has("commands")?object.getJSONArray("commands"):object.getJSONArray("points");for(int i=0;i<geometry.length();i++){JSONArray command=geometry.getJSONArray(i);int start=object.has("commands")?1:0,stop=object.has("commands")?command.length():2;for(int k=start;k<stop;k+=2){double distance=Math.hypot(command.getDouble(k)-p[0]/document.getDouble("width"),command.getDouble(k+1)-p[1]/document.getDouble("height"));if(distance<nearest){nearest=distance;nodeCommand=i;nodeOffset=k;}}}if(nodeCommand>=0)nodePreview=SketchDocument.copy(object);}
+    private void chooseNode(float x,float y) throws Exception {JSONObject object=SketchShapeKeys.sampled(SketchDocument.object(document,selectedId),frame);nodeCommand=-1;nodePreview=null;if(!object.has("points")&&!object.has("commands"))return;float[] p={x*document.getInt("width"),y*document.getInt("height")};objectInverse().mapPoints(p);double nearest=.06;JSONArray geometry=object.has("commands")?object.getJSONArray("commands"):object.getJSONArray("points");for(int i=0;i<geometry.length();i++){JSONArray command=geometry.getJSONArray(i);int start=object.has("commands")?1:0,stop=object.has("commands")?command.length():2;for(int k=start;k<stop;k+=2){double distance=Math.hypot(command.getDouble(k)-p[0]/document.getDouble("width"),command.getDouble(k+1)-p[1]/document.getDouble("height"));if(distance<nearest){nearest=distance;nodeCommand=i;nodeOffset=k;}}}if(nodeCommand>=0)nodePreview=SketchDocument.copy(object);}
     private void moveNode(float x,float y) throws Exception {if(nodePreview==null)return;float[] p={x*document.getInt("width"),y*document.getInt("height")};objectInverse().mapPoints(p);JSONArray geometry=nodePreview.has("commands")?nodePreview.getJSONArray("commands"):nodePreview.getJSONArray("points");geometry.getJSONArray(nodeCommand).put(nodeOffset,Math.max(0,Math.min(1,p[0]/document.getDouble("width")))).put(nodeOffset+1,Math.max(0,Math.min(1,p[1]/document.getDouble("height"))));if(renderer!=null)renderer.setGeometryPreview(nodePreview);}
     private void addPoint(float screenX, float screenY, float pressure) throws Exception {
-        if (gesture.length() >= 8192) throw SketchDocument.bad("Touch stroke reaches 8192 points; lift to continue");
+        if (gesture.length() >= (isPrecisionTool()?OmegaBezierFitter.MAX_SAMPLES:8192)) throw SketchDocument.bad("Stroke point budget reached; lift the pen to continue");
         Matrix inverse = new Matrix();
         if(isPaintTool()&&paintTarget!=null){JSONObject object=SketchDocument.object(document,paintTarget);Matrix world=new Matrix();world.setConcat(SketchFrameRenderer.matrix(SketchDocument.transformAt(SketchDocument.layer(document,layerId),frame),document.getInt("width"),document.getInt("height")),SketchFrameRenderer.matrix(SketchDocument.transformAt(object,frame),document.getInt("width"),document.getInt("height")));if(!world.invert(inverse))throw SketchDocument.bad("Paint transform cannot be inverted");}
         else SketchFrameRenderer.matrix(SketchDocument.transformAt(SketchDocument.layer(document, layerId), frame), document.getInt("width"), document.getInt("height")).invert(inverse);
         float[] p = {(screenX - left) / viewScale, (screenY - top) / viewScale}; inverse.mapPoints(p);
         double x = Math.max(0, Math.min(1, p[0] / document.getInt("width"))), y = Math.max(0, Math.min(1, p[1] / document.getInt("height")));
         if (gesture.length() > 0) { JSONArray last = gesture.getJSONArray(gesture.length() - 1); if (Math.hypot(x - last.getDouble(0), y - last.getDouble(1)) < .0002 && Math.abs(pressure - last.getDouble(2)) < .01) return; }
-        if(gesture.length()>0&&("stroke".equals(tool)||"eraser".equals(tool))){double[] precise=SketchStrokePrecision.filter(gesture,x,y,stabilization,document.getInt("width"),document.getInt("height"));x=precise[0];y=precise[1];}
+        if(gesture.length()>0&&("stroke".equals(tool)||"eraser".equals(tool)||isPrecisionTool())){double[] precise=SketchStrokePrecision.filter(gesture,x,y,stabilization,document.getInt("width"),document.getInt("height"));x=precise[0];y=precise[1];}
         if(isPaintTool())appendPaintPoint(x,y,Math.max(0,Math.min(1,pressure)));else gesture.put(new JSONArray().put(x).put(y).put(Math.max(0, Math.min(1, pressure))));
     }
+    private boolean isPrecisionTool(){return "precision".equals(tool)||"precision_brush".equals(tool);}
     private boolean isPaintTool(){return "paint".equals(tool)||"paint_erase".equals(tool)||"clone".equals(tool);}
     private void beginPaintGesture()throws Exception{
         if(paintBrush==null)throw SketchDocument.bad("Choose Paint settings before painting");
@@ -514,8 +569,25 @@ public final class SketchCanvasView extends View {
         Path path=new Path();JSONArray points=operation.getJSONArray("points");for(int i=0;i<points.length();i++){JSONArray point=points.getJSONArray(i);float x=(float)point.getDouble(0)*w,y=(float)point.getDouble(1)*h;if(i==0)path.moveTo(x,y);else path.lineTo(x,y);}if(points.length()==1){JSONArray point=points.getJSONArray(0);marker.setStyle(Paint.Style.FILL);canvas.drawCircle((float)point.getDouble(0)*w,(float)point.getDouble(1)*h,marker.getStrokeWidth()/2,marker);}else canvas.drawPath(path,marker);canvas.restoreToCount(save);
     }
     private void commitGesture() throws Exception {
-        if (gesture.length() == 0) return; JSONObject object = baseObject(tool);
-        if ("stroke".equals(tool) || "eraser".equals(tool)) object.put("points", gesture);
+        if(gesture.length()==0)return;
+        if(isPrecisionTool()){
+            if(gesture.length()<2)return;
+            // Fast UI admission only. The measured, pixel-tolerance-constrained
+            // path fitting executes through the existing sketch worker/undo
+            // transaction; never block touch by fitting 4096 samples here.
+            JSONObject operation=new JSONObject().put("type","precision_contour")
+                    .put("layerId",layerId).put("objectId",UUID.randomUUID().toString())
+                    .put("points",new JSONArray(gesture.toString()))
+                    .put("frame",frame).put("exposure",1)
+                    .put("color",color).put("width",brushWidth)
+                    .put("tolerancePx",1.8).put("tension",.9)
+                    .put("closed",false).put("pressureOutline",!document.has("layeredDrawing"));
+            if("precision_brush".equals(tool))operation.put("pressureOutline",false).put("brush",brushStyle==null?SketchBrushes.style("ink",1,.6,true,0):SketchDocument.copy(brushStyle));
+            if(listener!=null)listener.onOperation(operation);
+            return;
+        }
+        JSONObject object = baseObject(tool);
+        if ("stroke".equals(tool) || "eraser".equals(tool) || isPrecisionTool()) object.put("points", gesture);
         else {
             JSONArray a = gesture.getJSONArray(0), b = gesture.getJSONArray(gesture.length() - 1);
             if ("line".equals(tool)) object.put("points", new JSONArray().put(a).put(b));

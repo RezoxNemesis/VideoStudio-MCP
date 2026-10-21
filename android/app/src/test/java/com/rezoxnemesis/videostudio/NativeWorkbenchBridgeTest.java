@@ -10,9 +10,22 @@ import static org.junit.Assert.*;
 
 @RunWith(RobolectricTestRunner.class) @Config(sdk=33,manifest=Config.NONE)
 public class NativeWorkbenchBridgeTest {
+    @Test public void exactCameraCompatibilityAliasesRemainClosedAndUseNativeWorkers() throws Exception {
+        JSONObject aliases=NativeWorkbenchBridge.capabilities().getJSONObject("compatibilityAliases");
+        assertEquals(2,aliases.length());
+        for(String suffix:new String[]{"edit","get"}){
+            String action="cinematic_3d_"+suffix+"_program",alias="studio_"+action+"_v4103";
+            assertEquals(action,aliases.getString(alias));assertEquals(action,NativeWorkbenchBridge.canonicalAction(alias));
+            assertTrue(NativeAgentMailboxActions.supports(alias));assertTrue(NativeCommandExecutionPolicy.requiresBackgroundThread(alias));
+        }
+        for(String unknown:new String[]{"studio_cinematic_3d_get_program_v4104","studio_gallery_v4103","toString"})assertEquals(unknown,NativeWorkbenchBridge.canonicalAction(unknown));
+    }
+
     @Test public void onlyTheClosedKnownAliasesResolveToExistingActions()throws Exception {
-        JSONObject advertised=NativeWorkbenchBridge.capabilities();JSONArray actions=advertised.getJSONArray("canonicalActions");assertEquals(61,actions.length());assertEquals("sketch_review",NativeWorkbenchBridge.canonicalAction("studio_sketch_review"));assertEquals("sketch_quality_audit",NativeWorkbenchBridge.canonicalAction("studio_sketch_quality_audit"));assertEquals("app_execute",advertised.getString("tool"));assertEquals("3.9.0",advertised.getString("minimumNativeVersion"));assertEquals("4.1.0",advertised.getString("paintMinimumNativeVersion"));
+        JSONObject advertised=NativeWorkbenchBridge.capabilities();JSONArray actions=advertised.getJSONArray("canonicalActions");assertEquals(89,actions.length());assertEquals("4.10.2",advertised.getJSONObject("localNeuralDrawing").getString("minimumNativeVersion"));assertEquals("sketch_layered_drawing_preview",NativeWorkbenchBridge.canonicalAction("studio_sketch_layered_drawing_preview"));assertTrue(NativeCommandExecutionPolicy.requiresBackgroundThread("studio_sketch_layered_drawing_preview"));assertTrue(NativeAgentMailboxActions.supports("sketch_layered_drawing_preview"));assertEquals("4.9.2",advertised.getString("layeredDrawingMinimumNativeVersion"));assertEquals("sketch_review",NativeWorkbenchBridge.canonicalAction("studio_sketch_review"));assertEquals("sketch_quality_audit",NativeWorkbenchBridge.canonicalAction("studio_sketch_quality_audit"));assertEquals("app_execute",advertised.getString("tool"));assertEquals("3.9.0",advertised.getString("minimumNativeVersion"));assertEquals("4.1.0",advertised.getString("paintMinimumNativeVersion"));
         assertEquals("4.4.0",advertised.getString("characterAnimationMinimumNativeVersion"));
+        for(String action:new String[]{"sketch_book_timeline","sketch_import_animation","sketch_component_save","sketch_component_list","sketch_component_apply"}){assertEquals(action,NativeWorkbenchBridge.canonicalAction("studio_"+action));assertTrue(NativeCommandExecutionPolicy.requiresBackgroundThread("studio_"+action));}
+        assertEquals("4.7.0",advertised.getString("featureLengthSketchMinimumNativeVersion"));
         assertEquals("cinematic_3d_edit_program",NativeWorkbenchBridge.canonicalAction("studio_cinematic_3d_edit_program"));
         assertTrue(NativeCommandExecutionPolicy.requiresBackgroundThread("studio_cinematic_3d_edit_program"));
         assertEquals("4.3.0",advertised.getString("cameraEditMinimumNativeVersion"));
@@ -20,8 +33,33 @@ public class NativeWorkbenchBridgeTest {
         assertTrue(NativeCommandExecutionPolicy.requiresBackgroundThread("studio_import_mailbox_media"));
         assertEquals("4.2.0",advertised.getString("encryptedMediaImportMinimumNativeVersion"));
         assertEquals(256L*1024*1024,advertised.getLong("encryptedMediaImportMaximumBytes"));
+        // New actions are explicitly enumerated; unknown prefixes remain closed below.
+        for(String action:new String[]{"sketch_animation_place_in_book","sketch_story_create","sketch_story_preview","sketch_story_audio_create","sketch_story_example","project_asset_info","project_import_asset"}){
+            assertEquals(action,NativeWorkbenchBridge.canonicalAction("studio_"+action));assertTrue(NativeAgentMailboxActions.supports(action));
+        }
+        for(String suffix:new String[]{"start","get","list","note","options","propose","preview","apply","close"}){
+            String action="sketch_correction_"+suffix;assertEquals(action,NativeWorkbenchBridge.canonicalAction("studio_"+action));assertTrue(NativeAgentMailboxActions.supports(action));assertTrue(NativeCommandExecutionPolicy.requiresBackgroundThread("studio_"+action));
+        }
         for(int i=0;i<actions.length();i++){String action=actions.getString(i);assertEquals(action,NativeWorkbenchBridge.canonicalAction("studio_"+action));assertEquals(action,NativeWorkbenchBridge.canonicalAction(action));}
         for(String unknown:new String[]{"studio_gallery_list","studio_delete_project","studio_run_shell","studio_unknown_action","studio_studio_sketch_edit","studio_cinematic_3d_save_program/execute","Studio_sketch_edit","studio_"})assertEquals(unknown,NativeWorkbenchBridge.canonicalAction(unknown));assertNull(NativeWorkbenchBridge.canonicalAction(null));
+    }
+    @Test public void referenceLayersAliasUsesSharedMailboxAndBackgroundRoute()throws Exception {
+        String action="sketch_import_reference_layers";
+        assertEquals(action,NativeWorkbenchBridge.canonicalAction("studio_"+action));
+        assertTrue(NativeAgentMailboxActions.supports(action));
+        assertTrue(NativeCommandExecutionPolicy.requiresBackgroundThread(action));
+        assertTrue(NativeCommandExecutionPolicy.requiresBackgroundThread("studio_"+action));
+        assertEquals("4.8.5",NativeWorkbenchBridge.capabilities().getString("referenceLayersMinimumNativeVersion"));
+        assertEquals("4.8.5",NativeWorkbenchBridge.capabilities().getString("sourceMaskMinimumNativeVersion"));
+    }
+    @Test public void referencePreviewAliasIsExplicitAndRunsOnTheBackgroundLane()throws Exception {
+        String action="sketch_reference_layers_preview";
+        assertEquals(action,NativeWorkbenchBridge.canonicalAction("studio_"+action));
+        assertTrue(NativeAgentMailboxActions.supports(action));
+        assertTrue(NativeAgentMailboxActions.supports("studio_"+action));
+        assertTrue(NativeCommandExecutionPolicy.requiresBackgroundThread(action));
+        assertTrue(NativeCommandExecutionPolicy.requiresBackgroundThread("studio_"+action));
+        assertEquals("4.8.5",NativeWorkbenchBridge.capabilities().getString("referenceLayersPreviewMinimumNativeVersion"));
     }
     @Test public void flatParametersCredentialsAndPrivateBookkeepingStayExactAndIndependent()throws Exception {
         JSONObject parameters=new JSONObject().put("projectId","owned_source").put("sourceProjectUpdatedAt",9223372036854775800L).put("requestId","job_reference").put("bearer","private-token-in-memory-only").put("_mcpCommandId","command_1").put("_recoveryPlanId","recovery_1").put("assetIds",new JSONArray().put("source_b").put("source_a")).put("settings",new JSONObject().put("strength",.8));

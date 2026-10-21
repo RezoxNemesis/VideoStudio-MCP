@@ -100,6 +100,11 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
     private TextView studioCaptionPreview;
     private Runnable studioCaptionClock;
     private FrameLayout studioPreviewFrame;
+    private TextView studioPreviewErrorView;
+    private Button studioPreviewRetry;
+    private String studioPreviewError="";
+    private String studioPreviewErrorProjectId="";
+    private long studioPreviewErrorRevision=-1;
     private TextView studioTimeLabel;
     private SeekBar studioSeek;
     private StudioTracksView studioTracks;
@@ -768,6 +773,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         studioStillPreview=new ImageView(this);
         studioStillPreview.setBackgroundColor(Color.BLACK);
         studioStillPreview.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        studioStillPreview.setVisibility(View.GONE);
         studioPreviewFrame.addView(studioStillPreview,
                 new FrameLayout.LayoutParams(-1,-1));
         studioCaptionPreview=new TextView(this);
@@ -781,6 +787,14 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         studioPreviewFrame.addView(studioCaptionPreview,
                 new FrameLayout.LayoutParams(-1,-2,Gravity.BOTTOM|Gravity.CENTER_HORIZONTAL));
         previewCard.addView(studioPreviewFrame,margins(-1,dp(254),dp(7),0,0,0));
+        studioPreviewErrorView=body(studioPreviewError);
+        studioPreviewErrorView.setTag("studio-preview-error");
+        studioPreviewErrorView.setVisibility(studioPreviewError.isEmpty()?View.GONE:View.VISIBLE);
+        previewCard.addView(studioPreviewErrorView);
+        studioPreviewRetry=studioButton("Retry preview",this::playStudioTimeline);
+        studioPreviewRetry.setTag("studio-preview-retry");
+        studioPreviewRetry.setVisibility(studioPreviewError.isEmpty()?View.GONE:View.VISIBLE);
+        previewCard.addView(studioPreviewRetry);
 
         studioTimeLabel=body("0:00 / "+time(activeProject.outputDurationMs()));
         previewCard.addView(studioTimeLabel,margins(-1,-2,dp(7),0,0,0));
@@ -965,6 +979,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         Button add=studioButton("+ Import",this::pickMedia);
         mediaHead.addView(add,new LinearLayout.LayoutParams(dp(105),dp(43)));
         box.addView(mediaHead,margins(-1,-2,dp(8),dp(4),0,0));
+        box.addView(studioButton("Import from project",()->ProjectAssetImportDialog.show(this,activeProject.id)),margins(-1,dp(43),dp(8),0,0,dp(4)));
         if(studioShowMedia)renderStudioMediaBin(box);
 
         box.addView(title("Tools",18),margins(-1,-2,dp(10),dp(3),0,0));
@@ -1121,17 +1136,18 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                     Toast.LENGTH_LONG).show();
             return;
         }
-        String[] quality={"720p · faster mobile export","1080p · higher detail"};
-        new AlertDialog.Builder(this).setTitle("Export this timeline")
-                .setMessage("VideoStudio's native Media3 renderer applies supported effects. "+
-                        "The finished MP4 will appear in All Renders; the source project stays intact.")
-                .setItems(quality,(d,index)->{
+        final ProjectStore.Project project=activeProject;
+        StudioExportDialog.show(this,(aspect,quality)->{
+                    if(project.clips.isEmpty()){
+                        Toast.makeText(this,"Add clips to the timeline before exporting",Toast.LENGTH_LONG).show();
+                        return;
+                    }
                     try{
                         Intent request=new Intent(this,ControlService.class)
                                 .setAction(ControlService.ACTION_LOCAL_EXPORT)
-                                .putExtra("projectId",activeProject.id)
-                                .putExtra("aspect","9:16")
-                                .putExtra("quality",index==0?"720p":"1080p")
+                                .putExtra("projectId",project.id)
+                                .putExtra("aspect",aspect)
+                                .putExtra("quality",quality)
                                 .putExtra("fileName","VideoStudio_"+
                                         System.currentTimeMillis()+".mp4");
                         startForegroundService(request);
@@ -1142,29 +1158,59 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                         Toast.makeText(this,"Could not queue native export: "+e.getMessage(),
                                 Toast.LENGTH_LONG).show();
                     }
-                }).setNegativeButton("Cancel",null).show();
+                });
     }
 
     private void previewSelectedStudioClip(boolean startPlayback){
+        if(!studioPreviewError.isEmpty()){
+            if(activeProject!=null&&activeProject.id.equals(studioPreviewErrorProjectId)&&
+                    activeProject.updatedAt==studioPreviewErrorRevision){
+                // Rebuilding layout is not a Retry and does not prove decoding works.
+                if(livePlayer!=null&&livePlayer.isEditedPreview())startStudioEditedClock();
+                return;
+            }
+            showStudioPreviewError("");
+        }
         if(selectedClip==null||activeProject==null||activeProject.clips.isEmpty())return;
         beginStudioEditPreview(startPlayback||timelinePreviewRunning);
     }
 
-    private void beginStudioEditPreview(boolean play){
+    private boolean beginStudioEditPreview(boolean play){
+        final int stillVisibility=studioStillPreview==null?View.GONE:studioStillPreview.getVisibility();
+        final int captionVisibility=studioCaptionPreview==null?View.GONE:studioCaptionPreview.getVisibility();
         try{
-            if(studioStillPreview!=null)studioStillPreview.setVisibility(View.GONE);
-            if(studioCaptionPreview!=null)studioCaptionPreview.setVisibility(View.GONE);
-            player().setContextIds("",selectedClip==null?"":selectedClip.id);
             player().playEdit(activeProject,renderEngine,"9:16","720p",studioPlayheadMs,play,
                     ()->{timelinePreviewRunning=false;studioPlayheadMs=activeProject.outputDurationMs();},
-                    error->{timelinePreviewRunning=false;
-                        Toast.makeText(this,error,Toast.LENGTH_LONG).show();});
+                    error->{
+                        if(studioStillPreview!=null)studioStillPreview.setVisibility(stillVisibility);
+                        if(studioCaptionPreview!=null)studioCaptionPreview.setVisibility(captionVisibility);
+                        timelinePreviewRunning=player().isEditedPreview()&&player().snapshotState().playWhenReady;
+                        showStudioPreviewError(error);
+                    });
+            player().setContextIds("",selectedClip==null?"":selectedClip.id);
+            if(studioStillPreview!=null)studioStillPreview.setVisibility(View.GONE);
+            if(studioCaptionPreview!=null)studioCaptionPreview.setVisibility(View.GONE);
+            if(stillTimelineNext!=null){ui.removeCallbacks(stillTimelineNext);stillTimelineNext=null;}
+            if(studioAudioPreview!=null)studioAudioPreview.stop();
+            showStudioPreviewError("");
             timelinePreviewRunning=play;
             startStudioEditedClock();
+            return true;
         }catch(Exception error){
-            timelinePreviewRunning=false;
-            Toast.makeText(this,"Edited preview unavailable: "+error.getMessage(),Toast.LENGTH_LONG).show();
+            showStudioPreviewError("Edited preview unavailable: "+error.getMessage());
+            return false;
         }
+    }
+
+    private void showStudioPreviewError(String error){
+        studioPreviewError=error==null?"":error;
+        studioPreviewErrorProjectId=studioPreviewError.isEmpty()||activeProject==null?"":activeProject.id;
+        studioPreviewErrorRevision=studioPreviewError.isEmpty()||activeProject==null?-1:activeProject.updatedAt;
+        if(studioPreviewErrorView!=null){
+            studioPreviewErrorView.setText(studioPreviewError);
+            studioPreviewErrorView.setVisibility(studioPreviewError.isEmpty()?View.GONE:View.VISIBLE);
+        }
+        if(studioPreviewRetry!=null)studioPreviewRetry.setVisibility(studioPreviewError.isEmpty()?View.GONE:View.VISIBLE);
     }
 
     private void startStudioEditedClock(){
@@ -1219,12 +1265,11 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
     }
 
     /** GPU edited composition, including stills, timed text and independently mixed audio. */
-    private void playStudioTimeline(){
+    private boolean playStudioTimeline(){
         if(activeProject==null||activeProject.clips.isEmpty()){
-            Toast.makeText(this,"Timeline is empty",Toast.LENGTH_SHORT).show();return;
+            showStudioPreviewError("Timeline is empty. Add clips, then Retry preview.");return false;
         }
-        stopStillSequenceOnly();
-        beginStudioEditPreview(true);
+        return beginStudioEditPreview(true);
     }
 
     private void playStudioFrom(int index){
@@ -1425,6 +1470,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                 new LinearLayout.LayoutParams(dp(109),dp(44)));
         box.addView(header,margins(-1,-2,dp(10),dp(4),0,0));
         box.addView(studioButton("+ Image Overlay",this::chooseStudioImage),margins(-1,dp(43),0,dp(4),0,0));
+        box.addView(studioButton("Story audio",()->{if(activeProject!=null)SketchStoryAudioDialog.show(this,activeProject.id,result->Toast.makeText(this,"Story audio saved in a separate audio project",Toast.LENGTH_LONG).show());}),margins(-1,dp(43),0,dp(4),0,0));
 
         StudioTracksView bands=new StudioTracksView(this);
         studioTracks=bands;
@@ -2281,20 +2327,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         playButton.setOnClickListener(v -> previewTimeline());
         top.addView(playButton);
         Button exportButton = compactButton("Export");
-        exportButton.setOnClickListener(v -> {
-            if (activeProject == null || activeProject.clips.isEmpty()) {
-                Toast.makeText(this, "Timeline is empty", Toast.LENGTH_SHORT).show();
-                return;
-            }
-            Intent export = new Intent(this, ControlService.class)
-                    .setAction(ControlService.ACTION_LOCAL_EXPORT)
-                    .putExtra("projectId", activeProject.id)
-                    .putExtra("aspect", "9:16")
-                    .putExtra("quality", "1080p")
-                    .putExtra("fileName", "VideoStudio_" + System.currentTimeMillis() + ".mp4");
-            startForegroundService(export);
-            Toast.makeText(this, "Export queued in Native Agent • watch Autonomous work", Toast.LENGTH_LONG).show();
-        });
+        exportButton.setOnClickListener(v -> queueStudioExport());
         top.addView(exportButton);
         box.addView(top, margins(-1, -2, 0, dp(10), 0, 0));
         Button storyboard=neonButton("Storyboard → Scoped Motion Drafts",C_MAGENTA);
@@ -4396,12 +4429,17 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                     refreshCurrent();
                     break;
                 }
-                case "preview_project":
+                case "preview_project": {
                     if (!"editor".equals(currentScreen)) showEditor();
-                    ui.postDelayed(this::previewTimeline, 250);
-                    result.put("ok", true);
-                    result.put("previewing", true);
+                    boolean admitted=playStudioTimeline();
+                    result.put("ok",admitted);
+                    result.put("admitted",admitted);
+                    result.put("playbackRequested",admitted);
+                    result.put("previewMode","edited_composition");
+                    result.put("previewing",admitted&&player().isPlaying());
+                    if(!admitted)result.put("error",studioPreviewError);
                     break;
+                }
                 case "analyse_media":
                     queueAnalysisCommand(command, p);
                     return;

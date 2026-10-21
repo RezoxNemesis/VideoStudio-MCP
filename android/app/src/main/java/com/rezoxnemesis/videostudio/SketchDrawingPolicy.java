@@ -22,6 +22,7 @@ public final class SketchDrawingPolicy {
     public static void requireBegin(JSONObject document, String method) throws Exception {
         requireMethod(method);
         if (!ORIGINAL.equals(method)) return;
+        if(document.has("layeredDrawing")){SketchLayeredDrawing.validate(document);return;}
         JSONArray layers = document.getJSONArray("layers");
         for (int i = 0; i < layers.length(); i++) {
             JSONArray objects = layers.getJSONObject(i).getJSONArray("objects");
@@ -35,6 +36,8 @@ public final class SketchDrawingPolicy {
     }
     public static void requireAction(JSONObject session, String action, JSONObject args) throws Exception {
         if (!requiresOriginal(session)) return;
+        if ("sketch_import_reference_layers".equals(action))
+            throw rejected("Named cutouts copy source pixels; use source_assisted outside original drawing");
         if ("sketch_undo".equals(action) || "sketch_redo".equals(action))
             throw rejected("End the original drawing session before using history; history replacement is not a recorded drawing step");
         if ("sketch_import_reference".equals(action) && args.optBoolean("guideVisible", true))
@@ -49,7 +52,7 @@ public final class SketchDrawingPolicy {
         for (int i = 0; i < operations.length(); i++) {
             JSONObject operation = operations.getJSONObject(i);
             String type = operation.optString("type");
-            if ("trace_reference".equals(type) || "vectorize_reference".equals(type) || "duplicate_cel".equals(type))
+            if ("trace_reference".equals(type) || "vectorize_reference".equals(type) || "duplicate_cel".equals(type) || "master_instance".equals(type))
                 throw rejected("Use authored strokes and geometry instead of tracing or copying existing cel contents");
             if ("paint_stroke".equals(type)) {
                 JSONObject record = operation.optJSONObject("stroke");
@@ -81,6 +84,7 @@ public final class SketchDrawingPolicy {
     }
     /** Final-state guard catches image revelation through transforms, keys, timing or hidden layers. */
     public static void requireDocument(JSONObject session, JSONObject current, JSONObject next) throws Exception {
+        SketchLayeredDrawing.validate(next);
         if (!requiresOriginal(session)) return;
         JSONArray layers = next.getJSONArray("layers");
         for (int i = 0; i < layers.length(); i++) {

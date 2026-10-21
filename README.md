@@ -307,6 +307,53 @@ The app includes a ChatGPT Activity screen. Imports, analysis, edits, renders, e
 
 Only work executed by VideoStudio itself counts as completed editing.
 
+## Generated speech in short shots
+
+For a short shot within an imported long dialogue master, ordinary ChatGPT should
+call `app_status`, require a connected native app version **4.8.0 or newer**, then
+read `sketch_capabilities.speechAnimation`. Import the completed dialogue through
+Open Pipeline first; the master, timing archive and project asset ownership are
+still verified before loading a line.
+
+Use `speech.generated.shotStartMs` to state the shot's global start in the master,
+in whole milliseconds from 0 through 600000. For example, in a six-second shot
+starting at 65000 ms, a line starting at 65500 ms begins at local 500 ms:
+
+```json
+{
+  "type": "add_face_animation",
+  "layerId": "layer_1",
+  "faceId": "story_speaker",
+  "settings": {"view": "front"},
+  "speech": {
+    "generated": {
+      "requestId": "story_master",
+      "lineIndex": 0,
+      "shotStartMs": 65000
+    }
+  }
+}
+```
+
+Send the operation through `sketch_edit` with the shot's current revision and a
+stable operation ID. The same generated reference works for mouth and character
+animation. Omitting `shotStartMs` preserves the previous zero-offset behavior;
+explicitly supplying it, including zero, requires 4.8.0.
+
+Native subtracts only the explicit shot start, then validates every original
+prediction segment against the unchanged shot duration. Negative local starts
+and lines that extend beyond the shot reject: no clipping or timewarp, and no
+FPS, resolution or master-audio changes. The native loader returns
+`audioTimelineOffsetMs` equal to `shotStartMs`, plus unchanged `sourceLineTiming`
+and the verified master asset identity/hash. Place the shot at that offset on
+the film timeline and leave the unchanged master at its original origin.
+
+Both **Speech animation** and **Character performance** dialogs offer
+**Shot start in master (ms)**, initially zero, next to **Load generated dialogue**.
+Loaded cues remain editable. Sketch preview/export stays silent; review the shot
+with the original master in the project editor. Model duration predictions do
+not establish forced alignment or verified lip sync.
+
 ## Development
 
 Install dependencies:

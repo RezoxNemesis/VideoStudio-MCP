@@ -181,7 +181,7 @@ public final class SketchProjectStore implements AutoCloseable {
         JSONObject drawing=SketchDocument.copy(source);String id=SketchDocument.id(drawing,"id");SketchDocument.id(new JSONObject().put("id",operationId),"id");drawing.put("revision",1);SketchDocument.validate(drawing);
         String fingerprint=SketchDocument.sha256(("sketch_owned_import\n"+SketchDocument.canonical(drawing)).getBytes(StandardCharsets.UTF_8));JSONObject previous=receipt(id,operationId,fingerprint);if(previous!=null)return previous;
         verifyReferences(drawing);java.util.ArrayList<PaintIntent> seeds=paintIntents(drawing);db.beginTransaction();try{previous=receipt(id,operationId,fingerprint);if(previous!=null){db.setTransactionSuccessful();return previous;}
-            if(revision(id)>0)throw new IllegalStateException("SKETCH_ALREADY_EXISTS");try(Cursor count=db.rawQuery("SELECT COUNT(*) FROM sketches",null)){count.moveToFirst();if(count.getInt(0)>=10240)throw new IllegalStateException("SKETCH_STORAGE_BUDGET");}
+            if(revision(id)>0)throw new IllegalStateException("SKETCH_ALREADY_EXISTS");try(Cursor count=db.rawQuery("SELECT COUNT(*) FROM sketches",null)){count.moveToFirst();if(count.getInt(0)>=2000000)throw new IllegalStateException("SKETCH_STORAGE_BUDGET");}
             if(db.insert("sketches",null,values(id,drawing,0,1))<0)throw new IllegalStateException("SKETCH_ALREADY_EXISTS");history(id,0,drawing);seedPaintIntents(id,seeds);JSONObject result=result(drawing,false,false);saveReceipt(id,operationId,fingerprint,result);db.setTransactionSuccessful();return result;
         }finally{db.endTransaction();}
     }
@@ -195,7 +195,7 @@ public final class SketchProjectStore implements AutoCloseable {
             JSONObject previous = receipt(id, op, fingerprint);
             if (previous != null) { db.setTransactionSuccessful(); return previous; }
             try (Cursor c = db.rawQuery("SELECT COUNT(*) FROM sketches", null)) {
-                c.moveToFirst(); if (c.getInt(0) >= 10240) throw new IllegalStateException("SKETCH_STORAGE_BUDGET: at most 10240 sketch documents");
+                c.moveToFirst(); if (c.getInt(0) >= 2000000) throw new IllegalStateException("SKETCH_STORAGE_BUDGET: at most 2,000,000 sketch documents");
             }
             JSONObject doc = SketchDocument.create(args);
             ContentValues values = values(id, doc, 0, 1);
@@ -226,7 +226,9 @@ public final class SketchProjectStore implements AutoCloseable {
             JSONObject next = mutation.apply(SketchDocument.copy(current));
             if(SketchDrawingPolicy.requiresOriginal(activeDrawingSession(id))&&(liveOperations==null||liveOperations.length()==0))throw new IllegalStateException("SKETCH_ORIGINAL_DRAWING_REQUIRED: every drawing change must have recorded operations");
             next.put("id", id).put("revision", Math.addExact(expectedRevision, 1));
+            SketchLayeredDrawing.requireTransition(current,next,liveOperations);
             SketchDocument.validate(next); verifyReferences(next);
+            SketchLayeredDrawing.requireReviewPixels(context,next,liveOperations);
             SketchDrawingPolicy.requireDocument(activeDrawingSession(id),current,next);
             recordPaintIntents(id,liveOperations);if(seeds!=null)seedPaintIntents(id,seeds);
             int position;
@@ -239,10 +241,16 @@ public final class SketchProjectStore implements AutoCloseable {
                 throw new IllegalStateException("SKETCH_REVISION_CONFLICT");
             trimHistory(id, position);
             JSONObject result = result(next, canMove(id, position, false), false);
-            if(paintDetails!=null){SketchDocument.fields(paintDetails,"paintChanges");JSONArray changes=paintDetails.getJSONArray("paintChanges");if(changes.length()>64)throw SketchDocument.bad("At most 64 paint changes per receipt");result.put("paintChanges",new JSONArray(changes.toString()));}
+            if(paintDetails!=null){SketchDocument.fields(paintDetails,"paintChanges,authoredStagePromotions");JSONArray changes=paintDetails.getJSONArray("paintChanges");if(changes.length()>64)throw SketchDocument.bad("At most 64 paint changes per receipt");result.put("paintChanges",new JSONArray(changes.toString()));
+                if(paintDetails.has("authoredStagePromotions")){JSONArray promoted=paintDetails.getJSONArray("authoredStagePromotions");if(promoted.length()<1||promoted.length()>64)throw SketchDocument.bad("Reuse receipts require1..64 owned marks");for(int i=0;i<promoted.length();i++){JSONObject pin=promoted.getJSONObject(i);SketchDocument.fields(pin,"sourceObjectId,objectId,partId,layerId,sourcePaintSha256");JSONObject source=SketchDocument.object(current,SketchDocument.id(pin,"sourceObjectId")),target=SketchDocument.object(next,SketchDocument.id(pin,"objectId"));SketchDocument.id(pin,"partId");if(!source.getString("kind").equals(target.getString("kind"))||!SketchDocument.owner(next,target.getString("id")).getString("id").equals(SketchDocument.id(pin,"layerId")))throw SketchDocument.bad("Authored stage receipt ownership changed");if("paint".equals(source.getString("kind"))){String hash=source.getJSONObject("paint").getString("sha256");if(!hash.equals(pin.getString("sourcePaintSha256"))||!hash.equals(target.getJSONObject("paint").getString("sha256")))throw SketchDocument.bad("Authored stage paint identity changed");}else if(pin.has("sourcePaintSha256"))throw SketchDocument.bad("Pen reuse cannot claim a paint snapshot");}result.put("authoredStagePromotions",new JSONArray(promoted.toString()));}
+            }
             if(liveOperations!=null&&(liveOperations.length()>32768||liveOperations.toString().getBytes(StandardCharsets.UTF_8).length>8*1024*1024))throw new IllegalStateException("SKETCH_LIVE_EVENT_BUDGET: split generated tracing into smaller atomic batches");
             if(liveOperations!=null&&liveOperations.length()>0){if(context.getFilesDir().getUsableSpace()<16L*1024*1024+liveOperations.toString().getBytes(StandardCharsets.UTF_8).length*3L)throw new IllegalStateException("SKETCH_LIVE_STORAGE_FULL");ContentValues event=new ContentValues();event.put("sketch_id",id);event.put("base_revision",expectedRevision);event.put("revision",next.getLong("revision"));event.put("operations",liveOperations.toString());db.insertOrThrow("sketch_live_events",null,event);trimLiveEvents(id);}
-            saveReceipt(id, operationId, fingerprint, result); db.setTransactionSuccessful(); return result;
+            saveReceipt(id, operationId, fingerprint, result);
+            // Stop All can arrive after preparation, validation or history writes.
+            // Roll the entire uncommitted edit back; an existing receipt above still replays.
+            if(Thread.currentThread().isInterrupted())throw new java.io.InterruptedIOException("SKETCH_EDIT_CANCELLED: drawing change rolled back before commit; retry the operation ID to recover any committed receipt");
+            db.setTransactionSuccessful(); return result;
         } finally { db.endTransaction(); }
     }
     /** A short revision/receipt admission snapshot; expensive immutable painting follows outside SQLite. */
@@ -300,7 +308,6 @@ public final class SketchProjectStore implements AutoCloseable {
             if (previous != null) { db.setTransactionSuccessful(); return previous; }
             requireReceiptCapacity(id);
             JSONObject current = get(id); requireRevision(current, expectedRevision);
-            if(SketchDrawingPolicy.requiresOriginal(activeDrawingSession(id)))throw new IllegalStateException("SKETCH_ORIGINAL_STROKES_ONLY: end the drawing-only session before undo or redo");
             int position, nextPosition;
             try (Cursor c = db.rawQuery("SELECT position,next_position FROM sketches WHERE id=?", new String[]{id})) {
                 c.moveToFirst(); position = c.getInt(0); nextPosition = c.getInt(1);
@@ -312,7 +319,8 @@ public final class SketchProjectStore implements AutoCloseable {
                 target = c.getInt(0);
                 restored = new JSONObject(SQLiteLargeText.read(db, "SELECT json FROM sketch_history WHERE sketch_id=? AND position=?", id, Integer.toString(target)));
             }
-            restored.put("revision", Math.addExact(expectedRevision, 1)); SketchDocument.validate(restored); verifyReferences(restored);
+            if(!current.has("layeredDrawing")&&!restored.has("layeredDrawing"))SketchDrawingPolicy.requireAction(activeDrawingSession(id),redo?"sketch_redo":"sketch_undo",new JSONObject());
+            restored.put("revision", Math.addExact(expectedRevision, 1)); SketchLayeredDrawing.requireHistoryTransition(current,restored);SketchDocument.validate(restored); verifyReferences(restored);
             if (db.update("sketches", values(id, restored, target, nextPosition), "id=? AND revision=?", new String[]{id, Long.toString(expectedRevision)}) != 1)
                 throw new IllegalStateException("SKETCH_REVISION_CONFLICT");
             JSONObject result = result(restored, canMove(id, target, false), canMove(id, target, true));
@@ -381,13 +389,14 @@ public final class SketchProjectStore implements AutoCloseable {
     }
     public void verifyReferences(JSONObject doc) throws Exception {
         java.util.HashSet<String> verified = new java.util.HashSet<>(); JSONArray layers = doc.getJSONArray("layers");
-        SketchPaintStore assets=null;try{for (int i = 0; i < layers.length(); i++) {
+        java.util.HashMap<String,JSONArray> support=new java.util.HashMap<>();SketchPaintStore assets=null;try{for (int i = 0; i < layers.length(); i++) {
             JSONArray objects = layers.getJSONObject(i).getJSONArray("objects");
             for (int j = 0; j < objects.length(); j++) {
                 JSONObject object = objects.getJSONObject(j);
                 if ("image".equals(object.getString("kind")) && verified.add(object.getJSONObject("reference").getString("sha256")))
                     referenceFile(doc.getString("id"), object.getJSONObject("reference"));
                 if("paint".equals(object.getString("kind"))&&verified.add("paint:"+object.getJSONObject("paint").getString("sha256"))){if(assets==null)assets=new SketchPaintStore(context,doc.getString("id"));assets.verify(object.getJSONObject("paint"));}
+                if("paint".equals(object.getString("kind"))&&object.has("paintMesh")&&object.getJSONObject("paintMesh").has("sourceRect")){String sha=object.getJSONObject("paint").getString("sha256");JSONArray required=support.get(sha);if(required==null){if(assets==null)assets=new SketchPaintStore(context,doc.getString("id"));Bitmap bitmap=assets.renderSource(object.getJSONObject("paint"));try{required=SketchPaintMeshPrepare.supportRectangle(bitmap);support.put(sha,required);}finally{bitmap.recycle();}}SketchPaintMeshPrepare.requireSupport(object,required);}
             }
         }}finally{if(assets!=null)assets.close();}
     }

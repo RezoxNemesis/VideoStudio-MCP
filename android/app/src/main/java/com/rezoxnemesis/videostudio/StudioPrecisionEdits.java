@@ -112,6 +112,10 @@ public final class StudioPrecisionEdits {
         });
     }
 
+    static void validateClip(ProjectStore.Clip clip,ProjectStore.Asset asset)throws Exception{
+        applyOperation(clip,asset,new JSONObject());
+    }
+
     private static void applyOperation(ProjectStore.Clip clip,ProjectStore.Asset asset,JSONObject operation)throws Exception{
         if(operation.has("keyframeEdits")&&(operation.has("keyframes")||operation.has("clearKeyframes")))
             throw new IllegalArgumentException("keyframeEdits cannot be combined with replacement or clearKeyframes");

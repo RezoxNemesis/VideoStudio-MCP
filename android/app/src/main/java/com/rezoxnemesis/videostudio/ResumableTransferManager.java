@@ -19,12 +19,16 @@ import java.util.regex.Pattern;
  */
 public final class ResumableTransferManager {
     public static final int BUFFER_BYTES = 256 * 1024;
+    /** 64-bit media files; the 10 GiB ceiling is a resource limit, not a heap allocation. */
+    public static final long MAX_TRANSFER_BYTES = 10L * 1024L * 1024L * 1024L;
+    private static final long CHECKPOINT_BYTES = 8L * 1024L * 1024L;
     public static final long STORAGE_RESERVE_BYTES = 256L * 1024L * 1024L;
     private static final Pattern CONTENT_RANGE =
             Pattern.compile("bytes\\s+(\\d+)-(\\d+)/(\\d+|\\*)", Pattern.CASE_INSENSITIVE);
 
     public interface ProgressListener {
-        void onProgress(long totalBytes);
+        /** A durable checkpoint may require fsync, which can fail with I/O. */
+        void onProgress(long totalBytes) throws Exception;
     }
 
     public interface DownloadProgress {
@@ -49,6 +53,7 @@ public final class ResumableTransferManager {
             this.id = id;
             this.sourceUrl = sourceUrl;
             this.target = target;
+            if (expectedBytes > MAX_TRANSFER_BYTES) throw new IllegalArgumentException("Remote media exceeds the 10 GiB transfer ceiling");
             this.expectedBytes = expectedBytes > 0 ? expectedBytes : -1L;
             this.sha256 = sha256 == null ? "" : sha256.trim().toLowerCase(Locale.US);
         }
@@ -96,16 +101,27 @@ public final class ResumableTransferManager {
         long expected = request.expectedBytes;
 
         if (checkpoint != null) {
-            boolean sameSource = request.sourceUrl.equals(checkpoint.sourceUrl);
+            boolean sameSource = request.sourceUrl.equals(checkpoint.sourceUrl)
+                    && request.sha256.equalsIgnoreCase(checkpoint.sha256);
             boolean samePartial = partial.getAbsolutePath().equals(checkpoint.partialPath);
-            boolean sameOffset = checkpoint.completedBytes == offset;
-            if (!sameSource || !samePartial || !sameOffset) {
+            long pinned = checkpoint.completedBytes;
+            // A crash may leave up to 8 MiB on disk after the last fsynced
+            // journal receipt. Discard ONLY that unreceipted suffix; never
+            // append unverified bytes or reset the already durable prefix.
+            boolean recoverableTail = offset >= pinned && pinned >= 0L
+                    && offset - pinned <= CHECKPOINT_BYTES + BUFFER_BYTES;
+            if (!sameSource || !samePartial || !recoverableTail) {
                 truncate(partial);
                 offset = 0L;
                 etag = "";
                 lastModified = "";
-            } else if (expected <= 0 && checkpoint.expectedBytes > 0) {
-                expected = checkpoint.expectedBytes;
+            } else {
+                if (offset > pinned) {
+                    truncate(partial, pinned);
+                    offset = pinned;
+                }
+                if (expected <= 0 && checkpoint.expectedBytes > 0)
+                    expected = checkpoint.expectedBytes;
             }
         } else if (offset > 0) {
             // A stray partial with no durable provenance is unsafe to append.
@@ -166,6 +182,8 @@ public final class ResumableTransferManager {
             } else if (offset == 0L && connection.getContentLengthLong() > 0) {
                 expected = connection.getContentLengthLong();
             }
+            if (expected > MAX_TRANSFER_BYTES || offset > MAX_TRANSFER_BYTES)
+                throw new IllegalStateException("Remote media exceeds the 10 GiB transfer ceiling");
 
             long freeAfterHeaders = parent == null ? 0L : Math.max(0L, parent.getUsableSpace());
             StorageBudget.Check budget = StorageBudget.checkTransfer(
@@ -205,15 +223,36 @@ public final class ResumableTransferManager {
                 if (offset == 0L) output.setLength(0L);
                 output.seek(offset);
                 final long baseOffset = offset;
+                final long[] lastSaved = {baseOffset};
                 copyStream(input, output, baseOffset, total -> {
-                    journal.save(new TransferJournal.Entry(
-                            request.id, request.sourceUrl, partial.getAbsolutePath(),
-                            expectedForCopy, total, durableEtag, durableLastModified,
-                            request.sha256, "running"
-                    ));
-                    if (progress != null) progress.onProgress(total, expectedForCopy);
+                    if (total - lastSaved[0] >= CHECKPOINT_BYTES) {
+                        output.getFD().sync();
+                        if (budgetRoot != null
+                                && budgetRoot.getUsableSpace() < StorageBudget.DEFAULT_TRANSFER_RESERVE_BYTES) {
+                            journal.save(new TransferJournal.Entry(
+                                    request.id, request.sourceUrl, partial.getAbsolutePath(),
+                                    expectedForCopy, total, durableEtag, durableLastModified,
+                                    request.sha256, "waiting_storage"
+                            ));
+                            throw new IllegalStateException("MEDIA_WAITING_STORAGE: 512 MiB reserve reached; "
+                                    + "retry the same transfer after freeing storage");
+                        }
+                        journal.save(new TransferJournal.Entry(
+                                request.id, request.sourceUrl, partial.getAbsolutePath(),
+                                expectedForCopy, total, durableEtag, durableLastModified,
+                                request.sha256, "running"
+                        ));
+                        lastSaved[0] = total;
+                        if (progress != null) progress.onProgress(total, expectedForCopy);
+                    }
                 });
                 output.getFD().sync();
+                long synced = output.length();
+                journal.save(new TransferJournal.Entry(
+                        request.id, request.sourceUrl, partial.getAbsolutePath(),
+                        expectedForCopy, synced, durableEtag, durableLastModified,
+                        request.sha256, "running"
+                ));
             }
 
             long finalBytes = partial.length();
@@ -281,12 +320,16 @@ public final class ResumableTransferManager {
                                   long startingOffset,
                                   ProgressListener listener) throws Exception {
         if (input == null || output == null) throw new IllegalArgumentException("Input and output are required");
+        if (startingOffset < 0L || startingOffset > MAX_TRANSFER_BYTES)
+            throw new IllegalArgumentException("Remote transfer offset outside 10 GiB budget");
         long copied = 0L;
         byte[] buffer = new byte[BUFFER_BYTES];
         int count;
         while ((count = input.read(buffer)) != -1) {
             if (Thread.currentThread().isInterrupted()) throw new InterruptedIOException("Transfer cancelled");
             if (count == 0) continue;
+            if ((long) count > MAX_TRANSFER_BYTES - startingOffset - copied)
+                throw new IllegalStateException("Remote media exceeds the 10 GiB transfer ceiling");
             output.write(buffer, 0, count);
             copied += count;
             if (listener != null) listener.onProgress(startingOffset + copied);
@@ -318,9 +361,13 @@ public final class ResumableTransferManager {
     }
 
     private static void truncate(File file) throws Exception {
+        truncate(file, 0L);
+    }
+    private static void truncate(File file, long length) throws Exception {
         if (!file.exists()) return;
+        if (length < 0L || length > file.length()) throw new IllegalArgumentException("Invalid partial truncate");
         try (RandomAccessFile output = new RandomAccessFile(file, "rw")) {
-            output.setLength(0L);
+            output.setLength(length);
             output.getFD().sync();
         }
     }

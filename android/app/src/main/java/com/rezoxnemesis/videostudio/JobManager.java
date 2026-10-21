@@ -120,6 +120,11 @@ public final class JobManager {
     private final Context context;
     private final SharedPreferences prefs;
     private static final Semaphore PROCESS_HEAVY_LANE = new Semaphore(1, true);
+    /** Interactive native AI uses the same process-wide lane as queued exports. */
+    static AutoCloseable acquireInteractiveHeavyLane()throws InterruptedException{
+        PROCESS_HEAVY_LANE.acquire();java.util.concurrent.atomic.AtomicBoolean held=new java.util.concurrent.atomic.AtomicBoolean(true);
+        return ()->{if(held.compareAndSet(true,false))PROCESS_HEAVY_LANE.release();};
+    }
     // Separate GPU and disk/network queues; both share one exclusive project
     // media lane. A thermally parked render yields the lane to transfers.
     private final ExecutorService heavyPool = Executors.newSingleThreadExecutor();
@@ -156,7 +161,7 @@ public final class JobManager {
         job.future = executor.submit(() -> {
             try {
                 setState(job, STATE_PREPARING,
-                        kind == Kind.HEAVY ? "Preparing GPU / encoding"
+                        kind == Kind.HEAVY ? "Preparing intensive native work"
                         : kind == Kind.TRANSFER ? "Preparing protected file transfer"
                         : "Preparing interactive task");
                 if (kind != Kind.LIGHT) acquireSafeLane(job);

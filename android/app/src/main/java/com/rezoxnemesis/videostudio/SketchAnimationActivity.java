@@ -16,6 +16,7 @@ import android.text.InputType;
 import android.util.AtomicFile;
 import android.view.MotionEvent;
 import android.view.View;
+import android.widget.AdapterView;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.CheckBox;
@@ -42,6 +43,10 @@ public final class SketchAnimationActivity extends Activity {
     private final ExecutorService io=Executors.newSingleThreadExecutor();
     private final ExecutorService quality=Executors.newSingleThreadExecutor();
     private Future<?> qualityTask;
+    private final java.util.concurrent.atomic.AtomicBoolean bookPlacementCancelled=new java.util.concurrent.atomic.AtomicBoolean();
+    private volatile Thread bookPlacementWorker;
+    private boolean placingInBook;
+    private AlertDialog bookPlacementDialog;
     private final Handler main=new Handler(Looper.getMainLooper());
     private JSONObject source,program,sampled=new JSONObject();
     private String sketchId,animationId,selectedRig="",selectedJoint="",interpolation="smooth";
@@ -83,9 +88,11 @@ public final class SketchAnimationActivity extends Activity {
         joints.setOnItemSelectedListener(new Selected(){public void selected(int position){if(!pickerUpdating&&position<jointIds.size()){selectedJoint=jointIds.get(position);canvas.invalidate();refreshFrame();}}});
         selectionLabel=label("",12);controls.addView(selectionLabel);
         LinearLayout rig=row(controls);mode=button(rig,"Rig mode",()->{mapping=!mapping;mode.setText(mapping?"Rig mode":"Pose mode");requestPreview();refreshFrame();},false);button(rig,"Rig / bind",this::rigTools,false);button(rig,"Pose tools",this::poseTools,false);
-        LinearLayout effects=row(controls);button(effects,"Foot contact",this::contacts,false);button(effects,"Camera",this::camera,false);button(effects,"Cels / dialogue",this::dialogueMenu,false);
+        LinearLayout effects=row(controls);button(effects,"Pin contact",this::contacts,false);button(effects,"Camera",this::camera,false);button(effects,"Cels / dialogue",this::dialogueMenu,false);
         LinearLayout production=row(controls);button(production,"Acting presets",this::motionPresets,false);button(production,"Mouth timing",this::autoMouthTiming,false);button(production,"Production QA",this::productionCheck,false);
         LinearLayout files=row(controls);button(files,"Example",this::example,false);button(files,"Open",this::openAnimation,false);button(files,"Save scene",this::saveScene,false);button(files,"Bake animation",this::bake,true);
+        button(row(controls),"Place in book",this::placeInBook,false);
+        button(row(controls),"Story plan",()->{try{SketchStoryPlanDialog.show(this,id->startActivity(new Intent(this,SketchStudioActivity.class).putExtra("bookId",id)));}catch(Exception error){message(error.getMessage());}},false);
         StudioUi.prepareTouchLayout(root);
     }
     private void load(){
@@ -168,7 +175,7 @@ public final class SketchAnimationActivity extends Activity {
             });
         }catch(Exception failure){previewInFlight=false;message(failure.getMessage());}
     };
-    private void rigTools(){if(!ready())return;menu("Rig and artwork",new String[]{"Bind artwork to selected joint","Deform vector artwork","Joint position / parent","Add joint","Add character","Remove selected joint"},this::bindings,this::skinWeights,this::jointSettings,this::addJoint,this::addRig,this::removeJoint);}
+    private void rigTools(){if(!ready())return;menu("Rig and artwork",new String[]{"Bind artwork to selected joint","Deform pen / paint","Joint position / parent","Add joint","Add character","Remove selected joint"},this::bindings,this::skinWeights,this::jointSettings,this::addJoint,this::addRig,this::removeJoint);}
     private void bindings(){
         try{
             JSONObject rig=SketchAnimationUiModel.rig(program,selectedRig);JSONArray bindings=rig.getJSONArray("bindings"),layers=source.getJSONArray("layers");ArrayList<String> ids=new ArrayList<>(),labels=new ArrayList<>();
@@ -181,7 +188,7 @@ public final class SketchAnimationActivity extends Activity {
                 for(int i=0;i<old.length();i++){JSONObject binding=old.getJSONObject(i);int at=ids.indexOf(binding.optString("objectId"));if(!targetJoint.equals(binding.optString("jointId"))&&(at<0||!checked[at]))next.put(binding);}
                 for(int i=0;i<ids.size();i++)if(checked[i]){
                     JSONArray all=program.getJSONArray("rigs");for(int n=0;n<all.length();n++)if(!targetRig.equals(all.getJSONObject(n).getString("id"))){JSONArray others=all.getJSONObject(n).getJSONArray("bindings");for(int k=0;k<others.length();k++)if(ids.get(i).equals(others.getJSONObject(k).getString("objectId")))throw SketchDocument.bad("Artwork "+ids.get(i)+" already belongs to another character");}
-                    JSONObject retained=null;for(int n=0;n<old.length();n++)if(ids.get(i).equals(old.getJSONObject(n).getString("objectId")))retained=SketchDocument.copy(old.getJSONObject(n));if(retained==null)retained=new JSONObject().put("objectId",ids.get(i));next.put(retained.put("jointId",targetJoint));
+                    JSONObject retained=null;for(int n=0;n<old.length();n++)if(ids.get(i).equals(old.getJSONObject(n).getString("objectId")))retained=SketchDocument.copy(old.getJSONObject(n));if(retained==null)retained=new JSONObject().put("objectId",ids.get(i));if(retained.has("region")&&!targetJoint.equals(retained.getJSONObject("region").getString("movingJointId")))throw SketchDocument.bad("Edit this part's region moving joint or choose a rigid binding before rebinding");next.put(retained.put("jointId",targetJoint));
                 }
                 current.put("bindings",next);changed();
             }catch(Exception invalid){message(invalid.getMessage());}}).show();
@@ -189,6 +196,7 @@ public final class SketchAnimationActivity extends Activity {
     }
     private JSONArray vertices(JSONObject object)throws Exception {
         JSONArray points=new JSONArray();String kind=object.getString("kind");
+        if(object.has("paintMesh"))return SketchPaintMesh.pointsAt(object,0);
         if("path".equals(kind)){JSONArray commands=object.getJSONArray("commands");for(int i=0;i<commands.length();i++){JSONArray command=commands.getJSONArray(i);for(int j=1;j<command.length();j+=2)points.put(new JSONArray().put(command.getDouble(j)).put(command.getDouble(j+1)));}}
         else if(java.util.Arrays.asList("stroke","eraser","line","polygon").contains(kind)){JSONArray original=object.getJSONArray("points");for(int i=0;i<original.length();i++)points.put(new JSONArray().put(original.getJSONArray(i).getDouble(0)).put(original.getJSONArray(i).getDouble(1)));}
         return points;
@@ -196,8 +204,8 @@ public final class SketchAnimationActivity extends Activity {
     private void skinWeights(){
         if(!ready())return;try{JSONObject rig=SketchAnimationUiModel.rig(program,selectedRig);JSONArray bindings=rig.getJSONArray("bindings");ArrayList<JSONObject> editable=new ArrayList<>();ArrayList<String> names=new ArrayList<>();
             for(int i=0;i<bindings.length();i++){JSONObject binding=bindings.getJSONObject(i),object=SketchDocument.object(source,binding.getString("objectId"));int count=vertices(object).length();if(count>0){editable.add(binding);names.add(binding.getString("objectId")+" · "+count+" vertices");}}
-            if(editable.isEmpty()){message("Bind a stroke, path, line or polygon before editing its deformation weights. Raster parts use rigid joint bindings.");return;}
-            new AlertDialog.Builder(this).setTitle("Deform vector artwork").setItems(names.toArray(new String[0]),(d,index)->editWeights(editable.get(index))).setNegativeButton("Cancel",null).show();
+            if(editable.isEmpty()){message("Bind pen artwork or prepare a native paint grid before bending a part.");return;}
+            new AlertDialog.Builder(this).setTitle("Deform pen / paint").setItems(names.toArray(new String[0]),(d,index)->editWeights(editable.get(index))).setNegativeButton("Cancel",null).show();
         }catch(Exception invalid){message(invalid.getMessage());}
     }
     private void editWeights(JSONObject binding){
@@ -208,9 +216,11 @@ public final class SketchAnimationActivity extends Activity {
             blend.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener(){public void onProgressChanged(SeekBar bar,int amount,boolean human){fraction.setText("First joint "+amount+"% · second joint "+(100-amount)+"%");}public void onStartTrackingTouch(SeekBar bar){}public void onStopTrackingTouch(SeekBar bar){}});
             LinearLayout actions=row(form);button(actions,"Set vertex",()->{try{SketchAnimationUiModel.setVertexBlend(draft,points.length(),vertex.getProgress(),first.getSelectedItem().toString(),second.getSelectedItem().toString(),blend.getProgress()/100d);message("Vertex "+(vertex.getProgress()+1)+" blend prepared");}catch(Exception invalid){message(invalid.getMessage());}},false);
             button(actions,"Linear blend all",()->{try{for(int i=0;i<points.length();i++)SketchAnimationUiModel.setVertexBlend(draft,points.length(),i,first.getSelectedItem().toString(),second.getSelectedItem().toString(),points.length()==1?1:1-i/(double)(points.length()-1));message("Vertex-order gradient prepared. Refine individual vertices before saving.");}catch(Exception invalid){message(invalid.getMessage());}},false);
-            button(form,"Use rigid binding",()->{draft.remove("weights");message("Rigid binding prepared");},false);
+            button(form,"Bend a region",()->editRegion(draft),false);
+            button(form,"Edit 1–4 joint influences",()->{try{JSONArray saved=draft.optJSONArray("weights");JSONObject current=saved==null?new JSONObject().put(draft.getString("jointId"),1):saved.getJSONObject(vertex.getProgress());LinearLayout entry=column();EditText values=field(entry,"Joint influence map",current.toString(),false);dialog("Vertex influences",entry,"Use influences",()->{java.util.Set<String> valid=new java.util.HashSet<>();JSONArray joints=SketchAnimationUiModel.rig(program,selectedRig).getJSONArray("joints");for(int i=0;i<joints.length();i++)valid.add(joints.getJSONObject(i).getString("id"));SketchAnimationUiModel.setVertexInfluences(draft,points.length(),vertex.getProgress(),new JSONObject(values.getText().toString()),valid);message("Selected vertex influences prepared");});}catch(Exception invalid){message(invalid.getMessage());}},false);
+            button(form,"Use rigid binding",()->{draft.remove("weights");draft.remove("region");message("Rigid binding prepared");},false);
             form.addView(label("The orange point marks the selected rest vertex. Set vertex records a blend between two joints; all other vertices retain their current weights. Linear blend all follows vertex order. Saving applies the weights; Cancel leaves the rig unchanged. Large numbers of deforming vertices or long scenes may exceed the editable output budget.",12));
-            ScrollView scroll=new ScrollView(this);scroll.addView(form);AlertDialog dialog=new AlertDialog.Builder(this).setTitle("Skin weights · "+binding.getString("objectId")).setView(scroll).setNegativeButton("Cancel",null).setPositiveButton("Save weights",null).create();dialog.setOnDismissListener(d->{skinObjectId="";skinVertex=-1;canvas.invalidate();});dialog.show();dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{try{if(draft.has("weights"))binding.put("weights",draft.getJSONArray("weights"));else binding.remove("weights");changed();dialog.dismiss();}catch(Exception invalid){message(invalid.getMessage());}});
+            ScrollView scroll=new ScrollView(this);scroll.addView(form);AlertDialog dialog=new AlertDialog.Builder(this).setTitle("Skin weights · "+binding.getString("objectId")).setView(scroll).setNegativeButton("Cancel",null).setPositiveButton("Save weights",null).create();dialog.setOnDismissListener(d->{skinObjectId="";skinVertex=-1;canvas.invalidate();});dialog.show();dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{try{binding.put("jointId",draft.getString("jointId"));if(draft.has("weights"))binding.put("weights",draft.getJSONArray("weights"));else binding.remove("weights");if(draft.has("region"))binding.put("region",SketchDocument.copy(draft.getJSONObject("region")));else binding.remove("region");changed();dialog.dismiss();}catch(Exception invalid){message(invalid.getMessage());}});
         }catch(Exception invalid){message(invalid.getMessage());}
     }
     private void jointSettings(){
@@ -225,7 +235,14 @@ public final class SketchAnimationActivity extends Activity {
         }catch(Exception invalid){message(invalid.getMessage());}
     }
     private void addRig(){LinearLayout form=column();EditText name=field(form,"Character name","character_"+(rigIds.size()+1),false);dialog("Add character rig",form,"Add",()->{String id=name.getText().toString().trim();SketchDocument.id(new JSONObject().put("id",id),"id");if(rigIds.contains(id))throw SketchDocument.bad("Character name already exists");program.getJSONArray("rigs").put(SketchAnimationUiModel.humanoid(id));selectedRig=id;selectedJoint="root";refreshPickers();changed();});}
-    private void removeJoint(){try{JSONObject rig=SketchAnimationUiModel.rig(program,selectedRig);JSONArray values=rig.getJSONArray("joints"),next=new JSONArray();for(int i=0;i<values.length();i++){JSONObject joint=values.getJSONObject(i);if(selectedJoint.equals(joint.optString("parent")))throw SketchDocument.bad("Remove or reparent child joints before removing this joint");if(!selectedJoint.equals(joint.getString("id")))next.put(joint);}JSONArray bindings=rig.getJSONArray("bindings");for(int i=0;i<bindings.length();i++)if(selectedJoint.equals(bindings.getJSONObject(i).getString("jointId")))throw SketchDocument.bad("Unbind this joint's artwork first");JSONArray contacts=rig.getJSONArray("ik");for(int i=0;i<contacts.length();i++)for(String name:new String[]{"hip","knee","ankle"})if(selectedJoint.equals(contacts.getJSONObject(i).getString(name)))throw SketchDocument.bad("Remove this joint's foot contact first");for(int i=0;i<bindings.length();i++){JSONArray weights=bindings.getJSONObject(i).optJSONArray("weights");if(weights!=null)for(int n=0;n<weights.length();n++)if(weights.getJSONObject(n).has(selectedJoint))throw SketchDocument.bad("Remove this joint's skin influences first");}if(next.length()==0)throw SketchDocument.bad("Keep a root joint");rig.put("joints",next);JSONArray poses=rig.getJSONArray("poses");for(int i=0;i<poses.length();i++)poses.getJSONObject(i).getJSONObject("rotations").remove(selectedJoint);selectedJoint="";refreshPickers();changed();}catch(Exception invalid){message(invalid.getMessage());}}
+    private void editRegion(JSONObject draft){
+        try{JSONObject rig=SketchAnimationUiModel.rig(program,selectedRig),prior=draft.optJSONObject("region");if(rig.getJSONArray("joints").length()<2)throw SketchDocument.bad("Add a second joint before bending a region");String moving=draft.getString("jointId"),fixed=prior==null?"":prior.getString("fixedJointId");if(fixed.isEmpty())for(String id:jointIds)if(!id.equals(moving)){fixed=id;break;}
+            LinearLayout form=column();Spinner fixedPicker=jointPicker(form,"Fixed region joint",fixed),movingPicker=jointPicker(form,"Moving region joint",moving);JSONObject a=SketchAnimationUiModel.joint(rig,fixed),b=SketchAnimationUiModel.joint(rig,moving);JSONArray start=prior==null?new JSONArray().put(a.getDouble("x")).put(a.getDouble("y")):prior.getJSONArray("start"),end=prior==null?new JSONArray().put(b.getDouble("x")).put(b.getDouble("y")):prior.getJSONArray("end");
+            EditText sx=field(form,"Region start X",String.valueOf(start.getDouble(0)),true),sy=field(form,"Region start Y",String.valueOf(start.getDouble(1)),true),ex=field(form,"Region end X",String.valueOf(end.getDouble(0)),true),ey=field(form,"Region end Y",String.valueOf(end.getDouble(1)),true),radius=field(form,"Region radius in pixels",String.valueOf(prior==null?80:prior.getDouble("radiusPx")),true);form.addView(label("Use normalized source-canvas coordinates before poses and camera. Influence grows from the fixed end toward the moving end and fades outside the radius. Saving the draft updates the ordinary native rig preview; it does not infer anatomy or contacts.",12));
+            dialog("Bend a region",form,"Use region",()->{JSONObject recipe=new JSONObject().put("fixedJointId",fixedPicker.getSelectedItem().toString()).put("movingJointId",movingPicker.getSelectedItem().toString()).put("start",new JSONArray().put(number(sx,-4,4)).put(number(sy,-4,4))).put("end",new JSONArray().put(number(ex,-4,4)).put(number(ey,-4,4))).put("radiusPx",number(radius,.5,2048));SketchRigRegion.validate(recipe,movingPicker.getSelectedItem().toString(),new java.util.HashSet<>(jointIds));draft.put("jointId",movingPicker.getSelectedItem().toString()).put("region",recipe);draft.remove("weights");message("Region prepared. Save weights to preview this binding.");});
+        }catch(Exception invalid){message(invalid.getMessage());}
+    }
+    private void removeJoint(){try{JSONObject rig=SketchAnimationUiModel.rig(program,selectedRig);JSONArray values=rig.getJSONArray("joints"),next=new JSONArray();for(int i=0;i<values.length();i++){JSONObject joint=values.getJSONObject(i);if(selectedJoint.equals(joint.optString("parent")))throw SketchDocument.bad("Remove or reparent child joints before removing this joint");if(!selectedJoint.equals(joint.getString("id")))next.put(joint);}JSONArray bindings=rig.getJSONArray("bindings");for(int i=0;i<bindings.length();i++)if(selectedJoint.equals(bindings.getJSONObject(i).getString("jointId")))throw SketchDocument.bad("Unbind this joint's artwork first");JSONArray contacts=rig.getJSONArray("ik");for(int i=0;i<contacts.length();i++)for(String name:new String[]{"hip","knee","ankle"})if(selectedJoint.equals(contacts.getJSONObject(i).getString(name)))throw SketchDocument.bad("Remove this joint's foot contact first");for(int i=0;i<bindings.length();i++){JSONArray weights=bindings.getJSONObject(i).optJSONArray("weights");if(weights!=null)for(int n=0;n<weights.length();n++)if(weights.getJSONObject(n).has(selectedJoint))throw SketchDocument.bad("Remove this joint's skin influences first");JSONObject region=bindings.getJSONObject(i).optJSONObject("region");if(region!=null&&(selectedJoint.equals(region.getString("fixedJointId"))||selectedJoint.equals(region.getString("movingJointId"))))throw SketchDocument.bad("Remove this joint's region recipe first");}if(next.length()==0)throw SketchDocument.bad("Keep a root joint");rig.put("joints",next);JSONArray poses=rig.getJSONArray("poses");for(int i=0;i<poses.length();i++)poses.getJSONObject(i).getJSONObject("rotations").remove(selectedJoint);selectedJoint="";refreshPickers();changed();}catch(Exception invalid){message(invalid.getMessage());}}
     private void motionPresets(){
         if(!ready())return;
         menu("Editable acting presets",new String[]{"Idle / breathing","Walk cycle","Run cycle","Anticipation → strike → recover","Plant gait feet (walk/run)"},
@@ -278,7 +295,7 @@ public final class SketchAnimationActivity extends Activity {
             });
         });
     }
-    private void poseTools(){if(!ready())return;menu("Pose at frame "+(frame+1),new String[]{"Joint rotation / root motion","Save pose key","Delete pose key","Smooth timing","Linear timing","Hold timing","Action contact markers"},this::rotation,()->{try{SketchAnimationUiModel.pose(program,selectedRig,frame,interpolation);changed();}catch(Exception invalid){message(invalid.getMessage());}},this::deleteKey,()->setTiming("smooth"),()->setTiming("linear"),()->setTiming("hold"),this::interactionMenu);}
+    private void poseTools(){if(!ready())return;menu("Pose at frame "+(frame+1),new String[]{"Joint rotation / root motion","Save pose key","Delete pose key","Smooth timing","Linear timing","Hold timing","Timing curve…","Action contact markers"},this::rotation,()->{try{SketchAnimationUiModel.poseKeepingTiming(program,selectedRig,frame,interpolation);changed();}catch(Exception invalid){message(invalid.getMessage());}},this::deleteKey,()->setTiming("smooth"),()->setTiming("linear"),()->setTiming("hold"),this::poseTimingCurve,this::interactionMenu);}
     private void interactionMenu(){
         if(!ready())return;
         menu("Physical choreography contacts",
@@ -389,7 +406,42 @@ public final class SketchAnimationActivity extends Activity {
     private void rotation(){
         try{JSONObject previous=SketchAnimationUiModel.previousPose(SketchAnimationUiModel.rig(program,selectedRig),frame);LinearLayout form=column();EditText rotation=field(form,"Joint rotation degrees",String.valueOf(previous.getJSONObject("rotations").optDouble(selectedJoint)),true),x=field(form,"Root motion X",String.valueOf(previous.optDouble("rootX")),true),y=field(form,"Root motion Y",String.valueOf(previous.optDouble("rootY")),true);
             LinearLayout nudge=row(form);button(nudge,"−5°",()->{try{rotation.setText(String.valueOf(number(rotation,-3600,3600)-5));}catch(Exception invalid){message(invalid.getMessage());}},false);button(nudge,"+5°",()->{try{rotation.setText(String.valueOf(number(rotation,-3600,3600)+5));}catch(Exception invalid){message(invalid.getMessage());}},false);
-            dialog("Pose "+selectedJoint,form,"Set key",()->{double degrees=number(rotation,-3600,3600),xx=number(x,-4,4),yy=number(y,-4,4);SketchAnimationUiModel.setRotation(program,selectedRig,frame,selectedJoint,degrees,interpolation);SketchAnimationUiModel.pose(program,selectedRig,frame,interpolation).put("rootX",xx).put("rootY",yy);mapping=false;mode.setText("Pose mode");changed();});
+            dialog("Pose "+selectedJoint,form,"Set key",()->{double degrees=number(rotation,-3600,3600),xx=number(x,-4,4),yy=number(y,-4,4);SketchAnimationUiModel.setRotation(program,selectedRig,frame,selectedJoint,degrees,interpolation);SketchAnimationUiModel.poseKeepingTiming(program,selectedRig,frame,interpolation).put("rootX",xx).put("rootY",yy);mapping=false;mode.setText("Pose mode");changed();});
+        }catch(Exception invalid){message(invalid.getMessage());}
+    }
+    private final class TimingInputs {
+        final String[] modes={"linear","smooth","hold","ease_in","ease_out","ease_in_out","bezier"};
+        final Spinner selected;final EditText controls;
+        TimingInputs(LinearLayout form,JSONObject prior)throws Exception {
+            selected=picker("Animation timing");selected.setAdapter(new ArrayAdapter<>(SketchAnimationActivity.this,android.R.layout.simple_spinner_dropdown_item,
+                    new String[]{"Linear","Smooth","Hold","Ease in","Ease out","Ease in/out","Bezier"}));
+            selected.setSelection(Math.max(0,java.util.Arrays.asList(modes).indexOf(prior.optString("interpolation",interpolation))));
+            form.addView(label("Animation timing",12));form.addView(selected);
+            String values="0.42, 0, 1, 1";
+            if(prior.has("curve")){JSONArray c=prior.getJSONArray("curve");values=c.get(0)+", "+c.get(1)+", "+c.get(2)+", "+c.get(3);}
+            controls=field(form,"Bezier timing: x1, y1, x2, y2",values,false);
+            controls.setVisibility(selected.getSelectedItemPosition()==6?View.VISIBLE:View.GONE);
+            selected.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener(){
+                public void onNothingSelected(AdapterView<?> parent){}
+                public void onItemSelected(AdapterView<?> parent,View view,int position,long id){controls.setVisibility(position==6?View.VISIBLE:View.GONE);}
+            });
+        }
+        void apply(JSONObject target)throws Exception {
+            String mode=modes[selected.getSelectedItemPosition()];
+            SketchAnimationUiModel.timing(target,mode,"bezier".equals(mode)?new JSONArray("["+controls.getText().toString()+"]"):null);
+        }
+    }
+    private void poseTimingCurve(){
+        if(!ready())return;
+        try{
+            JSONObject prior=SketchAnimationUiModel.previousPose(SketchAnimationUiModel.rig(program,selectedRig),frame);
+            LinearLayout form=column();TimingInputs timing=new TimingInputs(form,prior);
+            dialog("Pose timing",form,"Set timing",()->{
+                JSONObject accepted=new JSONObject();timing.apply(accepted);
+                JSONObject key=SketchAnimationUiModel.poseKeepingTiming(program,selectedRig,frame,interpolation);
+                SketchAnimationUiModel.timing(key,accepted.getString("interpolation"),accepted.optJSONArray("curve"));
+                interpolation=accepted.getString("interpolation");changed();
+            });
         }catch(Exception invalid){message(invalid.getMessage());}
     }
     private void setTiming(String value){interpolation=value;try{SketchAnimationUiModel.pose(program,selectedRig,frame,value);changed();message("Segment timing: "+value);}catch(Exception invalid){message(invalid.getMessage());}}
@@ -401,17 +453,27 @@ public final class SketchAnimationActivity extends Activity {
         for(String name:new String[]{"camera","dialogues","mouthCels","celRanges"}){JSONArray values=candidate.optJSONArray(name);if(values==null)continue;for(int n=0;n<values.length();n++){JSONObject value=values.getJSONObject(n);if(value.optInt("end",value.optInt("frame"))>=count)throw SketchDocument.bad(name+" contains a key outside the new duration");}}
     }
     private void contacts(){
-        if(!ready())return;try{JSONObject rig=SketchAnimationUiModel.rig(program,selectedRig);LinearLayout form=column();Spinner hip=jointPicker(form,"IK hip joint","hip_left"),knee=jointPicker(form,"IK knee joint","knee_left"),ankle=jointPicker(form,"IK foot joint","foot_left");EditText start=field(form,"First contact frame",String.valueOf(frame+1),true),end=field(form,"Last contact frame",String.valueOf(Math.min(frame+12,program.optInt("frameCount"))),true),x=field(form,"Foot target X","0.43",true),y=field(form,"Foot target Y","0.91",true);Spinner bend=picker("Knee bend direction");bend.setAdapter(adapter(java.util.Arrays.asList("Bend +1","Bend −1")));form.addView(bend);CheckBox lockRotation=new CheckBox(this);lockRotation.setText("Lock foot world rotation");lockRotation.setTextColor(StudioUi.TEXT);lockRotation.setMinimumHeight(dp(48));lockRotation.setChecked(true);form.addView(lockRotation);EditText footRotation=field(form,"Foot world rotation degrees","0",true);form.addView(label("A planted foot stays at this world position over the chosen range. Hip → knee → foot must be direct parent links; unreachable targets are reported, never hidden.",12));
-            button(form,"Clear contacts for this rig",()->{try{rig.put("ik",new JSONArray());changed();message("Contacts cleared");}catch(Exception invalid){message(invalid.getMessage());}},false);
-            dialog("Planted foot / two-bone IK",form,"Add contact",()->{int first=index(start),last=index(end);if(last<first)throw SketchDocument.bad("Last contact frame must follow the first");JSONObject contact=new JSONObject().put("hip",hip.getSelectedItem().toString()).put("knee",knee.getSelectedItem().toString()).put("ankle",ankle.getSelectedItem().toString()).put("start",first).put("end",last).put("x",number(x,0,1)).put("y",number(y,0,1)).put("bend",bend.getSelectedItemPosition()==0?1:-1);if(lockRotation.isChecked())contact.put("rotation",number(footRotation,-3600,3600));JSONArray current=rig.getJSONArray("ik");current.put(contact);changed();});
+        if(!ready())return;try{
+            final String rigId=selectedRig;SketchAnimationUiModel.rig(program,rigId);final int openedGeneration=generation;final JSONObject openedSource=source;
+            LinearLayout form=column();Spinner hip=jointPicker(form,"IK root joint","hip_left"),knee=jointPicker(form,"IK bend joint","knee_left"),ankle=jointPicker(form,"IK contact joint","foot_left");
+            EditText start=field(form,"First contact frame",String.valueOf(frame+1),true),end=field(form,"Last contact frame",String.valueOf(Math.min(frame+12,program.optInt("frameCount"))),true),x=field(form,"Contact target X","0.43",true),y=field(form,"Contact target Y","0.91",true);
+            EditText approach=field(form,"Approach frames","0",true),release=field(form,"Release frames","0",true);form.addView(label("Ease into and out of the contact over 0–12 frames. Both ranges must fit inside this shot; 0 keeps an immediate contact.",12));
+            Spinner bend=picker("Chain bend direction");bend.setAdapter(adapter(java.util.Arrays.asList("Bend +1","Bend −1")));form.addView(bend);CheckBox lockRotation=new CheckBox(this);lockRotation.setText("Lock contact world rotation");lockRotation.setTextColor(StudioUi.TEXT);lockRotation.setMinimumHeight(dp(48));lockRotation.setChecked(true);form.addView(lockRotation);EditText rotation=field(form,"Contact world rotation degrees","0",true);
+            form.addView(label("A hand, foot or prop joint stays at this point over the chosen range. The root, bend and contact joints must be direct parent links. Unreachable targets are reported. Inspect the actual artwork during playback.",12));
+            SketchPoseTargetPicker targets=new SketchPoseTargetPicker(this,openedSource,program,start,x,y,()->!destroyed&&source==openedSource&&generation==openedGeneration);form.addView(targets);
+            AlertDialog owner=dialog("Hand / foot / prop contact",form,"Add contact",()->{
+                if(source!=openedSource||generation!=openedGeneration)throw SketchDocument.bad("Animation changed; reopen contact controls");int first=index(start),last=index(end);if(last<first)throw SketchDocument.bad("Last contact frame must follow the first");int before=SketchAnimationUiModel.integer(approach.getText().toString(),0,12,"Approach frames"),after=SketchAnimationUiModel.integer(release.getText().toString(),0,12,"Release frames");if(first-before<0||last+after>=program.getInt("frameCount"))throw SketchDocument.bad("Contact easing must stay inside this shot");JSONObject contact=new JSONObject().put("hip",hip.getSelectedItem().toString()).put("knee",knee.getSelectedItem().toString()).put("ankle",ankle.getSelectedItem().toString()).put("start",first).put("end",last).put("x",number(x,0,1)).put("y",number(y,0,1)).put("bend",bend.getSelectedItemPosition()==0?1:-1);if(before>0)contact.put("blendInFrames",before);if(after>0)contact.put("blendOutFrames",after);if(lockRotation.isChecked())contact.put("rotation",number(rotation,-3600,3600));SketchAnimationUiModel.rig(program,rigId).getJSONArray("ik").put(contact);changed();
+            });targets.attach(owner);
+            Button clear=new Button(this);clear.setText("Clear contacts for this rig");StudioUi.styleButton(clear,false);form.addView(clear);clear.setOnClickListener(v->{try{if(source!=openedSource||generation!=openedGeneration)throw SketchDocument.bad("Animation changed; reopen contact controls");SketchAnimationUiModel.rig(program,rigId).put("ik",new JSONArray());changed();owner.dismiss();message("Contacts cleared");}catch(Exception invalid){message(invalid.getMessage());}});
         }catch(Exception invalid){message(invalid.getMessage());}
     }
+
     private Spinner jointPicker(LinearLayout form,String description,String preferred){Spinner picker=picker(description);picker.setAdapter(adapter(jointIds));picker.setSelection(Math.max(0,jointIds.indexOf(preferred)));form.addView(label(description,12));form.addView(picker);return picker;}
     private int index(EditText field)throws Exception {return SketchAnimationUiModel.integer(field.getText().toString(),1,program.getInt("frameCount"),String.valueOf(field.getContentDescription()))-1;}
     private void camera(){
         if(!ready())return;try{JSONObject prior=new JSONObject().put("x",0).put("y",0).put("zoom",1).put("rotation",0);JSONArray values=program.getJSONArray("camera");for(int i=0;i<values.length();i++)if(values.getJSONObject(i).getInt("frame")==frame)prior=values.getJSONObject(i);
-            LinearLayout form=column();EditText x=field(form,"Camera X",String.valueOf(prior.optDouble("x")),true),y=field(form,"Camera Y",String.valueOf(prior.optDouble("y")),true),zoom=field(form,"Camera zoom",String.valueOf(prior.optDouble("zoom",1)),true),rotation=field(form,"Camera rotation degrees",String.valueOf(prior.optDouble("rotation")),true);form.addView(label("The camera transforms the artwork layers you select; dialogue remains readable when placed on a separate unselected layer. Use two camera keys for a continuous pan or zoom; a hold key creates a shot cut.",12));button(form,"Choose camera layers",this::cameraLayers,false);button(form,"Delete camera key here",()->{try{program.put("camera",SketchAnimationUiModel.withoutFrame(program.getJSONArray("camera"),frame));changed();message("Camera key removed");}catch(Exception invalid){message(invalid.getMessage());}},false);
-            dialog("Camera key · frame "+(frame+1),form,"Set key",()->{JSONObject key=new JSONObject().put("frame",frame).put("x",number(x,-4,4)).put("y",number(y,-4,4)).put("zoom",number(zoom,.01,8)).put("rotation",number(rotation,-3600,3600)).put("interpolation",interpolation);JSONArray keys=SketchAnimationUiModel.withoutFrame(program.getJSONArray("camera"),frame);keys.put(key);program.put("camera",SketchAnimationUiModel.sortedFrames(keys));changed();});
+            LinearLayout form=column();EditText x=field(form,"Camera X",String.valueOf(prior.optDouble("x")),true),y=field(form,"Camera Y",String.valueOf(prior.optDouble("y")),true),zoom=field(form,"Camera zoom",String.valueOf(prior.optDouble("zoom",1)),true),rotation=field(form,"Camera rotation degrees",String.valueOf(prior.optDouble("rotation")),true);form.addView(label("The camera transforms the artwork layers you select; dialogue remains readable when placed on a separate unselected layer. Use two camera keys for a continuous pan or zoom; a hold key creates a shot cut.",12));TimingInputs timing=new TimingInputs(form,prior);button(form,"Choose camera layers",this::cameraLayers,false);button(form,"Delete camera key here",()->{try{program.put("camera",SketchAnimationUiModel.withoutFrame(program.getJSONArray("camera"),frame));changed();message("Camera key removed");}catch(Exception invalid){message(invalid.getMessage());}},false);
+            dialog("Camera key · frame "+(frame+1),form,"Set key",()->{JSONObject key=new JSONObject().put("frame",frame).put("x",number(x,-4,4)).put("y",number(y,-4,4)).put("zoom",number(zoom,.01,8)).put("rotation",number(rotation,-3600,3600));timing.apply(key);JSONArray keys=SketchAnimationUiModel.withoutFrame(program.getJSONArray("camera"),frame);keys.put(key);program.put("camera",SketchAnimationUiModel.sortedFrames(keys));changed();});
         }catch(Exception invalid){message(invalid.getMessage());}
     }
     private void cameraLayers(){try{JSONArray layers=source.getJSONArray("layers"),selected=program.getJSONArray("cameraLayerIds");String[] labels=new String[layers.length()];boolean[] chosen=new boolean[layers.length()];for(int i=0;i<layers.length();i++){labels[i]=layers.getJSONObject(i).getString("name");for(int j=0;j<selected.length();j++)if(selected.getString(j).equals(layers.getJSONObject(i).getString("id")))chosen[i]=true;}new AlertDialog.Builder(this).setTitle("Camera affects layers").setMultiChoiceItems(labels,chosen,(d,i,value)->chosen[i]=value).setPositiveButton("Apply",(d,w)->{try{JSONArray next=new JSONArray();for(int i=0;i<chosen.length;i++)if(chosen[i])next.put(layers.getJSONObject(i).getString("id"));program.put("cameraLayerIds",next);changed();}catch(Exception invalid){message(invalid.getMessage());}}).setNegativeButton("Cancel",null).show();}catch(Exception invalid){message(invalid.getMessage());}}
@@ -604,6 +666,87 @@ public final class SketchAnimationActivity extends Activity {
         });
     }
     private void openAnimation(){if(!ready())return;stopPlayback();status.setText("Loading saved animations…");io.execute(()->{try{JSONArray values=SketchAnimationOps.execute(this,"sketch_animation_list",new JSONObject()).getJSONArray("animations");String[] labels=new String[values.length()];for(int i=0;i<labels.length;i++){JSONObject item=values.getJSONObject(i);labels[i]=item.optString("animationId")+" · r"+item.optLong("revision");}post(()->{new AlertDialog.Builder(this).setTitle("Saved animation scenes").setItems(labels,(d,index)->{persistDraft();animationId=values.optJSONObject(index).optString("animationId");selectedRig="";selectedJoint="";load();}).setNegativeButton("Cancel",null).show();});}catch(Exception failure){post(()->message(failure.getMessage()));}});}
+    private void placeInBook(){
+        if(!ready()||saving||placingInBook)return;stopPlayback();
+        String pending=getPreferences(MODE_PRIVATE).getString("animationBookPlacementPending",null);
+        if(pending!=null){
+            new AlertDialog.Builder(this).setTitle("Retained book placement")
+                    .setMessage("Resume the original saved scene and page range. Existing pages and later edits are preserved.")
+                    .setPositiveButton("Resume",(d,w)->{try{startBookPlacement(new JSONObject(pending));}catch(Exception error){message(error.getMessage());}})
+                    .setNeutralButton("Another range",(d,w)->choosePlacementBook()).setNegativeButton("Close",null).show();
+        }else choosePlacementBook();
+    }
+    private void choosePlacementBook(){
+        if(revision<1||dirty){message("Save this scene before placing its frames in a book");return;}
+        final String selectedAnimation=animationId;final long selectedRevision=revision;
+        status.setText("Loading destination sketch books…");
+        io.execute(()->{try{
+            JSONArray books=SketchBookStore.execute(this,"sketch_book_list",new JSONObject()).getJSONArray("books");
+            ArrayList<JSONObject> compatible=new ArrayList<>();ArrayList<String> names=new ArrayList<>();
+            JSONObject saved=SketchAnimationOps.load(this,selectedAnimation);
+            if(saved.getLong("revision")!=selectedRevision)throw new IllegalStateException("Saved scene changed; reopen it before placement");
+            names.add("New 120-second book matching this scene");
+            for(int i=0;i<books.length();i++){
+                JSONObject book=books.getJSONObject(i);
+                if(book.getInt("width")==saved.getInt("width")&&book.getInt("height")==saved.getInt("height")&&book.getInt("fps")==saved.getInt("fps")){
+                    compatible.add(book);names.add(book.getString("name")+" · "+book.getInt("pageCount")+" pages · r"+book.getLong("revision"));
+                }
+            }
+            post(()->{
+                if(!selectedAnimation.equals(animationId)||selectedRevision!=revision||dirty){message("Scene changed; reopen Place in book");return;}
+                new AlertDialog.Builder(this).setTitle("Place saved scene · destination book").setItems(names.toArray(new String[0]),(d,index)->{
+                    try{
+                        if(index==0){
+                            if(saving||placingInBook)return;
+                            JSONObject create=new JSONObject().put("bookId",UUID.randomUUID().toString()).put("operationId",UUID.randomUUID().toString())
+                                    .put("name","Two-minute story").put("pageCount",120*saved.getInt("fps")).put("fps",saved.getInt("fps"))
+                                    .put("width",saved.getInt("width")).put("height",saved.getInt("height")).put("background",saved.getJSONObject("sourceDocument").getString("background"));
+                            saving=true;io.execute(()->{try{SketchBookStore.execute(this,"sketch_book_create",create);post(()->{saving=false;choosePlacementBook();});}
+                                catch(Exception error){post(()->{saving=false;message(error.getMessage());});}});return;
+                        }
+                        JSONObject book=compatible.get(index-1);LinearLayout form=column();
+                        form.addView(label("Copies 1–64 saved frames as editable cels. Choose unopened, one-frame pages. Export sound separately in the project editor.",12));
+                        EditText first=field(form,"First source frame (1 based)",String.valueOf(frame+1),true);
+                        EditText count=field(form,"Frames (1–64)",String.valueOf(Math.min(64,saved.getInt("frameCount")-frame)),true);
+                        EditText page=field(form,"First destination page (1 based)","1",true);
+                        dialog("Place in "+book.getString("name"),form,"Place frames",()->{
+                            if(placingInBook||saving)throw SketchDocument.bad("A placement or save is already running");
+                            if(!selectedAnimation.equals(animationId)||selectedRevision!=revision||dirty)throw SketchDocument.bad("Save changed scene and reopen Place in book");
+                            double firstNumber=number(first,1,saved.getInt("frameCount")),countNumber=number(count,1,64),pageNumber=number(page,1,book.getInt("pageCount"));
+                            if(firstNumber!=Math.rint(firstNumber)||countNumber!=Math.rint(countNumber)||pageNumber!=Math.rint(pageNumber))throw SketchDocument.bad("Use whole frame and page numbers");
+                            JSONObject request=new JSONObject().put("animationId",selectedAnimation).put("expectedAnimationRevision",selectedRevision)
+                                    .put("bookId",book.getString("bookId")).put("expectedBookRevision",book.getLong("revision"))
+                                    .put("sourceFrameStart",(int)firstNumber-1).put("frameCount",(int)countNumber)
+                                    .put("destinationPageStart",(int)pageNumber-1).put("operationId",UUID.randomUUID().toString());
+                            if(!getPreferences(MODE_PRIVATE).edit().putString("animationBookPlacementPending",request.toString()).commit())throw new IllegalStateException("Could not retain placement for retry");
+                            startBookPlacement(request);
+                        });
+                    }catch(Exception error){message(error.getMessage());}
+                }).setNegativeButton("Cancel",null).show();
+            });
+        }catch(Exception error){post(()->message(error.getMessage()));}});
+    }
+    private void cancelBookPlacement(){bookPlacementCancelled.set(true);Thread worker=bookPlacementWorker;if(worker!=null)worker.interrupt();}
+    private void startBookPlacement(JSONObject request)throws Exception {
+        if(placingInBook||saving)return;
+        placingInBook=true;saving=true;bookPlacementCancelled.set(false);
+        AlertDialog progress=new AlertDialog.Builder(this).setTitle("Placing saved animation")
+                .setMessage("Preparing the frozen frame batch. Cancelled work can be resumed with the same request.")
+                .setNegativeButton("Cancel",(d,w)->cancelBookPlacement()).create();
+        bookPlacementDialog=progress;progress.setOnCancelListener(d->cancelBookPlacement());progress.show();
+        io.execute(()->{bookPlacementWorker=Thread.currentThread();try{
+            if(bookPlacementCancelled.get())throw new InterruptedException("Placement cancelled before publication");
+            JSONObject result=SketchAnimationBookPlacement.place(this,request,(done,total)->{
+                if(bookPlacementCancelled.get())throw new InterruptedException("Placement cancelled; resume the retained request");
+                post(()->{progress.setMessage(done+" / "+total+" editable cels placed");status.setText("Book placement · "+done+" / "+total);});
+            });
+            // Clear only this exact completed request; keep any newer pending request intact.
+            if(request.toString().equals(getPreferences(MODE_PRIVATE).getString("animationBookPlacementPending",null)))
+                getPreferences(MODE_PRIVATE).edit().remove("animationBookPlacementPending").commit();
+            post(()->status.setText("Placed "+result.optInt("frameCount")+" editable cels · book r"+result.optLong("bookRevision")+" · review acting and add audio before export"));
+        }catch(Exception failure){post(()->{status.setText("Placement retained for resume · "+failure.getMessage());message(failure.getMessage());});}
+        finally{bookPlacementWorker=null;Thread.interrupted();post(()->{placingInBook=false;saving=false;progress.dismiss();if(bookPlacementDialog==progress)bookPlacementDialog=null;});}});
+    }
     private void productionCheck(){
         if(!ready()||saving)return;
         final int checkedGeneration=generation,request=++qualityRequest;
@@ -654,7 +797,7 @@ public final class SketchAnimationActivity extends Activity {
     @Override public void onBackPressed(){requestBack();}
     @Override protected void onPause(){stopPlayback();++qualityRequest;if(qualityTask!=null)qualityTask.cancel(true);persistDraft();super.onPause();}
     @Override protected void onSaveInstanceState(Bundle state){state.putString("sketchId",sketchId);state.putString("animationId",revision>0?animationId:null);state.putInt("frame",frame);state.putBoolean("mapping",mapping);state.putString("selectedRig",selectedRig);state.putString("selectedJoint",selectedJoint);persistDraft();super.onSaveInstanceState(state);}
-    @Override protected void onDestroy(){destroyed=true;stopPlayback();if(qualityTask!=null)qualityTask.cancel(true);quality.shutdownNow();main.removeCallbacksAndMessages(null);canvas.replace(null);io.execute(()->{if(renderer!=null){renderer.close();renderer=null;}});io.shutdown();super.onDestroy();}
+    @Override protected void onDestroy(){destroyed=true;cancelBookPlacement();if(bookPlacementDialog!=null)bookPlacementDialog.dismiss();stopPlayback();if(qualityTask!=null)qualityTask.cancel(true);quality.shutdownNow();main.removeCallbacksAndMessages(null);canvas.replace(null);io.execute(()->{if(renderer!=null){renderer.close();renderer=null;}});io.shutdown();super.onDestroy();}
     private void post(Runnable run){main.post(()->{if(!destroyed)run.run();});}
     private void message(String text){if(text!=null&&!destroyed)Toast.makeText(this,text,Toast.LENGTH_LONG).show();}
     private int dp(int value){return StudioUi.dp(this,value);}
@@ -666,7 +809,7 @@ public final class SketchAnimationActivity extends Activity {
     private EditText field(LinearLayout form,String name,String text,boolean number){form.addView(label(name,12));EditText value=new EditText(this);value.setContentDescription(name);value.setText(text);value.setTextColor(StudioUi.TEXT);value.setHintTextColor(StudioUi.MUTED);value.setTextSize(14);value.setMinimumHeight(dp(48));if(number)value.setInputType(InputType.TYPE_CLASS_NUMBER|InputType.TYPE_NUMBER_FLAG_DECIMAL|InputType.TYPE_NUMBER_FLAG_SIGNED);form.addView(value,new LinearLayout.LayoutParams(-1,-2));return value;}
     private double number(EditText field,double low,double high)throws Exception{return SketchAnimationUiModel.bounded(field.getText().toString(),low,high,String.valueOf(field.getContentDescription()));}
     private interface EditAction {void run()throws Exception;}
-    private void dialog(String title,LinearLayout form,String verb,EditAction action){ScrollView scroll=new ScrollView(this);scroll.addView(form);AlertDialog dialog=new AlertDialog.Builder(this).setTitle(title).setView(scroll).setNegativeButton("Cancel",null).setPositiveButton(verb,null).create();dialog.show();dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{try{action.run();dialog.dismiss();}catch(Exception invalid){message(invalid.getMessage());}});}
+    private AlertDialog dialog(String title,LinearLayout form,String verb,EditAction action){ScrollView scroll=new ScrollView(this);scroll.addView(form);AlertDialog dialog=new AlertDialog.Builder(this).setTitle(title).setView(scroll).setNegativeButton("Cancel",null).setPositiveButton(verb,null).create();dialog.show();dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{try{action.run();dialog.dismiss();}catch(Exception invalid){message(invalid.getMessage());}});return dialog;}
     private void menu(String title,String[] labels,Runnable... actions){new AlertDialog.Builder(this).setTitle(title).setItems(labels,(d,index)->{if(ready())actions[index].run();}).show();}
     private abstract static class Selected implements android.widget.AdapterView.OnItemSelectedListener {public abstract void selected(int position);public void onItemSelected(android.widget.AdapterView<?> parent,View view,int position,long id){selected(position);}public void onNothingSelected(android.widget.AdapterView<?> parent){}}
 
@@ -702,7 +845,7 @@ public final class SketchAnimationActivity extends Activity {
                 if((event.getActionMasked()==MotionEvent.ACTION_MOVE||event.getActionMasked()==MotionEvent.ACTION_UP)&&!dragged.isEmpty()){
                     JSONObject joint=SketchAnimationUiModel.joint(rig,dragged);
                     if(mapping){joint.put("x",Math.max(0,Math.min(1,x))).put("y",Math.max(0,Math.min(1,y)));}
-                    else if(joint.optString("parent").isEmpty()){SketchAnimationUiModel.pose(program,selectedRig,frame,interpolation).put("rootX",Math.max(-4,Math.min(4,rootX+x-downX))).put("rootY",Math.max(-4,Math.min(4,rootY+y-downY)));}
+                    else if(joint.optString("parent").isEmpty()){SketchAnimationUiModel.poseKeepingTiming(program,selectedRig,frame,interpolation).put("rootX",Math.max(-4,Math.min(4,rootX+x-downX))).put("rootY",Math.max(-4,Math.min(4,rootY+y-downY)));}
                     else{
                         String parentId=joint.getString("parent");JSONObject parent=SketchAnimationUiModel.joint(rig,parentId),parentWorld=worldPosition(parent);String grandId=parent.optString("parent");double grandRotation=grandId.isEmpty()?0:worldPosition(SketchAnimationUiModel.joint(rig,grandId)).optDouble("rotation");
                         double rest=Math.atan2((joint.getDouble("y")-parent.getDouble("y"))*source.getDouble("height"),(joint.getDouble("x")-parent.getDouble("x"))*source.getDouble("width"));

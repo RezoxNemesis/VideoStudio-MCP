@@ -70,7 +70,8 @@ public final class SketchPaintStore implements AutoCloseable {
         if(!canonical.startsWith(files+"/")||!ownedDependencyRoot.isDirectory())throw bad("SKETCH_PAINT_OWNERSHIP: private archive owner required");
         String relative=canonical.substring(files.length()+1);
         if(!relative.matches("sketch_studio/[A-Za-z0-9_-]{1,96}/(exports|archives)/[A-Za-z0-9_-]{1,96}/assets")&&
-           !relative.matches("sketch_books/[A-Za-z0-9_-]{1,96}/exports/[A-Za-z0-9_-]{1,96}/pages/[0-9]{1,5}/assets")&&
+           !relative.matches("sketch_books/[A-Za-z0-9_-]{1,96}/exports/[A-Za-z0-9_-]{1,96}/pages/[0-9]{1,6}/assets")&&
+           !relative.matches("sketch_books/[A-Za-z0-9_-]{1,96}/exports/[A-Za-z0-9_-]{1,96}/cels/[0-9]{1,3}/[0-9]{1,6}/assets")&&
            !relative.matches("sketch_archive_staging/[A-Za-z0-9_-]{1,160}/assets"))
             throw bad("SKETCH_PAINT_OWNERSHIP: unsupported private archive scope");
         owner=ownedDependencyRoot.getCanonicalFile();root=new File(owner,"paint");rootPath=canonical+"/paint";
@@ -123,6 +124,37 @@ public final class SketchPaintStore implements AutoCloseable {
         }
     }
 
+    /** Paint an existing authored closed contour into ordinary immutable native tiles. */
+    public PreparedChange prepareFill(JSONObject document,JSONObject operation)throws Exception {
+        writable();interrupted();if(!id.equals(document.getString("id")))throw bad("Wrong contour paint owner");
+        SketchContourPaint.Selection selected=SketchContourPaint.select(document,operation);JSONObject before=selected.before;int width=before.getInt("width"),height=before.getInt("height");
+        synchronized(lock){
+            JSONObject previous=manifest(before);if(previous.getInt("strokeCount")>=MAX_CHAIN)throw bad("Paint journal budget exceeded");
+            if(selected.moveUnderInk&&(previous.getInt("strokeCount")!=0||previous.getJSONArray("tiles").length()!=0))throw bad("Choose a paint cel already behind the ink, or create a fresh base cel");
+            if(previous.has("strokeSha256")&&stroke(previous.getString("strokeSha256")).getString("strokeId").equals(operation.getString("strokeId")))throw bad("SKETCH_PAINT_STROKE_ID_CONFLICT");
+            JSONObject record=new JSONObject().put("schema",STROKE).put("objectId",operation.getString("objectId")).put("strokeId",operation.getString("strokeId")).put("request",copy(operation)).put("beforePaint",before).put("contour",selected.pin).put("moveUnderInk",selected.moveUnderInk);
+            validateStroke(record);TreeMap<Integer,String> tiles=tileMap(previous,width,height);int columns=(width+TILE_SIZE-1)/TILE_SIZE,dirty=0;RectF bounds=new RectF();selected.path.computeBounds(bounds,true);
+            int left=Math.max(0,(int)Math.floor(bounds.left)),top=Math.max(0,(int)Math.floor(bounds.top)),right=Math.min(width,(int)Math.ceil(bounds.right)),bottom=Math.min(height,(int)Math.ceil(bounds.bottom));Paint ink=new Paint(Paint.ANTI_ALIAS_FLAG);ink.setStyle(Paint.Style.FILL);ink.setColor(SketchDocument.color(operation.getString("color")));
+            // Raster clipping changes Skia's curved-edge coverage/color rounding.
+            // Draw the bounded area once at native canvas size, then copy raw
+            // premultiplied pixels into tiles without another drawing transform.
+            Bitmap composite=Bitmap.createBitmap(width,height,Bitmap.Config.ARGB_8888);
+            try{
+                Canvas full=new Canvas(composite);draw(full,before);interrupted();full.drawPath(selected.path,ink);interrupted();
+                int[] raw=new int[width*height];composite.copyPixelsToBuffer(java.nio.IntBuffer.wrap(raw));int[] tilePixels=new int[TILE_SIZE*TILE_SIZE];
+                for(int ty=top/TILE_SIZE;ty<=(bottom-1)/TILE_SIZE;ty++)for(int tx=left/TILE_SIZE;tx<=(right-1)/TILE_SIZE;tx++){
+                    interrupted();int index=ty*columns+tx,x=tx*TILE_SIZE,y=ty*TILE_SIZE,tileWidth=Math.min(TILE_SIZE,width-x),tileHeight=Math.min(TILE_SIZE,height-y);java.util.Arrays.fill(tilePixels,0);
+                    for(int row=0;row<tileHeight;row++)System.arraycopy(raw,(y+row)*width+x,tilePixels,row*TILE_SIZE,tileWidth);
+                    Bitmap baseline=tiles.containsKey(index)?tile(tiles.get(index)):null,target=Bitmap.createBitmap(TILE_SIZE,TILE_SIZE,Bitmap.Config.ARGB_8888);
+                    try{target.copyPixelsFromBuffer(java.nio.IntBuffer.wrap(tilePixels));if(baseline!=null&&target.sameAs(baseline)||baseline==null&&transparent(target))continue;if(transparent(target))tiles.remove(index);else tiles.put(index,publishBitmap("tiles",target,TILE_BYTES));dirty++;}finally{target.recycle();if(baseline!=null)baseline.recycle();}
+                }
+            }finally{composite.recycle();}
+            interrupted();String strokeHash=publishJson("strokes",record,JOURNAL_BYTES);JSONArray declarations=new JSONArray();for(Map.Entry<Integer,String> tile:tiles.entrySet())declarations.put(new JSONObject().put("x",tile.getKey()%columns).put("y",tile.getKey()/columns).put("sha256",tile.getValue()));
+            JSONObject after=new JSONObject().put("schema",SNAPSHOT).put("width",width).put("height",height).put("tileSize",TILE_SIZE).put("tiles",declarations).put("parentSha256",before.getString("sha256")).put("strokeSha256",strokeHash).put("strokeCount",previous.getInt("strokeCount")+1);JSONObject next=descriptor(publishJson("",after,MANIFEST_BYTES),width,height);
+            JSONObject visual=new JSONObject().put("type","paint_fill").put("objectId",operation.getString("objectId")).put("strokeId",operation.getString("strokeId")).put("beforePaint",before).put("afterPaint",next).put("stroke",record);return new PreparedChange(copy(next),copy(visual),strokeHash,dirty);
+        }
+    }
+
     public void verify(JSONObject d)throws Exception {
         JSONObject m=manifest(d);for(String sha:tileMap(m,d.getInt("width"),d.getInt("height")).values())verifyPng(owned("tiles",sha,"png",TILE_BYTES),TILE_SIZE,TILE_SIZE);
         if(m.has("strokeSha256")){JSONObject journal=stroke(m.getString("strokeSha256"));
@@ -134,6 +166,13 @@ public final class SketchPaintStore implements AutoCloseable {
         validateDescriptor(d);View view=view(d,maximum,crop);Bitmap output=Bitmap.createBitmap(view.width,view.height,Bitmap.Config.ARGB_8888);
         try{Canvas canvas=new Canvas(output);canvas.scale((float)view.width/view.area.width(),(float)view.height/view.area.height());canvas.translate(-view.area.left,-view.area.top);canvas.clipRect(view.area);draw(canvas,d);return output;}
         catch(Exception|OutOfMemoryError error){output.recycle();throw error;}
+    }
+
+    /** Exact full-canvas source for bounded deformation and alpha support, independent of viewport limits. */
+    Bitmap renderSource(JSONObject descriptor)throws Exception {
+        if(android.os.Looper.myLooper()==android.os.Looper.getMainLooper())throw new IllegalStateException("Full paint source requires a worker");
+        validateDescriptor(descriptor);interrupted();Bitmap image=Bitmap.createBitmap(descriptor.getInt("width"),descriptor.getInt("height"),Bitmap.Config.ARGB_8888);
+        try{draw(new Canvas(image),descriptor);interrupted();return image;}catch(Exception|OutOfMemoryError failure){image.recycle();throw failure;}
     }
 
     /** Worker-only native resolution streaming into an existing export/viewport Canvas. */
@@ -151,13 +190,13 @@ public final class SketchPaintStore implements AutoCloseable {
 
     public Bitmap renderPrefix(JSONObject visual,double fraction,int maximum,JSONObject crop)throws Exception {
         if(!Double.isFinite(fraction)||fraction<0||fraction>1)throw bad("Paint replay fraction must be 0..1");
-        fields(visual,"type,objectId,strokeId,beforePaint,afterPaint,stroke");if(!"paint_stroke".equals(visual.getString("type")))throw bad("Paint replay requires its authoritative stroke event");
+        fields(visual,"type,objectId,strokeId,beforePaint,afterPaint,stroke");if(!java.util.Arrays.asList("paint_stroke","paint_fill").contains(visual.getString("type")))throw bad("Paint replay requires its authoritative native paint event");
         JSONObject before=visual.getJSONObject("beforePaint"),after=visual.getJSONObject("afterPaint"),record=visual.getJSONObject("stroke");
         validateDescriptor(before);validateDescriptor(after);validateStroke(record);
         if(!SketchDocument.canonical(record.getJSONObject("beforePaint")).equals(SketchDocument.canonical(before))||!record.getString("objectId").equals(visual.getString("objectId"))||!record.getString("strokeId").equals(visual.getString("strokeId")))throw bad("SKETCH_PAINT_REPLAY_CHANGED: event pins changed");
         JSONObject finalManifest=manifest(after);String journalHash=SketchDocument.sha256(bytes(record));
         if(!journalHash.equals(finalManifest.optString("strokeSha256"))||!before.getString("sha256").equals(finalManifest.optString("parentSha256")))throw bad("SKETCH_PAINT_REPLAY_CHANGED: committed journal mismatch");
-        if(fraction==0)return render(before,maximum,crop);if(fraction==1)return render(after,maximum,crop);
+        if(fraction==0||"paint_fill".equals(visual.getString("type"))&&fraction<1)return render(before,maximum,crop);if(fraction==1)return render(after,maximum,crop);
         int width=before.getInt("width"),height=before.getInt("height");SketchPaintBrush.Plan plan=SketchPaintBrush.plan(record.getJSONObject("request"),width,height);
         SketchPaintBrush.Source source=record.has("source")?source(record.getJSONObject("source"),width,height):null;
         return renderPlan(before,plan,source,fraction,maximum,crop);
@@ -206,6 +245,19 @@ public final class SketchPaintStore implements AutoCloseable {
             if(!m.has("strokeSha256"))break;if(count>=MAX_CHAIN)throw bad("SKETCH_PAINT_JOURNAL_BUDGET");JSONObject record=stroke(m.getString("strokeSha256"));
             JSONObject prior=parent(current,m,record);if(count++>=offset)result.put(record);if(result.length()>=limit)break;current=prior;
         }return result;
+    }
+
+    /** Bounded, streaming ancestry check for reuse of current authored stage paint. */
+    void requireAuthoredStageSource(JSONObject descriptor)throws Exception {
+        if(android.os.Looper.myLooper()==android.os.Looper.getMainLooper())throw bad("Authored paint reuse requires a worker");verify(descriptor);JSONObject current=copy(descriptor);java.util.HashSet<String> seen=new java.util.HashSet<>();int count=0;
+        while(true){interrupted();if(!seen.add(current.getString("sha256")))throw bad("Authored paint ancestry is cyclic");JSONObject m=manifest(current);
+            if(count==0&&m.getJSONArray("tiles").length()==0)throw bad("Choose paint with retained authored pixels");
+            if(!m.has("strokeSha256")){if(m.getInt("strokeCount")!=0||m.getJSONArray("tiles").length()!=0)throw bad("Authored paint ancestry must begin with an empty native snapshot");return;}
+            if(++count>MAX_CHAIN)throw bad("Authored paint ancestry exceeds8192 steps");JSONObject record=stroke(m.getString("strokeSha256")),request=record.getJSONObject("request");
+            if(record.has("source")||request.has("cloneSource"))throw bad("Reference or clone-derived paint cannot become an authored clean part");
+            if(!"paint_fill".equals(request.optString("type"))){JSONObject brush=request.optJSONObject("brush");if(!"paint_stroke".equals(request.optString("type"))||brush==null||!java.util.Arrays.asList("paint","erase").contains(brush.optString("mode")))throw bad("Reuse only native authored paint/fill ancestry");}
+            current=parent(current,m,record);
+        }
     }
 
     public LinkedHashMap<String,File> dependencies(JSONObject d)throws Exception {
@@ -287,7 +339,7 @@ public final class SketchPaintStore implements AutoCloseable {
     private static final class Target {final JSONObject object,before;final SketchPaintBrush.Plan plan;final int frame;Target(JSONObject object,JSONObject before,SketchPaintBrush.Plan plan,int frame){this.object=object;this.before=before;this.plan=plan;this.frame=frame;}}
     private Target target(JSONObject document,JSONObject operation)throws Exception {
         if(!id.equals(document.getString("id")))throw bad("SKETCH_PAINT_OWNERSHIP: wrong sketch document");int width=integer(document,"width",256,2048),height=integer(document,"height",256,2048);dimensions(width,height);SketchPaintBrush.Plan plan=SketchPaintBrush.plan(operation,width,height);
-        String objectId=safeId(plan.stroke.getString("objectId"));JSONObject object=SketchDocument.object(document,objectId);if(!"paint".equals(object.getString("kind")))throw bad("Paint stroke requires a paint cel");SketchEditOps.requireUnlocked(SketchDocument.owner(document,objectId));
+        String objectId=safeId(plan.stroke.getString("objectId"));JSONObject object=SketchDocument.object(document,objectId);if(!"paint".equals(object.getString("kind")))throw bad("Paint stroke requires a paint cel");if(object.has("paintMesh"))throw bad("Remove the paint deformation grid before authoring source pixels");SketchEditOps.requireUnlocked(SketchDocument.owner(document,objectId));
         int frames=integer(document,"frameCount",1,1200),start=integer(object,"frame",0,frames-1),exposure=integer(object,"exposure",1,frames-start),frame=plan.stroke.has("frameIndex")?integer(plan.stroke,"frameIndex",0,frames-1):start;if(frame<start||frame>=start+exposure)throw bad("Paint stroke frame must be inside its target cel exposure");
         JSONObject bounds=object.getJSONObject("bounds");SketchDocument.validateBounds(bounds);if(bounds.getDouble("x")!=0||bounds.getDouble("y")!=0||bounds.getDouble("width")!=1||bounds.getDouble("height")!=1)throw bad("Paint cel bounds must cover its native canvas");
         JSONObject before=copy(object.getJSONObject("paint"));validateDescriptor(before);if(before.getInt("width")!=width||before.getInt("height")!=height)throw bad("Paint cel dimensions must match canvas");return new Target(object,before,plan,frame);
@@ -306,8 +358,10 @@ public final class SketchPaintStore implements AutoCloseable {
 
     private JSONObject stroke(String sha)throws Exception {JSONObject record=json(owned("strokes",hash(sha),"json",JOURNAL_BYTES),JOURNAL_BYTES);validateStroke(record);return record;}
     private static void validateStroke(JSONObject record)throws Exception {
-        fields(record,"schema,objectId,strokeId,request,beforePaint,source");if(!STROKE.equals(record.getString("schema")))throw bad("Unknown paint journal schema");safeId(record.getString("objectId"));safeId(record.getString("strokeId"));validateDescriptor(record.getJSONObject("beforePaint"));JSONObject request=record.getJSONObject("request");
-        if(!record.getString("objectId").equals(request.getString("objectId"))||!record.getString("strokeId").equals(request.getString("strokeId")))throw bad("Paint journal request IDs changed");SketchPaintBrush.plan(request,record.getJSONObject("beforePaint").getInt("width"),record.getJSONObject("beforePaint").getInt("height"));
+        fields(record,"schema,objectId,strokeId,request,beforePaint,source,contour,moveUnderInk");if(!STROKE.equals(record.getString("schema")))throw bad("Unknown paint journal schema");safeId(record.getString("objectId"));safeId(record.getString("strokeId"));validateDescriptor(record.getJSONObject("beforePaint"));JSONObject request=record.getJSONObject("request");
+        if(!record.getString("objectId").equals(request.getString("objectId"))||!record.getString("strokeId").equals(request.getString("strokeId")))throw bad("Paint journal request IDs changed");
+        if("paint_fill".equals(request.optString("type"))){SketchContourPaint.request(request);if(record.has("source")||!record.has("contour")||!(record.get("moveUnderInk") instanceof Boolean))throw bad("Contour fill provenance missing or unexpected");JSONObject pin=record.getJSONObject("contour");SketchContourPaint.path(pin);if(!request.getString("contourObjectId").equals(pin.getJSONObject("object").getString("id"))||!request.getString("expectedContourSha256").equals(pin.getString("sha256"))||pin.getInt("width")!=record.getJSONObject("beforePaint").getInt("width")||pin.getInt("height")!=record.getJSONObject("beforePaint").getInt("height"))throw bad("Contour fill provenance differs from its request");if(record.getBoolean("moveUnderInk")&&!SketchContourPaint.emptyHash(pin.getInt("width"),pin.getInt("height")).equals(record.getJSONObject("beforePaint").getString("sha256")))throw bad("Only a fresh paint cel can move behind ink");return;}
+        if(record.has("contour")||record.has("moveUnderInk"))throw bad("Brush strokes cannot inject contour provenance");SketchPaintBrush.plan(request,record.getJSONObject("beforePaint").getInt("width"),record.getJSONObject("beforePaint").getInt("height"));
         boolean clone="clone".equals(request.getJSONObject("brush").getString("mode"));if(clone!=record.has("source"))throw bad("Paint clone journal source missing or unexpected");
         if(clone){JSONObject pin=record.getJSONObject("source");validateSource(pin);if(!request.getJSONObject("cloneSource").getString("sha256").equals(pin.getString("sha256")))throw bad("SKETCH_PAINT_SOURCE_CHANGED: journal source differs from authored request");}
     }

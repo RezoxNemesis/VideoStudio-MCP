@@ -1,0 +1,58 @@
+name: Temple native study evidence transport
+
+on:
+  push:
+    branches: [test/native-temple-figure-v4103]
+
+permissions:
+  contents: read
+
+jobs:
+  transport-reviewed-local-study:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Verify frozen product source and locally rendered evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import base64, hashlib, importlib.util, json, os, pathlib, subprocess
+          source = 'ea33220a3df31370c17dacb8169383a9d0e76af3'
+          blob = '567476948f97f00afa5cb16be90e73acde614706'
+          expected = '2b52a9c8c933a8e01970f435e676b7f4a9dfbf960d46fd02d2b05b840ab4d76d'
+          subprocess.check_call(['git','merge-base','--is-ancestor',source,'HEAD'])
+          subprocess.check_call(['git','diff','--exit-code',source,'--','android/app/src/main','android/app/build.gradle.kts'])
+          raw = subprocess.check_output(['gh','api',f'repos/{os.environ["GITHUB_REPOSITORY"]}/git/blobs/{blob}'])
+          response = json.loads(raw)
+          assert response['encoding'] == 'base64' and response['size'] == 2545306
+          data = base64.b64decode(response['content'])
+          assert hashlib.sha256(data).hexdigest() == expected
+          spec = importlib.util.spec_from_file_location('transport','scripts/receive-native-study-evidence.py')
+          module = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(module)
+          manifest = module.validate(data, source)
+          driver = pathlib.Path('android/app/src/test/java/com/rezoxnemesis/videostudio/TempleNativeFrameConsistencyStudyTest.java')
+          assert hashlib.sha256(driver.read_bytes()).hexdigest() == manifest['testDriverSha256']
+          output = pathlib.Path('work/native-study-evidence')
+          output.mkdir(parents=True,exist_ok=True)
+          (output/'temple-native-layer-frame-study.zip').write_bytes(data)
+          (output/'temple-native-layer-frame-study.zip.sha256').write_text(expected+'  temple-native-layer-frame-study.zip\n')
+          (output/'transport-verification.json').write_text(json.dumps({
+              'productSource':source,'courierCommit':os.environ['GITHUB_SHA'],
+              'zipSha256':expected,'nativeRenderingOccurredLocally':True,
+              'ciRenderingPerformed':False,'visualStatus':'NEEDS_REWORK',
+              'exactAssetMatch':False,'originalReferencePixelsIncluded':False,
+          },indent=2)+'\n')
+          print('Transport integrity PASS. Native likeness remains FAIL/NEEDS_REWORK.')
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Temple-native-layer-frame-study
+          path: work/native-study-evidence/
+          if-no-files-found: error
+          retention-days: 30

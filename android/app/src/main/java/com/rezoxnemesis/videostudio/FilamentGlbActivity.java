@@ -4,6 +4,8 @@ import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.Intent;
 import android.graphics.Color;
+import android.graphics.Bitmap;
+import android.view.PixelCopy;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
@@ -64,7 +66,16 @@ public final class FilamentGlbActivity extends Activity
     private UiHelper uiHelper;
     private SurfaceView surface;
     private TextView status,modelHint,clipTime;
-    private Button playbackButton,orbitButton,rateButton;
+    private Button playbackButton,orbitButton,rateButton,retryButton;
+    private final Preview3DReadiness previewReadiness=new Preview3DReadiness();
+    private String pendingModelId="",modelReadyMessage="3D model resources loaded • frame submitted";
+    /** The boundary returns native driver observations; tests cannot attest GPU pixels. */
+    interface PreviewFrameDriver {
+        boolean hasAsset();
+        float progress();
+        boolean render(long frameTimeNanos);
+    }
+    private PreviewFrameDriver previewDriver;
     private SeekBar modelScrub;
     private final Preview3DPlayback clipClock=new Preview3DPlayback();
     private final Handler main=new Handler(Looper.getMainLooper());
@@ -73,18 +84,32 @@ public final class FilamentGlbActivity extends Activity
     private int animationIndex=0;
     private double cameraAngle=0;
     private double cameraPitch=0,cameraDistance=4;
+    // A separate, opt-in 3D camera path: never changes GLB animation data.
+    private String referenceCameraPreset="";
+    private double referenceCameraPhase=0,referenceCameraOriginAzimuth=0,
+            referenceCameraOriginPitch=0,
+            referenceCameraOriginDistance=4;
+    private boolean studioLightingOn;
+    private int[] studioLights=new int[0];
+    private Button studioLightingButton;
+
+
     private String loadedModelId="",modelName="";
-    private boolean renderUnavailable,restoringModel;
+    private String sketchCaptureTargetId="",sketchCaptureMode="colour_regions";
+    private int sketchCaptureFrame;
+    private boolean sketchCaptureBusy;
+    private boolean renderUnavailable,restoringModel,modelLoading;
     private double restoredClipPosition;
     private int modelLoadGeneration;
     private Future<?> modelTask;
     private volatile InputStream modelInput;
     private boolean cinematic;
     private volatile boolean destroyed;
-    private boolean cinematicLoading,cinematicUnavailable,cinematicResourcesReady;
+    private boolean cinematicLoading,cinematicUnavailable;
     private int cinematicLoadGeneration,cinematicFrame,cinematicFrameCount,cinematicFps;
     private int cinematicShotIndex=-1,cinematicLastRenderedFrame=-1,cinematicPlayStartFrame,cinematicFallbackLight;
-    private long cinematicPlayStartedAt,cinematicResourceStartedAt;
+    private int cinematicOutputWidth=720,cinematicOutputHeight=1280;
+    private long cinematicPlayStartedAt;
     private String cinematicProgramId,cinematicProgramSha;
     private JSONObject cinematicProgram,cinematicBundle,cinematicTimeline,cinematicScene;
     private JSONArray cinematicShots;
@@ -97,20 +122,54 @@ public final class FilamentGlbActivity extends Activity
         getWindow().setStatusBarColor(0xff090d17);
         getWindow().setNavigationBarColor(0xff090d17);
         projectStore=new ProjectStore(this);
+        sketchCaptureTargetId=getIntent().getStringExtra("sketchCaptureTargetId");
+        if(sketchCaptureTargetId==null)sketchCaptureTargetId="";
+        sketchCaptureFrame=getIntent().getIntExtra("sketchCaptureFrame",0);
+        sketchCaptureMode=getIntent().getStringExtra("sketchCaptureMode");
+        if(sketchCaptureMode==null)sketchCaptureMode="colour_regions";
         cinematicProgramId=getIntent().getStringExtra("cinematicProgramId");
         cinematic=cinematicProgramId!=null&&!cinematicProgramId.isEmpty();
+        if(cinematic){
+            int width=getIntent().getIntExtra("cinematicOutputWidth",720);
+            int height=getIntent().getIntExtra("cinematicOutputHeight",1280);
+            // Only the three declared native film frame shapes are accepted.
+            CinematicOutputFraming.matching(width,height);
+            cinematicOutputWidth=width;cinematicOutputHeight=height;
+        }
+
         if(cinematic)cinematicFrame=Math.max(0,getIntent().getIntExtra("previewStartFrame",0));
         cinematicProgramSha=getIntent().getStringExtra("expectedProgramSha256");
         String projectId=getIntent().getStringExtra("projectId");
         project=projectId==null?projectStore.active():projectStore.get(projectId);
         if(project==null){finish();return;}
         if(state!=null){
+            if(cinematic){
+                // Recreation follows the exact original owner-selected frame
+                // size; a stale/injected dimension cannot change the GPU budget.
+                int width=state.getInt("cinematicOutputWidth",cinematicOutputWidth);
+                int height=state.getInt("cinematicOutputHeight",cinematicOutputHeight);
+                CinematicOutputFraming.matching(width,height);
+                cinematicOutputWidth=width;cinematicOutputHeight=height;
+            }
             paused=state.getBoolean("paused",false);cinematicFrame=Math.max(0,state.getInt("cinematicFrame",0));
             loadedModelId=state.getString("modelId","");animationIndex=Math.max(0,state.getInt("animationIndex",0));
             restoredClipPosition=state.getDouble("clipPosition",0);restoringModel=!loadedModelId.isEmpty();
             try{clipClock.rate(state.getDouble("playbackRate",1));}catch(IllegalArgumentException ignored){}
             cameraAngle=finiteOr(state.getDouble("cameraAngle",0),0);cameraPitch=Math.max(-80,Math.min(80,finiteOr(state.getDouble("cameraPitch",0),0)));
             cameraDistance=Math.max(2,Math.min(12,finiteOr(state.getDouble("cameraDistance",4),4)));
+            referenceCameraPreset=state.getString("referenceCameraPreset","");
+            referenceCameraPhase=Math.max(0,Math.min(1,finiteOr(
+                    state.getDouble("referenceCameraPhase",0),0)));
+            referenceCameraOriginAzimuth=finiteOr(
+                    state.getDouble("referenceCameraOriginAzimuth",0),0);
+            referenceCameraOriginPitch=Math.max(-80,Math.min(80,finiteOr(
+                    state.getDouble("referenceCameraOriginPitch",0),0)));
+            referenceCameraOriginDistance=Math.max(2,Math.min(12,finiteOr(
+                    state.getDouble("referenceCameraOriginDistance",4),4)));
+            if(!java.util.Arrays.asList(CinematicReferenceCameraPath.presets())
+                    .contains(referenceCameraPreset))referenceCameraPreset="";
+            studioLightingOn=state.getBoolean("studioLightingOn",false);
+
         }
         try{
             Native3DRuntime.initialize();
@@ -165,6 +224,7 @@ public final class FilamentGlbActivity extends Activity
         surface=new CinematicSurfaceView(this);modelFrame.addView(surface,new FrameLayout.LayoutParams(-1,-1));
         modelHint=new TextView(this);modelHint.setText("No 3D model loaded in this project.\nUse Import GLB or Existing model to open your geometry.");modelHint.setTextColor(0xffb9ccdf);modelHint.setTextSize(15);modelHint.setGravity(Gravity.CENTER);modelHint.setPadding(dp(24),dp(24),dp(24),dp(24));modelFrame.addView(modelHint,new FrameLayout.LayoutParams(-1,-1));
         viewer=new ModelViewer(surface,engine,uiHelper,null);
+        attachPreviewDriver();
         configureCameraGestures();
 
         LinearLayout second=new LinearLayout(this);
@@ -172,13 +232,31 @@ public final class FilamentGlbActivity extends Activity
                 new LinearLayout.LayoutParams(0,dp(50),1));
         second.addView(action("Choose motion",v->chooseAnimation()),
                 new LinearLayout.LayoutParams(0,dp(50),1));
-        orbitButton=action("Orbit: off",v->{orbit=!orbit;orbitButton.setText(orbit?"Orbit: on":"Orbit: off");});second.addView(orbitButton,
+        orbitButton=action("Orbit: off",v->{referenceCameraPreset="";orbit=!orbit;orbitButton.setText(orbit?"Orbit: on":"Orbit: off");});second.addView(orbitButton,
                 new LinearLayout.LayoutParams(0,dp(50),1));
         root.addView(second);
         LinearLayout cameraTools=new LinearLayout(this);
         cameraTools.addView(action("Camera views",v->chooseCamera()),new LinearLayout.LayoutParams(0,dp(48),1));
-        cameraTools.addView(action("Fit model",v->{cameraAngle=cameraPitch=0;cameraDistance=4;orbit=false;orbitButton.setText("Orbit: off");updateModelCamera();}),new LinearLayout.LayoutParams(0,dp(48),1));
+        cameraTools.addView(action("Fit model",v->{referenceCameraPreset="";cameraAngle=cameraPitch=0;cameraDistance=4;orbit=false;orbitButton.setText("Orbit: off");updateModelCamera();}),new LinearLayout.LayoutParams(0,dp(48),1));
         rateButton=action("Speed 1×",v->chooseRate());cameraTools.addView(rateButton,new LinearLayout.LayoutParams(0,dp(48),1));root.addView(cameraTools);
+        Button paths=action("Reference camera • 360° car / hero / acting / action / detail",
+                v->chooseReferenceCameraPath());
+        paths.setContentDescription("Use the existing real 3D GLB and its material textures "
+                +"with a cinematic moving perspective, without changing your source asset");
+        root.addView(paths,new LinearLayout.LayoutParams(-1,dp(50)));
+        studioLightingButton=action(
+                studioLightingOn?"3-point PBR studio lighting: on":"3-point PBR studio lighting: off",
+                v->toggleStudioLighting());
+        studioLightingButton.setContentDescription("Toggle real key fill and rim lighting "
+                +"on the imported GLB material surfaces. Does not edit UVs or artwork.");
+        root.addView(studioLightingButton,new LinearLayout.LayoutParams(-1,dp(46)));
+
+
+        if(!sketchCaptureTargetId.isEmpty()){
+            Button capture=action("Capture this 3D pose → editable Sketch cel",v->capturePoseForSketch());
+            capture.setContentDescription("Capture the currently visible 3D pose and transfer it to the chosen Sketch Studio animation frame");
+            root.addView(capture,new LinearLayout.LayoutParams(-1,dp(50)));
+        }
         clipTime=new TextView(this);clipTime.setTextColor(0xffb9ccdf);clipTime.setPadding(dp(14),0,dp(14),0);clipTime.setText("Drag to orbit • pinch to zoom • select a clip to scrub");root.addView(clipTime);
         modelScrub=new SeekBar(this);modelScrub.setMax(1000);modelScrub.setEnabled(false);modelScrub.setContentDescription("3D animation clip time");
         modelScrub.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener(){
@@ -192,6 +270,7 @@ public final class FilamentGlbActivity extends Activity
         status.setTextSize(12);
         status.setPadding(14,9,14,22);
         root.addView(status);
+        addPreviewRetry(root);
         setContentView(root);
         chooseFirstExisting();
     }
@@ -201,8 +280,10 @@ public final class FilamentGlbActivity extends Activity
         TextView title=new TextView(this);title.setText("VideoStudio • Cinematic 3D Preview");title.setTextColor(0xffe8f7ff);title.setTextSize(19);title.setPadding(14,18,14,9);root.addView(title);
         TextView description=new TextView(this);description.setText("Saved full-scene geometry, weighted actors, swords and effects. Authored world roots and exact clip/camera bindings match native export.");description.setTextColor(0xff9fb1c7);description.setTextSize(12);description.setPadding(14,0,14,10);root.addView(description);
         FrameLayout preview=new FrameLayout(this);root.addView(preview,new LinearLayout.LayoutParams(-1,0,1));surface=new CinematicSurfaceView(this);preview.addView(surface,new FrameLayout.LayoutParams(-1,-1,Gravity.CENTER));
-        preview.addOnLayoutChangeListener((view,left,top,right,bottom,oldLeft,oldTop,oldRight,oldBottom)->{int availableWidth=right-left,availableHeight=bottom-top;if(availableWidth<1||availableHeight<1)return;int width=availableWidth,height=Math.round(width*Cinematic3DStudioActivity.OUTPUT_HEIGHT/(float)Cinematic3DStudioActivity.OUTPUT_WIDTH);if(height>availableHeight){height=availableHeight;width=Math.round(height*Cinematic3DStudioActivity.OUTPUT_WIDTH/(float)Cinematic3DStudioActivity.OUTPUT_HEIGHT);}FrameLayout.LayoutParams layout=(FrameLayout.LayoutParams)surface.getLayoutParams();if(layout.width!=width||layout.height!=height){layout.width=width;layout.height=height;surface.setLayoutParams(layout);}});
+        preview.addOnLayoutChangeListener((view,left,top,right,bottom,oldLeft,oldTop,oldRight,oldBottom)->{int availableWidth=right-left,availableHeight=bottom-top;if(availableWidth<1||availableHeight<1)return;int width=availableWidth,height=Math.round(width*cinematicOutputHeight/(float)cinematicOutputWidth);if(height>availableHeight){height=availableHeight;width=Math.round(height*cinematicOutputWidth/(float)cinematicOutputHeight);}FrameLayout.LayoutParams layout=(FrameLayout.LayoutParams)surface.getLayoutParams();if(layout.width!=width||layout.height!=height){layout.width=width;layout.height=height;surface.setLayoutParams(layout);}});
         viewer=new ModelViewer(surface,engine,uiHelper,null);
+        attachPreviewDriver();
+        modelHint=new TextView(this);modelHint.setTextColor(0xffb9ccdf);modelHint.setTextSize(15);modelHint.setGravity(Gravity.CENTER);modelHint.setPadding(dp(24),dp(24),dp(24),dp(24));preview.addView(modelHint,new FrameLayout.LayoutParams(-1,-1));
         // ModelViewer's standalone default sunlight is not part of the authored scene.
         viewer.getScene().remove(viewer.getLight());surface.setOnTouchListener((v,event)->true);
         Renderer.ClearOptions clear=new Renderer.ClearOptions();clear.clear=true;clear.clearColor=new double[]{.045,.055,.075,1};viewer.getRenderer().setClearOptions(clear);
@@ -212,7 +293,72 @@ public final class FilamentGlbActivity extends Activity
             @Override public void onStopTrackingTouch(SeekBar bar){}
         });root.addView(cinematicScrub);
         LinearLayout actions=new LinearLayout(this);actions.addView(action("Play / Pause",v->togglePlayback()),new LinearLayout.LayoutParams(0,dp(50),1));actions.addView(action("Restart",v->{if(cinematicLoading||cinematicUnavailable)return;cinematicFrame=0;cinematicPlayStartedAt=0;paused=false;requestCinematicFrame();}),new LinearLayout.LayoutParams(0,dp(50),1));actions.addView(action("Return",v->finish()),new LinearLayout.LayoutParams(0,dp(50),1));root.addView(actions);
-        status=new TextView(this);status.setText("Verifying the saved source, program and scene bundle…");status.setTextColor(0xff5adff4);status.setTextSize(12);status.setPadding(14,9,14,22);root.addView(status);setContentView(root);loadCinematicProgram();
+        status=new TextView(this);status.setText("Verifying the saved source, program and scene bundle…");status.setTextColor(0xff5adff4);status.setTextSize(12);status.setPadding(14,9,14,22);root.addView(status);addPreviewRetry(root);setContentView(root);loadCinematicProgram();
+    }
+
+    private void attachPreviewDriver(){
+        final ModelViewer owned=viewer;
+        previewDriver=new PreviewFrameDriver(){
+            public boolean hasAsset(){return owned.getAsset()!=null;}
+            public float progress(){return owned.getProgress();}
+            public boolean render(long nanos){return owned.render(nanos);}
+        };
+    }
+    private void addPreviewRetry(LinearLayout root){
+        retryButton=action("Retry preview",v->retryPreview());retryButton.setVisibility(View.GONE);root.addView(retryButton);
+    }
+    private void beginPreviewReadiness(){
+        previewReadiness.start(android.os.SystemClock.elapsedRealtime());clipClock.suspend();cinematicPlayStartedAt=0;
+        if(retryButton!=null)retryButton.setVisibility(View.GONE);
+        if(modelScrub!=null)modelScrub.setEnabled(false);
+        if(cinematicScrub!=null)cinematicScrub.setEnabled(false);
+        previewMessage("Loading 3D resources…");
+    }
+    private void previewMessage(String message){
+        if(status!=null)status.setText(message);
+        if(modelHint!=null){modelHint.setText(message);modelHint.setVisibility(View.VISIBLE);}
+    }
+    private void observePreviewSubmission(float progress,boolean submitted){
+        if(!previewReadiness.monitoring()||previewReadiness.failed())return;
+        previewReadiness.observe(android.os.SystemClock.elapsedRealtime(),progress,submitted);
+        if(previewReadiness.ready()){
+            if(modelHint!=null)modelHint.setVisibility(View.GONE);
+            if(cinematic){
+                cinematicLastRenderedFrame=cinematicFrame;
+                if(cinematicScrub!=null)cinematicScrub.setEnabled(true);
+            }else{
+                if(modelScrub!=null)modelScrub.setEnabled(clipDuration()>0);
+                if(status!=null)status.setText(modelReadyMessage);
+            }
+            return;
+        }
+        clipClock.suspend();cinematicPlayStartedAt=0;
+        if(modelScrub!=null)modelScrub.setEnabled(false);
+        if(cinematicScrub!=null)cinematicScrub.setEnabled(false);
+        boolean materials=!Float.isFinite(progress)||progress<1f;
+        if(previewReadiness.failed()){
+            String reason=materials?"3D materials did not finish loading":"3D frame submission remained unavailable";
+            previewFailure(new IllegalStateException(reason+" after 30 seconds while this screen was active"));
+        }else previewMessage(materials?"Loading 3D materials…":"Waiting for 3D surface/frame submission…");
+    }
+    private void previewFailure(Throwable error){
+        previewReadiness.fail();clipClock.suspend();cinematicPlayStartedAt=0;
+        if(cinematic){paused=true;cinematicUnavailable=true;cinematicLoading=false;cinematicLoadGeneration++;try{releaseCinematicScene();}catch(RuntimeException ignored){}}
+        else cancelModelLoad();
+        if(modelScrub!=null)modelScrub.setEnabled(false);
+        if(cinematicScrub!=null)cinematicScrub.setEnabled(false);
+        String reason=error.getMessage()==null?error.getClass().getSimpleName():error.getMessage();
+        previewMessage("3D preview unavailable: "+reason+". Tap Retry preview.");
+        if(retryButton!=null)retryButton.setVisibility(View.VISIBLE);
+    }
+    private void retryPreview(){
+        if(destroyed||renderUnavailable||viewer==null)return;
+        if(cinematic){cinematicUnavailable=false;loadCinematicProgram();return;}
+        ProjectStore.Project fresh=projectStore.get(project.id);
+        ProjectStore.Asset asset=fresh==null?null:fresh.asset(pendingModelId);
+        if(asset==null){previewFailure(new IllegalArgumentException("The selected project model is no longer available"));return;}
+        project=fresh;
+        loadRegistered(asset);
     }
 
     private JSONObject cinematicRequest() throws Exception{
@@ -220,6 +366,7 @@ public final class FilamentGlbActivity extends Activity
         return new JSONObject().put("projectId",project.id).put("programId",cinematicProgramId).put("expectedProgramSha256",cinematicProgramSha);
     }
     private void loadCinematicProgram(){
+        beginPreviewReadiness();
         cinematicLoading=true;int generation=++cinematicLoadGeneration;
         cinematicWorker.execute(()->{JSONObject program=null,bundle=null;Throwable problem=null;
             try{program=Cinematic3DProgramStore.get(getApplicationContext(),projectStore,cinematicRequest());bundle=NativeCinematicBundleStore.get(getApplicationContext(),projectStore,new JSONObject().put("projectId",project.id).put("bundleId",program.getString("bundleId")));}
@@ -241,6 +388,7 @@ public final class FilamentGlbActivity extends Activity
             JSONArray scenes=cinematicProgram.optJSONArray("scenes");scene=scenes!=null?scenes.getJSONObject(shotIndex):Cinematic3DSceneSampling.sceneForShot(cinematicBundle,shot);
             final JSONObject selectedScene=new JSONObject(scene.toString());final int selectedIndex=shotIndex;final int generation=++cinematicLoadGeneration;
             cinematicLoading=true;cinematicScrub.setEnabled(false);cinematicPlayStartedAt=0;status.setText("Loading authored scene • "+shot.getString("action"));
+            beginPreviewReadiness();
             cinematicWorker.execute(()->{ByteBuffer data=null;Throwable problem=null;
                 try{
                     Cinematic3DProgramStore.get(getApplicationContext(),projectStore,cinematicRequest());
@@ -264,7 +412,7 @@ public final class FilamentGlbActivity extends Activity
                         cinematicCamera=Cinematic3DSceneSampling.requireCamera(viewer.getAsset(),engine,selectedScene.getString("cameraName"));viewer.getView().setCamera(cinematicCamera);
                         for(int entity:viewer.getAsset().getLightEntities())viewer.getScene().addEntity(entity);
                         cinematicFallbackLight=Cinematic3DSceneSampling.createFallbackLight(engine,viewer.getScene(),viewer.getAsset());
-                        cinematicResourcesReady=false;cinematicResourceStartedAt=android.os.SystemClock.elapsedRealtime();cinematicScrub.setEnabled(true);applyCinematicFrame(cinematicFrameBinding());cinematicLastRenderedFrame=-1;cinematicPlayStartFrame=cinematicFrame;cinematicPlayStartedAt=0;
+                        applyCinematicFrame(cinematicFrameBinding());cinematicLastRenderedFrame=-1;cinematicPlayStartFrame=cinematicFrame;cinematicPlayStartedAt=0;
                     }catch(Exception|OutOfMemoryError error){cinematicFailure(error);}
                 });
             });
@@ -278,15 +426,15 @@ public final class FilamentGlbActivity extends Activity
     private void applyCinematicFrame(JSONObject sampled) throws Exception {
         if(cinematicScene==null||cinematicCamera==null)return;
         JSONObject shot=sampled.getJSONObject("shot");JSONObject frame=Cinematic3DSceneSampling.frame(shot,sampled.getInt("shotFrame"),cinematicFps,cinematicScene);
-        Cinematic3DSceneSampling.apply(engine,viewer.getAsset(),viewer.getAnimator(),animationIndex,cinematicCamera,frame,Cinematic3DStudioActivity.OUTPUT_WIDTH,Cinematic3DStudioActivity.OUTPUT_HEIGHT);
+        Cinematic3DSceneSampling.apply(engine,viewer.getAsset(),viewer.getAnimator(),animationIndex,cinematicCamera,frame,cinematicOutputWidth,cinematicOutputHeight);
         cinematicScrub.setProgress(cinematicFrame);status.setText(cinematicTimeline.optString("name")+" • "+("procedural_mannequin".equals(cinematicTimeline.optString("motionProvider"))?"procedural mannequins":"authored 3D")+" • "+shot.getString("action")+" • frame "+(cinematicFrame+1)+"/"+cinematicFrameCount+(frame.getBoolean("hitStop")?" • impact hold":"")+(paused?" • paused":""));
     }
-    private void cinematicFailure(Throwable error){paused=true;cinematicUnavailable=true;cinematicPlayStartedAt=0;cinematicLoading=false;cinematicScrub.setEnabled(false);try{releaseCinematicScene();}catch(RuntimeException ignored){}status.setText("Cinematic preview unavailable: "+(error.getMessage()==null?error.getClass().getSimpleName():error.getMessage()));}
+    private void cinematicFailure(Throwable error){previewFailure(error);}
     private void releaseCinematicScene(){
         if(viewer==null)return;viewer.getView().setCamera(viewer.getCamera());cinematicCamera=null;
         if(cinematicFallbackLight!=0){viewer.getScene().remove(cinematicFallbackLight);engine.destroyEntity(cinematicFallbackLight);EntityManager.get().destroy(cinematicFallbackLight);cinematicFallbackLight=0;}
         if(viewer.getAsset()!=null)for(int entity:viewer.getAsset().getLightEntities())viewer.getScene().remove(entity);
-        viewer.destroyModel();cinematicShotIndex=-1;cinematicScene=null;cinematicResourcesReady=false;
+        viewer.destroyModel();cinematicShotIndex=-1;cinematicScene=null;
     }
     static boolean normalizeSceneForPreview(boolean fullScene){return !fullScene;}
     /** The pinned viewer's automatic detach destructor must not race Activity cleanup. */
@@ -417,6 +565,7 @@ public final class FilamentGlbActivity extends Activity
     private void loadRegistered(ProjectStore.Asset asset){
         if(destroyed||renderUnavailable||viewer==null||asset==null)return;
         cancelModelLoad();final int generation=modelLoadGeneration;
+        pendingModelId=asset.id;modelLoading=true;beginPreviewReadiness();
         status.setText("Loading 3D scene and skinned materials...");
         modelTask=cinematicWorker.submit(()->{try{
             File file=new File(Uri.parse(asset.uri).getPath());
@@ -431,25 +580,35 @@ public final class FilamentGlbActivity extends Activity
             }finally{modelInput=null;}
             buffer.flip();
             main.post(()->{if(destroyed||renderUnavailable||generation!=modelLoadGeneration||viewer==null)return;try{
+            modelLoading=false;
             viewer.loadModelGlb(buffer);
             if(viewer.getAsset()==null)
                 throw new IllegalArgumentException("Filament could not create the model asset");
             if(normalizeSceneForPreview(cinematic))viewer.resetToDefaultState();
-            if(modelHint!=null)modelHint.setVisibility(View.GONE);
             Animator animations=viewer.getAnimator();
             int count=animations==null?0:animations.getAnimationCount();
             boolean restore=restoringModel&&asset.id.equals(loadedModelId);restoringModel=false;
             if(!restore){paused=false;animationIndex=0;cameraAngle=cameraPitch=0;cameraDistance=4;}
             loadedModelId=asset.id;modelName=asset.name;animationIndex=Math.min(animationIndex,Math.max(0,count-1));
             clipClock.seek(restore&&Double.isFinite(restoredClipPosition)&&restoredClipPosition>=0?restoredClipPosition:0,clipDuration());
-            modelScrub.setEnabled(count>0);applyModelPose();updateModelCamera();updatePlaybackUi();
-            status.setText(asset.name+" • real glTF skeletal/PBR model • "+count+
+            applyModelPose();updateModelCamera();updatePlaybackUi();
+            if(studioLightingOn&&studioLights.length==0){
+                try{studioLights=CinematicStudioLighting.install(engine,viewer.getScene());}
+                catch(RuntimeException|LinkageError unavailable){
+                    studioLightingOn=false;
+                    if(studioLightingButton!=null)studioLightingButton.setText(
+                            "3-point PBR studio lighting: off");
+                }
+            }
+
+            modelReadyMessage=asset.name+" • glTF model • frame submitted • "+count+
                     " embedded animation(s). "+(count==0
-                    ?"Rig has no authored animation: import a model with animation clips."
-                    :"Choose motion, scrub a pose, adjust speed or frame the camera."));
-            }catch(Exception|LinkageError|OutOfMemoryError error){status.setText("Cannot load 3D model: "+error.getClass().getSimpleName()+": "+error.getMessage());}});
+                    ?"No authored animation clips."
+                    :"Choose motion, scrub a pose, adjust speed or frame the camera.");
+            previewMessage("Loading 3D materials…");
+            }catch(Exception|LinkageError|OutOfMemoryError error){previewFailure(error);}});
         }catch(Exception|LinkageError|OutOfMemoryError error){
-            main.post(()->{if(!destroyed&&generation==modelLoadGeneration)status.setText("Cannot load 3D model: "+error.getClass().getSimpleName()+": "+error.getMessage());});
+            main.post(()->{if(!destroyed&&generation==modelLoadGeneration)previewFailure(error);});
         }});
     }
     private void togglePlayback(){
@@ -494,9 +653,63 @@ public final class FilamentGlbActivity extends Activity
         double[] rates={.25,.5,1,1.5,2};String[] names={"0.25× · inspect","0.5× · slow","1× · authored","1.5×","2×"};
         new AlertDialog.Builder(this).setTitle("Preview playback speed").setItems(names,(dialog,index)->{clipClock.rate(rates[index]);updatePlaybackUi();}).setNegativeButton("Cancel",null).show();
     }
+    private void toggleStudioLighting(){
+        if(viewer==null||engine==null||cinematic||renderUnavailable
+                ||viewer.getAsset()==null){
+            if(status!=null)status.setText("Open a 3D GLB model before applying studio lights");
+            return;
+        }
+        try{
+            if(studioLightingOn){
+                CinematicStudioLighting.remove(engine,viewer.getScene(),studioLights);
+                studioLights=new int[0];studioLightingOn=false;
+            }else{
+                studioLights=CinematicStudioLighting.install(engine,viewer.getScene());
+                studioLightingOn=true;
+            }
+            if(studioLightingButton!=null)studioLightingButton.setText(
+                    studioLightingOn?"3-point PBR studio lighting: on"
+                            :"3-point PBR studio lighting: off");
+            if(status!=null)status.setText(studioLightingOn
+                    ?"Real 3D material detail: key, fill, rim and actual shadow lighting"
+                    :"GLB original preview lighting restored");
+        }catch(Exception|LinkageError failed){
+            CinematicStudioLighting.remove(engine,viewer.getScene(),studioLights);
+            studioLights=new int[0];studioLightingOn=false;
+            if(studioLightingButton!=null)studioLightingButton.setText("3-point PBR studio lighting: off");
+            if(status!=null)status.setText("PBR lighting unavailable on this device: "
+                    +failed.getClass().getSimpleName());
+        }
+    }
+
+    private void chooseReferenceCameraPath(){
+        if(cinematic||viewer==null||viewer.getAsset()==null||renderUnavailable){
+            if(status!=null)status.setText("Load an existing VideoStudio GLB before choosing camera choreography");
+            return;
+        }
+        final String[] ids=CinematicReferenceCameraPath.presets();
+        String[] choices={"360° turntable • all sides",
+                "Hero push-in • moving three-quarter view",
+                "Follow character • lateral tracking",
+                "Anime action • impact arc and settle",
+                "Fine detail • elevated camera reveal"};
+        new AlertDialog.Builder(this).setTitle("Cinematic reference cameras")
+                .setItems(choices,(dialog,index)->{
+                    referenceCameraPreset=ids[index];
+                    referenceCameraPhase=0;
+                    referenceCameraOriginAzimuth=cameraAngle;
+                    referenceCameraOriginPitch=cameraPitch;
+                    referenceCameraOriginDistance=cameraDistance;
+                    orbit=false;orbitButton.setText("Orbit: off");
+                    paused=false;
+                    if(status!=null)status.setText("3D perspective motion: "+choices[index]
+                            +" • original GLB and its real materials retained");
+                }).setNegativeButton("Cancel",null).show();
+    }
+
     private void chooseCamera(){
         new AlertDialog.Builder(this).setTitle("Model camera view").setItems(new String[]{"Front","Right","Back","Left","Above","Three-quarter"},(dialog,index)->{
-            cameraAngle=new double[]{0,Math.PI/2,Math.PI,-Math.PI/2,0,Math.PI/4}[index];cameraPitch=index==4?75:index==5?20:0;cameraDistance=4;orbit=false;orbitButton.setText("Orbit: off");updateModelCamera();
+            referenceCameraPreset="";cameraAngle=new double[]{0,Math.PI/2,Math.PI,-Math.PI/2,0,Math.PI/4}[index];cameraPitch=index==4?75:index==5?20:0;cameraDistance=4;orbit=false;orbitButton.setText("Orbit: off");updateModelCamera();
         }).setNegativeButton("Cancel",null).show();
     }
     private void updateModelCamera(){
@@ -504,24 +717,98 @@ public final class FilamentGlbActivity extends Activity
         viewer.getCamera().lookAt(horizontal*Math.sin(cameraAngle),cameraDistance*Math.sin(pitch),-4+horizontal*Math.cos(cameraAngle),0,0,-4,0,1,0);
     }
     private void configureCameraGestures(){
-        ScaleGestureDetector scale=new ScaleGestureDetector(this,new ScaleGestureDetector.SimpleOnScaleGestureListener(){@Override public boolean onScale(ScaleGestureDetector detector){float factor=detector.getScaleFactor();if(Float.isFinite(factor)&&factor>0){cameraDistance=Math.max(2,Math.min(12,cameraDistance/factor));updateModelCamera();}return true;}});
+        ScaleGestureDetector scale=new ScaleGestureDetector(this,new ScaleGestureDetector.SimpleOnScaleGestureListener(){@Override public boolean onScale(ScaleGestureDetector detector){float factor=detector.getScaleFactor();if(Float.isFinite(factor)&&factor>0){referenceCameraPreset="";cameraDistance=Math.max(2,Math.min(12,cameraDistance/factor));updateModelCamera();}return true;}});
         float[] last={0,0};boolean[] dragging={false};surface.setContentDescription("3D model. Drag to orbit and pinch to zoom. Camera views and Fit model provide accessible alternatives.");
         surface.setOnTouchListener((view,event)->{
             for(int index=0;index<event.getPointerCount();index++)if(!Float.isFinite(event.getX(index))||!Float.isFinite(event.getY(index))){dragging[0]=false;return true;}scale.onTouchEvent(event);
-            int action=event.getActionMasked();if(action==MotionEvent.ACTION_DOWN){last[0]=event.getX();last[1]=event.getY();dragging[0]=true;}
+            int action=event.getActionMasked();if(action==MotionEvent.ACTION_DOWN){referenceCameraPreset="";last[0]=event.getX();last[1]=event.getY();dragging[0]=true;}
             else if(event.getPointerCount()>1){dragging[0]=false;}
             else if(action==MotionEvent.ACTION_MOVE&&dragging[0]&&!scale.isInProgress()){cameraAngle+=((double)event.getX()-last[0])*.008;cameraPitch=Math.max(-80,Math.min(80,cameraPitch+((double)event.getY()-last[1])*.25));last[0]=event.getX();last[1]=event.getY();updateModelCamera();}
             else if(action==MotionEvent.ACTION_UP||action==MotionEvent.ACTION_CANCEL){dragging[0]=false;if(action==MotionEvent.ACTION_UP)view.performClick();}return true;
         });
     }
+    /** Capture only the owner's currently visible 3D viewport; never access Gallery. */
+    private void capturePoseForSketch(){
+        if(sketchCaptureBusy)return;
+        if(cinematic||viewer==null||viewer.getAsset()==null||loadedModelId.isEmpty()||renderUnavailable){
+            status.setText("Load a real GLB model before capturing a 2D animation cel.");return;
+        }
+        if(sketchCaptureTargetId.isEmpty()){status.setText("Open this action from Sketch Studio first");return;}
+        if(!"colour_regions".equals(sketchCaptureMode)&&!"edges".equals(sketchCaptureMode)){
+            status.setText("Invalid 2D tracing mode");return;
+        }
+        final int[] dimensions;
+        try{dimensions=Sketch3DCelBridge.captureSize(surface.getWidth(),surface.getHeight(),Sketch3DCelBridge.MAX_CAPTURE_EDGE);}
+        catch(Exception error){status.setText("3D capture unavailable: "+error.getMessage());return;}
+        final Bitmap frame=Bitmap.createBitmap(dimensions[0],dimensions[1],Bitmap.Config.ARGB_8888);
+        final String modelId=loadedModelId,projectId=project.id,sketchId=sketchCaptureTargetId,traceMode=sketchCaptureMode;
+        final int sketchFrame=sketchCaptureFrame,generation=modelLoadGeneration,animation=animationIndex;
+        final double yaw=cameraAngle,pitch=cameraPitch,distance=cameraDistance,seconds=clipClock.position();
+        sketchCaptureBusy=true;paused=true;orbit=false;clipClock.suspend();
+        applyModelPose();updatePlaybackUi();
+        status.setText("Capturing visible GLB pose as an app-private 2D reference...");
+        try{PixelCopy.request(surface,frame,copyResult->{
+            if(copyResult!=PixelCopy.SUCCESS||destroyed||generation!=modelLoadGeneration){
+                frame.recycle();sketchCaptureBusy=false;
+                if(!destroyed)status.setText("3D capture was cancelled or GPU readback failed ("+copyResult+")");
+                return;
+            }
+            cinematicWorker.execute(()->{
+                File file=null;boolean registered=false;
+                try{
+                    File folder=new File(getFilesDir(),"creative_workspace/projects/"+projectId+"/pose_cels");
+                    if(!folder.isDirectory()&&!folder.mkdirs())throw new IllegalStateException("3D pose storage unavailable");
+                    file=new File(folder,UUID.randomUUID().toString()+".png");
+                    try(FileOutputStream output=new FileOutputStream(file)){
+                        if(!frame.compress(Bitmap.CompressFormat.PNG,100,output))throw new IllegalStateException("3D pose PNG encoding failed");
+                        output.getFD().sync();
+                    }
+                    if(file.length()<32||file.length()>8L*1024*1024)throw new IllegalStateException("3D pose exceeded the PNG storage budget");
+                    String hash=SketchProjectStore.fileHash(file);
+                    ProjectStore.Project fresh=projectStore.get(projectId);
+                    if(fresh==null||fresh.asset(modelId)==null)throw new IllegalStateException("Source GLB project changed during capture");
+                    ProjectStore.Asset asset=projectStore.registerGeneratedAsset(fresh,
+                            Uri.fromFile(file),"3D pose "+modelName+" f"+(sketchFrame+1)+".png","sketch_3d_pose",false);
+                    asset.generationMetadata=new JSONObject().put("sourceGlbAssetId",modelId)
+                            .put("captureSha256",hash).put("sketchId",sketchId)
+                            .put("frameIndex",sketchFrame).put("traceMode",traceMode)
+                            .put("cameraYawRadians",yaw).put("cameraPitchDegrees",pitch)
+                            .put("cameraDistance",distance).put("animationIndex",animation)
+                            .put("animationTimeSeconds",seconds)
+                            .put("captureWidth",dimensions[0]).put("captureHeight",dimensions[1]);
+                    projectStore.save(fresh);
+                    registered=true;
+                    String capturedAssetId=asset.id;
+                    main.post(()->{
+                        sketchCaptureBusy=false;
+                        if(destroyed)return;
+                        Intent result=new Intent().putExtra("sketchId",sketchId)
+                                .putExtra("projectId",projectId).putExtra("assetId",capturedAssetId)
+                                .putExtra("frameIndex",sketchFrame).putExtra("traceMode",traceMode);
+                        setResult(RESULT_OK,result);finish();
+                    });
+                }catch(Exception|OutOfMemoryError error){
+                    final String why=String.valueOf(error.getMessage());
+                    main.post(()->{sketchCaptureBusy=false;if(!destroyed)status.setText("3D pose retained only after verified registration: "+why);});
+                }finally{frame.recycle();if(!registered&&file!=null)file.delete();}
+            });
+        },main);}
+        catch(Exception|OutOfMemoryError error){
+            frame.recycle();sketchCaptureBusy=false;
+            status.setText("GPU 3D capture not available: "+error.getMessage());
+        }
+    }
+
     private static double finiteOr(double value,double fallback){return Double.isFinite(value)?value:fallback;}
     private void closeModelInput(){InputStream input=modelInput;modelInput=null;if(input!=null)try{input.close();}catch(Exception ignored){}}
-    private void cancelModelLoad(){modelLoadGeneration++;if(modelTask!=null){modelTask.cancel(true);modelTask=null;}closeModelInput();}
+    private void cancelModelLoad(){modelLoading=false;modelLoadGeneration++;if(modelTask!=null){modelTask.cancel(true);modelTask=null;}closeModelInput();}
     @Override protected void onResume(){
+        previewReadiness.resume(android.os.SystemClock.elapsedRealtime());
         super.onResume();loopActive=viewer!=null&&!renderUnavailable&&!destroyed;clipClock.suspend();lastRenderedAt=0;
         Choreographer.getInstance().removeFrameCallback(this);if(loopActive)Choreographer.getInstance().postFrameCallback(this);
     }
     @Override protected void onPause(){
+        previewReadiness.pause(android.os.SystemClock.elapsedRealtime());
         loopActive=false;
         clipClock.suspend();
         if(cinematic)cinematicPlayStartedAt=0;
@@ -532,31 +819,58 @@ public final class FilamentGlbActivity extends Activity
         try{renderFrame(frameTimeNanos);}catch(Exception|LinkageError|OutOfMemoryError error){show3DError(error);}
     }
     private void renderFrame(long frameTimeNanos){
-        if(!loopActive||viewer==null||destroyed||renderUnavailable)return;
+        if(!loopActive||previewDriver==null||destroyed||renderUnavailable)return;
+        if(previewReadiness.failed()){Choreographer.getInstance().postFrameCallback(this);return;}
         if(cinematic){
-            if(!cinematicLoading&&!cinematicUnavailable&&cinematicResourcesReady&&cinematicTimeline!=null&&!paused){if(cinematicPlayStartedAt==0){cinematicPlayStartedAt=frameTimeNanos;cinematicPlayStartFrame=cinematicFrame;}long elapsed=frameTimeNanos-cinematicPlayStartedAt;long advance=elapsed/1_000_000_000L*cinematicFps+(elapsed%1_000_000_000L)*cinematicFps/1_000_000_000L;cinematicFrame=(int)Math.min(cinematicFrameCount-1,(long)cinematicPlayStartFrame+advance);if(cinematicFrame==cinematicFrameCount-1)paused=true;}
+            if(!cinematicLoading&&!cinematicUnavailable&&previewReadiness.ready()&&cinematicTimeline!=null&&!paused){if(cinematicPlayStartedAt==0){cinematicPlayStartedAt=frameTimeNanos;cinematicPlayStartFrame=cinematicFrame;}long elapsed=frameTimeNanos-cinematicPlayStartedAt;long advance=elapsed/1_000_000_000L*cinematicFps+(elapsed%1_000_000_000L)*cinematicFps/1_000_000_000L;cinematicFrame=(int)Math.min(cinematicFrameCount-1,(long)cinematicPlayStartFrame+advance);if(cinematicFrame==cinematicFrameCount-1)paused=true;}
             boolean frameChanged=!cinematicLoading&&cinematicFrame!=cinematicLastRenderedFrame;
             if(frameChanged||frameTimeNanos-lastRenderedAt>=1_000_000_000L/Math.max(1,cinematicFps==0?30:cinematicFps)){lastRenderedAt=frameTimeNanos;
                 if(!cinematicLoading&&!cinematicUnavailable&&cinematicTimeline!=null){
                     requestCinematicFrame();
                 }
-                if(viewer.getAsset()!=null){viewer.render(frameTimeNanos);if(!cinematicLoading){cinematicLastRenderedFrame=cinematicFrame;if(!cinematicResourcesReady){if(viewer.getProgress()>=1f){cinematicResourcesReady=true;cinematicPlayStartedAt=0;}else if(android.os.SystemClock.elapsedRealtime()-cinematicResourceStartedAt>30_000)cinematicFailure(new IllegalStateException("Scene material loading timed out"));else status.setText("Preparing authored scene materials…");}}}
+                if(!cinematicLoading&&previewDriver.hasAsset()){
+                    boolean submitted=previewDriver.render(frameTimeNanos);
+                    observePreviewSubmission(previewDriver.progress(),submitted);
+                }else observePreviewSubmission(0f,false);
             }
             Choreographer.getInstance().postFrameCallback(this);return;
         }
-        if(viewer.getAsset()==null){Choreographer.getInstance().postFrameCallback(this);return;}
+        if(modelLoading||!previewDriver.hasAsset()){
+            observePreviewSubmission(0f,false);Choreographer.getInstance().postFrameCallback(this);return;
+        }
         // 30fps GPU cap protects battery/thermal headroom on phone.
         if(frameTimeNanos-lastRenderedAt>=33_000_000L){
             long elapsed=lastRenderedAt==0?0:Math.max(0,frameTimeNanos-lastRenderedAt);
             lastRenderedAt=frameTimeNanos;
-            if(orbit) {
-                cameraAngle+=Math.min(.1,elapsed/1_000_000_000d)*.35;updateModelCamera();
+            if(!referenceCameraPreset.isEmpty()&&previewReadiness.ready()&&!paused) {
+                // Animates the actual Filament perspective camera, not the
+                // pixels of a pasted video frame. 30 fps GPU cap is unchanged.
+                double delta=Math.min(.1,elapsed/1_000_000_000d);
+                double duration=CinematicReferenceCameraPath.CAR_TURNTABLE
+                        .equals(referenceCameraPreset)?8:6;
+                referenceCameraPhase=Math.min(1,referenceCameraPhase+delta/duration);
+                CinematicReferenceCameraPath.Pose pose=CinematicReferenceCameraPath.model(
+                        referenceCameraPreset,referenceCameraPhase,
+                        referenceCameraOriginAzimuth,referenceCameraOriginPitch,
+                        referenceCameraOriginDistance,
+                        new double[]{0,0,-4});
+                Camera current=viewer.getCamera();
+                current.lookAt(pose.position[0],pose.position[1],pose.position[2],
+                        pose.target[0],pose.target[1],pose.target[2],
+                        pose.up[0],pose.up[1],pose.up[2]);
+                cameraAngle=pose.azimuthRad;cameraPitch=pose.pitchDeg;
+                cameraDistance=pose.distance;
+                if(referenceCameraPhase>=1)referenceCameraPreset="";
+            }else if(orbit&&previewReadiness.ready()) {
+                cameraAngle+=Math.min(.1,elapsed/1_000_000_000d)*.35;
+                updateModelCamera();
             }
-            Animator animator=viewer.getAnimator();
+            Animator animator=viewer==null?null:viewer.getAnimator();
             if(animator!=null&&animator.getAnimationCount()>0){
-                clipClock.frame(frameTimeNanos,!paused,clipDuration());applyModelPose();updatePlaybackUi();
+                clipClock.frame(frameTimeNanos,!paused&&previewReadiness.ready(),clipDuration());applyModelPose();updatePlaybackUi();
             }
-            viewer.render(frameTimeNanos);
+            boolean submitted=previewDriver.render(frameTimeNanos);
+            observePreviewSubmission(previewDriver.progress(),submitted);
         }
         Choreographer.getInstance().postFrameCallback(this);
     }
@@ -567,8 +881,16 @@ public final class FilamentGlbActivity extends Activity
         destroyViewer();super.onDestroy();
     }
     private void destroyViewer(){
-        try{if(viewer!=null){ModelViewer owned=viewer;try{if(cinematic)releaseCinematicScene();}catch(Exception|LinkageError error){ActivityLog.add(this,"user","3D scene cleanup stopped",error.getClass().getSimpleName(),"failed",null,null,project==null?"":project.id);}finally{viewer=null;engine=null;uiHelper=null;owned.destroy();}}else{if(uiHelper!=null)uiHelper.detach();if(engine!=null)engine.destroy();engine=null;uiHelper=null;}}
+        previewDriver=null;
+        try{if(viewer!=null){CinematicStudioLighting.remove(engine,viewer.getScene(),studioLights);studioLights=new int[0];ModelViewer owned=viewer;try{if(cinematic)releaseCinematicScene();}catch(Exception|LinkageError error){ActivityLog.add(this,"user","3D scene cleanup stopped",error.getClass().getSimpleName(),"failed",null,null,project==null?"":project.id);}finally{viewer=null;engine=null;uiHelper=null;owned.destroy();}}else{if(uiHelper!=null)uiHelper.detach();if(engine!=null)engine.destroy();engine=null;uiHelper=null;}}
         catch(Exception|LinkageError error){ActivityLog.add(this,"user","3D cleanup stopped",error.getClass().getSimpleName(),"failed",null,null,project==null?"":project.id);}
     }
-    @Override protected void onSaveInstanceState(Bundle state){super.onSaveInstanceState(state);state.putBoolean("paused",paused);state.putInt("cinematicFrame",cinematicFrame);state.putString("modelId",loadedModelId);state.putInt("animationIndex",animationIndex);state.putDouble("clipPosition",restoringModel?restoredClipPosition:clipClock.position());state.putDouble("playbackRate",clipClock.rate());state.putDouble("cameraAngle",cameraAngle);state.putDouble("cameraPitch",cameraPitch);state.putDouble("cameraDistance",cameraDistance);}
+    @Override protected void onSaveInstanceState(Bundle state){super.onSaveInstanceState(state);state.putBoolean("paused",paused);state.putInt("cinematicFrame",cinematicFrame);state.putString("modelId",loadedModelId);state.putInt("animationIndex",animationIndex);state.putDouble("clipPosition",restoringModel?restoredClipPosition:clipClock.position());state.putDouble("playbackRate",clipClock.rate());state.putDouble("cameraAngle",cameraAngle);state.putDouble("cameraPitch",cameraPitch);state.putDouble("cameraDistance",cameraDistance);
+        state.putString("referenceCameraPreset",referenceCameraPreset);
+        state.putDouble("referenceCameraPhase",referenceCameraPhase);
+        state.putDouble("referenceCameraOriginAzimuth",referenceCameraOriginAzimuth);
+        state.putDouble("referenceCameraOriginPitch",referenceCameraOriginPitch);
+        state.putDouble("referenceCameraOriginDistance",referenceCameraOriginDistance);
+        state.putBoolean("studioLightingOn",studioLightingOn);state.putInt("cinematicOutputWidth",cinematicOutputWidth);state.putInt("cinematicOutputHeight",cinematicOutputHeight);
+    }
 }

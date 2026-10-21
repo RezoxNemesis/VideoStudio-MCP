@@ -1,0 +1,65 @@
+{
+  "id": "sd15_onnx_v1",
+  "version": "1",
+  "runtimeAdapter": "sd15_onnx_v1",
+  "license": "CreativeML OpenRAIL-M",
+  "sourceRepository": "onnx-community/stable-diffusion-v1-5-ONNX",
+  "sourceRevision": "90ff1f14e325544b14919d1ee5abc99f19d4e647",
+  "baseUrl": "https://huggingface.co/onnx-community/stable-diffusion-v1-5-ONNX/resolve/90ff1f14e325544b14919d1ee5abc99f19d4e647/",
+  "requiredAvailableRamMb": 6144,
+  "modelBytes": 4268238533,
+  "width": 512,
+  "height": 512,
+  "files": [
+    {
+      "path": "text_encoder/model.onnx",
+      "bytes": 492543235,
+      "sha256": "7c83ed133fd7a397ec1fd25eed7451936c066a9b5c2d06362a13e63ed4bddbf4"
+    },
+    {
+      "path": "unet/model.onnx",
+      "bytes": 1088564,
+      "sha256": "dcc6e47bcd2f9137a0d2fd4bea29dd481f438baccd724b5320c0602d30379a8d"
+    },
+    {
+      "path": "unet/weights.pb",
+      "bytes": 3438083840,
+      "sha256": "1b6a21409483a0b91b0cc993f6c24f537b673d30a1d0ba4db7ad3a48e1f58f99"
+    },
+    {
+      "path": "vae_encoder/model.onnx",
+      "bytes": 136760348,
+      "sha256": "313d56e981fdb5d731a3ba117e15b4cf15d86fd7ba4cc654f0fb2f24af5afdad"
+    },
+    {
+      "path": "vae_decoder/model.onnx",
+      "bytes": 198078223,
+      "sha256": "c4b6ca4aebff4a8850e7c92b8982c7afbcfc5c5cdd32ba66389988b92dabb300"
+    },
+    {
+      "path": "tokenizer/merges.txt",
+      "bytes": 573514,
+      "sha256": "0bc7695944744789d6fd6d0ab754bcbbb9e36f1c182df0a006d619ce70a1e052"
+    },
+    {
+      "path": "tokenizer/vocab.json",
+      "bytes": 1109372,
+      "sha256": "fd67774a869730a6b27bf53d3e434e72054f2a825873c7af3bece183bb1f791e"
+    },
+    {
+      "path": "tokenizer/tokenizer_config.json",
+      "bytes": 734,
+      "sha256": "2edbd316072af0382bb999f82b007ad8af159d6277648e29b7747d72c3add791"
+    },
+    {
+      "path": "scheduler/scheduler_config.json",
+      "bytes": 389,
+      "sha256": "62e161758584fae790f53146009f63969b787501e5273ba3db7197af11ab748d"
+    },
+    {
+      "path": "README.md",
+      "bytes": 314,
+      "sha256": "460161a006a072a3796638752e1ab74b816745bc55b4bfc1d42f8a18517480eb"
+    }
+  ]
+}

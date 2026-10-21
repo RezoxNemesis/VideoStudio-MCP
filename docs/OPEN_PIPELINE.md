@@ -16,6 +16,11 @@ Python code, or remote-code authorization.
 
 An operator configuration, outside Git, can contain:
 
+Hindi/English dialogue is an optional additional `kokoro` backend. Its native
+manual form, MCP contract, pinned model preparation and PCM project import are
+documented in [Character dialogue](CHARACTER_DIALOGUE.md). The video model
+configuration below remains independent of the speech model.
+
 ```json
 {
   "schema": "videostudio.openpipeline.config.v1",

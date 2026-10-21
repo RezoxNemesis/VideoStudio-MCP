@@ -11,7 +11,7 @@ import java.util.Set;
 /** Bounded, normalized vector/cel document. All accepted edits are validated here. */
 public final class SketchDocument {
     public static final String SCHEMA = "videostudio.sketch.v1";
-    public static final int MAX_BYTES = 4 * 1024 * 1024, MAX_LAYERS = 32, MAX_OBJECTS = 4096;
+    public static final int MAX_BYTES = 4 * 1024 * 1024, MAX_LAYERS = 32, MAX_IMAGES = 32, MAX_OBJECTS = 4096;
     public static final int MAX_POINTS = 131072, MAX_FRAMES = 1200, MAX_KEYS = 4096;
     private SketchDocument() {}
 
@@ -39,7 +39,7 @@ public final class SketchDocument {
     public static JSONObject copy(JSONObject o) throws Exception { return new JSONObject(o.toString()); }
 
     public static void validate(JSONObject doc) throws Exception {
-        fields(doc, "schema,id,name,revision,width,height,fps,frameCount,background,layers,paletteStyles");
+        fields(doc, "schema,id,name,revision,width,height,fps,frameCount,background,layers,paletteStyles,masterAssets,layeredDrawing");
         if (!SCHEMA.equals(doc.getString("schema"))) throw bad("Unknown sketch schema");
         id(doc, "id");
         text(doc, "name", 160);
@@ -51,10 +51,13 @@ public final class SketchDocument {
         int frames = (int) integer(doc, "frameCount", 1, MAX_FRAMES);
         color(doc.getString("background"));
         java.util.Map<String,Integer> linkedStyles=SketchPaletteStyles.indexed(doc);
+        java.util.Map<String,JSONObject> linkedMasters=SketchMasterAssets.indexed(doc);
         JSONArray layers = doc.getJSONArray("layers");
         if (layers.length() < 1 || layers.length() > MAX_LAYERS) throw bad("Use 1..32 sketch layers");
         Set<String> ids = new HashSet<>();
-        int objects = 0, points = 0, keys = 0, images = 0;
+        Set<String> meshedPaintSources=new HashSet<>();
+        int objects = 0, points = SketchMasterAssets.storedPoints(linkedMasters), keys = 0, images = 0, proceduralActors=0;
+        int[] proceduralActorChanges=new int[frames+1];
         for (int i = 0; i < layers.length(); i++) {
             JSONObject layer = layers.getJSONObject(i);
             fields(layer, "id,name,visible,locked,opacity,transform,keys,objects,blendMode");
@@ -66,22 +69,30 @@ public final class SketchDocument {
             JSONArray items = layer.getJSONArray("objects");
             for (int j = 0; j < items.length(); j++) {
                 JSONObject item = items.getJSONObject(j);
-                fields(item, "id,kind,frame,exposure,color,styleId,width,fill,points,bounds,reference,paint,transform,keys,brush,commands,gradient,referenceCrop,text,fontFamily,fontSize,fontStyle,textAlign,letterSpacing");
+                fields(item, "id,kind,frame,exposure,color,styleId,width,fill,points,bounds,reference,paint,transform,keys,brush,commands,shapeKeys,paintMesh,gradient,referenceCrop,text,fontFamily,fontSize,fontStyle,textAlign,letterSpacing,hand,human,masterLink");
                 unique(ids, id(item, "id"));
                 String kind = item.getString("kind");
-                if (!java.util.Arrays.asList("stroke","eraser","line","rect","ellipse","polygon","image","paint","path","text").contains(kind))
+                if (!java.util.Arrays.asList("stroke","eraser","line","rect","ellipse","polygon","image","paint","path","text","hand","human").contains(kind))
                     throw bad("Unsupported sketch object kind");
                 int start = (int) integer(item, "frame", 0, frames - 1);
-                integer(item, "exposure", 1, frames - start);
+                int exposure=(int)integer(item, "exposure", 1, frames - start);
                 color(item.getString("color")); SketchPaletteStyles.validateLink(item,linkedStyles); number(item, "width", .0005, .2); bool(item, "fill");
                 validateTransform(item.getJSONObject("transform"));
                 keys += validateKeys(item.getJSONArray("keys"), frames);
+                int[] shapeBudget=SketchShapeKeys.validate(item,frames);keys+=shapeBudget[0];points+=shapeBudget[1];
+                int[] meshBudget=SketchPaintMesh.validate(item,frames);keys+=meshBudget[0];points+=meshBudget[1];if(item.has("paintMesh")){meshedPaintSources.add(item.getJSONObject("paint").getString("sha256"));if(meshedPaintSources.size()>32||(long)width*height>1048576)throw bad("Use at most32 distinct meshed paint sources, each at most1048576 native pixels");}
                 if(item.has("paint")&&!"paint".equals(kind))throw bad("Paint snapshots require a paint cel");
-                if("paint".equals(kind))fields(item,"id,kind,frame,exposure,color,width,fill,bounds,paint,transform,keys");
+                if("paint".equals(kind))fields(item,"id,kind,frame,exposure,color,width,fill,bounds,paint,transform,keys,paintMesh");
+                if(item.has("hand")&&!"hand".equals(kind))throw bad("Hand programme requires a hand object");
+                if("hand".equals(kind)){SketchHandAnimation.validate(doc,item);keys+=item.getJSONObject("hand").getJSONArray("poses").length();}
+                if(item.has("human")&&!"human".equals(kind))throw bad("Human programme requires a human object");
+                if("human".equals(kind)){SketchHumanAnimation.validate(doc,item);keys+=item.getJSONObject("human").getJSONArray("poses").length();}
+                if("hand".equals(kind)||"human".equals(kind)){proceduralActorChanges[start]++;proceduralActorChanges[start+exposure]--;}
                 if (item.has("brush")) { if (!"stroke".equals(kind) && !"eraser".equals(kind)) throw bad("Brush requires stroke/eraser"); SketchBrushes.validate(item.getJSONObject("brush")); }
                 if (item.has("gradient")) validateGradient(item.getJSONObject("gradient"));
                 if (item.has("referenceCrop")) { if (!"image".equals(kind)) throw bad("Reference crop requires an image"); validateBounds(item.getJSONObject("referenceCrop")); }
                 if ("text".equals(kind)) SketchText.validate(item);
+                SketchMasterAssets.validateInstance(item,linkedMasters);
                 if ("path".equals(kind)) { points += validateCommands(item.getJSONArray("commands")); }
                 else if ("stroke".equals(kind) || "eraser".equals(kind) || "line".equals(kind) || "polygon".equals(kind)) {
                     JSONArray pp = item.getJSONArray("points");
@@ -103,7 +114,7 @@ public final class SketchDocument {
                         throw bad("Shape bounds must fit normalized canvas");
                     if ("image".equals(kind)) {
                         JSONObject ref = item.getJSONObject("reference");
-                        fields(ref, "file,sha256,width,height,sourceProjectId,sourceAssetId,sourceWidth,sourceHeight,sourceOrientation,sourceSha256");
+                        fields(ref, "file,sha256,width,height,sourceProjectId,sourceAssetId,sourceWidth,sourceHeight,sourceOrientation,sourceSha256,sourceMask");
                         String hash = ref.getString("sha256");
                         if (!hash.matches("[a-f0-9]{64}") || !ref.getString("file").equals(hash + ".png"))
                             throw bad("Reference image must be an owned hash-bound PNG");
@@ -114,6 +125,7 @@ public final class SketchDocument {
                         }
                         if(ref.has("sourceOrientation"))integer(ref,"sourceOrientation",1,8);
                         if(ref.has("sourceSha256")&&!ref.getString("sourceSha256").matches("[a-f0-9]{64}"))throw bad("Reference source hash is invalid");
+                        if(ref.has("sourceMask"))SketchSourceMask.validate(ref);
                         id(ref, "sourceProjectId"); id(ref, "sourceAssetId"); images++;
                     }
                     if("paint".equals(kind)){
@@ -125,8 +137,14 @@ public final class SketchDocument {
                 objects++;
             }
         }
-        if (objects > MAX_OBJECTS || points > MAX_POINTS || keys > MAX_KEYS || images > 16)
-            throw bad("Sketch budget exceeded (4096 objects, 131072 points, 4096 keys, 16 images)");
+        // Cel splits increase stored segments without increasing simultaneous rendering work.
+        for(int frame=0;frame<frames;frame++){
+            proceduralActors+=proceduralActorChanges[frame];
+            if(proceduralActors>16)throw bad("Use at most16 simultaneously exposed retained hand/human actors per frame");
+        }
+        if (objects > MAX_OBJECTS || points > MAX_POINTS || keys > MAX_KEYS || images > MAX_IMAGES)
+            throw bad("Sketch budget exceeded (4096 objects, 131072 points, 4096 keys, 32 images)");
+        SketchLayeredDrawing.validate(doc);
         if (doc.toString().getBytes(StandardCharsets.UTF_8).length > MAX_BYTES) throw bad("Sketch document exceeds 4 MiB");
     }
 
@@ -142,9 +160,7 @@ public final class SketchDocument {
         }return points;
     }
     static void validateGradient(JSONObject g) throws Exception {
-        fields(g,"startColor,endColor,x0,y0,x1,y1");color(g.getString("startColor"));color(g.getString("endColor"));
-        for(String key:new String[]{"x0","y0","x1","y1"})number(g,key,0,1);
-        if(g.getDouble("x0")==g.getDouble("x1")&&g.getDouble("y0")==g.getDouble("y1"))throw bad("Gradient endpoints must differ");
+        SketchGradients.validate(g);
     }
 
     public static void validateTransform(JSONObject t) throws Exception {
@@ -158,13 +174,12 @@ public final class SketchDocument {
         int previous = -1;
         for (int i = 0; i < keys.length(); i++) {
             JSONObject key = keys.getJSONObject(i);
-            fields(key, "frame,transform,interpolation");
+            fields(key, "frame,transform,interpolation,curve");
             int frame = (int) integer(key, "frame", 0, frames - 1);
             if (frame <= previous) throw bad("Transform keys require unique ascending frames");
             previous = frame;
             validateTransform(key.getJSONObject("transform"));
-            String interpolation = key.getString("interpolation");
-            if (!"linear".equals(interpolation) && !"hold".equals(interpolation)) throw bad("Use linear or hold key interpolation");
+            key.getString("interpolation");SketchEasing.validate(key);
         }
         return keys.length();
     }
@@ -182,6 +197,7 @@ public final class SketchDocument {
         if (right == null || "hold".equals(left.getString("interpolation"))) return copy(a);
         JSONObject b = right.getJSONObject("transform");
         double f = (frame - left.getInt("frame")) / (double) (right.getInt("frame") - left.getInt("frame"));
+        f=SketchEasing.sample(left.getString("interpolation"),left.optJSONArray("curve"),f);
         JSONObject out = new JSONObject();
         for (String key : new String[]{"x","y","scaleX","scaleY","rotation","anchorX","anchorY","opacity"})
             out.put(key, a.getDouble(key) + (b.getDouble(key) - a.getDouble(key)) * f);

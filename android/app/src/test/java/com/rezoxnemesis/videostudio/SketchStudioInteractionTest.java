@@ -169,6 +169,33 @@ public class SketchStudioInteractionTest {
         Context c=RuntimeEnvironment.getApplication();JSONObject doc=SketchDocument.create(new JSONObject().put("sketchId",UUID.randomUUID().toString()).put("width",256).put("height",256).put("frameCount",1));JSONObject line=SketchEditOps.completeObject(new JSONObject().put("id","nose").put("kind","stroke").put("width",.04).put("points",new JSONArray("[[0.1,0.5,1],[0.9,0.5,1]]")));doc.getJSONArray("layers").getJSONObject(0).getJSONArray("objects").put(line);
         try(SketchFrameRenderer r=new SketchFrameRenderer(c,doc)){r.setPresentation("nose",.25f);Bitmap partial=r.render(0);r.setPresentation(null,1);Bitmap full=r.render(0);try{assertNotEquals(Color.WHITE,partial.getPixel(51,128));assertEquals(Color.WHITE,partial.getPixel(205,128));assertNotEquals(Color.WHITE,full.getPixel(205,128));}finally{partial.recycle();full.recycle();}}
     }
+    @Test public void manualGraphitePickerPersistsTheSameBrushOnAnActualTouchStroke()throws Exception{
+        Context c=RuntimeEnvironment.getApplication();String id=createLiveSketch(c);
+        try(ActivityController<SketchStudioActivity> activity=Robolectric.buildActivity(SketchStudioActivity.class,new Intent(c,SketchStudioActivity.class).putExtra("sketchId",id)).create().start().resume().visible()){
+            SketchStudioActivity studio=activity.get();waitIo(studio);
+            button(studio.getWindow().getDecorView(),"Draw myself").performClick();waitIo(studio);
+            button(studio.getWindow().getDecorView(),"Brush / Text").performClick();choose("Brush");
+            android.app.AlertDialog dialog=org.robolectric.shadows.ShadowAlertDialog.getLatestAlertDialog();
+            Spinner picker=spinner(dialog.getWindow().getDecorView());assertNotNull(picker);
+            picker.setSelection(java.util.Arrays.asList(SketchBrushes.PRESETS).indexOf("graphite"));
+            dialog.getButton(android.app.AlertDialog.BUTTON_POSITIVE).performClick();
+            assertEquals("graphite",field(studio,"brushPreset"));
+            SketchCanvasView canvas=(SketchCanvasView)field(studio,"canvas");
+            assertEquals("graphite",((JSONObject)field(canvas,"brushStyle")).getString("preset"));
+            View root=studio.getWindow().getDecorView();root.measure(View.MeasureSpec.makeMeasureSpec(720,View.MeasureSpec.EXACTLY),View.MeasureSpec.makeMeasureSpec(1440,View.MeasureSpec.EXACTLY));root.layout(0,0,720,1440);Bitmap surface=Bitmap.createBitmap(720,1440,Bitmap.Config.ARGB_8888);root.draw(new Canvas(surface));surface.recycle();canvas.setTool("stroke");
+            long now=android.os.SystemClock.uptimeMillis();
+            for(int action:new int[]{MotionEvent.ACTION_DOWN,MotionEvent.ACTION_MOVE,MotionEvent.ACTION_UP}){
+                float x=canvas.getWidth()*(action==MotionEvent.ACTION_DOWN?.4f:.6f);
+                MotionEvent event=MotionEvent.obtain(now,now+action,action,x,canvas.getHeight()*.5f,0);canvas.onTouchEvent(event);event.recycle();
+            }
+            ((SketchEditorSession)field(studio,"session")).awaitIdle(10000);ShadowLooper.idleMainLooper();
+            try(SketchProjectStore store=new SketchProjectStore(c)){
+                JSONArray objects=SketchDocument.layer(store.get(id),"layer_1").getJSONArray("objects");
+                assertEquals(2,objects.length());assertEquals("graphite",objects.getJSONObject(1).getJSONObject("brush").getString("preset"));
+            }
+        }
+    }
+    private static Spinner spinner(View view){if(view instanceof Spinner)return (Spinner)view;if(view instanceof ViewGroup){ViewGroup group=(ViewGroup)view;for(int i=0;i<group.getChildCount();i++){Spinner found=spinner(group.getChildAt(i));if(found!=null)return found;}}return null;}
     private static Object field(Object o,String name) throws Exception{Field f=o.getClass().getDeclaredField(name);f.setAccessible(true);return f.get(o);}
     private static void waitIo(SketchStudioActivity studio) throws Exception{((ExecutorService)field(studio,"io")).submit(()->{}).get(10,TimeUnit.SECONDS);ShadowLooper.idleMainLooper();}
 }

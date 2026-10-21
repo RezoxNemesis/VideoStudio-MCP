@@ -30,6 +30,8 @@ import androidx.media3.effect.TextureOverlay;
 import androidx.media3.effect.Presentation;
 import androidx.media3.effect.ScaleAndRotateTransformation;
 import androidx.media3.transformer.Composition;
+import androidx.media3.transformer.DefaultEncoderFactory;
+import androidx.media3.transformer.EncoderUtil;
 import androidx.media3.transformer.EditedMediaItem;
 import androidx.media3.transformer.EditedMediaItemSequence;
 import androidx.media3.transformer.Effects;
@@ -46,6 +48,7 @@ import java.util.Collections;
 import java.util.Set;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
+import com.google.common.collect.ImmutableList;
 
 @UnstableApi
 public final class NativeRenderEngine {
@@ -96,11 +99,21 @@ public final class NativeRenderEngine {
             }
             final boolean layeredAnimation = hasLayeredAnimation(project);
             final boolean hasStudioTracks = !project.studioLayers.isEmpty();
+            final int[] requestedRaster = outputSize(aspect, quality);
             Composition composition = buildPreviewComposition(project, aspect, quality);
 
             Transformer transformer = new Transformer.Builder(context)
                     .setVideoMimeType(MimeTypes.VIDEO_H264)
                     .setAudioMimeType(MimeTypes.AUDIO_AAC)
+                    .setEncoderFactory(new DefaultEncoderFactory.Builder(context)
+                            // Media3's default selector discards software whenever any
+                            // hardware codec exists, even if only software fits the raster.
+                            .setVideoEncoderSelector(mime -> ImmutableList.sortedCopyOf(
+                                    (a,b) -> Boolean.compare(EncoderUtil.isHardwareAccelerated(b,mime),
+                                            EncoderUtil.isHardwareAccelerated(a,mime)),
+                                    EncoderUtil.getSupportedEncoders(mime)))
+                            .setEnableFormatFallback(false)
+                            .build())
                     .addListener(new Transformer.Listener() {
                         @Override
                         public void onCompleted(Composition composition, ExportResult result) {
@@ -150,8 +163,8 @@ public final class NativeRenderEngine {
                                 if (rotationDegrees == 90 || rotationDegrees == 270) {
                                     int temp = actualWidth; actualWidth = actualHeight; actualHeight = temp;
                                 }
-                                if (!outputGeometryMatches(aspect, actualWidth, actualHeight)) {
-                                    listener.onError("Export dimension mismatch: requested " + aspect
+                                if (!outputGeometryMatches(aspect, quality, actualWidth, actualHeight)) {
+                                    listener.onError("Export raster mismatch: requested " + requestedRaster[0] + "x" + requestedRaster[1]
                                             + " but encoded " + actualWidth + "x" + actualHeight);
                                     return;
                                 }
@@ -174,6 +187,12 @@ public final class NativeRenderEngine {
 
                         @Override
                         public void onError(Composition composition, ExportResult result, ExportException exception) {
+                            if (exception.errorCode == ExportException.ERROR_CODE_ENCODING_FORMAT_UNSUPPORTED
+                                    && exception.codecInfo != null && exception.codecInfo.isVideo) {
+                                listener.onError("NATIVE_EXPORT_RASTER_UNAVAILABLE: cannot encode exact "
+                                        + requestedRaster[0] + "x" + requestedRaster[1] + "; " + exception.getMessage());
+                                return;
+                            }
                             listener.onError(exception.getMessage() == null ? "Native export failed" : exception.getMessage());
                         }
                     })
@@ -311,8 +330,9 @@ public final class NativeRenderEngine {
                             .build())
                     .build();
             EditedMediaItem.Builder track=new EditedMediaItem.Builder(media)
-                    .setRemoveVideo(true)
-                    .setDurationUs(lane.durationMs*1000L);
+                    .setRemoveVideo(true);
+            // Media3 applies source clipping after durationUs, including sourceInMs.
+            if(asset.durationMs>0)track.setDurationUs(Math.multiplyExact(asset.durationMs,1000L));
             if(lane.gain<.999f){
                 List<AudioProcessor> processors=Collections.singletonList(
                         new GainProcessor(new DefaultGainProvider.Builder(lane.gain).build()));
@@ -548,6 +568,10 @@ public final class NativeRenderEngine {
         }
 
         EditedMediaItem.Builder edited = new EditedMediaItem.Builder(media.build());
+        // CompositionPlayer needs the full source clock before applying trim/speed.
+        // Unknown metadata stays unknown; the interactive player reports it explicitly.
+        if(!image&&asset.durationMs>0)
+            edited.setDurationUs(Math.multiplyExact(asset.durationMs,1000L));
         if (image) edited.setFrameRate(clip.effects != null && (clip.effects.optBoolean("poseInbetween", false)
                     || clip.effects.optBoolean("directorSequenceFrame", false))
                 ? poseFrameRate(clip) : 30);
@@ -612,7 +636,7 @@ public final class NativeRenderEngine {
 
         if(fx.has("crop"))effects.add(new StudioCropEffect(fx.optJSONObject("crop")));
         // Enforce correct raster geometry instead of a 9:16 scene letterboxed
-        // in a 16:9 output. The encoder still selects a supported size.
+        // in a 16:9 output. Encoding must preserve this computed raster.
         int[] raster=outputSize(aspect,quality);
         int width=raster[0],height=raster[1];
         effects.add(Presentation.createForWidthAndHeight(
@@ -702,12 +726,13 @@ public final class NativeRenderEngine {
     }
 
     static boolean outputGeometryMatches(String aspect, int width, int height) {
+        return outputGeometryMatches(aspect, "720p", width, height);
+    }
+
+    static boolean outputGeometryMatches(String aspect, String quality, int width, int height) {
         if (width <= 0 || height <= 0) return false;
-        int[] exact = sourceRaster(aspect);
-        if (exact != null) return width == exact[0] && height == exact[1];
-        if ("9:16".equals(aspect) || "4:5".equals(aspect)) return height > width;
-        if ("16:9".equals(aspect)) return width > height;
-        return true;
+        int[] exact = outputSize(aspect, quality);
+        return width == exact[0] && height == exact[1];
     }
 
     private static double clamp(double v, double min, double max) {

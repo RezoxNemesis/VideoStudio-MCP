@@ -42,7 +42,7 @@ final class SketchXsheetDialog {
             root.setOrientation(LinearLayout.VERTICAL);
             root.setPadding(StudioUi.dp(owner,8),StudioUi.dp(owner,5),StudioUi.dp(owner,8),StudioUi.dp(owner,5));
             root.setBackgroundColor(StudioUi.SURFACE);
-            TextView info=text(owner,"Drawing ● · Hold = · Blank − · * means transform key",11);
+            TextView info=text(owner,"Drawing ● · Hold = · Blank − · * transform key · ◇ shape key",11);
             root.addView(info);
             TextView hint=text(owner,"Inspect levels without altering artwork. Tap a frame to move the editor playhead.",11);
             root.addView(hint);
@@ -84,6 +84,7 @@ final class SketchXsheetDialog {
                         else tag+="hold";
                     }
                     if(slot.optBoolean("transformKey"))tag+=" *";
+                    if(slot.optBoolean("shapeKey"))tag+=" ◇";
                     String layerId=level.getString("layerId");
                     TextView item=cell(owner,tag,false,"blank".equals(state)?StudioUi.MUTED:StudioUi.TEXT,125);
                     item.setContentDescription("Frame "+(selectedFrame+1)+", "+level.getString("name")+", "+state);

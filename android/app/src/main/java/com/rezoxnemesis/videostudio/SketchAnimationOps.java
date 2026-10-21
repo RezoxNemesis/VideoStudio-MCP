@@ -20,10 +20,11 @@ public final class SketchAnimationOps {
     /** Public commands return bounded metadata/programs, never a full source or compiled drawing in an ACK. */
     public static JSONObject execute(Context context,String action,JSONObject args)throws Exception {
         if(context==null||args==null)throw SketchDocument.bad("Animation context and arguments are required");
+        if("sketch_animation_place_in_book".equals(action))return SketchAnimationBookPlacement.place(context,args,null);
         synchronized(LOCK){try(Store store=new Store(context)){
             switch(action){
                 case "sketch_animation_save":return store.save(args);
-                case "sketch_animation_get":SketchDocument.fields(args,"animationId");return store.read(SketchDocument.id(args,"animationId"),false);
+                case "sketch_animation_get":return store.readRequest(args);
                 case "sketch_animation_list":SketchDocument.fields(args,"");return store.list();
                 case "sketch_animation_bake":return store.bake(args);
                 default:throw SketchDocument.bad("Unknown sketch animation action");
@@ -80,6 +81,18 @@ public final class SketchAnimationOps {
                 else if(db.update("animations",values,"id=? AND revision=?",new String[]{id,Long.toString(expected)})!=1)throw new IllegalStateException("SKETCH_ANIMATION_REVISION_CONFLICT");
                 insertOperation(id,operation,fingerprint,result,null);db.setTransactionSuccessful();return result;
             }finally{db.endTransaction();}
+        }
+
+        JSONObject readRequest(JSONObject args)throws Exception {
+            SketchDocument.fields(args,"animationId,expectedRevision,sampleFrame");String id=SketchDocument.id(args,"animationId");
+            if(args.has("sampleFrame")&&!args.has("expectedRevision"))throw SketchDocument.bad("Pose sampling requires the saved animation expectedRevision");
+            Long expected=args.has("expectedRevision")?SketchDocument.integer(args,"expectedRevision",1,Long.MAX_VALUE-2):null;
+            Integer frame=args.has("sampleFrame")?(int)SketchDocument.integer(args,"sampleFrame",0,1199):null;
+            if(expected==null&&frame==null)return read(id,false);
+            if(frame!=null)SketchPoseCoordinates.worker();JSONObject record=record(id);
+            if(expected!=null&&record.getLong("revision")!=expected)throw new IllegalStateException("SKETCH_ANIMATION_REVISION_CONFLICT: expected "+expected+", actual "+record.getLong("revision"));
+            verifyRecord(record);JSONObject result=metadata(record).put("program",SketchDocument.copy(record.getJSONObject("program")));
+            if(frame!=null)result.put("poseSample",SketchPoseCoordinates.sample(record.getJSONObject("sourceDocument"),record.getJSONObject("program"),frame));return result;
         }
 
         JSONObject read(String id,boolean includeSource)throws Exception {

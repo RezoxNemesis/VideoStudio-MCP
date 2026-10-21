@@ -7,6 +7,7 @@ import android.os.Looper;
 import android.view.ViewGroup;
 
 import androidx.media3.common.MediaItem;
+import androidx.media3.common.C;
 import androidx.media3.common.Player;
 import androidx.media3.exoplayer.ExoPlayer;
 import androidx.media3.ui.PlayerView;
@@ -29,6 +30,12 @@ public final class LiveEditPlayer {
     private boolean editedPreview;
     private String editRevision="";
     private java.util.function.Consumer<String> editError;
+    private Player fallbackPlayer;
+    private boolean fallbackPlayWhenReady;
+    private String fallbackRevision="",fallbackSnapshotId="",fallbackClipId="";
+    private java.util.function.Consumer<String> fallbackEditError;
+    private Runnable fallbackBoundaryWatcher;
+    private boolean settingPlaybackIntent;
     private String snapshotId = "";
     private String clipId = "";
     private final Handler handler = new Handler(Looper.getMainLooper());
@@ -61,9 +68,9 @@ public final class LiveEditPlayer {
     public void play(Uri uri, long positionMs, float speed, boolean playWhenReady) {
         if (uri == null) return;
         cancelClipBoundaryWatcher();
-        if(editPlayer!=null)editPlayer.pause();
         editedPreview=false;
         view.setPlayer(player);
+        discardEditedPlayers();
         MediaItem item = MediaItem.fromUri(uri);
         player.setMediaItem(item, Math.max(0L, positionMs));
         player.setPlaybackSpeed(Math.max(.25f, Math.min(4f, speed)));
@@ -76,32 +83,79 @@ public final class LiveEditPlayer {
                          String quality,long outputPositionMs,boolean playWhenReady,
                          Runnable onComplete,java.util.function.Consumer<String> onError)throws Exception {
         String revision=project.id+":"+project.updatedAt+":"+aspect+":"+quality;
-        // Construct before disturbing a working preview when preparation rejects the edit.
-        Composition composition=revision.equals(editRevision)&&editPlayer!=null?null:
+        Composition composition=editedPreview&&revision.equals(editRevision)&&editPlayer!=null?null:
                 engine.buildPreviewComposition(project,aspect,quality);
-        cancelClipBoundaryWatcher();player.pause();editError=onError;
-        if(editPlayer==null){
-            editPlayer=new CompositionPlayer.Builder(context).build();
-            editPlayer.addListener(new Player.Listener(){
-                @Override public void onPlayerError(PlaybackException error){
-                    cancelClipBoundaryWatcher();
-                    if(editError!=null)editError.accept("Edited preview unavailable: "+error.getMessage());
-                }
-            });
-        }
-        editedPreview=true;view.setPlayer(editPlayer);
         long offset=Math.max(0,Math.min(Math.max(0,project.outputDurationMs()-1),outputPositionMs));
         if(composition!=null){
-            editPlayer.setComposition(composition,offset);editPlayer.prepare();editRevision=revision;
+            // Export may discover unknown source metadata; interactive admission cannot.
+            for(var sequence:composition.sequences)for(var item:sequence.editedMediaItems){
+                if(item.durationUs==C.TIME_UNSET||item.durationUs<=0)
+                    throw new IllegalArgumentException("Source duration unavailable. Re-import the source to refresh its metadata, then Retry preview.");
+                try{item.getPresentationDurationUs();}
+                catch(IllegalArgumentException error){throw new IllegalArgumentException("Clip timing exceeds the known source duration. Adjust the trim, then Retry preview.",error);}
+            }
+            Player previous=activePlayer();
+            boolean previousReady=previous.getPlayWhenReady();
+            Runnable previousWatcher=clipBoundaryWatcher;
+            java.util.function.Consumer<String> previousError=editError;
+            CompositionPlayer candidate=new CompositionPlayer.Builder(context).build();
+            candidate.addListener(new Player.Listener(){
+                @Override public void onPlayWhenReadyChanged(boolean ready,int reason){
+                    // PlayerView controls call Player directly. Initial app setup must
+                    // not replace the previous preview's independently saved intent.
+                    if(editPlayer==candidate&&fallbackPlayer!=null&&!settingPlaybackIntent&&
+                            reason==Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST)
+                        fallbackPlayWhenReady=ready;
+                }
+                @Override public void onPlayerError(PlaybackException error){
+                    if(editPlayer!=candidate)return;
+                    java.util.function.Consumer<String> failedCallback=editError;
+                    cancelClipBoundaryWatcher();
+                    if(fallbackPlayer!=null){
+                        Player restore=fallbackPlayer;
+                        boolean ready=fallbackPlayWhenReady;
+                        Runnable resume=fallbackBoundaryWatcher;
+                        editPlayer=restore instanceof CompositionPlayer?(CompositionPlayer)restore:null;
+                        editedPreview=editPlayer!=null;editRevision=fallbackRevision;
+                        snapshotId=fallbackSnapshotId;clipId=fallbackClipId;editError=fallbackEditError;
+                        clearFallback();
+                        view.setPlayer(restore);setPlaybackIntent(restore,ready);candidate.release();
+                        clipBoundaryWatcher=resume;
+                        if(resume!=null)handler.post(resume);
+                    }else{
+                        // An older fallback may already have been released. Keep the
+                        // current context rather than restoring an unrelated source.
+                        candidate.pause();editRevision="";
+                    }
+                    if(failedCallback!=null)failedCallback.accept("Edited preview unavailable: "+error.getMessage()+". Retry preview after checking the source.");
+                }
+            });
+            try{
+                candidate.setComposition(composition,offset);candidate.prepare();
+                if(candidate.getPlayerError()!=null)throw candidate.getPlayerError();
+                candidate.setVolume(1f);
+                view.setPlayer(candidate);
+                // Binding can expose an SDK error synchronously, before adoption.
+                if(candidate.getPlayerError()!=null)throw candidate.getPlayerError();
+            }catch(Exception error){
+                view.setPlayer(previous);candidate.release();throw error;
+            }
+            cancelClipBoundaryWatcher();
+            releaseFallback();
+            fallbackPlayer=previous;fallbackPlayWhenReady=previousReady;
+            fallbackRevision=editRevision;fallbackSnapshotId=snapshotId;fallbackClipId=clipId;
+            fallbackEditError=previousError;fallbackBoundaryWatcher=previousWatcher;
+            setPlaybackIntent(previous,false);editPlayer=candidate;editedPreview=true;editRevision=revision;
         }else editPlayer.seekTo(offset);
-        editPlayer.setVolume(1f);editPlayer.setPlayWhenReady(playWhenReady);
+        cancelClipBoundaryWatcher();editError=onError;
+        editPlayer.setVolume(1f);setPlaybackIntent(editPlayer,playWhenReady);
         if(onComplete!=null){
             clipBoundaryWatcher=new Runnable(){
                 private boolean completed;
                 @Override public void run(){
                     if(completed||!editedPreview)return;
                     if(editPlayer.getPlaybackState()==Player.STATE_ENDED){
-                        completed=true;editPlayer.pause();onComplete.run();return;
+                        completed=true;setPlaybackIntent(editPlayer,false);onComplete.run();return;
                     }
                     handler.postDelayed(this,60);
                 }
@@ -111,6 +165,30 @@ public final class LiveEditPlayer {
     }
     public boolean isEditedPreview(){return editedPreview;}
     private Player activePlayer(){return editedPreview&&editPlayer!=null?editPlayer:player;}
+
+    private void setPlaybackIntent(Player target,boolean ready){
+        boolean previous=settingPlaybackIntent;settingPlaybackIntent=true;
+        try{target.setPlayWhenReady(ready);}finally{settingPlaybackIntent=previous;}
+    }
+
+    private void releaseFallback(){
+        Player expired=fallbackPlayer;
+        clearFallback();
+        if(expired instanceof CompositionPlayer&&expired!=editPlayer)expired.release();
+    }
+
+    private void clearFallback(){
+        fallbackPlayer=null;
+        fallbackPlayWhenReady=false;
+        fallbackRevision="";fallbackSnapshotId="";fallbackClipId="";
+        fallbackEditError=null;fallbackBoundaryWatcher=null;
+    }
+
+    private void discardEditedPlayers(){
+        CompositionPlayer previous=editPlayer;editPlayer=null;editRevision="";editError=null;
+        releaseFallback();
+        if(previous!=null)previous.release();
+    }
 
     public void playClip(Uri uri,
                          long inMs,
@@ -137,7 +215,7 @@ public final class LiveEditPlayer {
     }
 
     public void setPlaylist(List<MediaItem> items) {
-        if(editPlayer!=null)editPlayer.pause();editedPreview=false;view.setPlayer(player);
+        cancelClipBoundaryWatcher();editedPreview=false;view.setPlayer(player);discardEditedPlayers();
         List<MediaItem> safe = items == null ? new ArrayList<>() : new ArrayList<>(items);
         player.setMediaItems(safe, true);
         player.prepare();
@@ -194,12 +272,14 @@ public final class LiveEditPlayer {
     }
 
     public void pause() {
+        fallbackPlayWhenReady=false;
         activePlayer().pause();
     }
 
     public void stop() {
         cancelClipBoundaryWatcher();
         activePlayer().stop();
+        fallbackPlayWhenReady=false;
         editRevision="";
     }
 
@@ -210,8 +290,9 @@ public final class LiveEditPlayer {
     public void release() {
         cancelClipBoundaryWatcher();
         view.setPlayer(null);
+        editedPreview=false;
+        discardEditedPlayers();
         player.release();
-        if(editPlayer!=null)editPlayer.release();
     }
 
     private void cancelClipBoundaryWatcher() {

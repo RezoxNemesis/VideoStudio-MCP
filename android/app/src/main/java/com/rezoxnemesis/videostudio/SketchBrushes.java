@@ -6,7 +6,7 @@ import org.json.JSONObject;
 
 /** Deterministic pressure brushes shared by touch, agent preview and export. */
 public final class SketchBrushes {
-    public static final String[] PRESETS={"ink","pencil","marker","airbrush","charcoal","calligraphy","hairline","engraving"};
+    public static final String[] PRESETS={"ink","pencil","marker","airbrush","charcoal","calligraphy","hairline","engraving","graphite"};
     private SketchBrushes() {}
     public static JSONObject style(String preset,double opacity,double hardness,boolean pressure,double angle) throws Exception {
         JSONObject b=new JSONObject().put("preset",preset).put("opacity",opacity).put("hardness",hardness).put("pressure",pressure).put("angle",angle);validate(b);return b;
@@ -25,7 +25,9 @@ public final class SketchBrushes {
         Paint alpha=new Paint();alpha.setXfermode(source.getXfermode());p.setXfermode(null);alpha.setAlpha((int)Math.round(255*b.optDouble("opacity",1)));
         JSONArray first=points.getJSONArray(0);float fx=(float)first.getDouble(0)*w,fy=(float)first.getDouble(1)*h;RectF bounds=new RectF(fx,fy,fx,fy);for(int i=1;i<points.length();i++){JSONArray a=points.getJSONArray(i);float x=(float)a.getDouble(0)*w,y=(float)a.getDouble(1)*h;bounds.left=Math.min(bounds.left,x);bounds.right=Math.max(bounds.right,x);bounds.top=Math.min(bounds.top,y);bounds.bottom=Math.max(bounds.bottom,y);}bounds.inset(-width,-width);
         int save=c.saveLayer(bounds,alpha);boolean pressure=b.optBoolean("pressure",true);
-        if("hairline".equals(preset)||"engraving".equals(preset)){
+        if("graphite".equals(preset)){
+            drawGraphite(c,points,w,h,width,p,pressure,(float)b.optDouble("hardness",.6));
+        }else if("hairline".equals(preset)||"engraving".equals(preset)){
             drawRefinedInk(c,points,w,h,width,p,pressure,"engraving".equals(preset));
         }else if("ink".equals(preset)||"marker".equals(preset)) {
             JSONArray pp=points;if(!pressure||"marker".equals(preset)){pp=new JSONArray();for(int i=0;i<points.length();i++){JSONArray a=points.getJSONArray(i);pp.put(new JSONArray().put(a.getDouble(0)).put(a.getDouble(1)).put(1));}}
@@ -57,6 +59,67 @@ public final class SketchBrushes {
             }
         }
         c.restoreToCount(save);
+    }
+
+    /** Continuous pressure core with fine, repeatable grain. Older pencil marks keep their renderer. */
+    private static void drawGraphite(Canvas canvas,JSONArray points,int w,int h,float width,
+                                      Paint source,boolean pressure,float hardness)throws Exception{
+        JSONArray corePoints=points;
+        if(!pressure){corePoints=new JSONArray();for(int i=0;i<points.length();i++){
+            JSONArray point=points.getJSONArray(i);corePoints.put(new JSONArray()
+                    .put(point.getDouble(0)).put(point.getDouble(1)).put(1));}}
+        Paint core=new Paint(source);core.setShader(null);
+        core.setAlpha(Math.round(source.getAlpha()*(.30f+.45f*hardness)));
+        drawGraphiteCore(canvas,corePoints,w,h,width*.92f,core);
+        Paint grain=new Paint(source);grain.setShader(null);grain.setStyle(Paint.Style.FILL);
+        grain.setAlpha(Math.round(source.getAlpha()*(.08f+.12f*hardness)));
+        float spacing=Math.max(.5f,width*.14f);int stamp=0;
+        for(int i=0;i<corePoints.length();i++){
+            JSONArray end=corePoints.getJSONArray(i),start=corePoints.getJSONArray(Math.max(0,i-1));
+            float ax=(float)start.getDouble(0)*w,ay=(float)start.getDouble(1)*h;
+            float bx=(float)end.getDouble(0)*w,by=(float)end.getDouble(1)*h;
+            int steps=i==0?0:Math.max(1,(int)Math.ceil(Math.hypot(bx-ax,by-ay)/spacing));
+            for(int j=i==0?0:1;j<=steps;j++){
+                float t=steps==0?0:j/(float)steps,x=ax+(bx-ax)*t,y=ay+(by-ay)*t;
+                float force=(float)(start.getDouble(2)+(end.getDouble(2)-start.getDouble(2))*t);
+                float radius=width*(.15f+.85f*force)/2;
+                int seed=stamp++*1103515245+12345;
+                for(int n=0;n<4;n++){
+                    seed=seed*1664525+1013904223;float dx=((seed>>>8)&65535)/32767.5f-1;
+                    seed=seed*1664525+1013904223;float dy=((seed>>>8)&65535)/32767.5f-1;
+                    if(dx*dx+dy*dy<=1)canvas.drawCircle(x+dx*radius,y+dy*radius,
+                            Math.max(.08f,radius*.07f),grain);
+                }
+            }
+        }
+    }
+
+    private static void drawGraphiteCore(Canvas canvas,JSONArray points,int w,int h,
+                                         float width,Paint paint)throws Exception{
+        // Fill the whole core once. Separate segment/cap draws compound alpha at
+        // control points and leave visible dark beads in low-opacity shading.
+        Path coverage=new Path();coverage.setFillType(Path.FillType.WINDING);
+        for(int i=0;i<points.length();i++){
+            JSONArray point=points.getJSONArray(i);
+            float x=(float)point.getDouble(0)*w,y=(float)point.getDouble(1)*h;
+            float radius=width*(.15f+.85f*(float)point.getDouble(2))/2;
+            if(i>0){
+                JSONArray prior=points.getJSONArray(i-1);
+                float ax=(float)prior.getDouble(0)*w,ay=(float)prior.getDouble(1)*h;
+                float before=width*(.15f+.85f*(float)prior.getDouble(2))/2;
+                float dx=x-ax,dy=y-ay,length=(float)Math.hypot(dx,dy);
+                if(length>.0001f){
+                    float nx=-dy/length,ny=dx/length;
+                    coverage.moveTo(ax+nx*before,ay+ny*before);
+                    coverage.lineTo(x+nx*radius,y+ny*radius);
+                    coverage.lineTo(x-nx*radius,y-ny*radius);
+                    coverage.lineTo(ax-nx*before,ay-ny*before);coverage.close();
+                }
+            }
+            // Same winding as the segment quads prevents cancellation in overlaps.
+            coverage.addCircle(x,y,radius,Path.Direction.CCW);
+        }
+        paint.setStyle(Paint.Style.FILL);canvas.drawPath(coverage,paint);
     }
 
     /**

@@ -31,7 +31,7 @@ final class SketchXsheetProjection {
             throw SketchDocument.bad("Xsheet requires a valid frame and 1..48 visible rows");
         int last=Math.min(frames,offset+requestedRows);
         JSONArray columns=new JSONArray(),layers=source.getJSONArray("layers");
-        int drawings=0,draws=0,holds=0,blanks=0,transformKeys=0;
+        int drawings=0,draws=0,holds=0,blanks=0,transformKeys=0,shapeKeys=0;
         for(int layerIndex=0;layerIndex<layers.length();layerIndex++){
             if(Thread.currentThread().isInterrupted())throw new InterruptedException("Xsheet inspection cancelled");
             JSONObject layer=layers.getJSONObject(layerIndex);
@@ -39,9 +39,13 @@ final class SketchXsheetProjection {
             JSONArray objects=layer.getJSONArray("objects");
             Set<Integer> layerKeys=framesWithKeys(layer);
             Map<String,Set<Integer>> objectKeys=new HashMap<>();
+            Map<String,Set<Integer>> objectShapeKeys=new HashMap<>();
             for(int i=0;i<objects.length();i++){
                 JSONObject item=objects.getJSONObject(i);
                 objectKeys.put(item.getString("id"),framesWithKeys(item));
+                Set<Integer> shapeFrames=new HashSet<>();JSONArray shapes=item.optJSONArray("shapeKeys");
+                if(shapes!=null)for(int k=0;k<shapes.length();k++)shapeFrames.add(shapes.getJSONObject(k).getInt("frame"));
+                objectShapeKeys.put(item.getString("id"),shapeFrames);
             }
             // A window beginning during a held exposure MUST still show HOLD,
             // not a false new drawing on the first row of each page.
@@ -60,6 +64,7 @@ final class SketchXsheetProjection {
                     keyed=true;break;
                 }
                 if(keyed){cell.put("transformKey",true);transformKeys++;}
+                for(String objectId:exposed)if(objectShapeKeys.get(objectId).contains(frame)){cell.put("shapeKey",true);shapeKeys++;break;}
                 cells.put(cell);
                 if(!active.isEmpty()&&!known.containsKey(active)){
                     known.put(active,active);
@@ -84,6 +89,7 @@ final class SketchXsheetProjection {
                 .put("dictionaryDrawings",drawings)
                 .put("drawingCells",draws).put("holdCells",holds).put("blankCells",blanks)
                 .put("transformKeyCells",transformKeys)
+                .put("shapeKeyCells",shapeKeys)
                 .put("readOnly",true)
                 .put("renderingParity","exposure intervals match SketchFrameRenderer.exposed; hidden levels remain authored columns");
         if(result.toString().getBytes(StandardCharsets.UTF_8).length>MAX_RESULT_BYTES)

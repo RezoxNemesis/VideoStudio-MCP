@@ -123,6 +123,26 @@ public class RigEditorActivityTest {
             assertSame("Failed navigation retains the displayed original and its annotation draft",retained,bitmapField.get(activity));assertFalse(retained.isRecycled());
         }finally{controller.pause().stop().destroy();}
     }
+    @Test public void headMaskCanBeDrawnUndoneSavedAndReopened()throws Exception{
+        Fixture fixture=fixture();ActivityController<RigEditorActivity> first=Robolectric.buildActivity(RigEditorActivity.class,fixture.intent).create().start().resume().visible();
+        Bundle state=new Bundle();
+        try{
+            RigEditorActivity activity=first.get();awaitOwnerWorker(activity);
+            Button head=findButton(activity.getWindow().getDecorView(),"Head mask");assertNotNull("Head isolation must be reachable in the native owner editor",head);head.performClick();
+            View drawing=(View)field(activity,"drawing");drawing.layout(0,0,1000,1000);
+            int[][] vertices={{300,120},{550,120},{550,280},{300,280}};long clock=10;
+            for(int[] point:vertices){touch(drawing,MotionEvent.ACTION_DOWN,point[0],point[1],clock++);touch(drawing,MotionEvent.ACTION_UP,point[0],point[1],clock++);}
+            assertEquals(4,new org.json.JSONObject(draft(activity)).getJSONArray("headOutline").length());
+            findButton(activity.getWindow().getDecorView(),"Undo").performClick();assertEquals(3,new org.json.JSONObject(draft(activity)).getJSONArray("headOutline").length());
+            findButton(activity.getWindow().getDecorView(),"Redo").performClick();
+            findButton(activity.getWindow().getDecorView(),"Save Actor Rig").performClick();awaitOwnerWorker(activity);
+            assertEquals(4,fixture.rigs.load(fixture.project.id,fixture.profile.id).toJson().getJSONArray("headOutline").length());
+            first.saveInstanceState(state);
+        }finally{first.pause().stop().destroy();}
+        ActivityController<RigEditorActivity> reopened=Robolectric.buildActivity(RigEditorActivity.class,fixture.intent).create(state).start().resume().visible();
+        try{awaitOwnerWorker(reopened.get());assertEquals(4,new org.json.JSONObject(draft(reopened.get())).getJSONArray("headOutline").length());}
+        finally{reopened.pause().stop().destroy();}
+    }
     private static void awaitOwnerWorker(RigEditorActivity activity)throws Exception{Field field=RigEditorActivity.class.getDeclaredField("ownerWorker");field.setAccessible(true);((ExecutorService)field.get(activity)).submit(()->{}).get(10,TimeUnit.SECONDS);ShadowLooper.idleMainLooper();}
     private static Object field(Object activity,String name)throws Exception{Field field=RigEditorActivity.class.getDeclaredField(name);field.setAccessible(true);return field.get(activity);}
     private static String draft(RigEditorActivity activity)throws Exception{Method method=RigEditorActivity.class.getDeclaredMethod("draft");method.setAccessible(true);return(String)method.invoke(activity);}

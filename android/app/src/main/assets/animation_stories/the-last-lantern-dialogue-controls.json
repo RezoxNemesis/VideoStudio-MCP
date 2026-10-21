@@ -1,0 +1,274 @@
+{
+  "language": "en-US",
+  "durationMs": 124000,
+  "lines": [
+    {
+      "lineId": "line_00",
+      "characterId": "arin",
+      "voice": "am_adam",
+      "text": "I can still get the lantern across.",
+      "startMs": 8000,
+      "slotMs": 6000,
+      "speed": 0.98,
+      "phrases": [
+        {
+          "text": "I can still get",
+          "speed": 1.04,
+          "pauseAfterMs": 180
+        },
+        {
+          "text": "the lantern across.",
+          "speed": 1.0,
+          "pauseAfterMs": 150
+        }
+      ]
+    },
+    {
+      "lineId": "line_01",
+      "characterId": "leela",
+      "voice": "af_heart",
+      "text": "Wait. Those boards are loose.",
+      "startMs": 16000,
+      "slotMs": 4500,
+      "speed": 0.94,
+      "phrases": [
+        {
+          "text": "Wait.",
+          "speed": 0.98,
+          "pauseAfterMs": 250
+        },
+        {
+          "text": "Those boards are loose.",
+          "speed": 1.04,
+          "pauseAfterMs": 150
+        }
+      ]
+    },
+    {
+      "lineId": "line_02",
+      "characterId": "arin",
+      "voice": "am_adam",
+      "text": "They need this light. I can't just stand here.",
+      "startMs": 22000,
+      "slotMs": 7000,
+      "speed": 1.03,
+      "phrases": [
+        {
+          "text": "They need this light.",
+          "speed": 1.05,
+          "pauseAfterMs": 300
+        },
+        {
+          "text": "I can't just stand here.",
+          "speed": 1.08,
+          "pauseAfterMs": 150
+        }
+      ]
+    },
+    {
+      "lineId": "line_03",
+      "characterId": "leela",
+      "voice": "af_heart",
+      "text": "And they need you to arrive safely. Look.",
+      "startMs": 31000,
+      "slotMs": 6000,
+      "speed": 0.94,
+      "phrases": [
+        {
+          "text": "And they need you to arrive safely.",
+          "speed": 0.96,
+          "pauseAfterMs": 300
+        },
+        {
+          "text": "Look.",
+          "speed": 1.02,
+          "pauseAfterMs": 150
+        }
+      ]
+    },
+    {
+      "lineId": "line_04",
+      "characterId": "arin",
+      "voice": "am_adam",
+      "text": "The lantern!",
+      "startMs": 40000,
+      "slotMs": 3000,
+      "speed": 1.08,
+      "phrases": [
+        {
+          "text": "The lantern!",
+          "speed": 1.06,
+          "pauseAfterMs": 150
+        }
+      ]
+    },
+    {
+      "lineId": "line_05",
+      "characterId": "leela",
+      "voice": "af_heart",
+      "text": "The flame is small. It isn't gone.",
+      "startMs": 48000,
+      "slotMs": 6000,
+      "speed": 0.92,
+      "phrases": [
+        {
+          "text": "The flame is small.",
+          "speed": 0.94,
+          "pauseAfterMs": 350
+        },
+        {
+          "text": "It isn't gone.",
+          "speed": 0.91,
+          "pauseAfterMs": 200
+        }
+      ]
+    },
+    {
+      "lineId": "line_06",
+      "characterId": "arin",
+      "voice": "am_adam",
+      "text": "You're right. Show me what to do.",
+      "startMs": 57000,
+      "slotMs": 5000,
+      "speed": 0.96,
+      "phrases": [
+        {
+          "text": "You're right.",
+          "speed": 0.96,
+          "pauseAfterMs": 300
+        },
+        {
+          "text": "Show me what to do.",
+          "speed": 1.0,
+          "pauseAfterMs": 150
+        }
+      ]
+    },
+    {
+      "lineId": "line_07",
+      "characterId": "leela",
+      "voice": "af_heart",
+      "text": "Pass the rope through. Now hold it steady.",
+      "startMs": 64000,
+      "slotMs": 4500,
+      "speed": 0.94,
+      "phrases": [
+        {
+          "text": "Pass the rope through.",
+          "speed": 1.06,
+          "pauseAfterMs": 150
+        },
+        {
+          "text": "Now hold it steady.",
+          "speed": 1.08,
+          "pauseAfterMs": 150
+        }
+      ]
+    },
+    {
+      "lineId": "line_08",
+      "characterId": "arin",
+      "voice": "am_adam",
+      "text": "I've got you. Take your time.",
+      "startMs": 80000,
+      "slotMs": 5000,
+      "speed": 0.92,
+      "phrases": [
+        {
+          "text": "I've got you.",
+          "speed": 0.96,
+          "pauseAfterMs": 300
+        },
+        {
+          "text": "Take your time.",
+          "speed": 0.92,
+          "pauseAfterMs": 200
+        }
+      ]
+    },
+    {
+      "lineId": "line_09",
+      "characterId": "leela",
+      "voice": "af_heart",
+      "text": "There. Sometimes the light needs two hands.",
+      "startMs": 88000,
+      "slotMs": 4500,
+      "speed": 0.91,
+      "phrases": [
+        {
+          "text": "There.",
+          "speed": 1.02,
+          "pauseAfterMs": 180
+        },
+        {
+          "text": "Sometimes the light needs two hands.",
+          "speed": 1.08,
+          "pauseAfterMs": 150
+        }
+      ]
+    },
+    {
+      "lineId": "line_10",
+      "characterId": "arin",
+      "voice": "am_adam",
+      "text": "I thought being quick meant being useful.",
+      "startMs": 104000,
+      "slotMs": 5500,
+      "speed": 0.93,
+      "phrases": [
+        {
+          "text": "I thought being quick",
+          "speed": 0.96,
+          "pauseAfterMs": 200
+        },
+        {
+          "text": "meant being useful.",
+          "speed": 0.94,
+          "pauseAfterMs": 200
+        }
+      ]
+    },
+    {
+      "lineId": "line_11",
+      "characterId": "leela",
+      "voice": "af_heart",
+      "text": "Tonight, being kind was enough.",
+      "startMs": 112000,
+      "slotMs": 5000,
+      "speed": 0.92,
+      "phrases": [
+        {
+          "text": "Tonight,",
+          "speed": 0.94,
+          "pauseAfterMs": 250
+        },
+        {
+          "text": "being kind was enough.",
+          "speed": 0.92,
+          "pauseAfterMs": 200
+        }
+      ]
+    },
+    {
+      "lineId": "line_12",
+      "characterId": "arin",
+      "voice": "am_adam",
+      "text": "Come on. Let's walk together.",
+      "startMs": 119000,
+      "slotMs": 4500,
+      "speed": 0.95,
+      "phrases": [
+        {
+          "text": "Come on.",
+          "speed": 0.98,
+          "pauseAfterMs": 220
+        },
+        {
+          "text": "Let's walk together.",
+          "speed": 0.96,
+          "pauseAfterMs": 200
+        }
+      ]
+    }
+  ]
+}

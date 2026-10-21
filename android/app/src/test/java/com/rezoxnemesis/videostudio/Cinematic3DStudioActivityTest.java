@@ -34,6 +34,64 @@ import static org.robolectric.Shadows.shadowOf;
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk=33,manifest=Config.NONE)
 public class Cinematic3DStudioActivityTest {
+    @Test public void manualExactAnglesUseTheSameWorkerOperationAndSurviveRecreation()throws Exception{
+        Context context=RuntimeEnvironment.getApplication();ProjectStore.Project project=new ProjectStore(context).create("Exact angle study");Bundle initial=state(project.updatedAt);initial.putInt("selectedShot",1);Intent intent=new Intent(context,Cinematic3DStudioActivity.class).putExtra("projectId",project.id);Bundle saved=new Bundle();
+        try(ActivityController<Cinematic3DStudioActivity> controller=Robolectric.buildActivity(Cinematic3DStudioActivity.class,intent).create(initial).start().resume().visible()){
+            Cinematic3DStudioActivity activity=controller.get();findButton(activity.getWindow().getDecorView(),"Exact camera angles").performClick();AlertDialog form=ShadowAlertDialog.getLatestAlertDialog();
+            ((android.widget.EditText)form.getWindow().getDecorView().findViewWithTag("orbit_start_azimuth")).setText("25");((android.widget.EditText)form.getWindow().getDecorView().findViewWithTag("orbit_end_azimuth")).setText("385");
+            form.getButton(AlertDialog.BUTTON_POSITIVE).performClick();awaitWorker(activity);assertFalse(form.isShowing());JSONObject orbit=((JSONObject)field(activity,"timeline")).getJSONArray("shots").getJSONObject(1).getJSONObject("camera").getJSONObject("orbit");assertEquals(25,orbit.getDouble("startAzimuthDegrees"),0);assertEquals(385,orbit.getDouble("endAzimuthDegrees"),0);assertTrue((Boolean)field(activity,"dirty"));assertFalse((Boolean)field(activity,"sceneRebuildRequired"));controller.saveInstanceState(saved);
+        }
+        try(ActivityController<Cinematic3DStudioActivity> controller=Robolectric.buildActivity(Cinematic3DStudioActivity.class,intent).create(saved).start().resume().visible()){
+            Cinematic3DStudioActivity activity=controller.get();String before=Cinematic3DTimeline.canonical(field(activity,"timeline"));findButton(activity.getWindow().getDecorView(),"Exact camera angles").performClick();AlertDialog form=ShadowAlertDialog.getLatestAlertDialog();assertEquals(25,Double.parseDouble(((android.widget.EditText)form.getWindow().getDecorView().findViewWithTag("orbit_start_azimuth")).getText().toString()),0);
+            ((android.widget.EditText)form.getWindow().getDecorView().findViewWithTag("orbit_radius")).setText("-1");form.getButton(AlertDialog.BUTTON_POSITIVE).performClick();awaitWorker(activity);assertTrue(form.isShowing());assertEquals(before,Cinematic3DTimeline.canonical(field(activity,"timeline")));assertFalse(((android.widget.TextView)form.getWindow().getDecorView().findViewWithTag("orbit_error")).getText().toString().isEmpty());
+        }
+    }
+
+    @Test public void referenceCameraButtonReallyOpensNativeCameraAuthoringWithoutRewritingScene()
+            throws Exception {
+        Context context=RuntimeEnvironment.getApplication();
+        ProjectStore.Project project=new ProjectStore(context)
+                .create("Cinematic camera reference UI");
+        ActivityController<Cinematic3DStudioActivity> controller=Robolectric.buildActivity(
+                Cinematic3DStudioActivity.class,
+                new Intent(context,Cinematic3DStudioActivity.class)
+                        .putExtra("projectId",project.id))
+                .create(state(project.updatedAt)).start().resume().visible();
+        try {
+            Cinematic3DStudioActivity activity=controller.get();
+            Button camera=findButton(activity.getWindow().getDecorView(),
+                    "Reference camera paths");
+            assertNotNull("Reference camera UI must actually be in native 3D Studio",camera);
+            String before=Cinematic3DTimeline.canonical(field(activity,"timeline"));
+            camera.performClick();
+            AlertDialog form=ShadowAlertDialog.getLatestAlertDialog();
+            assertNotNull(form);
+            assertTrue(form.isShowing());
+            assertEquals(before,Cinematic3DTimeline.canonical(field(activity,"timeline")));
+            form.getButton(AlertDialog.BUTTON_NEGATIVE).performClick();
+            assertEquals("Cancelling a reference path must leave the original film unchanged",
+                    before,Cinematic3DTimeline.canonical(field(activity,"timeline")));
+        }finally{controller.pause().stop().destroy();}
+    }
+    @Test public void importedAuthoredCameraExplainsWhyItsKeysRequireARebuild() throws Exception {
+        Context context=RuntimeEnvironment.getApplication();
+        ProjectStore.Project project=new ProjectStore(context).create("Authored camera portrait");
+        Bundle initial=state(project.updatedAt);
+        JSONObject bundle=library();
+        bundle.getJSONObject("manifest").getJSONArray("scenes").getJSONObject(0).put("cameraReplay","authored");
+        initial.putString("editorBundle",bundle.toString());
+        ActivityController<Cinematic3DStudioActivity> controller=Robolectric.buildActivity(Cinematic3DStudioActivity.class,
+                new Intent(context,Cinematic3DStudioActivity.class).putExtra("projectId",project.id)).create(initial).start().resume().visible();
+        try {
+            Cinematic3DStudioActivity activity=controller.get();
+            String before=Cinematic3DTimeline.canonical(field(activity,"timeline"));
+            AlertDialog dialog=ShadowAlertDialog.getLatestAlertDialog();
+            findButton(activity.getWindow().getDecorView(),"Camera keys").performClick();
+            assertSame(dialog,ShadowAlertDialog.getLatestAlertDialog());
+            assertTrue(((android.widget.TextView)field(activity,"status")).getText().toString().contains("authored camera"));
+            assertEquals(before,Cinematic3DTimeline.canonical(field(activity,"timeline")));
+        } finally { controller.pause().stop().destroy(); }
+    }
     @Test public void cameraWorkerCannotOverwriteANewerDraftOrApplyAfterPause() throws Exception {
         for(boolean pause:new boolean[]{false,true}){
             Context context=RuntimeEnvironment.getApplication();ProjectStore store=new ProjectStore(context);ProjectStore.Project project=store.create("Pending camera draft");Bundle initial=state(project.updatedAt);initial.putInt("selectedShot",1);ActivityController<Cinematic3DStudioActivity> controller=Robolectric.buildActivity(Cinematic3DStudioActivity.class,new Intent(context,Cinematic3DStudioActivity.class).putExtra("projectId",project.id)).create(initial).start().resume().visible();CountDownLatch blocked=new CountDownLatch(1),release=new CountDownLatch(1);

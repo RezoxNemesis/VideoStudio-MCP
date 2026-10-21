@@ -47,12 +47,13 @@ public final class Cinematic3DTimeline {
         else if(frame<impact)phase=.5*frame/impact;
         else if(held)phase=.5;
         else {int resume=impact+h-1;phase=.5+.5*(frame-resume)/(n-(double)resume);}
-        JSONObject settings=shot.getJSONObject("camera");String mode=settings.getString("mode");double p=frame/(double)n;double[] position,target={0,1.1,0},up=cameraUp(mode);boolean authored=settings.has("keyframes");
-        if(authored){double[][] sampled=sampleCameraKeys(settings.getJSONArray("keyframes"),p,mode);position=sampled[0];target=sampled[1];up=sampled[2];}
+        JSONObject settings=shot.getJSONObject("camera");String mode=settings.getString("mode");double p=frame/(double)n;double[] position,target={0,1.1,0},up=cameraUp(mode);boolean authored=settings.has("keyframes");JSONObject orbitSample=null;
+        if(settings.has("orbit")){orbitSample=CinematicCameraOrbit.sample(settings.getJSONObject("orbit"),frame,n);position=cameraVector(orbitSample.getJSONArray("position"));target=cameraVector(orbitSample.getJSONArray("target"));up=cameraVector(orbitSample.getJSONArray("up"));}
+        else if(authored){double[][] sampled=sampleCameraKeys(settings.getJSONArray("keyframes"),p,mode);position=sampled[0];target=sampled[1];up=sampled[2];}
         else switch(mode){case "orbit":double a=-.35+.7*p;position=new double[]{5.2*Math.sin(a),1.9,5.2*Math.cos(a)};break;case "macro":position=new double[]{.15,1.45,2.2};break;case "top_down":position=new double[]{0,6,.001};target=new double[]{0,.8,0};break;default:position=new double[]{0,1.65,5.5};}
         if(impact(shot.getString("action"))&&frame>=impact){double elapsed=(frame-impact)/(double)fps,A=.04*settings.getDouble("shakeIntensity")*Math.exp(-7*elapsed);position[0]+=A*Math.sin(53*elapsed+.7);position[1]+=.6*A*Math.sin(71*elapsed+1.3);position[2]+=.4*A*Math.cos(47*elapsed);}
         cameraBasis(position,target,up);
-        JSONObject camera=new JSONObject().put("position",vector(position)).put("target",vector(target)).put("fovDegrees",settings.getDouble("fovDegrees"));if(authored||"top_down".equals(mode))camera.put("up",vector(up));
+        JSONObject camera=new JSONObject().put("position",vector(position)).put("target",vector(target)).put("fovDegrees",settings.getDouble("fovDegrees"));if(authored||orbitSample!=null||"top_down".equals(mode))camera.put("up",vector(up));if(orbitSample!=null)for(String key:new String[]{"azimuthDegrees","elevationDegrees","radius","cameraPhase"})camera.put(key,orbitSample.get(key));
         return new JSONObject().put("phase",phase).put("motionSeconds",phase*(n-h)/fps).put("hitStop",held).put("impactFrame",impact).put("camera",camera);
     }
 
@@ -67,7 +68,12 @@ public final class Cinematic3DTimeline {
         String action=text(shot,"action",32);if(!ACTIONS.contains(action))throw new IllegalArgumentException("Unknown cinematic action");integer(shot,"durationFrames",8,600);int hold=(int)integer(shot,"hitStopFrames",0,5);
         if(shot.has("motionStyle")){JSONObject style=object(shot,"motionStyle");fields(style,"preset","intensity");if(!Arrays.asList("grounded","anime","martial","cartoony").contains(text(style,"preset",16)))throw new IllegalArgumentException("Unknown motion style");if(style.has("intensity"))number(style,"intensity",0,1);}
         if(hold==1||hold>0&&!impact(action))throw new IllegalArgumentException("Hit-stop requires an impact action and 2..5 frames");
-        JSONObject camera=object(shot,"camera");fields(camera,"mode","fovDegrees","shakeIntensity","keyframes");String mode=text(camera,"mode",16);if(!Arrays.asList("wide","orbit","macro","top_down").contains(mode))throw new IllegalArgumentException("Unknown cinematic camera mode");number(camera,"fovDegrees",35,100);number(camera,"shakeIntensity",0,1);
+        JSONObject camera=object(shot,"camera");fields(camera,"mode","fovDegrees","shakeIntensity","keyframes","orbit");String mode=text(camera,"mode",16);if(!Arrays.asList("wide","orbit","macro","top_down").contains(mode))throw new IllegalArgumentException("Unknown cinematic camera mode");number(camera,"fovDegrees",35,100);number(camera,"shakeIntensity",0,1);
+        if(camera.has("orbit")){
+            if(!"orbit".equals(mode)||camera.has("keyframes")||camera.getDouble("shakeIntensity")!=0)
+                throw new IllegalArgumentException("Exact orbit requires mode orbit, zero camera shake and no Cartesian keys");
+            CinematicCameraOrbit.validate(object(camera,"orbit"));
+        }
         if(camera.has("keyframes"))validateCameraKeys(array(camera,"keyframes"),mode);
         JSONObject vfx=object(shot,"vfx");fields(vfx,"sparkBurst","slashTrail","rubble");for(String key:new String[]{"sparkBurst","slashTrail","rubble"})bool(vfx,key);
         if(shot.has("sourceAnchors")){JSONArray refs=array(shot,"sourceAnchors");if(refs.length()>160)throw new IllegalArgumentException("Source anchor occurrence limit exceeded");for(int i=0;i<refs.length();i++){JSONObject ref=object(refs,i);fields(ref,"assetId","sha256");id(text(ref,"assetId",96));digest(text(ref,"sha256",64),false);}}

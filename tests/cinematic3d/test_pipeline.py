@@ -60,6 +60,23 @@ class PipelineTest(unittest.TestCase):
             for item in manifest['files']:
                 self.assertEqual(hashlib.sha256(archive.read(item['path'])).hexdigest(),item['sha256'])
 
+    def test_authored_camera_policy_is_preserved_and_unknown_values_do_not_publish(self):
+        folder,manifest=self.generation()
+        scene=manifest['scenes'][0]
+        scene['cameraReplay']='authored'
+        (folder/'manifest.json').write_text(json.dumps(manifest))
+        target=self.root/'authored.vscinematic'
+        pipeline.build_bundle(folder,target)
+        with zipfile.ZipFile(target) as archive:
+            self.assertEqual(json.loads(archive.read('manifest.json'))['scenes'][0]['cameraReplay'],'authored')
+        for bad in ('autored', True, None, 3):
+            scene['cameraReplay']=bad
+            (folder/'manifest.json').write_text(json.dumps(manifest))
+            rejected=self.root/'invalid.vscinematic'
+            with self.assertRaisesRegex(ValueError,'Camera replay'):
+                pipeline.build_bundle(folder,rejected)
+            self.assertFalse(rejected.exists())
+
     def test_cloud_conditioning_sidecars_never_bloat_phone_archive(self):
         folder,_=self.generation()
         sidecar=folder/'conditioning';sidecar.mkdir()
