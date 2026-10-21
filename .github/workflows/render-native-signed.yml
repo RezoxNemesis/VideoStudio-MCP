@@ -70,7 +70,7 @@ jobs:
         run: |
           set -euo pipefail
           test "${{ steps.vs_signer.outputs.cache-hit }}" = "true"
-          python -c "import sys;from pathlib import Path;sys.path.insert(0,'tools');from prepare_render_signed_build import inspect_keystore;print('Original VideoStudio signer:', inspect_keystore(Path.home()/'.android/debug.keystore')))"
+          python -c "import sys;from pathlib import Path;sys.path.insert(0,'tools');from prepare_render_signed_build import inspect_keystore;print('Original VideoStudio signer:', inspect_keystore(Path.home()/'.android/debug.keystore'))"
           echo "VIDEOSTUDIO_SIGNING_KEYSTORE=$HOME/.android/debug.keystore" >> "$GITHUB_ENV"
 
       - name: Build pinned Render JNI and Android tests
