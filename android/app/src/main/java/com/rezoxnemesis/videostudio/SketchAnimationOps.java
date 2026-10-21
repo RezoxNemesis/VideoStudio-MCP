@@ -37,6 +37,17 @@ public final class SketchAnimationOps {
         synchronized(LOCK){SketchDocument.id(new JSONObject().put("id",animationId),"id");try(Store store=new Store(context)){return store.read(animationId,true);}}
     }
 
+    /** Archive recovery owns this already-validated immutable source snapshot. Do not
+     * reread a later human edit between the sketch and animation database commits. */
+    static JSONObject restoreFrozen(Context context,JSONObject source,JSONObject program,String id,String operation)throws Exception {
+        synchronized(LOCK){try(Store store=new Store(context)){
+            JSONObject args=new JSONObject().put("animationId",id).put("sketchId",source.getString("id"))
+                    .put("sourceRevision",source.getLong("revision")).put("expectedRevision",0)
+                    .put("operationId",operation).put("program",SketchDocument.copy(program));
+            return store.save(args,source);
+        }}
+    }
+
     private static String hash(JSONObject object)throws Exception{return SketchDocument.sha256(SketchDocument.canonical(object).getBytes(StandardCharsets.UTF_8));}
     private static int bytes(JSONObject object){return object.toString().getBytes(StandardCharsets.UTF_8).length;}
     private static String intent(String action,JSONObject args)throws Exception{return SketchDocument.sha256((action+"\n"+SketchDocument.canonical(args)).getBytes(StandardCharsets.UTF_8));}
@@ -56,6 +67,9 @@ public final class SketchAnimationOps {
         @Override public void close(){try{sketches.close();}finally{helper.close();}}
 
         JSONObject save(JSONObject args)throws Exception {
+            return save(args,null);
+        }
+        JSONObject save(JSONObject args,JSONObject restoredSource)throws Exception {
             SketchDocument.fields(args,"animationId,sketchId,sourceRevision,expectedRevision,operationId,program");
             String id=SketchDocument.id(args,"animationId"),sourceId=SketchDocument.id(args,"sketchId"),operation=SketchDocument.id(args,"operationId");
             long expected=SketchDocument.integer(args,"expectedRevision",0,Long.MAX_VALUE-2),sourceRevision=SketchDocument.integer(args,"sourceRevision",1,Long.MAX_VALUE-1);
@@ -63,17 +77,17 @@ public final class SketchAnimationOps {
             // whole-valued Doubles, which JSONObject serializes as integers on the wire.
             // Keep args intact: the operation fingerprint still identifies the original request.
             JSONObject program=SketchDocument.copy(args.getJSONObject("program"));if(bytes(program)>PROGRAM_BYTES)throw SketchDocument.bad("Animation program exceeds 512 KiB budget");
-            String fingerprint=intent("save",args);db.beginTransaction();try{
+            String fingerprint=restoredSource==null?intent("save",args):SketchDocument.sha256((intent("restore",args)+"\n"+hash(restoredSource)).getBytes(StandardCharsets.UTF_8));db.beginTransaction();try{
                 JSONObject previous=operation(id,operation,fingerprint);if(previous!=null){db.setTransactionSuccessful();return previous.getJSONObject("result");}
                 requireRevision(id,expected);requireOperationCapacity(id);
                 JSONObject existing=expected>0?record(id):null;boolean frozen=existing!=null&&sourceId.equals(existing.getString("sketchId"))&&sourceRevision==existing.getLong("sourceRevision");
                 JSONObject source;
                 if(frozen){verifyRecord(existing);source=SketchDocument.copy(existing.getJSONObject("sourceDocument"));}
-                else {source=sketches.get(sourceId);SketchProjectStore.requireRevision(source,sourceRevision);sketches.verifyReferences(source);}
+                else {source=restoredSource==null?sketches.get(sourceId):SketchDocument.copy(restoredSource);SketchDocument.validate(source);if(!sourceId.equals(source.getString("id")))throw SketchDocument.bad("Restored animation source identity differs");SketchProjectStore.requireRevision(source,sourceRevision);sketches.verifyReferences(source);}
                 JSONObject compiled=SketchAnimationCompiler.compile(SketchDocument.copy(source),SketchDocument.copy(program),validationOutputId(sourceId,id));
                 JSONObject report=checkedReport(compiled.getJSONObject("report"));
                 // A human may edit during compilation. Admit only the requested source revision.
-                if(!frozen&&sketches.revision(sourceId)!=sourceRevision)throw new IllegalStateException("SKETCH_REVISION_CONFLICT: prepared artwork changed while saving animation");
+                if(restoredSource==null&&!frozen&&sketches.revision(sourceId)!=sourceRevision)throw new IllegalStateException("SKETCH_REVISION_CONFLICT: prepared artwork changed while saving animation");
                 long revision=Math.addExact(expected,1),now=System.currentTimeMillis();JSONObject record=new JSONObject().put("schema",RECORD_SCHEMA)
                         .put("animationId",id).put("revision",revision).put("sketchId",sourceId).put("sourceRevision",sourceRevision)
                         .put("sourceSha256",hash(source)).put("programSha256",hash(program)).put("program",SketchDocument.copy(program))

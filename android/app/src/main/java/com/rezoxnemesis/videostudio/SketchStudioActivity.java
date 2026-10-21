@@ -1549,9 +1549,17 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
         afterSaves(()->transfers.execute(()->{
             try{JSONObject restored=SketchLocalArchive.restore(this,uri,operation,null);String target=restored.getString("sketchId");
                 postUi(()->{if(session!=active||generation!=loadGeneration||page!=pageGeneration||active!=null&&active.pending()>0){onMessage("Editable animation imported as a new sketch. Find it in File → Open.");return;}
-                    bookId=null;book=null;loadSketch(target,0);onMessage("Editable animation imported with its layers, cels, colours and timing. Your previous work is preserved.");});
+                    bookId=null;book=null;loadSketch(target,0);onMessage("Editable animation imported with its layers, cels, colours and timing. Your previous work is preserved.");offerRestoredMotion(restored);});
             }catch(Exception failure){postUi(()->onMessage("Editable import failed: "+failure.getMessage()));}
         }));
+    }
+    private void offerRestoredMotion(JSONObject result){
+        if(!result.optBoolean("animationRestored")||!result.has("animationId"))return;
+        String restoredAnimation=result.optString("animationId");
+        new AlertDialog.Builder(this).setTitle("Editable motion scene restored")
+                .setMessage("The saved rig, poses, weights and timing are available in a new scene. Your original projects are preserved.")
+                .setPositiveButton("Open animation scene",(dialog,which)->startActivity(new Intent(this,SketchAnimationActivity.class).putExtra("animationId",restoredAnimation)))
+                .setNegativeButton("Keep drawing",null).show();
     }
     private void restoreArchiveDialog(){
         transfers.execute(()->{try{ArrayList<JSONObject> archives=knownEditableArchives();String[] labels=new String[archives.size()+1];for(int i=0;i<archives.size();i++){JSONObject archive=archives.get(i);labels[i]=archive.optString("displayName")+" · revision "+archive.optLong("sourceRevision");}labels[archives.size()]="Restore with archive details";
@@ -1567,7 +1575,7 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
         try{JSONObject args=new JSONObject().put("archiveProjectId",archive.getString("archiveProjectId")).put("archiveName",archive.getString("archiveName")).put("expectedSha256",archive.getString("archiveSha256")).put("operationId",UUID.randomUUID().toString());
             String prior=getPreferences(MODE_PRIVATE).getString("pendingEditableRestore","");if(!prior.isEmpty()){JSONObject retained=new JSONObject(prior);if(args.getString("archiveProjectId").equals(retained.optString("archiveProjectId"))&&args.getString("archiveName").equals(retained.optString("archiveName"))&&args.getString("expectedSha256").equals(retained.optString("expectedSha256")))args=retained;}
             getPreferences(MODE_PRIVATE).edit().putString("pendingEditableRestore",args.toString()).apply();JSONObject frozen=args;SketchEditorSession active=session;int generation=loadGeneration,page=pageGeneration;
-            io.execute(()->{try{if(active!=null){active.awaitIdle(15000);if(active.error()!=null)throw new IllegalStateException(active.error());}transfers.execute(()->{try{JSONObject result=SketchPaintArchive.restore(this,frozen);getPreferences(MODE_PRIVATE).edit().remove("pendingEditableRestore").apply();String restored=result.getString("sketchId");postUi(()->{if(session!=active||generation!=loadGeneration||page!=pageGeneration){onMessage("Archive restored as a new sketch. Find it in File → Open.");return;}bookId=null;book=null;loadSketch(restored,0);onMessage("Verified editable archive restored. Your existing drawing is preserved.");});}catch(Exception failure){postUi(()->onMessage("Restore retained for retry: "+failure.getMessage()));}});}catch(Exception failure){postUi(()->onMessage(failure.getMessage()));}});
+            io.execute(()->{try{if(active!=null){active.awaitIdle(15000);if(active.error()!=null)throw new IllegalStateException(active.error());}transfers.execute(()->{try{JSONObject result=SketchPaintArchive.restore(this,frozen);getPreferences(MODE_PRIVATE).edit().remove("pendingEditableRestore").apply();String restored=result.getString("sketchId");postUi(()->{if(session!=active||generation!=loadGeneration||page!=pageGeneration){onMessage("Archive restored as a new sketch. Find it in File → Open.");return;}bookId=null;book=null;loadSketch(restored,0);onMessage("Verified editable archive restored. Your existing drawing is preserved.");offerRestoredMotion(result);});}catch(Exception failure){postUi(()->onMessage("Restore retained for retry: "+failure.getMessage()));}});}catch(Exception failure){postUi(()->onMessage(failure.getMessage()));}});
         }catch(Exception failure){onMessage(failure.getMessage());}
     }
     private JSONObject paintStyle()throws Exception{return new JSONObject().put("mode",paintMode).put("color",brushColor).put("sizePx",paintSize).put("opacity",brushOpacity).put("flow",paintFlow).put("hardness",brushHardness).put("spacing",paintSpacing).put("pressure",paintPressure).put("texture",paintTexture).put("seed",paintSeed).put("angle",brushAngle).put("tip",paintTip);}

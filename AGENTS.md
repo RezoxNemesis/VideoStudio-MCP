@@ -1,3 +1,16 @@
+# Active portable animation scene packages —2026-10-21
+
+Current isolated feature4.10.9/code512 extends verified signed511103d5e.
+Read docs/continuity/NATIVE_PORTABLE_ANIMATION_4109.md. Optional source-bound
+animationId+animationRevision on sketch_archive include an editable saved recipe;
+omission preserves legacy behavior/floors/fingerprints. Manual scene archive and
+new-scene restore use the same native writer/validator. Focused33native and actual
+96frame source-assisted package roundtrip pass; full combined/CI/signing pending.
+Do not call this film/art acceptance. Preserve failed head-neck automatic clipping
+integration separately; its tests remain unchanged and that repair is not shipped.
+Root owns ONE local Gradle across all worktrees. No main/Worker/stable publication,
+replacement signer, Gallery/hosted art, uninstall/data/MCP identity reset.
+
 # Active native Plus attention conditioning — 2026-10-21
 
 Current feature integration4.10.8/code511 extends frozen4.10.7/code510 source76fb9a0. Read

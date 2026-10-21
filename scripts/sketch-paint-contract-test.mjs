@@ -55,3 +55,17 @@ test('paint, archive and larger canvas requests gate incompatible APKs before ad
  assert.doesNotThrow(()=>requireStudioVersion({appVersion:'4.0.0'},'sketch_edit',edit({type:'set_canvas',width:1280})));
  assert.throws(()=>requireStudioVersion({appVersion:'4.0.1'},'sketch_edit',edit({type:'set_canvas',width:2048})),/4\.1\.0/);
 });
+
+
+test('optional saved-scene archive is strict and gates only explicit selection',()=>{
+ const plain={sketchId:'s',expectedRevision:2,operationId:'archive'};
+ const selected={...plain,animationId:'scene',animationRevision:1};
+ assert.deepEqual(nativeStudioParameters('sketch_archive',selected),selected);
+ assert.throws(()=>requireStudioVersion({appVersion:'4.10.8'},'sketch_archive',selected),/4\.10\.9/);
+ assert.doesNotThrow(()=>requireStudioVersion({appVersion:'4.10.9'},'sketch_archive',selected));
+ assert.doesNotThrow(()=>requireStudioVersion({appVersion:'4.1.0'},'sketch_archive',plain));
+ assert.deepEqual(nativeStudioParameters('sketch_archive',plain),plain);
+ for(const bad of [{...plain,animationId:'scene'},{...plain,animationRevision:1},{...selected,animationId:null},{...selected,animationRevision:'1'},{...selected,animationRevision:0},{...selected,includeAllScenes:true}])assert.throws(()=>nativeStudioParameters('sketch_archive',bad));
+ const restore={archiveProjectId:'s',archiveName:'s.vssketch',expectedSha256:'a'.repeat(64),operationId:'r'};
+ assert.doesNotThrow(()=>requireStudioVersion({appVersion:'4.1.0'},'sketch_restore_archive',restore));
+});

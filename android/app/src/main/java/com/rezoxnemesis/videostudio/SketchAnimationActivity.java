@@ -92,6 +92,7 @@ public final class SketchAnimationActivity extends Activity {
         LinearLayout production=row(controls);button(production,"Acting presets",this::motionPresets,false);button(production,"Mouth timing",this::autoMouthTiming,false);button(production,"Production QA",this::productionCheck,false);
         LinearLayout files=row(controls);button(files,"Example",this::example,false);button(files,"Open",this::openAnimation,false);button(files,"Save scene",this::saveScene,false);button(files,"Bake animation",this::bake,true);
         button(row(controls),"Place in book",this::placeInBook,false);
+        button(row(controls),"Archive scene",this::archiveScene,false);
         button(row(controls),"Story plan",()->{try{SketchStoryPlanDialog.show(this,id->startActivity(new Intent(this,SketchStudioActivity.class).putExtra("bookId",id)));}catch(Exception error){message(error.getMessage());}},false);
         StudioUi.prepareTouchLayout(root);
     }
@@ -787,6 +788,24 @@ public final class SketchAnimationActivity extends Activity {
             long savedRevision=saved.getLong("revision");JSONObject baked=null;if(bake)baked=SketchAnimationOps.execute(this,"sketch_animation_bake",new JSONObject().put("animationId",id).put("expectedRevision",savedRevision).put("operationId",UUID.randomUUID().toString()).put("outputSketchId","animated_"+UUID.randomUUID().toString().replace("-","")));
             JSONObject output=baked;post(()->{saving=false;if(id.equals(animationId)){revision=savedRevision;if(acceptedGeneration==generation)dirty=false;persistDraft();}if(output!=null){String outputId=output.optString("outputSketchId");new AlertDialog.Builder(this).setTitle("Editable animation baked").setMessage("Your source sketch is preserved. The new drawing contains articulated pose keys, camera keys and timed dialogue. Open it to refine cels or export the video.").setPositiveButton("Open animation",(d,w)->startActivity(new Intent(this,SketchStudioActivity.class).putExtra("sketchId",outputId))).setNegativeButton("Keep editing scene",null).show();}status.setText(output==null?"Scene saved · r"+savedRevision:"Baked separate editable animation · "+output.optString("outputSketchId"));});
         }catch(Exception failure){JSONObject acceptedSave=saved;post(()->{saving=false;if(acceptedSave!=null&&id.equals(animationId)){revision=acceptedSave.optLong("revision",revision);if(acceptedGeneration==generation)dirty=false;persistDraft();}status.setText((acceptedSave==null?"Animation retained as a local draft":"Scene saved · r"+acceptedSave.optLong("revision")+" · bake needs attention")+" · "+failure.getMessage());message(failure.getMessage());});}});
+    }
+    private void archiveScene(){
+        if(!ready()||saving)return;
+        if(dirty||revision<1){message("Save scene first so the archive includes this exact motion");return;}
+        stopPlayback();final String selected=animationId,sourceId=sketchId;final long savedRevision=revision,artRevision=sourceRevision;
+        saving=true;status.setText("Archiving saved scene, source artwork and motion controls…");
+        io.execute(()->{try{
+            JSONObject request=new JSONObject().put("sketchId",sourceId).put("expectedRevision",artRevision)
+                    .put("animationId",selected).put("animationRevision",savedRevision).put("operationId",UUID.randomUUID().toString());
+            String pending=getPreferences(MODE_PRIVATE).getString("pendingAnimationArchive","");
+            if(!pending.isEmpty()){JSONObject prior=new JSONObject(pending);if(sourceId.equals(prior.optString("sketchId"))&&artRevision==prior.optLong("expectedRevision")&&selected.equals(prior.optString("animationId"))&&savedRevision==prior.optLong("animationRevision"))request=prior;}
+            if(!getPreferences(MODE_PRIVATE).edit().putString("pendingAnimationArchive",request.toString()).commit())throw new IllegalStateException("Could not retain archive retry");
+            JSONObject result=SketchPaintArchive.archive(this,request);if(!result.optBoolean("remoteVerified"))throw new IllegalStateException("Scene archive transfer was not verified");
+            getPreferences(MODE_PRIVATE).edit().remove("pendingAnimationArchive").putString("lastAnimationArchive",result.toString()).commit();
+            post(()->{saving=false;status.setText("Saved scene archived · motion controls included");new AlertDialog.Builder(this).setTitle("Editable scene archived")
+                    .setMessage("The archive includes the saved rig, poses, timing and its frozen source artwork. Restore it as a new sketch and scene through File → Restore archive.\n\n"+result.optString("archiveName"))
+                    .setPositiveButton("Done",null).show();});
+        }catch(Exception failure){post(()->{saving=false;status.setText("Scene archive retained for retry · "+failure.getMessage());message(failure.getMessage());});}});
     }
     private void togglePlayback(){if(!ready())return;if(playing){stopPlayback();return;}mapping=false;mode.setText("Pose mode");playing=true;playFirst=frame;playStarted=SystemClock.uptimeMillis();play.setText("Pause");main.post(playTick);}
     private final Runnable playTick=new Runnable(){public void run(){if(!playing||destroyed||program==null)return;int fps=program.optInt("fps");int next=playFirst+(int)((SystemClock.uptimeMillis()-playStarted)*fps/1000);if(next>=program.optInt("frameCount")){frame=program.optInt("frameCount")-1;stopPlayback();refreshFrame();requestPreview();return;}if(frame!=next){frame=next;refreshFrame();requestPreview();}main.postDelayed(this,Math.max(8,1000/fps));}};
