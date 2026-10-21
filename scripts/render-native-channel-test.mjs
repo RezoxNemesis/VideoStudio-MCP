@@ -79,6 +79,38 @@ test("Render STOP, cancellation and revoke cannot affect VideoStudio",async()=>{
   assert.equal((await R.status(st,video)).linked,false);
   await assert.rejects(R.poll(st,device,key,true,null),/AUTH_REQUIRED/);
 });
+test("actual Android capabilities are reported, not inferred from pairing",async()=>{
+  const st=fakeState();
+  await R.link(st,(await R.challenge(st,video)).pairingCode,device,key,{});
+  assert.equal((await R.status(st,video)).deviceOnline,false);
+  assert.equal((await R.status(st,video)).capabilitiesKnown,false);
+  await R.poll(st,device,key,true,null,[
+    {id:"engine.status",available:true,read_only:true},
+    {id:"blender.scene.summary",available:false,reason:"BLENDER_ENGINE_NOT_INSTALLED"},
+    {id:"external.shell",available:true}
+  ]);
+  const online=await R.status(st,video);
+  assert.equal(online.deviceOnline,true);
+  assert.equal(online.capabilitiesKnown,true);
+  assert.equal(online.capabilities.length,2);
+  assert.ok(online.capabilities.every(item=>!item.id.startsWith("external.")));
+  assert.equal(online.capabilities.find(c=>c.id==="blender.scene.summary").available,false);
+  await assert.rejects(R.enqueue(st,video,"blender.scene.summary",{}),/RENDER_ACTION_UNAVAILABLE_ON_DEVICE/);
+  const task=await R.enqueue(st,video,"engine.status",{},"available");
+  assert.equal(task.status,"queued");
+});
+test("unauthorized and expired pairing codes cannot bind Render devices",async()=>{
+  const st=fakeState();
+  await assert.rejects(R.challenge(st,"wrong-parent-key"),/OWNER_REJECTED/);
+  const code=(await R.challenge(st,video)).pairingCode;
+  const hash=Buffer.from(await crypto.subtle.digest("SHA-256",
+    new TextEncoder().encode(code))).toString("hex");
+  const storageKey="render-pair-code:"+hash;
+  const old=await st.ctx.storage.get(storageKey);
+  await st.ctx.storage.put(storageKey,{...old,expiresAt:Date.now()-1});
+  await assert.rejects(R.link(st,code,device,key),/RENDER_PAIR_CODE_EXPIRED_OR_USED/);
+  assert.equal((await R.status(st,video)).linked,false);
+});
 test("wrong device key cannot read or report native result",async()=>{
   const st=fakeState();await R.link(st,(await R.challenge(st,video)).pairingCode,device,key,{});
   await assert.rejects(R.poll(st,device,"wrong",true,null),/AUTH_REQUIRED/);
