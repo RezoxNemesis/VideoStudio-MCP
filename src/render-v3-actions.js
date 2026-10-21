@@ -19,7 +19,7 @@ export const RENDER_NATIVE_ACTIONS = Object.freeze({
   "blender.object.add_light": ["name", "light_type", "location", "color", "energy"],
   "blender.object.modifier_add": ["name", "modifier_type", "levels", "width"],
   "blender.material.assign": ["name", "material_name", "color", "metallic", "roughness"],
-  "blender.scene.render_settings": ["resolution_x", "resolution_y", "samples", "engine"],
+  "blender.scene.render_settings": ["resolution_x", "resolution_y", "samples", "engine", "denoising"],
   "blender.scene.render_still": [],
 });
 const o = value => value && typeof value==="object" && !Array.isArray(value) && Object.getPrototypeOf(value)===Object.prototype;
@@ -99,6 +99,7 @@ export function assertRenderAction(action,args) {
     for(const key of ["resolution_x","resolution_y"])
       if(Object.hasOwn(args,key)&&!integer(args[key],16,16384))throw Error("RENDER_INVALID_RESOLUTION");
     if(Object.hasOwn(args,"samples")&&!integer(args.samples,1,4096))throw Error("RENDER_INVALID_SAMPLES");
+    if(Object.hasOwn(args,"denoising")&&typeof args.denoising!=="boolean")throw Error("RENDER_INVALID_DENOISING");
     if(Object.hasOwn(args,"engine")&&!["CYCLES","BLENDER_EEVEE","BLENDER_EEVEE_NEXT","BLENDER_WORKBENCH"].includes(args.engine))
       throw Error("RENDER_INVALID_ENGINE");
   }

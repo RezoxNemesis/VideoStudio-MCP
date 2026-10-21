@@ -54,6 +54,7 @@ test("real Blender modeling, light, material, and rendering actions require type
   assert.throws(()=>assertRenderAction("blender.object.add_light",{light_type:"AREA",color:[0,0,9]}),/RENDER_INVALID_COLOR/);
   assert.throws(()=>assertRenderAction("blender.scene.render_settings",{resolution_x:0}),/RENDER_INVALID_RESOLUTION/);
   assert.throws(()=>assertRenderAction("blender.scene.render_settings",{}),/RENDER_SETTINGS_REQUIRED/);
+  assert.throws(()=>assertRenderAction("blender.scene.render_settings",{denoising:"false"}),/RENDER_INVALID_DENOISING/);
   assert.throws(()=>assertRenderAction("blender.object.modifier_add",{name:"Sphere",modifier_type:"RUN_SCRIPT"}),/RENDER_INVALID_MODIFIER/);
   assert.throws(()=>assertRenderAction("blender.scene.render_still",{filepath:"/sdcard/secret"}),/RENDER_UNKNOWN_ARGUMENT/);
 });
