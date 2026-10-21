@@ -394,13 +394,14 @@ public final class SketchEditOps {
             }
             case "update_object": {
                 SketchDocument.fields(op, "type,objectId,patch"); String id = SketchDocument.id(op, "objectId"); requireUnlocked(SketchDocument.owner(doc, id));
-                JSONObject patch = op.getJSONObject("patch"); SketchDocument.fields(patch, "color,styleId,width,fill,points,bounds,frame,exposure,brush,commands,shapeKeys,paintMesh,gradient,referenceCrop,text,fontFamily,fontSize,fontStyle,textAlign,letterSpacing,hand,human");
+                JSONObject patch = op.getJSONObject("patch"); SketchDocument.fields(patch, "color,styleId,width,fill,points,bounds,frame,exposure,brush,commands,shapeKeys,paintMesh,gradient,referenceCrop,text,fontFamily,fontSize,fontStyle,textAlign,letterSpacing,hand,human,clipOut");
                 if(SketchDocument.object(doc,id).has("masterLink"))
-                    for(String field:new String[]{"color","styleId","width","fill","commands","shapeKeys","gradient","brush"})
+                    for(String field:new String[]{"color","styleId","width","fill","commands","shapeKeys","gradient","brush","clipOut"})
                         if(patch.has(field))throw SketchDocument.bad("Linked artwork appearance must be edited with master_patch, master_override or master_detach");
                 JSONObject target=SketchDocument.object(doc,id);
                 // An explicit direct recolor is a deliberate opt-out of the linked palette.
                 if(patch.has("color")&&!patch.has("styleId"))target.remove("styleId");
+                if(patch.has("clipOut")&&!"path".equals(target.getString("kind")))throw SketchDocument.bad("Path clipping patches require an editable path");
                 if(patch.has("paintMesh")&&!"paint".equals(target.getString("kind")))throw SketchDocument.bad("Paint mesh patches require a paint cel");
                 merge(target, patch);
                 if(patch.has("paintMesh")&&patch.isNull("paintMesh"))target.remove("paintMesh");
@@ -408,6 +409,7 @@ public final class SketchEditOps {
                 if("human".equals(target.optString("kind")))SketchHumanAnimation.refreshBounds(doc,target);
                 if(patch.has("shapeKeys"))target.put("shapeKeys",new JSONArray(patch.getJSONArray("shapeKeys").toString()));
                 if(patch.has("gradient")&&patch.isNull("gradient"))target.remove("gradient");
+                if(patch.has("clipOut")&&patch.isNull("clipOut"))target.remove("clipOut");
                 break;
             }
             case "palette_upsert": {

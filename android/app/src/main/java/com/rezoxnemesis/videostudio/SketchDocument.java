@@ -69,7 +69,7 @@ public final class SketchDocument {
             JSONArray items = layer.getJSONArray("objects");
             for (int j = 0; j < items.length(); j++) {
                 JSONObject item = items.getJSONObject(j);
-                fields(item, "id,kind,frame,exposure,color,styleId,width,fill,points,bounds,reference,paint,transform,keys,brush,commands,shapeKeys,paintMesh,gradient,referenceCrop,text,fontFamily,fontSize,fontStyle,textAlign,letterSpacing,hand,human,masterLink");
+                fields(item, "id,kind,frame,exposure,color,styleId,width,fill,points,bounds,reference,paint,transform,keys,brush,commands,shapeKeys,paintMesh,gradient,referenceCrop,text,fontFamily,fontSize,fontStyle,textAlign,letterSpacing,hand,human,masterLink,clipOut");
                 unique(ids, id(item, "id"));
                 String kind = item.getString("kind");
                 if (!java.util.Arrays.asList("stroke","eraser","line","rect","ellipse","polygon","image","paint","path","text","hand","human").contains(kind))
@@ -93,6 +93,7 @@ public final class SketchDocument {
                 if (item.has("referenceCrop")) { if (!"image".equals(kind)) throw bad("Reference crop requires an image"); validateBounds(item.getJSONObject("referenceCrop")); }
                 if ("text".equals(kind)) SketchText.validate(item);
                 SketchMasterAssets.validateInstance(item,linkedMasters);
+                points += SketchPathClip.validate(item);
                 if ("path".equals(kind)) { points += validateCommands(item.getJSONArray("commands")); }
                 else if ("stroke".equals(kind) || "eraser".equals(kind) || "line".equals(kind) || "polygon".equals(kind)) {
                     JSONArray pp = item.getJSONArray("points");

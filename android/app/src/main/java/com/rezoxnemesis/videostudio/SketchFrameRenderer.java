@@ -4,6 +4,7 @@ import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
+import android.graphics.Color;
 import android.graphics.Matrix;
 import android.graphics.Paint;
 import android.graphics.Path;
@@ -301,7 +302,7 @@ public final class SketchFrameRenderer implements AutoCloseable {
         paint.setStyle(object.getBoolean("fill") ? Paint.Style.FILL : Paint.Style.STROKE);
         JSONObject gradient=object.optJSONObject("gradient");
         if(gradient!=null)paint.setShader(SketchGradients.shader(gradient,w,h));
-        if("path".equals(kind)){Path shape=geometryAt(object,kind,w,h,frame);if(partial)shape=partialPath(shape,presentationFraction,paint);canvas.drawPath(shape,paint);return;}
+        if("path".equals(kind)){Path shape=geometryAt(object,kind,w,h,frame);if(partial)shape=partialPath(shape,presentationFraction,paint);if(!object.has("clipOut")){canvas.drawPath(shape,paint);return;}int save=canvas.saveLayer(null,null);try{canvas.drawPath(shape,paint);Paint mask=new Paint(Paint.ANTI_ALIAS_FLAG);mask.setColor(Color.BLACK);mask.setXfermode(new PorterDuffXfermode(PorterDuff.Mode.DST_OUT));canvas.drawPath(SketchPathClip.path(object.getJSONArray("clipOut"),w,h),mask);}finally{canvas.restoreToCount(save);}return;}
         if ("line".equals(kind)) {
             JSONArray pp = object.getJSONArray("points"), a = pp.getJSONArray(0), b = pp.getJSONArray(1);
             paint.setStyle(Paint.Style.STROKE); float f=partial?presentationFraction:1;canvas.drawLine((float)a.getDouble(0)*w,(float)a.getDouble(1)*h,(float)(a.getDouble(0)+(b.getDouble(0)-a.getDouble(0))*f)*w,(float)(a.getDouble(1)+(b.getDouble(1)-a.getDouble(1))*f)*h,paint);
@@ -458,6 +459,7 @@ public final class SketchFrameRenderer implements AutoCloseable {
                 if (!combined.invert(inverse)) continue; float[] p = {(float) x * w, (float) y * h}; inverse.mapPoints(p);
                 float t = (float) tolerance * Math.min(w, h) + (float) object.getDouble("width") * Math.min(w, h) / 2;
                 String kind = object.getString("kind");
+                if(object.has("clipOut")&&SketchPathClip.excludes(object.getJSONArray("clipOut"),p[0]/w,p[1]/h))continue;
                 if (object.has("bounds")) {
                     RectF bounds = bounds(object.getJSONObject("bounds"), w, h);
                     if("paint".equals(kind)&&(!legacyBounds||object.has("paintMesh"))){

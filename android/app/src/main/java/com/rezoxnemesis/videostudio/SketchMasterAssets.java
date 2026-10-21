@@ -58,7 +58,7 @@ final class SketchMasterAssets {
         if (master==null) throw SketchDocument.bad("Linked artwork has an unknown master: "+id);
         if (!"path".equals(instance.optString("kind")))
             throw SketchDocument.bad("A linked master currently requires an editable path");
-        if (instance.has("styleId")||instance.has("shapeKeys")||instance.has("brush"))
+        if (instance.has("styleId")||instance.has("shapeKeys")||instance.has("brush")||instance.has("clipOut"))
             throw SketchDocument.bad("A linked path cannot have independent geometry or palette programmes");
         if (SketchDocument.integer(link,"version",1,Long.MAX_VALUE-2)!=master.getLong("version"))
             throw SketchDocument.bad("Linked master version mismatch");
@@ -93,7 +93,7 @@ final class SketchMasterAssets {
             && (!a.has(key)||SketchDocument.canonical(a.get(key)).equals(SketchDocument.canonical(b.get(key))));
     }
     private static JSONObject snapshot(JSONObject source)throws Exception {
-        if (!"path".equals(source.getString("kind"))||source.has("shapeKeys")
+        if (!"path".equals(source.getString("kind"))||source.has("shapeKeys")||source.has("clipOut")
                 ||source.has("styleId")||source.has("brush")||source.has("masterLink"))
             throw SketchDocument.bad("Choose an original vector path with no existing master, shape animation or palette link");
         JSONObject art=new JSONObject();

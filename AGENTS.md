@@ -1,3 +1,17 @@
+# Active reusable path clipping — 2026-10-21
+
+Branch feat/native-path-clipping-v4109 extends frozen103d5e6 (4.10.8/code511).
+Read docs/continuity/NATIVE_PATH_CLIPPING_4109.md. Optional path-only clipOut
+polygons preserve original native stroke rasterization and lower artwork; strict
+manual/MCP contracts require4.10.9. Root integrates the version/code512 later.
+Fresh standalone5 native/0failures/0errors/0skips and768Node+306smoke pass.
+Full combined Android regression, CI and signing remain PENDING/root-owned.
+The separate failed automatic neck-depth mask is NOT included. Keep its source,
+strict regressions and all failed native evidence; no claim of chin/neck repair,
+actor likeness, mastered views or finished film. Root owns all Gradle/inference,
+full integrated validation and signing. No hosted artwork, Gallery, external art,
+main/Worker/stable publication or signer/device/data/MCP reset.
+
 # Active native Plus attention conditioning — 2026-10-21
 
 Current feature integration4.10.8/code511 extends frozen4.10.7/code510 source76fb9a0. Read

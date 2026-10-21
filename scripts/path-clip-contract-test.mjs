@@ -1,0 +1,11 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {nativeStudioParameters,requireStudioVersion} from '../src/studio-workbench-contract.js';
+const clipOut=[[[.45,.3],[.65,.3],[.65,.7],[.45,.7]]];
+const path={id:'ink',kind:'path',commands:[['M',.1,.5],['C',.3,.15,.7,.85,.9,.5]],clipOut};
+const edit=op=>({sketchId:'sketch',expectedRevision:1,operationId:'edit',operations:[op]});
+const add={type:'add_object',layerId:'layer_1',object:path};
+const patch={type:'update_object',objectId:'ink',patch:{clipOut}};
+test('path clips are strict ordinary object and patch geometry',()=>{for(const op of [add,patch,{...patch,patch:{clipOut:null}}]){const p=edit(op);assert.deepEqual(nativeStudioParameters('sketch_edit',p),p);}});
+test('explicit clips require4.10.9 on ordinary and nested requests while old omissions retain their floor',()=>{for(const op of [add,patch,{...patch,patch:{clipOut:null}}]){const p=edit(op);for(const action of ['sketch_edit','studio_sketch_edit']){assert.throws(()=>requireStudioVersion({appVersion:'4.10.8'},action,p),/4\.10\.9/);assert.doesNotThrow(()=>requireStudioVersion({appVersion:'4.10.9'},action,p));}}const old=structuredClone(add);delete old.object.clipOut;assert.doesNotThrow(()=>requireStudioVersion({appVersion:'4.7.0'},'sketch_edit',edit(old)));});
+test('malformed and non-convex masks are not coerced or silently accepted',()=>{for(const bad of [null,'[]',[],[[[0,0],[1,1]]],[[[0,0],[.5,.5],[1,1]]],[[[0,0],[1,1],[1,0],[0,1]]],[[[-.01,0],[1,0],[1,1]]],[[[0,0],['1',0],[1,1]]]])assert.throws(()=>nativeStudioParameters('sketch_edit',edit({...add,object:{...path,clipOut:bad}})));assert.throws(()=>nativeStudioParameters('sketch_edit',edit({...add,object:{...path,kind:'line',points:[[0,0,1],[1,1,1]]}})));});

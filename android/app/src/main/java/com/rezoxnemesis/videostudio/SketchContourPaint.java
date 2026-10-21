@@ -16,7 +16,7 @@ final class SketchContourPaint {
   if(value.getJSONArray("keys").length()!=0||value.has("shapeKeys")||!stable(value.getJSONObject("transform")).equals(stable(SketchDocument.transform())))throw SketchDocument.bad("Contour paint requires static identity transforms; bake or remove transforms explicitly first");
  }
  private static void authored(JSONObject object)throws Exception{
-  if(!"path".equals(object.optString("kind"))||object.optBoolean("fill",false)||object.has("reference")||object.has("masterLink")||object.has("styleId")||object.has("gradient"))throw SketchDocument.bad("Choose a source-free unfilled authored pen path");
+  if(!"path".equals(object.optString("kind"))||object.optBoolean("fill",false)||object.has("reference")||object.has("masterLink")||object.has("styleId")||object.has("gradient")||object.has("clipOut"))throw SketchDocument.bad("Choose a source-free unfilled authored pen path");
   identity(object);JSONArray commands=object.getJSONArray("commands");if(commands.length()<3||commands.length()>4096)throw SketchDocument.bad("Contour paint requires 3..4096 path commands");SketchDocument.validateCommands(commands);
   boolean open=false,closed=false;for(int i=0;i<commands.length();i++){String c=commands.getJSONArray(i).getString(0);if("M".equals(c)){if(open)throw SketchDocument.bad("Every pen subpath must close before another starts");open=true;}else if("Z".equals(c)){if(!open)throw SketchDocument.bad("Contour close has no open pen subpath");open=false;closed=true;}else if(!open)throw SketchDocument.bad("Contour segment has no open pen subpath");}
   if(open||!closed)throw SketchDocument.bad("Close every pen subpath before filling it");
