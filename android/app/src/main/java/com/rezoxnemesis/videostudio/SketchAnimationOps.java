@@ -59,7 +59,10 @@ public final class SketchAnimationOps {
             SketchDocument.fields(args,"animationId,sketchId,sourceRevision,expectedRevision,operationId,program");
             String id=SketchDocument.id(args,"animationId"),sourceId=SketchDocument.id(args,"sketchId"),operation=SketchDocument.id(args,"operationId");
             long expected=SketchDocument.integer(args,"expectedRevision",0,Long.MAX_VALUE-2),sourceRevision=SketchDocument.integer(args,"sourceRevision",1,Long.MAX_VALUE-1);
-            JSONObject program=args.getJSONObject("program");if(bytes(program)>PROGRAM_BYTES)throw SketchDocument.bad("Animation program exceeds 512 KiB budget");
+            // Hash the same JSON representation that is persisted. Native callers may supply
+            // whole-valued Doubles, which JSONObject serializes as integers on the wire.
+            // Keep args intact: the operation fingerprint still identifies the original request.
+            JSONObject program=SketchDocument.copy(args.getJSONObject("program"));if(bytes(program)>PROGRAM_BYTES)throw SketchDocument.bad("Animation program exceeds 512 KiB budget");
             String fingerprint=intent("save",args);db.beginTransaction();try{
                 JSONObject previous=operation(id,operation,fingerprint);if(previous!=null){db.setTransactionSuccessful();return previous.getJSONObject("result");}
                 requireRevision(id,expected);requireOperationCapacity(id);

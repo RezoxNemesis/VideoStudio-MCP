@@ -371,8 +371,11 @@ public final class SketchProjectStore implements AutoCloseable {
         values.put("fingerprint", fingerprint); values.put("result", result.toString()); db.insertOrThrow("sketch_operations", null, values);
     }
     private static JSONObject result(JSONObject doc, boolean undo, boolean redo) throws Exception {
+        // Receipts describe the stored JSON, including JSONObject's normalization of whole
+        // Doubles. Do not alter canonical request fingerprints or historical saved receipts.
+        JSONObject persisted=SketchDocument.copy(doc);
         return new JSONObject().put("sketchId", doc.getString("id")).put("revision", doc.getLong("revision"))
-                .put("documentSha256", SketchDocument.sha256(SketchDocument.canonical(doc).getBytes(StandardCharsets.UTF_8)))
+                .put("documentSha256", SketchDocument.sha256(SketchDocument.canonical(persisted).getBytes(StandardCharsets.UTF_8)))
                 .put("canUndo", undo).put("canRedo", redo).put("persisted", true);
     }
 
