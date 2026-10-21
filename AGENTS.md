@@ -1,3 +1,22 @@
+# Active explicit native structural edges —2026-10-21
+
+Feature feat/native-structure-edge-thresholds-v41012 starts44e33a2. Read
+ docs/continuity/NATIVE_STRUCTURE_EDGES_41012.md. Optional paired conditioning.
+structureEdges low/high strict1..1020 integers low<high shares native/manual/MCP
+preparation; explicit values require4.10.12. Omission retains100/200 native pixels,
+old request bytes/floors/fingerprints and model identity. Root owns515 version
+bump/fullAndroid/CI/original signing. Root GREEN1 passed8newcore+21existing+1private
+actual-input checks; UI helper NPE was a fixture failure, not missing-control RED.
+Only its null guard changed; GREEN2 all9newnative/0failures/errors/skips passes.
+Full782Node+306smoke pass. Actual native40/80 probe retained ear-fold detail
+(10→237ROIedgepixels) with exact source/defaultPNG identity; this is transmission,
+not corrected anatomy/likeness or accepted art. All failed model/RED/UI evidence
+is preserved. Deferred appearance-window work stays separate/unimplemented.
+No private study driver/personal assets in Git. ONE Gradle and all inference are
+root-owned. No hosted/external art, Gallery, main/Worker/stable publication,
+replacement signer or device/data/MCP identity reset. Production source frozen
+for root integration; no completed film/installed515/live-MCP claim.
+
 # Active combined character-shading candidate —2026-10-21
 
 Root feat/native-character-shading-v41011 extends fully locally verified513c78cd5b
