@@ -1,0 +1,54 @@
+name: Render Studio Native Binder IPC QA
+
+on:
+  push:
+    branches:
+      - feature/render-lively-ipc-v354-20261022
+    paths:
+      - android/**
+      - .github/workflows/render-lively-ipc-qa.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  android-bridge-checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+      - name: Install Android 36 SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -path "*/bin/sdkmanager" -type f | sort -V | tail -1)"
+          test -x "$SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses > /dev/null || true
+          "$SDKMANAGER" --install "platforms;android-36" "build-tools;35.0.0"
+      - name: Android unit tests and compilation (no phone installation)
+        working-directory: android
+        run: gradle --no-daemon :app:testDebugUnitTest :app:assembleDebug --stacktrace
+      - name: Verify typed bridge registration and rejected arbitrary actions
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          a = Path("android/app/src/main/java/com/rezoxnemesis/videostudio/RenderNativeIpcClient.java").read_text()
+          assert 'blender.scene.create_lively_project' in a
+          assert 'blender.scene.populate_lively' in a
+          assert 'blender.scene.render_video' in a
+          assert '1_980_000L' in a
+          assert 'return action != null && action.startsWith("render.")' in a
+          t = Path("android/app/src/test/java/com/rezoxnemesis/videostudio/RenderNativeIpcClientTest.java").read_text()
+          assert 'neverForwardsUnknownPythonOrVideoStudioTools' in t
+          assert 'nativeVideoTimeoutExceedsRenderWorkerAndUnknownsStayBounded' in t
+          print("PASS: typed Render actions and bounded IPC timeouts")
+          PY
