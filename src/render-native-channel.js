@@ -20,16 +20,38 @@ async function resolve(st,videoKey){
   if(!d||d.ownerHash!==link.ownerHash||d.protocolFamily!=="render-native"||d.renderRevoked)return null;
   return {device:d,link};
 }
-export async function link(st,videoKey,renderId,renderKey,meta={}){
+/** Only the existing VideoStudio MCP authority can mint a one-use Render code.
+ * The original VideoStudio owner key NEVER goes to Render Android.
+ */
+export async function challenge(st,videoKey){
   const video=await st.appV3Device(videoKey);
   if(video.protocolFamily!=="videostudio-native" && video.nativeAgent!=="videostudio-v3")
     throw Error("VIDEOSTUDIO_OWNER_REQUIRED");
+  const bytes=new Uint8Array(20);crypto.getRandomValues(bytes);
+  const code=[...bytes].map(x=>x.toString(16).padStart(2,"0")).join("");
+  const expiresAt=Date.now()+600000;
+  await st.ctx.storage.put("render-pair-code:"+await sha256(code),{
+    videoDeviceId:video.deviceId,used:false,expiresAt
+  });
+  return {pairingCode:code,expiresAt,expiresInSeconds:600,
+    instructions:"Enter this code in Render Android > ChatGPT x Render > Connect Using VideoStudio MCP. Do not enter your private VideoStudio owner key."};
+}
+export async function link(st,pairCode,renderId,renderKey,meta={}){
+  if(typeof pairCode!=="string" || !/^[a-f0-9]{40}$/.test(pairCode))
+    throw Error("RENDER_PAIR_CODE_INVALID");
+  const storage=st.ctx.storage,pairKey="render-pair-code:"+await sha256(pairCode);
+  const paired=await storage.get(pairKey);
+  if(!paired || paired.used || paired.expiresAt<=Date.now())
+    throw Error("RENDER_PAIR_CODE_EXPIRED_OR_USED");
+  const video=await storage.get("app-device:"+paired.videoDeviceId);
+  if(!video || video.protocolFamily!=="videostudio-native" &&
+                video.nativeAgent!=="videostudio-v3")throw Error("VIDEOSTUDIO_OWNER_NOT_FOUND");
   if(typeof renderId!=="string"||!/^[a-f0-9]{8}-[a-f0-9-]{27}$/.test(renderId) || renderId===video.deviceId)
     throw Error("RENDER_DEVICE_ID_INVALID");
-  if(typeof renderKey!=="string"||!/^[A-Za-z0-9_-]{43,128}$/.test(renderKey)||renderKey===videoKey)
+  if(typeof renderKey!=="string"||!/^[A-Za-z0-9_-]{43,128}$/.test(renderKey))
     throw Error("RENDER_DEVICE_KEY_INVALID");
   const hash=await sha256(renderKey),key="render-link:"+video.deviceId;
-  const old=await st.ctx.storage.get(key);
+  const old=await storage.get(key);
   if(old&&(old.deviceId!==renderId||old.ownerHash!==hash))
     throw Error("RENDER_ALREADY_LINKED");
   const result=await st.appRegister(renderId,renderKey,{
@@ -41,8 +63,9 @@ export async function link(st,videoKey,renderId,renderKey,meta={}){
     localEngineOwnsProjects:true,directAttachmentIngest:false,connectionCoreVersion:3
   });
   if(result.__staleClient)throw Error("RENDER_STALE_CLIENT");
-  await st.ctx.storage.put(key,{deviceId:renderId,ownerHash:hash,parent:video.deviceId,linkedAt:old?.linkedAt||now()});
-  await st.ctx.storage.put("render-parent:"+renderId,video.deviceId);
+  await storage.put(key,{deviceId:renderId,ownerHash:hash,parent:video.deviceId,linkedAt:old?.linkedAt||now()});
+  await storage.put("render-parent:"+renderId,video.deviceId);
+  await storage.put(pairKey,{...paired,used:true,usedAt:Date.now()});
   return {linked:true,deviceId:renderId,transport:"existing-videostudio-mcp-v3",galleryAccess:false,
     editorRuns:"render-android-native",separateMcpConnectionRequired:false};
 }
