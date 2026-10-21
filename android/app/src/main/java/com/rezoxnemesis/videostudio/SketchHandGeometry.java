@@ -89,7 +89,14 @@ final class SketchHandGeometry {
             for(int t=1;t<face.p.length-1;t++){
                 int[] indices={0,t,t+1};double[] x=new double[3],y=new double[3],values=new double[3];Path triangle=new Path();
                 for(int j=0;j<3;j++){int i=indices[j];x[j]=cx+face.p[i].x*unit;y[j]=cy+face.p[i].y*unit;values[j]=face.material==2?.68:.64+.43*Math.max(0,face.normals[i].dot(light));if(j==0)triangle.moveTo((float)x[j],(float)y[j]);else triangle.lineTo((float)x[j],(float)y[j]);}triangle.close();
-                if(!triangle.op(visible,Path.Op.INTERSECT))throw SketchDocument.bad("Native triangle visibility failed");if(triangle.isEmpty())continue;
+                // Skia can reject a valid near-coincident clipped triangle at
+                // intermediate smooth poses. Preserve its successful legacy
+                // result, and retry only failed intersections with the same
+                // bounded native vector Boolean used by the cel renderer.
+                Path clipped=new Path(triangle);
+                if(clipped.op(visible,Path.Op.INTERSECT))triangle.set(clipped);
+                else celOp(triangle,visible,Path.Op.INTERSECT);
+                if(triangle.isEmpty())continue;
                 double dx1=x[1]-x[0],dy1=y[1]-y[0],dx2=x[2]-x[0],dy2=y[2]-y[0],det=dx1*dy2-dx2*dy1;
                 Ink mark=new Ink(triangle,SketchCharacterArt.tone(base,(values[0]+values[1]+values[2])/3),true);
                 double low=Math.min(values[0],Math.min(values[1],values[2])),high=Math.max(values[0],Math.max(values[1],values[2]));

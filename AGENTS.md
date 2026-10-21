@@ -1,3 +1,26 @@
+# Active native hand visibility and movement audit — 2026-10-21
+
+Owner requests hand/leg/jump/run/punch/chair/expression/sleep/speech studies and
+ultimately the proper240s film. Work on feat/native-hand-visibility-v4104,
+target4.10.4/code507, extends2bd6906 and frozen productea33220. Read
+`docs/continuity/NATIVE_HAND_VISIBILITY_4104.md`. Fresh90-case audit exposed
+smooth left hand/right view frame40 Skia triangle intersection failure. Preserve
+RED inputs/logs/frames. Failure-only bounded vector retry passes96frames and
+retains40 prior frames exactly; retake90cases and930 prior screenshot comparisons
+pass. General procedural figures are diagnostics, not accepted Temple artwork.
+New Temple hand cels preserve body pixels and return cel exactly, but flat/stiff
+fingers still NEEDS_REWORK. Sleeping and numeric human-view yaw are unsupported;
+3D camera math does not recover unseen2D anatomy. Speech mouth study is silent.
+Fresh698 Node+306smoke and50 release-contract checks pass. Actual Temple editor then exposed8MiB selection-map exhaustion from padded cels.
+Compact alpha support retains full coordinates/holes/source and the8MiB bound;
+RED tests/UI preserved,9 focused selection/UI tests pass. Final combined full
+local2219 Android/0failures/0errors/20skips across393suites passes.
+Candidate CI/signing remains separate; no phone/GPU/codec/live MCP claim.
+Do not pad these studies into a purported accepted240s film. Keep failed versions,
+private original artwork and all prior projects. Use only native app authoring/
+rendering; workspace may serialize literal requests/package unchanged frames.
+One Gradle, root only. No main/Worker/stable or signing/device/data/MCP reset.
+
 # Active native angle structure — 2026-10-21
 
 Owner rejects current AI draft likeness and requires coherent arbitrary angles and

@@ -39,9 +39,32 @@ public final class SketchFrameRenderer implements AutoCloseable {
     /** Immutable full-source image/paint alpha support within a shared8 MiB budget. */
     static final class ImageSelection {
         final int width,height;private final long[] words;
-        ImageSelection(Bitmap image){width=image.getWidth();height=image.getHeight();java.util.BitSet bits=new java.util.BitSet(width*height);int[] row=new int[width];
-            for(int y=0;y<height;y++){if(Thread.currentThread().isInterrupted())throw new IllegalStateException("Part selection cancelled");image.getPixels(row,0,width,0,y,width,1);for(int x=0;x<width;x++)if((row[x]>>>24)!=0)bits.set(y*width+x);}words=bits.toLongArray();}
-        boolean contains(int x,int y){if(x<0||y<0||x>=width||y>=height)return false;int index=y*width+x,word=index>>>6;return word<words.length&&(words[word]&(1L<<(index&63)))!=0;}
+        private final int originX,originY,supportWidth,supportHeight;
+        ImageSelection(Bitmap image){
+            width=image.getWidth();height=image.getHeight();int[] row=new int[width];
+            int left=width,top=height,right=0,bottom=0;
+            // Retain full-source coordinates, but do not charge transparent
+            // padding once for every ordinary painted cel in the timeline.
+            for(int y=0;y<height;y++){
+                if(Thread.currentThread().isInterrupted())throw new IllegalStateException("Part selection cancelled");
+                image.getPixels(row,0,width,0,y,width,1);
+                for(int x=0;x<width;x++)if((row[x]>>>24)!=0){left=Math.min(left,x);right=Math.max(right,x+1);top=Math.min(top,y);bottom=y+1;}
+            }
+            if(right<=left){originX=originY=supportWidth=supportHeight=0;words=new long[0];return;}
+            originX=left;originY=top;supportWidth=right-left;supportHeight=bottom-top;
+            java.util.BitSet bits=new java.util.BitSet(Math.multiplyExact(supportWidth,supportHeight));
+            for(int y=0;y<supportHeight;y++){
+                if(Thread.currentThread().isInterrupted())throw new IllegalStateException("Part selection cancelled");
+                image.getPixels(row,0,supportWidth,originX,originY+y,supportWidth,1);
+                for(int x=0;x<supportWidth;x++)if((row[x]>>>24)!=0)bits.set(y*supportWidth+x);
+            }
+            words=bits.toLongArray();
+        }
+        boolean contains(int x,int y){
+            if(x<originX||y<originY||x>=originX+supportWidth||y>=originY+supportHeight)return false;
+            int index=(y-originY)*supportWidth+x-originX,word=index>>>6;
+            return word<words.length&&(words[word]&(1L<<(index&63)))!=0;
+        }
         long bytes(){return words.length*8L;}
     }
     void enableImageSelections(){requireRasterWorker();prepareSelections=true;}
