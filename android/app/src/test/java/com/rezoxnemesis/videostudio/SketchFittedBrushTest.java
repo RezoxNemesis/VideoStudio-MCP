@@ -1,0 +1,45 @@
+package com.rezoxnemesis.videostudio;
+import android.content.Context;
+import android.graphics.*;
+import org.json.*;
+import org.junit.*;
+import org.junit.runner.RunWith;
+import org.robolectric.*;
+import org.robolectric.annotation.*;
+import java.util.concurrent.*;
+import static org.junit.Assert.*;
+/** Verifies authored pressure curves through actual native fitting, brushes and persistence. */
+@RunWith(RobolectricTestRunner.class) @Config(sdk=33,manifest=Config.NONE) @GraphicsMode(GraphicsMode.Mode.NATIVE)
+public class SketchFittedBrushTest {
+ private JSONObject doc()throws Exception{return SketchDocument.create(new JSONObject().put("sketchId","fitted_"+java.util.UUID.randomUUID()).put("width",512).put("height",512).put("frameCount",24).put("background","#00000000"));}
+ private JSONObject operation()throws Exception{return new JSONObject().put("type","precision_contour").put("layerId","layer_1").put("objectId","owned_curve").put("points",new JSONArray("[[.15,.7,.2],[.35,.2,.95],[.65,.2,.5],[.85,.7,.1]]")).put("tolerancePx",.25).put("tension",.8).put("width",.016).put("color","#FF282128").put("frame",3).put("exposure",8).put("brush",SketchBrushes.style("graphite",.8,.65,true,0));}
+ @Test public void fittedBrushRetainsPressureExposureAndOrdinaryEditableStrokeGeometry()throws Exception{
+  JSONObject d=doc(),op=operation();String request=SketchDocument.canonical(op);SketchEditOps.apply(d,op);SketchDocument.validate(d);JSONObject o=SketchDocument.object(d,"owned_curve");assertEquals("stroke",o.getString("kind"));assertFalse(o.getBoolean("fill"));assertEquals(3,o.getInt("frame"));assertEquals(8,o.getInt("exposure"));assertEquals("graphite",o.getJSONObject("brush").getString("preset"));assertEquals(.8,o.getJSONObject("brush").getDouble("opacity"),0);assertEquals(.65,o.getJSONObject("brush").getDouble("hardness"),0);assertEquals(0,o.getJSONObject("brush").getDouble("angle"),0);assertTrue(o.getJSONObject("brush").getBoolean("pressure"));assertFalse(o.has("reference"));assertFalse(o.has("commands"));JSONArray p=o.getJSONArray("points");assertTrue(p.length()>4&&p.length()<=8192);assertEquals(op.getJSONArray("points").getJSONArray(0).toString(),p.getJSONArray(0).toString());assertEquals(op.getJSONArray("points").getJSONArray(3).toString(),p.getJSONArray(p.length()-1).toString());assertEquals(request,SketchDocument.canonical(op));
+  for(int i=1;i<p.length();i++){JSONArray a=p.getJSONArray(i-1),b=p.getJSONArray(i);double gap=Math.hypot(a.getDouble(0)-b.getDouble(0),a.getDouble(1)-b.getDouble(1))*512;assertTrue("Retained brush sample "+i+" spacing "+gap+" exceeds the native half-pixel spacing",gap<=.51);assertTrue(b.getDouble(2)>=0&&b.getDouble(2)<=1);}
+ }
+ private double distance(double x,double y,JSONArray source)throws Exception{double best=Double.POSITIVE_INFINITY;for(int i=1;i<source.length();i++){JSONArray a=source.getJSONArray(i-1),b=source.getJSONArray(i);double ax=a.getDouble(0),ay=a.getDouble(1),dx=b.getDouble(0)-ax,dy=b.getDouble(1)-ay,t=Math.max(0,Math.min(1,((x-ax)*dx+(y-ay)*dy)/(dx*dx+dy*dy)));best=Math.min(best,Math.hypot(x-ax-t*dx,y-ay-t*dy));}return best;}
+ @Test public void nativeCurvedBrushRendersAwayFromTheOldAngularPolylineAndSelectionAgrees()throws Exception{
+  Context c=RuntimeEnvironment.getApplication();JSONObject d=doc(),op=operation();SketchEditOps.apply(d,op);JSONArray p=SketchDocument.object(d,"owned_curve").getJSONArray("points");double best=0,x=0,y=0;for(int i=1;i<p.length()-1;i++){JSONArray q=p.getJSONArray(i);double gap=distance(q.getDouble(0),q.getDouble(1),op.getJSONArray("points"));if(gap>best){best=gap;x=q.getDouble(0);y=q.getDouble(1);}}assertTrue("The study must actually exercise a curve between sparse authored anchors",best*512>8);
+  JSONObject old=doc(),stroke=new JSONObject().put("id","raw").put("kind","stroke").put("points",op.getJSONArray("points")).put("brush",op.getJSONObject("brush")).put("width",op.getDouble("width")).put("color",op.getString("color")).put("frame",3).put("exposure",8);SketchEditOps.apply(old,new JSONObject().put("type","add_object").put("layerId","layer_1").put("object",stroke));
+  try(SketchFrameRenderer r=new SketchFrameRenderer(c,d);SketchFrameRenderer legacy=new SketchFrameRenderer(c,old)){Bitmap a=r.render(3),b=legacy.render(3);try{int px=Math.min(511,(int)Math.round(x*512)),py=Math.min(511,(int)Math.round(y*512));assertTrue(Color.alpha(a.getPixel(px,py))>20);assertEquals(0,Color.alpha(b.getPixel(px,py)));assertEquals("owned_curve",SketchFrameRenderer.hitTest(d,3,(float)x,(float)y,.002));}finally{a.recycle();b.recycle();}}
+ }
+ @Test public void filledClosedMalformedAndOversizeBrushRequestsLeaveTheSourceUntouched()throws Exception{
+  for(String field:new String[]{"closed","fill","pressureOutline"}){JSONObject d=doc(),op=operation().put(field,true);String before=SketchDocument.canonical(d);assertThrows(IllegalArgumentException.class,()->SketchEditOps.apply(d,op));assertEquals(before,SketchDocument.canonical(d));}
+  for(Object bad:new Object[]{JSONObject.NULL,"graphite",1,new JSONObject().put("preset","graphite").put("externalTexture","photo")}){JSONObject d=doc(),op=operation().put("brush",bad);assertThrows(Exception.class,()->SketchEditOps.apply(d,op));assertEquals(0,d.getJSONArray("layers").getJSONObject(0).getJSONArray("objects").length());}
+  JSONObject d=doc(),op=operation();JSONArray zigzag=new JSONArray();for(int i=0;i<24;i++)zigzag.put(new JSONArray().put(i%2==0?.1:.9).put(.05+i*.038).put(.5));op.put("points",zigzag);String before=SketchDocument.canonical(d);assertThrows(IllegalArgumentException.class,()->SketchEditOps.apply(d,op));assertEquals(before,SketchDocument.canonical(d));
+ }
+ @Test public void aCollinearPressurePulseSurvivesGeometricSimplification()throws Exception{
+  JSONObject d=doc(),op=operation().put("points",new JSONArray("[[.1,.5,.1],[.4,.5,1],[.5,.5,.1],[.9,.5,.1]]"));SketchEditOps.apply(d,op);JSONArray points=SketchDocument.object(d,"owned_curve").getJSONArray("points");double max=0;for(int i=0;i<points.length();i++)max=Math.max(max,points.getJSONArray(i).getDouble(2));assertEquals("A pressure peak is authored content even when the centerline is straight",1,max,0);
+ }
+ @Test public void stationaryPressureKnotsAreRetainedIncludingAStrokeEndPeak()throws Exception{
+  JSONObject d=doc(),op=operation().put("points",new JSONArray("[[.1,.5,.1],[.4,.5,.2],[.4,.5,1],[.4,.5,.3],[.9,.5,.8],[.9,.5,.1]]"));SketchEditOps.apply(d,op);JSONArray points=SketchDocument.object(d,"owned_curve").getJSONArray("points");boolean peak=false,endPeak=false;for(int i=0;i<points.length();i++){JSONArray p=points.getJSONArray(i);peak|=p.getDouble(2)==1;endPeak|=p.getDouble(0)==.9&&p.getDouble(2)==.8;}assertTrue("Pressure at a stationary stylus position remains an authored mark",peak);assertTrue("A pressure peak before the final sample must survive",endPeak);assertEquals(.1,points.getJSONArray(points.length()-1).getDouble(2),0);
+ }
+ @Test public void cancellationNeverAppendsTheGeneratedStroke()throws Exception{
+  JSONObject d=doc(),op=operation();String before=SketchDocument.canonical(d);Thread.currentThread().interrupt();try{assertThrows(java.io.InterruptedIOException.class,()->SketchEditOps.apply(d,op));}finally{Thread.interrupted();}assertEquals(before,SketchDocument.canonical(d));
+ }
+ @Test public void publicEditRetryUndoAndArchiveRetainTheSameNativeBrushStroke()throws Exception{
+  ExecutorService worker=Executors.newSingleThreadExecutor();try{worker.submit(()->{try{Context c=RuntimeEnvironment.getApplication();String id="fitted_archive_"+java.util.UUID.randomUUID();SketchEditOps.execute(c,"sketch_create",new JSONObject().put("sketchId",id).put("operationId","new").put("width",512).put("height",512).put("frameCount",24));JSONObject edit=new JSONObject().put("sketchId",id).put("expectedRevision",1).put("operationId","curve").put("operations",new JSONArray().put(operation()));JSONObject receipt=SketchEditOps.execute(c,"sketch_edit",edit);assertEquals(receipt.toString(),SketchEditOps.execute(c,"sketch_edit",edit).toString());JSONObject before;try(SketchProjectStore s=new SketchProjectStore(c)){before=SketchDocument.copy(SketchDocument.object(s.get(id),"owned_curve"));}
+   SketchEditOps.execute(c,"sketch_undo",new JSONObject().put("sketchId",id).put("expectedRevision",2).put("operationId","undo"));SketchEditOps.execute(c,"sketch_redo",new JSONObject().put("sketchId",id).put("expectedRevision",3).put("operationId","redo"));SketchPaintArchive.Prepared archive=SketchPaintArchive.prepare(c,new JSONObject().put("sketchId",id).put("expectedRevision",4).put("operationId","archive"));JSONObject restored=SketchPaintArchive.restoreFile(c,archive.file,SketchProjectStore.fileHash(archive.file),"restore","Fitted graphite");try(SketchProjectStore s=new SketchProjectStore(c)){assertEquals(SketchDocument.canonical(before),SketchDocument.canonical(SketchDocument.object(s.get(restored.getString("sketchId")),"owned_curve")));}return null;
+  }catch(Exception x){throw new RuntimeException(x);}}).get(90,TimeUnit.SECONDS);}finally{worker.shutdownNow();}
+ }
+}

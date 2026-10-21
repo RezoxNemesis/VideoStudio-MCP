@@ -69,8 +69,8 @@ final class SketchLayeredDrawingDialog implements AutoCloseable {
         progress=column();form.addView(progress);instructions=text(progress,"");instructions.setContentDescription("Drawing stage instructions");reviewState=text(progress,"");reviewState.setContentDescription("Drawing stage reviews");
         for(int i=0;i<STAGES.length;i++){final String stage=STAGES[i];stageButtons.add(button(progress,TITLES[i],()->submit(new JSONObject().put("type","layered_drawing_stage").put("stage",stage))));}
         reuse=button(progress,"Reuse own marks in clean parts",this::reuseOwnMarks);
-        layer=picker(progress,"Draw on layer");tool=picker(progress,"Layer drawing tool");tool.setAdapter(adapter(Arrays.asList("Pen","Precision Bézier pen","Pressure paint")));
-        drawLayer=button(progress,"Draw selected layer",()->{int at=layer.getSelectedItemPosition();if(at<0||at>=activeIds.size())throw SketchDocument.bad("Choose an authored layer");String id=activeIds.get(at),mode=tool.getSelectedItemPosition()==1?"precision":tool.getSelectedItemPosition()==2?"paint":"stroke";close();draw.open(id,mode);});
+        layer=picker(progress,"Draw on layer");tool=picker(progress,"Layer drawing tool");tool.setAdapter(adapter(Arrays.asList("Pen","Precision Bézier pen","Pressure paint","Precise pressure brush")));
+        drawLayer=button(progress,"Draw selected layer",()->{int at=layer.getSelectedItemPosition();if(at<0||at>=activeIds.size())throw SketchDocument.bad("Choose an authored layer");String id=activeIds.get(at),mode=tool.getSelectedItemPosition()==3?"precision_brush":tool.getSelectedItemPosition()==1?"precision":tool.getSelectedItemPosition()==2?"paint":"stroke";close();draw.open(id,mode);});
         text(progress,"Return here from More → Layer-by-layer drawing after drawing. Earlier stages stay available for corrections. The ordinary Undo button restores saved edits.");
         stageOnly=new CheckBox(activity);stageOnly.setText("Show current stage only");stageOnly.setContentDescription("Show current stage only");progress.addView(stageOnly);
         stageOnly.setOnCheckedChangeListener((button,checked)->{invalidatePreview();sync();});

@@ -72,7 +72,7 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
     private int humanToolPosition,pendingAgentToolSelection=-1;
     private boolean syncingAgentTool,agentGlobalTool;
     private android.graphics.drawable.Drawable agentToolIndicator;
-    private final String[] toolValues={"stroke","eraser","line","rect","ellipse","polygon","select","eyedropper","pan","curve","nodes","paint","paint_erase","clone","precision"};
+    private final String[] toolValues={"stroke","eraser","line","rect","ellipse","polygon","select","eyedropper","pan","curve","nodes","paint","paint_erase","clone","precision","precision_brush"};
     private String sketchId;
     private SketchCanvasView canvas;
     private TextView status,previewStatus;
@@ -122,7 +122,7 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
         layeredReferenceImage=new android.widget.ImageView(this);layeredReferenceImage.setContentDescription("Separate drawing reference");layeredReferenceImage.setScaleType(android.widget.ImageView.ScaleType.FIT_CENTER);layeredReferencePanel.addView(layeredReferenceImage,new LinearLayout.LayoutParams(-1,0,1));
         root.addView(drawingArea,new LinearLayout.LayoutParams(-1,0,1));
         LinearLayout tools = row(root); Spinner tool = new Spinner(this);toolPicker=tool;
-        String[] names = {"Pen", "Eraser", "Line", "Rectangle", "Ellipse", "Polygon", "Select / move", "Eyedropper", "Pan canvas", "Curve pen", "Edit curve nodes", "Paint brush", "Erase paint", "Clone brush", "Precision Bézier pen"};
+        String[] names = {"Pen", "Eraser", "Line", "Rectangle", "Ellipse", "Polygon", "Select / move", "Eyedropper", "Pan canvas", "Curve pen", "Edit curve nodes", "Paint brush", "Erase paint", "Clone brush", "Precision Bézier pen", "Precise pressure brush"};
         tool.setAdapter(new ArrayAdapter<String>(this, android.R.layout.simple_spinner_dropdown_item, names){@Override public View getView(int position,View convert,android.view.ViewGroup parent){TextView view=(TextView)super.getView(position,convert,parent);view.setTextColor(StudioUi.TEXT);view.setTextSize(12);view.setSingleLine(true);view.setEllipsize(android.text.TextUtils.TruncateAt.END);return view;}});
         tool.setContentDescription("Drawing tool");tool.setMinimumHeight(dp(48));tools.addView(tool,new LinearLayout.LayoutParams(0,dp(48),1));
         tool.setOnItemSelectedListener(new SimpleSelection() { @Override public void selected(int position) { if(canvas!=null){if(syncingAgentTool||position==pendingAgentToolSelection){pendingAgentToolSelection=-1;return;}humanToolPosition=position;if(position>=11&&position<=13)runAction("Choose paint tool",()->activatePaint(position==12?"erase":position==13?"clone":"paint"));else canvas.setTool(toolValues[position]);} } });
@@ -1289,7 +1289,7 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
                 runAction("Draw selected layer",()->{try{
                     JSONObject selected=SketchDocument.layer(document,layerId);if(selected.getBoolean("locked"))throw SketchDocument.bad("This layer is locked");canvas.setLayerId(layerId);layers.setSelection(Math.max(0,layerIds.indexOf(layerId)));canvas.selectObject(null);
                     watching=false;++liveLoadGeneration;getPreferences(MODE_PRIVATE).edit().putBoolean("watchLiveDrawing",false).apply();updateLiveControl();
-                    if("paint".equals(tool)){paintPressure=true;paintMode="paint";pendingAgentToolSelection=11;syncingAgentTool=true;try{toolPicker.setSelection(11);}finally{syncingAgentTool=false;}activatePaint("paint");}else{int position="precision".equals(tool)?14:0;toolPicker.setSelection(position);canvas.setTool(tool);updateBrush();}
+                    if("paint".equals(tool)){paintPressure=true;paintMode="paint";pendingAgentToolSelection=11;syncingAgentTool=true;try{toolPicker.setSelection(11);}finally{syncingAgentTool=false;}activatePaint("paint");}else{int position="precision_brush".equals(tool)?15:"precision".equals(tool)?14:0;toolPicker.setSelection(position);canvas.setTool(tool);updateBrush();}
                     layeredReferenceVisible=true;refreshLayeredDrawingControls();onMessage("Draw on "+selected.getString("name")+". The reference stays separate; return to Stages to compare and review.");
                 }catch(Exception failure){onMessage(failure.getMessage());}});
             });layeredDrawingDialog.preferSource(canvas.getSelectedId());}catch(Exception failure){onMessage(failure.getMessage());}

@@ -1,3 +1,18 @@
+# Active native layered brush quality — 2026-10-21
+
+Current candidate4.10.1/code504 includes committed contour placement2a86e56
+plus fitted-pressure-brush work. Fresh combined full local validation passed
+2187 Android/0failures/0errors/14skips and688 Node+306smoke. Candidate CI/signing
+remain pending; the artwork still fails likeness acceptance. Read docs/continuity/NATIVE_FITTED_BRUSH_4101.md.
+The owner rejects the current simplified art. Continue original-composition faces,
+hair, hands, garment and sword through actual native authored layers. Review actual
+crops with reference hidden; do not treat feature tests as likeness acceptance.
+Fitted pressure brush is optional precision_contour.brush, stored as ordinary
+source-free stroke points. Preserve omitted old behavior, original pressure knots
+(including stationary peaks), exact endpoint pressure, bounded native sampling,
+worker/cancellation, Undo/replay/archive, and manual/MCP parity. Keep RED evidence.
+Voice stays last. One local Gradle. No Worker/main/stable or signer/device resets.
+
 # Active native contour placement — 2026-10-21
 
 Current feat/native-contour-placement-v4101 is based on frozen signed4.9.9

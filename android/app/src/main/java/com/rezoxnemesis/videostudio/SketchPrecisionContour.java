@@ -21,7 +21,7 @@ final class SketchPrecisionContour {
     static void apply(JSONObject doc,JSONObject op) throws Exception {
         if(doc==null||op==null)throw new IllegalArgumentException("Sketch and precise pen operation required");
         SketchDocument.fields(op,
-                "type,layerId,objectId,points,closed,tolerancePx,tension,width,fill,color,frame,exposure,pressureOutline");
+                "type,layerId,objectId,points,closed,tolerancePx,tension,width,fill,color,frame,exposure,pressureOutline,brush");
         if(!"precision_contour".equals(op.getString("type")))
             throw new IllegalArgumentException("Only authored precision contours are supported");
         String layerId=SketchDocument.id(op,"layerId");
@@ -45,6 +45,13 @@ final class SketchPrecisionContour {
         boolean fill=flag(op,"fill",false);
         if(outline&&closed)
             throw new IllegalArgumentException("Pressure outline needs an open stylus contour");
+        JSONObject brush=null;
+        if(op.has("brush")){
+            if(!(op.get("brush") instanceof JSONObject))throw SketchDocument.bad("Fitted brush settings must be an object");
+            brush=SketchDocument.copy(op.getJSONObject("brush"));SketchBrushes.validate(brush);
+            if(closed||outline||fill)throw SketchDocument.bad("Fitted pressure brushes require an open unfilled authored centerline");
+            SketchFittedBrush.active();
+        }
         JSONArray raw=op.getJSONArray("points");
         if(raw.length()<(closed?3:2)||raw.length()>OmegaBezierFitter.MAX_SAMPLES)
             throw new IllegalArgumentException("Use 2..4096 authored stylus points per contour");
@@ -66,6 +73,15 @@ final class SketchPrecisionContour {
         }
         OmegaBezierFitter.StrokeFit result=OmegaBezierFitter.fitStroke(
                 points,width,height,tolerance,closed,tension);
+        if(brush!=null){
+            JSONArray centerline=SketchFittedBrush.points(result.contour,points,width,height);
+            JSONObject artwork=new JSONObject().put("id",objectId).put("kind","stroke")
+                    .put("points",centerline).put("brush",brush).put("color",color)
+                    .put("width",stroke).put("fill",false).put("frame",frame).put("exposure",exposure);
+            SketchFittedBrush.active();
+            SketchEditOps.appendObject(doc,new JSONObject().put("type","add_object").put("layerId",layerId).put("object",artwork));
+            return;
+        }
         List<OmegaBezierFitter.Command> commands=outline?
                 OmegaBezierFitter.pressureOutline(result.contour,stroke,width,height):
                 OmegaBezierFitter.nativeCommands(result.contour);
