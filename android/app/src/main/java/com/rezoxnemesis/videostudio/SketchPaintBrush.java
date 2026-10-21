@@ -34,17 +34,17 @@ public final class SketchPaintBrush {
         private final int color, seed;
         private final double opacity, flow, hardness, cos, sin;
         private final double lastX, lastY, lastPressure;
-        private final boolean flat, grain, alphaLock;
+        private final boolean flat, grain, alphaLock, maximumCoverage;
         private Plan(JSONObject stroke, int width, int height, ArrayList<Dab> dabs,
                      BitSet tiles, String mode, int color, int seed, double opacity,
                      double flow, double hardness, double angle, boolean flat,
-                     boolean grain, boolean alphaLock, double[] lastPoint) {
+                     boolean grain, boolean alphaLock, boolean maximumCoverage, double[] lastPoint) {
             this.stroke=stroke; this.width=width; this.height=height;
             this.dabs=dabs.toArray(new Dab[0]); this.dabCount=this.dabs.length;
             this.tileIndexes=(BitSet)tiles.clone(); this.mode=mode; this.color=color;
             this.seed=seed; this.opacity=opacity; this.flow=flow; this.hardness=hardness;
             this.cos=Math.cos(Math.toRadians(angle)); this.sin=Math.sin(Math.toRadians(angle));
-            this.flat=flat; this.grain=grain; this.alphaLock=alphaLock;
+            this.flat=flat; this.grain=grain; this.alphaLock=alphaLock;this.maximumCoverage=maximumCoverage;
             this.lastX=lastPoint[0]/width; this.lastY=lastPoint[1]/height; this.lastPressure=lastPoint[2];
         }
         /** O(1) native cursor metadata for the visible ordered dab prefix. */
@@ -66,7 +66,7 @@ public final class SketchPaintBrush {
         String objectId=SketchDocument.id(operation,"objectId"), strokeId=SketchDocument.id(operation,"strokeId");
         Integer frameIndex=operation.has("frameIndex")?(int)SketchDocument.integer(operation,"frameIndex",0,1199):null;
         JSONObject brush=object(operation,"brush");
-        SketchDocument.fields(brush,"mode,color,sizePx,opacity,flow,hardness,spacing,pressure,texture,seed,angle,tip");
+        SketchDocument.fields(brush,"mode,color,sizePx,opacity,flow,hardness,spacing,pressure,texture,seed,angle,tip,coverage");
         String mode=choice(brush,"mode","paint","erase","clone");
         String colorText=string(brush,"color").toUpperCase(Locale.ROOT);
         int color=SketchDocument.color(colorText);
@@ -78,6 +78,7 @@ public final class SketchPaintBrush {
         String texture=brush.has("texture")?choice(brush,"texture","smooth","grain"):"smooth";
         String tip=brush.has("tip")?choice(brush,"tip","round","flat"):"round";
         int seed=brush.has("seed")?(int)SketchDocument.integer(brush,"seed",0,Integer.MAX_VALUE):0;
+        String coverage=brush.has("coverage")?choice(brush,"coverage","maximum","accumulate"):null;
         if("erase".equals(mode) && alphaLock) throw bad("Erase cannot use alpha lock");
         if(operation.has("cloneSource") && !"clone".equals(mode)) throw bad("Only clone mode accepts cloneSource");
         JSONObject clone=null;
@@ -115,6 +116,8 @@ public final class SketchPaintBrush {
         JSONObject normalizedBrush=new JSONObject().put("mode",mode).put("color",colorText).put("sizePx",size)
                 .put("opacity",opacity).put("flow",flow).put("hardness",hardness).put("spacing",spacing)
                 .put("pressure",pressure).put("texture",texture).put("seed",seed).put("angle",angle).put("tip",tip);
+        // An omitted field must keep historical journal/request identities exactly.
+        if(coverage!=null)normalizedBrush.put("coverage",coverage);
         JSONObject normalized=new JSONObject().put("type","paint_stroke").put("objectId",objectId)
                 .put("strokeId",strokeId).put("points",normalizedPoints).put("brush",normalizedBrush).put("alphaLock",alphaLock);
         if(frameIndex!=null) normalized.put("frameIndex",frameIndex);
@@ -139,7 +142,7 @@ public final class SketchPaintBrush {
                         size,pressure,flat,cos,sin,width,clipLeft,clipTop,clipRight,clipBottom);
             }
         }
-        return new Plan(normalized,width,height,dabs,tiles,mode,color,seed,opacity,flow,hardness,angle,flat,"grain".equals(texture),alphaLock,positions[positions.length-1]);
+        return new Plan(normalized,width,height,dabs,tiles,mode,color,seed,opacity,flow,hardness,angle,flat,"grain".equals(texture),alphaLock,"maximum".equals(coverage),positions[positions.length-1]);
     }
 
     private static long addDab(ArrayList<Dab> dabs,BitSet tiles,long visits,double x,double y,double p,
@@ -176,8 +179,8 @@ public final class SketchPaintBrush {
         if("clone".equals(plan.mode) && source==null) throw bad("Clone requires a native source sampler");
         if(fraction==0 || plan.opacity==0 || plan.flow==0 || (plan.alphaLock && before==null)) return;
         int[] original=new int[TILE_SIZE*TILE_SIZE]; target.getPixels(original,0,TILE_SIZE,0,0,TILE_SIZE,TILE_SIZE);
-        // Flow accumulates dab coverage; opacity caps this complete stroke's
-        // contribution against pre-stroke pixels rather than each prior dab.
+        // Legacy flow accumulates. Explicit maximum retains the strongest dab's
+        // feather instead; opacity caps either whole stroke against its baseline.
         float[] mask=new float[original.length];
         int[] baseline=null;
         if(plan.alphaLock) {baseline=new int[original.length];before.getPixels(baseline,0,TILE_SIZE,0,0,TILE_SIZE,TILE_SIZE);}
@@ -198,7 +201,8 @@ public final class SketchPaintBrush {
                     if(plan.grain) coverage*=grain(plan.seed,x,y,i);
                     double amount=coverage*plan.flow*prefix;
                     if(amount<=0) continue;
-                    mask[offset]=(float)clamp(mask[offset]+(1-mask[offset])*amount);
+                    mask[offset]=plan.maximumCoverage?(float)Math.max(mask[offset],clamp(amount))
+                            :(float)clamp(mask[offset]+(1-mask[offset])*amount);
                 }
             }
         }
