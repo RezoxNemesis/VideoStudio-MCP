@@ -39,6 +39,8 @@ test("link isolated Render identity without touching old VideoStudio queue",asyn
   assert.equal(link.separateMcpConnectionRequired,false);
   assert.deepEqual((await st.ctx.storage.get("app-v3-cl:vs-original")).map(x=>x.id),["video-edit"]);
   assert.equal((await R.status(st,video)).linked,true);
+  assert.equal((await R.status(st,video)).deviceOnline,false,
+    "Pairing alone must not pretend Android has sent a native heartbeat");
   await assert.rejects(R.link(st,oneTime,"e4bf43b3-87e2-41a1-80b3-887c14e55d31",key),/RENDER_PAIR_CODE_EXPIRED_OR_USED/);
   const second=(await R.challenge(st,video)).pairingCode;
   await assert.rejects(R.link(st,second,"e4bf43b3-87e2-41a1-80b3-887c14e55d31",key),/RENDER_ALREADY_LINKED/);
@@ -48,8 +50,9 @@ test("true queued native execution, authenticated completion and idempotency",as
   // Owner first enables Render on-phone; later it falls offline without
   // disabling the user-authorized session. Queue must remain durable.
   await R.poll(st,device,key,true,null);
+  assert.equal((await R.status(st,video)).deviceOnline,true);
   const stale=await st.ctx.storage.get("app-device:"+device);
-  stale.lastSeenAt=new Date(Date.now()-120000).toISOString();
+  stale.lastRenderPollAt=new Date(Date.now()-120000).toISOString();
   await st.ctx.storage.put("app-device:"+device,stale);
   const offline=await R.enqueue(st,video,"blender.scene.summary",{},"one");
   assert.equal(offline.status,"waiting_native");
@@ -61,6 +64,7 @@ test("true queued native execution, authenticated completion and idempotency",as
   assert.equal(delivered.job.job_id,offline.id);
   assert.equal(JSON.parse(delivered.job.payload).action,"blender.scene.summary");
   assert.equal((await R.complete(st,device,key,offline.id,delivered.job.digest,"succeeded",{scene:"Main"})).accepted,true);
+  assert.equal((await R.complete(st,device,key,offline.id,delivered.job.digest,"succeeded",{scene:"Main"})).duplicate,true);
   assert.equal((await R.command(st,video,offline.id)).result.native_result.scene,"Main");
   assert.deepEqual((await st.ctx.storage.get("app-v3-cl:vs-original"))||[],[]);
 });
