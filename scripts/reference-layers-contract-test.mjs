@@ -152,8 +152,8 @@ test('native admission and source-level dispatch route reference layers through 
  assert.match(native('ControlService'),/case "sketch_import_reference_layers":[\s\S]*?SketchEditOps\.execute\(this,action,p\)/);
  assert.match(native('ControlService'),/case "sketch_reference_layers_preview":\s*case "sketch_layered_drawing_preview":\s*case "sketch_preview":\{\s*JSONObject preview=SketchEditOps\.execute\(this,action,p\)/);
  assert.match(native('SketchCapabilities'),/\.put\("referenceLayers",referenceLayers\(\)\)/);
- assert.match(native('AppProtocol'),/APP_VERSION = "4\.10\.5"/);
- const build=fs.readFileSync(new URL('../android/app/build.gradle.kts',import.meta.url),'utf8');assert.match(build,/versionCode = 508/);assert.match(build,/versionName = "4\.10\.5"/);
+ assert.match(native('AppProtocol'),/APP_VERSION = "4\.10\.6"/);
+ const build=fs.readFileSync(new URL('../android/app/build.gradle.kts',import.meta.url),'utf8');assert.match(build,/versionCode = 509/);assert.match(build,/versionName = "4\.10\.6"/);
 });
 
 test('native and MCP referenceLayers capability metadata match exactly',()=>{
