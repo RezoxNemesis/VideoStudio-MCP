@@ -1484,7 +1484,11 @@ function serverFor(env,hybridKey=""){
         const challenge=await st.appRenderChallenge(deviceId);
         return out({ok:true,...challenge,origin:"existing-videostudio-mcp"});
       }
+      // Compatibility tool defaults to on-phone VideoStudio→Render Binder,
+      // including after this Worker is deployed. Explicitly opt into the
+      // separately queued Render child-device Worker transport when paired.
       if(native&&action==="autonomous_request" &&
+         p.renderTransport==="render_child" &&
          typeof p.nativeAction==="string"&&p.nativeAction.startsWith("render.")){
         const actionName=p.nativeAction.slice(7);
         const command=await st.appRenderQueue(deviceId,actionName,p.nativeParameters||{},p.renderRequestId||null);
