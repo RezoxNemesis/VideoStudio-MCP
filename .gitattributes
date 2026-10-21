@@ -1,0 +1,3 @@
+
+# Public tokenizer golden fixtures retain their exact pinned upstream bytes.
+android/app/src/test/resources/local_drawing/tokenizer/* binary

@@ -2,6 +2,7 @@
 import {z} from 'zod';
 import {cinematic3dTimelineSchema,CINEMATIC_3D_ACTIONS} from './cinematic3d-contract.js';
 
+export const LOCAL_DRAWING_CAPABILITIES=Object.freeze({"minimumNativeVersion":"4.10.2","actions":["local_drawing_models","local_drawing_install","local_drawing_generate","local_drawing_get"],"runtime":"onnxruntime-cpu","packId":"sd15_onnx_v1","hostedInference":false,"modelWeightsOptional":true,"modelDownloadRequiresNetwork":true,"inferenceRequiresNetwork":false,"input":"Explicit owned unmeshed/unflipped full image reference; sourceRect uses the full EXIF-oriented working PNG","output":"Reference-conditioned model-generated raster draft in a separate project","width":512,"height":512,"maxSteps":30,"maxPromptTokens":75,"requiredAvailableRamMb":6144,"requires64BitProcess":true,"recoversArtistLayers":false,"creativeQualityCertified":false,"sourceArtworkModified":false,"seedScope":"Added denoising noise; the model encoder posterior sample is checkpointed","manualControls":"Sketch Studio > More > Local AI drawing","limitations":"A raster draft does not recover hand-drawn strokes, semantic layers, correct anatomy, unseen views or consistent animation. Review actual output. Phone performance is not established by host inference.","defaultSettings":{"seed":41718,"steps":20,"strength":0.5,"guidance":7,"negativePrompt":"distorted anatomy, extra fingers, blurry, flat vector shapes"},"transparentOutput":false,"supportedGenerationModes":["reference_conditioned_raster"],"supports3dCameraOrbit":false});
 const finite=z.number().finite(),integer=(min,max)=>finite.int().min(min).max(max);
 const id=z.string().regex(/^[A-Za-z0-9_-]{1,96}$/),sha=z.string().regex(/^[a-f0-9]{64}$/);
 const text=(max,nonempty=true)=>z.string().max(max).refine(v=>!v.includes('\0')&&(!nonempty||v.trim().length>0),'Bounded text is required');
@@ -624,6 +625,12 @@ export const studioToolSchemas={
  sketch_preview:{...sketchIdentity,expectedRevision:revision.optional(),frameIndex:frame.optional(),maxDimension:integer(128,720).optional(),crop:bounds.optional()},
  sketch_layered_drawing_preview:{...sketchIdentity,expectedRevision:revision,frameIndex:frame.optional(),view:z.enum(['reference','artwork','comparison']),stageOnly:z.boolean().optional(),maxDimension:integer(128,1024).optional(),crop:bounds.optional()},
  sketch_render:{...mutation,aspect:z.enum(['original','9:16','16:9','1:1']).optional(),quality:z.enum(['720p','1080p']).optional()},
+ local_drawing_models:{},
+ local_drawing_install:{packId:z.literal('sd15_onnx_v1')},
+ local_drawing_get:{requestId:id,includePreview:z.boolean().optional()},
+ local_drawing_generate:{requestId:id,sketchId:id,expectedRevision:revision,objectId:id,sourceSha256:sha,
+  sourceRect:z.object({x:finite.min(0).max(1),y:finite.min(0).max(1),width:finite.positive().max(1),height:finite.positive().max(1)}).strict().refine(v=>v.x+v.width<=1&&v.y+v.height<=1,'Source rectangle must fit the full oriented image').optional(),
+  settings:z.object({prompt:text(1200),negativePrompt:text(1200,false).optional(),seed:integer(0,2147483647),steps:integer(4,30),strength:finite.min(.1).max(1),guidance:finite.min(1).max(12)}).strict()},
  open_pipeline_configure:{endpoint,bearer:z.string().min(16).max(4096).regex(/^[A-Za-z0-9_.~+/-]+=*$/)},
  open_pipeline_capabilities:{},open_pipeline_list:{},
  open_pipeline_export_request:{projectId:id,sourceProjectUpdatedAt:updatedAt,requestId:id,backend:z.enum(['blender','cogvideox','frame_sequence','interpolation','kokoro']),controls:z.union(Object.values(backendControls)),assetIds:sourceIds},
@@ -728,6 +735,7 @@ const legacy3d=new Set(['STANDOFF','CHARGE','CLASH','BLADE_LOCK','FOLLOW_THROUGH
 const pixelFields=new Set(['keyframes','opacity','chromaKey','chromaColor','chromaTolerance','chromaFeather','maskShape','maskLeft','maskTop','maskRight','maskBottom','maskFeather','glowStrength','glowRadiusPx','glowThreshold']);
 export function requireStudioVersion(device,action,parameters={}){
  const alias=studioAliases.has(action);action=nativeStudioCanonicalAction(action);
+ if(LOCAL_DRAWING_CAPABILITIES.actions.includes(action)&&!atLeast(device?.appVersion,'4.10.2'))throw new Error('NATIVE_APP_UPGRADE_REQUIRED: offline neural drawing requires VideoStudio 4.10.2 or newer');
  if(CORRECTION_WORKFLOW_CAPABILITIES.actions.includes(action)&&!atLeast(device?.appVersion,'4.8.4'))throw new Error('NATIVE_APP_UPGRADE_REQUIRED: app-owned correction workflow and recipe options require VideoStudio 4.8.4 or newer');
  const styledHandObject=object=>object?.kind==='hand'&&object.hand?.settings?.renderStyle!==undefined;
  const styledHandOperation=op=>op.type==='add_hand_animation'&&op.settings?.renderStyle!==undefined||op.type==='add_object'&&styledHandObject(op.object)||op.type==='update_object'&&op.patch?.hand?.settings?.renderStyle!==undefined||op.type==='add_layer'&&(op.layer?.objects||[]).some(styledHandObject);

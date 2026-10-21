@@ -20,6 +20,7 @@ public final class NativeWorkbenchBridge {
             "sketch_paint_journal","sketch_sample_color","sketch_archive","sketch_restore_archive",
             "sketch_import_reference","sketch_import_reference_layers","sketch_reference_layers_preview","sketch_layered_drawing_preview","sketch_import_frame_manifest","sketch_import_drawing_manifest","sketch_import_drawing_asset","sketch_import_animation","sketch_preview","sketch_render",
             "sketch_book_create","sketch_book_edit","sketch_book_list","sketch_book_get","sketch_book_open_page","sketch_book_timeline","sketch_book_render","sketch_live_begin","sketch_live_events","sketch_live_end","sketch_capabilities","sketch_component_save","sketch_component_list","sketch_component_apply",
+            "local_drawing_models","local_drawing_install","local_drawing_generate","local_drawing_get",
             "open_pipeline_configure","open_pipeline_capabilities","open_pipeline_list",
             "open_pipeline_export_request","open_pipeline_submit","open_pipeline_status","open_pipeline_cancel",
             "open_pipeline_download_result","open_pipeline_import_result","open_pipeline_archive_artifact","open_pipeline_restore_artifact",
@@ -62,6 +63,7 @@ public final class NativeWorkbenchBridge {
                 .put("drawingAssetImportMinimumNativeVersion","4.3.1").put("nativeResultPageMinimumNativeVersion","4.3.1")
                 .put("incrementalKeyframeMinimumNativeVersion","4.3.0").put("cameraEditMinimumNativeVersion","4.3.0")
                 .put("symmetryMinimumNativeVersion","4.3.0").put("stereoMixMinimumNativeVersion","4.3.0").put("captionStyleMinimumNativeVersion","4.3.0")
+                .put("localNeuralDrawing",LocalDrawingCapabilities.get())
                 .put("galleryAccess",false).put("nativeExecutionVerified",false);
     }
     private static final class Budget {int values;long characters;void add(long amount){characters+=amount;if(characters>MAX_COMMAND_BYTES)throw new IllegalArgumentException("Native command exceeds its relay metadata budget");}}

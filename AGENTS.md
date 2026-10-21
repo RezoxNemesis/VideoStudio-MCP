@@ -1,3 +1,23 @@
+# Active offline neural drawing — 2026-10-21
+
+Owner now requests native AI drawing and explicitly rejects hosted inference.
+Current feat/native-offline-drawing-v4102 extends36c2257; target4.10.2/code505.
+Read docs/continuity/NATIVE_OFFLINE_DRAWING_4102.md and the matching spec/plan.
+Actual VideoStudio Java executes pinned SD1.5 through ONNX Runtime CPU/JNI.
+Optional weights are4,268,238,533 bytes; generation requires a64-bit process and
+6144MiB currently available RAM. Keep model licenses, pinned hashes, source-bound
+requests, failed generations and real receipts. Never upload reference pixels to
+hosted inference or substitute external artwork helpers. First outputs are
+reference-conditioned512px raster drafts, NOT recovered artist strokes, semantic
+layers, accepted likeness, anatomical perfection, unseen3D or consistent animation.
+Native host inference under Robolectric is NOT phone/APK/GPU/codec execution.
+Manual and MCP operations share the same implementation. Live private MCP returned
+HTTP403 from this workspace; preserve device identity and do not reset anything.
+Check actual fresh test/CI evidence before verification claims. Original signer,
+package/projects/assets/history and all other worktrees must survive. One local
+Gradle owned by root; no Worker/main/stable publication or replacement key.
+Voice remains last; the detailed layered240s film remains unfinished.
+
 # Active native layered brush quality — 2026-10-21
 
 Current candidate4.10.1/code504 includes committed contour placement2a86e56

@@ -138,6 +138,7 @@ final class NativeStartupGuard {
             case "export_project": case "sketch_render": case "sketch_book_render": case "sketch_import_animation":
             case "sketch_story_create": case "sketch_story_audio_create": case "sketch_animation_place_in_book":
             case "generate_image": case "install_model_pack":
+            case "local_drawing_generate": case "local_drawing_install":
                 return true;
             default:return false;
         }

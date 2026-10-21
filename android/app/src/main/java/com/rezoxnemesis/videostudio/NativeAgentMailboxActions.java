@@ -40,6 +40,7 @@ final class NativeAgentMailboxActions {
   "sketch_import_frame_manifest",
   "sketch_import_drawing_manifest",
   "sketch_import_drawing_asset","sketch_import_animation",
+  "local_drawing_models","local_drawing_install","local_drawing_generate","local_drawing_get",
   "open_pipeline_configure",
   "open_pipeline_capabilities",
   "open_pipeline_list",

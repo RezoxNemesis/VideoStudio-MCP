@@ -712,6 +712,11 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 case "sketch_import_drawing_manifest": complete(command,queueSketchDrawingManifest(p));return;
                 case "sketch_import_animation": complete(command,queueSketchAnimationImport(p));return;
                 case "sketch_import_drawing_asset": complete(command,queueSketchDrawingAsset(p));return;
+                case "local_drawing_models": case "local_drawing_get":{
+                    JSONObject result=LocalDrawingOperations.execute(this,action,p,null);Object image=result.remove("localDrawingPreviewImage");if(image!=null)result.put("contactSheet",image);complete(command,result);return;
+                }
+                case "local_drawing_install": case "local_drawing_generate":
+                    complete(command,queueLocalDrawing(action,p));return;
                 case "open_pipeline_configure": case "open_pipeline_capabilities": case "open_pipeline_list":
                 case "open_pipeline_status": case "open_pipeline_cancel":
                     complete(command,OpenPipelineOperations.execute(this,store,action,p,null));return;
@@ -910,10 +915,12 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                     result.put("compute", computeProfile.snapshot());
                     result.put("localSceneRenderer", "2d-vectors-and-perspective-3d-triangle-meshes");
                     result.put("stillImageMotion", "articulated-2.5d-portrait");
-                    result.put("neuralImageGeneration", false);
+                    JSONObject localDrawing=new LocalDrawingModels(this).status();
+                    result.put("localNeuralDrawing",localDrawing);
+                    result.put("neuralImageGeneration",localDrawing.getBoolean("runtimeAvailable"));
                     result.put("neuralVideoGeneration", false);
                     result.put("photorealisticHumanSynthesis", false);
-                    result.put("missingComponent", "executable-local-generative-model-adapter-and-compatible-model-pack");
+                    result.put("missingComponent",localDrawing.getBoolean("runtimeAvailable")?"neural-video-generation-provider":"installed-local-drawing-model-pack-or-64-bit-process");
                     result.put("paidInferenceRequired", false);
                     result.put("phoneValidationRequired", true);
                     complete(command, result);
@@ -2072,6 +2079,8 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                         parameters.remove("projectId");queued=queueSketchStoryWork(action,parameters);break;
                     case "sketch_story_audio_create":queued=queueSketchStoryWork(action,parameters);break;
                     case "sketch_import_drawing_asset":queued=queueSketchDrawingAsset(parameters);break;
+                    case "local_drawing_install": case "local_drawing_generate":
+                        parameters.remove("projectId");queued=queueLocalDrawing(action,parameters);break;
                     case "open_pipeline_export_request": case "open_pipeline_submit": case "open_pipeline_download_result":
                     case "open_pipeline_import_result": case "open_pipeline_archive_artifact": case "open_pipeline_restore_artifact":
                         if(!"open_pipeline_export_request".equals(action))parameters.remove("projectId");
@@ -3313,6 +3322,16 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         });
         return ok().put("queued",true).put("jobId",job.id).put("projectId",projectId).put("requestId",requestId)
                 .put("durableRecovery",true).put("nativeRendered",false);
+    }
+
+    private JSONObject queueLocalDrawing(String action,JSONObject input)throws Exception {
+        JSONObject request=new JSONObject(input.toString());JSONArray names=request.names();if(names!=null)for(int i=0;i<names.length();i++)if(names.getString(i).startsWith("_"))request.remove(names.getString(i));
+        if("local_drawing_generate".equals(action))LocalDrawingSource.validate(request);
+        else {SketchDocument.fields(request,"packId");if(!LocalDrawingModels.ID.equals(request.getString("packId")))throw new IllegalArgumentException("Unknown local drawing model");}
+        JSONObject durable=new JSONObject(request.toString());for(String key:new String[]{"_recoveryPlanId","_mcpCommandId"})if(input.has(key))durable.put(key,input.get(key));
+        JobManager.Work work=state->{JSONObject result=LocalDrawingOperations.execute(this,action,request,(n,stage)->{checkpoint(state,"Local AI drawing",stage,n,"");jobs.awaitSafeCheckpoint(state,"local_neural_drawing");});state.setResult(result.put("ok",true));syncProtocolState();};
+        JobManager.Job job="local_drawing_install".equals(action)?submitRecoverableTransfer(action,durable,"","Download optional local drawing model",work):submitRecoverableHeavy(action,durable,"","Local neural drawing",work);
+        return ok().put("queued",true).put("jobId",job.id).put("requestId",request.optString("requestId","")).put("durableRecovery",true).put("hostedInference",false);
     }
 
     private JSONObject queueCinematic3D(JSONObject input) throws Exception {
@@ -5256,6 +5275,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             case "sketch_render": case "sketch_book_render":
             case "sketch_story_create": case "sketch_story_audio_create": case "sketch_animation_place_in_book":
             case "sketch_import_frame_manifest": case "sketch_import_drawing_manifest": case "sketch_import_drawing_asset": case "sketch_import_animation":
+            case "local_drawing_install": case "local_drawing_generate":
             case "open_pipeline_export_request": case "open_pipeline_submit": case "open_pipeline_download_result":
             case "open_pipeline_import_result": case "open_pipeline_archive_artifact": case "open_pipeline_restore_artifact":
             case "prompt_video":

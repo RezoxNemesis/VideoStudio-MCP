@@ -9,7 +9,7 @@ plugins {
 // can change between visual generations without changing compiled test classes.
 tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
     if (listOf("VIDEOSTUDIO_REFERENCE_FIDELITY_FIXTURE", "VIDEOSTUDIO_OWNER_DRAWING_ASSET",
-            "VIDEOSTUDIO_LAYERED_DRAWING_EVIDENCE", "VIDEOSTUDIO_AUTHORED_SCENE_MANIFEST", "VIDEOSTUDIO_AUTHORED_MOTION_MANIFEST", "VIDEOSTUDIO_OWNED_EDITOR_MANIFEST").any { !System.getenv(it).isNullOrBlank() }) {
+            "VIDEOSTUDIO_LAYERED_DRAWING_EVIDENCE", "VIDEOSTUDIO_AUTHORED_SCENE_MANIFEST", "VIDEOSTUDIO_AUTHORED_MOTION_MANIFEST", "VIDEOSTUDIO_OWNED_EDITOR_MANIFEST", "VIDEOSTUDIO_LOCAL_DRAWING_MODEL", "VIDEOSTUDIO_LOCAL_DRAWING_STUDY").any { !System.getenv(it).isNullOrBlank() }) {
         outputs.upToDateWhen { false }
     }
 }
@@ -22,8 +22,8 @@ android {
         applicationId = "com.rezoxnemesis.videostudio.next"
         minSdk = 29
         targetSdk = 35
-        versionCode = 504
-        versionName = "4.10.1"
+        versionCode = 505
+        versionName = "4.10.2"
     }
 
     testOptions { unitTests.isIncludeAndroidResources = true }
@@ -88,6 +88,9 @@ tasks.matching {
 
 dependencies {
     implementation("androidx.core:core:1.15.0")
+    // Real on-device neural inference; model weights remain optional private packs.
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.23.2")
+    testRuntimeOnly("com.microsoft.onnxruntime:onnxruntime:1.23.2")
     implementation(files("libs/clipper2-java-2.0.1b.jar"))
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.robolectric:robolectric:4.14.1")
