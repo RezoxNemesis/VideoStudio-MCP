@@ -1,0 +1,560 @@
+[
+  {
+    "path": "/workspace/work/native-ai-paired-models/clip-vit-h-14-image-fp16/model.onnx",
+    "fileBytes": 1264856075,
+    "inputs": [
+      {
+        "name": "pixel_values",
+        "elementType": 10,
+        "shape": [
+          "batch",
+          3,
+          224,
+          224
+        ],
+        "directNodeUses": 2,
+        "hasInitializerDefault": false
+      }
+    ],
+    "outputs": [
+      {
+        "name": "image_embeds",
+        "elementType": 10,
+        "shape": [
+          "batch",
+          1024
+        ]
+      },
+      {
+        "name": "onnx::Gather_4496",
+        "elementType": 10,
+        "shape": [
+          "batch",
+          "Addonnx::Gather_4496_dim_1",
+          "Addonnx::Gather_4496_dim_2"
+        ]
+      }
+    ],
+    "externalData": [],
+    "opsets": [
+      {
+        "version": 17
+      }
+    ],
+    "irVersion": 8,
+    "producerName": "pytorch",
+    "producerVersion": "2.3.0",
+    "initializerCount": 520,
+    "initializerElementTypes": {
+      "10": 520
+    },
+    "operators": {
+      "::Add": 289,
+      "::Cast": 1,
+      "::Concat": 259,
+      "::Constant": 1164,
+      "::ConstantOfShape": 1,
+      "::Conv": 1,
+      "::Div": 32,
+      "::Equal": 1,
+      "::Erf": 32,
+      "::Expand": 1,
+      "::Gather": 99,
+      "::LayerNormalization": 66,
+      "::MatMul": 257,
+      "::Mul": 129,
+      "::Reshape": 258,
+      "::Shape": 99,
+      "::Slice": 1,
+      "::Softmax": 32,
+      "::Transpose": 161,
+      "::Unsqueeze": 385,
+      "::Where": 1
+    }
+  },
+  {
+    "path": "/workspace/work/native-ai-paired-models/sd15-controlnet-canny-fp16/model.onnx",
+    "fileBytes": 723055316,
+    "inputs": [
+      {
+        "name": "sample",
+        "elementType": 10,
+        "shape": [
+          "batch",
+          4,
+          64,
+          64
+        ],
+        "directNodeUses": 2,
+        "hasInitializerDefault": false
+      },
+      {
+        "name": "timestep",
+        "elementType": 10,
+        "shape": [
+          "batch"
+        ],
+        "directNodeUses": 1,
+        "hasInitializerDefault": false
+      },
+      {
+        "name": "encoder_hidden_states",
+        "elementType": 10,
+        "shape": [
+          "batch",
+          77,
+          768
+        ],
+        "directNodeUses": 15,
+        "hasInitializerDefault": false
+      },
+      {
+        "name": "canny_image",
+        "elementType": 10,
+        "shape": [
+          "batch",
+          3,
+          512,
+          512
+        ],
+        "directNodeUses": 1,
+        "hasInitializerDefault": false
+      }
+    ],
+    "outputs": [
+      {
+        "name": "down_residual_0",
+        "elementType": 10,
+        "shape": [
+          "batch",
+          320,
+          64,
+          64
+        ]
+      },
+      {
+        "name": "down_residual_1",
+        "elementType": 10,
+        "shape": [
+          "batch",
+          320,
+          64,
+          64
+        ]
+      },
+      {
+        "name": "down_residual_2",
+        "elementType": 10,
+        "shape": [
+          "batch",
+          320,
+          64,
+          64
+        ]
+      },
+      {
+        "name": "down_residual_3",
+        "elementType": 10,
+        "shape": [
+          "batch",
+          320,
+          32,
+          32
+        ]
+      },
+      {
+        "name": "down_residual_4",
+        "elementType": 10,
+        "shape": [
+          "batch",
+          640,
+          32,
+          32
+        ]
+      },
+      {
+        "name": "down_residual_5",
+        "elementType": 10,
+        "shape": [
+          "batch",
+          640,
+          32,
+          32
+        ]
+      },
+      {
+        "name": "down_residual_6",
+        "elementType": 10,
+        "shape": [
+          "batch",
+          640,
+          16,
+          16
+        ]
+      },
+      {
+        "name": "down_residual_7",
+        "elementType": 10,
+        "shape": [
+          "batch",
+          1280,
+          16,
+          16
+        ]
+      },
+      {
+        "name": "down_residual_8",
+        "elementType": 10,
+        "shape": [
+          "batch",
+          1280,
+          16,
+          16
+        ]
+      },
+      {
+        "name": "down_residual_9",
+        "elementType": 10,
+        "shape": [
+          "batch",
+          1280,
+          8,
+          8
+        ]
+      },
+      {
+        "name": "down_residual_10",
+        "elementType": 10,
+        "shape": [
+          "batch",
+          1280,
+          8,
+          8
+        ]
+      },
+      {
+        "name": "down_residual_11",
+        "elementType": 10,
+        "shape": [
+          "batch",
+          1280,
+          8,
+          8
+        ]
+      },
+      {
+        "name": "mid_residual",
+        "elementType": 10,
+        "shape": [
+          "batch",
+          1280,
+          8,
+          8
+        ]
+      }
+    ],
+    "externalData": [],
+    "opsets": [
+      {
+        "version": 17
+      }
+    ],
+    "irVersion": 8,
+    "producerName": "pytorch",
+    "producerVersion": "2.3.0",
+    "initializerCount": 330,
+    "initializerElementTypes": {
+      "10": 330
+    },
+    "operators": {
+      "::Add": 118,
+      "::Cast": 86,
+      "::Concat": 73,
+      "::Constant": 594,
+      "::ConstantOfShape": 1,
+      "::Conv": 61,
+      "::Cos": 1,
+      "::Div": 66,
+      "::Equal": 1,
+      "::Erf": 7,
+      "::Expand": 1,
+      "::Gather": 58,
+      "::Gemm": 12,
+      "::Identity": 10,
+      "::InstanceNormalization": 27,
+      "::LayerNormalization": 21,
+      "::MatMul": 98,
+      "::Mul": 155,
+      "::Reshape": 125,
+      "::Shape": 100,
+      "::Sigmoid": 29,
+      "::Sin": 1,
+      "::Slice": 30,
+      "::Softmax": 14,
+      "::Sqrt": 42,
+      "::Transpose": 70,
+      "::Unsqueeze": 183,
+      "::Where": 1
+    }
+  },
+  {
+    "path": "/workspace/work/native-ai-paired-models/sd15-ipadapter-fp16/model.onnx",
+    "fileBytes": 1764924739,
+    "inputs": [
+      {
+        "name": "sample",
+        "elementType": 10,
+        "shape": [
+          "batch",
+          4,
+          64,
+          64
+        ],
+        "directNodeUses": 2,
+        "hasInitializerDefault": false
+      },
+      {
+        "name": "timestep",
+        "elementType": 10,
+        "shape": [
+          "batch"
+        ],
+        "directNodeUses": 1,
+        "hasInitializerDefault": false
+      },
+      {
+        "name": "encoder_hidden_states",
+        "elementType": 10,
+        "shape": [
+          "batch",
+          77,
+          768
+        ],
+        "directNodeUses": 33,
+        "hasInitializerDefault": false
+      },
+      {
+        "name": "image_embeds",
+        "elementType": 10,
+        "shape": [
+          "batch",
+          1,
+          1024
+        ],
+        "directNodeUses": 4,
+        "hasInitializerDefault": false
+      },
+      {
+        "name": "down_residual_0",
+        "elementType": 10,
+        "shape": [
+          "batch",
+          320,
+          64,
+          64
+        ],
+        "directNodeUses": 1,
+        "hasInitializerDefault": false
+      },
+      {
+        "name": "down_residual_1",
+        "elementType": 10,
+        "shape": [
+          "batch",
+          320,
+          64,
+          64
+        ],
+        "directNodeUses": 1,
+        "hasInitializerDefault": false
+      },
+      {
+        "name": "down_residual_2",
+        "elementType": 10,
+        "shape": [
+          "batch",
+          320,
+          64,
+          64
+        ],
+        "directNodeUses": 1,
+        "hasInitializerDefault": false
+      },
+      {
+        "name": "down_residual_3",
+        "elementType": 10,
+        "shape": [
+          "batch",
+          320,
+          32,
+          32
+        ],
+        "directNodeUses": 1,
+        "hasInitializerDefault": false
+      },
+      {
+        "name": "down_residual_4",
+        "elementType": 10,
+        "shape": [
+          "batch",
+          640,
+          32,
+          32
+        ],
+        "directNodeUses": 1,
+        "hasInitializerDefault": false
+      },
+      {
+        "name": "down_residual_5",
+        "elementType": 10,
+        "shape": [
+          "batch",
+          640,
+          32,
+          32
+        ],
+        "directNodeUses": 1,
+        "hasInitializerDefault": false
+      },
+      {
+        "name": "down_residual_6",
+        "elementType": 10,
+        "shape": [
+          "batch",
+          640,
+          16,
+          16
+        ],
+        "directNodeUses": 1,
+        "hasInitializerDefault": false
+      },
+      {
+        "name": "down_residual_7",
+        "elementType": 10,
+        "shape": [
+          "batch",
+          1280,
+          16,
+          16
+        ],
+        "directNodeUses": 1,
+        "hasInitializerDefault": false
+      },
+      {
+        "name": "down_residual_8",
+        "elementType": 10,
+        "shape": [
+          "batch",
+          1280,
+          16,
+          16
+        ],
+        "directNodeUses": 1,
+        "hasInitializerDefault": false
+      },
+      {
+        "name": "down_residual_9",
+        "elementType": 10,
+        "shape": [
+          "batch",
+          1280,
+          8,
+          8
+        ],
+        "directNodeUses": 1,
+        "hasInitializerDefault": false
+      },
+      {
+        "name": "down_residual_10",
+        "elementType": 10,
+        "shape": [
+          "batch",
+          1280,
+          8,
+          8
+        ],
+        "directNodeUses": 1,
+        "hasInitializerDefault": false
+      },
+      {
+        "name": "down_residual_11",
+        "elementType": 10,
+        "shape": [
+          "batch",
+          1280,
+          8,
+          8
+        ],
+        "directNodeUses": 1,
+        "hasInitializerDefault": false
+      },
+      {
+        "name": "mid_residual",
+        "elementType": 10,
+        "shape": [
+          "batch",
+          1280,
+          8,
+          8
+        ],
+        "directNodeUses": 1,
+        "hasInitializerDefault": false
+      }
+    ],
+    "outputs": [
+      {
+        "name": "noise_pred",
+        "elementType": 10,
+        "shape": [
+          "batch",
+          4,
+          64,
+          64
+        ]
+      }
+    ],
+    "externalData": [],
+    "opsets": [
+      {
+        "version": 17
+      }
+    ],
+    "irVersion": 8,
+    "producerName": "pytorch",
+    "producerVersion": "2.3.0",
+    "initializerCount": 722,
+    "initializerElementTypes": {
+      "10": 722
+    },
+    "operators": {
+      "::Add": 294,
+      "::Cast": 258,
+      "::Concat": 226,
+      "::Constant": 1562,
+      "::ConstantOfShape": 1,
+      "::Conv": 98,
+      "::Cos": 1,
+      "::Div": 166,
+      "::Equal": 1,
+      "::Erf": 16,
+      "::Expand": 1,
+      "::Gather": 136,
+      "::Gemm": 25,
+      "::InstanceNormalization": 61,
+      "::LayerNormalization": 49,
+      "::MatMul": 288,
+      "::Mul": 351,
+      "::Reshape": 334,
+      "::Resize": 3,
+      "::Shape": 246,
+      "::Sigmoid": 47,
+      "::Sin": 1,
+      "::Slice": 82,
+      "::Softmax": 48,
+      "::Sqrt": 144,
+      "::Transpose": 208,
+      "::Unsqueeze": 517,
+      "::Where": 1
+    }
+  }
+]

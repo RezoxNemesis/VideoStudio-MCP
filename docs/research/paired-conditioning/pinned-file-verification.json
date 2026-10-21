@@ -1,0 +1,29 @@
+[
+  {
+    "repo": "sona-forge/sd15-ipadapter-fp16",
+    "revision": "05fa2599c72fd2c237280fe92b6be5ccdba0e26c",
+    "expectedBytes": 1764924739,
+    "expectedSha256": "a0287f119d85b8028d9673850322247b5978ed9b504077bc04d433f4c9fadcb7",
+    "state": "VERIFIED",
+    "actualBytes": 1764924739,
+    "actualSha256": "a0287f119d85b8028d9673850322247b5978ed9b504077bc04d433f4c9fadcb7"
+  },
+  {
+    "repo": "sona-forge/clip-vit-h-14-image-fp16",
+    "revision": "0f88973ddf2652f08e3b2cf83dd06448ecb5c7a3",
+    "expectedBytes": 1264856075,
+    "expectedSha256": "038078ba22b67e57ec2ca5b466e0699f30e14a9613054be8c7fb24e537987689",
+    "state": "VERIFIED",
+    "actualBytes": 1264856075,
+    "actualSha256": "038078ba22b67e57ec2ca5b466e0699f30e14a9613054be8c7fb24e537987689"
+  },
+  {
+    "repo": "sona-forge/sd15-controlnet-canny-fp16",
+    "revision": "b9688cefd7ebfd917edd81490d01dbbae6b4c0f1",
+    "expectedBytes": 723055316,
+    "expectedSha256": "399358929322eb5bb2f0e141e23486397a29ec871e4efa625c0f2ba4d418c698",
+    "state": "VERIFIED",
+    "actualBytes": 723055316,
+    "actualSha256": "399358929322eb5bb2f0e141e23486397a29ec871e4efa625c0f2ba4d418c698"
+  }
+]

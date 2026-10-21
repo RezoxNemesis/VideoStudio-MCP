@@ -1,0 +1,72 @@
+{
+  "technicalStatus": "PASS",
+  "visualStatus": "NOT_APPLICABLE",
+  "hostedInference": false,
+  "userArtworkProcessed": false,
+  "imageOutputCreated": false,
+  "phoneExecution": false,
+  "providerImplemented": false,
+  "renderer": "VideoStudio Java test and app LocalDrawingEngine.run; ONNX Runtime CPU\/JNI under Robolectric",
+  "stages": [
+    {
+      "stage": "weights verified",
+      "timeMs": 1792591568704,
+      "VmHWM": "299736 kB",
+      "VmRSS": "299736 kB"
+    },
+    {
+      "stage": "loading clip-vit-h-14-image-fp16",
+      "timeMs": 1792591568706,
+      "VmHWM": "299884 kB",
+      "VmRSS": "299884 kB"
+    },
+    {
+      "stage": "image encoder responds; session closes before diffusion networks",
+      "timeMs": 1792591573322,
+      "VmHWM": "3790020 kB",
+      "VmRSS": "1998384 kB"
+    },
+    {
+      "stage": "loading sd15-controlnet-canny-fp16",
+      "timeMs": 1792591573336,
+      "VmHWM": "3790020 kB",
+      "VmRSS": "1921416 kB"
+    },
+    {
+      "stage": "loading sd15-ipadapter-fp16",
+      "timeMs": 1792591573658,
+      "VmHWM": "3790020 kB",
+      "VmRSS": "2094320 kB"
+    },
+    {
+      "stage": "native graph contracts verified",
+      "timeMs": 1792591575128,
+      "VmHWM": "3790020 kB",
+      "VmRSS": "3092484 kB"
+    },
+    {
+      "stage": "ControlNet responds to changed structural guide",
+      "timeMs": 1792591577769,
+      "VmHWM": "4241856 kB",
+      "VmRSS": "3302148 kB"
+    },
+    {
+      "stage": "independent image and structure routes executed",
+      "timeMs": 1792591586163,
+      "VmHWM": "4500316 kB",
+      "VmRSS": "3352352 kB"
+    },
+    {
+      "stage": "technical graph routing passes; no artistic or provider readiness verdict",
+      "timeMs": 1792591586221,
+      "VmHWM": "4500316 kB",
+      "VmRSS": "2243172 kB"
+    }
+  ],
+  "runtimeVersion": "1.23.2",
+  "imageEncoderMeanAbsoluteDelta": 0.455428181681782,
+  "controlResidualMeanAbsoluteDeltaSum": 2.005904887766883,
+  "unetImageMeanAbsoluteDelta": 0.004123610913666198,
+  "unetStructureMeanAbsoluteDelta": 0.006694609961414244,
+  "elapsedMs": 23880
+}
