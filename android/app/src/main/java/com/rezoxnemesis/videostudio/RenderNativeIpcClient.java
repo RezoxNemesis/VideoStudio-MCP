@@ -37,7 +37,9 @@ public final class RenderNativeIpcClient {
             "blender.object.add_primitive","blender.object.add_camera",
             "blender.object.add_light","blender.object.modifier_add",
             "blender.material.assign","blender.scene.render_settings",
-            "blender.scene.render_still"));
+            "blender.scene.render_still","blender.project.restore_scene",
+            "blender.scene.create_lively_project","blender.scene.populate_lively",
+            "blender.scene.render_video"));
 
     private RenderNativeIpcClient() {}
     /** Prefer the new signed side-by-side Render preview only when installed.
@@ -67,6 +69,18 @@ public final class RenderNativeIpcClient {
         if(!supports(action))return "VideoStudio";
         return "Render Studio • "+action.substring(7)
             .replace('.', ' ').replace('_', ' ');
+    }
+
+    /** Binder wait must exceed Render's own bounded Blender worker timeouts. */
+    static long timeoutMillis(String action) {
+        if ("render.blender.scene.render_video".equals(action)) return 1_980_000L;
+        if ("render.blender.scene.render_still".equals(action)) return 540_000L;
+        if ("render.blender.scene.populate_lively".equals(action)
+                || "render.blender.scene.create_lively_project".equals(action))
+            return 150_000L;
+        if ("render.blender.project.save_copy".equals(action)) return 145_000L;
+        if ("render.blender.project.restore_scene".equals(action)) return 120_000L;
+        return 40_000L;
     }
 
     private static JSONObject error(String code) {
@@ -158,8 +172,7 @@ public final class RenderNativeIpcClient {
                 finish.accept(error("RENDER_APP_NOT_INSTALLED_OR_INCOMPATIBLE"));
                 return;
             }
-            long waitMs = "render.blender.scene.render_still".equals(action) ? 540000 :
-                "render.blender.project.save_copy".equals(action) ? 145000 : 40000;
+            long waitMs = timeoutMillis(action);
             main.postDelayed(timeout[0], waitMs);
         } catch (Exception e) {
             finish.accept(error("RENDER_IPC_BIND_FAILED"));
