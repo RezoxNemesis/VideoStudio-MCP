@@ -295,11 +295,23 @@ final class SketchAnatomyHead {
         double[] hairPoint(double a,double t){return v(20.5*Math.sin(t)*Math.sin(a),-5-22.8*Math.cos(t),21.7*Math.sin(t)*Math.cos(a));}
 
         void longHair()throws Exception {
-            // Rear curtain is emitted before the head; the face occludes it normally.
-            pen(tone(hair,skin,.18),INK,.46).m(-18,-16,-8)
-                .c(-25,0,-12,-20,24,-10,-24,42,-8)
-                .q(-11,47,-7,0,43,-8).q(14,48,-7,24,41,-8)
-                .c(19,24,-10,25,0,-12,18,-16,-8).q(0,-29,-12,-18,-16,-8).z().end();
+            // A closed rear volume retains width behind the skull in profile. The
+            // old almost-flat curtain projected inside the cranium at side angles.
+            Mesh curtain=new Mesh();int sides=32;
+            double[][] rings={{-16,18,11,-14},{0,23,12,-14},{23,21,10,-13},{42,23,7,-11}};
+            curtain.vertices.add(v(0,-23,-14));
+            for(double[] ring:rings)for(int j=0;j<sides;j++){
+                double angle=2*Math.PI*j/sides;
+                curtain.vertices.add(v(ring[1]*Math.sin(angle),ring[0],ring[3]+ring[2]*Math.cos(angle)));
+            }
+            for(int j=0;j<sides;j++)curtain.triangle(0,1+(j+1)%sides,1+j);
+            for(int row=0;row<rings.length-1;row++)for(int j=0;j<sides;j++){
+                int a=1+row*sides+j,b=1+row*sides+(j+1)%sides;
+                curtain.triangle(a,b,a+sides);curtain.triangle(b,b+sides,a+sides);
+            }
+            int bottom=curtain.vertices.size();curtain.vertices.add(v(0,47,-11));
+            for(int j=0;j<sides;j++)curtain.triangle(1+3*sides+j,1+3*sides+(j+1)%sides,bottom);
+            curtain.draw(this,tone(hair,skin,.18),INK,.46);
             for(int s:new int[]{-1,1})for(int i=0;i<4;i++)pen(null,light,.23)
                 .m(s*(13+i*1.5),-3,-6-i*.8)
                 .c(s*(21+i*.35),12,-7-i*.8,s*(13+i*1.4),29,-7-i*.8,s*(17+i*1.3),40,-7-i*.8).end();

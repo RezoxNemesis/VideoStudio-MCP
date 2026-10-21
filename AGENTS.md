@@ -1,3 +1,16 @@
+# Active character structure integration — 2026-10-21
+
+Root integrates contour-hole/long-hair repairs, scoped numeric persistence and
+paired local AI on feat/native-character-structure-v4107. Intended4.10.7/code510;
+read docs/continuity/NATIVE_CHARACTER_STRUCTURE_4107.md and paired-provider docs.
+Frozen4.10.6 e16a050 passed CI39616588540 and independent original signer checks,
+but newly discovered numeric/guide defects are preserved and being repaired here.
+Full combined verification remains pending. All three owner-requested tracks
+remain separate evidence: one-character motion/camera, source-assisted cutouts,
+and native local drawing. No parameter/frame/assertion count inflation; no claim
+of accepted likeness or complete240s film. One local Gradle, root only. No hosted
+artwork, Gallery, Worker/main/stable publication, signer/device/data/MCP reset.
+
 # Active parallel one-character animation work — 2026-10-21
 
 Owner explicitly requests three parallel tracks: root character/motion/camera

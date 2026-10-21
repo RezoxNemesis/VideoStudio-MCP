@@ -200,8 +200,47 @@ final class SketchHumanAnatomy {
         }
         if(!any)throw SketchDocument.bad("Anatomy surface is empty");Paint pen=new Paint(Paint.ANTI_ALIAS_FLAG);pen.setStyle(Paint.Style.STROKE);pen.setStrokeWidth(.65f);pen.setStrokeJoin(Paint.Join.ROUND);pen.setStrokeCap(Paint.Cap.ROUND);Path rim=new Path();pen.getFillPath(skinPath,rim);
         if(!shortsPath.isEmpty()&&!rim.op(shortsPath,Path.Op.DIFFERENCE))throw SketchDocument.bad("Native anatomy garment occlusion failed");
-        begin("contour");PathMeasure measure=new PathMeasure(rim,false);JungleCelInk.Shape line=ink.ink(INK,null,16);
-        do{Path contour=new Path();if(!measure.getSegment(0,measure.getLength(),contour,true))continue;float[]points=contour.approximate(.015f);if(points.length<6)continue;for(int i=0;i<points.length;i+=3){if(i==0)line.m(points[i+1],points[i+2]);else line.l(points[i+1],points[i+2]);}line.z();}while(measure.nextContour());line.end();finish();
+        begin("contour");JungleCelInk.Shape line=ink.ink(INK,null,16);
+        for(float[] points:windingContours(rim)){
+            for(int i=0;i<points.length;i+=2){if(i==0)line.m(points[i],points[i+1]);else line.l(points[i],points[i+1]);}line.z();
+        }
+        line.end();finish();
+    }
+    /** Boolean/stroked native paths may use EVEN_ODD. Ordinary editable ink uses
+     * nonzero winding, so preserve holes by alternating nested ring direction.
+     * Merely changing the native fill type would fill those holes before export. */
+    static List<float[]> windingContours(Path path)throws Exception{
+        if(path.isInverseFillType())throw SketchDocument.bad("Inverse anatomy contours are unsupported");
+        List<float[]> rings=new ArrayList<>();PathMeasure measure=new PathMeasure(path,false);
+        do{
+            Path contour=new Path();if(!measure.getSegment(0,measure.getLength(),contour,true))continue;
+            float[] samples=contour.approximate(.015f);if(samples.length<9)continue;
+            int count=samples.length/3;
+            if(samples[1]==samples[samples.length-2]&&samples[2]==samples[samples.length-1])count--;
+            if(count<3)continue;float[] ring=new float[count*2];
+            for(int i=0;i<count;i++){ring[i*2]=samples[i*3+1];ring[i*2+1]=samples[i*3+2];}
+            rings.add(ring);
+        }while(measure.nextContour());
+        if(path.getFillType()!=Path.FillType.EVEN_ODD)return rings;
+        for(float[] ring:rings){
+            int depth=0;for(float[] parent:rings)if(parent!=ring&&encloses(parent,ring))depth++;
+            double area=0;for(int i=0,j=ring.length-2;i<ring.length;j=i,i+=2)area+=(double)ring[j]*ring[i+1]-(double)ring[i]*ring[j+1];
+            if((area>0)!=(depth%2==0))for(int a=0,b=ring.length-2;a<b;a+=2,b-=2){float x=ring[a],y=ring[a+1];ring[a]=ring[b];ring[a+1]=ring[b+1];ring[b]=x;ring[b+1]=y;}
+        }
+        return rings;
+    }
+    private static boolean encloses(float[] parent,float[] child){
+        // Native Boolean contours can touch. Skip coincident boundary samples
+        // rather than confusing a shared endpoint with an enclosing ring.
+        for(int k=0;k<child.length;k+=2){double x=child[k],y=child[k+1];boolean inside=false,boundary=false;
+            for(int i=0,j=parent.length-2;i<parent.length;j=i,i+=2){double ax=parent[j],ay=parent[j+1],bx=parent[i],by=parent[i+1];
+                double cross=(x-ax)*(by-ay)-(y-ay)*(bx-ax);
+                if(Math.abs(cross)<1e-7&&x>=Math.min(ax,bx)-1e-7&&x<=Math.max(ax,bx)+1e-7&&y>=Math.min(ay,by)-1e-7&&y<=Math.max(ay,by)+1e-7){boundary=true;break;}
+                if((ay>y)!=(by>y)&&x<(bx-ax)*(y-ay)/(by-ay)+ax)inside=!inside;
+            }
+            if(!boundary)return inside;
+        }
+        return false;
     }
     private void guides()throws Exception{
         begin("guides");String blue="#885381AB";
