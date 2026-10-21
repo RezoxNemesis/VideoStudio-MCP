@@ -4,6 +4,11 @@ Owner explicitly requests three parallel tracks: root character/motion/camera
 consistency; agent2 source-assisted cutouts; agent3 native local drawing controls.
 Current numeric-guide slice is on feat/native-character-guides-v4106; intended
 combined release4.10.6/code509 extends frozen signed8e5c362 (4.10.5/code508).
+Fresh combined2252 Android/0failures/0errors/20skips and760 Node+306smoke pass;
+CI/original signing is separately pending. Explicit new controls require4.10.6.
+Private cutoutv3/editor screenshots are source-assisted and NEEDS_REWORK; further
+lower-coat/contact repairs continue privately. Next paired-provider4.10.7 remains
+separate and unverified as a drawing feature.
 Read docs/continuity/NATIVE_CHARACTER_GUIDES_4106.md. Numeric anatomy camera
 settings preserve world pose; they do not establish matched young-man views.
 Keep actual cutout/model generations and their failures. No count inflation:

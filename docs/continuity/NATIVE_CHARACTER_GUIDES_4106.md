@@ -27,3 +27,25 @@ from phone/GPU execution. Target-character artwork remains NEEDS_REWORK.
 The integrated4.10.6 release also needs the separately committed cutout-pivot and
 frame-source slices, combined regression validation and original signing checks.
 Do not claim this slice alone is the complete app or four-minute film.
+
+## Combined candidate verification checkpoint
+
+Integrated with frame-source commitdf33dce and cutout commitse50f74a/7da2ff
+through preserved cherry-pick history, plus4.10.6/code509 protocol/build assertions.
+Fresh combined local validation:2252 Android tests,0 failures,0 errors,20 skips,
+398 suites;760 Node tests and306 smoke checks,0 failures. Evidence is under
+`integrated/` in the private guide evidence directory. Initial combined Node runs
+exposed older capability-VM fixtures and an obsolete exact image-key regex; their
+failed logs remain, and fixes still compare actual native metadata / execute old
+image transport rather than omitting assertions. CI signing remains a separate
+pending check at this source checkpoint.
+
+The native source-assisted young-man4second/96frame study and real editor screenshots
+are private review artifacts. Neck/hair gaps were corrected acrossv1-v3; later
+comparison exposed clipped lower coat mass and duplicate hand backing. Further
+private recipe revisions continue; technical passes do not accept these images.
+No private actor recipe, coordinates, source pixels or archive enters public Git.
+A separate4.10.7 paired local-provider branch is in progress. A real native graph
+routing probe passed with independent appearance/structure inputs and measured
+4,500,316kB host process HWM; no provider, artwork or phone readiness follows from
+that probe. It is not included in this4.10.6 candidate.
