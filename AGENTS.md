@@ -1,3 +1,15 @@
+# Active combined character-shading candidate —2026-10-21
+
+Root feat/native-character-shading-v41011 extends fully locally verified513c78cd5b
+(CI39662879426 running), with raster coverage56cd05f(cherry0d46f56). Target
+4.10.11/code514 version/AppProtocol/release assertions aligned. Feature73native/
+0failures/errors/skips and777Node+306smoke pass. Rootfull514integrated checks,
+CI/original signing and actualblinkv7 visualreview remain PENDING. Newmaximum
+coverage is raster-only, not vectorfittedbrush, skin-tone healing or anatomy.
+Preserve omittedoldnormalization/pixels/fingerprints/floors. Keep all failed
+blink/model generations. One local Gradle, root only. No hosted/external artwork,
+Gallery, main/Worker/stable release, signer/device/data/MCPidentity reset.
+
 # Active native soft raster coverage —2026-10-21
 
 Isolated feat/native-soft-paint-coverage-v41011 extends frozen513source8ab009f.
