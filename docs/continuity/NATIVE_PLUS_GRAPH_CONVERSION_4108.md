@@ -217,3 +217,33 @@ the converted graph path because the engineering storage relocation made it a
 symlink. It failed before numerical comparison. Preserve this failure; use the
 independently hash-verified regular target path for a new runtime trial without
 weakening the production anti-symlink policy.
+
+## Actual old/new numeric equivalence result
+
+Root ran a third actual app-native CPU study against the separately frozen
+rank4 audit graph and the regular resolved (hash-verified) derived UNet target.
+This passed the PREDECLARED0.02maximum absolute/0.003RMS error budgets:
+actual maximum absolute0.00030517578125, mean absolute0.00005227300426,
+RMS0.00007883467628, relativeRMS0.00051897756. Two UNet forwards and one actual
+ControlNet forward ran through ORT1.23.2; hostHWM3710292kB, about24seconds.
+The original four-token K/V tensors were genuinely captured, then each token was
+repeated four times and K transposed; all17old/48new ports and all13residuals
+retained. Original and converted returned noise tensors have DIFFERENT SHA256s.
+Status is TECHNICAL_FP16_BUDGET_PASS_NOT_PIXEL_IDENTITY, not exact/pixel identity,
+artistic acceptance, phone performance or an animation scenario. Preserved failed
+v1(rank annotation) and v2(anti-symlink storage guard) trials remain part of the
+evidence. Actual complete installed-model Plus synthesis/review is still next.
+
+Integration now includes root's native profile fringe fix0d3d1f2 (original4a18068),
+with both continuity blocks preserved. VersionName/AppProtocol4.10.8/code511 and
+the ordinary release assertions agree; earlier feature floors remain unchanged.
+Public repository check showed main3.5/code350, latest published preview4.8.6
+and frozen candidate4.10.7/code510;511 is the next feature candidate, not a stable
+publication.
+
+Fresh integrated npm test passes765Node tests/0failures/0skips and306smoke
+checks. Initial version-only failures in three older exact-release assertions
+are retained in integrated-plus-node-v1.log; updating those assertions to the
+actual4.10.8/code511 (without changing feature floors) yields the complete v2
+PASS. Full combined Android, actual Plus image review and CI/signing remain
+root-owned and pending.
