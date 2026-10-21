@@ -1,3 +1,16 @@
+# Combined animation production tools candidate —2026-10-21
+
+Current feat/native-animation-recipe-archive-v4109 is4.10.9/code512 and combines
+portable saved-scene archives, local vector path clipping and the successful
+bounded v4cranial-cap occlusion repair. The slice notes below record earlier
+checkpoints; the current combined candidate DOES include the now-passing v4
+head repair. All failed generations/tests remain preserved independently.
+Full combined native regression and original-signer CI are pending now; root
+owns one local Gradle. Real actor cuff/package tests remain source-assisted and
+film NEEDS_REWORK. First blink is visualFAIL despite technical preservationPASS.
+Rear-hair painter order and center-part drawing improvements continue in513.
+No main/Worker/stable publication, replacement signing/data/identity reset.
+
 # Active portable animation scene packages —2026-10-21
 
 Current isolated feature4.10.9/code512 extends verified signed511103d5e.
@@ -10,6 +23,18 @@ Do not call this film/art acceptance. Preserve failed head-neck automatic clippi
 integration separately; its tests remain unchanged and that repair is not shipped.
 Root owns ONE local Gradle across all worktrees. No main/Worker/stable publication,
 replacement signer, Gallery/hosted art, uninstall/data/MCP identity reset.
+
+# Active cranial-cap depth occlusion — 2026-10-21
+
+This dependent slice extends core path clipping f3a5aa2 for root4.10.9/code512.
+Read docs/continuity/NATIVE_NECK_DEPTH_4109.md. Root observed21focusednative/
+0failures/0errors/0skips and reviewed native guide heads. Preserve every failed
+iteration and unchanged strict head regression. Full integrated native/CI/signing
+remain PENDING/root-owned. The long rear-curtain painter-order bug is still
+NEEDS_REWORK and belongs to separate513; no accepted actor likeness or film.
+Only3native production files +strict regression/docs are in this dependent slice.
+Root owns ONE Gradle and actual inference. No hosted/Gallery/external art,
+main/Worker/stable publication, replacement signer or data/MCP/device reset.
 
 # Active reusable path clipping — 2026-10-21
 
