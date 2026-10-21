@@ -4,10 +4,11 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import {webcrypto} from 'node:crypto';
 import {persistNativeCommandQueue,hydrateNativeField,hydrateNativeCommand} from '../src/native-payload-storage.js';
+import * as renderNative from '../src/render-native-channel.js';
 // Run the real relay class with an in-memory Durable Object store; SDK/network are not needed.
 const source=fs.readFileSync(new URL('../src/index.js',import.meta.url),'utf8');
 const end=source.indexOf('\n}\n',source.indexOf('export class VideoStudioState'))+3;
-const context={crypto:webcrypto,TextEncoder,Response,Request,Headers,URL,setTimeout,DurableObject:class{constructor(ctx){this.ctx=ctx;}},Date,persistNativeCommandQueue,hydrateNativeField,hydrateNativeCommand};
+const context={crypto:webcrypto,TextEncoder,Response,Request,Headers,URL,setTimeout,DurableObject:class{constructor(ctx){this.ctx=ctx;}},Date,renderNative,persistNativeCommandQueue,hydrateNativeField,hydrateNativeCommand};
 vm.createContext(context);
 vm.runInContext(source.slice(source.indexOf('const JH'),end).replace('export class VideoStudioState','globalThis.VideoStudioState = class VideoStudioState'),context);
 async function fixture(commands=[]) {
@@ -69,7 +70,7 @@ function loadWorkerForRouteTests() {
  const workerContext={
   crypto:webcrypto,TextEncoder,TextDecoder,Response,Request,Headers,URL,setTimeout,clearTimeout,Date,
   DurableObject:class{constructor(ctx){this.ctx=ctx;}},
-  persistNativeCommandQueue,hydrateNativeField,hydrateNativeCommand,
+  renderNative,persistNativeCommandQueue,hydrateNativeField,hydrateNativeCommand,
   McpServer:class{},
   createMcpHandler:()=>()=>new Response(null,{status:204}),
   z:{},
