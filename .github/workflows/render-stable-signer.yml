@@ -1,0 +1,125 @@
+name: Render v0.16 — Stable VideoStudio Certificate (fail closed)
+on:
+  push:
+    branches: ["feature/render-native-mcp-channel-20261021"]
+    paths:
+      - ".github/workflows/render-stable-signer.yml"
+      - "tools/prepare_render_signed_build.py"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  owner-signed-render:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 65
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.11.1"
+      - name: Restore original VideoStudio signing identity (MUST exist)
+        uses: actions/cache/restore@v4
+        id: original_signer
+        with:
+          path: ~/.android/debug.keystore
+          key: videostudio-android-debug-signing-v1
+          fail-on-cache-miss: true
+      - name: Reject wrong or missing signing certificate
+        run: |
+          test "${{ steps.original_signer.outputs.cache-hit }}" = "true"
+          python -c "from pathlib import Path;from tools.prepare_render_signed_build import inspect_keystore;print('Verified original VideoStudio signing certificate:',inspect_keystore(Path.home()/'.android/debug.keystore'))"
+          echo "VIDEOSTUDIO_SIGNING_KEYSTORE=$HOME/.android/debug.keystore" >> "$GITHUB_ENV"
+      - name: Install Android build dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -path "*/bin/sdkmanager" -type f | sort -V | tail -1)"
+          test -x "$SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" --install "platforms;android-35" "build-tools;35.0.0" "cmake;3.22.1" "ndk;27.2.12479018"
+      - name: Checkout precisely tested Render native v0.16 source
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir render-native
+          git -C render-native init -q
+          git -C render-native remote add origin https://github.com/RezoxNemesis/Render.git
+          git -C render-native fetch --depth 1 --filter=blob:none origin 401377734498c196e54a983d114339ded4bb9c03
+          git -C render-native checkout -q --detach FETCH_HEAD
+          test "$(git -C render-native rev-parse HEAD)" = "401377734498c196e54a983d114339ded4bb9c03"
+          grep -Fq "versionCode 19" render-native/full-app/app/build.gradle
+          grep -Fq "0.16.0-native-scene-creation-materials-render" render-native/full-app/app/build.gradle
+      - name: Build native Render JNI and Android unit tests
+        run: gradle -p render-native --no-daemon :app:testDebugUnitTest :app:assembleDebug
+      - name: Download original full Blender native engine and verify pinned hash
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fL --retry 3 --connect-timeout 15 \
+            "https://github.com/simfeo/blender/releases/download/android-alpha-4/blender-full.apk" \
+            -o "$RUNNER_TEMP/blender-full.apk"
+          echo "3fe775a1e14470ebfcd3c25ae32b57003433f04552f896880631ae98b1f18aea  $RUNNER_TEMP/blender-full.apk" | sha256sum -c -
+          test "$(stat -c%s "$RUNNER_TEMP/blender-full.apk")" = "286561495"
+      - name: Fetch upstream Blender Android launcher at exact commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir "$RUNNER_TEMP/full-blender-src"
+          git -C "$RUNNER_TEMP/full-blender-src" init -q
+          git -C "$RUNNER_TEMP/full-blender-src" remote add origin https://github.com/simfeo/blender.git
+          git -C "$RUNNER_TEMP/full-blender-src" sparse-checkout init --cone
+          git -C "$RUNNER_TEMP/full-blender-src" sparse-checkout set build_files/android/apk/app/src/main
+          git -C "$RUNNER_TEMP/full-blender-src" -c protocol.version=2 fetch --depth=1 --filter=blob:none origin d93bd33cba768e19ee4387a31c0ea137ee2f0047
+          git -C "$RUNNER_TEMP/full-blender-src" checkout --detach -q FETCH_HEAD
+          test "$(git -C "$RUNNER_TEMP/full-blender-src" rev-parse HEAD)" = "d93bd33cba768e19ee4387a31c0ea137ee2f0047"
+      - name: Stage genuine Blender native engine and Render agent
+        run: |
+          python render-native/tools/assemble_full_native.py \
+            --engine-apk "$RUNNER_TEMP/blender-full.apk" \
+            --bridge-apk render-native/app/build/outputs/apk/debug/app-debug.apk \
+            --upstream-source "$RUNNER_TEMP/full-blender-src" \
+            --output render-native/full-app/stage
+      - name: Apply only already-verified VideoStudio signing identity
+        run: |
+          python tools/prepare_render_signed_build.py \
+            --keystore "$VIDEOSTUDIO_SIGNING_KEYSTORE" \
+            --gradle render-native/full-app/app/build.gradle
+      - name: Build the stable-signed full Render APK
+        run: gradle -p render-native/full-app --no-daemon :app:assembleDebug
+      - name: Verify APK install identity, native Blender and signature v2
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK=render-native/full-app/app/build/outputs/apk/debug/app-debug.apk
+          test -s "$APK"
+          unzip -tqq "$APK"
+          unzip -Z -1 "$APK" | grep -Fx "lib/arm64-v8a/libblender.so"
+          unzip -Z -1 "$APK" | grep -Fx "lib/arm64-v8a/librender_bridge.so"
+          unzip -Z -1 "$APK" | grep -Fx "assets/blender_runtime.zip"
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$APK" > "$RUNNER_TEMP/render-app-badging.txt"
+          grep -F "name='com.rezox.render'" "$RUNNER_TEMP/render-app-badging.txt"
+          grep -F "versionCode='19'" "$RUNNER_TEMP/render-app-badging.txt"
+          python tools/prepare_render_signed_build.py \
+            --keystore "$VIDEOSTUDIO_SIGNING_KEYSTORE" --apk "$APK" \
+            --apksigner "$ANDROID_HOME/build-tools/35.0.0/apksigner"
+          sha256sum "$APK" | tee "$RUNNER_TEMP/render-signed-sha256.txt"
+          echo "APK signed by SAME original VideoStudio certificate. Existing Render debug installations may have different certificate and still require backup+migration." >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Render-v0.16-Native-Blender-Original-VideoStudio-Signer
+          path: render-native/full-app/app/build/outputs/apk/debug/app-debug.apk
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Render-v0.16-Stable-Signing-Proof
+          path: |
+            ${{ runner.temp }}/render-app-badging.txt
+            ${{ runner.temp }}/render-signed-sha256.txt
+          if-no-files-found: error
+          retention-days: 14
