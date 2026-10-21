@@ -258,20 +258,23 @@ final class SketchAnatomyHead {
                     .q(t[0]+3,t[1]+4,t[2],t[0]-3,t[1]+3,t[2]-1).z().end();
             }
             // Forelock clusters have separate tips, interior flow and open skin gaps.
-            if(view[2]>.08){
+            // Each lock has its own near-side visibility check below. A blanket
+            // frontal gate erased the entire fringe at both exact side views.
+            {
                 double[][] locks={{-15,-19,-17,-6,-7,-25},{-12,-22,-9,-10,-3,-27},
                     {-7,-23,-1,-8.5,5,-26},{-1,-24,7,-11,11,-25},
                     {5,-23,13,-8,17,-22},{12,-20,18,-4,22,-17}};
                 for(double[] lock:locks){
                     double x=lock[0],y=lock[1],tx=lock[2],ty=lock[3],bx=lock[4],by=lock[5];
-                    double z=17.9-Math.abs(x)*.22;
                     if(x*view[0]*.06+view[2]<.14)continue;
-                    pen(tone(hair,skin,.20),null,.2).m(x-2,y,z-2)
-                        .c(bx,by,z-1,tx+3,ty-4,z+2,tx,ty,z+1)
-                        .q(tx+1,ty-4,z+2,tx-2,ty-6,z+1)
-                        .q(x-3,y+2,z,x-2,y,z-2).z().end();
-                    pen(null,light,.21).m(x-.8,y,z-.8)
-                        .c(bx-1,by+1,z+1,tx+1.8,ty-5,z+2,tx+.5,ty-2,z+1.5).end();
+                    // Follow the cranial envelope in depth. Constant-z lock
+                    // planes collapse into narrow strips in an exact profile.
+                    pen(tone(hair,skin,.20),null,.2).m(fringePoint(x-2,y))
+                        .c(fringePoint(bx,by),fringePoint(tx+3,ty-4),fringePoint(tx,ty))
+                        .q(fringePoint(tx+1,ty-4),fringePoint(tx-2,ty-6))
+                        .q(fringePoint(x-3,y+2),fringePoint(x-2,y)).z().end();
+                    pen(null,light,.21).m(fringePoint(x-.8,y))
+                        .c(fringePoint(bx-1,by+1),fringePoint(tx+1.8,ty-5),fringePoint(tx+.5,ty-2)).end();
                 }
             }
             // Flow arcs lie on the actual cranial surface and are culled on the far side.
@@ -291,6 +294,10 @@ final class SketchAnatomyHead {
                 pen(hair,null,.2).m(s*18,-10,4).q(s*20,-4,3,s*18.4,1,2)
                     .l(s*17.7,3,3).q(s*18,-5,7,s*16.8,-8,8).z().end();
             }
+        }
+        double[] fringePoint(double x,double y){
+            double radial=1-x*x/(21*21)-(y+5)*(y+5)/(24*24);
+            return v(x,y,1+21*Math.sqrt(Math.max(0,radial)));
         }
         double[] hairPoint(double a,double t){return v(20.5*Math.sin(t)*Math.sin(a),-5-22.8*Math.cos(t),21.7*Math.sin(t)*Math.cos(a));}
 
@@ -325,7 +332,8 @@ final class SketchAnatomyHead {
         Pen m(double x,double y,double z)throws Exception{return m(v(x,y,z));}
         Pen m(double[] a)throws Exception{double[] p=h.point(a);path.m(p[0],p[1]);return this;}
         Pen l(double x,double y,double z)throws Exception{double[] p=h.point(v(x,y,z));path.l(p[0],p[1]);return this;}
-        Pen q(double x,double y,double z,double a,double b,double c)throws Exception{double[] p=h.point(v(x,y,z)),r=h.point(v(a,b,c));path.q(p[0],p[1],r[0],r[1]);return this;}
+        Pen q(double x,double y,double z,double a,double b,double c)throws Exception{return q(v(x,y,z),v(a,b,c));}
+        Pen q(double[] a,double[] b)throws Exception{double[] p=h.point(a),r=h.point(b);path.q(p[0],p[1],r[0],r[1]);return this;}
         Pen c(double x,double y,double z,double a,double b,double c,double d,double e,double f)throws Exception{return c(v(x,y,z),v(a,b,c),v(d,e,f));}
         Pen c(double[] a,double[] b,double[] c)throws Exception{double[] p=h.point(a),q=h.point(b),r=h.point(c);path.c(p[0],p[1],q[0],q[1],r[0],r[1]);return this;}
         Pen z(){path.z();return this;}

@@ -1,3 +1,15 @@
+# Active profile fringe repair — 2026-10-21
+
+Root isolates existing SketchAnatomyHead profile forelock disappearance and
+constant-depth strip defects on feat/native-character-fringe-v4108, from frozen
+signed51076fb9a0. Read docs/continuity/NATIVE_PROFILE_FRINGE_4108.md. Preserve
+both RED attempts and actual native screenshots. Focused15/0/0/0 plus native8view
+static guide/reopen passes; recorded native front/back pixels remain exact.
+Generic guide geometry is not matched actor artwork or mastered angles. Merge
+only into the feature integration after review; no main/Worker/stable/signing/
+identity reset. ONE local Gradle, root owns the lane. Agent3 Plus worktree is
+independent; no full4.10.8 validation or signing yet.
+
 # Active character structure integration — 2026-10-21
 
 Root integrates contour-hole/long-hair repairs, scoped numeric persistence and
