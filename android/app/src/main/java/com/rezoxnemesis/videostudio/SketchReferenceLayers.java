@@ -87,15 +87,17 @@ final class SketchReferenceLayers {
                 int[] colors={0xff42c9ff,0xffffb847,0xffd586ff,0xff5de2a0,0xffff7797,0xffd9e257,0xffd4d9e4,0xffdba77b};
                 for(int i=0;i<p.accepted.length();i++){JSONObject m=p.accepted.getJSONObject(i);Path path=path(m.getJSONArray("rings"),w,h);paint.setStyle(Paint.Style.FILL);paint.setColor((colors[i]&0xffffff)|0x50000000);canvas.drawPath(path,paint);paint.setStyle(Paint.Style.STROKE);paint.setStrokeWidth((float)(2/scale));paint.setColor(colors[i]);canvas.drawPath(path,paint);paint.setStyle(Paint.Style.FILL);}
                 ByteArrayOutputStream out=new ByteArrayOutputStream();if(!overlay.compress(Bitmap.CompressFormat.PNG,100,out))throw new IOException("Cannot encode mask preview");byte[] png=out.toByteArray();
-                return new JSONObject().put("sourceModified",false).put("sourceRevision",doc.getLong("revision")).put("sourceReferenceSha256",args.getString("expectedReferenceSha256")).put("sourceSha256",args.getString("expectedSourceSha256")).put("acceptedMasks",p.accepted).put("edgeAdjustedPointCount",p.adjusted).put("sourceAssisted",true).put("hiddenSurfaceReconstruction",false).put("sharedSourcePixelCount",p.sharedPixels).put("retainedPreviewImage",retainedPreview(nativeImage,p)).put("retainedPreviewSource","named_parts_without_background").put("sketchPreviewImage",new JSONObject().put("mimeType","image/png").put("base64",Base64.encodeToString(png,Base64.NO_WRAP)).put("sha256",SketchDocument.sha256(png)).put("width",rw).put("height",rh));
+                return new JSONObject().put("sourceModified",false).put("sourceRevision",doc.getLong("revision")).put("sourceReferenceSha256",args.getString("expectedReferenceSha256")).put("sourceSha256",args.getString("expectedSourceSha256")).put("acceptedMasks",p.accepted).put("edgeAdjustedPointCount",p.adjusted).put("sourceAssisted",true).put("hiddenSurfaceReconstruction",false).put("sharedSourcePixelCount",p.sharedPixels).put("retainedPreviewImage",retainedPreview(nativeImage,p)).put("retainedPreviewSource","named_parts_without_background").put("retainedPreviewCompositing","source_over_layer_order").put("sketchPreviewImage",new JSONObject().put("mimeType","image/png").put("base64",Base64.encodeToString(png,Base64.NO_WRAP)).put("sha256",SketchDocument.sha256(png)).put("width",rw).put("height",rh));
             }finally{nativeImage.recycle();overlay.recycle();}
         }
     }
-    /** Rewrite a private preview bitmap row-by-row before bounded filtering: excluded pixels cannot bleed into retained ink. */
+    /** Actual ordered source-over stack, reusing one private full-source bitmap and a bounded output. */
     private static JSONObject retainedPreview(Bitmap image,Prepared p)throws Exception {
-        int[] row=new int[p.w];for(int y=0;y<p.h;y++){checkCancelled();Arrays.fill(row,0);int offset=y*p.w;for(int x=0;x<p.w;x++)if(p.retained.get(offset+x))row[x]=p.pixels[offset+x];image.setPixels(row,0,p.w,0,y,p.w,1);}
-        double scale=Math.min(1,360d/Math.max(p.w,p.h));int w=Math.max(1,(int)Math.round(p.w*scale)),h=Math.max(1,(int)Math.round(p.h*scale));Bitmap bounded=Bitmap.createScaledBitmap(image,w,h,true);
-        try{ByteArrayOutputStream out=new ByteArrayOutputStream();if(!bounded.compress(Bitmap.CompressFormat.PNG,100,out))throw new IOException("Cannot encode retained artwork preview");byte[] png=out.toByteArray();if(png.length>1024*1024)throw SketchDocument.bad("Retained preview exceeds 1 MiB");return new JSONObject().put("mimeType","image/png").put("base64",Base64.encodeToString(png,Base64.NO_WRAP)).put("sha256",SketchDocument.sha256(png)).put("bytes",png.length).put("width",w).put("height",h);}finally{if(bounded!=image)bounded.recycle();}
+        double scale=Math.min(1,360d/Math.max(p.w,p.h));int w=Math.max(1,(int)Math.round(p.w*scale)),h=Math.max(1,(int)Math.round(p.h*scale));Bitmap bounded=Bitmap.createBitmap(w,h,Bitmap.Config.ARGB_8888);
+        try{Canvas canvas=new Canvas(bounded);Paint paint=new Paint(Paint.FILTER_BITMAP_FLAG);paint.setStyle(Paint.Style.FILL);RectF destination=new RectF(0,0,w,h);int[] row=new int[p.w];
+            for(Part part:p.parts){if(part.complement)continue;checkCancelled();for(int y=0;y<p.h;y++){checkCancelled();Arrays.fill(row,0);int offset=y*p.w;for(int x=0;x<p.w;x++)if(part.selected.get(offset+x))row[x]=p.pixels[offset+x];image.setPixels(row,0,p.w,0,y,p.w,1);}canvas.drawBitmap(image,null,destination,paint);checkCancelled();}
+            ByteArrayOutputStream out=new ByteArrayOutputStream();if(!bounded.compress(Bitmap.CompressFormat.PNG,100,out))throw new IOException("Cannot encode retained artwork preview");byte[] png=out.toByteArray();if(png.length>1024*1024)throw SketchDocument.bad("Retained preview exceeds 1 MiB");return new JSONObject().put("mimeType","image/png").put("base64",Base64.encodeToString(png,Base64.NO_WRAP)).put("sha256",SketchDocument.sha256(png)).put("bytes",png.length).put("width",w).put("height",h);
+        }finally{bounded.recycle();}
     }
     private static void checkCancelled()throws InterruptedIOException{if(Thread.currentThread().isInterrupted())throw new InterruptedIOException("Reference separation cancelled before commit; retry the operation ID to recover any earlier committed receipt");}
     /** Identical conservative retained/output/free-space admission for preview and execution. */
@@ -123,7 +125,7 @@ final class SketchReferenceLayers {
         }
     }
     private static final class Part{JSONObject descriptor;JSONArray rings;boolean complement;BitSet selected;}
-    private static final class Prepared implements AutoCloseable{JSONObject source,ref;JSONArray accepted;int w,h,adjusted,sharedPixels;int[] pixels;BitSet retained;List<Part> parts=new ArrayList<>();public void close(){pixels=null;retained=null;for(Part p:parts)p.selected=null;}}
+    private static final class Prepared implements AutoCloseable{JSONObject source,ref;JSONArray accepted;int w,h,adjusted,sharedPixels;int[] pixels;List<Part> parts=new ArrayList<>();public void close(){pixels=null;for(Part p:parts)p.selected=null;}}
     private static Prepared prepare(SketchProjectStore store,JSONObject doc,JSONObject a)throws Exception{
         int frame=(int)SketchDocument.integer(a,"frame",0,doc.getInt("frameCount")-1);SketchDocument.integer(a,"exposure",1,doc.getInt("frameCount")-frame);
         Prepared p=new Prepared();p.source=requireSource(doc,a.getString("sourceObjectId"),a.getString("expectedReferenceSha256"),a.getString("expectedSourceSha256"));p.ref=p.source.getJSONObject("reference");
@@ -137,7 +139,7 @@ final class SketchReferenceLayers {
             while(it.next(rect))for(int y=rect.top;y<rect.bottom;y++)for(int x=rect.left;x<rect.right;x++){int n=y*p.w+x;if((p.pixels[n]>>>24)==0)continue;if(used.get(n)){if(!allowOverlap)throw SketchDocument.bad("Named parts overlap visible source pixels; refine boundaries or explicitly allow shared joint pixels");shared.set(n);}part.selected.set(n);used.set(n);visible=true;}
             if(!visible)throw SketchDocument.bad("Each named part must contain visible source pixels");p.parts.add(part);for(int r=0;r<rr.length();r++)allRings.put(rr.getJSONArray(r));
         }
-        p.retained=used;p.sharedPixels=shared.cardinality();if(a.has("background")&&p.sharedPixels>0)throw SketchDocument.bad("Shared joint pixels cannot be combined with v1 background complement; omit background or refine nonoverlapping boundaries");
+        p.sharedPixels=shared.cardinality();if(a.has("background")&&p.sharedPixels>0)throw SketchDocument.bad("Shared joint pixels cannot be combined with v1 background complement; omit background or refine nonoverlapping boundaries");
         if(a.has("background")){Part bg=new Part();bg.descriptor=a.getJSONObject("background");bg.rings=allRings;bg.complement=true;bg.selected=new BitSet(p.pixels.length);for(int i=0;i<p.pixels.length;i++)if(!used.get(i))bg.selected.set(i);p.parts.add(0,bg);}
         return p;
     }

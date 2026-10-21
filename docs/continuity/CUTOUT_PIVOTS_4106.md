@@ -29,7 +29,7 @@ No silent geometry conversion or hidden artwork is generated. Translucent shared
 pixels can darken when stacked. This is not an automatic seamless-joint claim.
 
 Preview and import use the same source-bound accepted rings/settings. The new
-`retainedPreviewImage` is an actual native transparent PNG of the union of named
+`retainedPreviewImage` is an actual native transparent PNG of the native ordered source-over stack of named
 retained parts without optional background, bounded to360px/1MiB. Masked-away
 pixels are cleared before bounded filtering; source RGBA inside masks remains
 native source-assisted artwork. The older source/selection overlay remains a
@@ -106,17 +106,25 @@ review: a large neck/shoulder gap, unwanted sword strip and cut cuff fabric.
 Native original-source head/cuff magnified previews then guided the second
 generation. Cuff shape improved, but its head still failed visible joint seams.
 Both generations and explicit Visual-Review.json failures remain preserved.
-A third private source-mask revision is being reviewed separately; no technical
-check accepts its art. Product synthetic regression is independent of art review.
+The third private source-mask revision closes the large open joins and retains
+the folded cuffs; root inspected actual head/wrist crops and native editor
+screenshots. Remaining fringe/possible duplicate hand lines keep it NEEDS_REWORK.
+No technical check accepts its art. Product synthetic regression is independent of art review.
 
 Visual/contact quality must be reviewed from actual native outputs;
 source/clock/hash/archive tests alone cannot accept it. One study's96frames are
 one scenario, not96different actions. The240-second film remains unfinished.
 
 
-One known preview limitation remains: the transparent preview uses the union of
-retained source pixels. For intentionally overlapping translucent parts, import
-compositing can be darker than that union preview. Shared opaque actor pixels are
-unaffected; UI/capability text warns about alpha stacking. A follow-up native
-source-over preview regression and repair is queued rather than claiming parity
-for that translucent case.
+A follow-up exact alpha-compositing regression was observed RED: a shared pixel
+from two128-alpha source parts rendered192-alpha after import but only128-alpha
+in the original union preview. The failure/log remains private in
+alpha-preview-red-junit.xml and alpha-preview-red.log. The repair now clears and
+draws each named part sequentially through native Canvas source-over into the
+360px transparent output, using one reused mutable full-source bitmap, row-sized
+scratch and per-row cancellation checks. It skips optional background complement.
+This shows actual shared alpha stacking instead of a raw source-pixel union.
+Fresh exact unchanged regression plus full affected reference suite:49 tests
+PASS,0 failures,0 errors,0 skips (alpha-preview-green.log and
+alpha-preview-green-junit). Node reference contract16/16 PASS again after this
+repair. The root agent owns final integrated regression and CI/signing.
