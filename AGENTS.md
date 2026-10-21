@@ -5,7 +5,7 @@ paired local AI on feat/native-character-structure-v4107. Intended4.10.7/code510
 read docs/continuity/NATIVE_CHARACTER_STRUCTURE_4107.md and paired-provider docs.
 Frozen4.10.6 e16a050 passed CI39616588540 and independent original signer checks,
 but newly discovered numeric/guide defects are preserved and being repaired here.
-Full combined verification remains pending. All three owner-requested tracks
+Fresh combined local2281 Android/0failures/0errors/22skips and763 Node+306smoke pass; CI/original signing pending. All three owner-requested tracks
 remain separate evidence: one-character motion/camera, source-assisted cutouts,
 and native local drawing. No parameter/frame/assertion count inflation; no claim
 of accepted likeness or complete240s film. One local Gradle, root only. No hosted

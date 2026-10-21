@@ -27,3 +27,25 @@ math and this repair do not establish unseen artwork, mastered360views or action
 Combined4.10.7 integration, full checks and original-signer candidate remain
 pending. Keep local paired-provider failed generations and source-assisted cutout
 provenance. One native4second study is one action, not96distinct actions.
+
+## Fresh integrated source verification
+
+Combined source includes preserved persistenceb0857c5, paired graph auditfee01ad,
+providerae7628a, version90832da and manual snapshot/provenance repair3f199e6.
+Fresh full local Android: 2281 tests,0failures,0errors,22skips,
+407 suites;763 Node tests and306smoke checks pass. One local Gradle ran
+for7m51s, original RED evidence retained. Source, logs and individual XML remain
+under private integrated evidence. CI/signing remain separate pending checks.
+
+The actual new native paired CPU/JNI profile generation finished successfully
+(178,904ms operation), with frozen input hashes, archive/replay and unchanged
+original. It still fails artistic acceptance: elongated neck, weak eye/detail,
+changed lower face/hair/clothing. It is a512px model-generated raster, not recovered
+artist layers. Actual head-grid and wrist source-assisted studies preserve texture
+identity and fixed-neck constraints, but paper fringe and planar deformation still
+need review. No accepted360degree actor, thousands of actions or240second film.
+
+Matching native and Node schemas are in this branch; the remote Worker was not
+deployed and new private MCP/phone operation is unverified. Optional paired weights
+are about4.58GB and require64-bit/8GiB available RAM. No installed phone, GPU or
+Android-codec performance is implied by workspace native execution.
