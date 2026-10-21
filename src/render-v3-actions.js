@@ -14,6 +14,13 @@ export const RENDER_NATIVE_ACTIONS = Object.freeze({
   "blender.object.set_transform": ["name", "location", "rotation_euler", "scale"],
   "blender.object.keyframe": ["name", "frame", "data_path", "value"],
   "blender.project.save_copy": [],
+  "blender.object.add_primitive": ["kind", "name", "size", "location"],
+  "blender.object.add_camera": ["name", "location", "rotation_euler"],
+  "blender.object.add_light": ["name", "light_type", "location", "color", "energy"],
+  "blender.object.modifier_add": ["name", "modifier_type", "levels", "width"],
+  "blender.material.assign": ["name", "material_name", "color", "metallic", "roughness"],
+  "blender.scene.render_settings": ["resolution_x", "resolution_y", "samples", "engine"],
+  "blender.scene.render_still": [],
 });
 const o = value => value && typeof value==="object" && !Array.isArray(value) && Object.getPrototypeOf(value)===Object.prototype;
 const integer = (v,min,max) => Number.isInteger(v) && v>=min && v<=max;
@@ -53,6 +60,47 @@ export function assertRenderAction(action,args) {
     for(const [key,min,max] of [["location",-100000,100000],["rotation_euler",-1000,1000],["scale",.001,10000]]){
       if(Object.hasOwn(args,key)&&!triple(args[key],min,max))throw Error("RENDER_INVALID_TRANSFORM");
     }
+  }
+  if(action==="blender.object.add_primitive"){
+    if(Object.hasOwn(args,"kind")&&!["UV_SPHERE","ICO_SPHERE","CYLINDER","CONE","PLANE","TORUS"].includes(args.kind))
+      throw Error("RENDER_INVALID_PRIMITIVE");
+    if(Object.hasOwn(args,"name")&&!validName(args.name))throw Error("RENDER_INVALID_OBJECT_NAME");
+    if(Object.hasOwn(args,"size")&&!scalar(args.size,.001,10000))throw Error("RENDER_INVALID_SIZE");
+    if(Object.hasOwn(args,"location")&&!triple(args.location,-100000,100000))throw Error("RENDER_INVALID_LOCATION");
+  }
+  if(action==="blender.object.add_camera"){
+    if(Object.hasOwn(args,"name")&&!validName(args.name))throw Error("RENDER_INVALID_OBJECT_NAME");
+    if(Object.hasOwn(args,"location")&&!triple(args.location,-100000,100000))throw Error("RENDER_INVALID_LOCATION");
+    if(Object.hasOwn(args,"rotation_euler")&&!triple(args.rotation_euler,-1000,1000))throw Error("RENDER_INVALID_ROTATION");
+  }
+  if(action==="blender.object.add_light"){
+    if(Object.hasOwn(args,"name")&&!validName(args.name))throw Error("RENDER_INVALID_OBJECT_NAME");
+    if(Object.hasOwn(args,"light_type")&&!["POINT","SUN","SPOT","AREA"].includes(args.light_type))
+      throw Error("RENDER_INVALID_LIGHT_TYPE");
+    if(Object.hasOwn(args,"location")&&!triple(args.location,-100000,100000))throw Error("RENDER_INVALID_LOCATION");
+    if(Object.hasOwn(args,"color")&&!triple(args.color,0,1))throw Error("RENDER_INVALID_COLOR");
+    if(Object.hasOwn(args,"energy")&&!scalar(args.energy,0,10000000))throw Error("RENDER_INVALID_LIGHT_ENERGY");
+  }
+  if(action==="blender.object.modifier_add"){
+    if(!validName(args.name)||!["SUBSURF","BEVEL","SOLIDIFY","MIRROR"].includes(args.modifier_type))
+      throw Error("RENDER_INVALID_MODIFIER");
+    if(Object.hasOwn(args,"levels")&&!integer(args.levels,0,6))throw Error("RENDER_INVALID_LEVELS");
+    if(Object.hasOwn(args,"width")&&!scalar(args.width,0,1000))throw Error("RENDER_INVALID_WIDTH");
+  }
+  if(action==="blender.material.assign"){
+    if(!validName(args.name))throw Error("RENDER_INVALID_OBJECT_NAME");
+    if(Object.hasOwn(args,"material_name")&&!validName(args.material_name))throw Error("RENDER_INVALID_MATERIAL_NAME");
+    if(Object.hasOwn(args,"color")&&!triple(args.color,0,1))throw Error("RENDER_INVALID_COLOR");
+    if(Object.hasOwn(args,"metallic")&&!scalar(args.metallic,0,1))throw Error("RENDER_INVALID_METALLIC");
+    if(Object.hasOwn(args,"roughness")&&!scalar(args.roughness,0,1))throw Error("RENDER_INVALID_ROUGHNESS");
+  }
+  if(action==="blender.scene.render_settings"){
+    if(Object.keys(args).length===0)throw Error("RENDER_SETTINGS_REQUIRED");
+    for(const key of ["resolution_x","resolution_y"])
+      if(Object.hasOwn(args,key)&&!integer(args[key],16,16384))throw Error("RENDER_INVALID_RESOLUTION");
+    if(Object.hasOwn(args,"samples")&&!integer(args.samples,1,4096))throw Error("RENDER_INVALID_SAMPLES");
+    if(Object.hasOwn(args,"engine")&&!["CYCLES","BLENDER_EEVEE","BLENDER_EEVEE_NEXT","BLENDER_WORKBENCH"].includes(args.engine))
+      throw Error("RENDER_INVALID_ENGINE");
   }
   if(action==="blender.object.keyframe"){
     if(!validName(args.name) || !integer(args.frame,1,100000) || !["location","rotation_euler","scale"].includes(args.data_path))

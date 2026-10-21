@@ -32,7 +32,11 @@ public final class RenderNativeIpcClient {
             "engine.status", "gpu.info", "projects.list", "projects.inspect",
             "blender.scene.summary", "blender.object.add_cube",
             "blender.scene.set_frame", "blender.object.set_transform",
-            "blender.object.keyframe", "blender.project.save_copy"));
+            "blender.object.keyframe", "blender.project.save_copy",
+            "blender.object.add_primitive","blender.object.add_camera",
+            "blender.object.add_light","blender.object.modifier_add",
+            "blender.material.assign","blender.scene.render_settings",
+            "blender.scene.render_still"));
 
     private RenderNativeIpcClient() {}
 
@@ -141,7 +145,8 @@ public final class RenderNativeIpcClient {
                 finish.accept(error("RENDER_APP_NOT_INSTALLED_OR_INCOMPATIBLE"));
                 return;
             }
-            long waitMs = "render.blender.project.save_copy".equals(action) ? 145000 : 40000;
+            long waitMs = "render.blender.scene.render_still".equals(action) ? 540000 :
+                "render.blender.project.save_copy".equals(action) ? 145000 : 40000;
             main.postDelayed(timeout[0], waitMs);
         } catch (Exception e) {
             finish.accept(error("RENDER_IPC_BIND_FAILED"));

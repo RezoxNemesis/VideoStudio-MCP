@@ -34,3 +34,23 @@ test("request ID controls dedupe and receipt state is distinct from execution",(
   assert.equal(renderCommandStatus("claimed"),"pending");
   assert.equal(renderCommandStatus("completed"),"succeeded");
 });
+
+
+test("real Blender modeling, light, material, and rendering actions require typed arguments",()=>{
+  for(const [action,args] of [
+    ["blender.object.add_primitive",{kind:"UV_SPHERE",name:"Sphere",size:1.4}],
+    ["blender.object.add_camera",{name:"Camera",location:[0,-6,3]}],
+    ["blender.object.add_light",{name:"Light",light_type:"AREA",energy:800,color:[1,.8,.6]}],
+    ["blender.object.modifier_add",{name:"Sphere",modifier_type:"SUBSURF",levels:2}],
+    ["blender.material.assign",{name:"Sphere",material_name:"Copper",color:[.8,.4,.2],metallic:.6}],
+    ["blender.scene.render_settings",{resolution_x:1920,resolution_y:1080,engine:"CYCLES",samples:32}],
+    ["blender.scene.render_still",{}],
+  ]){
+    assert.deepEqual(assertRenderAction(action,args),{action,args});
+  }
+  assert.throws(()=>assertRenderAction("blender.object.add_light",{light_type:"AREA",color:[0,0,9]}),/RENDER_INVALID_COLOR/);
+  assert.throws(()=>assertRenderAction("blender.scene.render_settings",{resolution_x:0}),/RENDER_INVALID_RESOLUTION/);
+  assert.throws(()=>assertRenderAction("blender.scene.render_settings",{}),/RENDER_SETTINGS_REQUIRED/);
+  assert.throws(()=>assertRenderAction("blender.object.modifier_add",{name:"Sphere",modifier_type:"RUN_SCRIPT"}),/RENDER_INVALID_MODIFIER/);
+  assert.throws(()=>assertRenderAction("blender.scene.render_still",{filepath:"/sdcard/secret"}),/RENDER_UNKNOWN_ARGUMENT/);
+});
