@@ -95,11 +95,13 @@ test('human clothing metadata matches native literals and gives ordinary ChatGPT
  for(const key of ['genuine3D','creativeQualityCertified','phoneExecutionVerified','speechVerified'])assert.equal(m[key],false);
  assert.deepEqual(m.budgets,{maximumBytes:4194304,maximumObjects:4096,maximumPoints:131072,maximumKeys:4096});assert.equal(m.channels.length,35);assert.equal(m.maximumRetainedActors,16);
  class JSONObject{put(key,value){this[key]=value;return this;}}class JSONArray extends Array{constructor(values){super();this.push(...values);}}
- const body=native('SketchCapabilities').match(/public static JSONObject humanAnimation\(\) throws Exception \{\s*return ([\s\S]*?);\s*\}/)[1];const expression=body.replace(/new (?:String|double|int)\[\]\{([^}]*)\}/g,'[$1]');assert.deepEqual(JSON.parse(JSON.stringify(vm.runInNewContext('('+expression+')',{JSONObject,JSONArray}))),m);
+ const cameraLiteral=native('SketchHumanCameraGuide').match(/return new JSONObject\(("(?:\\.|[^"\\])*")\);/)[1];
+ const SketchHumanCameraGuide={capabilities:()=>JSON.parse(JSON.parse(cameraLiteral))};
+ const body=native('SketchCapabilities').match(/public static JSONObject humanAnimation\(\) throws Exception \{\s*return ([\s\S]*?);\s*\}/)[1];const expression=body.replace(/new (?:String|double|int)\[\]\{([^}]*)\}/g,'[$1]');assert.deepEqual(JSON.parse(JSON.stringify(vm.runInNewContext('('+expression+')',{JSONObject,JSONArray,SketchHumanCameraGuide}))),m);
  const detail=worker.match(/:action==='sketch_edit'\?'([^']+)'/)[1];assert.match(detail,/clothingStyle.*legacy.*tailored.*4\.8\.2/);assert.match(detail,/Clothing.*dropdown/);
 });
 
-test('release is coherent at 4.9.6/code499 and existing hand/archive/action floors stay intact',()=>{
+test('release is coherent at 4.10.6/code509 and existing hand/archive/action floors stay intact',()=>{
  assert.match(native('AppProtocol'),/APP_VERSION = "4\.10\.6"/);const build=fs.readFileSync(new URL('../android/app/build.gradle.kts',import.meta.url),'utf8');assert.match(build,/versionCode = 509/);assert.match(build,/versionName = "4\.10\.6"/);
  assert.equal(contract.STUDIO_NATIVE_ACTIONS.size,Object.keys(contract.studioToolSchemas).length);assert(contract.STUDIO_ALIAS_ACTIONS.has("studio_sketch_layered_drawing_preview"));for(const action of contract.STUDIO_NATIVE_ACTIONS)assert(contract.STUDIO_ALIAS_ACTIONS.has("studio_"+action));assert.equal(contract.HAND_ANIMATION_CAPABILITIES.renderStyleMinimumNativeVersion,'4.8.1');
  const archive={archiveProjectId:'archive',archiveName:'actor.vssketch',expectedSha256:'a'.repeat(64),operationId:'restore'};for(const action of names('sketch_restore_archive')){assert.deepEqual(contract.nativeStudioParameters(action,archive),archive);assert.doesNotThrow(()=>contract.requireStudioVersion({appVersion:'4.1.0'},action,archive));assert.throws(()=>contract.nativeStudioParameters(action,{...archive,clothingStyle:'tailored'}));}

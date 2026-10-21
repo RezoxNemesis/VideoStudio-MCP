@@ -134,7 +134,10 @@ test('correction whitelist blocks paint, dependencies, references, imports, cloc
 test('preview preserves the existing image contract and enforces after proposal binding and frame/crop bounds',()=>{
  const before={...identity,side:'before',frameIndex:0};assert.deepEqual(parse('sketch_correction_preview',before),before);
  for(const args of [{...before,side:'after'},{...before,side:'AFTER'},{...before,frameIndex:1200},{...before,frameIndex:-1},{...before,frameIndex:'0'},{...before,crop:{x:.9,y:0,width:.2,height:.2}},{...before,detail:'thumbnail'},{...before,maxDimension:32}])assert.throws(()=>parse('sketch_correction_preview',args));
- assert.match(worker,/\['contactSheet','sourceArtworkImage','rigPreviewImage','sketchPreviewImage'\]/);
+ const imageReader=vm.runInNewContext('('+worker.match(/const nativeImageBlocks = (command => \{[\s\S]*?\n\});/)[1]+')');
+ const priorKeys=['contactSheet','sourceArtworkImage','rigPreviewImage','sketchPreviewImage'];
+ const encoded=Object.fromEntries(priorKeys.map(key=>[key,{base64:Buffer.from(key).toString('base64'),mimeType:'image/png'}]));
+ assert.deepEqual(JSON.parse(JSON.stringify(imageReader({result:encoded}))),priorKeys.map(key=>({type:'image',data:encoded[key].base64,mimeType:'image/png'})));
  const service=native('ControlService');for(const action of actions)assert.ok(service.includes('case "'+action+'"'),action);
  assert.match(service,/SketchCorrectionOps\.execute\(this,action,p\)/);
 });
@@ -203,7 +206,7 @@ test('capability literals expose fixed recipe checks and human judgment without 
  assert.match(worker,/correctionWorkflow:isV3.*CORRECTION_WORKFLOW_CAPABILITIES/);
 });
 
-test('release is4.9.6/code499 and earlier anatomy/style/action floors are unchanged',()=>{
+test('release is4.10.6/code509 and earlier anatomy/style/action floors are unchanged',()=>{
  assert.match(native('AppProtocol'),/APP_VERSION = "4\.10\.6"/);const build=fs.readFileSync(new URL('../android/app/build.gradle.kts',import.meta.url),'utf8');assert.match(build,/versionCode = 509/);assert.match(build,/versionName = "4\.10\.6"/);
  assert.equal(contract.STUDIO_NATIVE_ACTIONS.size,Object.keys(contract.studioToolSchemas).length);assert(contract.STUDIO_ALIAS_ACTIONS.has("studio_sketch_layered_drawing_preview"));for(const action of contract.STUDIO_NATIVE_ACTIONS)assert(contract.STUDIO_ALIAS_ACTIONS.has("studio_"+action));
  const anatomy={sketchId:'original',expectedRevision:1,operationId:'anatomy',operations:[{type:'add_human_animation',layerId:'layer_1',actorId:'actor',settings:{figureStyle:'legacy',constructionGuides:false}}]};
