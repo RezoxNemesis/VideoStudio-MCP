@@ -53,7 +53,6 @@ test("true queued native execution, authenticated completion and idempotency",as
   await st.ctx.storage.put("app-device:"+device,stale);
   const offline=await R.enqueue(st,video,"blender.scene.summary",{},"one");
   assert.equal(offline.status,"waiting_native");
-  await R.poll(st,device,key,true,null);
   const original=await R.enqueue(st,video,"blender.object.add_cube",{name:"CubeA",size:2},"two");
   const duplicate=await R.enqueue(st,video,"blender.object.add_cube",{name:"CubeA",size:2},"two");
   assert.equal(duplicate.duplicate,true);assert.equal(duplicate.id,original.id);
