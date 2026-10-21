@@ -12,6 +12,7 @@ import STUDIO_ACTION_TIMELINE_JS from "./studio-action-timeline.js";
 import STUDIO_POSE_SEQUENCE_JS from "./studio-pose-sequence.js";
 import LOCAL_VIDEO_DOWNLOAD_HTML from "./local-download.js";
 import {persistNativeCommandQueue, hydrateNativeField, hydrateNativeCommand} from "./native-payload-storage.js";
+import * as renderNative from "./render-native-channel.js";
 
 const JH = {"content-type":"application/json; charset=UTF-8","cache-control":"no-store"};
 const now = () => new Date().toISOString();
@@ -226,6 +227,14 @@ export class VideoStudioState extends DurableObject {
     const ra=(await this.ctx.storage.get("rcl:"+deviceId))||[]; return {connected:!!d,device:d,projectCount:ps.length,pendingCommands:a.filter(c=>c.status==="queued").length,pendingRuntimeCommands:ra.filter(c=>c.status==="queued").length,lastCommand:(ra[ra.length-1]||a[a.length-1]||null)};
   }
 
+  async appRenderLink(v,id,key,meta={}){return renderNative.link(this,v,id,key,meta);}
+  async appRenderStatus(v){return renderNative.status(this,v);}
+  async appRenderQueue(v,a,args={},rid=null){return renderNative.enqueue(this,v,a,args,rid);}
+  async appRenderCommand(v,id){return renderNative.command(this,v,id);}
+  async appRenderCancel(v,id){return renderNative.cancel(this,v,id);}
+  async appRenderPoll(id,key,enabled,active=null,caps=[]){return renderNative.poll(this,id,key,enabled,active,caps);}
+  async appRenderComplete(id,key,cmd,digest,state,result){return renderNative.complete(this,id,key,cmd,digest,state,result);}
+  async appRenderUnlink(id,key){return renderNative.unlink(this,id,key);}
   async appRegister(deviceId,ownerKey,meta={}){
     if(!deviceId||String(deviceId).length<8) throw new Error("Invalid native device ID");
     if(!ownerKey||String(ownerKey).length<32) throw new Error("Invalid owner key");
@@ -1031,6 +1040,7 @@ export class VideoStudioState extends DurableObject {
       queuedExecutionPolicy:fallbackConnected?"studio-web-when-compatible-otherwise-native-on-reconnect":"native-on-reconnect",
       lastCommand:redactCommand(list[list.length-1]||null),
       projectCount:Array.isArray(d.projects)?d.projects.length:0,
+      render:await this.appRenderStatus(ownerKey),
       galleryAccess:false,
       directAttachmentIngest:true,
       portraitAnimationEngine:d.portraitAnimationEngine||"",
@@ -1469,6 +1479,14 @@ function serverFor(env,hybridKey=""){
         return out(await st.appConvergeOwnerAliases(primary,legacy,String(p.primaryDeviceId||"")));
       }
       const native=await st.appResolve(deviceId);
+      if(native&&action==="autonomous_request" &&
+         typeof p.nativeAction==="string"&&p.nativeAction.startsWith("render.")){
+        const actionName=p.nativeAction.slice(7);
+        const command=await st.appRenderQueue(deviceId,actionName,p.nativeParameters||{},p.renderRequestId||null);
+        return out({queued:true,commandId:command.id,sequence:command.seq,action:actionName,
+          target:"Render Android",nativeApp:true,protocolVersion:3,
+          waitingNative:command.status==="waiting_native",duplicate:!!command.duplicate});
+      }
       if(native){
         let nativeAction=p.nativeAction||"";
         let nativeParameters=p.nativeParameters||p;
@@ -1508,6 +1526,8 @@ function serverFor(env,hybridKey=""){
     }catch(e){ return out({queued:false,error:e.message}); }
   });
   s.registerTool("get_video_command_result",{description:"Get the result of a queued edit, media-analysis, render or native-app compatibility command.",inputSchema:{deviceId:z.string().min(8),commandId:z.string().min(8)}},async({deviceId,commandId})=>{
+    const r=await st.appRenderCommand(deviceId,commandId).catch(()=>null);
+    if(r)return out(redactCommand(r));
     const native=await st.appResolve(deviceId);
     if(native){
       const c=await commandNative(st,native,deviceId,commandId);
@@ -1687,6 +1707,33 @@ function serverForApp(env,ownerKey,protocolVersion=1){
     }catch(e){ return out({error:e.message}); }
   };
 
+  if(isV3){
+    s.registerTool("render_status",{
+      description:"Status for Render Android using the existing VideoStudio MCP. Offline queue does not mean native execution.",
+      inputSchema:{}
+    },async()=>out(await st.appRenderStatus(ownerKey)));
+    s.registerTool("render_execute",{
+      description:"Queue a validated native Blender operation in the separate Render Android app. No cloud rendering.",
+      inputSchema:{action:z.string().min(3).max(80),args:z.record(z.string(),z.any()).optional(),
+        requestId:z.string().min(1).max(128).optional()}
+    },async({action,args,requestId})=>{
+      try{const c=await st.appRenderQueue(ownerKey,action,args||{},requestId||null);
+        return out({queued:true,commandId:c.id,action,duplicate:!!c.duplicate,
+          waitingNative:c.status==="waiting_native",target:"Render Android"});
+      }catch(e){return out({queued:false,error:e.message})}
+    });
+    s.registerTool("render_command_result",{
+      description:"Return native Render command state and actual device-result evidence; queued is not succeeded.",
+      inputSchema:{commandId:z.string().min(8).max(128)}
+    },async({commandId})=>out(redactCommand(await st.appRenderCommand(ownerKey,commandId))||{error:"RENDER_COMMAND_NOT_FOUND"}));
+    s.registerTool("render_cancel",{
+      description:"Cancel a queued Render command or request that the phone cancel a running action.",
+      inputSchema:{commandId:z.string().min(8).max(128)}
+    },async({commandId})=>{
+      try{return out(await st.appRenderCancel(ownerKey,commandId))}
+      catch(e){return out({ok:false,error:e.message})}
+    });
+  }
   s.registerTool("app_status",{description:isV3?"Check the VideoStudio v3 Native Agent connection, protocol version, permission mode, projects and pending native work. Gallery access is always false.":"Check the private native VideoStudio Android connection, permission mode, projects, control-pause state and pending work. Gallery access is always false.",inputSchema:{}},async()=>out(await readStatus()));
 
   s.registerTool("app_capabilities",{description:isV3?"Read VideoStudio v3 Native Agent capabilities and architecture guarantees.":"Read the native v1.1 editing, AI, render and privacy capabilities available to ChatGPT.",inputSchema:{}},async()=>out({
@@ -2085,6 +2132,28 @@ async function api(request,env){
           "x-videostudio-sha256":meta.digest
         }
       });
+    }
+    // Render Android uses a distinct device identity and queue in this Worker.
+    if(u.pathname==="/api/v3/render/health"&&request.method==="GET")
+      return reply({ok:true,service:"videostudio-render-mcp-v3",transportOnly:true,blenderExecutor:"android"});
+    if(u.pathname==="/api/v3/render/link"&&request.method==="POST"){
+      const b=await request.json();
+      return reply({ok:true,...await st.appRenderLink(b.videoStudioOwnerKey,b.renderDeviceId,b.renderOwnerKey,b.meta||{})});
+    }
+    if(u.pathname==="/api/v3/render/poll"&&request.method==="POST"){
+      const b=await request.json(),key=bearer(request);
+      if(!key)return reply({error:"Render device authorization required"},401);
+      return reply(await st.appRenderPoll(b.deviceId,key,b.enabled,b.activeJobId||null,b.capabilities||[]));
+    }
+    if(u.pathname==="/api/v3/render/result"&&request.method==="POST"){
+      const b=await request.json(),key=bearer(request);
+      if(!key)return reply({error:"Render device authorization required"},401);
+      return reply(await st.appRenderComplete(b.deviceId,key,b.job_id,b.digest,b.state,b.result));
+    }
+    if(u.pathname==="/api/v3/render/unlink"&&request.method==="POST"){
+      const b=await request.json(),key=bearer(request);
+      if(!key)return reply({error:"Render device authorization required"},401);
+      return reply(await st.appRenderUnlink(b.deviceId,key));
     }
     if(u.pathname==="/api/v3/app/register"&&request.method==="POST"){
       const b=await request.json(), meta=b.meta||{};
