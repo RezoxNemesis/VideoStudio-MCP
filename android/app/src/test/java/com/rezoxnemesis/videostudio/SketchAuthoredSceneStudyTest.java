@@ -22,7 +22,11 @@ public class SketchAuthoredSceneStudyTest {
  private void run(JSONObject manifest)throws Exception{
   Context context=RuntimeEnvironment.getApplication();File root=new File(manifest.getString("output"));assertTrue(root.mkdirs()||root.isDirectory());JSONArray calls=new JSONArray();
   String op=manifest.getString("studyId"),id;
-  if(manifest.has("referenceSource")){
+  if(manifest.has("newSketch")){
+   assertTrue("Fresh native studies explicitly exclude imported image pixels",manifest.optBoolean("plainSource",false));
+   id=op;JSONObject create=SketchDocument.copy(manifest.getJSONObject("newSketch")).put("sketchId",id).put("operationId","new");
+   calls.put(new JSONObject().put("action","sketch_create").put("request",create).put("receipt",SketchEditOps.execute(context,"sketch_create",create)));
+  }else if(manifest.has("referenceSource")){
    JSONObject input=manifest.getJSONObject("referenceSource");File source=new File(input.getString("path"));assertEquals("Owner reference upload identity",input.getString("expectedUploadSha256"),SketchProjectStore.fileHash(source));ProjectStore projects=new ProjectStore(context);ProjectStore.Project project=projects.create("Owner profile reference only");ProjectStore.Asset asset=projects.registerImportedAsset(project.id,android.net.Uri.fromFile(source),source.getName(),"image/jpeg",0,source.length());id=op;
    JSONObject create=new JSONObject().put("sketchId",id).put("operationId","new").put("width",256).put("height",256).put("frameCount",1).put("background","#00000000");calls.put(new JSONObject().put("action","sketch_create").put("request",create).put("receipt",SketchEditOps.execute(context,"sketch_create",create)));
    JSONObject admit=new JSONObject().put("sketchId",id).put("operationId","reference").put("expectedRevision",1).put("projectId",project.id).put("sourceProjectUpdatedAt",projects.get(project.id).updatedAt).put("assetId",asset.id).put("layerId","layer_1").put("objectId","guide").put("guideVisible",false);calls.put(new JSONObject().put("action","sketch_import_reference").put("request",admit).put("receipt",SketchEditOps.execute(context,"sketch_import_reference",admit)));JSONObject reference=SketchDocument.object(load(context,id),"guide").getJSONObject("reference");assertEquals(input.getString("expectedUploadSha256"),reference.getString("sourceSha256"));
