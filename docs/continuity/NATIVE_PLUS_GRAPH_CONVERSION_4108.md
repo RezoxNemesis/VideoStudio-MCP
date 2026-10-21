@@ -94,3 +94,46 @@ No actual multiGiB graph conversion or ORT compatibility result is claimed yet.
 6. Actual app-native character drawings under frozen pose/reference inputs need
    visual review. No exact likeness, unseen views, temporal consistency or finished
    four-minute film follows from this engineering slice.
+
+## Actual native conversion and CPU routing (root executed)
+
+The opt-in LocalDrawingPlusGraphConversionStudyTest first ran discovery without
+publication (native-conversion-v1), then a separate frozen-pin verification into
+native-conversion-v2. Original public model hashes remained unchanged. Verified:
+
+- CLIP1,264,856,252bytes,
+  SHA8f6c9781e0a6de096ac0e6160e067f8b94001dabef279f7fa70dff150e4e454a.
+- UNet1,764,916,898bytes,
+  SHAd53c027c7a0ea50f737fe57a2f68ab5f980b0c6199c4980cb96ff66de5da00f6.
+
+Native verification passed36seconds with host-process HWM366944kB, no model
+runtime loaded. Independent streamed protobuf/payload hashing then proved ALL
+original initializer payloads byte/hash-identical in both derived files, and all13
+original residual ValueInfo byte strings unchanged. Actual UNet delta is36deleted
+projection nodes (28data-dependent +8Constant),64changed KV/reshape nodes,16added
+shape initializers and48inputs. CLIP adds1Identity/output, changes no old nodes.
+Both source and derived graphs have zero intermediate value_info records.
+Independent evidence: native-conversion-v2-independent-byte-audit.json.
+
+Root then ran LocalDrawingPlusGraphRuntimeProbeTest through the actual shared
+VideoStudio ONNX Runtime1.23.2 CPU/JNI runner. Sequential sessions:2CLIP passes,
+2PlusFace-head passes,1actual ControlNet pass,5converted-UNet passes. All48typed
+ports,13residual ports and32KV outputs were checked. Finite appearance-route mean
+absolute delta0.0025244166 and actual structural-route delta0.0377554564 prove
+numeric influence. Different real K arrays with allV=0 produced EXACT0difference.
+Unconditional tokens came from actual CLIP(all-zero NORMALIZED pixels), whose
+nonzero hidden RMS0.80455408 rules out a zero-hidden-array substitute. Host-process
+HWM3870288kB; not phone RAM/performance or GPU execution.
+
+This is a numeric graph probe, not image synthesis, likeness acceptance, old-path
+equivalence, mastered views or an animation scenario. No VAE decode or full
+schedule ran. Evidence/log/XML and source snapshots remain native-runtime-v1.
+The optional study drivers explicitly distinguish discovery/verification/runtime
+and skip without their dedicated environment variables; their envs bypass Gradle
+result caching so changed configs cannot silently reuse a previous probe.
+
+Old-path equivalence remains next: append32original4-token KV outputs to the
+otherwise untouched original UNet in an app-native private audit recipe, capture
+its real outputs, close that session, repeat each token4times and compare the new
+16-token graph. BEFORE measuring, the FP16 budgets were frozen at maxAbs0.02 and
+RMS0.003. Nonzero results must be reported as tolerances, never pixel identity.
