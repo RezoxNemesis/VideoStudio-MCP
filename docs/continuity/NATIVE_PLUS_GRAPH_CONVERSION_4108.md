@@ -247,3 +247,25 @@ are retained in integrated-plus-node-v1.log; updating those assertions to the
 actual4.10.8/code511 (without changing feature floors) yields the complete v2
 PASS. Full combined Android, actual Plus image review and CI/signing remain
 root-owned and pending.
+
+## Both real public heads and manual selector execution
+
+Root executed LocalDrawingPlusHeadRuntimeProbeTest through the native shared
+ORT1.23.2 CPU/JNI runner. Both independently pinned49,514,510-byte PlusFace and
+Plus heads accepted the identical bounded numeric[1,257,1280] input, emitted all
+32finite FP32 ports with exact K[1,inner,16]/V[1,16,inner] layout/order, and produced
+distinct results (maximum absolute24.77766037/mean absolute1.50460492 across the
+returned head tensors). This rules out silently selecting the same head twice;
+these raw numeric differences are not image quality scores. Actual head forwards
+were187ms/127ms; host-process HWM414132kB. Evidence is native-both-heads-v1 with
+its native XML. No artwork, image synthesis, likeness, phone or animation claim.
+The test skips without the explicit existing graph-probe environment/config and
+therefore retains its cache-bypass semantics without a new environment mechanism.
+
+The manual regression now goes beyond finding the selector and common missing-
+model text: it clicks Generate new draft through the actual activity, then reads
+the durable failed-model receipt and request. It verifies the actual Plus pack
+and `conditioning.adapter:plus_face`, rejecting silent basic fallback. Root
+observed this stronger public-flow test PASS with the source-preview lane; exact
+XML is overall-preview-and-manual-green-junit. The optional model deliberately
+is absent in that synthetic fixture, so no inference/art claim is made by it.
