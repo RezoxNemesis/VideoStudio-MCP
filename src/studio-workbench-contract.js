@@ -1,6 +1,7 @@
 // Inert application-v3 authoring contracts. Native facades own storage/rendering.
 import {z} from 'zod';
-import {cinematic3dTimelineSchema,CINEMATIC_3D_ACTIONS} from './cinematic3d-contract.js';
+import {cinematic3dTimelineSchema,CINEMATIC_3D_ACTIONS,EXACT_CAMERA_ORBIT_CAPABILITIES} from './cinematic3d-contract.js';
+export {EXACT_CAMERA_ORBIT_CAPABILITIES} from './cinematic3d-contract.js';
 
 export const LOCAL_DRAWING_CAPABILITIES=Object.freeze({"minimumNativeVersion":"4.10.2","actions":["local_drawing_models","local_drawing_install","local_drawing_generate","local_drawing_get"],"runtime":"onnxruntime-cpu","packId":"sd15_onnx_v1","hostedInference":false,"modelWeightsOptional":true,"modelDownloadRequiresNetwork":true,"inferenceRequiresNetwork":false,"input":"Explicit owned unmeshed/unflipped full image reference; sourceRect uses the full EXIF-oriented working PNG","output":"Reference-conditioned model-generated raster draft in a separate project","width":512,"height":512,"maxSteps":30,"maxPromptTokens":75,"requiredAvailableRamMb":6144,"requires64BitProcess":true,"recoversArtistLayers":false,"creativeQualityCertified":false,"sourceArtworkModified":false,"seedScope":"Added denoising noise; the model encoder posterior sample is checkpointed","manualControls":"Sketch Studio > More > Local AI drawing","limitations":"A raster draft does not recover hand-drawn strokes, semantic layers, correct anatomy, unseen views or consistent animation. Review actual output. Phone performance is not established by host inference.","defaultSettings":{"seed":41718,"steps":20,"strength":0.5,"guidance":7,"negativePrompt":"distorted anatomy, extra fingers, blurry, flat vector shapes"},"transparentOutput":false,"supportedGenerationModes":["reference_conditioned_raster"],"supports3dCameraOrbit":false});
 const finite=z.number().finite(),integer=(min,max)=>finite.int().min(min).max(max);
@@ -643,7 +644,7 @@ export const STUDIO_NATIVE_ACTIONS=new Set(Object.keys(studioToolSchemas));
 const studioAliases=new Map([...new Set([...STUDIO_NATIVE_ACTIONS,...CINEMATIC_3D_ACTIONS,'apply_tool'])].map(action=>['studio_'+action,action]));
 export const STUDIO_ALIAS_ACTIONS=new Set(studioAliases.keys());
 /** A closed compatibility bridge; unknown names and repeated prefixes stay unchanged. */
-export function nativeStudioCanonicalAction(action){return studioAliases.get(action)??action;}
+export function nativeStudioCanonicalAction(action){return Object.hasOwn(EXACT_CAMERA_ORBIT_CAPABILITIES.compatibilityAliases,action)?EXACT_CAMERA_ORBIT_CAPABILITIES.compatibilityAliases[action]:(studioAliases.get(action)??action);}
 
 function boundedJson(parameters){
  const active=new Set();let nodes=0;
@@ -734,7 +735,11 @@ export function nativeStudioParameters(action,parameters={}){
 const legacy3d=new Set(['STANDOFF','CHARGE','CLASH','BLADE_LOCK','FOLLOW_THROUGH','KNOCKBACK','LANDING','RECOVERY','AERIAL_FLIP','TUMBLE','MACRO_CLASH']);
 const pixelFields=new Set(['keyframes','opacity','chromaKey','chromaColor','chromaTolerance','chromaFeather','maskShape','maskLeft','maskTop','maskRight','maskBottom','maskFeather','glowStrength','glowRadiusPx','glowThreshold']);
 export function requireStudioVersion(device,action,parameters={}){
- const alias=studioAliases.has(action);action=nativeStudioCanonicalAction(action);
+ const degreeBridge=Object.hasOwn(EXACT_CAMERA_ORBIT_CAPABILITIES.compatibilityAliases,action);const alias=studioAliases.has(action);action=nativeStudioCanonicalAction(action);
+ const exactOrbit=degreeBridge||action==='cinematic_3d_save_program'&&parameters.timeline?.shots?.some(shot=>shot?.camera&&Object.hasOwn(shot.camera,'orbit'))
+  ||action==='cinematic_3d_edit_program'&&(parameters.operations||[]).some(op=>['set_camera_orbit','clear_camera_orbit'].includes(op.type))
+  ||action==='cinematic_3d_get_program'&&parameters.sampleFrame!==undefined;
+ if(exactOrbit&&!atLeast(device?.appVersion,'4.10.3'))throw new Error('NATIVE_APP_UPGRADE_REQUIRED: exact degree camera orbits and source-bound camera samples require VideoStudio4.10.3 or newer');
  if(LOCAL_DRAWING_CAPABILITIES.actions.includes(action)&&!atLeast(device?.appVersion,'4.10.2'))throw new Error('NATIVE_APP_UPGRADE_REQUIRED: offline neural drawing requires VideoStudio 4.10.2 or newer');
  if(CORRECTION_WORKFLOW_CAPABILITIES.actions.includes(action)&&!atLeast(device?.appVersion,'4.8.4'))throw new Error('NATIVE_APP_UPGRADE_REQUIRED: app-owned correction workflow and recipe options require VideoStudio 4.8.4 or newer');
  const styledHandObject=object=>object?.kind==='hand'&&object.hand?.settings?.renderStyle!==undefined;

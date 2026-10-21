@@ -34,6 +34,19 @@ import static org.robolectric.Shadows.shadowOf;
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk=33,manifest=Config.NONE)
 public class Cinematic3DStudioActivityTest {
+    @Test public void manualExactAnglesUseTheSameWorkerOperationAndSurviveRecreation()throws Exception{
+        Context context=RuntimeEnvironment.getApplication();ProjectStore.Project project=new ProjectStore(context).create("Exact angle study");Bundle initial=state(project.updatedAt);initial.putInt("selectedShot",1);Intent intent=new Intent(context,Cinematic3DStudioActivity.class).putExtra("projectId",project.id);Bundle saved=new Bundle();
+        try(ActivityController<Cinematic3DStudioActivity> controller=Robolectric.buildActivity(Cinematic3DStudioActivity.class,intent).create(initial).start().resume().visible()){
+            Cinematic3DStudioActivity activity=controller.get();findButton(activity.getWindow().getDecorView(),"Exact camera angles").performClick();AlertDialog form=ShadowAlertDialog.getLatestAlertDialog();
+            ((android.widget.EditText)form.getWindow().getDecorView().findViewWithTag("orbit_start_azimuth")).setText("25");((android.widget.EditText)form.getWindow().getDecorView().findViewWithTag("orbit_end_azimuth")).setText("385");
+            form.getButton(AlertDialog.BUTTON_POSITIVE).performClick();awaitWorker(activity);assertFalse(form.isShowing());JSONObject orbit=((JSONObject)field(activity,"timeline")).getJSONArray("shots").getJSONObject(1).getJSONObject("camera").getJSONObject("orbit");assertEquals(25,orbit.getDouble("startAzimuthDegrees"),0);assertEquals(385,orbit.getDouble("endAzimuthDegrees"),0);assertTrue((Boolean)field(activity,"dirty"));assertFalse((Boolean)field(activity,"sceneRebuildRequired"));controller.saveInstanceState(saved);
+        }
+        try(ActivityController<Cinematic3DStudioActivity> controller=Robolectric.buildActivity(Cinematic3DStudioActivity.class,intent).create(saved).start().resume().visible()){
+            Cinematic3DStudioActivity activity=controller.get();String before=Cinematic3DTimeline.canonical(field(activity,"timeline"));findButton(activity.getWindow().getDecorView(),"Exact camera angles").performClick();AlertDialog form=ShadowAlertDialog.getLatestAlertDialog();assertEquals(25,Double.parseDouble(((android.widget.EditText)form.getWindow().getDecorView().findViewWithTag("orbit_start_azimuth")).getText().toString()),0);
+            ((android.widget.EditText)form.getWindow().getDecorView().findViewWithTag("orbit_radius")).setText("-1");form.getButton(AlertDialog.BUTTON_POSITIVE).performClick();awaitWorker(activity);assertTrue(form.isShowing());assertEquals(before,Cinematic3DTimeline.canonical(field(activity,"timeline")));assertFalse(((android.widget.TextView)form.getWindow().getDecorView().findViewWithTag("orbit_error")).getText().toString().isEmpty());
+        }
+    }
+
     @Test public void referenceCameraButtonReallyOpensNativeCameraAuthoringWithoutRewritingScene()
             throws Exception {
         Context context=RuntimeEnvironment.getApplication();

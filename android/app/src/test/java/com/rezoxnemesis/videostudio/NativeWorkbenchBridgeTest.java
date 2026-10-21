@@ -10,6 +10,17 @@ import static org.junit.Assert.*;
 
 @RunWith(RobolectricTestRunner.class) @Config(sdk=33,manifest=Config.NONE)
 public class NativeWorkbenchBridgeTest {
+    @Test public void exactCameraCompatibilityAliasesRemainClosedAndUseNativeWorkers() throws Exception {
+        JSONObject aliases=NativeWorkbenchBridge.capabilities().getJSONObject("compatibilityAliases");
+        assertEquals(2,aliases.length());
+        for(String suffix:new String[]{"edit","get"}){
+            String action="cinematic_3d_"+suffix+"_program",alias="studio_"+action+"_v4103";
+            assertEquals(action,aliases.getString(alias));assertEquals(action,NativeWorkbenchBridge.canonicalAction(alias));
+            assertTrue(NativeAgentMailboxActions.supports(alias));assertTrue(NativeCommandExecutionPolicy.requiresBackgroundThread(alias));
+        }
+        for(String unknown:new String[]{"studio_cinematic_3d_get_program_v4104","studio_gallery_v4103","toString"})assertEquals(unknown,NativeWorkbenchBridge.canonicalAction(unknown));
+    }
+
     @Test public void onlyTheClosedKnownAliasesResolveToExistingActions()throws Exception {
         JSONObject advertised=NativeWorkbenchBridge.capabilities();JSONArray actions=advertised.getJSONArray("canonicalActions");assertEquals(89,actions.length());assertEquals("4.10.2",advertised.getJSONObject("localNeuralDrawing").getString("minimumNativeVersion"));assertEquals("sketch_layered_drawing_preview",NativeWorkbenchBridge.canonicalAction("studio_sketch_layered_drawing_preview"));assertTrue(NativeCommandExecutionPolicy.requiresBackgroundThread("studio_sketch_layered_drawing_preview"));assertTrue(NativeAgentMailboxActions.supports("sketch_layered_drawing_preview"));assertEquals("4.9.2",advertised.getString("layeredDrawingMinimumNativeVersion"));assertEquals("sketch_review",NativeWorkbenchBridge.canonicalAction("studio_sketch_review"));assertEquals("sketch_quality_audit",NativeWorkbenchBridge.canonicalAction("studio_sketch_quality_audit"));assertEquals("app_execute",advertised.getString("tool"));assertEquals("3.9.0",advertised.getString("minimumNativeVersion"));assertEquals("4.1.0",advertised.getString("paintMinimumNativeVersion"));
         assertEquals("4.4.0",advertised.getString("characterAnimationMinimumNativeVersion"));

@@ -50,12 +50,19 @@ public final class Cinematic3DProgramStore {
     }
 
     public static JSONObject get(Context context,ProjectStore projects,JSONObject request)throws Exception {
-        fields(request,"projectId","programId","expectedProgramSha256","editOnly");if(request.has("editOnly")&&bool(request,"editOnly"))throw new IllegalArgumentException("Use the edit-only helper to reopen an unverified draft");String projectId=id(text(request,"projectId",96)),programId=id(text(request,"programId",96)),expected=optionalDigest(request,"expectedProgramSha256");final JSONObject saved;
+        fields(request,"projectId","programId","expectedProgramSha256","editOnly","sampleFrame");final int sampledFrame=request.has("sampleFrame")?(int)integer(request,"sampleFrame",0,MAX_FRAMES-1):-1;if(sampledFrame>=0&&optionalDigest(request,"expectedProgramSha256").isEmpty())throw new IllegalArgumentException("Camera sampling requires exact expectedProgramSha256");if(request.has("editOnly")&&bool(request,"editOnly"))throw new IllegalArgumentException("Use the edit-only helper to reopen an unverified draft");String projectId=id(text(request,"projectId",96)),programId=id(text(request,"programId",96)),expected=optionalDigest(request,"expectedProgramSha256");final JSONObject saved;
         synchronized(FILE_LOCK){saved=readCurrent(context,projectId,programId);}String digest=saved.getString("sha256");if(!expected.isEmpty()&&!expected.equals(digest))throw new IllegalStateException("SOURCE_PROGRAM_CHANGED: selected program revision changed");JSONObject payload=withoutDigest(saved);validatePayload(payload,projectId,programId);
         ProjectStore.Project source=projects.get(projectId);if(source==null)throw new IllegalArgumentException("Source project unavailable");if(source.updatedAt!=payload.getLong("sourceProjectUpdatedAt"))throw new IllegalStateException("SOURCE_PROJECT_CHANGED: saved program source revision differs");
         JSONObject bundle=NativeCinematicBundleStore.get(context,projects,projectId,payload.getString("bundleId"));if(!payload.getString("bundleSha256").equals(bundle.getString("sha256"))||!payload.getString("bundleReceiptSha256").equals(bundle.getString("receiptSha256")))throw new IllegalStateException("SOURCE_BUNDLE_CHANGED: saved bundle proof differs");bindScenes(bundle,payload.getJSONObject("timeline"));
         SourceProof proof=measureSources(context,source,payload.getJSONObject("timeline"));requireSourceProof(payload,proof);
-        return projects.guardedProject(projectId,source.updatedAt,current->{synchronized(FILE_LOCK){assertRegistration(current,proof);if(!digest.equals(readCurrent(context,projectId,programId).getString("sha256")))throw new IllegalStateException("SOURCE_PROGRAM_CHANGED: program changed during source verification");if(!payload.getString("bundleReceiptSha256").equals(cheapPayload(context,projectId,payload.getString("bundleId")).getString("receiptSha256")))throw new IllegalStateException("SOURCE_BUNDLE_CHANGED: bundle changed during verification");return receipt(payload,digest,bundle);}});
+        return projects.guardedProject(projectId,source.updatedAt,current->{synchronized(FILE_LOCK){assertRegistration(current,proof);if(!digest.equals(readCurrent(context,projectId,programId).getString("sha256")))throw new IllegalStateException("SOURCE_PROGRAM_CHANGED: program changed during source verification");if(!payload.getString("bundleReceiptSha256").equals(cheapPayload(context,projectId,payload.getString("bundleId")).getString("receiptSha256")))throw new IllegalStateException("SOURCE_BUNDLE_CHANGED: bundle changed during verification");return sampledReceipt(payload,digest,bundle,sampledFrame);}});
+    }
+
+    private static JSONObject sampledReceipt(JSONObject payload,String digest,JSONObject bundle,int frame)throws Exception {
+        JSONObject accepted=receipt(payload,digest,bundle);if(frame<0)return accepted;JSONObject sample=Cinematic3DTimeline.sample(payload.getJSONObject("timeline"),frame);
+        JSONObject scene=accepted.getJSONArray("scenes").getJSONObject(sample.getInt("shotIndex"));
+        if("authored".equals(Cinematic3DSceneSampling.cameraReplay(scene)))throw new IllegalArgumentException("AUTHORED_CAMERA_SAMPLE_UNAVAILABLE: this scene uses its authored camera; timeline sampling cannot claim its rendered view");
+        return accepted.put("cameraSample",new JSONObject().put("frameIndex",frame).put("shotId",sample.getJSONObject("shot").getString("id")).put("shotFrame",sample.getInt("shotFrame")).put("camera",sample.getJSONObject("sample").getJSONObject("camera")).put("programSha256",digest).put("readOnly",true).put("rendered",false).put("drawingQualityCertified",false));
     }
 
     /** Reopen immutable authoring data, including stale sources, without authorizing execution. */
@@ -75,11 +82,13 @@ public final class Cinematic3DProgramStore {
     }
 
     public static JSONObject plan(Context context,ProjectStore projects,JSONObject request)throws Exception {
+        fields(request,"projectId","programId","expectedProgramSha256","editOnly");
         JSONObject out=get(context,projects,request),compiled=compile(out.getJSONObject("timeline"));return out.put("fps",compiled.getInt("fps")).put("totalFrames",compiled.getInt("totalFrames")).put("frameCount",compiled.getInt("totalFrames")).put("durationSeconds",compiled.getDouble("durationSeconds")).put("shots",compiled.getJSONArray("shots")).put("requiresNativeSceneValidation",true);
     }
 
     /** A portable inert producer request. No external code, model or Blender constraint runs here. */
     public static JSONObject exportRequest(Context context,ProjectStore projects,JSONObject request)throws Exception {
+        fields(request,"projectId","programId","expectedProgramSha256","editOnly");
         JSONObject accepted=get(context,projects,request);JSONObject producer=new JSONObject().put("schema","videostudio.cinematic3d.export-request.v1").put("timeline",accepted.getJSONObject("timeline")).put("sourceProjectId",accepted.getString("projectId")).put("sourceProjectUpdatedAt",accepted.getLong("sourceProjectUpdatedAt")).put("sourceEntries",accepted.getJSONObject("sourceEntries")).put("bundleSha256",accepted.getString("bundleSha256")).put("programSha256",accepted.getString("sha256"));
         return accepted.put("exportRequest",producer).put("execution","request_only").put("bakedPoseChangesRequireRebuild",true);
     }

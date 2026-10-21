@@ -119,6 +119,7 @@ public final class Cinematic3DStudioActivity extends Activity {
         });root.addView(shots,new LinearLayout.LayoutParams(-1,dp(52)));
         row(root,button("Move earlier",()->moveSelected(-1)),button("Move later",()->moveSelected(1)),button("Edit shot",this::editSelected));
         row(root,button("Camera keys",this::editCameraKeys),button("Reference camera paths",this::chooseReferenceCameraPath));
+        row(root,button("Exact camera angles",this::editExactOrbit));
         addShotButton=button("Add shot",this::addShot);duplicateButton=button("Duplicate",this::duplicateShot);deleteShotButton=button("Delete shot",this::deleteShot);row(root,addShotButton,duplicateButton,deleteShotButton);
         root.addView(label("Edit shot order, duration, impact hold, camera and effects. Custom pose, root and foot-contact changes need a rebuilt Blender bundle.",12));
         row(root,button("Actor body / material",this::chooseActor),button("Motion style",this::editMotionStyle));
@@ -210,7 +211,7 @@ public final class Cinematic3DStudioActivity extends Activity {
         form.addView(label("Action",12));Spinner action=new Spinner(this);java.util.List<String> actionNames=isActionLibrary()?libraryActions():java.util.Collections.singletonList(shot.getString("action"));action.setAdapter(new ArrayAdapter<>(this,android.R.layout.simple_spinner_dropdown_item,actionNames));action.setSelection(actionNames.indexOf(shot.getString("action")));action.setEnabled(isActionLibrary());form.addView(action);if(!isActionLibrary())form.addView(label("Custom baked actions need a rebuilt bundle.",11));
         EditText duration=numeric(form,"Duration in frames (8–600)",String.valueOf(shot.getInt("durationFrames")),false),hold=numeric(form,"Impact hold (0 or 2–5 frames)",String.valueOf(shot.getInt("hitStopFrames")),false);
         form.addView(label("Camera",12));Spinner mode=new Spinner(this);String[] modes={"wide","orbit","macro","top_down"};mode.setAdapter(new ArrayAdapter<>(this,android.R.layout.simple_spinner_dropdown_item,modes));for(int i=0;i<modes.length;i++)if(modes[i].equals(camera.getString("mode")))mode.setSelection(i);form.addView(mode);
-        final int authoredMode=mode.getSelectedItemPosition();CheckBox authoredTrack=camera.has("keyframes")?check(form,"Use authored camera track",true):null;if(authoredTrack!=null){mode.setEnabled(false);authoredTrack.setOnCheckedChangeListener((control,checked)->{if(checked)mode.setSelection(authoredMode);mode.setEnabled(!checked);});form.addView(label("Uncheck to replace the camera path with a preset. Actor and weapon poses keep their baked motion.",11));}
+        final int authoredMode=mode.getSelectedItemPosition();CheckBox authoredTrack=camera.has("keyframes")||camera.has("orbit")?check(form,camera.has("orbit")?"Keep exact orbit":"Use authored camera track",true):null;if(authoredTrack!=null){mode.setEnabled(false);authoredTrack.setOnCheckedChangeListener((control,checked)->{if(checked)mode.setSelection(authoredMode);mode.setEnabled(!checked);});form.addView(label("Uncheck to replace the camera path with a preset. Actor and weapon poses keep their baked motion.",11));}
         EditText fov=numeric(form,"Field of view (35–100°)",String.valueOf(camera.getDouble("fovDegrees")),true),shake=numeric(form,"Camera shake (0–1)",String.valueOf(camera.getDouble("shakeIntensity")),true);
         if(authoredCameraSelected()){mode.setEnabled(false);fov.setEnabled(false);shake.setEnabled(false);if(authoredTrack!=null)authoredTrack.setEnabled(false);form.addView(label("This scene keeps its authored camera. Rebuild the bundle to change framing.",11));}
         CheckBox spark=check(form,"Spark burst",vfx.getBoolean("sparkBurst")),trail=check(form,"Slash trail",vfx.getBoolean("slashTrail")),rubble=check(form,"Contact debris",vfx.getBoolean("rubble"));
@@ -252,6 +253,7 @@ public final class Cinematic3DStudioActivity extends Activity {
         }
         JSONObject shot=timeline.getJSONArray("shots").getJSONObject(selectedShot);
         String shotId=shot.getString("id");
+        if(shot.getJSONObject("camera").has("orbit")){setStatus("Clear the exact orbit before replacing it with a keyframed camera path.");return;}
         JSONArray initial=Cinematic3DTimeline.sampleShot(shot,0,timeline.getInt("fps"))
                 .getJSONObject("camera").getJSONArray("target");
         LinearLayout form=draftForm();
@@ -299,9 +301,34 @@ public final class Cinematic3DStudioActivity extends Activity {
         });
     }catch(Exception error){setStatus(message(error));}}
 
+    private void editExactOrbit(){if(!requireTimeline())return;try{
+        if(authoredCameraSelected()){setStatus("This scene keeps its authored camera. Its framing cannot be replaced by an orbit.");return;}
+        JSONObject shot=timeline.getJSONArray("shots").getJSONObject(selectedShot),camera=shot.getJSONObject("camera");
+        JSONObject existing=camera.optJSONObject("orbit"),initial=Cinematic3DTimeline.sampleShot(shot,0,timeline.getInt("fps")).getJSONObject("camera");
+        JSONArray target=initial.getJSONArray("target"),position=initial.getJSONArray("position");
+        double dx=position.getDouble(0)-target.getDouble(0),dy=position.getDouble(1)-target.getDouble(1),dz=position.getDouble(2)-target.getDouble(2);
+        double azimuth=Math.toDegrees(Math.atan2(dx,dz)),elevation=Math.toDegrees(Math.atan2(dy,Math.hypot(dx,dz)));
+        LinearLayout form=draftForm();form.addView(label("Orbit existing 3D geometry at a constant distance. 0° is world +Z, 90° is +X. Positive elevation looks from above. This does not draw unseen anatomy or reconstruct your reference.",12));
+        form.addView(label("Apply replaces this shot's XYZ camera keys and disables shake. The selected endpoints occupy its first and last frames; actor timing and source geometry stay unchanged. Equal start/end angles hold one exact view.",12));
+        EditText x=cameraNumber(form,"Target X (metres)",String.valueOf(target.getDouble(0)),"orbit_x"),y=cameraNumber(form,"Target Y (metres)",String.valueOf(target.getDouble(1)),"orbit_y"),z=cameraNumber(form,"Target Z (metres)",String.valueOf(target.getDouble(2)),"orbit_z");
+        EditText radius=cameraNumber(form,"Orbit radius (0.5–30 m)",String.valueOf(existing==null?Math.hypot(Math.hypot(dx,dy),dz):existing.getDouble("radius")),"orbit_radius");
+        EditText start=cameraNumber(form,"Start azimuth (degrees)",String.valueOf(existing==null?azimuth:existing.getDouble("startAzimuthDegrees")),"orbit_start_azimuth"),end=cameraNumber(form,"End azimuth (degrees)",String.valueOf(existing==null?azimuth+360:existing.getDouble("endAzimuthDegrees")),"orbit_end_azimuth");
+        EditText low=cameraNumber(form,"Start elevation (degrees)",String.valueOf(existing==null?elevation:existing.getDouble("startElevationDegrees")),"orbit_start_elevation"),high=cameraNumber(form,"End elevation (degrees)",String.valueOf(existing==null?elevation:existing.getDouble("endElevationDegrees")),"orbit_end_elevation");
+        TextView error=label("",12);error.setTextColor(0xffff8888);error.setTag("orbit_error");form.addView(error);
+        AlertDialog dialog=new AlertDialog.Builder(this).setTitle("Exact camera angles").setView(scrollForm(form)).setPositiveButton("Apply orbit",null).setNegativeButton("Cancel",null).create();
+        Button clear=button("Clear exact orbit",()->{try{acceptCameraOperations(new JSONArray().put(new JSONObject().put("type","clear_camera_orbit").put("shotId",shot.getString("id"))),dialog,error);}catch(Exception invalid){error.setText(message(invalid));}});form.addView(clear);
+        dialog.setOnDismissListener(ignored->{controls.remove(clear);if(pendingCameraDialog==dialog)cancelCameraEdit();});dialog.show();
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{try{
+            JSONObject orbit=new JSONObject().put("target",new JSONArray().put(Double.parseDouble(x.getText().toString())).put(Double.parseDouble(y.getText().toString())).put(Double.parseDouble(z.getText().toString())))
+                    .put("radius",Double.parseDouble(radius.getText().toString())).put("startAzimuthDegrees",Double.parseDouble(start.getText().toString())).put("endAzimuthDegrees",Double.parseDouble(end.getText().toString()))
+                    .put("startElevationDegrees",Double.parseDouble(low.getText().toString())).put("endElevationDegrees",Double.parseDouble(high.getText().toString()));
+            acceptCameraOperations(new JSONArray().put(new JSONObject().put("type","set_camera_orbit").put("shotId",shot.getString("id")).put("orbit",orbit)),dialog,error);
+        }catch(Exception invalid){error.setText(message(invalid));}});
+    }catch(Exception error){setStatus(message(error));}}
+
     private void editCameraKeys(){if(!requireTimeline())return;try{
         if(authoredCameraSelected()){setStatus("This scene uses its authored camera. Rebuild the bundle to change its framing.");return;}
-        JSONObject shot=timeline.getJSONArray("shots").getJSONObject(selectedShot),camera=shot.getJSONObject("camera");String shotId=shot.getString("id");JSONArray keys=camera.optJSONArray("keyframes");
+        JSONObject shot=timeline.getJSONArray("shots").getJSONObject(selectedShot),camera=shot.getJSONObject("camera");String shotId=shot.getString("id");if(camera.has("orbit")){setStatus("Clear the exact orbit before editing XYZ camera keys.");return;}JSONArray keys=camera.optJSONArray("keyframes");
         LinearLayout form=draftForm();form.addView(label("Author a camera path in Y-up metres. Keys interpolate over shot time while actor impact holds keep their own clock.",12));
         java.util.List<String> names=new java.util.ArrayList<>();names.add("New key");for(int i=0;keys!=null&&i<keys.length();i++)names.add(String.format(java.util.Locale.US,"Key %d · phase %.6f",i+1,keys.getJSONObject(i).getDouble("phase")));
         Spinner picker=select(form,"Camera key",names.toArray(new String[0]),names.get(keys==null?0:1));
@@ -501,7 +528,7 @@ public final class Cinematic3DStudioActivity extends Activity {
     static JSONObject changeLibraryAction(JSONObject original,JSONObject library,int index,String action) throws Exception {JSONObject template=libraryTemplate(library,action),result=copy(original);JSONArray shots=result.getJSONArray("shots");if(index<0||index>=shots.length())throw new IllegalArgumentException("Select an existing shot to change");JSONObject shot=shots.getJSONObject(index).put("action",action);if(!isImpact(action))shot.put("hitStopFrames",0);for(String key:new String[]{"sourceAnchors","poseKeyframes","footContacts"}){shot.remove(key);if(template.has(key))shot.put(key,template.get(key));}return Cinematic3DTimeline.validate(result);}
     static JSONObject moveShot(JSONObject original,int from,int to) throws Exception {JSONObject result=copy(original);JSONArray entries=result.getJSONArray("shots");if(from<0||from>=entries.length()||to<0||to>=entries.length())throw new IllegalArgumentException("Shot is already at the timeline boundary");JSONObject selected=entries.getJSONObject(from);JSONArray ordered=new JSONArray();for(int i=0;i<entries.length();i++){int source=i;if(i==to){ordered.put(selected);continue;}if(from<to&&i>=from&&i<to)source=i+1;else if(from>to&&i>to&&i<=from)source=i-1;ordered.put(entries.getJSONObject(source));}result.put("shots",ordered);return Cinematic3DTimeline.validate(result);}
     static JSONObject editShot(JSONObject original,int index,int frames,int hold,String mode,double fov,double shake,boolean spark,boolean trail,boolean rubble) throws Exception {JSONObject result=copy(original);JSONObject shot=result.getJSONArray("shots").getJSONObject(index);shot.put("durationFrames",frames).put("hitStopFrames",hold);shot.getJSONObject("camera").put("mode",mode).put("fovDegrees",fov).put("shakeIntensity",shake);shot.put("vfx",new JSONObject().put("sparkBurst",spark).put("slashTrail",trail).put("rubble",rubble));return Cinematic3DTimeline.validate(result);}
-    static JSONObject chooseCameraTrack(JSONObject original,int index,boolean keepAuthoredTrack) throws Exception {JSONObject result=copy(original);JSONObject camera=result.getJSONArray("shots").getJSONObject(index).getJSONObject("camera");if(!keepAuthoredTrack)camera.remove("keyframes");return Cinematic3DTimeline.validate(result);}
+    static JSONObject chooseCameraTrack(JSONObject original,int index,boolean keepAuthoredTrack) throws Exception {JSONObject result=copy(original);JSONObject camera=result.getJSONArray("shots").getJSONObject(index).getJSONObject("camera");if(!keepAuthoredTrack){camera.remove("keyframes");camera.remove("orbit");}return Cinematic3DTimeline.validate(result);}
     static JSONObject saveRequest(String projectId,long revision,String bundleId,String programId,String sha,JSONObject timeline) throws Exception {JSONObject request=new JSONObject().put("projectId",projectId).put("sourceProjectUpdatedAt",revision).put("bundleId",bundleId).put("timeline",Cinematic3DTimeline.validate(timeline));if(programId!=null&&!programId.isEmpty())request.put("programId",programId);if(sha!=null&&!sha.isEmpty())request.put("expectedProgramSha256",sha);return request;}
     static JSONObject restoreTimeline(Bundle state,long revision) throws Exception {String value=state.getLong("sourceRevision",-1)==revision?state.getString("draft"):state.getString("acceptedTimeline");return value==null?null:Cinematic3DTimeline.validate(new JSONObject(value));}
     static Intent previewIntent(Context context,String projectId,String programId,String sha){return previewIntent(context,projectId,programId,sha,0);}

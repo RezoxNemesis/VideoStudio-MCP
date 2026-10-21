@@ -1,3 +1,23 @@
+# Active native angle structure — 2026-10-21
+
+Owner rejects current AI draft likeness and requires coherent arbitrary angles and
+ultimately the240s layered film. Frozen4.10.2/code505 c4e5708 is signed/verified
+in its own worktree, not artistically accepted. New local worktree targets
+provisional4.10.3/code506 on feat/native-angle-structure-v4103. Read
+ docs/superpowers/specs/2026-10-21-native-exact-orbit.md. Add exact spherical
+camera authoring and source-bound native camera reads through existing operations,
+shared manual/MCP controls and worker preflight. Preserve old omitted behavior,
+old clocks/fingerprints/floors, scene roots/poses, authored-camera locks and CAS.
+Do not call a camera-math pass drawing mastery, hidden-view reconstruction or
+finished native/GPU/phone art. Keep failed AI generations. No hosted inference,
+Gallery, workspace-only artwork helpers, main/Worker/stable/signing/device resets.
+One local Gradle, root only. GitHub CLI now returns HTTP401 after4.10.2 candidate
+and screenshot evidence were successfully delivered. The separately authenticated
+GitHub connector is usable; preserve exact tree/parent identity for feature uploads.
+Its tools do not expose workflow_dispatch. See docs/continuity/NATIVE_EXACT_ORBIT_4103.md. Fresh local2210 Android/0/0/16
+plus final focused40/0/0 and698 Node+306smoke pass. Artwork/360views/film
+remain unfinished; floating interior angle rounding is not a pixel identity proof.
+
 # Active offline neural drawing — 2026-10-21
 
 Owner now requests native AI drawing and explicitly rejects hosted inference.

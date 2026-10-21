@@ -31,6 +31,9 @@ public final class NativeWorkbenchBridge {
     private NativeWorkbenchBridge() {}
 
     public static String canonicalAction(String action) {
+        // Closed additive aliases let an older v3 relay forward newly shaped requests.
+        if("studio_cinematic_3d_edit_program_v4103".equals(action))return "cinematic_3d_edit_program";
+        if("studio_cinematic_3d_get_program_v4103".equals(action))return "cinematic_3d_get_program";
         if(action!=null&&action.startsWith(PREFIX)){
             String candidate=action.substring(PREFIX.length());
             if(ACTIONS.contains(candidate))return candidate;
@@ -64,6 +67,7 @@ public final class NativeWorkbenchBridge {
                 .put("incrementalKeyframeMinimumNativeVersion","4.3.0").put("cameraEditMinimumNativeVersion","4.3.0")
                 .put("symmetryMinimumNativeVersion","4.3.0").put("stereoMixMinimumNativeVersion","4.3.0").put("captionStyleMinimumNativeVersion","4.3.0")
                 .put("localNeuralDrawing",LocalDrawingCapabilities.get())
+                .put("compatibilityAliases",CinematicCameraOrbit.capabilities().getJSONObject("compatibilityAliases"))
                 .put("galleryAccess",false).put("nativeExecutionVerified",false);
     }
     private static final class Budget {int values;long characters;void add(long amount){characters+=amount;if(characters>MAX_COMMAND_BYTES)throw new IllegalArgumentException("Native command exceeds its relay metadata budget");}}
