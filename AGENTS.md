@@ -1,3 +1,36 @@
+# Active native layered brush quality — 2026-10-21
+
+Current candidate4.10.1/code504 includes committed contour placement2a86e56
+plus fitted-pressure-brush work. Fresh combined full local validation passed
+2187 Android/0failures/0errors/14skips and688 Node+306smoke. Candidate CI/signing
+remain pending; the artwork still fails likeness acceptance. Read docs/continuity/NATIVE_FITTED_BRUSH_4101.md.
+The owner rejects the current simplified art. Continue original-composition faces,
+hair, hands, garment and sword through actual native authored layers. Review actual
+crops with reference hidden; do not treat feature tests as likeness acceptance.
+Fitted pressure brush is optional precision_contour.brush, stored as ordinary
+source-free stroke points. Preserve omitted old behavior, original pressure knots
+(including stationary peaks), exact endpoint pressure, bounded native sampling,
+worker/cancellation, Undo/replay/archive, and manual/MCP parity. Keep RED evidence.
+Voice stays last. One local Gradle. No Worker/main/stable or signer/device resets.
+
+# Active native contour placement — 2026-10-21
+
+Current feat/native-contour-placement-v4101 is based on frozen signed4.9.9
+29f2ad084854295d5ed08dd438ce88365845ffd4. Target4.10.1/code504 reserves
+503 for the separately preserved unfinished tracked-contact worktree.
+The owner rejected the previous art. Priority is the original two-character manga
+composition: accurate faces/hair/hands/garment/sword in actual native authored
+layers before more actions. Voice remains last. Engineering counts do not accept art.
+Actual native head study exposed contour fill moving every fresh paint cel below
+all earlier painted parts. Add optional strict paint_fill.placement under_contour
+or layer_back; preserve refills existing cels without moving them. Omission preserves old requests, fingerprints and raster order.
+Only fresh cels may relocate automatically. Native history/replay/Undo/archive and
+manual/MCP paths must agree. Keep failed redraws and RED evidence privately.
+Use app capabilities for all art, analysis, import and rendering. No external
+art generator, Gallery, workspace renderer, phone/codec claim, main merge, stable
+publication, Worker deployment, replacement signer or app identity/data reset.
+ONE local Gradle process, owned by root, across every worktree.
+
 # Active native posed contact targets — 2026-10-20
 
 Current feat/native-posed-contact-targets-v499 extends frozen verified4.9.8

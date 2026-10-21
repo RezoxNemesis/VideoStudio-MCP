@@ -58,6 +58,9 @@ public class SketchLayeredDrawingDialogTest {
         owner.close();String layer=SketchLayeredDrawing.activeLayerIds(document).getString(0);JSONObject stroke=SketchEditOps.completeObject(new JSONObject().put("id","authored_stroke").put("kind","stroke").put("frame",3).put("exposure",21).put("points",new JSONArray("[[0.15,0.8,1],[0.25,0.25,1],[0.5,0.12,1],[0.75,0.25,1],[0.85,0.8,1]]")).put("width",.012).put("color","#FF161C2B"));
         JSONObject request=new JSONObject().put("sketchId",id).put("operationId","author_native_stroke").put("expectedRevision",document.getLong("revision")).put("operations",new JSONArray().put(new JSONObject().put("type","add_object").put("layerId",layer).put("object",stroke)));ExecutorService writer=Executors.newSingleThreadExecutor();try{writer.submit(()->{try{return SketchEditOps.execute(activity,"sketch_edit",request);}catch(Exception error){throw new RuntimeException(error);}}).get(20,TimeUnit.SECONDS);}finally{writer.shutdownNow();}document=load();open();
     }
+    @Test public void manualLayeredDrawingOffersThePrecisePressureBrush()throws Exception{
+        setup();begin();Spinner picker=(Spinner)view("Layer drawing tool");assertEquals(4,picker.getCount());assertEquals("Precise pressure brush",picker.getItemAtPosition(3));picker.setSelection(3);idle();click("Draw selected layer");assertEquals("precision_brush",drawTool);assertEquals(SketchLayeredDrawing.activeLayerIds(document).getString(0),drawLayer);
+    }
     @Test public void stageOnlyPreviewIsReadOnlyStrictAndShowsOnlyCurrentNativeInk()throws Exception{
         setup();begin();drawNativeStroke();JSONObject snapshot=SketchDocument.copy(document);
         SketchEditOps.apply(snapshot,new JSONObject().put("type","layered_drawing_review").put("stage","construction").put("reviewedRevision",snapshot.getLong("revision")).put("frameIndex",3).put("status","ACCEPTABLE").put("note","Reviewed construction for preview isolation test."));
