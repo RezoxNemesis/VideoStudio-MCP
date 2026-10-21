@@ -3,7 +3,7 @@
  * Existing VideoStudio keys/queues/projects are neither replaced nor modified.
  */
 import {persistNativeCommandQueue,hydrateNativeCommand} from "./native-payload-storage.js";
-import {assertRenderAction,assertRenderRequestId} from "./render-v3-actions.js";
+import {assertRenderAction,assertRenderRequestId,RENDER_NATIVE_ACTIONS} from "./render-v3-actions.js";
 const now = () => new Date().toISOString();
 const sha256 = async value => {
   const bytes=new TextEncoder().encode(value);
@@ -79,6 +79,8 @@ export async function status(st,videoKey){
   return {linked:true,deviceId:d.deviceId,deviceOnline:online,
     executionAvailable:online&&!d.controlPaused,controlPaused:!!d.controlPaused,
     appVersion:d.appVersion,lastSeenAt:d.lastRenderPollAt||null,
+    capabilitiesKnown:Array.isArray(d.renderCapabilities)&&d.renderCapabilities.length>0,
+    capabilities:Array.isArray(d.renderCapabilities)?d.renderCapabilities:[],
     pendingCommands:q.filter(pending).length,transport:"videostudio-mcp-v3",
     galleryAccess:false,executor:"render-android-only"};
 }
@@ -87,6 +89,11 @@ export async function enqueue(st,videoKey,action,args={},requestId=null){
   if(!rec)throw Error("RENDER_NOT_LINKED");
   if(rec.device.controlPaused)throw Error("RENDER_EXECUTOR_STOPPED");
   assertRenderAction(action,args);
+  const advertised=rec.device.renderCapabilities;
+  if(Array.isArray(advertised)&&advertised.length>0){
+    const claim=advertised.find(c=>c.id===action);
+    if(!claim || claim.available!==true)throw Error("RENDER_ACTION_UNAVAILABLE_ON_DEVICE");
+  }
   const rid=assertRenderRequestId(requestId||crypto.randomUUID().replaceAll("-",""));
   const payload=JSON.stringify({device_id:rec.device.deviceId,request_id:rid,api_version:1,action,args});
   const digest=await sha256(payload);
@@ -142,8 +149,23 @@ async function child(st,deviceId,ownerKey){
 export async function poll(st,deviceId,ownerKey,enabled,activeJobId=null,capabilities=[]){
   if(typeof enabled!=="boolean")throw Error("RENDER_ENABLED_FLAG_REQUIRED");
   const d=await child(st,deviceId,ownerKey),storage=st.ctx.storage;
+  // Device claims are informational only; the Worker owns the allowlist and
+  // validates requests a second time. Preserve only small validated fields.
+  if(!Array.isArray(capabilities)||capabilities.length>128)
+    throw Error("RENDER_CAPABILITIES_INVALID");
+  const advertised=[];
+  const seen=new Set();
+  for(const cap of capabilities){
+    if(!cap||typeof cap!=="object"||Array.isArray(cap)||
+       typeof cap.id!=="string"||!Object.hasOwn(RENDER_NATIVE_ACTIONS,cap.id)||
+       seen.has(cap.id))continue;
+    seen.add(cap.id);
+    advertised.push({id:cap.id,available:cap.available===true,
+      read_only:cap.read_only===true,
+      reason:cap.available===true?"":String(cap.reason||"").slice(0,160)});
+  }
   const nextDevice={...d,lastSeenAt:now(),lastRenderPollAt:now(),controlPaused:!enabled,
-    renderCapabilities:Array.isArray(capabilities)?capabilities.slice(0,128):[]};
+    renderCapabilities:advertised};
   await storage.put("app-device:"+deviceId,nextDevice);
   const k="app-v3-cl:"+deviceId,q=(await storage.get(k))||[];
   if(!enabled){
