@@ -405,3 +405,73 @@ test('private image payload is delivered to Android but redacted from status and
  assert.ok(!JSON.stringify(rows).includes('user-private-binary-frame'));
  assert.ok(!JSON.stringify(rows).includes('secret=abc'));
 });
+
+
+test("HTTP /api/v3/render routes link and execute a distinct Android device without crossing VideoStudio authority",async()=>{
+  const f=await fixture();
+  // Simulate original installed VideoStudio native v3 registration exactly;
+  // the same owner is the authority that mints short-lived Render codes.
+  await f.relay.appRegister(f.deviceId,f.key,{
+    protocolVersion:3,appGeneration:1,protocolFamily:"videostudio-native",
+    nativeAgent:"videostudio-v3"
+  });
+  const worker=loadWorkerForRouteTests();
+  const env={VIDEO_STATE:{getByName:()=>f.relay}};
+  const host="https://video-test.example";
+  const get=async(path,headers={})=>worker.fetch(new Request(host+path,{headers}),env,{});
+  const post=async(path,body,key)=>worker.fetch(new Request(host+path,{
+    method:"POST",headers:{"content-type":"application/json",...(key?{authorization:"Bearer "+key}:{})},
+    body:JSON.stringify(body)
+  }),env,{});
+
+  const health=await get("/api/v3/render/health");
+  assert.equal(health.status,200);
+  assert.equal((await health.json()).blenderExecutor,"android");
+  const code=await f.relay.appRenderChallenge(f.key);
+  const device="5ff97123-4be1-48d4-aa82-955ccd434b5a";
+  const owner="render-device-test-key-"+"a".repeat(45);
+  const linked=await post("/api/v3/render/link",{
+    pairingCode:code.pairingCode,renderDeviceId:device,renderOwnerKey:owner,meta:{appVersion:"test-0.12"}
+  });
+  assert.equal(linked.status,200);
+  assert.equal((await linked.json()).linked,true);
+  const replay=await post("/api/v3/render/link",{
+    pairingCode:code.pairingCode,renderDeviceId:device,renderOwnerKey:owner
+  });
+  assert.equal(replay.status,400);
+  const unauth=await post("/api/v3/render/poll",{
+    deviceId:device,enabled:true,capabilities:[]
+  });
+  assert.equal(unauth.status,401);
+  const polled=await post("/api/v3/render/poll",{
+    deviceId:device,enabled:true,capabilities:[]
+  },owner);
+  assert.equal(polled.status,200);
+  assert.equal((await polled.json()).device_id,device);
+
+  // The Cloudflare Worker never executes the Blender call; Android must
+  // poll, claim and return a native result.
+  const queued=await f.relay.appRenderQueue(f.key,"blender.scene.summary",{},"http-test-scene");
+  const claim=await post("/api/v3/render/poll",{deviceId:device,enabled:true,capabilities:[]},owner);
+  assert.equal(claim.status,200);
+  const job=(await claim.json()).job;
+  assert.equal(job.job_id,queued.id);
+  assert.equal(JSON.parse(job.payload).action,"blender.scene.summary");
+  const finished=await post("/api/v3/render/result",{
+    deviceId:device,job_id:job.job_id,digest:job.digest,state:"succeeded",
+    result:{scene:"Real native scene",executed_by:"android"}
+  },owner);
+  assert.equal(finished.status,200);
+  assert.equal((await finished.json()).accepted,true);
+  const result=await f.relay.appRenderCommand(f.key,job.job_id);
+  assert.equal(result.result.native_result.scene,"Real native scene");
+  assert.equal(result.status,"completed");
+
+  // Unlinking Render cannot alter VideoStudio's own owner or projects.
+  const revoke=await post("/api/v3/render/unlink",{deviceId:device},owner);
+  assert.equal(revoke.status,200);
+  assert.equal((await revoke.json()).unlinked,true);
+  assert.equal((await f.relay.appStatusV3(f.key)).connected,true);
+  const blocked=await post("/api/v3/render/poll",{deviceId:device,enabled:true},owner);
+  assert.equal(blocked.status,400);
+});
