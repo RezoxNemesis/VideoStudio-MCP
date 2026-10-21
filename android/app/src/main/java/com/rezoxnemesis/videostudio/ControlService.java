@@ -3819,6 +3819,8 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     }
 
     private String friendlyAction(String action) {
+        if(RenderNativeIpcClient.supports(action))
+            return RenderNativeIpcClient.displayLabel(action);
         if (action == null) return "ChatGPT action";
         switch (action) {
             case "create_project": return "Creating project";
@@ -3880,6 +3882,8 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     }
 
     private String commandDetail(String action, JSONObject p) {
+        if(RenderNativeIpcClient.supports(action))
+            return "Target: Render Studio Android (native Binder, not VideoStudio project)";
         if (p == null) return "Received from ChatGPT";
         if ("apply_tool".equals(action)) return p.optString("tool", "edit") + " • clip " + (p.optInt("clipIndex", 0) + 1);
         if ("create_project".equals(action)) return p.optString("name", "New project");

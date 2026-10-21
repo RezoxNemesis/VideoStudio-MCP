@@ -14,6 +14,11 @@ public class RenderNativeIpcClientTest {
         for (String name : actions)
             assertTrue(RenderNativeIpcClient.supports("render." + name));
     }
+    @Test public void namesTheCorrectTargetApplication() {
+        assertTrue(RenderNativeIpcClient.displayLabel("render.blender.object.add_cube")
+            .startsWith("Render Studio"));
+        assertEquals("VideoStudio",RenderNativeIpcClient.displayLabel("apply_tool"));
+    }
     @Test public void neverForwardsUnknownPythonOrVideoStudioTools() {
         String[] invalid = {null, "", "render.", "render.python.eval",
             "render.shell.exec", "render.gallery.list",

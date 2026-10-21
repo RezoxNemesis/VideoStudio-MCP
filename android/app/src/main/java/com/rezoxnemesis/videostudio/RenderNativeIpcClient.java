@@ -45,6 +45,13 @@ public final class RenderNativeIpcClient {
                 ALLOWED.contains(action.substring(7));
     }
 
+    /** Explicit target name in VideoStudio logs and ChatGPT receipts. */
+    public static String displayLabel(String action) {
+        if(!supports(action))return "VideoStudio";
+        return "Render Studio • "+action.substring(7)
+            .replace('.', ' ').replace('_', ' ');
+    }
+
     private static JSONObject error(String code) {
         JSONObject out = new JSONObject();
         try {
