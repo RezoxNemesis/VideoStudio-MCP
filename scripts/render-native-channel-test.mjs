@@ -32,15 +32,18 @@ const video="private-original-video-owner",device="7a8f43c0-6d2a-4b79-9cb5-96c1f
 test("link isolated Render identity without touching old VideoStudio queue",async()=>{
   const st=fakeState();
   await st.ctx.storage.put("app-v3-cl:vs-original",[{id:"video-edit",status:"queued"}]);
-  const link=await R.link(st,video,device,key,{});
+  const oneTime=(await R.challenge(st,video)).pairingCode;
+  const link=await R.link(st,oneTime,device,key,{});
   assert.equal(link.linked,true);
   assert.equal(link.separateMcpConnectionRequired,false);
   assert.deepEqual((await st.ctx.storage.get("app-v3-cl:vs-original")).map(x=>x.id),["video-edit"]);
   assert.equal((await R.status(st,video)).linked,true);
-  await assert.rejects(R.link(st,video,"e4bf43b3-87e2-41a1-80b3-887c14e55d31",key),/RENDER_ALREADY_LINKED/);
+  await assert.rejects(R.link(st,oneTime,"e4bf43b3-87e2-41a1-80b3-887c14e55d31",key),/RENDER_PAIR_CODE_EXPIRED_OR_USED/);
+  const second=(await R.challenge(st,video)).pairingCode;
+  await assert.rejects(R.link(st,second,"e4bf43b3-87e2-41a1-80b3-887c14e55d31",key),/RENDER_ALREADY_LINKED/);
 });
 test("true queued native execution, authenticated completion and idempotency",async()=>{
-  const st=fakeState();await R.link(st,video,device,key,{});
+  const st=fakeState();await R.link(st,(await R.challenge(st,video)).pairingCode,device,key,{});
   // Owner first enables Render on-phone; later it falls offline without
   // disabling the user-authorized session. Queue must remain durable.
   await R.poll(st,device,key,true,null);
@@ -62,7 +65,7 @@ test("true queued native execution, authenticated completion and idempotency",as
   assert.deepEqual((await st.ctx.storage.get("app-v3-cl:vs-original"))||[],[]);
 });
 test("Render STOP, cancellation and revoke cannot affect VideoStudio",async()=>{
-  const st=fakeState();await R.link(st,video,device,key,{});
+  const st=fakeState();await R.link(st,(await R.challenge(st,video)).pairingCode,device,key,{});
   await R.poll(st,device,key,true,null);
   const command=await R.enqueue(st,video,"engine.status",{},"stop");
   const cancelled=await R.cancel(st,video,command.id);assert.equal(cancelled.status,"cancelled");
@@ -73,7 +76,7 @@ test("Render STOP, cancellation and revoke cannot affect VideoStudio",async()=>{
   await assert.rejects(R.poll(st,device,key,true,null),/AUTH_REQUIRED/);
 });
 test("wrong device key cannot read or report native result",async()=>{
-  const st=fakeState();await R.link(st,video,device,key,{});
+  const st=fakeState();await R.link(st,(await R.challenge(st,video)).pairingCode,device,key,{});
   await assert.rejects(R.poll(st,device,"wrong",true,null),/AUTH_REQUIRED/);
   await assert.rejects(R.complete(st,device,"wrong","some","0".repeat(64),"failed",{}),/AUTH_REQUIRED/);
   await assert.rejects(R.status(st,"wrong-parent-key"),/OWNER_REJECTED/);
