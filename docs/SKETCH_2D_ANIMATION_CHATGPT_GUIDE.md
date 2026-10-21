@@ -142,6 +142,42 @@ original and copies the owned reference/paint dependencies into the output;
 verify the returned `outputSketchId`, `outputRevision`, `documentSha256`,
 `report` and `persisted` fields before proceeding.
 
+## Archive the saved motion recipe
+
+On native4.10.9 or later, use the existing `sketch_archive` action with both
+`animationId` and `animationRevision` to keep the selected saved scene alongside
+its source artwork. Read these values and the frozen `sketchId`/`sourceRevision`
+from `sketch_animation_get`; the archive's `expectedRevision` is that frozen
+source revision, not the animation revision or a later drawing revision.
+
+```json
+{
+  "action": "sketch_archive",
+  "parameters": {
+    "sketchId": "courier_prepared_parts",
+    "expectedRevision": 12,
+    "operationId": "courier_shot_01_archive_001",
+    "animationId": "courier_rooftop_shot_01",
+    "animationRevision": 1
+  }
+}
+```
+
+Use authoritative returned values in place of the example identifiers/revisions.
+Both selection fields are required together. Omitting both keeps ordinary legacy
+sketch-only archiving. Inspect the completed receipt and `remoteVerified` before
+claiming transfer. Retain the exact request on an uncertain retry.
+
+Restore through ordinary `sketch_restore_archive` with its existing project,
+archive name, expected SHA256 and operation ID fields. A scene package creates a
+new sketch and returns `animationRestored`, `animationId`, `animationRevision`
+and `animationProgramSha256`. Read that new saved scene before editing or baking;
+never assume the source IDs were reused. Archive restore preserves later human
+edits on replay. Source/native contract support does not establish that an older
+deployed relay accepts new fields: check actual capabilities and terminal results.
+The opaque restore action keeps its existing version floor, but version2 package
+contents require a reader that supports saved recipes.
+
 ## Author motion, not only a moving picture
 
 Use hierarchical joints and independent part bindings. Author anticipation,

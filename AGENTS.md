@@ -5,8 +5,8 @@ verified signed511103d5e. Includes portable saved-scene archives, reusable path
 clipping and cranial construction-edge occlusion. Accepted-camera testing found
 three real geometry/budget failures; failure-only skin union and exact convex
 mask coalescing preserve limits, successful old paths and visible holes. Focused
-combined23/0/0/0 passes. Full512 Android/Node, CI and original signing are still
-PENDING; do not mistake old focused XML for the interrupted full run. That full
+combined23/0/0/0 passes. Fresh full512 Android2325/0failures/0errors/26skips and769Node+306smoke pass.
+CI and original signing remain PENDING; do not mistake old focused XML for the interrupted full run. That full
 run exhausted /tmp; preserve it. Root reruns Java temporary files on workspace
 disk, without bypassing production storage admission. Future513 fringe/rear-hair
 work remains isolated. Actor/blink/hidden views/240secondfilm remain NEEDS_REWORK.

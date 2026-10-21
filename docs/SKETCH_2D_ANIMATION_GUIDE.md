@@ -75,6 +75,29 @@ shot first, before extending it into a sequence.
    motion is ready. Open that output and use **File → Export video** for the
    existing native export path. **Open** returns to a saved animation scene.
 
+## Keep an editable scene for reuse
+
+In4.10.9 and later, choose **Save scene**, then **Archive scene** in the
+animation workspace. This includes the saved rig, bindings, pose keys, timing,
+camera and cel choices together with that scene's frozen source artwork.
+Archiving only a baked sketch retains its drawing keys, but does not include
+the original saved animation recipe.
+
+The scene archive transfers through your app-linked workspace. A failed transfer
+keeps the same request for retry; it does not mean the file reached remote
+storage. Save later motion edits before starting a new archive.
+
+Restore a transferred archive through **File → Restore archive**. For a local
+`.vssketch` file use **File → Import editable animation**. Choose **Open animation
+scene** after restoring. Restore creates a new sketch and scene, leaving the
+originals available. Open the scene, change a pose, save and bake a new output.
+Version2 scene archives require a4.10.9-capable reader; keep older packages if
+you need to use older app versions.
+
+An editable package does not certify drawing likeness or natural acting. Inspect
+the actual rendered shot, especially hand contacts, cloth joins and replacement
+cels, before including it in a film.
+
 ## Combine three kinds of 2D animation
 
 **Frame by frame:** draw a new cel when anatomy, perspective or the silhouette
