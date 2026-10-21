@@ -81,3 +81,21 @@ test('native sketch frame input is strict, explicit and retains the legacy image
 test('prepared native source preview is explicit and gated without changing old request parsing',()=>{
  const p={...request,previewOnly:true};assert.deepEqual(nativeStudioParameters('local_drawing_generate',p),p);assert.throws(()=>requireStudioVersion({appVersion:'4.10.5'},'local_drawing_generate',p),/4\.10\.6/);assert.doesNotThrow(()=>requireStudioVersion({appVersion:'4.10.6'},'local_drawing_generate',p));for(const value of [null,'true',1])assert.throws(()=>nativeStudioParameters('local_drawing_generate',{...request,previewOnly:value}));
 });
+
+test('paired appearance and authored structure requests are explicit, strict and version gated',()=>{
+ const paired={requestId:'paired',sketchId:'actor',expectedRevision:8,frameSource:{frameIndex:4,documentSha256:'a'.repeat(64),layerIds:['pose']},appearanceSource:{objectId:'appearance',sourceSha256:'b'.repeat(64),sourceRect:{x:.2,y:.1,width:.5,height:.7}},conditioning:{appearanceStrength:.75,structureStrength:.8},settings:request.settings};
+ assert.deepEqual(nativeStudioParameters('local_drawing_generate',paired),paired);assert.throws(()=>requireStudioVersion({appVersion:'4.10.6'},'local_drawing_generate',paired),/4\.10\.7/);assert.doesNotThrow(()=>requireStudioVersion({appVersion:'4.10.7'},'local_drawing_generate',paired));
+ for(const mutate of [p=>delete p.frameSource,p=>delete p.conditioning,p=>delete p.appearanceSource,p=>p.appearanceSource=null,p=>p.appearanceSource.sourceSha256='bad',p=>p.conditioning.appearanceStrength='0.75',p=>p.conditioning.structureStrength=1.1,p=>p.conditioning.extra=true,p=>p.appearanceSource.sourceRect.x=.9]){const value=structuredClone(paired);mutate(value);assert.throws(()=>nativeStudioParameters('local_drawing_generate',value));}
+ const preview={...paired,previewOnly:true};delete preview.settings;assert.deepEqual(nativeStudioParameters('local_drawing_generate',preview),preview);
+ assert.deepEqual(nativeStudioParameters('local_drawing_generate',request),request);assert.doesNotThrow(()=>requireStudioVersion({appVersion:'4.10.2'},'local_drawing_generate',request));
+});
+
+test('optional paired model selection has its own floor and preserves ordinary model requests',()=>{
+ const p={packId:'sd15_ipadapter_controlnet_v1'};for(const action of ['local_drawing_models','local_drawing_install']){assert.deepEqual(nativeStudioParameters(action,p),p);assert.throws(()=>requireStudioVersion({appVersion:'4.10.6'},action,p),/4\.10\.7/);assert.doesNotThrow(()=>requireStudioVersion({appVersion:'4.10.7'},action,p));}
+ assert.deepEqual(nativeStudioParameters('local_drawing_models',{}),{});assert.throws(()=>requireStudioVersion({appVersion:'4.10.6'},'local_drawing_models',{packId:'sd15_onnx_v1'}),/4\.10\.7/);assert.doesNotThrow(()=>requireStudioVersion({appVersion:'4.10.2'},'local_drawing_install',{packId:'sd15_onnx_v1'}));assert.throws(()=>nativeStudioParameters('local_drawing_models',{packId:'custom'}));
+});
+
+test('ordinary MCP image blocks expose all real paired previews and the completed draft',()=>{
+ const worker=fs.readFileSync(new URL('../src/index.js',import.meta.url),'utf8'),start=worker.indexOf('const nativeImageBlocks ='),end=worker.indexOf('\nconst clean =',start);const context={};vm.createContext(context);vm.runInContext(worker.slice(start,end).replace('const nativeImageBlocks =','globalThis.nativeImageBlocks ='),context);
+ const keys=['localDrawingSourcePreviewImage','localDrawingAppearancePreviewImage','localDrawingStructurePreviewImage','localDrawingPreviewImage'];const result=Object.fromEntries(keys.map((key,index)=>[key,{mimeType:'image/png',base64:'native_'+index}]));assert.deepEqual(JSON.parse(JSON.stringify(context.nativeImageBlocks({result}))),keys.map((key,index)=>({type:'image',data:'native_'+index,mimeType:'image/png'})));
+});

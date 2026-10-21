@@ -9,25 +9,29 @@ import java.nio.file.Files;
 
 /** Explicit public-weight download and verified private activation; no inference network calls. */
 final class LocalDrawingModels {
- static final String ID="sd15_onnx_v1";
+ static final String ID="sd15_onnx_v1",PAIRED_ID="sd15_ipadapter_controlnet_v1";
+ private final String packId;
+ static String forRequest(JSONObject request){return request.has("appearanceSource")?PAIRED_ID:ID;}
+ static String selected(JSONObject parameters)throws Exception{String id=parameters.has("packId")?parameters.getString("packId"):ID;if(!ID.equals(id)&&!PAIRED_ID.equals(id))throw SketchDocument.bad("Unknown local drawing model pack");return id;}
  private static final java.util.concurrent.Semaphore INSTALL=new java.util.concurrent.Semaphore(1,true);
  private final Context context;
- LocalDrawingModels(Context c){context=c.getApplicationContext();}
+ LocalDrawingModels(Context c){this(c,ID);}
+ LocalDrawingModels(Context c,String id){if(!ID.equals(id)&&!PAIRED_ID.equals(id))throw new IllegalArgumentException("Unknown local drawing model pack");context=c.getApplicationContext();packId=id;}
  JSONObject catalogue()throws Exception {
-  try(InputStream in=context.getAssets().open("local_drawing/sd15-onnx-v1.json");ByteArrayOutputStream bytes=new ByteArrayOutputStream()){byte[] buffer=new byte[8192];int n;while((n=in.read(buffer))!=-1){if(bytes.size()+n>64*1024)throw new IOException("Model catalogue exceeds bound");bytes.write(buffer,0,n);}return new JSONObject(bytes.toString("UTF-8"));}
+  try(InputStream in=context.getAssets().open("local_drawing/"+(ID.equals(packId)?"sd15-onnx-v1.json":"sd15-ipadapter-controlnet-v1.json"));ByteArrayOutputStream bytes=new ByteArrayOutputStream()){byte[] buffer=new byte[8192];int n;while((n=in.read(buffer))!=-1){if(bytes.size()+n>64*1024)throw new IOException("Model catalogue exceeds bound");bytes.write(buffer,0,n);}return new JSONObject(bytes.toString("UTF-8"));}
  }
  String identity()throws Exception{return SketchDocument.sha256(SketchDocument.canonical(catalogue()).getBytes(StandardCharsets.UTF_8));}
- File directory(){return new File(context.getFilesDir(),"creative_workspace/models/installed/"+ID);}
+ File directory(){return new File(context.getFilesDir(),"creative_workspace/models/installed/"+packId);}
  JSONObject status()throws Exception {
   JSONObject c=catalogue();boolean installed;try{installed=structurallyInstalled(c);}catch(Exception invalid){installed=false;}boolean bit64=android.os.Process.is64Bit();
-  return new JSONObject().put("packId",ID).put("minimumNativeVersion","4.10.2").put("runtimeAdapter",ID).put("runtimeIncluded",true).put("modelInstalled",installed).put("requires64BitProcess",true).put("process64Bit",bit64).put("runtimeAvailable",installed&&bit64)
+  return new JSONObject().put("packId",packId).put("minimumNativeVersion",ID.equals(packId)?"4.10.2":"4.10.7").put("runtimeAdapter",packId).put("runtimeIncluded",true).put("modelInstalled",installed).put("requires64BitProcess",true).put("process64Bit",bit64).put("runtimeAvailable",installed&&bit64)
    .put("modelIdentity",identity()).put("modelBytes",c.getLong("modelBytes")).put("requiredAvailableRamMb",c.getLong("requiredAvailableRamMb")).put("availableRamMb",availableRamMb())
-   .put("inferenceVerified",identity().equals(context.getSharedPreferences("local_drawing",Context.MODE_PRIVATE).getString("verifiedModel","")))
+   .put("inferenceVerified",identity().equals(context.getSharedPreferences("local_drawing",Context.MODE_PRIVATE).getString(ID.equals(packId)?"verifiedModel":"verifiedModel_"+packId,"")))
    .put("hostedInference",false).put("weightsDownloadedSeparately",true).put("width",512).put("height",512).put("outputKind","reference-conditioned model-generated raster draft").put("recoversArtistLayers",false).put("guaranteesAnatomyOrLikeness",false).put("license",c.getString("license")).put("sourceRepository",c.getString("sourceRepository")).put("sourceRevision",c.getString("sourceRevision"));
  }
  private boolean structurallyInstalled(JSONObject c)throws Exception {
   File root=directory(),manifest=new File(root,"manifest.json");if(Files.isSymbolicLink(root.toPath())||!manifest.isFile()||manifest.length()>64*1024)return false;
-  JSONObject m=new JSONObject(new String(Files.readAllBytes(manifest.toPath()),StandardCharsets.UTF_8));if(!identity().equals(m.optString("pinnedCatalogueSha256"))||!ID.equals(m.optString("runtimeAdapter")))return false;
+  JSONObject m=new JSONObject(new String(Files.readAllBytes(manifest.toPath()),StandardCharsets.UTF_8));if(!identity().equals(m.optString("pinnedCatalogueSha256"))||!packId.equals(m.optString("runtimeAdapter")))return false;
   JSONArray files=c.getJSONArray("files");for(int i=0;i<files.length();i++){JSONObject item=files.getJSONObject(i);File file=new File(root,item.getString("path"));if(!safe(root,file)||!file.isFile()||file.length()!=item.getLong("bytes"))return false;}return true;
  }
  Lease require(LocalDrawingEngine.Progress progress)throws Exception {
@@ -59,24 +63,24 @@ final class LocalDrawingModels {
    if(!identity().equals(prior.optString("pinnedCatalogueSha256")))throw new IOException("LOCAL_DRAWING_PACK_ID_CONFLICT: existing pack is preserved");
   }
   long reserve=Math.max(512L*1024*1024,context.getFilesDir().getTotalSpace()/20),required=c.getLong("modelBytes")*2+reserve;if(context.getFilesDir().getUsableSpace()<required)throw new IllegalStateException("LOCAL_DRAWING_STORAGE_UNAVAILABLE: download/activation requires "+((required+1073741823L)/1073741824L)+"GiB free app storage");
-  ModelPackManager manager=new ModelPackManager(context);File stage=new File(context.getFilesDir(),"creative_workspace/models/cloud_restore/"+ID+"_native_download");if(!stage.isDirectory()&&!stage.mkdirs())throw new IOException("Cannot stage optional model");stage.setLastModified(System.currentTimeMillis());
+  ModelPackManager manager=new ModelPackManager(context);File stage=new File(context.getFilesDir(),"creative_workspace/models/cloud_restore/"+packId+"_native_download");if(!stage.isDirectory()&&!stage.mkdirs())throw new IOException("Cannot stage optional model");stage.setLastModified(System.currentTimeMillis());
   JSONArray files=c.getJSONArray("files");long done=0,total=c.getLong("modelBytes");
   for(int i=0;i<files.length();i++){
    if(Thread.currentThread().isInterrupted())throw new InterruptedException("Local model download cancelled");JSONObject item=files.getJSONObject(i);File target=new File(stage,item.getString("path"));if(!safe(stage,target))throw new IOException("Unsafe pinned model path");long prefix=done;
    if(!target.isFile()||target.length()!=item.getLong("bytes")||!item.getString("sha256").equals(hash(target))){
-    new ResumableTransferManager(new TransferJournal(context)).download(new ResumableTransferManager.Request("local_model_"+i,c.getString("baseUrl")+item.getString("path"),target,item.getLong("bytes"),item.getString("sha256")),LocalDrawingModels::open,(bytes,expected)->{
+    new ResumableTransferManager(new TransferJournal(context)).download(new ResumableTransferManager.Request((ID.equals(packId)?"local_model_":"paired_model_")+i,item.has("url")?item.getString("url"):c.getString("baseUrl")+item.getString("path"),target,item.getLong("bytes"),item.getString("sha256")),LocalDrawingModels::open,(bytes,expected)->{
      try{progress.report((int)Math.min(85,85d*(prefix+bytes)/total),"Downloading optional model weights; inference stays offline");}catch(Exception cancelled){if(cancelled instanceof InterruptedException)Thread.currentThread().interrupt();throw new ProgressFailure(cancelled);}
     });
    }
    done+=item.getLong("bytes");stage.setLastModified(System.currentTimeMillis());
   }
   JSONObject hashes=new JSONObject();for(int i=0;i<files.length();i++)hashes.put(files.getJSONObject(i).getString("path"),files.getJSONObject(i).getString("sha256"));
-  try(InputStream license=context.getAssets().open("local_drawing/LICENSE-OpenRAIL-M.txt");ByteArrayOutputStream bytes=new ByteArrayOutputStream()){byte[] buffer=new byte[8192];int n;while((n=license.read(buffer))!=-1){if(bytes.size()+n>64*1024)throw new IOException("Model license exceeds bound");bytes.write(buffer,0,n);}byte[] text=bytes.toByteArray();OpenPipelineArtifacts.writeAtomic(new File(stage,"MODEL_LICENSE.txt"),text,64*1024);hashes.put("MODEL_LICENSE.txt",SketchDocument.sha256(text));}
-  JSONObject manifest=new JSONObject().put("id",ID).put("version","1").put("license",c.getString("license")).put("capabilities",new JSONArray().put("image.generate.neural").put("image.refine.neural")).put("category","generation").put("backend","onnxruntime-cpu").put("runtimeAdapter",ID).put("pinnedCatalogueSha256",identity()).put("files",hashes).put("sourceRepository",c.getString("sourceRepository")).put("sourceRevision",c.getString("sourceRevision")).put("hostedInference",false);
+  try(InputStream license=context.getAssets().open(ID.equals(packId)?"local_drawing/LICENSE-OpenRAIL-M.txt":"local_drawing/LICENSE-Paired-Models.txt");ByteArrayOutputStream bytes=new ByteArrayOutputStream()){byte[] buffer=new byte[8192];int n;while((n=license.read(buffer))!=-1){if(bytes.size()+n>64*1024)throw new IOException("Model license exceeds bound");bytes.write(buffer,0,n);}byte[] text=bytes.toByteArray();OpenPipelineArtifacts.writeAtomic(new File(stage,"MODEL_LICENSE.txt"),text,64*1024);hashes.put("MODEL_LICENSE.txt",SketchDocument.sha256(text));}
+  JSONObject manifest=new JSONObject().put("id",packId).put("version","1").put("license",c.getString("license")).put("capabilities",new JSONArray().put("image.generate.neural").put("image.refine.neural")).put("category","generation").put("backend","onnxruntime-cpu").put("runtimeAdapter",packId).put("pinnedCatalogueSha256",identity()).put("files",hashes).put("sourceRepository",c.getString("sourceRepository")).put("sourceRevision",c.getString("sourceRevision")).put("hostedInference",false);
   OpenPipelineArtifacts.writeAtomic(new File(stage,"manifest.json"),manifest.toString(2).getBytes(StandardCharsets.UTF_8),64*1024);
   manager.activateRestoredDirectory(stage,"pinned-public-model-download",(n,d)->progress.report(85+n*15/100,d));return status();
  }
- void verified()throws Exception {if(!context.getSharedPreferences("local_drawing",Context.MODE_PRIVATE).edit().putString("verifiedModel",identity()).commit())throw new IOException("Cannot retain native inference receipt");}
+ void verified()throws Exception {if(!context.getSharedPreferences("local_drawing",Context.MODE_PRIVATE).edit().putString(ID.equals(packId)?"verifiedModel":"verifiedModel_"+packId,identity()).commit())throw new IOException("Cannot retain native inference receipt");}
  long availableRamMb(){ActivityManager manager=(ActivityManager)context.getSystemService(Context.ACTIVITY_SERVICE);if(manager==null)return 0;ActivityManager.MemoryInfo info=new ActivityManager.MemoryInfo();manager.getMemoryInfo(info);return info.availMem/(1024L*1024L);}
  static String hash(File file)throws Exception {java.security.MessageDigest digest=java.security.MessageDigest.getInstance("SHA-256");try(InputStream in=new FileInputStream(file)){byte[] b=new byte[256*1024];int n;while((n=in.read(b))!=-1){if(Thread.currentThread().isInterrupted())throw new InterruptedException("Model verification cancelled");digest.update(b,0,n);}}return OpenPipelineArtifacts.hex(digest.digest());}
  private static boolean safe(File root,File file)throws Exception{return file.getCanonicalPath().startsWith(root.getCanonicalPath()+File.separator)&&!Files.isSymbolicLink(file.toPath());}

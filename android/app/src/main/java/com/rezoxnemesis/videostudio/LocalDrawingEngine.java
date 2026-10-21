@@ -14,7 +14,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 final class LocalDrawingEngine implements AutoCloseable {
     interface Progress { void report(int percent,String stage)throws Exception; }
     static final int EDGE=512, LATENT_EDGE=64, LATENTS=4*64*64, EMBEDDING=77*768;
-    private static final Semaphore INFERENCE_SLOT=new Semaphore(1,true);
+    static final Semaphore INFERENCE_SLOT=new Semaphore(1,true);
     private final OrtEnvironment environment;
     private final ScheduledExecutorService watchdog=Executors.newSingleThreadScheduledExecutor(r->{Thread t=new Thread(r,"local-drawing-cancellation");t.setDaemon(true);return t;});
     LocalDrawingEngine(){environment=OrtEnvironment.getEnvironment();try{environment.setTelemetry(false);}catch(OrtException unavailable){throw new IllegalStateException("Cannot disable local inference telemetry",unavailable);}}
@@ -78,8 +78,8 @@ final class LocalDrawingEngine implements AutoCloseable {
             Bitmap result=Bitmap.createBitmap(EDGE,EDGE,Bitmap.Config.ARGB_8888);result.setPixels(pixels,0,EDGE,0,0,EDGE,EDGE);return result;
         }finally{close();if(acquired)INFERENCE_SLOT.release();}
     }
-    private static int channel(float x)throws Exception{if(!Float.isFinite(x))throw new IOException("Non-finite decoded image");return Math.round(Math.max(0,Math.min(1,x*.5f+.5f))*255);}
-    private OrtSession open(File root,String path)throws Exception {
+    static int channel(float x)throws Exception{if(!Float.isFinite(x))throw new IOException("Non-finite decoded image");return Math.round(Math.max(0,Math.min(1,x*.5f+.5f))*255);}
+    OrtSession open(File root,String path)throws Exception {
         check();File file=new File(root,path);if(!file.isFile()||!file.getCanonicalPath().startsWith(root.getCanonicalPath()+File.separator))throw new IOException("LOCAL_DRAWING_MODEL_MISSING: "+path);
         try(OrtSession.SessionOptions options=new OrtSession.SessionOptions()){
             options.setIntraOpNumThreads(Math.max(1,Math.min(4,Runtime.getRuntime().availableProcessors())));options.setInterOpNumThreads(1);
@@ -87,7 +87,7 @@ final class LocalDrawingEngine implements AutoCloseable {
             return environment.createSession(file.getAbsolutePath(),options);
         }
     }
-    private float[] encode(OrtSession session,long[] ids)throws Exception {
+    float[] encode(OrtSession session,long[] ids)throws Exception {
         NodeInfo node=session.getInputInfo().get("input_ids");if(node==null||!(node.getInfo() instanceof TensorInfo))throw new IllegalArgumentException("CLIP input contract differs");
         OnnxJavaType type=((TensorInfo)node.getInfo()).type;OnnxTensor input;
         if(type==OnnxJavaType.INT32){int[] ints=new int[ids.length];for(int i=0;i<ints.length;i++)ints[i]=(int)ids[i];input=OnnxTensor.createTensor(environment,IntBuffer.wrap(ints),new long[]{1,77});}
@@ -101,7 +101,7 @@ final class LocalDrawingEngine implements AutoCloseable {
             try(OrtSession.Result out=run(session,inputs)){return floats(out,0,1,4,LATENT_EDGE,LATENT_EDGE);}
         }
     }
-    private OnnxTensor tensor(float[] input,long...shape)throws Exception{return OnnxTensor.createTensor(environment,FloatBuffer.wrap(input),shape);}
+    OnnxTensor tensor(float[] input,long...shape)throws Exception{return OnnxTensor.createTensor(environment,FloatBuffer.wrap(input),shape);}
     OrtSession.Result run(OrtSession session,Map<String,? extends OnnxTensorLike> inputs)throws Exception {
         check();Thread owner=Thread.currentThread();Object guard=new Object();AtomicBoolean closed=new AtomicBoolean();
         try(OrtSession.RunOptions options=new OrtSession.RunOptions()){
@@ -109,13 +109,13 @@ final class LocalDrawingEngine implements AutoCloseable {
             try{return session.run(inputs,options);}catch(OrtException nativeError){if(owner.isInterrupted()){InterruptedException cancelled=new InterruptedException("Local AI drawing cancelled; saved checkpoints are kept");cancelled.initCause(nativeError);throw cancelled;}throw nativeError;}finally{termination.cancel(false);synchronized(guard){closed.set(true);}}
         }
     }
-    private static float[] floats(OrtSession.Result result,int index,long...shape)throws Exception {
+    static float[] floats(OrtSession.Result result,int index,long...shape)throws Exception {
         OnnxValue value=result.get(index);if(!(value instanceof OnnxTensor))throw new IOException("Model must return a tensor");OnnxTensor tensor=(OnnxTensor)value;
         if(tensor.getInfo().type!=OnnxJavaType.FLOAT||!Arrays.equals(shape,tensor.getInfo().getShape()))throw new IOException("LOCAL_DRAWING_TENSOR_CONTRACT_DIFFERS: "+Arrays.toString(tensor.getInfo().getShape()));
         FloatBuffer buffer=tensor.getFloatBuffer();float[] out=new float[buffer.remaining()];buffer.get(out);for(float x:out)if(!Float.isFinite(x))throw new IOException("Non-finite model tensor");return out;
     }
-    private static final class Snapshot{final int step;final float[] values;Snapshot(int s,float[] v){step=s;values=v;}}
-    private static Snapshot read(File directory,String name,String identity,int count)throws Exception {
+    static final class Snapshot{final int step;final float[] values;Snapshot(int s,float[] v){step=s;values=v;}}
+    static Snapshot read(File directory,String name,String identity,int count)throws Exception {
         File f=new File(directory,name);if(!f.exists())return new Snapshot(0,null);if(f.length()!=4+64+4+4+4L*count+32)throw new IOException("LOCAL_DRAWING_CHECKPOINT_SIZE_DIFFERS");
         byte[] bytes=java.nio.file.Files.readAllBytes(f.toPath());java.security.MessageDigest digest=java.security.MessageDigest.getInstance("SHA-256");digest.update(bytes,0,bytes.length-32);
         if(!java.security.MessageDigest.isEqual(digest.digest(),Arrays.copyOfRange(bytes,bytes.length-32,bytes.length)))throw new IOException("LOCAL_DRAWING_CHECKPOINT_CHECKSUM_DIFFERS");
@@ -123,12 +123,12 @@ final class LocalDrawingEngine implements AutoCloseable {
             if(in.readInt()!=0x56444c32)throw new IOException("Invalid drawing checkpoint");byte[] id=new byte[64];in.readFully(id);if(!identity.equals(new String(id,java.nio.charset.StandardCharsets.US_ASCII)))throw new IOException("LOCAL_DRAWING_CHECKPOINT_IDENTITY_DIFFERS");int step=in.readInt();if(in.readInt()!=count)throw new IOException("Invalid latent count");float[] values=new float[count];for(int i=0;i<count;i++){values[i]=in.readFloat();if(!Float.isFinite(values[i]))throw new IOException("Invalid saved tensor");}return new Snapshot(step,values);
         }
     }
-    private static void save(File directory,String name,String identity,int step,float[] values)throws Exception {
+    static void save(File directory,String name,String identity,int step,float[] values)throws Exception {
         check();File part=new File(directory,".tensor_"+UUID.randomUUID());
         try{java.security.MessageDigest digest=java.security.MessageDigest.getInstance("SHA-256");try(FileOutputStream file=new FileOutputStream(part);DataOutputStream out=new DataOutputStream(new BufferedOutputStream(new java.security.DigestOutputStream(file,digest)))){out.writeInt(0x56444c32);out.write(identity.getBytes(java.nio.charset.StandardCharsets.US_ASCII));out.writeInt(step);out.writeInt(values.length);for(float value:values)out.writeFloat(value);out.flush();file.write(digest.digest());file.getFD().sync();}
             check();if(!part.renameTo(new File(directory,name)))throw new IOException("Cannot publish native tensor checkpoint");
         }finally{if(part.exists())part.delete();}
     }
-    private static void check()throws InterruptedException{if(Thread.currentThread().isInterrupted())throw new InterruptedException("Local neural drawing cancelled");}
+    static void check()throws InterruptedException{if(Thread.currentThread().isInterrupted())throw new InterruptedException("Local neural drawing cancelled");}
     @Override public void close(){watchdog.shutdownNow();}
 }

@@ -46,7 +46,8 @@ const nativeImageBlocks = command => {
   const result=command&&command.result;
   if(!result||typeof result!=='object')return [];
   const seen=new Set();
-  return ['contactSheet','sourceArtworkImage','rigPreviewImage','sketchPreviewImage','retainedPreviewImage','localDrawingSourcePreviewImage'].flatMap(key=>{
+  const pairedImageKeys=['localDrawingSourcePreviewImage','localDrawingAppearancePreviewImage','localDrawingStructurePreviewImage','localDrawingPreviewImage'];
+  return ['contactSheet','sourceArtworkImage','rigPreviewImage','sketchPreviewImage','retainedPreviewImage'].concat(pairedImageKeys).flatMap(key=>{
     const value=result[key];
     if(!value||typeof value.base64!=='string'||!value.base64||value.base64.length>1500*1024)return [];
     const mime=value.mimeType||'image/jpeg';

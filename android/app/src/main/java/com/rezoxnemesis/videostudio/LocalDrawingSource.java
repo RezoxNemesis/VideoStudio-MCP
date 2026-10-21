@@ -6,7 +6,7 @@ import java.io.*;
 /** Freeze an explicitly selected owned reference in full EXIF-oriented source coordinates. */
 final class LocalDrawingSource {
  static void validate(JSONObject p)throws Exception {
-  SketchDocument.fields(p,"requestId,sketchId,expectedRevision,objectId,sourceSha256,sourceRect,frameSource,previewOnly,settings");
+  SketchDocument.fields(p,"requestId,sketchId,expectedRevision,objectId,sourceSha256,sourceRect,frameSource,appearanceSource,conditioning,previewOnly,settings");
   for(String key:new String[]{"requestId","sketchId"})SketchDocument.id(p,key);
   SketchDocument.integer(p,"expectedRevision",1,Long.MAX_VALUE-1);
   if(p.has("previewOnly"))SketchDocument.bool(p,"previewOnly");
@@ -18,6 +18,11 @@ final class LocalDrawingSource {
    if(source.has("crop"))rect(source.getJSONObject("crop"));
   }else{
    SketchDocument.id(p,"objectId");hash(p,"sourceSha256");if(p.has("sourceRect"))rect(p.getJSONObject("sourceRect"));
+  }
+  if(p.has("appearanceSource")||p.has("conditioning")){
+   if(!p.has("appearanceSource")||!p.has("conditioning")||!p.has("frameSource"))throw SketchDocument.bad("Paired drawing requires frameSource, appearanceSource and conditioning together");
+   JSONObject appearance=p.getJSONObject("appearanceSource");SketchDocument.fields(appearance,"objectId,sourceSha256,sourceRect");SketchDocument.id(appearance,"objectId");hash(appearance,"sourceSha256");if(appearance.has("sourceRect"))rect(appearance.getJSONObject("sourceRect"));
+   JSONObject control=p.getJSONObject("conditioning");SketchDocument.fields(control,"appearanceStrength,structureStrength");SketchDocument.number(control,"appearanceStrength",0,1);SketchDocument.number(control,"structureStrength",0,1);
   }
   if(p.has("settings"))LocalDrawingEngine.validate(p.getJSONObject("settings"));else if(!p.optBoolean("previewOnly",false))throw SketchDocument.bad("Drawing settings are required for generation");
  }
@@ -62,15 +67,7 @@ final class LocalDrawingSource {
   return new int[]{(int)Math.floor(crop.getDouble("x")*width),(int)Math.floor(crop.getDouble("y")*height),Math.min(width,(int)Math.ceil((crop.getDouble("x")+crop.getDouble("width"))*width)),Math.min(height,(int)Math.ceil((crop.getDouble("y")+crop.getDouble("height"))*height))};
  }
  static Bitmap prepare(SketchProjectStore store,JSONObject document,JSONObject p)throws Exception {
-  validate(p);SketchProjectStore.requireRevision(document,p.getLong("expectedRevision"));JSONObject object=SketchDocument.object(document,p.getString("objectId"));
-  if(!"image".equals(object.getString("kind")))throw SketchDocument.bad("Choose an imported image reference for local AI drawing");
-  if(object.has("imageMesh")||object.optBoolean("referenceFlipX",false)||object.optBoolean("referenceFlipY",false))throw SketchDocument.bad("Use an unmeshed, unflipped original reference; crop in full source coordinates");
-  if(object.has("referenceCrop")){JSONObject crop=object.getJSONObject("referenceCrop");if(crop.getDouble("x")!=0||crop.getDouble("y")!=0||crop.getDouble("width")!=1||crop.getDouble("height")!=1)throw SketchDocument.bad("Use the full original guide and select the AI source rectangle explicitly");}
-  JSONObject ref=object.getJSONObject("reference");if(!p.getString("sourceSha256").equals(ref.getString("sha256")))throw new IllegalStateException("LOCAL_DRAWING_SOURCE_CHANGED");
-  File file=store.referenceFile(document.getString("id"),ref);if(file.length()>8L*1024*1024||!p.getString("sourceSha256").equals(SketchProjectStore.fileHash(file)))throw new IllegalStateException("LOCAL_DRAWING_SOURCE_CHANGED");
-  BitmapFactory.Options bounds=new BitmapFactory.Options();bounds.inJustDecodeBounds=true;BitmapFactory.decodeFile(file.getPath(),bounds);
-  if(bounds.outWidth!=ref.getInt("width")||bounds.outHeight!=ref.getInt("height")||bounds.outWidth<1||bounds.outHeight<1||bounds.outWidth>2048||bounds.outHeight>2048)throw SketchDocument.bad("Reference dimensions differ from the source identity");
-  Bitmap source=BitmapFactory.decodeFile(file.getPath());if(source==null)throw SketchDocument.bad("Cannot decode selected reference");
+  validate(p);Bitmap source=decodeOwnedImage(store,document,p);JSONObject ref=SketchDocument.object(document,p.getString("objectId")).getJSONObject("reference");
   Bitmap target=null,selected=null;try{
    JSONObject crop=p.has("sourceRect")?p.getJSONObject("sourceRect"):new JSONObject().put("x",0).put("y",0).put("width",1).put("height",1);
    float l=(float)(crop.getDouble("x")*source.getWidth()),t=(float)(crop.getDouble("y")*source.getHeight()),w=(float)(crop.getDouble("width")*source.getWidth()),h=(float)(crop.getDouble("height")*source.getHeight());
@@ -83,4 +80,16 @@ final class LocalDrawingSource {
    return target;
   }catch(Exception e){if(target!=null)target.recycle();throw e;}finally{if(selected!=null&&selected!=source)selected.recycle();source.recycle();}
  }
+ static Bitmap decodeOwnedImage(SketchProjectStore store,JSONObject document,JSONObject p)throws Exception {
+  SketchProjectStore.requireRevision(document,p.getLong("expectedRevision"));JSONObject object=SketchDocument.object(document,p.getString("objectId"));
+  if(!"image".equals(object.getString("kind")))throw SketchDocument.bad("Choose an imported image reference for local AI drawing");
+  if(object.has("imageMesh")||object.optBoolean("referenceFlipX",false)||object.optBoolean("referenceFlipY",false))throw SketchDocument.bad("Use an unmeshed, unflipped original reference; crop in full source coordinates");
+  if(object.has("referenceCrop")){JSONObject crop=object.getJSONObject("referenceCrop");if(crop.getDouble("x")!=0||crop.getDouble("y")!=0||crop.getDouble("width")!=1||crop.getDouble("height")!=1)throw SketchDocument.bad("Use the full original guide and select the AI source rectangle explicitly");}
+  JSONObject ref=object.getJSONObject("reference");if(!p.getString("sourceSha256").equals(ref.getString("sha256")))throw new IllegalStateException("LOCAL_DRAWING_SOURCE_CHANGED");
+  File file=store.referenceFile(document.getString("id"),ref);if(file.length()>8L*1024*1024||!p.getString("sourceSha256").equals(SketchProjectStore.fileHash(file)))throw new IllegalStateException("LOCAL_DRAWING_SOURCE_CHANGED");
+  BitmapFactory.Options bounds=new BitmapFactory.Options();bounds.inJustDecodeBounds=true;BitmapFactory.decodeFile(file.getPath(),bounds);
+  if(bounds.outWidth!=ref.getInt("width")||bounds.outHeight!=ref.getInt("height")||bounds.outWidth<1||bounds.outHeight<1||bounds.outWidth>2048||bounds.outHeight>2048)throw SketchDocument.bad("Reference dimensions differ from the source identity");
+  Bitmap source=BitmapFactory.decodeFile(file.getPath());if(source==null)throw SketchDocument.bad("Cannot decode selected reference");return source;
+ }
+
 }
