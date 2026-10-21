@@ -199,7 +199,14 @@ final class SketchHumanAnatomy {
     private void skinRim()throws Exception{
         JSONArray objects=layer.getJSONArray("objects");Path skinPath=new Path(),shortsPath=new Path();boolean any=false;
         for(int i=0;i<objects.length();i++){JSONObject o=objects.getJSONObject(i);if(!o.optBoolean("fill"))continue;
-            if(skin.equals(o.optString("color"))){Path path=modelPath(o);if(!any){skinPath.set(path);any=true;}else if(!skinPath.op(path,Path.Op.UNION))throw SketchDocument.bad("Native anatomy skin union failed");}
+            if(skin.equals(o.optString("color"))){Path path=modelPath(o);if(!any){skinPath.set(path);any=true;}else {
+                // Skia fails on the valid rear/high225° union. Preserve both
+                // original operands and retry only that failure with the same
+                // native vector backend used by bounded hand intersections.
+                Path trial=new Path(skinPath);
+                if(trial.op(path,Path.Op.UNION))skinPath.set(trial);
+                else SketchHandGeometry.retryVectorBoolean(skinPath,path,Path.Op.UNION);
+            }}
             if(o.getString("id").startsWith(actor+"_anatomy_shorts_"))shortsPath.addPath(modelPath(o));
         }
         if(!any)throw SketchDocument.bad("Anatomy surface is empty");Paint pen=new Paint(Paint.ANTI_ALIAS_FLAG);pen.setStyle(Paint.Style.STROKE);pen.setStrokeWidth(.65f);pen.setStrokeJoin(Paint.Join.ROUND);pen.setStrokeCap(Paint.Cap.ROUND);Path rim=new Path();pen.getFillPath(skinPath,rim);
