@@ -86,3 +86,27 @@ review fresh source/appearance/structure previews before any inference retake.
 No new model inference, phone/APK execution, actual513/514/515 installation,
 artistic acceptance or finished film is established by this feature. Full515
 integration/CI/original signer verification remain root-owned and pending.
+
+## Edge-preview freshness repair
+
+A subsequent read-only review found that editing the three new edge controls
+left an earlier structural preview visible. A completed worker could also queue
+old pixels and display them after a threshold edit. Root observed two genuine
+manual-flow RED failures at integrated515 sourceb57a431; exact fixtures, XML and
+logs are retained in `integrated515/preview-state-red` under the root evidence
+ledger. Neither failure was a finder/timing substitute for the reported defect.
+
+The checkbox and both threshold fields now invalidate the displayed structural
+bitmap. Source-only state remains set, so clearing the input cannot make it
+eligible for placing a generated draft. A UI generation captured before worker
+submission rejects and recycles outdated source-preview results. Generated draft
+results and saved study requests, IDs, checkpoints and resume behavior remain
+unchanged. The change is scoped to these edge controls; it does not add general
+source-selection invalidation or modify native sampling/model behavior.
+
+Root GREEN passed22native tests with0failures,0errors and0skips: the two new
+manual regressions, nine edge tests and eleven existing snapshot/numeric/Plus
+checks. Exact executed sources and XML are retained in
+`integrated515/preview-state-green`. These are UI/persistence checks, not evidence
+of improved drawing likeness or finished animation. Full integrated515 regression,
+CI and original-signature verification remain separate root-owned checks.
