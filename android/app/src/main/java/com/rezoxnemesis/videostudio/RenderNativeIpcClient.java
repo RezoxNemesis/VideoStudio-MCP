@@ -30,7 +30,8 @@ public final class RenderNativeIpcClient {
     private static final String RENDER_SERVICE =
             "com.rezox.render.agent.VideoStudioNativeBridgeService";
     private static final Set<String> ALLOWED = new HashSet<>(Arrays.asList(
-            "engine.status", "gpu.info", "projects.list", "projects.inspect",
+            "engine.status", "agent.diagnostics", "agent.capabilities",
+            "gpu.info", "projects.list", "projects.inspect",
             "blender.scene.summary", "blender.object.add_cube",
             "blender.scene.set_frame", "blender.object.set_transform",
             "blender.object.keyframe", "blender.project.save_copy",
@@ -38,7 +39,8 @@ public final class RenderNativeIpcClient {
             "blender.object.add_light","blender.object.modifier_add",
             "blender.material.assign","blender.scene.render_settings",
             "blender.scene.render_still","blender.project.restore_scene",
-            "blender.scene.create_lively_project","blender.scene.populate_lively",
+            "blender.scene.create_lively_project","blender.scene.batch_assembly",
+            "blender.scene.visual_audit","blender.scene.populate_lively",
             "blender.scene.render_video"));
 
     private RenderNativeIpcClient() {}
@@ -76,7 +78,8 @@ public final class RenderNativeIpcClient {
         if ("render.blender.scene.render_video".equals(action)) return 1_980_000L;
         if ("render.blender.scene.render_still".equals(action)) return 540_000L;
         if ("render.blender.scene.populate_lively".equals(action)
-                || "render.blender.scene.create_lively_project".equals(action))
+                || "render.blender.scene.create_lively_project".equals(action)
+                || "render.blender.scene.batch_assembly".equals(action))
             return 150_000L;
         if ("render.blender.project.save_copy".equals(action)) return 145_000L;
         if ("render.blender.project.restore_scene".equals(action)) return 120_000L;
