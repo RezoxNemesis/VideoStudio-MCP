@@ -163,3 +163,40 @@ wire-equivalent old receipt replay, historical SHA/ledger retention, ordinary
 AI-key import/Undo/archive restoration and rejection of changed request meaning.
 Final integrated4.10.7 regression, signed APK and real phone validation remain
 root-owned work; this focused GREEN does not establish those results.
+
+## Manual snapshot and new-guide audit repair
+
+Independent combined-source review found two actual manual workflow defects:
+
+- Placing an AI key updated the Activity's opened document/revision but retained
+  its earlier document SHA, so the next frame-conditioned preview or generation
+  rejected the Activity's own edit as LOCAL_DRAWING_FRAME_SOURCE_CHANGED.
+- Use draft as a new drawing guide imported the generated PNG without the normal
+  verified localDrawing binding, losing portable request/model/source provenance.
+
+The narrow repair computes the fresh document hash on the worker, then updates
+opened document and hash together in one UI callback. Existing selected frame,
+layers and crop stay unchanged. New-guide import uses the same verified ordinary
+binding as key placement, with explicit frame0/exposure1. No new action or version
+bump is introduced in this isolated branch.
+
+LocalDrawingManualSnapshotTest exercises actual manual controls: layer exclusion,
+source preview, Show saved draft, Place draft, and immediate source preview without
+Refresh; it checks rendered blue pixels while excluding a red layer, retained crop
+and clock, current revision and absence of another document edit. A second actual
+manual flow opens a completed paired draft as a guide, then exports/restores an
+editable archive after deleting the fixture's original study output; full portable
+AI request/model/source proof must survive. Fixtures are synthetic engineering
+colors/completed receipts, not neural inference or new creative scenarios.
+
+Preserved RED1–4 were test-harness failures before the intended assertion: missing
+explicit24-frame fixture exposure, an extra checkbox toggle, the PAUSED dialog not
+yet laid out, and reading the selection before the posted positive-button callback.
+Corrections retain all requested assertions: explicit native authored clock, one
+real checkbox click, actual dialog measure/layout and main-looper callback drain.
+Root's RED5 then confirmed both actual product defects: stale frame-source SHA and
+missing new-guide provenance. Production remained untouched until that observation.
+Root's fresh GREEN passes32native tests/0failures/0errors/0skips across seven suites;
+XML/logs are preserved under /workspace/work/native-ai-frame-source-evidence as
+manual-snapshot-green-junit and manual-snapshot-green.log. Earlier RED evidence
+remains. Final combined root regression and signed candidate are separate work.
