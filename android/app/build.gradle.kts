@@ -17,7 +17,20 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
+    // AGP may resolve its default debug key through ANDROID_USER_HOME rather
+    // than HOME. Never let that replace the owner's established identity.
+    signingConfigs {
+        getByName("debug") {
+            val verifiedKey = System.getenv("VIDEOSTUDIO_SIGNING_KEYSTORE")
+                ?: "${System.getenv("HOME")}/.android/debug.keystore"
+            storeFile = file(verifiedKey)
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
+    }
     buildTypes {
+        getByName("debug") { signingConfig = signingConfigs.getByName("debug") }
         release { isMinifyEnabled = false }
     }
 }
