@@ -264,6 +264,7 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
         stopPlayback();
         try{
             if(SketchPaintOps.containsPaint(operations)||needsPreparedWorker(operations)
+                    ||document.has("layeredDrawing")&&SketchCelOps.singleDuplicate(operations)
                     ||session.hasPreparedSaves()){
                 // Durable intent + worker transaction; asynchronously publishes
                 // the resulting editable vector and real actor keyframes.

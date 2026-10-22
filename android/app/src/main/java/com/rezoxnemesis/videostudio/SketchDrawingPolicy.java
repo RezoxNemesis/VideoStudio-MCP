@@ -47,6 +47,14 @@ public final class SketchDrawingPolicy {
         if ("sketch_edit".equals(action)) requireOperations(session, args.getJSONArray("operations"));
     }
     /** Call before expensive paint/trace preparation, and again at transactional admission. */
+    public static void requireOperations(JSONObject session,JSONObject document,JSONArray operations)throws Exception {
+        if(requiresOriginal(session)&&document!=null&&document.has("layeredDrawing")&&SketchCelOps.singleDuplicate(operations)){
+            // The persistent workflow protects the hidden guide and rejects imported
+            // artwork. The worker separately verifies all immutable paint ancestors.
+            SketchLayeredDrawing.authoredCelSources(document,operations.getJSONObject(0));return;
+        }
+        requireOperations(session,operations);
+    }
     public static void requireOperations(JSONObject session, JSONArray operations) throws Exception {
         if (!requiresOriginal(session) || operations == null) return;
         for (int i = 0; i < operations.length(); i++) {

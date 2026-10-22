@@ -7,6 +7,11 @@ import java.util.UUID;
 /** Atomic flipbook operations. No object-count-dependent UI batch splitting. */
 public final class SketchCelOps {
     private SketchCelOps() {}
+    /** The copy worker can recover an exact receipt before checking the current drawing stage. */
+    static boolean singleDuplicate(JSONArray operations) {
+        return operations!=null&&operations.length()==1&&operations.optJSONObject(0)!=null
+                &&"duplicate_cel".equals(operations.optJSONObject(0).optString("type"));
+    }
     public static void apply(JSONObject doc,JSONObject op) throws Exception {
         String type=op.getString("type");
         if("duplicate_cel".equals(type)) {
@@ -15,7 +20,7 @@ public final class SketchCelOps {
             if(from==to)throw SketchDocument.bad("Choose a different destination cel");String prefix=SketchDocument.id(op,"idPrefix");if(prefix.length()>72)throw SketchDocument.bad("Cel ID prefix too long");
             JSONObject layer=SketchDocument.layer(doc,SketchDocument.id(op,"layerId"));SketchEditOps.requireUnlocked(layer);JSONArray copies=new JSONArray(),objects=layer.getJSONArray("objects");
             for(int i=0;i<objects.length();i++){JSONObject original=objects.getJSONObject(i);if(!SketchFrameRenderer.exposed(original,from))continue;copies.put(sampled(original,from).put("id",prefix+"_"+copies.length()).put("frame",to).put("exposure",1).put("keys",new JSONArray()).put("transform",SketchDocument.transformAt(original,from)));}
-            doc.put("frameCount",Math.max(doc.getInt("frameCount"),to+1));clear(layer,to);
+            doc.put("frameCount",Math.max(doc.getInt("frameCount"),to+1));clear(layer,to,doc.has("layeredDrawing")?prefix:null);
             for(int i=0;i<copies.length();i++)layer.getJSONArray("objects").put(copies.getJSONObject(i));
         }else if("clear_cel".equals(type)) {
             SketchDocument.fields(op,"type,layerId,frame");int frame=(int)SketchDocument.integer(op,"frame",0,doc.getInt("frameCount")-1);
@@ -87,13 +92,19 @@ public final class SketchCelOps {
         }
     }
     private static void clear(JSONObject layer,int frame) throws Exception {
+        clear(layer,frame,null);
+    }
+    private static void clear(JSONObject layer,int frame,String copyPrefix) throws Exception {
         JSONArray objects=layer.getJSONArray("objects"),result=new JSONArray();for(int i=0;i<objects.length();i++){
             JSONObject o=objects.getJSONObject(i);if(!SketchFrameRenderer.exposed(o,frame)){result.put(o);continue;}
             int start=o.getInt("frame"),end=start+o.getInt("exposure");
             if(end>frame+1){
                 JSONObject tail=SketchDocument.copy(o);retainSourceClock(tail,frame+1);
                 tail.put("frame",frame+1).put("exposure",end-frame-1);
-                if(start<frame)tail.put("id",UUID.randomUUID().toString());
+                // Protected authored copies are replayed by the workflow validator.
+                // Their surviving ranges need the same IDs in preview and publication.
+                // Unprotected legacy cel operations keep their original UUID behavior.
+                if(start<frame)tail.put("id",copyPrefix==null?UUID.randomUUID().toString():copyPrefix+"_tail_"+i);
                 if(start<frame)result.put(o.put("exposure",frame-start));result.put(tail);
             }else if(start<frame)result.put(o.put("exposure",frame-start));
         }

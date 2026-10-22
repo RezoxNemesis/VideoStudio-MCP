@@ -1,3 +1,20 @@
+# Active protected authored cel reuse — 2026-10-22
+
+Isolated feat/native-authored-cel-reuse-v41017 starts exact519510d549. Read
+`docs/continuity/NATIVE_AUTHORED_CEL_REUSE_41017.md`. Root genuine nativeRED6tests/
+5FAIL4.11s, then unchanged6GREEN4.828s on FULL519 plus6productionoverrides.
+Initial missing-UI-import compile failure is separately frozen, not behavioralRED.
+Existing duplicate_cel now admits source-free active visible unlocked stage marks
+inside the frozen shot clock with matching layer transforms; complete native paint
+ancestry rejects reference/clone descendants. One copy per edit, receipt-first
+retry, deterministic layered exposure-tail IDs, native worker manual Copy→next.
+Legacy duplicate floors/normalization/UUIDs and opaque archive floors unchanged.
+Future4.10.17/code520 version/full integratedAndroid/CI/originalsigner are root-owned.
+Agent owns this isolated repair and Node only; NO Gradle/native/JUnit/model runs.
+Keep original6assertions and failed generations unchanged. Broader root49native/0failures/0errors/0skips PASS36.697s (12new+37existing);
+full803Node plus306smoke PASS. Full520integration/signing remain pending. No new action, hidden view inference, automatic
+redraw, contact/art quality certification or completed film/device/MCP claims.
+
 # Active explicit finger flexion preparation — 2026-10-22
 
 Isolated `feat/native-finger-joint-angles-v41016` starts exact518 `b3b8d36`.

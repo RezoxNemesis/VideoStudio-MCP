@@ -28,8 +28,11 @@ public final class SketchPaintOps {
 
     public static JSONObject executeEdit(Context context,SketchProjectStore sketches,String id,String operationId,long revision,String fingerprint,JSONArray operations)throws Exception {
         for(int i=0;i<operations.length();i++)if(SketchAuthoredStagePromotion.requested(operations.getJSONObject(i))&&operations.length()!=1)throw SketchDocument.bad("Keep source-bound stage reuse in its own edit");
-        SketchDrawingPolicy.requireOperations(sketches.activeDrawingSession(id),operations);
+        boolean celCopy=SketchCelOps.singleDuplicate(operations);
+        if(!celCopy)SketchDrawingPolicy.requireOperations(sketches.activeDrawingSession(id),operations);
         SketchProjectStore.MutationPreflight admitted=sketches.preflightMutation(id,operationId,revision,fingerprint,operations);if(admitted.receipt!=null)return admitted.receipt;
+        if(celCopy)SketchDrawingPolicy.requireOperations(sketches.activeDrawingSession(id),admitted.document,operations);
+        if(admitted.document.has("layeredDrawing"))for(int i=0;i<operations.length();i++)if("duplicate_cel".equals(operations.getJSONObject(i).optString("type"))&&!celCopy)throw new IllegalStateException("SKETCH_LAYERED_DRAWING_REQUIRED: Keep authored cel reuse in its own revision-bound edit");
         for(int i=0;i<operations.length();i++)SketchLayeredDrawing.requireOperation(admitted.document,operations.getJSONObject(i));
         JSONObject next=SketchDocument.copy(admitted.document);JSONArray visual=new JSONArray(),changes=new JSONArray();
         JSONArray promotions=new JSONArray();SketchPaintStore assets=null;try{
@@ -55,6 +58,13 @@ public final class SketchPaintOps {
                 }else if("symmetry_stroke".equals(type)){
                     JSONArray expanded=SketchSymmetry.apply(next,operation);for(int k=0;k<expanded.length();k++)visual.put(SketchDocument.copy(expanded.getJSONObject(k)));
                 }else{
+                    if("duplicate_cel".equals(type)&&next.has("layeredDrawing")){
+                        JSONArray sources=SketchLayeredDrawing.authoredCelSources(next,operation);java.util.HashSet<String> verified=new java.util.HashSet<>();
+                        for(int n=0;n<sources.length();n++){
+                            if(Thread.currentThread().isInterrupted())throw new java.io.InterruptedIOException("Authored cel reuse cancelled before publication");
+                            JSONObject source=sources.getJSONObject(n);if("paint".equals(source.getString("kind"))){String sha=source.getJSONObject("paint").getString("sha256");if(verified.add(sha)){if(assets==null)assets=new SketchPaintStore(context,id);assets.requireAuthoredStageSource(source.getJSONObject("paint"));}}
+                        }
+                    }
                     if(SketchAuthoredStagePromotion.requested(operation)){
                         JSONObject prospective=SketchDocument.copy(next);SketchEditOps.apply(prospective,operation);SketchDocument.validate(prospective);
                         JSONArray promoted=SketchAuthoredStagePromotion.sources(next,operation);java.util.HashSet<String> verified=new java.util.HashSet<>();
@@ -72,8 +82,8 @@ public final class SketchPaintOps {
         // Final admission rechecks revision and receipt. A conflict leaves only harmless
         // immutable orphan files and produces no history, accepted stroke or live event.
         return sketches.mutatePrepared(id,operationId,revision,fingerprint,ignored->{
-            if(promotions.length()>0&&Thread.currentThread().isInterrupted())throw new java.io.InterruptedIOException("Authored stage reuse cancelled before publication");
-            SketchDrawingPolicy.requireOperations(sketches.activeDrawingSession(id),operations);
+            if((promotions.length()>0||celCopy)&&Thread.currentThread().isInterrupted())throw new java.io.InterruptedIOException("Authored reuse cancelled before publication");
+            SketchDrawingPolicy.requireOperations(sketches.activeDrawingSession(id),admitted.document,operations);
             return SketchDocument.copy(preparedDocument);
         },visual,details,seedDrawing);
     }

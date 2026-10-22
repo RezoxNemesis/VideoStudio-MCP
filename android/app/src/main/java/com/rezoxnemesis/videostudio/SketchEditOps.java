@@ -51,7 +51,10 @@ public final class SketchEditOps {
             String id = SketchDocument.id(args, "sketchId");
             // Named-part import recovers an existing receipt before its transactional
             // policy check. Replaying committed work never copies pixels into a later session.
-            if(!"sketch_import_reference_layers".equals(action)&&!"sketch_undo".equals(action)&&!"sketch_redo".equals(action))SketchDrawingPolicy.requireAction(store.activeDrawingSession(id),action,args);
+            // Only a singleton cel-copy uses receipt-first worker admission. Other
+            // original-session actions retain their existing early policy checks.
+            boolean celCopy="sketch_edit".equals(action)&&SketchCelOps.singleDuplicate(args.optJSONArray("operations"));
+            if(!celCopy&&!"sketch_import_reference_layers".equals(action)&&!"sketch_undo".equals(action)&&!"sketch_redo".equals(action))SketchDrawingPolicy.requireAction(store.activeDrawingSession(id),action,args);
             if("sketch_layered_drawing_preview".equals(action)){SketchDocument.fields(args,"sketchId,expectedRevision,view,frameIndex,maxDimension,crop,stageOnly");JSONObject document=store.get(id);SketchProjectStore.requireRevision(document,SketchDocument.integer(args,"expectedRevision",1,Long.MAX_VALUE-1));return SketchLayeredDrawingPreview.inspect(context,document,args);}
             if("sketch_reference_layers_preview".equals(action))return SketchReferenceLayers.preview(context,store,args);
             if("sketch_paint_journal".equals(action)||"sketch_sample_color".equals(action))return SketchPaintOps.query(context,store,action,args);

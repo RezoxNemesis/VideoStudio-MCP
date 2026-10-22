@@ -102,10 +102,28 @@ public final class SketchLayeredDrawing {
         String kind=object.optString("kind");if(!Arrays.asList("stroke","eraser","path").contains(kind)&&!(nativePaint&&"paint".equals(kind)))throw denied("Author strokes, erasers, unfilled pen paths or native paint cels; copied or prefab shapes are unavailable");
         if(object.optBoolean("fill",false)||object.has("reference")||object.has("masterLink")||object.has("hand")||object.has("human")||object.has("styleId")||object.has("gradient"))throw denied("Only source-free unfilled authored marks are allowed");
     }
+    /** Structural admission only. Paint ancestry is checked on the native authoring worker. */
+    static JSONArray authoredCelSources(JSONObject doc,JSONObject op)throws Exception {
+        if(!enabled(doc))throw denied("Protected authored cel reuse requires a layered drawing");validate(doc);
+        SketchDocument.fields(op,"type,layerId,fromFrame,toFrame,idPrefix");
+        for(String field:new String[]{"layerId","fromFrame","toFrame","idPrefix"})if(!op.has(field))throw denied("Authored cel reuse requires "+field);
+        int from=(int)SketchDocument.integer(op,"fromFrame",0,doc.getInt("frameCount")-1),to=(int)SketchDocument.integer(op,"toFrame",0,SketchDocument.MAX_FRAMES-1);
+        if(to>=doc.getInt("frameCount"))throw denied("Copy inside the frozen drawing clock; its frame count cannot be extended");
+        String layerId=SketchDocument.id(op,"layerId");
+        if(!contains(activeLayerIds(doc),layerId))throw denied("Copy authored cels on an active stage layer only");
+        JSONObject layer=SketchDocument.layer(doc,layerId);SketchEditOps.requireUnlocked(layer);
+        JSONObject sourceTransform=SketchDocument.transformAt(layer,from),targetTransform=SketchDocument.transformAt(layer,to);
+        if(!layer.getBoolean("visible")||layer.getDouble("opacity")<=0||sourceTransform.getDouble("opacity")<=0||targetTransform.getDouble("opacity")<=0)throw denied("Copy a visible authored stage layer");
+        if(!stable(sourceTransform).equals(stable(targetTransform)))throw denied("Match source and destination layer transforms before reusing authored cels");
+        JSONArray objects=layer.getJSONArray("objects"),sources=new JSONArray();
+        for(int i=0;i<objects.length();i++){JSONObject object=objects.getJSONObject(i);if(!SketchFrameRenderer.exposed(object,from))continue;authored(object,true);sources.put(object);}
+        if(sources.length()==0)throw denied("Choose a cel containing authored marks");return sources;
+    }
     public static void requireOperation(JSONObject doc,JSONObject op)throws Exception{
         String type=op.optString("type");if("layered_drawing_begin".equals(type)){if(enabled(doc))throw denied("A workflow is already active");return;}if(!enabled(doc))return;
         if(type.startsWith("layered_drawing_"))return;JSONArray active=activeLayerIds(doc);String layerId=null;
         if("add_object".equals(type)){authored(op.getJSONObject("object"),false);layerId=op.getString("layerId");}
+        else if("duplicate_cel".equals(type)){authoredCelSources(doc,op);layerId=op.getString("layerId");}
         else if("precision_contour".equals(type)){if(op.optBoolean("fill",false)||op.optBoolean("pressureOutline",false))throw denied("Use an unfilled precision pen contour");layerId=op.getString("layerId");}
         else if("add_paint_cel".equals(type))layerId=op.getString("layerId");
         else if("paint_fill".equals(type)){
