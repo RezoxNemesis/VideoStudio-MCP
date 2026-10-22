@@ -122,7 +122,37 @@ public final class SketchAnimationCompiler {
             SketchDocument.layer(out,cue.getString("layerId")).getJSONArray("objects").put(text);
         }
         double maxApproximation=0;int denseKeys=0;
-        for(int li=0;li<layers.length();li++){JSONObject layer=layers.getJSONObject(li);if(m.cameraLayers.contains(layer.getString("id"))){denseKeys+=layer.getJSONArray("keys").length();Reduction reduced=reduceKeys(m,layer.getJSONArray("keys"),new double[]{-16d*m.width,-16d*m.height,16d*m.width,16d*m.height},0);layer.put("keys",reduced.keys);maxApproximation=Math.max(maxApproximation,reduced.error);}JSONArray items=layer.getJSONArray("objects");for(int oi=0;oi<items.length();oi++){JSONObject object=items.getJSONObject(oi);Binding binding=m.bindings.get(object.getString("id"));if(binding!=null&&binding.weights==null){denseKeys+=object.getJSONArray("keys").length();double layerScale=maxLayerScale(m,m.owners.get(binding.objectId));Reduction reduced=reduceKeys(m,object.getJSONArray("keys"),geometryBounds(m,object),m.keyTolerancePixels/layerScale);object.put("keys",reduced.keys);maxApproximation=Math.max(maxApproximation,reduced.error*layerScale);}}}
+        for(int li=0;li<layers.length();li++){
+            JSONObject layer=layers.getJSONObject(li);
+            if(m.cameraLayers.contains(layer.getString("id"))){
+                denseKeys+=layer.getJSONArray("keys").length();
+                Set<Integer> anchors=sourceKeyAnchors(SketchDocument.layer(m.source,layer.getString("id")));
+                for(Camera camera:m.camera)anchor(anchors,camera.frame);
+                Reduction reduced=reduceKeys(m,layer.getJSONArray("keys"),new double[]{-16d*m.width,-16d*m.height,16d*m.width,16d*m.height},0,anchors);
+                layer.put("keys",reduced.keys);maxApproximation=Math.max(maxApproximation,reduced.error);
+            }
+            JSONArray items=layer.getJSONArray("objects");
+            for(int oi=0;oi<items.length();oi++){
+                JSONObject object=items.getJSONObject(oi);Binding binding=m.bindings.get(object.getString("id"));
+                if(binding!=null&&binding.weights==null){
+                    denseKeys+=object.getJSONArray("keys").length();double layerScale=maxLayerScale(m,m.owners.get(binding.objectId));
+                    Set<Integer> anchors=sourceKeyAnchors(m.objects.get(binding.objectId));
+                    for(Rig rig:m.rigs)if(rig.bindings.contains(binding)){
+                        for(Pose pose:rig.poses)anchor(anchors,pose.frame);
+                        for(Contact contact:rig.contacts){
+                            anchor(anchors,contact.start-contact.blendIn);anchor(anchors,contact.start);
+                            anchor(anchors,contact.end);anchor(anchors,contact.end+contact.blendOut);
+                            // Contact intervals include their end frame. Preserve
+                            // the first free sample, especially with zero blend.
+                            anchor(anchors,contact.end+contact.blendOut+1);
+                        }
+                        break;
+                    }
+                    Reduction reduced=reduceKeys(m,object.getJSONArray("keys"),geometryBounds(m,object),m.keyTolerancePixels/layerScale,anchors);
+                    object.put("keys",reduced.keys);maxApproximation=Math.max(maxApproximation,reduced.error*layerScale);
+                }
+            }
+        }
         int objectCount=0,keyCount=0,pointCount=0;
         for(int i=0;i<layers.length();i++){
             JSONObject layer=layers.getJSONObject(i);
@@ -549,12 +579,26 @@ public final class SketchAnimationCompiler {
     private static double[] applyCamera(Model m,Camera c,double x,double y){double a=Math.toRadians(c.rotation),dx=(x-m.width*.5)*c.zoom,dy=(y-m.height*.5)*c.zoom;return new double[]{m.width*(.5+c.x)+Math.cos(a)*dx-Math.sin(a)*dy,m.height*(.5+c.y)+Math.sin(a)*dx+Math.cos(a)*dy};}
     private static double[] applyTransform(JSONObject t,double x,double y,int width,int height)throws Exception{double ax=t.getDouble("anchorX")*width,ay=t.getDouble("anchorY")*height,dx=(x-ax)*t.getDouble("scaleX"),dy=(y-ay)*t.getDouble("scaleY"),a=Math.toRadians(t.getDouble("rotation"));return new double[]{ax+t.getDouble("x")*width+Math.cos(a)*dx-Math.sin(a)*dy,ay+t.getDouble("y")*height+Math.sin(a)*dx+Math.cos(a)*dy};}
     private static final class Reduction {JSONArray keys;double error;Reduction(JSONArray keys,double error){this.keys=keys;this.error=error;}}
+    private static Set<Integer> sourceKeyAnchors(JSONObject source)throws Exception {
+        Set<Integer> anchors=new HashSet<>();JSONArray keys=source.getJSONArray("keys");
+        for(int i=0;i<keys.length();i++)anchor(anchors,keys.getJSONObject(i).getInt("frame"));return anchors;
+    }
+    private static void anchor(Set<Integer> anchors,int frame){
+        if(frame>=0)anchors.add(frame);
+        // Retain the preceding sample too: a tiny authored hold/opacity step
+        // must not become a tolerance-sized ramp before its explicit key.
+        if(frame>0)anchors.add(frame-1);
+    }
     /** Ramer-Douglas-Peucker over fully sampled affine transforms. The AABB corners bound every
-     * prepared vertex/control point, and error is checked at every integer output frame. */
-    private static Reduction reduceKeys(Model m,JSONArray dense,double[] bounds,double tolerance)throws Exception {
+     * prepared vertex/control point, and error is checked at every integer output frame.
+     * Authored pose/source/camera/contact boundaries are exact, not approximated. */
+    private static Reduction reduceKeys(Model m,JSONArray dense,double[] bounds,double tolerance,Set<Integer> anchors)throws Exception {
         if(dense.length()<2)return new Reduction(dense,0);
         boolean[] keep=new boolean[dense.length()];keep[0]=true;keep[keep.length-1]=true;
-        java.util.ArrayDeque<int[]> pending=new java.util.ArrayDeque<>();pending.add(new int[]{0,keep.length-1});
+        java.util.ArrayDeque<int[]> pending=new java.util.ArrayDeque<>();int previousAnchor=0;
+        for(int i=1;i<keep.length;i++)if(i==keep.length-1||anchors.contains(dense.getJSONObject(i).getInt("frame"))){
+            keep[i]=true;pending.add(new int[]{previousAnchor,i});previousAnchor=i;
+        }
         while(!pending.isEmpty()){
             if(Thread.currentThread().isInterrupted())throw new InterruptedException("Animation key reduction cancelled");
             int[] span=pending.removeLast();int a=span[0],b=span[1];if(b-a<2)continue;int worst=-1;double worstScore=1;

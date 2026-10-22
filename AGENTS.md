@@ -1,3 +1,7 @@
+# Active authored animation anchor repair —2026-10-22
+
+Feature feat/native-authored-pose-anchors-v41015 starts verified signed51793048e7. Actual private headlean failed at authored neutralframe84 with1402changedpixels; compiler quarterpixel reduction discarded explicit pose timing. Root genuine nativeRED4tests4FAIL2.615s, source/camera opacity keys also lost. Final6new+22existing native28PASS3.639s; independentzero-blendreleaseRED6tests1FAIL2.581s corrected by firstfree-frame anchor. ActualheadV3PASS46.868s all96strictneutral/portable, visuallyNEEDS_REWORK oldcutoutownership; nofilmacceptance. Preserve explicit rig/source/camera/contact anchors plus their prior sample, approximate only between anchors. No new canonical operation/schema/floors; source/program/fingerprints and dense/output budgets unchanged. Root owns Compiler/test/one Gradle and allnative lanes. Agent3 separatelyowns handparts worktree fromsame517, integrationfuture518planned onlyafterfreshcombinedchecks. Preserve all failedstudies, originalsigner/projects/identity, no main/Worker/stablepublication/hostedart/phoneclaims.
+
 # Active native filtered clone sampling — 2026-10-22
 
 Feature `feat/native-filtered-clone-v41014` starts verified signed516 `c01f0f2`.
