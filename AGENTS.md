@@ -1,3 +1,20 @@
+# Active native character head-fit RED-only slice — 2026-10-22
+
+Worktree `/workspace/work/VideoStudio-Head-Fit-v41013`, branch
+`feat/native-character-head-fit-v41013`, base verified515 `32faad8`.
+Read `docs/continuity/NATIVE_CHARACTER_HEAD_FIT_41013.md`. Optional proposed
+anatomy-only `settings.headProportions` carries strict local-model jaw width,
+chin length and eye width scales. Tests and source-free baseline helper only;
+NO production implementation or version bump before root observes native RED.
+Root owns ONE Gradle, all JUnit/native rendering/inference, integrated future516
+version bump, full checks and signing. Agents may run Node. Existing root515
+worktree stays untouched. Omitted geometry/pixels/normalization/floors and explicit
+scale1 pixels must remain exact. Fit geometry before projection/facing/depth,
+not a 2D screen warp. Single front reference cannot establish unseen anatomy;
+this tool cannot guarantee AI identity or accepted character views/film.
+Preserve all old and failed artwork/tests. No hosted/external art, Gallery,
+main/Worker/stable publication, signer or device/data/MCP identity reset.
+
 # Active combined character drawing candidate — 2026-10-21
 
 Root feat/native-character-drawing-v41012 integrates verified brush sourcebdcf18c
