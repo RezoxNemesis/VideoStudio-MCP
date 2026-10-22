@@ -21,6 +21,8 @@ final class SketchHandDialog {
     private static final String[] VIEWS={"front","left","right","back","high","low"};
     private static final String[] HANDS={"right","left"},DETAILS={"anatomical","contour"};
     private static final String[] RENDER_STYLES={"smooth","cel"};
+    private static final String[] PART_LABELS={"Legacy default (complete hand)","All","Palm / forearm","Digits"};
+    private static final String[] PARTS={"all","palm_forearm","digits"};
     private static final String[] STUDY_LABELS={"Open / close","Grasp","Finger cascade","Thumb opposition"};
     private static final String[] EASING={"Native default","linear","hold","smooth","ease_in","ease_out","ease_in_out","bezier"};
     private static final String[][] NUMBERS={{"centerX","Centre X (0.2..0.8)"},{"centerY","Centre Y (0.2..0.8)"},{"size","Size (0.4..1.2)"},{"motion","Motion (0..1)"},{"wristMotion","Wrist motion (0..1)"}};
@@ -29,7 +31,7 @@ final class SketchHandDialog {
     private final SketchConstructionSubmit create;
     private final LinearLayout form,poseControls;
     private final TextView status;
-    private final Spinner view,handedness,detail,renderStyle,study,posePicker,easing;
+    private final Spinner view,handedness,detail,renderStyle,parts,study,posePicker,easing;
     private final CheckBox custom;
     private final EditText skin,nail,keyFrame,previewFrame;
     private final Map<String,EditText> settingsFields=new LinkedHashMap<>(),channels=new LinkedHashMap<>();
@@ -61,6 +63,8 @@ final class SketchHandDialog {
         handedness=spinner(form,"Handedness",HANDS);handedness.setSelection(Arrays.asList(HANDS).indexOf(defaults.getString("handedness")));
         detail=spinner(form,"Hand detail",DETAILS);detail.setSelection(Arrays.asList(DETAILS).indexOf(defaults.getString("detail")));
         renderStyle=spinner(form,"Render style",RENDER_STYLES);renderStyle.setSelection(Arrays.asList(RENDER_STYLES).indexOf(defaults.getString("renderStyle")));
+        parts=spinner(form,"Hand parts",PART_LABELS);
+        TextView partHelp=new TextView(activity);partHelp.setText("Partial passes require cel and exactly one hand object on their own layer. Use matching pose and transform keys on separate rear palm/forearm and front digit layers around a prop. Visibility is resolved on the full hand first. Contact and thumb pose remain authored; this does not solve grip anatomy. Partial output uses native pixels up to 2048 squared; later cached preview zoom may soften its boundary.");form.addView(partHelp);
         skin=input(form,"Skin colour (ARGB)",defaults.getString("skinColor"),true);skin.setInputType(InputType.TYPE_CLASS_TEXT);
         nail=input(form,"Nail colour (ARGB)",defaults.getString("nailColor"),true);nail.setInputType(InputType.TYPE_CLASS_TEXT);
         for(String[] field:NUMBERS)settingsFields.put(field[0],input(form,field[1],String.valueOf(defaults.get(field[0])),true));
@@ -90,7 +94,7 @@ final class SketchHandDialog {
             }
         });
         custom.setOnCheckedChangeListener((control,checked)->{if(binding||unavailable()||submitting)return;clearPreview();enable(poseControls,checked);status.setText(checked?"Custom keys enabled. Blank channels use native neutral defaults.":"Native preset enabled with the current settings. Custom keys are retained until Reset preset.");});
-        for(Spinner control:new Spinner[]{view,handedness,detail,renderStyle,easing})control.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener(){
+        for(Spinner control:new Spinner[]{view,handedness,detail,renderStyle,parts,easing})control.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener(){
             public void onNothingSelected(AdapterView<?> parent){}
             public void onItemSelected(AdapterView<?> parent,View child,int position,long id){if(!binding&&!unavailable()&&!submitting)clearPreview();}
         });
@@ -133,6 +137,8 @@ final class SketchHandDialog {
         JSONObject settings=readSettings();if(custom.isChecked()){saveCurrent();refresh();}
         String id="hand_"+UUID.randomUUID().toString().replace("-","").substring(0,15);
         JSONObject operation=new JSONObject().put("type","add_hand_animation").put("layerId",id).put("handId",id).put("settings",settings);
+        if(parts.getSelectedItemPosition()>0)operation.put("parts",PARTS[parts.getSelectedItemPosition()-1]);
+        SketchHandAnimation.parts(operation,settings);
         if(custom.isChecked())operation.put("poses",new JSONArray(poses.toString()));
         return new JSONObject().put("operations",new JSONArray().put(new JSONObject().put("type","add_layer").put("layer",new JSONObject().put("id",id).put("name","Hand animation"))).put(operation));
     }

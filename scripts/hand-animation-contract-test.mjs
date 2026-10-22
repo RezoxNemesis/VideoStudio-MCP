@@ -204,7 +204,12 @@ test('shared Java/Node hand metadata matches and native templates use the produc
  // constructor by SketchHandStudiesTest; Node advertises where to retrieve them.
  assert.match(body,/\.put\("studyExamples",SketchHandStudies\.examples\(\)\)/);
  const expression=body.replace('.put("studyExamples",SketchHandStudies.examples())','').replace(/new (?:String|double|int)\[\]\{([^}]*)\}/g,'[$1]');
- const nativeMetadata=vm.runInNewContext(`(${expression})`,{JSONObject,JSONArray,SketchHandStudies:{PATTERNS:patterns}});
+ const handSource=fs.readFileSync(new URL('../android/app/src/main/java/com/rezoxnemesis/videostudio/SketchHandAnimation.java',import.meta.url),'utf8');
+ const partBody=handSource.match(/static JSONObject partCapabilities\(\)throws Exception \{\s*return ([\s\S]*?);\s*\}/)?.[1];
+ assert.ok(partBody,'native hand passes have inspectable shared metadata');
+ const partExpression=partBody.replace(/new (?:String|double|int)\[\]\{([^}]*)\}/g,'[$1]');
+ const SketchHandAnimation={partCapabilities:()=>vm.runInNewContext(`(${partExpression})`,{JSONObject,JSONArray})};
+ const nativeMetadata=vm.runInNewContext(`(${expression})`,{JSONObject,JSONArray,SketchHandStudies:{PATTERNS:patterns},SketchHandAnimation});
  assert.deepEqual(JSON.parse(JSON.stringify(nativeMetadata)),contract.HAND_ANIMATION_CAPABILITIES);
 });
 

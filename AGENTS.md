@@ -1,3 +1,31 @@
+# Active native hand part passes — 2026-10-22
+
+Isolated `feat/native-hand-part-passes-v41015` starts exact verified517 `93048e7`.
+Read `docs/continuity/NATIVE_HAND_PART_PASSES_41015.md`. Optional strict operation
+`parts` / retained `hand.parts` all,palm_forearm,digits; partials cel-only. Omission
+and explicitall must preserve complete geometry/pixels; old omitted normalized
+requests/floors remain exact. Explicit choices require future4.10.15. Full-hand
+visibility must resolve before part selection; normal source-over recomposition
+must be pixel-exact including AA, native output transforms and paper backgrounds.
+Root baseline FULL517 PASS1/20.913s, genuine nativeRED5/4FAIL18.008s unknownparts;
+omitted pinned old geometry/raw pixels PASS. Frozen core assertions stay unchanged.
+Actual offscreenv3 passed10/11, shared-layer underpaint failed; public rectclipv4
+passed7/11 and is rejected. Candidate now uses original native device-grid bitmap
+pixels with strict prepublication sole-own-layer partial validation; caps/manual/
+Node match, complete/all sharing unchanged. Original5 core assertions unchanged;
+Focused native run now12 tests: original core5, manual2, new integration5.
+Full Node795/795 plus306 smoke pass. Root focused nativeGREENv5 PASS12/119.073s
+on FULL517 retained runtime plus5 production overrides; originalcore5 unchanged,
+allowed separate-underpaint/.43object/.73layer exact, invalid shared-layer add/
+patch atomic and legacyexplicitall sharing/UndoRedo PASS. Frozen proof remains
+outsideGit native-hand-part-passes-20261022/green-v5-frozen-proof.
+Root owns future518 integration/version, ONE Gradle/all JUnit/native rendering,
+full checks/CI/signing. Agent may run Node only. Integrated518/full checks and
+actual generic split-pass visual study remain pending. No contactIK, actor
+likeness, finished grasp/style/film or phone claim. Preserve every older artifact,
+failed trial and frozen517 candidate; no main/Worker/stable publication or signer,
+device/data/MCP identity reset. No hosted/external artwork.
+
 # Active native filtered clone sampling — 2026-10-22
 
 Feature `feat/native-filtered-clone-v41014` starts verified signed516 `c01f0f2`.

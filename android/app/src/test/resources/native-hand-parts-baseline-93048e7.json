@@ -1,0 +1,478 @@
+{
+  "sourceCommit": "93048e717a25fafdc2fe92f663b9fa2089469876",
+  "appVersion": "4.10.14",
+  "sourceFree": true,
+  "externalDrawingRenderer": false,
+  "canvasSize": 512,
+  "frameCount": 96,
+  "fps": 24,
+  "cases": [
+    {
+      "id": "cel_right_front_grasp",
+      "input": {
+        "id": "cel_right_front_grasp",
+        "settings": {
+          "view": "front",
+          "handedness": "right",
+          "detail": "anatomical",
+          "centerX": 0.5,
+          "centerY": 0.55,
+          "size": 0.55,
+          "skinColor": "#FFE2DED3",
+          "nailColor": "#FFF0EADF",
+          "motion": 0,
+          "wristMotion": 0,
+          "renderStyle": "cel"
+        },
+        "poses": [
+          {
+            "frame": 0,
+            "interpolation": "hold",
+            "indexCurl": 0.82,
+            "middleCurl": 0.88,
+            "ringCurl": 0.93,
+            "littleCurl": 0.96,
+            "thumbCurl": 0.68,
+            "thumbOpposition": 0.7,
+            "spread": 0.06,
+            "wristFlex": 6,
+            "wristTurn": -8
+          }
+        ]
+      },
+      "frames": [
+        {
+          "frame": 0,
+          "inkSha256": "da1812495302bf821e2aa5481383989350156502cf9f854e7a8ef76f22de4146",
+          "transparentPixelSha256": "c18e839ee12a7fd01c675ad18026c98bff8d5e9e2b268c0e91a0554c28b6c475",
+          "transparentPngSha256": "b32553e2f1b30fbbcba1a20e9b6d48875fd552192b5f2964117e3e45c008daac",
+          "paperPixelSha256": "5aac79a83dcd39bbce95aa669ee29666309a549561a736deda35491f933dbe19",
+          "paperPngSha256": "fae77241996dd109dbee98c2c8992b69a9304670d0c912794e71ef802ae323eb"
+        },
+        {
+          "frame": 36,
+          "inkSha256": "da1812495302bf821e2aa5481383989350156502cf9f854e7a8ef76f22de4146",
+          "transparentPixelSha256": "8b96339b9475ab5ea40bbc103c3334e2bb87513423afe63f66261f791ac26c3b",
+          "transparentPngSha256": "44c9fd520cf9382092d5280f67c912b11925b3f3a1fd8da3a3a573a0f9103681",
+          "paperPixelSha256": "1000823e319344c49dde97a7e5e11c5ab665428b526918dc0e43ac0b8f7daaf4",
+          "paperPngSha256": "e5b4a768560fff0386e9d608b2112100719fd0b6ba286d25f68c10ded9def62f"
+        }
+      ]
+    },
+    {
+      "id": "cel_left_front_open",
+      "input": {
+        "id": "cel_left_front_open",
+        "settings": {
+          "view": "front",
+          "handedness": "left",
+          "detail": "anatomical",
+          "centerX": 0.5,
+          "centerY": 0.55,
+          "size": 0.55,
+          "skinColor": "#FFE2DED3",
+          "nailColor": "#FFF0EADF",
+          "motion": 0,
+          "wristMotion": 0,
+          "renderStyle": "cel"
+        },
+        "poses": [
+          {
+            "frame": 0,
+            "interpolation": "hold",
+            "indexCurl": 0.04,
+            "middleCurl": 0.06,
+            "ringCurl": 0.08,
+            "littleCurl": 0.1,
+            "thumbCurl": 0.12,
+            "thumbOpposition": 0.15,
+            "spread": 0.4,
+            "wristFlex": 0,
+            "wristTurn": 0
+          }
+        ]
+      },
+      "frames": [
+        {
+          "frame": 0,
+          "inkSha256": "6166a182289eaeda26d3b9de01ba52c6305f7b2680e5d7b14991030bfcd32698",
+          "transparentPixelSha256": "88b210a0e4ca930a1d17a0592a94e4f19263379c3840cbcb3c1e57ddb676ebca",
+          "transparentPngSha256": "b321444d11b3c390f6008b01397d1c859f90ae857113c2aafc56645effc4b503",
+          "paperPixelSha256": "7850e6e38cd73704c4b87b88f7b5f39a2951e5319e152f8844abb38c9c6182f4",
+          "paperPngSha256": "9e7b448b7b7a1e2062a59848b931c925d939745e9d90cc139300de68026b94e8"
+        },
+        {
+          "frame": 36,
+          "inkSha256": "6166a182289eaeda26d3b9de01ba52c6305f7b2680e5d7b14991030bfcd32698",
+          "transparentPixelSha256": "82ee8ee63ed5bd261348837c30d1bee8da349e448e76ace21a47eca9be7a8499",
+          "transparentPngSha256": "385fa3d10da43118b045c8efd61669958f1dfddd19fb801e114728fd4c315bcc",
+          "paperPixelSha256": "13ba4321e8bc637c60c68c8f8066ac91ffc395e8439bf2457f7d7a87b8a53700",
+          "paperPngSha256": "825a47e815cde429c608344281186a3b328a05a3144562e32110d3e94929ce19"
+        }
+      ]
+    },
+    {
+      "id": "cel_right_back_grasp",
+      "input": {
+        "id": "cel_right_back_grasp",
+        "settings": {
+          "view": "back",
+          "handedness": "right",
+          "detail": "anatomical",
+          "centerX": 0.5,
+          "centerY": 0.55,
+          "size": 0.55,
+          "skinColor": "#FFE2DED3",
+          "nailColor": "#FFF0EADF",
+          "motion": 0,
+          "wristMotion": 0,
+          "renderStyle": "cel"
+        },
+        "poses": [
+          {
+            "frame": 0,
+            "interpolation": "hold",
+            "indexCurl": 0.82,
+            "middleCurl": 0.88,
+            "ringCurl": 0.93,
+            "littleCurl": 0.96,
+            "thumbCurl": 0.68,
+            "thumbOpposition": 0.7,
+            "spread": 0.06,
+            "wristFlex": 6,
+            "wristTurn": -8
+          }
+        ]
+      },
+      "frames": [
+        {
+          "frame": 0,
+          "inkSha256": "5196385f66a9f313a8da90aecb614ff45dd1034cb49af456b0dde7dc56b66fdb",
+          "transparentPixelSha256": "a3fe907a38092234ef86dd89f9ab28cb257ca140605332717076d5a45bbcaf7a",
+          "transparentPngSha256": "773009f823d91cf9c935578b09fe8eb13df552c13e7893d5febe238ad62c3984",
+          "paperPixelSha256": "5a4321b91972139874bc03de78d5a21bda79713a3245214c1f334bfa24c3c594",
+          "paperPngSha256": "d786db5ba869e662976f4443dd9b57313f017004b3d2751ed5f5091c08c39702"
+        },
+        {
+          "frame": 36,
+          "inkSha256": "5196385f66a9f313a8da90aecb614ff45dd1034cb49af456b0dde7dc56b66fdb",
+          "transparentPixelSha256": "3fd6d0856d4a6eda066f495d734eaee9790b98fa9c064e17c1f4dccc9dd485e8",
+          "transparentPngSha256": "225aecb34c92dec41dd1791e94e20075167c493564bd280e28f40a1b599fe103",
+          "paperPixelSha256": "f10ae9b2a891e575435d8c6c88fc2acc795d9618faa878c55fd5b4a7479d7761",
+          "paperPngSha256": "0067a3d19252c74b10ac04e170ef23bf4e33303c69f42c564e206520c46d8514"
+        }
+      ]
+    },
+    {
+      "id": "cel_left_left_grasp",
+      "input": {
+        "id": "cel_left_left_grasp",
+        "settings": {
+          "view": "left",
+          "handedness": "left",
+          "detail": "anatomical",
+          "centerX": 0.5,
+          "centerY": 0.55,
+          "size": 0.55,
+          "skinColor": "#FFE2DED3",
+          "nailColor": "#FFF0EADF",
+          "motion": 0,
+          "wristMotion": 0,
+          "renderStyle": "cel"
+        },
+        "poses": [
+          {
+            "frame": 0,
+            "interpolation": "hold",
+            "indexCurl": 0.82,
+            "middleCurl": 0.88,
+            "ringCurl": 0.93,
+            "littleCurl": 0.96,
+            "thumbCurl": 0.68,
+            "thumbOpposition": 0.7,
+            "spread": 0.06,
+            "wristFlex": 6,
+            "wristTurn": -8
+          }
+        ]
+      },
+      "frames": [
+        {
+          "frame": 0,
+          "inkSha256": "8f7721a2893e3bf508ad86f434b7493f17fdf1e69b0600834121f2e55138c208",
+          "transparentPixelSha256": "849ee767909352c410764a5f3177565e6d177da658a2dbd0f33d12ab7eeb2e94",
+          "transparentPngSha256": "5d2ee8c0c1ec53e8c2d8e832b956212f379391ddf4e67925d0a61c4ed627cb15",
+          "paperPixelSha256": "74c65f8dfd5eea2f8e2341dab02d9c6a9ab42b6968b22f0f388b9ced448ff53c",
+          "paperPngSha256": "307597c73555fd5196295388693d720b8ccca57397731ef4a12ca1da0f9f3a30"
+        },
+        {
+          "frame": 36,
+          "inkSha256": "8f7721a2893e3bf508ad86f434b7493f17fdf1e69b0600834121f2e55138c208",
+          "transparentPixelSha256": "0d639a7f369bcc918ace8a08bacdc360d4fd30da9ef17c5fe5edebc3ee9ea163",
+          "transparentPngSha256": "83423f23ad0068d5eef91acdb38c9f3ebc7674795e9027230af92d7bfcbb68bc",
+          "paperPixelSha256": "d91f28176e9f616f9e52f7bebf2b0f9dc836da5c92e0db6ab9ec1f8e70c72003",
+          "paperPngSha256": "11b5f2733a542634c488cca891b3b207a34b09c20bddd3875711031b1e34a172"
+        }
+      ]
+    },
+    {
+      "id": "cel_right_right_open",
+      "input": {
+        "id": "cel_right_right_open",
+        "settings": {
+          "view": "right",
+          "handedness": "right",
+          "detail": "anatomical",
+          "centerX": 0.5,
+          "centerY": 0.55,
+          "size": 0.55,
+          "skinColor": "#FFE2DED3",
+          "nailColor": "#FFF0EADF",
+          "motion": 0,
+          "wristMotion": 0,
+          "renderStyle": "cel"
+        },
+        "poses": [
+          {
+            "frame": 0,
+            "interpolation": "hold",
+            "indexCurl": 0.04,
+            "middleCurl": 0.06,
+            "ringCurl": 0.08,
+            "littleCurl": 0.1,
+            "thumbCurl": 0.12,
+            "thumbOpposition": 0.15,
+            "spread": 0.4,
+            "wristFlex": 0,
+            "wristTurn": 0
+          }
+        ]
+      },
+      "frames": [
+        {
+          "frame": 0,
+          "inkSha256": "e20ebb70c27c47a96bc06e49ea9a464abac3e5443c29fb339372be6950c12b52",
+          "transparentPixelSha256": "a53f118390521b88368a243512678dfabd5a1e5ca2092f642d5f531f0cc580c3",
+          "transparentPngSha256": "24771fa237795ca1f22ceb237268d7c4c6c9ffde8a542bb5f09444d4ad91a57b",
+          "paperPixelSha256": "81d85510acacda4236a224fe69e65baae03dc7dd16b8f6f1bf4ad06c140d35b4",
+          "paperPngSha256": "2966914940997464cbb61de6afc106c57e97172f15e1b1f4751fcec1caec346d"
+        },
+        {
+          "frame": 36,
+          "inkSha256": "e20ebb70c27c47a96bc06e49ea9a464abac3e5443c29fb339372be6950c12b52",
+          "transparentPixelSha256": "a4dae7f97c9cac976cee440575f16bd1ca4737a4d1902dc9840dbf3f943d49ef",
+          "transparentPngSha256": "30229e1017161cb95db12ed6373da9c795fcada25f270650264e9da6c4955c29",
+          "paperPixelSha256": "218a702a2c989c6c1b6d1b21ede05228b5fc3b9042a7133bf7455a0545739dbc",
+          "paperPngSha256": "66b46874957966da361d2f5db9dbc82937804c8c79d7b3b75d9bd39a2d396c14"
+        }
+      ]
+    },
+    {
+      "id": "cel_left_high_grasp",
+      "input": {
+        "id": "cel_left_high_grasp",
+        "settings": {
+          "view": "high",
+          "handedness": "left",
+          "detail": "anatomical",
+          "centerX": 0.5,
+          "centerY": 0.55,
+          "size": 0.55,
+          "skinColor": "#FFE2DED3",
+          "nailColor": "#FFF0EADF",
+          "motion": 0,
+          "wristMotion": 0,
+          "renderStyle": "cel"
+        },
+        "poses": [
+          {
+            "frame": 0,
+            "interpolation": "hold",
+            "indexCurl": 0.82,
+            "middleCurl": 0.88,
+            "ringCurl": 0.93,
+            "littleCurl": 0.96,
+            "thumbCurl": 0.68,
+            "thumbOpposition": 0.7,
+            "spread": 0.06,
+            "wristFlex": 6,
+            "wristTurn": -8
+          }
+        ]
+      },
+      "frames": [
+        {
+          "frame": 0,
+          "inkSha256": "c9da307a41753099b6a94599935ed9f6b3c4f0d8c1d6676ca881163547b613db",
+          "transparentPixelSha256": "4816c826383a94ab6a357d199c6e12a55ca70d9899131b38d0e21f76fbc3d51c",
+          "transparentPngSha256": "abe29cd7cbc53a0de29f182d6e7351691bbb6de5f58dcae905cfe0de623cc652",
+          "paperPixelSha256": "b9022f71be73bfdd972460e0961f7d3e329f6400756c9db668dd629e29c36732",
+          "paperPngSha256": "4acc6f8a7a81a1a809e0b53e06a0d458ca17ba5bca93b5da546653d76a0de856"
+        },
+        {
+          "frame": 36,
+          "inkSha256": "c9da307a41753099b6a94599935ed9f6b3c4f0d8c1d6676ca881163547b613db",
+          "transparentPixelSha256": "4512648b027d16790b076c6c100a3c86779dac5a82ed51fd1cab2f572bef5206",
+          "transparentPngSha256": "5d8652890aa54abcafe8075855dffa41f9ec3dfb729384b5a0cc97e43aa7dd33",
+          "paperPixelSha256": "e404d9c57c04721f2b2f468317d7f6164c30e1564bc8b800e0a57964f28e04af",
+          "paperPngSha256": "298cc474404613b57bad011b9b5c0a8e629f446f2b2a708a0ec1525c98d1234e"
+        }
+      ]
+    },
+    {
+      "id": "cel_right_low_grasp",
+      "input": {
+        "id": "cel_right_low_grasp",
+        "settings": {
+          "view": "low",
+          "handedness": "right",
+          "detail": "anatomical",
+          "centerX": 0.5,
+          "centerY": 0.55,
+          "size": 0.55,
+          "skinColor": "#FFE2DED3",
+          "nailColor": "#FFF0EADF",
+          "motion": 0,
+          "wristMotion": 0,
+          "renderStyle": "cel"
+        },
+        "poses": [
+          {
+            "frame": 0,
+            "interpolation": "hold",
+            "indexCurl": 0.82,
+            "middleCurl": 0.88,
+            "ringCurl": 0.93,
+            "littleCurl": 0.96,
+            "thumbCurl": 0.68,
+            "thumbOpposition": 0.7,
+            "spread": 0.06,
+            "wristFlex": 6,
+            "wristTurn": -8
+          }
+        ]
+      },
+      "frames": [
+        {
+          "frame": 0,
+          "inkSha256": "7f5feaef28c60c9cac7da3e72e424fa6c813c3549dcad8684692d306d17c557c",
+          "transparentPixelSha256": "0e68f44e85b89268de00972b42633f62fb39db1fcc9e59e4c6fbb54422744a75",
+          "transparentPngSha256": "c6d81ae465cd04eca1e50f4e3e7c21aadb42d037130d167ec976715d96e640a7",
+          "paperPixelSha256": "bb084002360ddd7604f415366392081b3427088ea1045cdc13753426063c1b7f",
+          "paperPngSha256": "1ee6b1880f843950284124dd634a7afbd8df870e4069514ecfa29f24c221de9c"
+        },
+        {
+          "frame": 36,
+          "inkSha256": "7f5feaef28c60c9cac7da3e72e424fa6c813c3549dcad8684692d306d17c557c",
+          "transparentPixelSha256": "d4022227f169dbd523aa6e85204b3423e0829e28fb0e8bea3da4a3c391eb19e5",
+          "transparentPngSha256": "73c2cf8158f42da21ff31c76a95b784abf7a58c1252e0551d5dcdf8918ea1ebd",
+          "paperPixelSha256": "2f1964965afb454b59980cf34f3ce893ff9a236b8a6cacdfd16a2b001f1dc2a3",
+          "paperPngSha256": "f432294df38838e7fcb9f3b94e913e1b2915bf727b6c493a4c432a8de3e5e74a"
+        }
+      ]
+    },
+    {
+      "id": "legacy_right_front_grasp",
+      "input": {
+        "id": "legacy_right_front_grasp",
+        "settings": {
+          "view": "front",
+          "handedness": "right",
+          "detail": "anatomical",
+          "centerX": 0.5,
+          "centerY": 0.55,
+          "size": 0.55,
+          "skinColor": "#FFE2DED3",
+          "nailColor": "#FFF0EADF",
+          "motion": 0,
+          "wristMotion": 0
+        },
+        "poses": [
+          {
+            "frame": 0,
+            "interpolation": "hold",
+            "indexCurl": 0.82,
+            "middleCurl": 0.88,
+            "ringCurl": 0.93,
+            "littleCurl": 0.96,
+            "thumbCurl": 0.68,
+            "thumbOpposition": 0.7,
+            "spread": 0.06,
+            "wristFlex": 6,
+            "wristTurn": -8
+          }
+        ]
+      },
+      "frames": [
+        {
+          "frame": 0,
+          "inkSha256": "b8539751c19a0aea3ee08694f19e36653d88c6eb3b536632df5aa436876a4de0",
+          "transparentPixelSha256": "00603998215d053f3f386c2e15da653510741a02ac00de58984e6332ee3671b2",
+          "transparentPngSha256": "ed3f2729040ce2a535ab11770155cfd8ed2ac17a769e03dd0a31727d5a57bcb8",
+          "paperPixelSha256": "48fce323c57909367ccd40a6482cf2673d25db92503190900f2e4ef1eaa2fa91",
+          "paperPngSha256": "b791f225c5a1fadbb3e38df5bf9538349722c3584af20efd97455f5c6d3114f1"
+        },
+        {
+          "frame": 36,
+          "inkSha256": "b8539751c19a0aea3ee08694f19e36653d88c6eb3b536632df5aa436876a4de0",
+          "transparentPixelSha256": "76ed53c2b40f6467b72a45c2459c7b28039bb4f774e3f4659772d20d40d24364",
+          "transparentPngSha256": "aeb91108b3e31819a638f79899b45bc858bd4d942fcf6fbd80531d4b1004f23e",
+          "paperPixelSha256": "9f3296604d685a151139a6af2379365ded2e30571f34cc4b798eb6653ad7197b",
+          "paperPngSha256": "018e8454ad79521f09755afd40db12e07c0b611f16591d7fd5a18925b30f3909"
+        }
+      ]
+    },
+    {
+      "id": "smooth_left_back_open",
+      "input": {
+        "id": "smooth_left_back_open",
+        "settings": {
+          "view": "back",
+          "handedness": "left",
+          "detail": "anatomical",
+          "centerX": 0.5,
+          "centerY": 0.55,
+          "size": 0.55,
+          "skinColor": "#FFE2DED3",
+          "nailColor": "#FFF0EADF",
+          "motion": 0,
+          "wristMotion": 0,
+          "renderStyle": "smooth"
+        },
+        "poses": [
+          {
+            "frame": 0,
+            "interpolation": "hold",
+            "indexCurl": 0.04,
+            "middleCurl": 0.06,
+            "ringCurl": 0.08,
+            "littleCurl": 0.1,
+            "thumbCurl": 0.12,
+            "thumbOpposition": 0.15,
+            "spread": 0.4,
+            "wristFlex": 0,
+            "wristTurn": 0
+          }
+        ]
+      },
+      "frames": [
+        {
+          "frame": 0,
+          "inkSha256": "62979f0c82db3c13ffa5cbdbf193585a04e44fabe30031c5d3c21da1dffb0bdd",
+          "transparentPixelSha256": "ec668f7724c7f93ec504f03d7f547485767cf49342ff70909096e8f3256bded9",
+          "transparentPngSha256": "b92adcb426c5b2a63a34fb6cb5001ac2bc75adb1634f5cc5a24ecc63d9a89c38",
+          "paperPixelSha256": "dea50784f0152735a47c4d31969dc02b0e57bdcafa63eea8433c6f4fc50f9279",
+          "paperPngSha256": "3333eca5d1f9069663d3444151e873d5fa21102766e63b4c770babed4439b557"
+        },
+        {
+          "frame": 36,
+          "inkSha256": "62979f0c82db3c13ffa5cbdbf193585a04e44fabe30031c5d3c21da1dffb0bdd",
+          "transparentPixelSha256": "3f2bf12be2afae308120fd1fa7c7f24e6c9b47526b812772a81d4424087e4382",
+          "transparentPngSha256": "cdbc086dd11b8f68906e9a3aaa6549432ff8518d70cd47f67906cdc1ff071366",
+          "paperPixelSha256": "c62f27adcf8e748f9b69e2714e2a28fdaf85b0f6c15d556a01d6bfc1a05bfeae",
+          "paperPngSha256": "707eb126e8ecf2d4a9b9d88b4e0a54750921cafde3622065a61f4919d8a2ac94"
+        }
+      ]
+    }
+  ]
+}
