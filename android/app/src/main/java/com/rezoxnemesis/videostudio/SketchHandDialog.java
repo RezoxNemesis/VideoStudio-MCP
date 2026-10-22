@@ -35,6 +35,7 @@ final class SketchHandDialog {
     private final CheckBox custom;
     private final EditText skin,nail,keyFrame,previewFrame;
     private final Map<String,EditText> settingsFields=new LinkedHashMap<>(),channels=new LinkedHashMap<>();
+    private final Map<String,EditText[]> fingerFields=new LinkedHashMap<>();
     private final EditText[] curve=new EditText[4];
     private final ImageView preview;
     private final ExecutorService worker=Executors.newSingleThreadExecutor();
@@ -77,6 +78,8 @@ final class SketchHandDialog {
         poses=SketchHandAnimation.preset(frames,fps,defaults);
         posePicker=spinner(poseControls,"Hand pose",new String[]{"Pose"});keyFrame=input(poseControls,"Key frame (1 based)","1",false);
         for(String channel:SketchHandAnimation.CHANNELS)channels.put(channel,input(poseControls,channel,"",true));
+        TextView fingerHelp=new TextView(activity);fingerHelp.setText("Optional finger joint degrees override curl for that finger at this key. Fill all three values or leave all blank: MCP 0–110, PIP 0–120, DIP 0–90. Intervals ease between resolved endpoint angles; a blank endpoint uses its own curl. Thumb controls are unchanged. These authored angles do not solve prop contact.");poseControls.addView(fingerHelp);
+        for(String finger:SketchFingerJointAngles.FINGERS){EditText[] fields=new EditText[3];String[] joints={"MCP","PIP","DIP"};for(int j=0;j<3;j++)fields[j]=input(poseControls,finger+" "+joints[j]+" (degrees)","",true);fingerFields.put(finger,fields);}
         easing=spinner(poseControls,"Pose easing",EASING);
         for(int i=0;i<4;i++)curve[i]=input(poseControls,"Bezier "+(i+1),i<2?"0":"1",true);
         button(poseControls,"Apply pose edits",()->{saveCurrent();refresh();status.setText("Pose edits applied; keys are ordered.");});
@@ -104,6 +107,7 @@ final class SketchHandDialog {
             public void afterTextChanged(Editable value){}
         };
         List<EditText> fields=new ArrayList<>(settingsFields.values());fields.addAll(channels.values());fields.addAll(Arrays.asList(curve));fields.addAll(Arrays.asList(skin,nail,keyFrame,previewFrame));
+        for(EditText[] finger:fingerFields.values())fields.addAll(Arrays.asList(finger));
         for(EditText field:fields)field.addTextChangedListener(edited);
         refresh();enable(poseControls,false);
     }
@@ -146,6 +150,12 @@ final class SketchHandDialog {
     private JSONObject readPose()throws Exception {
         JSONObject pose=new JSONObject().put("frame",frame(keyFrame));
         for(Map.Entry<String,EditText> channel:channels.entrySet())if(!channel.getValue().getText().toString().trim().isEmpty())pose.put(channel.getKey(),number(channel.getValue()));
+        JSONObject fingers=new JSONObject();for(Map.Entry<String,EditText[]> entry:fingerFields.entrySet()){
+            int entered=0;for(EditText field:entry.getValue())if(!field.getText().toString().trim().isEmpty())entered++;
+            if(entered==0)continue;if(entered!=3)throw SketchDocument.bad("Fill all three "+entry.getKey()+" joint degrees or leave all blank");
+            JSONArray triple=new JSONArray();for(EditText field:entry.getValue())triple.put(number(field));fingers.put(entry.getKey(),triple);
+        }
+        if(fingers.length()>0)pose.put("fingerJointAngles",fingers);SketchFingerJointAngles.validate(pose);
         int mode=easing.getSelectedItemPosition();if(mode>0)pose.put("interpolation",EASING[mode]);
         if("bezier".equals(EASING[mode])){JSONArray values=new JSONArray();for(EditText field:curve)values.put(number(field));pose.put("curve",values);}
         return pose;
@@ -188,6 +198,7 @@ final class SketchHandDialog {
             posePicker.setAdapter(new ArrayAdapter<>(activity,android.R.layout.simple_spinner_dropdown_item,labels));posePicker.setSelection(selected);
             JSONObject pose=poses.getJSONObject(selected);keyFrame.setText(String.valueOf(pose.getInt("frame")+1));
             for(Map.Entry<String,EditText> channel:channels.entrySet())channel.getValue().setText(pose.has(channel.getKey())?String.valueOf(pose.get(channel.getKey())):"");
+            JSONObject fingers=pose.optJSONObject("fingerJointAngles");for(Map.Entry<String,EditText[]> entry:fingerFields.entrySet()){JSONArray tuple=fingers==null?null:fingers.optJSONArray(entry.getKey());for(int j=0;j<3;j++)entry.getValue()[j].setText(tuple==null?"":String.valueOf(tuple.get(j)));}
             easing.setSelection(Math.max(0,Arrays.asList(EASING).indexOf(pose.optString("interpolation","Native default"))));
             JSONArray values=pose.optJSONArray("curve");for(int i=0;i<4;i++)curve[i].setText(values==null?(i<2?"0":"1"):String.valueOf(values.get(i)));
         }finally{binding=false;}

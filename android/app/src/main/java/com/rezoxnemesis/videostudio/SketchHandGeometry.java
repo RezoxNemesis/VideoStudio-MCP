@@ -17,7 +17,7 @@ final class SketchHandGeometry {
     static final double[][] LENGTHS={{.67,.43,.33},{.76,.49,.35},{.70,.46,.33},{.54,.34,.27},{.54,.43,.32}};
     static V[][] joints(double[] pose){
         V[][] out=new V[5][4];double[] xs={-.46,-.12,.24,.54},ys={-1.29,-1.39,-1.34,-1.19},fans={-14,-3,7,19};
-        for(int d=0;d<4;d++){out[d][0]=new V(xs[d],ys[d],.02);double angle=0,fan=Math.toRadians(fans[d]*pose[6]);for(int j=0;j<3;j++){angle+=Math.toRadians(new double[]{60,92,48}[j]*pose[d]);V direction=new V(Math.sin(fan)*Math.cos(angle),-Math.cos(fan)*Math.cos(angle),Math.sin(angle));out[d][j+1]=out[d][j].add(direction.mul(LENGTHS[d][j]));}}
+        for(int d=0;d<4;d++){out[d][0]=new V(xs[d],ys[d],.02);double angle=0,fan=Math.toRadians(fans[d]*pose[6]);for(int j=0;j<3;j++){angle+=SketchFingerJointAngles.increment(pose,d,j);V direction=new V(Math.sin(fan)*Math.cos(angle),-Math.cos(fan)*Math.cos(angle),Math.sin(angle));out[d][j+1]=out[d][j].add(direction.mul(LENGTHS[d][j]));}}
         out[4][0]=new V(-.23,-.18,.12);double opposition=pose[5],fan=Math.toRadians(-56+75*opposition),angle=Math.toRadians(10+32*opposition);for(int j=0;j<3;j++){angle+=Math.toRadians(new double[]{12,48,55}[j]*pose[4]);V direction=new V(Math.sin(fan)*Math.cos(angle),-Math.cos(fan)*Math.cos(angle),Math.sin(angle));out[4][j+1]=out[4][j].add(direction.mul(LENGTHS[4][j]));}return out;
     }
     static final class Ink {final Path path;final String color;final boolean fill;JSONObject gradient;

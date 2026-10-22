@@ -209,7 +209,10 @@ test('shared Java/Node hand metadata matches and native templates use the produc
  assert.ok(partBody,'native hand passes have inspectable shared metadata');
  const partExpression=partBody.replace(/new (?:String|double|int)\[\]\{([^}]*)\}/g,'[$1]');
  const SketchHandAnimation={partCapabilities:()=>vm.runInNewContext(`(${partExpression})`,{JSONObject,JSONArray})};
- const nativeMetadata=vm.runInNewContext(`(${expression})`,{JSONObject,JSONArray,SketchHandStudies:{PATTERNS:patterns},SketchHandAnimation});
+ const fingerSource=fs.readFileSync(new URL('../android/app/src/main/java/com/rezoxnemesis/videostudio/SketchFingerJointAngles.java',import.meta.url),'utf8');
+ const fingerJson=fingerSource.match(/CAPABILITY_JSON\s*=\s*("(?:[^"\\]|\\.)*")/)?.[1];assert.ok(fingerJson,'native finger angles have inspectable shared metadata');
+ const SketchFingerJointAngles={capabilities:()=>JSON.parse(JSON.parse(fingerJson))};
+ const nativeMetadata=vm.runInNewContext(`(${expression})`,{JSONObject,JSONArray,SketchHandStudies:{PATTERNS:patterns},SketchHandAnimation,SketchFingerJointAngles});
  assert.deepEqual(JSON.parse(JSON.stringify(nativeMetadata)),contract.HAND_ANIMATION_CAPABILITIES);
 });
 

@@ -1,3 +1,17 @@
+# Active explicit finger flexion preparation — 2026-10-22
+
+Isolated `feat/native-finger-joint-angles-v41016` starts exact518 `b3b8d36`.
+Read `docs/continuity/NATIVE_FINGER_JOINT_ANGLES_41016.md`. Genuine nativeRED11tests/10FAIL22.118s, old pinned9casegeometry/pixelsPASS.
+Root nativeGREENv1 PASS11/32.07s on FULL518 plus exact5production overrides;
+all3native tests byteexact, pinned old9casegeometry/pixels/UI/archivePASS.
+FullNode799/799 plus306smokePASS; full519/version/CI/signing and actualgripart pending root. Optional pose.fingerJointAngles
+strict index/middle/ring/little three numeric degree tuples, endpoint-resolved
+interpolation; never-explicit fingers and omitted old9-channel pixels exact.
+Thumb/bones/materials/part ownership unchanged. Future4.10.16/code519 root-owned;
+root alone runs Gradle/JUnit/native, version/full integration/signing. Agent may
+run Node and read-only checks. Preserve frozen518 and every failed art generation.
+No contactIK/physical cylinder/actor anatomy recovery or accepted grasp/film claim.
+
 # Integrated518 regression retake —2026-10-22
 
 Fullv2 executed2401tests/3FAIL/0errors/28skips; existing duel5043keys>4096. Exact authored anchors remain; only incoming HOLD/first-key predecessors and affected hip-subtree contact boundaries pin prior samples. Focusedv4 existingduel/numeric/compiler+9anchor tests38/0FAIL/0errors/1skip pass27s. Original scenes/tolerances/4096budget untouched. Failedfull/retake/exactsource evidence retained private. Freshfull518/CI/signing still pending. Source-assisted actorhairownership mask retake and actualhand/banana study are next; no finishedfilm/allangles/phone claim. Root owns one localGradle/allnative lanes.

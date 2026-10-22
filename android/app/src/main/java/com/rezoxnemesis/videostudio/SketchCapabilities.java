@@ -76,6 +76,7 @@ public final class SketchCapabilities {
                 .put("operation","add_hand_animation")
                 .put("settings",new JSONObject().put("view","front").put("handedness","right").put("detail","anatomical").put("skinColor","#FFD6A078").put("nailColor","#FFE5C1AC").put("centerX",0.5).put("centerY",0.55).put("size",1).put("motion",1).put("wristMotion",0.6).put("renderStyle","smooth"))
                 .put("partPasses",SketchHandAnimation.partCapabilities())
+                .put("fingerJointAngles",SketchFingerJointAngles.capabilities())
                 .put("renderStyles",new JSONArray(new String[]{"smooth","cel"}))
                 .put("renderStyleMinimumNativeVersion","4.8.1")
                 .put("celMotionQualityMinimumNativeVersion","4.8.2")

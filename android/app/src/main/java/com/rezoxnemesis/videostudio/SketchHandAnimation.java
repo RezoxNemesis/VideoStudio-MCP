@@ -21,14 +21,14 @@ final class SketchHandAnimation {
     }
     static void validatePoses(JSONArray a,int frames)throws Exception {
         if(a.length()<1||a.length()>32)throw SketchDocument.bad("Use 1..32 hand poses");int previous=-1;
-        for(int i=0;i<a.length();i++){JSONObject p=a.getJSONObject(i);SketchDocument.fields(p,"frame,indexCurl,middleCurl,ringCurl,littleCurl,thumbCurl,thumbOpposition,spread,wristFlex,wristTurn,interpolation,curve");int f=(int)SketchDocument.integer(p,"frame",0,frames-1);if(f<=previous||i==0&&f!=0)throw SketchDocument.bad("Hand poses must start at zero and strictly increase");previous=f;
-            for(int c=0;c<CHANNELS.length;c++)if(p.has(CHANNELS[c]))SketchDocument.number(p,CHANNELS[c],c<7?0:-25,c<7?1:25);SketchEasing.validate(p);
+        for(int i=0;i<a.length();i++){JSONObject p=a.getJSONObject(i);SketchDocument.fields(p,"frame,indexCurl,middleCurl,ringCurl,littleCurl,thumbCurl,thumbOpposition,spread,wristFlex,wristTurn,interpolation,curve,fingerJointAngles");int f=(int)SketchDocument.integer(p,"frame",0,frames-1);if(f<=previous||i==0&&f!=0)throw SketchDocument.bad("Hand poses must start at zero and strictly increase");previous=f;
+            for(int c=0;c<CHANNELS.length;c++)if(p.has(CHANNELS[c]))SketchDocument.number(p,CHANNELS[c],c<7?0:-25,c<7?1:25);SketchEasing.validate(p);SketchFingerJointAngles.validate(p);
         }
     }
     static double[] poseAt(JSONArray a,int frame)throws Exception {
         JSONObject left=a.getJSONObject(0),right=left;for(int i=1;i<a.length();i++){right=a.getJSONObject(i);if(frame<right.getInt("frame"))break;left=right;}
         double t=left==right?0:SketchEasing.sample(left.optString("interpolation","linear"),left.optJSONArray("curve"),(frame-left.getInt("frame"))/(double)(right.getInt("frame")-left.getInt("frame")));
-        double[] p=new double[CHANNELS.length];for(int c=0;c<p.length;c++)p[c]=left.optDouble(CHANNELS[c],NEUTRAL[c])+(right.optDouble(CHANNELS[c],NEUTRAL[c])-left.optDouble(CHANNELS[c],NEUTRAL[c]))*t;return p;
+        double[] p=new double[CHANNELS.length];for(int c=0;c<p.length;c++)p[c]=left.optDouble(CHANNELS[c],NEUTRAL[c])+(right.optDouble(CHANNELS[c],NEUTRAL[c])-left.optDouble(CHANNELS[c],NEUTRAL[c]))*t;return SketchFingerJointAngles.resolve(a,left,right,t,p,NEUTRAL);
     }
     static JSONArray preset(int frames,int fps,JSONObject settings)throws Exception {
         double motion=settings.getDouble("motion"),wrist=settings.getDouble("wristMotion");JSONArray a=new JSONArray();
@@ -80,7 +80,7 @@ final class SketchHandAnimation {
         RectF bounds=new RectF();for(int f=object.getInt("frame");f<object.getInt("frame")+object.getInt("exposure");f++){RectF b=frameBounds(object,doc.getInt("width"),doc.getInt("height"),f);if(f==object.getInt("frame"))bounds.set(b);else bounds.union(b);}
         double w=doc.getInt("width"),h=doc.getInt("height");if(bounds.left<0||bounds.top<0||bounds.right>w||bounds.bottom>h)throw SketchDocument.bad("Hand leaves canvas; adjust position or size");object.put("bounds",new JSONObject().put("x",bounds.left/w).put("y",bounds.top/h).put("width",bounds.width()/w).put("height",bounds.height()/h));
     }
-    static JSONObject sampled(JSONObject object,int frame)throws Exception {JSONObject copy=SketchDocument.copy(object),hand=copy.getJSONObject("hand"),frozen=new JSONObject().put("frame",0).put("interpolation","hold");double[] pose=poseAt(hand.getJSONArray("poses"),localFrame(object,frame));for(int i=0;i<CHANNELS.length;i++)frozen.put(CHANNELS[i],pose[i]);hand.put("poses",new JSONArray().put(frozen)).put("renderFrame",localFrame(object,frame));return copy;}
+    static JSONObject sampled(JSONObject object,int frame)throws Exception {JSONObject copy=SketchDocument.copy(object),hand=copy.getJSONObject("hand"),frozen=new JSONObject().put("frame",0).put("interpolation","hold");double[] pose=poseAt(hand.getJSONArray("poses"),localFrame(object,frame));for(int i=0;i<CHANNELS.length;i++)frozen.put(CHANNELS[i],pose[i]);SketchFingerJointAngles.sample(hand.getJSONArray("poses"),pose,frozen);hand.put("poses",new JSONArray().put(frozen)).put("renderFrame",localFrame(object,frame));return copy;}
     static List<SketchHandGeometry.Ink> ink(JSONObject object,int width,int height,int frame)throws Exception {JSONObject h=object.getJSONObject("hand");return SketchHandGeometry.draw(h.getJSONObject("settings"),poseAt(h.getJSONArray("poses"),localFrame(object,frame)),width,height);}
     static void draw(Canvas canvas,JSONObject object,int width,int height,int frame,double alpha)throws Exception {
         JSONObject hand=object.getJSONObject("hand");String part=parts(hand,hand.getJSONObject("settings"));
