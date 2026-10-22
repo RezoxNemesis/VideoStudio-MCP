@@ -54,6 +54,7 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
     private SketchCorrectionDialog correctionDialog;
     private SketchReferenceLayersDialog referenceLayersDialog;
     private SketchLayeredDrawingDialog layeredDrawingDialog;
+    private SketchLayerGroupMotionDialog layerGroupMotionDialog;
     private LinearLayout layeredToolbar,layeredReferencePanel;
     private TextView layeredStageLabel;
     private android.widget.ImageView layeredReferenceImage;
@@ -229,7 +230,7 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
 
     private void reload() { loadSketch(sketchId,canvas.getFrame()); }
     private void loadSketch(String id,int frame) {
-        if(destroyed)return;if(layeredDrawingDialog!=null)layeredDrawingDialog.close();clearLayeredReference();stopPlayback();loadingDrawing=true;stopLivePlayer();
+        if(destroyed)return;if(layeredDrawingDialog!=null)layeredDrawingDialog.close();if(layerGroupMotionDialog!=null)layerGroupMotionDialog.close();clearLayeredReference();stopPlayback();loadingDrawing=true;stopLivePlayer();
         if(notifiedSketchId!=null&&!notifiedSketchId.equals(id)){notifiedSketchId=null;notifiedSessionId=null;notificationReplayPending=false;}
         if(session!=null&&session.pending()>0){onMessage("Finishing the current drawing save");return;}
         if(session!=null){session.close();session=null;}canvas.setEnabled(false);
@@ -266,7 +267,8 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
         if(operations!=null)for(int i=0;i<operations.length();i++){
             JSONObject operation=operations.optJSONObject(i);
             if(operation!=null&&("precision_contour".equals(operation.optString("type"))
-                    ||"apply_acting_motion".equals(operation.optString("type"))))
+                    ||"apply_acting_motion".equals(operation.optString("type"))
+                    ||"set_layer_group_motion".equals(operation.optString("type"))))
                 return true;
         }
         return false;
@@ -1188,7 +1190,7 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
     @Override protected void onPause() { resumed=false;++liveLoadGeneration;if(livePlayer!=null||watchInFlight){loadingDrawing=true;if(notifiedSessionId!=null)notificationReplayPending=true;}stopLivePlayer();stopPlayback();canvas.setPreviewActive(false);handler.removeCallbacks(watchTick);super.onPause(); }
     @Override protected void onResume() { super.onResume();if(canvas!=null)canvas.setPreviewActive(true);resumed=true;liveSessionId="";if(loadingDrawing&&session!=null&&!activeConstructions.containsKey(loadGeneration+":"+pageGeneration)){if(localEditableReturn!=null&&localEditableReturn.ownsEditor())localEditableReturn.deferredResumeReload=true;else if(session.pending()==0)reload();else afterSaves(()->postUi(this::reload));}handler.removeCallbacks(watchTick);handler.postDelayed(watchTick,250); }
     @Override protected void onStop(){resumed=false;stopPlayback();if(canvas!=null)canvas.setPreviewActive(false);handler.removeCallbacks(watchTick);super.onStop();}
-    @Override protected void onDestroy() { destroyed=true;if(correctionDialog!=null)correctionDialog.close();if(referenceLayersDialog!=null)referenceLayersDialog.close();if(layeredDrawingDialog!=null)layeredDrawingDialog.close();clearLayeredReference();activeConstructions.clear();stopLivePlayer();stopPlayback();handler.removeCallbacksAndMessages(null);if(session!=null)session.close();io.shutdown();transfers.shutdown();if(canvas!=null)canvas.dispose();super.onDestroy(); }
+    @Override protected void onDestroy() { destroyed=true;if(correctionDialog!=null)correctionDialog.close();if(referenceLayersDialog!=null)referenceLayersDialog.close();if(layeredDrawingDialog!=null)layeredDrawingDialog.close();if(layerGroupMotionDialog!=null)layerGroupMotionDialog.close();clearLayeredReference();activeConstructions.clear();stopLivePlayer();stopPlayback();handler.removeCallbacksAndMessages(null);if(session!=null)session.close();io.shutdown();transfers.shutdown();if(canvas!=null)canvas.dispose();super.onDestroy(); }
     @Override protected void onSaveInstanceState(Bundle state) { state.putString("bookId",bookId);state.putInt("bookPage",bookPage);state.putString("sketchId", sketchId); state.putInt("frame", canvas.getFrame());state.putString("notifiedSketchId",notifiedSketchId);state.putString("notifiedSessionId",notifiedSessionId); super.onSaveInstanceState(state); }
     private LinearLayout column() { LinearLayout layout = new LinearLayout(this); layout.setOrientation(LinearLayout.VERTICAL);layout.setBackgroundColor(StudioUi.SURFACE);layout.setPadding(dp(6),dp(2),dp(6),dp(2));return layout; }
     private LinearLayout row(LinearLayout root) { LinearLayout layout = new LinearLayout(this); layout.setOrientation(LinearLayout.HORIZONTAL);root.addView(layout,new LinearLayout.LayoutParams(-1,-2));return layout; }
@@ -1368,6 +1370,20 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
     }
     private void openAnimationStudio(){if(document==null)return;stopPlayback();afterSaves(()->postUi(()->startActivity(new Intent(this,SketchAnimationActivity.class).putExtra("sketchId",sketchId))));}
 
+    private void layerGroupMotionDialog(){
+        if(session==null||document==null)return;stopPlayback();final SketchEditorSession origin=session;final String target=sketchId;
+        final int generation=loadGeneration,page=pageGeneration,frame=canvas.getFrame();
+        afterSaves(()->{JSONObject snapshot=SketchDocument.copy(origin.document());postUi(()->{
+            if(destroyed||session!=origin||generation!=loadGeneration||page!=pageGeneration||!target.equals(sketchId))return;
+            try{if(layerGroupMotionDialog!=null)layerGroupMotionDialog.close();layerGroupMotionDialog=SketchLayerGroupMotionDialog.show(this,snapshot,frame,operation->{
+                if(destroyed||session!=origin||generation!=loadGeneration||page!=pageGeneration||!target.equals(sketchId)
+                        ||origin.pending()!=0||origin.error()!=null||origin.document().getLong("revision")!=snapshot.getLong("revision"))
+                    throw SketchDocument.bad("The source drawing changed. Close and reopen Group motion on the current revision.");
+                origin.submitPrepared(new JSONArray().put(operation));updateStatus();
+            });}catch(Exception failure){onMessage(failure.getMessage());}
+        });});
+    }
+
     /** Prompt-driven original storyboard; all created cels remain ordinary editable Sketch Studio parts. */
     private volatile boolean drawingJungleFilm;
     private void drawOriginalJungleFilm(){drawJungleBook(false);}
@@ -1507,7 +1523,7 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
         }).show();
     }
     private boolean onionEnabled=true;private int onionRange=1,onionAlpha=48;
-    private void framesMenu(){menu("Frames / Cels",new String[]{"Go to frame","Timing / canvas","Exposure","Exposure sheet","Xsheet (read-only)","Copy → next","Cel tools","Onion skin","Onion settings","Film direction"},this::scrubDialog,this::timingDialog,this::exposureDialog,this::bookTimingDialog,this::xsheetDialog,this::duplicateCel,this::celDialog,()->{if(playing){onMessage("Onion skin is disabled during playback; your preference is retained");return;}onionEnabled=!onionEnabled;canvas.setOnion(onionEnabled);saveOnionOptions();onMessage(onionEnabled?"Onion skin on":"Onion skin off");},this::onionDialog,this::sequenceDirectionDialog);}
+    private void framesMenu(){menu("Frames / Cels",new String[]{"Go to frame","Timing / canvas","Exposure","Exposure sheet","Xsheet (read-only)","Copy → next","Group motion","Cel tools","Onion skin","Onion settings","Film direction"},this::scrubDialog,this::timingDialog,this::exposureDialog,this::bookTimingDialog,this::xsheetDialog,this::duplicateCel,this::layerGroupMotionDialog,this::celDialog,()->{if(playing){onMessage("Onion skin is disabled during playback; your preference is retained");return;}onionEnabled=!onionEnabled;canvas.setOnion(onionEnabled);saveOnionOptions();onMessage(onionEnabled?"Onion skin on":"Onion skin off");},this::onionDialog,this::sequenceDirectionDialog);}
     private void xsheetDialog(){
         if(document==null)return;
         if(bookId!=null){onMessage("Xsheet currently shows the selected editable sketch page; open a standalone sketch to view its layer columns.");return;}

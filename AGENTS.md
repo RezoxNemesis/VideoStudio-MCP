@@ -1,3 +1,31 @@
+# Active native shared layer motion — 2026-10-22
+
+Isolated `feat/native-layer-group-motion-v41019` starts verified521
+`3cb74cf01a638187e29b4c29637ac02616460310`; future4.10.19/code522 metadata is
+root-owned. Read `docs/continuity/NATIVE_LAYER_GROUP_MOTION_41019.md`.
+New `sketch_edit` operation `set_layer_group_motion` composes one explicit rigid
+canvas-world motion over each selected layer's ORIGINAL per-frame transform.
+Whole shot1..240frames,2..32visible unlocked layers,1..32poses (onepose only for
+oneframe), endpoints0/last; native outgoing timing becomes ordinary dense HOLD
+layerkeys. Preserve per-frame anchors/scales/opacity, object data/source PNGs,
+clock and4096key/4MiB budgets. No new action/group schema/archive floor/camera/rig.
+Root genuine RED14tests10FAIL at unsupported operation; first17-case nativeGREEN
+had2fixture failures (3900key setup exceeded512KiB request; transientDouble vs
+persistedInt JSON equality). Exact failed generation/source/log preserved. Only
+fixture batching and test wire-roundtrip comparison changed; no production
+canonicalization, assertions, native pixel gates or tolerances weakened. Root
+retakeGREEN17/0FAIL5.03s on retained FULL521 plus4exactproductionoverrides. This
+is scoped verification, not full integrated522/CI/signing/phone/art acceptance.
+Root manualmissing-menuRED3/3FAIL then scopedcore+manual20PASS7.679s; fresh
+Node811+306smokePASS. Fullintegrated522/CI/originalsigning remain root-owned
+pending gates; focused override checks are not full522 verification.
+Root owns ONE Gradle and every native/JUnit/model/ADB lane. Core helper/EditOps/
+workflow/nativecap files are frozen pending root integration; UI and Node agents
+own disjoint files on this shared tree. No commits until root admits coherent
+integration. Keep original/failed sources and all existing assets/history/signer/
+MCP identity; no main/Worker/stable publication or reset. Shared2D placement is
+not articulated grasp, new contact/force simulation, likeness or completed film.
+
 # Active native editable archive return repair — 2026-10-22
 
 Isolated `fix/native-editable-import-return-v41018` starts verified signed520

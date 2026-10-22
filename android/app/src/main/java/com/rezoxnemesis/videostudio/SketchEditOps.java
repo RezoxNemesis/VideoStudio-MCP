@@ -309,6 +309,7 @@ public final class SketchEditOps {
         String type = op.getString("type");
         if(type.startsWith("layered_drawing_")){SketchLayeredDrawing.apply(doc,op);return;}
         switch (type) {
+            case "set_layer_group_motion": SketchLayerGroupMotion.apply(doc,op);break;
             case "add_layer": {
                 SketchDocument.fields(op, "type,layer"); JSONObject layer = SketchDocument.copy(op.getJSONObject("layer"));
                 SketchDocument.fields(layer, "id,name,visible,locked,opacity,transform,keys,objects,blendMode");

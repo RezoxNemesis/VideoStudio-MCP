@@ -134,6 +134,8 @@ public final class SketchLayeredDrawing {
         }else if(Arrays.asList("append_points","update_object","delete_object","set_exposure","reorder_object").contains(type)){
             String id=op.getString("objectId");JSONObject object=SketchDocument.object(doc,id);layerId=SketchDocument.owner(doc,id).getString("id");authored(object,true);
             if("update_object".equals(type)){JSONObject candidate=SketchDocument.copy(object),patch=op.getJSONObject("patch");Iterator<String> keys=patch.keys();while(keys.hasNext()){String key=keys.next();candidate.put(key,patch.get(key));}authored(candidate,true);}
+        }else if("set_layer_group_motion".equals(type)){
+            JSONArray selected=op.getJSONArray("layerIds");for(int i=0;i<selected.length();i++)if(!contains(active,selected.getString(i)))throw denied("Group motion must select active stage layers only");return;
         }else if("set_transform".equals(type)||"set_keyframe".equals(type)){layerId=op.has("objectId")?SketchDocument.owner(doc,op.getString("objectId")).getString("id"):op.getString("layerId");}
         else if("reorder_layer".equals(type)){
             String current=meta(doc).getString("stage");if(!"clean_line".equals(current)&&!"separation".equals(current))throw denied("Reorder named clean parts during clean line or separation");
