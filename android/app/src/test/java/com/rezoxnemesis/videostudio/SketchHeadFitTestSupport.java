@@ -44,7 +44,12 @@ final class SketchHeadFitTestSupport {
   cases.put(new JSONObject().put("name","posed-yaw-030-pitch-minus020").put("settings",settings(30,-20)).put("pose",new JSONObject().put("bodyLean",13).put("headTilt",9).put("blink",.35).put("gazeX",.4).put("brow",.3).put("mouth",.2)));
   cases.put(new JSONObject().put("name","legacy-omitted-camera-and-fringe").put("settings",new JSONObject().put("figureStyle","anatomy_sketch").put("skinColor",SKIN)).put("pose",new JSONObject()));return cases;
  }
- static File baseline(){String path=System.getenv("VIDEOSTUDIO_HEAD_FIT_BASELINE");assertNotNull("Root must capture original32faad8 native baseline before product edits; set VIDEOSTUDIO_HEAD_FIT_BASELINE",path);return new File(path);}
+ static JSONObject readBaseline()throws Exception{
+  String path=System.getenv("VIDEOSTUDIO_HEAD_FIT_BASELINE");if(path!=null)return read(new File(path,"Baseline.json"));
+  try(InputStream input=SketchHeadFitTestSupport.class.getResourceAsStream("/native-head-fit-baseline-32faad8.json")){
+   assertNotNull("Immutable source-free32faad8 baseline must be present on the test classpath",input);ByteArrayOutputStream bytes=new ByteArrayOutputStream();byte[] buffer=new byte[8192];int count;while((count=input.read(buffer))!=-1)bytes.write(buffer,0,count);return new JSONObject(new String(bytes.toByteArray(),StandardCharsets.UTF_8));
+  }
+ }
  static JSONArray skinShell(JSONObject doc)throws Exception{JSONArray objects=doc.getJSONArray("layers").getJSONObject(0).getJSONArray("objects"),best=null;for(int i=0;i<objects.length();i++){JSONObject object=objects.getJSONObject(i);if(object.getBoolean("fill")&&SKIN.equals(object.getString("color"))&&(best==null||object.getJSONArray("commands").length()>best.length()))best=object.getJSONArray("commands");}assertNotNull("Actual filled cranial shell",best);return best;}
  static double shellLowerWidth(JSONObject doc)throws Exception{double width=0;JSONArray commands=skinShell(doc);for(int i=0;i<commands.length();i++){JSONArray c=commands.getJSONArray(i);for(int k=1;k<c.length();k+=2){double x=(c.getDouble(k)*512-CX)/SCALE,y=(c.getDouble(k+1)*512-CY)/SCALE;if(y>=19&&y<=24)width=Math.max(width,Math.abs(x));}}assertTrue("Measured lower mandibular control vertices",width>0);return width;}
  static double shellBottom(JSONObject doc)throws Exception{double bottom=-Double.MAX_VALUE;JSONArray commands=skinShell(doc);for(int i=0;i<commands.length();i++){JSONArray c=commands.getJSONArray(i);for(int k=2;k<c.length();k+=2)bottom=Math.max(bottom,(c.getDouble(k)*512-CY)/SCALE);}return bottom;}

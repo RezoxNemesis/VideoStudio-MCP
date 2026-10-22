@@ -13,7 +13,7 @@ import static org.junit.Assert.*;
 @RunWith(RobolectricTestRunner.class) @Config(sdk=33,manifest=Config.NONE) @GraphicsMode(GraphicsMode.Mode.NATIVE)
 public class SketchHumanHeadFitTest {
  @Test public void omittedProfilePreservesCapturedOriginalGeometryAndActualNativePixels()throws Exception{
-  JSONObject baseline=SketchHeadFitTestSupport.read(new File(SketchHeadFitTestSupport.baseline(),"Baseline.json"));assertEquals(SketchHeadFitTestSupport.BASE,baseline.getString("sourceCommit"));JSONArray cases=baseline.getJSONArray("cases");assertEquals(10,cases.length());
+  JSONObject baseline=SketchHeadFitTestSupport.readBaseline();assertEquals(SketchHeadFitTestSupport.BASE,baseline.getString("sourceCommit"));JSONArray cases=baseline.getJSONArray("cases");assertEquals(10,cases.length());
   for(int i=0;i<cases.length();i++){JSONObject entry=cases.getJSONObject(i);assertFalse(entry.getJSONObject("settings").has("headProportions"));JSONObject doc=SketchHeadFitTestSupport.document(entry.getJSONObject("settings"),entry.getJSONObject("pose"));assertEquals(entry.getString("name"),entry.getString("layerSha256"),SketchHeadFitTestSupport.textSha(SketchHeadFitTestSupport.ink(doc)));Bitmap image=SketchHeadFitTestSupport.render(doc);try{assertEquals(entry.getString("name"),entry.getString("rawPixelsSha256"),SketchHeadFitTestSupport.pixels(image));}finally{image.recycle();}}
   assertFalse(SketchHumanFigure.settings(new JSONObject()).has("headProportions"));assertEquals(13,SketchHumanFigure.defaults().length());
  }

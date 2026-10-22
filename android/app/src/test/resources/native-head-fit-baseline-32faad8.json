@@ -1,0 +1,174 @@
+{
+  "sourceCommit": "32faad8a2ed955c72356b3729e5911984ab2158e",
+  "fixtureVersion": 1,
+  "nativeGraphics": true,
+  "sourceFree": true,
+  "renderer": "SketchAnatomyHead + SketchFrameRenderer under Robolectric native graphics",
+  "acceptedCharacterAngles": 0,
+  "animationScenarios": 0,
+  "limits": "Authored generic construction; no target likeness, hidden anatomy recovery, phone or model execution",
+  "cases": [
+    {
+      "name": "yaw-000",
+      "settings": {
+        "figureStyle": "anatomy_sketch",
+        "hairStyle": "long",
+        "fringeStyle": "center_part",
+        "skinColor": "#FFF1EEE8",
+        "hairColor": "#FF555150",
+        "viewYawDegrees": 0,
+        "viewPitchDegrees": 0
+      },
+      "pose": {},
+      "layerSha256": "448f2d399b98e43aa219a4a1d179364d8a1c5890f26c591ff95433690c21a385",
+      "rawPixelsSha256": "7296e9104a447babe5093f73aac591c6bdc7122f530719d1aa4c93dc1cab10e2",
+      "pngSha256": "b67e455c1f17e8fb7f402ca7d5cacf6b4ece50b78a6bc0293de6dcc80af668db"
+    },
+    {
+      "name": "yaw-045",
+      "settings": {
+        "figureStyle": "anatomy_sketch",
+        "hairStyle": "long",
+        "fringeStyle": "center_part",
+        "skinColor": "#FFF1EEE8",
+        "hairColor": "#FF555150",
+        "viewYawDegrees": 45,
+        "viewPitchDegrees": 0
+      },
+      "pose": {},
+      "layerSha256": "65f1b3fbf0de72debcbd8896268021ecdee7f04fc8dedf592fdf30ddbd2e4db9",
+      "rawPixelsSha256": "5623386d94a55706fd8a9e27a12b88cf3decba858b407f4c158df509575e21ca",
+      "pngSha256": "c89f95c91a4fce67ddca37fc3bf388d198724866110b7829c1c6ca70bb8b3830"
+    },
+    {
+      "name": "yaw-090",
+      "settings": {
+        "figureStyle": "anatomy_sketch",
+        "hairStyle": "long",
+        "fringeStyle": "center_part",
+        "skinColor": "#FFF1EEE8",
+        "hairColor": "#FF555150",
+        "viewYawDegrees": 90,
+        "viewPitchDegrees": 0
+      },
+      "pose": {},
+      "layerSha256": "300033f0e8f15806a0cc8e45a89be84b4b00db36d07926a9065ed8bd99fd371a",
+      "rawPixelsSha256": "d256be178d91ffbc2c572f1d6b669d2267386b943909e61978e02d21c1e70d4d",
+      "pngSha256": "2dc5f0da3bb94a065f34c9e8abd5c8ff4290d9c27b8ecbf19cac10c5ce45c525"
+    },
+    {
+      "name": "yaw-135",
+      "settings": {
+        "figureStyle": "anatomy_sketch",
+        "hairStyle": "long",
+        "fringeStyle": "center_part",
+        "skinColor": "#FFF1EEE8",
+        "hairColor": "#FF555150",
+        "viewYawDegrees": 135,
+        "viewPitchDegrees": 0
+      },
+      "pose": {},
+      "layerSha256": "289cce069f0b50474b9dc55085c2f3e833eb4298f258d232b78c1f144e326278",
+      "rawPixelsSha256": "8c31861782bf98c5e31645776fa0b8599a4e72b53535731d1c4cabc753dc50b5",
+      "pngSha256": "bddf630980c9163ec5125f40faaa78bcc37e3efe28488b7c9eaa0fb746286955"
+    },
+    {
+      "name": "yaw-180",
+      "settings": {
+        "figureStyle": "anatomy_sketch",
+        "hairStyle": "long",
+        "fringeStyle": "center_part",
+        "skinColor": "#FFF1EEE8",
+        "hairColor": "#FF555150",
+        "viewYawDegrees": 180,
+        "viewPitchDegrees": 0
+      },
+      "pose": {},
+      "layerSha256": "ac6a35a897183dc9dca4f75882d4b7b9a55bc62691d23e0f0e3c0f3466612f8d",
+      "rawPixelsSha256": "9fa6c7a3abf848cffc9129f62fcf812cca97f8ab1087ae1e6b8108fe8ce271fe",
+      "pngSha256": "be9d3b5ba70c79636b13a0cad2c2e379c73f270000619e6bc55432adec9c0af9"
+    },
+    {
+      "name": "yaw-225",
+      "settings": {
+        "figureStyle": "anatomy_sketch",
+        "hairStyle": "long",
+        "fringeStyle": "center_part",
+        "skinColor": "#FFF1EEE8",
+        "hairColor": "#FF555150",
+        "viewYawDegrees": 225,
+        "viewPitchDegrees": 0
+      },
+      "pose": {},
+      "layerSha256": "3b6306ac1dcc7ba1134aa9a27dc59338304a036390ba7338e3d14b667d157465",
+      "rawPixelsSha256": "238c26aa51812261dd5a1e62b3c3473ce3fe540332e19fec9cbc9c05997cd317",
+      "pngSha256": "9db140bd5ffbbafa3dc2765785eb82ca99e7af0edb821c59e4ef296b1bbb3410"
+    },
+    {
+      "name": "yaw-270",
+      "settings": {
+        "figureStyle": "anatomy_sketch",
+        "hairStyle": "long",
+        "fringeStyle": "center_part",
+        "skinColor": "#FFF1EEE8",
+        "hairColor": "#FF555150",
+        "viewYawDegrees": 270,
+        "viewPitchDegrees": 0
+      },
+      "pose": {},
+      "layerSha256": "d24a82fb2139b9f53f03fd9e4e8f483dad6dd52cafb46af249e911c8ff925b87",
+      "rawPixelsSha256": "ece3200c6bae7391a95aaed5fe3402d8b3b0822cd269b3dec7ceaba62f566e84",
+      "pngSha256": "9fae1ac8194624698791dcfeb28993bf87bed2167ccf94d255d82fcb98fc2972"
+    },
+    {
+      "name": "yaw-315",
+      "settings": {
+        "figureStyle": "anatomy_sketch",
+        "hairStyle": "long",
+        "fringeStyle": "center_part",
+        "skinColor": "#FFF1EEE8",
+        "hairColor": "#FF555150",
+        "viewYawDegrees": 315,
+        "viewPitchDegrees": 0
+      },
+      "pose": {},
+      "layerSha256": "26362e6301dc0067a942ab31d54ee8332b265f123626526b886eebd6663fe960",
+      "rawPixelsSha256": "32f1d683bef613fbee907317586c844df57d15ec1cb26ce1065089661415c5c1",
+      "pngSha256": "18042fbf7ecc513b3d33d6d8e28958a57d3c3c9ef382a45eb8e8a00962611c6f"
+    },
+    {
+      "name": "posed-yaw-030-pitch-minus020",
+      "settings": {
+        "figureStyle": "anatomy_sketch",
+        "hairStyle": "long",
+        "fringeStyle": "center_part",
+        "skinColor": "#FFF1EEE8",
+        "hairColor": "#FF555150",
+        "viewYawDegrees": 30,
+        "viewPitchDegrees": -20
+      },
+      "pose": {
+        "bodyLean": 13,
+        "headTilt": 9,
+        "blink": 0.35,
+        "gazeX": 0.4,
+        "brow": 0.3,
+        "mouth": 0.2
+      },
+      "layerSha256": "155ea995aef72e3fdecb109e9ef5dab212feedfd14117a1a9a12cdffdad1cb63",
+      "rawPixelsSha256": "f03f7b6a7d1af77daa4168da399ac97cb86135907a8676aeba6145cb696d3b5e",
+      "pngSha256": "4e298ebca87d18445570a4cefe0e9b7f5ae1fe0d6f943458d08c03dac1bcddb5"
+    },
+    {
+      "name": "legacy-omitted-camera-and-fringe",
+      "settings": {
+        "figureStyle": "anatomy_sketch",
+        "skinColor": "#FFF1EEE8"
+      },
+      "pose": {},
+      "layerSha256": "5764087081f57224ecc717cacdebc8c5fdfbefe40b86c9409336e90496207fa8",
+      "rawPixelsSha256": "64e769c4263f945ab964f3ad8f50583424d9b375319826a0a2fadbf90df1a4dd",
+      "pngSha256": "782b7ec32d935fd1e7baccfd22c741b46e59ccd9b1f838d4d7a8cb069b85f8f0"
+    }
+  ]
+}
