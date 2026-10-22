@@ -6,8 +6,11 @@ Read `docs/continuity/NATIVE_CHARACTER_HEAD_FIT_41013.md`. Optional proposed
 anatomy-only `settings.headProportions` carries strict local-model jaw width,
 chin length and eye width scales. Root baselinev2PASS1/2.771s and genuine
 nativeRED8tests/7FAIL3.854s observed; exact omitted geometry/pixels PASS.
-Scoped implementation prepared and Node786+306smokePASS; nativeGREEN/full
-integration/version bump pending root. Native tests remain unchanged.
+Scoped implementation Node786+306smokePASS and root nativeGREENv3 8PASS/5.898s.
+Every strict geometry/pixel/settings/manual/persistence assertion remains; only
+fixture array ownership and initial onShow-loop sequencing were corrected, with
+all failed sources/logs retained. Full integratedAndroid/CI/originalsigning and
+future4.10.13/code516 version bump pending root; source-free view review pending.
 Root owns ONE Gradle, all JUnit/native rendering/inference, integrated future516
 version bump, full checks and signing. Agents may run Node. Existing root515
 worktree stays untouched. Omitted geometry/pixels/normalization/floors and explicit

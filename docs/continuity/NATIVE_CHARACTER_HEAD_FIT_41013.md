@@ -1,10 +1,10 @@
-# Native character head proportions — implementation awaiting native GREEN
+# Native character head proportions — focused native GREEN
 
 Worktree: `/workspace/work/VideoStudio-Head-Fit-v41013`.
 Branch: `feat/native-character-head-fit-v41013`.
 Base: `32faad8a2ed955c72356b3729e5911984ab2158e` (verified 4.10.12/code515).
 Root observed the original native baseline and genuine feature RED. The scoped
-production implementation is now prepared; native GREEN/full integration and
+production implementation passed focused native GREEN. Full integration and
 the future version bump remain root-owned and pending.
 
 The current anatomy head uses one local construction volume and arbitrary native
@@ -102,7 +102,25 @@ Full Node GREENv3 passed 786 tests and 306 smoke checks. Two earlier full attemp
 exposed test-VM contexts missing the new capability-helper binding. Their logs
 are preserved. All three fixture contexts now parse the actual native capability
 literal and retain exact native/Node deep-equality assertions. No production
-Java change was needed for these fixture failures. Native GREEN remains pending.
+Java change was needed for these fixture failures.
+
+Root native GREENv1 passed seven of eight tests. The manual fixture clicked the
+initial legacy submit before the dialog's queued onShow handler was installed;
+the actual failure included UnExecutedRunnablesException. One initial native
+main-looper idle was added, retaining every expected request/profile/omission
+assertion; the failure message now includes the real native dialog status. No
+production fix was needed. The failed test source, launcher and log are retained.
+Root GREENv2 had a launcher classname slash typo and failed initialization; it is
+preserved separately, not counted as a product regression. Dotted-class GREENv3
+passed all eight native tests in 5.898 seconds, including exact original ten-case
+geometry/raw pixels, explicit identity, local jaw/chin/socket changes, continuous
+yaw and world-pose preservation, strict settings, public manual opt-in/legacy
+omission and Undo/component/archive persistence with four exact native frames.
+
+These are focused technical checks. Source-free native visual view review, full
+combined Android regression, future 4.10.13/code516 version integration, CI and
+original-signer verification remain root-owned. No accepted actor likeness,
+mastered character angles or completed film is established.
 
 Preserve every old or failed native/model generation.
 No Gradle from agents, main/Worker/stable publication, replacement signer,
