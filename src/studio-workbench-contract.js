@@ -238,6 +238,7 @@ export const HUMAN_ANIMATION_CAPABILITIES=Object.freeze({
 export const HAND_ANIMATION_CAPABILITIES=Object.freeze({
  minimumNativeVersion:'4.8.0',action:'sketch_edit',operation:'add_hand_animation',
  settings:{view:'front',handedness:'right',detail:'anatomical',skinColor:'#FFD6A078',nailColor:'#FFE5C1AC',centerX:.5,centerY:.55,size:1,motion:1,wristMotion:.6,renderStyle:'smooth'},
+ partPasses:{minimumNativeVersion:'4.10.15',field:'parts',choices:['all','palm_forearm','digits'],partialRenderStyle:'cel',requiresOwnLayer:true,visibility:'full_hand_before_part_selection',automaticContact:false,recoversUnseenAnatomy:false},
  renderStyles:['smooth','cel'],renderStyleMinimumNativeVersion:'4.8.1',
  celMotionQualityMinimumNativeVersion:'4.8.2',
  renderStyleControls:'Optional renderStyle smooth or cel is independent of anatomical/contour detail. Native smooth is the legacy default. Any explicit renderStyle, including smooth, requires native 4.8.1; the old add_hand_animation API without this field keeps its 4.8.0 floor. Omit the field to preserve old MCP request fingerprints; Node inserts no default. The cel surface style uses the shared native joint geometry and Canvas renderer, with the same pose channels, exact frames, views and budgets; no external renderer or quality certification.',
@@ -347,11 +348,14 @@ const radialGradient=z.object({type:z.literal('radial'),cx:coordinate,cy:coordin
 const gradient=z.union([legacyGradient,radialGradient]);
 const blendMode=z.enum(['normal','multiply','screen','add']);
 const sketchObjectShape={id,frame:frame.optional(),exposure:integer(1,1200).optional(),color:color.optional(),width:finite.min(.0005).max(.2).optional(),fill:z.boolean().optional(),transform:fullTransform.optional(),keys:sketchKeys.optional()};
+const handParts=z.enum(['all','palm_forearm','digits']).optional();
+const handPartCompatible=v=>v.parts===undefined||v.parts==='all'||v.settings.renderStyle==='cel';
 const handRenderStyle=z.enum(HAND_ANIMATION_CAPABILITIES.renderStyles).optional();
 const handSettings=z.object({renderStyle:handRenderStyle,view:z.enum(HAND_ANIMATION_CAPABILITIES.views).optional(),handedness:z.enum(HAND_ANIMATION_CAPABILITIES.handedness).optional(),detail:z.enum(HAND_ANIMATION_CAPABILITIES.details).optional(),skinColor:color.optional(),nailColor:color.optional(),centerX:finite.min(.2).max(.8).optional(),centerY:finite.min(.2).max(.8).optional(),size:finite.min(.4).max(1.2).optional(),motion:coordinate.optional(),wristMotion:coordinate.optional()}).strict();
 const handPose=z.object({frame:integer(0,239),indexCurl:coordinate.optional(),middleCurl:coordinate.optional(),ringCurl:coordinate.optional(),littleCurl:coordinate.optional(),thumbCurl:coordinate.optional(),thumbOpposition:coordinate.optional(),spread:coordinate.optional(),wristFlex:finite.min(-25).max(25).optional(),wristTurn:finite.min(-25).max(25).optional(),interpolation:drawingInterpolation.optional(),curve:timingCurve.optional()}).strict().refine(v=>timingValid({...v,interpolation:v.interpolation??'linear'}),'Invalid hand timing curve');
 const handPoses=z.array(handPose).min(1).max(32).refine(v=>v[0].frame===0&&v.every((p,i)=>i===0||p.frame>v[i-1].frame),'Hand poses start at zero and strictly increase');
-const handPayload=z.object({settings:handSettings.required().extend({renderStyle:handRenderStyle}),poses:handPoses,durationFrames:integer(24,240),fps,renderFrame:integer(0,239).optional(),sourceFrameOffset:integer(-1200,1200).optional()}).strict()
+const handPayload=z.object({parts:handParts,settings:handSettings.required().extend({renderStyle:handRenderStyle}),poses:handPoses,durationFrames:integer(24,240),fps,renderFrame:integer(0,239).optional(),sourceFrameOffset:integer(-1200,1200).optional()}).strict()
+ .refine(handPartCompatible,'Partial hand passes require cel render style')
  .refine(v=>v.durationFrames/v.fps>=4&&v.durationFrames/v.fps<=8,'Retained hand clock must preserve 4..8 seconds')
  .refine(v=>v.poses.every(p=>p.frame<v.durationFrames)&&(v.renderFrame===undefined||v.renderFrame<v.durationFrames),'Hand poses and sampled frame must fit the original programme duration');
 const humanClothingStyle=z.enum(HUMAN_ANIMATION_CAPABILITIES.clothingStyles).optional();
@@ -402,7 +406,7 @@ function objectUnion(complete=false){
  ]).refine(v=>(v.frame??0)+(v.exposure??1)<=1200,'Exposure exceeds the bounded frame domain');
 }
 const sketchObject=objectUnion(),completeSketchObject=objectUnion(true);
-const layer=z.object({id,name:text(160).optional(),visible:z.boolean().optional(),locked:z.boolean().optional(),blendMode:blendMode.optional(),opacity:finite.min(0).max(1).optional(),transform:fullTransform.optional(),keys:sketchKeys.optional(),objects:z.array(completeSketchObject).max(4096).optional()}).strict();
+const layer=z.object({id,name:text(160).optional(),visible:z.boolean().optional(),locked:z.boolean().optional(),blendMode:blendMode.optional(),opacity:finite.min(0).max(1).optional(),transform:fullTransform.optional(),keys:sketchKeys.optional(),objects:z.array(completeSketchObject).max(4096).optional()}).strict().refine(v=>!v.objects?.some(o=>o.kind==='hand'&&o.hand.parts!==undefined&&o.hand.parts!=='all')||v.objects.length===1,'Partial hand passes require their own layer with exactly one hand object');
 const target={layerId:id.optional(),objectId:id.optional()};
 const symmetry=z.object({mode:z.enum(['vertical','horizontal','both','radial']),segments:integer(2,8).optional(),centerX:coordinate.optional(),centerY:coordinate.optional()}).strict()
  .refine(v=>(v.mode==='radial')===(v.segments!==undefined),'Only radial symmetry requires segments');
@@ -432,7 +436,7 @@ const operation=z.discriminatedUnion('type',[
  z.object({type:z.literal('add_story_stage'),layerId:id,sceneId:id.max(20),foregroundLayerId:id.optional(),settings:storyStageSettings}).strict().refine(v=>v.foregroundLayerId===undefined||v.foregroundLayerId!==v.layerId,'Foreground and background layers must differ'),
  z.object({type:z.literal('add_actor_prop'),layerId:id,propId:id.max(20),actorId:id.optional(),settings:actorPropSettings}).strict().refine(v=>(v.settings.attachment??'near')==='floor'||v.actorId!==undefined,'Held actor props require actorId; only floor attachment may omit it'),
  z.object({type:z.literal('add_human_animation'),layerId:id,actorId:id.max(20),settings:humanSettings,preset:z.enum(HUMAN_ANIMATION_CAPABILITIES.presets).optional(),ground:z.enum(HUMAN_ANIMATION_CAPABILITIES.grounds).optional(),motion:humanMotion.optional(),poseOverrides:humanPoseOverrides.optional(),fit:z.boolean().optional(),blinkTrack:z.union([z.literal(false),humanBlinkTrack]).optional(),poses:humanPoses.optional(),speech:humanSpeechTiming.optional()}).strict().refine(v=>!(v.poses!==undefined&&(v.motion!==undefined||v.poseOverrides!==undefined)),'Choose preset motion/poseOverrides controls or explicit human poses').refine(v=>v.ground===undefined||(v.fit!==true&&v.poses===undefined&&v.motion?.groundSlope===undefined&&v.motion?.groundSlopeX===undefined),'Choose scene ground or explicit poses, motion slopes and solo framing'),
- z.object({type:z.literal('add_hand_animation'),layerId:id,handId:id.max(20),settings:handSettings,poses:handPoses.optional()}).strict(),
+ z.object({type:z.literal('add_hand_animation'),layerId:id,handId:id.max(20),settings:handSettings,poses:handPoses.optional(),parts:handParts}).strict().refine(handPartCompatible,'Partial hand passes require cel render style'),
  z.object({type:z.literal('add_character_animation'),layerId:id,characterId:id.max(20),settings:characterSettings,speech:speechTiming.optional()}).strict(),
  z.object({type:z.literal('add_face_animation'),layerId:id,faceId:id.max(28),settings:faceSettings,speech:speechTiming.optional(),preset:z.enum(['reaction','playful','chew']).optional(),poses:z.array(facePose).min(1).max(240).refine(v=>v[0].frame===0&&v.every((p,i)=>i===0||p.frame>v[i-1].frame),'Face poses start at zero and strictly increase').optional()}).strict().refine(v=>!(v.speech!==undefined&&v.poses!==undefined),'Choose speech cues or pose keys'),
  z.object({type:z.literal('add_mouth_animation'),layerId:id,mouthId:id.max(36),settings:mouthSettings,speech:speechTiming.optional(),preset:z.enum(['articulation','tongue','chew']).optional(),poses:z.array(mouthPose).min(1).max(240).refine(v=>v[0].frame===0&&v.every((p,i)=>i===0||p.frame>v[i-1].frame),'Mouth poses start at zero and strictly increase').optional()}).strict().refine(v=>!(v.speech!==undefined&&v.poses!==undefined),'Choose speech cues or pose keys'),
@@ -763,6 +767,8 @@ export function nativeStudioParameters(action,parameters={}){
 const legacy3d=new Set(['STANDOFF','CHARGE','CLASH','BLADE_LOCK','FOLLOW_THROUGH','KNOCKBACK','LANDING','RECOVERY','AERIAL_FLIP','TUMBLE','MACRO_CLASH']);
 const pixelFields=new Set(['keyframes','opacity','chromaKey','chromaColor','chromaTolerance','chromaFeather','maskShape','maskLeft','maskTop','maskRight','maskBottom','maskFeather','glowStrength','glowRadiusPx','glowThreshold']);
 export function requireStudioVersion(device,action,parameters={}){
+ const handPartPass=value=>value&&typeof value==='object'&&((value.type==='add_hand_animation'&&Object.hasOwn(value,'parts'))||(value.hand&&typeof value.hand==='object'&&Object.hasOwn(value.hand,'parts'))||Object.values(value).some(handPartPass));
+ if(handPartPass(parameters)&&!atLeast(device?.appVersion,'4.10.15'))throw new Error('NATIVE_APP_UPGRADE_REQUIRED: explicit hand parts, including all, require VideoStudio4.10.15 or newer');
  const sampledClone=value=>value&&typeof value==='object'&&(value.cloneSource&&typeof value.cloneSource==='object'&&Object.hasOwn(value.cloneSource,'sampling')||Object.values(value).some(sampledClone));
  if(sampledClone(parameters)&&!atLeast(device?.appVersion,'4.10.14'))throw new Error('NATIVE_APP_UPGRADE_REQUIRED: explicit clone source sampling, including nearest, requires VideoStudio4.10.14 or newer');
  const headProportions=value=>value&&typeof value==='object'&&(Object.hasOwn(value,'headProportions')||Object.values(value).some(headProportions));

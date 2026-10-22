@@ -458,6 +458,21 @@ final class SketchHandGeometry {
             if(!visible.isEmpty())pieces.add(visible);
         }return celUnion(pieces);
     }
+    /** Resolve the complete skin first. Group membership never removes an occluder.
+     * These are ownership classifiers, not newly drawn skin/detail/outline paths. */
+    static Path[] visibleCelPartOwners(JSONObject settings,double[] pose,int width,int height)throws Exception {
+        List<Face> faces=celSurfaces(settings,pose);faces.sort((a,b)->Double.compare(depth(b),depth(a)));
+        double unit=Math.min(width,height)/720d*112*settings.getDouble("size"),cx=width*settings.getDouble("centerX"),cy=height*settings.getDouble("centerY");
+        Path covered=new Path();List<Path> rear=new ArrayList<>(),digits=new ArrayList<>();
+        for(Face face:faces){
+            if(Thread.currentThread().isInterrupted())throw new InterruptedException("Hand ownership cancelled");
+            if(face.material!=0||!celFront(face))continue;
+            Path shape=celProjection(face,unit,cx,cy),visible=new Path(shape);celOp(visible,covered,Path.Op.DIFFERENCE);
+            if(!visible.isEmpty())(face.owner==0||face.owner==6?rear:digits).add(visible);
+            celOp(covered,shape,Path.Op.UNION);
+        }
+        return new Path[]{celUnion(rear),celUnion(digits)};
+    }
     private static List<Ink> drawCel(JSONObject settings,double[] pose,int width,int height)throws Exception {
         List<Face> faces=celSurfaces(settings,pose);faces.sort((a,b)->Double.compare(depth(b),depth(a)));
         double unit=Math.min(width,height)/720d*112*settings.getDouble("size"),cx=width*settings.getDouble("centerX"),cy=height*settings.getDouble("centerY");

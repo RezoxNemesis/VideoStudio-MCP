@@ -38,20 +38,22 @@ final class SketchHandAnimation {
         int previous=-1;for(double[] stage:stages){int f=(int)Math.round(stage[0]*(frames-1));if(f==previous)continue;previous=f;JSONObject p=new JSONObject().put("frame",f).put("interpolation","smooth");for(int c=0;c<CHANNELS.length;c++)p.put(CHANNELS[c],c<7?NEUTRAL[c]+(stage[c+1]-NEUTRAL[c])*motion:stage[c+1]*wrist*motion);a.put(p);}return a;
     }
     static void apply(JSONObject doc,JSONObject op)throws Exception {
-        cancelled();SketchDocument.fields(op,"type,layerId,handId,settings,poses");String id=SketchDocument.id(op,"handId"),layerId=SketchDocument.id(op,"layerId");if(id.length()>20)throw SketchDocument.bad("Hand identity must fit20characters");JSONObject layer=SketchDocument.layer(doc,layerId);if(layer.getBoolean("locked"))throw SketchDocument.bad("Layer is locked");
+        cancelled();SketchDocument.fields(op,"type,layerId,handId,settings,poses,parts");String id=SketchDocument.id(op,"handId"),layerId=SketchDocument.id(op,"layerId");if(id.length()>20)throw SketchDocument.bad("Hand identity must fit20characters");JSONObject layer=SketchDocument.layer(doc,layerId);if(layer.getBoolean("locked"))throw SketchDocument.bad("Layer is locked");
         JSONArray layers=doc.getJSONArray("layers");int existing=0;for(int l=0;l<layers.length();l++){JSONArray o=layers.getJSONObject(l).getJSONArray("objects");existing+=o.length();for(int i=0;i<o.length();i++)if(o.getJSONObject(i).getString("id").startsWith(id+"_"))throw SketchDocument.bad("Hand identity already exists");}
         int frames=doc.getInt("frameCount"),fps=doc.getInt("fps");double seconds=frames/(double)fps;if(frames<24||frames>240||seconds<4||seconds>8||!Set.of(24,30,60).contains(fps))throw SketchDocument.bad("Hand animation needs4..8seconds,24..240frames,24/30/60FPS");
-        JSONObject s=settings(op.getJSONObject("settings"));JSONArray poses=op.has("poses")?op.getJSONArray("poses"):preset(frames,fps,s);validatePoses(poses,frames);
+        JSONObject s=settings(op.getJSONObject("settings"));parts(op,s);JSONArray poses=op.has("poses")?op.getJSONArray("poses"):preset(frames,fps,s);validatePoses(poses,frames);
         JSONObject object=SketchEditOps.completeObject(new JSONObject().put("id",id+"_rig").put("kind","hand").put("width",.0012).put("frame",0).put("exposure",frames).put("hand",new JSONObject().put("settings",s).put("poses",new JSONArray(poses.toString())).put("durationFrames",frames).put("fps",fps)));
+        if(op.has("parts"))object.getJSONObject("hand").put("parts",op.get("parts"));
         refreshBounds(doc,object);JSONObject candidate=SketchDocument.copy(doc);SketchDocument.layer(candidate,layerId).getJSONArray("objects").put(object);SketchDocument.validate(candidate);
         layer.getJSONArray("objects").put(object);
     }
     static void validate(JSONObject doc,JSONObject object)throws Exception {
-        JSONObject hand=object.getJSONObject("hand");SketchDocument.fields(hand,"settings,poses,durationFrames,fps,renderFrame,sourceFrameOffset");settings(hand.getJSONObject("settings"));
+        JSONObject hand=object.getJSONObject("hand");SketchDocument.fields(hand,"settings,poses,durationFrames,fps,renderFrame,sourceFrameOffset,parts");parts(hand,settings(hand.getJSONObject("settings")));
         int frames=(int)SketchDocument.integer(hand,"durationFrames",24,240),fps=(int)SketchDocument.integer(hand,"fps",24,60);if(!Set.of(24,30,60).contains(fps)||frames/(double)fps<4||frames/(double)fps>8)throw SketchDocument.bad("Invalid retained hand clock");validatePoses(hand.getJSONArray("poses"),frames);
         if(hand.has("renderFrame"))SketchDocument.integer(hand,"renderFrame",0,frames-1);if(hand.has("sourceFrameOffset"))SketchDocument.integer(hand,"sourceFrameOffset",-1200,1200);
         if(object.has("gradient")||object.has("styleId")||object.has("shapeKeys")||object.has("commands"))throw SketchDocument.bad("Hand anatomy uses its own editable settings and poses");
         int w=doc.getInt("width"),h=doc.getInt("height");JSONObject owner=null;for(int i=0;i<doc.getJSONArray("layers").length();i++){JSONObject l=doc.getJSONArray("layers").getJSONObject(i);JSONArray o=l.getJSONArray("objects");for(int j=0;j<o.length();j++)if(o.getJSONObject(j)==object)owner=l;}
+        if(!parts(hand,hand.getJSONObject("settings")).equals("all")&&(owner==null||owner.getJSONArray("objects").length()!=1))throw SketchDocument.bad("Partial hand passes require their own layer with exactly one hand object");
         RectF envelope=new RectF();int first=object.getInt("frame"),last=first+object.getInt("exposure");
         for(int f=first;f<last;f++){
             RectF bounds=frameBounds(object,w,h,f);if(f==first)envelope.set(bounds);else envelope.union(bounds);
@@ -60,6 +62,16 @@ final class SketchHandAnimation {
             if(inkBounds.left<0||inkBounds.top<0||inkBounds.right>w||inkBounds.bottom>h)throw SketchDocument.bad("Hand leaves canvas through destination transform");
         }
         RectF stored=SketchFrameRenderer.bounds(object.getJSONObject("bounds"),w,h);if(stored.left>envelope.left+.1||stored.top>envelope.top+.1||stored.right<envelope.right-.1||stored.bottom<envelope.bottom-.1)throw SketchDocument.bad("Hand bounds must contain its complete pose programme");
+    }
+    static String parts(JSONObject value,JSONObject settings)throws Exception {
+        if(!value.has("parts"))return "all";
+        Object part=value.get("parts");
+        if(!(part instanceof String)||!Set.of("all","palm_forearm","digits").contains(part))throw SketchDocument.bad("Unknown hand parts");
+        if(!part.equals("all")&&!settings.optString("renderStyle","smooth").equals("cel"))throw SketchDocument.bad("Partial hand passes require cel render style");
+        return (String)part;
+    }
+    static JSONObject partCapabilities()throws Exception {
+        return new JSONObject().put("minimumNativeVersion","4.10.15").put("field","parts").put("choices",new JSONArray(new String[]{"all","palm_forearm","digits"})).put("partialRenderStyle","cel").put("requiresOwnLayer",true).put("visibility","full_hand_before_part_selection").put("automaticContact",false).put("recoversUnseenAnatomy",false);
     }
     private static void cancelled()throws InterruptedException {if(Thread.currentThread().isInterrupted())throw new InterruptedException("Hand construction cancelled");}
     static int localFrame(JSONObject object,int frame)throws Exception {JSONObject hand=object.getJSONObject("hand");return hand.has("renderFrame")?hand.getInt("renderFrame"):Math.min(hand.getInt("durationFrames")-1,Math.max(0,frame-object.getInt("frame")+hand.optInt("sourceFrameOffset",0)));}
@@ -71,10 +83,17 @@ final class SketchHandAnimation {
     static JSONObject sampled(JSONObject object,int frame)throws Exception {JSONObject copy=SketchDocument.copy(object),hand=copy.getJSONObject("hand"),frozen=new JSONObject().put("frame",0).put("interpolation","hold");double[] pose=poseAt(hand.getJSONArray("poses"),localFrame(object,frame));for(int i=0;i<CHANNELS.length;i++)frozen.put(CHANNELS[i],pose[i]);hand.put("poses",new JSONArray().put(frozen)).put("renderFrame",localFrame(object,frame));return copy;}
     static List<SketchHandGeometry.Ink> ink(JSONObject object,int width,int height,int frame)throws Exception {JSONObject h=object.getJSONObject("hand");return SketchHandGeometry.draw(h.getJSONObject("settings"),poseAt(h.getJSONArray("poses"),localFrame(object,frame)),width,height);}
     static void draw(Canvas canvas,JSONObject object,int width,int height,int frame,double alpha)throws Exception {
+        JSONObject hand=object.getJSONObject("hand");String part=parts(hand,hand.getJSONObject("settings"));
+        if(part.equals("all")){drawComplete(canvas,object,width,height,frame,alpha);return;}
+        Path[] owners=SketchHandGeometry.visibleCelPartOwners(hand.getJSONObject("settings"),poseAt(hand.getJSONArray("poses"),localFrame(object,frame)),width,height);
+        SketchHandPartClip.draw(canvas,owners,(float)object.getDouble("width")*Math.min(width,height),part.equals("digits"),surface->drawComplete(surface,object,width,height,frame,alpha));
+    }
+    private static void drawComplete(Canvas canvas,JSONObject object,int width,int height,int frame,double alpha)throws Exception {
         Paint paint=new Paint(Paint.ANTI_ALIAS_FLAG);paint.setStrokeWidth((float)object.getDouble("width")*Math.min(width,height));paint.setStrokeJoin(Paint.Join.ROUND);paint.setStrokeCap(Paint.Cap.ROUND);
-        for(SketchHandGeometry.Ink mark:ink(object,width,height,frame)){int color=Color.parseColor(mark.color);paint.setColor(color);paint.setAlpha((int)Math.round(Color.alpha(color)*alpha));paint.setStyle(mark.fill?Paint.Style.FILL:Paint.Style.STROKE);paint.setShader(mark.gradient==null?null:SketchGradients.shader(mark.gradient,width,height));canvas.drawPath(mark.path,paint);}
+        for(SketchHandGeometry.Ink mark:ink(object,width,height,frame)){cancelled();int color=Color.parseColor(mark.color);paint.setColor(color);paint.setAlpha((int)Math.round(Color.alpha(color)*alpha));paint.setStyle(mark.fill?Paint.Style.FILL:Paint.Style.STROKE);paint.setShader(mark.gradient==null?null:SketchGradients.shader(mark.gradient,width,height));canvas.drawPath(mark.path,paint);}
     }
     static JSONArray vectorFrame(JSONObject object,int width,int height,int frame)throws Exception {
+        JSONObject hand=object.getJSONObject("hand");if(!parts(hand,hand.getJSONObject("settings")).equals("all"))throw SketchDocument.bad("Partial hand passes retain their native hand programme; ordinary vector conversion cannot preserve device-pixel ownership");
         JSONArray objects=new JSONArray();int ordinal=0;for(SketchHandGeometry.Ink mark:ink(object,width,height,frame)){JSONArray commands=object.getJSONObject("hand").getJSONObject("settings").optString("renderStyle","smooth").equals("cel")?celCommands(mark.path,width,height):commands(mark.path,width,height);if(commands.length()<2)continue;JSONObject path=SketchEditOps.completeObject(new JSONObject().put("id",object.getString("id")+"_ink"+ordinal++).put("kind","path").put("frame",0).put("exposure",1).put("commands",commands).put("fill",mark.fill).put("color",mark.color).put("width",object.getDouble("width")).put("transform",SketchDocument.transformAt(object,frame)));if(mark.gradient!=null)path.put("gradient",new JSONObject(mark.gradient.toString()));objects.put(path);}return objects;
     }
     /** Keep conditioned cel boundaries through ordinary editable path conversion.
