@@ -1,3 +1,25 @@
+# Active native editable archive return repair — 2026-10-22
+
+Isolated `fix/native-editable-import-return-v41018` starts verified signed520
+`eceead08442624f03e6ee457911cd9ba71313296`. Read
+`docs/continuity/NATIVE_EDITABLE_IMPORT_RETURN_41018.md`. Actual Android Files
+restoration persisted the new drawing but left the old editor selected. Root
+genuine native lifecycle RED3/1FAIL4.993s; first repair still3/1FAIL4.006s from
+a stale follow callback. Second repair original3PASS4.132s and broader53PASS
+11.293s. Separate completed native edit RED1FAIL3.837s exposed UI-only revision
+admission. Final worker stored-revision admission passed root54 focused native
+tests/0failures/0errors/0skips in11.627s on retained full520+one activity override;
+original3assertions and guard7/external1 unchanged (permanent core class renamed).
+Keep original assertions and every failed source/log generation. Pause only the
+current import's automatic viewer reload/follow; successful current manual import
+takes over this viewer, with ordinary Watch ChatGPT available to resume. Failed,
+stale or background imports preserve following and native archive receipts.
+Stored-revision admission is a worker read, not atomic cross-runtime exclusion.
+No action/schema/fingerprint/version-floor change. Agent may inspect/edit/Node;
+root owns every Gradle/native/JUnit/ADB/model run, next521 metadata/full/CI/signing.
+Preserve frozen520, all source assets/projects and MCP identity. No signer/data
+reset, main merge, Worker deployment or film/art/phone/live-MCP claim.
+
 # Active protected authored cel reuse — 2026-10-22
 
 Isolated feat/native-authored-cel-reuse-v41017 starts exact519510d549. Read

@@ -36,6 +36,21 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
     private boolean notificationReplayPending,replaySelectedFromFile;
     private JSONObject document;
     private SketchEditorSession session;
+    /** One Files result may finish after onResume; it still belongs to this exact editor. */
+    private LocalEditableReturn localEditableReturn;
+    private final class LocalEditableReturn {
+        final SketchEditorSession origin=session;
+        final String originSketch=sketchId,originBook=bookId;
+        final int generation=loadGeneration,page=pageGeneration,bookPageAtReturn=bookPage,followGeneration=liveLoadGeneration;
+        final long revision=origin==null?-1:origin.document().optLong("revision",-1);
+        boolean deferredResumeReload;
+        boolean ownsSourceEditor(){return session==origin&&generation==loadGeneration&&page==pageGeneration
+                &&bookPageAtReturn==bookPage&&java.util.Objects.equals(originSketch,sketchId)
+                &&java.util.Objects.equals(originBook,bookId);}
+        boolean ownsEditor(){return ownsSourceEditor()&&followGeneration==liveLoadGeneration;}
+        boolean canOpen(){return origin!=null&&ownsEditor()&&origin.pending()==0&&origin.error()==null
+                &&revision==origin.document().optLong("revision",-1);}
+    }
     private SketchCorrectionDialog correctionDialog;
     private SketchReferenceLayersDialog referenceLayersDialog;
     private SketchLayeredDrawingDialog layeredDrawingDialog;
@@ -1140,6 +1155,7 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
 
     private final Runnable watchTick=new Runnable(){public void run(){
         if(destroyed)return;
+        if(localEditableReturn!=null&&localEditableReturn.ownsEditor()){handler.postDelayed(this,250);return;}
         if(followNewerNativeWork()){
             handler.postDelayed(this,250);
             return;
@@ -1148,9 +1164,9 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
             if(notificationReplayPending){startLivePlayer(notifiedSessionId);handler.postDelayed(this,250);return;}
             // An explicit invitation stays on its drawing, even while other books have pending sessions.
             if(notifiedSessionId!=null){handler.postDelayed(this,250);return;}
-            watchInFlight=true;long cursor=getPreferences(MODE_PRIVATE).getLong("lastLiveSequence",0),revision=document.optLong("revision");String id=sketchId;SketchEditorSession active=session;
+            watchInFlight=true;long cursor=getPreferences(MODE_PRIVATE).getLong("lastLiveSequence",0),revision=document.optLong("revision");String id=sketchId;SketchEditorSession active=session;int followGeneration=liveLoadGeneration;
             io.execute(()->{try{JSONObject next,changed=null;try(SketchProjectStore store=new SketchProjectStore(SketchStudioActivity.this)){next=store.newestFollowSession(cursor,System.currentTimeMillis());if(next==null&&store.revision(id)!=revision)changed=store.get(id);}JSONObject pending=next,incoming=changed;
-                postUi(()->{watchInFlight=false;if(destroyed||!resumed||!watching||active!=session||session.pending()>0||canvas.isDrawing())return;try{
+                postUi(()->{watchInFlight=false;if(destroyed||!resumed||!watching||followGeneration!=liveLoadGeneration||localEditableReturn!=null&&localEditableReturn.ownsEditor()||active!=session||session.pending()>0||canvas.isDrawing())return;try{
                     if(pending!=null){String target=pending.getString("sketchId"),token=pending.getString("sessionId");if(!target.equals(sketchId)){if(pending.has("bookId"))openBookPage(pending.getString("bookId"),pending.getInt("page"));else{bookId=null;book=null;loadSketch(target,0);}}else startLivePlayer(token);return;}
                     android.content.SharedPreferences signal=getSharedPreferences("sketch_live_workspace",MODE_PRIVATE);String target=signal.getString("sketchId","");if(!target.isEmpty()&&!target.equals(sketchId)){String targetBook=signal.getString("bookId","");if(targetBook.isEmpty()){bookId=null;book=null;loadSketch(target,0);}else openBookPage(targetBook,signal.getInt("page",0));return;}
                     if(incoming!=null&&session.adopt(incoming))present(session.document());
@@ -1170,7 +1186,7 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
     private void stopPlayback(){stopPlayback(true);}
     private void stopPlayback(boolean restoreBookPage) { boolean wasPlaying=playing;playing = false;++playbackGeneration;bookPlaybackInFlight=false;if(canvas!=null)canvas.setPlaybackPreview(false);android.graphics.Bitmap abandoned=pendingBookBitmap.getAndSet(null);if(abandoned!=null)abandoned.recycle();if(restoreBookPage&&wasPlaying&&bookId!=null&&session!=null&&!destroyed){openBookPage(bookId,bookPage);} handler.removeCallbacks(playTick); if(canvas!=null&&!destroyed)canvas.setEnabled(!loadingDrawing&&(!wasPlaying||bookId==null)&&session!=null&&livePlayer==null);if (playButton != null) playButton.setText("Play"); }
     @Override protected void onPause() { resumed=false;++liveLoadGeneration;if(livePlayer!=null||watchInFlight){loadingDrawing=true;if(notifiedSessionId!=null)notificationReplayPending=true;}stopLivePlayer();stopPlayback();canvas.setPreviewActive(false);handler.removeCallbacks(watchTick);super.onPause(); }
-    @Override protected void onResume() { super.onResume();if(canvas!=null)canvas.setPreviewActive(true);resumed=true;liveSessionId="";if(loadingDrawing&&session!=null&&!activeConstructions.containsKey(loadGeneration+":"+pageGeneration)){if(session.pending()==0)reload();else afterSaves(()->postUi(this::reload));}handler.removeCallbacks(watchTick);handler.postDelayed(watchTick,250); }
+    @Override protected void onResume() { super.onResume();if(canvas!=null)canvas.setPreviewActive(true);resumed=true;liveSessionId="";if(loadingDrawing&&session!=null&&!activeConstructions.containsKey(loadGeneration+":"+pageGeneration)){if(localEditableReturn!=null&&localEditableReturn.ownsEditor())localEditableReturn.deferredResumeReload=true;else if(session.pending()==0)reload();else afterSaves(()->postUi(this::reload));}handler.removeCallbacks(watchTick);handler.postDelayed(watchTick,250); }
     @Override protected void onStop(){resumed=false;stopPlayback();if(canvas!=null)canvas.setPreviewActive(false);handler.removeCallbacks(watchTick);super.onStop();}
     @Override protected void onDestroy() { destroyed=true;if(correctionDialog!=null)correctionDialog.close();if(referenceLayersDialog!=null)referenceLayersDialog.close();if(layeredDrawingDialog!=null)layeredDrawingDialog.close();clearLayeredReference();activeConstructions.clear();stopLivePlayer();stopPlayback();handler.removeCallbacksAndMessages(null);if(session!=null)session.close();io.shutdown();transfers.shutdown();if(canvas!=null)canvas.dispose();super.onDestroy(); }
     @Override protected void onSaveInstanceState(Bundle state) { state.putString("bookId",bookId);state.putInt("bookPage",bookPage);state.putString("sketchId", sketchId); state.putInt("frame", canvas.getFrame());state.putString("notifiedSketchId",notifiedSketchId);state.putString("notifiedSessionId",notifiedSessionId); super.onSaveInstanceState(state); }
@@ -1558,13 +1574,33 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
         if(requestCode==REQUEST_3D_CEL){handle3DPoseResult(resultCode,data);return;}
         if(requestCode!=LOCAL_EDITABLE_ARCHIVE||resultCode!=RESULT_OK||data==null||data.getData()==null)return;
         android.net.Uri uri=data.getData();String operation=UUID.randomUUID().toString();stopPlayback();
-        SketchEditorSession active=session;int generation=loadGeneration,page=pageGeneration;
-        afterSaves(()->transfers.execute(()->{
-            try{JSONObject restored=SketchLocalArchive.restore(this,uri,operation,null);String target=restored.getString("sketchId");
-                postUi(()->{if(session!=active||generation!=loadGeneration||page!=pageGeneration||active!=null&&active.pending()>0){onMessage("Editable animation imported as a new sketch. Find it in File → Open.");return;}
-                    bookId=null;book=null;loadSketch(target,0);onMessage("Editable animation imported with its layers, cels, colours and timing. Your previous work is preserved.");offerRestoredMotion(restored);});
-            }catch(Exception failure){postUi(()->onMessage("Editable import failed: "+failure.getMessage()));}
-        }));
+        LocalEditableReturn returning=new LocalEditableReturn();localEditableReturn=returning;
+        io.execute(()->{try{
+            if(returning.origin!=null){returning.origin.awaitIdle(15000);if(returning.origin.error()!=null)throw new IllegalStateException(returning.origin.error());}
+            transfers.execute(()->{
+                try{JSONObject restored=SketchLocalArchive.restore(this,uri,operation,null);String target=restored.getString("sketchId");
+                    boolean originUnchanged=localArchiveOriginUnchanged(returning);
+                    postUi(()->{if(!originUnchanged||localEditableReturn!=returning||!returning.canOpen()){resumeDeferredEditableReturn(returning);onMessage("Editable animation imported as a new sketch. Find it in File → Open.");return;}
+                        // A successful manual Files choice takes over this viewer only.
+                        // The ordinary Watch ChatGPT control can resume following later.
+                        localEditableReturn=null;++liveLoadGeneration;watching=false;getPreferences(MODE_PRIVATE).edit().putBoolean("watchLiveDrawing",false).apply();updateLiveControl();
+                        bookId=null;book=null;loadSketch(target,0);onMessage("Editable animation imported with its layers, cels, colours and timing. Your previous work is preserved.");offerRestoredMotion(restored);});
+                }catch(Exception failure){postUi(()->{resumeDeferredEditableReturn(returning);onMessage("Editable import failed: "+failure.getMessage());});}
+            });
+        }catch(Exception failure){postUi(()->{resumeDeferredEditableReturn(returning);onMessage("Editable import failed: "+failure.getMessage());});}});
+    }
+    /** Worker read-admission only: edits committed after this read remain possible and are preserved. */
+    private boolean localArchiveOriginUnchanged(LocalEditableReturn returning){
+        if(returning.originSketch==null||returning.revision<1)return false;
+        try(SketchProjectStore store=new SketchProjectStore(this)){return store.revision(returning.originSketch)==returning.revision;}
+        catch(Exception unavailable){return false;}
+    }
+    /** A failed/background import must not leave a pause-induced reload suspended forever. */
+    private void resumeDeferredEditableReturn(LocalEditableReturn returning){
+        if(localEditableReturn!=returning)return;localEditableReturn=null;
+        if(!returning.deferredResumeReload||!returning.ownsSourceEditor()||!loadingDrawing)return;
+        if(returning.origin.pending()==0)reload();
+        else afterSaves(()->postUi(()->{if(localEditableReturn==null&&returning.ownsSourceEditor())reload();}));
     }
     private void offerRestoredMotion(JSONObject result){
         if(!result.optBoolean("animationRestored")||!result.has("animationId"))return;
