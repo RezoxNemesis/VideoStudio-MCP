@@ -22,7 +22,10 @@ final class SketchHeadFitTestSupport {
   JSONObject layer=doc.getJSONArray("layers").getJSONObject(0);SketchHumanFigure.Skeleton p=SketchHumanFigure.skeleton(settings,pose);
   SketchAnatomyHead.draw(layer,"actor",settings,p);double[] centre=p.camera.point(p.head);JSONArray objects=layer.getJSONArray("objects");
   for(int i=0;i<objects.length();i++){
-   JSONObject object=objects.getJSONObject(i);JSONArray commands=object.getJSONArray("commands");
+   // JungleCelInk intentionally shares one command array between fill and outline.
+   // Detach each ordinary object before this fixture's one-time close-up mapping,
+   // matching SketchAnatomyHeadTest; otherwise the second owner is mapped twice.
+   JSONObject object=objects.getJSONObject(i);JSONArray commands=new JSONArray(object.getJSONArray("commands").toString());object.put("commands",commands);
    for(int j=0;j<commands.length();j++){JSONArray c=commands.getJSONArray(j);for(int k=1;k<c.length();k+=2){double x=(c.getDouble(k)*1280-640)*16-centre[0],y=(c.getDouble(k+1)*720-360)*16-centre[1];c.put(k,(CX+x*SCALE)/512);c.put(k+1,(CY+y*SCALE)/512);}}
    object.put("width",object.getDouble("width")*720*SCALE/512);
   }
