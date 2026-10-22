@@ -55,4 +55,17 @@ public class SketchAnimationPoseAnchorTest {
   rig.getJSONArray("bindings").getJSONObject(0).put("jointId","foot");rig.put("ik",new JSONArray().put(new JSONObject().put("hip","hip").put("knee","knee").put("ankle","foot").put("start",36).put("end",60).put("x",.40001).put("y",.69999).put("bend",1).put("rotation",0)));
   JSONObject baked=SketchDocument.object(SketchAnimationCompiler.compile(s,p,"pose_anchor_output").getJSONObject("document"),"head");for(int f:new int[]{60,61,62})exactTransform(exact(s,p,f),SketchDocument.transformAt(baked,f));
  }
+ @Test public void firstLatePosePreservesTheImplicitBaseHoldBeforeItsExactAuthoredValue()throws Exception {
+  JSONObject s=source(),p=program();p.getJSONArray("rigs").getJSONObject(0).put("poses",new JSONArray().put(new JSONObject().put("frame",20).put("rotations",new JSONObject().put("neck",.001))).put(new JSONObject().put("frame",95).put("rotations",new JSONObject().put("neck",.001))));
+  JSONObject baked=SketchDocument.object(SketchAnimationCompiler.compile(s,p,"pose_anchor_output").getJSONObject("document"),"head");for(int f:new int[]{0,18,19,20,21,95})exactTransform(exact(s,p,f),SketchDocument.transformAt(baked,f));
+ }
+ @Test public void firstLateSourceOpacityKeyPreservesTheImplicitBaseHold()throws Exception {
+  JSONObject s=source(),p=program(),head=SketchDocument.object(s,"head");p.getJSONArray("rigs").getJSONObject(0).put("poses",new JSONArray().put(new JSONObject().put("frame",0)).put(new JSONObject().put("frame",95)));head.put("keys",new JSONArray().put(new JSONObject().put("frame",20).put("interpolation","linear").put("transform",SketchDocument.transform().put("opacity",.9995))).put(new JSONObject().put("frame",95).put("interpolation","hold").put("transform",SketchDocument.transform().put("opacity",.9995))));SketchDocument.validate(s);
+  JSONObject baked=SketchDocument.object(SketchAnimationCompiler.compile(s,p,"pose_anchor_output").getJSONObject("document"),"head");for(int f:new int[]{0,18,19,20,21,95})exactTransform(exact(s,p,f),SketchDocument.transformAt(baked,f));
+ }
+ @Test public void contactOnAnIndependentLimbDoesNotForceExtraKeysIntoTheHead()throws Exception {
+  JSONObject s=source(),p=program(),rig=p.getJSONArray("rigs").getJSONObject(0);rig.put("joints",new JSONArray().put(new JSONObject().put("id","hip").put("x",.4).put("y",.3)).put(new JSONObject().put("id","knee").put("parent","hip").put("x",.4).put("y",.5)).put(new JSONObject().put("id","foot").put("parent","knee").put("x",.4).put("y",.7)).put(new JSONObject().put("id","neck").put("x",.8).put("y",.3)));rig.put("poses",new JSONArray().put(new JSONObject().put("frame",0)).put(new JSONObject().put("frame",95)));
+  JSONArray before=SketchDocument.object(SketchAnimationCompiler.compile(s,p,"pose_anchor_without_contact").getJSONObject("document"),"head").getJSONArray("keys");rig.put("ik",new JSONArray().put(new JSONObject().put("hip","hip").put("knee","knee").put("ankle","foot").put("start",36).put("end",60).put("x",.40001).put("y",.69999).put("bend",1)));
+  JSONObject baked=SketchDocument.object(SketchAnimationCompiler.compile(s,p,"pose_anchor_with_contact").getJSONObject("document"),"head");assertEquals("Independent head does not inherit leg contact boundaries",SketchDocument.canonical(before),SketchDocument.canonical(baked.getJSONArray("keys")));for(int f:new int[]{0,35,36,60,61,95})exactTransform(exact(s,p,f),SketchDocument.transformAt(baked,f));
+ }
 }

@@ -127,7 +127,8 @@ public final class SketchAnimationCompiler {
             if(m.cameraLayers.contains(layer.getString("id"))){
                 denseKeys+=layer.getJSONArray("keys").length();
                 Set<Integer> anchors=sourceKeyAnchors(SketchDocument.layer(m.source,layer.getString("id")));
-                for(Camera camera:m.camera)anchor(anchors,camera.frame);
+                Camera previousCamera=null;
+                for(Camera camera:m.camera){authoredAnchor(anchors,camera.frame,previousCamera==null||"hold".equals(previousCamera.interpolation));previousCamera=camera;}
                 Reduction reduced=reduceKeys(m,layer.getJSONArray("keys"),new double[]{-16d*m.width,-16d*m.height,16d*m.width,16d*m.height},0,anchors);
                 layer.put("keys",reduced.keys);maxApproximation=Math.max(maxApproximation,reduced.error);
             }
@@ -138,8 +139,9 @@ public final class SketchAnimationCompiler {
                     denseKeys+=object.getJSONArray("keys").length();double layerScale=maxLayerScale(m,m.owners.get(binding.objectId));
                     Set<Integer> anchors=sourceKeyAnchors(m.objects.get(binding.objectId));
                     for(Rig rig:m.rigs)if(rig.bindings.contains(binding)){
-                        for(Pose pose:rig.poses)anchor(anchors,pose.frame);
-                        for(Contact contact:rig.contacts){
+                        Pose previousPose=null;
+                        for(Pose pose:rig.poses){authoredAnchor(anchors,pose.frame,previousPose==null||"hold".equals(previousPose.interpolation));previousPose=pose;}
+                        for(Contact contact:rig.contacts)if(descendantOf(rig,binding.joint,contact.hip)){
                             anchor(anchors,contact.start-contact.blendIn);anchor(anchors,contact.start);
                             anchor(anchors,contact.end);anchor(anchors,contact.end+contact.blendOut);
                             // Contact intervals include their end frame. Preserve
@@ -581,12 +583,22 @@ public final class SketchAnimationCompiler {
     private static final class Reduction {JSONArray keys;double error;Reduction(JSONArray keys,double error){this.keys=keys;this.error=error;}}
     private static Set<Integer> sourceKeyAnchors(JSONObject source)throws Exception {
         Set<Integer> anchors=new HashSet<>();JSONArray keys=source.getJSONArray("keys");
-        for(int i=0;i<keys.length();i++)anchor(anchors,keys.getJSONObject(i).getInt("frame"));return anchors;
+        for(int i=0;i<keys.length();i++)authoredAnchor(anchors,keys.getJSONObject(i).getInt("frame"),i==0||"hold".equals(keys.getJSONObject(i-1).optString("interpolation","linear")));return anchors;
+    }
+    private static void authoredAnchor(Set<Integer> anchors,int frame,boolean incomingHold){
+        if(frame>=0)anchors.add(frame);
+        // Only discontinuities need a preceding sample. Pinning every smooth
+        // predecessor consumes the document key budget without preserving any
+        // extra authored value. The first key also follows the implicit base hold.
+        if(incomingHold&&frame>0)anchors.add(frame-1);
+    }
+    private static boolean descendantOf(Rig rig,int joint,int ancestor){
+        for(int at=joint;at>=0;at=rig.joints.get(at).parent)if(at==ancestor)return true;
+        return false;
     }
     private static void anchor(Set<Integer> anchors,int frame){
         if(frame>=0)anchors.add(frame);
-        // Retain the preceding sample too: a tiny authored hold/opacity step
-        // must not become a tolerance-sized ramp before its explicit key.
+        // Contact boundaries can be discontinuous independent of pose easing.
         if(frame>0)anchors.add(frame-1);
     }
     /** Ramer-Douglas-Peucker over fully sampled affine transforms. The AABB corners bound every

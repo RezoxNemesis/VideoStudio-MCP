@@ -37,7 +37,7 @@ final class SketchHandPartTestSupport {
  }
  static String pixels(Bitmap image)throws Exception{int[] p=new int[image.getWidth()*image.getHeight()];image.getPixels(p,0,image.getWidth(),0,0,image.getWidth(),image.getHeight());ByteBuffer bytes=ByteBuffer.allocate(p.length*4);for(int color:p)bytes.putInt(color);return SketchDocument.sha256(bytes.array());}
  static JSONObject readBaseline()throws Exception{
-  String path=System.getenv("VIDEOSTUDIO_HAND_PART_BASELINE");if(path!=null){File file=new File(path);if(file.isDirectory())file=new File(file,"Baseline.json");return new JSONObject(Files.readString(file.toPath()));}
+  String path=System.getenv("VIDEOSTUDIO_HAND_PART_BASELINE");if(path!=null){File file=new File(path);if(file.isDirectory())file=new File(file,"Baseline.json");return new JSONObject(new String(Files.readAllBytes(file.toPath()),StandardCharsets.UTF_8));}
   try(InputStream stream=SketchHandPartTestSupport.class.getResourceAsStream("/native-hand-parts-baseline-93048e7.json")){assertNotNull("Root must capture original93048e7 before production changes and retain its immutable source-free baseline",stream);return new JSONObject(new String(stream.readAllBytes(),StandardCharsets.UTF_8));}
  }
  static String canonical(Object value)throws Exception{return SketchDocument.canonical(new JSONObject(new JSONObject().put("v",value).toString()).get("v"));}

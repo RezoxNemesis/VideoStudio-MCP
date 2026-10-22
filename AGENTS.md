@@ -1,3 +1,7 @@
+# Integrated518 regression retake —2026-10-22
+
+Fullv2 executed2401tests/3FAIL/0errors/28skips; existing duel5043keys>4096. Exact authored anchors remain; only incoming HOLD/first-key predecessors and affected hip-subtree contact boundaries pin prior samples. Focusedv4 existingduel/numeric/compiler+9anchor tests38/0FAIL/0errors/1skip pass27s. Original scenes/tolerances/4096budget untouched. Failedfull/retake/exactsource evidence retained private. Freshfull518/CI/signing still pending. Source-assisted actorhairownership mask retake and actualhand/banana study are next; no finishedfilm/allangles/phone claim. Root owns one localGradle/allnative lanes.
+
 # Active combined character contact candidate —2026-10-22
 
 Branch feat/native-character-contacts-v41015 integrates signed51793048e7 with nativehandpart7589b4f and authoredanchorfixdda0861, preservingbothfeaturehistories. Planned4.10.15/code518; version/fullcombinedAndroid/Node/CI/originalsigner pending root. Handparts12focusedPASS119.073s/795Node+306smoke, anchor6new+22existing28PASS3.639s. These are scopedoverrides, notfull518verification. Actorheadlean technicalPASS46.868s/96neutral/source/portable but VISUALNEEDS_REWORK lowerhairsourcecoat scraps. BlinkV12brief LIMITED_ACCEPTABLE notyetintegrated. Root owns ONE localGradle and allnative/JUnit/model lanes. AgentsmayrunNode/read-only. No main/Worker/stablepublication, signers/projects/deviceidentity resets, externalart/inference/Gallery or filmcompletion/phone/codec claim.
