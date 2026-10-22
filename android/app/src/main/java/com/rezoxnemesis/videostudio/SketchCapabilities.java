@@ -111,6 +111,7 @@ public final class SketchCapabilities {
                 .put("minimumNativeVersion","4.8.0")
                 .put("cameraGuideDegrees",SketchHumanCameraGuide.capabilities())
                 .put("fringe",SketchHumanFringeCapabilities.get())
+                .put("headProportions",SketchHumanHeadProportions.capabilities())
                 .put("action","sketch_edit")
                 .put("operation","add_human_animation")
                 .put("objectKind","human")

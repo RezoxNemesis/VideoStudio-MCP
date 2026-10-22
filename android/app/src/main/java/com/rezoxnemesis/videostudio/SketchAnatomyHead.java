@@ -55,12 +55,14 @@ final class SketchAnatomyHead {
         final double[] axis,view;
         final double angle;
         final JSONObject controls;final DepthOccluder neck;
+        final SketchHumanHeadProportions proportions;boolean facialInk=true;int eyeSide;
         Head(JSONObject layer,JSONObject settings,SketchHumanFigure.Skeleton skeleton,DepthOccluder occluder){
             neck=occluder;
             p=skeleton;ink=new JungleCelInk(layer).at(640,360,1/16d,0);
             skin=settings.optString("skinColor","#FFF1EEE8");hair=settings.optString("hairColor","#FF555150");fringeStyle=settings.optString("fringeStyle","swept");
             shade=tone(skin,INK,.13);soft=tone(skin,INK,.48);light=tone(hair,skin,.53);
             controls=p.controls==null?new JSONObject():p.controls;
+            proportions=SketchHumanHeadProportions.from(settings);
             axis=p.camera.poseAxis();angle=Math.toRadians(p.lean+p.headTilt);
             // Lean/tilt uses the old head's screen-normal rotation convention.
             // Its inverse leaves the viewing normal itself invariant.
@@ -70,7 +72,8 @@ final class SketchAnatomyHead {
         double[] world(double[] local){double[] r=rotate(local,axis,angle);return v(r[0]+p.head[0],r[1]+p.head[1],r[2]+p.head[2]);}
         double[] point(double[] local){return p.camera.point(world(local));}
         double depth(double[] local){double[] r=world(local);return Math.sin(p.camera.pitch)*r[1]+Math.cos(p.camera.pitch)*p.camera.depth(r);}
-        Pen pen(String fill,String stroke,double weight){return new Pen(this,ink.ink(fill,stroke,weight*16));}
+        Pen pen(String fill,String stroke,double weight){return new Pen(this,ink.ink(fill,stroke,weight*16),facialInk,eyeSide);}
+        Pen rawPen(String fill,String stroke,double weight){return new Pen(this,ink.ink(fill,stroke,weight*16),false,0);}
 
         /** Adult cranial envelope with a separate narrow nasal ridge and tapered mandible.
          * Rings are original anatomical measurements, not sampled reference contours.
@@ -87,18 +90,18 @@ final class SketchAnatomyHead {
                 {17,12.6,18.8,8.6,0},{20,10.1,17.8,5.5,0},
                 {23,6.4,16.3,2,0},{24.5,3,13.7,.8,0}
             };
-            Mesh mesh=new Mesh();mesh.vertices.add(v(0,-25,-1));int n=48;
+            Mesh mesh=new Mesh();mesh.vertices.add(proportions.face(v(0,-25,-1)));int n=48;
             for(double[] r:rings)for(int j=0;j<n;j++){
                 double a=j*Math.PI*2/n,c=Math.cos(a),x=r[1]*Math.sin(a);
                 double z=c>=0?r[2]*Math.pow(c,.52)+r[4]*Math.pow(c,32):r[3]*c;
-                mesh.vertices.add(v(x,r[0],z));
+                mesh.vertices.add(proportions.face(v(x,r[0],z)));
             }
             for(int j=0;j<n;j++)mesh.triangle(0,1+(j+1)%n,1+j);
             for(int row=0;row<rings.length-1;row++)for(int j=0;j<n;j++){
                 int a=1+row*n+j,b=1+row*n+(j+1)%n,c=a+n,d=b+n;
                 mesh.triangle(a,b,c);mesh.triangle(b,d,c);
             }
-            int end=mesh.vertices.size();mesh.vertices.add(v(0,25,10.5));
+            int end=mesh.vertices.size();mesh.vertices.add(proportions.face(v(0,25,10.5)));
             int last=1+(rings.length-1)*n;
             for(int j=0;j<n;j++)mesh.triangle(last+j,last+(j+1)%n,end);
             mesh.draw(this,skin,INK,.62,true);
@@ -141,6 +144,7 @@ final class SketchAnatomyHead {
             // A far socket disappears across the nasal/temporal turn; the near socket
             // remains a genuine side-plane feature in profile.
             if(s*view[0]*.50+view[2]*.866<.12)return;
+            int previousEye=eyeSide;eyeSide=s;try {
             double open=1-control("blink"),brow=control("brow"),y=-.8;
             double inner=s*3.8,outer=s*13.6,cx=s*8.6;
             if(open>.025){
@@ -181,6 +185,7 @@ final class SketchAnatomyHead {
                 pen(null,hair,.19).m(s*x,by+.75,18.5-(x-4.5)*.45)
                     .q(s*(x+.45+j*.08),by-.15,18.4-(x-4.5)*.45,s*(x+1+j*.12),by-.40+j*.12,18-(x-4.5)*.45).end();
             }
+            }finally{eyeSide=previousEye;}
         }
 
         void oval(String fill,String stroke,double weight,double x,double y,double z,double rx,double ry,int side)throws Exception {
@@ -247,6 +252,7 @@ final class SketchAnatomyHead {
 
         /** A cap built of directional, overlapping locks; no image or texture backing. */
         void hair()throws Exception {
+            boolean previous=facialInk;facialInk=false;try {
             Mesh mesh=new Mesh();int n=48,rows=9;
             mesh.vertices.add(v(-2,-27,-2));
             for(int i=1;i<=rows;i++)for(int j=0;j<n;j++){
@@ -311,6 +317,7 @@ final class SketchAnatomyHead {
                 pen(hair,null,.2).m(s*18,-10,4).q(s*20,-4,3,s*18.4,1,2)
                     .l(s*17.7,3,3).q(s*18,-5,7,s*16.8,-8,8).z().end();
             }
+            }finally{facialInk=previous;}
         }
         /** Crown-parted brow/temple locks are closed shallow volumes whose
          * centreline follows the same cranial cap envelope in every camera.
@@ -342,6 +349,7 @@ final class SketchAnatomyHead {
         double[] hairPoint(double a,double t){return v(20.5*Math.sin(t)*Math.sin(a),-5-22.8*Math.cos(t),21.7*Math.sin(t)*Math.cos(a));}
 
         void longHair()throws Exception {
+            boolean previous=facialInk;facialInk=false;try {
             // A closed rear volume retains width behind the skull in profile. The
             // old almost-flat curtain projected inside the cranium at side angles.
             Mesh curtain=new Mesh();int sides=32;
@@ -362,20 +370,22 @@ final class SketchAnatomyHead {
             for(int s:new int[]{-1,1})for(int i=0;i<4;i++)pen(null,light,.23)
                 .m(s*(13+i*1.5),-3,-6-i*.8)
                 .c(s*(21+i*.35),12,-7-i*.8,s*(13+i*1.4),29,-7-i*.8,s*(17+i*1.3),40,-7-i*.8).end();
+            }finally{facialInk=previous;}
         }
     }
 
     /** Project every Bezier control point in the same local 3D frame. */
     private static final class Pen {
-        final Head h;final JungleCelInk.Shape path;
-        Pen(Head head,JungleCelInk.Shape shape){h=head;path=shape;}
+        final Head h;final JungleCelInk.Shape path;final boolean facial;final int eyeSide;
+        Pen(Head head,JungleCelInk.Shape shape,boolean facial,int eyeSide){h=head;path=shape;this.facial=facial;this.eyeSide=eyeSide;}
+        double[] point(double[] local){if(facial){if(eyeSide!=0)local=h.proportions.eye(local,eyeSide);local=h.proportions.face(local);}return h.point(local);}
         Pen m(double x,double y,double z)throws Exception{return m(v(x,y,z));}
-        Pen m(double[] a)throws Exception{double[] p=h.point(a);path.m(p[0],p[1]);return this;}
-        Pen l(double x,double y,double z)throws Exception{double[] p=h.point(v(x,y,z));path.l(p[0],p[1]);return this;}
+        Pen m(double[] a)throws Exception{double[] p=point(a);path.m(p[0],p[1]);return this;}
+        Pen l(double x,double y,double z)throws Exception{double[] p=point(v(x,y,z));path.l(p[0],p[1]);return this;}
         Pen q(double x,double y,double z,double a,double b,double c)throws Exception{return q(v(x,y,z),v(a,b,c));}
-        Pen q(double[] a,double[] b)throws Exception{double[] p=h.point(a),r=h.point(b);path.q(p[0],p[1],r[0],r[1]);return this;}
+        Pen q(double[] a,double[] b)throws Exception{double[] p=point(a),r=point(b);path.q(p[0],p[1],r[0],r[1]);return this;}
         Pen c(double x,double y,double z,double a,double b,double c,double d,double e,double f)throws Exception{return c(v(x,y,z),v(a,b,c),v(d,e,f));}
-        Pen c(double[] a,double[] b,double[] c)throws Exception{double[] p=h.point(a),q=h.point(b),r=h.point(c);path.c(p[0],p[1],q[0],q[1],r[0],r[1]);return this;}
+        Pen c(double[] a,double[] b,double[] c)throws Exception{double[] p=point(a),q=point(b),r=point(c);path.c(p[0],p[1],q[0],q[1],r[0],r[1]);return this;}
         Pen z(){path.z();return this;}
         void end()throws Exception{path.end();}
     }
@@ -502,7 +512,8 @@ final class SketchAnatomyHead {
             for(int i=0;i<vertices.size();i++){
                 double[] q=h.point(vertices.get(i));projected[i]=v(q[0],q[1],h.depth(vertices.get(i)));
             }
-            Pen p=h.pen(fill,null,weight),outline=h.pen(null,stroke,weight);boolean drawn=false,outlined=false;List<double[][]> outlineCurves=new ArrayList<>();
+            // Mesh vertices are already fitted before facing/normals/depth; do not fit them twice.
+            Pen p=h.rawPen(fill,null,weight),outline=h.rawPen(null,stroke,weight);boolean drawn=false,outlined=false;List<double[][]> outlineCurves=new ArrayList<>();
             while(!next.isEmpty()){
                 int start=next.keySet().iterator().next(),at=start;List<double[]> loop=new ArrayList<>();
                 do{

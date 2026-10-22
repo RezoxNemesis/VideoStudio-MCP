@@ -1,9 +1,11 @@
-# Native character head proportions — RED-only checkpoint
+# Native character head proportions — implementation awaiting native GREEN
 
 Worktree: `/workspace/work/VideoStudio-Head-Fit-v41013`.
 Branch: `feat/native-character-head-fit-v41013`.
 Base: `32faad8a2ed955c72356b3729e5911984ab2158e` (verified 4.10.12/code515).
-No production implementation or version bump exists at this checkpoint.
+Root observed the original native baseline and genuine feature RED. The scoped
+production implementation is now prepared; native GREEN/full integration and
+the future version bump remain root-owned and pending.
 
 The current anatomy head uses one local construction volume and arbitrary native
 orthographic camera yaw/pitch, but hardcodes all head proportions. Ordinary path
@@ -45,7 +47,7 @@ Only root runs Gradle/JUnit/native rendering/model inference. Before any product
 edit, root runs `SketchHumanHeadFitBaselineStudyTest` with:
 
 ```
-VIDEOSTUDIO_CAPTURE_HEAD_FIT_BASELINE=/workspace/work/native-head-fit-20261022/baseline-32faad8
+VIDEOSTUDIO_CAPTURE_HEAD_FIT_BASELINE=/workspace/work/native-head-fit-20261022/baseline-32faad8-v2
 ```
 
 The source-free helper writes ten original native head cases: eight numeric yaw
@@ -58,7 +60,7 @@ Root then runs `SketchHumanHeadFitTest` and
 `SketchHumanHeadFitPersistenceTest` with:
 
 ```
-VIDEOSTUDIO_HEAD_FIT_BASELINE=/workspace/work/native-head-fit-20261022/baseline-32faad8
+VIDEOSTUDIO_HEAD_FIT_BASELINE=/workspace/work/native-head-fit-20261022/baseline-32faad8-v2
 ```
 
 There are six geometry/settings tests and two public persistence/manual tests.
@@ -74,8 +76,35 @@ link and failed to resolve zod; it was not treated as RED. Reusing the existing
 ignored node_modules symlink allowed the genuine RED run, saved separately at
 `/workspace/work/native-head-fit-20261022/node-red-v1.log`.
 
-No production implementation is authorized until root observes the native
-baseline and RED results. Preserve every old or failed native/model generation.
+Root baseline v1 failed a test-fixture ownership mistake: fill and outline share
+one JungleCelInk commands array, and the close-up fixture mapped that array twice.
+The fixture now clones each object's commands before mapping, exactly as the
+existing native head test does. Original failed fixture/source/output/log remain
+preserved. No production validation, geometry or assertions were changed.
+
+Root baseline v2 passed one test in 2.771 seconds with all ten native cases.
+Root then observed eight native tests with seven failures in 3.854 seconds: six
+valid-profile cases rejected the unknown key, and manual controls were missing.
+The exact old geometry/raw-pixel omission regression passed. These genuine RED
+results authorized the production implementation; the tests remain unchanged.
+
+The implementation fits cranial vertices before triangle-facing/normal/depth
+calculations. Facial paths share the same local lower-face mapping. Eye socket,
+lids, iris and brow share a local x/z scale about the original eye anchor. Hair
+cap, part roots and curtain retain their original cranial frame; this slice does
+not fit fringe topology. Neither numeric camera nor world joints are modified.
+Mesh ink projects its already-fitted vertices once, while ordinary facial paths
+apply their local mapping before projection. Identity operations return original
+coordinates without added arithmetic. Strict manual/Node/native normalization
+and the recursive 4.10.13 floor use existing ordinary actions.
+
+Full Node GREENv3 passed 786 tests and 306 smoke checks. Two earlier full attempts
+exposed test-VM contexts missing the new capability-helper binding. Their logs
+are preserved. All three fixture contexts now parse the actual native capability
+literal and retain exact native/Node deep-equality assertions. No production
+Java change was needed for these fixture failures. Native GREEN remains pending.
+
+Preserve every old or failed native/model generation.
 No Gradle from agents, main/Worker/stable publication, replacement signer,
 Gallery, external rendering, hosted inference, phone install or film-completion
 claim.

@@ -137,8 +137,10 @@ test('capabilities match native and advertise style-specific views, manual contr
  const SketchHumanCameraGuide={capabilities:()=>JSON.parse(JSON.parse(cameraLiteral))};
  const fringeLiteral=native('SketchHumanFringeCapabilities').match(/new JSONObject\(("(?:\\.|[^"\\])*")\)/)[1];
  const SketchHumanFringeCapabilities={get:()=>JSON.parse(JSON.parse(fringeLiteral))};
+ const headLiteral=native('SketchHumanHeadProportions').match(/new JSONObject\(("(?:\\.|[^"\\])*")\)/)[1];
+ const SketchHumanHeadProportions={capabilities:()=>JSON.parse(JSON.parse(headLiteral))};
  const body=native('SketchCapabilities').match(/public static JSONObject humanAnimation\(\) throws Exception \{\s*return ([\s\S]*?);\s*\}/)[1];
- assert.deepEqual(JSON.parse(JSON.stringify(vm.runInNewContext('('+body.replace(/new (?:String|double|int)\[\]\{([^}]*)\}/g,'[$1]')+')',{JSONObject,JSONArray,SketchHumanCameraGuide,SketchHumanFringeCapabilities}))),m);
+ assert.deepEqual(JSON.parse(JSON.stringify(vm.runInNewContext('('+body.replace(/new (?:String|double|int)\[\]\{([^}]*)\}/g,'[$1]')+')',{JSONObject,JSONArray,SketchHumanCameraGuide,SketchHumanFringeCapabilities,SketchHumanHeadProportions}))),m);
  const detail=worker.match(/:action==='sketch_edit'\?'([^']+)'/)[1];assert.match(detail,/figureStyle.*constructionGuides.*4\.8\.3/);assert.match(detail,/three_quarter_left.*three_quarter_right/);
 });
 
