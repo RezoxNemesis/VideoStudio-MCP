@@ -82,7 +82,7 @@ public final class SketchPaintBrush {
         if("erase".equals(mode) && alphaLock) throw bad("Erase cannot use alpha lock");
         if(operation.has("cloneSource") && !"clone".equals(mode)) throw bad("Only clone mode accepts cloneSource");
         JSONObject clone=null;
-        if("clone".equals(mode)) clone=cloneSource(object(operation,"cloneSource"));
+        if("clone".equals(mode)) {clone=cloneSource(object(operation,"cloneSource"));if(SketchCloneSourceSampling.filtered(clone))SketchCloneSourceSampling.requireTarget(width,height);}
 
         double clipX=0,clipY=0,clipWidth=1,clipHeight=1;
         JSONObject clip=null;
@@ -286,10 +286,11 @@ public final class SketchPaintBrush {
         if(!o.has(field))return fallback;SketchDocument.bool(o,field);return o.getBoolean(field);
     }
     private static JSONObject cloneSource(JSONObject source) throws Exception {
-        SketchDocument.fields(source,"objectId,sha256,offsetX,offsetY,scale,rotation,mapping");
+        SketchDocument.fields(source,"objectId,sha256,offsetX,offsetY,scale,rotation,mapping,sampling");
         String id=SketchDocument.id(source,"objectId"),sha=string(source,"sha256");
         if(!sha.matches("[a-f0-9]{64}"))throw bad("Clone source requires its owned SHA-256");
         JSONObject normalized=new JSONObject().put("objectId",id).put("sha256",sha);
+        if(source.has("sampling"))normalized.put("sampling",SketchCloneSourceSampling.choice(source));
         if(source.has("mapping")) {
             if(source.has("offsetX") || source.has("offsetY") || source.has("scale") || source.has("rotation"))
                 throw bad("Clone affine mapping cannot be combined with offset, scale or rotation");

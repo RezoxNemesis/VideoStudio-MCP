@@ -283,24 +283,29 @@ public final class SketchPaintStore implements AutoCloseable {
     private JSONObject pinSource(JSONObject doc,JSONObject target,JSONObject requested,int frame,boolean publishSource)throws Exception {
         JSONObject guide=SketchDocument.object(doc,safeId(requested.getString("objectId")));if(!"image".equals(guide.getString("kind")))throw bad("Clone brush requires an owned image reference");
         JSONObject ref=guide.getJSONObject("reference");String sha=hash(requested.getString("sha256"));if(!sha.equals(ref.getString("sha256")))throw bad("SKETCH_PAINT_SOURCE_CHANGED: clone hash differs");
-        File original=referenceFile(ref);int w=integer(ref,"width",1,2048),h=integer(ref,"height",1,2048);verifyPng(original,w,h);double[] mapping;
+        File original=referenceFile(ref);int w=integer(ref,"width",1,2048),h=integer(ref,"height",1,2048);verifyPng(original,w,h);boolean filtered=SketchCloneSourceSampling.filtered(requested);if(filtered)SketchCloneSourceSampling.requireTarget(doc.getInt("width"),doc.getInt("height"));Rect sampleRect=filtered?(requested.has("mapping")?new Rect(0,0,w,h):SketchCloneSourceSampling.sourceRect(guide,w,h)):null;double[] mapping;
         if(requested.has("mapping")){JSONArray a=requested.getJSONArray("mapping");mapping=new double[6];for(int i=0;i<6;i++)mapping[i]=a.getDouble(i);}
-        else{mapping=referenceMapping(doc,guide,target,frame);double scale=requested.optDouble("scale",1),angle=Math.toRadians(-requested.optDouble("rotation",0)),cos=Math.cos(angle)/scale,sin=Math.sin(angle)/scale;
+        else{mapping=referenceMapping(doc,guide,target,frame,sampleRect);double scale=requested.optDouble("scale",1),angle=Math.toRadians(-requested.optDouble("rotation",0)),cos=Math.cos(angle)/scale,sin=Math.sin(angle)/scale;
             double a=cos*mapping[0]-sin*mapping[1],b=sin*mapping[0]+cos*mapping[1],c=cos*mapping[2]-sin*mapping[3],dd=sin*mapping[2]+cos*mapping[3];
             double tx=cos*(mapping[4]-.5)-sin*(mapping[5]-.5)+.5+requested.optDouble("offsetX",0),ty=sin*(mapping[4]-.5)+cos*(mapping[5]-.5)+.5+requested.optDouble("offsetY",0);mapping=new double[]{a,b,c,dd,tx,ty};}
         JSONArray frozen=new JSONArray();for(double value:mapping){if(!Double.isFinite(value)||Math.abs(value)>4096)throw bad("Clone mapping exceeds finite transform budget");frozen.put(value);}
         if(publishSource){File retained=new File(new File(root,"sources"),sha+".png");if(retained.exists())verifyPng(owned("sources",sha,"png",8*1024*1024),w,h);else{byte[] data=read(original,8*1024*1024);if(!sha.equals(SketchDocument.sha256(data)))throw bad("SKETCH_PAINT_SOURCE_CHANGED: source changed while copying");publish("sources","png",data,sha,8*1024*1024);}}
         JSONObject clip=requested.has("mapping")?new JSONObject().put("x",0).put("y",0).put("width",1).put("height",1):sourceClip(guide);
-        return new JSONObject().put("file",sha+".png").put("sha256",sha).put("width",w).put("height",h).put("mapping",frozen).put("sourceClip",clip).put("originalReference",copy(ref));
+        if(filtered)clip=new JSONObject().put("x",sampleRect.left/(double)w).put("y",sampleRect.top/(double)h).put("width",sampleRect.width()/(double)w).put("height",sampleRect.height()/(double)h);
+        JSONObject pin=new JSONObject().put("file",sha+".png").put("sha256",sha).put("width",w).put("height",h).put("mapping",frozen).put("sourceClip",clip).put("originalReference",copy(ref));
+        if(requested.has("sampling"))pin.put("sampling",SketchCloneSourceSampling.choice(requested));if(filtered)pin.put("sourceRect",SketchCloneSourceSampling.declaration(sampleRect));return pin;
     }
 
-    private double[] referenceMapping(JSONObject doc,JSONObject guide,JSONObject target,int frame)throws Exception {
+    private double[] referenceMapping(JSONObject doc,JSONObject guide,JSONObject target,int frame)throws Exception {return referenceMapping(doc,guide,target,frame,null);}
+
+    private double[] referenceMapping(JSONObject doc,JSONObject guide,JSONObject target,int frame,Rect filteredCrop)throws Exception {
         int width=doc.getInt("width"),height=doc.getInt("height");if(frame<0||frame>=doc.getInt("frameCount"))throw bad("Reference sample frame outside document");
         Matrix sourceWorld=new Matrix();sourceWorld.setConcat(SketchFrameRenderer.matrix(SketchDocument.transformAt(SketchDocument.owner(doc,guide.getString("id")),frame),width,height),SketchFrameRenderer.matrix(SketchDocument.transformAt(guide,frame),width,height));
         Matrix inverse=new Matrix();if(!sourceWorld.invert(inverse))throw bad("Clone reference transform cannot be inverted");Matrix targetWorld=new Matrix();
         if(target!=null)targetWorld.setConcat(SketchFrameRenderer.matrix(SketchDocument.transformAt(SketchDocument.owner(doc,target.getString("id")),frame),width,height),SketchFrameRenderer.matrix(SketchDocument.transformAt(target,frame),width,height));
         Matrix combined=new Matrix();combined.setConcat(inverse,targetWorld);float[] coordinates={0,0,width,0,0,height};combined.mapPoints(coordinates);
         JSONObject b=guide.getJSONObject("bounds"),crop=guide.optJSONObject("referenceCrop");if(crop==null)crop=new JSONObject().put("x",0).put("y",0).put("width",1).put("height",1);SketchDocument.validateBounds(b);SketchDocument.validateBounds(crop);
+        if(filteredCrop!=null){JSONObject ref=guide.getJSONObject("reference");crop=new JSONObject().put("x",filteredCrop.left/(double)ref.getInt("width")).put("y",filteredCrop.top/(double)ref.getInt("height")).put("width",filteredCrop.width()/(double)ref.getInt("width")).put("height",filteredCrop.height()/(double)ref.getInt("height"));}
         double[] u=new double[3],v=new double[3];for(int i=0;i<3;i++){u[i]=((coordinates[i*2]/width-b.getDouble("x"))/b.getDouble("width"))*crop.getDouble("width")+crop.getDouble("x");v[i]=((coordinates[i*2+1]/height-b.getDouble("y"))/b.getDouble("height"))*crop.getDouble("height")+crop.getDouble("y");}
         return new double[]{u[1]-u[0],v[1]-v[0],u[2]-u[0],v[2]-v[0],u[0],v[0]};
     }
@@ -317,6 +322,11 @@ public final class SketchPaintStore implements AutoCloseable {
     }
     private SketchPaintBrush.Source source(JSONObject pin,int canvasWidth,int canvasHeight,File file)throws Exception {
         validateSource(pin);String sha=pin.getString("sha256");int w=pin.getInt("width"),h=pin.getInt("height");checked(file,sha,8*1024*1024);verifyPng(file,w,h);
+        if(SketchCloneSourceSampling.filtered(pin)){
+            SketchCloneSourceSampling.requireTarget(canvasWidth,canvasHeight);String key="bilinear:"+sha+":"+canvasWidth+":"+canvasHeight+":"+SketchDocument.canonical(pin.getJSONArray("mapping"))+":"+pin.getJSONArray("sourceRect").toString();
+            int[] retained=cachedSourcePixels;if(!key.equals(cachedSourceHash)||retained==null){cachedSourcePixels=null;cachedSourceHash=null;Bitmap image=decode(file,w,h);try{retained=SketchCloneSourceSampling.raster(image,pin,canvasWidth,canvasHeight);cachedSourcePixels=retained;cachedSourceHash=key;}finally{image.recycle();}}
+            int[] pixels=retained;return(paintX,paintY)->{int x=(int)Math.floor(paintX),y=(int)Math.floor(paintY);return x<0||y<0||x>=canvasWidth||y>=canvasHeight?0:pixels[y*canvasWidth+x];};
+        }
         int[] retained=cachedSourcePixels;if(!sha.equals(cachedSourceHash)||retained==null){Bitmap image=decode(file,w,h);try{retained=new int[w*h];image.getPixels(retained,0,w,0,0,w,h);cachedSourcePixels=retained;cachedSourceHash=sha;}finally{image.recycle();}}
         int[] pixels=retained;JSONArray values=pin.getJSONArray("mapping");double[] m=new double[6];for(int i=0;i<6;i++)m[i]=values.getDouble(i);JSONObject clip=pin.getJSONObject("sourceClip");double left=clip.getDouble("x"),top=clip.getDouble("y"),right=left+clip.getDouble("width"),bottom=top+clip.getDouble("height");
         return(paintX,paintY)->{double x=paintX/canvasWidth,y=paintY/canvasHeight,u=m[0]*x+m[2]*y+m[4],v=m[1]*x+m[3]*y+m[5];if(u<left||u>=right||v<top||v>=bottom)return 0;return pixels[Math.min(h-1,(int)Math.floor(v*h))*w+Math.min(w-1,(int)Math.floor(u*w))];};
@@ -326,9 +336,11 @@ public final class SketchPaintStore implements AutoCloseable {
         validateSource(pin);verifyPng(owned("sources",pin.getString("sha256"),"png",8*1024*1024),pin.getInt("width"),pin.getInt("height"));
     }
     private static void validateSource(JSONObject pin)throws Exception {
-        fields(pin,"file,sha256,width,height,mapping,sourceClip,originalReference");String sha=hash(pin.getString("sha256"));if(!pin.getString("file").equals(sha+".png"))throw bad("Paint source filename differs");
+        fields(pin,"file,sha256,width,height,mapping,sourceClip,originalReference,sampling,sourceRect");String sha=hash(pin.getString("sha256"));if(!pin.getString("file").equals(sha+".png"))throw bad("Paint source filename differs");
         int w=integer(pin,"width",1,2048),h=integer(pin,"height",1,2048);JSONArray mapping=pin.getJSONArray("mapping");if(mapping.length()!=6)throw bad("Paint source requires six affine terms");for(int i=0;i<6;i++)SketchDocument.scalar(mapping.get(i),-4096,4096,"source mapping");
-        SketchDocument.validateBounds(pin.getJSONObject("sourceClip"));JSONObject ref=pin.getJSONObject("originalReference");if(!sha.equals(ref.getString("sha256"))||!ref.getString("file").equals(sha+".png")||integer(ref,"width",1,2048)!=w||integer(ref,"height",1,2048)!=h)throw bad("SKETCH_PAINT_SOURCE_CHANGED: provenance differs from frozen source");
+        SketchDocument.validateBounds(pin.getJSONObject("sourceClip"));boolean filtered=SketchCloneSourceSampling.filtered(pin);if(filtered!=pin.has("sourceRect"))throw bad("Filtered clone source crop missing or unexpected");
+        if(filtered){Rect rect=SketchCloneSourceSampling.validatedRect(pin);JSONObject clip=pin.getJSONObject("sourceClip");if(clip.getDouble("x")!=rect.left/(double)w||clip.getDouble("y")!=rect.top/(double)h||clip.getDouble("width")!=rect.width()/(double)w||clip.getDouble("height")!=rect.height()/(double)h)throw bad("Filtered clone crop differs from its frozen source clip");}
+        JSONObject ref=pin.getJSONObject("originalReference");if(!sha.equals(ref.getString("sha256"))||!ref.getString("file").equals(sha+".png")||integer(ref,"width",1,2048)!=w||integer(ref,"height",1,2048)!=h)throw bad("SKETCH_PAINT_SOURCE_CHANGED: provenance differs from frozen source");
     }
     private static JSONObject sourceClip(JSONObject guide)throws Exception {return guide.has("referenceCrop")?copy(guide.getJSONObject("referenceCrop")):new JSONObject().put("x",0).put("y",0).put("width",1).put("height",1);}
     private static boolean insideSource(double u,double v,JSONObject clip)throws Exception {return u>=clip.getDouble("x")&&u<clip.getDouble("x")+clip.getDouble("width")&&v>=clip.getDouble("y")&&v<clip.getDouble("y")+clip.getDouble("height");}
@@ -363,7 +375,7 @@ public final class SketchPaintStore implements AutoCloseable {
         if("paint_fill".equals(request.optString("type"))){SketchContourPaint.request(request);if(record.has("source")||!record.has("contour")||!(record.get("moveUnderInk") instanceof Boolean))throw bad("Contour fill provenance missing or unexpected");JSONObject pin=record.getJSONObject("contour");SketchContourPaint.path(pin);if(!request.getString("contourObjectId").equals(pin.getJSONObject("object").getString("id"))||!request.getString("expectedContourSha256").equals(pin.getString("sha256"))||pin.getInt("width")!=record.getJSONObject("beforePaint").getInt("width")||pin.getInt("height")!=record.getJSONObject("beforePaint").getInt("height"))throw bad("Contour fill provenance differs from its request");if(record.getBoolean("moveUnderInk")&&!SketchContourPaint.emptyHash(pin.getInt("width"),pin.getInt("height")).equals(record.getJSONObject("beforePaint").getString("sha256")))throw bad("Only a fresh paint cel can move behind ink");return;}
         if(record.has("contour")||record.has("moveUnderInk"))throw bad("Brush strokes cannot inject contour provenance");SketchPaintBrush.plan(request,record.getJSONObject("beforePaint").getInt("width"),record.getJSONObject("beforePaint").getInt("height"));
         boolean clone="clone".equals(request.getJSONObject("brush").getString("mode"));if(clone!=record.has("source"))throw bad("Paint clone journal source missing or unexpected");
-        if(clone){JSONObject pin=record.getJSONObject("source");validateSource(pin);if(!request.getJSONObject("cloneSource").getString("sha256").equals(pin.getString("sha256")))throw bad("SKETCH_PAINT_SOURCE_CHANGED: journal source differs from authored request");}
+        if(clone){JSONObject pin=record.getJSONObject("source");validateSource(pin);if(!request.getJSONObject("cloneSource").getString("sha256").equals(pin.getString("sha256")))throw bad("SKETCH_PAINT_SOURCE_CHANGED: journal source differs from authored request");JSONObject requested=request.getJSONObject("cloneSource");if(requested.has("sampling")!=pin.has("sampling")||(requested.has("sampling")&&!requested.getString("sampling").equals(pin.getString("sampling"))))throw bad("SKETCH_PAINT_JOURNAL_CHANGED: clone sampling differs from authored request");}
     }
 
     private Bitmap tile(String sha)throws Exception {return decode(owned("tiles",sha,"png",TILE_BYTES),TILE_SIZE,TILE_SIZE);}

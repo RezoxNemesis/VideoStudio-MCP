@@ -1,3 +1,22 @@
+# Active native filtered clone sampling — 2026-10-22
+
+Feature `feat/native-filtered-clone-v41014` starts verified signed516 `c01f0f2`.
+Actual actor-eye diagnostics prove existing nearest clone sampling differs from
+native half-pixel filtered reference rendering. Add optional strict clone-only
+`cloneSource.sampling` nearest/bilinear. Omission preserves old normalization,
+pixels, fingerprints and floors. Explicit choices require4.10.14. Filtered mode
+uses bounded native Canvas/Skia, integral source crop and at most1048576 target
+pixels, without downsampling; preserve alpha/provenance/cancellation/replay.
+Full local517 Android2383/0failures/0errors/28skips across441suites and
+790Node+306smoke pass; CI/original signing pending. Root owns
+Brush/Store/helper/SketchCapabilities, version517/full checks/signing
+and ONE local Gradle/native/JUnit/model lane. Agent2 owns native core tests and
+private eye diagnostics; agent3 owns Node and manual controls/UI tests. Agents
+may run Node, never native/Gradle. Source assets and failed generations stay
+private outside Git. No main/Worker/stable publication, replacement signer,
+device/data/MCP identity reset or completed film/installed APK claim. Film and
+all-angle actor remain unfinished; source-assisted pixels retain that label.
+
 # Active native character head-fit implementation — 2026-10-22
 
 Worktree `/workspace/work/VideoStudio-Head-Fit-v41013`, branch
