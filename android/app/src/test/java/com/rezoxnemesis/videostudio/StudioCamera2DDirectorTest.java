@@ -96,6 +96,30 @@ public class StudioCamera2DDirectorTest {
         }
     }
 
+    @Test public void cameraHoldsLastKeyWhenUserExtendsTimelineWithoutDeletingMedia()throws Exception{
+        try(ProjectStore store=new ProjectStore(RuntimeEnvironment.getApplication())){
+            ProjectStore.Project source=sample(store);
+            StudioCamera2DDirector.apply(store,set(source));
+            ProjectStore.Project extended=store.get(source.id);
+            extended.clips.get(0).outMs=4800;
+            store.save(extended);
+            ProjectStore.Project saved=store.get(source.id);
+            // The camera has an authored 4s curve, but safe clip edits can
+            // extend the composition to 4.8s; the transform holds its end.
+            assertEquals(4800,saved.outputDurationMs());
+            StudioLayerContract.fromJson(saved,StudioLayerContract.toJson(saved.studioLayers));
+            Composition composition=new NativeRenderEngine(RuntimeEnvironment.getApplication())
+                    .buildPreviewComposition(saved,"9:16","720p");
+            assertEquals(2,composition.effects.videoEffects.size());
+            StudioClipKeyframes camera=(StudioClipKeyframes)composition.effects.videoEffects.get(1);
+            float[] end=new float[9];
+            camera.getMatrix(4_800_000L).getValues(end);
+            assertEquals(1.2f,end[Matrix.MSCALE_X],.01f);
+            assertEquals(.2f,end[Matrix.MTRANS_X],.01f);
+            assertEquals("file:///owner/song.mp4",saved.asset("original-audio").uri);
+        }
+    }
+
     @Test public void clearAndRemoveCameraDoNotDeleteImportedMedia()throws Exception{
         try(ProjectStore store=new ProjectStore(RuntimeEnvironment.getApplication())){
             ProjectStore.Project source=sample(store);
