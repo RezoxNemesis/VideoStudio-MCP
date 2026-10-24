@@ -1056,6 +1056,14 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
     /** Transform the selected owned layer directly on the real edited video surface. */
     private void openStudioDirectTouch(StudioLayer layer){
         if(activeProject==null||studioPreviewFrame==null||layer==null)return;
+        StudioLayer camera=currentStudioCamera();
+        if(camera!=null&&camera.motionKeyframes!=null&&camera.motionKeyframes.length()>0){
+            Toast.makeText(this,
+                    "Global camera motion is active. Use exact layer placement in Inspector; " +
+                    "direct touch requires inverse-camera hit mapping before it can be accurate.",
+                    Toast.LENGTH_LONG).show();
+            return;
+        }
         if(isStudioExternalPreviewMode()){
             Toast.makeText(this,"Return to the edited preview before moving a layer",Toast.LENGTH_LONG).show();return;
         }
