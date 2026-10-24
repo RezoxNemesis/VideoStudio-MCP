@@ -290,7 +290,8 @@ public final class StudioKineticDirector {
             keys.put(key(enter, 0.0, 0.0, 1.15, 2 * direction, 1, "ease_out"));
             keys.put(key(Math.min(ms, enter + Math.max(50, enter / 2)), 0, 0, 1.0, 0, 1, "ease_in_out"));
         } else if ("editorial".equals(style)) {
-            keys.put(key(0, direction * .28, .07, 1.07, 0, 0, "ease_out"));
+            keys.put(key(0, direction * .28, .07, 1.07, 0, 0, "cubic_bezier")
+                    .put("bezier",StudioBezierEasing.fromText(StudioBezierEasing.PRESET_FILM)));
             keys.put(key(enter, 0, 0, 1, 0, 1, "ease_in_out"));
         } else {
             keys.put(key(0, 0, .035, 1.01, 0, 0, "ease_in_out"));
