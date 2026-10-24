@@ -13,6 +13,7 @@ import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
 import android.graphics.drawable.RippleDrawable;
 import android.view.View;
+import android.view.MotionEvent;
 import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.FrameLayout;
@@ -34,6 +35,9 @@ public final class StudioEditorWorkspace extends LinearLayout {
     private final LinearLayout lowerView;
     private boolean landscape;
     private int preferredPreviewHeight;
+    private float landscapeShare;
+    private final SplitHandle resizeHandle;
+    private static final String SIZING_PREFS="videostudio_editor_workspace_size_v1";
     private String activePane;
 
     public StudioEditorWorkspace(Context context,View header,View preview,View transport,View editingTools,
@@ -43,7 +47,10 @@ public final class StudioEditorWorkspace extends LinearLayout {
         headerView=header;previewView=preview;transportView=transport;editingToolsView=editingTools;
         landscape=getResources().getConfiguration().orientation==Configuration.ORIENTATION_LANDSCAPE;
         int available=getResources().getConfiguration().screenHeightDp;
-        preferredPreviewHeight=dp(available>0&&available<720?176:280);
+        android.content.SharedPreferences sizes=context.getSharedPreferences(SIZING_PREFS,Context.MODE_PRIVATE);
+        preferredPreviewHeight=dp(sizes.getInt("portraitPreviewDp",available>0&&available<720?176:280));
+        landscapeShare=Math.max(.30f,Math.min(.72f,sizes.getInt("landscapeSharePercent",48)/100f));
+        resizeHandle=new SplitHandle(context);
         setOrientation(VERTICAL);setBackgroundColor(BG);setPadding(dp(12),dp(6),dp(12),dp(6));
         header.setMinimumHeight(dp(56));
         pane=new FrameLayout(context);pane.setContentDescription("Editor workspace pane");
@@ -56,7 +63,7 @@ public final class StudioEditorWorkspace extends LinearLayout {
 
     /** Reflow the same admitted player and pane; configuration changes are not edits. */
     private void arrangeExistingViews(){
-        for(View view:new View[]{headerView,previewView,transportView,lowerView,editingToolsView})
+        for(View view:new View[]{headerView,previewView,transportView,lowerView,editingToolsView,resizeHandle})
             if(view.getParent() instanceof ViewGroup)((ViewGroup)view.getParent()).removeView(view);
         removeAllViews();addView(headerView,new LayoutParams(-1,-2));
         if(landscape){
@@ -64,11 +71,16 @@ public final class StudioEditorWorkspace extends LinearLayout {
             LinearLayout viewing=new LinearLayout(getContext());viewing.setOrientation(VERTICAL);
             previewView.setMinimumHeight(dp(96));viewing.addView(previewView,new LayoutParams(-1,0,1));
             viewing.addView(transportView,new LayoutParams(-1,-2));
-            LayoutParams viewingSize=new LayoutParams(0,-1,1);viewingSize.rightMargin=dp(12);
-            body.addView(viewing,viewingSize);body.addView(lowerView,new LayoutParams(0,-1,1.15f));
+            LayoutParams viewingSize=new LayoutParams(0,-1,landscapeShare);
+            body.addView(viewing,viewingSize);
+            resizeHandle.setVertical(true);
+            body.addView(resizeHandle,new LayoutParams(dp(22),-1));
+            body.addView(lowerView,new LayoutParams(0,-1,1-landscapeShare));
             addView(body,new LayoutParams(-1,0,1));
         }else{
             addView(previewView,new LayoutParams(-1,preferredPreviewHeight));
+            resizeHandle.setVertical(false);
+            addView(resizeHandle,new LayoutParams(-1,dp(21)));
             addView(transportView,new LayoutParams(-1,-2));addView(lowerView,new LayoutParams(-1,0,1));
         }
         addView(editingToolsView,new LayoutParams(-1,-2));
@@ -77,7 +89,6 @@ public final class StudioEditorWorkspace extends LinearLayout {
     @Override protected void onConfigurationChanged(Configuration configuration){
         super.onConfigurationChanged(configuration);
         boolean nextLandscape=configuration.orientation==Configuration.ORIENTATION_LANDSCAPE;
-        preferredPreviewHeight=dp(configuration.screenHeightDp>0&&configuration.screenHeightDp<720?176:280);
         if(nextLandscape!=landscape){landscape=nextLandscape;arrangeExistingViews();}
         requestLayout();
     }
@@ -85,7 +96,7 @@ public final class StudioEditorWorkspace extends LinearLayout {
     @Override protected void onMeasure(int widthSpec,int heightSpec){
         if(!landscape&&MeasureSpec.getMode(heightSpec)!=MeasureSpec.UNSPECIFIED){
             int width=Math.max(0,MeasureSpec.getSize(widthSpec)-getPaddingLeft()-getPaddingRight());
-            int fixed=getPaddingTop()+getPaddingBottom()+naturalHeight(headerView,width)
+            int fixed=getPaddingTop()+getPaddingBottom()+dp(21)+naturalHeight(headerView,width)
                     +naturalHeight(transportView,width)+naturalHeight(tabs,width)+naturalHeight(editingToolsView,width);
             // Keep the actual Timeline heading and native two-band track reachable. Generic
             // touch styling may make the preview WRAP_CONTENT because it owns Retry; the
@@ -94,6 +105,68 @@ public final class StudioEditorWorkspace extends LinearLayout {
             previewView.getLayoutParams().height=Math.max(dp(96),Math.min(preferredPreviewHeight,previewBudget));
         }
         super.onMeasure(widthSpec,heightSpec);
+    }
+
+    public boolean isWideWorkspace(){return landscape;}
+    public float landscapePreviewFraction(){return landscapeShare;}
+    public int portraitPreviewHeightPx(){return preferredPreviewHeight;}
+
+    /** Explicit touch-resizing; coordinates are display pixels, not video source dimensions. */
+    public void adjustSplit(float deltaPixels){
+        if(!Float.isFinite(deltaPixels))return;
+        if(landscape){
+            float usable=Math.max(dp(180),getWidth()-getPaddingLeft()-getPaddingRight()-dp(22));
+            landscapeShare=Math.max(.30f,Math.min(.72f,landscapeShare+deltaPixels/usable));
+            getContext().getSharedPreferences(SIZING_PREFS,Context.MODE_PRIVATE).edit()
+                .putInt("landscapeSharePercent",Math.round(landscapeShare*100)).apply();
+            arrangeExistingViews();
+        }else{
+            preferredPreviewHeight=Math.max(dp(96),Math.min(dp(540),preferredPreviewHeight+Math.round(deltaPixels)));
+            getContext().getSharedPreferences(SIZING_PREFS,Context.MODE_PRIVATE).edit()
+                .putInt("portraitPreviewDp",Math.round(preferredPreviewHeight/getResources().getDisplayMetrics().density)).apply();
+            previewView.getLayoutParams().height=preferredPreviewHeight;
+        }
+        requestLayout();
+    }
+
+    /** A visible 21dp drag handle keeps the edited player alive while panes resize. */
+    private final class SplitHandle extends View {
+        private final Paint paint=new Paint(Paint.ANTI_ALIAS_FLAG);
+        private boolean vertical;
+        private float last;
+        SplitHandle(Context context){
+            super(context);setContentDescription("Drag to resize preview and timeline workspaces");
+            setFocusable(true);setClickable(true);
+            setMinimumWidth(dp(21));setMinimumHeight(dp(21));
+        }
+        void setVertical(boolean value){vertical=value;invalidate();}
+        @Override protected void onDraw(Canvas canvas){
+            super.onDraw(canvas);
+            canvas.drawColor(BG);
+            paint.setColor(RULE);
+            float cx=getWidth()/2f,cy=getHeight()/2f;
+            if(vertical){
+                for(int i=-1;i<=1;i++)canvas.drawRoundRect(cx-2,cy+i*12-3,cx+2,cy+i*12+3,dp(2),dp(2),paint);
+            }else{
+                for(int i=-1;i<=1;i++)canvas.drawRoundRect(cx+i*12-3,cy-2,cx+i*12+3,cy+2,dp(2),dp(2),paint);
+            }
+        }
+        @Override public boolean onTouchEvent(MotionEvent event){
+            switch(event.getActionMasked()){
+                case MotionEvent.ACTION_DOWN:
+                    last=vertical?event.getRawX():event.getRawY();
+                    if(getParent()!=null)getParent().requestDisallowInterceptTouchEvent(true);
+                    return true;
+                case MotionEvent.ACTION_MOVE:{
+                    float next=vertical?event.getRawX():event.getRawY();
+                    adjustSplit(next-last);last=next;return true;
+                }
+                case MotionEvent.ACTION_UP:performClick();return true;
+                case MotionEvent.ACTION_CANCEL:return true;
+                default:return super.onTouchEvent(event);
+            }
+        }
+        @Override public boolean performClick(){super.performClick();return true;}
     }
 
     private int naturalHeight(View view,int width){
