@@ -206,7 +206,7 @@ test('capability literals expose fixed recipe checks and human judgment without 
  assert.match(worker,/correctionWorkflow:isV3.*CORRECTION_WORKFLOW_CAPABILITIES/);
 });
 
-test('release is4.10.26-kinetic-rc1/code529 and earlier anatomy/style/action floors are unchanged',()=>{
+test('release is4.10.26/code529 and earlier anatomy/style/action floors are unchanged',()=>{
  assert.match(native('AppProtocol'),/APP_VERSION = "4\.10\.26-kinetic-rc1"/);const build=fs.readFileSync(new URL('../android/app/build.gradle.kts',import.meta.url),'utf8');assert.match(build,/versionCode = 529/);assert.match(build,/versionName = "4\.10\.26-kinetic-rc1"/);
  assert.equal(contract.STUDIO_NATIVE_ACTIONS.size,Object.keys(contract.studioToolSchemas).length);assert(contract.STUDIO_ALIAS_ACTIONS.has("studio_sketch_layered_drawing_preview"));for(const action of contract.STUDIO_NATIVE_ACTIONS)assert(contract.STUDIO_ALIAS_ACTIONS.has("studio_"+action));
  const anatomy={sketchId:'original',expectedRevision:1,operationId:'anatomy',operations:[{type:'add_human_animation',layerId:'layer_1',actorId:'actor',settings:{figureStyle:'legacy',constructionGuides:false}}]};

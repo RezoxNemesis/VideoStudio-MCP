@@ -23,7 +23,7 @@ android {
         minSdk = 29
         targetSdk = 35
         versionCode = 529
-        versionName = "4.10.26-kinetic-rc1"
+        versionName = "4.10.26"
     }
 
     testOptions { unitTests.isIncludeAndroidResources = true }
