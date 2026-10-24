@@ -857,6 +857,18 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                     complete(command, applyEditPlan(p));
                     syncProtocolState();
                     return;
+                case "kinetic_benchmark_capabilities":
+                    complete(command, StudioKineticDirector.capabilities());
+                    return;
+                case "kinetic_benchmark_plan": {
+                    ProjectStore.Project sourceProject = store.get(p.optString("projectId", ""));
+                    complete(command, StudioKineticDirector.plan(sourceProject, p));
+                    return;
+                }
+                case "kinetic_benchmark_apply":
+                    complete(command, StudioKineticDirector.apply(store, p));
+                    syncProtocolState();
+                    return;
                 case "set_studio_layers":
                     complete(command, setStudioLayers(p));
                     syncProtocolState();
@@ -5095,6 +5107,8 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             out.put("cinematic3d",cinematic3DCapabilities());
             out.put("workbenchRelayCompatibility",NativeWorkbenchBridge.capabilities());
             out.put("studioEditing",StudioEditingCapabilities.capabilities());
+            out.put("kineticDirector",StudioKineticDirector.capabilities());
+            out.put("lastEditedPreviewFailure",StudioPreviewDiagnostics.last(this));
             out.put("audioAnalysis",NativeAudioEnvelope.capabilities());
             out.put("sketchStillExport",SketchStillExport.capabilities());
             out.put("studioWorkbench",new JSONObject().put("minimumNativeAppVersion","3.9.0")
