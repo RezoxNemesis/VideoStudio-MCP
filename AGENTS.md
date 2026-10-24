@@ -1,3 +1,30 @@
+# Active native clip-local presentation clock repair — 2026-10-24
+
+Branch `fix/native-clip-keyframe-clock-v41021` starts verified original-signed523
+`acf57cd6b8b9190d8b82df283d2529c99f77ec56`; next candidate4.10.21/code524.
+Read `docs/continuity/NATIVE_CLIP_KEYFRAME_CLOCK_41021.md`. Actual native523
+two-video export shows second clip starts/stays at its final1.04 zoom; first
+clip correctly progresses1→1.02→1.04. Pinned Media3 adds cumulative item time
+before effects. Correct per-item evaluator clocks without changing frame PTS,
+composition-global image/title lanes, authored split offsets, source media,
+durations, schemas, fingerprints, single-item behavior or other projects.
+Account for real microsecond durations, rational frames and supported speed.
+Root alone owns one Gradle and every native/JUnit/model/ADB run, production
+repair, versioning, integrated validation, signing and exact-revision CI.
+Inventory agent prepares genuine behavior RED tests/source audit only. Preserve
+all failed generations and assertions. PNG feature is separately parked as
+future525; do not mix its uncommitted tests/production into this repair.
+No main/Worker/stable publication, signer replacement, uninstall/data clear,
+MCP identity reset, external artwork substitute or completed film claim.
+
+Full native524v2 ran2513/1FAIL/0errors/28skips: all22new clock cases passed,
+but existing second-pass story-audio cancellation exposed an unnormalized
+ClosedByInterruptException. A deterministic real-file header/channel regression
+reproduced1/1FAIL against full523. The narrow render-boundary catch retains cause,
+interrupt flag and existing staging cleanup; original16story-audio tests plus
+the new case pass17/0FAIL6.409s on the exact audio override. Full combined retake
+and signed524 native export remain required. No original test was weakened.
+
 # Active native editor image-overlay motion — 2026-10-24
 
 Feature `feat/native-image-overlay-motion-v41020` starts original-signed522

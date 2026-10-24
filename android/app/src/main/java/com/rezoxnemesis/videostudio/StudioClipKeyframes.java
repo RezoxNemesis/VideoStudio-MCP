@@ -29,8 +29,18 @@ public final class StudioClipKeyframes implements MatrixTransformation {
     private final ArrayList<Key> keys;
     private final Values base;
     private final long clockOffsetMs;
+    private final long presentationStartUs;
     private StudioClipKeyframes(ArrayList<Key> keys,Values base){this(keys,base,0);}
-    private StudioClipKeyframes(ArrayList<Key> keys,Values base,long offset){this.keys=keys;this.base=base;clockOffsetMs=offset;}
+    private StudioClipKeyframes(ArrayList<Key> keys,Values base,long offset){this(keys,base,offset,0);}
+    private StudioClipKeyframes(ArrayList<Key> keys,Values base,long offset,long presentationStartUs){
+        if(presentationStartUs<0)throw new IllegalArgumentException("Presentation start must be nonnegative");
+        this.keys=keys;this.base=base;clockOffsetMs=offset;this.presentationStartUs=presentationStartUs;
+    }
+
+    /** Render callback clock only. Authored/local sampling and split offsets stay unchanged. */
+    public StudioClipKeyframes withPresentationStartUs(long startUs){
+        return new StudioClipKeyframes(new ArrayList<>(keys),base,clockOffsetMs,startUs);
+    }
 
     public static StudioClipKeyframes parse(JSONArray frames,long durationMs){
         return parse(frames,durationMs,new JSONObject());
@@ -156,7 +166,7 @@ public final class StudioClipKeyframes implements MatrixTransformation {
     private static double mix(double a,double b,double p){return a+(b-a)*p;}
     @Override public Size configure(int width,int height){return new Size(width,height);}
     @Override public Matrix getMatrix(long presentationTimeUs){
-        Values value=atUs(presentationTimeUs);
+        Values value=atUs(StudioEffectClock.localUs(presentationTimeUs,presentationStartUs));
         float ax=(float)(2*value.anchorX-1),ay=(float)(1-2*value.anchorY);
         Matrix matrix=new Matrix();matrix.postTranslate(-ax,-ay);
         matrix.postScale((float)value.scaleX,(float)value.scaleY);matrix.postRotate((float)value.rotate);

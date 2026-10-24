@@ -84,6 +84,11 @@ public final class SketchStoryAudio {
                 .put("bufferFrames",BUFFER).put("passes",2).put("headroom",HEADROOM).put("sampleClockUnchanged",true)
                 .put("hardClippedSamples",0).put("playbackVerified",false).put("listening","UNREVIEWED");
             cancelled();publish(stage,output);return proof;
+        }catch(ClosedByInterruptException interrupted){
+            // An interrupt may arrive inside NIO after our explicit checkpoint.
+            // Preserve the normal cancellation contract, cause and interrupt flag.
+            InterruptedIOException cancellation=new InterruptedIOException("Story audio cancelled; source retained");
+            cancellation.initCause(interrupted);throw cancellation;
         }finally{if(stage!=null)Files.deleteIfExists(stage.toPath());}
     }
     private static double[] pass(FileChannel source,PcmWaveFile.Layout pcm,Synth synth,OutputStream out,double gain)throws Exception {

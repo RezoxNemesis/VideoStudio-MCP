@@ -21,13 +21,20 @@ public final class AtmosphereOverlay extends CanvasOverlay {
     private final String environment;
     private final float intensity;
     private final long durationUs;
+    private final long presentationStartUs;
     private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
 
     public AtmosphereOverlay(String environment, double intensity, long durationUs) {
+        this(environment,intensity,durationUs,0);
+    }
+
+    public AtmosphereOverlay(String environment,double intensity,long durationUs,long presentationStartUs) {
         super(true);
+        if(presentationStartUs<0)throw new IllegalArgumentException("Presentation start must be nonnegative");
         this.environment = environment == null ? "ambient_drift" : environment.toLowerCase();
         this.intensity = (float) Math.max(.08, Math.min(1.0, intensity));
         this.durationUs = Math.max(1L, durationUs);
+        this.presentationStartUs = presentationStartUs;
         paint.setStrokeCap(Paint.Cap.ROUND);
     }
 
@@ -38,7 +45,7 @@ public final class AtmosphereOverlay extends CanvasOverlay {
         int h = canvas.getHeight();
         if (w <= 0 || h <= 0) return;
 
-        float p = clamp(presentationTimeUs / (float) durationUs);
+        float p = clamp(StudioEffectClock.localUs(presentationTimeUs,presentationStartUs) / (float) durationUs);
         if (environment.contains("water") || environment.contains("river")) {
             drawWaterGlints(canvas, w, h, p);
             drawMist(canvas, w, h, p, .32f);

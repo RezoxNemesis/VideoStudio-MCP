@@ -242,13 +242,18 @@ public final class NativeRenderEngine {
         } else {
             List<EditedMediaItem> edited = new ArrayList<>();
             boolean hasSourceAudio = false;
+            long itemStartUs = 0;
+            EditedMediaItem previousItem=null;
             for (ProjectStore.Clip clip : project.clips) {
                 ProjectStore.Asset asset = project.asset(clip.assetId);
                 if (asset == null) continue;
                 boolean isImage = asset.mime != null && asset.mime.startsWith("image/");
                 boolean isVideo = asset.mime != null && asset.mime.startsWith("video/");
                 if (isVideo) hasSourceAudio = true;
-                edited.add(buildItem(asset, clip, aspect, quality, isImage));
+                if(previousItem!=null)itemStartUs=Math.addExact(itemStartUs,StudioEffectClock.durationUs(previousItem));
+                EditedMediaItem item=buildItem(asset,clip,aspect,quality,isImage,Collections.emptyList(),itemStartUs);
+                edited.add(item);
+                previousItem=item;
             }
             if (edited.isEmpty()) {
                 throw new IllegalArgumentException("No renderable clips");
@@ -276,6 +281,8 @@ public final class NativeRenderEngine {
                                                      String aspect,String quality) {
         ArrayList<EditedMediaItem> clips=new ArrayList<>();
         boolean hasSourceAudio=false;
+        long itemStartUs=0;
+        EditedMediaItem previousItem=null;
         for(ProjectStore.Clip clip:project.clips){
             ProjectStore.Asset asset=project.asset(clip.assetId);
             if(asset==null||asset.mime==null)continue;
@@ -284,7 +291,10 @@ public final class NativeRenderEngine {
             if(!image&&!video)continue;
             if(video)hasSourceAudio=true;
             if(clip.outputDurationMs()<=0)continue;
-            clips.add(buildItem(asset,clip,aspect,quality,image));
+            if(previousItem!=null)itemStartUs=Math.addExact(itemStartUs,StudioEffectClock.durationUs(previousItem));
+            EditedMediaItem item=buildItem(asset,clip,aspect,quality,image,Collections.emptyList(),itemStartUs);
+            clips.add(item);
+            previousItem=item;
         }
         if(clips.isEmpty())throw new IllegalArgumentException("No playable base video clips");
         ArrayList<EditedMediaItemSequence> sequences=new ArrayList<>();
@@ -392,16 +402,21 @@ public final class NativeRenderEngine {
             List<EditedMediaItem> torso = new ArrayList<>();
             List<EditedMediaItem> lower = new ArrayList<>();
             List<EditedMediaItem> background = new ArrayList<>();
+            long itemStartUs=0;
+            EditedMediaItem previousItem=null;
 
             for (ProjectStore.Clip clip : project.clips) {
                 JSONObject fx = clip.effects == null ? new JSONObject() : clip.effects;
                 JSONObject spec = fx.optJSONObject("animationSpec");
                 long durationMs = Math.max(700, clip.outputDurationMs());
 
-                head.add(buildLayerItem(fx.optString("headUri"), clip, aspect, quality, durationMs, spec, "head"));
-                torso.add(buildLayerItem(fx.optString("torsoUri"), clip, aspect, quality, durationMs, spec, "torso"));
-                lower.add(buildLayerItem(fx.optString("lowerUri"), clip, aspect, quality, durationMs, spec, "lower"));
-                background.add(buildLayerItem(fx.optString("backgroundUri"), clip, aspect, quality, durationMs, spec, "background"));
+                if(previousItem!=null)itemStartUs=Math.addExact(itemStartUs,StudioEffectClock.durationUs(previousItem));
+                EditedMediaItem headItem=buildLayerItem(fx.optString("headUri"),clip,aspect,quality,durationMs,spec,"head",itemStartUs);
+                head.add(headItem);
+                torso.add(buildLayerItem(fx.optString("torsoUri"),clip,aspect,quality,durationMs,spec,"torso",itemStartUs));
+                lower.add(buildLayerItem(fx.optString("lowerUri"),clip,aspect,quality,durationMs,spec,"lower",itemStartUs));
+                background.add(buildLayerItem(fx.optString("backgroundUri"),clip,aspect,quality,durationMs,spec,"background",itemStartUs));
+                previousItem=headItem;
             }
 
             // Earlier sequences are composited above later sequences. The
@@ -417,12 +432,17 @@ public final class NativeRenderEngine {
 
         List<EditedMediaItem> foreground = new ArrayList<>();
         List<EditedMediaItem> background = new ArrayList<>();
+        long itemStartUs=0;
+        EditedMediaItem previousItem=null;
         for (ProjectStore.Clip clip : project.clips) {
             JSONObject fx = clip.effects == null ? new JSONObject() : clip.effects;
             JSONObject spec = fx.optJSONObject("animationSpec");
             long durationMs = Math.max(700, clip.outputDurationMs());
-            foreground.add(buildLayerItem(fx.optString("foregroundUri"), clip, aspect, quality, durationMs, spec, "foreground"));
-            background.add(buildLayerItem(fx.optString("backgroundUri"), clip, aspect, quality, durationMs, spec, "background"));
+            if(previousItem!=null)itemStartUs=Math.addExact(itemStartUs,StudioEffectClock.durationUs(previousItem));
+            EditedMediaItem foregroundItem=buildLayerItem(fx.optString("foregroundUri"),clip,aspect,quality,durationMs,spec,"foreground",itemStartUs);
+            foreground.add(foregroundItem);
+            background.add(buildLayerItem(fx.optString("backgroundUri"),clip,aspect,quality,durationMs,spec,"background",itemStartUs));
+            previousItem=foregroundItem;
         }
         return new Composition.Builder(
                 EditedMediaItemSequence.withVideoFrom(foreground),
@@ -449,6 +469,11 @@ public final class NativeRenderEngine {
                                            long durationMs,
                                            JSONObject animationSpec,
                                            String layerRole) {
+        return buildLayerItem(uri,clip,aspect,quality,durationMs,animationSpec,layerRole,0);
+    }
+
+    private EditedMediaItem buildLayerItem(String uri,ProjectStore.Clip clip,String aspect,String quality,
+                                           long durationMs,JSONObject animationSpec,String layerRole,long itemStartUs) {
         MediaItem media = new MediaItem.Builder()
                 .setUri(Uri.parse(uri))
                 .setImageDurationMs(durationMs)
@@ -458,7 +483,7 @@ public final class NativeRenderEngine {
                 .setFrameRate(30)
                 .setRemoveAudio(true);
 
-        List<Effect> video = buildLayerEffects(clip, aspect, quality, durationMs, animationSpec, layerRole);
+        List<Effect> video = buildLayerEffects(clip,aspect,quality,durationMs,animationSpec,layerRole,itemStartUs);
         item.setEffects(new Effects(Collections.emptyList(), video));
         return item.build();
     }
@@ -469,6 +494,11 @@ public final class NativeRenderEngine {
                                            long durationMs,
                                            JSONObject animationSpec,
                                            String layerRole) {
+        return buildLayerEffects(clip,aspect,quality,durationMs,animationSpec,layerRole,0);
+    }
+
+    private List<Effect> buildLayerEffects(ProjectStore.Clip clip,String aspect,String quality,long durationMs,
+                                          JSONObject animationSpec,String layerRole,long itemStartUs) {
         ArrayList<Effect> effects = new ArrayList<>();
         JSONObject fx = clip.effects == null ? new JSONObject() : clip.effects;
 
@@ -496,7 +526,7 @@ public final class NativeRenderEngine {
                 Math.min(320_000L, Math.max(180_000L, durationUs / 12)),
                 animationSpec,
                 layerRole
-        ));
+        ).withPresentationStartUs(itemStartUs));
 
         // Atmosphere is drawn only once on the topmost subject sequence.
         // Articulated renders use the head layer; older layered projects use
@@ -505,10 +535,10 @@ public final class NativeRenderEngine {
             String environment = animationSpec.optString("environmentMotion", "ambient_drift");
             double atmosphere = animationSpec.optDouble("atmosphereIntensity", .42);
             effects.add(new OverlayEffect(Collections.singletonList(
-                    new AtmosphereOverlay(environment, atmosphere, durationUs)
+                    new AtmosphereOverlay(environment,atmosphere,durationUs,itemStartUs)
             )));
         }
-        StudioPixelEffect pixels=new StudioPixelEffect(fx,Math.max(1,clip.outputDurationMs()));
+        StudioPixelEffect pixels=new StudioPixelEffect(fx,Math.max(1,clip.outputDurationMs()),itemStartUs);
         if(pixels.hasPixelChanges())effects.add(pixels);
         return effects;
     }
@@ -549,6 +579,11 @@ public final class NativeRenderEngine {
     private EditedMediaItem buildItem(ProjectStore.Asset asset, ProjectStore.Clip clip,
                                       String aspect,String quality,boolean image,
                                       List<StudioLayer> titles) {
+        return buildItem(asset,clip,aspect,quality,image,titles,0);
+    }
+
+    private EditedMediaItem buildItem(ProjectStore.Asset asset,ProjectStore.Clip clip,String aspect,String quality,
+                                      boolean image,List<StudioLayer> titles,long itemStartUs) {
         long inputDurationMs = Math.max(100, clip.outMs - clip.inMs);
         MediaItem.Builder media = new MediaItem.Builder().setUri(Uri.parse(asset.uri));
 
@@ -591,7 +626,7 @@ public final class NativeRenderEngine {
                     clip.effects,clip.outputDurationMs(),clip.speed,clip.volume);
             if(envelope.changesAudio())audio=Collections.singletonList(new StudioClipAudioProcessor(envelope));
         }
-        List<Effect> video = buildEffects(clip, aspect, quality, inputDurationMs);
+        List<Effect> video = buildEffects(clip,aspect,quality,inputDurationMs,itemStartUs);
         video.addAll(titleEffects(titles));
         edited.setEffects(new Effects(audio, video));
         if (asset.mime == null || !asset.mime.startsWith("video/")) edited.setRemoveAudio(true);
@@ -631,6 +666,10 @@ public final class NativeRenderEngine {
     }
 
     private List<Effect> buildEffects(ProjectStore.Clip clip, String aspect, String quality, long inputDurationMs) {
+        return buildEffects(clip,aspect,quality,inputDurationMs,0);
+    }
+
+    private List<Effect> buildEffects(ProjectStore.Clip clip,String aspect,String quality,long inputDurationMs,long itemStartUs) {
         ArrayList<Effect> effects = new ArrayList<>();
         JSONObject fx = clip.effects == null ? new JSONObject() : clip.effects;
 
@@ -646,7 +685,7 @@ public final class NativeRenderEngine {
         if (proceduralGraph != null) {
             try {
                 effects.add(new OverlayEffect(Collections.singletonList(new ProceduralSceneOverlay(
-                        proceduralGraph, Math.max(100_000, clip.outputDurationMs() * 1000L)))));
+                        proceduralGraph,Math.max(100_000,clip.outputDurationMs()*1000L),itemStartUs))));
             } catch (Exception error) { throw new IllegalArgumentException("Invalid procedural scene", error); }
         }
 
@@ -658,7 +697,7 @@ public final class NativeRenderEngine {
         if ("soft_glow".equals(preset) || "dream".equals(preset)) blur = Math.max(blur, 1.6);
         if (blur > .1) effects.add(new GaussianBlur((float) Math.min(18, blur)));
 
-        effects.add(StudioClipKeyframes.fromEffects(fx, Math.max(1, clip.outputDurationMs())));
+        effects.add(StudioClipKeyframes.fromEffects(fx,Math.max(1,clip.outputDurationMs())).withPresentationStartUs(itemStartUs));
         if (clip.title != null && !clip.title.trim().isEmpty()) {
             StudioLayer title = new StudioLayer();
             title.text = clip.title;
@@ -672,10 +711,10 @@ public final class NativeRenderEngine {
         boolean exactKeys = fx.optJSONArray("keyframes") != null && fx.optJSONArray("keyframes").length() > 0;
         if (!exactKeys && (!"none".equals(motion) || (!"none".equals(transition) && !"cut".equals(transition)))) {
             String matrixPreset = "none".equals(motion) ? transition : motion;
-            effects.add(new MotionMatrixEffect(matrixPreset, Math.max(100_000, clip.outputDurationMs() * 1000L), 280_000));
+            effects.add(new MotionMatrixEffect(matrixPreset,Math.max(100_000,clip.outputDurationMs()*1000L),280_000).withPresentationStartUs(itemStartUs));
         }
 
-        StudioPixelEffect pixels=new StudioPixelEffect(fx,Math.max(1,clip.outputDurationMs()));
+        StudioPixelEffect pixels=new StudioPixelEffect(fx,Math.max(1,clip.outputDurationMs()),itemStartUs);
         if(pixels.hasPixelChanges())effects.add(pixels);
 
         return effects;

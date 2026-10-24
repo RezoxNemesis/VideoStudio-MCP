@@ -18,7 +18,13 @@ public final class StudioPixelEffect implements GlEffect {
     public final int maskShape; // 0=none, 1=rectangle, 2=ellipse
     private final StudioClipKeyframes animation;
     private final boolean changes;
+    private final long presentationStartUs;
     public StudioPixelEffect(JSONObject effects,long durationMs){
+        this(effects,durationMs,0);
+    }
+    public StudioPixelEffect(JSONObject effects,long durationMs,long presentationStartUs){
+        if(presentationStartUs<0)throw new IllegalArgumentException("Presentation start must be nonnegative");
+        this.presentationStartUs=presentationStartUs;
         if(effects==null)effects=new JSONObject();
         JSONObject fx;
         try{fx=new JSONObject(effects.toString());}catch(Exception error){throw new IllegalArgumentException("Invalid pixel settings",error);}
@@ -47,7 +53,9 @@ public final class StudioPixelEffect implements GlEffect {
     }
     // Media3 effects process linear RGB, while owner-authored color selectors are sRGB.
     private static float linear(float value){return value<=.04045f?value/12.92f:(float)Math.pow((value+.055f)/1.055f,2.4);}
-    public float opacityAtUs(long presentationTimeUs){return (float)animation.atUs(presentationTimeUs).opacity;}
+    public float opacityAtUs(long presentationTimeUs){
+        return (float)animation.atUs(StudioEffectClock.localUs(presentationTimeUs,presentationStartUs)).opacity;
+    }
     public boolean hasPixelChanges(){return changes;}
     @Override public boolean isNoOp(int inputWidth,int inputHeight){return !changes;}
     @Override public GlShaderProgram toGlShaderProgram(Context context,boolean useHdr)throws VideoFrameProcessingException{
