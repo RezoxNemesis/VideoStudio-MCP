@@ -242,6 +242,14 @@ public final class StudioTracksView extends View {
                 StudioLayer selected=hit(e.getX(),e.getY());
                 downX=e.getX();dragChanged=false;
                 seeking=false;
+                if(selected!=null&&change!=null&&StudioLayer.CAMERA.equals(selected.type)){
+                    // The composition camera must cover the full output clock.
+                    // Selecting it is allowed; dragging/trim would corrupt that
+                    // invariant and is intentionally not a touchscreen action.
+                    draggingId="";seeking=false;
+                    change.onSelect(selected.id);
+                    invalidate();return true;
+                }
                 if(selected!=null&&change!=null){
                     draggingId=selected.id;
                     originalStart=selected.startMs;
