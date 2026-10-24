@@ -10,6 +10,7 @@ import android.widget.Button;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
+import java.nio.charset.StandardCharsets;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -34,6 +35,8 @@ final class SketchStillPngDialog implements AutoCloseable {
 
     private static final int OPEN=0,PREPARING=1,ADMITTED=2,CLOSED=3;
     private static final int MAX_REQUEST_CHARS=4096,MAX_JOB_SNAPSHOT_CHARS=512*1024;
+    // Existing public RecoveryPlanStore retention and JobManager.persist() bounds.
+    private static final int MAX_RECENT_PLANS=24,MAX_RECENT_JOBS=40;
     private final Activity activity;
     private final ExecutorService io;
     private final SharedPreferences preferences;
@@ -48,6 +51,7 @@ final class SketchStillPngDialog implements AutoCloseable {
     private final TextView status,savedSummary;
     private final Button save,retry;
     private String savedRequest="",observedRequest="";
+    private long observationGeneration,observedSinceMs;
     private final Runnable poll=this::pollJob;
 
     static SketchStillPngDialog show(Activity activity,ExecutorService io,SharedPreferences preferences,
@@ -114,6 +118,8 @@ final class SketchStillPngDialog implements AutoCloseable {
 
     private void submit(String raw,boolean exactRetry) {
         if(!live()||!state.compareAndSet(OPEN,PREPARING))return;
+        final long observation=++observationGeneration;
+        main.removeCallbacks(poll);
         save.setEnabled(false);retry.setEnabled(false);status.setText(exactRetry?"Checking the exact saved PNG request…":"Checking the selected saved frame…");
         io.execute(()->{
             try {
@@ -125,10 +131,13 @@ final class SketchStillPngDialog implements AutoCloseable {
                 // Close/navigation and this admission checkpoint have one ordering.
                 synchronized(admissionLock){if(!live()||!state.compareAndSet(PREPARING,ADMITTED))return;}
                 if(!preferences.edit().putString(preferenceKey,raw).commit())throw new IllegalStateException("Could not retain the PNG request for retry");
+                final long submittedAt=System.currentTimeMillis();
                 activity.startForegroundService(new Intent(activity,ControlService.class)
                         .setAction(ControlService.ACTION_LOCAL_SKETCH_EXPORT).putExtra("requestJson",raw));
                 post(()->{
+                    if(observation!=observationGeneration)return;
                     savedRequest=raw;observedRequest=raw;
+                    observedSinceMs=submittedAt;
                     savedSummary.setText("Saved request: frame "+(request.optInt("frame")+1)+" · revision "+request.optLong("expectedRevision")
                             +". Retry keeps this exact source, frame and operation.");
                     status.setText("PNG save submitted. Jobs / Activity shows its native progress. After completion: Media Bin → Import from project.");
@@ -136,6 +145,7 @@ final class SketchStillPngDialog implements AutoCloseable {
                     main.removeCallbacks(poll);main.postDelayed(poll,1000);
                 });
             }catch(Exception failure){post(()->{
+                if(observation!=observationGeneration)return;
                 state.compareAndSet(PREPARING,OPEN);state.compareAndSet(ADMITTED,OPEN);
                 restoreRequest();save.setEnabled(true);status.setText("PNG was not confirmed: "+failure.getMessage()+". Your drawing is unchanged; an exact saved request remains available for retry.");
             });}
@@ -146,21 +156,35 @@ final class SketchStillPngDialog implements AutoCloseable {
     private void pollJob() {
         if(!live()||observedRequest.isEmpty()||!polling.compareAndSet(false,true))return;
         final String requestText=observedRequest;
+        final long observation=observationGeneration,since=observedSinceMs;
         io.execute(()->{
             JSONObject found=null,verified=null;String error=null;
             try {
-                JSONObject request=new JSONObject(requestText);
+                JSONObject request=SketchStillExport.validate(new JSONObject(requestText));
                 String target=SketchStillExport.outputProjectId(request.getString("sketchId"),request.getString("operationId"));
+                String requestHash=requestHash(request);
+                JSONObject plan=matchingPlan(requestHash,target,since);
+                String jobId=plan!=null&&plan.opt("jobId") instanceof String?plan.getString("jobId"):"";
                 String raw=activity.getSharedPreferences("videostudio_native_v1",Activity.MODE_PRIVATE)
                         .getString(ExecutionTruthPolicy.JOB_RECOVERY_PREF_KEY,"[]");
-                if(raw!=null&&raw.length()<=MAX_JOB_SNAPSHOT_CHARS){
+                if(raw!=null&&raw.length()>MAX_JOB_SNAPSHOT_CHARS)throw new IllegalStateException("Native PNG job status exceeds the read limit");
+                if(raw!=null){
                     JSONArray jobs=new JSONArray(raw);
-                    for(int i=0;i<jobs.length();i++){
+                    for(int i=0;i<Math.min(MAX_RECENT_JOBS,jobs.length());i++){
                         JSONObject job=jobs.optJSONObject(i),result=job==null?null:job.optJSONObject("result");
-                        if(result==null||!"png".equals(result.optString("format"))
-                                ||!target.equals(result.optString("outputProjectId",result.optString("projectId"))))continue;
+                        if(job==null)continue;
+                        // The service attaches the exact plan/job before writing any output.
+                        // A failure/cancellation therefore needs no result payload to be visible.
+                        boolean attached=!jobId.isEmpty()&&jobId.equals(job.opt("id"));
+                        boolean completed=JobManager.STATE_COMPLETED.equals(job.opt("state"));
+                        // Receipt-first completion can still be recognized after old plans age
+                        // out, but a shallow format/output result cannot attribute a failure.
+                        if(!attached&&(plan!=null||!completed||!receiptMatches(result,requestHash,target)))continue;
                         found=job;
-                        if(JobManager.STATE_COMPLETED.equals(job.optString("state")))verified=SketchStillExport.verify(activity,result);
+                        if(completed){
+                            if(!receiptMatches(result,requestHash,target))throw new IllegalStateException("Completed PNG job has no receipt bound to the saved request");
+                            verified=SketchStillExport.verify(activity,result);
+                        }
                         break;
                     }
                 }
@@ -168,7 +192,7 @@ final class SketchStillPngDialog implements AutoCloseable {
             final JSONObject job=found,receipt=verified;final String failure=error;
             polling.set(false);
             post(()->{
-                if(!requestText.equals(observedRequest))return;
+                if(observation!=observationGeneration||!requestText.equals(observedRequest))return;
                 if(failure!=null){status.setText("PNG completion could not be verified: "+failure+". See Jobs / Activity, or retry the same saved request.");return;}
                 if(receipt!=null){
                     String project=receipt.optString("outputProjectName",receipt.optString("projectName",receipt.optString("outputProjectId")));
@@ -185,6 +209,41 @@ final class SketchStillPngDialog implements AutoCloseable {
                 main.postDelayed(poll,1500);
             });
         });
+    }
+
+    /** Only the strict public PNG request binds status; service metadata is not caller proof. */
+    private JSONObject matchingPlan(String expectedHash,String target,long since)throws Exception {
+        JSONArray plans=new RecoveryPlanStore(activity).recent(MAX_RECENT_PLANS);
+        for(int i=0;i<Math.min(MAX_RECENT_PLANS,plans.length());i++){
+            JSONObject plan=plans.optJSONObject(i);
+            if(plan==null||!"sketch_render".equals(plan.opt("action"))||!target.equals(plan.opt("projectId")))continue;
+            // A newly submitted exact retry observes its new attempt rather than an older
+            // terminal attempt while the service is still admitting the queued request.
+            if(plan.optLong("createdAt",0)<since)continue;
+            JSONObject parameters=plan.optJSONObject("parameters");if(parameters==null||parameters.length()>MAX_REQUEST_CHARS)continue;
+            try{
+                JSONObject publicRequest=new JSONObject();java.util.Iterator<String> keys=parameters.keys();
+                while(keys.hasNext()){String key=keys.next();if(!key.startsWith("_"))publicRequest.put(key,parameters.get(key));}
+                JSONObject normalized=SketchStillExport.validate(publicRequest);
+                if(expectedHash.equals(requestHash(normalized)))return plan;
+            }catch(Exception invalid){/* Another/malformed request is never this dialog's status. */}
+        }
+        return null;
+    }
+
+    private static boolean receiptMatches(JSONObject receipt,String expectedHash,String target){
+        if(receipt==null||!"png".equals(receipt.opt("format"))||!target.equals(receipt.opt("projectId"))
+                ||!target.equals(receipt.opt("outputProjectId"))||!expectedHash.equals(receipt.opt("requestSha256")))return false;
+        try{
+            JSONObject request=SketchStillExport.validate(new JSONObject().put("sketchId",receipt.get("sketchId"))
+                    .put("expectedRevision",receipt.get("sourceRevision")).put("operationId",receipt.get("operationId"))
+                    .put("format",receipt.get("format")).put("frame",receipt.get("frame")));
+            return expectedHash.equals(requestHash(request));
+        }catch(Exception invalid){return false;}
+    }
+
+    private static String requestHash(JSONObject request)throws Exception {
+        return SketchDocument.sha256(SketchDocument.canonical(request).getBytes(StandardCharsets.UTF_8));
     }
 
     private void post(Runnable work){if(!closed.get())main.post(()->{if(live())work.run();});}
