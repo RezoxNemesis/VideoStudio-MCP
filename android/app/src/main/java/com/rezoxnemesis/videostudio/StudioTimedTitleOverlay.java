@@ -9,6 +9,7 @@ import android.text.style.BackgroundColorSpan;
 import android.text.style.ForegroundColorSpan;
 import android.text.style.StyleSpan;
 import android.text.style.TypefaceSpan;
+import android.util.Pair;
 import androidx.media3.common.OverlaySettings;
 import androidx.media3.effect.StaticOverlaySettings;
 import androidx.media3.effect.TextOverlay;
@@ -22,10 +23,13 @@ public final class StudioTimedTitleOverlay extends TextOverlay {
     private final long startUs,endUs;
     private final SpannableString content;
     private final OverlaySettings visible,hidden;
+    private final StudioLayerMotion motion;
+    private final float anchorY;
     public StudioTimedTitleOverlay(StudioLayer caption){
         if(caption==null||!StudioLayer.TITLE.equals(caption.type))
             throw new IllegalArgumentException("Timed title layer required");
         caption.validate();
+        motion=StudioLayerMotion.fromLayer(caption);
         startUs=caption.startMs*1000L;
         endUs=(caption.startMs+caption.durationMs)*1000L;
         content=new SpannableString(caption.text);
@@ -42,6 +46,7 @@ public final class StudioTimedTitleOverlay extends TextOverlay {
         if((caption.backgroundColor>>>24)>0)
             content.setSpan(new BackgroundColorSpan(caption.backgroundColor),0,content.length(),0);
         float y=caption.position==0?.72f:(caption.position==2?-.71f:0f);
+        anchorY=y;
         visible=new StaticOverlaySettings.Builder()
                 .setBackgroundFrameAnchor(0f,y)
                 .setOverlayFrameAnchor(0f,0f)
@@ -58,6 +63,27 @@ public final class StudioTimedTitleOverlay extends TextOverlay {
         return content;
     }
     @Override public OverlaySettings getOverlaySettings(long presentationTimeUs){
-        return activeAt(presentationTimeUs,startUs,endUs)?visible:hidden;
+        boolean active=activeAt(presentationTimeUs,startUs,endUs);
+        if(!motion.hasKeyframes())return active?visible:hidden;
+        // Title lanes are attached to the final composition. Their clock is
+        // independent of source trims, clip speeds and cumulative clip origins.
+        StudioClipKeyframes.Values value=motion.atUs(active?presentationTimeUs-startUs:0);
+        return new MotionSettings(0f+(float)(2*value.x),anchorY-(float)(2*value.y),
+                1f*(float)value.scaleX,1f*(float)value.scaleY,0f+(float)value.rotate,
+                active?1f*(float)value.opacity:0f);
+    }
+
+    /** Immutable per-frame settings support authored offscreen anchors without clamping. */
+    private static final class MotionSettings implements OverlaySettings {
+        private final Pair<Float,Float> background,scale;
+        private final float rotation,alpha;
+        MotionSettings(float x,float y,float sx,float sy,float rotation,float alpha){
+            background=Pair.create(x,y);scale=Pair.create(sx,sy);this.rotation=rotation;this.alpha=alpha;
+        }
+        @Override public Pair<Float,Float> getBackgroundFrameAnchor(){return background;}
+        @Override public Pair<Float,Float> getOverlayFrameAnchor(){return OverlaySettings.DEFAULT_OVERLAY_FRAME_ANCHOR;}
+        @Override public Pair<Float,Float> getScale(){return scale;}
+        @Override public float getRotationDegrees(){return rotation;}
+        @Override public float getAlphaScale(){return alpha;}
     }
 }

@@ -56,8 +56,9 @@ public final class StudioLayer {
             throw new IllegalArgumentException("Caption styles are only supported on title layers");
         if(AUDIO.equals(type)&& (assetId==null||assetId.trim().isEmpty()))
             throw new IllegalArgumentException("Audio lane needs an imported audio asset");
-        if(motionKeyframes!=null&&!IMAGE.equals(type))
-            throw new IllegalArgumentException("motionKeyframes is only supported on image layers");
+        if(motionKeyframes!=null&&!IMAGE.equals(type)&&!TITLE.equals(type))
+            throw new IllegalArgumentException("motionKeyframes is only supported on image or title layers");
+        if(TITLE.equals(type)&&motionKeyframes!=null)StudioLayerMotion.fromLayer(this);
         if(IMAGE.equals(type)){
             if(assetId==null||assetId.trim().isEmpty())throw new IllegalArgumentException("Image lane needs an imported image asset");
             if(!Float.isFinite(x)||!Float.isFinite(y)||x<0||x>1||y<0||y>1
@@ -86,7 +87,7 @@ public final class StudioLayer {
                 obj.put("width",width==.01f?.01:(double)width);obj.put("height",height==.01f?.01:(double)height);
                 obj.put("rotation",rotation);obj.put("opacity",opacity);}
             if(motionKeyframes!=null){
-                StudioImageMotion.fromLayer(this);
+                StudioLayerMotion.fromLayer(this);
                 obj.put("motionKeyframes",new JSONArray(motionKeyframes.toString()));
             }
         }catch(org.json.JSONException error){throw new IllegalArgumentException("Could not serialize studio layer",error);}
@@ -122,7 +123,7 @@ public final class StudioLayer {
             if(!(o.opt("motionKeyframes") instanceof JSONArray))
                 throw new IllegalArgumentException("motionKeyframes must be an array");
             try{l.motionKeyframes=new JSONArray(o.getJSONArray("motionKeyframes").toString());}
-            catch(org.json.JSONException error){throw new IllegalArgumentException("Invalid image motion keys",error);}
+            catch(org.json.JSONException error){throw new IllegalArgumentException(IMAGE.equals(l.type)?"Invalid image motion keys":"Invalid title motion keys",error);}
         }
         l.validate();
         return l;
