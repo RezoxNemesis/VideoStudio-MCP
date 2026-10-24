@@ -125,7 +125,7 @@ public class NativeAudioEnvelopeCodecTest {
         @Implementation protected void queueInputBuffer(int index,int offset,int size,long time,int flags){}
         @Implementation protected int dequeueOutputBuffer(MediaCodec.BufferInfo info,long timeout){if(!formatted){formatted=true;return MediaCodec.INFO_OUTPUT_FORMAT_CHANGED;}if(cursor>=packets.size())return MediaCodec.INFO_TRY_AGAIN_LATER;Packet next=packets.get(cursor);info.set(next.offset,next.declaredSize,next.time,next.eos?MediaCodec.BUFFER_FLAG_END_OF_STREAM:0);return cursor++;}
         @Implementation protected MediaFormat getOutputFormat(){return format(encoding);}
-        @Implementation protected ByteBuffer getOutputBuffer(int index){if(interruptOnBuffer)Thread.currentThread().interrupt();return packets.get(index).bytes.duplicate().clear();}
+        @Implementation protected ByteBuffer getOutputBuffer(int index){if(interruptOnBuffer)Thread.currentThread().interrupt();ByteBuffer output=packets.get(index).bytes.duplicate();output.clear();return output;}
         @Implementation protected void releaseOutputBuffer(int index,boolean render){outputReleased++;if(afterRelease!=null){Runnable action=afterRelease;afterRelease=null;action.run();}}
         @Implementation protected void stop(){stopped++;}
         @Implementation protected void release(){released++;}
