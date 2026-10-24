@@ -33,11 +33,13 @@ public final class StudioKineticDirector {
                 .put("maxProjectLayers", 32)
                 .put("inputs", new JSONArray(Arrays.asList(
                         "projectId", "expectedUpdatedAt", "titles", "style",
-                        "beatMarkersMs", "bpm", "tempoOffsetMs", "audioEnvelope", "operationId")))
+                        "beatMarkersMs", "bpm", "tempoOffsetMs", "audioEnvelope", "shapeAccents", "operationId")))
                 .put("timingProvenance", new JSONArray(Arrays.asList(
                         "author_markers", "measured_audio_onset_candidates",
                         "manual_bpm_grid", "clip_boundaries")))
                 .put("renderedBy", "existing native Media3 composition title/keyframe effects")
+                .put("vectorAccentMinimumNativeVersion", "4.10.27")
+                .put("supportsSourceFreeShapeAccents", true)
                 .put("sourceUnchanged", true).put("createsIndependentEditableProject", true)
                 .put("autoExport", false).put("galleryAccess", false)
                 .put("actualBeatDetection", false)
@@ -209,9 +211,34 @@ public final class StudioKineticDirector {
                 timelineEvents, titles.size(), outputMs);
         if (cues.isEmpty()) throw new IllegalArgumentException("No events long enough to animate a title");
 
+        boolean includeAccents=request.optBoolean("shapeAccents",false);
+        int shapesOnSource=0;
+        for(StudioLayer lane:source.studioLayers)
+            if(StudioLayer.SHAPE.equals(lane.type))shapesOnSource++;
+        int remainingSlots=32-output.studioLayers.size()-cues.size();
+        int desired=includeAccents?Math.min(4,cues.size()):0;
+        int accentCount=Math.max(0,Math.min(desired,Math.min(remainingSlots,12-shapesOnSource)));
+        java.util.HashSet<Integer> accentedIndices=new java.util.HashSet<>();
+        for(int i=0;i<accentCount;i++) {
+            int index=accentCount==1?0:
+                    (int)Math.round(i*(cues.size()-1.0)/(accentCount-1));
+            accentedIndices.add(index);
+        }
+
         JSONArray cueReceipts = new JSONArray();
         for (int i = 0; i < cues.size(); i++) {
             KineticBeatPlanner.Cue cue = cues.get(i);
+            StudioLayer accent=null;
+            if(accentedIndices.contains(i)){
+                String kind="impact".equals(style)?"diamond":
+                        "minimal".equals(style)?"line":"grid";
+                String motionStyle="impact".equals(style)?"spin":
+                        "minimal".equals(style)?"slide":"drift";
+                accent=StudioShapePresets.create(kind,motionStyle,cue.startMs,cue.durationMs);
+                accent.id=UUID.nameUUIDFromBytes((source.id+"/kinetic-shape/"+i+
+                        "/"+cue.startMs).getBytes(StandardCharsets.UTF_8)).toString();
+                output.studioLayers.add(accent);
+            }
             StudioLayer title = new StudioLayer();
             title.id = UUID.nameUUIDFromBytes((source.id + "/kinetic/" + i
                     + "/" + cue.startMs).getBytes(StandardCharsets.UTF_8)).toString();
@@ -229,9 +256,12 @@ public final class StudioKineticDirector {
             title.motionKeyframes = titleKeys(style, i, cue.durationMs);
             title.validate();
             output.studioLayers.add(title);
-            cueReceipts.put(new JSONObject().put("text", title.text)
+            JSONObject cueReceipt=new JSONObject().put("text", title.text)
                     .put("startMs", title.startMs).put("durationMs", title.durationMs)
-                    .put("layerId", title.id).put("keyframeCount", title.motionKeyframes.length()));
+                    .put("layerId", title.id).put("keyframeCount", title.motionKeyframes.length());
+            if(accent!=null)cueReceipt.put("nativeShapeLayerId",accent.id)
+                    .put("nativeShapeKind",accent.shapeKind);
+            cueReceipts.put(cueReceipt);
         }
         // Uses the same authoritative admission that normal editor lanes use.
         StudioLayerContract.fromJson(output, StudioLayerContract.toJson(output.studioLayers));
@@ -241,6 +271,7 @@ public final class StudioKineticDirector {
                 .put("style", style).put("timingProvenance", origin)
                 .put("musicalBeatCertainty", "none")
                 .put("titleCount", cues.size()).put("requestedTitles", titles.size())
+                .put("shapeAccentsRequested", includeAccents).put("shapeAccentsCreated", accentCount)
                 .put("durationMs", outputMs).put("assetCount", output.assets.size())
                 .put("clipCount", output.clips.size()).put("layerCount", output.studioLayers.size())
                 .put("originalProjectModified", false).put("rendered", false)

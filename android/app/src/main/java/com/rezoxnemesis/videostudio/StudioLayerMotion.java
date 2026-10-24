@@ -16,8 +16,8 @@ public final class StudioLayerMotion {
 
     public static StudioLayerMotion fromLayer(StudioLayer layer){
         if(layer==null||(!StudioLayer.IMAGE.equals(layer.type)&&!StudioLayer.TITLE.equals(layer.type)
-                &&!StudioLayer.VIDEO.equals(layer.type)))
-            throw new IllegalArgumentException("Layer motion requires an image, title or video layer");
+                &&!StudioLayer.VIDEO.equals(layer.type)&&!StudioLayer.SHAPE.equals(layer.type)))
+            throw new IllegalArgumentException("Layer motion requires an image, shape, title or video layer");
         String kind=layer.type;
         JSONArray keys=layer.motionKeyframes;
         if(keys!=null){

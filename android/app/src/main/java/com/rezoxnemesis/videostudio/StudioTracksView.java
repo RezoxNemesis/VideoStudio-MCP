@@ -122,11 +122,11 @@ public final class StudioTracksView extends View {
             if(x2-x<dp(3))x2=Math.min(right,x+dp(3));
             boolean audio=StudioLayer.AUDIO.equals(lane.type);
             float top=audio?audioY:titleY;
-            brush.setColor(quietEditorPalette?(audio?0xff607e6d:StudioLayer.IMAGE.equals(lane.type)?0xff557463:StudioLayer.VIDEO.equals(lane.type)?0xff5f7582:0xff78856e):(audio?0xff188fcb:StudioLayer.IMAGE.equals(lane.type)?0xff279777:StudioLayer.VIDEO.equals(lane.type)?0xff397eac:0xffa13bdf));
+            brush.setColor(quietEditorPalette?(audio?0xff607e6d:StudioLayer.IMAGE.equals(lane.type)?0xff557463:StudioLayer.VIDEO.equals(lane.type)?0xff5f7582:StudioLayer.SHAPE.equals(lane.type)?0xff506b85:0xff78856e):(audio?0xff188fcb:StudioLayer.IMAGE.equals(lane.type)?0xff279777:StudioLayer.VIDEO.equals(lane.type)?0xff397eac:StudioLayer.SHAPE.equals(lane.type)?0xff378bd1:0xffa13bdf));
             canvas.drawRoundRect(new RectF(x,top,x2,top+barHeight),dp(5),dp(5),brush);
             brush.setColor(quietEditorPalette?StudioEditorWorkspace.TEXT:0xffffffff);
             brush.setTextSize(dp(10));
-            String label=audio?"♪ Music":StudioLayer.IMAGE.equals(lane.type)?"Image":StudioLayer.VIDEO.equals(lane.type)?"Video":(lane.text==null?"Text":lane.text);
+            String label=audio?"♪ Music":StudioLayer.IMAGE.equals(lane.type)?"Image":StudioLayer.VIDEO.equals(lane.type)?"Video":StudioLayer.SHAPE.equals(lane.type)?"Shape · "+lane.shapeKind:(lane.text==null?"Text":lane.text);
             int maxChars=Math.max(1,(int)((x2-x-dp(10))/dp(6)));
             if(label.length()>maxChars)label=label.substring(0,maxChars);
             canvas.save();
