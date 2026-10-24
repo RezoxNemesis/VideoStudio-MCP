@@ -123,12 +123,24 @@ public final class LiveEditPlayer {
                     StudioPreviewDiagnostics.failed(context,project,error,"asynchronous_playback");
                     java.util.function.Consumer<String> failedCallback=editError;
                     cancelClipBoundaryWatcher();
-                    if(fallbackPlayer!=null){
+                    if(fallbackPlayer!=null&&!(fallbackPlayer instanceof CompositionPlayer)){
+                        // A source ExoPlayer may still hold the last frame of a
+                        // DIFFERENT project. Never show that unrelated footage
+                        // underneath the new project's edited-preview error.
+                        // Only another admitted CompositionPlayer is a valid
+                        // visual rollback target after asynchronous GPU failure.
+                        Player stale=fallbackPlayer;
+                        clearFallback();
+                        stale.pause();
+                        view.setPlayer(null);
+                        candidate.pause();candidate.release();
+                        editPlayer=null;editedPreview=false;editRevision="";
+                    }else if(fallbackPlayer!=null){
                         Player restore=fallbackPlayer;
                         boolean ready=fallbackPlayWhenReady;
                         Runnable resume=fallbackBoundaryWatcher;
-                        editPlayer=restore instanceof CompositionPlayer?(CompositionPlayer)restore:null;
-                        editedPreview=editPlayer!=null;editRevision=fallbackRevision;
+                        editPlayer=(CompositionPlayer)restore;
+                        editedPreview=true;editRevision=fallbackRevision;
                         snapshotId=fallbackSnapshotId;clipId=fallbackClipId;editError=fallbackEditError;
                         clearFallback();
                         view.setPlayer(restore);setPlaybackIntent(restore,ready);candidate.release();
