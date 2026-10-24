@@ -46,12 +46,15 @@ public final class StudioTimedImageOverlay extends BitmapOverlay {
             if(bounds.outWidth<=0||bounds.outHeight<=0||bounds.outWidth>32768||bounds.outHeight>32768)
                 throw new IllegalArgumentException("Image dimensions are unavailable or exceed 32768 pixels");
             BitmapFactory.Options options=new BitmapFactory.Options();options.inPreferredConfig=Bitmap.Config.ARGB_8888;options.inSampleSize=1;
+            options.inMutable=layer.mask!=null; // alpha-only edit of an app-owned decoded copy; never the source file.
             while(Math.max(bounds.outWidth/options.inSampleSize,bounds.outHeight/options.inSampleSize)>1024
                     ||(long)(bounds.outWidth/options.inSampleSize)*(bounds.outHeight/options.inSampleSize)>1_048_576L)options.inSampleSize*=2;
             try(InputStream input=context.getContentResolver().openInputStream(Uri.parse(uri))){
                 if(input==null)throw new IllegalStateException("Owned image is unreadable");source=BitmapFactory.decodeStream(input,null,options);
             }
-            if(source==null)throw new IllegalArgumentException("Could not decode imported image pixels");return source;
+            if(source==null)throw new IllegalArgumentException("Could not decode imported image pixels");
+                if(layer.mask!=null)StudioMaskRasterizer.apply(source,layer.mask);
+                return source;
         }catch(Exception error){throw new VideoFrameProcessingException("Could not load timed image overlay",error);}
     }
     @Override public OverlaySettings getOverlaySettings(long presentationTimeUs){
