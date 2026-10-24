@@ -2,6 +2,7 @@ package com.rezoxnemesis.videostudio;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -12,7 +13,7 @@ import java.util.UUID;
  * EditedMediaItemSequences, with time offsets.
  */
 public final class StudioLayer {
-    public static final String AUDIO="audio", TITLE="title", IMAGE="image";
+    public static final String AUDIO="audio", TITLE="title", IMAGE="image", VIDEO="video";
     public String id=UUID.randomUUID().toString();
     public String type=TITLE;
     public String assetId="";
@@ -20,6 +21,8 @@ public final class StudioLayer {
     public long startMs=0;
     public long durationMs=2500;
     public long sourceInMs=0;
+    /** VIDEO requires an explicit silent source; old kinds never serialize this field. */
+    public String audioMode="";
     public float gain=1f;
     public int color=0xffffffff;
     public int position=1; // 0 = upper, 1 = center, 2 = lower
@@ -31,13 +34,20 @@ public final class StudioLayer {
     /** Null retains legacy serialization; an empty array is an explicit motion clear. */
     public JSONArray motionKeyframes;
     private static final String[] CAPTION_FIELDS={"fontSize","fontFamily","fontStyle","textAlign","backgroundColor"};
+    private static final Set<String> VIDEO_FIELDS=Set.of("id","type","assetId","audioMode","startMs","durationMs","sourceInMs",
+            "x","y","width","height","rotation","opacity","motionKeyframes");
 
     public StudioLayer copy() {return fromJson(toJson());}
 
     public void validate(){
         if(id==null||id.isEmpty()||id.length()>128)throw new IllegalArgumentException("Layer ID must contain 1..128 characters");
-        if(!AUDIO.equals(type)&&!TITLE.equals(type)&&!IMAGE.equals(type))
-            throw new IllegalArgumentException("Only real audio, caption and image lanes are supported");
+        if(!AUDIO.equals(type)&&!TITLE.equals(type)&&!IMAGE.equals(type)&&!VIDEO.equals(type))
+            throw new IllegalArgumentException("Only real audio, caption, image and video lanes are supported");
+        if(VIDEO.equals(type)){
+            if(!"silent".equals(audioMode))throw new IllegalArgumentException("Video lanes require audioMode:\"silent\"");
+            if(text==null||!text.isEmpty()||gain!=1f||color!=0xffffffff||position!=1)
+                throw new IllegalArgumentException("Video lanes do not support audio levels or caption fields");
+        }else if(!"".equals(audioMode))throw new IllegalArgumentException("audioMode is only supported on video layers");
         if(startMs<0||durationMs<100||durationMs>86_400_000L||sourceInMs<0)
             throw new IllegalArgumentException("Invalid layer time or duration");
         if(!Float.isFinite(gain)||gain<0||gain>1)
@@ -56,19 +66,24 @@ public final class StudioLayer {
             throw new IllegalArgumentException("Caption styles are only supported on title layers");
         if(AUDIO.equals(type)&& (assetId==null||assetId.trim().isEmpty()))
             throw new IllegalArgumentException("Audio lane needs an imported audio asset");
-        if(motionKeyframes!=null&&!IMAGE.equals(type))
-            throw new IllegalArgumentException("motionKeyframes is only supported on image layers");
-        if(IMAGE.equals(type)){
-            if(assetId==null||assetId.trim().isEmpty())throw new IllegalArgumentException("Image lane needs an imported image asset");
+        if(motionKeyframes!=null&&!IMAGE.equals(type)&&!VIDEO.equals(type))
+            throw new IllegalArgumentException("motionKeyframes is only supported on image or video layers");
+        if(IMAGE.equals(type)||VIDEO.equals(type)){
+            String name=VIDEO.equals(type)?"Video":"Image";
+            if(assetId==null||assetId.trim().isEmpty())throw new IllegalArgumentException(name+" lane needs an imported "+type+" asset");
             if(!Float.isFinite(x)||!Float.isFinite(y)||x<0||x>1||y<0||y>1
                     ||!Float.isFinite(width)||!Float.isFinite(height)||width<.01f||width>2||height<.01f||height>2
                     ||!Float.isFinite(rotation)||rotation<-360||rotation>360||!Float.isFinite(opacity)||opacity<0||opacity>1)
-                throw new IllegalArgumentException("Invalid image layer position, size, rotation or opacity");
-            if(motionKeyframes!=null)StudioImageMotion.fromLayer(this);
+                throw new IllegalArgumentException("Invalid "+type+" layer position, size, rotation or opacity");
+            if(motionKeyframes!=null){
+                if(IMAGE.equals(type))StudioImageMotion.fromLayer(this);
+                else StudioLayerMotion.fromLayer(this);
+            }
         }
     }
 
     public JSONObject toJson(){
+        if(VIDEO.equals(type))return videoJson();
         JSONObject obj=new JSONObject();
         try{
             obj.put("id",id);obj.put("type",type);obj.put("assetId",assetId);
@@ -100,6 +115,8 @@ public final class StudioLayer {
         StudioLayer l=new StudioLayer();
         l.id=o.optString("id",UUID.randomUUID().toString());
         l.type=o.optString("type",TITLE);
+        if(VIDEO.equals(l.type))return videoFromJson(o,l);
+        if(o.has("audioMode"))throw new IllegalArgumentException("audioMode is only supported on video layers");
         if(!TITLE.equals(l.type))for(String field:CAPTION_FIELDS)if(o.has(field))
             throw new IllegalArgumentException(field+" is only supported on title layers");
         l.assetId=o.optString("assetId","");
@@ -126,6 +143,43 @@ public final class StudioLayer {
         }
         l.validate();
         return l;
+    }
+
+    /** New VIDEO encoding does not change legacy kinds' fields or numeric representation. */
+    private JSONObject videoJson(){
+        validate();
+        JSONObject obj=new JSONObject();
+        try{
+            obj.put("id",id);obj.put("type",type);obj.put("assetId",assetId);obj.put("audioMode",audioMode);
+            obj.put("startMs",startMs);obj.put("durationMs",durationMs);obj.put("sourceInMs",sourceInMs);
+            obj.put("x",x);obj.put("y",y);obj.put("width",width==.01f?.01:(double)width);
+            obj.put("height",height==.01f?.01:(double)height);obj.put("rotation",rotation);obj.put("opacity",opacity);
+            if(motionKeyframes!=null)obj.put("motionKeyframes",new JSONArray(motionKeyframes.toString()));
+        }catch(org.json.JSONException error){throw new IllegalArgumentException("Could not serialize video layer",error);}
+        return obj;
+    }
+
+    private static StudioLayer videoFromJson(JSONObject o,StudioLayer l){
+        java.util.Iterator<String> fields=o.keys();
+        while(fields.hasNext()){
+            String field=fields.next();
+            if(!VIDEO_FIELDS.contains(field))throw new IllegalArgumentException("Unsupported video layer field: "+field);
+        }
+        if(!(o.opt("audioMode") instanceof String)||!"silent".equals(o.opt("audioMode")))
+            throw new IllegalArgumentException("Video lanes require audioMode:\"silent\"");
+        l.audioMode="silent";l.assetId=o.optString("assetId","");
+        l.startMs=o.has("startMs")?StudioClipKeyframes.integer(o,"startMs",0,86_400_000):0;
+        l.durationMs=o.has("durationMs")?StudioClipKeyframes.integer(o,"durationMs",100,86_400_000):2500;
+        l.sourceInMs=o.has("sourceInMs")?StudioClipKeyframes.integer(o,"sourceInMs",0,86_400_000):0;
+        l.x=(float)StudioClipKeyframes.number(o,"x",.5,0,1);l.y=(float)StudioClipKeyframes.number(o,"y",.5,0,1);
+        l.width=(float)StudioClipKeyframes.number(o,"width",.35,.01,2);l.height=(float)StudioClipKeyframes.number(o,"height",.35,.01,2);
+        l.rotation=(float)StudioClipKeyframes.number(o,"rotation",0,-360,360);l.opacity=(float)StudioClipKeyframes.number(o,"opacity",1,0,1);
+        if(o.has("motionKeyframes")){
+            if(!(o.opt("motionKeyframes") instanceof JSONArray))throw new IllegalArgumentException("motionKeyframes must be an array");
+            try{l.motionKeyframes=new JSONArray(o.getJSONArray("motionKeyframes").toString());}
+            catch(org.json.JSONException error){throw new IllegalArgumentException("Invalid video motion keys",error);}
+        }
+        l.validate();return l;
     }
 
     private static String captionChoice(JSONObject object,String name,String fallback,String... choices){

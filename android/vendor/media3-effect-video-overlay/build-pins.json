@@ -1,0 +1,25 @@
+{
+  "aarSha256": "aacaf7d4cc410ee0e4fe731a1d1b156d22ce263a45bc6bf17a6dbd6f2182f0ab",
+  "aarSizeBytes": 402882,
+  "allowedCompiledClassfileMajor": 52,
+  "binaryArtifactUrl": "https://dl.google.com/dl/android/maven2/androidx/media3/media3-effect/1.11.1/media3-effect-1.11.1.aar",
+  "classesJarSha256": "62469926bd8577dd5111d2f4e0aac8c1ae26cc5afb38dea873b12bebc233019c",
+  "coordinate": "androidx.media3:media3-effect:1.11.1",
+  "licenseSha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+  "maintainedSourceSha256": {
+    "src/androidx/media3/effect/DefaultVideoCompositor.java": "17ba6db180a424de26f32087616dd0e29604b5ed3ba2fb0d8067d93e6c6d1d0b",
+    "src/androidx/media3/effect/VideoCompositorFramePolicy.java": "724652869675b664e050c45853430dbaac8afbc59c60f7ac53e031fb4417a415"
+  },
+  "noticeSha256": "ad88c2bbc17f88f70980545b3ff18c6102950291eeb94fd0c13a2db02100ade7",
+  "originalCompositorClasses": {
+    "androidx/media3/effect/DefaultVideoCompositor$1.class": "d259bae9d83a350dda201162c00c8cbd86b45fa786c8223e230150d30ab1d739",
+    "androidx/media3/effect/DefaultVideoCompositor$FrameInfo.class": "ddafe7f372d94e631b092a296c6b12b92ed72930a96be767f9ac2b24331c3260",
+    "androidx/media3/effect/DefaultVideoCompositor$InputSource.class": "4c4bf6b3a5469889617d917797183a086dbd60de9f8e4b41e0b1c79ce2969830",
+    "androidx/media3/effect/DefaultVideoCompositor.class": "8bf8a89cdd9b0ddd230b94b21d654b229c8b09e86bbaea931859029fbf59d807"
+  },
+  "patchSha256": "3aad02464a14937fd393b25eae5c7530ff25e2b92bd667e2ac7a92922cc43ca7",
+  "requiredCompilerMajor": 17,
+  "sourceArtifactUrl": "https://dl.google.com/dl/android/maven2/androidx/media3/media3-effect/1.11.1/media3-effect-1.11.1-sources.jar",
+  "sourcesJarSha256": "a452414ffe8dbc89bf7958120694e061603babb919517b13b79849a01a91685d",
+  "upstreamJavaSha256": "418c2f9eb34b7fe9a257cee7bf6a4e98b61626ee9da99392fb5e87bd90b93aad"
+}

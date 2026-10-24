@@ -1,0 +1,16 @@
+VideoStudio native VIDEO overlay compositor extension
+
+Based on androidx.media3:media3-effect:1.11.1, AndroidX Media3.
+DefaultVideoCompositor.java: Copyright 2023 The Android Open Source Project.
+VideoCompositorFramePolicy.java and maintained modifications:
+Copyright 2026 VideoStudio contributors.
+
+Both are licensed under the Apache License, Version 2.0; see LICENSE.
+The pristine upstream source and the maintained patch are retained beside the
+modified source. Original upstream artifact/source identities and the exact
+source-compiled replacement inventory are recorded in build-pins.json and the
+generated AAR's META-INF/videostudio/Media3-Video-Overlay-Provenance.json.
+
+This extension is opt-in. It preserves the default compositor path and its
+primary clock, queue/fence ownership and input-size ordering. It provides no
+new character artwork, voice model, hosted AI service or artistic certification.

@@ -223,6 +223,9 @@ public final class NativeRenderEngine {
         final boolean hasStudioTracks = !project.studioLayers.isEmpty();
         if(hasStudioTracks) StudioLayerContract.fromJson(
                 project,StudioLayerContract.toJson(project.studioLayers));
+        if(layeredAnimation)for(StudioLayer layer:project.studioLayers)
+            if(StudioLayer.VIDEO.equals(layer.type))throw new IllegalArgumentException(
+                    "VIDEO overlays are not yet supported with layered/articulated image animation");
         Composition composition;
         if(layeredAnimation && hasStudioTracks) {
             // Preserve the articulated foreground/background compositor,
@@ -301,10 +304,48 @@ public final class NativeRenderEngine {
         sequences.add(hasSourceAudio
                 ?EditedMediaItemSequence.withAudioAndVideoFrom(clips)
                 :EditedMediaItemSequence.withVideoFrom(clips));
+        ArrayList<StudioLayer> videos=new ArrayList<>();
+        for(StudioLayer layer:project.studioLayers)if(StudioLayer.VIDEO.equals(layer.type))videos.add(layer);
+        if(!videos.isEmpty()){
+            // Match the actual base item clock, including submillisecond speed/rational
+            // durations. The saved project duration deliberately remains unchanged.
+            long baseUs=Math.addExact(itemStartUs,StudioEffectClock.durationUs(clips.get(clips.size()-1)));
+            sequences.addAll(buildStudioVideoSequences(project,videos,baseUs));
+        }
         sequences.addAll(buildStudioAudioSequences(project));
         Composition.Builder assembled=new Composition.Builder(sequences);
+        if(!videos.isEmpty()){
+            int[] canvas=outputSize(aspect,quality);
+            assembled.setVideoCompositorSettings(new StudioVideoCompositorSettings(canvas[0],canvas[1],videos));
+        }
         attachTimedTitles(assembled,project);
         return assembled.build();
+    }
+
+    /** Real nonlooping VIDEO inputs; no imageDuration, forced FPS or source audio. */
+    private List<EditedMediaItemSequence> buildStudioVideoSequences(ProjectStore.Project project,
+            List<StudioLayer> videos,long baseDurationUs){
+        ArrayList<EditedMediaItemSequence> result=new ArrayList<>();
+        for(StudioLayer layer:videos){
+            StudioLayerContract.validate(project,layer);
+            ProjectStore.Asset asset=project.asset(layer.assetId);
+            long startUs=Math.multiplyExact(layer.startMs,1000L);
+            long endUs=Math.addExact(startUs,Math.multiplyExact(layer.durationMs,1000L));
+            if(endUs>baseDurationUs)throw new IllegalArgumentException("VIDEO overlay exceeds the native base duration");
+            MediaItem media=new MediaItem.Builder().setUri(Uri.parse(asset.uri))
+                    .setClippingConfiguration(new MediaItem.ClippingConfiguration.Builder()
+                            .setStartPositionMs(layer.sourceInMs)
+                            .setEndPositionMs(Math.addExact(layer.sourceInMs,layer.durationMs)).build()).build();
+            EditedMediaItem item=new EditedMediaItem.Builder(media)
+                    .setDurationUs(Math.multiplyExact(asset.durationMs,1000L)).setRemoveAudio(true).build();
+            EditedMediaItemSequence.Builder sequence=new EditedMediaItemSequence.Builder(
+                    java.util.Collections.singleton(C.TRACK_TYPE_VIDEO));
+            if(startUs>0)sequence.addGap(startUs);
+            sequence.addItem(item);
+            if(endUs<baseDurationUs)sequence.addGap(baseDurationUs-endUs);
+            result.add(sequence.build());
+        }
+        return result;
     }
 
     private void attachTimedTitles(Composition.Builder assembled,

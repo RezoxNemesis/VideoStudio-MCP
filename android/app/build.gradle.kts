@@ -109,3 +109,12 @@ dependencies {
     implementation("com.google.mlkit:face-mesh-detection:16.0.0-beta1")
 }
 
+// One pinned source-compiled compositor artifact serves normal preview, export
+// and tests. The original Maven component/transitive dependency graph is kept.
+// AGP types are available here, but not on an applied Kotlin script's classpath.
+// Pass a lazy Gradle-core Provider instead of loading AGP again in that script.
+extensions.extraProperties.set("videostudioMedia3AndroidJar", layout.file(providers.provider {
+    android.bootClasspath.first { it.name == "android.jar" }
+}))
+apply(from = rootProject.file("vendor/media3-effect-video-overlay/transform.gradle.kts"))
+

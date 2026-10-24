@@ -1,0 +1,294 @@
+--- a/androidx/media3/effect/DefaultVideoCompositor.java
++++ b/androidx/media3/effect/DefaultVideoCompositor.java
+@@ -25,6 +25,7 @@
+ import android.opengl.EGLContext;
+ import android.opengl.EGLDisplay;
+ import android.opengl.EGLSurface;
++import android.util.Pair;
+ import android.util.SparseArray;
+ import androidx.annotation.GuardedBy;
+ import androidx.annotation.IntRange;
+@@ -45,6 +46,7 @@
+ import com.google.common.collect.Iterables;
+ import java.util.ArrayDeque;
+ import java.util.Iterator;
++import java.util.List;
+ import java.util.Queue;
+ import java.util.concurrent.ExecutorService;
+ import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
+@@ -92,6 +94,9 @@
+ 
+   private VideoCompositorSettings videoCompositorSettings;
+ 
++  @GuardedBy("this")
++  private boolean inputTextureQueued;
++
+   private @MonotonicNonNull ColorInfo configuredColorInfo;
+ 
+   private @MonotonicNonNull EGLDisplay eglDisplay;
+@@ -146,7 +151,13 @@
+   }
+ 
+   @Override
+-  public void setVideoCompositorSettings(VideoCompositorSettings videoCompositorSettings) {
++  public synchronized void setVideoCompositorSettings(VideoCompositorSettings videoCompositorSettings) {
++    if (inputTextureQueued
++        && (this.videoCompositorSettings instanceof VideoCompositorFramePolicy
++            || videoCompositorSettings instanceof VideoCompositorFramePolicy)
++        && this.videoCompositorSettings != videoCompositorSettings) {
++      throw new IllegalStateException("VIDEO compositor policy must be installed before queuing input");
++    }
+     this.videoCompositorSettings = videoCompositorSettings;
+   }
+ 
+@@ -173,7 +184,10 @@
+         return;
+       }
+     }
+-    if (inputIndex != primaryInputIndex && inputSources.get(inputIndex).frameInfos.size() == 1) {
++    if (inputIndex != primaryInputIndex
++        && (inputSources.get(inputIndex).frameInfos.size() == 1
++            || (videoCompositorSettings instanceof VideoCompositorFramePolicy
++                && inputSources.get(inputIndex).frameInfos.isEmpty()))) {
+       // When a secondary stream ends input, composite if there was only one pending frame in the
+       // stream.
+       videoFrameProcessingTaskExecutor.submit(this::maybeComposite);
+@@ -200,10 +214,14 @@
+ 
+     FrameInfo frameInfo =
+         new FrameInfo(
++            inputIndex,
+             textureProducer,
+             new TimedGlTextureInfo(inputTexture, presentationTimeUs),
+-            videoCompositorSettings.getOverlaySettings(inputIndex, presentationTimeUs));
++            videoCompositorSettings instanceof VideoCompositorFramePolicy
++                ? VideoCompositorSettings.DEFAULT.getOverlaySettings(inputIndex, presentationTimeUs)
++                : videoCompositorSettings.getOverlaySettings(inputIndex, presentationTimeUs));
+     inputSource.frameInfos.add(frameInfo);
++    inputTextureQueued = true;
+ 
+     if (inputIndex == primaryInputIndex) {
+       releaseExcessFramesInAllSecondaryStreams();
+@@ -294,7 +312,12 @@
+ 
+   private synchronized void maybeComposite()
+       throws VideoFrameProcessingException, GlUtil.GlException {
+-    ImmutableList<FrameInfo> framesToComposite = getFramesToComposite();
++    @Nullable VideoCompositorFramePolicy framePolicy =
++        videoCompositorSettings instanceof VideoCompositorFramePolicy
++            ? (VideoCompositorFramePolicy) videoCompositorSettings
++            : null;
++    ImmutableList<FrameInfo> framesToComposite =
++        framePolicy == null ? getFramesToComposite() : getFramesToCompositeWithPolicy(framePolicy);
+     if (framesToComposite.isEmpty()) {
+       return;
+     }
+@@ -306,7 +329,16 @@
+       GlTextureInfo texture = framesToComposite.get(i).timedGlTextureInfo.glTextureInfo;
+       inputSizes.add(new Size(texture.width, texture.height));
+     }
+-    Size outputSize = videoCompositorSettings.getOutputSize(inputSizes.build());
++    Size outputSize =
++        (framePolicy == null ? videoCompositorSettings : framePolicy)
++            .getOutputSize(inputSizes.build());
++    // Validate/snapshot all opted-in callbacks BEFORE leasing an output texture.
++    // Keep primary, size-list and source-frame order separate from GL paint order.
++    @Nullable ImmutableList<GlCompositionFrame> policyFrames =
++        framePolicy == null
++            ? null
++            : buildPolicyFrames(framePolicy, framesToComposite,
++                primaryInputFrame.timedGlTextureInfo.presentationTimeUs);
+     outputTexturePool.ensureConfigured(
+         glObjectsProvider, outputSize.getWidth(), outputSize.getHeight());
+ 
+@@ -314,14 +346,18 @@
+     long outputPresentationTimestampUs = primaryInputFrame.timedGlTextureInfo.presentationTimeUs;
+     outputTextureTimestamps.add(outputPresentationTimestampUs);
+ 
+-    ImmutableList.Builder<GlCompositionFrame> glProgramInput = new ImmutableList.Builder<>();
+-    for (int i = 0; i < framesToComposite.size(); i++) {
+-      glProgramInput.add(
+-          new GlCompositionFrame(
+-              framesToComposite.get(i).timedGlTextureInfo.glTextureInfo,
+-              framesToComposite.get(i).overlaySettings));
+-    }
+-    compositorGlProgram.drawFrame(glProgramInput.build(), outputTexture);
++    if (policyFrames != null) {
++      compositorGlProgram.drawFrame(policyFrames, outputTexture);
++    } else {
++      ImmutableList.Builder<GlCompositionFrame> glProgramInput = new ImmutableList.Builder<>();
++      for (int i = 0; i < framesToComposite.size(); i++) {
++        glProgramInput.add(
++            new GlCompositionFrame(
++                framesToComposite.get(i).timedGlTextureInfo.glTextureInfo,
++                framesToComposite.get(i).overlaySettings));
++      }
++      compositorGlProgram.drawFrame(glProgramInput.build(), outputTexture);
++    }
+ 
+     long syncObject = GlUtil.createGlSyncFence();
+     syncObjects.add(syncObject);
+@@ -402,6 +438,145 @@
+     return framesToCompositeList;
+   }
+ 
++  /** Original source selection/release semantics, with opt-in contiguous source-phase admission. */
++  private synchronized ImmutableList<FrameInfo> getFramesToCompositeWithPolicy(
++      VideoCompositorFramePolicy policy) throws VideoFrameProcessingException {
++    if (outputTexturePool.freeTextureCount() == 0) {
++      return ImmutableList.of();
++    }
++    InputSource primaryInputSource = inputSources.get(primaryInputIndex);
++    if (primaryInputSource.frameInfos.isEmpty()) {
++      return ImmutableList.of();
++    }
++    boolean waitingForInput = false;
++    for (int i = 0; i < inputSources.size(); i++) {
++      if (inputSources.valueAt(i).frameInfos.isEmpty()) {
++        if (inputSources.keyAt(i) != primaryInputIndex && inputSources.valueAt(i).isInputEnded) {
++          throw new VideoFrameProcessingException("VIDEO overlay input ended without a decoded frame");
++        }
++        waitingForInput = true;
++      }
++    }
++    if (waitingForInput) {
++      return ImmutableList.of();
++    }
++    ImmutableList.Builder<FrameInfo> framesToComposite = new ImmutableList.Builder<>();
++    FrameInfo primaryFrameToComposite = primaryInputSource.frameInfos.element();
++    framesToComposite.add(primaryFrameToComposite);
++    long outputTimeUs = primaryFrameToComposite.timedGlTextureInfo.presentationTimeUs;
++    for (int i = 0; i < inputSources.size(); i++) {
++      if (inputSources.keyAt(i) == primaryInputIndex) {
++        continue;
++      }
++      InputSource secondaryInputSource = inputSources.valueAt(i);
++      if (secondaryInputSource.frameInfos.size() == 1 && !secondaryInputSource.isInputEnded) {
++        return ImmutableList.of();
++      }
++      long minTimeDiffFromPrimaryUs = Long.MAX_VALUE;
++      @Nullable FrameInfo secondaryFrameToComposite = null;
++      Iterator<FrameInfo> frameInfosIterator = secondaryInputSource.frameInfos.iterator();
++      while (frameInfosIterator.hasNext()) {
++        FrameInfo candidateFrame = frameInfosIterator.next();
++        long candidateTimestampUs = candidateFrame.timedGlTextureInfo.presentationTimeUs;
++        long candidateAbsDistance = abs(candidateTimestampUs - outputTimeUs);
++        if (policy.isInputFrameEligibleForOutput(
++                candidateFrame.inputIndex, candidateTimestampUs, outputTimeUs)
++            && candidateAbsDistance < minTimeDiffFromPrimaryUs) {
++          minTimeDiffFromPrimaryUs = candidateAbsDistance;
++          secondaryFrameToComposite = candidateFrame;
++        }
++        if (candidateTimestampUs > outputTimeUs
++            || (!frameInfosIterator.hasNext() && secondaryInputSource.isInputEnded)) {
++          if (secondaryFrameToComposite == null) {
++            // Waiting for stream end here can deadlock its bounded gap-texture queue.
++            throw new VideoFrameProcessingException(
++                "VIDEO overlay has no decoded source frame in the active output interval");
++          }
++          framesToComposite.add(secondaryFrameToComposite);
++          break;
++        }
++      }
++    }
++    ImmutableList<FrameInfo> result = framesToComposite.build();
++    return result.size() == inputSources.size() ? result : ImmutableList.of();
++  }
++
++  private static ImmutableList<GlCompositionFrame> buildPolicyFrames(
++      VideoCompositorFramePolicy policy, ImmutableList<FrameInfo> selectedFrames, long outputTimeUs)
++      throws VideoFrameProcessingException {
++    ImmutableList.Builder<Integer> inputIds = new ImmutableList.Builder<>();
++    SparseArray<FrameInfo> framesByInputId = new SparseArray<>();
++    for (FrameInfo frame : selectedFrames) {
++      if (framesByInputId.get(frame.inputIndex) != null) {
++        throw new VideoFrameProcessingException("Duplicate VIDEO compositor input ID");
++      }
++      inputIds.add(frame.inputIndex);
++      framesByInputId.put(frame.inputIndex, frame);
++    }
++    List<Integer> requestedOrder = policy.getInputIdsInTopToBottomOrder(inputIds.build());
++    if (requestedOrder == null || requestedOrder.size() != selectedFrames.size()) {
++      throw new VideoFrameProcessingException("Invalid VIDEO compositor frame order");
++    }
++    // Snapshot settings as well as order before a texture is leased. The input-size
++    // callback has already received original primary-first dimensions for this frame.
++    ImmutableList.Builder<GlCompositionFrame> result = new ImmutableList.Builder<>();
++    for (Integer inputId : requestedOrder) {
++      @Nullable FrameInfo frame = inputId == null ? null : framesByInputId.get(inputId);
++      if (frame == null) {
++        throw new VideoFrameProcessingException("Unknown/duplicate VIDEO compositor input ID");
++      }
++      OverlaySettings settings = policy.getOverlaySettingsForOutput(
++          inputId, frame.timedGlTextureInfo.presentationTimeUs, outputTimeUs);
++      if (settings == null) {
++        throw new VideoFrameProcessingException("VIDEO compositor settings must not be null");
++      }
++      result.add(new GlCompositionFrame(
++          frame.timedGlTextureInfo.glTextureInfo, new PolicyOverlaySettings(settings)));
++      framesByInputId.remove(inputId);
++    }
++    return result.build();
++  }
++
++  /** Immutable policy-only snapshot; all consumer getters run before output texture leasing. */
++  private static final class PolicyOverlaySettings implements OverlaySettings {
++    private final Pair<Float, Float> backgroundAnchor;
++    private final Pair<Float, Float> overlayAnchor;
++    private final Pair<Float, Float> scale;
++    private final float alpha;
++    private final float rotation;
++    private final float hdrLuminance;
++
++    private PolicyOverlaySettings(OverlaySettings settings) throws VideoFrameProcessingException {
++      Pair<Float, Float> background = settings.getBackgroundFrameAnchor();
++      Pair<Float, Float> overlay = settings.getOverlayFrameAnchor();
++      Pair<Float, Float> scaling = settings.getScale();
++      alpha = settings.getAlphaScale();
++      rotation = settings.getRotationDegrees();
++      hdrLuminance = settings.getHdrLuminanceMultiplier();
++      if (!finitePair(background) || !finitePair(overlay) || !finitePair(scaling)
++          || !Float.isFinite(alpha) || alpha < 0 || alpha > 1
++          || !Float.isFinite(rotation) || !Float.isFinite(hdrLuminance) || hdrLuminance < 0) {
++        throw new VideoFrameProcessingException("Invalid VIDEO compositor settings");
++      }
++      // Offscreen anchors remain valid; StaticOverlaySettings.Builder would clamp/reject them.
++      backgroundAnchor = Pair.create(background.first, background.second);
++      overlayAnchor = Pair.create(overlay.first, overlay.second);
++      scale = Pair.create(scaling.first, scaling.second);
++    }
++
++    private static boolean finitePair(@Nullable Pair<Float, Float> pair) {
++      return pair != null && pair.first != null && pair.second != null
++          && Float.isFinite(pair.first) && Float.isFinite(pair.second);
++    }
++
++    @Override public Pair<Float, Float> getBackgroundFrameAnchor() { return backgroundAnchor; }
++    @Override public Pair<Float, Float> getOverlayFrameAnchor() { return overlayAnchor; }
++    @Override public Pair<Float, Float> getScale() { return scale; }
++    @Override public float getAlphaScale() { return alpha; }
++    @Override public float getRotationDegrees() { return rotation; }
++    @Override public float getHdrLuminanceMultiplier() { return hdrLuminance; }
++  }
++
+   private synchronized void releaseOutputTextureInternal(long presentationTimeUs)
+       throws VideoFrameProcessingException, GlUtil.GlException {
+     while (outputTexturePool.freeTextureCount() < outputTexturePool.capacity()
+@@ -440,14 +615,17 @@
+ 
+   /** Holds information on a frame and how to release it. */
+   private static final class FrameInfo {
++    public final int inputIndex;
+     public final GlTextureProducer textureProducer;
+     public final TimedGlTextureInfo timedGlTextureInfo;
+     public final OverlaySettings overlaySettings;
+ 
+     private FrameInfo(
++        int inputIndex,
+         GlTextureProducer textureProducer,
+         TimedGlTextureInfo timedGlTextureInfo,
+         OverlaySettings overlaySettings) {
++      this.inputIndex = inputIndex;
+       this.textureProducer = textureProducer;
+       this.timedGlTextureInfo = timedGlTextureInfo;
+       this.overlaySettings = overlaySettings;

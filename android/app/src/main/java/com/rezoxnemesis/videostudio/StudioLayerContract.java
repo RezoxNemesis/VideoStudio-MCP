@@ -22,7 +22,7 @@ public final class StudioLayerContract {
         if(layers.length()>32)throw new IllegalArgumentException("Maximum 32 layers");
         ArrayList<StudioLayer> result=new ArrayList<>();
         Set<String> usedIds=new HashSet<>();
-        int images=0;
+        int images=0,videos=0;
         for(int i=0;i<layers.length();i++){
             JSONObject entry=layers.getJSONObject(i);
             StudioLayer lane=StudioLayer.fromJson(entry);
@@ -30,6 +30,7 @@ public final class StudioLayerContract {
                 throw new IllegalArgumentException("Duplicate/invalid lane ID");
             validate(project,lane);
             if(StudioLayer.IMAGE.equals(lane.type)&&++images>8)throw new IllegalArgumentException("Maximum 8 decoded image layers");
+            if(StudioLayer.VIDEO.equals(lane.type)&&++videos>2)throw new IllegalArgumentException("Maximum 2 decoded video layers");
             result.add(lane);
         }
         return result;
@@ -56,6 +57,16 @@ public final class StudioLayerContract {
             ProjectStore.Asset asset=project.asset(lane.assetId);
             if(asset==null||asset.mime==null||!asset.mime.startsWith("image/")||asset.uri==null||asset.uri.isEmpty())
                 throw new IllegalArgumentException("Image must be previously imported into this project");
+        }
+        if(StudioLayer.VIDEO.equals(lane.type)){
+            ProjectStore.Asset asset=project.asset(lane.assetId);
+            if(asset==null||asset.mime==null||!asset.mime.startsWith("video/")||asset.uri==null||asset.uri.trim().isEmpty())
+                throw new IllegalArgumentException("Video must be previously imported into this project");
+            if(!asset.seekable)throw new IllegalArgumentException("Video layer source must have verified seekability");
+            if(asset.durationMs<=0||asset.durationMs>Long.MAX_VALUE/1000L)
+                throw new IllegalArgumentException("Video layer source requires a known positive native duration");
+            if(lane.sourceInMs>asset.durationMs||lane.durationMs>asset.durationMs-lane.sourceInMs)
+                throw new IllegalArgumentException("Video trim exceeds imported source duration");
         }
     }
 

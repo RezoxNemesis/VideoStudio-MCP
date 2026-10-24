@@ -41,8 +41,8 @@ test('image key fields and scalars reject coercion, anchors, unknowns, malformed
  assert.throws(()=>parse(layer(Array.from({length:65},(_,timeMs)=>({timeMs})))));
 });
 
-test('motion is image-only and does not add actions or relax existing track count limits',()=>{
- for(const type of ['audio','title']){
+test('motion keeps AUDIO rejection and does not add actions or relax existing track count limits',()=>{
+ for(const type of ['audio']){
   const l={id:'track',type,assetId:'sound',text:'A title',motionKeyframes:[]};assert.throws(()=>parse(l));
  }
  assert.equal(contract.STUDIO_NATIVE_ACTIONS.size,76);assert.equal(contract.STUDIO_NATIVE_ACTIONS.size,Object.keys(contract.studioToolSchemas).length);
@@ -74,13 +74,13 @@ test('omitted image motion keeps old normalized bytes, feature floors and opaque
 
 test('Node and native share exact truthful editor registry with old feature floors retained',()=>{
  const cap=contract.EDITOR_EDITING_CAPABILITIES;assert.ok(cap,'Truthful native editing registry has matching Node export');
- assert.equal(cap.registryMinimumNativeVersion,'4.10.20');assert.equal(cap.imageOverlayMotion.minimumNativeVersion,'4.10.20');
+ assert.equal(cap.registryMinimumNativeVersion,'4.10.24');assert.equal(cap.imageOverlayMotion.minimumNativeVersion,'4.10.20');
  assert.equal(cap.precisionEdits.minimumNativeVersion,'3.9.0');assert.equal(cap.layerTracks.imageMinimumNativeVersion,'3.9.0');
  assert.equal(cap.precisionEdits.audioFadesMinimumNativeVersion,'4.2.0');assert.equal(cap.precisionEdits.stereoMinimumNativeVersion,'4.3.0');
  const java=fs.readFileSync(new URL('../android/app/src/main/java/com/rezoxnemesis/videostudio/StudioEditingCapabilities.java',import.meta.url),'utf8');
  const literal=java.match(/CAPABILITY_JSON\s*=\s*("(?:\\.|[^"\\])*")/);assert.ok(literal,'Native registry is one auditable JSON literal');assert.deepEqual(JSON.parse(JSON.parse(literal[1])),cap);
  assert.deepEqual(cap.renderedTransitions,['none','cut']);assert.deepEqual(cap.renderedEffectPresets,['none','gaussian_blur','dream']);
- for(const name of ['cross_dissolve','speed_ramp','reverse','freeze','motion_blur','video_overlay_lanes','beat_detection','kinetic_typography'])assert.ok(cap.unavailable.includes(name));
+ for(const name of ['cross_dissolve','speed_ramp','reverse','freeze','motion_blur','video_overlay_source_audio','beat_detection','automatic_word_highlighting'])assert.ok(cap.unavailable.includes(name));
  assert.equal(cap.sourceAnalysis.exactFrameTimes,false);assert.equal(cap.sourceAnalysis.beatDetection,false);
 });
 
@@ -89,7 +89,7 @@ test('ordinary ChatGPT gets executable catalogue lists and separately labeled no
  const start=source.indexOf('  s.registerTool("app_catalog"'),end=source.indexOf('  s.registerTool("app_state"',start);assert.ok(start>=0&&end>start);
  let handler;const s={registerTool:(name,options,fn)=>{assert.equal(name,'app_catalog');handler=fn;}};
  Function('s','out','isV3','EDITOR_EDITING_CAPABILITIES',source.slice(start,end))(s,value=>value,true,contract.EDITOR_EDITING_CAPABILITIES);
- const catalog=await handler();assert.deepEqual(catalog.transitions,['none','cut']);assert.deepEqual(catalog.effects,['none','gaussian_blur','dream']);assert.deepEqual(catalog.textAnimations,['none']);
+ const catalog=await handler();assert.deepEqual(catalog.transitions,['none','cut']);assert.deepEqual(catalog.effects,['none','gaussian_blur','dream']);assert.deepEqual(catalog.textAnimations,['none','motion_keyframes']);
  assert.equal(catalog.legacyPlanningCatalog.executable,false);assert.ok(catalog.legacyPlanningCatalog.transitions.includes('film_burn'));
  assert.ok(catalog.legacyPlanningCatalog.aiTools.includes('beat_sync'));assert.ok(!catalog.aiTools.includes('beat_sync'));assert.deepEqual(catalog.studioEditing,contract.EDITOR_EDITING_CAPABILITIES);
  assert.match(source,/studioEditing\s*:\s*isV3[^\n]*EDITOR_EDITING_CAPABILITIES/);
