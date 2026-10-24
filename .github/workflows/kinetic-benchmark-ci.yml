@@ -8,6 +8,7 @@ on:
       - feature/ae-masks-responsive-studio-20261024
       - feature/ae-bezier-motion-graph-20261024
       - feature/ae-parent-motion-groups-v41030
+      - feature/ae-touch-curve-editor-v41031
   pull_request:
     branches:
       - feat/native-preview-audio-import-20261024

@@ -51,7 +51,16 @@ public final class StudioEditingCapabilities {
                     .put("groupBézierKeyframes",true)
                     .put("sourceMediaUnchanged",true)
                     .put("previewAndExportShared",true)
-                    .put("notFullPrecomp",true));}
+                    .put("notFullPrecomp",true))
+                  .put("touchBezierCurveGraph",new JSONObject()
+                    .put("minimumNativeVersion","4.10.31")
+                    .put("nativeAndroidTouchHandles",true)
+                    .put("editors",new org.json.JSONArray(java.util.Arrays.asList("image","title","video","motion_group")))
+                    .put("sampledFromRendererMath",true)
+                    .put("noSourceMediaMutation",true)
+                    .put("commitOnlyOnApply",true)
+                    .put("graphHandleBounds",new org.json.JSONArray().put(0).put(1))
+                    .put("galleryAccess",false));}
         catch(org.json.JSONException error){throw new IllegalStateException("Invalid native editor capability registry",error);}
     }
 }
