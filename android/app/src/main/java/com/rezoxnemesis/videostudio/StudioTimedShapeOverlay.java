@@ -53,6 +53,7 @@ public final class StudioTimedShapeOverlay extends BitmapOverlay {
         if (raster == null) {
             try {
                 raster = drawOriginalShape(layer);
+                if(layer.mask!=null)StudioMaskRasterizer.apply(raster,layer.mask);
             } catch (RuntimeException | OutOfMemoryError error) {
                 throw new VideoFrameProcessingException("Could not construct native shape geometry", error);
             }
