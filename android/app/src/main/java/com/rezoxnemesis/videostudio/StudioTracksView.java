@@ -133,7 +133,8 @@ public final class StudioTracksView extends View {
                         StudioLayer.IMAGE.equals(layer.type)?"IM":
                         StudioLayer.VIDEO.equals(layer.type)?"VD":
                         StudioLayer.SHAPE.equals(layer.type)?"SH":
-                        StudioLayer.GROUP.equals(layer.type)?"GR":"TX";
+                        StudioLayer.GROUP.equals(layer.type)?"GR":
+                        StudioLayer.CAMERA.equals(layer.type)?"CM":"TX";
                 if(layer.parentId!=null&&!layer.parentId.isEmpty())code="↳"+code;
                 canvas.drawText(code,dp(4),top+dp(21),brush);
             }
@@ -165,7 +166,7 @@ public final class StudioTracksView extends View {
             canvas.drawRoundRect(new RectF(x,top,x2,top+barHeight),dp(5),dp(5),brush);
             brush.setColor(quietEditorPalette?StudioEditorWorkspace.TEXT:0xffffffff);
             brush.setTextSize(dp(10));
-            String label=audio?"♪ Music":StudioLayer.IMAGE.equals(lane.type)?"Image":StudioLayer.VIDEO.equals(lane.type)?"Video":StudioLayer.SHAPE.equals(lane.type)?"Shape · "+lane.shapeKind:StudioLayer.GROUP.equals(lane.type)?"Parent group":(lane.text==null?"Text":lane.text);
+            String label=audio?"♪ Music":StudioLayer.IMAGE.equals(lane.type)?"Image":StudioLayer.VIDEO.equals(lane.type)?"Video":StudioLayer.SHAPE.equals(lane.type)?"Shape · "+lane.shapeKind:StudioLayer.GROUP.equals(lane.type)?"Parent group":StudioLayer.CAMERA.equals(lane.type)?"2D Camera":(lane.text==null?"Text":lane.text);
             int maxChars=Math.max(1,(int)((x2-x-dp(10))/dp(6)));
             if(label.length()>maxChars)label=label.substring(0,maxChars);
             canvas.save();
