@@ -13,7 +13,7 @@ import java.util.UUID;
  * EditedMediaItemSequences, with time offsets.
  */
 public final class StudioLayer {
-    public static final String AUDIO="audio", TITLE="title", IMAGE="image", VIDEO="video", SHAPE="shape", GROUP="group";
+    public static final String AUDIO="audio", TITLE="title", IMAGE="image", VIDEO="video", SHAPE="shape", GROUP="group", CAMERA="camera2d";
     public String id=UUID.randomUUID().toString();
     public String type=TITLE;
     public String assetId="";
@@ -45,6 +45,7 @@ public final class StudioLayer {
     private static final Set<String> SHAPE_KINDS=Set.of("rect","ellipse","ring","diamond","line","grid");
     private static final Set<String> SHAPE_FIELDS=Set.of("id","type","startMs","durationMs","x","y","width","height","rotation","opacity","color","shapeKind","strokeColor","strokeWidth","motionKeyframes","mask","parentId");
     private static final Set<String> GROUP_FIELDS=Set.of("id","type","startMs","durationMs","motionKeyframes");
+    private static final Set<String> CAMERA_FIELDS=Set.of("id","type","startMs","durationMs","motionKeyframes");
     private static final Set<String> VIDEO_FIELDS=Set.of("id","type","assetId","audioMode","startMs","durationMs","sourceInMs",
             "x","y","width","height","rotation","opacity","motionKeyframes");
 
@@ -52,7 +53,7 @@ public final class StudioLayer {
 
     public void validate(){
         if(id==null||id.isEmpty()||id.length()>128)throw new IllegalArgumentException("Layer ID must contain 1..128 characters");
-        if(!AUDIO.equals(type)&&!TITLE.equals(type)&&!IMAGE.equals(type)&&!VIDEO.equals(type)&&!SHAPE.equals(type)&&!GROUP.equals(type))
+        if(!AUDIO.equals(type)&&!TITLE.equals(type)&&!IMAGE.equals(type)&&!VIDEO.equals(type)&&!SHAPE.equals(type)&&!GROUP.equals(type)&&!CAMERA.equals(type))
             throw new IllegalArgumentException("Only real audio, caption, image, video and native shape lanes are supported");
         if(VIDEO.equals(type)){
             if(!"silent".equals(audioMode))throw new IllegalArgumentException("Video lanes require audioMode:\"silent\"");
@@ -63,6 +64,21 @@ public final class StudioLayer {
             throw new IllegalArgumentException("Invalid or self-referential motion parent ID");
         if(!parentId.isEmpty()&&!IMAGE.equals(type)&&!TITLE.equals(type)&&!SHAPE.equals(type))
             throw new IllegalArgumentException("Only title, image and shape overlays can use a motion parent");
+        if(CAMERA.equals(type)){
+            if((assetId!=null&&!assetId.isEmpty())||(text!=null&&!text.isEmpty())
+                    ||gain!=1f||position!=1||audioMode.length()!=0||mask!=null||!parentId.isEmpty())
+                throw new IllegalArgumentException("2D camera cannot own media, masks or parent links");
+            if(startMs!=0)throw new IllegalArgumentException("2D camera must start at composition zero");
+            if(motionKeyframes!=null){
+                StudioLayerMotion.fromLayer(this);
+                for(int i=0;i<motionKeyframes.length();i++){
+                    JSONObject frame=motionKeyframes.optJSONObject(i);
+                    if(frame!=null&&frame.has("opacity")&&
+                            StudioClipKeyframes.number(frame,"opacity",1,0,1)!=1)
+                        throw new IllegalArgumentException("2D camera opacity is not yet supported");
+                }
+            }
+        }
         if(GROUP.equals(type)){
             if((assetId!=null&&!assetId.isEmpty())||(text!=null&&!text.isEmpty())||gain!=1f
                     ||position!=1||audioMode.length()!=0||mask!=null||!parentId.isEmpty())
@@ -98,7 +114,7 @@ public final class StudioLayer {
             throw new IllegalArgumentException("Caption styles are only supported on title layers");
         if(AUDIO.equals(type)&& (assetId==null||assetId.trim().isEmpty()))
             throw new IllegalArgumentException("Audio lane needs an imported audio asset");
-        if(motionKeyframes!=null&&!IMAGE.equals(type)&&!TITLE.equals(type)&&!VIDEO.equals(type)&&!SHAPE.equals(type)&&!GROUP.equals(type))
+        if(motionKeyframes!=null&&!IMAGE.equals(type)&&!TITLE.equals(type)&&!VIDEO.equals(type)&&!SHAPE.equals(type)&&!GROUP.equals(type)&&!CAMERA.equals(type))
             throw new IllegalArgumentException("motionKeyframes is only supported on image, title, shape or video layers");
         if(TITLE.equals(type)&&motionKeyframes!=null)StudioLayerMotion.fromLayer(this);
         if(IMAGE.equals(type)||VIDEO.equals(type)||SHAPE.equals(type)){
@@ -119,6 +135,7 @@ public final class StudioLayer {
         if(VIDEO.equals(type))return videoJson();
         if(SHAPE.equals(type))return shapeJson();
         if(GROUP.equals(type))return groupJson();
+        if(CAMERA.equals(type))return cameraJson();
         JSONObject obj=new JSONObject();
         try{
             obj.put("id",id);obj.put("type",type);obj.put("assetId",assetId);
@@ -156,6 +173,7 @@ public final class StudioLayer {
         if(VIDEO.equals(l.type))return videoFromJson(o,l);
         if(SHAPE.equals(l.type))return shapeFromJson(o,l);
         if(GROUP.equals(l.type))return groupFromJson(o,l);
+        if(CAMERA.equals(l.type))return cameraFromJson(o,l);
         if(o.has("shapeKind")||o.has("strokeColor")||o.has("strokeWidth"))
             throw new IllegalArgumentException("Shape-only fields require type shape");
         if(o.has("audioMode"))throw new IllegalArgumentException("audioMode is only supported on video layers");
@@ -279,6 +297,38 @@ public final class StudioLayer {
         }
         l.validate();
         return l;
+    }
+
+    /** Source-free composition camera: animated whole-scene matrix, not 3D. */
+    private JSONObject cameraJson(){
+        validate();
+        JSONObject o=new JSONObject();
+        try{
+            o.put("id",id).put("type",CAMERA)
+                    .put("startMs",startMs).put("durationMs",durationMs);
+            if(motionKeyframes!=null)
+                o.put("motionKeyframes",new JSONArray(motionKeyframes.toString()));
+        }catch(org.json.JSONException error){
+            throw new IllegalArgumentException("Cannot persist composition camera",error);
+        }
+        return o;
+    }
+
+    private static StudioLayer cameraFromJson(JSONObject o,StudioLayer lane){
+        java.util.Iterator<String> it=o.keys();
+        while(it.hasNext())if(!CAMERA_FIELDS.contains(it.next()))
+            throw new IllegalArgumentException("2D camera supports only exact transform keys");
+        lane.type=CAMERA;
+        lane.startMs=o.has("startMs")?StudioClipKeyframes.integer(o,"startMs",0,0):0;
+        lane.durationMs=o.has("durationMs")
+                ?StudioClipKeyframes.integer(o,"durationMs",100,86_400_000):2500;
+        if(o.has("motionKeyframes")){
+            if(!(o.opt("motionKeyframes") instanceof JSONArray))
+                throw new IllegalArgumentException("Camera motion keys must be a JSON array");
+            lane.motionKeyframes=o.optJSONArray("motionKeyframes");
+        }
+        lane.validate();
+        return lane;
     }
 
     /** New VIDEO encoding does not change legacy kinds' fields or numeric representation. */
