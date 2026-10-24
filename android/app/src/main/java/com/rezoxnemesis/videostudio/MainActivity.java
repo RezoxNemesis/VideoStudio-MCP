@@ -104,6 +104,8 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
     private TextView studioCaptionPreview;
     private Runnable studioCaptionClock;
     private FrameLayout studioPreviewFrame;
+    private StudioTouchTransformOverlay studioTouchTransform;
+    private Button studioTouchExit;
     private TextView studioPreviewErrorView;
     private Button studioPreviewRetry;
     private String studioPreviewError="";
@@ -247,6 +249,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         closeStudioAudioEnvelope();
         closeSelectedVideoImport();selectedVideoPick=null;
         closeStudioVideoEditor();
+        stopStudioDirectTouch();
         if(studioImageMotionDialog!=null)studioImageMotionDialog.dismiss();
         timelinePreviewRunning = false;
         if(stillTimelineNext!=null)ui.removeCallbacks(stillTimelineNext);
@@ -758,6 +761,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
      * searchable categories instead of an unstructured 24-button wall.
      */
     private void showEditor() {
+        stopStudioDirectTouch();
         ensureEditorMedia();
         if(studioCaptionClock!=null){ui.removeCallbacks(studioCaptionClock);studioCaptionClock=null;}
         if(studioAudioPreview!=null)studioAudioPreview.stop();
@@ -1018,6 +1022,63 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         ScrollView scroll=baseScroll();scroll.addView(box);return scroll;
     }
 
+    /** Transform the selected owned layer directly on the real edited video surface. */
+    private void openStudioDirectTouch(StudioLayer layer){
+        if(activeProject==null||studioPreviewFrame==null||layer==null)return;
+        if(isStudioExternalPreviewMode()){
+            Toast.makeText(this,"Return to the edited preview before moving a layer",Toast.LENGTH_LONG).show();return;
+        }
+        stopStudioDirectTouch();
+        final String owner=activeProject.id;
+        final long expected=activeProject.updatedAt;
+        final long generation=studioSurfaceGeneration;
+        final StudioLayer source=layer.copy();
+        try{
+            studioTouchTransform=new StudioTouchTransformOverlay(this,source,
+                    new StudioTouchTransformOverlay.Listener(){
+                @Override public void onCommit(StudioLayer candidate){
+                    stopStudioDirectTouch();
+                    if(activeProject==null||!owner.equals(activeProject.id)
+                            ||activeProject.updatedAt!=expected
+                            ||studioSurfaceGeneration!=generation){
+                        Toast.makeText(MainActivity.this,"The editor changed; touch edit was not saved",
+                                Toast.LENGTH_LONG).show();return;
+                    }
+                    try{saveStudioLayer(candidate,expected);}
+                    catch(Exception failure){
+                        Toast.makeText(MainActivity.this,"Touch edit not saved: "+failure.getMessage(),
+                                Toast.LENGTH_LONG).show();
+                    }
+                }
+                @Override public void onCancel(){stopStudioDirectTouch();}
+            });
+            studioPreviewFrame.addView(studioTouchTransform,new FrameLayout.LayoutParams(-1,-1));
+            studioTouchExit=studioButton("Done",this::stopStudioDirectTouch);
+            studioTouchExit.setContentDescription("Close direct manipulation handles");
+            FrameLayout.LayoutParams position=new FrameLayout.LayoutParams(dp(82),dp(48),Gravity.TOP|Gravity.END);
+            position.setMargins(dp(6),dp(30),dp(6),0);
+            studioPreviewFrame.addView(studioTouchExit,position);
+            Toast.makeText(this,"Drag the layer, or pinch with two fingers to resize and rotate. Release to save.",
+                    Toast.LENGTH_LONG).show();
+        }catch(Exception error){
+            stopStudioDirectTouch();
+            Toast.makeText(this,"Direct transform unavailable: "+error.getMessage(),Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void stopStudioDirectTouch(){
+        if(studioTouchTransform!=null){
+            if(studioTouchTransform.getParent() instanceof ViewGroup)
+                ((ViewGroup)studioTouchTransform.getParent()).removeView(studioTouchTransform);
+            studioTouchTransform=null;
+        }
+        if(studioTouchExit!=null){
+            if(studioTouchExit.getParent() instanceof ViewGroup)
+                ((ViewGroup)studioTouchExit.getParent()).removeView(studioTouchExit);
+            studioTouchExit=null;
+        }
+    }
+
     private void openStudioMaskEditor(StudioLayer target) {
         if(activeProject==null || target==null)return;
         if(!StudioLayer.IMAGE.equals(target.type)&&!StudioLayer.SHAPE.equals(target.type))return;
@@ -1110,17 +1171,20 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
             ProjectStore.Asset asset=activeProject.asset(layer.assetId);TextView source=body((asset==null?(StudioLayer.SHAPE.equals(layer.type)?layer.shapeKind:layer.text):asset.name)+" · "+StudioEditCursor.timecode(layer.startMs)+" – "+StudioEditCursor.timecode(layer.startMs+layer.durationMs));source.setMaxLines(2);box.addView(source);
             if(StudioLayer.IMAGE.equals(layer.type)){
                 box.addView(studioButton("Mask / feather",()->openStudioMaskEditor(layer)));
+                box.addView(studioButton("Touch-transform directly on preview",()->openStudioDirectTouch(layer)));
                 box.addView(studioButton("Animate overlay",()->openStudioImageMotion(layer)));
                 box.addView(studioButton("Placement / timing",()->editStudioImage(layer,layer.assetId)));
                 box.addView(studioButton("Delete image overlay",()->removeStudioLayer(layer)));
                 box.addView(body("Image motion keeps the source pixels. Source Crop belongs to a base clip; this overlay has no source-crop control."));
             }else if(StudioLayer.VIDEO.equals(layer.type)){
+                box.addView(studioButton("Touch-transform directly on preview",()->openStudioDirectTouch(layer)));
                 box.addView(studioButton("Animate video",()->openStudioVideoMotion(layer)));
                 box.addView(studioButton("Placement / timing",()->editStudioVideo(layer,layer.assetId)));
                 box.addView(studioButton("Delete video overlay",()->removeStudioLayer(layer)));
                 box.addView(body("Silent independent video source. Source in trims its own footage; it does not move the base timeline or add source audio."));
             }else if(StudioLayer.SHAPE.equals(layer.type)){
                 box.addView(studioButton("Mask / feather",()->openStudioMaskEditor(layer)));
+                box.addView(studioButton("Touch-transform directly on preview",()->openStudioDirectTouch(layer)));
                 box.addView(studioButton("Animate vector shape",()->openStudioShapeMotion(layer)));
                 box.addView(studioButton("Placement / timing",()->editStudioShape(layer)));
                 box.addView(studioButton("Change geometry",()->chooseStudioShapeGeometry(layer)));
