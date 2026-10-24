@@ -53,6 +53,32 @@ public class StudioKineticDirectorTest {
                         .put("CREATE MOTION").put("EVERY FRAME COUNTS"));
     }
 
+    @Test public void originalVectorAccentsArePartOfTheSameEditableSourcePreservingEdit() throws Exception {
+        try (ProjectStore store = new ProjectStore(RuntimeEnvironment.getApplication())) {
+            ProjectStore.Project source = sample(store);
+            String old = SketchDocument.canonical(source.toJson());
+            JSONObject req=request(source).put("shapeAccents",true)
+                    .put("operationId","accent-case-20261024");
+            JSONObject plan=StudioKineticDirector.plan(source,req);
+            assertTrue(plan.getBoolean("shapeAccentsRequested"));
+            assertEquals(3,plan.getInt("shapeAccentsCreated"));
+            assertEquals(7,plan.getInt("layerCount"));
+            JSONObject receipt=StudioKineticDirector.apply(store,req);
+            ProjectStore.Project edited=store.get(receipt.getString("projectId"));
+            assertEquals(7,edited.studioLayers.size());
+            for(int i=1;i<edited.studioLayers.size();i+=2){
+                assertEquals("Accent should be below its associated title",
+                        StudioLayer.SHAPE,edited.studioLayers.get(i).type);
+                assertEquals(StudioLayer.TITLE,edited.studioLayers.get(i+1).type);
+                assertEquals(4,edited.studioLayers.get(i).motionKeyframes.length());
+            }
+            StudioLayerContract.fromJson(edited,StudioLayerContract.toJson(edited.studioLayers));
+            assertEquals(old,SketchDocument.canonical(store.get(source.id).toJson()));
+            assertEquals(receipt.getString("projectId"),
+                    StudioKineticDirector.apply(store,req).getString("projectId"));
+        }
+    }
+
     @Test public void dryRunDoesNotTouchTheOriginalProject() throws Exception {
         try (ProjectStore store = new ProjectStore(RuntimeEnvironment.getApplication())) {
             ProjectStore.Project source = sample(store);
