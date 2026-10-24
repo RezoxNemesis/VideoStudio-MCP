@@ -974,9 +974,9 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         setStudioPlayerControls(!edited&&!still);updateStudioPlayToggle();
     }
 
-    private void studioWorkspaceTrim(){StudioLayer layer=selectedStudioLayer();if(layer==null)trimDialog();else if(StudioLayer.IMAGE.equals(layer.type))editStudioImage(layer,layer.assetId);else if(StudioLayer.VIDEO.equals(layer.type))editStudioVideo(layer,layer.assetId);else if(StudioLayer.SHAPE.equals(layer.type))editStudioShape(layer);else if(StudioLayer.AUDIO.equals(layer.type))editStudioAudio(layer,layer.assetId);else editStudioTitle(layer);}
+    private void studioWorkspaceTrim(){StudioLayer layer=selectedStudioLayer();if(layer==null)trimDialog();else if(StudioLayer.IMAGE.equals(layer.type))editStudioImage(layer,layer.assetId);else if(StudioLayer.VIDEO.equals(layer.type))editStudioVideo(layer,layer.assetId);else if(StudioLayer.SHAPE.equals(layer.type))editStudioShape(layer);else if(StudioLayer.GROUP.equals(layer.type))openStudioMotionGroup(layer);else if(StudioLayer.AUDIO.equals(layer.type))editStudioAudio(layer,layer.assetId);else editStudioTitle(layer);}
     private void studioWorkspaceAdjust(){StudioLayer layer=selectedStudioLayer();if(layer==null)studioAdvancedAdjustDialog(false);else studioWorkspaceTrim();}
-    private void studioWorkspaceMotion(){StudioLayer layer=selectedStudioLayer();if(layer==null)studioKeyframeManager();else if(StudioLayer.IMAGE.equals(layer.type))openStudioImageMotion(layer);else if(StudioLayer.VIDEO.equals(layer.type))openStudioVideoMotion(layer);else if(StudioLayer.SHAPE.equals(layer.type))openStudioShapeMotion(layer);else if(StudioLayer.TITLE.equals(layer.type))openStudioTitleMotion(layer);else Toast.makeText(this,"Motion keys apply to a base clip, image/video overlay or title",Toast.LENGTH_LONG).show();}
+    private void studioWorkspaceMotion(){StudioLayer layer=selectedStudioLayer();if(layer==null)studioKeyframeManager();else if(StudioLayer.IMAGE.equals(layer.type))openStudioImageMotion(layer);else if(StudioLayer.VIDEO.equals(layer.type))openStudioVideoMotion(layer);else if(StudioLayer.SHAPE.equals(layer.type))openStudioShapeMotion(layer);else if(StudioLayer.GROUP.equals(layer.type))openStudioMotionGroup(layer);else if(StudioLayer.TITLE.equals(layer.type))openStudioTitleMotion(layer);else Toast.makeText(this,"Motion keys apply to a base clip, image/video overlay or title",Toast.LENGTH_LONG).show();}
     private void studioWorkspaceAudioMenu(){new AlertDialog.Builder(this).setTitle("Audio").setItems(new String[]{"Clip Volume & Fades","+ Music","Story audio"},(dialog,which)->{if(which==0)studioVolumeDialog();else if(which==1)chooseStudioAudio();else if(activeProject!=null)SketchStoryAudioDialog.show(this,activeProject.id,result->Toast.makeText(this,"Story audio saved in a separate audio project",Toast.LENGTH_LONG).show());}).show();}
 
     private View buildStudioWorkspacePane(String pane){
@@ -991,6 +991,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
             visuals.addView(video,new LinearLayout.LayoutParams(0,dp(48),1));box.addView(visuals);
             box.addView(body("Up to 2 silent video overlays. Source files stay owned by this project."));
             box.addView(studioButton("+ Animated Shape / Perspective Grid",this::chooseStudioShape));
+            box.addView(studioButton("+ Parent Motion Group · move layers together",this::createStudioMotionGroup));
             studioWorkspaceActions(box,new String[]{"Choose video file","Retry saved video copy"},new Runnable[]{this::pickStudioVideoFile,this::retrySelectedVideoImport});
             studioWorkspaceActions(box,new String[]{"+ Music","+ Caption","Story audio"},new Runnable[]{this::chooseStudioAudio,()->editStudioTitle(null),()->{if(activeProject!=null)SketchStoryAudioDialog.show(this,activeProject.id,result->Toast.makeText(this,"Story audio saved in a separate audio project",Toast.LENGTH_LONG).show());}});
             box.addView(studioButton("Kinetic Director · editable motion graphics", () ->
@@ -1132,6 +1133,94 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                 }).show();
     }
 
+    /** A group is a lightweight non-rendering track, never a copy of imported media. */
+    private void createStudioMotionGroup(){
+        if(activeProject==null||activeProject.outputDurationMs()<100){onStudioNoTarget();return;}
+        long expected=activeProject.updatedAt;
+        try{
+            StudioLayer group=new StudioLayer();
+            group.type=StudioLayer.GROUP;
+            group.startMs=0;group.durationMs=activeProject.outputDurationMs();
+            ArrayList<StudioLayer> lanes=new ArrayList<>(activeProject.studioLayers);
+            lanes.add(group);
+            if(applyStudioLayerList(lanes,expected)){
+                studioSelectedLayerId=group.id;
+                if(studioWorkspace!=null)studioWorkspace.showPane("Inspector");
+            }
+        }catch(Exception error){Toast.makeText(this,"Cannot create group: "+error.getMessage(),Toast.LENGTH_LONG).show();}
+    }
+
+    /** Simple native group motion styles, one revision-guarded edit per choice. */
+    private void openStudioMotionGroup(StudioLayer group){
+        if(activeProject==null||group==null||!StudioLayer.GROUP.equals(group.type))return;
+        final String owner=activeProject.id;final long revision=activeProject.updatedAt;
+        String[] labels={"Keep original motion","Drift together","Zoom together","Orbit around frame center","Slide together","Clear group motion"};
+        new AlertDialog.Builder(this).setTitle("Parent motion · "+group.id.substring(0,Math.min(8,group.id.length())))
+          .setItems(labels,(dialog,which)->{
+              if(activeProject==null||!owner.equals(activeProject.id)||revision!=activeProject.updatedAt){
+                  Toast.makeText(this,"Project changed. Reopen group motion",Toast.LENGTH_LONG).show();return;
+              }
+              try{
+                  StudioLayer changed=group.copy();
+                  String[] programs={"hold","drift","pulse","spin","slide","hold"};
+                  changed.motionKeyframes=which==5?new JSONArray():StudioShapePresets.motion(programs[which],changed.durationMs);
+                  saveStudioLayer(changed,revision);
+              }catch(Exception error){Toast.makeText(this,"Group motion not saved: "+error.getMessage(),Toast.LENGTH_LONG).show();}
+          }).show();
+    }
+
+    private void chooseStudioGroupChildren(StudioLayer group){
+        if(activeProject==null||group==null||!StudioLayer.GROUP.equals(group.type))return;
+        final String owner=activeProject.id;final long revision=activeProject.updatedAt;
+        ArrayList<StudioLayer> children=new ArrayList<>();
+        ArrayList<String> labels=new ArrayList<>();
+        for(StudioLayer item:activeProject.studioLayers){
+            if(!StudioLayer.TITLE.equals(item.type)&&!StudioLayer.IMAGE.equals(item.type)
+                    &&!StudioLayer.SHAPE.equals(item.type))continue;
+            if(item.startMs<group.startMs||item.durationMs>group.durationMs-(item.startMs-group.startMs))continue;
+            if(!item.parentId.isEmpty()&&!group.id.equals(item.parentId))continue;
+            children.add(item);
+            String kind=StudioLayer.TITLE.equals(item.type)?"Text":StudioLayer.IMAGE.equals(item.type)?"Image":"Shape";
+            labels.add((group.id.equals(item.parentId)?"✓ ":"○ ")+kind+" · "+
+                    (StudioLayer.SHAPE.equals(item.type)?item.shapeKind:
+                        StudioLayer.TITLE.equals(item.type)?item.text:item.assetId));
+        }
+        if(children.isEmpty()){Toast.makeText(this,"Add a text, image or shape layer within this group first",Toast.LENGTH_LONG).show();return;}
+        new AlertDialog.Builder(this).setTitle("Link / unlink native overlays")
+          .setItems(labels.toArray(new String[0]),(dialog,index)->{
+              if(activeProject==null||!owner.equals(activeProject.id)||revision!=activeProject.updatedAt){
+                  Toast.makeText(this,"Project changed; choose group again",Toast.LENGTH_LONG).show();return;
+              }
+              ArrayList<StudioLayer> changed=new ArrayList<>();
+              String target=children.get(index).id;
+              for(StudioLayer layer:activeProject.studioLayers){
+                  StudioLayer clone=layer.copy();
+                  if(target.equals(clone.id))
+                      clone.parentId=group.id.equals(clone.parentId)?"":group.id;
+                  changed.add(clone);
+              }
+              applyStudioLayerList(changed,revision);
+          }).setNegativeButton("Cancel",null).show();
+    }
+
+    private void removeStudioMotionGroup(StudioLayer group){
+        if(activeProject==null||group==null)return;
+        final String owner=activeProject.id;final long revision=activeProject.updatedAt;
+        new AlertDialog.Builder(this).setTitle("Delete motion group?")
+          .setMessage("Linked layers will be unlinked, not deleted. Imported media and saved footage remain intact.")
+          .setPositiveButton("Unlink and delete",(dialog,which)->{
+              if(activeProject==null||!owner.equals(activeProject.id)||revision!=activeProject.updatedAt)return;
+              ArrayList<StudioLayer> changed=new ArrayList<>();
+              for(StudioLayer layer:activeProject.studioLayers){
+                  if(group.id.equals(layer.id))continue;
+                  StudioLayer clone=layer.copy();
+                  if(group.id.equals(clone.parentId))clone.parentId="";
+                  changed.add(clone);
+              }
+              applyStudioLayerList(changed,revision);
+          }).setNegativeButton("Cancel",null).show();
+    }
+
     private void studioWorkspaceActions(LinearLayout box,String[] names,Runnable[] actions){
         for(int first=0;first<names.length;first+=2){LinearLayout row=new LinearLayout(this);
             for(int i=first;i<Math.min(names.length,first+2);i++)row.addView(studioButton(names[i],actions[i]),new LinearLayout.LayoutParams(0,dp(48),1));box.addView(row);}
@@ -1152,7 +1241,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         if(activeProject==null)return;final String owner=activeProject.id;final long revision=activeProject.updatedAt;
         ArrayList<String> ids=new ArrayList<>(),labels=new ArrayList<>();
         if(selectedClip!=null){ids.add("");labels.add("Base clip · "+(activeProject.clips.indexOf(selectedClip)+1));}
-        for(StudioLayer layer:activeProject.studioLayers){ids.add(layer.id);ProjectStore.Asset asset=activeProject.asset(layer.assetId);labels.add((StudioLayer.IMAGE.equals(layer.type)?"Image overlay":StudioLayer.VIDEO.equals(layer.type)?"Video overlay":StudioLayer.SHAPE.equals(layer.type)?"Animated shape":StudioLayer.AUDIO.equals(layer.type)?"Audio":"Title")+" · "+(asset==null?(StudioLayer.SHAPE.equals(layer.type)?layer.shapeKind:layer.text):asset.name)+(StudioLayer.VIDEO.equals(layer.type)?" · "+StudioEditCursor.timecode(layer.startMs):""));}
+        for(StudioLayer layer:activeProject.studioLayers){ids.add(layer.id);ProjectStore.Asset asset=activeProject.asset(layer.assetId);labels.add((StudioLayer.IMAGE.equals(layer.type)?"Image overlay":StudioLayer.VIDEO.equals(layer.type)?"Video overlay":StudioLayer.SHAPE.equals(layer.type)?"Animated shape":StudioLayer.GROUP.equals(layer.type)?"Motion group":StudioLayer.AUDIO.equals(layer.type)?"Audio":"Title")+" · "+(asset==null?(StudioLayer.SHAPE.equals(layer.type)?layer.shapeKind:StudioLayer.GROUP.equals(layer.type)?"Parent · "+layer.id.substring(0,Math.min(8,layer.id.length())):layer.text):asset.name)+(StudioLayer.VIDEO.equals(layer.type)?" · "+StudioEditCursor.timecode(layer.startMs):""));}
         if(ids.isEmpty()){onStudioNoTarget();return;}
         new AlertDialog.Builder(this).setTitle("Inspect target").setItems(labels.toArray(new String[0]),(dialog,index)->{
             if(activeProject==null||!owner.equals(activeProject.id)||revision!=activeProject.updatedAt){Toast.makeText(this,"Project changed. Choose its current target again.",Toast.LENGTH_LONG).show();return;}
@@ -1169,7 +1258,12 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         heading.addView(title(kind,17),new LinearLayout.LayoutParams(0,dp(48),1));heading.addView(studioButton("Choose target",this::chooseStudioInspectorTarget),new LinearLayout.LayoutParams(-2,dp(48)));box.addView(heading);
         if(layer!=null){
             ProjectStore.Asset asset=activeProject.asset(layer.assetId);TextView source=body((asset==null?(StudioLayer.SHAPE.equals(layer.type)?layer.shapeKind:layer.text):asset.name)+" · "+StudioEditCursor.timecode(layer.startMs)+" – "+StudioEditCursor.timecode(layer.startMs+layer.durationMs));source.setMaxLines(2);box.addView(source);
-            if(StudioLayer.IMAGE.equals(layer.type)){
+            if(StudioLayer.GROUP.equals(layer.type)){
+                box.addView(studioButton("Animate grouped layers",()->openStudioMotionGroup(layer)));
+                box.addView(studioButton("Link or unlink overlay layers",()->chooseStudioGroupChildren(layer)));
+                box.addView(studioButton("Delete group (unlink children)",()->removeStudioMotionGroup(layer)));
+                box.addView(body("One-level motion parent. All linked text, image and vector layers receive its transform during preview and export."));
+            }else if(StudioLayer.IMAGE.equals(layer.type)){
                 box.addView(studioButton("Mask / feather",()->openStudioMaskEditor(layer)));
                 box.addView(studioButton("Touch-transform directly on preview",()->openStudioDirectTouch(layer)));
                 box.addView(studioButton("Animate overlay",()->openStudioImageMotion(layer)));
