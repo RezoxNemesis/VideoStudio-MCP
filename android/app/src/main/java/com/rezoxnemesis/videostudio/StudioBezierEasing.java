@@ -41,7 +41,7 @@ public final class StudioBezierEasing {
             for(String token:tokens){
                 double value=Double.parseDouble(token.trim());
                 if(!Double.isFinite(value))throw new NumberFormatException("Nonfinite");
-                values.put(value);
+                values.put((Object) Double.valueOf(value));
             }
         }catch(NumberFormatException error){
             throw new IllegalArgumentException("Bezier handles must be finite decimal numbers",error);
