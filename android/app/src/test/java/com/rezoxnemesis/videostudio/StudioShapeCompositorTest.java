@@ -12,12 +12,14 @@ import org.junit.runner.RunWith;
 import org.robolectric.RobolectricTestRunner;
 import org.robolectric.RuntimeEnvironment;
 import org.robolectric.annotation.Config;
+import org.robolectric.annotation.GraphicsMode;
 import java.util.ArrayList;
 import static org.junit.Assert.*;
 
 /** Real Canvas pixels + native Media3 compositor admission, no claimed phone GPU output. */
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk=33,manifest=Config.NONE)
+@GraphicsMode(GraphicsMode.Mode.NATIVE)
 public class StudioShapeCompositorTest {
     private static ProjectStore.Project source() {
         ProjectStore.Project project=new ProjectStore.Project();
