@@ -152,7 +152,7 @@ public class StudioImageMotionTest {
     @Test public void malformedMotionIsStrictAndCannotCrossIntoTitlesOrAudio() throws Exception {
         for(Object raw:new Object[]{JSONObject.NULL,"[]",new JSONObject(),1,true})
             assertThrows("motionKeyframes type "+raw,IllegalArgumentException.class,()->StudioLayer.fromJson(layer().put("motionKeyframes",raw)));
-        for(String type:new String[]{"title","audio"})
+        for(String type:new String[]{"audio"})
             assertThrows("Non-image explicit keys",IllegalArgumentException.class,()->StudioLayer.fromJson(layer().put("type",type).put("text","Hello").put("motionKeyframes",new JSONArray())));
         for(String field:new String[]{"anchorX","anchorY","width","rotation","perspective","unknown"})
             assertThrows(field,IllegalArgumentException.class,()->StudioLayer.fromJson(layer().put("motionKeyframes",new JSONArray().put(key(0).put(field,.5)))));

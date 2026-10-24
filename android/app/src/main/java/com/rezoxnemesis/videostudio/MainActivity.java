@@ -918,7 +918,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
 
     private void studioWorkspaceTrim(){StudioLayer layer=selectedStudioLayer();if(layer==null)trimDialog();else if(StudioLayer.IMAGE.equals(layer.type))editStudioImage(layer,layer.assetId);else if(StudioLayer.AUDIO.equals(layer.type))editStudioAudio(layer,layer.assetId);else editStudioTitle(layer);}
     private void studioWorkspaceAdjust(){StudioLayer layer=selectedStudioLayer();if(layer==null)studioAdvancedAdjustDialog(false);else studioWorkspaceTrim();}
-    private void studioWorkspaceMotion(){StudioLayer layer=selectedStudioLayer();if(layer==null)studioKeyframeManager();else if(StudioLayer.IMAGE.equals(layer.type))openStudioImageMotion(layer);else Toast.makeText(this,"Motion keys apply to a base clip or image overlay",Toast.LENGTH_LONG).show();}
+    private void studioWorkspaceMotion(){StudioLayer layer=selectedStudioLayer();if(layer==null)studioKeyframeManager();else if(StudioLayer.IMAGE.equals(layer.type))openStudioImageMotion(layer);else if(StudioLayer.TITLE.equals(layer.type))openStudioTitleMotion(layer);else Toast.makeText(this,"Motion keys apply to a base clip, image overlay or title",Toast.LENGTH_LONG).show();}
     private void studioWorkspaceAudioMenu(){new AlertDialog.Builder(this).setTitle("Audio").setItems(new String[]{"Clip Volume & Fades","+ Music","Story audio"},(dialog,which)->{if(which==0)studioVolumeDialog();else if(which==1)chooseStudioAudio();else if(activeProject!=null)SketchStoryAudioDialog.show(this,activeProject.id,result->Toast.makeText(this,"Story audio saved in a separate audio project",Toast.LENGTH_LONG).show());}).show();}
 
     private View buildStudioWorkspacePane(String pane){
@@ -991,7 +991,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                 box.addView(studioButton("Delete image overlay",()->removeStudioLayer(layer)));
                 box.addView(body("Image motion keeps the source pixels. Source Crop belongs to a base clip; this overlay has no source-crop control."));
             }else if(StudioLayer.AUDIO.equals(layer.type)){box.addView(studioButton("Edit audio",()->editStudioAudio(layer,layer.assetId)));box.addView(studioButton("Delete audio",()->removeStudioLayer(layer)));}
-            else{box.addView(studioButton("Edit caption",()->editStudioTitle(layer)));box.addView(studioButton("Delete caption",()->removeStudioLayer(layer)));}
+            else{box.addView(studioButton("Animate title",()->openStudioTitleMotion(layer)));box.addView(studioButton("Edit caption",()->editStudioTitle(layer)));box.addView(studioButton("Delete caption",()->removeStudioLayer(layer)));}
         }else if(selectedClip!=null){
             ProjectStore.Asset asset=activeProject.asset(selectedClip.assetId);box.addView(body((asset==null?"Missing media":asset.name)+" · "+StudioEditCursor.timecode(selectedClip.outputDurationMs())));
             String[] tools={"Crop","Keyframes","Trim","Slow Motion","Volume","Exact Transform","Colour","Adjust","Blur","Opacity","Green Screen","Mask","Glow","Effects","Motion","Shake","Duplicate","Delete Clip","Move Left","Move Right"};
@@ -1007,6 +1007,30 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         if(activeProject==null)return;final String owner=activeProject.id;final long revision=activeProject.updatedAt,generation=studioSurfaceGeneration;
         try{if(!canApplyStudioImage(owner,revision,generation))return;showStudioImageMotion(image.copy(),owner,revision,generation,()->{});}
         catch(Exception error){Toast.makeText(this,"Cannot animate image overlay: "+error.getMessage(),Toast.LENGTH_LONG).show();}
+    }
+
+    private void openStudioTitleMotion(StudioLayer title){
+        if(activeProject==null)return;final String owner=activeProject.id;final long revision=activeProject.updatedAt,generation=studioSurfaceGeneration;
+        try{
+            if(!canApplyStudioTitleMotion(owner,revision,generation))return;
+            if(studioImageMotionDialog!=null)studioImageMotionDialog.dismiss();
+            AlertDialog motionDialog=StudioTitleMotionDialog.show(this,title.copy(),
+                    Math.max(0,Math.min(title.durationMs,studioPlayheadMs-title.startMs)),candidate->{
+                        if(!canApplyStudioTitleMotion(owner,revision,generation))return false;
+                        return saveStudioLayer(candidate,revision);
+                    },dismissed->{if(studioImageMotionDialog==dismissed)studioImageMotionDialog=null;});
+            studioImageMotionDialog=motionDialog;
+        }catch(Exception error){Toast.makeText(this,"Cannot animate title: "+error.getMessage(),Toast.LENGTH_LONG).show();}
+    }
+
+    private boolean canApplyStudioTitleMotion(String projectId,long revision,long surfaceGeneration){
+        if(isFinishing()||isDestroyed()||activeProject==null||!projectId.equals(activeProject.id)
+                ||activeProject.updatedAt!=revision||studioSurfaceGeneration!=surfaceGeneration
+                ||!"editor".equals(currentScreen)){
+            Toast.makeText(this,"The editing view changed. Reopen this title before applying its draft.",Toast.LENGTH_LONG).show();
+            return false;
+        }
+        return true;
     }
 
     private void renderStudioCompactClips(LinearLayout box){

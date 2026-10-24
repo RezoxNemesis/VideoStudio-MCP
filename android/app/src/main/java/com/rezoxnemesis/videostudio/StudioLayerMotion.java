@@ -4,7 +4,7 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 import java.util.Set;
 
-/** Shared image/video layer-local motion; the saved placement remains the static base. */
+/** Shared image/title/video layer-local motion relative to the saved static base. */
 public final class StudioLayerMotion {
     private static final Set<String> FIELDS=Set.of("timeMs","x","y","scale","scaleX","scaleY","rotate","opacity","easing");
     private final StudioClipKeyframes animation;
@@ -15,8 +15,9 @@ public final class StudioLayerMotion {
     }
 
     public static StudioLayerMotion fromLayer(StudioLayer layer){
-        if(layer==null||(!StudioLayer.IMAGE.equals(layer.type)&&!StudioLayer.VIDEO.equals(layer.type)))
-            throw new IllegalArgumentException("Layer motion requires an image or video layer");
+        if(layer==null||(!StudioLayer.IMAGE.equals(layer.type)&&!StudioLayer.TITLE.equals(layer.type)
+                &&!StudioLayer.VIDEO.equals(layer.type)))
+            throw new IllegalArgumentException("Layer motion requires an image, title or video layer");
         String kind=layer.type;
         JSONArray keys=layer.motionKeyframes;
         if(keys!=null){
