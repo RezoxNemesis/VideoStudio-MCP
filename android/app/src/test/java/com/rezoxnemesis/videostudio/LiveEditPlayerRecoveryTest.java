@@ -35,6 +35,32 @@ public class LiveEditPlayerRecoveryTest {
             assertTrue("Unknown duration needs actionable feedback",String.valueOf(error.getMessage()).toLowerCase().contains("duration"));
         }finally{live.release();}
     }
+    @Test public void asynchronousNewEditFailureCannotRevealAnUnrelatedSourceFrame()throws Exception{
+        LiveEditPlayer live=new LiveEditPlayer(RuntimeEnvironment.getApplication());
+        try{
+            ExoPlayer source=(ExoPlayer)field(live,"player");
+            source.setMediaItem(MediaItem.fromUri("file:///unrelated-previous-project.mp4"),1000);
+            source.setPlayWhenReady(true);
+            FrameLayout host=new FrameLayout(RuntimeEnvironment.getApplication());
+            live.attach(host);
+            PlayerView view=(PlayerView)host.getChildAt(0);
+            ProjectStore.Project current=NativePreviewAdmissionTest.project();
+            java.util.ArrayList<String> errors=new java.util.ArrayList<>();
+            live.playEdit(current,new NativeRenderEngine(RuntimeEnvironment.getApplication()),
+                    "9:16","720p",0,true,null,errors::add);
+            Player candidate=(Player)field(live,"editPlayer");
+            assertSame(candidate,view.getPlayer());
+            failPlayback(candidate);
+            assertNull("Never show stale prior-project footage as this project's failed edit",
+                    view.getPlayer());
+            assertFalse(live.isEditedPreview());
+            assertFalse(source.getPlayWhenReady());
+            assertNull(field(live,"editPlayer"));
+            assertEquals(1,errors.size());
+            assertTrue(errors.get(0).contains("Edited preview unavailable"));
+        }finally{live.release();}
+    }
+
     @Test public void asynchronousFailureRestoresPreviousEditedPlayerAndItsClock()throws Exception{
         LiveEditPlayer live=new LiveEditPlayer(RuntimeEnvironment.getApplication());
         try{
