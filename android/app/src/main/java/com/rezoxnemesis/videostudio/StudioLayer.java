@@ -33,13 +33,15 @@ public final class StudioLayer {
     public float x=.5f,y=.5f,width=.35f,height=.35f,rotation=0f,opacity=1f;
     /** Null retains legacy serialization; an empty array is an explicit motion clear. */
     public JSONArray motionKeyframes;
+    /** Optional source-preserving IMAGE/SHAPE alpha mask. Null retains legacy JSON. */
+    public JSONObject mask;
     /** SHAPE-only original Canvas geometry. No external image source required. */
     public String shapeKind="rect";
     public int strokeColor=0xffffffff;
     public float strokeWidth=.02f;
     private static final String[] CAPTION_FIELDS={"fontSize","fontFamily","fontStyle","textAlign","backgroundColor"};
     private static final Set<String> SHAPE_KINDS=Set.of("rect","ellipse","ring","diamond","line","grid");
-    private static final Set<String> SHAPE_FIELDS=Set.of("id","type","startMs","durationMs","x","y","width","height","rotation","opacity","color","shapeKind","strokeColor","strokeWidth","motionKeyframes");
+    private static final Set<String> SHAPE_FIELDS=Set.of("id","type","startMs","durationMs","x","y","width","height","rotation","opacity","color","shapeKind","strokeColor","strokeWidth","motionKeyframes","mask");
     private static final Set<String> VIDEO_FIELDS=Set.of("id","type","assetId","audioMode","startMs","durationMs","sourceInMs",
             "x","y","width","height","rotation","opacity","motionKeyframes");
 
@@ -59,6 +61,11 @@ public final class StudioLayer {
                 throw new IllegalArgumentException("Native SHAPE has no external asset, title text or audio");
             if(!SHAPE_KINDS.contains(shapeKind)||!Float.isFinite(strokeWidth)||strokeWidth<0||strokeWidth>.20f)
                 throw new IllegalArgumentException("Unknown shape or invalid normalized stroke width");
+        }
+        if(mask!=null){
+            if(!IMAGE.equals(type)&&!SHAPE.equals(type))
+                throw new IllegalArgumentException("Alpha masks apply only to image and native shape layers");
+            StudioMaskRasterizer.validate(mask);
         }
         if(startMs<0||durationMs<100||durationMs>86_400_000L||sourceInMs<0)
             throw new IllegalArgumentException("Invalid layer time or duration");
@@ -114,6 +121,7 @@ public final class StudioLayer {
             if(IMAGE.equals(type)){obj.put("x",x);obj.put("y",y);
                 obj.put("width",width==.01f?.01:(double)width);obj.put("height",height==.01f?.01:(double)height);
                 obj.put("rotation",rotation);obj.put("opacity",opacity);}
+            if(mask!=null)obj.put("mask",StudioMaskRasterizer.validate(mask));
             if(motionKeyframes!=null){
                 if(IMAGE.equals(type))StudioImageMotion.fromLayer(this);
                 else StudioLayerMotion.fromLayer(this);
@@ -135,6 +143,8 @@ public final class StudioLayer {
         if(o.has("shapeKind")||o.has("strokeColor")||o.has("strokeWidth"))
             throw new IllegalArgumentException("Shape-only fields require type shape");
         if(o.has("audioMode"))throw new IllegalArgumentException("audioMode is only supported on video layers");
+        if(o.has("mask")&&!IMAGE.equals(l.type))
+            throw new IllegalArgumentException("Only IMAGE/SHAPE support visual masks");
         if(!TITLE.equals(l.type))for(String field:CAPTION_FIELDS)if(o.has(field))
             throw new IllegalArgumentException(field+" is only supported on title layers");
         l.assetId=o.optString("assetId","");
@@ -160,6 +170,10 @@ public final class StudioLayer {
             catch(org.json.JSONException error){throw new IllegalArgumentException(
                     TITLE.equals(l.type)?"Invalid title motion keys":"Invalid image motion keys",error);}
         }
+        if(o.has("mask")){
+            if(!(o.opt("mask") instanceof JSONObject))throw new IllegalArgumentException("Image mask must be an object");
+            l.mask=StudioMaskRasterizer.validate(o.getJSONObject("mask"));
+        }
         l.validate();
         return l;
     }
@@ -176,6 +190,7 @@ public final class StudioLayer {
                     .put("rotation",rotation).put("opacity",opacity)
                     .put("color",color).put("shapeKind",shapeKind)
                     .put("strokeColor",strokeColor).put("strokeWidth",strokeWidth);
+            if(mask!=null)obj.put("mask",StudioMaskRasterizer.validate(mask));
             if(motionKeyframes!=null)obj.put("motionKeyframes",new JSONArray(motionKeyframes.toString()));
         }catch(org.json.JSONException error){throw new IllegalArgumentException("Could not serialize original shape",error);}
         return obj;
@@ -198,6 +213,10 @@ public final class StudioLayer {
         l.shapeKind=o.optString("shapeKind","rect");
         l.strokeColor=o.optInt("strokeColor",0xffffffff);
         l.strokeWidth=(float)StudioClipKeyframes.number(o,"strokeWidth",.02,0,.20);
+        if(o.has("mask")){
+            if(!(o.opt("mask") instanceof JSONObject))throw new IllegalArgumentException("Shape mask must be an object");
+            l.mask=StudioMaskRasterizer.validate(o.getJSONObject("mask"));
+        }
         if(o.has("motionKeyframes")){
             if(!(o.opt("motionKeyframes") instanceof JSONArray))
                 throw new IllegalArgumentException("Shape motion keys must be an array");
