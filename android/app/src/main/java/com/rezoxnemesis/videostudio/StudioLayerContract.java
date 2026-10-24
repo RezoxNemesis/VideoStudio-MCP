@@ -55,6 +55,14 @@ public final class StudioLayerContract {
         if(project==null||lane==null)throw new IllegalArgumentException("Missing lane");
         lane.validate();
         long output=project.outputDurationMs();
+        if(StudioLayer.CAMERA.equals(lane.type)){
+            if(lane.startMs!=0)
+                throw new IllegalArgumentException("Global camera must start at timeline zero");
+            // Camera keyframes have their own authored duration; if clips are
+            // lengthened or shortened later, the sample holds the nearest
+            // authored end key rather than blocking an otherwise safe trim.
+            return;
+        }
         if(output<=0||lane.startMs>=output||
                 lane.durationMs>output-lane.startMs)
             throw new IllegalArgumentException("Track extends outside the rendered video timeline");
@@ -67,10 +75,6 @@ public final class StudioLayerContract {
                         lane.durationMs>asset.durationMs-lane.sourceInMs)
                     throw new IllegalArgumentException("Audio trim exceeds imported source duration");
             }
-        }
-        if(StudioLayer.CAMERA.equals(lane.type)){
-            if(lane.startMs!=0||lane.durationMs!=output)
-                throw new IllegalArgumentException("Global camera must cover the exact original output duration");
         }
         if(StudioLayer.SHAPE.equals(lane.type)){
             if(!lane.assetId.isEmpty())throw new IllegalArgumentException("Native SHAPE cannot reference media sources");

@@ -375,8 +375,8 @@ public final class NativeRenderEngine {
         // This effect order is shared by interactive CompositionPlayer and
         // the native H.264 export builder. Audio is not transformed.
         for(StudioLayer layer:project.studioLayers)if(StudioLayer.CAMERA.equals(layer.type)){
-            if(layer.startMs!=0||layer.durationMs!=project.outputDurationMs())
-                throw new IllegalArgumentException("Composition camera must cover the original project clock");
+            if(layer.startMs!=0)
+                throw new IllegalArgumentException("Composition camera must start at project time zero");
             finalStage.add(StudioClipKeyframes.parse(layer.motionKeyframes,layer.durationMs));
         }
         if(!finalStage.isEmpty()){
