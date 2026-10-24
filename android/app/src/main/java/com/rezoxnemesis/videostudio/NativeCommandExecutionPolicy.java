@@ -15,6 +15,7 @@ public final class NativeCommandExecutionPolicy {
             case "precision_edit":
             case "kinetic_benchmark_capabilities": case "kinetic_benchmark_plan": case "kinetic_benchmark_apply":
             case "motion_group_capabilities": case "motion_group_plan": case "motion_group_edit":
+            case "camera2d_capabilities": case "camera2d_plan": case "camera2d_apply":
             case "apply_tool": case "set_studio_layers":
             case "sketch_create": case "sketch_list": case "sketch_get": case "sketch_inspect": case "sketch_review": case "sketch_quality_audit": case "sketch_edit":
             case "sketch_animation_save": case "sketch_animation_get": case "sketch_animation_list": case "sketch_animation_bake": case "sketch_animation_place_in_book":
