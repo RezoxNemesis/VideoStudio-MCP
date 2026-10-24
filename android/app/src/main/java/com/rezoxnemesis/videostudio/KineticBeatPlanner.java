@@ -129,10 +129,11 @@ public final class KineticBeatPlanner {
         ArrayList<Long> candidates = new ArrayList<>();
         long prev = -1000;
         for (Long at : events) {
-            if (at == null || at < 0 || at >= filmMs - 190 || at <= prev)
+            if (at == null || at < 0 || at >= filmMs || at <= prev)
                 throw new IllegalArgumentException("Timing events must be increasing and inside the film");
             prev = at;
-            if (candidates.isEmpty() || at - candidates.get(candidates.size() - 1) >= 320)
+            if (at >= filmMs - 390) continue;
+            if (candidates.isEmpty() || at - candidates.get(candidates.size() - 1) >= 420)
                 candidates.add(at);
         }
         int count = Math.min(requestedTitles, candidates.size());
@@ -140,14 +141,14 @@ public final class KineticBeatPlanner {
         for (int i = 0; i < count; i++) {
             int index = count == 1 ? 0 : (int) Math.round(i * (candidates.size() - 1.0) / (count - 1.0));
             long at = candidates.get(index);
-            if (chosen.isEmpty() || at - chosen.get(chosen.size() - 1) >= 320) chosen.add(at);
+            if (chosen.isEmpty() || at - chosen.get(chosen.size() - 1) >= 420) chosen.add(at);
         }
         ArrayList<Cue> output = new ArrayList<>();
         for (int i = 0; i < chosen.size(); i++) {
             long at = chosen.get(i);
             long untilNext = i + 1 < chosen.size() ? chosen.get(i + 1) - at : filmMs - at;
             long duration = Math.min(2200, untilNext - (i + 1 < chosen.size() ? 40 : 0));
-            if (duration >= 190) output.add(new Cue(at, duration));
+            if (duration >= 390) output.add(new Cue(at, duration));
         }
         return Collections.unmodifiableList(output);
     }
