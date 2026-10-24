@@ -26,17 +26,21 @@ public final class StudioExportDelayUiTest {
 
     @Before public void freshChoices(){
         RuntimeEnvironment.getApplication().getSharedPreferences("studio_export_choices",0).edit().clear().commit();
+        // The new WYSIWYG editor defaults to a 9:16 preview; never inherit
+        // an unconfirmed aspect from unrelated Robolectric test execution.
+        RuntimeEnvironment.getApplication().getSharedPreferences("videostudio_native_v1",0)
+                .edit().remove("studio_preview_canvas_aspect").commit();
         while(nextService()!=null){}
     }
 
-    @Test public void defaultSubmissionKeepsTheExactOldIntentFieldsAndNoRenderEngine()throws Exception{
+    @Test public void defaultSubmissionMatchesWysiwygCanvasWithOldIntentSchemaAndNoRenderEngine()throws Exception{
         ProjectStore.Project p=project();MainActivity activity=activity(p);String before=SketchDocument.canonical(p.toJson());
         AlertDialog dialog=open(activity);assertNull("Opening must not queue a native job",nextService());
         confirm(dialog);
         Intent request=nextService();assertNotNull(request);
         assertEquals(Set.of("projectId","aspect","quality","fileName"),request.getExtras().keySet());
         assertFalse("Default is omission, not an explicit25-second override",request.hasExtra(FIELD));
-        assertEquals(p.id,request.getStringExtra("projectId"));assertEquals("16:9",request.getStringExtra("aspect"));
+        assertEquals(p.id,request.getStringExtra("projectId"));assertEquals("9:16",request.getStringExtra("aspect"));
         assertEquals("720p",request.getStringExtra("quality"));assertEquals(ControlService.ACTION_LOCAL_EXPORT,request.getAction());
         assertEquals(before,SketchDocument.canonical(p.toJson()));assertNull(field(activity,"renderEngine"));assertNull(nextService());dismissLatest();
     }
