@@ -33,6 +33,7 @@ public final class StudioEditorWorkspace extends LinearLayout {
     private final Consumer<String> selected;
     private final View headerView,previewView,transportView,editingToolsView;
     private final LinearLayout lowerView;
+    private LinearLayout viewingPanel;
     private boolean landscape;
     private int preferredPreviewHeight;
     private float landscapeShare;
@@ -69,6 +70,7 @@ public final class StudioEditorWorkspace extends LinearLayout {
         if(landscape){
             LinearLayout body=new LinearLayout(getContext());body.setOrientation(HORIZONTAL);
             LinearLayout viewing=new LinearLayout(getContext());viewing.setOrientation(VERTICAL);
+            viewingPanel=viewing;
             previewView.setMinimumHeight(dp(96));viewing.addView(previewView,new LayoutParams(-1,0,1));
             viewing.addView(transportView,new LayoutParams(-1,-2));
             LayoutParams viewingSize=new LayoutParams(0,-1,landscapeShare);
@@ -78,6 +80,7 @@ public final class StudioEditorWorkspace extends LinearLayout {
             body.addView(lowerView,new LayoutParams(0,-1,1-landscapeShare));
             addView(body,new LayoutParams(-1,0,1));
         }else{
+            viewingPanel=null;
             addView(previewView,new LayoutParams(-1,preferredPreviewHeight));
             resizeHandle.setVertical(false);
             addView(resizeHandle,new LayoutParams(-1,dp(21)));
@@ -119,7 +122,12 @@ public final class StudioEditorWorkspace extends LinearLayout {
             landscapeShare=Math.max(.30f,Math.min(.72f,landscapeShare+deltaPixels/usable));
             getContext().getSharedPreferences(SIZING_PREFS,Context.MODE_PRIVATE).edit()
                 .putInt("landscapeSharePercent",Math.round(landscapeShare*100)).apply();
-            arrangeExistingViews();
+            if(viewingPanel!=null){
+                LinearLayout.LayoutParams viewport=(LinearLayout.LayoutParams)viewingPanel.getLayoutParams();
+                viewport.weight=landscapeShare;viewingPanel.setLayoutParams(viewport);
+                LinearLayout.LayoutParams inspector=(LinearLayout.LayoutParams)lowerView.getLayoutParams();
+                inspector.weight=1-landscapeShare;lowerView.setLayoutParams(inspector);
+            }
         }else{
             preferredPreviewHeight=Math.max(dp(96),Math.min(dp(540),preferredPreviewHeight+Math.round(deltaPixels)));
             getContext().getSharedPreferences(SIZING_PREFS,Context.MODE_PRIVATE).edit()
