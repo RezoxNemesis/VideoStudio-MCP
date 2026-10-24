@@ -1206,12 +1206,37 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         if(activeProject==null||group==null||!StudioLayer.GROUP.equals(group.type))return;
         final String owner=activeProject.id,groupId=group.id;
         final long revision=activeProject.updatedAt;
-        String[] labels={"Preserve existing motion","Drift together","Pulse together",
+        String[] labels={"Edit precise keyframes and Bézier curves…",
+                "Preserve existing motion","Drift together","Pulse together",
                 "Rotate together","Slide together","Clear group motion"};
         String[] styles={"hold","drift","pulse","spin","slide","hold"};
         new AlertDialog.Builder(this).setTitle("Linked Motion · "+groupId.substring(0,Math.min(8,groupId.length())))
           .setItems(labels,(dialog,which)->{
-              if(which==0)return;
+              if(which==0){
+                  try {
+                      StudioGroupMotionDialog.show(this,group,
+                              Math.max(0,Math.min(group.durationMs,studioPlayheadMs-group.startMs)),
+                              keys->{
+                                  if(activeProject==null||!owner.equals(activeProject.id)
+                                          ||revision!=activeProject.updatedAt)return false;
+                                  try{
+                                      JSONObject req=new JSONObject().put("projectId",owner)
+                                              .put("expectedUpdatedAt",revision).put("operation","animate")
+                                              .put("groupId",groupId).put("motionKeyframes",keys);
+                                      saveStudioMotionGroup(req,true);
+                                      return true;
+                                  }catch(Exception failure){
+                                      Toast.makeText(this,"Group not saved: "+failure.getMessage(),
+                                              Toast.LENGTH_LONG).show();return false;
+                                  }
+                              });
+                  }catch(Exception failure){
+                      Toast.makeText(this,"Exact keyframe editor unavailable: "+failure.getMessage(),
+                              Toast.LENGTH_LONG).show();
+                  }
+                  return;
+              }
+              if(which==1)return;
               if(activeProject==null||!owner.equals(activeProject.id)||revision!=activeProject.updatedAt){
                   Toast.makeText(this,"Project changed. Reopen group motion",Toast.LENGTH_LONG).show();return;
               }
@@ -1219,8 +1244,8 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                   JSONObject request=new JSONObject().put("projectId",owner)
                           .put("expectedUpdatedAt",revision).put("operation","animate")
                           .put("groupId",groupId)
-                          .put("motionKeyframes",which==5?new JSONArray():
-                                  StudioShapePresets.motion(styles[which],group.durationMs));
+                          .put("motionKeyframes",which==6?new JSONArray():
+                                  StudioShapePresets.motion(styles[which-1],group.durationMs));
                   saveStudioMotionGroup(request,true);
               }catch(Exception error){
                   Toast.makeText(this,"Group motion not saved: "+error.getMessage(),Toast.LENGTH_LONG).show();
