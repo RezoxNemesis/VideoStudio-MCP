@@ -67,7 +67,17 @@ public final class StudioEditingCapabilities {
                     .put("separateFromPhoneRotation",true)
                     .put("touchPlacementUsesPreviewRatio",true)
                     .put("exportDefaultsToActualPreviewAspect",true)
-                    .put("sourceMediaUnchanged",true));}
+                    .put("sourceMediaUnchanged",true))
+                  .put("professionalMultitrackTimeline",new JSONObject()
+                    .put("minimumNativeVersion","4.10.32")
+                    .put("compactModePreserved",true)
+                    .put("oneRowPerLayer",true)
+                    .put("touchMoveAndTrim",true)
+                    .put("audioWaveforms",true)
+                    .put("pinchTimelineZoom",true)
+                    .put("usesNativeRevisionGuardOnSave",true)
+                    .put("portraitAndLandscape",true)
+                    .put("preservesExistingProjectAssets",true));}
         catch(org.json.JSONException error){throw new IllegalStateException("Invalid native editor capability registry",error);}
     }
 }
