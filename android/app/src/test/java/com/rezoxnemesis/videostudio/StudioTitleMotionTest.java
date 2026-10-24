@@ -186,8 +186,8 @@ public class StudioTitleMotionTest {
         project.studioLayers.add(StudioLayer.fromJson(title().put("startMs",1500).put("motionKeyframes",keys)));
         project.studioLayers.add(StudioLayer.fromJson(title().put("id","later").put("startMs",2000).put("motionKeyframes",keys)));
         Composition composition=new NativeRenderEngine(RuntimeEnvironment.getApplication()).buildPreviewComposition(project,"9:16","720p");
-        OverlayEffect effect=(OverlayEffect)composition.effects.videoEffects.stream().filter(e->e instanceof OverlayEffect).findFirst().get();
-        Field field=OverlayEffect.class.getDeclaredField("overlays");field.setAccessible(true);List<?> overlays=(List<?>)field.get(effect);
+        StudioCompositionOverlayEffect effect=(StudioCompositionOverlayEffect)composition.effects.videoEffects.stream().filter(e->e instanceof StudioCompositionOverlayEffect).findFirst().get();
+        List<?> overlays=effect.createOverlays();
         assertEquals(2,overlays.size());StudioTimedTitleOverlay early=(StudioTimedTitleOverlay)overlays.get(0),later=(StudioTimedTitleOverlay)overlays.get(1);
         try{
             assertEquals(.4,early.getOverlaySettings(2_000_000).getBackgroundFrameAnchor().first,.000001);

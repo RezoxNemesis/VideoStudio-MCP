@@ -1,3 +1,15 @@
+# Active composition overlay ownership repair — future527
+
+Read docs/continuity/NATIVE_COMPOSITION_OVERLAY_OWNERSHIP_41024.md. Actual526
+creativeexport failsatfirstcut. Nativeownership regressions4/3FAIL and allocation
+cleanup2/1FAIL reproduce the existing OverlayEffect reused terminal-image lifecycle.
+New StudioCompositionOverlayEffect retainsimmutable recipes and creates fresh native
+IMAGE/TITLE resources per shaderprogramgeneration, preserving PNGbytes/alphaclocks
+and directreleasedobjectterminal behavior. Rootbroad89PASS27.72s plusfocused25PASS
+6.711s, Node844+306PASS; full527/CI/signature/actualexport stillpending.
+Originalfailedgenerations/tests preserved; four legacystructuralattachmentseams
+adaptedwithout changing numeric/pixel/clockassertions. No4minfilmacceptance.
+
 # Active silent VIDEO overlay and reliability526 integration — future4.10.24/code527
 
 Preserve combined source10b7adc (VIDEOcore/vendor, TITLEmotion and guarded VIDEO UI)

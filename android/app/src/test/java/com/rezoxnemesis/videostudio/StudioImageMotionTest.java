@@ -215,10 +215,9 @@ public class StudioImageMotionTest {
         StudioLayer motion=StudioLayer.fromJson(layer().put("motionKeyframes",new JSONArray().put(key(0)).put(key(1000).put("x",.2))));
         project.studioLayers.add(motion);StudioLayer caption=new StudioLayer();caption.type=StudioLayer.TITLE;caption.text="A real caption";caption.durationMs=1000;project.studioLayers.add(caption);
         androidx.media3.transformer.Composition composition=new NativeRenderEngine(RuntimeEnvironment.getApplication()).buildPreviewComposition(project,"1:1","720p");
-        OverlayEffect effect=(OverlayEffect)composition.effects.videoEffects.stream().filter(e->e instanceof OverlayEffect).findFirst().get();
-        // Inspect actual attached TextureOverlay instances; no replacement compositor or test renderer.
-        Field field=OverlayEffect.class.getDeclaredField("overlays");field.setAccessible(true);
-        List<?> overlays=(List<?>)field.get(effect);assertEquals(2,overlays.size());
+        StudioCompositionOverlayEffect effect=(StudioCompositionOverlayEffect)composition.effects.videoEffects.stream().filter(e->e instanceof StudioCompositionOverlayEffect).findFirst().get();
+        // Inspect one actual fresh native resource generation, without GL allocation.
+        List<?> overlays=effect.createOverlays();assertEquals(2,overlays.size());
         StudioTimedImageOverlay attached=(StudioTimedImageOverlay)overlays.stream().filter(o->o instanceof StudioTimedImageOverlay).findFirst().get();
         attached.configure(new Size(200,100));assertEquals(.2,attached.getOverlaySettings(750_000).getBackgroundFrameAnchor().first,.000001);
         assertTrue(overlays.stream().anyMatch(o->o instanceof StudioTimedTitleOverlay));attached.release();

@@ -72,7 +72,7 @@ public class StudioPixelAndImageLayerTest {
         ProjectStore.Project p=project();StudioLayer lane=image();lane.assetId=p.assets.get(0).id;p.studioLayers.add(lane);
         androidx.media3.transformer.Composition composition=new NativeRenderEngine(RuntimeEnvironment.getApplication())
                 .buildPreviewComposition(p,"9:16","720p");
-        assertTrue(composition.effects.videoEffects.stream().anyMatch(e->e instanceof androidx.media3.effect.OverlayEffect));
+        assertTrue(composition.effects.videoEffects.stream().anyMatch(e->e instanceof StudioCompositionOverlayEffect));
     }
 
     @Test public void allPixelControlsAreBoundToTheSharedNativeEffectBuilder() throws Exception {
