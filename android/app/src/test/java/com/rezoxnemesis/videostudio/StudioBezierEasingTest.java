@@ -12,7 +12,7 @@ import static org.junit.Assert.*;
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk=33,manifest=Config.NONE)
 public class StudioBezierEasingTest {
-    @Test public void endpointsAndSymmetryAreExact() {
+    @Test public void endpointsAndSymmetryAreExact() throws Exception {
         double[] h=StudioBezierEasing.validate(new JSONArray()
                 .put(.42).put(0).put(.58).put(1));
         assertEquals(0,StudioBezierEasing.evaluate(0,h),0);
