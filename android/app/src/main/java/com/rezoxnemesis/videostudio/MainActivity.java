@@ -57,6 +57,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
     private static final int PICK_MEDIA = 1201;
     private static final int PICK_CLOUD_WORKSPACE = 1202;
     private static final int PICK_UPDATE_APK = 1203;
+    private static final int PICK_VIDEO_OVERLAY_FILE = 1204;
     private static final int C_BG = StudioUi.BG;
     private static final int C_CARD = StudioUi.SURFACE;
     private static final int C_CARD_2 = StudioUi.SURFACE_ALT;
@@ -120,6 +121,12 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
     private final java.util.concurrent.ConcurrentHashMap<String,AudioEnvelopeCompletion> audioEnvelopeCommands=new java.util.concurrent.ConcurrentHashMap<>();
     private java.util.concurrent.ScheduledExecutorService audioEnvelopeCompletions;
     private boolean audioEnvelopeCommandsClosed;
+    private SelectedVideoImportDialog selectedVideoImport;
+    private SelectedVideoPick selectedVideoPick;
+    private static final class SelectedVideoPick {
+        final String projectId,operationId;final long revision,generation;
+        SelectedVideoPick(String projectId,long revision,long generation){this.projectId=projectId;this.revision=revision;this.generation=generation;operationId=UUID.randomUUID().toString();}
+    }
     private long studioSurfaceGeneration;
     private StudioEditorWorkspace studioWorkspace;
     private String studioWorkspacePane="Timeline",studioInspectorProjectId="",studioSelectedLayerId;
@@ -236,6 +243,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
     @Override
     protected void onDestroy() {
         closeStudioAudioEnvelope();
+        closeSelectedVideoImport();selectedVideoPick=null;
         closeStudioVideoEditor();
         if(studioImageMotionDialog!=null)studioImageMotionDialog.dismiss();
         timelinePreviewRunning = false;
@@ -344,6 +352,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
     private void setScreen(View view, String name) {
         if (activityRefresh != null) ui.removeCallbacks(activityRefresh);
         closeStudioAudioEnvelope();
+        closeSelectedVideoImport();
         studioSurfaceGeneration++;
         currentScreen = name;
         StudioUi.prepareTouchLayout(view);
@@ -941,6 +950,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
             Button video=studioButton("+ Video Overlay",this::chooseStudioVideo);video.setEnabled(studioVideoCount()<2);
             visuals.addView(video,new LinearLayout.LayoutParams(0,dp(48),1));box.addView(visuals);
             box.addView(body("Up to 2 silent video overlays. Source files stay owned by this project."));
+            studioWorkspaceActions(box,new String[]{"Choose video file","Retry saved video copy"},new Runnable[]{this::pickStudioVideoFile,this::retrySelectedVideoImport});
             studioWorkspaceActions(box,new String[]{"+ Music","+ Caption","Story audio"},new Runnable[]{this::chooseStudioAudio,()->editStudioTitle(null),()->{if(activeProject!=null)SketchStoryAudioDialog.show(this,activeProject.id,result->Toast.makeText(this,"Story audio saved in a separate audio project",Toast.LENGTH_LONG).show());}});
             renderStudioMediaBin(box);
         }else if("Inspector".equals(pane))buildStudioInspector(box);
@@ -1060,9 +1070,9 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         ArrayList<ProjectStore.Asset> videos=new ArrayList<>();ArrayList<String> labels=new ArrayList<>();
         for(ProjectStore.Asset asset:activeProject.assets)if(eligibleStudioVideo(asset)){videos.add(asset);labels.add(asset.name);}
         if(videos.isEmpty()){
-            new AlertDialog.Builder(this).setTitle("Add video overlay").setMessage("Import a seekable app-owned video with a known duration into this project's Media Bin first. External links cannot supply an owned overlay.")
+            new AlertDialog.Builder(this).setTitle("Add video overlay").setMessage("Choose one video in Files to make an independent owned copy without adding a base clip. Or copy an already owned video from another project. The selected document stays unchanged.")
                     .setPositiveButton("Import from project",(dialog,which)->ProjectAssetImportDialog.show(this,owner))
-                    .setNeutralButton("+ Import",(dialog,which)->pickMedia()).setNegativeButton("Cancel",null).show();return;
+                    .setNeutralButton("Choose video file",(dialog,which)->{if(canApplyStudioVideo(owner,revision,generation))pickStudioVideoFile();}).setNegativeButton("Cancel",null).show();return;
         }
         new AlertDialog.Builder(this).setTitle("Choose an imported overlay video").setItems(labels.toArray(new String[0]),(dialog,index)->{
             if(canApplyStudioVideo(owner,revision,generation))editStudioVideo(null,videos.get(index).id);
@@ -1129,6 +1139,35 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
     }
 
     private void closeStudioAudioEnvelope(){StudioAudioEnvelopeDialog dialog=studioAudioEnvelopeDialog;studioAudioEnvelopeDialog=null;if(dialog!=null)dialog.close();}
+    private void pickStudioVideoFile(){
+        if(activeProject==null||!"editor".equals(currentScreen))return;
+        selectedVideoPick=new SelectedVideoPick(activeProject.id,activeProject.updatedAt,studioSurfaceGeneration);
+        Intent picker=new Intent(Intent.ACTION_OPEN_DOCUMENT);picker.addCategory(Intent.CATEGORY_OPENABLE);picker.setType("video/*");picker.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION|Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+        try{startActivityForResult(picker,PICK_VIDEO_OVERLAY_FILE);}catch(Exception error){selectedVideoPick=null;Toast.makeText(this,"Could not open video Files: "+error.getMessage(),Toast.LENGTH_LONG).show();}
+    }
+    private void selectedStudioVideoResult(int resultCode,Intent data){
+        SelectedVideoPick selection=selectedVideoPick;selectedVideoPick=null;if(resultCode!=RESULT_OK)return;
+        if(selection==null||!canApplyStudioVideo(selection.projectId,selection.revision,selection.generation))return;
+        if(data==null||data.getData()==null||data.getClipData()!=null&&data.getClipData().getItemCount()!=1){Toast.makeText(this,"Choose one VIDEO document in Files",Toast.LENGTH_LONG).show();return;}
+        try{
+            Uri uri=data.getData();if(!"content".equals(uri.getScheme()))throw new IllegalArgumentException("Choose an explicit video document from Files");
+            getContentResolver().takePersistableUriPermission(uri,Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            closeSelectedVideoImport();selectedVideoImport=SelectedVideoImportDialog.picked(this,selection.projectId,selection.revision,uri,selection.operationId,
+                    ()->canApplyStudioVideo(selection.projectId,selection.revision,selection.generation),this::selectedVideoImported,
+                    closed->{if(selectedVideoImport==closed)selectedVideoImport=null;});
+        }catch(Exception error){Toast.makeText(this,"Video import not saved: "+error.getMessage(),Toast.LENGTH_LONG).show();}
+    }
+    private void retrySelectedVideoImport(){
+        if(activeProject==null||!"editor".equals(currentScreen))return;final String owner=activeProject.id;final long revision=activeProject.updatedAt,generation=studioSurfaceGeneration;
+        try{closeSelectedVideoImport();selectedVideoImport=SelectedVideoImportDialog.retry(this,owner,()->canApplyStudioVideo(owner,revision,generation),this::selectedVideoImported,closed->{if(selectedVideoImport==closed)selectedVideoImport=null;});}
+        catch(Exception error){Toast.makeText(this,"Video copy retry unavailable: "+error.getMessage(),Toast.LENGTH_LONG).show();}
+    }
+    private void selectedVideoImported(JSONObject result){
+        if(activeProject==null||!activeProject.id.equals(result.optString("projectId")))return;
+        studioWorkspacePane="Media";showEditor();String assetId=result.optString("assetId");
+        if(studioVideoCount()<2&&activeProject.asset(assetId)!=null)editStudioVideo(null,assetId);
+    }
+    private void closeSelectedVideoImport(){SelectedVideoImportDialog dialog=selectedVideoImport;selectedVideoImport=null;if(dialog!=null)dialog.close();}
 
     private boolean canApplyStudioTitleMotion(String projectId,long revision,long surfaceGeneration){
         if(isFinishing()||isDestroyed()||activeProject==null||!projectId.equals(activeProject.id)
@@ -3700,6 +3739,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
 
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        if(requestCode==PICK_VIDEO_OVERLAY_FILE){selectedStudioVideoResult(resultCode,data);return;}
         if (requestCode == PICK_UPDATE_APK) {
             if (resultCode == RESULT_OK && data != null && data.getData() != null)
                 inspectAndOfferUpdate(data.getData());
