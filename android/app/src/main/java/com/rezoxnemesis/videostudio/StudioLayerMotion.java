@@ -6,7 +6,7 @@ import java.util.Set;
 
 /** Shared image/title/video layer-local motion relative to the saved static base. */
 public final class StudioLayerMotion {
-    private static final Set<String> FIELDS=Set.of("timeMs","x","y","scale","scaleX","scaleY","rotate","opacity","easing");
+    private static final Set<String> FIELDS=Set.of("timeMs","x","y","scale","scaleX","scaleY","rotate","opacity","easing","bezier");
     private final StudioClipKeyframes animation;
     private final boolean keyed;
 
