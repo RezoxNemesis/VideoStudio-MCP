@@ -83,6 +83,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
     private ProxyManager proxyManager;
     private SharedPreferences prefs;
     private FrameLayout content;
+    private View appNavigation;
     private TextView connectionPill;
     private ProjectStore.Project activeProject;
     private ProjectStore.Clip selectedClip;
@@ -115,6 +116,17 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
     private AlertDialog studioToolDialog;
     private AlertDialog studioImageMotionDialog;
     private long studioSurfaceGeneration;
+    private StudioEditorWorkspace studioWorkspace;
+    private String studioWorkspacePane="Timeline",studioInspectorProjectId="",studioSelectedLayerId;
+    private Button studioPlayToggle;
+    private View studioEditedTransport,studioSavedRenderTransport;
+    private enum StudioPreviewTarget{EDITED,SAVED_RENDER,SOURCE_VIDEO,SOURCE_STILL}
+    private StudioPreviewTarget studioPreviewTarget=StudioPreviewTarget.EDITED;
+    private String studioPreviewTargetProjectId="",studioPreviewTargetAssetId="",studioPreviewTargetName="";
+    private TextView studioPreviewTargetLabel;
+    private String studioEditedProjectId="";
+    private long studioEditedRevision=-1;
+    private boolean studioPendingEditedSeek;
     private int studioTimelinePage=0;
     private int studioMediaPage=0;
     private long studioPlayheadMs=0;
@@ -317,6 +329,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         nav.addView(navButton("⚙", "Agent", () -> showControl()), weight());
         nav.setMinimumHeight(dp(72));
         root.addView(nav, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        appNavigation=nav;
         return root;
     }
 
@@ -325,6 +338,10 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         studioSurfaceGeneration++;
         currentScreen = name;
         StudioUi.prepareTouchLayout(view);
+        if(appNavigation!=null)appNavigation.setVisibility("editor".equals(name)?View.GONE:View.VISIBLE);
+        if("editor".equals(name))StudioEditorWorkspace.applyQuiet(view);
+        getWindow().setStatusBarColor("editor".equals(name)?StudioEditorWorkspace.BG:C_BG);
+        getWindow().setNavigationBarColor("editor".equals(name)?StudioEditorWorkspace.BG:C_BG);
         content.removeAllViews();
         content.addView(view, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
     }
@@ -722,312 +739,292 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
      */
     private void showEditor() {
         ensureEditorMedia();
-        final int previousScroll="editor".equals(currentScreen)&&content!=null&&content.getChildCount()>0&&content.getChildAt(0) instanceof ScrollView
-                ?content.getChildAt(0).getScrollY():0;
-        if(studioCaptionClock!=null){
-            ui.removeCallbacks(studioCaptionClock);studioCaptionClock=null;
-        }
+        if(studioCaptionClock!=null){ui.removeCallbacks(studioCaptionClock);studioCaptionClock=null;}
         if(studioAudioPreview!=null)studioAudioPreview.stop();
-        if(activeProject==null){
-            activeProject=store.active();
-            if(activeProject==null)activeProject=store.create("Untitled Project");
-        }
+        if(activeProject==null){activeProject=store.active();if(activeProject==null)activeProject=store.create("Untitled Project");}
         ProjectStore.Project refreshed=store.get(activeProject.id);
         if(refreshed!=null&&refreshed.updatedAt!=activeProject.updatedAt){
-            String selectedId=selectedClip==null?"":selectedClip.id;
-            activeProject=refreshed;selectedClip=null;
-            for(ProjectStore.Clip c:activeProject.clips){
-                if(selectedId.equals(c.id)){selectedClip=c;break;}
-            }
+            String selectedId=selectedClip==null?"":selectedClip.id;activeProject=refreshed;selectedClip=null;
+            for(ProjectStore.Clip clip:activeProject.clips)if(selectedId.equals(clip.id)){selectedClip=clip;break;}
         }
-        if(selectedClip==null && !activeProject.clips.isEmpty())
-            selectedClip=activeProject.clips.get(0);
-        editHistory.reset(activeProject.id);
-        ScrollView scroll=baseScroll();
-        LinearLayout box=column();
-        box.setPadding(dp(12),dp(12),dp(12),dp(24));
-        scroll.addView(box);
+        if(!activeProject.id.equals(studioInspectorProjectId)){
+            studioInspectorProjectId=activeProject.id;studioSelectedLayerId=null;studioWorkspacePane="Timeline";
+        }
+        if(!activeProject.id.equals(studioPreviewTargetProjectId))setStudioPreviewTarget(StudioPreviewTarget.EDITED,"","");
+        if(studioPreviewTarget==StudioPreviewTarget.SOURCE_VIDEO||studioPreviewTarget==StudioPreviewTarget.SOURCE_STILL){
+            ProjectStore.Asset target=activeProject.asset(studioPreviewTargetAssetId);
+            if(target==null||target.mime==null||!target.mime.startsWith(studioPreviewTarget==StudioPreviewTarget.SOURCE_STILL?"image/":"video/"))
+                setStudioPreviewTarget(StudioPreviewTarget.EDITED,"","");
+        }
+        if(selectedClip==null&&!activeProject.clips.isEmpty())selectedClip=activeProject.clips.get(0);
+        selectedStudioLayer();editHistory.reset(activeProject.id);
+        long length=Math.max(1,activeProject.outputDurationMs());studioPlayheadMs=Math.max(0,Math.min(length,studioPlayheadMs));
+        if(selectedClip!=null){
+            StudioTimelineClock.Position position=StudioTimelineClock.locate(activeProject.clips,studioPlayheadMs);
+            if(position.clipIndex<0||!selectedClip.id.equals(activeProject.clips.get(position.clipIndex).id))
+                studioPlayheadMs=StudioTimelineEditOps.startOf(activeProject.clips,selectedClip.id);
+        }
 
-        LinearLayout projectTop=new LinearLayout(this);
-        projectTop.setGravity(Gravity.CENTER_VERTICAL);
-        Button projectButton=studioButton("▾  "+activeProject.name,()->showStudioProjectLibrary());
-        projectButton.setTextSize(15);
-        projectTop.addView(projectButton,new LinearLayout.LayoutParams(0,dp(49),1));
-        Button export=studioButton("Export",this::queueStudioExport);
-        StudioUi.styleButton(export,true);
-        projectTop.addView(export,margins(dp(86),dp(48),0,0,dp(6),0));
-        box.addView(projectTop);
-        box.addView(body("PROJECT  •  "+activeProject.clips.size()+" clips  •  "+
-                activeProject.assets.size()+" assets  •  "+time(activeProject.outputDurationMs())),
-                margins(-1,-2,dp(4),dp(8),dp(3),0));
+        LinearLayout header=new LinearLayout(this);header.setGravity(Gravity.CENTER_VERTICAL);
+        header.addView(studioEditorIconButton("back","Back to Home",this::showHome),new LinearLayout.LayoutParams(dp(48),dp(48)));
+        Button project=studioButton("▾  "+activeProject.name,this::showStudioProjectLibrary);
+        project.setTextSize(18);project.setSingleLine(true);project.setMaxLines(1);
+        project.setEllipsize(android.text.TextUtils.TruncateAt.END);project.setContentDescription("Open project "+activeProject.name);
+        header.addView(project,new LinearLayout.LayoutParams(0,dp(48),1));
+        JSONObject nativeState=NativeWorkMonitor.snapshot(this);boolean connected=nativeState.optBoolean("nativeServiceOnline",false);
+        TextView nativeStatus=accent(connected?"●":"○",connected?C_CYAN:C_MUTED);nativeStatus.setGravity(Gravity.CENTER);
+        nativeStatus.setTag("editor-native-status");
+        nativeStatus.setContentDescription((connected?"Native connected":"Native reconnecting")+". Open Activity");
+        nativeStatus.setOnClickListener(view->showStudioJobDetails());header.addView(nativeStatus,new LinearLayout.LayoutParams(dp(48),dp(48)));
+        Button export=studioButton("Export",this::queueStudioExport);StudioUi.styleButton(export,true);
+        export.setTag("editor-export");export.setCompoundDrawablesWithIntrinsicBounds(null,null,StudioEditorWorkspace.icon(this,"export",false),null);
+        export.setCompoundDrawablePadding(dp(4));header.addView(export,new LinearLayout.LayoutParams(dp(100),dp(48)));
 
-        LinearLayout previewCard=card(false);
-        LinearLayout caption=new LinearLayout(this);
-        caption.setGravity(Gravity.CENTER_VERTICAL);
-        TextView previewLabel=title("Preview",16);
-        caption.addView(previewLabel,new LinearLayout.LayoutParams(0,-2,1));
-        TextView sourceLabel=accent(selectedClip==null?"NO CLIP":
-                "SELECTED "+(activeProject.clips.indexOf(selectedClip)+1)+
-                        "/"+activeProject.clips.size(),C_CYAN);
-        caption.addView(sourceLabel);
-        previewCard.addView(caption);
-        studioPreviewFrame=new FrameLayout(this);
-        studioPreviewFrame.setBackground(rounded(Color.BLACK,0,dp(12)));
-        player().attach(studioPreviewFrame);
-        studioStillPreview=new ImageView(this);
-        studioStillPreview.setBackgroundColor(Color.BLACK);
-        studioStillPreview.setScaleType(ImageView.ScaleType.FIT_CENTER);
-        studioStillPreview.setVisibility(View.GONE);
-        studioPreviewFrame.addView(studioStillPreview,
-                new FrameLayout.LayoutParams(-1,-1));
-        studioCaptionPreview=new TextView(this);
-        studioCaptionPreview.setGravity(Gravity.CENTER);
-        studioCaptionPreview.setTextSize(17);
-        studioCaptionPreview.setTypeface(Typeface.DEFAULT,Typeface.BOLD);
-        studioCaptionPreview.setTextColor(Color.WHITE);
-        studioCaptionPreview.setShadowLayer(dp(3),0,dp(2),Color.BLACK);
-        studioCaptionPreview.setPadding(dp(8),dp(5),dp(8),dp(5));
-        studioCaptionPreview.setVisibility(View.GONE);
-        studioPreviewFrame.addView(studioCaptionPreview,
-                new FrameLayout.LayoutParams(-1,-2,Gravity.BOTTOM|Gravity.CENTER_HORIZONTAL));
-        previewCard.addView(studioPreviewFrame,margins(-1,dp(254),dp(7),0,0,0));
-        studioPreviewErrorView=body(studioPreviewError);
-        studioPreviewErrorView.setTag("studio-preview-error");
+        studioPreviewFrame=new FrameLayout(this);studioPreviewFrame.setBackgroundColor(StudioEditorWorkspace.BG);
+        player().attach(studioPreviewFrame);setStudioPlayerControls(false);
+        studioStillPreview=new ImageView(this);studioStillPreview.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        studioStillPreview.setBackgroundColor(Color.BLACK);studioStillPreview.setVisibility(View.GONE);
+        studioPreviewFrame.addView(studioStillPreview,new FrameLayout.LayoutParams(-1,-1));
+        studioCaptionPreview=new TextView(this);studioCaptionPreview.setGravity(Gravity.CENTER);studioCaptionPreview.setTextSize(17);
+        studioCaptionPreview.setTypeface(Typeface.DEFAULT,Typeface.BOLD);studioCaptionPreview.setTextColor(Color.WHITE);
+        studioCaptionPreview.setShadowLayer(dp(3),0,dp(2),Color.BLACK);studioCaptionPreview.setPadding(dp(8),dp(5),dp(8),dp(5));
+        studioCaptionPreview.setVisibility(View.GONE);studioPreviewFrame.addView(studioCaptionPreview,new FrameLayout.LayoutParams(-1,-2,Gravity.BOTTOM|Gravity.CENTER_HORIZONTAL));
+        studioPreviewErrorView=body(studioPreviewError);studioPreviewErrorView.setTag("studio-preview-error");
+        studioPreviewErrorView.setMaxLines(2);studioPreviewErrorView.setEllipsize(android.text.TextUtils.TruncateAt.END);
         studioPreviewErrorView.setVisibility(studioPreviewError.isEmpty()?View.GONE:View.VISIBLE);
-        previewCard.addView(studioPreviewErrorView);
-        studioPreviewRetry=studioButton("Retry preview",this::playStudioTimeline);
-        studioPreviewRetry.setTag("studio-preview-retry");
+        studioPreviewErrorView.setOnClickListener(view->{if(!studioPreviewError.isEmpty())new AlertDialog.Builder(this).setTitle("Edited preview").setMessage(studioPreviewError).setPositiveButton("OK",null).show();});
+        FrameLayout.LayoutParams errorSize=new FrameLayout.LayoutParams(-1,-2,Gravity.BOTTOM);errorSize.bottomMargin=dp(50);studioPreviewFrame.addView(studioPreviewErrorView,errorSize);
+        studioPreviewRetry=studioButton("Retry preview",this::playStudioTimeline);studioPreviewRetry.setTag("studio-preview-retry");
         studioPreviewRetry.setVisibility(studioPreviewError.isEmpty()?View.GONE:View.VISIBLE);
-        previewCard.addView(studioPreviewRetry);
+        studioPreviewFrame.addView(studioPreviewRetry,new FrameLayout.LayoutParams(-2,dp(48),Gravity.BOTTOM|Gravity.END));
 
-        studioTimeLabel=body("0:00 / "+time(activeProject.outputDurationMs()));
-        previewCard.addView(studioTimeLabel,margins(-1,-2,dp(7),0,0,0));
-        SeekBar seek=new SeekBar(this);
-        studioSeek=seek;
-        seek.setMax(1_000_000);
-        long projectLength=Math.max(1,activeProject.outputDurationMs());
-        studioPlayheadMs=Math.max(0,Math.min(projectLength,studioPlayheadMs));
-        if(selectedClip!=null){
-            StudioTimelineClock.Position position=StudioTimelineClock.locate(
-                    activeProject.clips,studioPlayheadMs);
-            if(position.clipIndex<0||
-                    !selectedClip.id.equals(activeProject.clips.get(position.clipIndex).id)){
-                studioPlayheadMs=0;
-                for(ProjectStore.Clip clip:activeProject.clips){
-                    if(clip.id.equals(selectedClip.id))break;
-                    studioPlayheadMs+=clip.outputDurationMs();
-                }
-            }
-        }
-        studioTimeLabel.setText(StudioEditCursor.timecode(studioPlayheadMs)+" / "+StudioEditCursor.timecode(projectLength));
-        seek.setProgress((int)(seek.getMax()*Math.min(projectLength,studioPlayheadMs)/(double)projectLength));
-        seek.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener(){
-            @Override public void onStartTrackingTouch(SeekBar b){stopStillSequenceOnly();}
-            @Override public void onProgressChanged(SeekBar b,int value,boolean fromUser){
-                if(fromUser)studioTimeLabel.setText(
-                        StudioEditCursor.timecode(Math.round(projectLength*value/(double)b.getMax()))+" / "+StudioEditCursor.timecode(projectLength));
-            }
-            @Override public void onStopTrackingTouch(SeekBar b){
-                long playhead=Math.round(projectLength*b.getProgress()/(double)b.getMax());
-                scrubStudioTo(playhead);
-            }
-        });
-        previewCard.addView(seek,margins(-1,dp(38),0,0,0,0));
-
-        LinearLayout precisionTransport=new LinearLayout(this);
-        String[] transportLabels={"|‹ Cut","−0.1s","Time…","+0.1s","Cut ›|"};
-        Runnable[] transportActions={()->seekStudioBoundary(-1),()->scrubStudioTo(studioPlayheadMs-100),this::studioSeekDialog,()->scrubStudioTo(studioPlayheadMs+100),()->seekStudioBoundary(1)};
-        for(int i=0;i<transportLabels.length;i++)precisionTransport.addView(studioButton(transportLabels[i],transportActions[i]),new LinearLayout.LayoutParams(0,dp(42),1));
-        previewCard.addView(precisionTransport);
-
-        LinearLayout controls=new LinearLayout(this);
-        controls.setGravity(Gravity.CENTER_VERTICAL);
-        controls.addView(studioButton("▶ Play Edit",this::playStudioTimeline),
-                new LinearLayout.LayoutParams(0,dp(46),1));
-        controls.addView(studioButton("▶ Latest MP4",this::playStudioLatest),
-                new LinearLayout.LayoutParams(0,dp(46),1));
-        controls.addView(studioButton("▤ All Renders",this::showStudioRenderLibrary),
-                new LinearLayout.LayoutParams(0,dp(46),1));
-        previewCard.addView(controls,margins(-1,dp(48),dp(3),0,0,0));
-        box.addView(previewCard,margins(-1,-2,dp(8),0,0,0));
-
-        JSONObject nativeState=NativeWorkMonitor.snapshot(this);
-        LinearLayout background=new LinearLayout(this);background.setGravity(Gravity.CENTER_VERTICAL);
-        boolean nativeOnline=nativeState.optBoolean("nativeServiceOnline",false);
-        String summary=nativeOnline?"● Native connected":"◌ Native reconnecting";
-        if(nativeState.optInt("active",0)>0)summary+=" · "+nativeState.optString("jobName","Background export")+" "+nativeState.optInt("jobProgress",0)+"%";
-        TextView backgroundStatus=title(summary,12);backgroundStatus.setTextColor(nativeOnline?C_CYAN:C_MUTED);background.addView(backgroundStatus,new LinearLayout.LayoutParams(0,-2,1));
-        background.addView(studioButton("Activity",this::showStudioJobDetails),new LinearLayout.LayoutParams(dp(85),dp(38)));
-        box.addView(background,margins(-1,dp(42),dp(5),0,0,0));
-
-        LinearLayout timelineHeader=new LinearLayout(this);
-        timelineHeader.setGravity(Gravity.CENTER_VERTICAL);
-        timelineHeader.addView(title("Timeline",17),
-                new LinearLayout.LayoutParams(0,-2,1));
-        Button undo=studioButton("↶ Undo",()->restoreStudioHistory(false));
-        undo.setEnabled(editHistory.canUndo());
-        timelineHeader.addView(undo,new LinearLayout.LayoutParams(dp(76),dp(42)));
-        Button redo=studioButton("↷ Redo",()->restoreStudioHistory(true));
-        redo.setEnabled(editHistory.canRedo());
-        timelineHeader.addView(redo,new LinearLayout.LayoutParams(dp(76),dp(42)));
-        box.addView(timelineHeader,margins(-1,-2,dp(9),dp(2),0,0));
-
-        if(selectedClip!=null){
-            TextView selectedInfo=body("SELECTED CLIP  "+(activeProject.clips.indexOf(selectedClip)+1)+"  •  Source "+StudioEditCursor.timecode(selectedClip.inMs)+" – "+StudioEditCursor.timecode(selectedClip.outMs)+"  •  "+trimFloat(selectedClip.speed)+"×");
-            box.addView(selectedInfo,margins(-1,-2,dp(3),dp(4),0,0));
-            HorizontalScrollView quickScroll=new HorizontalScrollView(this);
-            quickScroll.setHorizontalScrollBarEnabled(false);
-            LinearLayout quick=new LinearLayout(this);
-            studioSplitButton=studioButton("Split Here",this::splitClip);
-            studioSplitButton.setEnabled(canSplitStudioAtCursor());
-            quick.addView(studioSplitButton,new LinearLayout.LayoutParams(dp(106),dp(44)));
-            String[] labels={"Trim…","Set In Here","Set Out Here","Duplicate","Speed","Volume"};
-            Runnable[] actions={this::trimDialog,()->trimStudioAtCursor(true),()->trimStudioAtCursor(false),()->applyTool("Duplicate"),this::studioSpeedDialog,this::studioVolumeDialog};
-            for(int i=0;i<labels.length;i++)quick.addView(studioButton(labels[i],actions[i]),new LinearLayout.LayoutParams(dp(113),dp(44)));
-            quickScroll.addView(quick);box.addView(quickScroll,margins(-1,dp(46),0,dp(5),0,0));
-        }else studioSplitButton=null;
-
-        HorizontalScrollView timeline=new HorizontalScrollView(this);
-        timeline.setHorizontalScrollBarEnabled(false);
-        LinearLayout clips=new LinearLayout(this);
-        clips.setPadding(dp(2),dp(3),dp(9),dp(6));
-        int pageSize=20;
-        int pages=Math.max(1,(activeProject.clips.size()+pageSize-1)/pageSize);
-        studioTimelinePage=Math.max(0,Math.min(studioTimelinePage,pages-1));
-        int first=studioTimelinePage*pageSize;
-        int end=Math.min(activeProject.clips.size(),first+pageSize);
-        for(int i=first;i<end;i++){
-            final int at=i;
-            ProjectStore.Clip clip=activeProject.clips.get(i);
-            ProjectStore.Asset asset=activeProject.asset(clip.assetId);
-            boolean selected=selectedClip!=null&&selectedClip.id.equals(clip.id);
-            LinearLayout chip=column();
-            chip.setPadding(dp(5),dp(6),dp(5),dp(6));
-            chip.setBackground(rounded(selected?0xff192a4b:C_CARD_2,
-                    selected?C_CYAN:0xff32405d,dp(11)));
-            TextView number=accent(String.valueOf(i+1)+" · "+time(clip.outputDurationMs()),
-                    selected?C_CYAN:C_MUTED);
-            chip.addView(number);
-            ImageView thumb=new ImageView(this);
-            thumb.setBackgroundColor(0xff0c1626);
-            thumb.setScaleType(ImageView.ScaleType.CENTER_CROP);
-            if(asset!=null&&studioThumbs!=null)studioThumbs.bind(thumb,asset);
-            chip.addView(thumb,margins(-1,dp(81),dp(4),0,0,0));
-            TextView filename=body(asset==null?"Missing media":asset.name);
-            filename.setMaxLines(1);filename.setEllipsize(android.text.TextUtils.TruncateAt.END);
-            chip.addView(filename,margins(-1,-2,dp(4),0,0,0));
-            chip.setOnClickListener(v->{
-                stopStillSequenceOnly();
-                long start=0;
-                for(int j=0;j<at;j++)start+=activeProject.clips.get(j).outputDurationMs();
-                studioPlayheadMs=start;
-                selectedClip=activeProject.clips.get(at);
-                showEditor();
-                if(selectedClip!=null)previewSelectedStudioClip(true);
-            });
-            // Press-and-hold to reorder the actual timeline. No changes to
-            // imported source media, generated renders or other project tracks.
-            chip.setOnLongClickListener(v->{
-                android.content.ClipData dragData=android.content.ClipData.newPlainText(
-                        "videostudio.timeline.clip",clip.id);
-                return v.startDragAndDrop(dragData,new View.DragShadowBuilder(chip),
-                        clip.id,0);
-            });
-            chip.setOnDragListener((v,event)->{
-                switch(event.getAction()){
-                    case android.view.DragEvent.ACTION_DRAG_STARTED:
-                        return event.getLocalState() instanceof String;
-                    case android.view.DragEvent.ACTION_DROP:
-                        Object origin=event.getLocalState();
-                        if(!(origin instanceof String))return false;
-                        moveStudioClipTo((String)origin,at);
-                        return true;
-                    default:return true;
-                }
-            });
-            clips.addView(chip,margins(dp(115),dp(144),0,0,0,dp(7)));
-        }
-        if(activeProject.clips.isEmpty()){
-            TextView empty=body("No clips yet. Import media or choose an existing generated project.");
-            clips.addView(empty);
-        }
-        timeline.addView(clips);
-        box.addView(timeline);
-        if(pages>1){
-            LinearLayout paging=new LinearLayout(this);
-            paging.setGravity(Gravity.CENTER_VERTICAL);
-            Button prev=studioButton("‹ Earlier",()->{
-                studioTimelinePage=Math.max(0,studioTimelinePage-1);showEditor();
-            });
-            paging.addView(prev,new LinearLayout.LayoutParams(0,dp(40),1));
-            TextView current=body("Page "+(studioTimelinePage+1)+" / "+pages);
-            current.setGravity(Gravity.CENTER);
-            paging.addView(current,new LinearLayout.LayoutParams(0,dp(40),1));
-            Button next=studioButton("Later ›",()->{
-                studioTimelinePage=Math.min(pages-1,studioTimelinePage+1);showEditor();
-            });
-            paging.addView(next,new LinearLayout.LayoutParams(0,dp(40),1));
-            box.addView(paging);
-        }
-
-        renderStudioTrackLanes(box);
-
-        LinearLayout mediaHead=new LinearLayout(this);
-        mediaHead.setGravity(Gravity.CENTER_VERTICAL);
-        TextView mediaTitle=title("Media Bin · "+activeProject.assets.size(),16);
-        mediaHead.addView(mediaTitle,new LinearLayout.LayoutParams(0,-2,1));
-        Button binButton=studioButton(studioShowMedia?"Hide media":"Show media",()->{
-            studioShowMedia=!studioShowMedia;showEditor();
-        });
-        mediaHead.addView(binButton,new LinearLayout.LayoutParams(dp(114),dp(43)));
-        Button add=studioButton("+ Import",this::pickMedia);
-        mediaHead.addView(add,new LinearLayout.LayoutParams(dp(105),dp(43)));
-        box.addView(mediaHead,margins(-1,-2,dp(8),dp(4),0,0));
-        box.addView(studioButton("Import from project",()->ProjectAssetImportDialog.show(this,activeProject.id)),margins(-1,dp(43),dp(8),0,0,dp(4)));
-        if(studioShowMedia)renderStudioMediaBin(box);
-
-        box.addView(title("Tools",18),margins(-1,-2,dp(10),dp(3),0,0));
-        HorizontalScrollView categories=new HorizontalScrollView(this);
-        categories.setHorizontalScrollBarEnabled(false);
-        LinearLayout tabs=new LinearLayout(this);
-        for(int i=0;i<StudioToolCatalog.GROUPS.length;i++){
-            final int choice=i;
-            String group=StudioToolCatalog.GROUPS[i];
-            Button tab=studioButton(group,()->{
-                studioToolCategory=choice;showEditor();
-            });
-            tab.setBackground(rounded(studioToolCategory==i?C_CARD_2:C_CARD,
-                    studioToolCategory==i?C_CYAN:StudioUi.BORDER,dp(12)));
-            tabs.addView(tab,margins(dp(151),dp(45),0,0,0,dp(6)));
-        }
-        categories.addView(tabs);
-        box.addView(categories);
-        List<StudioToolCatalog.Tool> actions=StudioToolCatalog.group(studioToolCategory);
-        for(int i=0;i<actions.size();i+=2){
-            LinearLayout row=new LinearLayout(this);
-            for(int j=i;j<Math.min(actions.size(),i+2);j++){
-                StudioToolCatalog.Tool tool=actions.get(j);
-                Button button=studioButton(tool.label+(tool.supported?"":" (unavailable)"),
-                        ()->performStudioTool(tool.label));
-                row.addView(button,new LinearLayout.LayoutParams(0,dp(49),1));
-            }
-            if((actions.size()-i)==1)row.addView(new View(this),
-                    new LinearLayout.LayoutParams(0,dp(49),1));
-            box.addView(row,margins(-1,dp(49),dp(3),0,0,0));
-        }
-        Button find=studioButton("⌕ Find any tool",this::findStudioTool);
-        box.addView(find,margins(-1,dp(46),dp(10),0,0,0));
-        box.addView(body("Preview and MP4 export share the native effect pipeline. "+
-                "Unavailable tools explain which rendering support is missing."),
-                margins(-1,-2,dp(5),0,0,0));
-
-        setScreen(scroll,"editor");
-        if(previousScroll>0)scroll.post(()->scroll.scrollTo(0,previousScroll));
-        previewSelectedStudioClip(false);
+        LinearLayout transport=column(),editedTransport=column();studioEditedTransport=editedTransport;
+        LinearLayout play=new LinearLayout(this);play.setGravity(Gravity.CENTER_VERTICAL);
+        studioTimeLabel=body(StudioEditCursor.timecode(studioPlayheadMs)+" / "+StudioEditCursor.timecode(activeProject.outputDurationMs()));
+        studioTimeLabel.setGravity(Gravity.CENTER);studioTimeLabel.setTextSize(12);studioTimeLabel.setSingleLine(true);
+        studioTimeLabel.setContentDescription("Edited timeline time. Tap for exact time");studioTimeLabel.setOnClickListener(view->studioSeekDialog());
+        play.addView(studioTimeLabel,new LinearLayout.LayoutParams(0,dp(48),1));
+        play.addView(studioEditorIconButton("previous","|‹ Cut",()->seekStudioBoundary(-1)),new LinearLayout.LayoutParams(dp(48),dp(48)));
+        studioPlayToggle=studioEditorIconButton("play","▶ Play Edit",this::toggleStudioEditedPlayback);studioPlayToggle.setTag("editor-play");
+        studioPlayToggle.setCompoundDrawablesWithIntrinsicBounds(StudioEditorWorkspace.icon(this,"play",true),null,null,null);
+        play.addView(studioPlayToggle,new LinearLayout.LayoutParams(dp(48),dp(48)));
+        play.addView(studioEditorIconButton("next","Cut ›|",()->seekStudioBoundary(1)),new LinearLayout.LayoutParams(dp(48),dp(48)));
+        play.addView(studioEditorIconButton("audio","Audio controls",this::studioWorkspaceAudioMenu),new LinearLayout.LayoutParams(dp(48),dp(48)));
+        editedTransport.addView(play,new LinearLayout.LayoutParams(-1,-2));
+        studioSeek=new SeekBar(this);studioSeek.setContentDescription("Edited timeline seek");studioSeek.setMax(1_000_000);
+        studioSeek.setProgress((int)Math.round(studioSeek.getMax()*studioPlayheadMs/(double)length));
+        studioSeek.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener(){
+            @Override public void onStartTrackingTouch(SeekBar bar){stopStillSequenceOnly();}
+            @Override public void onProgressChanged(SeekBar bar,int value,boolean user){if(user)studioTimeLabel.setText(StudioEditCursor.timecode(Math.round(activeProject.outputDurationMs()*value/(double)bar.getMax()))+" / "+StudioEditCursor.timecode(activeProject.outputDurationMs()));}
+            @Override public void onStopTrackingTouch(SeekBar bar){scrubStudioTo(Math.round(activeProject.outputDurationMs()*bar.getProgress()/(double)bar.getMax()));}
+        });editedTransport.addView(studioSeek,new LinearLayout.LayoutParams(-1,dp(48)));
+        transport.addView(editedTransport,new LinearLayout.LayoutParams(-1,-2));
+        LinearLayout savedTransport=new LinearLayout(this);savedTransport.setGravity(Gravity.CENTER_VERTICAL);
+        studioPreviewTargetLabel=body("");studioPreviewTargetLabel.setMaxLines(2);
+        savedTransport.addView(studioPreviewTargetLabel,new LinearLayout.LayoutParams(0,-2,1));
+        savedTransport.addView(studioButton("Return to edit",this::playStudioTimeline),new LinearLayout.LayoutParams(-2,-2));
+        savedTransport.setVisibility(View.GONE);studioSavedRenderTransport=savedTransport;
+        transport.addView(savedTransport,new LinearLayout.LayoutParams(-1,-2));
+        View editingTools=StudioEditorWorkspace.editingTools(this,new String[]{"Trim","Adjust","Motion","Audio","More"},new Runnable[]{this::studioWorkspaceTrim,this::studioWorkspaceAdjust,this::studioWorkspaceMotion,this::studioWorkspaceAudioMenu,this::studioPreviewMenu});
+        studioWorkspace=new StudioEditorWorkspace(this,header,studioPreviewFrame,transport,editingTools,studioWorkspacePane,
+                this::buildStudioWorkspacePane,pane->studioWorkspacePane=pane);
+        setScreen(studioWorkspace,"editor");
+        if(isStudioExternalPreviewMode()&&!studioPendingEditedSeek)applyStudioPreviewTarget();else previewSelectedStudioClip(false);
         updateStudioCaptionAt(studioPlayheadMs);
         scheduleEditorRefresh(activeProject.id,activeProject.updatedAt);
     }
 
+    private void setStudioPlayerControls(boolean visible){
+        if(studioPreviewFrame==null)return;
+        for(int i=0;i<studioPreviewFrame.getChildCount();i++)if(studioPreviewFrame.getChildAt(i) instanceof androidx.media3.ui.PlayerView){
+            androidx.media3.ui.PlayerView view=(androidx.media3.ui.PlayerView)studioPreviewFrame.getChildAt(i);
+            view.setShutterBackgroundColor(StudioEditorWorkspace.BG);view.setBackgroundColor(StudioEditorWorkspace.BG);
+            view.setUseController(visible);if(visible)view.showController();else view.hideController();
+        }
+    }
+
+    private void studioPreviewMenu(){
+        if(isStudioExternalPreviewMode()){
+            ArrayList<String> labels=new ArrayList<>();ArrayList<Runnable> actions=new ArrayList<>();
+            labels.add("Return to edit");actions.add(this::playStudioTimeline);
+            labels.add("▶ Latest MP4");actions.add(this::playStudioLatest);labels.add("▤ All Renders");actions.add(this::showStudioRenderLibrary);
+            if(studioPreviewTarget!=StudioPreviewTarget.SOURCE_STILL){labels.add("Preview controls");actions.add(()->setStudioPlayerControls(true));}
+            labels.add("Activity");actions.add(this::showStudioJobDetails);labels.add("⌕ Find any tool");actions.add(this::findStudioTool);
+            labels.add("Home");actions.add(this::showHome);labels.add("Tools");actions.add(this::showTools);labels.add("Agent");actions.add(this::showControl);
+            new AlertDialog.Builder(this).setTitle(studioPreviewTarget==StudioPreviewTarget.SAVED_RENDER?"Saved render playback":"Source preview")
+                    .setItems(labels.toArray(new String[0]),(dialog,which)->actions.get(which).run()).show();return;
+        }
+        String[] labels={"Time…","|‹ Cut","Cut ›|","−0.1s","+0.1s","▶ Latest MP4","▤ All Renders","Preview controls","Activity","⌕ Find any tool","Home","Tools","Agent"};
+        new AlertDialog.Builder(this).setTitle("Preview and renders").setItems(labels,(dialog,which)->{
+            switch(which){
+                case 0:studioSeekDialog();break;case 1:seekStudioBoundary(-1);break;case 2:seekStudioBoundary(1);break;
+                case 3:scrubStudioTo(studioPlayheadMs-100);break;case 4:scrubStudioTo(studioPlayheadMs+100);break;
+                case 5:playStudioLatest();break;case 6:showStudioRenderLibrary();break;case 7:setStudioPlayerControls(true);break;
+                case 8:showStudioJobDetails();break;case 9:findStudioTool();break;case 10:showHome();break;case 11:showTools();break;case 12:showControl();break;
+            }
+        }).show();
+    }
+
+    private Button studioEditorIconButton(String icon,String description,Runnable action){
+        Button button=studioButton("",action);button.setTag("editor-icon");button.setContentDescription(description);button.setTooltipText(description);
+        button.setPadding(dp(12),dp(12),dp(12),dp(12));button.setCompoundDrawablesWithIntrinsicBounds(StudioEditorWorkspace.icon(this,icon,false),null,null,null);return button;
+    }
+
+    private void toggleStudioEditedPlayback(){
+        if(isStudioExternalPreviewMode())return;
+        boolean ready=player().isEditedPreview()&&player().snapshotState().playWhenReady&&activeProject!=null&&player().currentPositionMs()<activeProject.outputDurationMs()-1;
+        if(ready){timelinePreviewRunning=false;player().pause();}else playStudioTimeline();
+        updateStudioPlayToggle();
+    }
+
+    private void updateStudioPlayToggle(){
+        if(studioPlayToggle==null)return;
+        boolean playing=livePlayer!=null&&livePlayer.isEditedPreview()&&livePlayer.snapshotState().playWhenReady;
+        String description=playing?"Pause edited timeline":"▶ Play Edit";
+        if(!description.contentEquals(studioPlayToggle.getContentDescription())){
+            studioPlayToggle.setContentDescription(description);
+            studioPlayToggle.setCompoundDrawablesWithIntrinsicBounds(StudioEditorWorkspace.icon(this,playing?"pause":"play",true),null,null,null);
+        }
+    }
+
+    private boolean isStudioExternalPreviewMode(){return activeProject!=null&&activeProject.id.equals(studioPreviewTargetProjectId)&&studioPreviewTarget!=StudioPreviewTarget.EDITED;}
+
+    private void setStudioPreviewTarget(StudioPreviewTarget target,String assetId,String name){
+        studioPreviewTarget=target;studioPreviewTargetProjectId=activeProject==null?"":activeProject.id;
+        studioPreviewTargetAssetId=assetId==null?"":assetId;studioPreviewTargetName=name==null?"":name;
+    }
+
+    /** Presentation follows the actual selected native source, not merely Player.isEditedPreview. */
+    private void applyStudioPreviewTarget(){
+        boolean edited=!isStudioExternalPreviewMode();
+        if(studioEditedTransport!=null)studioEditedTransport.setVisibility(edited?View.VISIBLE:View.GONE);
+        if(studioSavedRenderTransport!=null)studioSavedRenderTransport.setVisibility(edited?View.GONE:View.VISIBLE);
+        if(studioPreviewTargetLabel!=null)studioPreviewTargetLabel.setText((studioPreviewTarget==StudioPreviewTarget.SAVED_RENDER?"Saved render":"Source preview")
+                +(studioPreviewTargetName.isEmpty()?"":" · "+studioPreviewTargetName));
+        boolean still=!edited&&studioPreviewTarget==StudioPreviewTarget.SOURCE_STILL;
+        if(!edited&&studioCaptionPreview!=null){studioCaptionPreview.setText("");studioCaptionPreview.setVisibility(View.GONE);}
+        if(studioStillPreview!=null){
+            studioStillPreview.setVisibility(still?View.VISIBLE:View.GONE);
+            if(still){
+                ProjectStore.Asset source=activeProject.asset(studioPreviewTargetAssetId);
+                if(source!=null&&source.mime!=null&&source.mime.startsWith("image/")){
+                    if(studioThumbs==null)studioThumbs=new StudioThumbnailLoader(this);
+                    if(!("preview:"+source.id).equals(studioStillPreview.getTag()))studioThumbs.bindPreview(studioStillPreview,source);
+                }
+            }else studioStillPreview.setTag(null); // Reject a late source-still thumbnail after returning to edit.
+        }
+        setStudioPlayerControls(!edited&&!still);updateStudioPlayToggle();
+    }
+
+    private void studioWorkspaceTrim(){StudioLayer layer=selectedStudioLayer();if(layer==null)trimDialog();else if(StudioLayer.IMAGE.equals(layer.type))editStudioImage(layer,layer.assetId);else if(StudioLayer.AUDIO.equals(layer.type))editStudioAudio(layer,layer.assetId);else editStudioTitle(layer);}
+    private void studioWorkspaceAdjust(){StudioLayer layer=selectedStudioLayer();if(layer==null)studioAdvancedAdjustDialog(false);else studioWorkspaceTrim();}
+    private void studioWorkspaceMotion(){StudioLayer layer=selectedStudioLayer();if(layer==null)studioKeyframeManager();else if(StudioLayer.IMAGE.equals(layer.type))openStudioImageMotion(layer);else Toast.makeText(this,"Motion keys apply to a base clip or image overlay",Toast.LENGTH_LONG).show();}
+    private void studioWorkspaceAudioMenu(){new AlertDialog.Builder(this).setTitle("Audio").setItems(new String[]{"Clip Volume & Fades","+ Music","Story audio"},(dialog,which)->{if(which==0)studioVolumeDialog();else if(which==1)chooseStudioAudio();else if(activeProject!=null)SketchStoryAudioDialog.show(this,activeProject.id,result->Toast.makeText(this,"Story audio saved in a separate audio project",Toast.LENGTH_LONG).show());}).show();}
+
+    private View buildStudioWorkspacePane(String pane){
+        studioTracks=null;studioSplitButton=null;LinearLayout box=column();box.setPadding(0,dp(4),0,dp(4));
+        if("Media".equals(pane)){
+            box.addView(title("Media Bin · "+activeProject.assets.size()+" owned assets",16));
+            LinearLayout imports=new LinearLayout(this);imports.addView(studioButton("+ Import",this::pickMedia),new LinearLayout.LayoutParams(0,dp(48),1));
+            imports.addView(studioButton("Import from project",()->ProjectAssetImportDialog.show(this,activeProject.id)),new LinearLayout.LayoutParams(0,dp(48),1));box.addView(imports);
+            studioWorkspaceActions(box,new String[]{"+ Image Overlay","+ Music","+ Caption","Story audio"},new Runnable[]{this::chooseStudioImage,this::chooseStudioAudio,()->editStudioTitle(null),()->{if(activeProject!=null)SketchStoryAudioDialog.show(this,activeProject.id,result->Toast.makeText(this,"Story audio saved in a separate audio project",Toast.LENGTH_LONG).show());}});
+            renderStudioMediaBin(box);
+        }else if("Inspector".equals(pane))buildStudioInspector(box);
+        else{
+            LinearLayout heading=new LinearLayout(this);heading.setGravity(Gravity.CENTER_VERTICAL);heading.addView(title("Timeline",17),new LinearLayout.LayoutParams(0,dp(48),1));
+            Button undo=studioButton("↶ Undo",()->restoreStudioHistory(false));undo.setEnabled(editHistory.canUndo());heading.addView(undo,new LinearLayout.LayoutParams(dp(76),dp(48)));
+            Button redo=studioButton("↷ Redo",()->restoreStudioHistory(true));redo.setEnabled(editHistory.canRedo());heading.addView(redo,new LinearLayout.LayoutParams(dp(76),dp(48)));box.addView(heading);
+            renderStudioTrackLanes(box);renderStudioCompactClips(box);
+            LinearLayout navigation=new LinearLayout(this);navigation.setGravity(Gravity.CENTER_VERTICAL);
+            Button less=studioButton("−",()->{studioTrackZoom=Math.max(1,studioTrackZoom/2);studioWorkspace.refreshPane();});less.setEnabled(studioTrackZoom>1);navigation.addView(less,new LinearLayout.LayoutParams(dp(48),dp(48)));
+            TextView zoom=body(studioTrackZoom+"×");zoom.setGravity(Gravity.CENTER);navigation.addView(zoom,new LinearLayout.LayoutParams(dp(34),dp(48)));
+            Button more=studioButton("+",()->{studioTrackZoom=Math.min(16,studioTrackZoom*2);studioWorkspace.refreshPane();});more.setEnabled(studioTrackZoom<16);navigation.addView(more,new LinearLayout.LayoutParams(dp(48),dp(48)));
+            navigation.addView(studioButton(studioTrackSnap?"Snap: On":"Snap: Off",()->{studioTrackSnap=!studioTrackSnap;studioWorkspace.refreshPane();}),new LinearLayout.LayoutParams(0,dp(48),1));
+            navigation.addView(studioButton("Targets",this::chooseStudioInspectorTarget),new LinearLayout.LayoutParams(dp(90),dp(48)));
+            Button tools=studioButton("⋮",this::findStudioTool);tools.setContentDescription("Find any existing editing tool");navigation.addView(tools,new LinearLayout.LayoutParams(dp(48),dp(48)));box.addView(navigation);
+            // Retain the existing authoring/automation entry; panes do not re-admit a failed preview.
+            box.addView(studioButton("Show media",()->studioWorkspace.showPane("Media")));
+        }
+        ScrollView scroll=baseScroll();scroll.addView(box);return scroll;
+    }
+
+    private void studioWorkspaceActions(LinearLayout box,String[] names,Runnable[] actions){
+        for(int first=0;first<names.length;first+=2){LinearLayout row=new LinearLayout(this);
+            for(int i=first;i<Math.min(names.length,first+2);i++)row.addView(studioButton(names[i],actions[i]),new LinearLayout.LayoutParams(0,dp(48),1));box.addView(row);}
+    }
+
+    private StudioLayer selectedStudioLayer(){
+        if(activeProject!=null&&studioSelectedLayerId!=null)for(StudioLayer layer:activeProject.studioLayers)if(studioSelectedLayerId.equals(layer.id))return layer;
+        studioSelectedLayerId=null;return null;
+    }
+
+    private void selectStudioLayer(String id){
+        if(activeProject==null)return;boolean found=false;for(StudioLayer layer:activeProject.studioLayers)if(layer.id.equals(id)){found=true;break;}
+        if(!found)return;studioInspectorProjectId=activeProject.id;studioSelectedLayerId=id;
+        if(studioWorkspace!=null){if("Inspector".equals(studioWorkspacePane))studioWorkspace.refreshPane();else studioWorkspace.showPane("Inspector");}
+    }
+
+    private void chooseStudioInspectorTarget(){
+        if(activeProject==null)return;final String owner=activeProject.id;final long revision=activeProject.updatedAt;
+        ArrayList<String> ids=new ArrayList<>(),labels=new ArrayList<>();
+        if(selectedClip!=null){ids.add("");labels.add("Base clip · "+(activeProject.clips.indexOf(selectedClip)+1));}
+        for(StudioLayer layer:activeProject.studioLayers){ids.add(layer.id);ProjectStore.Asset asset=activeProject.asset(layer.assetId);labels.add((StudioLayer.IMAGE.equals(layer.type)?"Image overlay":StudioLayer.AUDIO.equals(layer.type)?"Audio":"Title")+" · "+(asset==null?layer.text:asset.name));}
+        if(ids.isEmpty()){onStudioNoTarget();return;}
+        new AlertDialog.Builder(this).setTitle("Inspect target").setItems(labels.toArray(new String[0]),(dialog,index)->{
+            if(activeProject==null||!owner.equals(activeProject.id)||revision!=activeProject.updatedAt){Toast.makeText(this,"Project changed. Choose its current target again.",Toast.LENGTH_LONG).show();return;}
+            studioSelectedLayerId=ids.get(index).isEmpty()?null:ids.get(index);if(studioWorkspace!=null){if("Inspector".equals(studioWorkspacePane))studioWorkspace.refreshPane();else studioWorkspace.showPane("Inspector");}
+        }).show();
+    }
+
+    private void onStudioNoTarget(){Toast.makeText(this,"Import a timeline clip or overlay first",Toast.LENGTH_LONG).show();}
+
+    private void buildStudioInspector(LinearLayout box){
+        StudioLayer layer=selectedStudioLayer();
+        LinearLayout heading=new LinearLayout(this);heading.setGravity(Gravity.CENTER_VERTICAL);
+        String kind=layer==null?"Base clip":StudioLayer.IMAGE.equals(layer.type)?"Image overlay":StudioLayer.AUDIO.equals(layer.type)?"Audio":"Title";
+        heading.addView(title(kind,17),new LinearLayout.LayoutParams(0,dp(48),1));heading.addView(studioButton("Choose target",this::chooseStudioInspectorTarget),new LinearLayout.LayoutParams(-2,dp(48)));box.addView(heading);
+        if(layer!=null){
+            ProjectStore.Asset asset=activeProject.asset(layer.assetId);TextView source=body((asset==null?layer.text:asset.name)+" · "+StudioEditCursor.timecode(layer.startMs)+" – "+StudioEditCursor.timecode(layer.startMs+layer.durationMs));source.setMaxLines(2);box.addView(source);
+            if(StudioLayer.IMAGE.equals(layer.type)){
+                box.addView(studioButton("Animate overlay",()->openStudioImageMotion(layer)));
+                box.addView(studioButton("Placement / timing",()->editStudioImage(layer,layer.assetId)));
+                box.addView(studioButton("Delete image overlay",()->removeStudioLayer(layer)));
+                box.addView(body("Image motion keeps the source pixels. Source Crop belongs to a base clip; this overlay has no source-crop control."));
+            }else if(StudioLayer.AUDIO.equals(layer.type)){box.addView(studioButton("Edit audio",()->editStudioAudio(layer,layer.assetId)));box.addView(studioButton("Delete audio",()->removeStudioLayer(layer)));}
+            else{box.addView(studioButton("Edit caption",()->editStudioTitle(layer)));box.addView(studioButton("Delete caption",()->removeStudioLayer(layer)));}
+        }else if(selectedClip!=null){
+            ProjectStore.Asset asset=activeProject.asset(selectedClip.assetId);box.addView(body((asset==null?"Missing media":asset.name)+" · "+StudioEditCursor.timecode(selectedClip.outputDurationMs())));
+            String[] tools={"Crop","Keyframes","Trim","Slow Motion","Volume","Exact Transform","Colour","Adjust","Blur","Opacity","Green Screen","Mask","Glow","Effects","Motion","Shake","Duplicate","Delete Clip","Move Left","Move Right"};
+            Runnable[] callbacks=new Runnable[tools.length];for(int i=0;i<tools.length;i++){String tool=tools[i];callbacks[i]=()->{if("Trim".equals(tool))trimDialog();else if("Duplicate".equals(tool))applyTool("Duplicate");else performStudioTool(tool);};}
+            studioWorkspaceActions(box,tools,callbacks);
+            studioSplitButton=studioButton("Split Here",this::splitClip);studioSplitButton.setEnabled(canSplitStudioAtCursor());box.addView(studioSplitButton);
+            studioWorkspaceActions(box,new String[]{"Set In Here","Set Out Here"},new Runnable[]{()->trimStudioAtCursor(true),()->trimStudioAtCursor(false)});
+        }else{box.addView(body("Select a timeline clip or image/audio/title layer. Media import and existing tools remain available."));}
+        box.addView(studioButton("⌕ Find any tool",this::findStudioTool));
+    }
+
+    private void openStudioImageMotion(StudioLayer image){
+        if(activeProject==null)return;final String owner=activeProject.id;final long revision=activeProject.updatedAt,generation=studioSurfaceGeneration;
+        try{if(!canApplyStudioImage(owner,revision,generation))return;showStudioImageMotion(image.copy(),owner,revision,generation,()->{});}
+        catch(Exception error){Toast.makeText(this,"Cannot animate image overlay: "+error.getMessage(),Toast.LENGTH_LONG).show();}
+    }
+
+    private void renderStudioCompactClips(LinearLayout box){
+        HorizontalScrollView scroll=new HorizontalScrollView(this);LinearLayout clips=new LinearLayout(this);scroll.setHorizontalScrollBarEnabled(false);
+        int pages=Math.max(1,(activeProject.clips.size()+19)/20);studioTimelinePage=Math.max(0,Math.min(pages-1,studioTimelinePage));
+        for(int i=studioTimelinePage*20;i<Math.min(activeProject.clips.size(),(studioTimelinePage+1)*20);i++){
+            ProjectStore.Clip clip=activeProject.clips.get(i);ProjectStore.Asset asset=activeProject.asset(clip.assetId);
+            LinearLayout chip=column();chip.setPadding(dp(6),dp(4),dp(6),dp(4));chip.setBackground(rounded(C_CARD_2,selectedClip!=null&&clip.id.equals(selectedClip.id)?C_CYAN:StudioUi.BORDER,dp(8)));
+            TextView name=body((i+1)+" · "+(asset==null?"Missing media":asset.name));name.setSingleLine(true);name.setEllipsize(android.text.TextUtils.TruncateAt.END);chip.addView(name);chip.addView(body(StudioEditCursor.timecode(clip.outputDurationMs())));
+            chip.setContentDescription("Select base clip "+(i+1)+" "+(asset==null?"Missing media":asset.name));
+            chip.setOnClickListener(view->{stopStillSequenceOnly();selectedClip=clip;studioSelectedLayerId=null;studioPlayheadMs=StudioTimelineEditOps.startOf(activeProject.clips,clip.id);studioPendingEditedSeek=true;showEditor();previewSelectedStudioClip(true);});
+            final int at=i;chip.setOnLongClickListener(view->view.startDragAndDrop(ClipData.newPlainText("videostudio.timeline.clip",clip.id),new View.DragShadowBuilder(view),clip.id,0));
+            chip.setOnDragListener((view,event)->{if(event.getAction()==android.view.DragEvent.ACTION_DRAG_STARTED)return event.getLocalState() instanceof String;if(event.getAction()==android.view.DragEvent.ACTION_DROP&&event.getLocalState() instanceof String){moveStudioClipTo((String)event.getLocalState(),at);return true;}return false;});
+            LinearLayout.LayoutParams size=new LinearLayout.LayoutParams(dp(136),dp(60));size.rightMargin=dp(4);clips.addView(chip,size);
+        }
+        if(activeProject.clips.isEmpty())clips.addView(body("No base clips. Open Media to import or append an owned image/video."));scroll.addView(clips);box.addView(scroll,new LinearLayout.LayoutParams(-1,dp(64)));
+        if(pages>1)studioWorkspaceActions(box,new String[]{"‹ Earlier clips","Later clips ›"},new Runnable[]{()->{studioTimelinePage=Math.max(0,studioTimelinePage-1);studioWorkspace.refreshPane();},()->{studioTimelinePage=Math.min(pages-1,studioTimelinePage+1);studioWorkspace.refreshPane();}});
+    }
 
     private Button studioButton(String label,Runnable action){
         Button button=new Button(this);
@@ -1111,6 +1108,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                         studioStillPreview.setVisibility(View.GONE);
                     player().setContextIds("final:"+System.currentTimeMillis(),"");
                     player().play(Uri.parse(uris.get(index)),0L);
+                    setStudioPreviewTarget(StudioPreviewTarget.SAVED_RENDER,"",activeProject.name);applyStudioPreviewTarget();
                 })
                 .setNegativeButton("Close",null).show();
     }
@@ -1127,6 +1125,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
             player().setContextIds("final:"+activeProject.latestExportAt,"");
             player().setVolume(1f);
             player().play(Uri.parse(activeProject.latestExportUri),0L);
+            setStudioPreviewTarget(StudioPreviewTarget.SAVED_RENDER,"",activeProject.name);applyStudioPreviewTarget();
         }catch(Exception error){
             Toast.makeText(this,"Latest MP4 could not open. Try All Renders.",
                     Toast.LENGTH_LONG).show();
@@ -1170,25 +1169,40 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
             if(activeProject!=null&&activeProject.id.equals(studioPreviewErrorProjectId)&&
                     activeProject.updatedAt==studioPreviewErrorRevision){
                 // Rebuilding layout is not a Retry and does not prove decoding works.
-                if(livePlayer!=null&&livePlayer.isEditedPreview())startStudioEditedClock();
+                applyStudioPreviewTarget();
+                if(!isStudioExternalPreviewMode()&&livePlayer!=null&&livePlayer.isEditedPreview())startStudioEditedClock();
                 return;
             }
             showStudioPreviewError("");
         }
         if(selectedClip==null||activeProject==null||activeProject.clips.isEmpty())return;
+        if(!startPlayback&&!studioPendingEditedSeek&&livePlayer!=null&&livePlayer.isEditedPreview()
+                &&activeProject.id.equals(studioEditedProjectId)&&activeProject.updatedAt==studioEditedRevision){
+            // Rebuilding native controls is not a seek, composition admission or playback-intent change.
+            timelinePreviewRunning=livePlayer.snapshotState().playWhenReady;
+            applyStudioPreviewTarget();startStudioEditedClock();return;
+        }
         beginStudioEditPreview(startPlayback||timelinePreviewRunning);
     }
 
     private boolean beginStudioEditPreview(boolean play){
         final int stillVisibility=studioStillPreview==null?View.GONE:studioStillPreview.getVisibility();
         final int captionVisibility=studioCaptionPreview==null?View.GONE:studioCaptionPreview.getVisibility();
+        final StudioPreviewTarget previousTarget=studioPreviewTarget;
+        final String previousAsset=studioPreviewTargetAssetId,previousName=studioPreviewTargetName;
         try{
             player().playEdit(activeProject,renderEngine,"9:16","720p",studioPlayheadMs,play,
-                    ()->{timelinePreviewRunning=false;studioPlayheadMs=activeProject.outputDurationMs();},
+                    ()->{timelinePreviewRunning=false;studioPlayheadMs=activeProject.outputDurationMs();updateStudioPlayToggle();},
                     error->{
-                        if(studioStillPreview!=null)studioStillPreview.setVisibility(stillVisibility);
-                        if(studioCaptionPreview!=null)studioCaptionPreview.setVisibility(captionVisibility);
+                        if(!isStudioExternalPreviewMode()){
+                            if(studioStillPreview!=null)studioStillPreview.setVisibility(stillVisibility);
+                            if(studioCaptionPreview!=null)studioCaptionPreview.setVisibility(captionVisibility);
+                        }
                         timelinePreviewRunning=player().isEditedPreview()&&player().snapshotState().playWhenReady;
+                        if(previousTarget!=StudioPreviewTarget.EDITED&&!isStudioExternalPreviewMode()){
+                            setStudioPreviewTarget(previousTarget,previousAsset,previousName);applyStudioPreviewTarget();
+                        }
+                        updateStudioPlayToggle();
                         showStudioPreviewError(error);
                     });
             player().setContextIds("",selectedClip==null?"":selectedClip.id);
@@ -1198,6 +1212,8 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
             if(studioAudioPreview!=null)studioAudioPreview.stop();
             showStudioPreviewError("");
             timelinePreviewRunning=play;
+            studioEditedProjectId=activeProject.id;studioEditedRevision=activeProject.updatedAt;studioPendingEditedSeek=false;
+            setStudioPreviewTarget(StudioPreviewTarget.EDITED,"","");applyStudioPreviewTarget();
             startStudioEditedClock();
             return true;
         }catch(Exception error){
@@ -1222,12 +1238,18 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         studioCaptionClock=new Runnable(){
             @Override public void run(){
                 if(!"editor".equals(currentScreen)||activeProject==null||!player().isEditedPreview())return;
+                long previous=studioPlayheadMs;
                 studioPlayheadMs=Math.min(activeProject.outputDurationMs(),player().currentPositionMs());
-                if(studioTimeLabel!=null)studioTimeLabel.setText(StudioEditCursor.timecode(studioPlayheadMs)+" / "+StudioEditCursor.timecode(activeProject.outputDurationMs()));
-                if(studioSeek!=null&&!studioSeek.isPressed())studioSeek.setProgress((int)Math.round(studioPlayheadMs*studioSeek.getMax()/(double)Math.max(1,activeProject.outputDurationMs())));
-                if(studioTracks!=null)studioTracks.setPlayhead(studioPlayheadMs);
-                if(studioSplitButton!=null)studioSplitButton.setEnabled(canSplitStudioAtCursor());
-                ui.postDelayed(this,100);
+                String time=StudioEditCursor.timecode(studioPlayheadMs)+" / "+StudioEditCursor.timecode(activeProject.outputDurationMs());
+                if(studioTimeLabel!=null&&!time.contentEquals(studioTimeLabel.getText()))studioTimeLabel.setText(time);
+                if(studioSeek!=null&&!studioSeek.isPressed()){
+                    int progress=(int)Math.round(studioPlayheadMs*studioSeek.getMax()/(double)Math.max(1,activeProject.outputDurationMs()));
+                    if(studioSeek.getProgress()!=progress)studioSeek.setProgress(progress);
+                }
+                if(studioTracks!=null&&previous!=studioPlayheadMs)studioTracks.setPlayhead(studioPlayheadMs);
+                if(studioSplitButton!=null){boolean canSplit=canSplitStudioAtCursor();if(studioSplitButton.isEnabled()!=canSplit)studioSplitButton.setEnabled(canSplit);}
+                updateStudioPlayToggle();
+                ui.postDelayed(this,player().snapshotState().playWhenReady?100:250);
             }
         };
         ui.post(studioCaptionClock);
@@ -1242,6 +1264,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         studioPlayheadMs=position.globalTimeMs;
         selectedClip=activeProject.clips.get(position.clipIndex);
         studioTimelinePage=position.clipIndex/20;
+        studioPendingEditedSeek=true;
         showEditor();
     }
 
@@ -1371,10 +1394,10 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                     studioStillPreview.setVisibility(View.GONE);
                     player().setContextIds("asset:"+asset.id,"");
                     player().play(Uri.parse(ProxyManager.previewUri(activeProject,asset)),0L);
+                    setStudioPreviewTarget(StudioPreviewTarget.SOURCE_VIDEO,asset.id,asset.name);applyStudioPreviewTarget();
                 }else if(asset.mime!=null&&asset.mime.startsWith("image/")){
                     player().pause();
-                    studioStillPreview.setVisibility(View.VISIBLE);
-                    studioThumbs.bindPreview(studioStillPreview,asset);
+                    setStudioPreviewTarget(StudioPreviewTarget.SOURCE_STILL,asset.id,asset.name);applyStudioPreviewTarget();
                 }
             });
             tile.addView(use,margins(-1,dp(36),dp(3),0,0,0));
@@ -1464,100 +1487,36 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
      * These are editable, source-backed tracks, not decorative timeline labels.
      */
     private void renderStudioTrackLanes(LinearLayout box){
-        LinearLayout header=new LinearLayout(this);
-        header.setGravity(Gravity.CENTER_VERTICAL);
-        header.addView(title("Audio & Titles",17),
-                new LinearLayout.LayoutParams(0,-2,1));
-        header.addView(studioButton("+ Music",this::chooseStudioAudio),
-                new LinearLayout.LayoutParams(dp(93),dp(44)));
-        header.addView(studioButton("+ Caption",()->editStudioTitle(null)),
-                new LinearLayout.LayoutParams(dp(109),dp(44)));
-        box.addView(header,margins(-1,-2,dp(10),dp(4),0,0));
-        box.addView(studioButton("+ Image Overlay",this::chooseStudioImage),margins(-1,dp(43),0,dp(4),0,0));
-        box.addView(studioButton("Story audio",()->{if(activeProject!=null)SketchStoryAudioDialog.show(this,activeProject.id,result->Toast.makeText(this,"Story audio saved in a separate audio project",Toast.LENGTH_LONG).show());}),margins(-1,dp(43),0,dp(4),0,0));
-
-        StudioTracksView bands=new StudioTracksView(this);
-        studioTracks=bands;
-        bands.setTimeline(activeProject.outputDurationMs(),studioPlayheadMs,
-                activeProject.studioLayers,this::scrubStudioTo,
-                new StudioTracksView.ChangeListener(){
-                    @Override public void onChange(String id,long start,long duration){
-                        moveStudioLayerOnTimeline(id,start,duration);
-                    }
-                    @Override public void onTrimLeft(String id,long start,long duration){
-                        moveStudioLayerOnTimeline(id,start,duration,true);
-                    }
-                    @Override public void onSelect(String id){
-                        for(StudioLayer layer:activeProject.studioLayers){
-                            if(!layer.id.equals(id))continue;
-                            if(StudioLayer.AUDIO.equals(layer.type))
-                                editStudioAudio(layer,layer.assetId);
-                            else if(StudioLayer.IMAGE.equals(layer.type))editStudioImage(layer,layer.assetId);
-                            else editStudioTitle(layer);
-                            return;
-                        }
-                    }
-                });
+        StudioTracksView bands=new StudioTracksView(this);studioTracks=bands;bands.setQuietEditorPalette(true);
+        bands.setTimeline(activeProject.outputDurationMs(),studioPlayheadMs,activeProject.studioLayers,this::scrubStudioTo,new StudioTracksView.ChangeListener(){
+            @Override public void onChange(String id,long start,long duration){moveStudioLayerOnTimeline(id,start,duration);}
+            @Override public void onTrimLeft(String id,long start,long duration){moveStudioLayerOnTimeline(id,start,duration,true);}
+            @Override public void onSelect(String id){selectStudioLayer(id);}
+        });
         bands.setSnapping(studioClipBoundaries(),studioTrackSnap);
-        LinearLayout zoom=new LinearLayout(this);
-        Button zoomOut=studioButton("− Zoom",()->{studioTrackZoom=Math.max(1,studioTrackZoom/2);showEditor();});
-        zoomOut.setEnabled(studioTrackZoom>1);
-        zoom.addView(zoomOut,new LinearLayout.LayoutParams(0,dp(40),1));
-        zoom.addView(body(studioTrackZoom+"×"),new LinearLayout.LayoutParams(dp(36),dp(40)));
-        Button zoomIn=studioButton("+ Zoom",()->{studioTrackZoom=Math.min(16,studioTrackZoom*2);showEditor();});
-        zoomIn.setEnabled(studioTrackZoom<16);
-        zoom.addView(zoomIn,new LinearLayout.LayoutParams(0,dp(40),1));
-        zoom.addView(studioButton(studioTrackSnap?"Snap: On":"Snap: Off",()->{studioTrackSnap=!studioTrackSnap;bands.setSnapping(studioClipBoundaries(),studioTrackSnap);showEditor();}),new LinearLayout.LayoutParams(0,dp(40),1));
-        box.addView(zoom);
-        HorizontalScrollView tracksScroll=new HorizontalScrollView(this);
-        int trackWidth=Math.max(dp(280),getResources().getDisplayMetrics().widthPixels-dp(24));
-        tracksScroll.addView(bands,new android.widget.FrameLayout.LayoutParams(trackWidth*studioTrackZoom,dp(150)));
-        box.addView(tracksScroll,margins(-1,dp(150),dp(4),dp(6),0,0));
-        tracksScroll.post(()->tracksScroll.scrollTo(Math.max(0,(int)(studioPlayheadMs/(double)Math.max(1,activeProject.outputDurationMs())*bands.getWidth())-trackWidth/2),0));
-        if(studioAudioWaveforms!=null){
-            for(StudioLayer audio:activeProject.studioLayers){
-                if(!StudioLayer.AUDIO.equals(audio.type))continue;
-                ProjectStore.Asset sample=activeProject.asset(audio.assetId);
-                if(sample==null)continue;
-                final String id=audio.id;
-                final java.lang.ref.WeakReference<StudioTracksView> visible=
-                        new java.lang.ref.WeakReference<>(bands);
-                studioAudioWaveforms.request(sample,audio,(key,peaks)->{
-                    StudioTracksView view=visible.get();
-                    if(view!=null&&view.isAttachedToWindow())
-                        view.setWaveform(id,peaks,(float)Math.min(1.0,30000.0/Math.max(1,audio.durationMs)));
-                });
+        HorizontalScrollView scrolling=new HorizontalScrollView(this){
+            @Override protected void onMeasure(int widthSpec,int heightSpec){
+                if(View.MeasureSpec.getMode(widthSpec)!=View.MeasureSpec.UNSPECIFIED){
+                    // Configuration reflow must use the new pane width in this layout,
+                    // rather than clipping the old portrait width until a second pass.
+                    int width=Math.max(dp(48),View.MeasureSpec.getSize(widthSpec)-getPaddingLeft()-getPaddingRight());
+                    bands.getLayoutParams().width=width*studioTrackZoom;
+                }
+                super.onMeasure(widthSpec,heightSpec);
             }
+        };
+        // Width follows this pane, including landscape's side-by-side workspace.
+        int screen=getResources().getConfiguration().screenWidthDp;
+        boolean landscape=getResources().getConfiguration().orientation==android.content.res.Configuration.ORIENTATION_LANDSCAPE;
+        int initial=Math.max(dp(180),dp(screen>0?(landscape?(screen-36)*115/215:screen-24):280));
+        scrolling.addView(bands,new FrameLayout.LayoutParams(initial*studioTrackZoom,dp(135)));
+        box.addView(scrolling,new LinearLayout.LayoutParams(-1,dp(135)));
+        scrolling.post(()->{int width=scrolling.getWidth();scrolling.scrollTo(Math.max(0,(int)(studioPlayheadMs/(double)Math.max(1,activeProject.outputDurationMs())*bands.getWidth())-width/2),0);});
+        if(studioAudioWaveforms!=null)for(StudioLayer audio:activeProject.studioLayers){
+            if(!StudioLayer.AUDIO.equals(audio.type))continue;ProjectStore.Asset source=activeProject.asset(audio.assetId);if(source==null)continue;
+            java.lang.ref.WeakReference<StudioTracksView> target=new java.lang.ref.WeakReference<>(bands);String id=audio.id;
+            studioAudioWaveforms.request(source,audio,(key,peaks)->{StudioTracksView visible=target.get();if(visible!=null&&visible.isAttachedToWindow())visible.setWaveform(id,peaks,(float)Math.min(1.0,30000.0/Math.max(1,audio.durationMs)));});
         }
-
-        ArrayList<StudioLayer> order=new ArrayList<>(activeProject.studioLayers);
-        order.sort((a,b)->Long.compare(a.startMs,b.startMs));
-        for(StudioLayer lane:order){
-            LinearLayout row=new LinearLayout(this);
-            row.setGravity(Gravity.CENTER_VERTICAL);
-            row.setBackground(rounded(C_CARD_2,0xff334661,dp(11)));
-            row.setPadding(dp(9),dp(4),dp(9),dp(4));
-            ProjectStore.Asset asset=!StudioLayer.TITLE.equals(lane.type)?
-                    activeProject.asset(lane.assetId):null;
-            String desc=!StudioLayer.TITLE.equals(lane.type)?
-                    (asset==null?"Missing audio file":asset.name):lane.text;
-            TextView info=body((StudioLayer.AUDIO.equals(lane.type)?"♫  ":StudioLayer.IMAGE.equals(lane.type)?"▧  ":"T  ")+desc+
-                    "\n"+time(lane.startMs)+" – "+
-                    time(lane.startMs+lane.durationMs)+
-                    (StudioLayer.AUDIO.equals(lane.type)?
-                    "  ·  "+Math.round(lane.gain*100)+"%":""));
-            info.setMaxLines(2);info.setEllipsize(android.text.TextUtils.TruncateAt.END);
-            row.addView(info,new LinearLayout.LayoutParams(0,-2,1));
-            row.addView(studioButton("Edit",()->{
-                if(StudioLayer.AUDIO.equals(lane.type))editStudioAudio(lane,lane.assetId);
-                else if(StudioLayer.IMAGE.equals(lane.type))editStudioImage(lane,lane.assetId);
-                else editStudioTitle(lane);
-            }),new LinearLayout.LayoutParams(dp(65),dp(38)));
-            row.addView(studioButton("×",()->removeStudioLayer(lane)),
-                    new LinearLayout.LayoutParams(dp(42),dp(38)));
-            box.addView(row,margins(-1,-2,dp(3),dp(3),0,0));
-        }
-        box.addView(body("Audio, captions and image overlays share their authored times in edited preview and MP4 export."),margins(-1,-2,dp(2),0,0,0));
     }
 
     private void moveStudioLayerOnTimeline(String id,long start,long duration){
@@ -1867,7 +1826,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                     if(!applyStudioPrecision(fragment,revision[0]))return false;
                     revision[0]=activeProject.updatedAt;return true;
                 }catch(Exception error){Toast.makeText(this,error.getMessage(),Toast.LENGTH_LONG).show();return false;}
-            },at->{studioPlayheadMs=clipStart+at;previewSelectedStudioClip(false);});
+            },at->{studioPlayheadMs=clipStart+at;studioPendingEditedSeek=true;previewSelectedStudioClip(false);});
         }catch(Exception error){Toast.makeText(this,"Cannot open keyframes: "+error.getMessage(),Toast.LENGTH_LONG).show();}
     }
 
@@ -1977,17 +1936,21 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                         .put("durationMs",Long.parseLong(duration.getText().toString()));
                 for(int i=0;i<names.length;i++)record.put(names[i],Double.parseDouble(fields[i].getText().toString()));
                 StudioLayer draft=StudioLayer.fromJson(record);
-                if(studioImageMotionDialog!=null)studioImageMotionDialog.dismiss();
-                AlertDialog motionDialog=StudioImageMotionDialog.show(this,draft,
-                        Math.max(0,Math.min(draft.durationMs,studioPlayheadMs-draft.startMs)),candidate->{
-                            if(!canApplyStudioImage(projectId,revision,surfaceGeneration))return false;
-                            if(!saveStudioLayer(candidate,revision))return false;
-                            dialog.dismiss();return true;
-                        });
-                studioImageMotionDialog=motionDialog;
-                motionDialog.setOnDismissListener(ignored->{if(studioImageMotionDialog==motionDialog)studioImageMotionDialog=null;});
+                showStudioImageMotion(draft,projectId,revision,surfaceGeneration,dialog::dismiss);
             }catch(Exception error){Toast.makeText(this,"Cannot animate image overlay: "+error.getMessage(),Toast.LENGTH_LONG).show();}
         });
+    }
+
+    private void showStudioImageMotion(StudioLayer draft,String projectId,long revision,long surfaceGeneration,Runnable afterSaved)throws Exception{
+        if(studioImageMotionDialog!=null)studioImageMotionDialog.dismiss();
+        AlertDialog motionDialog=StudioImageMotionDialog.show(this,draft,
+                Math.max(0,Math.min(draft.durationMs,studioPlayheadMs-draft.startMs)),candidate->{
+                    if(!canApplyStudioImage(projectId,revision,surfaceGeneration))return false;
+                    if(!saveStudioLayer(candidate,revision))return false;
+                    afterSaved.run();return true;
+                });
+        studioImageMotionDialog=motionDialog;
+        motionDialog.setOnDismissListener(ignored->{if(studioImageMotionDialog==motionDialog)studioImageMotionDialog=null;});
     }
 
     private boolean canApplyStudioImage(String projectId,long revision,long surfaceGeneration){
@@ -2028,7 +1991,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
 
     private void updateStudioCaptionAt(long globalTimeMs){
         if(studioCaptionPreview==null||activeProject==null)return;
-        if(player().isEditedPreview()){
+        if(isStudioExternalPreviewMode()||player().isEditedPreview()){
             studioCaptionPreview.setText("");studioCaptionPreview.setVisibility(View.GONE);return;
         }
         List<StudioLayer> active=StudioTrackLayout.activeAt(
@@ -3802,9 +3765,14 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         final ProjectStore.Clip original=selectedClip;
         ProjectStore.Asset asset=activeProject.asset(original.assetId);
         final long maximum=StudioTrimMath.sourceLength(asset==null?0:asset.durationMs,original);
+        final boolean still=asset!=null&&asset.mime!=null&&asset.mime.startsWith("image/");
+        // A still's imported duration is a default, not a finite source-video boundary.
+        // Keep the seek handles useful over the current extent; exact numeric duration
+        // uses the same existing 24h admission as native precision editing.
+        final long allowedMaximum=still?86_400_000L:maximum;
         ScrollView scroll=new ScrollView(this);
         LinearLayout wrap=column();wrap.setPadding(dp(20),dp(5),dp(20),dp(7));scroll.addView(wrap);
-        wrap.addView(body("Set exact source seconds (millisecond precision). Preview and export use the saved trim."));
+        wrap.addView(body(still?"Set exact still duration in seconds (up to 24 hours). Seek handles cover its current extent. Preview and export use the saved duration.":"Set exact source seconds (millisecond precision). Preview and export use the saved trim."));
         wrap.addView(body("Start / In-point"));
         EditText start=numberInput(0);start.setText(String.format(Locale.US,"%.3f",original.inMs/1000.0));wrap.addView(start);
         SeekBar inSeek=new SeekBar(this);inSeek.setMax(1000);inSeek.setProgress(StudioTrimMath.toSeek(original.inMs,maximum));
@@ -3836,7 +3804,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         dialog.setOnShowListener(d->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{
             try{
                 long a=secondsToMs(start),b=secondsToMs(end);
-                if(!StudioTrimMath.valid(a,b,maximum))throw new IllegalArgumentException("Trim must fit the source and retain at least 0.1 seconds");
+                if(!StudioTrimMath.valid(a,b,allowedMaximum))throw new IllegalArgumentException(still?"Still duration must retain at least 0.1 seconds within 24 hours":"Trim must fit the source and retain at least 0.1 seconds");
                 if(applyStudioPrecision(new JSONObject().put("clipId",clipId)
                         .put("set",new JSONObject().put("inMs",a).put("outMs",b)),revision))dialog.dismiss();
             }catch(Exception error){errorLabel.setText(error.getMessage()==null?"Invalid trim range":error.getMessage());}

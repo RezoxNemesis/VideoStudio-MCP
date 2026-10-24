@@ -1,3 +1,30 @@
+# Active combined Quiet Canvas editor and native PNG525 — 2026-10-24
+
+Combined candidate4.10.22/code525 retains verified signed524 clock/audio repair
+7f638afe86173dd03bd0ef3e59e7173798b50490. Coherent PNG ec98ba5 and Editor
+1b60899 feature commits are combined here; preserve both and all prior work.
+Root scoped PNG28PASS5.613s, Node827+306smokePASS, Editor26PASS10.139s
+(21new plus5legacy UI cases). These are scoped checks, not full525 verification.
+Fresh full integrated validation, original-signed exact-revision CI, native APK
+UI/PNG/preview/export checks and delivery remain pending. Root owns ONE Gradle
+and ALL native/JUnit/JVM/model/ADB execution; other agents edit/read/Node only.
+
+The five new editor UI test classes use a unit-only VideoGraph at Media3's
+public factory seam because Robolectric's glGetProgramiv simulates link status
+but not active uniforms. Assertions are unchanged; legacy5 tests remain intact.
+SAME fixture old source failed3/3 with exact seek/caption/target errors, fixed
+source passes26. This proves UI/admission/control state only, never GL pixels,
+codec execution or artistic acceptance. All failed generations remain retained.
+Voice foundations are isolated in a separate worktree and NOT in this APK.
+
+Keep package/original signer, owned data/assets/identity and active projects.
+No main merge/push, Worker deployment, stable publication, fallback signer,
+uninstall/data clear/MCP reset, Gallery or external art/animation/audio substitute.
+The live owner MCP403 remains owner-action-required; do not retry or evade it.
+The technical eight-second clock retake passed on original-signed524; finished
+editing/animation and240-second film remain unfinished with0accepted final seconds.
+Read both continuity docs for native PNG export and Editor workspace below.
+
 # Active native still PNG export — future4.10.22/code525
 
 Branch `feat/native-sketch-still-png-v41022` integrates locally verified clock524
@@ -47,6 +74,47 @@ reproduced1/1FAIL against full523. The narrow render-boundary catch retains caus
 interrupt flag and existing staging cleanup; original16story-audio tests plus
 the new case pass17/0FAIL6.409s on the exact audio override. Full combined retake
 and signed524 native export remain required. No original test was weakened.
+
+# Active native editor workspace redesign — 2026-10-24
+
+Isolated `feat/native-editor-workspace-20261024` starts original-signed523
+`acf57cd6b8b9190d8b82df283d2529c99f77ec56`; preserve this branch and earlier
+work. Read `docs/continuity/NATIVE_EDITOR_WORKSPACE_20261024.md`. Root owns
+integration with verified clock524 and separate PNG525, all version/release work,
+ONE Gradle, and every native/JUnit/model/ADB run. UI agent has not run native code.
+No main/Worker/stable publication, signer replacement, uninstall/data clear, MCP
+reset or film claim.
+
+Editor now has a compact one-line project header/fixed Export, one edited
+transport, reachable Media/Timeline/Inspector panes, contextual existing controls
+and Editor-only quiet styling. Rotation reflows the same Views/player; native
+track width is measured before layout. Source-video/source-still/saved-render
+preview targets remain explicit with truthful labels, appropriate native controls
+and Return to edit. Native editing/history/CAS/MCP/source ownership stay intact.
+Explicit keyframe-preview seeks bypass layout-only player reuse, blocked edited
+admission retains the source target, and edited captions cannot leak over an
+external preview. No new editing effect, drawing/AI or rendered-film capability.
+
+Root froze genuine layout, duration, pause, configuration and target failures.
+Later intermittent frame-processing errors were traced to headless Robolectric
+GLES20 not enumerating shader uniforms (actual native NPE); preserve all failed
+sources/logs. The five NEW UI classes now use a UNIT-ONLY Builder shadow at the
+real Media3 `setVideoGraphFactory` seam. This local protocol fixture never renders
+pixels or proves GL/codec/export/effect fidelity; no production seam/dependency,
+ignored error or forced playback was added. Existing legacy five tests are
+unchanged. All assertion semantics remain; one separately documented fixture
+layout after a second showEditor was corrected, and only test @Config declarations
+added the graph fixture.
+
+Root SAME-fixture precise RED against old Main2ddfe:3/3FAIL4.353s (explicit seek
+1000→0, caption leak, lost external controls). Latest focused GREEN26/0FAIL10.139s
+against FULL524 plus exact Main6254639/Workspace469644/Trackscfef7d overrides,
+21new unit cases +5legacy. These are UI/admission/seek/control checks, not creative
+scenarios, actual APK UI/GPU execution or integrated525 verification. Actual APK
+screenshots/touch/GPU checks, combined full regression/CI/original signing remain
+root-owned pending gates. Keep private diagnosis-only sources out of the commit;
+root will commit only the three UI product files, five UI test classes, fixture,
+continuity doc and this header. Do not edit frozen product/tests during integration.
 
 # Active native editor image-overlay motion — 2026-10-24
 
