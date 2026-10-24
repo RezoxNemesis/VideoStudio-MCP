@@ -1310,7 +1310,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
             return;
         }
         final ProjectStore.Project project=activeProject;
-        StudioExportDialog.show(this,(aspect,quality)->{
+        StudioExportDialog.showOptions(this,(aspect,quality,maxOutputSampleDelayMs)->{
                     if(project.clips.isEmpty()){
                         Toast.makeText(this,"Add clips to the timeline before exporting",Toast.LENGTH_LONG).show();
                         return;
@@ -1323,6 +1323,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                                 .putExtra("quality",quality)
                                 .putExtra("fileName","VideoStudio_"+
                                         System.currentTimeMillis()+".mp4");
+                        if(maxOutputSampleDelayMs!=null)request.putExtra(NativeExportOptions.FIELD,maxOutputSampleDelayMs.longValue());
                         startForegroundService(request);
                         Toast.makeText(this,"Export queued. Open Jobs to track the actual result.",
                                 Toast.LENGTH_LONG).show();
@@ -4294,6 +4295,10 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
     }
 
     private JSONObject queueNativeExport(ProjectStore.Project project, String aspect, String quality, String fileName) throws Exception {
+        return queueNativeExport(project,aspect,quality,fileName,null);
+    }
+
+    private JSONObject queueNativeExport(ProjectStore.Project project, String aspect, String quality, String fileName,Long maxOutputSampleDelayMs) throws Exception {
         if (project == null || project.clips.isEmpty()) throw new IllegalArgumentException("Timeline is empty");
         final ProjectStore.Project target = store.get(project.id);
         if (target == null) throw new IllegalArgumentException("Project not found");
@@ -4305,7 +4310,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
 
         JobManager.Job job = jobs.submit("Export • " + target.name, JobManager.Kind.HEAVY, state -> {
             state.checkpoint(2, "Preparing Media3 native export");
-            runExportBlocking(target, aspect, quality, finalName, state);
+            runExportBlocking(target, aspect, quality, finalName,maxOutputSampleDelayMs,state);
             state.checkpoint(100, "Export complete");
         });
 
@@ -4319,6 +4324,10 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
     }
 
     private void runExportBlocking(ProjectStore.Project project, String aspect, String quality, String fileName, JobManager.Job state) throws Exception {
+        runExportBlocking(project,aspect,quality,fileName,null,state);
+    }
+
+    private void runExportBlocking(ProjectStore.Project project, String aspect, String quality, String fileName,Long maxOutputSampleDelayMs,JobManager.Job state) throws Exception {
         File dir = new File(getCacheDir(), "native_exports");
         if (!dir.exists() && !dir.mkdirs()) throw new IllegalStateException("Could not create export workspace");
         File temp = new File(dir, "tmp_" + System.currentTimeMillis() + ".mp4");
@@ -4327,7 +4336,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         AtomicReference<File> completed = new AtomicReference<>(null);
 
         ui.post(() -> {
-            activeRenderHandle = renderEngine.export(project, temp, aspect, quality, new NativeRenderEngine.Listener() {
+            NativeRenderEngine.Listener listener=new NativeRenderEngine.Listener() {
                 @Override public void onProgress(int progress, String detail) {
                     state.checkpoint(Math.max(20, Math.min(96, 20 + (int) (progress * .76))), detail);
                 }
@@ -4341,7 +4350,10 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                     error.set(message);
                     latch.countDown();
                 }
-            });
+            };
+            activeRenderHandle=maxOutputSampleDelayMs==null
+                    ?renderEngine.export(project,temp,aspect,quality,listener)
+                    :renderEngine.export(project,temp,aspect,quality,maxOutputSampleDelayMs,listener);
         });
 
         while (!latch.await(550, TimeUnit.MILLISECONDS)) {
@@ -4718,7 +4730,8 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                             activeProject,
                             p.optString("aspect", "9:16"),
                             p.optString("quality", "1080p"),
-                            p.optString("fileName", "VideoStudio_" + System.currentTimeMillis() + ".mp4")
+                            p.optString("fileName", "VideoStudio_" + System.currentTimeMillis() + ".mp4"),
+                            NativeExportOptions.read(p)
                     );
                     break;
                 case "creator_preset":

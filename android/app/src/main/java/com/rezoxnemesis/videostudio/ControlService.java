@@ -493,6 +493,10 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 p.put("fileName", intent.getStringExtra("fileName") == null
                         ? "VideoStudio_" + System.currentTimeMillis() + ".mp4"
                         : intent.getStringExtra("fileName"));
+                if (intent.hasExtra(NativeExportOptions.FIELD)) {
+                    Object delay = intent.getExtras().get(NativeExportOptions.FIELD);
+                    p.put(NativeExportOptions.FIELD, delay == null ? JSONObject.NULL : delay);
+                }
                 JSONObject queued = queueExport(p);
                 ActivityLog.add(this, "user", "Export queued",
                         "Native job " + shortId(queued.optString("jobId")),
@@ -4290,6 +4294,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     }
 
     private JSONObject queueExport(JSONObject p) throws Exception {
+        Long maxOutputSampleDelayMs = NativeExportOptions.read(p);
         ProjectStore.Project project = resolveProject(p.optString("projectId", ""));
         if (project.clips.isEmpty()) throw new IllegalArgumentException("Timeline is empty");
         String aspect = p.optString("aspect", "9:16");
@@ -4306,7 +4311,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 "Export • " + project.name,
                 state -> {
             checkpoint(state, "Exporting video", "Preparing protected native export", 2, project.id);
-            runExportBlocking(project, aspect, quality, fileName, state);
+            runExportBlocking(project, aspect, quality, fileName, maxOutputSampleDelayMs, state);
             checkpoint(state, "Exporting video", "Export complete", 100, project.id);
         });
         JSONObject result = ok();
@@ -4319,6 +4324,11 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     }
 
     private void runExportBlocking(ProjectStore.Project project, String aspect, String quality, String fileName, JobManager.Job state) throws Exception {
+        runExportBlocking(project, aspect, quality, fileName, null, state);
+    }
+
+    private void runExportBlocking(ProjectStore.Project project, String aspect, String quality, String fileName,
+                                   Long maxOutputSampleDelayMs, JobManager.Job state) throws Exception {
         ensureProjectWorkspaceHydrated(project, state);
         jobs.awaitSafeCheckpoint(state, "native_export_prepare");
         // Long-form exports are too valuable to stage in Android's evictable cache.
@@ -4337,7 +4347,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         AtomicReference<File> completed = new AtomicReference<>();
         AtomicReference<JSONObject> encoderReceipt = new AtomicReference<>();
 
-        final NativeRenderEngine.Handle ownedHandle = renderEngine.export(project, temp, aspect, quality, new NativeRenderEngine.Listener() {
+        NativeRenderEngine.Listener listener = new NativeRenderEngine.Listener() {
             @Override public void onProgress(int progress, String detail) {
                 checkpoint(state, "Rendering video", detail, Math.max(20, Math.min(96, 20 + (int) (progress * .76))), project.id);
             }
@@ -4352,7 +4362,10 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 error.set(message);
                 latch.countDown();
             }
-        });
+        };
+        final NativeRenderEngine.Handle ownedHandle = maxOutputSampleDelayMs == null
+                ? renderEngine.export(project, temp, aspect, quality, listener)
+                : renderEngine.export(project, temp, aspect, quality, maxOutputSampleDelayMs, listener);
         if (ownedHandle == null) throw new IllegalStateException("Could not start native render");
         synchronized(this){activeRender=ownedHandle;activeRenderJobId=state.id;}
         long totalSourceBytes=0L;

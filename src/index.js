@@ -182,6 +182,7 @@ export class VideoStudioState extends DurableObject {
     p.updatedAt=now(); await this.ctx.storage.put("p:"+deviceId+":"+id,p); await this.register(deviceId); return p;
   }
   async enqueue(deviceId,projectId,action,parameters={}){
+    if(action==="render"&&Object.hasOwn(parameters,"maxOutputSampleDelayMs"))throw new Error("Explicit maxOutputSampleDelayMs requires the native VideoStudio export_project action; browser render is unavailable");
     if(action==="analyse_media"&&hasMediaAnalysisMode(parameters)){
       nativeStoryboardParameters(action,parameters);
       throw new Error("AUDIO_ENVELOPE_INPUT: audio_envelope requires the native VideoStudio device; browser analysis is unavailable");
@@ -526,6 +527,7 @@ export class VideoStudioState extends DurableObject {
     return {binding,web,fresh,ageMs:age===Number.MAX_SAFE_INTEGER?null:age,project};
   }
   async appTryStudioWebFallback(ownerKey,action,parameters={}){
+    if(action==="export_project"&&Object.hasOwn(parameters,"maxOutputSampleDelayMs"))return null;
     if(action==="analyse_media"&&hasMediaAnalysisMode(parameters))return null;
     const fallback=await this.appResolveStudioWebFallback(ownerKey);
     if(!fallback||!fallback.fresh||!fallback.project) return null;
@@ -690,7 +692,7 @@ export class VideoStudioState extends DurableObject {
       createdAt:binding.createdAt
     };
   }
-  async appResolveHybrid(hybridKey){
+  async appResolveHybrid(hybridKey,guardedAction="",guardedParameters={}){
     if(!hybridKey||String(hybridKey).length<32) return null;
     const hybridHash=await sha256Hex(hybridKey);
     return this.ctx.storage.transaction(async transaction=>{
@@ -700,6 +702,8 @@ export class VideoStudioState extends DurableObject {
       if(!canonicalId) return null;
       const native=await readNativeDeviceInTransaction(transaction,"app-device:"+canonicalId);
       if(!native||native.supersededByDeviceId) return null;
+      if(guardedAction==="export_project"&&Object.hasOwn(guardedParameters,"maxOutputSampleDelayMs"))
+        requireStoryboardNativeVersion(native,guardedAction,guardedParameters);
       binding.nativeDeviceId=canonicalId;binding.lastUsedAt=Date.now();
       await transaction.put("hybrid-binding:"+hybridHash,binding);
       const {ownerHash,...safeBinding}=binding;
@@ -708,8 +712,9 @@ export class VideoStudioState extends DurableObject {
     });
   }
   async appEnqueueHybrid(hybridKey,action,parameters={}){
-    if(action==="analyse_media"&&hasMediaAnalysisMode(parameters))parameters=nativeStoryboardParameters(action,parameters);
-    const resolved=await this.appResolveHybrid(hybridKey);
+    const explicitWait=action==="export_project"&&Object.hasOwn(parameters,"maxOutputSampleDelayMs");
+    if(action==="analyse_media"&&hasMediaAnalysisMode(parameters)||explicitWait)parameters=nativeStoryboardParameters(action,parameters);
+    const resolved=explicitWait?await this.appResolveHybrid(hybridKey,action,parameters):await this.appResolveHybrid(hybridKey);
     if(!resolved) throw new Error("Private hybrid binding rejected");
     parameters=nativeStoryboardParameters(action,parameters);
     const d=resolved.native;
@@ -960,7 +965,8 @@ export class VideoStudioState extends DurableObject {
     if(d.controlPaused) throw new Error("ChatGPT control is paused on the phone");
     if(!appActionAllowed(d.permissionMode,action)) throw new Error("Action blocked by device permission mode or Gallery privacy boundary: "+d.permissionMode);
     const lastSeenMs=Date.parse(String(d.lastSeenAt||""))||0,fresh=lastSeenMs>0&&Date.now()-lastSeenMs<=45000;
-    if(!fresh&&!STORYBOARD_NATIVE_ACTIONS.has(action)&&!(action==="analyse_media"&&hasMediaAnalysisMode(parameters))){
+    if(!fresh&&!STORYBOARD_NATIVE_ACTIONS.has(action)&&!(action==="analyse_media"&&hasMediaAnalysisMode(parameters))
+        &&!(action==="export_project"&&Object.hasOwn(parameters,"maxOutputSampleDelayMs"))){
       const webCommand=await this.appTryStudioWebFallback(ownerKey,action,parameters);
       if(webCommand)return webCommand;
     }
@@ -1192,9 +1198,13 @@ export class VideoStudioState extends DurableObject {
 const state = env => env.VIDEO_STATE.getByName("primary");
 const out = x => ({content:[{type:"text",text:JSON.stringify(x)}]});
 const isNativeV3 = d => !!d && Number(d.protocolVersion||0)===3;
-const enqueueNative = (st,d,ownerKey,action,parameters={}) => isNativeV3(d)
-  ? st.appEnqueueV3(ownerKey,action,parameters)
-  : st.appEnqueue(ownerKey,action,parameters);
+const enqueueNative = (st,d,ownerKey,action,parameters={}) => {
+  if(action==="export_project"&&Object.hasOwn(parameters,"maxOutputSampleDelayMs")){
+    nativeStoryboardParameters(action,parameters);
+    requireStoryboardNativeVersion(d,action,parameters);
+  }
+  return isNativeV3(d)?st.appEnqueueV3(ownerKey,action,parameters):st.appEnqueue(ownerKey,action,parameters);
+};
 const commandNative = (st,d,ownerKey,id) => isNativeV3(d)
   ? st.appCommandV3(ownerKey,id)
   : st.appCommand(ownerKey,id);
@@ -2160,7 +2170,7 @@ function serverForApp(env,ownerKey,protocolVersion=1){
     inputSchema:{jobId:z.string().min(8)}
   },async({jobId})=>queue("job_status",{jobId}));
 
-  s.registerTool("app_export_project",{description:"Render the active timeline to a native MP4 and publish it to Movies/VideoStudio.",inputSchema:{aspect:z.enum(["9:16","16:9","1:1","4:5"]).optional(),quality:z.enum(["720p","1080p"]).optional(),fileName:z.string().max(180).optional()}},async({aspect,quality,fileName})=>queue("export_project",{aspect:aspect||"9:16",quality:quality||"1080p",fileName:fileName||("VideoStudio_"+Date.now()+".mp4")}));
+  s.registerTool("app_export_project",{description:"Render the active timeline to a native MP4 and publish it to Movies/VideoStudio. Native4.10.25 optionally accepts maxOutputSampleDelayMs, a strict integer25000..120000 bounding the wait for another muxed output sample. Omit it to retain the SDK default and old export request. Call app_status first and read studioEditing.exportOutputWait. The option cannot disable the timeout, improve decoder speed or guarantee export success; explicit use stays queued for native execution while Android sleeps and never falls back to a browser render.",inputSchema:{aspect:z.enum(["9:16","16:9","1:1","4:5"]).optional(),quality:z.enum(["720p","1080p"]).optional(),fileName:z.string().max(180).optional(),maxOutputSampleDelayMs:z.number().int().min(25000).max(120000).optional()}},async({aspect,quality,fileName,maxOutputSampleDelayMs})=>queue("export_project",{aspect:aspect||"9:16",quality:quality||"1080p",fileName:fileName||("VideoStudio_"+Date.now()+".mp4"),...(maxOutputSampleDelayMs===undefined?{}:{maxOutputSampleDelayMs})}));
 
   s.registerTool("app_preview_project",{description:"Preview the active timeline locally on the Android device.",inputSchema:{}},async()=>queue("preview_project",{}));
 

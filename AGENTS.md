@@ -1,3 +1,37 @@
+# Explicit bounded export waiting — unpublished 4.10.25/code528
+
+Read docs/continuity/NATIVE_EXPORT_OUTPUT_WAIT_41025.md and the combined preview,
+audio and import continuity below. This isolated feature starts at c2020d65 and
+preserves the earlier 2c15 preview/MIME branch pointer. Existing export_project
+alone gains optional strict integer maxOutputSampleDelayMs from 25000 to 120000.
+Omission leaves the SDK setter uncalled and old parameters, routes, receipts and
+floors unchanged. Manual Default/60s/120s choices are remembered only when
+confirmed. Native and Node exportOutputWait capabilities match at 4.10.25.
+Cancellation, the global deadline and source clocks stay unchanged.
+
+Root's first 25-case run stopped at compilation due to a package-private SDK
+factory. A test-only same-package bridge corrected access without changing any
+assertion. Corrected genuine RED: 25 tests, 17 failures, 8 passing controls, 7.615s.
+Then the unchanged 25 passed in 7.014s with six frozen native product files.
+Fresh Node checks: 877 plus 306 smoke checks passed; all 1166 candidate product
+and test files stayed unchanged during that run. Independent six-file source
+review found no blocker. These are scoped logic, UI and admission checks, not
+actual GPU/codec or finished-edit evidence. Root's earlier full c202 run passed
+2705 tests before this feature. Post-merge full validation, CI/signing and actual
+updated-APK extended-wait retakes remain required. No APK 528 with this feature
+has been verified, signed or installed; actual APK evidence currently concerns 527.
+
+The actual 527 12.4-second edit still failed with error7002 after25s at the fifth
+VIDEO clip. Public native metadata proved its 2.4s trim seeks back to SYNC0 on
+1080x1920 HEVC at30FPS, preserving source and project identity. Actual preroll
+progress and a complete 12.4s extended-wait export remain pending. This bounded
+option is not a claimed repair. Preserve partials and failed generations.
+Root owns integration, versions, signing and pushes, one Gradle process and every
+JVM/native/ADB run. No root combined-source edits, main/Worker/stable publication,
+replacement signer, data reset, Gallery or external renderer. The four-minute
+film remains unfinished with zero accepted final seconds. Native defaults and
+the original phone error are separate matters.
+
 # Combined native preview, selected-video import and audio envelope candidate —4.10.25/code528
 
 Root integration branch feat/native-preview-audio-import-20261024 preserves full

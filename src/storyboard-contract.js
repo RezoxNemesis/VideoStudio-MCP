@@ -34,6 +34,11 @@ export function requireStoryboardNativeVersion(device, action, parameters={}) {
 export function nativeStoryboardParameters(action, parameters={}) {
   if (!parameters || typeof parameters !== 'object' || Array.isArray(parameters)) throw new Error('Native parameters must be an object');
   action=nativeStudioCanonicalAction(action);
+  if(Object.hasOwn(parameters,'maxOutputSampleDelayMs')){
+    if(action!=='export_project')throw new Error('maxOutputSampleDelayMs is supported only by native export_project');
+    const delay=parameters.maxOutputSampleDelayMs;
+    if(!Number.isInteger(delay)||delay<25000||delay>120000)throw new Error('maxOutputSampleDelayMs must be a strict integer in25000..120000');
+  }
   if(action==='analyse_media'&&hasMediaAnalysisMode(parameters))return nativeMediaAnalysisParameters(parameters);
   if(STUDIO_NATIVE_ACTIONS.has(action))return nativeStudioParameters(action,parameters);
   if(CINEMATIC_3D_ACTIONS.has(action))return nativeCinematic3dParameters(action,parameters);

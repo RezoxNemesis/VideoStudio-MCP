@@ -88,11 +88,17 @@ public final class NativeRenderEngine {
     }
 
     public Handle export(ProjectStore.Project project, File outputFile, String aspect, String quality, Listener listener) {
+        return export(project,outputFile,aspect,quality,null,listener);
+    }
+
+    public Handle export(ProjectStore.Project project,File outputFile,String aspect,String quality,
+                         Long maxOutputSampleDelayMs,Listener listener) {
         if (project == null || project.clips.isEmpty()) {
             listener.onError("Timeline is empty");
             return null;
         }
         try {
+            final Long outputSampleDelayMs=NativeExportOptions.validate(maxOutputSampleDelayMs);
             if (outputFile.exists() && !outputFile.delete()) {
                 listener.onError("Could not replace previous export");
                 return null;
@@ -102,7 +108,7 @@ public final class NativeRenderEngine {
             final int[] requestedRaster = outputSize(aspect, quality);
             Composition composition = buildPreviewComposition(project, aspect, quality);
 
-            Transformer transformer = new Transformer.Builder(context)
+            Transformer.Builder transformerBuilder = new Transformer.Builder(context)
                     .setVideoMimeType(MimeTypes.VIDEO_H264)
                     .setAudioMimeType(MimeTypes.AUDIO_AAC)
                     .setEncoderFactory(new DefaultEncoderFactory.Builder(context)
@@ -141,6 +147,8 @@ public final class NativeRenderEngine {
                                 info.put("layeredAnimation", layeredAnimation);
                                 info.put("nativeStudioTracks", hasStudioTracks);
                                 info.put("studioTrackCount", project.studioLayers.size());
+                                if(outputSampleDelayMs!=null)
+                                    info.put(NativeExportOptions.FIELD,outputSampleDelayMs);
                                 info.put("animationMode", layeredAnimation
                                         ? (hasArticulatedAnimation(project) ? "articulated-subject-2.5d" : "subject-aware-2.5d")
                                         : "standard");
@@ -187,6 +195,13 @@ public final class NativeRenderEngine {
 
                         @Override
                         public void onError(Composition composition, ExportResult result, ExportException exception) {
+                            if(exception.errorCode==ExportException.ERROR_CODE_MUXING_TIMEOUT){
+                                long limit=outputSampleDelayMs==null
+                                        ?Transformer.DEFAULT_MAX_DELAY_BETWEEN_MUXER_SAMPLES_MS:outputSampleDelayMs;
+                                listener.onError("Native export stopped (7002): no output sample was written for "
+                                        +java.math.BigDecimal.valueOf(limit,3).stripTrailingZeros().toPlainString()+" seconds.");
+                                return;
+                            }
                             if (exception.errorCode == ExportException.ERROR_CODE_ENCODING_FORMAT_UNSUPPORTED
                                     && exception.codecInfo != null && exception.codecInfo.isVideo) {
                                 listener.onError("NATIVE_EXPORT_RASTER_UNAVAILABLE: cannot encode exact "
@@ -195,8 +210,10 @@ public final class NativeRenderEngine {
                             }
                             listener.onError(exception.getMessage() == null ? "Native export failed" : exception.getMessage());
                         }
-                    })
-                    .build();
+                    });
+            if(outputSampleDelayMs!=null)
+                transformerBuilder.setMaxDelayBetweenMuxerSamplesMs(outputSampleDelayMs);
+            Transformer transformer=transformerBuilder.build();
 
             Handle handle = new Handle(transformer, main);
             main.post(() -> {
