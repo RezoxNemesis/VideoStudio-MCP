@@ -13,7 +13,7 @@ import java.util.UUID;
  * EditedMediaItemSequences, with time offsets.
  */
 public final class StudioLayer {
-    public static final String AUDIO="audio", TITLE="title", IMAGE="image", VIDEO="video";
+    public static final String AUDIO="audio", TITLE="title", IMAGE="image", VIDEO="video", SHAPE="shape";
     public String id=UUID.randomUUID().toString();
     public String type=TITLE;
     public String assetId="";
@@ -33,7 +33,13 @@ public final class StudioLayer {
     public float x=.5f,y=.5f,width=.35f,height=.35f,rotation=0f,opacity=1f;
     /** Null retains legacy serialization; an empty array is an explicit motion clear. */
     public JSONArray motionKeyframes;
+    /** SHAPE-only original Canvas geometry. No external image source required. */
+    public String shapeKind="rect";
+    public int strokeColor=0xffffffff;
+    public float strokeWidth=.02f;
     private static final String[] CAPTION_FIELDS={"fontSize","fontFamily","fontStyle","textAlign","backgroundColor"};
+    private static final Set<String> SHAPE_KINDS=Set.of("rect","ellipse","ring","diamond","line","grid");
+    private static final Set<String> SHAPE_FIELDS=Set.of("id","type","startMs","durationMs","x","y","width","height","rotation","opacity","color","shapeKind","strokeColor","strokeWidth","motionKeyframes");
     private static final Set<String> VIDEO_FIELDS=Set.of("id","type","assetId","audioMode","startMs","durationMs","sourceInMs",
             "x","y","width","height","rotation","opacity","motionKeyframes");
 
@@ -41,13 +47,19 @@ public final class StudioLayer {
 
     public void validate(){
         if(id==null||id.isEmpty()||id.length()>128)throw new IllegalArgumentException("Layer ID must contain 1..128 characters");
-        if(!AUDIO.equals(type)&&!TITLE.equals(type)&&!IMAGE.equals(type)&&!VIDEO.equals(type))
-            throw new IllegalArgumentException("Only real audio, caption, image and video lanes are supported");
+        if(!AUDIO.equals(type)&&!TITLE.equals(type)&&!IMAGE.equals(type)&&!VIDEO.equals(type)&&!SHAPE.equals(type))
+            throw new IllegalArgumentException("Only real audio, caption, image, video and native shape lanes are supported");
         if(VIDEO.equals(type)){
             if(!"silent".equals(audioMode))throw new IllegalArgumentException("Video lanes require audioMode:\"silent\"");
             if(text==null||!text.isEmpty()||gain!=1f||color!=0xffffffff||position!=1)
                 throw new IllegalArgumentException("Video lanes do not support audio levels or caption fields");
         }else if(!"".equals(audioMode))throw new IllegalArgumentException("audioMode is only supported on video layers");
+        if(SHAPE.equals(type)){
+            if((assetId!=null&&!assetId.isEmpty())||(text!=null&&!text.isEmpty())||gain!=1f||position!=1)
+                throw new IllegalArgumentException("Native SHAPE has no external asset, title text or audio");
+            if(!SHAPE_KINDS.contains(shapeKind)||!Float.isFinite(strokeWidth)||strokeWidth<0||strokeWidth>.20f)
+                throw new IllegalArgumentException("Unknown shape or invalid normalized stroke width");
+        }
         if(startMs<0||durationMs<100||durationMs>86_400_000L||sourceInMs<0)
             throw new IllegalArgumentException("Invalid layer time or duration");
         if(!Float.isFinite(gain)||gain<0||gain>1)
@@ -66,12 +78,12 @@ public final class StudioLayer {
             throw new IllegalArgumentException("Caption styles are only supported on title layers");
         if(AUDIO.equals(type)&& (assetId==null||assetId.trim().isEmpty()))
             throw new IllegalArgumentException("Audio lane needs an imported audio asset");
-        if(motionKeyframes!=null&&!IMAGE.equals(type)&&!TITLE.equals(type)&&!VIDEO.equals(type))
-            throw new IllegalArgumentException("motionKeyframes is only supported on image, title or video layers");
+        if(motionKeyframes!=null&&!IMAGE.equals(type)&&!TITLE.equals(type)&&!VIDEO.equals(type)&&!SHAPE.equals(type))
+            throw new IllegalArgumentException("motionKeyframes is only supported on image, title, shape or video layers");
         if(TITLE.equals(type)&&motionKeyframes!=null)StudioLayerMotion.fromLayer(this);
-        if(IMAGE.equals(type)||VIDEO.equals(type)){
+        if(IMAGE.equals(type)||VIDEO.equals(type)||SHAPE.equals(type)){
             String name=VIDEO.equals(type)?"Video":"Image";
-            if(assetId==null||assetId.trim().isEmpty())throw new IllegalArgumentException(name+" lane needs an imported "+type+" asset");
+            if(!SHAPE.equals(type)&&(assetId==null||assetId.trim().isEmpty()))throw new IllegalArgumentException(name+" lane needs an imported "+type+" asset");
             if(!Float.isFinite(x)||!Float.isFinite(y)||x<0||x>1||y<0||y>1
                     ||!Float.isFinite(width)||!Float.isFinite(height)||width<.01f||width>2||height<.01f||height>2
                     ||!Float.isFinite(rotation)||rotation<-360||rotation>360||!Float.isFinite(opacity)||opacity<0||opacity>1)
@@ -85,6 +97,7 @@ public final class StudioLayer {
 
     public JSONObject toJson(){
         if(VIDEO.equals(type))return videoJson();
+        if(SHAPE.equals(type))return shapeJson();
         JSONObject obj=new JSONObject();
         try{
             obj.put("id",id);obj.put("type",type);obj.put("assetId",assetId);
@@ -118,6 +131,9 @@ public final class StudioLayer {
         l.id=o.optString("id",UUID.randomUUID().toString());
         l.type=o.optString("type",TITLE);
         if(VIDEO.equals(l.type))return videoFromJson(o,l);
+        if(SHAPE.equals(l.type))return shapeFromJson(o,l);
+        if(o.has("shapeKind")||o.has("strokeColor")||o.has("strokeWidth"))
+            throw new IllegalArgumentException("Shape-only fields require type shape");
         if(o.has("audioMode"))throw new IllegalArgumentException("audioMode is only supported on video layers");
         if(!TITLE.equals(l.type))for(String field:CAPTION_FIELDS)if(o.has(field))
             throw new IllegalArgumentException(field+" is only supported on title layers");
@@ -146,6 +162,49 @@ public final class StudioLayer {
         }
         l.validate();
         return l;
+    }
+
+    /** SHAPE-only serialization leaves IMAGE, TITLE, AUDIO and VIDEO JSON unchanged. */
+    private JSONObject shapeJson(){
+        validate();
+        JSONObject obj=new JSONObject();
+        try{
+            obj.put("id",id).put("type",SHAPE).put("startMs",startMs).put("durationMs",durationMs);
+            obj.put("x",x).put("y",y)
+                    .put("width",width==.01f?.01:(double)width)
+                    .put("height",height==.01f?.01:(double)height)
+                    .put("rotation",rotation).put("opacity",opacity)
+                    .put("color",color).put("shapeKind",shapeKind)
+                    .put("strokeColor",strokeColor).put("strokeWidth",strokeWidth);
+            if(motionKeyframes!=null)obj.put("motionKeyframes",new JSONArray(motionKeyframes.toString()));
+        }catch(org.json.JSONException error){throw new IllegalArgumentException("Could not serialize original shape",error);}
+        return obj;
+    }
+
+    private static StudioLayer shapeFromJson(JSONObject o,StudioLayer l){
+        java.util.Iterator<String> fields=o.keys();
+        while(fields.hasNext())if(!SHAPE_FIELDS.contains(fields.next()))
+            throw new IllegalArgumentException("Unsupported original shape field");
+        l.type=SHAPE;
+        l.startMs=o.has("startMs")?StudioClipKeyframes.integer(o,"startMs",0,86_400_000):0;
+        l.durationMs=o.has("durationMs")?StudioClipKeyframes.integer(o,"durationMs",100,86_400_000):2500;
+        l.x=(float)StudioClipKeyframes.number(o,"x",.5,0,1);
+        l.y=(float)StudioClipKeyframes.number(o,"y",.5,0,1);
+        l.width=(float)StudioClipKeyframes.number(o,"width",.35,.01,2);
+        l.height=(float)StudioClipKeyframes.number(o,"height",.35,.01,2);
+        l.rotation=(float)StudioClipKeyframes.number(o,"rotation",0,-360,360);
+        l.opacity=(float)StudioClipKeyframes.number(o,"opacity",1,0,1);
+        l.color=o.optInt("color",0xffffffff);
+        l.shapeKind=o.optString("shapeKind","rect");
+        l.strokeColor=o.optInt("strokeColor",0xffffffff);
+        l.strokeWidth=(float)StudioClipKeyframes.number(o,"strokeWidth",.02,0,.20);
+        if(o.has("motionKeyframes")){
+            if(!(o.opt("motionKeyframes") instanceof JSONArray))
+                throw new IllegalArgumentException("Shape motion keys must be an array");
+            try{l.motionKeyframes=new JSONArray(o.getJSONArray("motionKeyframes").toString());}
+            catch(org.json.JSONException error){throw new IllegalArgumentException("Could not read shape motion keys",error);}
+        }
+        l.validate();return l;
     }
 
     /** New VIDEO encoding does not change legacy kinds' fields or numeric representation. */
