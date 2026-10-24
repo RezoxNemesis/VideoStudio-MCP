@@ -39,6 +39,7 @@ public final class SketchNativeExport {
         return prepare(context, args, (frame, count) -> {});
     }
     public static Prepared prepare(Context context, JSONObject args, Progress progress) throws Exception {
+        if(args!=null&&args.has("format"))return SketchStillExport.prepare(context,args,progress);
         SketchDocument.fields(args, "sketchId,expectedRevision,operationId,aspect,quality");
         String id = SketchDocument.id(args, "sketchId"), operationId = SketchDocument.id(args, "operationId");
         long revision = SketchDocument.integer(args, "expectedRevision", 1, Long.MAX_VALUE - 1);

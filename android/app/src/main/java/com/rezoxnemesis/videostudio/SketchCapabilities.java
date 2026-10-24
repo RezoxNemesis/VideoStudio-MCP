@@ -359,6 +359,7 @@ public final class SketchCapabilities {
         return new JSONObject().put("localNeuralDrawing",LocalDrawingCapabilities.get()).put("minimumNativeVersion","3.9.1").put("promptFirstDrawing",true).put("referenceImageRequired",false).put("humanAndAgentShareOperations",true)
                 .put("linkedMasters",SketchMasterAssets.capability())
                 .put("sharedLayerMotion",SketchLayerGroupMotion.capabilities())
+                .put("stillPngExport",SketchStillExport.capabilities())
                 .put("characterPerformance",characterPerformance())
                 .put("handAnimation",handAnimation())
                 .put("humanAnimation",humanAnimation())

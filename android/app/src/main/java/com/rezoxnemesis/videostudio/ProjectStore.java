@@ -27,7 +27,7 @@ import java.util.UUID;
  * once on upgrade; the old SharedPreferences copy is intentionally left
  * untouched as a rollback safety net.
  */
-public final class ProjectStore {
+public final class ProjectStore implements AutoCloseable {
     private static final String LEGACY_PREFS = "videostudio_native_v1";
     private static final String LEGACY_PROJECTS = "projects";
     private static final String LEGACY_ACTIVE = "active_project";
@@ -255,6 +255,9 @@ public final class ProjectStore {
         migrateLegacyProjectsOnce();
     }
 
+    /** Close only this store instance's SQLite handle; returned project data is detached. */
+    @Override public synchronized void close(){db.close();}
+
     public synchronized List<Project> list() {
         ArrayList<Project> out = new ArrayList<>();
         ArrayList<String> ids = new ArrayList<>();
@@ -380,6 +383,44 @@ public final class ProjectStore {
         } finally {
             db.endTransaction();
         }
+    }
+
+    /** Durable ownership witness for the one-asset native still export; survives later deletion. */
+    synchronized JSONObject sketchStillCommit(String operationKey) throws Exception {
+        String value=getMeta(sketchStillCommitKey(operationKey));
+        if(value.isEmpty())return null;
+        if(value.length()>64*1024)throw new IllegalStateException("SKETCH_STILL_COMMIT_CHANGED");
+        return new JSONObject(value);
+    }
+
+    /** Insert the new output and its recovery witness in ONE writer transaction, without activation. */
+    synchronized JSONObject createSketchStillOutput(Project project,String operationKey,JSONObject receipt) throws Exception {
+        String key=sketchStillCommitKey(operationKey);
+        if(project==null||project.assets.size()!=1||!project.clips.isEmpty()||!project.studioLayers.isEmpty()||
+                !project.id.equals(receipt.getString("outputProjectId"))||!"png".equals(receipt.getString("format"))||
+                !"image/png".equals(project.assets.get(0).mime)||!project.assets.get(0).generated||
+                !project.assets.get(0).id.equals(receipt.getString("assetId")))
+            throw new IllegalArgumentException("A new one-image native still output is required");
+        JSONObject committed=new JSONObject(receipt.toString());long before=project.updatedAt;
+        db.beginTransaction();
+        try {
+            if(!getMeta(key).isEmpty()||get(project.id)!=null)
+                throw new IllegalStateException("SKETCH_STILL_OUTPUT_PROJECT_CHANGED");
+            if(Thread.currentThread().isInterrupted())throw new InterruptedException("Sketch still export cancelled; source retained");
+            project.updatedAt=Math.max(1,System.currentTimeMillis());committed.put("updatedAt",project.updatedAt);
+            String proof=committed.toString();if(proof.length()>64*1024)throw new IllegalArgumentException("Still commit receipt exceeds budget");
+            ContentValues row=new ContentValues();row.put("id",project.id);row.put("json",project.toJson().toString());row.put("updated_at",project.updatedAt);
+            db.insertOrThrow("projects",null,row);
+            ContentValues witness=new ContentValues();witness.put("key",key);witness.put("value",proof);db.insertOrThrow("meta",null,witness);
+            if(Thread.currentThread().isInterrupted())throw new InterruptedException("Sketch still export cancelled; source retained");
+            db.setTransactionSuccessful();return committed;
+        }catch(Exception failure){project.updatedAt=before;throw failure;}
+        finally{db.endTransaction();}
+    }
+
+    private static String sketchStillCommitKey(String operationKey){
+        if(operationKey==null||!operationKey.matches("[a-f0-9]{64}"))throw new IllegalArgumentException("Exact still operation identity required");
+        return "sketch_still_commit/"+operationKey;
     }
 
     public synchronized void delete(String id) {

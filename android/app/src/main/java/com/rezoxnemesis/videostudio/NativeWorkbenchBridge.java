@@ -63,6 +63,7 @@ public final class NativeWorkbenchBridge {
                 .put("storyPlanMinimumNativeVersion","4.8.0").put("storyAudioMinimumNativeVersion","4.8.0")
                 .put("projectAssetImport",ProjectAssetImport.capabilities())
                 .put("studioEditing",StudioEditingCapabilities.capabilities())
+                .put("sketchStillExport",SketchStillExport.capabilities())
                 .put("encryptedMediaImportMinimumNativeVersion","4.2.0").put("encryptedMediaImportMaximumBytes",256L*1024*1024)
                 .put("drawingAssetImportMinimumNativeVersion","4.3.1").put("nativeResultPageMinimumNativeVersion","4.3.1")
                 .put("incrementalKeyframeMinimumNativeVersion","4.3.0").put("cameraEditMinimumNativeVersion","4.3.0")

@@ -1,3 +1,26 @@
+# Active native still PNG export — future4.10.22/code525
+
+Branch `feat/native-sketch-still-png-v41022` integrates locally verified clock524
+`7f638afe86173dd03bd0ef3e59e7173798b50490`; its original-signed CI candidate is
+being verified separately. Read the preserved PNG design continuity file. Add
+optional `format:"png"` plus required strict `frame` to existing `sketch_render`.
+Omission retains exact old MP4 behavior, fingerprints and floors. PNG rejects
+aspect/quality/book arguments and exports a full native frame with alpha to a
+deterministic owned output project: ONE PNG asset, NO clips. Existing asset import
+provides destination CAS. Source/revision/dependency freezing, operation conflicts,
+private staging, cancellation, atomic file publication, DB commit witness and
+receipt-first recovery/replay must preserve all user source/assets/edits.
+Root executed immutable native RED22/17FAIL4.846s against FULL524. Original three
+new test sources and all failed evidence remain frozen. Existing Node REDfloor
+4.10.21 is historical/stale; this new feature requires4.10.22 after clock524.
+Core agent owns shared helper/SketchNativeExport and narrow atomic ProjectStore
+witness; bridge/Node agent owns ControlService/strict schemas/caps; manual
+SketchStudio UI work is separate from the Editor redesign. Root alone executes
+ALL native/JUnit/Gradle/model/ADB and owns version/integration/signing/CI.
+No new canonical action, fake video/voice/AI feature, main/Worker/stable publish,
+new signer, identity/data reset or claimed finished film. Keep original tests and
+all earlier work; no duplicated recovery patches or private media in Git.
+
 # Active native clip-local presentation clock repair — 2026-10-24
 
 Branch `fix/native-clip-keyframe-clock-v41021` starts verified original-signed523

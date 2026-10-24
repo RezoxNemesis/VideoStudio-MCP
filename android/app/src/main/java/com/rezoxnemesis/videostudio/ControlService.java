@@ -476,7 +476,10 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             authoringExecutor.execute(()->{
                 try {
                     JSONObject queued=queueSketchRender(new JSONObject(request));
-                    ActivityLog.add(this,"user","Sketch export queued","Native Canvas and Media3 job", "queued",0,null,queued.optString("projectId",""));
+                    boolean png="png".equals(queued.opt("format"));
+                    ActivityLog.add(this,"user",png?"Sketch PNG save queued":"Sketch export queued",
+                            png?"See Jobs / Activity, then Media Bin > Import from project":"Native Canvas and Media3 job",
+                            "queued",0,null,queued.optString("projectId",""));
                 } catch(Exception failure) {
                     ActivityLog.add(this,"user","Sketch export failed",failure.getMessage()==null?"Cannot prepare sketch export":failure.getMessage(),"failed",null,null,null);
                 }
@@ -3211,6 +3214,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     /** Complete admission precedes output creation, recovery work and GPU effects. */
     private JSONObject queueSketchRender(JSONObject input) throws Exception {
         final JSONObject request=publicOperationParameters(input);
+        if(request.has("format"))return queueSketchPng(input,request);
         boolean isBook=request.has("bookId");
         SketchDocument.fields(request,isBook?"bookId,expectedRevision,operationId,pageStart,pageCount,aspect,quality":"sketchId,expectedRevision,operationId,aspect,quality");
         String sketchId=SketchDocument.id(request,isBook?"bookId":"sketchId"),operationId=SketchDocument.id(request,"operationId");
@@ -3296,6 +3300,37 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         });
         return ok().put("queued",true).put("jobId",job.id).put("projectId",outputId).put("outputProjectId",outputId)
                 .put("sketchId",sketchId).put("durableRecovery",true).put("render",true);
+    }
+
+    /** Still capture shares the existing action, source guards and recoverable transfer lane. */
+    private JSONObject queueSketchPng(JSONObject input,JSONObject request)throws Exception {
+        // Admission is read-only and receipt-first: completed or frozen identical
+        // operations remain valid after later source edits; fresh stale input fails
+        // before a job or output project is created.
+        final JSONObject admitted=SketchStillExport.admit(this,request);
+        final String sketchId=admitted.getString("sketchId"),operationId=admitted.getString("operationId");
+        final String outputId=SketchStillExport.outputProjectId(sketchId,operationId);
+        JSONObject durable=new JSONObject(admitted.toString());
+        if(input.has("_recoveryPlanId"))durable.put("_recoveryPlanId",input.get("_recoveryPlanId"));
+        if(input.has("_mcpCommandId"))durable.put("_mcpCommandId",input.get("_mcpCommandId"));
+        JobManager.Job job=submitRecoverableTransfer("sketch_render",durable,outputId,"Save sketch PNG",state->{
+            jobs.awaitSafeCheckpoint(state,"sketch_png_prepare");
+            checkpoint(state,"Saving sketch PNG","Capturing the selected native frame",5,outputId);
+            JSONObject result=SketchStillExport.execute(this,admitted,(frame,count)->{
+                jobs.awaitSafeCheckpoint(state,"sketch_png_capture");
+                checkpoint(state,"Saving sketch PNG","Retaining native artwork and transparency",45,outputId);
+            });
+            if(!outputId.equals(result.getString("projectId"))||!"image/png".equals(result.opt("mime")))
+                throw new IllegalStateException("Native PNG output identity changed");
+            state.setResult(result);
+            checkpoint(state,"Sketch PNG saved","Saved to "+result.optString("outputProjectName",result.optString("projectName","the PNG project"))
+                    +". Use Media Bin > Import from project to attach it.",100,outputId);
+            syncProtocolState();
+        });
+        return ok().put("queued",true).put("jobId",job.id).put("projectId",outputId).put("outputProjectId",outputId)
+                .put("sketchId",sketchId).put("sourceRevision",admitted.getLong("expectedRevision"))
+                .put("operationId",operationId).put("frame",admitted.getInt("frame")).put("format","png")
+                .put("mime","image/png").put("durableRecovery",true);
     }
 
     private static JSONObject publicOperationParameters(JSONObject input)throws Exception {
@@ -4989,6 +5024,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             out.put("cinematic3d",cinematic3DCapabilities());
             out.put("workbenchRelayCompatibility",NativeWorkbenchBridge.capabilities());
             out.put("studioEditing",StudioEditingCapabilities.capabilities());
+            out.put("sketchStillExport",SketchStillExport.capabilities());
             out.put("studioWorkbench",new JSONObject().put("minimumNativeAppVersion","3.9.0")
                     .put("sharedHumanAndMCP",true).put("sketchCanvasRenderer",true).put("sketchGeometryPaging",true)
                     .put("atomicClipEdits",true).put("clipKeyframes",true).put("chromaKey",true)
@@ -5063,6 +5099,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             out.put("neuralStoryboardModelAvailable", false);
             out.put("workbenchRelayCompatibility",NativeWorkbenchBridge.capabilities());
             out.put("studioEditing",StudioEditingCapabilities.capabilities());
+            out.put("sketchStillExport",SketchStillExport.capabilities());
             out.put("localEngineOwnsProjects", true);
             out.put("portraitAnimationEngine", "v3.2-articulated-parallax");
             out.put("onDevicePortraitAi", true);
@@ -5473,6 +5510,34 @@ public final class ControlService extends Service implements AppProtocol.Callbac
 
         JSONObject jobResult = job.optJSONObject("result");
         if (jobResult != null) out.put("jobResult", new JSONObject(jobResult.toString()));
+
+        if("sketch_render".equals(NativeWorkbenchBridge.canonicalAction(action))
+                &&queuedResult!=null&&"png".equals(queuedResult.opt("format"))){
+            // A readable image is not a playable video. Verify the committed
+            // native PNG receipt and bind it to this exact queued operation.
+            out.put("verifiedImageOutput",false).put("verifiedPlayableOutput",false);
+            try{
+                if(jobResult==null||!"image/png".equals(jobResult.opt("mime")))
+                    throw new IllegalStateException("Native PNG receipt is unavailable");
+                JSONObject verified=SketchStillExport.verify(this,jobResult);
+                for(String field:new String[]{"projectId","outputProjectId","sketchId","operationId"})
+                    if(!queuedResult.getString(field).equals(verified.getString(field)))
+                        throw new IllegalStateException("Native PNG receipt differs from its queued operation");
+                if(SketchDocument.integer(queuedResult,"frame",0,1199)!=SketchDocument.integer(verified,"frame",0,1199)
+                        ||SketchDocument.integer(queuedResult,"sourceRevision",1,9_007_199_254_740_991L)
+                        !=SketchDocument.integer(verified,"sourceRevision",1,9_007_199_254_740_991L))
+                    throw new IllegalStateException("Native PNG source frame or revision changed");
+                out.put("ok",true).put("format","png").put("mime","image/png").put("verifiedImageOutput",true)
+                        .put("projectId",verified.getString("projectId")).put("outputProjectId",verified.getString("outputProjectId"))
+                        .put("assetId",verified.getString("assetId")).put("sha256",verified.getString("sha256"))
+                        .put("bytes",verified.getLong("bytes")).put("width",verified.getInt("width")).put("height",verified.getInt("height"))
+                        .put("jobResult",verified);
+            }catch(Exception invalid){
+                out.put("ok",false).put("error","Native PNG completion could not be verified: "
+                        +(invalid.getMessage()==null?"owned image verification failed":invalid.getMessage()));
+            }
+            return out;
+        }
 
         boolean requirePlayableOutput = ExecutionTruthPolicy.requiresValidatedMediaOutput(action);
         if ("animate_images".equals(action)
