@@ -2,6 +2,8 @@ package com.rezoxnemesis.videostudio;
 
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.content.pm.ActivityInfo;
+import android.content.res.Configuration;
 import android.content.ClipData;
 import android.content.ContentValues;
 import android.content.Intent;
@@ -789,6 +791,9 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         project.setTextSize(18);project.setSingleLine(true);project.setMaxLines(1);
         project.setEllipsize(android.text.TextUtils.TruncateAt.END);project.setContentDescription("Open project "+activeProject.name);
         header.addView(project,new LinearLayout.LayoutParams(0,dp(48),1));
+        Button orientation=studioButton("↔",this::chooseEditorOrientation);
+        orientation.setTextSize(18);orientation.setContentDescription("Editor orientation: auto, portrait or landscape");
+        header.addView(orientation,new LinearLayout.LayoutParams(dp(42),dp(48)));
         JSONObject nativeState=NativeWorkMonitor.snapshot(this);boolean connected=nativeState.optBoolean("nativeServiceOnline",false);
         TextView nativeStatus=accent(connected?"●":"○",connected?C_CYAN:C_MUTED);nativeStatus.setGravity(Gravity.CENTER);
         nativeStatus.setTag("editor-native-status");
@@ -846,10 +851,41 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         View editingTools=StudioEditorWorkspace.editingTools(this,new String[]{"Trim","Adjust","Motion","Audio","More"},new Runnable[]{this::studioWorkspaceTrim,this::studioWorkspaceAdjust,this::studioWorkspaceMotion,this::studioWorkspaceAudioMenu,this::studioPreviewMenu});
         studioWorkspace=new StudioEditorWorkspace(this,header,studioPreviewFrame,transport,editingTools,studioWorkspacePane,
                 this::buildStudioWorkspacePane,pane->studioWorkspacePane=pane);
+        int savedOrientation=prefs.getInt("studio_orientation_choice",0);
+        int wanted=savedOrientation==1?ActivityInfo.SCREEN_ORIENTATION_PORTRAIT:
+                savedOrientation==2?ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE:
+                        ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED;
+        if(getRequestedOrientation()!=wanted)setRequestedOrientation(wanted);
         setScreen(studioWorkspace,"editor");
         if(isStudioExternalPreviewMode()&&!studioPendingEditedSeek)applyStudioPreviewTarget();else previewSelectedStudioClip(false);
         updateStudioCaptionAt(studioPlayheadMs);
         scheduleEditorRefresh(activeProject.id,activeProject.updatedAt);
+    }
+
+    /** Manual orientation choice overrides rotation-lock only while the editor is open. */
+    private void chooseEditorOrientation(){
+        String[] options={"Auto-rotate editor","Portrait editing","Landscape editing"};
+        int configured=prefs.getInt("studio_orientation_choice",0);
+        new AlertDialog.Builder(this).setTitle("Responsive editor orientation")
+                .setSingleChoiceItems(options,Math.max(0,Math.min(options.length-1,configured)),
+                        (dialog,which)->{
+                            prefs.edit().putInt("studio_orientation_choice",which).apply();
+                            setRequestedOrientation(which==1?ActivityInfo.SCREEN_ORIENTATION_PORTRAIT:
+                                    which==2?ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE:
+                                            ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED);
+                            dialog.dismiss();
+                        })
+                .setNeutralButton("Resize panes", (d,w)->Toast.makeText(this,
+                        "Drag the handle between preview and timeline to resize both panes.",
+                        Toast.LENGTH_LONG).show())
+                .setNegativeButton("Cancel",null).show();
+    }
+
+    @Override public void onConfigurationChanged(Configuration next) {
+        super.onConfigurationChanged(next);
+        // The existing media3 player and native timeline survive a rotation.
+        // StudioEditorWorkspace receives the same configuration and reflows in place.
+        if("editor".equals(currentScreen)&&studioWorkspace!=null)studioWorkspace.requestLayout();
     }
 
     private void setStudioPlayerControls(boolean visible){
@@ -982,6 +1018,59 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         ScrollView scroll=baseScroll();scroll.addView(box);return scroll;
     }
 
+    private void openStudioMaskEditor(StudioLayer target) {
+        if(activeProject==null || target==null)return;
+        if(!StudioLayer.IMAGE.equals(target.type)&&!StudioLayer.SHAPE.equals(target.type))return;
+        final String owner=activeProject.id;
+        final long revision=activeProject.updatedAt;
+        String[] choices={"No mask","Ellipse","Rectangle","Rounded rectangle","Linear wipe"};
+        new AlertDialog.Builder(this).setTitle("After Effects-style alpha mask")
+                .setItems(choices,(dialog,which)->{
+                    if(activeProject==null || !owner.equals(activeProject.id)
+                            ||revision!=activeProject.updatedAt){
+                        Toast.makeText(this,"Project changed; reopen mask editor",Toast.LENGTH_LONG).show();return;
+                    }
+                    if(which==0){
+                        StudioLayer edit=target.copy();edit.mask=null;
+                        saveStudioLayer(edit,revision);return;
+                    }
+                    final String kind=new String[]{"","ellipse","rectangle","round_rect","linear_wipe"}[which];
+                    LinearLayout controls=column();controls.setPadding(dp(16),dp(10),dp(16),dp(10));
+                    controls.addView(body("Feather (0–0.4, normalized to layer pixels)"));
+                    EditText feather=numberInput(.06f);controls.addView(feather);
+                    controls.addView(body("Wipe position 0–1 (used by linear wipe)"));
+                    EditText position=numberInput(.5f);controls.addView(position);
+                    android.widget.CheckBox inverted=new android.widget.CheckBox(this);
+                    inverted.setText("Invert alpha mask");controls.addView(inverted);
+                    if(target.mask!=null){
+                        feather.setText(Double.toString(target.mask.optDouble("feather",.06)));
+                        position.setText(Double.toString(target.mask.optDouble("position",.5)));
+                        inverted.setChecked(target.mask.optBoolean("invert",false));
+                    }
+                    AlertDialog edit=new AlertDialog.Builder(this).setTitle("Mask · "+choices[which])
+                            .setView(controls).setPositiveButton("Apply",null)
+                            .setNegativeButton("Cancel",null).create();
+                    edit.setOnShowListener(ignored->
+                        edit.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(view->{
+                            try {
+                                if(activeProject==null||!owner.equals(activeProject.id)
+                                        ||revision!=activeProject.updatedAt)
+                                    throw new IllegalStateException("Project changed. Reopen the mask inspector");
+                                StudioLayer draft=target.copy();
+                                draft.mask=StudioMaskRasterizer.validate(new JSONObject()
+                                        .put("kind",kind)
+                                        .put("feather",Double.parseDouble(feather.getText().toString()))
+                                        .put("position",Double.parseDouble(position.getText().toString()))
+                                        .put("invert",inverted.isChecked()));
+                                if(saveStudioLayer(draft,revision))edit.dismiss();
+                            }catch(Exception error){
+                                Toast.makeText(this,"Mask not saved: "+error.getMessage(),Toast.LENGTH_LONG).show();
+                            }
+                        }));
+                    edit.show();
+                }).show();
+    }
+
     private void studioWorkspaceActions(LinearLayout box,String[] names,Runnable[] actions){
         for(int first=0;first<names.length;first+=2){LinearLayout row=new LinearLayout(this);
             for(int i=first;i<Math.min(names.length,first+2);i++)row.addView(studioButton(names[i],actions[i]),new LinearLayout.LayoutParams(0,dp(48),1));box.addView(row);}
@@ -1020,6 +1109,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         if(layer!=null){
             ProjectStore.Asset asset=activeProject.asset(layer.assetId);TextView source=body((asset==null?(StudioLayer.SHAPE.equals(layer.type)?layer.shapeKind:layer.text):asset.name)+" · "+StudioEditCursor.timecode(layer.startMs)+" – "+StudioEditCursor.timecode(layer.startMs+layer.durationMs));source.setMaxLines(2);box.addView(source);
             if(StudioLayer.IMAGE.equals(layer.type)){
+                box.addView(studioButton("Mask / feather",()->openStudioMaskEditor(layer)));
                 box.addView(studioButton("Animate overlay",()->openStudioImageMotion(layer)));
                 box.addView(studioButton("Placement / timing",()->editStudioImage(layer,layer.assetId)));
                 box.addView(studioButton("Delete image overlay",()->removeStudioLayer(layer)));
@@ -1030,6 +1120,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                 box.addView(studioButton("Delete video overlay",()->removeStudioLayer(layer)));
                 box.addView(body("Silent independent video source. Source in trims its own footage; it does not move the base timeline or add source audio."));
             }else if(StudioLayer.SHAPE.equals(layer.type)){
+                box.addView(studioButton("Mask / feather",()->openStudioMaskEditor(layer)));
                 box.addView(studioButton("Animate vector shape",()->openStudioShapeMotion(layer)));
                 box.addView(studioButton("Placement / timing",()->editStudioShape(layer)));
                 box.addView(studioButton("Change geometry",()->chooseStudioShapeGeometry(layer)));
