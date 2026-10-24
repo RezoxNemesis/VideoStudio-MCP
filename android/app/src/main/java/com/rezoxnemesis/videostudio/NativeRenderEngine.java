@@ -368,9 +368,19 @@ public final class NativeRenderEngine {
     private void attachTimedTitles(Composition.Builder assembled,
                                           ProjectStore.Project project){
         StudioCompositionOverlayEffect overlays=new StudioCompositionOverlayEffect(context,project);
-        if(!overlays.isEmpty()){
-            assembled.setEffects(new Effects(Collections.emptyList(),
-                    Collections.singletonList(overlays)));
+        ArrayList<Effect> finalStage=new ArrayList<>();
+        if(!overlays.isEmpty())finalStage.add(overlays);
+        // The camera is a composition-global matrix AFTER image/title/vector
+        // overlay compositing, not an item-local zoom of a source screenshot.
+        // This effect order is shared by interactive CompositionPlayer and
+        // the native H.264 export builder. Audio is not transformed.
+        for(StudioLayer layer:project.studioLayers)if(StudioLayer.CAMERA.equals(layer.type)){
+            if(layer.startMs!=0)
+                throw new IllegalArgumentException("Composition camera must start at project time zero");
+            finalStage.add(StudioClipKeyframes.parse(layer.motionKeyframes,layer.durationMs));
+        }
+        if(!finalStage.isEmpty()){
+            assembled.setEffects(new Effects(Collections.emptyList(),finalStage));
         }
     }
 

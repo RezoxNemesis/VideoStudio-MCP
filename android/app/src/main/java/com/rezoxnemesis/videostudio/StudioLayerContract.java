@@ -22,7 +22,7 @@ public final class StudioLayerContract {
         if(layers.length()>32)throw new IllegalArgumentException("Maximum 32 layers");
         ArrayList<StudioLayer> result=new ArrayList<>();
         Set<String> usedIds=new HashSet<>();
-        int images=0,videos=0,shapes=0,groups=0;
+        int images=0,videos=0,shapes=0,groups=0,cameras=0;
         java.util.HashMap<String,StudioLayer> byId=new java.util.HashMap<>();
         for(int i=0;i<layers.length();i++){
             JSONObject entry=layers.getJSONObject(i);
@@ -34,6 +34,8 @@ public final class StudioLayerContract {
             if(StudioLayer.IMAGE.equals(lane.type)&&++images>8)throw new IllegalArgumentException("Maximum 8 decoded image layers");
             if(StudioLayer.VIDEO.equals(lane.type)&&++videos>2)throw new IllegalArgumentException("Maximum 2 decoded video layers");
             if(StudioLayer.SHAPE.equals(lane.type)&&++shapes>12)throw new IllegalArgumentException("Maximum 12 cached original vector shapes");
+            if(StudioLayer.CAMERA.equals(lane.type)&&++cameras>1)
+                throw new IllegalArgumentException("Only one global composition camera is supported");
             if(StudioLayer.GROUP.equals(lane.type)&&++groups>8)
                 throw new IllegalArgumentException("Maximum 8 motion groups per composition");
             result.add(lane);
@@ -53,6 +55,15 @@ public final class StudioLayerContract {
         if(project==null||lane==null)throw new IllegalArgumentException("Missing lane");
         lane.validate();
         long output=project.outputDurationMs();
+        if(StudioLayer.CAMERA.equals(lane.type)){
+            if(output<100)throw new IllegalArgumentException("Camera requires a renderable output timeline");
+            if(lane.startMs!=0)
+                throw new IllegalArgumentException("Global camera must start at timeline zero");
+            // Camera keyframes have their own authored duration; if clips are
+            // lengthened or shortened later, the sample holds the nearest
+            // authored end key rather than blocking an otherwise safe trim.
+            return;
+        }
         if(output<=0||lane.startMs>=output||
                 lane.durationMs>output-lane.startMs)
             throw new IllegalArgumentException("Track extends outside the rendered video timeline");

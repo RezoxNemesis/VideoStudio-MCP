@@ -1003,9 +1003,9 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         setStudioPlayerControls(!edited&&!still);updateStudioPlayToggle();
     }
 
-    private void studioWorkspaceTrim(){StudioLayer layer=selectedStudioLayer();if(layer==null)trimDialog();else if(StudioLayer.IMAGE.equals(layer.type))editStudioImage(layer,layer.assetId);else if(StudioLayer.VIDEO.equals(layer.type))editStudioVideo(layer,layer.assetId);else if(StudioLayer.SHAPE.equals(layer.type))editStudioShape(layer);else if(StudioLayer.GROUP.equals(layer.type))openStudioMotionGroup(layer);else if(StudioLayer.AUDIO.equals(layer.type))editStudioAudio(layer,layer.assetId);else editStudioTitle(layer);}
+    private void studioWorkspaceTrim(){StudioLayer layer=selectedStudioLayer();if(layer==null)trimDialog();else if(StudioLayer.IMAGE.equals(layer.type))editStudioImage(layer,layer.assetId);else if(StudioLayer.VIDEO.equals(layer.type))editStudioVideo(layer,layer.assetId);else if(StudioLayer.SHAPE.equals(layer.type))editStudioShape(layer);else if(StudioLayer.GROUP.equals(layer.type))openStudioMotionGroup(layer);else if(StudioLayer.CAMERA.equals(layer.type))openStudioCamera2D(layer);else if(StudioLayer.AUDIO.equals(layer.type))editStudioAudio(layer,layer.assetId);else editStudioTitle(layer);}
     private void studioWorkspaceAdjust(){StudioLayer layer=selectedStudioLayer();if(layer==null)studioAdvancedAdjustDialog(false);else studioWorkspaceTrim();}
-    private void studioWorkspaceMotion(){StudioLayer layer=selectedStudioLayer();if(layer==null)studioKeyframeManager();else if(StudioLayer.IMAGE.equals(layer.type))openStudioImageMotion(layer);else if(StudioLayer.VIDEO.equals(layer.type))openStudioVideoMotion(layer);else if(StudioLayer.SHAPE.equals(layer.type))openStudioShapeMotion(layer);else if(StudioLayer.GROUP.equals(layer.type))openStudioMotionGroup(layer);else if(StudioLayer.TITLE.equals(layer.type))openStudioTitleMotion(layer);else Toast.makeText(this,"Motion keys apply to a base clip, image/video overlay or title",Toast.LENGTH_LONG).show();}
+    private void studioWorkspaceMotion(){StudioLayer layer=selectedStudioLayer();if(layer==null)studioKeyframeManager();else if(StudioLayer.IMAGE.equals(layer.type))openStudioImageMotion(layer);else if(StudioLayer.VIDEO.equals(layer.type))openStudioVideoMotion(layer);else if(StudioLayer.SHAPE.equals(layer.type))openStudioShapeMotion(layer);else if(StudioLayer.GROUP.equals(layer.type))openStudioMotionGroup(layer);else if(StudioLayer.CAMERA.equals(layer.type))openStudioCamera2D(layer);else if(StudioLayer.TITLE.equals(layer.type))openStudioTitleMotion(layer);else Toast.makeText(this,"Motion keys apply to a base clip, image/video overlay or title",Toast.LENGTH_LONG).show();}
     private void studioWorkspaceAudioMenu(){new AlertDialog.Builder(this).setTitle("Audio").setItems(new String[]{"Clip Volume & Fades","+ Music","Story audio"},(dialog,which)->{if(which==0)studioVolumeDialog();else if(which==1)chooseStudioAudio();else if(activeProject!=null)SketchStoryAudioDialog.show(this,activeProject.id,result->Toast.makeText(this,"Story audio saved in a separate audio project",Toast.LENGTH_LONG).show());}).show();}
 
     private View buildStudioWorkspacePane(String pane){
@@ -1021,6 +1021,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
             box.addView(body("Up to 2 silent video overlays. Source files stay owned by this project."));
             box.addView(studioButton("+ Animated Shape / Perspective Grid",this::chooseStudioShape));
             box.addView(studioButton("+ Parent Motion Group · move layers together",this::createStudioMotionGroup));
+            box.addView(studioButton("+ 2D Camera · animate entire composition",this::chooseStudioCamera2D));
             studioWorkspaceActions(box,new String[]{"Choose video file","Retry saved video copy"},new Runnable[]{this::pickStudioVideoFile,this::retrySelectedVideoImport});
             studioWorkspaceActions(box,new String[]{"+ Music","+ Caption","Story audio"},new Runnable[]{this::chooseStudioAudio,()->editStudioTitle(null),()->{if(activeProject!=null)SketchStoryAudioDialog.show(this,activeProject.id,result->Toast.makeText(this,"Story audio saved in a separate audio project",Toast.LENGTH_LONG).show());}});
             box.addView(studioButton("Kinetic Director · editable motion graphics", () ->
@@ -1055,6 +1056,14 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
     /** Transform the selected owned layer directly on the real edited video surface. */
     private void openStudioDirectTouch(StudioLayer layer){
         if(activeProject==null||studioPreviewFrame==null||layer==null)return;
+        StudioLayer camera=currentStudioCamera();
+        if(camera!=null&&camera.motionKeyframes!=null&&camera.motionKeyframes.length()>0){
+            Toast.makeText(this,
+                    "Global camera motion is active. Use exact layer placement in Inspector; " +
+                    "direct touch requires inverse-camera hit mapping before it can be accurate.",
+                    Toast.LENGTH_LONG).show();
+            return;
+        }
         if(isStudioExternalPreviewMode()){
             Toast.makeText(this,"Return to the edited preview before moving a layer",Toast.LENGTH_LONG).show();return;
         }
@@ -1161,6 +1170,124 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                         }));
                     edit.show();
                 }).show();
+    }
+
+    private StudioLayer currentStudioCamera(){
+        if(activeProject==null)return null;
+        for(StudioLayer layer:activeProject.studioLayers)
+            if(StudioLayer.CAMERA.equals(layer.type))return layer;
+        return null;
+    }
+
+    /** Authored camera presets operate on the WHOLE composed 2D frame. */
+    private void chooseStudioCamera2D(){
+        if(activeProject==null||activeProject.clips.isEmpty()||activeProject.outputDurationMs()<100){
+            onStudioNoTarget();return;
+        }
+        StudioLayer existing=currentStudioCamera();
+        if(existing!=null){openStudioCamera2D(existing);return;}
+        final String owner=activeProject.id;
+        final long revision=activeProject.updatedAt;
+        String[] choices={"Static camera (edit manually)","Cinematic slow push-in",
+                "Sideways pan","Cinematic pull-back","Gentle camera roll"};
+        new AlertDialog.Builder(this).setTitle("2D composition camera")
+                .setItems(choices,(dialog,index)->{
+                    if(activeProject==null||!owner.equals(activeProject.id)
+                            ||activeProject.updatedAt!=revision){
+                        Toast.makeText(this,"Project changed. Reopen the 2D camera tool",Toast.LENGTH_LONG).show();
+                        return;
+                    }
+                    try{
+                        long duration=activeProject.outputDurationMs();
+                        JSONArray keys=new JSONArray();
+                        if(index!=0){
+                            double startX=0,startScale=1,startRotate=0,endX=0,endScale=1,endRotate=0;
+                            switch(index){
+                                case 1:endScale=1.2;break;
+                                case 2:startX=-.12;endX=.12;break;
+                                case 3:startScale=1.2;break;
+                                case 4:startRotate=-3.0;endRotate=3.0;break;
+                                default:throw new IllegalArgumentException("Unknown camera preset");
+                            }
+                            keys.put(new JSONObject().put("timeMs",0)
+                                    .put("x",startX).put("scale",startScale)
+                                    .put("rotate",startRotate)
+                                    .put("easing","cubic_bezier")
+                                    .put("bezier",StudioBezierEasing.fromText(StudioBezierEasing.PRESET_FILM)));
+                            keys.put(new JSONObject().put("timeMs",duration)
+                                    .put("x",endX).put("scale",endScale)
+                                    .put("rotate",endRotate));
+                        }
+                        JSONObject request=new JSONObject()
+                                .put("projectId",owner).put("expectedUpdatedAt",revision)
+                                .put("operation","set").put("motionKeyframes",keys);
+                        saveStudioCamera2D(request,true);
+                    }catch(Exception failure){
+                        Toast.makeText(this,"2D camera not saved: "+failure.getMessage(),
+                                Toast.LENGTH_LONG).show();
+                    }
+                }).show();
+    }
+
+    private void openStudioCamera2D(StudioLayer camera){
+        if(activeProject==null||camera==null||!StudioLayer.CAMERA.equals(camera.type))return;
+        final String owner=activeProject.id;
+        final long revision=activeProject.updatedAt;
+        try{
+            StudioGroupMotionDialog.show(this,camera,
+                    Math.max(0,Math.min(camera.durationMs,studioPlayheadMs)),keys->{
+                        if(activeProject==null||!owner.equals(activeProject.id)
+                                ||activeProject.updatedAt!=revision)return false;
+                        try{
+                            JSONObject request=new JSONObject()
+                                    .put("projectId",owner).put("expectedUpdatedAt",revision)
+                                    .put("operation","set").put("motionKeyframes",keys);
+                            saveStudioCamera2D(request,true);
+                            return true;
+                        }catch(Exception failure){
+                            Toast.makeText(this,"Camera curves not saved: "+failure.getMessage(),
+                                    Toast.LENGTH_LONG).show();
+                            return false;
+                        }
+                    });
+        }catch(Exception failure){
+            Toast.makeText(this,"Camera editor unavailable: "+failure.getMessage(),Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void removeStudioCamera2D(StudioLayer camera){
+        if(activeProject==null||camera==null)return;
+        final String owner=activeProject.id;final long revision=activeProject.updatedAt;
+        new AlertDialog.Builder(this).setTitle("Remove composition camera?")
+                .setMessage("Remove this 2D camera's global pan/zoom/rotation? "+
+                        "Images, overlays, clips, titles and music remain in the original project.")
+                .setPositiveButton("Remove camera",(dialog,which)->{
+                    if(activeProject==null||!owner.equals(activeProject.id)
+                            ||revision!=activeProject.updatedAt)return;
+                    try{
+                        saveStudioCamera2D(new JSONObject()
+                                .put("projectId",owner).put("expectedUpdatedAt",revision)
+                                .put("operation","remove"),false);
+                    }catch(Exception failure){
+                        Toast.makeText(this,"Camera not removed: "+failure.getMessage(),
+                                Toast.LENGTH_LONG).show();
+                    }
+                }).setNegativeButton("Cancel",null).show();
+    }
+
+    private void saveStudioCamera2D(JSONObject request,boolean selectCamera)throws Exception{
+        if(activeProject==null)throw new IllegalStateException("No open editing project");
+        ProjectStore.Project before=ProjectStore.Project.fromJson(activeProject.toJson());
+        JSONObject receipt=StudioCamera2DDirector.apply(store,request);
+        ProjectStore.Project saved=store.get(receipt.getString("projectId"));
+        if(saved==null)throw new IllegalStateException("Saved camera project unavailable");
+        editHistory.checkpoint(before);
+        activeProject=saved;
+        selectedClip=saved.clips.isEmpty()?null:saved.clips.get(0);
+        studioSelectedLayerId=selectCamera?receipt.optString("cameraId",""):null;
+        syncProtocolState();
+        showEditor();
+        if(selectCamera&&studioWorkspace!=null)studioWorkspace.showPane("Inspector");
     }
 
     /** Create a linked, keyframed group for selected visual layers in one edit. */
@@ -1370,7 +1497,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         if(activeProject==null)return;final String owner=activeProject.id;final long revision=activeProject.updatedAt;
         ArrayList<String> ids=new ArrayList<>(),labels=new ArrayList<>();
         if(selectedClip!=null){ids.add("");labels.add("Base clip · "+(activeProject.clips.indexOf(selectedClip)+1));}
-        for(StudioLayer layer:activeProject.studioLayers){ids.add(layer.id);ProjectStore.Asset asset=activeProject.asset(layer.assetId);labels.add((StudioLayer.IMAGE.equals(layer.type)?"Image overlay":StudioLayer.VIDEO.equals(layer.type)?"Video overlay":StudioLayer.SHAPE.equals(layer.type)?"Animated shape":StudioLayer.GROUP.equals(layer.type)?"Motion group":StudioLayer.AUDIO.equals(layer.type)?"Audio":"Title")+" · "+(asset==null?(StudioLayer.SHAPE.equals(layer.type)?layer.shapeKind:StudioLayer.GROUP.equals(layer.type)?"Parent · "+layer.id.substring(0,Math.min(8,layer.id.length())):layer.text):asset.name)+(StudioLayer.VIDEO.equals(layer.type)?" · "+StudioEditCursor.timecode(layer.startMs):""));}
+        for(StudioLayer layer:activeProject.studioLayers){ids.add(layer.id);ProjectStore.Asset asset=activeProject.asset(layer.assetId);labels.add((StudioLayer.IMAGE.equals(layer.type)?"Image overlay":StudioLayer.VIDEO.equals(layer.type)?"Video overlay":StudioLayer.SHAPE.equals(layer.type)?"Animated shape":StudioLayer.GROUP.equals(layer.type)?"Motion group":StudioLayer.CAMERA.equals(layer.type)?"2D camera":StudioLayer.AUDIO.equals(layer.type)?"Audio":"Title")+" · "+(asset==null?(StudioLayer.SHAPE.equals(layer.type)?layer.shapeKind:StudioLayer.GROUP.equals(layer.type)?"Parent · "+layer.id.substring(0,Math.min(8,layer.id.length())):StudioLayer.CAMERA.equals(layer.type)?"Global Camera":layer.text):asset.name)+(StudioLayer.VIDEO.equals(layer.type)?" · "+StudioEditCursor.timecode(layer.startMs):""));}
         if(ids.isEmpty()){onStudioNoTarget();return;}
         new AlertDialog.Builder(this).setTitle("Inspect target").setItems(labels.toArray(new String[0]),(dialog,index)->{
             if(activeProject==null||!owner.equals(activeProject.id)||revision!=activeProject.updatedAt){Toast.makeText(this,"Project changed. Choose its current target again.",Toast.LENGTH_LONG).show();return;}
@@ -1386,8 +1513,13 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         String kind=layer==null?"Base clip":StudioLayer.IMAGE.equals(layer.type)?"Image overlay":StudioLayer.VIDEO.equals(layer.type)?"Video overlay":StudioLayer.SHAPE.equals(layer.type)?"Animated shape":StudioLayer.GROUP.equals(layer.type)?"Motion group":StudioLayer.AUDIO.equals(layer.type)?"Audio":"Title";
         heading.addView(title(kind,17),new LinearLayout.LayoutParams(0,dp(48),1));heading.addView(studioButton("Choose target",this::chooseStudioInspectorTarget),new LinearLayout.LayoutParams(-2,dp(48)));box.addView(heading);
         if(layer!=null){
-            ProjectStore.Asset asset=activeProject.asset(layer.assetId);TextView source=body((asset==null?(StudioLayer.SHAPE.equals(layer.type)?layer.shapeKind:StudioLayer.GROUP.equals(layer.type)?"Linked motion · "+layer.id.substring(0,Math.min(8,layer.id.length())):layer.text):asset.name)+" · "+StudioEditCursor.timecode(layer.startMs)+" – "+StudioEditCursor.timecode(layer.startMs+layer.durationMs));source.setMaxLines(2);box.addView(source);
-            if(StudioLayer.GROUP.equals(layer.type)){
+            ProjectStore.Asset asset=activeProject.asset(layer.assetId);TextView source=body((asset==null?(StudioLayer.SHAPE.equals(layer.type)?layer.shapeKind:StudioLayer.GROUP.equals(layer.type)?"Linked motion · "+layer.id.substring(0,Math.min(8,layer.id.length())):StudioLayer.CAMERA.equals(layer.type)?"Entire composition":layer.text):asset.name)+" · "+StudioEditCursor.timecode(layer.startMs)+" – "+StudioEditCursor.timecode(layer.startMs+layer.durationMs));source.setMaxLines(2);box.addView(source);
+            if(StudioLayer.CAMERA.equals(layer.type)){
+                box.addView(studioButton("Edit precise camera keyframes / Bézier curves",()->openStudioCamera2D(layer)));
+                box.addView(studioButton("Remove global camera",()->removeStudioCamera2D(layer)));
+                box.addView(body("Moves the completed 2D frame after title, image, vector and video compositing. "
+                        +"The source files and the music are not altered. This is not a 3D camera."));
+            }else if(StudioLayer.GROUP.equals(layer.type)){
                 box.addView(studioButton("Animate grouped layers",()->openStudioMotionGroup(layer)));
                 box.addView(studioButton("Link or unlink overlay layers",()->chooseStudioGroupChildren(layer)));
                 box.addView(studioButton("Delete group (unlink children)",()->removeStudioMotionGroup(layer)));
