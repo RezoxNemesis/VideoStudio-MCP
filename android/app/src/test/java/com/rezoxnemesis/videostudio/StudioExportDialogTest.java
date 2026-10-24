@@ -19,11 +19,14 @@ import static org.junit.Assert.*;
 public final class StudioExportDialogTest {
     @Test public void currentCanvasAspectIsPreselectedWithoutModifyingLegacySavedExportChoices(){
         Activity activity=Robolectric.buildActivity(Activity.class).setup().get();
+        AlertDialog baseline=StudioExportDialog.show(activity,(aspect,quality)->{});
+        int previous=choice(baseline,"export_aspect").getSelectedItemPosition();
+        baseline.dismiss();
         AlertDialog source=StudioExportDialog.showOptions(activity,(aspect,quality,wait)->{}, "4:5");
         assertEquals(3,choice(source,"export_aspect").getSelectedItemPosition());
         click(source,AlertDialog.BUTTON_NEGATIVE);
         AlertDialog legacy=StudioExportDialog.show(activity,(aspect,quality)->fail("Opening export cannot send a render"));
-        assertEquals(0,choice(legacy,"export_aspect").getSelectedItemPosition());
+        assertEquals(previous,choice(legacy,"export_aspect").getSelectedItemPosition());
         assertNull(nextService());
         legacy.dismiss();
     }
