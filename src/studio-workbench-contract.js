@@ -92,7 +92,8 @@ export const PROJECT_ASSET_IMPORT_CAPABILITIES=Object.freeze({
  "manualControls": "Editor > Media Bin > Import from project; explicit source project/asset selection, hash inspection and optional timeline append use the same ProjectAssetImport core",
  "agentGuidance": "Ordinary ChatGPT calls app_status and gates native 4.8.0, reads projectAssetImport capabilities, obtains fresh revisions and project_asset_info, then project_import_asset. Book-render output can be copied into the Story Audio output project and appended at time zero before existing project preview/export. No Files picker or FFmpeg is needed for already-owned files.",
  "galleryAccess": false,
- "phoneExecutionVerified": false
+ "phoneExecutionVerified": false,
+ "selectedVideoDocumentCopy": {"minimumNativeVersion":"4.10.25","field":"selectedDocument","selectedDocument":true,"infoAction":"project_asset_info","importAction":"project_import_asset","registeredVideoOnly":true,"exactPersistedReadGrant":true,"maximumBytes":10737418240,"storageReserveBytes":536870912,"sameProject":true,"sameProjectRevisionRule":"Same-project requests require sourceProjectUpdatedAt equal to expectedUpdatedAt","appendAllowed":false,"readOnlyInspection":true,"inspectionAppOwned":false,"independentOwnedCopy":true,"receiptFirstReplay":true,"source":"Only an existing registered VIDEO content document with its exact current persisted READ grant, known bounded byte length and native video metadata; no public URI/path/provider-list parameter","manualControls":"Editor > Media > Choose video file; Retry saved video copy; Video overlay > Choose video file","newCanonicalAction":false,"limitations":"Copies only the explicit selected VIDEO bytes into owned storage. No Gallery/provider enumeration, source conversion, generated artwork, automatic timeline/overlay append, new audio lane or artistic certification. Provider compatibility and actual changed-APK execution require separate verification."}
 });
 export const DIALOGUE_PHRASE_CAPABILITIES=Object.freeze({
  minimumNativeVersion:'4.8.0',action:'open_pipeline_export_request',backend:'kokoro',field:'controls.lines[].phrases',
@@ -643,8 +644,8 @@ export const studioToolSchemas={
  sketch_correction_options:{sketchId:id,reviewId:id,objectId:id},
  sketch_correction_list:{sketchId:id,offset:integer(0,1000000).optional(),limit:integer(1,16).optional()},
  sketch_correction_close:{sketchId:id,reviewId:id,expectedReviewRevision:revision},
- project_asset_info:{projectId:id,expectedUpdatedAt:updatedAt,assetId:id},
- project_import_asset:{projectId:id,expectedUpdatedAt:updatedAt,sourceProjectId:id,sourceProjectUpdatedAt:updatedAt,assetId:id,expectedSha256:sha,operationId:id,appendToTimeline:z.boolean().optional()},
+ project_asset_info:{projectId:id,expectedUpdatedAt:updatedAt,assetId:id,selectedDocument:z.literal(true).optional()},
+ project_import_asset:{projectId:id,expectedUpdatedAt:updatedAt,sourceProjectId:id,sourceProjectUpdatedAt:updatedAt,assetId:id,expectedSha256:sha,operationId:id,appendToTimeline:z.boolean().optional(),selectedDocument:z.literal(true).optional()},
  import_mailbox_media:{projectId:id,attachmentId:z.string().uuid(),manifestSha256:sha},
  precision_edit:{projectId:id,expectedUpdatedAt:updatedAt,operations:z.array(clipOperation).min(1).max(64)},
  set_studio_layers:{projectId:id,expectedUpdatedAt:updatedAt,studioLayers},
@@ -764,7 +765,12 @@ export function nativeStudioParameters(action,parameters={}){
   if(operations?(parsed.recipeId!==undefined||parsed.objectId!==undefined):!recipe)throw new Error('Choose exactly correction operations OR recipeId with objectId');
  }
  if(action==='sketch_correction_preview'&&((parsed.side==='after')!==(parsed.proposalId!==undefined)))throw new Error('After preview requires proposalId; before preview uses only the captured source');
- if(action==='project_import_asset'&&parsed.projectId===parsed.sourceProjectId)throw new Error('Choose a different destination project');
+ if(action==='project_import_asset'){
+  if(parsed.selectedDocument===true){
+   if(parsed.appendToTimeline!==undefined&&parsed.appendToTimeline!==false)throw new Error('Selected VIDEO copying cannot append to the timeline');
+   if(parsed.projectId===parsed.sourceProjectId&&parsed.expectedUpdatedAt!==parsed.sourceProjectUpdatedAt)throw new Error('Same-project selected VIDEO copying requires identical source and destination revisions');
+  }else if(parsed.projectId===parsed.sourceProjectId)throw new Error('Choose a different destination project');
+ }
  if(action==='sketch_story_preview'){
   const shot=parsed.plan.shots.find(shot=>shot.shotId===parsed.shotId);
   if(!shot||parsed.frame>=shot.frameCount)throw new Error('Story preview must select an existing shot and frame inside its unchanged clock');
@@ -802,6 +808,8 @@ export function nativeStudioParameters(action,parameters={}){
 const legacy3d=new Set(['STANDOFF','CHARGE','CLASH','BLADE_LOCK','FOLLOW_THROUGH','KNOCKBACK','LANDING','RECOVERY','AERIAL_FLIP','TUMBLE','MACRO_CLASH']);
 const pixelFields=new Set(['keyframes','opacity','chromaKey','chromaColor','chromaTolerance','chromaFeather','maskShape','maskLeft','maskTop','maskRight','maskBottom','maskFeather','glowStrength','glowRadiusPx','glowThreshold']);
 export function requireStudioVersion(device,action,parameters={}){
+ const selectedDocumentRoute=['project_asset_info','studio_project_asset_info','project_import_asset','studio_project_import_asset'].includes(action);
+ if(selectedDocumentRoute&&Object.hasOwn(parameters,'selectedDocument')&&!atLeast(device?.appVersion,'4.10.25'))throw new Error('NATIVE_APP_UPGRADE_REQUIRED: explicit selected VIDEO document copying requires VideoStudio4.10.25 or newer');
  const stillRoute=action==='sketch_render'||action==='studio_sketch_render';
  if(stillRoute&&(Object.hasOwn(parameters,'format')||Object.hasOwn(parameters,'frame'))&&!atLeast(device?.appVersion,'4.10.22'))throw new Error('NATIVE_APP_UPGRADE_REQUIRED: explicit native PNG still export requires VideoStudio4.10.22 or newer');
  // Gate actual structured layer routes, including an explicit empty clear.

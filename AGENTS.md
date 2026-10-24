@@ -1,3 +1,37 @@
+# Active selected VIDEO document ownership — future4.10.25/code528
+
+This isolated feat/native-owned-video-source-20261024 starts594fa074, preserving
+future527 and all prior work. Read docs/continuity/NATIVE_SELECTED_VIDEO_SOURCE_20261024.md.
+Root genuine selected-document core8/8FAIL2.424s and manual3/3FAIL6.307s precede
+implementation. First43 scopedPASS13.839s; two new hardening cases genuinely failed
+2/2 in2.989s before exact-number/stableOSlock repairs. Focused45/0FAIL11.525s
+preceded independent manual retry-pointer RED1/1FAIL3.288s (old provider4reads,
+expected0). Narrow per-project request-lock/reservation-CAS repair now passes
+final46/0FAIL11.519s:14 immutable new cases plus32 legacy cases; this is unit/source UI/native
+helper proof, NOT a full528 build, actual provider/codec/GPU or artistic acceptance.
+All failed/successful generations and original assertions remain retained privately.
+
+Existing project_asset_info/project_import_asset gain optional literaltrue
+selectedDocument, native4.10.25 only. Omission keeps legacy owned-only paths,
+normalization/fingerprints/floors unchanged. Only one registered VIDEO content URI
+with exact persisted READ grant, pinned source/destination revisions/hash and
+bounded1byte..10GiB is admitted; no supplied URI/path or Gallery enumeration.
+Same-project copy requires equal revisions and no append. Shared worker helper
+retains original source and adds one independent owned source asset, no clips/
+layers, with native copied metadata, exact retry receipts and normal projectCAS.
+Dedicated native Files picker invokes the same helper through a private descriptor.
+Stable operation OS lock/dirsync covers cooperating private writers only; lock
+inodes and potentially owned published files are never deleted on failed writes.
+
+Helper5715bc34/lockd989df8e/Main4b5c30b3/dialogc3ff61c6/request-store031d8d71
+and all14 assertions are frozen after root46PASS. Nativecapf9a2dc50 exactly
+matches Node selectedVideoDocumentCopy983b9d; Node853+306smokePASS, with old
+omitted fingerprints/floors unchanged. Independent narrow source review found
+no remaining blocker. Coherent feature-only commit is delegated after review; version metadata/full integration, one
+Gradle, all JVM/native/ADB/model runs, signing/CI/device proof remain root-owned.
+Preserve527 source/signing/projects/assets/identity. No main/stable/Worker publish,
+uninstall/data clear/MCP reset, Gallery, external media renderer or film claim.
+
 # Active silent VIDEO overlay and reliability526 integration — future4.10.24/code527
 
 Preserve combined source10b7adc (VIDEOcore/vendor, TITLEmotion and guarded VIDEO UI)

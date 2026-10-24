@@ -41,11 +41,33 @@ public final class ProjectAssetImport {
                 .put("execution","Import runs as a cancellable recoverable transfer JobManager job. Admission returns ok/queued/jobId; wait for actual jobResult. Stop All interrupts copying and identical retry safely resumes.")
                 .put("manualControls","Editor > Media Bin > Import from project; explicit source project/asset selection, hash inspection and optional timeline append use the same ProjectAssetImport core")
                 .put("agentGuidance","Ordinary ChatGPT calls app_status and gates native 4.8.0, reads projectAssetImport capabilities, obtains fresh revisions and project_asset_info, then project_import_asset. Book-render output can be copied into the Story Audio output project and appended at time zero before existing project preview/export. No Files picker or FFmpeg is needed for already-owned files.")
+                .put("selectedVideoDocumentCopy",new JSONObject()
+                        .put("minimumNativeVersion","4.10.25")
+                        .put("field","selectedDocument")
+                        .put("selectedDocument",true)
+                        .put("infoAction","project_asset_info")
+                        .put("importAction","project_import_asset")
+                        .put("registeredVideoOnly",true)
+                        .put("exactPersistedReadGrant",true)
+                        .put("maximumBytes",MAX_BYTES)
+                        .put("storageReserveBytes",STORAGE_RESERVE_BYTES)
+                        .put("sameProject",true)
+                        .put("sameProjectRevisionRule","Same-project requests require sourceProjectUpdatedAt equal to expectedUpdatedAt")
+                        .put("appendAllowed",false)
+                        .put("readOnlyInspection",true)
+                        .put("inspectionAppOwned",false)
+                        .put("independentOwnedCopy",true)
+                        .put("receiptFirstReplay",true)
+                        .put("source","Only an existing registered VIDEO content document with its exact current persisted READ grant, known bounded byte length and native video metadata; no public URI/path/provider-list parameter")
+                        .put("manualControls","Editor > Media > Choose video file; Retry saved video copy; Video overlay > Choose video file")
+                        .put("newCanonicalAction",false)
+                        .put("limitations","Copies only the explicit selected VIDEO bytes into owned storage. No Gallery/provider enumeration, source conversion, generated artwork, automatic timeline/overlay append, new audio lane or artistic certification. Provider compatibility and actual changed-APK execution require separate verification."))
                 .put("galleryAccess",false).put("phoneExecutionVerified",false);
     }
 
     /** Pure request validation also used before creating a durable job. */
     public static JSONObject validate(JSONObject input)throws Exception {
+        if(input.has("selectedDocument"))return SelectedDocumentVideoImport.validate(input);
         fields(input,"projectId","expectedUpdatedAt","sourceProjectId","sourceProjectUpdatedAt","assetId","expectedSha256","operationId","appendToTimeline");
         JSONObject request=copy(input);id(request,"projectId");id(request,"sourceProjectId");id(request,"assetId");id(request,"operationId");
         integer(request,"expectedUpdatedAt");integer(request,"sourceProjectUpdatedAt");
@@ -56,6 +78,7 @@ public final class ProjectAssetImport {
     }
 
     public static JSONObject inspect(Context context,JSONObject input)throws Exception {
+        if(input.has("selectedDocument"))return SelectedDocumentVideoImport.inspectRegistered(context,input);
         fields(input,"projectId","expectedUpdatedAt","assetId");String projectId=id(input,"projectId"),assetId=id(input,"assetId");long revision=integer(input,"expectedUpdatedAt");cancelled();
         try(ProjectStore store=new ProjectStore(context)){
             ProjectStore.Project source=project(store,projectId,revision);ProjectStore.Asset asset=source.asset(assetId);File file=sourceFile(context,asset);long bytes=file.length();String digest=sha256(file);
@@ -71,6 +94,7 @@ public final class ProjectAssetImport {
 
     public static JSONObject execute(Context context,JSONObject input,Progress progress)throws Exception {
         JSONObject request=validate(input);if(progress==null)throw bad("Progress callback is required");
+        if(request.has("selectedDocument"))return SelectedDocumentVideoImport.executeRegistered(context,request,progress);
         // The transfer lane serializes normal jobs. This lock also protects direct manual callers
         // from racing the same operation, without holding a SQLite transaction during the copy.
         COPY_LOCK.lockInterruptibly();try{
