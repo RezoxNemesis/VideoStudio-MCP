@@ -18,16 +18,19 @@ public final class StudioTimedImageOverlay extends BitmapOverlay {
     private final String uri;
     private final StudioLayer layer;
     private final StudioImageMotion motion;
+    private final StudioParentGroupTransform parent;
     private final Bitmap transparent=Bitmap.createBitmap(1,1,Bitmap.Config.ARGB_8888);
     private Bitmap source;
     private int outputWidth=1,outputHeight=1;
     private boolean released;
-    public StudioTimedImageOverlay(Context context,ProjectStore.Asset asset,StudioLayer layer){
+    public StudioTimedImageOverlay(Context context,ProjectStore.Asset asset,StudioLayer layer){this(context,asset,layer,null);}
+    public StudioTimedImageOverlay(Context context,ProjectStore.Asset asset,StudioLayer layer,StudioLayer group){
         if(asset==null||asset.mime==null||!asset.mime.startsWith("image/")||asset.uri==null||asset.uri.isEmpty()
                 ||layer==null||!StudioLayer.IMAGE.equals(layer.type)||!asset.id.equals(layer.assetId))
             throw new IllegalArgumentException("Project-owned image layer required");
         layer.validate();this.context=context.getApplicationContext();uri=asset.uri;this.layer=layer.copy();
         motion=StudioImageMotion.fromLayer(this.layer);
+        parent=group==null?null:new StudioParentGroupTransform(group);
     }
     @Override public void configure(Size size){super.configure(size);outputWidth=size.getWidth();outputHeight=size.getHeight();}
     public boolean activeAt(long timeUs){return timeUs>=layer.startMs*1000L&&timeUs<(layer.startMs+layer.durationMs)*1000L;}
@@ -62,20 +65,19 @@ public final class StudioTimedImageOverlay extends BitmapOverlay {
         int width=1,height=1;
         if(active)try{Bitmap bitmap=load();width=bitmap.getWidth();height=bitmap.getHeight();}
         catch(VideoFrameProcessingException error){throw new IllegalStateException(error);}
+        OverlaySettings own;
         if(motion.hasKeyframes()){
             StudioClipKeyframes.Values value=motion.atUs(active?presentationTimeUs-layer.startMs*1000L:0);
-            // Keep the original float operation order for static geometry and
-            // multiply/offset only afterwards, so identity keys remain exact.
             float x=(2*layer.x-1)+(float)(2*value.x),y=(1-2*layer.y)-(float)(2*value.y);
             float sx=(outputWidth*layer.width/width)*(float)value.scaleX;
             float sy=(outputHeight*layer.height/height)*(float)value.scaleY;
-            return new MotionSettings(x,y,sx,sy,layer.rotation+(float)value.rotate,
+            own=new MotionSettings(x,y,sx,sy,layer.rotation+(float)value.rotate,
                     active?layer.opacity*(float)value.opacity:0);
-        }
-        return new StaticOverlaySettings.Builder()
+        }else own=new StaticOverlaySettings.Builder()
                 .setBackgroundFrameAnchor(2*layer.x-1,1-2*layer.y).setOverlayFrameAnchor(0,0)
                 .setScale(outputWidth*layer.width/width,outputHeight*layer.height/height)
                 .setRotationDegrees(layer.rotation).setAlphaScale(active?layer.opacity:0).build();
+        return parent==null?own:parent.apply(own,presentationTimeUs);
     }
     /** OverlaySettings supports time-varying placement, including offscreen panels. */
     private static final class MotionSettings implements OverlaySettings {
