@@ -31,7 +31,15 @@ public final class StudioEditingCapabilities {
                     .put("manualOrientationChoice",true)
                     .put("touchResizablePanels",true)
                     .put("directManipulation",new org.json.JSONArray(java.util.Arrays.asList("image","shape","video")))
-                    .put("geometryAppliedOnGestureRelease",true));}
+                    .put("geometryAppliedOnGestureRelease",true))
+                  .put("cubicBezierMotion",new JSONObject()
+                    .put("minimumNativeVersion","4.10.29")
+                    .put("keyframeEasing","cubic_bezier")
+                    .put("controlPointCount",4)
+                    .put("timeControlBounded",true)
+                    .put("supportsImageTitleVideoShapeLayers",true)
+                    .put("previewAndExportShareCurve",true)
+                    .put("editableInNativeKeyframeUI",true));}
         catch(org.json.JSONException error){throw new IllegalStateException("Invalid native editor capability registry",error);}
     }
 }

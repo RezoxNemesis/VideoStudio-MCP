@@ -6,6 +6,7 @@ on:
       - feature/kinetic-motion-engine-20261024
       - feature/kinetic-shape-compositor-v41027
       - feature/ae-masks-responsive-studio-20261024
+      - feature/ae-bezier-motion-graph-20261024
   pull_request:
     branches:
       - feat/native-preview-audio-import-20261024

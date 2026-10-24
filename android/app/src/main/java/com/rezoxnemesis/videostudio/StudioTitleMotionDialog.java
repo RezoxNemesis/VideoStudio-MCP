@@ -22,7 +22,7 @@ import java.util.function.Predicate;
 /** Detached title-lane recipe; Apply is one ordinary revision-guarded layer edit. */
 public final class StudioTitleMotionDialog {
     private static final String[] FIELDS={"x","y","scaleX","scaleY","rotate","opacity"};
-    private static final String[] EASINGS={"linear","ease_in","ease_out","ease_in_out","hold"};
+    private static final String[] EASINGS={"linear","ease_in","ease_out","ease_in_out","hold","cubic_bezier"};
     private final Context context;
     private final Predicate<StudioLayer> save;
     private final LinearLayout content,keyList;
@@ -30,6 +30,7 @@ public final class StudioTitleMotionDialog {
     private final EditText time;
     private final EditText[] values=new EditText[FIELDS.length];
     private final Spinner easing;
+    private final EditText bezierHandles;
     private StudioLayer draft;
     private AlertDialog dialog;
     private boolean closed;
@@ -78,6 +79,12 @@ public final class StudioTitleMotionDialog {
         label("Interpolation from this key to the next");
         easing=new Spinner(context);easing.setContentDescription("Title motion easing");
         easing.setAdapter(new ArrayAdapter<>(context,android.R.layout.simple_spinner_dropdown_item,EASINGS));content.addView(easing);
+        label("Custom cubic Bézier handles x1,y1,x2,y2 (used only for cubic_bezier)");
+        bezierHandles=new EditText(context);bezierHandles.setSingleLine(true);
+        bezierHandles.setInputType(InputType.TYPE_CLASS_TEXT);
+        bezierHandles.setContentDescription("Custom Bézier motion timing handles");
+        bezierHandles.setText(StudioBezierEasing.PRESET_FILM);
+        content.addView(bezierHandles);
         addButton(content,"Add / update key",this::upsert);
         addButton(content,"Remove key at entered time",this::remove);
         addButton(content,"Clear draft keys",()->{
@@ -114,11 +121,21 @@ public final class StudioTitleMotionDialog {
         time.setText(Long.toString(at));time.setError(null);
         for(int i=0;i<values.length;i++)values[i].setText(Double.toString(channels[i]));
         easing.setSelection(Math.max(0,java.util.Arrays.asList(EASINGS).indexOf(selectedEasing)));
+        bezierHandles.setText(StudioBezierEasing.PRESET_FILM);
+        for(int i=0;i<keys.length();i++)if(keys.getJSONObject(i).getLong("timeMs")==at){
+            JSONArray handles=keys.getJSONObject(i).optJSONArray("bezier");
+            if(handles!=null&&handles.length()==4){
+                bezierHandles.setText(handles.getDouble(0)+","+handles.getDouble(1)+","+handles.getDouble(2)+","+handles.getDouble(3));
+            }
+            break;
+        }
         selection.setText((exact?"Selected key at ":"Sampled motion at ")+at+" ms"+(exact?"":" · new key"));
     }
     private void upsert(){
         try{
             long at=enteredTime();JSONObject key=new JSONObject().put("timeMs",at).put("easing",easing.getSelectedItem().toString());
+            if("cubic_bezier".equals(easing.getSelectedItem().toString()))
+                key.put("bezier",StudioBezierEasing.fromText(bezierHandles.getText().toString()));
             for(int i=0;i<FIELDS.length;i++)key.put(FIELDS[i],Double.parseDouble(values[i].getText().toString().trim()));
             ArrayList<JSONObject> ordered=new ArrayList<>();JSONArray old=keys();
             for(int i=0;i<old.length();i++)if(old.getJSONObject(i).getLong("timeMs")!=at)ordered.add(old.getJSONObject(i));
