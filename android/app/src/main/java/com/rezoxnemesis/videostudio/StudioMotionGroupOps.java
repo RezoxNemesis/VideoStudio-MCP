@@ -147,7 +147,7 @@ public final class StudioMotionGroupOps {
         project.studioLayers.add(insertion,group);
         for(StudioLayer child:selected)child.parentId=group.id;
         return new JSONObject().put("operation","create").put("groupId",groupId)
-                .put("linkedLayerIds",new JSONArray(wanted))
+                .put("linkedLayerIds",new JSONArray(raw.toString()))
                 .put("groupStartMs",start).put("groupDurationMs",end-start)
                 .put("groupMotionKeys",group.motionKeyframes==null?0:group.motionKeyframes.length());
     }
