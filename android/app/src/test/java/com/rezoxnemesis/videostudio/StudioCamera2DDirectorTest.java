@@ -90,8 +90,9 @@ public class StudioCamera2DDirectorTest {
             float[] values=new float[9];matrix.getValues(values);
             assertEquals(1.1f,values[Matrix.MSCALE_X],.01f);
             assertEquals(.1f,values[Matrix.MTRANS_X],.01f);
-            assertEquals(1f,((StudioClipKeyframes)camera).getMatrix(0)
-                    .getScaleX(),.01f);
+            float[] beginning=new float[9];
+            ((StudioClipKeyframes)camera).getMatrix(0).getValues(beginning);
+            assertEquals(1f,beginning[Matrix.MSCALE_X],.01f);
         }
     }
 
