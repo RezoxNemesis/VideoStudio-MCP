@@ -1,3 +1,24 @@
+# Preview graph ownership — unpublished 4.10.25/code528
+
+Read docs/continuity/NATIVE_PREVIEW_GRAPH_OWNERSHIP_41025.md first. Isolated
+fix/native-preview-graph-ownership-v41025 starts ca8c829, preserving the explicit
+wait feature branch pointer. Retire only the obsolete fallback before creating
+a new candidate; preserve the current preview's clock/context/intent/callbacks.
+Media3 graph allocation is deferred to the playback thread, so the old order
+permitted a three-graph race. This is not a proven phone-error or GPU cause.
+
+First fixture1030 stopped at compilation due to an invalid checked throws clause;
+preserve it and all logs. Corrected fixture24e098 changed only that API error,
+retaining every assertion. Root genuine RED: 2 tests, 2 failures in 2.807s at the
+actual third SDK factory allocation. With Live823af, all 20 unchanged cases passed
+in 5.821s: 2 quota, 6 recovery, 3 player and 9 graph-selection. Independent source
+review passed. These protocol-resource/lifecycle checks do not render pixels or
+prove device resource limits. SDK release waits at most 500ms; normal release
+completion is required. Full post-merge validation, signedCI and actual updated
+APK retakes remain pending. Root alone owns all JVM/Gradle/native/ADB, integration,
+versions/signing/pushes. No actions/schema/floors/Node changes in this feature.
+The four-minute film remains unfinished with 0 accepted final seconds.
+
 # Explicit bounded export waiting — unpublished 4.10.25/code528
 
 Read docs/continuity/NATIVE_EXPORT_OUTPUT_WAIT_41025.md and the combined preview,

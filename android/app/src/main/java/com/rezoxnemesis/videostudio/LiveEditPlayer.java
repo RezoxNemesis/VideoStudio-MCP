@@ -100,6 +100,9 @@ public final class LiveEditPlayer {
             boolean previousReady=previous.getPlayWhenReady();
             Runnable previousWatcher=clipBoundaryWatcher;
             java.util.function.Consumer<String> previousError=editError;
+            // Keep the current preview for rollback, but retire its older fallback
+            // before a candidate can initialize another graph on the playback thread.
+            releaseFallback();
             CompositionPlayer.Builder candidateBuilder=new CompositionPlayer.Builder(context);
             if(needsMultipleInputVideoGraph(composition))
                 candidateBuilder.setVideoGraphFactory(new MultipleInputVideoGraph.Factory());
@@ -146,7 +149,6 @@ public final class LiveEditPlayer {
                 view.setPlayer(previous);candidate.release();throw error;
             }
             cancelClipBoundaryWatcher();
-            releaseFallback();
             fallbackPlayer=previous;fallbackPlayWhenReady=previousReady;
             fallbackRevision=editRevision;fallbackSnapshotId=snapshotId;fallbackClipId=clipId;
             fallbackEditError=previousError;fallbackBoundaryWatcher=previousWatcher;
