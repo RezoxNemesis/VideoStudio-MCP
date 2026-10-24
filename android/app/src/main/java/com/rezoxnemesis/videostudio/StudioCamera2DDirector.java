@@ -92,6 +92,7 @@ public final class StudioCamera2DDirector {
         if("remove".equals(operation)){
             if(camera==null)throw new IllegalArgumentException("No camera to remove");
             project.studioLayers.remove(camera);
+            camera=null;
         }else {
             if(camera==null){
                 if("clear".equals(operation))
