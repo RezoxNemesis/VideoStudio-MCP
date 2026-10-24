@@ -22,7 +22,7 @@ public final class StudioLayerContract {
         if(layers.length()>32)throw new IllegalArgumentException("Maximum 32 layers");
         ArrayList<StudioLayer> result=new ArrayList<>();
         Set<String> usedIds=new HashSet<>();
-        int images=0,videos=0;
+        int images=0,videos=0,shapes=0;
         for(int i=0;i<layers.length();i++){
             JSONObject entry=layers.getJSONObject(i);
             StudioLayer lane=StudioLayer.fromJson(entry);
@@ -31,6 +31,7 @@ public final class StudioLayerContract {
             validate(project,lane);
             if(StudioLayer.IMAGE.equals(lane.type)&&++images>8)throw new IllegalArgumentException("Maximum 8 decoded image layers");
             if(StudioLayer.VIDEO.equals(lane.type)&&++videos>2)throw new IllegalArgumentException("Maximum 2 decoded video layers");
+            if(StudioLayer.SHAPE.equals(lane.type)&&++shapes>12)throw new IllegalArgumentException("Maximum 12 cached original vector shapes");
             result.add(lane);
         }
         return result;
@@ -52,6 +53,9 @@ public final class StudioLayerContract {
                         lane.durationMs>asset.durationMs-lane.sourceInMs)
                     throw new IllegalArgumentException("Audio trim exceeds imported source duration");
             }
+        }
+        if(StudioLayer.SHAPE.equals(lane.type)){
+            if(!lane.assetId.isEmpty())throw new IllegalArgumentException("Native SHAPE cannot reference media sources");
         }
         if(StudioLayer.IMAGE.equals(lane.type)){
             ProjectStore.Asset asset=project.asset(lane.assetId);
