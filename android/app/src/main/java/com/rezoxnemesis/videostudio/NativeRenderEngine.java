@@ -350,16 +350,10 @@ public final class NativeRenderEngine {
 
     private void attachTimedTitles(Composition.Builder assembled,
                                           ProjectStore.Project project){
-        List<TextureOverlay> captions=new ArrayList<>();
-        for(StudioLayer layer:project.studioLayers){
-            if(StudioLayer.TITLE.equals(layer.type))
-                captions.add(new StudioTimedTitleOverlay(layer));
-            else if(StudioLayer.IMAGE.equals(layer.type))
-                captions.add(new StudioTimedImageOverlay(context,project.asset(layer.assetId),layer));
-        }
-        if(!captions.isEmpty()){
+        StudioCompositionOverlayEffect overlays=new StudioCompositionOverlayEffect(context,project);
+        if(!overlays.isEmpty()){
             assembled.setEffects(new Effects(Collections.emptyList(),
-                    Collections.singletonList(new OverlayEffect(captions))));
+                    Collections.singletonList(overlays)));
         }
     }
 

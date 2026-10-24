@@ -112,9 +112,8 @@ public class StudioClipTimelineClockTest {
     @Test public void compositionTimedCaptionStillUsesGlobalTimeAcrossTheCut()throws Exception{
         ProjectStore.Project p=project();video(p,"first",0,1000,1);video(p,"second",0,1000,1);
         zoom(p.clips.get(1),1000,"linear");caption(p,750,1000);
-        Composition c=build(p);OverlayEffect overlay=(OverlayEffect)c.effects.videoEffects.stream().filter(e->e instanceof OverlayEffect).findFirst().get();
-        Field f=OverlayEffect.class.getDeclaredField("overlays");f.setAccessible(true);
-        List<?> overlays=(List<?>)f.get(overlay);assertEquals(1,overlays.size());TextureOverlay title=(TextureOverlay)overlays.get(0);
+        Composition c=build(p);StudioCompositionOverlayEffect overlay=(StudioCompositionOverlayEffect)c.effects.videoEffects.stream().filter(e->e instanceof StudioCompositionOverlayEffect).findFirst().get();
+        List<?> overlays=overlay.createOverlays();assertEquals(1,overlays.size());TextureOverlay title=(TextureOverlay)overlays.get(0);
         assertEquals(0,title.getOverlaySettings(749_999).getAlphaScale(),0);
         assertEquals(1,title.getOverlaySettings(750_000).getAlphaScale(),0);
         assertEquals(1,title.getOverlaySettings(1_000_000).getAlphaScale(),0);
