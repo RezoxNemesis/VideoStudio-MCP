@@ -4,9 +4,11 @@ on:
   push:
     branches:
       - feature/kinetic-motion-engine-20261024
+      - feature/kinetic-shape-compositor-v41027
   pull_request:
     branches:
       - feat/native-preview-audio-import-20261024
+      - feature/kinetic-motion-engine-20261024
 
 concurrency:
   group: kinetic-native-${{ github.ref }}
