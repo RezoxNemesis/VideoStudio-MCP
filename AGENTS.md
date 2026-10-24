@@ -1,3 +1,28 @@
+# Active native analysis coverage repair — 2026-10-24
+
+Work only in isolated fix/native-analysis-coverage-v41023, based on combined525
+2d100d9da66ea03eafd84e84b2ae8d979d4477a3. Root owns versions, integration,
+ONE Gradle and ALL JVM/native/ADB/model execution. Actual original-signed524
+HEVC reference analysis returned6 of8 requested frames, silently missing0 and
+3753ms while ok:true; retain those app-native JSON/JPEG/source-hash receipts.
+Root genuine public-API RED10/8FAIL2.792s is preserved, original assertions stay
+byte-identical. Read docs/continuity/NATIVE_ANALYSIS_COVERAGE_41023.md.
+
+Prepared native fix: at most3 SAME-time OPTION_CLOSEST_SYNC attempts per planned
+sample; explicit requested/decoded/failed/complete coverage; no decoder/mode
+switch, neighbor borrowing or source mutation. Denied access is not retried;
+interruption preserves its flag. All owned frames/scratch/retrievers close on
+success/failure/cancel;24x14 signature scratch must not recycle an aliased input.
+Root focused14PASS3.471s on exact production9e490035... includes original10,
+unchanged orientation3 and small-frame1. The small mutable24x14 control PASSED
+unchanged FULL5251/1 in2.359s; no alias failure was reproduced, so do not call it
+RED. Its defensive guard remains source-level ownership handling. Full integration
+and real uploaded-HEVC signed-APK retakes remain pending.
+No agent Java/Gradle/ADB/native execution, version edits or copied private media
+in Git. Preserve earlier work, original signer, identity and user data. No main,
+Worker/stable publication, data clear/uninstall, Gallery, external artwork or
+claimed finished edit/animation/voice/240-second film.
+
 # Active combined Quiet Canvas editor and native PNG525 — 2026-10-24
 
 Combined candidate4.10.22/code525 retains verified signed524 clock/audio repair
