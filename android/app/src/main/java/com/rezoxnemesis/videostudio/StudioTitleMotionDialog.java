@@ -31,6 +31,7 @@ public final class StudioTitleMotionDialog {
     private final EditText[] values=new EditText[FIELDS.length];
     private final Spinner easing;
     private final EditText bezierHandles;
+    private final StudioBezierCurveView curve;
     private StudioLayer draft;
     private AlertDialog dialog;
     private boolean closed;
@@ -85,6 +86,16 @@ public final class StudioTitleMotionDialog {
         bezierHandles.setContentDescription("Custom Bézier motion timing handles");
         bezierHandles.setText(StudioBezierEasing.PRESET_FILM);
         content.addView(bezierHandles);
+        curve=new StudioBezierCurveView(context);
+        curve.setOnHandlesChanged(handles->{
+            bezierHandles.setText(StudioBezierCurveView.format(handles));
+            easing.setSelection(EASINGS.length-1);
+        });
+        content.addView(curve,new LinearLayout.LayoutParams(-1,dp(220)));
+        addButton(content,"Update graph from numeric handles",()->{
+            try{curve.setHandles(StudioBezierEasing.fromText(bezierHandles.getText().toString()));}
+            catch(Exception error){invalid(error);}
+        });
         addButton(content,"Add / update key",this::upsert);
         addButton(content,"Remove key at entered time",this::remove);
         addButton(content,"Clear draft keys",()->{
@@ -129,6 +140,7 @@ public final class StudioTitleMotionDialog {
             }
             break;
         }
+        curve.setHandles(StudioBezierEasing.fromText(bezierHandles.getText().toString()));
         selection.setText((exact?"Selected key at ":"Sampled motion at ")+at+" ms"+(exact?"":" · new key"));
     }
     private void upsert(){

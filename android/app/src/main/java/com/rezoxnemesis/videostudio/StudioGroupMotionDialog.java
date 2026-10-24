@@ -32,6 +32,7 @@ public final class StudioGroupMotionDialog {
     private final StudioLayer base;
     private final LinearLayout column,keyList;
     private final EditText time,bezier;
+    private final StudioBezierCurveView curve;
     private final EditText[] fields=new EditText[FIELDS.length];
     private final Spinner easing;
     private final TextView status;
@@ -106,6 +107,16 @@ public final class StudioGroupMotionDialog {
         bezier.setInputType(InputType.TYPE_CLASS_TEXT);
         bezier.setText(StudioBezierEasing.PRESET_FILM);
         column.addView(bezier);
+        curve=new StudioBezierCurveView(context);
+        curve.setOnHandlesChanged(handles->{
+            bezier.setText(StudioBezierCurveView.format(handles));
+            easing.setSelection(EASINGS.length-1);
+        });
+        column.addView(curve,new LinearLayout.LayoutParams(-1,StudioUi.dp(context,220)));
+        addButton(column,"Update graph from numeric handles",()->{
+            try{curve.setHandles(StudioBezierEasing.fromText(bezier.getText().toString()));}
+            catch(Exception error){invalid(error);}
+        });
         addButton(column,"Add or update key",this::upsert);
         addButton(column,"Remove key at time",this::remove);
         addButton(column,"Clear all draft keys",()->{
@@ -179,6 +190,7 @@ public final class StudioGroupMotionDialog {
         }
         easing.setSelection(Math.max(0,java.util.Arrays.asList(EASINGS).indexOf(keyEase)));
         bezier.setText(control);
+        curve.setHandles(StudioBezierEasing.fromText(bezier.getText().toString()));
     }
 
     private void renderKeys()throws Exception{
