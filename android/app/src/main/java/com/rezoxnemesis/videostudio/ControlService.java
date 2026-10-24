@@ -608,10 +608,15 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         if (p == null) p = new JSONObject();
         // Host payloads cannot supply frozen proofs, recovery identities or
         // trusted command metadata. Local recovery enters queue methods directly.
+        String rejectedAudioHostField=null;
+        boolean strictAudioHost="analyse_media".equals(action)&&p.has("mode");
         JSONArray incomingFields = p.names();
         if (incomingFields != null) for (int index = 0; index < incomingFields.length(); index++) {
             String field = incomingFields.optString(index);
-            if (field.startsWith("_")) p.remove(field);
+            if (field.startsWith("_")) {
+                if(strictAudioHost&&rejectedAudioHostField==null)rejectedAudioHostField=field;
+                p.remove(field);
+            }
         }
 
         String commandId = command.optString("id", "");
@@ -655,6 +660,13 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                         inflight.optString("projectId", projectId));
             }
             return;
+        }
+
+        if(rejectedAudioHostField!=null){
+            JSONObject failed=new JSONObject();
+            try{failed.put("ok",false).put("mode","audio_envelope").put("code","AUDIO_ENVELOPE_INPUT")
+                    .put("error","Unknown strict audio envelope host field: "+rejectedAudioHostField);}catch(Exception ignored){}
+            commandJournal.finish(command,failed,"failed");acknowledge(command,failed,"failed");return;
         }
 
         commandJournal.begin(command);
@@ -1344,6 +1356,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     }
 
     private void queueAnalysis(JSONObject command, JSONObject p) {
+        if(p.has("mode")){queueAudioAnalysis(command,p);return;}
         try {
             ProjectStore.Project project = resolveProject(p.optString("projectId", ""));
             String requested = p.optString("assetId", "");
@@ -1386,6 +1399,51 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             commandJournal.finish(command, failed, "failed");
             acknowledge(command, failed, "failed");
         }
+    }
+
+    /** Explicit new mode only; omission retains the legacy visual path above. */
+    private void queueAudioAnalysis(JSONObject command,JSONObject supplied) {
+        try{
+            JSONObject detached=new JSONObject(supplied.toString());detached.remove("_mcpCommandId");
+            final JSONObject request=NativeAudioEnvelope.validate(detached);
+            final java.util.concurrent.CountDownLatch admission=new java.util.concurrent.CountDownLatch(1);
+            final java.util.concurrent.atomic.AtomicBoolean admitted=new java.util.concurrent.atomic.AtomicBoolean();
+            try{
+            JobManager.Job job=jobs.submit("Audio envelope • "+request.getString("assetId"),JobManager.Kind.LIGHT,state->{
+                try{
+                    admission.await();
+                    if(!admitted.get())throw new InterruptedException("Audio analysis was not admitted; source retained");
+                    JSONObject result=NativeAudioEnvelope.analyse(this,request,(percent,detail)->
+                            checkpoint(state,"Audio envelope",detail,percent,request.getString("projectId")));
+                    boolean complete=result.getJSONObject("coverage").getBoolean("complete");
+                    ActivityLog.add(this,"chatgpt",complete?"Audio envelope complete":"Audio envelope partial",
+                            complete?"Measured source PCM16 amplitude on-device":"Measured partial source coverage; missing samples are explicit",
+                            complete?"success":"info",100,command.optString("id",""),request.getString("projectId"));
+                    state.setResult(result);commandJournal.finish(command,result,"completed");acknowledge(command,result,"completed");
+                }catch(Exception error){
+                    if(admitted.get()){
+                        JSONObject failed=audioEnvelopeFailure(error);state.setResult(failed);commandJournal.finish(command,failed,"failed");acknowledge(command,failed,"failed");
+                    }
+                    throw error;
+                }
+            });
+            // Link before the worker can finish. The ordinary deferred watcher also
+            // completes cancellation before the queued lambda ever starts.
+            complete(command,new JSONObject().put("ok",true).put("queued",true).put("jobId",job.id)
+                    .put("projectId",request.getString("projectId")).put("mode","audio_envelope").put("readOnly",true).put("audioRequest",request));
+            admitted.set(true);
+            }finally{admission.countDown();}
+        }catch(Exception error){
+            JSONObject failed=audioEnvelopeFailure(error);commandJournal.finish(command,failed,"failed");acknowledge(command,failed,"failed");
+        }
+    }
+    private static JSONObject audioEnvelopeFailure(Throwable error) {
+        JSONObject failed=new JSONObject();
+        try{
+            failed=NativeAudioEnvelope.diagnostics(error);failed.put("ok",false).put("mode","audio_envelope")
+                    .put("code",NativeAudioEnvelope.code(error)).put("error",error.getMessage()==null?"Audio envelope failed":error.getMessage());
+        }catch(Exception ignored){}
+        return failed;
     }
 
     private JSONObject workspaceStatus(JSONObject p) {
@@ -5024,6 +5082,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             out.put("cinematic3d",cinematic3DCapabilities());
             out.put("workbenchRelayCompatibility",NativeWorkbenchBridge.capabilities());
             out.put("studioEditing",StudioEditingCapabilities.capabilities());
+            out.put("audioAnalysis",NativeAudioEnvelope.capabilities());
             out.put("sketchStillExport",SketchStillExport.capabilities());
             out.put("studioWorkbench",new JSONObject().put("minimumNativeAppVersion","3.9.0")
                     .put("sharedHumanAndMCP",true).put("sketchCanvasRenderer",true).put("sketchGeometryPaging",true)
@@ -5099,6 +5158,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             out.put("neuralStoryboardModelAvailable", false);
             out.put("workbenchRelayCompatibility",NativeWorkbenchBridge.capabilities());
             out.put("studioEditing",StudioEditingCapabilities.capabilities());
+            out.put("audioAnalysis",NativeAudioEnvelope.capabilities());
             out.put("sketchStillExport",SketchStillExport.capabilities());
             out.put("localEngineOwnsProjects", true);
             out.put("portraitAnimationEngine", "v3.2-articulated-parallax");
@@ -5471,6 +5531,8 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                         failed.put("jobState", jobState);
                         failed.put("error", job.optString("detail",
                                 "Native job " + jobState));
+                        if("analyse_media".equals(durableCommand.optString("action"))&&"audio_envelope".equals(durableQueued.opt("mode")))
+                            failed.put("mode","audio_envelope").put("code","cancelled".equals(jobState)?"AUDIO_ENVELOPE_CANCELLED":"AUDIO_ENVELOPE_DECODE_FAILED");
                         finishDeferredCommand(durableCommand, failed, "failed", projectId);
                     }
                     return;
@@ -5510,6 +5572,25 @@ public final class ControlService extends Service implements AppProtocol.Callbac
 
         JSONObject jobResult = job.optJSONObject("result");
         if (jobResult != null) out.put("jobResult", new JSONObject(jobResult.toString()));
+
+        if("analyse_media".equals(NativeWorkbenchBridge.canonicalAction(action))&&queuedResult!=null&&"audio_envelope".equals(queuedResult.opt("mode"))){
+            try{
+                JSONObject request=NativeAudioEnvelope.validate(queuedResult.getJSONObject("audioRequest"));
+                if(jobResult==null||!jobResult.getBoolean("ok")||!jobResult.getBoolean("readOnly")||!jobResult.getBoolean("sourceUnchanged")
+                        ||!"videostudio.audio.envelope.v1".equals(jobResult.getString("schema"))||!"audio_envelope".equals(jobResult.getString("mode")))
+                    throw new IllegalStateException("Native audio envelope receipt is unavailable");
+                for(String field:new String[]{"projectId","assetId"})if(!request.getString(field).equals(jobResult.getString(field)))throw new IllegalStateException("Audio source identity differs");
+                if(request.getLong("expectedUpdatedAt")!=jobResult.getLong("sourceProjectUpdatedAt")||!request.getString("expectedSha256").equals(jobResult.getString("sourceSha256"))
+                        ||request.getLong("sourceMs")!=jobResult.getLong("sourceMs")||request.getLong("durationMs")!=jobResult.getLong("durationMs")
+                        ||request.getInt("buckets")!=jobResult.getInt("bucketCount")||request.getInt("buckets")!=jobResult.getJSONArray("buckets").length())
+                    throw new IllegalStateException("Audio source revision/hash/window differs");
+                jobResult.getJSONObject("coverage").getBoolean("complete");
+                // Deliver the original measured receipt, bound to its original
+                // request; do not claim a later source was freshly reanalysed.
+                return new JSONObject(jobResult.toString()).put("queued",false).put("completed",true).put("jobId",jobId).put("jobState","completed");
+            }catch(Exception invalid){return new JSONObject().put("ok",false).put("mode","audio_envelope").put("code","AUDIO_ENVELOPE_DECODE_FAILED")
+                    .put("error","Native audio completion could not be verified: "+invalid.getMessage()).put("jobId",jobId);}
+        }
 
         if("sketch_render".equals(NativeWorkbenchBridge.canonicalAction(action))
                 &&queuedResult!=null&&"png".equals(queuedResult.opt("format"))){

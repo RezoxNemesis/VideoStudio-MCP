@@ -1,3 +1,50 @@
+# Bounded native audio envelope — future4.10.25/code528
+
+Isolated feat/native-audio-envelope-v41025 starts594fa07, preserving root527 and
+all prior work. Read docs/continuity/NATIVE_AUDIO_ENVELOPE_41025.md. Integrate
+root527 final4517b8d23faa9689ed9a495e67525a487089a20e before any528 candidate;
+its full2646 checks and signedCI passed, while actual editing retakes remain
+root-owned. Root approved strictmode design and native6RED6/6 3.124s, then
+focused6GREEN2.782s at helperfc18/Control79bf. Service2 RED2FAIL3.436s and corrected
+Main3 RED2FAIL/1PASS7.615s reproduced host-metadata sanitation/lost queued ACKs;
+original Main33aab pagination-fixture failure and all evidence remain preserved.
+Only fixture pagination changed to f8e1, with assertions/bytes/hash proof intact.
+
+Root combined26 ran25PASS/1FAIL9.56s at helperfc18,Control1d44,Main26529,Dialog1ee5.
+All original6/Service2/codec8/deferred2/manual4/correctedMain3 passed. One genuine
+codec-config regression counted2000 duplicate frames: metadata was sampled as
+PCM. Product/helper78485e0a now excludes BUFFER_FLAG_CODEC_CONFIG while retaining
+release/EOS/cancel; all26 source/assertion bytes preserved before fix in
+editing-audio-envelope-20261024/native-before-codec-config-fix-v1. Root final26
+PASSED26/26 in8.077s at helper7848/Control1d44/Main26529/Dialog1ee5; evidence
+film-production-20261022/audio-envelope-combined-528-green-v2-*. Separate real-WAV
+11025Hz rational-window source53e736b0 PASSED1/1 in2.749s, evidence
+audio-envelope-pcm-clock-528-green-v1-*. Eight new native classes contain27cases;
+this is combined26 + separate1, NOT full528 Gradle or installed-APK verification.
+
+Node routine858+306smoke passed; frozen4 and new10 route scripts are included
+without version/dependency changes. Source is NOT integrated/signed/tested as528;
+no actual new-mode MP3/codec/GPU/preview or finished-film claim. Synthetic codec
+fixtures are logic checks only. Root alone executes Java/native; all failures,
+controls, original assertions and source hashes remain preserved.
+
+Extend existing analyse_media only with explicit strict mode audio_envelope;
+omission preserves legacy visual request bytes/fingerprints/floors. Source must
+be exact project/asset/revision/full hash, initially owned regular AUDIO file.
+No resolveProject fallback/create/select, Gallery, arbitrary URI, ASR/beat/true-
+peak claim or wrapping old float[] as complete coverage. New native all-channel
+PCM16 RMS/sample peak/raw+normalized metrics need real sample counts, source-time
+coverage, explicit missing/partial/silence, bounded/cancellable decoding and
+complete cleanup. Audio Inspector and ordinary MCP must share actual core/results.
+Respect the implemented limits/semantics; do not invent parity for
+linked SAF content. Actual526 first24s/576 MP3 normalized first-channel envelope
+passed only its old scope, not text editing, beat detection, audition or rendering.
+
+Root alone runs ONE Gradle and every Java/JVM/native/model/ADB lane and owns
+integration, versions/signing/CI. Keep original source media/history/keys/identity,
+all failures and assertions. No main/Worker/stable publication, fallback signer,
+uninstall/data clear/MCP reset, external media substitute or claimed finished film.
+
 # Active silent VIDEO overlay and reliability526 integration — future4.10.24/code527
 
 Preserve combined source10b7adc (VIDEOcore/vendor, TITLEmotion and guarded VIDEO UI)

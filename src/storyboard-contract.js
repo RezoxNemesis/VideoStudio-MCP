@@ -1,5 +1,7 @@
 import { CINEMATIC_3D_ACTIONS, nativeCinematic3dParameters } from './cinematic3d-contract.js';
 import { STUDIO_NATIVE_ACTIONS, STUDIO_ALIAS_ACTIONS, nativeStudioCanonicalAction, nativeStudioParameters, requireStudioVersion } from './studio-workbench-contract.js';
+import {hasMediaAnalysisMode,nativeMediaAnalysisParameters,requireMediaAnalysisNativeVersion} from './media-analysis-contract.js';
+export {AUDIO_ENVELOPE_CAPABILITIES,hasMediaAnalysisMode,nativeMediaAnalysisParameters,mediaAnalysisToolInputSchema} from './media-analysis-contract.js';
 export { cinematic3dToolSchemas } from './cinematic3d-contract.js';
 export { nativeStudioCanonicalAction };
 // Additive native application-v3 contracts. No browser/provider execution fallback.
@@ -19,6 +21,7 @@ const WORKBENCH_FIELDS={
 export const CINEMATIC_BEATS = ['STANDOFF','BLACK_STEP','WHITE_ADVANCE','CHARGE','DUAL_CHARGE',
   'PRE_IMPACT','CLASH','BLADE_LOCK','FOLLOW_THROUGH','WHITE_KNOCKBACK','BLACK_LANDING','AFTERMATH_RECOVERY'];
 export function requireStoryboardNativeVersion(device, action, parameters={}) {
+  if(action==='analyse_media'&&hasMediaAnalysisMode(parameters))return requireMediaAnalysisNativeVersion(device,parameters);
   requireStudioVersion(device,action,parameters);
   action=nativeStudioCanonicalAction(action);
   if (!STORYBOARD_NATIVE_ACTIONS.has(action)||action==='apply_tool') return;
@@ -31,6 +34,7 @@ export function requireStoryboardNativeVersion(device, action, parameters={}) {
 export function nativeStoryboardParameters(action, parameters={}) {
   if (!parameters || typeof parameters !== 'object' || Array.isArray(parameters)) throw new Error('Native parameters must be an object');
   action=nativeStudioCanonicalAction(action);
+  if(action==='analyse_media'&&hasMediaAnalysisMode(parameters))return nativeMediaAnalysisParameters(parameters);
   if(STUDIO_NATIVE_ACTIONS.has(action))return nativeStudioParameters(action,parameters);
   if(CINEMATIC_3D_ACTIONS.has(action))return nativeCinematic3dParameters(action,parameters);
   const stack=[{value:parameters,depth:0}], seen=new Set();let nodes=0;

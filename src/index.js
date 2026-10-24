@@ -2,7 +2,7 @@ import {relayRelease,commandBacklog,commandExecution} from './relay-diagnostics.
 import { nativeCommandSummary, nativeResultPage } from "./native-result-pages.js";
 import {receivePrivateBlob,privateBlobResponse,cleanupPrivateBlobs,deletePrivateBlob} from './private-blob-store.js';
 import { readCommandQueue, mutateCommandQueue, requireCommandQueueAdmission, terminalCommandUpdate, commandIsPending, readCommandReceipt, acknowledgePrunedCommand, readCommandQueueInTransaction, writeCommandQueueInTransaction, mergeCommandReceiptsInTransaction, readCommandReceiptsInTransaction, canonicalCommandResultSha256, readNativeDevice, readNativeDeviceInTransaction, writeNativeDevice, writeNativeDeviceInTransaction } from "./native-command-store.js";
-import { STORYBOARD_NATIVE_ACTIONS, CINEMATIC_BEATS, requireStoryboardNativeVersion, nativeStoryboardParameters, cinematic3dToolSchemas } from "./storyboard-contract.js";
+import { STORYBOARD_NATIVE_ACTIONS, CINEMATIC_BEATS, requireStoryboardNativeVersion, nativeStoryboardParameters, cinematic3dToolSchemas, AUDIO_ENVELOPE_CAPABILITIES, hasMediaAnalysisMode, mediaAnalysisToolInputSchema } from "./storyboard-contract.js";
 import { studioToolSchemas, nativeStudioCanonicalAction, SKETCH_STILL_EXPORT_CAPABILITIES, EDITOR_EDITING_CAPABILITIES, SHARED_LAYER_MOTION_CAPABILITIES, CLONE_SAMPLING_CAPABILITIES, ANIMATION_ARCHIVE_CAPABILITIES, CHARACTER_PERFORMANCE_CAPABILITIES, HAND_ANIMATION_CAPABILITIES, HUMAN_ANIMATION_CAPABILITIES, STORY_STAGE_CAPABILITIES, ACTOR_PROP_CAPABILITIES, DIALOGUE_PHRASE_CAPABILITIES, GRIP_LINK_CAPABILITIES, STORY_PLAN_CAPABILITIES, STORY_AUDIO_CAPABILITIES, PROJECT_ASSET_IMPORT_CAPABILITIES, CORRECTION_WORKFLOW_CAPABILITIES, REFERENCE_LAYERS_CAPABILITIES, LAYERED_DRAWING_CAPABILITIES, AUTHORED_DEFORMATION_CAPABILITIES, LOCAL_DRAWING_CAPABILITIES, EXACT_CAMERA_ORBIT_CAPABILITIES } from './studio-workbench-contract.js';
 import { DurableObject } from "cloudflare:workers";
 import { McpServer } from "@modelcontextprotocol/server";
@@ -182,6 +182,10 @@ export class VideoStudioState extends DurableObject {
     p.updatedAt=now(); await this.ctx.storage.put("p:"+deviceId+":"+id,p); await this.register(deviceId); return p;
   }
   async enqueue(deviceId,projectId,action,parameters={}){
+    if(action==="analyse_media"&&hasMediaAnalysisMode(parameters)){
+      nativeStoryboardParameters(action,parameters);
+      throw new Error("AUDIO_ENVELOPE_INPUT: audio_envelope requires the native VideoStudio device; browser analysis is unavailable");
+    }
     if(!(await this.project(deviceId,projectId))) throw new Error("Project not found");
     const sk="seq:"+deviceId, seq=((await this.ctx.storage.get(sk))||0)+1; await this.ctx.storage.put(sk,seq);
     const c={id:crypto.randomUUID(),seq,deviceId,projectId,action,parameters,status:"queued",createdAt:now(),completedAt:null,result:null};
@@ -522,6 +526,7 @@ export class VideoStudioState extends DurableObject {
     return {binding,web,fresh,ageMs:age===Number.MAX_SAFE_INTEGER?null:age,project};
   }
   async appTryStudioWebFallback(ownerKey,action,parameters={}){
+    if(action==="analyse_media"&&hasMediaAnalysisMode(parameters))return null;
     const fallback=await this.appResolveStudioWebFallback(ownerKey);
     if(!fallback||!fallback.fresh||!fallback.project) return null;
     const webDeviceId=fallback.binding.webDeviceId;
@@ -703,6 +708,7 @@ export class VideoStudioState extends DurableObject {
     });
   }
   async appEnqueueHybrid(hybridKey,action,parameters={}){
+    if(action==="analyse_media"&&hasMediaAnalysisMode(parameters))parameters=nativeStoryboardParameters(action,parameters);
     const resolved=await this.appResolveHybrid(hybridKey);
     if(!resolved) throw new Error("Private hybrid binding rejected");
     parameters=nativeStoryboardParameters(action,parameters);
@@ -715,6 +721,7 @@ export class VideoStudioState extends DurableObject {
     return this.appQueueNativeV3(d,action,parameters,{hybridHash:await sha256Hex(hybridKey),bindingId:resolved.binding.id});
   }
   async appQueueNativeV3(device,action,parameters,identity){
+    if(action==="analyse_media"&&hasMediaAnalysisMode(parameters))parameters=nativeStoryboardParameters(action,parameters);
     const key="app-v3-cl:"+device.deviceId,sequenceKey="app-v3-seq:"+device.deviceId;
     return this.ctx.storage.transaction(async transaction=>{
       let ownerHash=identity&&identity.ownerHash;
@@ -953,7 +960,7 @@ export class VideoStudioState extends DurableObject {
     if(d.controlPaused) throw new Error("ChatGPT control is paused on the phone");
     if(!appActionAllowed(d.permissionMode,action)) throw new Error("Action blocked by device permission mode or Gallery privacy boundary: "+d.permissionMode);
     const lastSeenMs=Date.parse(String(d.lastSeenAt||""))||0,fresh=lastSeenMs>0&&Date.now()-lastSeenMs<=45000;
-    if(!fresh&&!STORYBOARD_NATIVE_ACTIONS.has(action)){
+    if(!fresh&&!STORYBOARD_NATIVE_ACTIONS.has(action)&&!(action==="analyse_media"&&hasMediaAnalysisMode(parameters))){
       const webCommand=await this.appTryStudioWebFallback(ownerKey,action,parameters);
       if(webCommand)return webCommand;
     }
@@ -1493,6 +1500,7 @@ function serverFor(env,hybridKey=""){
   s.registerTool("queue_video_edit",{description:"Send one edit action to VideoStudio. Native v3/v1 compatibility can use the private owner credential as deviceId and projectId='active-native'.",inputSchema:{deviceId:z.string().min(8),projectId:z.string().min(8),action:z.enum(["set_trim","set_speed","set_mute","set_aspect","set_title","set_quality","set_transition","remove_clip","move_clip","reorder_timeline","replace_timeline","set_clip_speed","set_clip_title","set_clip_effects","analyse_media","inspect_render","render","autonomous_request"]),parameters:z.record(z.string(),z.any()).optional()}},async({deviceId,projectId,action,parameters})=>{
     try{
       const p=parameters||{};
+      if(action==="analyse_media"&&hasMediaAnalysisMode(p))nativeStoryboardParameters(action,p);
       // Backwards compatible for installed MCP connectors that have not yet
       // refreshed the dedicated deliver_studio_video_to_chat tool schema.
       if(action==="autonomous_request"&&Array.isArray(p.poseSequenceAnchorIds)&&!p.nativeAction){
@@ -1611,6 +1619,7 @@ function serverFor(env,hybridKey=""){
       const native=await st.appResolve(deviceId);
       for(const edit of edits){
         const p=edit.parameters||{};
+        if(edit.action==="analyse_media"&&hasMediaAnalysisMode(p))nativeStoryboardParameters(edit.action,p);
         if(native){
           let nativeAction=p.nativeAction||"";
           let nativeParameters=p.nativeParameters||p;
@@ -1632,12 +1641,14 @@ function serverFor(env,hybridKey=""){
       return out({queued:true,count:queued.length,commands:queued,nativeApp:!!native,protocolVersion:native?(isNativeV3(native)?3:1):0});
     }catch(e){ return out({queued:false,error:e.message,commands:queued}); }
   });
-  s.registerTool("request_media_analysis",{description:"Run local visual analysis on VideoStudio media. Native v3/v1.1 returns sampled frames and scene-change candidates without uploading the full video.",inputSchema:{deviceId:z.string().min(8),projectId:z.string().min(8),assetId:z.string().min(8).optional(),start:z.number().min(0).optional(),end:z.number().positive().optional(),frames:z.number().int().min(6).max(16).optional(),includeAudio:z.boolean().optional()}},async({deviceId,projectId,assetId,start,end,frames,includeAudio})=>{
+  s.registerTool("request_media_analysis",{description:"Run local visual sampling, or native4.10.25 strict mode:audio_envelope for an exact owned AUDIO file. Audio requires projectId, expectedUpdatedAt, assetId, expectedSha256, sourceMs, durationMs and buckets; no visual fields or includeAudio. Reports all-channel PCM16 RMS/sample peak and explicit source-time coverage; no transcription, beats or true peak. Full media stays on the phone.",inputSchema:mediaAnalysisToolInputSchema({deviceId:z.string().min(8),projectId:z.string().min(8),assetId:z.string().min(8).optional(),start:z.number().min(0).optional(),end:z.number().positive().optional(),frames:z.number().int().min(6).max(16).optional(),includeAudio:z.boolean().optional()},['deviceId'])},async({deviceId,...args})=>{
     try{
-      const parameters={}; if(assetId)parameters.assetId=assetId; if(start!=null)parameters.start=start; if(end!=null)parameters.end=end; if(frames!=null)parameters.frames=frames; if(includeAudio!=null)parameters.includeAudio=includeAudio;
+      const {projectId,assetId,start,end,frames,includeAudio}=args;
+      const parameters=hasMediaAnalysisMode(args)?nativeStoryboardParameters("analyse_media",args):{};
+      if(!hasMediaAnalysisMode(args)){if(assetId)parameters.assetId=assetId; if(start!=null)parameters.start=start; if(end!=null)parameters.end=end; if(frames!=null)parameters.frames=frames; if(includeAudio!=null)parameters.includeAudio=includeAudio;}
       const native=await st.appResolve(deviceId);
       const c=native?await enqueueNative(st,native,deviceId,"analyse_media",parameters):await st.enqueue(deviceId,projectId,"analyse_media",parameters);
-      return out({queued:true,commandId:c.id,sequence:c.seq,nativeApp:!!native,note:"VideoStudio will analyse frames locally and return a contact sheet."});
+      return out({queued:true,commandId:c.id,sequence:c.seq,nativeApp:!!native,note:hasMediaAnalysisMode(parameters)?"VideoStudio will measure the exact owned audio window locally; inspect actual coverage before authoring edits.":"VideoStudio will analyse frames locally and return a contact sheet."});
     }catch(e){ return out({queued:false,error:e.message}); }
   });
   s.registerTool("inspect_video_render",{description:"Inspect the actual latest local render with a contact sheet so ChatGPT can critique the finished edit and iterate.",inputSchema:{deviceId:z.string().min(8),projectId:z.string().min(8),frames:z.number().int().min(6).max(16).optional()}},async({deviceId,projectId,frames})=>{
@@ -1792,6 +1803,7 @@ function serverForApp(env,ownerKey,protocolVersion=1){
     layeredDrawing:isV3&&typeof LAYERED_DRAWING_CAPABILITIES!=='undefined'?LAYERED_DRAWING_CAPABILITIES:undefined,
     sketchStillExport:isV3&&typeof SKETCH_STILL_EXPORT_CAPABILITIES!=='undefined'?SKETCH_STILL_EXPORT_CAPABILITIES:undefined,
     studioEditing:isV3&&typeof EDITOR_EDITING_CAPABILITIES!=='undefined'?EDITOR_EDITING_CAPABILITIES:undefined,
+    audioAnalysis:isV3&&typeof AUDIO_ENVELOPE_CAPABILITIES!=='undefined'?AUDIO_ENVELOPE_CAPABILITIES:undefined,
     sharedLayerMotion:isV3&&typeof SHARED_LAYER_MOTION_CAPABILITIES!=='undefined'?SHARED_LAYER_MOTION_CAPABILITIES:undefined,
     exactCameraOrbit:isV3&&typeof EXACT_CAMERA_ORBIT_CAPABILITIES!=='undefined'?EXACT_CAMERA_ORBIT_CAPABILITIES:undefined,localNeuralDrawing:isV3&&typeof LOCAL_DRAWING_CAPABILITIES!=='undefined'?LOCAL_DRAWING_CAPABILITIES:undefined,
     authoredDeformation:isV3&&typeof AUTHORED_DEFORMATION_CAPABILITIES!=='undefined'?AUTHORED_DEFORMATION_CAPABILITIES:undefined,
@@ -1950,7 +1962,9 @@ function serverForApp(env,ownerKey,protocolVersion=1){
   s.registerTool("app_select_project",{description:"Select an existing native VideoStudio project by ID.",inputSchema:{projectId:z.string().min(8)}},async({projectId})=>queue("select_project",{projectId}));
   s.registerTool("app_delete_project",{description:"Delete a VideoStudio-owned project. Available in Full Autonomous mode; Gallery enumeration remains blocked.",inputSchema:{projectId:z.string().min(8)}},async({projectId})=>queue("delete_project",{projectId}));
 
-  s.registerTool("app_analyse_media",{description:"Sample a local imported video on-device and return a contact sheet plus scene-change candidates to ChatGPT. Full video stays on the phone.",inputSchema:{assetId:z.string().min(8).optional(),frames:z.number().int().min(6).max(16).optional(),start:z.number().min(0).optional(),end:z.number().positive().optional()}},async({assetId,frames,start,end})=>{
+  s.registerTool("app_analyse_media",{description:"Sample local video frames, or use explicit mode:audio_envelope on native4.10.25+. For audio: app_status, require4.10.25 and app_capabilities.audioAnalysis, then project_asset_info for the exact project revision and full source hash. Supply all projectId/expectedUpdatedAt/assetId/expectedSha256/sourceMs/durationMs/buckets; owned regular AUDIO files only, no linked URI/Gallery, visual fields or includeAudio. Wait for the native result and inspect complete/partial source-time coverage, counts, raw RMS/samplePeak and window_max_rms normalization before ordinary guarded TITLE/audio edits and native render review. Sample peak is not true peak; no ASR, lyric alignment, beats or automatic text editing. Omit mode for unchanged visual contact sheets with default12 frames. Manual Audio Inspector uses the same native request/result.",inputSchema:mediaAnalysisToolInputSchema({assetId:z.string().min(8).optional(),frames:z.number().int().min(6).max(16).optional(),start:z.number().min(0).optional(),end:z.number().positive().optional()}),annotations:{readOnlyHint:true}},async args=>{
+    if(hasMediaAnalysisMode(args))return queue("analyse_media",nativeStoryboardParameters("analyse_media",args));
+    const {assetId,frames,start,end}=args;
     const p={frames:frames||12}; if(assetId)p.assetId=assetId; if(start!=null)p.start=start; if(end!=null)p.end=end;
     return queue("analyse_media",p);
   });

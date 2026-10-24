@@ -116,6 +116,10 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
     private AlertDialog studioToolDialog;
     private AlertDialog studioImageMotionDialog;
     private AutoCloseable studioVideoEditor;
+    private StudioAudioEnvelopeDialog studioAudioEnvelopeDialog;
+    private final java.util.concurrent.ConcurrentHashMap<String,AudioEnvelopeCompletion> audioEnvelopeCommands=new java.util.concurrent.ConcurrentHashMap<>();
+    private java.util.concurrent.ScheduledExecutorService audioEnvelopeCompletions;
+    private boolean audioEnvelopeCommandsClosed;
     private long studioSurfaceGeneration;
     private StudioEditorWorkspace studioWorkspace;
     private String studioWorkspacePane="Timeline",studioInspectorProjectId="",studioSelectedLayerId;
@@ -231,6 +235,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
 
     @Override
     protected void onDestroy() {
+        closeStudioAudioEnvelope();
         closeStudioVideoEditor();
         if(studioImageMotionDialog!=null)studioImageMotionDialog.dismiss();
         timelinePreviewRunning = false;
@@ -245,6 +250,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         if(editorBootstrapReady&&editorStartupGuard!=null)editorStartupGuard.success();
         if (livePlayer != null) livePlayer.release();
         if (activeRenderHandle != null) activeRenderHandle.cancel();
+        closeAudioEnvelopeCommands();
         if (protocol != null) protocol.stop();
         if (jobs != null) jobs.shutdown();
         super.onDestroy();
@@ -337,6 +343,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
 
     private void setScreen(View view, String name) {
         if (activityRefresh != null) ui.removeCallbacks(activityRefresh);
+        closeStudioAudioEnvelope();
         studioSurfaceGeneration++;
         currentScreen = name;
         StudioUi.prepareTouchLayout(view);
@@ -1002,7 +1009,11 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                 box.addView(studioButton("Placement / timing",()->editStudioVideo(layer,layer.assetId)));
                 box.addView(studioButton("Delete video overlay",()->removeStudioLayer(layer)));
                 box.addView(body("Silent independent video source. Source in trims its own footage; it does not move the base timeline or add source audio."));
-            }else if(StudioLayer.AUDIO.equals(layer.type)){box.addView(studioButton("Edit audio",()->editStudioAudio(layer,layer.assetId)));box.addView(studioButton("Delete audio",()->removeStudioLayer(layer)));}
+            }else if(StudioLayer.AUDIO.equals(layer.type)){
+                box.addView(studioButton("Analyze envelope",()->openStudioAudioEnvelope(layer)));
+                box.addView(studioButton("Edit audio",()->editStudioAudio(layer,layer.assetId)));
+                box.addView(studioButton("Delete audio",()->removeStudioLayer(layer)));
+            }
             else{box.addView(studioButton("Animate title",()->openStudioTitleMotion(layer)));box.addView(studioButton("Edit caption",()->editStudioTitle(layer)));box.addView(studioButton("Delete caption",()->removeStudioLayer(layer)));}
         }else if(selectedClip!=null){
             ProjectStore.Asset asset=activeProject.asset(selectedClip.assetId);box.addView(body((asset==null?"Missing media":asset.name)+" · "+StudioEditCursor.timecode(selectedClip.outputDurationMs())));
@@ -1102,6 +1113,22 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         return true;
     }
     private void closeStudioVideoEditor(){AutoCloseable editor=studioVideoEditor;studioVideoEditor=null;if(editor!=null)try{editor.close();}catch(Exception ignored){}}
+
+    private void openStudioAudioEnvelope(StudioLayer lane){
+        if(activeProject==null||lane==null||!StudioLayer.AUDIO.equals(lane.type))return;
+        final String owner=activeProject.id,selected=lane.id;final long revision=activeProject.updatedAt,generation=studioSurfaceGeneration;
+        try{
+            ProjectStore.Asset asset=activeProject.asset(lane.assetId);
+            closeStudioAudioEnvelope();
+            studioAudioEnvelopeDialog=StudioAudioEnvelopeDialog.show(this,activeProject,asset,lane,
+                    ()->!isFinishing()&&!isDestroyed()&&activeProject!=null&&owner.equals(activeProject.id)
+                            &&activeProject.updatedAt==revision&&studioSurfaceGeneration==generation
+                            &&"editor".equals(currentScreen)&&selected.equals(studioSelectedLayerId),
+                    this::scrubStudioTo,closed->{if(studioAudioEnvelopeDialog==closed)studioAudioEnvelopeDialog=null;});
+        }catch(Exception error){Toast.makeText(this,"Cannot analyze audio: "+error.getMessage(),Toast.LENGTH_LONG).show();}
+    }
+
+    private void closeStudioAudioEnvelope(){StudioAudioEnvelopeDialog dialog=studioAudioEnvelopeDialog;studioAudioEnvelopeDialog=null;if(dialog!=null)dialog.close();}
 
     private boolean canApplyStudioTitleMotion(String projectId,long revision,long surfaceGeneration){
         if(isFinishing()||isDestroyed()||activeProject==null||!projectId.equals(activeProject.id)
@@ -4346,6 +4373,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
     }
 
     private void queueAnalysisCommand(JSONObject command, JSONObject parameters) {
+        if(parameters.has("mode")){queueAudioEnvelopeCommand(command,parameters);return;}
         try {
             if (activeProject == null || activeProject.assets.isEmpty()) throw new IllegalArgumentException("No media in the active project");
             String requested = parameters.optString("assetId", "");
@@ -4383,6 +4411,92 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
             } catch (Exception ignored) {}
             protocol.complete(command, failed, "failed");
         }
+    }
+
+    /** Explicit mode uses the same read-only worker as the ordinary Audio Inspector. */
+    private void queueAudioEnvelopeCommand(JSONObject command,JSONObject parameters){
+        final CountDownLatch admission=new CountDownLatch(1);
+        final AtomicReference<AudioEnvelopeCompletion> completion=new AtomicReference<>();
+        JobManager.Job submitted=null;
+        try{
+            // Public parameters contain no trusted transport metadata. Every key
+            // reaches strict validation, including host-supplied underscore keys.
+            final JSONObject request=NativeAudioEnvelope.validate(new JSONObject(parameters.toString()));
+            final android.content.Context app=getApplicationContext();
+            synchronized(audioEnvelopeCommands){
+                if(audioEnvelopeCommandsClosed)throw new InterruptedException("The audio command executor closed before admission");
+                submitted=jobs.submit("Audio envelope • "+request.getString("assetId"),JobManager.Kind.LIGHT,state->{
+                    try{
+                        admission.await();AudioEnvelopeCompletion bound=completion.get();
+                        if(bound==null||bound.sent.get())throw new InterruptedException("Audio command was not admitted");
+                        JSONObject result=NativeAudioEnvelope.analyse(app,request,(percent,detail)->state.checkpoint("Audio envelope",percent,detail));
+                        state.setResult(result);bound.send(result,"completed");
+                    }catch(Exception error){
+                        JSONObject failed=audioEnvelopeFailure(error);state.setResult(failed);
+                        AudioEnvelopeCompletion bound=completion.get();if(bound!=null)bound.send(failed,"failed");throw error;
+                    }
+                });
+                AudioEnvelopeCompletion bound=new AudioEnvelopeCompletion(new JSONObject(command.toString()),protocol,submitted,audioEnvelopeCommands);
+                completion.set(bound);audioEnvelopeCommands.put(submitted.id,bound);
+                if(audioEnvelopeCompletions==null){
+                    audioEnvelopeCompletions=java.util.concurrent.Executors.newSingleThreadScheduledExecutor();
+                    audioEnvelopeCompletions.scheduleWithFixedDelay(()->{
+                        for(AudioEnvelopeCompletion pending:audioEnvelopeCommands.values())pending.poll();
+                    },0,100,TimeUnit.MILLISECONDS);
+                }
+            }
+        }catch(Exception error){
+            if(submitted!=null)jobs.cancel(submitted.id);
+            AudioEnvelopeCompletion bound=completion.get();
+            if(bound!=null)bound.send(audioEnvelopeFailure(error),"failed");else protocol.complete(command,audioEnvelopeFailure(error),"failed");
+        }finally{admission.countDown();}
+    }
+
+    /** Complete queued cancellation even when Future.cancel prevents the work lambda from running. */
+    private static final class AudioEnvelopeCompletion {
+        final JSONObject command;final AppProtocol protocol;final JobManager.Job job;
+        final java.util.concurrent.ConcurrentHashMap<String,AudioEnvelopeCompletion> bindings;
+        final java.util.concurrent.atomic.AtomicBoolean sent=new java.util.concurrent.atomic.AtomicBoolean();
+        AudioEnvelopeCompletion(JSONObject command,AppProtocol protocol,JobManager.Job job,
+                java.util.concurrent.ConcurrentHashMap<String,AudioEnvelopeCompletion> bindings){
+            this.command=command;this.protocol=protocol;this.job=job;this.bindings=bindings;
+        }
+        synchronized void send(JSONObject result,String status){
+            if(!sent.compareAndSet(false,true))return;
+            // Cancellation already published by JobManager cannot be turned into
+            // success by a late decoder completion.
+            if(JobManager.STATE_CANCELLED.equals(job.state)){result=audioEnvelopeFailure(new InterruptedException("Audio envelope cancelled; source retained"));status="failed";}
+            try{protocol.complete(command,result,status);}finally{bindings.remove(job.id,this);}
+        }
+        synchronized void poll(){
+            if(sent.get()||!JobManager.isTerminal(job.state))return;
+            if(JobManager.STATE_CANCELLED.equals(job.state)){send(audioEnvelopeFailure(new InterruptedException("Audio envelope cancelled before completion; source retained")),"failed");return;}
+            JSONObject result=job.result;
+            if(result!=null)send(result,result.optBoolean("ok",false)?"completed":"failed");
+            else send(audioEnvelopeFailure(new IllegalStateException("Audio analysis ended without a measured result: "+job.detail)),"failed");
+        }
+        synchronized void cancelAndComplete(JobManager jobs){
+            // Wait for any already-started durable reply before cancelling its
+            // worker, rather than interrupting result persistence during close.
+            if(sent.get())return;if(jobs!=null)jobs.cancel(job.id);poll();
+        }
+    }
+
+    private void closeAudioEnvelopeCommands(){
+        synchronized(audioEnvelopeCommands){
+            audioEnvelopeCommandsClosed=true;
+            for(AudioEnvelopeCompletion pending:new ArrayList<>(audioEnvelopeCommands.values())){
+                pending.cancelAndComplete(jobs);
+            }
+            if(audioEnvelopeCompletions!=null)audioEnvelopeCompletions.shutdown();
+        }
+    }
+
+    private static JSONObject audioEnvelopeFailure(Throwable error){
+        JSONObject result=new JSONObject();try{
+            result=NativeAudioEnvelope.diagnostics(error);result.put("ok",false).put("mode","audio_envelope")
+                    .put("code",NativeAudioEnvelope.code(error)).put("error",error.getMessage()==null?"Audio envelope failed":error.getMessage());
+        }catch(Exception ignored){}return result;
     }
 
     private JSONObject applyCreatorPreset(JSONObject parameters) throws Exception {
@@ -4971,6 +5085,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
             out.put("workload", jobs.state());
             out.put("creatorCatalog", CreatorCatalog.describe());
             out.put("studioEditing",StudioEditingCapabilities.capabilities());
+            out.put("audioAnalysis",NativeAudioEnvelope.capabilities());
             out.put("recentActivity", ActivityLog.recent(this, 30));
             JSONArray caps = new JSONArray();
             String[] values = {
