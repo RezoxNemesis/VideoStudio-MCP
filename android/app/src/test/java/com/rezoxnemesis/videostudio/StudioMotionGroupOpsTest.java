@@ -20,7 +20,7 @@ import static org.junit.Assert.*;
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk=33,manifest=Config.NONE)
 public class StudioMotionGroupOpsTest {
-    private ProjectStore.Project sample(ProjectStore store) {
+    private ProjectStore.Project sample(ProjectStore store) throws Exception {
         ProjectStore.Project project=store.create("Motion group test");
         ProjectStore.Asset still=new ProjectStore.Asset();
         still.id="original-still";still.uri="file:///original/private-owner-image.png";
