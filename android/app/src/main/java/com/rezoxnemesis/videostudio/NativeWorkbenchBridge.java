@@ -13,7 +13,8 @@ public final class NativeWorkbenchBridge {
     private static final int MAX_COMMAND_BYTES=2*1024*1024,MAX_DEPTH=64,MAX_VALUES=2*1024*1024;
     private static final Set<String> ACTIONS=Collections.unmodifiableSet(new LinkedHashSet<>(Arrays.asList(
             "precision_edit","apply_tool","set_studio_layers",
-            "kinetic_benchmark_capabilities","kinetic_benchmark_plan","kinetic_benchmark_apply","import_mailbox_media","project_asset_info","project_import_asset","get_native_result_page","get_native_delivery_status","compact_native_delivery",
+            "kinetic_benchmark_capabilities","kinetic_benchmark_plan","kinetic_benchmark_apply",
+            "motion_group_capabilities","motion_group_plan","motion_group_edit","import_mailbox_media","project_asset_info","project_import_asset","get_native_result_page","get_native_delivery_status","compact_native_delivery",
             "sketch_create","sketch_list","sketch_get","sketch_inspect","sketch_review","sketch_quality_audit","sketch_edit","sketch_undo","sketch_redo",
             "sketch_animation_save","sketch_animation_get","sketch_animation_list","sketch_animation_bake","sketch_animation_place_in_book",
             "sketch_story_create","sketch_story_preview","sketch_story_audio_create","sketch_story_example",
@@ -65,6 +66,7 @@ public final class NativeWorkbenchBridge {
                 .put("projectAssetImport",ProjectAssetImport.capabilities())
                 .put("studioEditing",StudioEditingCapabilities.capabilities())
                 .put("kineticDirector",StudioKineticDirector.capabilities())
+                .put("motionGroups",StudioMotionGroupOps.capabilities())
                 .put("sketchStillExport",SketchStillExport.capabilities())
                 .put("encryptedMediaImportMinimumNativeVersion","4.2.0").put("encryptedMediaImportMaximumBytes",256L*1024*1024)
                 .put("drawingAssetImportMinimumNativeVersion","4.3.1").put("nativeResultPageMinimumNativeVersion","4.3.1")
