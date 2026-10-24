@@ -1,3 +1,33 @@
+# Active native preview graph and image MIME admission — future528
+
+Read docs/continuity/NATIVE_PREVIEW_GRAPH_MIME_41025.md. This isolated branch starts
+original-signed5274517b8d; leave the published candidate/source frozen elsewhere.
+Root genuine16-case RED reproduced9 failures (5 missing multi-input graph requests,
+4 lost known image MIME) with7 controls passing in4.845s. Independent review then
+found wildcard/unknown image MIME would suppress JPEG filename fallback in the
+initial repair; root additional2-case RED reproduced2/2 failures in2.881s. Preserve
+both failed generations and all18 unchanged tests. Root combined18GREEN0fail4.522s
+and separate146legacyGREEN0fail21.314s used the exact two production overrides.
+These are scoped unit/admission/UI controls, not GPU/codec or artistic proof. Full
+integration, original-signed exact-revision CI and actual updated-APK VIDEO preview/
+export remain pending. Root owns versions, integration, one Gradle and every
+Java/JVM/native/ADB run; this coherent source feature commit is authorized.
+
+Narrow source selects the actual MultipleInputVideoGraph only for multiple VIDEO
+inputs or nonDEFAULT compositor settings; single-video/audio/finalIMAGE/TITLE paths
+keep the SDK default. Known supported image MIME is forwarded through the shared
+MediaItem; unknown/wildcard MIME and other media retain legacy inference. No source
+bytes, transforms, timings, actions, project revisions, signing or identity change.
+
+The similar latest527 JPEG+MP3 native preview did not reproduce the owner's historical
+phone error. A black-preview alarm was withdrawn after independent raw screenshot
+pixel checks proved identical opaque photo content on526/527. Root reported8-second
+UI export completed100%, with output verification still pending. Do not speculate
+surface repairs, treat missing image first-frame analytics as failure, or claim the
+phone issue diagnosed. Typed diagnostics behavior RED is a separate upcoming task.
+No main/Worker/stable publication, replacement signer, uninstall/data clear/MCP reset,
+Gallery, external artwork substitute or finished240-second film/artistic acceptance.
+
 # Active composition overlay ownership repair — future527
 
 Read docs/continuity/NATIVE_COMPOSITION_OVERLAY_OWNERSHIP_41024.md. Actual526
