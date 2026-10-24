@@ -24,12 +24,15 @@ public final class StudioTimedTitleOverlay extends TextOverlay {
     private final SpannableString content;
     private final OverlaySettings visible,hidden;
     private final StudioLayerMotion motion;
+    private final StudioParentGroupTransform parent;
     private final float anchorY;
-    public StudioTimedTitleOverlay(StudioLayer caption){
+    public StudioTimedTitleOverlay(StudioLayer caption){this(caption,null);}
+    public StudioTimedTitleOverlay(StudioLayer caption,StudioLayer motionGroup){
         if(caption==null||!StudioLayer.TITLE.equals(caption.type))
             throw new IllegalArgumentException("Timed title layer required");
         caption.validate();
         motion=StudioLayerMotion.fromLayer(caption);
+        parent=motionGroup==null?null:new StudioParentGroupTransform(motionGroup);
         startUs=caption.startMs*1000L;
         endUs=(caption.startMs+caption.durationMs)*1000L;
         content=new SpannableString(caption.text);
@@ -64,13 +67,15 @@ public final class StudioTimedTitleOverlay extends TextOverlay {
     }
     @Override public OverlaySettings getOverlaySettings(long presentationTimeUs){
         boolean active=activeAt(presentationTimeUs,startUs,endUs);
-        if(!motion.hasKeyframes())return active?visible:hidden;
-        // Title lanes are attached to the final composition. Their clock is
-        // independent of source trims, clip speeds and cumulative clip origins.
-        StudioClipKeyframes.Values value=motion.atUs(active?presentationTimeUs-startUs:0);
-        return new MotionSettings(0f+(float)(2*value.x),anchorY-(float)(2*value.y),
-                1f*(float)value.scaleX,1f*(float)value.scaleY,0f+(float)value.rotate,
-                active?1f*(float)value.opacity:0f);
+        OverlaySettings own;
+        if(!motion.hasKeyframes())own=active?visible:hidden;
+        else{
+            StudioClipKeyframes.Values value=motion.atUs(active?presentationTimeUs-startUs:0);
+            own=new MotionSettings(0f+(float)(2*value.x),anchorY-(float)(2*value.y),
+                    1f*(float)value.scaleX,1f*(float)value.scaleY,0f+(float)value.rotate,
+                    active?1f*(float)value.opacity:0f);
+        }
+        return parent==null?own:parent.apply(own,presentationTimeUs);
     }
 
     /** Immutable per-frame settings support authored offscreen anchors without clamping. */

@@ -24,16 +24,19 @@ public final class StudioTimedShapeOverlay extends BitmapOverlay {
     public static final int RASTER_SIZE = 640;
     private final StudioLayer layer;
     private final StudioLayerMotion motion;
+    private final StudioParentGroupTransform parent;
     private Bitmap raster;
     private boolean released;
     private int frameWidth = 1, frameHeight = 1;
 
-    public StudioTimedShapeOverlay(StudioLayer incoming) {
+    public StudioTimedShapeOverlay(StudioLayer incoming){this(incoming,null);}
+    public StudioTimedShapeOverlay(StudioLayer incoming,StudioLayer group) {
         if (incoming == null || !StudioLayer.SHAPE.equals(incoming.type))
             throw new IllegalArgumentException("A native original shape lane is required");
         incoming.validate();
         layer = incoming.copy();
         motion = StudioLayerMotion.fromLayer(layer);
+        parent=group==null?null:new StudioParentGroupTransform(group);
     }
 
     @Override public void configure(Size frame) {
@@ -143,7 +146,8 @@ public final class StudioTimedShapeOverlay extends BitmapOverlay {
         float sy = frameHeight * layer.height / RASTER_SIZE * (float) value.scaleY;
         float angle = layer.rotation + (float) value.rotate;
         float alpha = active ? layer.opacity * (float) value.opacity : 0f;
-        return new FrameSettings(x, y, sx, sy, angle, alpha);
+        OverlaySettings own=new FrameSettings(x, y, sx, sy, angle, alpha);
+        return parent==null?own:parent.apply(own,timeUs);
     }
 
     private static final class FrameSettings implements OverlaySettings {

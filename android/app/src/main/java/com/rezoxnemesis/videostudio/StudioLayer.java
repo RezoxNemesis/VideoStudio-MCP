@@ -13,7 +13,7 @@ import java.util.UUID;
  * EditedMediaItemSequences, with time offsets.
  */
 public final class StudioLayer {
-    public static final String AUDIO="audio", TITLE="title", IMAGE="image", VIDEO="video", SHAPE="shape";
+    public static final String AUDIO="audio", TITLE="title", IMAGE="image", VIDEO="video", SHAPE="shape", GROUP="group";
     public String id=UUID.randomUUID().toString();
     public String type=TITLE;
     public String assetId="";
@@ -35,13 +35,16 @@ public final class StudioLayer {
     public JSONArray motionKeyframes;
     /** Optional source-preserving IMAGE/SHAPE alpha mask. Null retains legacy JSON. */
     public JSONObject mask;
+    /** One-level source-free motion parent. Missing ID preserves all old layers. */
+    public String parentId="";
     /** SHAPE-only original Canvas geometry. No external image source required. */
     public String shapeKind="rect";
     public int strokeColor=0xffffffff;
     public float strokeWidth=.02f;
     private static final String[] CAPTION_FIELDS={"fontSize","fontFamily","fontStyle","textAlign","backgroundColor"};
     private static final Set<String> SHAPE_KINDS=Set.of("rect","ellipse","ring","diamond","line","grid");
-    private static final Set<String> SHAPE_FIELDS=Set.of("id","type","startMs","durationMs","x","y","width","height","rotation","opacity","color","shapeKind","strokeColor","strokeWidth","motionKeyframes","mask");
+    private static final Set<String> SHAPE_FIELDS=Set.of("id","type","startMs","durationMs","x","y","width","height","rotation","opacity","color","shapeKind","strokeColor","strokeWidth","motionKeyframes","mask","parentId");
+    private static final Set<String> GROUP_FIELDS=Set.of("id","type","startMs","durationMs","motionKeyframes");
     private static final Set<String> VIDEO_FIELDS=Set.of("id","type","assetId","audioMode","startMs","durationMs","sourceInMs",
             "x","y","width","height","rotation","opacity","motionKeyframes");
 
@@ -49,13 +52,23 @@ public final class StudioLayer {
 
     public void validate(){
         if(id==null||id.isEmpty()||id.length()>128)throw new IllegalArgumentException("Layer ID must contain 1..128 characters");
-        if(!AUDIO.equals(type)&&!TITLE.equals(type)&&!IMAGE.equals(type)&&!VIDEO.equals(type)&&!SHAPE.equals(type))
+        if(!AUDIO.equals(type)&&!TITLE.equals(type)&&!IMAGE.equals(type)&&!VIDEO.equals(type)&&!SHAPE.equals(type)&&!GROUP.equals(type))
             throw new IllegalArgumentException("Only real audio, caption, image, video and native shape lanes are supported");
         if(VIDEO.equals(type)){
             if(!"silent".equals(audioMode))throw new IllegalArgumentException("Video lanes require audioMode:\"silent\"");
             if(text==null||!text.isEmpty()||gain!=1f||color!=0xffffffff||position!=1)
                 throw new IllegalArgumentException("Video lanes do not support audio levels or caption fields");
         }else if(!"".equals(audioMode))throw new IllegalArgumentException("audioMode is only supported on video layers");
+        if(parentId==null||parentId.length()>128||parentId.equals(id))
+            throw new IllegalArgumentException("Invalid or self-referential motion parent ID");
+        if(!parentId.isEmpty()&&!IMAGE.equals(type)&&!TITLE.equals(type)&&!SHAPE.equals(type))
+            throw new IllegalArgumentException("Only title, image and shape overlays can use a motion parent");
+        if(GROUP.equals(type)){
+            if((assetId!=null&&!assetId.isEmpty())||(text!=null&&!text.isEmpty())||gain!=1f
+                    ||position!=1||audioMode.length()!=0||mask!=null||!parentId.isEmpty())
+                throw new IllegalArgumentException("Motion GROUP must be source-free and cannot be nested");
+            if(motionKeyframes!=null)StudioLayerMotion.fromLayer(this);
+        }
         if(SHAPE.equals(type)){
             if((assetId!=null&&!assetId.isEmpty())||(text!=null&&!text.isEmpty())||gain!=1f||position!=1)
                 throw new IllegalArgumentException("Native SHAPE has no external asset, title text or audio");
@@ -85,7 +98,7 @@ public final class StudioLayer {
             throw new IllegalArgumentException("Caption styles are only supported on title layers");
         if(AUDIO.equals(type)&& (assetId==null||assetId.trim().isEmpty()))
             throw new IllegalArgumentException("Audio lane needs an imported audio asset");
-        if(motionKeyframes!=null&&!IMAGE.equals(type)&&!TITLE.equals(type)&&!VIDEO.equals(type)&&!SHAPE.equals(type))
+        if(motionKeyframes!=null&&!IMAGE.equals(type)&&!TITLE.equals(type)&&!VIDEO.equals(type)&&!SHAPE.equals(type)&&!GROUP.equals(type))
             throw new IllegalArgumentException("motionKeyframes is only supported on image, title, shape or video layers");
         if(TITLE.equals(type)&&motionKeyframes!=null)StudioLayerMotion.fromLayer(this);
         if(IMAGE.equals(type)||VIDEO.equals(type)||SHAPE.equals(type)){
@@ -105,6 +118,7 @@ public final class StudioLayer {
     public JSONObject toJson(){
         if(VIDEO.equals(type))return videoJson();
         if(SHAPE.equals(type))return shapeJson();
+        if(GROUP.equals(type))return groupJson();
         JSONObject obj=new JSONObject();
         try{
             obj.put("id",id);obj.put("type",type);obj.put("assetId",assetId);
@@ -121,6 +135,7 @@ public final class StudioLayer {
             if(IMAGE.equals(type)){obj.put("x",x);obj.put("y",y);
                 obj.put("width",width==.01f?.01:(double)width);obj.put("height",height==.01f?.01:(double)height);
                 obj.put("rotation",rotation);obj.put("opacity",opacity);}
+            if((IMAGE.equals(type)||TITLE.equals(type))&&!parentId.isEmpty())obj.put("parentId",parentId);
             if(mask!=null)obj.put("mask",StudioMaskRasterizer.validate(mask));
             if(motionKeyframes!=null){
                 if(IMAGE.equals(type))StudioImageMotion.fromLayer(this);
@@ -140,9 +155,15 @@ public final class StudioLayer {
         l.type=o.optString("type",TITLE);
         if(VIDEO.equals(l.type))return videoFromJson(o,l);
         if(SHAPE.equals(l.type))return shapeFromJson(o,l);
+        if(GROUP.equals(l.type))return groupFromJson(o,l);
         if(o.has("shapeKind")||o.has("strokeColor")||o.has("strokeWidth"))
             throw new IllegalArgumentException("Shape-only fields require type shape");
         if(o.has("audioMode"))throw new IllegalArgumentException("audioMode is only supported on video layers");
+        if(o.has("parentId")&&!TITLE.equals(l.type)&&!IMAGE.equals(l.type))
+            throw new IllegalArgumentException("Unsupported parent link for audio track");
+        if(o.has("parentId")&&!(o.opt("parentId") instanceof String))
+            throw new IllegalArgumentException("Motion parent ID must be a string");
+        l.parentId=o.optString("parentId","");
         if(o.has("mask")&&!IMAGE.equals(l.type))
             throw new IllegalArgumentException("Only IMAGE/SHAPE support visual masks");
         if(!TITLE.equals(l.type))for(String field:CAPTION_FIELDS)if(o.has(field))
@@ -190,6 +211,7 @@ public final class StudioLayer {
                     .put("rotation",rotation).put("opacity",opacity)
                     .put("color",color).put("shapeKind",shapeKind)
                     .put("strokeColor",strokeColor).put("strokeWidth",strokeWidth);
+            if(!parentId.isEmpty())obj.put("parentId",parentId);
             if(mask!=null)obj.put("mask",StudioMaskRasterizer.validate(mask));
             if(motionKeyframes!=null)obj.put("motionKeyframes",new JSONArray(motionKeyframes.toString()));
         }catch(org.json.JSONException error){throw new IllegalArgumentException("Could not serialize original shape",error);}
@@ -201,6 +223,9 @@ public final class StudioLayer {
         while(fields.hasNext())if(!SHAPE_FIELDS.contains(fields.next()))
             throw new IllegalArgumentException("Unsupported original shape field");
         l.type=SHAPE;
+        if(o.has("parentId")&&!(o.opt("parentId") instanceof String))
+            throw new IllegalArgumentException("Motion parent ID must be a string");
+        l.parentId=o.optString("parentId","");
         l.startMs=o.has("startMs")?StudioClipKeyframes.integer(o,"startMs",0,86_400_000):0;
         l.durationMs=o.has("durationMs")?StudioClipKeyframes.integer(o,"durationMs",100,86_400_000):2500;
         l.x=(float)StudioClipKeyframes.number(o,"x",.5,0,1);
@@ -224,6 +249,36 @@ public final class StudioLayer {
             catch(org.json.JSONException error){throw new IllegalArgumentException("Could not read shape motion keys",error);}
         }
         l.validate();return l;
+    }
+
+    /** Source-free non-rendering group with exact local motion keys. */
+    private JSONObject groupJson(){
+        validate();
+        JSONObject o=new JSONObject();
+        try{
+            o.put("id",id).put("type",GROUP)
+                    .put("startMs",startMs).put("durationMs",durationMs);
+            if(motionKeyframes!=null)o.put("motionKeyframes",new JSONArray(motionKeyframes.toString()));
+        }catch(org.json.JSONException error){
+            throw new IllegalArgumentException("Cannot persist motion group",error);
+        }
+        return o;
+    }
+
+    private static StudioLayer groupFromJson(JSONObject o,StudioLayer l){
+        java.util.Iterator<String> fields=o.keys();
+        while(fields.hasNext())if(!GROUP_FIELDS.contains(fields.next()))
+            throw new IllegalArgumentException("Motion group cannot own video, audio, masks or nested children");
+        l.type=GROUP;
+        l.startMs=o.has("startMs")?StudioClipKeyframes.integer(o,"startMs",0,86_400_000):0;
+        l.durationMs=o.has("durationMs")?StudioClipKeyframes.integer(o,"durationMs",100,86_400_000):2500;
+        if(o.has("motionKeyframes")){
+            if(!(o.opt("motionKeyframes") instanceof JSONArray))
+                throw new IllegalArgumentException("Group motion keys must be an array");
+            l.motionKeyframes=o.optJSONArray("motionKeyframes");
+        }
+        l.validate();
+        return l;
     }
 
     /** New VIDEO encoding does not change legacy kinds' fields or numeric representation. */

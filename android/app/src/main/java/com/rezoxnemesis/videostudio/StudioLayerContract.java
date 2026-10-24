@@ -22,17 +22,29 @@ public final class StudioLayerContract {
         if(layers.length()>32)throw new IllegalArgumentException("Maximum 32 layers");
         ArrayList<StudioLayer> result=new ArrayList<>();
         Set<String> usedIds=new HashSet<>();
-        int images=0,videos=0,shapes=0;
+        int images=0,videos=0,shapes=0,groups=0;
+        java.util.HashMap<String,StudioLayer> byId=new java.util.HashMap<>();
         for(int i=0;i<layers.length();i++){
             JSONObject entry=layers.getJSONObject(i);
             StudioLayer lane=StudioLayer.fromJson(entry);
             if(lane.id==null||lane.id.length()>128||!usedIds.add(lane.id))
                 throw new IllegalArgumentException("Duplicate/invalid lane ID");
             validate(project,lane);
+            byId.put(lane.id,lane);
             if(StudioLayer.IMAGE.equals(lane.type)&&++images>8)throw new IllegalArgumentException("Maximum 8 decoded image layers");
             if(StudioLayer.VIDEO.equals(lane.type)&&++videos>2)throw new IllegalArgumentException("Maximum 2 decoded video layers");
             if(StudioLayer.SHAPE.equals(lane.type)&&++shapes>12)throw new IllegalArgumentException("Maximum 12 cached original vector shapes");
+            if(StudioLayer.GROUP.equals(lane.type)&&++groups>8)
+                throw new IllegalArgumentException("Maximum 8 motion groups per composition");
             result.add(lane);
+        }
+        for(StudioLayer lane:result){
+            if(lane.parentId==null||lane.parentId.isEmpty())continue;
+            StudioLayer parent=byId.get(lane.parentId);
+            if(parent==null||!StudioLayer.GROUP.equals(parent.type))
+                throw new IllegalArgumentException("Parent link must reference a group in the same project");
+            if(lane.startMs<parent.startMs||lane.durationMs>parent.durationMs-(lane.startMs-parent.startMs))
+                throw new IllegalArgumentException("Motion group must cover every linked child\u0027s entire time span");
         }
         return result;
     }

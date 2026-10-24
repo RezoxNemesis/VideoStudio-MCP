@@ -24,10 +24,17 @@ final class StudioCompositionOverlayEffect implements GlEffect {
         if(context==null||project==null)throw new IllegalArgumentException("Composition context and project required");
         this.context=context.getApplicationContext();
         ArrayList<Entry> snapshot=new ArrayList<>();
+        java.util.HashMap<String,StudioLayer> groups=new java.util.HashMap<>();
+        for(StudioLayer layer:project.studioLayers)
+            if(StudioLayer.GROUP.equals(layer.type))groups.put(layer.id,layer.copy());
         for(StudioLayer layer:project.studioLayers){
-            if(StudioLayer.TITLE.equals(layer.type))snapshot.add(new Entry(layer,null));
-            else if(StudioLayer.IMAGE.equals(layer.type))snapshot.add(new Entry(layer,project.asset(layer.assetId)));
-            else if(StudioLayer.SHAPE.equals(layer.type))snapshot.add(new Entry(layer,null));
+            if(StudioLayer.GROUP.equals(layer.type))continue;
+            StudioLayer group=layer.parentId==null||layer.parentId.isEmpty()?null:groups.get(layer.parentId);
+            if(layer.parentId!=null&&!layer.parentId.isEmpty()&&group==null)
+                throw new IllegalArgumentException("Animated child has no valid motion group");
+            if(StudioLayer.TITLE.equals(layer.type))snapshot.add(new Entry(layer,null,group));
+            else if(StudioLayer.IMAGE.equals(layer.type))snapshot.add(new Entry(layer,project.asset(layer.assetId),group));
+            else if(StudioLayer.SHAPE.equals(layer.type))snapshot.add(new Entry(layer,null,group));
         }
         entries=Collections.unmodifiableList(snapshot);
     }
@@ -39,9 +46,9 @@ final class StudioCompositionOverlayEffect implements GlEffect {
         ArrayList<TextureOverlay> overlays=new ArrayList<>();
         try{
             for(Entry entry:entries){
-                if(StudioLayer.TITLE.equals(entry.layer.type))overlays.add(new StudioTimedTitleOverlay(entry.layer));
-                else if(StudioLayer.SHAPE.equals(entry.layer.type))overlays.add(new StudioTimedShapeOverlay(entry.layer));
-                else overlays.add(new StudioTimedImageOverlay(context,entry.asset,entry.layer));
+                if(StudioLayer.TITLE.equals(entry.layer.type))overlays.add(new StudioTimedTitleOverlay(entry.layer,entry.parent));
+                else if(StudioLayer.SHAPE.equals(entry.layer.type))overlays.add(new StudioTimedShapeOverlay(entry.layer,entry.parent));
+                else overlays.add(new StudioTimedImageOverlay(context,entry.asset,entry.layer,entry.parent));
             }
             return overlays;
         }catch(RuntimeException|Error failure){
@@ -67,10 +74,11 @@ final class StudioCompositionOverlayEffect implements GlEffect {
     }
 
     private static final class Entry {
-        final StudioLayer layer;
+        final StudioLayer layer,parent;
         final ProjectStore.Asset asset;
-        Entry(StudioLayer source,ProjectStore.Asset image){
+        Entry(StudioLayer source,ProjectStore.Asset image,StudioLayer motionGroup){
             layer=source.copy();
+            parent=motionGroup==null?null:motionGroup.copy();
             if(StudioLayer.IMAGE.equals(layer.type)){
                 if(image==null||image.mime==null||!image.mime.startsWith("image/")
                         ||image.uri==null||image.uri.isEmpty()||!image.id.equals(layer.assetId))
