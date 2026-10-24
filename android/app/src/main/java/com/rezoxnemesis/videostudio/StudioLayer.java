@@ -135,7 +135,7 @@ public final class StudioLayer {
             if(IMAGE.equals(type)){obj.put("x",x);obj.put("y",y);
                 obj.put("width",width==.01f?.01:(double)width);obj.put("height",height==.01f?.01:(double)height);
                 obj.put("rotation",rotation);obj.put("opacity",opacity);}
-            if(IMAGE.equals(type)&&!parentId.isEmpty())obj.put("parentId",parentId);
+            if((IMAGE.equals(type)||TITLE.equals(type))&&!parentId.isEmpty())obj.put("parentId",parentId);
             if(mask!=null)obj.put("mask",StudioMaskRasterizer.validate(mask));
             if(motionKeyframes!=null){
                 if(IMAGE.equals(type))StudioImageMotion.fromLayer(this);
