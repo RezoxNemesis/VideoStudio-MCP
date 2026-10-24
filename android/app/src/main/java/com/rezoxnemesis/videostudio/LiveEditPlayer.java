@@ -108,6 +108,9 @@ public final class LiveEditPlayer {
                 candidateBuilder.setVideoGraphFactory(new MultipleInputVideoGraph.Factory());
             CompositionPlayer candidate=candidateBuilder.build();
             candidate.addListener(new Player.Listener(){
+                @Override public void onRenderedFirstFrame(){
+                    if(editPlayer==candidate)StudioPreviewDiagnostics.renderedFirstFrame(context,project.id);
+                }
                 @Override public void onPlayWhenReadyChanged(boolean ready,int reason){
                     // PlayerView controls call Player directly. Initial app setup must
                     // not replace the previous preview's independently saved intent.
@@ -117,6 +120,7 @@ public final class LiveEditPlayer {
                 }
                 @Override public void onPlayerError(PlaybackException error){
                     if(editPlayer!=candidate)return;
+                    StudioPreviewDiagnostics.failed(context,project,error,"asynchronous_playback");
                     java.util.function.Consumer<String> failedCallback=editError;
                     cancelClipBoundaryWatcher();
                     if(fallbackPlayer!=null){
@@ -146,6 +150,7 @@ public final class LiveEditPlayer {
                 // Binding can expose an SDK error synchronously, before adoption.
                 if(candidate.getPlayerError()!=null)throw candidate.getPlayerError();
             }catch(Exception error){
+                StudioPreviewDiagnostics.failed(context,project,error,"prepare");
                 view.setPlayer(previous);candidate.release();throw error;
             }
             cancelClipBoundaryWatcher();
