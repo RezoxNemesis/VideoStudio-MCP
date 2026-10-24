@@ -1,3 +1,27 @@
+# Active native editor image-overlay motion — 2026-10-24
+
+Feature `feat/native-image-overlay-motion-v41020` starts original-signed522
+`e709fa1d9c2956865529d8fa1d4f305403eae1b4`; intended next4.10.20/code523
+metadata/full regression/CI/signing remain root-owned.
+Root focused broad119nativePASS9.476s after preserved realfloat-boundary and
+manualprecision failures. Alloriginalassertionsheld; full523/CI/signing pending. Read
+`docs/continuity/NATIVE_IMAGE_OVERLAY_MOTION_41020.md`. Existing
+`set_studio_layers` IMAGE lanes gain optional strict `motionKeyframes`:1..64
+(or explicit empty array to clear), clip-style local timeMs, canvas DELTA x/y,
+scale/scaleX/scaleY multipliers, additive rotate, multiplicative opacity and
+existing five outgoing easings. No anchor fields. Fixed center pivot. Omitted
+keys retain exact old settings/serialization/floor; explicit keys require4.10.20.
+Retain source RGBA/cache, layer spans, timeline duration, all other lanes and
+existing32lane/8image limits. Native helper shared by renderer/manual/MCP; normal
+project revision guard/history/Undo apply. No new canonical action or fake
+video overlay/cross-dissolve/speed-ramp capability.
+Root owns ONE Gradle and every native/JUnit/model/ADB run. Native core agent owns
+StudioLayer, StudioTimedImageOverlay and new StudioImageMotion; UI agent owns
+MainActivity/new image-motion dialog; Node agent owns contract/index/Node tests.
+Freeze genuine RED tests before implementation. Preserve failed generations,
+old projects/worktrees/original signer/identity. No main merge, Worker deployment,
+stable publication, external artwork/animation or phone/live-MCP/film claim.
+
 # Active native shared layer motion — 2026-10-22
 
 Isolated `feat/native-layer-group-motion-v41019` starts verified521

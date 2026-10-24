@@ -102,6 +102,9 @@ public final class CreatorCatalog {
     public static JSONObject describe() {
         JSONObject o = new JSONObject();
         try {
+            o.put("kind","legacy_planning_catalog");
+            o.put("executable",false);
+            o.put("executableCapabilitiesField","studioEditing");
             o.put("transitions", new JSONArray(TRANSITIONS));
             o.put("motions", new JSONArray(MOTIONS));
             o.put("effects", new JSONArray(EFFECTS));

@@ -1,5 +1,6 @@
 package com.rezoxnemesis.videostudio;
 
+import org.json.JSONArray;
 import org.json.JSONObject;
 import java.util.UUID;
 
@@ -27,6 +28,8 @@ public final class StudioLayer {
     public String fontFamily="sans-serif",fontStyle="bold",textAlign="left";
     public int backgroundColor=0; // Signed Android ARGB; zero preserves legacy transparency.
     public float x=.5f,y=.5f,width=.35f,height=.35f,rotation=0f,opacity=1f;
+    /** Null retains legacy serialization; an empty array is an explicit motion clear. */
+    public JSONArray motionKeyframes;
     private static final String[] CAPTION_FIELDS={"fontSize","fontFamily","fontStyle","textAlign","backgroundColor"};
 
     public StudioLayer copy() {return fromJson(toJson());}
@@ -53,12 +56,15 @@ public final class StudioLayer {
             throw new IllegalArgumentException("Caption styles are only supported on title layers");
         if(AUDIO.equals(type)&& (assetId==null||assetId.trim().isEmpty()))
             throw new IllegalArgumentException("Audio lane needs an imported audio asset");
+        if(motionKeyframes!=null&&!IMAGE.equals(type))
+            throw new IllegalArgumentException("motionKeyframes is only supported on image layers");
         if(IMAGE.equals(type)){
             if(assetId==null||assetId.trim().isEmpty())throw new IllegalArgumentException("Image lane needs an imported image asset");
             if(!Float.isFinite(x)||!Float.isFinite(y)||x<0||x>1||y<0||y>1
                     ||!Float.isFinite(width)||!Float.isFinite(height)||width<.01f||width>2||height<.01f||height>2
                     ||!Float.isFinite(rotation)||rotation<-360||rotation>360||!Float.isFinite(opacity)||opacity<0||opacity>1)
                 throw new IllegalArgumentException("Invalid image layer position, size, rotation or opacity");
+            if(motionKeyframes!=null)StudioImageMotion.fromLayer(this);
         }
     }
 
@@ -73,9 +79,17 @@ public final class StudioLayer {
                 obj.put("fontSize",fontSize);obj.put("fontFamily",fontFamily);obj.put("fontStyle",fontStyle);
                 obj.put("textAlign",textAlign);obj.put("backgroundColor",backgroundColor);
             }
-            if(IMAGE.equals(type)){obj.put("x",x);obj.put("y",y);obj.put("width",width);obj.put("height",height);
+            // The accepted .01 minimum rounds slightly below .01 in a float.
+            // Emit that boundary exactly so our own saved JSON remains valid;
+            // every other value keeps its existing promoted-float encoding.
+            if(IMAGE.equals(type)){obj.put("x",x);obj.put("y",y);
+                obj.put("width",width==.01f?.01:(double)width);obj.put("height",height==.01f?.01:(double)height);
                 obj.put("rotation",rotation);obj.put("opacity",opacity);}
-        }catch(Exception ignored){}
+            if(motionKeyframes!=null){
+                StudioImageMotion.fromLayer(this);
+                obj.put("motionKeyframes",new JSONArray(motionKeyframes.toString()));
+            }
+        }catch(org.json.JSONException error){throw new IllegalArgumentException("Could not serialize studio layer",error);}
         return obj;
     }
 
@@ -104,6 +118,12 @@ public final class StudioLayer {
         l.x=(float)StudioClipKeyframes.number(o,"x",.5,0,1);l.y=(float)StudioClipKeyframes.number(o,"y",.5,0,1);
         l.width=(float)StudioClipKeyframes.number(o,"width",.35,.01,2);l.height=(float)StudioClipKeyframes.number(o,"height",.35,.01,2);
         l.rotation=(float)StudioClipKeyframes.number(o,"rotation",0,-360,360);l.opacity=(float)StudioClipKeyframes.number(o,"opacity",1,0,1);
+        if(o.has("motionKeyframes")){
+            if(!(o.opt("motionKeyframes") instanceof JSONArray))
+                throw new IllegalArgumentException("motionKeyframes must be an array");
+            try{l.motionKeyframes=new JSONArray(o.getJSONArray("motionKeyframes").toString());}
+            catch(org.json.JSONException error){throw new IllegalArgumentException("Invalid image motion keys",error);}
+        }
         l.validate();
         return l;
     }

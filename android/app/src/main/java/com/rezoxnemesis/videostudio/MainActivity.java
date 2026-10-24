@@ -113,6 +113,8 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
     private boolean studioTrackSnap=true;
     private int studioToolCategory=0;
     private AlertDialog studioToolDialog;
+    private AlertDialog studioImageMotionDialog;
+    private long studioSurfaceGeneration;
     private int studioTimelinePage=0;
     private int studioMediaPage=0;
     private long studioPlayheadMs=0;
@@ -216,6 +218,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
 
     @Override
     protected void onDestroy() {
+        if(studioImageMotionDialog!=null)studioImageMotionDialog.dismiss();
         timelinePreviewRunning = false;
         if(stillTimelineNext!=null)ui.removeCallbacks(stillTimelineNext);
         if(studioCaptionClock!=null)ui.removeCallbacks(studioCaptionClock);
@@ -319,6 +322,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
 
     private void setScreen(View view, String name) {
         if (activityRefresh != null) ui.removeCallbacks(activityRefresh);
+        studioSurfaceGeneration++;
         currentScreen = name;
         StudioUi.prepareTouchLayout(view);
         content.removeAllViews();
@@ -1938,6 +1942,8 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         ProjectStore.Asset asset=activeProject.asset(assetId);
         if(asset==null||asset.mime==null||!asset.mime.startsWith("image/")){Toast.makeText(this,"Imported image is unavailable",Toast.LENGTH_LONG).show();return;}
         final long revision=activeProject.updatedAt;
+        final String projectId=activeProject.id;
+        final long surfaceGeneration=studioSurfaceGeneration;
         StudioLayer original=existing==null?new StudioLayer():existing.copy();original.type=StudioLayer.IMAGE;original.assetId=assetId;
         if(existing==null){original.startMs=Math.min(studioPlayheadMs,Math.max(0,activeProject.outputDurationMs()-100));
             original.durationMs=Math.min(2500,activeProject.outputDurationMs()-original.startMs);}
@@ -1948,16 +1954,50 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         String[] names={"x","y","width","height","rotation","opacity"};
         double[] values={original.x,original.y,original.width,original.height,original.rotation,original.opacity};
         EditText[] fields=new EditText[names.length];
-        for(int i=0;i<names.length;i++){content.addView(body(names[i]));fields[i]=numberInput((float)values[i]);content.addView(fields[i]);}
+        for(int i=0;i<names.length;i++){
+            content.addView(body(names[i]));fields[i]=numberInput((float)values[i]);
+            // Opening image motion must not quantize its existing static base.
+            fields[i].setText(Float.toString((float)values[i]));fields[i].setContentDescription("Overlay "+names[i]);content.addView(fields[i]);
+        }
+        Button animate=studioButton("Animate overlay",()->{});content.addView(animate);
         ScrollView scroll=new ScrollView(this);scroll.addView(content);
         AlertDialog dialog=new AlertDialog.Builder(this).setTitle("Image Overlay · "+asset.name).setView(scroll)
                 .setPositiveButton("Apply",null).setNegativeButton("Cancel",null).create();
         dialog.setOnShowListener(d->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{try{
+            if(!canApplyStudioImage(projectId,revision,surfaceGeneration))return;
             JSONObject record=original.toJson().put("startMs",Long.parseLong(start.getText().toString()))
                     .put("durationMs",Long.parseLong(duration.getText().toString()));
             for(int i=0;i<names.length;i++)record.put(names[i],Double.parseDouble(fields[i].getText().toString()));
             if(saveStudioLayer(StudioLayer.fromJson(record),revision))dialog.dismiss();
         }catch(Exception error){Toast.makeText(this,"Image overlay not applied: "+error.getMessage(),Toast.LENGTH_LONG).show();}}));dialog.show();
+        animate.setOnClickListener(view->{
+            try{
+                if(!canApplyStudioImage(projectId,revision,surfaceGeneration))return;
+                JSONObject record=original.toJson().put("startMs",Long.parseLong(start.getText().toString()))
+                        .put("durationMs",Long.parseLong(duration.getText().toString()));
+                for(int i=0;i<names.length;i++)record.put(names[i],Double.parseDouble(fields[i].getText().toString()));
+                StudioLayer draft=StudioLayer.fromJson(record);
+                if(studioImageMotionDialog!=null)studioImageMotionDialog.dismiss();
+                AlertDialog motionDialog=StudioImageMotionDialog.show(this,draft,
+                        Math.max(0,Math.min(draft.durationMs,studioPlayheadMs-draft.startMs)),candidate->{
+                            if(!canApplyStudioImage(projectId,revision,surfaceGeneration))return false;
+                            if(!saveStudioLayer(candidate,revision))return false;
+                            dialog.dismiss();return true;
+                        });
+                studioImageMotionDialog=motionDialog;
+                motionDialog.setOnDismissListener(ignored->{if(studioImageMotionDialog==motionDialog)studioImageMotionDialog=null;});
+            }catch(Exception error){Toast.makeText(this,"Cannot animate image overlay: "+error.getMessage(),Toast.LENGTH_LONG).show();}
+        });
+    }
+
+    private boolean canApplyStudioImage(String projectId,long revision,long surfaceGeneration){
+        if(isFinishing()||isDestroyed()||activeProject==null||!projectId.equals(activeProject.id)
+                ||activeProject.updatedAt!=revision||studioSurfaceGeneration!=surfaceGeneration
+                ||!"editor".equals(currentScreen)){
+            Toast.makeText(this,"The editing view changed. Reopen this image overlay before applying its draft.",Toast.LENGTH_LONG).show();
+            return false;
+        }
+        return true;
     }
 
     private long secondsToMs(EditText field){
@@ -4858,6 +4898,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
             out.put("jobs", jobs.state().optJSONArray("jobs"));
             out.put("workload", jobs.state());
             out.put("creatorCatalog", CreatorCatalog.describe());
+            out.put("studioEditing",StudioEditingCapabilities.capabilities());
             out.put("recentActivity", ActivityLog.recent(this, 30));
             JSONArray caps = new JSONArray();
             String[] values = {

@@ -4,6 +4,7 @@ import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.net.Uri;
+import android.util.Pair;
 import androidx.media3.common.OverlaySettings;
 import androidx.media3.common.VideoFrameProcessingException;
 import androidx.media3.common.util.Size;
@@ -16,6 +17,7 @@ public final class StudioTimedImageOverlay extends BitmapOverlay {
     private final Context context;
     private final String uri;
     private final StudioLayer layer;
+    private final StudioImageMotion motion;
     private final Bitmap transparent=Bitmap.createBitmap(1,1,Bitmap.Config.ARGB_8888);
     private Bitmap source;
     private int outputWidth=1,outputHeight=1;
@@ -25,6 +27,7 @@ public final class StudioTimedImageOverlay extends BitmapOverlay {
                 ||layer==null||!StudioLayer.IMAGE.equals(layer.type)||!asset.id.equals(layer.assetId))
             throw new IllegalArgumentException("Project-owned image layer required");
         layer.validate();this.context=context.getApplicationContext();uri=asset.uri;this.layer=layer.copy();
+        motion=StudioImageMotion.fromLayer(this.layer);
     }
     @Override public void configure(Size size){super.configure(size);outputWidth=size.getWidth();outputHeight=size.getHeight();}
     public boolean activeAt(long timeUs){return timeUs>=layer.startMs*1000L&&timeUs<(layer.startMs+layer.durationMs)*1000L;}
@@ -56,10 +59,33 @@ public final class StudioTimedImageOverlay extends BitmapOverlay {
         int width=1,height=1;
         if(active)try{Bitmap bitmap=load();width=bitmap.getWidth();height=bitmap.getHeight();}
         catch(VideoFrameProcessingException error){throw new IllegalStateException(error);}
+        if(motion.hasKeyframes()){
+            StudioClipKeyframes.Values value=motion.atUs(active?presentationTimeUs-layer.startMs*1000L:0);
+            // Keep the original float operation order for static geometry and
+            // multiply/offset only afterwards, so identity keys remain exact.
+            float x=(2*layer.x-1)+(float)(2*value.x),y=(1-2*layer.y)-(float)(2*value.y);
+            float sx=(outputWidth*layer.width/width)*(float)value.scaleX;
+            float sy=(outputHeight*layer.height/height)*(float)value.scaleY;
+            return new MotionSettings(x,y,sx,sy,layer.rotation+(float)value.rotate,
+                    active?layer.opacity*(float)value.opacity:0);
+        }
         return new StaticOverlaySettings.Builder()
                 .setBackgroundFrameAnchor(2*layer.x-1,1-2*layer.y).setOverlayFrameAnchor(0,0)
                 .setScale(outputWidth*layer.width/width,outputHeight*layer.height/height)
                 .setRotationDegrees(layer.rotation).setAlphaScale(active?layer.opacity:0).build();
+    }
+    /** OverlaySettings supports time-varying placement, including offscreen panels. */
+    private static final class MotionSettings implements OverlaySettings {
+        private final Pair<Float,Float> background,scale;
+        private final float rotation,alpha;
+        MotionSettings(float x,float y,float sx,float sy,float rotation,float alpha){
+            background=Pair.create(x,y);scale=Pair.create(sx,sy);this.rotation=rotation;this.alpha=alpha;
+        }
+        @Override public Pair<Float,Float> getBackgroundFrameAnchor(){return background;}
+        @Override public Pair<Float,Float> getOverlayFrameAnchor(){return OverlaySettings.DEFAULT_OVERLAY_FRAME_ANCHOR;}
+        @Override public Pair<Float,Float> getScale(){return scale;}
+        @Override public float getRotationDegrees(){return rotation;}
+        @Override public float getAlphaScale(){return alpha;}
     }
     @Override public void release()throws VideoFrameProcessingException{
         try{super.release();}finally{released=true;if(source!=null&&!source.isRecycled())source.recycle();

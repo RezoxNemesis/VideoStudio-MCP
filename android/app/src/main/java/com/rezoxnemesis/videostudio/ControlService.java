@@ -4988,6 +4988,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             out.put("sourceRigWorkbenchMinimumVersion", "3.7.3");
             out.put("cinematic3d",cinematic3DCapabilities());
             out.put("workbenchRelayCompatibility",NativeWorkbenchBridge.capabilities());
+            out.put("studioEditing",StudioEditingCapabilities.capabilities());
             out.put("studioWorkbench",new JSONObject().put("minimumNativeAppVersion","3.9.0")
                     .put("sharedHumanAndMCP",true).put("sketchCanvasRenderer",true).put("sketchGeometryPaging",true)
                     .put("atomicClipEdits",true).put("clipKeyframes",true).put("chromaKey",true)
@@ -5061,6 +5062,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             out.put("storyboardArtworkRequiresFourTracedActorRigs", true);
             out.put("neuralStoryboardModelAvailable", false);
             out.put("workbenchRelayCompatibility",NativeWorkbenchBridge.capabilities());
+            out.put("studioEditing",StudioEditingCapabilities.capabilities());
             out.put("localEngineOwnsProjects", true);
             out.put("portraitAnimationEngine", "v3.2-articulated-parallax");
             out.put("onDevicePortraitAi", true);
