@@ -24,7 +24,7 @@ public final class StudioKineticDirector {
     public static JSONObject capabilities() throws Exception {
         return new JSONObject()
                 .put("schema", "videostudio.kinetic-director.v1")
-                .put("minimumNativeVersion", "4.10.25")
+                .put("minimumNativeVersion", "4.10.26-kinetic-rc1")
                 .put("planAction", "kinetic_benchmark_plan")
                 .put("applyAction", "kinetic_benchmark_apply")
                 .put("mcpNativeActionBridge", "autonomous_request")

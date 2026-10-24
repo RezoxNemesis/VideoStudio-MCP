@@ -8,6 +8,10 @@ on:
     branches:
       - feat/native-preview-audio-import-20261024
 
+concurrency:
+  group: kinetic-native-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
