@@ -172,7 +172,7 @@ public final class StudioLayer {
         }
         if(o.has("mask")){
             if(!(o.opt("mask") instanceof JSONObject))throw new IllegalArgumentException("Image mask must be an object");
-            l.mask=StudioMaskRasterizer.validate(o.getJSONObject("mask"));
+            l.mask=StudioMaskRasterizer.validate(o.optJSONObject("mask"));
         }
         l.validate();
         return l;
@@ -215,7 +215,7 @@ public final class StudioLayer {
         l.strokeWidth=(float)StudioClipKeyframes.number(o,"strokeWidth",.02,0,.20);
         if(o.has("mask")){
             if(!(o.opt("mask") instanceof JSONObject))throw new IllegalArgumentException("Shape mask must be an object");
-            l.mask=StudioMaskRasterizer.validate(o.getJSONObject("mask"));
+            l.mask=StudioMaskRasterizer.validate(o.optJSONObject("mask"));
         }
         if(o.has("motionKeyframes")){
             if(!(o.opt("motionKeyframes") instanceof JSONArray))
