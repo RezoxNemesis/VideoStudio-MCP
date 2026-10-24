@@ -39,7 +39,19 @@ public final class StudioEditingCapabilities {
                     .put("timeControlBounded",true)
                     .put("supportsImageTitleVideoShapeLayers",true)
                     .put("previewAndExportShareCurve",true)
-                    .put("editableInNativeKeyframeUI",true));}
+                    .put("editableInNativeKeyframeUI",true))
+                  .put("motionParentGroups",new JSONObject()
+                    .put("minimumNativeVersion","4.10.30")
+                    .put("action","motion_group_edit")
+                    .put("planAction","motion_group_plan")
+                    .put("maximumGroups",8)
+                    .put("oneLevelOnly",true)
+                    .put("maximumChildrenPerGroup",8)
+                    .put("types",new org.json.JSONArray(java.util.Arrays.asList("image","shape","title")))
+                    .put("groupBézierKeyframes",true)
+                    .put("sourceMediaUnchanged",true)
+                    .put("previewAndExportShared",true)
+                    .put("notFullPrecomp",true));}
         catch(org.json.JSONException error){throw new IllegalStateException("Invalid native editor capability registry",error);}
     }
 }
