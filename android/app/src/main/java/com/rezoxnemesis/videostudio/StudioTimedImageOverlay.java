@@ -51,7 +51,9 @@ public final class StudioTimedImageOverlay extends BitmapOverlay {
             try(InputStream input=context.getContentResolver().openInputStream(Uri.parse(uri))){
                 if(input==null)throw new IllegalStateException("Owned image is unreadable");source=BitmapFactory.decodeStream(input,null,options);
             }
-            if(source==null)throw new IllegalArgumentException("Could not decode imported image pixels");return source;
+            if(source==null)throw new IllegalArgumentException("Could not decode imported image pixels");
+                if(layer.mask!=null)StudioMaskRasterizer.apply(source,layer.mask);
+                return source;
         }catch(Exception error){throw new VideoFrameProcessingException("Could not load timed image overlay",error);}
     }
     @Override public OverlaySettings getOverlaySettings(long presentationTimeUs){
