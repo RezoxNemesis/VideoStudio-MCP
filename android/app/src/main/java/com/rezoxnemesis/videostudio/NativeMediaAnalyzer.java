@@ -13,10 +13,12 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.ByteArrayOutputStream;
+import java.io.InterruptedIOException;
 import java.util.ArrayList;
 import java.util.Locale;
 
 public final class NativeMediaAnalyzer {
+    private static final int MAX_FRAME_ATTEMPTS = 3;
     private final Context context;
 
     public NativeMediaAnalyzer(Context context) {
@@ -26,10 +28,14 @@ public final class NativeMediaAnalyzer {
     public JSONObject analyse(ProjectStore.Asset asset, int frameCount, long startMs, long endMs) throws Exception {
         if (asset == null) throw new IllegalArgumentException("Asset not found");
         if (asset.mime == null || !asset.mime.startsWith("video/")) throw new IllegalArgumentException("Visual analysis currently requires a video asset");
+        cancelled();
 
         frameCount = Math.max(6, Math.min(16, frameCount));
         MediaMetadataRetriever retriever = new MediaMetadataRetriever();
+        ArrayList<Bitmap> frames = new ArrayList<>();
+        Bitmap sheet = null;
         try {
+            cancelled();
             retriever.setDataSource(context, Uri.parse(asset.uri));
             String durationMetadata = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION);
             long durationMs = parseLong(durationMetadata, asset.durationMs);
@@ -41,46 +47,73 @@ public final class NativeMediaAnalyzer {
             startMs = Math.max(0, Math.min(startMs, Math.max(0, endMs - 1)));
             long span = Math.max(1, endMs - startMs);
 
-            ArrayList<Bitmap> frames = new ArrayList<>();
             ArrayList<Long> times = new ArrayList<>();
             JSONArray changes = new JSONArray();
             JSONArray sampledFrames = new JSONArray();
+            JSONArray failures = new JSONArray();
+            RuntimeException lastDecoderFailure = null;
             double[] previous = null;
 
             for (int i = 0; i < frameCount; i++) {
                 long timeMs = startMs + (long) ((i / (double) Math.max(1, frameCount - 1)) * span);
-                Bitmap frame = retriever.getFrameAtTime(timeMs * 1000L, MediaMetadataRetriever.OPTION_CLOSEST_SYNC);
-                if (frame == null) continue;
-                // These are returned decoder dimensions, before our contact-sheet thumbnailing.
-                // Closest-sync retrieval does not expose the actual decoded presentation timestamp.
-                sampledFrames.put(new JSONObject().put("requestedTimeMs", timeMs)
-                        .put("width", frame.getWidth()).put("height", frame.getHeight()));
-                Bitmap thumb = scaleInside(frame, 270, 480);
-                if (thumb != frame) frame.recycle();
-                frames.add(thumb);
-                times.add(timeMs);
-
-                double[] signature = signature(thumb);
-                if (previous != null) {
-                    double diff = difference(previous, signature);
-                    if (diff > 0.115) {
-                        JSONObject change = new JSONObject();
-                        change.put("timeMs", timeMs);
-                        change.put("timeSeconds", Math.round(timeMs / 100d) / 10d);
-                        change.put("strength", Math.round(diff * 1000d) / 1000d);
-                        changes.put(change);
+                Bitmap frame = null, thumb = null;
+                try {
+                    FrameSample sample = decodeSample(retriever, timeMs);
+                    frame = sample.frame;
+                    cancelled();
+                    if (frame == null) {
+                        JSONObject failure = new JSONObject().put("requestedTimeMs", timeMs)
+                                .put("attempts", sample.attempts)
+                                .put("reason", sample.error == null ? "decoder_returned_no_frame" : "decoder_exception");
+                        if (sample.error != null) {
+                            lastDecoderFailure = sample.error;
+                            String message = sample.error.getMessage();
+                            failure.put("errorType", sample.error.getClass().getName());
+                            if (message != null) failure.put("message", message.substring(0, Math.min(512, message.length())));
+                        }
+                        failures.put(failure);
+                        continue;
                     }
+                    // Returned decoder dimensions precede unchanged contact-sheet thumbnailing.
+                    // Closest-sync retrieval still does not expose actual presentation timestamps.
+                    sampledFrames.put(new JSONObject().put("requestedTimeMs", timeMs)
+                            .put("width", frame.getWidth()).put("height", frame.getHeight())
+                            .put("attempts", sample.attempts));
+                    thumb = scaleInside(frame, 270, 480);
+                    if (thumb != frame) recycle(frame);
+                    frame = null;
+                    frames.add(thumb);
+                    thumb = null; // The outer finally now owns this thumbnail.
+                    times.add(timeMs);
+
+                    double[] signature = signature(frames.get(frames.size() - 1));
+                    if (previous != null) {
+                        double diff = difference(previous, signature);
+                        if (diff > 0.115) {
+                            JSONObject change = new JSONObject();
+                            change.put("timeMs", timeMs);
+                            change.put("timeSeconds", Math.round(timeMs / 100d) / 10d);
+                            change.put("strength", Math.round(diff * 1000d) / 1000d);
+                            changes.put(change);
+                        }
+                    }
+                    previous = signature;
+                } finally {
+                    recycle(frame);
+                    recycle(thumb);
                 }
-                previous = signature;
             }
 
-            if (frames.isEmpty()) throw new IllegalStateException("Could not decode analysis frames");
-            Bitmap sheet = contactSheet(frames, times);
+            cancelled();
+            if (frames.isEmpty()) throw new IllegalStateException(
+                    "Could not decode analysis frames (0 of " + frameCount + " requested samples)", lastDecoderFailure);
+            sheet = contactSheet(frames, times);
             int sheetWidth = sheet.getWidth(), sheetHeight = sheet.getHeight();
             ByteArrayOutputStream bytes = new ByteArrayOutputStream();
-            sheet.compress(Bitmap.CompressFormat.JPEG, 76, bytes);
-            sheet.recycle();
-            for (Bitmap b : frames) b.recycle();
+            cancelled();
+            if (!sheet.compress(Bitmap.CompressFormat.JPEG, 76, bytes))
+                throw new IllegalStateException("Could not encode analysis contact sheet");
+            cancelled();
 
             JSONObject contact = new JSONObject();
             contact.put("mimeType", "image/jpeg");
@@ -114,45 +147,93 @@ public final class NativeMediaAnalyzer {
             result.put("sampleTimesSeconds", sampled);
             result.put("sceneChanges", changes);
             result.put("contactSheet", contact);
-            result.put("analysisEngine", "native-frame-sampler-v1");
+            result.put("coverage", new JSONObject().put("requestedFrames", frameCount)
+                    .put("decodedFrames", times.size()).put("failedFrames", failures.length())
+                    .put("complete", failures.length() == 0).put("failures", failures)
+                    .put("maximumAttemptsPerSample", MAX_FRAME_ATTEMPTS));
+            result.put("analysisEngine", "native-frame-sampler-v2");
+            cancelled();
             return result;
         } finally {
+            recycle(sheet);
+            for (Bitmap frame : frames) recycle(frame);
             try { retriever.release(); } catch (Exception ignored) {}
         }
     }
 
-    private Bitmap contactSheet(ArrayList<Bitmap> frames, ArrayList<Long> times) {
+    private static final class FrameSample {
+        Bitmap frame;
+        int attempts;
+        RuntimeException error;
+    }
+
+    private FrameSample decodeSample(MediaMetadataRetriever retriever, long timeMs) throws InterruptedIOException {
+        FrameSample sample = new FrameSample();
+        while (sample.attempts < MAX_FRAME_ATTEMPTS) {
+            cancelled();
+            sample.attempts++;
+            try {
+                sample.frame = retriever.getFrameAtTime(timeMs * 1000L, MediaMetadataRetriever.OPTION_CLOSEST_SYNC);
+                if (sample.frame != null) return sample;
+            } catch (SecurityException denied) {
+                // Revoked access is not a transient codec miss and must not be retried.
+                throw denied;
+            } catch (RuntimeException decoderFailure) {
+                cancelled();
+                sample.error = decoderFailure;
+            }
+        }
+        return sample;
+    }
+
+    private static void cancelled() throws InterruptedIOException {
+        if (Thread.currentThread().isInterrupted()) throw new InterruptedIOException("Native media analysis cancelled");
+    }
+
+    private static void recycle(Bitmap bitmap) {
+        if (bitmap != null && !bitmap.isRecycled()) bitmap.recycle();
+    }
+
+    private Bitmap contactSheet(ArrayList<Bitmap> frames, ArrayList<Long> times) throws InterruptedIOException {
         int cols = frames.size() <= 8 ? 2 : 3;
         int rows = (int) Math.ceil(frames.size() / (double) cols);
         int cellW = 300;
         int cellH = 220;
         Bitmap sheet = Bitmap.createBitmap(cellW * cols, cellH * rows, Bitmap.Config.ARGB_8888);
-        Canvas canvas = new Canvas(sheet);
-        canvas.drawColor(Color.rgb(8, 11, 20));
-        Paint labelBg = new Paint(Paint.ANTI_ALIAS_FLAG);
-        labelBg.setColor(Color.argb(190, 0, 0, 0));
-        Paint label = new Paint(Paint.ANTI_ALIAS_FLAG);
-        label.setColor(Color.WHITE);
-        label.setTextSize(22);
-        label.setTypeface(android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.BOLD));
+        boolean completed = false;
+        try {
+            Canvas canvas = new Canvas(sheet);
+            canvas.drawColor(Color.rgb(8, 11, 20));
+            Paint labelBg = new Paint(Paint.ANTI_ALIAS_FLAG);
+            labelBg.setColor(Color.argb(190, 0, 0, 0));
+            Paint label = new Paint(Paint.ANTI_ALIAS_FLAG);
+            label.setColor(Color.WHITE);
+            label.setTextSize(22);
+            label.setTypeface(android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.BOLD));
 
-        for (int i = 0; i < frames.size(); i++) {
-            int col = i % cols;
-            int row = i / cols;
-            float left = col * cellW;
-            float top = row * cellH;
-            Bitmap b = frames.get(i);
-            float scale = Math.min(cellW / (float) b.getWidth(), cellH / (float) b.getHeight());
-            float dw = b.getWidth() * scale;
-            float dh = b.getHeight() * scale;
-            float x = left + (cellW - dw) / 2f;
-            float y = top + (cellH - dh) / 2f;
-            canvas.drawBitmap(b, null, new android.graphics.RectF(x, y, x + dw, y + dh), null);
-            canvas.drawRect(left, top + cellH - 38, left + 112, top + cellH, labelBg);
-            String ts = String.format(Locale.US, "%.1fs", times.get(i) / 1000d);
-            canvas.drawText(ts, left + 10, top + cellH - 11, label);
+            for (int i = 0; i < frames.size(); i++) {
+                cancelled();
+                int col = i % cols;
+                int row = i / cols;
+                float left = col * cellW;
+                float top = row * cellH;
+                Bitmap b = frames.get(i);
+                float scale = Math.min(cellW / (float) b.getWidth(), cellH / (float) b.getHeight());
+                float dw = b.getWidth() * scale;
+                float dh = b.getHeight() * scale;
+                float x = left + (cellW - dw) / 2f;
+                float y = top + (cellH - dh) / 2f;
+                canvas.drawBitmap(b, null, new android.graphics.RectF(x, y, x + dw, y + dh), null);
+                canvas.drawRect(left, top + cellH - 38, left + 112, top + cellH, labelBg);
+                String ts = String.format(Locale.US, "%.1fs", times.get(i) / 1000d);
+                canvas.drawText(ts, left + 10, top + cellH - 11, label);
+            }
+            cancelled();
+            completed = true;
+            return sheet;
+        } finally {
+            if (!completed) recycle(sheet);
         }
-        return sheet;
     }
 
     private Bitmap scaleInside(Bitmap source, int maxW, int maxH) {
@@ -161,20 +242,26 @@ public final class NativeMediaAnalyzer {
         return Bitmap.createScaledBitmap(source, Math.max(1, Math.round(source.getWidth() * scale)), Math.max(1, Math.round(source.getHeight() * scale)), true);
     }
 
-    private double[] signature(Bitmap bitmap) {
+    private double[] signature(Bitmap bitmap) throws InterruptedIOException {
         Bitmap small = Bitmap.createScaledBitmap(bitmap, 24, 14, true);
-        double[] out = new double[24 * 14 * 3];
-        int at = 0;
-        for (int y = 0; y < 14; y++) {
-            for (int x = 0; x < 24; x++) {
-                int c = small.getPixel(x, y);
-                out[at++] = Color.red(c) / 255d;
-                out[at++] = Color.green(c) / 255d;
-                out[at++] = Color.blue(c) / 255d;
+        try {
+            double[] out = new double[24 * 14 * 3];
+            int at = 0;
+            for (int y = 0; y < 14; y++) {
+                cancelled();
+                for (int x = 0; x < 24; x++) {
+                    int c = small.getPixel(x, y);
+                    out[at++] = Color.red(c) / 255d;
+                    out[at++] = Color.green(c) / 255d;
+                    out[at++] = Color.blue(c) / 255d;
+                }
             }
+            return out;
+        } finally {
+            // Android may return its input when the requested size is already24×14.
+            // That input is still needed by the contact sheet and belongs to frames.
+            if (small != bitmap) recycle(small);
         }
-        small.recycle();
-        return out;
     }
 
     private double difference(double[] a, double[] b) {

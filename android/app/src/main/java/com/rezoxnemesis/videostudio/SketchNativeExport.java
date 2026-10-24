@@ -50,6 +50,7 @@ public final class SketchNativeExport {
         File generation = new File(context.getFilesDir(), "sketch_studio/" + id + "/exports/" + operationId);
         if (!generation.getCanonicalPath().equals(context.getFilesDir().getCanonicalPath() + "/sketch_studio/" + id + "/exports/" + operationId)) throw SketchDocument.bad("Owned export directory rejected");
         synchronized (SketchNativeExport.class) {
+            try(SketchExportLock lock=SketchExportLock.acquire(context,generation)){
             File snapshotFile = new File(generation, "snapshot.json"); JSONObject snapshot;
             if (snapshotFile.isFile()) {
                 snapshot = readJson(snapshotFile, SketchDocument.MAX_BYTES + 16 * 1024 * 1024 + 4096);
@@ -151,12 +152,14 @@ public final class SketchNativeExport {
                 throw new IllegalStateException("SKETCH_EXPORT_OUTPUT_PROJECT_CHANGED");
             else project = existing;
             return new Prepared(project, output, aspect, quality, metadata, false, generation);
+            }
         }
     }
 
     /** Call only after NativeRenderEngine completion. Captured clocks are not claimed as decoded frames. */
     public static JSONObject complete(Context context, Prepared prepared, JSONObject encoderResult) throws Exception {
         synchronized (SketchNativeExport.class) {
+            try(SketchExportLock lock=SketchExportLock.acquire(context,prepared.generation)){
             if (prepared.completed) return SketchDocument.copy(prepared.metadata);
             if (!prepared.encodingFile.isFile() || prepared.encodingFile.length() < 1) throw new IllegalStateException("Sketch encoder output unavailable");
             try(java.io.RandomAccessFile encoded=new java.io.RandomAccessFile(prepared.encodingFile,"rw")){encoded.getFD().sync();}
@@ -168,11 +171,13 @@ public final class SketchNativeExport {
             ProjectStore projects = new ProjectStore(context); ProjectStore.Project project = projects.get(prepared.project.id);
             if (project == null) throw new IllegalStateException("Sketch output project unavailable");
             reconcileProject(context, projects, project, prepared.file, metadata); return metadata;
+            }
         }
     }
     /** Preserve the immutable private encoding and persist verified public publication separately. */
     public static JSONObject recordPublished(Context context, Prepared prepared, Uri published, String name) throws Exception {
         synchronized (SketchNativeExport.class) {
+            try(SketchExportLock lock=SketchExportLock.acquire(context,prepared.generation)){
             File receipt = new File(prepared.generation, "completed.json"); JSONObject metadata = readJson(receipt, 1024 * 1024);
             if (published == null || !"content".equals(published.getScheme()) || !"media".equals(published.getAuthority()) || name == null || name.isEmpty() || name.length() > 160)
                 throw SketchDocument.bad("Published sketch requires a MediaStore URI and bounded name");
@@ -187,6 +192,7 @@ public final class SketchNativeExport {
             ProjectStore projects = new ProjectStore(context); ProjectStore.Project project = projects.get(prepared.project.id);
             if (project == null) throw new IllegalStateException("Sketch output project unavailable");
             reconcileProject(context, projects, project, prepared.file, metadata); return metadata;
+            }
         }
     }
     private static boolean publishedMatches(Context context, Uri uri, JSONObject metadata) {

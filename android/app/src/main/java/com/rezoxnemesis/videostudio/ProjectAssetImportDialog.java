@@ -45,13 +45,15 @@ public final class ProjectAssetImportDialog {
     }
     private void show(){dialog.show();load();}
     private void load(){run("Reading project media…",()->{
-        ProjectStore store=new ProjectStore(activity);ProjectStore.Project destination=store.get(destinationId);if(destination==null)throw new IllegalArgumentException("Destination project no longer exists");
-        List<ProjectStore.Project> found=new ArrayList<>();for(ProjectStore.Project p:store.list())if(!p.id.equals(destinationId)){
-            boolean eligible=false;for(ProjectStore.Asset a:p.assets)try{ProjectAssetImport.sourceFile(activity,a);eligible=true;break;}catch(Exception ignored){}
-            if(eligible)found.add(p);
+        try(ProjectStore store=new ProjectStore(activity)){
+            ProjectStore.Project destination=store.get(destinationId);if(destination==null)throw new IllegalArgumentException("Destination project no longer exists");
+            List<ProjectStore.Project> found=new ArrayList<>();for(ProjectStore.Project p:store.list())if(!p.id.equals(destinationId)){
+                boolean eligible=false;for(ProjectStore.Asset a:p.assets)try{ProjectAssetImport.sourceFile(activity,a);eligible=true;break;}catch(Exception ignored){}
+                if(eligible)found.add(p);
+            }
+            String saved=readSaved();
+            return ()->{destinationRevision=destination.updatedAt;savedAvailable=saved!=null;projects.clear();projects.addAll(found);binding=true;try{List<String> names=new ArrayList<>();for(ProjectStore.Project p:projects)names.add(p.name);source.setAdapter(adapter(names));}finally{binding=false;}loadAssets();status.setText(savedAvailable?"A saved exact import is available. Retry saved import preserves its original parameters, even after source removal or later destination edits.":projects.isEmpty()?"No other project has an app-owned media file. External links need an owned import first.":"Select the source project and asset, then inspect its SHA-256.");};
         }
-        String saved=readSaved();
-        return ()->{destinationRevision=destination.updatedAt;savedAvailable=saved!=null;projects.clear();projects.addAll(found);binding=true;try{List<String> names=new ArrayList<>();for(ProjectStore.Project p:projects)names.add(p.name);source.setAdapter(adapter(names));}finally{binding=false;}loadAssets();status.setText(savedAvailable?"A saved exact import is available. Retry saved import preserves its original parameters, even after source removal or later destination edits.":projects.isEmpty()?"No other project has an app-owned media file. External links need an owned import first.":"Select the source project and asset, then inspect its SHA-256.");};
     });}
     private void loadAssets(){
         assets.clear();int i=source.getSelectedItemPosition();if(i>=0&&i<projects.size())for(ProjectStore.Asset a:projects.get(i).assets)try{ProjectAssetImport.sourceFile(activity,a);assets.add(a);}catch(Exception ignored){}

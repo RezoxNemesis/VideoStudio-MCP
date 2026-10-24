@@ -1,3 +1,116 @@
+# Active silent VIDEO overlay and reliability526 integration — future4.10.24/code527
+
+Preserve combined source10b7adc (VIDEOcore/vendor, TITLEmotion and guarded VIDEO UI)
+and original-signed5265efd42f plus DB handle ownership5b4ae5c. Root scoped union85
+PASS21.331s and native capability intentionalextension3PASS1.418s; Node844+306
+PASS. These are scoped/source checks, NOT full527/GPU/codec or artistic proof.
+Original unavailableVIDEO expectation3/1FAIL retained before deliberate extension.
+All source floors remain VIDEO4.10.24/TITLE4.10.23/IMAGE4.10.20, earlier floors unchanged.
+Root owns all Java/JVM/Gradle/ADB/model runs, oneGradle, versioning/CI/signing.
+
+Actual original-signed526 in-place update preserves11projects. Actual original525
+saved PNG exact operation retry now succeeds through manual UI: full720x1280RGBA,
+source/request/sourceprojects unchanged. Frozen12.4s creative526 import/edit succeeds
+but native exportFAIL20% with generic Video frame processing error; preserve its
+partialMP4/logs and investigate original typedcause before claimingrepair. LiveMCP403
+remains owner-action-required; no retry/evade. Detailed240sfilm still0acceptedseconds.
+ManualVIDEO currentlyworksforalreadyownedfiles. Standard SAF+Import retainslinked
+contentURI, so proposed+Import entrydoesnotproduceeligibleVIDEO; preserveownership
+and fixthat workflow beforeclaimingnew-file manual parity. Future fullintegrated527,
+originalsignedexactrevisionCI, real GPU/codec/photo/title/panel retests remainpending.
+No mainmerge/push, Workerdeploy, stablerelease, fallbacksigner, uninstall/data-clear,
+MCPidentityreset, Gallery, hostedAI or external art/animation/audio substitute.
+
+# Active demanding native editing retakes — 4.10.23/code526
+
+This isolated feature branch retains signed5252d100d9 and adds shared whole-title
+motion, finite source-sampler coverage and the trusted Android filesDir alias
+repair. Actual525creative12.4s test FAILED before export at project_import_asset;
+actualmanualPNG also FAILED hardlink EACCES. Preserve those generations. PNG
+publication/status repairs now pass39 focused checks and the actual Android
+filesystem primitive probe. Combined full checks, original-signed CI and actual
+product retakes remain pending. Do not call this candidate verified or art accepted.
+Root owns ONE Gradle and every native/JVM/ADB/model run. Feature development
+stays in isolated trees; no main/stable/Worker publication, signer replacement,
+identity/data reset, Gallery or outside media renderer. The requested240-second
+character film remains unfinished, with0accepted final-film seconds. Title
+manual+core58scopedPASS and Node835+306PASS are unit/protocol checks, not GPU
+output. Independent VIDEOoverlay work is future4.10.24/code527, not in526.
+
+# Active native analysis coverage repair — 2026-10-24
+
+Work only in isolated fix/native-analysis-coverage-v41023, based on combined525
+2d100d9da66ea03eafd84e84b2ae8d979d4477a3. Root owns versions, integration,
+ONE Gradle and ALL JVM/native/ADB/model execution. Actual original-signed524
+HEVC reference analysis returned6 of8 requested frames, silently missing0 and
+3753ms while ok:true; retain those app-native JSON/JPEG/source-hash receipts.
+Root genuine public-API RED10/8FAIL2.792s is preserved, original assertions stay
+byte-identical. Read docs/continuity/NATIVE_ANALYSIS_COVERAGE_41023.md.
+
+Prepared native fix: at most3 SAME-time OPTION_CLOSEST_SYNC attempts per planned
+sample; explicit requested/decoded/failed/complete coverage; no decoder/mode
+switch, neighbor borrowing or source mutation. Denied access is not retried;
+interruption preserves its flag. All owned frames/scratch/retrievers close on
+success/failure/cancel;24x14 signature scratch must not recycle an aliased input.
+Root focused14PASS3.471s on exact production9e490035... includes original10,
+unchanged orientation3 and small-frame1. The small mutable24x14 control PASSED
+unchanged FULL5251/1 in2.359s; no alias failure was reproduced, so do not call it
+RED. Its defensive guard remains source-level ownership handling. Full integration
+and real uploaded-HEVC signed-APK retakes remain pending.
+No agent Java/Gradle/ADB/native execution, version edits or copied private media
+in Git. Preserve earlier work, original signer, identity and user data. No main,
+Worker/stable publication, data clear/uninstall, Gallery, external artwork or
+claimed finished edit/animation/voice/240-second film.
+
+# Active actual-Android PNG publication repair — 2026-10-24
+
+Worktree fix/native-android-png-publication-v41023 preserves combined signed525
+and root's separate import/UI fixes d5237d7. Future4.10.23/code526 version and
+release metadata remain root-owned. Read
+`docs/continuity/NATIVE_PNG_ANDROID_PUBLICATION_20261024.md`. Actual original-
+signed525 real-photo Save PNG failed at snapshot publication despite host/CI
+checks. Root actual APK probe proved NIO AccessDenied and public Os.link EACCES13;
+both failed generations and scratch remain untouched. Never retry hardlinks,
+change policy or bypass permissions.
+
+Root V3 actual-APK ordinary-save probe passed stable FileChannel exclusion,
+fsynced staging/atomic rename exact bytes/inode, collision preservation, cancelled
+waiting with flag retained, directory fsync and stable lock reacquisition. This
+is private scratch filesystem evidence, not successful product PNG export. Root
+genuine original six public-API coordination tests failed6/6 in2.997s on FULL525.
+Tests remain unchanged at09d44a07fe72c395b863b6e7372fbb0474aa2b7422a2259002ea67f6903f4ddc.
+
+Scoped-verified product source is frozen for root integration: SketchExportLock, PNG
+admit/prepare/verify and same-generation legacy entry shims. Stable never-unlinked
+canonical-generation lock, interruptible waits/reentrant leases, source/target
+checks, same-directory ATOMIC_MOVE without copy/replace fallback and directory
+fsync protect cooperating app-private readers/writers. This is not hostile same-
+UID no-replace. Completion AtomicFile remains under the lock with DB-witness
+recovery. No schema, format, old fingerprint, minimum feature floor or action
+changes. Book preparation is separate; do not claim all book processes were
+upgraded. Root alone runs ONE Gradle and every native/JUnit/JVM/model/ADB lane.
+
+Root first scoped39 run failed19 at Robolectric ShadowLinux directory-open EIO
+(host RandomAccessFile cannot represent the directory); actual V3 public-Os
+directory fsync succeeded. Preserve failed source/logs and all assertions. Root
+V4 actual probe passed universal FileChannel READ/NOFOLLOW directory force plus
+all normal-save checks. Product universally uses that exact API; no platform/
+test branch, ignored fsync error or original-test change. New helper frozen at
+be5fd8b062d33aefe68923fe792e83dcad4aecefb5b85b07dcbe1b717c0fd597
+for root39-case retake: ALL39PASS11.729s, exact source/hash/launcher/log retained
+at film-production-20261022/png-publication-lock-525-green-v2-*. Original
+assertions and six-case09d44a07 source are unchanged; old failed39-run generation
+remains preserved. This is scoped native JVM verification. No actual changed-APK
+product PNG retake or full526 verification is claimed yet.
+
+Scoped native39 passed. Fresh full integration, original-signed exact-revision
+CI and real-photo manual save/verify/import/replay retake remain pending. Preserve
+all failures/assertions/user work/original signer/MCP identity.
+No main/Worker/stable publication, replacement key, uninstall/data clear/reset,
+Gallery or external artwork substitute. Owner MCP403 remains blocked; no bypass.
+Finished editing/animation and240-second film remain unfinished with0accepted
+final seconds.
+
 # Active combined Quiet Canvas editor and native PNG525 — 2026-10-24
 
 Combined candidate4.10.22/code525 retains verified signed524 clock/audio repair
