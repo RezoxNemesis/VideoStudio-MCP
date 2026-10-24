@@ -67,6 +67,7 @@ final class NativeAgentMailboxActions {
   "select_project",
   "delete_project",
   "apply_edit_plan",
+  "kinetic_benchmark_capabilities", "kinetic_benchmark_plan", "kinetic_benchmark_apply",
   "set_studio_layers",
   "apply_tool",
   "creator_preset",

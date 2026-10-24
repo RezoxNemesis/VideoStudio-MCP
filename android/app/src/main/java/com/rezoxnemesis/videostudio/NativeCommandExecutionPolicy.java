@@ -13,6 +13,7 @@ public final class NativeCommandExecutionPolicy {
             case "import_chat_file": case "import_attachment": case "import_url":
             case "project_asset_info": case "project_import_asset":
             case "precision_edit":
+            case "kinetic_benchmark_capabilities": case "kinetic_benchmark_plan": case "kinetic_benchmark_apply":
             case "apply_tool": case "set_studio_layers":
             case "sketch_create": case "sketch_list": case "sketch_get": case "sketch_inspect": case "sketch_review": case "sketch_quality_audit": case "sketch_edit":
             case "sketch_animation_save": case "sketch_animation_get": case "sketch_animation_list": case "sketch_animation_bake": case "sketch_animation_place_in_book":
