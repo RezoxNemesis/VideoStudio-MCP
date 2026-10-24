@@ -161,6 +161,8 @@ public final class StudioLayer {
         if(o.has("audioMode"))throw new IllegalArgumentException("audioMode is only supported on video layers");
         if(o.has("parentId")&&!TITLE.equals(l.type)&&!IMAGE.equals(l.type))
             throw new IllegalArgumentException("Unsupported parent link for audio track");
+        if(o.has("parentId")&&!(o.opt("parentId") instanceof String))
+            throw new IllegalArgumentException("Motion parent ID must be a string");
         l.parentId=o.optString("parentId","");
         if(o.has("mask")&&!IMAGE.equals(l.type))
             throw new IllegalArgumentException("Only IMAGE/SHAPE support visual masks");
@@ -221,6 +223,8 @@ public final class StudioLayer {
         while(fields.hasNext())if(!SHAPE_FIELDS.contains(fields.next()))
             throw new IllegalArgumentException("Unsupported original shape field");
         l.type=SHAPE;
+        if(o.has("parentId")&&!(o.opt("parentId") instanceof String))
+            throw new IllegalArgumentException("Motion parent ID must be a string");
         l.parentId=o.optString("parentId","");
         l.startMs=o.has("startMs")?StudioClipKeyframes.integer(o,"startMs",0,86_400_000):0;
         l.durationMs=o.has("durationMs")?StudioClipKeyframes.integer(o,"durationMs",100,86_400_000):2500;
