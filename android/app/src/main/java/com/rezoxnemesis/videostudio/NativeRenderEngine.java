@@ -623,6 +623,10 @@ public final class NativeRenderEngine {
         MediaItem.Builder media = new MediaItem.Builder().setUri(Uri.parse(asset.uri));
 
         if (image) {
+            // Retain the imported format when an owned image has an opaque filename.
+            // Export's image admission cannot rely on preview's header sniffing.
+            if(androidx.media3.common.util.Util.isBitmapFactorySupportedMimeType(asset.mime))
+                media.setMimeType(asset.mime);
             // Pose-interpolated frames are already real video samples; the usual
             // 250ms photo minimum would destroy 24fps action timing.
             boolean poseFrame = clip.effects != null && (clip.effects.optBoolean("poseInbetween", false)

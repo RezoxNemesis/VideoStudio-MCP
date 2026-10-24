@@ -9,6 +9,8 @@ import android.view.ViewGroup;
 import androidx.media3.common.MediaItem;
 import androidx.media3.common.C;
 import androidx.media3.common.Player;
+import androidx.media3.common.VideoCompositorSettings;
+import androidx.media3.effect.MultipleInputVideoGraph;
 import androidx.media3.exoplayer.ExoPlayer;
 import androidx.media3.ui.PlayerView;
 import androidx.media3.transformer.Composition;
@@ -98,7 +100,10 @@ public final class LiveEditPlayer {
             boolean previousReady=previous.getPlayWhenReady();
             Runnable previousWatcher=clipBoundaryWatcher;
             java.util.function.Consumer<String> previousError=editError;
-            CompositionPlayer candidate=new CompositionPlayer.Builder(context).build();
+            CompositionPlayer.Builder candidateBuilder=new CompositionPlayer.Builder(context);
+            if(needsMultipleInputVideoGraph(composition))
+                candidateBuilder.setVideoGraphFactory(new MultipleInputVideoGraph.Factory());
+            CompositionPlayer candidate=candidateBuilder.build();
             candidate.addListener(new Player.Listener(){
                 @Override public void onPlayWhenReadyChanged(boolean ready,int reason){
                     // PlayerView controls call Player directly. Initial app setup must
@@ -165,6 +170,16 @@ public final class LiveEditPlayer {
     }
     public boolean isEditedPreview(){return editedPreview;}
     private Player activePlayer(){return editedPreview&&editPlayer!=null?editPlayer:player;}
+
+    private static boolean needsMultipleInputVideoGraph(Composition composition){
+        // The SDK default supports one video input and DEFAULT settings only.
+        // Independent audio lanes and final IMAGE/TITLE effects keep that path.
+        if(composition.videoCompositorSettings!=VideoCompositorSettings.DEFAULT)return true;
+        int videoInputs=0;
+        for(var sequence:composition.sequences)
+            if(sequence.trackTypes.contains(C.TRACK_TYPE_VIDEO)&&++videoInputs>1)return true;
+        return false;
+    }
 
     private void setPlaybackIntent(Player target,boolean ready){
         boolean previous=settingPlaybackIntent;settingPlaybackIntent=true;
