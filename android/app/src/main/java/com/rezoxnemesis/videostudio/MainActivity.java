@@ -134,6 +134,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
     private long studioSurfaceGeneration;
     private StudioEditorWorkspace studioWorkspace;
     private String studioWorkspacePane="Timeline",studioInspectorProjectId="",studioSelectedLayerId;
+    private String studioPreviewAspect="9:16";
     private Button studioPlayToggle;
     private View studioEditedTransport,studioSavedRenderTransport;
     private enum StudioPreviewTarget{EDITED,SAVED_RENDER,SOURCE_VIDEO,SOURCE_STILL}
@@ -169,6 +170,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
 
         try {
         prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
+        studioPreviewAspect=StudioPreviewCanvas.coerce(prefs.getString("studio_preview_canvas_aspect","9:16"));
         migrateAutonomyDefaultOnce();
         editorStartupGuard.stage("loading_project_store");
         store = new ProjectStore(this);
@@ -879,9 +881,35 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                                             ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED);
                             dialog.dismiss();
                         })
-                .setNeutralButton("Resize panes", (d,w)->Toast.makeText(this,
-                        "Drag the handle between preview and timeline to resize both panes.",
-                        Toast.LENGTH_LONG).show())
+                .setNeutralButton("Preview canvas", (d,w)->chooseStudioPreviewCanvas())
+                .setNegativeButton("Cancel",null).show();
+    }
+
+    /** Canvas aspect is independent of the physical screen rotation. */
+    private void chooseStudioPreviewCanvas(){
+        final String[] values=StudioPreviewCanvas.ASPECTS;
+        final String[] labels={"9:16 · vertical film","16:9 · horizontal film",
+                "1:1 · square","4:5 · portrait artwork"};
+        int selected=0;
+        for(int i=0;i<values.length;i++)
+            if(values[i].equals(studioPreviewAspect))selected=i;
+        new AlertDialog.Builder(this).setTitle("Preview canvas · 720p")
+                .setSingleChoiceItems(labels,selected,(dialog,which)->{
+                    dialog.dismiss();
+                    String chosen=StudioPreviewCanvas.coerce(values[which]);
+                    if(chosen.equals(studioPreviewAspect))return;
+                    studioPreviewAspect=chosen;
+                    prefs.edit().putString("studio_preview_canvas_aspect",chosen).apply();
+                    stopStudioDirectTouch();
+                    // The old player revision key also includes aspect, but an
+                    // explicit rebuild is needed to avoid the quick reuse path.
+                    studioEditedProjectId="";
+                    studioEditedRevision=-1;
+                    studioPendingEditedSeek=true;
+                    if("editor".equals(currentScreen)&&activeProject!=null
+                            &&!activeProject.clips.isEmpty())
+                        beginStudioEditPreview(false);
+                })
                 .setNegativeButton("Cancel",null).show();
     }
 
@@ -912,13 +940,14 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
             new AlertDialog.Builder(this).setTitle(studioPreviewTarget==StudioPreviewTarget.SAVED_RENDER?"Saved render playback":"Source preview")
                     .setItems(labels.toArray(new String[0]),(dialog,which)->actions.get(which).run()).show();return;
         }
-        String[] labels={"Time…","|‹ Cut","Cut ›|","−0.1s","+0.1s","▶ Latest MP4","▤ All Renders","Preview controls","Activity","⌕ Find any tool","Home","Tools","Agent"};
+        String[] labels={"Time…","|‹ Cut","Cut ›|","−0.1s","+0.1s","▶ Latest MP4","▤ All Renders","Preview controls","Activity","⌕ Find any tool","Home","Tools","Agent","Canvas ratio…"};
         new AlertDialog.Builder(this).setTitle("Preview and renders").setItems(labels,(dialog,which)->{
             switch(which){
                 case 0:studioSeekDialog();break;case 1:seekStudioBoundary(-1);break;case 2:seekStudioBoundary(1);break;
                 case 3:scrubStudioTo(studioPlayheadMs-100);break;case 4:scrubStudioTo(studioPlayheadMs+100);break;
                 case 5:playStudioLatest();break;case 6:showStudioRenderLibrary();break;case 7:setStudioPlayerControls(true);break;
                 case 8:showStudioJobDetails();break;case 9:findStudioTool();break;case 10:showHome();break;case 11:showTools();break;case 12:showControl();break;
+                case 13:chooseStudioPreviewCanvas();break;
             }
         }).show();
     }
@@ -1036,6 +1065,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         final StudioLayer source=layer.copy();
         try{
             studioTouchTransform=new StudioTouchTransformOverlay(this,source,
+                    StudioPreviewCanvas.ratio(studioPreviewAspect),
                     new StudioTouchTransformOverlay.Listener(){
                 @Override public void onCommit(StudioLayer candidate){
                     stopStudioDirectTouch();
@@ -1803,7 +1833,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                         Toast.makeText(this,"Could not queue native export: "+e.getMessage(),
                                 Toast.LENGTH_LONG).show();
                     }
-                });
+                },studioPreviewAspect);
     }
 
     private void previewSelectedStudioClip(boolean startPlayback){
@@ -1833,7 +1863,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         final StudioPreviewTarget previousTarget=studioPreviewTarget;
         final String previousAsset=studioPreviewTargetAssetId,previousName=studioPreviewTargetName;
         try{
-            player().playEdit(activeProject,renderEngine,"9:16","720p",studioPlayheadMs,play,
+            player().playEdit(activeProject,renderEngine,studioPreviewAspect,"720p",studioPlayheadMs,play,
                     ()->{timelinePreviewRunning=false;studioPlayheadMs=activeProject.outputDurationMs();updateStudioPlayToggle();},
                     error->{
                         if(!isStudioExternalPreviewMode()){
