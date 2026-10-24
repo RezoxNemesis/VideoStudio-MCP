@@ -14,9 +14,9 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.InterruptedIOException;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
+import java.nio.file.StandardCopyOption;
 import java.security.MessageDigest;
 import java.util.Arrays;
 import java.util.Locale;
@@ -53,7 +53,7 @@ public final class SketchStillExport {
     public static JSONObject admit(Context context,JSONObject input)throws Exception {
         JSONObject request=validate(input);cancelled();
         synchronized(SketchNativeExport.class){
-            File generation=generation(context,request);try(ProjectStore projects=new ProjectStore(context)){
+            File generation=generation(context,request);try(SketchExportLock lock=SketchExportLock.acquire(context,generation);ProjectStore projects=new ProjectStore(context)){
             JSONObject snapshot=existingSnapshot(context,generation,request),commit=projects.sketchStillCommit(operationKey(request));
             if(commit!=null){
                 requireSnapshot(snapshot);verifyCommitted(context,projects,generation,request,snapshot,commit);return request;
@@ -79,7 +79,7 @@ public final class SketchStillExport {
     public static SketchNativeExport.Prepared prepare(Context context,JSONObject input,SketchNativeExport.Progress progress)throws Exception {
         JSONObject request=validate(input);if(progress==null)throw SketchDocument.bad("PNG progress callback required");cancelled();
         synchronized(SketchNativeExport.class){
-            cancelled();File generation=generation(context,request);try(ProjectStore projects=new ProjectStore(context)){
+            cancelled();File generation=generation(context,request);try(SketchExportLock lock=SketchExportLock.acquire(context,generation);ProjectStore projects=new ProjectStore(context)){
             JSONObject snapshot=existingSnapshot(context,generation,request),commit=projects.sketchStillCommit(operationKey(request));
             if(commit!=null){
                 requireSnapshot(snapshot);JSONObject result=verifyCommitted(context,projects,generation,request,snapshot,commit);
@@ -110,6 +110,7 @@ public final class SketchStillExport {
             ProjectStore.Asset asset=new ProjectStore.Asset();asset.id=ASSET_ID;asset.name=output.getName();asset.uri=Uri.fromFile(output).toString();asset.mime="image/png";
             asset.generated=true;asset.role="generated_sketch_still";asset.sizeBytes=output.length();asset.durationMs=0;asset.seekable=true;asset.persistedReadAccess=true;
             asset.generationMetadata=assetProof(receipt);project.assets.add(asset);
+            SketchExportLock.syncDirectory(context,generation);
             JSONObject committed=projects.createSketchStillOutput(project,operationKey(request),receipt);
             writeCompletion(context,generation,committed);
             JSONObject result=verifyCommitted(context,projects,generation,request,snapshot,committed).put("replayed",false);
@@ -125,14 +126,15 @@ public final class SketchStillExport {
         JSONObject request=validate(new JSONObject().put("sketchId",supplied.get("sketchId")).put("expectedRevision",supplied.get("sourceRevision"))
                 .put("operationId",supplied.get("operationId")).put("format",supplied.get("format")).put("frame",supplied.get("frame")));
         cancelled();synchronized(SketchNativeExport.class){
-            File generation=generation(context,request);JSONObject snapshot=existingSnapshot(context,generation,request);requireSnapshot(snapshot);
+            File generation=generation(context,request);try(SketchExportLock lock=SketchExportLock.acquire(context,generation)){
+            JSONObject snapshot=existingSnapshot(context,generation,request);requireSnapshot(snapshot);
             try(ProjectStore projects=new ProjectStore(context)){
             JSONObject commit=projects.sketchStillCommit(operationKey(request));if(commit==null)throw changed("PNG has not committed");
             JSONObject result=verifyCommitted(context,projects,generation,request,snapshot,commit);
             for(String field:new String[]{"projectId","outputProjectId","assetId","sketchId","sourceRevision","sketchRevision","operationId","format","mime","sha256","outputSha256","bytes","width","height","frame","documentSha256","requestSha256"})
                 if(!SketchDocument.canonical(result.get(field)).equals(SketchDocument.canonical(supplied.get(field))))throw changed("Delivered PNG receipt differs: "+field);
             return result.put("replayed",supplied.optBoolean("replayed",false));
-            }
+            }}
         }
     }
 
@@ -278,14 +280,24 @@ public final class SketchStillExport {
         ByteArrayOutputStream bytes=new ByteArrayOutputStream();byte[] buffer=new byte[8192];for(int n;(n=in.read(buffer))!=-1;){cancelled();if(bytes.size()+n>limit)throw changed("Metadata exceeds budget");bytes.write(buffer,0,n);}return new JSONObject(bytes.toString("UTF-8"));
     }
     private static void immutableJson(Context context,File target,JSONObject value,int limit)throws Exception {
-        owned(context,target);byte[] bytes=SketchDocument.canonical(value).getBytes(StandardCharsets.UTF_8);if(bytes.length>limit)throw changed("Metadata exceeds budget");
-        String expected=SketchDocument.sha256(bytes);if(target.exists()){regular(context,target);if(target.length()!=bytes.length||!expected.equals(hash(target)))throw changed("Immutable metadata was changed");return;}
+        SketchExportLock.requireHeld(context,target.getParentFile());owned(context,target);byte[] bytes=SketchDocument.canonical(value).getBytes(StandardCharsets.UTF_8);if(bytes.length>limit)throw changed("Metadata exceeds budget");
+        String expected=SketchDocument.sha256(bytes);if(target.exists()){regular(context,target);if(target.length()!=bytes.length||!expected.equals(hash(target)))throw changed("Immutable metadata was changed");SketchExportLock.syncDirectory(context,target.getParentFile());return;}
         File temporary=File.createTempFile(".still_metadata_",".part",target.getParentFile());try{try(FileOutputStream out=new FileOutputStream(temporary)){cancelled();out.write(bytes);out.getFD().sync();}cancelled();publishImmutable(context,temporary,target,bytes.length,expected);}finally{Files.deleteIfExists(temporary.toPath());}
     }
     private static void publishImmutable(Context context,File temporary,File target,long bytes,String expected)throws Exception {
-        owned(context,target);cancelled();try{Files.createLink(target.toPath(),temporary.toPath());}
-        catch(FileAlreadyExistsException collision){regular(context,target);if(target.length()!=bytes||!expected.equals(hash(target)))throw changed("Immutable publication already differs");}
-        // No replacement/copy fallback: a partial public image must never be observable.
+        File parent=target.getParentFile();SketchExportLock.requireHeld(context,parent);owned(context,target);regular(context,temporary);cancelled();
+        if(!parent.getCanonicalFile().equals(temporary.getParentFile().getCanonicalFile())||temporary.length()!=bytes||!expected.equals(hash(temporary)))throw changed("Private staged publication differs");
+        if(Files.exists(target.toPath(),LinkOption.NOFOLLOW_LINKS)){
+            regular(context,target);if(target.length()!=bytes||!expected.equals(hash(target)))throw changed("Immutable publication already differs");
+        }else{
+            // The stable cooperating-generation lock protects this check and rename.
+            // ATOMIC_MOVE itself is not OS no-replace against a same-UID nonparticipant.
+            cancelled();owned(context,target);regular(context,temporary);
+            Files.move(temporary.toPath(),target.toPath(),StandardCopyOption.ATOMIC_MOVE);
+            regular(context,target);if(target.length()!=bytes||!expected.equals(hash(target)))throw changed("Renamed publication differs");
+        }
+        SketchExportLock.syncDirectory(context,parent);
+        // Never copy into a public name, replace a conflict, or fall back to non-atomic move.
     }
     private static boolean completionExists(File generation){File file=new File(generation,"completed.json");return file.exists()||new File(file.getPath()+".bak").exists();}
     private static JSONObject readCompletion(Context context,File generation)throws Exception {
@@ -293,10 +305,12 @@ public final class SketchStillExport {
         try(InputStream in=new AtomicFile(file).openRead()){return parseJson(in,MAX_RECEIPT);}
     }
     private static void writeCompletion(Context context,File generation,JSONObject commit)throws Exception {
+        SketchExportLock.requireHeld(context,generation);
         File file=new File(generation,"completed.json");owned(context,file);owned(context,new File(file.getPath()+".bak"));owned(context,new File(file.getPath()+".new"));
-        if(completionExists(generation)){if(!SketchDocument.canonical(readCompletion(context,generation)).equals(SketchDocument.canonical(commit)))throw changed("Completed receipt was changed");return;}
+        if(completionExists(generation)){if(!SketchDocument.canonical(readCompletion(context,generation)).equals(SketchDocument.canonical(commit)))throw changed("Completed receipt was changed");SketchExportLock.syncDirectory(context,generation);return;}
         byte[] bytes=SketchDocument.canonical(commit).getBytes(StandardCharsets.UTF_8);if(bytes.length>MAX_RECEIPT)throw changed("Receipt exceeds budget");cancelled();
         AtomicFile atomic=new AtomicFile(file);FileOutputStream out=null;try{out=atomic.startWrite();out.write(bytes);atomic.finishWrite(out);}catch(Exception error){if(out!=null)atomic.failWrite(out);throw error;}
+        SketchExportLock.syncDirectory(context,generation);
     }
     private static String hash(File file)throws Exception {
         MessageDigest digest=MessageDigest.getInstance("SHA-256");try(InputStream in=new FileInputStream(file)){byte[] bytes=new byte[32768];for(int n;(n=in.read(bytes))!=-1;){cancelled();digest.update(bytes,0,n);}}
