@@ -27,6 +27,7 @@ final class StudioCompositionOverlayEffect implements GlEffect {
         for(StudioLayer layer:project.studioLayers){
             if(StudioLayer.TITLE.equals(layer.type))snapshot.add(new Entry(layer,null));
             else if(StudioLayer.IMAGE.equals(layer.type))snapshot.add(new Entry(layer,project.asset(layer.assetId)));
+            else if(StudioLayer.SHAPE.equals(layer.type))snapshot.add(new Entry(layer,null));
         }
         entries=Collections.unmodifiableList(snapshot);
     }
@@ -39,6 +40,7 @@ final class StudioCompositionOverlayEffect implements GlEffect {
         try{
             for(Entry entry:entries){
                 if(StudioLayer.TITLE.equals(entry.layer.type))overlays.add(new StudioTimedTitleOverlay(entry.layer));
+                else if(StudioLayer.SHAPE.equals(entry.layer.type))overlays.add(new StudioTimedShapeOverlay(entry.layer));
                 else overlays.add(new StudioTimedImageOverlay(context,entry.asset,entry.layer));
             }
             return overlays;
