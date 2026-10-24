@@ -952,6 +952,15 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
             box.addView(body("Up to 2 silent video overlays. Source files stay owned by this project."));
             studioWorkspaceActions(box,new String[]{"Choose video file","Retry saved video copy"},new Runnable[]{this::pickStudioVideoFile,this::retrySelectedVideoImport});
             studioWorkspaceActions(box,new String[]{"+ Music","+ Caption","Story audio"},new Runnable[]{this::chooseStudioAudio,()->editStudioTitle(null),()->{if(activeProject!=null)SketchStoryAudioDialog.show(this,activeProject.id,result->Toast.makeText(this,"Story audio saved in a separate audio project",Toast.LENGTH_LONG).show());}});
+            box.addView(studioButton("Kinetic Director · editable motion graphics", () ->
+                    StudioKineticDirectorDialog.show(this, store, activeProject, created -> {
+                        store.setActive(created.id);
+                        activeProject = created;
+                        selectedClip = created.clips.isEmpty() ? null : created.clips.get(0);
+                        studioPlayheadMs = 0;
+                        studioSelectedLayerId = null;
+                        showEditor();
+                    })));
             renderStudioMediaBin(box);
         }else if("Inspector".equals(pane))buildStudioInspector(box);
         else{
