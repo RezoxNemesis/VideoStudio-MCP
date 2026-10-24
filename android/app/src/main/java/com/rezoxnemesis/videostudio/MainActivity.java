@@ -1164,6 +1164,124 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                 }).show();
     }
 
+    private StudioLayer currentStudioCamera(){
+        if(activeProject==null)return null;
+        for(StudioLayer layer:activeProject.studioLayers)
+            if(StudioLayer.CAMERA.equals(layer.type))return layer;
+        return null;
+    }
+
+    /** Authored camera presets operate on the WHOLE composed 2D frame. */
+    private void chooseStudioCamera2D(){
+        if(activeProject==null||activeProject.clips.isEmpty()||activeProject.outputDurationMs()<100){
+            onStudioNoTarget();return;
+        }
+        StudioLayer existing=currentStudioCamera();
+        if(existing!=null){openStudioCamera2D(existing);return;}
+        final String owner=activeProject.id;
+        final long revision=activeProject.updatedAt;
+        String[] choices={"Static camera (edit manually)","Cinematic slow push-in",
+                "Sideways pan","Cinematic pull-back","Gentle camera roll"};
+        new AlertDialog.Builder(this).setTitle("2D composition camera")
+                .setItems(choices,(dialog,index)->{
+                    if(activeProject==null||!owner.equals(activeProject.id)
+                            ||activeProject.updatedAt!=revision){
+                        Toast.makeText(this,"Project changed. Reopen the 2D camera tool",Toast.LENGTH_LONG).show();
+                        return;
+                    }
+                    try{
+                        long duration=activeProject.outputDurationMs();
+                        JSONArray keys=new JSONArray();
+                        if(index!=0){
+                            double startX=0,startScale=1,startRotate=0,endX=0,endScale=1,endRotate=0;
+                            switch(index){
+                                case 1:endScale=1.2;break;
+                                case 2:startX=-.12;endX=.12;break;
+                                case 3:startScale=1.2;break;
+                                case 4:startRotate=-3.0;endRotate=3.0;break;
+                                default:throw new IllegalArgumentException("Unknown camera preset");
+                            }
+                            keys.put(new JSONObject().put("timeMs",0)
+                                    .put("x",startX).put("scale",startScale)
+                                    .put("rotate",startRotate)
+                                    .put("easing","cubic_bezier")
+                                    .put("bezier",StudioBezierEasing.fromText(StudioBezierEasing.PRESET_FILM)));
+                            keys.put(new JSONObject().put("timeMs",duration)
+                                    .put("x",endX).put("scale",endScale)
+                                    .put("rotate",endRotate));
+                        }
+                        JSONObject request=new JSONObject()
+                                .put("projectId",owner).put("expectedUpdatedAt",revision)
+                                .put("operation","set").put("motionKeyframes",keys);
+                        saveStudioCamera2D(request,true);
+                    }catch(Exception failure){
+                        Toast.makeText(this,"2D camera not saved: "+failure.getMessage(),
+                                Toast.LENGTH_LONG).show();
+                    }
+                }).show();
+    }
+
+    private void openStudioCamera2D(StudioLayer camera){
+        if(activeProject==null||camera==null||!StudioLayer.CAMERA.equals(camera.type))return;
+        final String owner=activeProject.id;
+        final long revision=activeProject.updatedAt;
+        try{
+            StudioGroupMotionDialog.show(this,camera,
+                    Math.max(0,Math.min(camera.durationMs,studioPlayheadMs)),keys->{
+                        if(activeProject==null||!owner.equals(activeProject.id)
+                                ||activeProject.updatedAt!=revision)return false;
+                        try{
+                            JSONObject request=new JSONObject()
+                                    .put("projectId",owner).put("expectedUpdatedAt",revision)
+                                    .put("operation","set").put("motionKeyframes",keys);
+                            saveStudioCamera2D(request,true);
+                            return true;
+                        }catch(Exception failure){
+                            Toast.makeText(this,"Camera curves not saved: "+failure.getMessage(),
+                                    Toast.LENGTH_LONG).show();
+                            return false;
+                        }
+                    });
+        }catch(Exception failure){
+            Toast.makeText(this,"Camera editor unavailable: "+failure.getMessage(),Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void removeStudioCamera2D(StudioLayer camera){
+        if(activeProject==null||camera==null)return;
+        final String owner=activeProject.id;final long revision=activeProject.updatedAt;
+        new AlertDialog.Builder(this).setTitle("Remove composition camera?")
+                .setMessage("Remove this 2D camera's global pan/zoom/rotation? "+
+                        "Images, overlays, clips, titles and music remain in the original project.")
+                .setPositiveButton("Remove camera",(dialog,which)->{
+                    if(activeProject==null||!owner.equals(activeProject.id)
+                            ||revision!=activeProject.updatedAt)return;
+                    try{
+                        saveStudioCamera2D(new JSONObject()
+                                .put("projectId",owner).put("expectedUpdatedAt",revision)
+                                .put("operation","remove"),false);
+                    }catch(Exception failure){
+                        Toast.makeText(this,"Camera not removed: "+failure.getMessage(),
+                                Toast.LENGTH_LONG).show();
+                    }
+                }).setNegativeButton("Cancel",null).show();
+    }
+
+    private void saveStudioCamera2D(JSONObject request,boolean selectCamera)throws Exception{
+        if(activeProject==null)throw new IllegalStateException("No open editing project");
+        ProjectStore.Project before=ProjectStore.Project.fromJson(activeProject.toJson());
+        JSONObject receipt=StudioCamera2DDirector.apply(store,request);
+        ProjectStore.Project saved=store.get(receipt.getString("projectId"));
+        if(saved==null)throw new IllegalStateException("Saved camera project unavailable");
+        editHistory.checkpoint(before);
+        activeProject=saved;
+        selectedClip=saved.clips.isEmpty()?null:saved.clips.get(0);
+        studioSelectedLayerId=selectCamera?receipt.optString("cameraId",""):null;
+        syncProtocolState();
+        showEditor();
+        if(selectCamera&&studioWorkspace!=null)studioWorkspace.showPane("Inspector");
+    }
+
     /** Create a linked, keyframed group for selected visual layers in one edit. */
     private void createStudioMotionGroup(){
         if(activeProject==null||activeProject.clips.isEmpty()||activeProject.outputDurationMs()<100){
