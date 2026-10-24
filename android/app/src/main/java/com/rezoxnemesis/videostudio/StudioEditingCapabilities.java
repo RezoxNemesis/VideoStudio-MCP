@@ -60,7 +60,14 @@ public final class StudioEditingCapabilities {
                     .put("noSourceMediaMutation",true)
                     .put("commitOnlyOnApply",true)
                     .put("graphHandleBounds",new org.json.JSONArray().put(0).put(1))
-                    .put("galleryAccess",false));}
+                    .put("galleryAccess",false))
+                  .put("responsiveCanvasAspect",new JSONObject()
+                    .put("minimumNativeVersion","4.10.31")
+                    .put("previewRatios",new org.json.JSONArray(java.util.Arrays.asList("9:16","16:9","1:1","4:5")))
+                    .put("separateFromPhoneRotation",true)
+                    .put("touchPlacementUsesPreviewRatio",true)
+                    .put("exportDefaultsToActualPreviewAspect",true)
+                    .put("sourceMediaUnchanged",true));}
         catch(org.json.JSONException error){throw new IllegalStateException("Invalid native editor capability registry",error);}
     }
 }

@@ -21,3 +21,14 @@ This is not Adobe's proprietary graph editor and does not import AEP composition
 ## Performance discipline
 
 The graph uses 72 sampled path points and 20 binary-search iterations per evaluated progress. The editor draws only when invalidated; it does not decode source video or rerender a full MP4 during handle dragging. This supports rapid touch authoring on Android but requires device frame-time measurements before claiming quantitative speed improvements.
+## WYSIWYG phone layout and export aspect
+
+The existing portrait/landscape resizable workspace gains a separate preview
+canvas choice: 9:16, 16:9, square or 4:5. Rotating the phone does not silently
+alter authored pixels. Direct overlay touch-position calculations use the
+visible letterboxed Media3 composition rectangle. Export defaults to the same
+canvas ratio rather than contradicting the preview. User choices persist
+locally as editor preferences without changing any original source assets.
+
+The final export quality and GPU frame match still require actual on-phone
+verification, including the previously reported Test subject 2 failure.
