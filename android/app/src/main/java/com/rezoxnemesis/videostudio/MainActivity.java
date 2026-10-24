@@ -2159,7 +2159,21 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
      * These are editable, source-backed tracks, not decorative timeline labels.
      */
     private void renderStudioTrackLanes(LinearLayout box){
-        StudioTracksView bands=new StudioTracksView(this);studioTracks=bands;bands.setQuietEditorPalette(true);
+        final boolean professional=prefs.getBoolean("studio_professional_multitrack",false);
+        box.addView(studioButton(professional?"Timeline view: Multitrack · tap for compact":
+                "Timeline view: Compact · tap for multitrack",()->{
+            prefs.edit().putBoolean("studio_professional_multitrack",!professional).apply();
+            if(studioWorkspace!=null)studioWorkspace.refreshPane();
+        }));
+        StudioTracksView bands=new StudioTracksView(this);studioTracks=bands;
+        bands.setQuietEditorPalette(true);
+        bands.setProfessionalRows(professional);
+        bands.setOnPinchZoom(factor->{
+            int before=studioTrackZoom;
+            if(factor>1.18f)studioTrackZoom=Math.min(16,studioTrackZoom*2);
+            else if(factor<.84f)studioTrackZoom=Math.max(1,studioTrackZoom/2);
+            if(before!=studioTrackZoom&&studioWorkspace!=null)studioWorkspace.refreshPane();
+        });
         bands.setTimeline(activeProject.outputDurationMs(),studioPlayheadMs,activeProject.studioLayers,this::scrubStudioTo,new StudioTracksView.ChangeListener(){
             @Override public void onChange(String id,long start,long duration){moveStudioLayerOnTimeline(id,start,duration);}
             @Override public void onTrimLeft(String id,long start,long duration){moveStudioLayerOnTimeline(id,start,duration,true);}
@@ -2181,8 +2195,12 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         int screen=getResources().getConfiguration().screenWidthDp;
         boolean landscape=getResources().getConfiguration().orientation==android.content.res.Configuration.ORIENTATION_LANDSCAPE;
         int initial=Math.max(dp(180),dp(screen>0?(landscape?(screen-36)*115/215:screen-24):280));
-        scrolling.addView(bands,new FrameLayout.LayoutParams(initial*studioTrackZoom,dp(135)));
-        box.addView(scrolling,new LinearLayout.LayoutParams(-1,dp(135)));
+        // Professional mode gives each media/title/group lane its own hit row.
+        // The parent pane's existing ScrollView owns vertical scrolling, while
+        // this HorizontalScrollView owns the ruler and zoomed time axis.
+        int height=bands.desiredHeightPx();
+        scrolling.addView(bands,new FrameLayout.LayoutParams(initial*studioTrackZoom,height));
+        box.addView(scrolling,new LinearLayout.LayoutParams(-1,height));
         scrolling.post(()->{int width=scrolling.getWidth();scrolling.scrollTo(Math.max(0,(int)(studioPlayheadMs/(double)Math.max(1,activeProject.outputDurationMs())*bands.getWidth())-width/2),0);});
         if(studioAudioWaveforms!=null)for(StudioLayer audio:activeProject.studioLayers){
             if(!StudioLayer.AUDIO.equals(audio.type))continue;ProjectStore.Asset source=activeProject.asset(audio.assetId);if(source==null)continue;
