@@ -13,8 +13,8 @@ import java.util.Set;
 @UnstableApi
 public final class StudioClipKeyframes implements MatrixTransformation {
     public static final int MAX_KEYS=64;
-    public static final Set<String> EASINGS=Set.of("linear","ease_in","ease_out","ease_in_out","hold");
-    private static final Set<String> FIELDS=Set.of("timeMs","x","y","scale","scaleX","scaleY","rotate","anchorX","anchorY","opacity","easing");
+    public static final Set<String> EASINGS=Set.of("linear","ease_in","ease_out","ease_in_out","hold","cubic_bezier");
+    private static final Set<String> FIELDS=Set.of("timeMs","x","y","scale","scaleX","scaleY","rotate","anchorX","anchorY","opacity","easing","bezier");
     public static final class Values {
         public final double x,y,scaleX,scaleY,rotate,anchorX,anchorY,opacity;
         Values(double x,double y,double sx,double sy,double rotate,double ax,double ay,double opacity){
@@ -23,8 +23,10 @@ public final class StudioClipKeyframes implements MatrixTransformation {
         }
     }
     private static final class Key {
-        final long time;final Values values;final String easing;
-        Key(long time,Values values,String easing){this.time=time;this.values=values;this.easing=easing;}
+        final long time;final Values values;final String easing;final double[] bezier;
+        Key(long time,Values values,String easing,double[] bezier){
+            this.time=time;this.values=values;this.easing=easing;this.bezier=bezier;
+        }
     }
     private final ArrayList<Key> keys;
     private final Values base;
@@ -117,8 +119,15 @@ public final class StudioClipKeyframes implements MatrixTransformation {
             if(time<=previous)throw new IllegalArgumentException("Keyframe timeMs values must strictly increase");
             previous=time;
             Object rawEase=frame.opt("easing");String easing=rawEase==null?"linear":rawEase instanceof String?(String)rawEase:"";
-            if(!EASINGS.contains(easing))throw new IllegalArgumentException("Use linear, ease_in, ease_out, ease_in_out or hold");
-            keys.add(new Key(time,values(frame,base),easing));
+            if(!EASINGS.contains(easing))throw new IllegalArgumentException(
+                    "Use linear, ease_in, ease_out, ease_in_out, hold or cubic_bezier");
+            boolean custom="cubic_bezier".equals(easing);
+            if(custom&&!(frame.opt("bezier") instanceof JSONArray))
+                throw new IllegalArgumentException("cubic_bezier requires four control points");
+            if(!custom&&frame.has("bezier"))
+                throw new IllegalArgumentException("Bezier points require cubic_bezier easing");
+            double[] handles=custom?StudioBezierEasing.validate(frame.getJSONArray("bezier")):null;
+            keys.add(new Key(time,values(frame,base),easing,handles));
         }
         return new StudioClipKeyframes(keys,base);
     }
@@ -156,6 +165,7 @@ public final class StudioClipKeyframes implements MatrixTransformation {
                 case "ease_in":p*=p;break;
                 case "ease_out":p=1-(1-p)*(1-p);break;
                 case "ease_in_out":p=p*p*(3-2*p);break;
+                case "cubic_bezier":p=StudioBezierEasing.evaluate(p,left.bezier);break;
             }
             Values a=left.values,b=right.values;
             return new Values(mix(a.x,b.x,p),mix(a.y,b.y,p),mix(a.scaleX,b.scaleX,p),mix(a.scaleY,b.scaleY,p),
