@@ -188,8 +188,15 @@ public final class ProjectAssetImport {
     private static String extension(String mime){if(mime.equals("video/mp4"))return ".mp4";if(mime.equals("audio/wav")||mime.equals("audio/x-wav"))return ".wav";if(mime.equals("image/png"))return ".png";if(mime.equals("image/jpeg"))return ".jpg";return ".bin";}
     private static void verifyOutput(Context c,File file,JSONObject journal)throws Exception {regular(c,file);if(file.length()!=journal.getLong("bytes")||!journal.getString("sha256").equals(sha256(file)))throw bad("PROJECT_ASSET_RESULT_CHANGED: existing bytes will not be overwritten");}
     private static void owned(Context c,File file)throws Exception {
-        Path path=file.toPath().toAbsolutePath();if(!path.normalize().equals(path))throw bad("Unsafe media path");for(Path p=path;p!=null;p=p.getParent())if(Files.isSymbolicLink(p))throw bad("Media symlinks are unavailable");
-        if(!file.getCanonicalPath().startsWith(c.getFilesDir().getCanonicalPath()+File.separator))throw bad("Media must be owned by this application");
+        Path path=file.toPath().toAbsolutePath();if(!path.normalize().equals(path))throw bad("Unsafe media path");
+        Path trusted=c.getFilesDir().toPath().toAbsolutePath().normalize(),canonicalRoot=c.getFilesDir().getCanonicalFile().toPath();
+        Path canonical=file.getCanonicalFile().toPath();
+        if(canonical.equals(canonicalRoot)||!canonical.startsWith(canonicalRoot))throw bad("Media must be owned by this application");
+        // Android may alias an ancestor of filesDir. Trust that Context root,
+        // while still rejecting every symlink below the owned-root boundary.
+        Path boundary=path.startsWith(trusted)?trusted:canonicalRoot;
+        if(!path.startsWith(boundary))throw bad("Unsafe media path");
+        for(Path p=path;p!=null&&!p.equals(boundary);p=p.getParent())if(Files.isSymbolicLink(p))throw bad("Media symlinks are unavailable");
     }
     private static void regular(Context c,File file)throws Exception {owned(c,file);if(!Files.isRegularFile(file.toPath(),LinkOption.NOFOLLOW_LINKS))throw bad("Owned file is unavailable");}
     private static void directory(Context c,File file)throws Exception {owned(c,file);Files.createDirectories(file.toPath());if(!file.isDirectory())throw bad("Media copy storage is unavailable");}
