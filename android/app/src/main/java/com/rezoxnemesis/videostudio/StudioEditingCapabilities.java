@@ -17,7 +17,21 @@ public final class StudioEditingCapabilities {
                   .put("motionKeyframesMaximum",64)
                   .put("renderedBy","Native Canvas bitmap cached per shader program, independently positioned on GPU with Media3")
                   .put("true3DWarp",false)
-                  .put("galleryAccess",false));}
+                  .put("galleryAccess",false))
+                  .put("nativeAlphaMasks",new JSONObject()
+                    .put("minimumNativeVersion","4.10.28")
+                    .put("supportedLayers",new org.json.JSONArray(java.util.Arrays.asList("image","shape")))
+                    .put("kinds",new org.json.JSONArray(java.util.Arrays.asList("ellipse","rectangle","round_rect","linear_wipe")))
+                    .put("maskFeather",true).put("maskInversion",true)
+                    .put("sourceMediaUnchanged",true).put("cachedNativeBitmap",true)
+                    .put("perFrameVideoMaskTracking",false))
+                  .put("responsiveWorkspace",new JSONObject()
+                    .put("minimumNativeVersion","4.10.28")
+                    .put("portraitAndLandscape",true)
+                    .put("manualOrientationChoice",true)
+                    .put("touchResizablePanels",true)
+                    .put("directManipulation",new org.json.JSONArray(java.util.Arrays.asList("image","shape","video")))
+                    .put("geometryAppliedOnGestureRelease",true));}
         catch(org.json.JSONException error){throw new IllegalStateException("Invalid native editor capability registry",error);}
     }
 }
