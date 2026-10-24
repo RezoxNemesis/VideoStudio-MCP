@@ -75,7 +75,7 @@ test('IMAGE4.10.20 AUDIO rejection legacy TITLE bytes and opaque archive floors 
 
 test('native and Node capabilities advertise exact whole-title scope and preserve the action inventory',()=>{
  const cap=contract.EDITOR_EDITING_CAPABILITIES;
- assert.equal(cap.registryMinimumNativeVersion,'4.10.24');assert.equal(cap.titleOverlayMotion.minimumNativeVersion,'4.10.23');assert.equal(cap.imageOverlayMotion.minimumNativeVersion,'4.10.20');
+ assert.equal(cap.registryMinimumNativeVersion,'4.10.25');assert.equal(cap.titleOverlayMotion.minimumNativeVersion,'4.10.23');assert.equal(cap.imageOverlayMotion.minimumNativeVersion,'4.10.20');
  assert.equal(cap.titleOverlayMotion.type,'title');assert.equal(cap.titleOverlayMotion.field,'motionKeyframes');assert.equal(cap.titleOverlayMotion.sourceAssetRequired,false);
  assert.equal(cap.titleOverlayMotion.maximumKeys,64);assert.equal(cap.titleOverlayMotion.clock,'layer-local milliseconds');assert.equal(cap.titleOverlayMotion.pivot,'fixed center');
  const java=fs.readFileSync(new URL('../android/app/src/main/java/com/rezoxnemesis/videostudio/StudioEditingCapabilities.java',import.meta.url),'utf8');

@@ -1,3 +1,26 @@
+# Combined native preview, selected-video import and audio envelope candidate —4.10.25/code528
+
+Root integration branch feat/native-preview-audio-import-20261024 preserves full
+original-signed5274517b8d and standalone Audio98a017, Preview2c15f14 and Owned
+VIDEO7458a8f. Read docs/continuity/NATIVE_PREVIEW_AUDIO_IMPORT_41025.md first.
+Scoped source checks passed; combined full Android/Node, CI/signing and actual528
+runtime remain PENDING. Do not call this candidate fully verified. Version floors
+VIDEO4.10.24, TITLE4.10.23, IMAGE4.10.20 and all older contracts remain unchanged;
+only explicit audio-envelope and selectedDocument copy require4.10.25.
+
+Actual527 provided JPEG+MP3 preview and native export passed the bounded controlled
+case:240frames/8s video, stereoAAC8.010884s, full decode and source preservation.
+This did NOT reproduce the original4.10.22 phone error. Its exact project is absent.
+Raw Android screenshots contain the photo; the prior black-preview inference was
+an image-viewer discrepancy and is withdrawn with retained correction evidence.
+The harder12.4s existing edit now passes its old20% released-overlay cut but fails
+at80%: typed native7002, no output sample for25000ms. Cause of that pipeline stall
+is unresolved, all partial outputs preserved; do not claim an export repair from
+unit passes or blindly increase the watchdog. Root alone owns native/JVM/ADB/model
+execution and ONE local Gradle. No main/Worker/stable publication, replacement
+signer, uninstall/data clear/MCP identity reset, Gallery, hostedAI or outside media
+renderer. Four-minute character film remains unfinished,0accepted final seconds.
+
 # Bounded native audio envelope — future4.10.25/code528
 
 Isolated feat/native-audio-envelope-v41025 starts594fa07, preserving root527 and

@@ -74,7 +74,7 @@ test('omitted image motion keeps old normalized bytes, feature floors and opaque
 
 test('Node and native share exact truthful editor registry with old feature floors retained',()=>{
  const cap=contract.EDITOR_EDITING_CAPABILITIES;assert.ok(cap,'Truthful native editing registry has matching Node export');
- assert.equal(cap.registryMinimumNativeVersion,'4.10.24');assert.equal(cap.imageOverlayMotion.minimumNativeVersion,'4.10.20');
+ assert.equal(cap.registryMinimumNativeVersion,'4.10.25');assert.equal(cap.imageOverlayMotion.minimumNativeVersion,'4.10.20');
  assert.equal(cap.precisionEdits.minimumNativeVersion,'3.9.0');assert.equal(cap.layerTracks.imageMinimumNativeVersion,'3.9.0');
  assert.equal(cap.precisionEdits.audioFadesMinimumNativeVersion,'4.2.0');assert.equal(cap.precisionEdits.stereoMinimumNativeVersion,'4.3.0');
  const java=fs.readFileSync(new URL('../android/app/src/main/java/com/rezoxnemesis/videostudio/StudioEditingCapabilities.java',import.meta.url),'utf8');

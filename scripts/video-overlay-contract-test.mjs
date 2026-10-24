@@ -84,7 +84,7 @@ test('old IMAGE/TITLE floors normalized bytes action inventory and opaque archiv
 
 test('VIDEO native and Node capabilities match silent bounded native-source composition without unsupported claims',()=>{
  const cap=contract.EDITOR_EDITING_CAPABILITIES,video=cap.videoOverlay;
- assert.equal(cap.registryMinimumNativeVersion,'4.10.24');assert.equal(video.minimumNativeVersion,'4.10.24');
+ assert.equal(cap.registryMinimumNativeVersion,'4.10.25');assert.equal(video.minimumNativeVersion,'4.10.24');
  assert.equal(cap.titleOverlayMotion.minimumNativeVersion,'4.10.23');assert.equal(cap.imageOverlayMotion.minimumNativeVersion,'4.10.20');
  assert.equal(video.action,'set_studio_layers');assert.equal(video.type,'video');assert.equal(video.maximumVideos,2);assert.equal(cap.layerTracks.maximumVideos,2);assert.equal(cap.layerTracks.maximumLayers,32);assert.equal(cap.layerTracks.maximumImages,8);
  assert.equal(video.audioMode,'silent');assert.equal(video.audioModeRequired,true);assert.equal(video.knownPositiveDurationRequired,true);assert.equal(video.seekableSourceRequired,true);
