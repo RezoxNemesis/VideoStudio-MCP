@@ -126,7 +126,7 @@ public final class StudioClipKeyframes implements MatrixTransformation {
                 throw new IllegalArgumentException("cubic_bezier requires four control points");
             if(!custom&&frame.has("bezier"))
                 throw new IllegalArgumentException("Bezier points require cubic_bezier easing");
-            double[] handles=custom?StudioBezierEasing.validate(frame.getJSONArray("bezier")):null;
+            double[] handles=custom?StudioBezierEasing.validate(frame.optJSONArray("bezier")):null;
             keys.add(new Key(time,values(frame,base),easing,handles));
         }
         return new StudioClipKeyframes(keys,base);
