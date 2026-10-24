@@ -42,6 +42,11 @@ public final class StudioBezierCurveView extends View {
         for(int i=0;i<4;i++)controls[i]=(float)verified[i];
         invalidate();
     }
+    public static String format(JSONArray controls){
+        double[] values=StudioBezierEasing.validate(controls);
+        return values[0]+","+values[1]+","+values[2]+","+values[3];
+    }
+
     public JSONArray handles(){
         JSONArray array=new JSONArray();
         for(float control:controls)array.put((Object)Double.valueOf(control));
@@ -156,7 +161,9 @@ public final class StudioBezierCurveView extends View {
             }
             case MotionEvent.ACTION_CANCEL:{
                 if(handle<0)return false;
-                handle=-1;invalidate();return true;
+                controls[handle*2]=originalX;controls[handle*2+1]=originalY;
+                handle=-1;if(callback!=null)callback.accept(handles());
+                invalidate();return true;
             }
             default:return super.onTouchEvent(event);
         }
