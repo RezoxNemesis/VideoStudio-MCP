@@ -92,8 +92,13 @@ public class StudioShapeCompositorTest {
         assertTrue(result.effects.videoEffects.get(0) instanceof StudioCompositionOverlayEffect);
         StudioCompositionOverlayEffect fx=(StudioCompositionOverlayEffect)result.effects.videoEffects.get(0);
         assertFalse(fx.isEmpty());
-        assertEquals(1,fx.createOverlays().size());
-        assertTrue(fx.createOverlays().get(0) instanceof StudioTimedShapeOverlay);
+        java.util.List<androidx.media3.effect.TextureOverlay> overlays=fx.createOverlays();
+        try{
+            assertEquals(1,overlays.size());
+            assertTrue(overlays.get(0) instanceof StudioTimedShapeOverlay);
+        }finally{
+            for(androidx.media3.effect.TextureOverlay overlay:overlays)overlay.release();
+        }
     }
 
     @Test public void unsupportedOrOversizedShapesAreRejectedBeforeProjectMutation() throws Exception {
