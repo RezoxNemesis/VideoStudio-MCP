@@ -17,6 +17,20 @@ import static org.junit.Assert.*;
 /** Manual chooser and actual service-request wiring; no service or renderer is started. */
 @RunWith(RobolectricTestRunner.class) @Config(sdk=33,manifest=Config.NONE)
 public final class StudioExportDialogTest {
+    @Test public void currentCanvasAspectIsPreselectedWithoutModifyingLegacySavedExportChoices(){
+        Activity activity=Robolectric.buildActivity(Activity.class).setup().get();
+        AlertDialog baseline=StudioExportDialog.show(activity,(aspect,quality)->{});
+        int previous=choice(baseline,"export_aspect").getSelectedItemPosition();
+        baseline.dismiss();
+        AlertDialog source=StudioExportDialog.showOptions(activity,(aspect,quality,wait)->{}, "4:5");
+        assertEquals(3,choice(source,"export_aspect").getSelectedItemPosition());
+        click(source,AlertDialog.BUTTON_NEGATIVE);
+        AlertDialog legacy=StudioExportDialog.show(activity,(aspect,quality)->fail("Opening export cannot send a render"));
+        assertEquals(previous,choice(legacy,"export_aspect").getSelectedItemPosition());
+        assertNull(nextService());
+        legacy.dismiss();
+    }
+
     @Test public void chooserDefaultsToLandscapeAndRemembersConfirmedPortraitAndQuality(){
         Activity activity=Robolectric.buildActivity(Activity.class).setup().get();String[] selected=new String[2];
         AlertDialog dialog=StudioExportDialog.show(activity,(aspect,quality)->{selected[0]=aspect;selected[1]=quality;});

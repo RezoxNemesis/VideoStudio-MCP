@@ -21,16 +21,22 @@ public final class StudioExportDialog {
 
     public static AlertDialog show(Activity activity,Selection selected){
         if(activity==null||selected==null)throw new IllegalArgumentException("Export activity and selection callback are required");
-        return build(activity,(aspect,quality,wait)->selected.selected(aspect,quality),false);
+        return build(activity,(aspect,quality,wait)->selected.selected(aspect,quality),false,null);
     }
 
     /** Explicit per-export options; the legacy two-argument chooser remains unchanged. */
     public static AlertDialog showOptions(Activity activity,OptionsSelection selected){
-        if(activity==null||selected==null)throw new IllegalArgumentException("Export activity and selection callback are required");
-        return build(activity,selected,true);
+        return showOptions(activity,selected,null);
     }
 
-    private static AlertDialog build(Activity activity,OptionsSelection selected,boolean includeWait){
+    /** The edited canvas previews this same aspect before final export. */
+    public static AlertDialog showOptions(Activity activity,OptionsSelection selected,String previewAspect){
+        if(activity==null||selected==null)throw new IllegalArgumentException("Export activity and selection callback are required");
+        return build(activity,selected,true,previewAspect);
+    }
+
+    private static AlertDialog build(Activity activity,OptionsSelection selected,
+                                     boolean includeWait,String previewAspect){
         SharedPreferences preferences=activity.getSharedPreferences(PREFS,Context.MODE_PRIVATE);
         LinearLayout form=new LinearLayout(activity);form.setOrientation(LinearLayout.VERTICAL);form.setPadding(24,16,24,16);
         TextView help=new TextView(activity);help.setText("Choose the canvas shape and quality for a new MP4. Find completed exports in All Renders.");form.addView(help);
@@ -38,7 +44,8 @@ public final class StudioExportDialog {
                 new String[]{"16:9 · landscape","9:16 · portrait","1:1 · square","4:5 · portrait"});
         Spinner quality=choice(activity,form,"Quality","Export quality","export_quality",
                 new String[]{"720p · faster export","1080p · higher detail"});
-        aspect.setSelection(index(ASPECTS,preferences.getString("aspect","16:9")));
+        aspect.setSelection(index(ASPECTS,previewAspect!=null&&java.util.Arrays.asList(ASPECTS).contains(previewAspect)
+                ?previewAspect:preferences.getString("aspect","16:9")));
         quality.setSelection(index(QUALITIES,preferences.getString("quality","720p")));
         final Spinner wait;
         if(includeWait){

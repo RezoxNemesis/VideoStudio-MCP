@@ -26,10 +26,17 @@ public final class StudioTouchTransformOverlay extends View {
     private StudioLayer draft,start;
     private boolean active,dirty,pinching,complete;
     private float startX,startY,startSpan,startAngle,startMidX,startMidY;
-    private static final float FRAME_ASPECT=9f/16f;
+    private final float frameAspect;
 
-    public StudioTouchTransformOverlay(Context context, StudioLayer layer, Listener listener) {
+    public StudioTouchTransformOverlay(Context context,StudioLayer layer,Listener listener){
+        this(context,layer,9f/16f,listener);
+    }
+    public StudioTouchTransformOverlay(Context context, StudioLayer layer, float frameAspect,
+                                       Listener listener) {
         super(context);
+        if(!Float.isFinite(frameAspect)||frameAspect<=0||frameAspect>4)
+            throw new IllegalArgumentException("A supported finite preview aspect ratio is required");
+        this.frameAspect=frameAspect;
         if(layer==null||listener==null)throw new IllegalArgumentException("Touch editor needs a selected layer");
         if(!StudioLayer.IMAGE.equals(layer.type)&&!StudioLayer.SHAPE.equals(layer.type)
                 &&!StudioLayer.VIDEO.equals(layer.type))
@@ -55,7 +62,7 @@ public final class StudioTouchTransformOverlay extends View {
 
     public StudioLayer candidate(){return draft.copy();}
 
-    private RectF content(){return fittedCanvas(getWidth(),getHeight(),FRAME_ASPECT);}
+    private RectF content(){return fittedCanvas(getWidth(),getHeight(),frameAspect);}
     private RectF bounds(StudioLayer layer,RectF content){
         float centerX=content.left+layer.x*content.width();
         float centerY=content.top+layer.y*content.height();
