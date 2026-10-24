@@ -5108,6 +5108,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             out.put("workbenchRelayCompatibility",NativeWorkbenchBridge.capabilities());
             out.put("studioEditing",StudioEditingCapabilities.capabilities());
             out.put("kineticDirector",StudioKineticDirector.capabilities());
+            out.put("lastEditedPreviewFailure",StudioPreviewDiagnostics.last(this));
             out.put("audioAnalysis",NativeAudioEnvelope.capabilities());
             out.put("sketchStillExport",SketchStillExport.capabilities());
             out.put("studioWorkbench",new JSONObject().put("minimumNativeAppVersion","3.9.0")
