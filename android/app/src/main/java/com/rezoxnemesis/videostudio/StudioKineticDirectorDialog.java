@@ -55,6 +55,11 @@ public final class StudioKineticDirectorDialog {
         style.setAdapter(modes);
         fields.addView(style, new LinearLayout.LayoutParams(-1, -2));
 
+        android.widget.CheckBox shapes=new android.widget.CheckBox(activity);
+        shapes.setText("Animated vector accents / perspective grid (up to 4)");
+        shapes.setChecked(true);
+        fields.addView(shapes,new LinearLayout.LayoutParams(-1,-2));
+
         EditText tempo = new EditText(activity);
         tempo.setHint("Optional music BPM (60–220)");
         tempo.setInputType(InputType.TYPE_CLASS_NUMBER);
@@ -84,6 +89,7 @@ public final class StudioKineticDirectorDialog {
                                 .put("projectId", projectId)
                                 .put("expectedUpdatedAt", expectedRevision)
                                 .put("style", style.getSelectedItem().toString().toLowerCase(java.util.Locale.ROOT))
+                                .put("shapeAccents",shapes.isChecked())
                                 .put("titles", phrases)
                                 .put("operationId", UUID.randomUUID().toString());
                         String bpm = tempo.getText().toString().trim();
