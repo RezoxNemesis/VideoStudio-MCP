@@ -115,6 +115,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
     private int studioToolCategory=0;
     private AlertDialog studioToolDialog;
     private AlertDialog studioImageMotionDialog;
+    private AutoCloseable studioVideoEditor;
     private long studioSurfaceGeneration;
     private StudioEditorWorkspace studioWorkspace;
     private String studioWorkspacePane="Timeline",studioInspectorProjectId="",studioSelectedLayerId;
@@ -230,6 +231,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
 
     @Override
     protected void onDestroy() {
+        closeStudioVideoEditor();
         if(studioImageMotionDialog!=null)studioImageMotionDialog.dismiss();
         timelinePreviewRunning = false;
         if(stillTimelineNext!=null)ui.removeCallbacks(stillTimelineNext);
@@ -916,9 +918,9 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         setStudioPlayerControls(!edited&&!still);updateStudioPlayToggle();
     }
 
-    private void studioWorkspaceTrim(){StudioLayer layer=selectedStudioLayer();if(layer==null)trimDialog();else if(StudioLayer.IMAGE.equals(layer.type))editStudioImage(layer,layer.assetId);else if(StudioLayer.AUDIO.equals(layer.type))editStudioAudio(layer,layer.assetId);else editStudioTitle(layer);}
+    private void studioWorkspaceTrim(){StudioLayer layer=selectedStudioLayer();if(layer==null)trimDialog();else if(StudioLayer.IMAGE.equals(layer.type))editStudioImage(layer,layer.assetId);else if(StudioLayer.VIDEO.equals(layer.type))editStudioVideo(layer,layer.assetId);else if(StudioLayer.AUDIO.equals(layer.type))editStudioAudio(layer,layer.assetId);else editStudioTitle(layer);}
     private void studioWorkspaceAdjust(){StudioLayer layer=selectedStudioLayer();if(layer==null)studioAdvancedAdjustDialog(false);else studioWorkspaceTrim();}
-    private void studioWorkspaceMotion(){StudioLayer layer=selectedStudioLayer();if(layer==null)studioKeyframeManager();else if(StudioLayer.IMAGE.equals(layer.type))openStudioImageMotion(layer);else if(StudioLayer.TITLE.equals(layer.type))openStudioTitleMotion(layer);else Toast.makeText(this,"Motion keys apply to a base clip, image overlay or title",Toast.LENGTH_LONG).show();}
+    private void studioWorkspaceMotion(){StudioLayer layer=selectedStudioLayer();if(layer==null)studioKeyframeManager();else if(StudioLayer.IMAGE.equals(layer.type))openStudioImageMotion(layer);else if(StudioLayer.VIDEO.equals(layer.type))openStudioVideoMotion(layer);else if(StudioLayer.TITLE.equals(layer.type))openStudioTitleMotion(layer);else Toast.makeText(this,"Motion keys apply to a base clip, image/video overlay or title",Toast.LENGTH_LONG).show();}
     private void studioWorkspaceAudioMenu(){new AlertDialog.Builder(this).setTitle("Audio").setItems(new String[]{"Clip Volume & Fades","+ Music","Story audio"},(dialog,which)->{if(which==0)studioVolumeDialog();else if(which==1)chooseStudioAudio();else if(activeProject!=null)SketchStoryAudioDialog.show(this,activeProject.id,result->Toast.makeText(this,"Story audio saved in a separate audio project",Toast.LENGTH_LONG).show());}).show();}
 
     private View buildStudioWorkspacePane(String pane){
@@ -927,7 +929,12 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
             box.addView(title("Media Bin · "+activeProject.assets.size()+" owned assets",16));
             LinearLayout imports=new LinearLayout(this);imports.addView(studioButton("+ Import",this::pickMedia),new LinearLayout.LayoutParams(0,dp(48),1));
             imports.addView(studioButton("Import from project",()->ProjectAssetImportDialog.show(this,activeProject.id)),new LinearLayout.LayoutParams(0,dp(48),1));box.addView(imports);
-            studioWorkspaceActions(box,new String[]{"+ Image Overlay","+ Music","+ Caption","Story audio"},new Runnable[]{this::chooseStudioImage,this::chooseStudioAudio,()->editStudioTitle(null),()->{if(activeProject!=null)SketchStoryAudioDialog.show(this,activeProject.id,result->Toast.makeText(this,"Story audio saved in a separate audio project",Toast.LENGTH_LONG).show());}});
+            LinearLayout visuals=new LinearLayout(this);
+            visuals.addView(studioButton("+ Image Overlay",this::chooseStudioImage),new LinearLayout.LayoutParams(0,dp(48),1));
+            Button video=studioButton("+ Video Overlay",this::chooseStudioVideo);video.setEnabled(studioVideoCount()<2);
+            visuals.addView(video,new LinearLayout.LayoutParams(0,dp(48),1));box.addView(visuals);
+            box.addView(body("Up to 2 silent video overlays. Source files stay owned by this project."));
+            studioWorkspaceActions(box,new String[]{"+ Music","+ Caption","Story audio"},new Runnable[]{this::chooseStudioAudio,()->editStudioTitle(null),()->{if(activeProject!=null)SketchStoryAudioDialog.show(this,activeProject.id,result->Toast.makeText(this,"Story audio saved in a separate audio project",Toast.LENGTH_LONG).show());}});
             renderStudioMediaBin(box);
         }else if("Inspector".equals(pane))buildStudioInspector(box);
         else{
@@ -968,7 +975,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         if(activeProject==null)return;final String owner=activeProject.id;final long revision=activeProject.updatedAt;
         ArrayList<String> ids=new ArrayList<>(),labels=new ArrayList<>();
         if(selectedClip!=null){ids.add("");labels.add("Base clip · "+(activeProject.clips.indexOf(selectedClip)+1));}
-        for(StudioLayer layer:activeProject.studioLayers){ids.add(layer.id);ProjectStore.Asset asset=activeProject.asset(layer.assetId);labels.add((StudioLayer.IMAGE.equals(layer.type)?"Image overlay":StudioLayer.AUDIO.equals(layer.type)?"Audio":"Title")+" · "+(asset==null?layer.text:asset.name));}
+        for(StudioLayer layer:activeProject.studioLayers){ids.add(layer.id);ProjectStore.Asset asset=activeProject.asset(layer.assetId);labels.add((StudioLayer.IMAGE.equals(layer.type)?"Image overlay":StudioLayer.VIDEO.equals(layer.type)?"Video overlay":StudioLayer.AUDIO.equals(layer.type)?"Audio":"Title")+" · "+(asset==null?layer.text:asset.name)+(StudioLayer.VIDEO.equals(layer.type)?" · "+StudioEditCursor.timecode(layer.startMs):""));}
         if(ids.isEmpty()){onStudioNoTarget();return;}
         new AlertDialog.Builder(this).setTitle("Inspect target").setItems(labels.toArray(new String[0]),(dialog,index)->{
             if(activeProject==null||!owner.equals(activeProject.id)||revision!=activeProject.updatedAt){Toast.makeText(this,"Project changed. Choose its current target again.",Toast.LENGTH_LONG).show();return;}
@@ -981,7 +988,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
     private void buildStudioInspector(LinearLayout box){
         StudioLayer layer=selectedStudioLayer();
         LinearLayout heading=new LinearLayout(this);heading.setGravity(Gravity.CENTER_VERTICAL);
-        String kind=layer==null?"Base clip":StudioLayer.IMAGE.equals(layer.type)?"Image overlay":StudioLayer.AUDIO.equals(layer.type)?"Audio":"Title";
+        String kind=layer==null?"Base clip":StudioLayer.IMAGE.equals(layer.type)?"Image overlay":StudioLayer.VIDEO.equals(layer.type)?"Video overlay":StudioLayer.AUDIO.equals(layer.type)?"Audio":"Title";
         heading.addView(title(kind,17),new LinearLayout.LayoutParams(0,dp(48),1));heading.addView(studioButton("Choose target",this::chooseStudioInspectorTarget),new LinearLayout.LayoutParams(-2,dp(48)));box.addView(heading);
         if(layer!=null){
             ProjectStore.Asset asset=activeProject.asset(layer.assetId);TextView source=body((asset==null?layer.text:asset.name)+" · "+StudioEditCursor.timecode(layer.startMs)+" – "+StudioEditCursor.timecode(layer.startMs+layer.durationMs));source.setMaxLines(2);box.addView(source);
@@ -990,6 +997,11 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                 box.addView(studioButton("Placement / timing",()->editStudioImage(layer,layer.assetId)));
                 box.addView(studioButton("Delete image overlay",()->removeStudioLayer(layer)));
                 box.addView(body("Image motion keeps the source pixels. Source Crop belongs to a base clip; this overlay has no source-crop control."));
+            }else if(StudioLayer.VIDEO.equals(layer.type)){
+                box.addView(studioButton("Animate video",()->openStudioVideoMotion(layer)));
+                box.addView(studioButton("Placement / timing",()->editStudioVideo(layer,layer.assetId)));
+                box.addView(studioButton("Delete video overlay",()->removeStudioLayer(layer)));
+                box.addView(body("Silent independent video source. Source in trims its own footage; it does not move the base timeline or add source audio."));
             }else if(StudioLayer.AUDIO.equals(layer.type)){box.addView(studioButton("Edit audio",()->editStudioAudio(layer,layer.assetId)));box.addView(studioButton("Delete audio",()->removeStudioLayer(layer)));}
             else{box.addView(studioButton("Animate title",()->openStudioTitleMotion(layer)));box.addView(studioButton("Edit caption",()->editStudioTitle(layer)));box.addView(studioButton("Delete caption",()->removeStudioLayer(layer)));}
         }else if(selectedClip!=null){
@@ -1022,6 +1034,74 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
             studioImageMotionDialog=motionDialog;
         }catch(Exception error){Toast.makeText(this,"Cannot animate title: "+error.getMessage(),Toast.LENGTH_LONG).show();}
     }
+
+    private int studioVideoCount(){int count=0;if(activeProject!=null)for(StudioLayer layer:activeProject.studioLayers)if(StudioLayer.VIDEO.equals(layer.type))count++;return count;}
+
+    private boolean eligibleStudioVideo(ProjectStore.Asset asset){
+        if(asset==null||asset.mime==null||!asset.mime.startsWith("video/")||!asset.seekable||asset.durationMs<100||asset.durationMs>Long.MAX_VALUE/1000L||asset.uri==null)return false;
+        Uri uri=Uri.parse(asset.uri);return "file".equals(uri.getScheme())&&uri.getPath()!=null&&uri.getQuery()==null&&uri.getFragment()==null&&(uri.getAuthority()==null||uri.getAuthority().isEmpty());
+    }
+
+    private void chooseStudioVideo(){
+        if(activeProject==null||activeProject.clips.isEmpty()||activeProject.outputDurationMs()<100){onStudioNoTarget();return;}
+        if(studioVideoCount()>=2){Toast.makeText(this,"Up to 2 silent video overlays are supported",Toast.LENGTH_LONG).show();return;}
+        final String owner=activeProject.id;final long revision=activeProject.updatedAt,generation=studioSurfaceGeneration;
+        ArrayList<ProjectStore.Asset> videos=new ArrayList<>();ArrayList<String> labels=new ArrayList<>();
+        for(ProjectStore.Asset asset:activeProject.assets)if(eligibleStudioVideo(asset)){videos.add(asset);labels.add(asset.name);}
+        if(videos.isEmpty()){
+            new AlertDialog.Builder(this).setTitle("Add video overlay").setMessage("Import a seekable app-owned video with a known duration into this project's Media Bin first. External links cannot supply an owned overlay.")
+                    .setPositiveButton("Import from project",(dialog,which)->ProjectAssetImportDialog.show(this,owner))
+                    .setNeutralButton("+ Import",(dialog,which)->pickMedia()).setNegativeButton("Cancel",null).show();return;
+        }
+        new AlertDialog.Builder(this).setTitle("Choose an imported overlay video").setItems(labels.toArray(new String[0]),(dialog,index)->{
+            if(canApplyStudioVideo(owner,revision,generation))editStudioVideo(null,videos.get(index).id);
+        }).setNegativeButton("Cancel",null).show();
+    }
+
+    private void editStudioVideo(StudioLayer existing,String assetId){
+        if(activeProject==null)return;final String owner=activeProject.id;final long revision=activeProject.updatedAt,generation=studioSurfaceGeneration;
+        try{
+            if(!canApplyStudioVideo(owner,revision,generation))return;
+            ProjectStore.Asset asset=activeProject.asset(assetId);if(!eligibleStudioVideo(asset))throw new IllegalArgumentException("Choose an owned, seekable video with a known duration");
+            if(existing==null&&studioVideoCount()>=2)throw new IllegalArgumentException("Up to 2 silent video overlays are supported");
+            closeStudioVideoEditor();if(studioImageMotionDialog!=null)studioImageMotionDialog.dismiss();
+            StudioVideoOverlayDialog editor=StudioVideoOverlayDialog.show(this,activeProject,asset,existing,studioPlayheadMs,
+                    ()->canApplyStudioVideo(owner,revision,generation),candidate->saveStudioVideo(candidate,owner,revision,generation),
+                    closed->{if(studioVideoEditor==closed)studioVideoEditor=null;if(studioImageMotionDialog==closed.dialog())studioImageMotionDialog=null;});
+            studioVideoEditor=editor;studioImageMotionDialog=editor.dialog();
+        }catch(Exception error){Toast.makeText(this,"Cannot edit video overlay: "+error.getMessage(),Toast.LENGTH_LONG).show();}
+    }
+
+    private void openStudioVideoMotion(StudioLayer layer){
+        if(activeProject==null)return;final String owner=activeProject.id;final long revision=activeProject.updatedAt,generation=studioSurfaceGeneration;
+        try{
+            if(!canApplyStudioVideo(owner,revision,generation))return;
+            ProjectStore.Asset asset=activeProject.asset(layer.assetId);if(!eligibleStudioVideo(asset))throw new IllegalArgumentException("The video source is unavailable");
+            closeStudioVideoEditor();if(studioImageMotionDialog!=null)studioImageMotionDialog.dismiss();
+            StudioVideoMotionDialog editor=StudioVideoMotionDialog.show(this,activeProject,asset,layer,
+                    Math.max(0,Math.min(layer.durationMs,studioPlayheadMs-layer.startMs)),
+                    ()->canApplyStudioVideo(owner,revision,generation),candidate->saveStudioVideo(candidate,owner,revision,generation),
+                    closed->{if(studioVideoEditor==closed)studioVideoEditor=null;if(studioImageMotionDialog==closed.dialog())studioImageMotionDialog=null;});
+            studioVideoEditor=editor;studioImageMotionDialog=editor.dialog();
+        }catch(Exception error){Toast.makeText(this,"Cannot animate video overlay: "+error.getMessage(),Toast.LENGTH_LONG).show();}
+    }
+
+    private boolean saveStudioVideo(StudioLayer candidate,String owner,long revision,long generation){
+        if(!canApplyStudioVideo(owner,revision,generation))return false;
+        String oldTarget=studioSelectedLayerId,oldPane=studioWorkspacePane;
+        studioSelectedLayerId=candidate.id;studioWorkspacePane="Inspector";
+        if(saveStudioLayer(candidate,revision))return true;
+        studioSelectedLayerId=oldTarget;studioWorkspacePane=oldPane;return false;
+    }
+
+    private boolean canApplyStudioVideo(String projectId,long revision,long generation){
+        if(isFinishing()||isDestroyed()||activeProject==null||!projectId.equals(activeProject.id)||activeProject.updatedAt!=revision
+                ||studioSurfaceGeneration!=generation||!"editor".equals(currentScreen)){
+            Toast.makeText(this,"The editing view changed. Reopen this video overlay before applying its draft.",Toast.LENGTH_LONG).show();return false;
+        }
+        return true;
+    }
+    private void closeStudioVideoEditor(){AutoCloseable editor=studioVideoEditor;studioVideoEditor=null;if(editor!=null)try{editor.close();}catch(Exception ignored){}}
 
     private boolean canApplyStudioTitleMotion(String projectId,long revision,long surfaceGeneration){
         if(isFinishing()||isDestroyed()||activeProject==null||!projectId.equals(activeProject.id)
@@ -1563,7 +1643,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         if(existing==null||existing.startMs==start&&existing.durationMs==duration)return;
         try{
             StudioLayer changed=existing.copy();
-            if(trimLeft&&StudioLayer.AUDIO.equals(changed.type))changed.sourceInMs+=start-existing.startMs;
+            if(trimLeft&&(StudioLayer.AUDIO.equals(changed.type)||StudioLayer.VIDEO.equals(changed.type)))changed.sourceInMs+=start-existing.startMs;
             changed.startMs=start;
             changed.durationMs=duration;
             changed.validate();
