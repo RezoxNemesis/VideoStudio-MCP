@@ -1,3 +1,18 @@
+# Active demanding native editing retakes — 4.10.23/code526
+
+This isolated feature branch retains signed5252d100d9 and adds shared whole-title
+motion, finite source-sampler coverage and the trusted Android filesDir alias
+repair. Actual525creative12.4s test FAILED before export at project_import_asset;
+actualmanualPNG also FAILED hardlink EACCES. Preserve those generations. PNG
+publication/status repairs, combined full checks, original-signed CI and actual
+retakes remain pending. Do not call this candidate verified or art accepted.
+Root owns ONE Gradle and every native/JVM/ADB/model run. Feature development
+stays in isolated trees; no main/stable/Worker publication, signer replacement,
+identity/data reset, Gallery or outside media renderer. The requested240-second
+character film remains unfinished, with0accepted final-film seconds. Title
+manual+core58scopedPASS and Node835+306PASS are unit/protocol checks, not GPU
+output. Independent VIDEOoverlay work is future4.10.24/code527, not in526.
+
 # Active native analysis coverage repair — 2026-10-24
 
 Work only in isolated fix/native-analysis-coverage-v41023, based on combined525
