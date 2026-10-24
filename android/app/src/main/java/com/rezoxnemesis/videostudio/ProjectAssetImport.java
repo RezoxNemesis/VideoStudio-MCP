@@ -57,12 +57,14 @@ public final class ProjectAssetImport {
 
     public static JSONObject inspect(Context context,JSONObject input)throws Exception {
         fields(input,"projectId","expectedUpdatedAt","assetId");String projectId=id(input,"projectId"),assetId=id(input,"assetId");long revision=integer(input,"expectedUpdatedAt");cancelled();
-        ProjectStore store=new ProjectStore(context);ProjectStore.Project source=project(store,projectId,revision);ProjectStore.Asset asset=source.asset(assetId);File file=sourceFile(context,asset);long bytes=file.length();String digest=sha256(file);
-        return store.guardedProject(projectId,revision,current->{
-            if(!sameAsset(asset,current.asset(assetId)))throw bad("Source asset changed");regular(context,file);if(file.length()!=bytes)throw bad("Source bytes changed");cancelled();
-            return new JSONObject().put("ok",true).put("readOnly",true).put("projectId",projectId).put("updatedAt",revision).put("assetId",assetId)
-                    .put("name",asset.name).put("mime",asset.mime).put("durationMs",asset.durationMs).put("bytes",bytes).put("sha256",digest).put("appOwned",true);
-        });
+        try(ProjectStore store=new ProjectStore(context)){
+            ProjectStore.Project source=project(store,projectId,revision);ProjectStore.Asset asset=source.asset(assetId);File file=sourceFile(context,asset);long bytes=file.length();String digest=sha256(file);
+            return store.guardedProject(projectId,revision,current->{
+                if(!sameAsset(asset,current.asset(assetId)))throw bad("Source asset changed");regular(context,file);if(file.length()!=bytes)throw bad("Source bytes changed");cancelled();
+                return new JSONObject().put("ok",true).put("readOnly",true).put("projectId",projectId).put("updatedAt",revision).put("assetId",assetId)
+                        .put("name",asset.name).put("mime",asset.mime).put("durationMs",asset.durationMs).put("bytes",bytes).put("sha256",digest).put("appOwned",true);
+            });
+        }
     }
 
     public static JSONObject execute(Context context,JSONObject input)throws Exception {return execute(context,input,(copied,total)->{});}
@@ -75,47 +77,49 @@ public final class ProjectAssetImport {
             cancelled();String destinationId=request.getString("projectId"),sourceId=request.getString("sourceProjectId"),operationId=request.getString("operationId");
             JSONObject normalized=copy(request).put("appendToTimeline",request.optBoolean("appendToTimeline",false));String fingerprint=hash(SketchDocument.canonical(normalized).getBytes(StandardCharsets.UTF_8));
             File directory=new File(new File(new File(context.getFilesDir(),"project_asset_imports"),destinationId),hash(operationId.getBytes(StandardCharsets.UTF_8)));
-            owned(context,directory);File journalFile=new File(directory,"receipt.json");JSONObject journal=null;ProjectStore store=new ProjectStore(context);
-            if(journalFile.isFile()||new File(journalFile.getPath()+".bak").isFile()){
-                journal=readJournal(context,journalFile);if(!fingerprint.equals(journal.getString("fingerprint")))throw bad("PROJECT_ASSET_OPERATION_CONFLICT: keep the same operation request");
-                ProjectStore.Project existing=store.get(destinationId);if(existing==null)throw bad("Destination project no longer exists");
-                ProjectStore.Asset imported=existing.asset(journal.getString("assetId"));
-                if(imported!=null)return result(context,existing,imported,journal,true);
-                if(journal.optBoolean("completed",false))throw bad("Imported asset was removed; it will not be recreated over human edits");
-            }
-            ProjectStore.Project source=project(store,sourceId,request.getLong("sourceProjectUpdatedAt"));project(store,destinationId,request.getLong("expectedUpdatedAt"));
-            ProjectStore.Asset selected=source.asset(request.getString("assetId"));File original=sourceFile(context,selected);long size=original.length();String expected=request.getString("expectedSha256");
-            if(!expected.equals(sha256(original)))throw bad("PROJECT_ASSET_SOURCE_CHANGED: expected source hash differs");
-            String assetId=UUID.nameUUIDFromBytes((destinationId+"/project-asset/"+operationId).getBytes(StandardCharsets.UTF_8)).toString();
-            File output=new File(directory,"media"+extension(selected.mime));owned(context,output);
-            if(journal==null){
-                if(output.exists())throw bad("Import output already exists without its receipt");
-                directory(context,directory);
-                journal=new JSONObject().put("fingerprint",fingerprint).put("request",normalized).put("assetId",assetId).put("sha256",expected).put("bytes",size)
-                        .put("outputName",output.getName()).put("sourceAsset",copy(selected.toJson())).put("completed",false);
-                writeJournal(context,journalFile,journal);
-            }else if(!assetId.equals(journal.getString("assetId"))||size!=journal.getLong("bytes")||!sameAsset(selected,ProjectStore.Asset.fromJson(journal.getJSONObject("sourceAsset")))||!output.getName().equals(journal.getString("outputName")))throw bad("Import source metadata changed");
-            if(output.exists())verifyOutput(context,output,journal);
-            else copyBytes(context,original,output,size,expected,progress);
-            cancelled();if(!expected.equals(sha256(original)))throw bad("Source bytes changed during copying");verifyOutput(context,output,journal);
-            final JSONObject receipt=journal;final File copied=output;
-            JSONObject result=store.guardedProject(sourceId,request.getLong("sourceProjectUpdatedAt"),currentSource->{
-                if(!sameAsset(selected,currentSource.asset(selected.id)))throw bad("Source asset changed during copying");
-                return store.guardedProject(destinationId,request.getLong("expectedUpdatedAt"),destination->{
-                    cancelled();if(destination.asset(assetId)!=null)throw bad("Destination asset identity already exists");
-                    ProjectStore.Asset asset=ProjectStore.Asset.fromJson(copy(selected.toJson()));asset.id=assetId;asset.uri=Uri.fromFile(copied).toString();asset.sizeBytes=size;asset.seekable=true;asset.persistedReadAccess=true;asset.providerAuthority="";asset.createdAt=System.currentTimeMillis();
-                    asset.generationMetadata=copy(selected.generationMetadata).put("projectAssetImport",new JSONObject().put("fingerprint",fingerprint).put("operationId",operationId).put("sourceProjectId",sourceId).put("sourceAssetId",selected.id).put("sourceSha256",expected));destination.assets.add(asset);
-                    if(normalized.getBoolean("appendToTimeline")&&!asset.mime.startsWith("audio/")){
-                        ProjectStore.Clip clip=new ProjectStore.Clip();clip.id=UUID.nameUUIDFromBytes((assetId+"/clip").getBytes(StandardCharsets.UTF_8)).toString();clip.assetId=asset.id;clip.inMs=0;clip.outMs=asset.mime.startsWith("image/")?3000:asset.durationMs;
-                        if(clip.outMs<=0)throw bad("A video duration is required to append this asset");destination.clips.add(clip);
-                        StudioLayerContract.fromJson(destination,StudioLayerContract.toJson(destination.studioLayers));
-                    }
-                    store.save(destination);return result(context,destination,asset,receipt,false);
+            owned(context,directory);File journalFile=new File(directory,"receipt.json");JSONObject journal=null;
+            try(ProjectStore store=new ProjectStore(context)){
+                if(journalFile.isFile()||new File(journalFile.getPath()+".bak").isFile()){
+                    journal=readJournal(context,journalFile);if(!fingerprint.equals(journal.getString("fingerprint")))throw bad("PROJECT_ASSET_OPERATION_CONFLICT: keep the same operation request");
+                    ProjectStore.Project existing=store.get(destinationId);if(existing==null)throw bad("Destination project no longer exists");
+                    ProjectStore.Asset imported=existing.asset(journal.getString("assetId"));
+                    if(imported!=null)return result(context,existing,imported,journal,true);
+                    if(journal.optBoolean("completed",false))throw bad("Imported asset was removed; it will not be recreated over human edits");
+                }
+                ProjectStore.Project source=project(store,sourceId,request.getLong("sourceProjectUpdatedAt"));project(store,destinationId,request.getLong("expectedUpdatedAt"));
+                ProjectStore.Asset selected=source.asset(request.getString("assetId"));File original=sourceFile(context,selected);long size=original.length();String expected=request.getString("expectedSha256");
+                if(!expected.equals(sha256(original)))throw bad("PROJECT_ASSET_SOURCE_CHANGED: expected source hash differs");
+                String assetId=UUID.nameUUIDFromBytes((destinationId+"/project-asset/"+operationId).getBytes(StandardCharsets.UTF_8)).toString();
+                File output=new File(directory,"media"+extension(selected.mime));owned(context,output);
+                if(journal==null){
+                    if(output.exists())throw bad("Import output already exists without its receipt");
+                    directory(context,directory);
+                    journal=new JSONObject().put("fingerprint",fingerprint).put("request",normalized).put("assetId",assetId).put("sha256",expected).put("bytes",size)
+                            .put("outputName",output.getName()).put("sourceAsset",copy(selected.toJson())).put("completed",false);
+                    writeJournal(context,journalFile,journal);
+                }else if(!assetId.equals(journal.getString("assetId"))||size!=journal.getLong("bytes")||!sameAsset(selected,ProjectStore.Asset.fromJson(journal.getJSONObject("sourceAsset")))||!output.getName().equals(journal.getString("outputName")))throw bad("Import source metadata changed");
+                if(output.exists())verifyOutput(context,output,journal);
+                else copyBytes(context,original,output,size,expected,progress);
+                cancelled();if(!expected.equals(sha256(original)))throw bad("Source bytes changed during copying");verifyOutput(context,output,journal);
+                final JSONObject receipt=journal;final File copied=output;
+                JSONObject result=store.guardedProject(sourceId,request.getLong("sourceProjectUpdatedAt"),currentSource->{
+                    if(!sameAsset(selected,currentSource.asset(selected.id)))throw bad("Source asset changed during copying");
+                    return store.guardedProject(destinationId,request.getLong("expectedUpdatedAt"),destination->{
+                        cancelled();if(destination.asset(assetId)!=null)throw bad("Destination asset identity already exists");
+                        ProjectStore.Asset asset=ProjectStore.Asset.fromJson(copy(selected.toJson()));asset.id=assetId;asset.uri=Uri.fromFile(copied).toString();asset.sizeBytes=size;asset.seekable=true;asset.persistedReadAccess=true;asset.providerAuthority="";asset.createdAt=System.currentTimeMillis();
+                        asset.generationMetadata=copy(selected.generationMetadata).put("projectAssetImport",new JSONObject().put("fingerprint",fingerprint).put("operationId",operationId).put("sourceProjectId",sourceId).put("sourceAssetId",selected.id).put("sourceSha256",expected));destination.assets.add(asset);
+                        if(normalized.getBoolean("appendToTimeline")&&!asset.mime.startsWith("audio/")){
+                            ProjectStore.Clip clip=new ProjectStore.Clip();clip.id=UUID.nameUUIDFromBytes((assetId+"/clip").getBytes(StandardCharsets.UTF_8)).toString();clip.assetId=asset.id;clip.inMs=0;clip.outMs=asset.mime.startsWith("image/")?3000:asset.durationMs;
+                            if(clip.outMs<=0)throw bad("A video duration is required to append this asset");destination.clips.add(clip);
+                            StudioLayerContract.fromJson(destination,StudioLayerContract.toJson(destination.studioLayers));
+                        }
+                        store.save(destination);return result(context,destination,asset,receipt,false);
+                    });
                 });
-            });
-            // If interruption/restart happens after publication, the asset provenance above is the
-            // commit witness. An identical retry verifies it instead of appending another clip.
-            receipt.put("completed",true);writeJournal(context,journalFile,receipt);return result;
+                // If interruption/restart happens after publication, the asset provenance above is the
+                // commit witness. An identical retry verifies it instead of appending another clip.
+                receipt.put("completed",true);writeJournal(context,journalFile,receipt);return result;
+            }
         }finally{COPY_LOCK.unlock();}
     }
 
