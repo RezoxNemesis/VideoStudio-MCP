@@ -70,7 +70,7 @@ public final class StudioKineticDirector {
         Draft plan = draft(source, request);
         String stable = "kinetic-director/" + source.id + "/" + operationId;
         String outputId = UUID.nameUUIDFromBytes(stable.getBytes(StandardCharsets.UTF_8)).toString();
-        String signature = fingerprint(source.id + ":" + source.updatedAt + ":" + plan.receipt.toString());
+        String signature = fingerprint(source.id + ":" + source.updatedAt + ":" + SketchDocument.canonical(plan.receipt));
         String witness = "videostudio.kinetic-director.v1:" + signature;
         ProjectStore.Project prior = store.get(outputId);
         if (prior != null) {
@@ -127,7 +127,7 @@ public final class StudioKineticDirector {
         if (!"editorial".equals(style) && !"impact".equals(style) && !"minimal".equals(style))
             throw new IllegalArgumentException("Unknown kinetic template");
         JSONArray raw = request.getJSONArray("titles");
-        if (raw.isEmpty() || raw.length() > KineticBeatPlanner.MAX_TITLES)
+        if (raw.length() == 0 || raw.length() > KineticBeatPlanner.MAX_TITLES)
             throw new IllegalArgumentException("Provide 1..24 human/AI-authored title strings");
         ArrayList<String> titles = new ArrayList<>();
         for (int i = 0; i < raw.length(); i++) {
@@ -155,7 +155,8 @@ public final class StudioKineticDirector {
             JSONObject envelope = request.getJSONObject("audioEnvelope");
             if (!"videostudio.audio.envelope.v1".equals(envelope.optString("schema"))
                     || !envelope.optBoolean("sourceUnchanged", false)
-                    || !envelope.optJSONObject("coverage").optBoolean("complete", false)
+                    || envelope.optJSONObject("coverage") == null
+                    || !envelope.getJSONObject("coverage").optBoolean("complete", false)
                     || !projectId.equals(envelope.optString("projectId", ""))
                     || revision != envelope.optLong("sourceProjectUpdatedAt", -1))
                 throw new IllegalArgumentException("Verified complete audio envelope for current project revision required");
