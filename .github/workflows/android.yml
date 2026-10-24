@@ -239,7 +239,7 @@ jobs:
           } > release-notes.md
 
       - name: Publish stable latest APK release
-        if: github.event_name == 'push'
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
