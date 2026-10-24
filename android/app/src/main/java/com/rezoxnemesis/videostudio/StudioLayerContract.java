@@ -56,6 +56,7 @@ public final class StudioLayerContract {
         lane.validate();
         long output=project.outputDurationMs();
         if(StudioLayer.CAMERA.equals(lane.type)){
+            if(output<100)throw new IllegalArgumentException("Camera requires a renderable output timeline");
             if(lane.startMs!=0)
                 throw new IllegalArgumentException("Global camera must start at timeline zero");
             // Camera keyframes have their own authored duration; if clips are
