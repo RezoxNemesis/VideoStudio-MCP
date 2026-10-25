@@ -71,6 +71,7 @@ final class NativeAgentMailboxActions {
   "camera2d_capabilities","camera2d_plan","camera2d_apply",
   "resolve_color_capabilities","resolve_grade_plan","resolve_grade_apply",
   "fairlight_fx_capabilities","fairlight_fx_plan","fairlight_fx_apply",
+  "fusion_scene_capabilities","fusion_scene_plan","fusion_scene_apply",
   "kinetic_benchmark_capabilities", "kinetic_benchmark_plan", "kinetic_benchmark_apply",
   "set_studio_layers",
   "apply_tool",
