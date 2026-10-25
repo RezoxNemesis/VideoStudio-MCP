@@ -448,6 +448,8 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                         }).show();
             });
             recoveryCard.addView(retry,margins(-1,dp(46),dp(8),0,0,0));
+            recoveryCard.addView(studioButton("New renders only · keep interrupted jobs paused",this::allowNewRenderSession),
+                    margins(-1,dp(46),dp(7),0,0,0));
             box.addView(recoveryCard,margins(-1,-2,dp(9),0,0,0));
         }
         NativeStartupGuard launchGuard=new NativeStartupGuard(this);
@@ -460,6 +462,8 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
             safety.addView(body(launchGuard.reason()));
             Button retry=studioButton("Retry interrupted work (optional)",this::retryHeldRecovery);
             safety.addView(retry,margins(-1,dp(48),dp(10),0,0,0));
+            safety.addView(studioButton("New exports only · keep old recovery paused",this::allowNewRenderSession),
+                    margins(-1,dp(48),dp(7),0,0,0));
             box.addView(safety,margins(-1,-2,dp(10),0,0,0));
         }
 
@@ -492,6 +496,29 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         creative.addView(authoring,margins(-1,dp(46),dp(7),0,0,0));
         box.addView(creative,margins(-1,-2,dp(16),0,0,0));
         setScreen(scroll,"home");
+    }
+
+    /** A deliberate foreground Android-only grant, never a private MCP bypass. */
+    private void allowNewRenderSession(){
+        new AlertDialog.Builder(this)
+                .setTitle("Allow new rendering while old recovery stays paused?")
+                .setMessage("Check that VideoStudio opens and all your projects load normally. "
+                        +"New video rendering is enabled for 30 minutes after confirmation; "
+                        +"the previously interrupted render stays quarantined. "
+                        +"A new task can still fail or use significant memory. "
+                        +"No source deletion or Gallery access occurs.")
+                .setNegativeButton("Keep paused",null)
+                .setPositiveButton("Allow new renders",(dialog,which)->{
+                    try{
+                        startForegroundService(new Intent(this,ControlService.class)
+                                .setAction(ControlService.ACTION_ALLOW_FRESH_RENDER));
+                        Toast.makeText(this,"New render permission requested; previous recovery remains paused",
+                                Toast.LENGTH_LONG).show();
+                    }catch(Exception error){
+                        Toast.makeText(this,"New render permission unavailable: "
+                                +error.getClass().getSimpleName(),Toast.LENGTH_LONG).show();
+                    }
+                }).show();
     }
 
     private void retryHeldRecovery(){
