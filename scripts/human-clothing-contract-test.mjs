@@ -106,7 +106,7 @@ test('human clothing metadata matches native literals and gives ordinary ChatGPT
 });
 
 test('release is coherent at 4.10.27/code545 and existing hand/archive/action floors stay intact',()=>{
- assert.match(native('AppProtocol'),/APP_VERSION = "4\.10\.42"/);const build=fs.readFileSync(new URL('../android/app/build.gradle.kts',import.meta.url),'utf8');assert.match(build,/versionCode = 545/);assert.match(build,/versionName = "4\.10\.42"/);
+ assert.match(native('AppProtocol'),/APP_VERSION = "4\.10\.43"/);const build=fs.readFileSync(new URL('../android/app/build.gradle.kts',import.meta.url),'utf8');assert.match(build,/versionCode = 546/);assert.match(build,/versionName = "4\.10\.43"/);
  assert.equal(contract.STUDIO_NATIVE_ACTIONS.size,Object.keys(contract.studioToolSchemas).length);assert(contract.STUDIO_ALIAS_ACTIONS.has("studio_sketch_layered_drawing_preview"));for(const action of contract.STUDIO_NATIVE_ACTIONS)assert(contract.STUDIO_ALIAS_ACTIONS.has("studio_"+action));assert.equal(contract.HAND_ANIMATION_CAPABILITIES.renderStyleMinimumNativeVersion,'4.8.1');
  const archive={archiveProjectId:'archive',archiveName:'actor.vssketch',expectedSha256:'a'.repeat(64),operationId:'restore'};for(const action of names('sketch_restore_archive')){assert.deepEqual(contract.nativeStudioParameters(action,archive),archive);assert.doesNotThrow(()=>contract.requireStudioVersion({appVersion:'4.1.0'},action,archive));assert.throws(()=>contract.nativeStudioParameters(action,{...archive,clothingStyle:'tailored'}));}
 });

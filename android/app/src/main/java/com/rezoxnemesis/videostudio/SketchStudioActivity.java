@@ -1361,6 +1361,12 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
         if(destroyed)return;
         pollLiveViewerCommands();
         pollAgentStage();
+        // An actual foreground ChatGPT gesture owns the selected frame until
+        // the UI preview and atomic native edit have both resolved. Do not
+        // steal the workspace with a follow-session or new live playback.
+        if(agentGestureAnimator!=null||agentGestureSaving){
+            handler.postDelayed(this,180);return;
+        }
         if(localEditableReturn!=null&&localEditableReturn.ownsEditor()){handler.postDelayed(this,250);return;}
         if(followNewerNativeWork()){
             handler.postDelayed(this,250);
