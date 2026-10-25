@@ -77,7 +77,20 @@ public final class StudioEditingCapabilities {
                     .put("pinchTimelineZoom",true)
                     .put("usesNativeRevisionGuardOnSave",true)
                     .put("portraitAndLandscape",true)
-                    .put("preservesExistingProjectAssets",true));}
+                    .put("preservesExistingProjectAssets",true))
+                  .put("compositionCamera2D",new JSONObject()
+                    .put("minimumNativeVersion","4.10.33")
+                    .put("applyAction","camera2d_apply")
+                    .put("planAction","camera2d_plan")
+                    .put("maxCameraTracks",1)
+                    .put("wholeSceneAfterOverlays",true)
+                    .put("panZoomRotate",true)
+                    .put("supportsBézierKeyframes",true)
+                    .put("2DOnly",true)
+                    .put("3DCamera",false)
+                    .put("cameraOpacity",false)
+                    .put("sourceMediaUnchanged",true)
+                    .put("studioPreviewAndExportSharePipeline",true));}
         catch(org.json.JSONException error){throw new IllegalStateException("Invalid native editor capability registry",error);}
     }
 }

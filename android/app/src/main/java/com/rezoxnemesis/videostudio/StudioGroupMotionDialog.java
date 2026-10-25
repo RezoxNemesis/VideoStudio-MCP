@@ -46,7 +46,8 @@ public final class StudioGroupMotionDialog {
         ScrollView scroll=new ScrollView(context);
         scroll.addView(editor.column);
         editor.dialog=new AlertDialog.Builder(context)
-                .setTitle("Motion Group · exact keyframes")
+                .setTitle(StudioLayer.CAMERA.equals(group.type)?
+                        "Composition Camera · exact 2D keys":"Motion Group · exact keyframes")
                 .setView(scroll)
                 .setPositiveButton("Apply group keys",null)
                 .setNegativeButton("Cancel",null).create();
@@ -72,16 +73,21 @@ public final class StudioGroupMotionDialog {
 
     private StudioGroupMotionDialog(Context context,StudioLayer group,
                                     Predicate<JSONArray> save) throws Exception {
-        if(context==null||group==null||!StudioLayer.GROUP.equals(group.type)||save==null)
+        if(context==null||group==null||(!StudioLayer.GROUP.equals(group.type)
+                &&!StudioLayer.CAMERA.equals(group.type))||save==null)
             throw new IllegalArgumentException("A saved original motion group is required");
         this.context=context;this.save=save;
         base=group.copy();
         detached=group.motionKeyframes==null?new JSONArray():new JSONArray(group.motionKeyframes.toString());
         column=new LinearLayout(context);column.setOrientation(LinearLayout.VERTICAL);
         int pad=StudioUi.dp(context,16);column.setPadding(pad,pad,pad,pad);
-        label("The motion group moves all linked titles, images and vector layers together. "
-                +"Values are relative to each child: X/Y in output-frame units, scale ×, "
-                +"rotation in degrees, and opacity from 0..1. Timing is group-local in milliseconds.");
+        label(StudioLayer.CAMERA.equals(group.type)?
+                "Camera moves the final entire composition AFTER image/video/title compositing. "
+                +"X/Y move the whole picture, scale changes framing, rotation turns the frame. "
+                +"This is 2D, not physical 3D; camera opacity is fixed at 1.":
+                "The motion group moves linked title, image and vector layers together. "
+                +"X/Y are relative to output-frame units, scale multiplies them, "
+                +"rotation adds degrees, and opacity is 0..1. Times are group-local.");
         status=label("");
         keyList=new LinearLayout(context);keyList.setOrientation(LinearLayout.VERTICAL);
         column.addView(keyList);
@@ -94,6 +100,10 @@ public final class StudioGroupMotionDialog {
         });
         for(int i=0;i<FIELDS.length;i++){
             label(FIELDS[i]);fields[i]=numberInput("Group transform "+FIELDS[i]);
+            if(StudioLayer.CAMERA.equals(group.type)&&"opacity".equals(FIELDS[i])){
+                fields[i].setText("1.0");fields[i].setEnabled(false);
+                fields[i].setContentDescription("Camera opacity fixed at 1: change clip opacity instead");
+            }
             column.addView(fields[i]);
         }
         label("Interpolation to next key");
@@ -133,7 +143,9 @@ public final class StudioGroupMotionDialog {
             JSONObject key=new JSONObject().put("timeMs",at)
                     .put("easing",easing.getSelectedItem().toString());
             for(int i=0;i<FIELDS.length;i++)
-                key.put(FIELDS[i],Double.parseDouble(fields[i].getText().toString()));
+                key.put(FIELDS[i],StudioLayer.CAMERA.equals(base.type)&&
+                        "opacity".equals(FIELDS[i])?1.0:
+                        Double.parseDouble(fields[i].getText().toString()));
             if("cubic_bezier".equals(easing.getSelectedItem().toString()))
                 key.put("bezier",StudioBezierEasing.fromText(bezier.getText().toString()));
             ArrayList<JSONObject> changed=new ArrayList<>();
