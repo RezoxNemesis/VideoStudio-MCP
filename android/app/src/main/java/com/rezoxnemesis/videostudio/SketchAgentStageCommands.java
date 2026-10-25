@@ -28,7 +28,7 @@ public final class SketchAgentStageCommands implements AutoCloseable {
             "stroke","eraser","line","rect","ellipse","polygon","select",
             "eyedropper","pan","curve","nodes","precision","precision_brush");
     private static final Set<String> ACTIONS=Set.of(
-            "tool","frame","layer","object","camera","fit","onion",
+            "tool","brush","frame","layer","object","camera","fit","onion",
             "grid","play","pause","wait","transform_curve","shape_curve","xsheet");
 
     private final SQLiteDatabase db;
@@ -76,7 +76,7 @@ public final class SketchAgentStageCommands implements AutoCloseable {
                 .put("maxQueuedCommands",MAX_PENDING)
                 .put("queueRetentionMs",MAX_AGE_MS)
                 .put("availableSteps",new JSONArray()
-                        .put("tool").put("frame").put("layer").put("object")
+                        .put("tool").put("brush").put("frame").put("layer").put("object")
                         .put("camera").put("fit").put("onion").put("grid")
                         .put("play").put("pause").put("wait").put("transform_curve")
                         .put("shape_curve").put("xsheet"))
@@ -86,6 +86,11 @@ public final class SketchAgentStageCommands implements AutoCloseable {
                 .put("visualProof","Only foreground editor acknowledges each actual UI step")
                 .put("xsheetEditableFromVersion","4.10.38")
                 .put("xsheetHoldEditOperation","set_exposure_cel")
+                .put("brushSettingFields",new JSONArray()
+                        .put("color").put("widthPx").put("fill").put("preset")
+                        .put("opacity").put("hardness").put("angle").put("stabilization"))
+                .put("brushSettingsOnly",true)
+                .put("brushSettingRequiresVisibleWatch",true)
                 .put("sourceEditsAction","sketch_edit")
                 .put("strokeVisualization","existing accepted native SketchLivePlayer")
                 .put("persistedWithoutBackgroundUI",true)
@@ -117,6 +122,32 @@ public final class SketchAgentStageCommands implements AutoCloseable {
                     if(!TOOL_NAMES.contains(tool))
                         throw SketchDocument.bad("Only real, non-paint-backing sketch tools can be selected by stage");
                     break;
+                case "brush": {
+                    SketchDocument.fields(step,"action,color,widthPx,fill,preset,opacity,hardness,angle,stabilization");
+                    if(step.length()<2)
+                        throw SketchDocument.bad("Choose at least one actual brush property to change");
+                    if(step.has("color")) {
+                        Object c=step.opt("color");
+                        if(!(c instanceof String))
+                            throw SketchDocument.bad("Brush colour must be #AARRGGBB");
+                        SketchDocument.color((String)c);
+                    }
+                    if(step.has("widthPx")) {
+                        int side=Math.min(document.getInt("width"),document.getInt("height"));
+                        SketchDocument.number(step,"widthPx",side*.0005,side*.2);
+                    }
+                    if(step.has("fill"))SketchDocument.bool(step,"fill");
+                    if(step.has("preset")){
+                        if(!(step.opt("preset") instanceof String)||
+                                !java.util.Arrays.asList(SketchBrushes.PRESETS).contains(step.getString("preset")))
+                            throw SketchDocument.bad("Unknown native brush preset");
+                    }
+                    if(step.has("opacity"))SketchDocument.number(step,"opacity",0,1);
+                    if(step.has("hardness"))SketchDocument.number(step,"hardness",0,1);
+                    if(step.has("angle"))SketchDocument.number(step,"angle",-180,180);
+                    if(step.has("stabilization"))SketchDocument.number(step,"stabilization",0,.9);
+                    break;
+                }
                 case "frame":
                     SketchDocument.fields(step,"action,frameIndex");
                     SketchDocument.integer(step,"frameIndex",0,document.getInt("frameCount")-1);
