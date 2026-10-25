@@ -35,6 +35,8 @@ public final class StudioLayer {
     public JSONArray motionKeyframes;
     /** Optional source-preserving IMAGE/SHAPE alpha mask. Null retains legacy JSON. */
     public JSONObject mask;
+    /** AUDIO-only source-preserving native EQ/dynamics recipe. */
+    public JSONObject fairlightFx;
     /** One-level source-free motion parent. Missing ID preserves all old layers. */
     public String parentId="";
     /** SHAPE-only original Canvas geometry. No external image source required. */
@@ -90,6 +92,12 @@ public final class StudioLayer {
                 throw new IllegalArgumentException("Native SHAPE has no external asset, title text or audio");
             if(!SHAPE_KINDS.contains(shapeKind)||!Float.isFinite(strokeWidth)||strokeWidth<0||strokeWidth>.20f)
                 throw new IllegalArgumentException("Unknown shape or invalid normalized stroke width");
+        }
+        if(fairlightFx!=null){
+            if(!AUDIO.equals(type))
+                throw new IllegalArgumentException("Fairlight effects apply only to owned audio lanes");
+            try{StudioFairlightSettings.validate(fairlightFx);}
+            catch(Exception error){throw new IllegalArgumentException("Invalid native audio effect",error);}
         }
         if(mask!=null){
             if(!IMAGE.equals(type)&&!SHAPE.equals(type))
@@ -153,6 +161,8 @@ public final class StudioLayer {
                 obj.put("width",width==.01f?.01:(double)width);obj.put("height",height==.01f?.01:(double)height);
                 obj.put("rotation",rotation);obj.put("opacity",opacity);}
             if((IMAGE.equals(type)||TITLE.equals(type))&&!parentId.isEmpty())obj.put("parentId",parentId);
+            if(AUDIO.equals(type)&&fairlightFx!=null)
+                obj.put("fairlightFx",StudioFairlightSettings.validate(fairlightFx));
             if(mask!=null)obj.put("mask",StudioMaskRasterizer.validate(mask));
             if(motionKeyframes!=null){
                 if(IMAGE.equals(type))StudioImageMotion.fromLayer(this);
@@ -177,6 +187,8 @@ public final class StudioLayer {
         if(o.has("shapeKind")||o.has("strokeColor")||o.has("strokeWidth"))
             throw new IllegalArgumentException("Shape-only fields require type shape");
         if(o.has("audioMode"))throw new IllegalArgumentException("audioMode is only supported on video layers");
+        if(o.has("fairlightFx")&&!AUDIO.equals(l.type))
+            throw new IllegalArgumentException("Fairlight audio fields need type AUDIO");
         if(o.has("parentId")&&!TITLE.equals(l.type)&&!IMAGE.equals(l.type))
             throw new IllegalArgumentException("Unsupported parent link for audio track");
         if(o.has("parentId")&&!(o.opt("parentId") instanceof String))
@@ -186,6 +198,12 @@ public final class StudioLayer {
             throw new IllegalArgumentException("Only IMAGE/SHAPE support visual masks");
         if(!TITLE.equals(l.type))for(String field:CAPTION_FIELDS)if(o.has(field))
             throw new IllegalArgumentException(field+" is only supported on title layers");
+        if(o.has("fairlightFx")){
+            if(!(o.opt("fairlightFx") instanceof JSONObject))
+                throw new IllegalArgumentException("Fairlight effects must be an object");
+            try{l.fairlightFx=StudioFairlightSettings.validate(o.optJSONObject("fairlightFx"));}
+            catch(Exception error){throw new IllegalArgumentException("Invalid Fairlight layer data",error);}
+        }
         l.assetId=o.optString("assetId","");
         l.text=o.optString("text","");
         l.startMs=o.has("startMs")?StudioClipKeyframes.integer(o,"startMs",0,86_400_000):0;
