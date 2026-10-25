@@ -34,6 +34,12 @@ public final class SketchLiveViewerCommandsTest {
                 .put("command",action);
     }
 
+    /** Read receipts by identity only; command parameters are not status query fields. */
+    private JSONObject receiptQuery(String[] pins,String operationId)throws Exception{
+        return new JSONObject().put("sketchId",pins[0])
+                .put("sessionId",pins[1]).put("operationId",operationId);
+    }
+
     @Test public void queuedIsNotCompletedUntilRealForegroundAck()throws Exception{
         Context ctx=RuntimeEnvironment.getApplication();
         String[] pair=live(ctx);
@@ -52,7 +58,7 @@ public final class SketchLiveViewerCommandsTest {
             JSONObject claim=queue.claim(pair[0],pair[1]);
             assertNotNull(claim);
             assertEquals("running",claim.getString("state"));
-            assertEquals("running",queue.status(cmd(pair,"speed_once","speed")).getString("state"));
+            assertEquals("running",queue.status(receiptQuery(pair,"speed_once")).getString("state"));
             JSONObject result=queue.finish(claim,true,new JSONObject()
                     .put("note","Native view speed applied")
                     .put("viewPaused",false).put("viewRate",.25));
@@ -72,8 +78,8 @@ public final class SketchLiveViewerCommandsTest {
             JSONObject claim=queue.claim(pair[0],pair[1]);
             assertNotNull(claim);
             queue.release(claim);
-            assertEquals("queued",queue.status(cmd(pair,"pause_once","pause")).getString("state"));
-            assertFalse(queue.status(cmd(pair,"pause_once","pause")).getBoolean("foregroundApplied"));
+            assertEquals("queued",queue.status(receiptQuery(pair,"pause_once")).getString("state"));
+            assertFalse(queue.status(receiptQuery(pair,"pause_once")).getBoolean("foregroundApplied"));
             JSONObject retried=queue.claim(pair[0],pair[1]);
             assertNotNull(retried);
             JSONObject rejected=queue.finish(retried,false,new JSONObject().put("note","Sketch player closed"));
@@ -97,7 +103,11 @@ public final class SketchLiveViewerCommandsTest {
                     ()->queue.enqueue(ctx,cmd(pair,"rate_three","speed").put("speed","0.25")));
             assertThrows(IllegalArgumentException.class,
                     ()->queue.enqueue(ctx,cmd(new String[]{pair[0],"not_a_real_session"},"ghost","pause")));
-            assertEquals("queued",queue.status(cmd(pair,"same_op","pause")).getString("state"));
+            assertEquals("queued",queue.status(receiptQuery(pair,"same_op")).getString("state"));
+            assertThrows(IllegalArgumentException.class,
+                    ()->queue.status(cmd(pair,"same_op","pause")));
+            assertThrows(IllegalArgumentException.class,
+                    ()->queue.status(receiptQuery(pair,"same_op").put("gallery",true)));
         }
     }
 
