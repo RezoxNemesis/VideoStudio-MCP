@@ -50,6 +50,9 @@ Imported `manifest.json` must include:
   "license": "Apache-2.0",
   "runtimeAdapter": "videostudio.temporal-video-onnx.v1",
   "requiredAvailableRamMb": 2048,
+  "requiredResidentMb": 1200,
+  "requiredWorkingSetMb": 1800,
+  "backend": "onnxruntime-cpu",
   "hostedInference": false,
   "requiresSubscription": false,
   "timeLimited": false,
@@ -139,3 +142,40 @@ fails; original media and original project remain untouched.
 This prototype adds no paid services and **does not yet establish
 model availability, photoreal image-to-video quality or actual phone MP4
 export**.
+
+## 2026-10-26 hardware and timing correction
+
+The owner's RMX5004 model is a realme P1 Speed 5G (MediaTek Dimensity
+7300 Energy). The Snapdragon/Qualcomm Hexagon/QNN engines from other
+Android generative video projects are **not interchangeable** with this
+SoC. This candidate is **ONNX Runtime CPU-only**. It does not claim
+validated MediaTek APU/NNAPI acceleration. The local `DeviceComputeProfile`
+determines current free memory, thermal and working-set limits, and
+`NativeOfflineVideoHardware` rejects an unsupported backend or model
+that exceeds a conservative real-device resident/working-set budget.
+
+The phone's October 25 profile reported about 5907 MiB available RAM,
+2480 MiB working-set budget and 1686 MiB resident-model budget. This is
+a transient measurement, **not guaranteed future model headroom**.
+Neither Wan2.2 5B nor a Qualcomm-only bundle has been shown to run
+inside this budget on the device.
+
+The native editor's previous still-image minimum duration was wrong for
+generated neural frames. `NativeRenderEngine` now requires generated
+asset role and matching neural-frame indices before accepting the special
+9 FPS/short-frame clock; generic photos retain normal duration behavior.
+`NativeOfflineVideoMotionAudit` rejects blank/static temporal tensor
+outputs and records sampled frame delta metrics. **Measurable moving
+pixels are not evidence of character consistency, good acting, or
+comparable cinematic quality.**
+
+The checkpoint pipeline re-infers on restart and atomically replaces
+any prior frame file. A partial, stale or corrupt PNG cannot be silently
+accepted as a valid current frame just because its filename exists.
+The input reference bytes are rehashed to detect changes during work.
+The model must declare `requiredResidentMb` and
+`requiredWorkingSetMb` and `backend: "onnxruntime-cpu"`.
+
+The six-short-shot / custom tiny 128×128 interface is a **prototype
+research ABI**, not a suitable substitute for the user's 16:9 wuxia
+cinematics, high-resolution characters or 30-second films.
