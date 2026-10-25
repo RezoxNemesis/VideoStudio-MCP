@@ -848,7 +848,23 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         studioPreviewErrorView=body(studioPreviewError);studioPreviewErrorView.setTag("studio-preview-error");
         studioPreviewErrorView.setMaxLines(2);studioPreviewErrorView.setEllipsize(android.text.TextUtils.TruncateAt.END);
         studioPreviewErrorView.setVisibility(studioPreviewError.isEmpty()?View.GONE:View.VISIBLE);
-        studioPreviewErrorView.setOnClickListener(view->{if(!studioPreviewError.isEmpty())new AlertDialog.Builder(this).setTitle("Edited preview").setMessage(studioPreviewError).setPositiveButton("OK",null).show();});
+        studioPreviewErrorView.setOnClickListener(view->{
+            if(studioPreviewError.isEmpty())return;
+            String detail=studioPreviewError;
+            JSONObject diagnostic=StudioPreviewDiagnostics.last(this);
+            if(activeProject!=null&&activeProject.id.equals(diagnostic.optString("projectId"))){
+                detail+="\\n\\nNative Media3 diagnostic (no source media shared):"
+                        +"\\nError: "+diagnostic.optString("media3ErrorCodeName","unknown")
+                        +" ("+diagnostic.optInt("media3ErrorCode",-1)+")"
+                        +"\\nStage: "+diagnostic.optString("phase","unknown")
+                        +"\\nTitles: "+diagnostic.optInt("titleLayers",0)
+                        +" · Graphics: "+diagnostic.optInt("imageLayers",0)
+                        +"\\nShader passes: "+diagnostic.optInt("plannedShaderPasses",-1)
+                        +" · Textures: "+diagnostic.optInt("plannedOverlayTextures",-1);
+            }
+            new AlertDialog.Builder(this).setTitle("Edited preview diagnostics")
+                    .setMessage(detail).setPositiveButton("Close",null).show();
+        });
         FrameLayout.LayoutParams errorSize=new FrameLayout.LayoutParams(-1,-2,Gravity.BOTTOM);errorSize.bottomMargin=dp(50);studioPreviewFrame.addView(studioPreviewErrorView,errorSize);
         studioPreviewRetry=studioButton("Retry preview",this::playStudioTimeline);studioPreviewRetry.setTag("studio-preview-retry");
         studioPreviewRetry.setVisibility(studioPreviewError.isEmpty()?View.GONE:View.VISIBLE);
