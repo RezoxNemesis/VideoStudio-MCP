@@ -24,14 +24,18 @@ public final class SketchAgentStageMcpTest {
     }
     @Test public void capabilitiesExplicitlyDistinguishQueuedAndVisibleWork()throws Exception{
         JSONObject advertised=NativeWorkbenchBridge.capabilities().getJSONObject("sketchVisibleAgent");
-        assertEquals("4.10.37",advertised.getString("minimumNativeVersion"));
+        assertEquals("4.10.43",advertised.getString("minimumNativeVersion"));
         assertEquals("sketch_stage_execute",advertised.getString("enqueueAction"));
         assertEquals("sketch_stage_status",advertised.getString("statusAction"));
         assertEquals(16,advertised.getInt("maxStepsPerCommand"));
         assertTrue(advertised.getBoolean("persistedWithoutBackgroundUI"));
-        assertTrue(advertised.getBoolean("originalDocumentUnchanged"));
+        assertTrue(advertised.getBoolean("navigationStepsSourceUnchanged"));
+        assertTrue(advertised.getBoolean("sourceChangesOnlyAfterForegroundCommit"));
+        assertFalse(advertised.getBoolean("originalDocumentUnchanged"));
+        assertTrue(advertised.getJSONArray("sourceChangingGestureSteps").toString().contains("object_drag"));
+        assertTrue(advertised.getJSONArray("sourceChangingGestureSteps").toString().contains("node_drag"));
         assertFalse(advertised.getBoolean("galleryAccess"));
-        assertEquals("4.10.37",SketchCapabilities.get()
+        assertEquals("4.10.43",SketchCapabilities.get()
                 .getJSONObject("visibleAgentDirector").getString("minimumNativeVersion"));
     }
 }
