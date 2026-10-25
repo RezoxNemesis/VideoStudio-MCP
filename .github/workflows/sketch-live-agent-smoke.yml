@@ -5,6 +5,7 @@ on:
     branches:
       - feature/sketch-agent-live-reliability-v41041-20261025
       - feature/sketch-human-live-controls-v41041-20261025
+      - feature/sketch-visible-brush-agent-v41042-20261025
   pull_request:
     branches:
       - feature/sketch-live-replay-deck-v41040-20261025
@@ -41,6 +42,7 @@ jobs:
         run: |
           set -euo pipefail
           gradle :app:testDebugUnitTest --no-daemon --stacktrace --console=plain \
+            --tests '*SketchAgentBrushStageTest' \
             --tests '*SketchEditableXsheetUiTest' \
             --tests '*SketchWritableXsheetTest' \
             --tests '*SketchLiveViewerCommandsTest' \
