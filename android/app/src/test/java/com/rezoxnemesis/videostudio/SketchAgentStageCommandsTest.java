@@ -55,7 +55,9 @@ public final class SketchAgentStageCommandsTest {
             assertFalse(queued.getBoolean("applied"));
             assertFalse(queued.getBoolean("documentModified"));
             assertFalse(queued.getBoolean("galleryAccess"));
-            assertEquals(before,SketchDocument.canonical(new SketchProjectStore(app).get(doc.getString("id"))));
+            try(SketchProjectStore projects=new SketchProjectStore(app)){
+                assertEquals(before,SketchDocument.canonical(projects.get(doc.getString("id"))));
+            }
         }
         try(SketchAgentStageCommands stage=new SketchAgentStageCommands(app)){
             JSONObject same=stage.enqueue(app,request);
@@ -65,7 +67,8 @@ public final class SketchAgentStageCommandsTest {
                 assertNotNull(claimed);
                 assertEquals(i,claimed.getInt("stepIndex"));
                 assertEquals(5,claimed.getInt("stepCount"));
-                assertEquals("running",stage.status(request).getString("state"));
+                assertEquals("running",stage.status(new JSONObject().put("sketchId",doc.getString("id"))
+                    .put("operationId",request.getString("operationId")))).getString("state"));
                 JSONObject result=stage.finish(claimed,true,new JSONObject()
                         .put("appliedOnScreen",true).put("actualFrameIndex",21)
                         .put("atMs",System.currentTimeMillis()));
@@ -88,7 +91,8 @@ public final class SketchAgentStageCommandsTest {
             stage.enqueue(app,program);
             JSONObject claimed=stage.claim(doc.getString("id"));
             assertNotNull(claimed);
-            assertEquals("running",stage.status(program).getString("state"));
+            assertEquals("running",stage.status(new JSONObject().put("sketchId",doc.getString("id"))
+                    .put("operationId",program.getString("operationId")))).getString("state"));
             stage.release(claimed);
             assertEquals("queued",stage.status(program).getString("state"));
             assertEquals(0,stage.status(program).getInt("completedSteps"));
@@ -121,7 +125,7 @@ public final class SketchAgentStageCommandsTest {
             new JSONArray().put(new JSONObject().put("action","camera")
                 .put("zoom",99).put("centerX",.5).put("centerY",.5)),
             new JSONArray().put(new JSONObject().put("action","camera")
-                .put("zoom",3).put("centerX",Double.POSITIVE_INFINITY).put("centerY",.5)),
+                .put("zoom",3).put("centerX","infinity").put("centerY",.5)),
             new JSONArray().put(new JSONObject().put("action","tool").put("tool","paint")),
             new JSONArray().put(new JSONObject().put("action","frame").put("frameIndex",4000)),
             new JSONArray().put(new JSONObject().put("action","shape_curve").put("objectId","not-owned")),
@@ -145,7 +149,7 @@ public final class SketchAgentStageCommandsTest {
     }
 
     @Test public void failedForegroundStepNeverIncrementsProgress()throws Exception{
-        Context app=RuntimeEnvironment.getApplication(),ignore=null;
+        Context app=RuntimeEnvironment.getApplication();
         JSONObject doc=source(app),program=request(doc,new JSONArray()
                 .put(new JSONObject().put("action","grid").put("enabled",true)));
         try(SketchAgentStageCommands stage=new SketchAgentStageCommands(app)){
