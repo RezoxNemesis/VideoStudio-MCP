@@ -1425,6 +1425,19 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
                 },duration);
                 return;
             }
+            case "xsheet":{
+                int page=step.getInt("frameIndex");
+                String level=step.getString("layerId");
+                SketchDocument.layer(document,level);
+                int levelIndex=layerIds.indexOf(level);
+                if(levelIndex<0)throw SketchDocument.bad("Xsheet level is not in the active drawing");
+                setFrame(page);
+                canvas.setLayerId(level);
+                layers.setSelection(levelIndex);
+                xsheetDialog(page,levelIndex);
+                showAgentStage(claimed,"opened Xsheet frame "+(page+1)+" · "+level);
+                break;
+            }
             case "transform_curve":{
                 if(step.has("objectId"))agentChooseObject(step.getString("objectId"));
                 else if(step.has("layerId")){
@@ -1845,22 +1858,57 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
     private void framesMenu(){menu("Frames / Cels",new String[]{"Go to frame","Timing / canvas","Exposure","Exposure sheet","Xsheet (read-only)","Copy → next","Group motion","Cel tools","Onion skin","Onion settings","Film direction"},this::scrubDialog,this::timingDialog,this::exposureDialog,this::bookTimingDialog,this::xsheetDialog,this::duplicateCel,this::layerGroupMotionDialog,this::celDialog,()->{if(playing){onMessage("Onion skin is disabled during playback; your preference is retained");return;}onionEnabled=!onionEnabled;canvas.setOnion(onionEnabled);saveOnionOptions();onMessage(onionEnabled?"Onion skin on":"Onion skin off");},this::onionDialog,this::sequenceDirectionDialog);}
     private void xsheetDialog(){
         if(document==null)return;
-        if(bookId!=null){onMessage("Xsheet currently shows the selected editable sketch page; open a standalone sketch to view its layer columns.");return;}
+        xsheetDialog(canvas.getFrame(),Math.max(0,layerIds.indexOf(canvas.getLayerId())));
+    }
+    private void xsheetDialog(int targetFrame,int firstLevel){
+        if(document==null)return;
+        if(bookId!=null){
+            onMessage("This Xsheet edits the selected standalone sketch. Animation-book page exposures use Book timing.");
+            return;
+        }
         try{
             final JSONObject opened=SketchDocument.copy(document);
-            final String owner=sketchId;final long revision=opened.getLong("revision");
-            SketchXsheetDialog.show(this,opened,canvas.getFrame(),0,(selected,level)->{
-                if(document==null||!owner.equals(sketchId)||document.optLong("revision")!=revision){
-                    onMessage("This Xsheet is an older revision. Reopen it before selecting frames.");return;
+            final String owner=sketchId;
+            final java.util.concurrent.atomic.AtomicLong sheetRevision=
+                    new java.util.concurrent.atomic.AtomicLong(opened.getLong("revision"));
+            SketchXsheetDialog.Selection seek=(selected,level)->{
+                if(document==null||!owner.equals(sketchId)
+                        ||document.optLong("revision")!=sheetRevision.get()){
+                    onMessage("The Xsheet belongs to an older revision. Reopen to select a current cell.");
+                    return;
                 }
-                runAction("Select frame",()->{
-                    if(!owner.equals(sketchId)||document==null||document.optLong("revision")!=revision)return;
+                runAction("Select Xsheet cell",()->{
+                    if(!owner.equals(sketchId)||document==null
+                            ||document.optLong("revision")!=sheetRevision.get())return;
                     if(layerIds.contains(level))canvas.setLayerId(level);
                     selectFilmstrip(selected);
                 });
-            });
+            };
+            SketchXsheetDialog.ExposureWriter write=(frame,level,duration,revision)->{
+                if(document==null||!owner.equals(sketchId)||revision!=document.optLong("revision"))
+                    throw new IllegalStateException("SKETCH_SOURCE_CHANGED: reopen the current Xsheet");
+                if(playing||loadingDrawing||watching||livePlayer!=null||watchInFlight)
+                    throw new IllegalStateException("Switch to Draw myself and stop playback before changing cel timing");
+                if(session==null||session.pending()>0||session.hasPreparedSaves())
+                    throw new IllegalStateException("Finish the current drawing save before retiming the cel");
+                JSONObject op=new JSONObject().put("type","set_exposure_cel")
+                        .put("layerId",level)
+                        .put("frameIndex",frame)
+                        .put("exposureFrames",duration);
+                SketchXsheetEdits.plan(document,op);
+                // SketchEditorSession owns optimistic local editing, recovery and
+                // the exact native revision/operation journal. Never bypass it
+                // with an independent UI-only mutation or replaced bitmap.
+                session.submit(new JSONArray().put(op));
+                present(session.document());
+                sheetRevision.set(session.document().getLong("revision"));
+                onMessage("Cel timing queued for native save · drawing pixels unchanged");
+                return SketchDocument.copy(session.document());
+            };
+            SketchXsheetDialog.show(this,opened,targetFrame,firstLevel,seek,write);
         }catch(Exception failure){onMessage(failure.getMessage());}
     }
+
     private boolean navigatorStillCurrent(String openedBook,String openedSketch){return document!=null&&java.util.Objects.equals(openedBook,bookId)&&(openedBook!=null||java.util.Objects.equals(openedSketch,sketchId));}
     private void scrubDialog(){
         if(document==null)return;final String openedBook=bookId,openedSketch=sketchId;final int count=bookId==null?document.optInt("frameCount"):book.optInt("pageCount"),current=bookId==null?canvas.getFrame():bookPage;
