@@ -92,6 +92,11 @@ public final class NativeOfflineVideoGenerator {
                 .put("fullyCinematicModelOnPhoneVerified",false);
         result.put("requiresUserInstalledCompatibleModelPack",
                 !result.getBoolean("modelPackInstalled"));
+        result.put("hardware",NativeOfflineVideoHardware.inspect(context));
+        result.put("modelPackDetectedButNotVerified",result.getBoolean("modelPackInstalled"));
+        result.put("modelReadyForExecution",false);
+        result.put("reasonIfNotReady","A compatible locally trained temporal ONNX model must pass full integrity, runtime ABI and memory preflight");
+
         return result;
     }
 
@@ -118,8 +123,10 @@ public final class NativeOfflineVideoGenerator {
                 ||m.optBoolean("hostedInference",false)||m.optBoolean("requiresSubscription",false)
                 ||m.optBoolean("timeLimited",false))
             throw new IllegalArgumentException("Remote, paid or expiring model packs are unsupported");
+        JSONObject hardware=NativeOfflineVideoHardware.inspect(context);
+        NativeOfflineVideoHardware.requireCompatible(m,hardware);
         JSONObject files=m.optJSONObject("files");
-        if(files==null)throw new IllegalArgumentException("Local model pack needs signed file hashes");
+        if(files==null)throw new IllegalArgumentException("Local model pack needs declared SHA-256 file hashes");
         for(String relative:REQUIRED){
             String expected=files.optString(relative,"");
             if(!expected.matches("[0-9a-f]{64}"))throw new IllegalArgumentException("Model hash missing for "+relative);
