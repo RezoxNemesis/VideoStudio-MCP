@@ -31,6 +31,10 @@ public class NativeFreshRenderRecoveryTest {
         assertTrue(guard.held());
         assertTrue(guard.mayStartFreshHeavy("export_project",now+201));
         assertTrue(guard.mayStartFreshHeavy("cinematic_3d_render",now+201));
+        assertFalse("Model installation cannot use limited new-render consent",
+                guard.mayStartFreshHeavy("install_model_pack",now+201));
+        assertFalse("Arbitrary creative graphs require separate recovery approval",
+                guard.mayStartFreshHeavy("run_creative_graph",now+201));
         assertFalse("Old unsafe recovery is never automatically resumed",
                 guard.mayAutoResume("old-crashed-render","export_project",now+201));
     }
