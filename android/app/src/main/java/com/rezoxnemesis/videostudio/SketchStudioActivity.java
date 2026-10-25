@@ -92,7 +92,9 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
     private final String[] toolValues={"stroke","eraser","line","rect","ellipse","polygon","select","eyedropper","pan","curve","nodes","paint","paint_erase","clone","precision","precision_brush"};
     private String sketchId;
     private SketchCanvasView canvas;
-    private TextView status,previewStatus;
+    private TextView status,previewStatus,agentStageIndicator;
+    private boolean agentStageInFlight;
+    private String agentStageActiveOperation="";
     private SeekBar frames;
     private Spinner layers;
     private final ArrayList<String> layerIds = new ArrayList<>();
@@ -133,6 +135,19 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
         android.widget.FrameLayout viewport=new android.widget.FrameLayout(this);
         viewport.addView(canvas,new android.widget.FrameLayout.LayoutParams(-1,-1));
         viewport.addView(previewStatus,new android.widget.FrameLayout.LayoutParams(-1,-2,android.view.Gravity.TOP));
+        agentStageIndicator=new TextView(this);
+        agentStageIndicator.setTextColor(0xffeaf6e7);
+        agentStageIndicator.setTextSize(12);
+        agentStageIndicator.setPadding(dp(10),dp(7),dp(10),dp(7));
+        agentStageIndicator.setBackgroundColor(0xee183a32);
+        agentStageIndicator.setMaxLines(2);
+        agentStageIndicator.setVisibility(View.GONE);
+        agentStageIndicator.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
+        agentStageIndicator.setContentDescription("Real ChatGPT Sketch Studio navigation");
+        android.widget.FrameLayout.LayoutParams agentStagePosition=
+                new android.widget.FrameLayout.LayoutParams(-1,-2,android.view.Gravity.TOP);
+        agentStagePosition.topMargin=dp(66);
+        viewport.addView(agentStageIndicator,agentStagePosition);
         LinearLayout drawingArea=new LinearLayout(this);drawingArea.setOrientation(LinearLayout.HORIZONTAL);drawingArea.addView(viewport,new LinearLayout.LayoutParams(0,-1,2));
         layeredReferencePanel=column();layeredReferencePanel.setBackgroundColor(0xff273345);layeredReferencePanel.setVisibility(View.GONE);drawingArea.addView(layeredReferencePanel,new LinearLayout.LayoutParams(0,-1,1));
         TextView referenceTitle=new TextView(this);referenceTitle.setText("REFERENCE ONLY");referenceTitle.setTextColor(StudioUi.TEXT);referenceTitle.setTextSize(11);layeredReferencePanel.addView(referenceTitle);
@@ -1191,6 +1206,7 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
 
     private final Runnable watchTick=new Runnable(){public void run(){
         if(destroyed)return;
+        pollAgentStage();
         if(localEditableReturn!=null&&localEditableReturn.ownsEditor()){handler.postDelayed(this,250);return;}
         if(followNewerNativeWork()){
             handler.postDelayed(this,250);
