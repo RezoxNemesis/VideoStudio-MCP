@@ -35,6 +35,8 @@ public final class StudioLayer {
     public JSONArray motionKeyframes;
     /** Optional source-preserving IMAGE/SHAPE alpha mask. Null retains legacy JSON. */
     public JSONObject mask;
+    /** Optional normalized TL/TR/BR/BL projective corners; null preserves legacy layers. */
+    public JSONArray cornerPin;
     /** One-level source-free motion parent. Missing ID preserves all old layers. */
     public String parentId="";
     /** Static project-owned SHAPE track matte. Missing fields keep old JSON byte-compatible. */
@@ -46,7 +48,7 @@ public final class StudioLayer {
     public float strokeWidth=.02f;
     private static final String[] CAPTION_FIELDS={"fontSize","fontFamily","fontStyle","textAlign","backgroundColor"};
     private static final Set<String> SHAPE_KINDS=Set.of("rect","ellipse","ring","diamond","line","grid");
-    private static final Set<String> SHAPE_FIELDS=Set.of("id","type","startMs","durationMs","x","y","width","height","rotation","opacity","color","shapeKind","strokeColor","strokeWidth","motionKeyframes","mask","parentId","matteLayerId","matteMode","matteOnly");
+    private static final Set<String> SHAPE_FIELDS=Set.of("id","type","startMs","durationMs","x","y","width","height","rotation","opacity","color","shapeKind","strokeColor","strokeWidth","motionKeyframes","mask","parentId","matteLayerId","matteMode","matteOnly","cornerPin");
     private static final Set<String> GROUP_FIELDS=Set.of("id","type","startMs","durationMs","motionKeyframes");
     private static final Set<String> VIDEO_FIELDS=Set.of("id","type","assetId","audioMode","startMs","durationMs","sourceInMs",
             "x","y","width","height","rotation","opacity","motionKeyframes");
@@ -90,6 +92,11 @@ public final class StudioLayer {
             if(matteOnly)throw new IllegalArgumentException("Hidden matte source cannot also use a second matte");
             if(!parentId.isEmpty()||(motionKeyframes!=null&&motionKeyframes.length()>0))
                 throw new IllegalArgumentException("Static matte target cannot use independently moving keys");
+        }
+        if(cornerPin!=null){
+            if(!IMAGE.equals(type)&&!SHAPE.equals(type))
+                throw new IllegalArgumentException("Corner pin only supports image or original vector layers");
+            StudioCornerPinRasterizer.validate(cornerPin);
         }
         if(mask!=null){
             if(!IMAGE.equals(type)&&!SHAPE.equals(type))
@@ -155,6 +162,8 @@ public final class StudioLayer {
             if(IMAGE.equals(type)&&!matteLayerId.isEmpty()){
                 obj.put("matteLayerId",matteLayerId).put("matteMode",matteMode);
             }
+            if(cornerPin!=null&&IMAGE.equals(type))
+                obj.put("cornerPin",StudioCornerPinRasterizer.validate(cornerPin));
             if(mask!=null)obj.put("mask",StudioMaskRasterizer.validate(mask));
             if(motionKeyframes!=null){
                 if(IMAGE.equals(type))StudioImageMotion.fromLayer(this);
@@ -179,6 +188,8 @@ public final class StudioLayer {
             throw new IllegalArgumentException("Shape-only fields require type shape");
         if(o.has("audioMode"))throw new IllegalArgumentException("audioMode is only supported on video layers");
         if(o.has("matteOnly"))throw new IllegalArgumentException("Only original shape tracks can be matte-only");
+        if(o.has("cornerPin")&&!IMAGE.equals(l.type))
+            throw new IllegalArgumentException("Only image/vector can be corner pinned");
         if((o.has("matteLayerId")||o.has("matteMode"))&&!IMAGE.equals(l.type))
             throw new IllegalArgumentException("Only image or shape tracks can use static alpha mattes");
         if(o.has("matteMode")&&!o.has("matteLayerId"))
@@ -221,6 +232,10 @@ public final class StudioLayer {
             catch(org.json.JSONException error){throw new IllegalArgumentException(
                     TITLE.equals(l.type)?"Invalid title motion keys":"Invalid image motion keys",error);}
         }
+        if(o.has("cornerPin")){
+            if(!(o.opt("cornerPin") instanceof JSONArray))throw new IllegalArgumentException("Image corner pin must be an array");
+            l.cornerPin=StudioCornerPinRasterizer.validate(o.optJSONArray("cornerPin"));
+        }
         if(o.has("mask")){
             if(!(o.opt("mask") instanceof JSONObject))throw new IllegalArgumentException("Image mask must be an object");
             l.mask=StudioMaskRasterizer.validate(o.optJSONObject("mask"));
@@ -242,6 +257,7 @@ public final class StudioLayer {
                     .put("color",color).put("shapeKind",shapeKind)
                     .put("strokeColor",strokeColor).put("strokeWidth",strokeWidth);
             if(!parentId.isEmpty())obj.put("parentId",parentId);
+            if(cornerPin!=null)obj.put("cornerPin",StudioCornerPinRasterizer.validate(cornerPin));
             if(matteOnly)obj.put("matteOnly",true);
             if(!matteLayerId.isEmpty()){
                 obj.put("matteLayerId",matteLayerId).put("matteMode",matteMode);
@@ -283,6 +299,10 @@ public final class StudioLayer {
         l.shapeKind=o.optString("shapeKind","rect");
         l.strokeColor=o.optInt("strokeColor",0xffffffff);
         l.strokeWidth=(float)StudioClipKeyframes.number(o,"strokeWidth",.02,0,.20);
+        if(o.has("cornerPin")){
+            if(!(o.opt("cornerPin") instanceof JSONArray))throw new IllegalArgumentException("Shape corner pin must be an array");
+            l.cornerPin=StudioCornerPinRasterizer.validate(o.optJSONArray("cornerPin"));
+        }
         if(o.has("mask")){
             if(!(o.opt("mask") instanceof JSONObject))throw new IllegalArgumentException("Shape mask must be an object");
             l.mask=StudioMaskRasterizer.validate(o.optJSONObject("mask"));
