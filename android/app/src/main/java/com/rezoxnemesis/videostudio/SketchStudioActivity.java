@@ -1265,6 +1265,7 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
      */
     private void pollAgentStage(){
         if(agentStageInFlight||!resumed||!watching||loadingDrawing
+                ||localEditableReturn!=null&&localEditableReturn.ownsEditor()
                 ||livePlayer!=null||watchInFlight||session==null||session.pending()>0
                 ||session.error()!=null||canvas==null||canvas.isDrawing()
                 ||bookId!=null||sketchId==null||document==null)return;
