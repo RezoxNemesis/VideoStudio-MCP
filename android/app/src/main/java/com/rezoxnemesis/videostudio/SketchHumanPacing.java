@@ -18,6 +18,19 @@ public final class SketchHumanPacing {
     public static final int MAX_VISIBLE_MS=750;
     private SketchHumanPacing(){}
 
+    public static JSONObject capabilities()throws Exception{
+        return new JSONObject().put("minimumNativeVersion","4.10.33")
+                .put("modes",new JSONArray().put(FAST).put(READABLE).put(CINEMATIC))
+                .put("maximumAdaptiveVisibleMilliseconds",MAX_VISIBLE_MS)
+                .put("enabledOnlyForAutoJournalledNativeDrawing",true)
+                .put("userOwnedLiveSessionSpeedUnchanged",true)
+                .put("acceptedInkOnly",true)
+                .put("sourceEditExecutionNotSlowed",true)
+                .put("doesNotInventStrokes",true)
+                .put("liveMethod","SketchLivePlayer real native hand prefix")
+                .put("galleryAccess",false);
+    }
+
     public static String requireMode(String value){
         if(!MODES.contains(value))
             throw new IllegalArgumentException("Use fast, readable or cinematic drawing playback");
