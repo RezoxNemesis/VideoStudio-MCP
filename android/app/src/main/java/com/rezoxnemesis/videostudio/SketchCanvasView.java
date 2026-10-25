@@ -45,6 +45,8 @@ public final class SketchCanvasView extends View {
     private JSONArray gesture = new JSONArray(), polygon = new JSONArray();
     private float downX, downY, viewScale = 1, left, top;
     private JSONObject dragBase, dragTransform,nodePreview;private int nodeCommand=-1,nodeOffset;
+    /** True transient selected geometry, never written into the source document. */
+    private boolean agentGestureActive;
     private String liveObject;private float liveFraction=1;
     public void setPresentation(String objectId,float fraction){if(objectId==null)hideAgentHand();liveObject=objectId;liveFraction=fraction;if(renderer!=null)renderer.setPresentation(objectId,fraction);invalidate();}
     private JSONObject brushStyle;
@@ -316,6 +318,62 @@ public final class SketchCanvasView extends View {
     public boolean isDrawing(){return pointerDown||nodePreview!=null||gesture.length()>0||polygon.length()>0||dragTransform!=null||navigating;}
     public float getZoom(){return zoom;}
     public void selectObject(String id){selectedId=id;invalidate();}
+    /**
+     * Present a real, source-pinned native object or node manipulation through
+     * the same preview paths used by finger dragging. No synthetic MotionEvents
+     * or screenshots, and absolutely no persisted edit until SketchEditOps ACK.
+     */
+    public void presentAgentGesture(SketchAgentGestureOps.Plan plan,float fraction)throws Exception{
+        if(android.os.Looper.myLooper()!=android.os.Looper.getMainLooper())
+            throw new IllegalStateException("Foreground native gesture must run on Android UI thread");
+        if(disposed||document==null||plan==null||pointerDown||navigating)
+            throw SketchDocument.bad("Canvas is not idle for an agent gesture");
+        if(!plan.sourceSketchId.equals(document.getString("id"))||
+                plan.sourceRevision!=document.getLong("revision")||
+                plan.frameIndex!=frame)
+            throw new IllegalStateException("SKETCH_STAGE_SOURCE_CHANGED: canvas is showing a different drawing/frame");
+        agentGestureActive=true;
+        selectedId=plan.objectId;
+        layerId=plan.layerId;
+        if(plan.editingNode()){
+            dragTransform=null;
+            nodePreview=plan.previewNode(fraction);
+            if(renderer!=null)renderer.setGeometryPreview(nodePreview);
+        }else{
+            nodePreview=null;
+            if(renderer!=null)renderer.setGeometryPreview(null);
+            dragTransform=plan.previewTransform(fraction);
+        }
+        double[] exact=plan.cursor(fraction);
+        setAgentHand(SketchAgentHand.State.manipulation(
+                exact[0],exact[1],plan.objectId,
+                plan.editingNode()?"Edit curve node":"Select / transform",
+                plan.editingNode()?"Moving actual Bézier handle":"Transforming selected original object"));
+        invalidateTouchPreview(false);
+        invalidate();
+    }
+
+    /** No phantom pixels survive a cancelled, failed or committed gesture. */
+    public void clearAgentGesture(){
+        agentGestureActive=false;
+        dragTransform=null;
+        nodePreview=null;
+        if(renderer!=null)renderer.setGeometryPreview(null);
+        hideAgentHand();
+        invalidateTouchPreview(true);
+        invalidate();
+    }
+
+    public JSONObject actualAgentGestureState()throws Exception{
+        return new JSONObject().put("visible",agentGestureActive)
+                .put("objectId",agentGestureActive?selectedId:"")
+                .put("frameIndex",frame)
+                .put("sketchId",document==null?"":document.optString("id"))
+                .put("sourceRevision",document==null?-1:document.optLong("revision"))
+                .put("hasTransformPreview",agentGestureActive&&dragTransform!=null)
+                .put("hasNodePreview",agentGestureActive&&nodePreview!=null)
+                .put("writesSource",false);
+    }
     private void clearFrameCache(){for(RasterFrame b:frameCache.values())b.bitmap.recycle();frameCache.clear();cacheBytes=0;lastRasterFrame=-1;lastRasterRevision=-1;}
     private int viewportEdge(){return Math.max(128,Math.min(1024,Math.max(getWidth(),getHeight())));}
     private JSONObject visibleCrop()throws Exception {
@@ -377,7 +435,7 @@ public final class SketchCanvasView extends View {
         if(image==null||image.bitmap.isRecycled())return;JSONObject c=image.crop;RectF target=c==null?new RectF(0,0,w,h):new RectF((float)c.getDouble("x")*w,(float)c.getDouble("y")*h,(float)(c.getDouble("x")+c.getDouble("width"))*w,(float)(c.getDouble("y")+c.getDouble("height"))*h);
         canvas.drawBitmap(image.bitmap,null,target,tint);
     }
-    public void dispose() { if(disposed)return;stopAgentCamera();disposed=true;imageSelections.clear();playbackPreview=false;previewActive=false;hideAgentHand();invalidateTouchPreview(true);++rasterGeneration;requestedRasterGeneration=rasterGeneration;rasterWorker.execute(()->{if(touchPaintCache!=null){touchPaintCache.close();touchPaintCache=null;touchPaintOwner=null;}});rasterWorker.shutdown();detachPaintPublication();clearFrameCache();if(renderer!=null){renderer.close();renderer=null;} }
+    public void dispose() { if(disposed)return;clearAgentGesture();stopAgentCamera();disposed=true;imageSelections.clear();playbackPreview=false;previewActive=false;hideAgentHand();invalidateTouchPreview(true);++rasterGeneration;requestedRasterGeneration=rasterGeneration;rasterWorker.execute(()->{if(touchPaintCache!=null){touchPaintCache.close();touchPaintCache=null;touchPaintOwner=null;}});rasterWorker.shutdown();detachPaintPublication();clearFrameCache();if(renderer!=null){renderer.close();renderer=null;} }
 
     @Override protected void onDraw(Canvas canvas) {
         super.onDraw(canvas); if (document == null||disposed) return;
@@ -403,7 +461,7 @@ public final class SketchCanvasView extends View {
             for(JSONObject preview:pendingPaintPreviews.values())if(!actualTouch||!preview.optString("strokeId").equals(touchCompositeStroke))drawPaintPreview(canvas,preview,w,h);
             if(grid||symmetry){paint.setStyle(Paint.Style.STROKE);paint.setStrokeWidth(1/viewScale);paint.setColor(0x553fa4c9);if(grid){for(int i=1;i<10;i++){canvas.drawLine(w*i/10f,0,w*i/10f,h,paint);canvas.drawLine(0,h*i/10f,w,h*i/10f,paint);}}if(symmetry)drawSymmetryGuides(canvas,w,h);}
             if((gesture.length()>0||polygon.length()>0)&&(!actualTouch||!isPaintTool()||!java.util.Objects.equals(paintStrokeId,touchCompositeStroke)))drawGesture(canvas,w,h);
-            if (selectedId != null && isEnabled() && liveObject == null) drawSelection(canvas, w, h);
+            if (selectedId != null && (isEnabled()||agentGestureActive) && liveObject == null) drawSelection(canvas, w, h);
             canvas.restoreToCount(save);
             if(agentHandEnabled&&agentHand.visible&&agentHand.x>=0&&agentHand.x<=1&&agentHand.y>=0&&agentHand.y<=1)
                 SketchAgentHand.draw(canvas,agentHand,left+(float)agentHand.x*w*viewScale,top+(float)agentHand.y*h*viewScale,StudioUi.dp(getContext(),28));
