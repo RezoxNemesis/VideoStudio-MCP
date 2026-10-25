@@ -52,7 +52,7 @@ public class StudioProceduralVfxTest {
         }
     }
 
-    @Test public void effectStateSurvivesNativeProjectSerializationWithoutChangingOldLayers(){
+    @Test public void effectStateSurvivesNativeProjectSerializationWithoutChangingOldLayers() throws Exception {
         StudioLayer fx=emitter("energy");
         fx.motionKeyframes=new JSONArray().put(new JSONObject().put("timeMs",0)
                 .put("x",-.1).put("opacity",0).put("easing","ease_out"))
