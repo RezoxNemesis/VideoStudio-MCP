@@ -178,6 +178,24 @@ public final class NativeOfflineVideoGenerator {
             throw new IllegalArgumentException("Local video ONNX tensor ABI differs: "+name);
     }
 
+    /** Exact source-byte proof: selected documents are read, never Gallery-enumerated. */
+    private String hashOwnedSource(ProjectStore.Asset asset)throws Exception{
+        if(asset==null)return "";
+        MessageDigest sha=MessageDigest.getInstance("SHA-256");
+        long n=0;
+        try(InputStream in=context.getContentResolver().openInputStream(Uri.parse(asset.uri))){
+            if(in==null)throw new IllegalArgumentException("Owned reference is unreadable");
+            byte[] buffer=new byte[128*1024];int count;
+            while((count=in.read(buffer))>=0){
+                check();
+                n+=count;
+                if(n>IMAGE_LIMIT)throw new IllegalArgumentException("Reference exceeds 64 MiB");
+                sha.update(buffer,0,count);
+            }
+        }
+        return OpenPipelineArtifacts.hex(sha.digest());
+    }
+
     private Bitmap image(ProjectStore.Asset asset)throws Exception{
         if(asset==null)return Bitmap.createBitmap(NativeOfflineVideoPlan.WIDTH,
                 NativeOfflineVideoPlan.HEIGHT,Bitmap.Config.ARGB_8888);
@@ -302,6 +320,7 @@ public final class NativeOfflineVideoGenerator {
                         throw new IllegalStateException("SOURCE_PROJECT_CHANGED_DURING_GENERATION");
                     ProjectStore.Asset anchor="text_to_video".equals(plan.getString("mode"))?null:
                             current.asset(assets.getString(shot));
+                    String anchorHash=hashOwnedSource(anchor);
                     Bitmap conditioning=image(anchor);
                     try{
                         Map<String,OnnxTensor> inputs=new LinkedHashMap<>();
@@ -359,6 +378,7 @@ public final class NativeOfflineVideoGenerator {
                                         .put("planSha256",plan.getString("planSha256"))
                                         .put("shotIndex",shot).put("frameIndex",frame)
                                         .put("imagePromptUsed",anchor!=null)
+                                        .put("sourceImageSha256",anchorHash)
                                         .put("proceduralFallback",false);
                                 ProjectStore.Clip clip=new ProjectStore.Clip();
                                 clip.id=UUID.nameUUIDFromBytes((outputId+"/clip/"+fileName)
@@ -370,6 +390,8 @@ public final class NativeOfflineVideoGenerator {
                             }
                         }finally{for(OnnxTensor t:inputs.values())if(t!=null)t.close();}
                     }finally{conditioning.recycle();}
+                    if(!anchorHash.equals(hashOwnedSource(anchor)))
+                        throw new IllegalStateException("SOURCE_IMAGE_BYTES_CHANGED_DURING_GENERATION");
                 }
             }
         }finally{LocalDrawingEngine.INFERENCE_SLOT.release();}
