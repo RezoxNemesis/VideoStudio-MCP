@@ -20,6 +20,7 @@ final class NativeStartupGuard {
     private static final String PREFS="videostudio_startup_guard_v457";
     static final long CRASH_WINDOW_MS=3L*60*1000;
     static final long RETRY_WINDOW_MS=20L*60*1000;
+    static final long FRESH_RENDER_WINDOW_MS=30L*60*1000;
     private static final int MAX_ATTEMPT_RECORDS=16;
     private final SharedPreferences state;
 
@@ -50,6 +51,7 @@ final class NativeStartupGuard {
                 .putInt("rapidUncleanStarts",count)
                 .putBoolean("recoveryHeld",held)
                 .putString("holdReason",reason)
+                .putLong("freshHeavyConsentAt",0L)
                 .putString("currentVersion",installedVersion==null?"":installedVersion)
                 .apply();
         return new Start(upgrade,held,count);
@@ -95,13 +97,30 @@ final class NativeStartupGuard {
 
     synchronized void hold(String reason){
         state.edit().putBoolean("recoveryHeld",true)
+                .putLong("freshHeavyConsentAt",0L)
                 .putString("holdReason",reason==null?"Native render recovery held":reason).apply();
+    }
+
+    /** Only an explicit local Android UI action may grant time-limited NEW heavy work.
+     * Old recovery remains quarantined. A service process restart clears this grant.
+     */
+    synchronized void allowFreshHeavyAfterOwnerCheck(long now){
+        if(now<=0||!held()||!state.getBoolean("serviceStartupOpen",false))
+            throw new IllegalStateException("Open VideoStudio safely before allowing fresh renders");
+        state.edit().putLong("freshHeavyConsentAt",now).apply();
+    }
+    synchronized boolean mayStartFreshHeavy(String action,long now){
+        if(!heavy(action))return true;
+        if(!held())return true;
+        long at=state.getLong("freshHeavyConsentAt",0);
+        return at>0&&now>=at&&now-at<=FRESH_RENDER_WINDOW_MS;
     }
     synchronized boolean held(){return state.getBoolean("recoveryHeld",false);}
     synchronized String reason(){return state.getString("holdReason","");}
     synchronized void userRetry(){
         state.edit().putBoolean("recoveryHeld",false)
                 .putString("holdReason","")
+                .putLong("freshHeavyConsentAt",0L)
                 .putString("recentPlanAttempts","{}")
                 .putInt("rapidUncleanStarts",0)
                 .apply();
@@ -118,6 +137,11 @@ final class NativeStartupGuard {
             result.put("rapidUncleanStarts",state.getInt("rapidUncleanStarts",0));
             result.put("projectsPreserved",true);
             result.put("retryRequiresOwnerAction",true);
+            long consentAt=state.getLong("freshHeavyConsentAt",0L);
+            long now=System.currentTimeMillis();
+            result.put("freshHeavyOwnerConsent",consentAt>0&&now>=consentAt
+                    &&now-consentAt<=FRESH_RENDER_WINDOW_MS);
+            result.put("oldRecoveryStillHeld",held());
             result.put("sourceAssetsCleared",false);
         }catch(Exception ignored){}
         return result;
