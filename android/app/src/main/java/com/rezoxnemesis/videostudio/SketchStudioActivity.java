@@ -169,7 +169,7 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
         liveReplayHud.addView(liveReplayStatus,new LinearLayout.LayoutParams(-1,-2));
         LinearLayout playbackRow=new LinearLayout(this);
         playbackRow.setOrientation(LinearLayout.HORIZONTAL);
-        liveReplayPause=liveReplayButton(playbackRow,"Pause",this::toggleLiveReplayPause);
+        liveReplayPause=liveReplayButton(playbackRow,"Pause stroke",this::toggleLiveReplayPause);
         liveReplayNext=liveReplayButton(playbackRow,"Next stroke",this::stepLiveReplay);
         liveReplaySpeed=liveReplayButton(playbackRow,"0.25×",this::showLiveReplaySpeed);
         liveReplayHud.addView(playbackRow,new LinearLayout.LayoutParams(-1,-2));
@@ -1187,7 +1187,7 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
         liveReplayHud.setVisibility(active?View.VISIBLE:View.GONE);
         if(!active)return;
         boolean paused=livePlayer.isPaused();
-        liveReplayPause.setText(paused?"Resume":"Pause");
+        liveReplayPause.setText(paused?"Resume stroke":"Pause stroke");
         liveReplayPause.setContentDescription(paused?"Resume real saved stroke":"Pause current saved stroke");
         liveReplayNext.setText("Next stroke");
         float speed=livePlayer.playbackSpeed();

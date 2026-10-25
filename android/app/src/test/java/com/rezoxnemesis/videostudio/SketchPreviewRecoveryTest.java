@@ -125,7 +125,7 @@ public class SketchPreviewRecoveryTest {
   void drain()throws Exception{worker.submit(()->{}).get(15,TimeUnit.SECONDS);ShadowLooper.idleMainLooper();}
   CountDownLatch block()throws Exception{CountDownLatch gate=new CountDownLatch(1),started=new CountDownLatch(1);worker.execute(()->{started.countDown();try{gate.await(15,TimeUnit.SECONDS);}catch(InterruptedException e){Thread.currentThread().interrupt();}});assertTrue(started.await(10,TimeUnit.SECONDS));return gate;}
   void play(){Button b=button(studio.getWindow().getDecorView(),"Play");if(b!=null)b.performClick();}
-  void pausePlayback()throws Exception{Button b=button(studio.getWindow().getDecorView(),"Pause");if(b!=null)b.performClick();call(studio,"updateStatus",new Class[]{});}
+  void pausePlayback()throws Exception{Button b=button(studio.getWindow().getDecorView(),"Pause");assertNotNull("Manual animation Pause must be visible and distinct from live-stroke replay",b);assertEquals(View.VISIBLE,b.getVisibility());b.performClick();call(studio,"updateStatus",new Class[]{});}
   String text(){return texts(studio.getWindow().getDecorView());}
   void more(String label){button(studio.getWindow().getDecorView(),"More").performClick();AlertDialog dialog=ShadowAlertDialog.getLatestAlertDialog();ListView list=dialog.getListView();for(int i=0;i<list.getAdapter().getCount();i++)if(label.equals(list.getAdapter().getItem(i).toString())){list.performItemClick(null,i,list.getAdapter().getItemId(i));return;}fail("More must expose "+label);}
   void present(JSONObject doc)throws Exception{call(studio,"present",new Class[]{JSONObject.class},doc);}
@@ -136,6 +136,6 @@ public class SketchPreviewRecoveryTest {
  private static Object field(Object o,String name)throws Exception{Field f=o.getClass().getDeclaredField(name);f.setAccessible(true);return f.get(o);}
  private static void set(Object o,String name,Object value)throws Exception{Field f=o.getClass().getDeclaredField(name);f.setAccessible(true);f.set(o,value);}
  private static Object call(Object o,String name,Class<?>[] types,Object...args)throws Exception{Method m=o.getClass().getDeclaredMethod(name,types);m.setAccessible(true);return m.invoke(o,args);}
- private static Button button(View v,String title){if(v instanceof Button&&title.contentEquals(((Button)v).getText()))return(Button)v;if(v instanceof ViewGroup)for(int i=0;i<((ViewGroup)v).getChildCount();i++){Button b=button(((ViewGroup)v).getChildAt(i),title);if(b!=null)return b;}return null;}
+ private static Button button(View v,String title){if(v.getVisibility()!=View.VISIBLE)return null;if(v instanceof Button&&title.contentEquals(((Button)v).getText()))return(Button)v;if(v instanceof ViewGroup)for(int i=0;i<((ViewGroup)v).getChildCount();i++){Button b=button(((ViewGroup)v).getChildAt(i),title);if(b!=null)return b;}return null;}
  private static String texts(View v){StringBuilder out=new StringBuilder();if(v.getVisibility()!=View.VISIBLE)return "";if(v instanceof TextView)out.append(((TextView)v).getText()).append('\n');if(v instanceof ViewGroup)for(int i=0;i<((ViewGroup)v).getChildCount();i++)out.append(texts(((ViewGroup)v).getChildAt(i)));return out.toString();}
 }
