@@ -905,6 +905,18 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                     complete(command,StudioResolveColorEdits.apply(store,p));
                     syncProtocolState();
                     return;
+                case "fairlight_fx_capabilities":
+                    complete(command,StudioFairlightEdits.capabilities());
+                    return;
+                case "fairlight_fx_plan":{
+                    ProjectStore.Project source=store.get(p.optString("projectId",""));
+                    complete(command,StudioFairlightEdits.plan(source,p));
+                    return;
+                }
+                case "fairlight_fx_apply":
+                    complete(command,StudioFairlightEdits.apply(store,p));
+                    syncProtocolState();
+                    return;
                 case "set_studio_layers":
                     complete(command, setStudioLayers(p));
                     syncProtocolState();
@@ -5147,6 +5159,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             out.put("motionGroupDirector",StudioMotionGroupOps.capabilities());
             out.put("compositionCamera2D",StudioCamera2DDirector.capabilities());
             out.put("resolveColorPage",StudioResolveColorEdits.capabilities());
+            out.put("fairlightAudio",StudioFairlightEdits.capabilities());
             out.put("lastEditedPreviewFailure",StudioPreviewDiagnostics.last(this));
             out.put("audioAnalysis",NativeAudioEnvelope.capabilities());
             out.put("sketchStillExport",SketchStillExport.capabilities());
