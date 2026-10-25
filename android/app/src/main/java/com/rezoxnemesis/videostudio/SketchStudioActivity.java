@@ -1611,6 +1611,12 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
                 showAgentStage(claimed,"moved timeline to frame "+(target+1));
                 break;
             }
+            case "scrub":{
+                SketchAgentTimelineScrub.Plan plan=SketchAgentTimelineScrub.plan(
+                        document,step,canvas.getFrame());
+                startAgentTimelineScrub(claimed,plan);
+                return;
+            }
             case "layer":{
                 String id=step.getString("layerId");
                 SketchDocument.layer(document,id);
@@ -1722,6 +1728,99 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
             default:throw SketchDocument.bad("Stage action not supported in native Sketch Studio");
         }
         settleAgentStage(claimed,true,action+" performed in foreground Sketch Studio");
+    }
+
+    /**
+     * Foreground-only, visible timeline manipulation. Publishes no more than
+     * 13 actual canvas/ruler frame positions; never claims full-frame pixel QA.
+     * This intentionally does not synthesize or persist intermediate cels.
+     */
+    private void startAgentTimelineScrub(JSONObject claim,
+                                         SketchAgentTimelineScrub.Plan plan)throws Exception {
+        if(agentGestureAnimator!=null||agentGestureSaving)
+            throw SketchDocument.bad("Another native agent hand gesture is active");
+        if(session==null||session.pending()!=0||session.error()!=null)
+            throw SketchDocument.bad("Wait for the prior human drawing save");
+        final String original=sketchId;
+        final SketchEditorSession owner=session;
+        final int generation=loadGeneration,bookGeneration=pageGeneration;
+        final long revision=document.getLong("revision");
+        if(!original.equals(plan.sketchId)||revision!=plan.sourceRevision
+                ||canvas.getFrame()!=plan.fromFrame)
+            throw SketchDocument.bad("Timeline changed before ChatGPT's visible drag");
+        showAgentStage(claim,"dragging the real frame ruler from "+
+                (plan.fromFrame+1)+" to "+(plan.toFrame+1));
+        canvas.setEnabled(false);
+        final java.util.concurrent.atomic.AtomicBoolean settled=
+                new java.util.concurrent.atomic.AtomicBoolean(false);
+        android.animation.ValueAnimator animator=android.animation.ValueAnimator.ofFloat(0f,1f);
+        agentGestureAnimator=animator;
+        animator.setDuration(plan.durationMs);
+        animator.setInterpolator(new android.view.animation.LinearInterpolator());
+        final int[] lastSample={-1},published={0};
+        animator.addUpdateListener(value->{
+            if(settled.get())return;
+            float progress=(float)value.getAnimatedValue();
+            int sample=Math.max(0,Math.min(SketchAgentTimelineScrub.MAX_VISUAL_SAMPLES,
+                    (int)Math.floor(progress*SketchAgentTimelineScrub.MAX_VISUAL_SAMPLES)));
+            if(sample==lastSample[0]&&progress<1f)return;
+            lastSample[0]=sample;
+            if(!stageGestureCurrent(original,owner,generation,bookGeneration,revision)){
+                animator.cancel();
+                return;
+            }
+            int frame=plan.sample(sample/(float)SketchAgentTimelineScrub.MAX_VISUAL_SAMPLES);
+            if(canvas.getFrame()!=frame){
+                canvas.setFrame(frame);
+                frames.setProgress(frame);
+                canvas.setEnabled(false);
+                updateStatus();
+                published[0]++;
+            }
+            if(agentStageIndicator!=null)
+                agentStageIndicator.setText("ChatGPT  ·  "+
+                        (claim.optInt("stepIndex")+1)+"/"+claim.optInt("stepCount",1)+
+                        "  ·  dragging frame ruler "+(canvas.getFrame()+1)+
+                        "/"+plan.frameCount+"  ·  "+
+                        Math.round(sample*100f/SketchAgentTimelineScrub.MAX_VISUAL_SAMPLES)+"%");
+        });
+        animator.addListener(new android.animation.AnimatorListenerAdapter(){
+            private boolean canceled;
+            @Override public void onAnimationCancel(android.animation.Animator a){
+                canceled=true;
+                if(!settled.compareAndSet(false,true))return;
+                agentGestureAnimator=null;
+                canvas.setEnabled(session!=null&&!loadingDrawing&&!playing&&livePlayer==null);
+                settleAgentStage(claim,false,
+                        "Native frame-ruler drag interrupted; no authored cel changed");
+            }
+            @Override public void onAnimationEnd(android.animation.Animator a){
+                if(canceled||!settled.compareAndSet(false,true))return;
+                agentGestureAnimator=null;
+                boolean current=stageGestureCurrent(original,owner,generation,
+                        bookGeneration,revision);
+                if(current&&canvas.getFrame()!=plan.toFrame){
+                    canvas.setFrame(plan.toFrame);
+                    frames.setProgress(plan.toFrame);
+                    updateStatus();
+                    published[0]++;
+                }
+                canvas.setEnabled(session!=null&&!loadingDrawing&&!playing&&livePlayer==null);
+                JSONObject proof=null;
+                boolean reached=current&&canvas.getFrame()==plan.toFrame
+                        &&frames.getProgress()==plan.toFrame
+                        &&published[0]>=1
+                        &&published[0]<=SketchAgentTimelineScrub.MAX_VISUAL_SAMPLES+1;
+                if(reached)try{
+                    proof=plan.evidence(canvas.getFrame(),published[0]);
+                }catch(Exception error){reached=false;}
+                settleAgentStage(claim,reached,reached?
+                        "Native timeline visibly scrubbed to frame "+(plan.toFrame+1)+
+                                " with "+published[0]+" bounded frame updates":
+                        "Frame ruler did not reach its requested native target",proof);
+            }
+        });
+        animator.start();
     }
 
     /**
