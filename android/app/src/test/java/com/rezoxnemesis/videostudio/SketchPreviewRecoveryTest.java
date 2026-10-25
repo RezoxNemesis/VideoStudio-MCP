@@ -98,7 +98,10 @@ public class SketchPreviewRecoveryTest {
   try(Fixture f=new Fixture()){
    f.canvas.setOnion(true);f.settle();f.play();f.canvas.setFrame(2);f.settle();assertTrue("Playback must preserve the manual preference",(boolean)field(f.canvas,"onion"));
    assertEquals("Playback only prepares the selected frame, with no onion neighbors",1,((Map<?,?>)field(f.canvas,"frameCache")).size());
-   f.pausePlayback();f.settle();assertTrue((boolean)field(f.canvas,"onion"));assertTrue(((Map<?,?>)field(f.canvas,"frameCache")).size()>1);
+   f.pausePlayback();f.settle();assertTrue((boolean)field(f.canvas,"onion"));
+   assertFalse("Playback mode should leave the canvas after tapping Pause",(boolean)field(f.canvas,"playbackPreview"));
+   assertTrue("Onion raster not populated: frame="+f.canvas.getFrame()+", cache="+((Map<?,?>)field(f.canvas,"frameCache")).keySet()+", inFlight="+field(f.canvas,"rasterInFlight")+
+           ", previewStatus="+f.canvas.previewStatus()+", rasterKey="+field(f.canvas,"rasterKey"),((Map<?,?>)field(f.canvas,"frameCache")).size()>1);
   }
  }
  private static final class Fixture implements AutoCloseable{
