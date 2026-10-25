@@ -125,7 +125,7 @@ public final class SketchAgentGestureOpsTest {
             move(4).put("objectId","missing"),
             node(4).put("commandIndex",300),
             node(4).put("pairIndex",9),
-            node(4).put("y",Double.NaN),
+            node(4).put("y","NaN"),
             move(4).put("x",0).put("y",0).put("rotation",0),
             move(4).put("durationMs",10000)
         };
