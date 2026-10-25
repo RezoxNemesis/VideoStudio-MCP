@@ -67,6 +67,26 @@ public class StudioEditorWorkspaceConfigurationUiTest {
         }
     }
 
+    @Test public void timelineViewSwitchLivesInExistingHeaderAndPreservesSourceAndPreview()throws Exception{
+        try(Fixture fixture=new Fixture(480,853)){
+            final String before=SketchDocument.canonical(fixture.store.get(fixture.project.id).toJson());
+            final Object player=field(fixture.activity,"livePlayer");
+            Button mode=button(fixture.root,"Tracks");
+            assertReachable(fixture,mode,"Compact-to-multitrack mode action remains in the Timeline header");
+            mode.performClick();
+            ShadowLooper.idleMainLooper();fixture.layout();
+            Button returnCompact=button(fixture.root,"Compact");
+            assertReachable(fixture,returnCompact,"Return-to-compact action remains visible");
+            assertSame(player,field(fixture.activity,"livePlayer"));
+            assertEquals(before,SketchDocument.canonical(fixture.store.get(fixture.project.id).toJson()));
+            returnCompact.performClick();
+            ShadowLooper.idleMainLooper();fixture.layout();
+            assertReachable(fixture,(View)field(fixture.activity,"studioTracks"),
+                    "Compact timeline is fully reachable again after switching");
+            assertEquals(before,SketchDocument.canonical(fixture.store.get(fixture.project.id).toJson()));
+        }
+    }
+
     @Test public void rebuildingTheEditorWhileNativePlaybackContinuesShowsPause()throws Exception{
         try(Fixture fixture=new Fixture(480,853)){
             invoke(fixture.activity,"toggleStudioEditedPlayback");LiveEditPlayer live=(LiveEditPlayer)field(fixture.activity,"livePlayer");assertTrue(live.snapshotState().playWhenReady);
