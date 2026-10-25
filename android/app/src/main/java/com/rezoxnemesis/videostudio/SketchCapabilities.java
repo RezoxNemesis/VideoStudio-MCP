@@ -360,6 +360,7 @@ public final class SketchCapabilities {
                 .put("linkedMasters",SketchMasterAssets.capability())
                 .put("sharedLayerMotion",SketchLayerGroupMotion.capabilities())
                 .put("agentWorkspace",SketchAgentStageControl.capabilities())
+                .put("nativeHumanPenReplay",SketchHumanPacing.capabilities())
                 .put("stillPngExport",SketchStillExport.capabilities())
                 .put("characterPerformance",characterPerformance())
                 .put("handAnimation",handAnimation())
