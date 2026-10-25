@@ -95,11 +95,13 @@ public class StudioResolveColorGraphTest {
         assertThrows(IllegalArgumentException.class,()->
                 StudioResolveColorGraph.validate(nodes(new JSONObject().put("type","primaries")
                         .put("externalFile","file:///private/grade.cube"))));
+        JSONArray invalidPoints=new JSONArray()
+                .put(new JSONArray().put(.2).put(.4))
+                .put(new JSONArray().put(1).put(1));
+        JSONObject malformedCurve=new JSONObject().put("type","curve")
+                .put("channel","red").put("points",invalidPoints);
         assertThrows(IllegalArgumentException.class,()->
-                StudioResolveColorGraph.validate(nodes(new JSONObject().put("type","curve")
-                        .put("channel","red").put("points",new JSONArray()
-                                .put(new JSONArray().put(.2).put(.4))
-                                .put(new JSONArray().put(1).put(1)))));
+                StudioResolveColorGraph.validate(nodes(malformedCurve)));
         JSONArray tooMany=new JSONArray();
         for(int i=0;i<9;i++)tooMany.put(new JSONObject().put("type","filmic"));
         assertThrows(IllegalArgumentException.class,()->
