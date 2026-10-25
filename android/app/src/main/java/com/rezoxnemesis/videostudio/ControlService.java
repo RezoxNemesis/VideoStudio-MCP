@@ -893,6 +893,18 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                     complete(command,StudioCamera2DDirector.apply(store,p));
                     syncProtocolState();
                     return;
+                case "resolve_color_capabilities":
+                    complete(command,StudioResolveColorEdits.capabilities());
+                    return;
+                case "resolve_grade_plan":{
+                    ProjectStore.Project source=store.get(p.optString("projectId",""));
+                    complete(command,StudioResolveColorEdits.plan(source,p));
+                    return;
+                }
+                case "resolve_grade_apply":
+                    complete(command,StudioResolveColorEdits.apply(store,p));
+                    syncProtocolState();
+                    return;
                 case "set_studio_layers":
                     complete(command, setStudioLayers(p));
                     syncProtocolState();
@@ -5134,6 +5146,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             out.put("kineticDirector",StudioKineticDirector.capabilities());
             out.put("motionGroupDirector",StudioMotionGroupOps.capabilities());
             out.put("compositionCamera2D",StudioCamera2DDirector.capabilities());
+            out.put("resolveColorPage",StudioResolveColorEdits.capabilities());
             out.put("lastEditedPreviewFailure",StudioPreviewDiagnostics.last(this));
             out.put("audioAnalysis",NativeAudioEnvelope.capabilities());
             out.put("sketchStillExport",SketchStillExport.capabilities());

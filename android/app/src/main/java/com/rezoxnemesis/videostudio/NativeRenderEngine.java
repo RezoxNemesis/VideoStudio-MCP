@@ -631,6 +631,19 @@ public final class NativeRenderEngine {
                     .adjustLightness((float) lightness)
                     .build());
         }
+        // DaVinci-inspired serial correction nodes compile into one bounded
+        // original 3D LUT. Preview and export use this identical shared list;
+        // malformed graphs fail closed, never silently render ungraded footage.
+        if(fx.has("resolveColorNodes")) {
+            Object nodes=fx.opt("resolveColorNodes");
+            if(!(nodes instanceof org.json.JSONArray))
+                throw new IllegalArgumentException("Color grade must contain native serial nodes");
+            try{
+                effects.add(StudioResolveColorGraph.createLut((org.json.JSONArray)nodes));
+            }catch(Exception invalid){
+                throw new IllegalArgumentException("Native color grade rejected: "+invalid.getMessage(),invalid);
+            }
+        }
     }
 
     private EditedMediaItem buildItem(ProjectStore.Asset asset, ProjectStore.Clip clip,

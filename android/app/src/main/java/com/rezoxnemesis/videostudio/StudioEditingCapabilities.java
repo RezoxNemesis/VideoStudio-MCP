@@ -90,7 +90,19 @@ public final class StudioEditingCapabilities {
                     .put("3DCamera",false)
                     .put("cameraOpacity",false)
                     .put("sourceMediaUnchanged",true)
-                    .put("studioPreviewAndExportSharePipeline",true));}
+                    .put("studioPreviewAndExportSharePipeline",true))
+                  .put("resolveColorPage",new JSONObject()
+                    .put("minimumNativeVersion","4.10.34")
+                    .put("serialGpuColorNodes",true)
+                    .put("lutCubeSize",17)
+                    .put("maxColorNodes",8)
+                    .put("colorNodes",new org.json.JSONArray(java.util.Arrays.asList(
+                        "primaries","wheels","curve","hue_qualifier","filmic")))
+                    .put("batchGradeUpToClips",64)
+                    .put("manualAndChatGptEditing",true)
+                    .put("previewAndExportSameEffects",true)
+                    .put("trueColorManagedHdrScopes",false)
+                    .put("sourceMediaUnchanged",true));}
         catch(org.json.JSONException error){throw new IllegalStateException("Invalid native editor capability registry",error);}
     }
 }
