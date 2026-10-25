@@ -39,12 +39,25 @@ public final class StudioLayerContract {
             result.add(lane);
         }
         for(StudioLayer lane:result){
-            if(lane.parentId==null||lane.parentId.isEmpty())continue;
-            StudioLayer parent=byId.get(lane.parentId);
-            if(parent==null||!StudioLayer.GROUP.equals(parent.type))
-                throw new IllegalArgumentException("Parent link must reference a group in the same project");
-            if(lane.startMs<parent.startMs||lane.durationMs>parent.durationMs-(lane.startMs-parent.startMs))
-                throw new IllegalArgumentException("Motion group must cover every linked child\u0027s entire time span");
+            if(lane.parentId!=null&&!lane.parentId.isEmpty()){
+                StudioLayer parent=byId.get(lane.parentId);
+                if(parent==null||!StudioLayer.GROUP.equals(parent.type))
+                    throw new IllegalArgumentException("Parent link must reference a group in the same project");
+                if(lane.startMs<parent.startMs||lane.durationMs>parent.durationMs-(lane.startMs-parent.startMs))
+                    throw new IllegalArgumentException("Motion group must cover every linked child\u0027s entire time span");
+            }
+            if(lane.matteLayerId!=null&&!lane.matteLayerId.isEmpty()){
+                StudioLayer matte=byId.get(lane.matteLayerId);
+                // All cross-layer references are admitted atomically. A failed
+                // matte link never creates orphaned project render dependencies.
+                StudioTrackMatteRasterizer.validatePair(lane,matte);
+            }
+            if(lane.matteOnly){
+                if(lane.motionKeyframes!=null&&lane.motionKeyframes.length()>0)
+                    throw new IllegalArgumentException("Matte-only shapes must remain static");
+                if(!lane.parentId.isEmpty())
+                    throw new IllegalArgumentException("Matte-only shapes cannot have moving parents");
+            }
         }
         return result;
     }
