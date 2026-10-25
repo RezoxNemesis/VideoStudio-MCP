@@ -73,7 +73,7 @@ public final class SketchEditableXsheetUiTest {
             assertEquals("1",field.getText().toString());
             field.setText("3");
             hold.getButton(AlertDialog.BUTTON_POSITIVE).performClick();
-            assertEquals(1,commits.get());
+            assertEquals("Exposure Apply must reach the guarded writer. UI error: "+String.valueOf(field.getError()),1,commits.get());
             JSONObject result=persisted.get();assertNotNull(result);
             assertEquals(2,result.getLong("revision"));
             assertEquals(3,SketchDocument.object(result,"authored_ellipse").getInt("exposure"));
