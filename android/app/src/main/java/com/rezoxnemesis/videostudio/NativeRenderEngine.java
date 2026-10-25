@@ -405,11 +405,15 @@ public final class NativeRenderEngine {
                     .setRemoveVideo(true);
             // Media3 applies source clipping after durationUs, including sourceInMs.
             if(asset.durationMs>0)track.setDurationUs(Math.multiplyExact(asset.durationMs,1000L));
-            if(lane.gain<.999f){
-                List<AudioProcessor> processors=Collections.singletonList(
-                        new GainProcessor(new DefaultGainProvider.Builder(lane.gain).build()));
+            ArrayList<AudioProcessor> processors=new ArrayList<>();
+            if(lane.gain<.999f)
+                processors.add(new GainProcessor(new DefaultGainProvider.Builder(lane.gain).build()));
+            // One independent stateful PCM processor per owned audio lane.
+            // Preview and final export both build this exact Effects graph.
+            if(StudioFairlightSettings.enabled(lane.fairlightFx))
+                processors.add(new StudioFairlightAudioProcessor(lane.fairlightFx));
+            if(!processors.isEmpty())
                 track.setEffects(new Effects(processors,Collections.emptyList()));
-            }
             EditedMediaItemSequence.Builder audio=new EditedMediaItemSequence.Builder(
                     Collections.singleton(C.TRACK_TYPE_AUDIO));
             if(lane.startMs>0)audio.addGap(lane.startMs*1000L);

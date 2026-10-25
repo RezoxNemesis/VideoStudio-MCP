@@ -1546,6 +1546,8 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                 box.addView(studioButton("Delete shape",()->removeStudioLayer(layer)));
                 box.addView(body("Native vector geometry is cached once and transformed with true timed keyframes on the edited composition. No source image is synthesized."));
             }else if(StudioLayer.AUDIO.equals(layer.type)){
+                box.addView(studioButton("Fairlight · EQ / compressor / limiter",
+                        ()->openStudioFairlightAudio(layer)));
                 box.addView(studioButton("Analyze envelope",()->openStudioAudioEnvelope(layer)));
                 box.addView(studioButton("Edit audio",()->editStudioAudio(layer,layer.assetId)));
                 box.addView(studioButton("Delete audio",()->removeStudioLayer(layer)));
@@ -2519,6 +2521,26 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
     }
 
     /** Native DaVinci-inspired Color page, with same revision guards as ChatGPT MCP. */
+    /** Owned AUDIO inspector, with the same atomic native backend as the MCP. */
+    private void openStudioFairlightAudio(StudioLayer track){
+        if(activeProject==null||track==null||!StudioLayer.AUDIO.equals(track.type))return;
+        final String original=track.id;
+        final ProjectStore.Project before=ProjectStore.Project.fromJson(activeProject.toJson());
+        try{
+            StudioFairlightDialog.show(this,store,activeProject,original,updated->{
+                editHistory.checkpoint(before);
+                activeProject=updated;
+                studioSelectedLayerId=original;
+                syncProtocolState();
+                showEditor();
+                if(studioWorkspace!=null)studioWorkspace.showPane("Inspector");
+            });
+        }catch(Exception error){
+            Toast.makeText(this,"Audio effects unavailable: "+error.getMessage(),
+                    Toast.LENGTH_LONG).show();
+        }
+    }
+
     private void openStudioResolveColor(){
         if(activeProject==null||selectedClip==null){
             onStudioNoTarget();return;

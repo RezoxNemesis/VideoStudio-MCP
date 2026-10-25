@@ -102,6 +102,19 @@ public final class StudioEditingCapabilities {
                     .put("manualAndChatGptEditing",true)
                     .put("previewAndExportSameEffects",true)
                     .put("trueColorManagedHdrScopes",false)
+                    .put("sourceMediaUnchanged",true))
+                  .put("fairlightAudio",new JSONObject()
+                    .put("minimumNativeVersion","4.10.35")
+                    .put("nativeProcessor","PCM16 Media3 BaseAudioProcessor")
+                    .put("effects",new org.json.JSONArray(java.util.Arrays.asList(
+                        "three_band_eq","compressor","noise_gate","highpass",
+                        "lowpass","sample_peak_limiter")))
+                    .put("sampleRmsMeter",true)
+                    .put("maxAudioChannels",8)
+                    .put("multitrackOwnedSourceProcessing",true)
+                    .put("previewAndExportShared",true)
+                    .put("batchNativeMcpEdit",true)
+                    .put("truePeakAndLufsMastering",false)
                     .put("sourceMediaUnchanged",true));}
         catch(org.json.JSONException error){throw new IllegalStateException("Invalid native editor capability registry",error);}
     }
