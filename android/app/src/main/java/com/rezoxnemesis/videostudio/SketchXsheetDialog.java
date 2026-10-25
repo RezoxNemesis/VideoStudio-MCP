@@ -191,8 +191,10 @@ final class SketchXsheetDialog {
         AlertDialog edit=new AlertDialog.Builder(owner).setTitle("Expose drawing at frame "+(frame+1))
                 .setView(form).setPositiveButton("Apply exposure",null)
                 .setNegativeButton("Cancel",null).create();
-        edit.setOnShowListener(ignored->edit.getButton(AlertDialog.BUTTON_POSITIVE)
-                .setOnClickListener(view->{
+        // Bind directly after show(): the actual button now exists on Android and
+        // in headless tests, with no posted onShow race that can lose the edit.
+        edit.show();
+        edit.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(view->{
                     try{
                         int hold=Integer.parseInt(input.getText().toString().trim());
                         JSONObject op=new JSONObject().put("type","set_exposure_cel")
@@ -208,8 +210,7 @@ final class SketchXsheetDialog {
                         Toast.makeText(owner,"Exposure unchanged: "+failure.getMessage(),
                                 Toast.LENGTH_LONG).show();
                     }
-                }));
-        edit.show();
+                });
     }
 
     private static void addPreset(Activity owner,LinearLayout row,String label,int duration,
