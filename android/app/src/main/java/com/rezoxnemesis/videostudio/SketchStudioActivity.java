@@ -449,16 +449,33 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
             timing.setSelection(Math.max(0,java.util.Arrays.asList(modes).indexOf(mode)));form.addView(timing);
             String controlValues=authored!=null&&authored.has("curve")?commaValues(authored.getJSONArray("curve")):"0.42, 0, 1, 1";
             EditText curve=input("Bezier timing: x1, y1, x2, y2",controlValues,false);form.addView(curve);
+            SketchTimingCurveView curveGraph=new SketchTimingCurveView(this);
+            curveGraph.setCurve(SketchTimingCurveView.parse(controlValues));
+            curveGraph.setOnDraftChanged(handles->{
+                curve.setText(SketchTimingCurveView.format(handles));
+                timing.setSelection(5);
+            });
+            form.addView(curveGraph,new LinearLayout.LayoutParams(-1,dp(218)));
+            button(row(form),"Update graph from numeric values",()->{
+                try{curveGraph.setCurve(SketchTimingCurveView.parse(curve.getText().toString()));}
+                catch(Exception error){onMessage(error.getMessage());}
+            });
             curve.setVisibility("bezier".equals(mode)?View.VISIBLE:View.GONE);
-            timing.setOnItemSelectedListener(new SimpleSelection(){@Override public void selected(int position){curve.setVisibility(position==5?View.VISIBLE:View.GONE);}});
-            new AlertDialog.Builder(this).setTitle(objectId == null ? "Layer transform" : "Object transform").setView(form).setNegativeButton("Cancel", null)
+            curveGraph.setVisibility("bezier".equals(mode)?View.VISIBLE:View.GONE);
+            timing.setOnItemSelectedListener(new SimpleSelection(){@Override public void selected(int position){
+                boolean custom=position==5;
+                curve.setVisibility(custom?View.VISIBLE:View.GONE);
+                curveGraph.setVisibility(custom?View.VISIBLE:View.GONE);
+            }});
+            ScrollView motionScroll=new ScrollView(this);motionScroll.addView(form);
+            new AlertDialog.Builder(this).setTitle(objectId == null ? "Layer transform" : "Object transform").setView(motionScroll).setNegativeButton("Cancel", null)
                     .setNeutralButton("Remove key", (d,w) -> { try { onOperation(targetOperation("set_keyframe", objectId).put("frame", canvas.getFrame()).put("remove", true)); } catch (Exception e) { onMessage(e.getMessage()); } })
                     .setPositiveButton("Apply", (d,w) -> { try { JSONObject transform = new JSONObject(); for (int i = 0; i < keys.length; i++) { double value = Double.parseDouble(values[i].getText().toString()); if (i == 0) value /= document.getInt("width"); if (i == 1) value /= document.getInt("height"); transform.put(keys[i], value); }
                         JSONObject operation = targetOperation(key.isChecked() ? "set_keyframe" : "set_transform", objectId).put("transform", transform);
                         if (key.isChecked()) {
                             String selected=hold.isChecked()?"hold":modes[timing.getSelectedItemPosition()];
                             operation.put("frame",canvas.getFrame()).put("interpolation",selected);
-                            if("bezier".equals(selected))operation.put("curve",new JSONArray("["+curve.getText().toString()+"]"));
+                            if("bezier".equals(selected))operation.put("curve",SketchTimingCurveView.parse(curve.getText().toString()));
                         }
                         onOperation(operation);
                     } catch (Exception e) { onMessage(e.getMessage()); } }).show();
@@ -482,15 +499,31 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
                     new String[]{"Linear","Smooth","Hold","Ease in","Ease out","Ease in/out","Bezier"}));
             timing.setSelection(prior==null?0:Math.max(0,java.util.Arrays.asList(modes).indexOf(prior.getString("interpolation"))));form.addView(timing);
             EditText curve=input("Bezier timing: x1, y1, x2, y2",prior!=null&&prior.has("curve")?commaValues(prior.getJSONArray("curve")):"0.42, 0, 1, 1",false);form.addView(curve);
-            curve.setVisibility(timing.getSelectedItemPosition()==6?View.VISIBLE:View.GONE);
-            timing.setOnItemSelectedListener(new SimpleSelection(){@Override public void selected(int index){curve.setVisibility(index==6?View.VISIBLE:View.GONE);}});
+            SketchTimingCurveView curveGraph=new SketchTimingCurveView(this);
+            curveGraph.setCurve(SketchTimingCurveView.parse(curve.getText().toString()));
+            curveGraph.setOnDraftChanged(handles->{
+                curve.setText(SketchTimingCurveView.format(handles));timing.setSelection(6);
+            });
+            form.addView(curveGraph,new LinearLayout.LayoutParams(-1,dp(218)));
+            button(row(form),"Update graph from numeric values",()->{
+                try{curveGraph.setCurve(SketchTimingCurveView.parse(curve.getText().toString()));}
+                catch(Exception error){onMessage(error.getMessage());}
+            });
+            boolean initialCurve=timing.getSelectedItemPosition()==6;
+            curve.setVisibility(initialCurve?View.VISIBLE:View.GONE);
+            curveGraph.setVisibility(initialCurve?View.VISIBLE:View.GONE);
+            timing.setOnItemSelectedListener(new SimpleSelection(){@Override public void selected(int index){
+                curve.setVisibility(index==6?View.VISIBLE:View.GONE);
+                curveGraph.setVisibility(index==6?View.VISIBLE:View.GONE);
+            }});
             button(row(form),"Clear shape animation",()->{try{onOperation(new JSONObject().put("type","update_object").put("objectId",id).put("patch",new JSONObject().put("shapeKeys",new JSONArray())));}catch(Exception failure){onMessage(failure.getMessage());}});
-            new AlertDialog.Builder(this).setTitle("Shape key · frame "+(frame+1)).setView(form).setNegativeButton("Cancel",null)
+            ScrollView shapeScroll=new ScrollView(this);shapeScroll.addView(form);
+            new AlertDialog.Builder(this).setTitle("Shape key · frame "+(frame+1)).setView(shapeScroll).setNegativeButton("Cancel",null)
                 .setNeutralButton("Remove key",(dialog,which)->{try{onOperation(new JSONObject().put("type","set_shape_key").put("objectId",id).put("frame",frame).put("remove",true));}catch(Exception failure){onMessage(failure.getMessage());}})
                 .setPositiveButton("Set key",(dialog,which)->{try{
                     String mode=modes[timing.getSelectedItemPosition()];JSONObject operation=new JSONObject().put("type","set_shape_key").put("objectId",id).put("frame",frame)
                         .put("commands",SketchShapeKeys.commandsAt(object,frame)).put("interpolation",mode);
-                    if("bezier".equals(mode))operation.put("curve",new JSONArray("["+curve.getText().toString()+"]"));
+                    if("bezier".equals(mode))operation.put("curve",SketchTimingCurveView.parse(curve.getText().toString()));
                     SketchEasing.validate(operation);onOperation(operation);
                 }catch(Exception failure){onMessage(failure.getMessage());}}).show();
         }catch(Exception failure){onMessage(failure.getMessage());}
