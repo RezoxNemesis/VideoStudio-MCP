@@ -70,7 +70,7 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
     // UI-thread counts scoped to the drawing load/page that owns each construction.
     private final java.util.HashMap<String,Integer> activeConstructions=new java.util.HashMap<>();
     private volatile boolean destroyed;
-    private boolean resumed,watching=true,watchInFlight,grid,symmetry;
+    private boolean resumed,watching=true,watchInFlight,grid,symmetry,liveViewerInFlight;
     private final java.util.concurrent.atomic.AtomicReference<android.graphics.Bitmap> pendingBookBitmap=new java.util.concurrent.atomic.AtomicReference<>();
     private JSONObject symmetrySettings;
     private String brushPreset="ink",bookId;
@@ -1357,6 +1357,7 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
 
     private final Runnable watchTick=new Runnable(){public void run(){
         if(destroyed)return;
+        pollLiveViewerCommands();
         pollAgentStage();
         if(localEditableReturn!=null&&localEditableReturn.ownsEditor()){handler.postDelayed(this,250);return;}
         if(followNewerNativeWork()){
@@ -1378,6 +1379,103 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
         }
         handler.postDelayed(this,250);
     }};
+
+    /**
+     * A separate foreground-only channel for controls over the actual saved
+     * pen journal. This is intentionally NOT sketch_edit or stage navigation:
+     * pause, step and viewing speed cannot create pixels or move cel timing.
+     * The SQLite ACK is settled only after this on-screen player accepted it.
+     */
+    private void pollLiveViewerCommands(){
+        if(liveViewerInFlight||!resumed||destroyed||!watching||loadingDrawing
+                ||livePlayer==null||watchInFlight||session==null
+                ||localEditableReturn!=null&&localEditableReturn.ownsEditor()
+                ||liveSessionId==null||liveSessionId.isEmpty()||sketchId==null)return;
+        final SketchLivePlayer selected=livePlayer;
+        final String targetId=sketchId,targetSession=liveSessionId;
+        final int generation=liveLoadGeneration;
+        final SketchEditorSession selectedSession=session;
+        liveViewerInFlight=true;
+        io.execute(()->{
+            JSONObject claim=null;
+            try(SketchLiveViewerCommands queue=new SketchLiveViewerCommands(this)){
+                claim=queue.claim(targetId,targetSession);
+            }catch(Exception failure){
+                postUi(()->{liveViewerInFlight=false;
+                    if(status!=null)status.setText("Replay control queue: "+failure.getMessage());
+                });return;
+            }
+            final JSONObject accepted=claim;
+            postUi(()->{
+                if(destroyed||!resumed||!watching||selected!=livePlayer
+                        ||selectedSession!=session||generation!=liveLoadGeneration
+                        ||!targetId.equals(sketchId)||!targetSession.equals(liveSessionId)){
+                    liveViewerInFlight=false;
+                    if(accepted!=null)io.execute(()->{
+                        try(SketchLiveViewerCommands queue=new SketchLiveViewerCommands(this)){
+                            queue.release(accepted);
+                        }catch(Exception ignored){}
+                    });
+                    return;
+                }
+                if(accepted==null){liveViewerInFlight=false;return;}
+                boolean applied=false;
+                String note="";
+                try{
+                    JSONObject command=accepted.getJSONObject("program");
+                    switch(command.getString("command")){
+                        case "pause":
+                            selected.pausePlayback();
+                            applied=selected.isPaused();
+                            note="Paused at last published native stroke prefix";
+                            break;
+                        case "resume":
+                            selected.resumePlayback();
+                            applied=!selected.isPaused();
+                            note="Resumed playback of original saved journal";
+                            break;
+                        case "speed": {
+                            float rate=(float)command.getDouble("speed");
+                            selected.setPlaybackSpeed(rate);
+                            applied=selected.playbackSpeed()==rate;
+                            note="Native live viewer speed changed; actual sketch timing unchanged";
+                            if(applied)getPreferences(MODE_PRIVATE).edit()
+                                    .putFloat("nativeLiveReplaySpeed",rate).apply();
+                            break;
+                        }
+                        case "next_operation":
+                            selected.nextOperation();
+                            applied=true;
+                            // This is an on-screen step REQUEST; completed
+                            // original operation may still need preparation.
+                            note="Started exactly one accepted operation; awaiting native completion";
+                            break;
+                        default:throw new IllegalArgumentException("Unknown native viewer command");
+                    }
+                    updateLiveReplayControlState();
+                    if(liveReplayStatus!=null)
+                        liveReplayStatus.setText("ChatGPT · "+note);
+                }catch(Exception rejected){note="Foreground replay control rejected: "+rejected.getMessage();}
+                final boolean used=applied;
+                final String message=note==null?"":note;
+                final JSONObject evidence=new JSONObject();
+                try{
+                    evidence.put("note",message.length()>170?message.substring(0,170):message)
+                            .put("viewPaused",selected.isPaused())
+                            .put("viewRate",(double)selected.playbackSpeed());
+                }catch(Exception ignored){}
+                io.execute(()->{
+                    try(SketchLiveViewerCommands queue=new SketchLiveViewerCommands(this)){
+                        queue.finish(accepted,used,evidence);
+                    }catch(Exception failure){
+                        postUi(()->{if(status!=null)
+                            status.setText("Replay control receipt: "+failure.getMessage());
+                        });
+                    }finally{postUi(()->liveViewerInFlight=false);}
+                });
+            });
+        });
+    }
 
     /**
      * Actual Sketch Studio foreground executor. It never marks a remote step
