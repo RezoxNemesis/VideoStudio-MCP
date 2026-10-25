@@ -1,6 +1,9 @@
 package com.rezoxnemesis.videostudio;
 
 import android.content.Context;
+import android.animation.ValueAnimator;
+import android.animation.Animator;
+import android.animation.AnimatorListenerAdapter;
 import android.graphics.Canvas;
 import android.graphics.Bitmap;
 import android.graphics.PorterDuffColorFilter;
@@ -76,6 +79,8 @@ public final class SketchCanvasView extends View {
     private long touchCompositeRevision;
     private JSONObject touchCompositeDocument;
     private float zoom=1,panX,panY,lastPanX,lastPanY,stabilization=.2f;
+    private ValueAnimator agentCamera;
+    private boolean cameraAnimating;
     private boolean navigating,grid,symmetry,pointerDown;
     private JSONObject symmetryConfiguration;
     private int onionRange=1,onionAlpha=48;
@@ -100,7 +105,7 @@ public final class SketchCanvasView extends View {
     public SketchCanvasView(Context context) {
         super(context);setBackgroundColor(0xff101725);setLayerType(View.LAYER_TYPE_SOFTWARE,null);
         scaling=new ScaleGestureDetector(context,new ScaleGestureDetector.SimpleOnScaleGestureListener(){
-            @Override public boolean onScale(ScaleGestureDetector detector){float old=zoom;zoom=Math.max(1,Math.min(12,zoom*detector.getScaleFactor()));float ratio=zoom/old;panX=(panX+getWidth()/2f-detector.getFocusX())*ratio-getWidth()/2f+detector.getFocusX();panY=(panY+getHeight()/2f-detector.getFocusY())*ratio-getHeight()/2f+detector.getFocusY();invalidate();return true;}
+            @Override public boolean onScale(ScaleGestureDetector detector){stopAgentCamera();float old=zoom;zoom=Math.max(1,Math.min(12,zoom*detector.getScaleFactor()));float ratio=zoom/old;panX=(panX+getWidth()/2f-detector.getFocusX())*ratio-getWidth()/2f+detector.getFocusX();panY=(panY+getHeight()/2f-detector.getFocusY())*ratio-getHeight()/2f+detector.getFocusY();invalidate();return true;}
         });
     }
     public void setListener(Listener listener) { this.listener = listener; }
@@ -221,7 +226,84 @@ public final class SketchCanvasView extends View {
         symmetryConfiguration=configuration==null?null:SketchSymmetry.configuration(configuration);symmetry=configuration!=null;invalidate();
     }
     public void setOnionOptions(int range,int alpha){onionRange=Math.max(1,Math.min(3,range));onionAlpha=Math.max(0,Math.min(128,alpha));invalidate();}
-    public void resetView(){zoom=1;panX=panY=0;invalidate();}
+    public void resetView(){stopAgentCamera();zoom=1;panX=panY=0;invalidate();}
+
+    /** Foreground canvas camera; no editable path, paint file or source is mutated. */
+    public JSONObject cameraSnapshot() throws Exception {
+        float[] center=cameraCenter();
+        return new JSONObject().put("zoom",zoom)
+                .put("centerX",center[0]).put("centerY",center[1])
+                .put("viewportWidth",getWidth()).put("viewportHeight",getHeight());
+    }
+    private float[] cameraCenter(){
+        if(document==null||getWidth()<1||getHeight()<1)return new float[]{.5f,.5f};
+        float w=document.optInt("width",720),h=document.optInt("height",1280);
+        float fit=Math.min(getWidth()/w,getHeight()/h);
+        float scale=Math.max(.000001f,fit*zoom);
+        return new float[]{.5f-panX/(w*scale),.5f-panY/(h*scale)};
+    }
+    private void applyCamera(float desiredZoom,float centerX,float centerY){
+        int w=document.optInt("width",720),h=document.optInt("height",1280);
+        float fit=Math.min(getWidth()/(float)w,getHeight()/(float)h);
+        zoom=desiredZoom;
+        panX=(.5f-centerX)*w*fit*zoom;
+        panY=(.5f-centerY)*h*fit*zoom;
+        invalidate();
+    }
+
+    /**
+     * Foreground-only camera move. Animation reuses current pixels; a single
+     * final crop rerender runs once the camera actually arrives. This cannot
+     * generate media or claim successful navigation after touch cancellation.
+     */
+    public void animateAgentCamera(double goalZoom,double centerX,double centerY,
+                                   int durationMs,java.util.function.Consumer<Boolean> completed){
+        if(document==null||disposed||isDrawing()||getWidth()<1||getHeight()<1
+                ||!Double.isFinite(goalZoom)||goalZoom<1||goalZoom>12
+                ||!Double.isFinite(centerX)||centerX<0||centerX>1
+                ||!Double.isFinite(centerY)||centerY<0||centerY>1
+                ||durationMs<0||durationMs>800||completed==null)
+            throw SketchDocument.bad("Camera navigation requires an active, idle canvas and bounded position");
+        stopAgentCamera();
+        float startZoom=zoom;
+        float[] startCenter=cameraCenter();
+        if(durationMs==0){
+            applyCamera((float)goalZoom,(float)centerX,(float)centerY);
+            rasterKey="";refreshPreview();
+            completed.accept(true);return;
+        }
+        cameraAnimating=true;
+        ValueAnimator animation=ValueAnimator.ofFloat(0f,1f);
+        agentCamera=animation;
+        animation.setDuration(durationMs);
+        animation.addUpdateListener(value->{
+            if(agentCamera!=animation||disposed)return;
+            float t=(float)value.getAnimatedValue();
+            float ease=t*t*(3-2*t);
+            applyCamera(startZoom+((float)goalZoom-startZoom)*ease,
+                    startCenter[0]+((float)centerX-startCenter[0])*ease,
+                    startCenter[1]+((float)centerY-startCenter[1])*ease);
+        });
+        animation.addListener(new AnimatorListenerAdapter(){
+            boolean cancelled;
+            @Override public void onAnimationCancel(Animator animator){cancelled=true;}
+            @Override public void onAnimationEnd(Animator animator){
+                if(agentCamera!=animation)return;
+                agentCamera=null;cameraAnimating=false;
+                if(!disposed&&!cancelled){
+                    applyCamera((float)goalZoom,(float)centerX,(float)centerY);
+                    refreshPreview();
+                }
+                completed.accept(!cancelled&&!disposed);
+            }
+        });
+        animation.start();
+    }
+    public void stopAgentCamera(){
+        if(agentCamera!=null){ValueAnimator running=agentCamera;running.cancel();}
+        cameraAnimating=false;
+    }
+
     public void focusSelection() throws Exception {
         if(document==null||selectedId==null)throw SketchDocument.bad("Select an object to focus");
         JSONObject object=SketchShapeKeys.sampled(SketchDocument.object(document,selectedId),frame),layer=SketchDocument.owner(document,selectedId);int w=document.getInt("width"),h=document.getInt("height");RectF bounds;
@@ -243,7 +325,7 @@ public final class SketchCanvasView extends View {
         return new JSONObject().put("x",x).put("y",y).put("width",right-x).put("height",bottom-y);
     }
     private void requestRaster()throws Exception {
-        if(disposed||!previewActive||document==null||liveObject!=null||getWidth()<1||getHeight()<1)return;
+        if(disposed||!previewActive||cameraAnimating||document==null||liveObject!=null||getWidth()<1||getHeight()<1)return;
         JSONObject crop=visibleCrop();
         String context=document.getString("id")+"/"+document.getLong("revision")+"/"+viewportEdge()+"/"+(crop==null?"full":crop.toString())+"/"+(dragTransform==null?"":dragTransform.toString())+"/"+(nodePreview==null?"":nodePreview.toString());
         // Viewport/source changes supersede work even while the clock is moving.
@@ -295,7 +377,7 @@ public final class SketchCanvasView extends View {
         if(image==null||image.bitmap.isRecycled())return;JSONObject c=image.crop;RectF target=c==null?new RectF(0,0,w,h):new RectF((float)c.getDouble("x")*w,(float)c.getDouble("y")*h,(float)(c.getDouble("x")+c.getDouble("width"))*w,(float)(c.getDouble("y")+c.getDouble("height"))*h);
         canvas.drawBitmap(image.bitmap,null,target,tint);
     }
-    public void dispose() { if(disposed)return;disposed=true;imageSelections.clear();playbackPreview=false;previewActive=false;hideAgentHand();invalidateTouchPreview(true);++rasterGeneration;requestedRasterGeneration=rasterGeneration;rasterWorker.execute(()->{if(touchPaintCache!=null){touchPaintCache.close();touchPaintCache=null;touchPaintOwner=null;}});rasterWorker.shutdown();detachPaintPublication();clearFrameCache();if(renderer!=null){renderer.close();renderer=null;} }
+    public void dispose() { if(disposed)return;stopAgentCamera();disposed=true;imageSelections.clear();playbackPreview=false;previewActive=false;hideAgentHand();invalidateTouchPreview(true);++rasterGeneration;requestedRasterGeneration=rasterGeneration;rasterWorker.execute(()->{if(touchPaintCache!=null){touchPaintCache.close();touchPaintCache=null;touchPaintOwner=null;}});rasterWorker.shutdown();detachPaintPublication();clearFrameCache();if(renderer!=null){renderer.close();renderer=null;} }
 
     @Override protected void onDraw(Canvas canvas) {
         super.onDraw(canvas); if (document == null||disposed) return;
@@ -389,6 +471,7 @@ public final class SketchCanvasView extends View {
     }
 
     @Override public boolean onTouchEvent(MotionEvent event) {
+        if(event.getActionMasked()==MotionEvent.ACTION_DOWN)stopAgentCamera();
         if(document==null)return false;
         if(!isEnabled()&&!(event.getPointerCount()>1||navigating||"pan".equals(tool)))return false;
         try {
