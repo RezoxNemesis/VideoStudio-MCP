@@ -671,6 +671,7 @@ public final class NativeRenderEngine {
     private EditedMediaItem buildItem(ProjectStore.Asset asset,ProjectStore.Clip clip,String aspect,String quality,
                                       boolean image,List<StudioLayer> titles,long itemStartUs) {
         long inputDurationMs = Math.max(100, clip.outMs - clip.inMs);
+        boolean neuralFrame=image&&isNativeNeuralFrame(asset,clip);
         MediaItem.Builder media = new MediaItem.Builder().setUri(Uri.parse(asset.uri));
 
         if (image) {
@@ -680,9 +681,9 @@ public final class NativeRenderEngine {
                 media.setMimeType(asset.mime);
             // Pose-interpolated frames are already real video samples; the usual
             // 250ms photo minimum would destroy 24fps action timing.
-            boolean poseFrame = clip.effects != null && (clip.effects.optBoolean("poseInbetween", false)
+            boolean poseFrame = neuralFrame || clip.effects != null && (clip.effects.optBoolean("poseInbetween", false)
                     || clip.effects.optBoolean("directorSequenceFrame", false));
-            if(poseFrame)poseFrameRate(clip);
+            if(poseFrame&&!neuralFrame)poseFrameRate(clip);
             media.setImageDurationMs(Math.max(poseFrame ? 1 : 250, clip.outputDurationMs()));
         } else {
             media.setClippingConfiguration(
@@ -697,7 +698,8 @@ public final class NativeRenderEngine {
         // Unknown metadata stays unknown; the interactive player reports it explicitly.
         if(!image&&asset.durationMs>0)
             edited.setDurationUs(Math.multiplyExact(asset.durationMs,1000L));
-        if (image) edited.setFrameRate(clip.effects != null && (clip.effects.optBoolean("poseInbetween", false)
+        if(image)edited.setFrameRate(neuralFrame ? NativeOfflineVideoPlan.FPS :
+                clip.effects != null && (clip.effects.optBoolean("poseInbetween", false)
                     || clip.effects.optBoolean("directorSequenceFrame", false))
                 ? poseFrameRate(clip) : 30);
         if(image)applyAuthoredFrameClock(edited,asset,clip);
@@ -721,6 +723,25 @@ public final class NativeRenderEngine {
         edited.setEffects(new Effects(audio, video));
         if (asset.mime == null || !asset.mime.startsWith("video/")) edited.setRemoveAudio(true);
         return edited.build();
+    }
+
+    /** Actual neural ONNX video frames get their true short image duration/9fps
+     * rather than the ordinary photograph's 250ms minimum and 30fps playback.
+     * This metadata cannot turn generic imported stills into a generated movie.
+     */
+    private static boolean isNativeNeuralFrame(ProjectStore.Asset asset,ProjectStore.Clip clip){
+        if(clip.effects==null||!clip.effects.optBoolean("nativeNeuralFrame",false))return false;
+        if(asset==null||!asset.generated||!"neural_video_frame".equals(asset.role)
+                ||asset.generationMetadata==null
+                ||!"videostudio.local_temporal_onnx".equals(
+                        asset.generationMetadata.optString("provider",""))
+                ||asset.generationMetadata.optInt("neuralFps",0)!=NativeOfflineVideoPlan.FPS
+                ||clip.effects.optInt("neuralFps",0)!=NativeOfflineVideoPlan.FPS
+                ||clip.effects.optInt("neuralFrameIndex",-1)<0
+                ||asset.generationMetadata.optInt("neuralFrameIndex",-2)
+                        !=clip.effects.optInt("neuralFrameIndex",-1))
+            throw new IllegalArgumentException("Neural frame identity differs from its generated asset");
+        return true;
     }
 
     private static int poseFrameRate(ProjectStore.Clip clip) {
