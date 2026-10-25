@@ -112,8 +112,25 @@ final class NativeStartupGuard {
     synchronized boolean mayStartFreshHeavy(String action,long now){
         if(!heavy(action))return true;
         if(!held())return true;
+        // Explicit UI consent is limited to NEW rendering, not risky model installation
+        // or arbitrary creative graphs. Existing interrupted jobs remain quarantined.
+        if(!freshRenderable(action))return false;
         long at=state.getLong("freshHeavyConsentAt",0);
         return at>0&&now>=at&&now-at<=FRESH_RENDER_WINDOW_MS;
+    }
+
+    static boolean freshRenderable(String action){
+        if(action==null)return false;
+        switch(action){
+            case "animate_images":case "animate_pose_sequence":
+            case "animate_storyboard_series":case "animate_storyboard_artwork":
+            case "render_rigged_2d":case "animate_combat_rig":case "render_gltf_combat":
+            case "cinematic_3d_render":case "prompt_video":case "export_project":
+            case "sketch_render":case "sketch_book_render":
+            case "sketch_story_create":case "sketch_story_audio_create":
+                return true;
+            default:return false;
+        }
     }
     synchronized boolean held(){return state.getBoolean("recoveryHeld",false);}
     synchronized String reason(){return state.getString("holdReason","");}
