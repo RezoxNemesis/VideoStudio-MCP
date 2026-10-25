@@ -62,6 +62,11 @@ public final class StudioTimedImageOverlay extends BitmapOverlay {
             if(source==null)throw new IllegalArgumentException("Could not decode imported image pixels");
                 if(layer.mask!=null)StudioMaskRasterizer.apply(source,layer.mask);
                 if(matte!=null)StudioTrackMatteRasterizer.apply(source,layer,matte);
+                if(layer.cornerPin!=null){
+                    Bitmap earlier=source;
+                    Bitmap projected=StudioCornerPinRasterizer.apply(earlier,layer.cornerPin);
+                    if(projected!=earlier){source=projected;earlier.recycle();}
+                }
                 return source;
         }catch(Exception error){throw new VideoFrameProcessingException("Could not load timed image overlay",error);}
     }
