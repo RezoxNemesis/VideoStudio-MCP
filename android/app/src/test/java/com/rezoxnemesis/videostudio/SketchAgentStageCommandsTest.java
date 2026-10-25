@@ -68,7 +68,7 @@ public final class SketchAgentStageCommandsTest {
                 assertEquals(i,claimed.getInt("stepIndex"));
                 assertEquals(5,claimed.getInt("stepCount"));
                 assertEquals("running",stage.status(new JSONObject().put("sketchId",doc.getString("id"))
-                    .put("operationId",request.getString("operationId")))).getString("state"));
+                    .put("operationId",request.getString("operationId"))).getString("state"));
                 JSONObject result=stage.finish(claimed,true,new JSONObject()
                         .put("appliedOnScreen",true).put("actualFrameIndex",21)
                         .put("atMs",System.currentTimeMillis()));
@@ -92,7 +92,7 @@ public final class SketchAgentStageCommandsTest {
             JSONObject claimed=stage.claim(doc.getString("id"));
             assertNotNull(claimed);
             assertEquals("running",stage.status(new JSONObject().put("sketchId",doc.getString("id"))
-                    .put("operationId",program.getString("operationId")))).getString("state"));
+                    .put("operationId",program.getString("operationId"))).getString("state"));
             stage.release(claimed);
             assertEquals("queued",stage.status(new JSONObject().put("sketchId",doc.getString("id")).put("operationId",program.getString("operationId"))).getString("state"));
             assertEquals(0,stage.status(new JSONObject().put("sketchId",doc.getString("id")).put("operationId",program.getString("operationId"))).getInt("completedSteps"));
