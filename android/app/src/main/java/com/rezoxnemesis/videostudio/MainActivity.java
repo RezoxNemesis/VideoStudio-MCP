@@ -1117,6 +1117,76 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         }
     }
 
+    /** One target + one shape matte, guarded as a single native editing operation. */
+    private void openStudioTrackMatte(StudioLayer target) {
+        if(activeProject==null||target==null)return;
+        if(!StudioLayer.IMAGE.equals(target.type)&&!StudioLayer.SHAPE.equals(target.type))return;
+        if(target.matteOnly){
+            Toast.makeText(this,"Hidden matte sources cannot be masked again",Toast.LENGTH_LONG).show();
+            return;
+        }
+        final String owner=activeProject.id,targetId=target.id;
+        final long revision=activeProject.updatedAt;
+        ArrayList<String> labels=new ArrayList<>();
+        ArrayList<JSONObject> actions=new ArrayList<>();
+        if(!target.matteLayerId.isEmpty()){
+            labels.add("Remove current alpha matte · restore shape visibility");
+            try {
+                actions.add(new JSONObject()
+                        .put("operation","unlink").put("targetLayerId",targetId));
+            }catch(Exception error){throw new IllegalStateException(error);}
+        }
+        for(StudioLayer shape:activeProject.studioLayers){
+            if(!StudioLayer.SHAPE.equals(shape.type)||shape.id.equals(targetId)||
+                    !shape.parentId.isEmpty()||!shape.matteLayerId.isEmpty()||
+                    shape.motionKeyframes!=null&&shape.motionKeyframes.length()>0||
+                    target.motionKeyframes!=null&&target.motionKeyframes.length()>0||
+                    !target.parentId.isEmpty())continue;
+            if(target.startMs<shape.startMs||target.durationMs>
+                    shape.durationMs-(target.startMs-shape.startMs))continue;
+            for(String mode:new String[]{"alpha","alpha_inverted"}){
+                String kind="alpha".equals(mode)?"Alpha":"Inverted alpha";
+                labels.add(kind+" from "+shape.shapeKind+" · "+
+                        shape.id.substring(0,Math.min(8,shape.id.length())));
+                try{
+                    actions.add(new JSONObject().put("operation","link")
+                            .put("targetLayerId",targetId)
+                            .put("matteLayerId",shape.id)
+                            .put("matteMode",mode));
+                }catch(Exception error){throw new IllegalStateException(error);}
+            }
+        }
+        if(labels.isEmpty()){
+            Toast.makeText(this,"Add a static shape covering this layer's full time span. Moving mattes are not supported yet.",
+                    Toast.LENGTH_LONG).show();
+            return;
+        }
+        new AlertDialog.Builder(this).setTitle("Static alpha track matte")
+            .setMessage("Use an existing vector shape's alpha, not a separate Gallery image. Both tracks stay editable and the imported source is unchanged. Static only.")
+            .setItems(labels.toArray(new String[0]),(dialog,index)->{
+                if(activeProject==null||!owner.equals(activeProject.id)
+                        ||revision!=activeProject.updatedAt){
+                    Toast.makeText(this,"Project changed; reopen the track matte selector",Toast.LENGTH_LONG).show();
+                    return;
+                }
+                try{
+                    ProjectStore.Project before=ProjectStore.Project.fromJson(activeProject.toJson());
+                    JSONObject p=new JSONObject(actions.get(index).toString())
+                            .put("projectId",owner).put("expectedUpdatedAt",revision);
+                    JSONObject result=StudioTrackMatteOps.apply(store,p);
+                    ProjectStore.Project saved=store.get(result.getString("projectId"));
+                    if(saved==null)throw new IllegalStateException("Saved project not found");
+                    editHistory.checkpoint(before);
+                    activeProject=saved;
+                    studioSelectedLayerId=targetId;
+                    syncProtocolState();showEditor();
+                    if(studioWorkspace!=null)studioWorkspace.showPane("Inspector");
+                }catch(Exception error){
+                    Toast.makeText(this,"Matte edit was not saved: "+error.getMessage(),Toast.LENGTH_LONG).show();
+                }
+            }).setNegativeButton("Cancel",null).show();
+    }
+
     private void openStudioMaskEditor(StudioLayer target) {
         if(activeProject==null || target==null)return;
         if(!StudioLayer.IMAGE.equals(target.type)&&!StudioLayer.SHAPE.equals(target.type))return;
@@ -1401,6 +1471,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                 box.addView(body("One-level motion parent. All linked text, image and vector layers receive its transform during preview and export."));
             }else if(StudioLayer.IMAGE.equals(layer.type)){
                 box.addView(studioButton("Mask / feather",()->openStudioMaskEditor(layer)));
+                box.addView(studioButton("Track matte · linked shape alpha",()->openStudioTrackMatte(layer)));
                 box.addView(studioButton("Touch-transform directly on preview",()->openStudioDirectTouch(layer)));
                 box.addView(studioButton("Animate overlay",()->openStudioImageMotion(layer)));
                 box.addView(studioButton("Placement / timing",()->editStudioImage(layer,layer.assetId)));
@@ -1413,6 +1484,8 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                 box.addView(studioButton("Delete video overlay",()->removeStudioLayer(layer)));
                 box.addView(body("Silent independent video source. Source in trims its own footage; it does not move the base timeline or add source audio."));
             }else if(StudioLayer.SHAPE.equals(layer.type)){
+                if(layer.matteOnly)box.addView(body("Alpha matte source · hidden during rendering. Select the image/shape it masks to unlink it."));
+                else box.addView(studioButton("Track matte · linked shape alpha",()->openStudioTrackMatte(layer)));
                 box.addView(studioButton("Mask / feather",()->openStudioMaskEditor(layer)));
                 box.addView(studioButton("Touch-transform directly on preview",()->openStudioDirectTouch(layer)));
                 box.addView(studioButton("Animate vector shape",()->openStudioShapeMotion(layer)));
