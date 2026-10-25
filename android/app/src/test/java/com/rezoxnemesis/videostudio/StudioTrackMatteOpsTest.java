@@ -110,7 +110,7 @@ public final class StudioTrackMatteOpsTest {
             assertFalse(receipt.contains("file:///owner"));
             assertFalse(receipt.contains("Audio.mp4"));
             assertFalse(receipt.contains("Original.png"));
-            assertFalse(receipt.contains("gallery"));
+            assertTrue(receipt.contains("\\"galleryAccess\\":false"));
             assertEquals("4.10.33",StudioTrackMatteOps.capabilities()
                     .getString("minimumNativeVersion"));
         }
