@@ -116,15 +116,15 @@ public class NativeOfflineVideoPlanTest {
                     .put("version","1").put("license","trial")
                     .put("archiveSha256",String.format("%064d",1))
                     .put("files",new JSONObject());
-            java.nio.file.Files.writeString(manifest.toPath(),pack.toString());
+            java.nio.file.Files.write(manifest.toPath(),pack.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
             NativeOfflineVideoGenerator runner=new NativeOfflineVideoGenerator(context);
             assertThrows(IllegalArgumentException.class,()->runner.plan(store,input(source)));
             pack.put("license","Apache-2.0").put("requiresSubscription",true);
-            java.nio.file.Files.writeString(manifest.toPath(),pack.toString());
+            java.nio.file.Files.write(manifest.toPath(),pack.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
             assertThrows(IllegalArgumentException.class,()->runner.plan(store,input(source)));
             pack.remove("requiresSubscription");
             pack.put("endpoint","https://paid.invalid/generate");
-            java.nio.file.Files.writeString(manifest.toPath(),pack.toString());
+            java.nio.file.Files.write(manifest.toPath(),pack.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
             assertThrows(IllegalArgumentException.class,()->runner.plan(store,input(source)));
         }finally{
             java.nio.file.Files.deleteIfExists(new java.io.File(root,"manifest.json").toPath());
