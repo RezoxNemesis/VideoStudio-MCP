@@ -19,18 +19,22 @@ public final class StudioTimedImageOverlay extends BitmapOverlay {
     private final StudioLayer layer;
     private final StudioImageMotion motion;
     private final StudioParentGroupTransform parent;
+    private final StudioLayer matte;
     private final Bitmap transparent=Bitmap.createBitmap(1,1,Bitmap.Config.ARGB_8888);
     private Bitmap source;
     private int outputWidth=1,outputHeight=1;
     private boolean released;
-    public StudioTimedImageOverlay(Context context,ProjectStore.Asset asset,StudioLayer layer){this(context,asset,layer,null);}
-    public StudioTimedImageOverlay(Context context,ProjectStore.Asset asset,StudioLayer layer,StudioLayer group){
+    public StudioTimedImageOverlay(Context context,ProjectStore.Asset asset,StudioLayer layer){this(context,asset,layer,null,null);}
+    public StudioTimedImageOverlay(Context context,ProjectStore.Asset asset,StudioLayer layer,StudioLayer group){this(context,asset,layer,group,null);}
+    public StudioTimedImageOverlay(Context context,ProjectStore.Asset asset,StudioLayer layer,StudioLayer group,StudioLayer matteSource){
         if(asset==null||asset.mime==null||!asset.mime.startsWith("image/")||asset.uri==null||asset.uri.isEmpty()
                 ||layer==null||!StudioLayer.IMAGE.equals(layer.type)||!asset.id.equals(layer.assetId))
             throw new IllegalArgumentException("Project-owned image layer required");
         layer.validate();this.context=context.getApplicationContext();uri=asset.uri;this.layer=layer.copy();
         motion=StudioImageMotion.fromLayer(this.layer);
         parent=group==null?null:new StudioParentGroupTransform(group);
+        if(matteSource!=null)StudioTrackMatteRasterizer.validatePair(this.layer,matteSource);
+        matte=matteSource==null?null:matteSource.copy();
     }
     @Override public void configure(Size size){super.configure(size);outputWidth=size.getWidth();outputHeight=size.getHeight();}
     public boolean activeAt(long timeUs){return timeUs>=layer.startMs*1000L&&timeUs<(layer.startMs+layer.durationMs)*1000L;}
@@ -49,7 +53,7 @@ public final class StudioTimedImageOverlay extends BitmapOverlay {
             if(bounds.outWidth<=0||bounds.outHeight<=0||bounds.outWidth>32768||bounds.outHeight>32768)
                 throw new IllegalArgumentException("Image dimensions are unavailable or exceed 32768 pixels");
             BitmapFactory.Options options=new BitmapFactory.Options();options.inPreferredConfig=Bitmap.Config.ARGB_8888;options.inSampleSize=1;
-            options.inMutable=layer.mask!=null; // alpha-only edit of an app-owned decoded copy; never the source file.
+            options.inMutable=layer.mask!=null||matte!=null; // original source stays untouched.
             while(Math.max(bounds.outWidth/options.inSampleSize,bounds.outHeight/options.inSampleSize)>1024
                     ||(long)(bounds.outWidth/options.inSampleSize)*(bounds.outHeight/options.inSampleSize)>1_048_576L)options.inSampleSize*=2;
             try(InputStream input=context.getContentResolver().openInputStream(Uri.parse(uri))){
@@ -57,6 +61,7 @@ public final class StudioTimedImageOverlay extends BitmapOverlay {
             }
             if(source==null)throw new IllegalArgumentException("Could not decode imported image pixels");
                 if(layer.mask!=null)StudioMaskRasterizer.apply(source,layer.mask);
+                if(matte!=null)StudioTrackMatteRasterizer.apply(source,layer,matte);
                 return source;
         }catch(Exception error){throw new VideoFrameProcessingException("Could not load timed image overlay",error);}
     }
