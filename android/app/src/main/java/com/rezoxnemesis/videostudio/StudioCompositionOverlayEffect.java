@@ -45,9 +45,20 @@ final class StudioCompositionOverlayEffect implements GlEffect {
     List<TextureOverlay> createOverlays(){
         ArrayList<TextureOverlay> overlays=new ArrayList<>();
         try{
+            int glyphOverlays = 0;
             for(Entry entry:entries){
-                if(StudioLayer.TITLE.equals(entry.layer.type))overlays.add(new StudioTimedTitleOverlay(entry.layer,entry.parent));
-                else if(StudioLayer.SHAPE.equals(entry.layer.type))overlays.add(new StudioTimedShapeOverlay(entry.layer,entry.parent));
+                if(StudioLayer.TITLE.equals(entry.layer.type)){
+                    if(entry.layer.glyphAnimation==null){
+                        overlays.add(new StudioTimedTitleOverlay(entry.layer,entry.parent));
+                    }else{
+                        int count=StudioGlyphAnimation.visibleGlyphCount(entry.layer.text);
+                        glyphOverlays+=count;
+                        if(glyphOverlays>StudioGlyphAnimation.MAX_COMPOSITION_GLYPHS)
+                            throw new IllegalArgumentException("Maximum 48 independently animated glyphs per composition");
+                        overlays.addAll(StudioTimedGlyphOverlay.expand(entry.layer,entry.parent));
+                    }
+                }else if(StudioLayer.SHAPE.equals(entry.layer.type))
+                    overlays.add(new StudioTimedShapeOverlay(entry.layer,entry.parent));
                 else overlays.add(new StudioTimedImageOverlay(context,entry.asset,entry.layer,entry.parent));
             }
             return overlays;
