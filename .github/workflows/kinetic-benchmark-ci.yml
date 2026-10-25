@@ -11,6 +11,7 @@ on:
       - feature/ae-touch-curve-editor-v41031
       - feature/professional-multitrack-editor-v41032
       - feature/ae-static-track-mattes-v41033
+      - feature/ae-perspective-corner-pin-v41034
   pull_request:
     branches:
       - feat/native-preview-audio-import-20261024
