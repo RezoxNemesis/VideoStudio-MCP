@@ -121,7 +121,10 @@ public final class StudioPrecisionEdits {
             throw new IllegalArgumentException("keyframeEdits cannot be combined with replacement or clearKeyframes");
         for(String name:new String[]{"clearKeyframes","resetColor","resetTransform"})
             if(operation.has(name)&&!(operation.opt(name) instanceof Boolean))throw new IllegalArgumentException(name+" must be boolean");
-        if(operation.optBoolean("resetColor"))for(String name:StudioClipAdjustments.COLOR_KEYS)clip.effects.remove(name);
+        if(operation.optBoolean("resetColor")){
+            for(String name:StudioClipAdjustments.COLOR_KEYS)clip.effects.remove(name);
+            clip.effects.remove("resolveColorNodes");
+        }
         if(operation.optBoolean("resetTransform"))for(String name:new String[]{"scale","zoom","scaleX","scaleY","rotate","x","y","anchorX","anchorY"})clip.effects.remove(name);
         if(operation.optBoolean("clearKeyframes")){
             clip.effects.remove("keyframes");clip.effects.remove("studioKeyframeDurationMs");clip.effects.remove("studioKeyframeOffsetMs");
@@ -130,7 +133,7 @@ public final class StudioPrecisionEdits {
             Object raw=operation.opt("set");if(!(raw instanceof JSONObject))throw new IllegalArgumentException("set must be an object");
             JSONObject values=(JSONObject)raw;java.util.Iterator<String> keys=values.keys();
             while(keys.hasNext()){
-                String key=keys.next();if(!NUMBERS.contains(key)&&!TEXT.contains(key)&&!"crop".equals(key)&&!"chromaKey".equals(key)&&!"audioMono".equals(key))throw new IllegalArgumentException("Unsupported clip setting: "+key);
+                String key=keys.next();if(!NUMBERS.contains(key)&&!TEXT.contains(key)&&!"crop".equals(key)&&!"chromaKey".equals(key)&&!"audioMono".equals(key)&&!"resolveColorNodes".equals(key))throw new IllegalArgumentException("Unsupported clip setting: "+key);
                 switch(key){
                     case "inMs":clip.inMs=StudioClipKeyframes.integer(values,key,0,86_400_000);break;
                     case "outMs":clip.outMs=StudioClipKeyframes.integer(values,key,1,86_400_000);break;
@@ -143,6 +146,10 @@ public final class StudioPrecisionEdits {
                     case "audioFadeInMs":case "audioFadeOutMs":clip.effects.put(key,StudioClipKeyframes.integer(values,key,0,86_400_000));break;
                     case "brightness":case "contrast":clip.effects.put(key,StudioClipKeyframes.number(values,key,0,-1,1));break;
                     case "saturationAdjust":case "lightnessAdjust":clip.effects.put(key,StudioClipKeyframes.number(values,key,0,-100,100));break;
+                    case "resolveColorNodes":
+                        if(!(values.opt(key) instanceof JSONArray))
+                            throw new IllegalArgumentException("Color grade requires an ordered node array");
+                        clip.effects.put(key,StudioResolveColorGraph.validate(values.getJSONArray(key)));break;
                     case "blur":clip.effects.put(key,StudioClipKeyframes.number(values,key,0,0,18));break;
                     case "chromaKey":
                         if(!(values.opt(key) instanceof Boolean))throw new IllegalArgumentException("chromaKey must be boolean");
@@ -188,6 +195,12 @@ public final class StudioPrecisionEdits {
         if(clip.effects.has("crop"))new StudioCropEffect(clip.effects.optJSONObject("crop"));
         StudioClipKeyframes.fromEffects(clip.effects,clip.outputDurationMs());
         StudioClipAudioEnvelope.fromEffects(clip.effects,clip.outputDurationMs(),clip.speed,clip.volume);
+        if(clip.effects.has("resolveColorNodes")){
+            Object raw=clip.effects.opt("resolveColorNodes");
+            if(!(raw instanceof JSONArray))
+                throw new IllegalArgumentException("Stored color graph is not a node array");
+            StudioResolveColorGraph.validate((JSONArray)raw);
+        }
         new StudioPixelEffect(clip.effects,clip.outputDurationMs());
     }
 }
