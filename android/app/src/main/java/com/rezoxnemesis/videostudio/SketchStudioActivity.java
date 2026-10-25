@@ -93,7 +93,8 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
     private String sketchId;
     private SketchCanvasView canvas;
     private TextView status,previewStatus,agentStageIndicator;
-    private boolean agentStageInFlight;
+    private boolean agentStageInFlight,agentStageBurst;
+    private long lastAgentStageProbeAt;
     private String agentStageActiveOperation="";
     private SeekBar frames;
     private Spinner layers;
@@ -1264,6 +1265,7 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
      * remain on the existing accepted-stroke live player.
      */
     private void pollAgentStage(){
+        if(!agentStageBurst&&SystemClock.uptimeMillis()-lastAgentStageProbeAt<950L)return;
         if(agentStageInFlight||!resumed||!watching||loadingDrawing
                 ||localEditableReturn!=null&&localEditableReturn.ownsEditor()
                 ||livePlayer!=null||watchInFlight||session==null||session.pending()>0
@@ -1271,6 +1273,7 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
                 ||bookId!=null||sketchId==null||document==null)return;
         final String id=sketchId;final SketchEditorSession active=session;
         final int generation=loadGeneration,page=pageGeneration;
+        lastAgentStageProbeAt=SystemClock.uptimeMillis();
         agentStageInFlight=true;
         io.execute(()->{
             try(SketchAgentStageCommands queue=new SketchAgentStageCommands(this)){
@@ -1287,7 +1290,8 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
                         agentStageInFlight=false;
                         return;
                     }
-                    if(claimed==null){agentStageInFlight=false;return;}
+                    if(claimed==null){agentStageBurst=false;agentStageInFlight=false;return;}
+                    agentStageBurst=true;
                     try{applyAgentStage(claimed);}
                     catch(Exception failure){
                         settleAgentStage(claimed,false,
@@ -1475,6 +1479,7 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
             }finally{
                 postUi(()->{
                     agentStageInFlight=false;
+                    if(!completed)agentStageBurst=false;
                     if(agentStageIndicator!=null&&agentStageActiveOperation.equals(claim.optString("operationId"))){
                         agentStageIndicator.setText(completed?"ChatGPT  ·  "+description:
                                 "ChatGPT stage rejected  ·  "+description);
@@ -1483,6 +1488,9 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
                                 agentStageIndicator.setVisibility(View.GONE);
                         },2200);
                     }
+                    // Continue an already admitted batch immediately instead of
+                    // paying the normal idle SQLite poll interval for every step.
+                    if(completed&&resumed&&watching&&!destroyed)pollAgentStage();
                 });
             }
         });
