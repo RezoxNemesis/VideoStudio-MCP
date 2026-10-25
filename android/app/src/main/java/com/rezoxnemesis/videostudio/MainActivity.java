@@ -2292,11 +2292,6 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
      */
     private void renderStudioTrackLanes(LinearLayout box){
         final boolean professional=prefs.getBoolean("studio_professional_multitrack",false);
-        box.addView(studioButton(professional?"Timeline view: Multitrack · tap for compact":
-                "Timeline view: Compact · tap for multitrack",()->{
-            prefs.edit().putBoolean("studio_professional_multitrack",!professional).apply();
-            if(studioWorkspace!=null)studioWorkspace.refreshPane();
-        }));
         StudioTracksView bands=new StudioTracksView(this);studioTracks=bands;
         bands.setQuietEditorPalette(true);
         bands.setProfessionalRows(professional);
@@ -2333,6 +2328,14 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         int height=bands.desiredHeightPx();
         scrolling.addView(bands,new FrameLayout.LayoutParams(initial*studioTrackZoom,height));
         box.addView(scrolling,new LinearLayout.LayoutParams(-1,height));
+        // The actual native timeline is the primary editing surface. Put
+        // secondary layout-mode controls AFTER it: enlarged Android text must
+        // never push timeline hit rows beneath the visible editing viewport.
+        box.addView(studioButton(professional?"Timeline view: Multitrack · tap for compact":
+                "Timeline view: Compact · tap for multitrack",()->{
+            prefs.edit().putBoolean("studio_professional_multitrack",!professional).apply();
+            if(studioWorkspace!=null)studioWorkspace.refreshPane();
+        }));
         scrolling.post(()->{int width=scrolling.getWidth();scrolling.scrollTo(Math.max(0,(int)(studioPlayheadMs/(double)Math.max(1,activeProject.outputDurationMs())*bands.getWidth())-width/2),0);});
         if(studioAudioWaveforms!=null)for(StudioLayer audio:activeProject.studioLayers){
             if(!StudioLayer.AUDIO.equals(audio.type))continue;ProjectStore.Asset source=activeProject.asset(audio.assetId);if(source==null)continue;
