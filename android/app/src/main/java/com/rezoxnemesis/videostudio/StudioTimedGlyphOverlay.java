@@ -12,7 +12,6 @@ import androidx.media3.effect.TextOverlay;
 import androidx.media3.effect.TextureOverlay;
 import java.util.ArrayList;
 import java.util.List;
-import org.json.JSONObject;
 
 /**
  * One native Media3 text texture per non-space codepoint, driven by one stored
@@ -22,7 +21,7 @@ import org.json.JSONObject;
 public final class StudioTimedGlyphOverlay extends TextOverlay {
     private final long startUs, endUs;
     private final SpannableString content;
-    private final JSONObject glyphProgram;
+    private final StudioGlyphAnimation.Spec glyphProgram;
     private final StudioLayerMotion titleMotion;
     private final StudioParentGroupTransform parent;
     private final String wholeText;
@@ -48,7 +47,7 @@ public final class StudioTimedGlyphOverlay extends TextOverlay {
         this.index = index;
         wholeText = layer.text;
         durationMs = layer.durationMs;
-        glyphProgram = StudioGlyphAnimation.validate(layer.glyphAnimation, layer.text, durationMs);
+        glyphProgram = StudioGlyphAnimation.compile(layer.glyphAnimation, layer.text, durationMs);
         titleMotion = StudioLayerMotion.fromLayer(layer);
         parent = group == null ? null : new StudioParentGroupTransform(group);
         startUs = layer.startMs * 1000L;
@@ -73,8 +72,7 @@ public final class StudioTimedGlyphOverlay extends TextOverlay {
         boolean active = StudioTimedTitleOverlay.activeAt(presentationTimeUs, startUs, endUs);
         long localUs = active ? presentationTimeUs - startUs : 0;
         long localMs = localUs / 1000L;
-        StudioGlyphAnimation.Frame glyph = StudioGlyphAnimation.sample(
-                glyphProgram, wholeText, index, durationMs, localMs);
+        StudioGlyphAnimation.Frame glyph = StudioGlyphAnimation.sample(glyphProgram, index, localMs);
         StudioClipKeyframes.Values title = titleMotion.atUs(localUs);
         float x = glyph.x + (float)(2 * title.x);
         float y = anchorY + glyph.y - (float)(2 * title.y);
